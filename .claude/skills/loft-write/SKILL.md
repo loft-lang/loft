@@ -34,7 +34,8 @@ compile in a way that sends you looking in the wrong place.
 8. **Match arms use `=>` and are comma-separated** — `->` is the return arrow; a missing comma
    reads as `Expect token ,`.
 9. **`fn` only at file scope** — inside a body write a lambda (`|x| { … }`, `fn(x: T) { … }`).
-10. **`text`, not `string`; `integer` (64-bit), not `long`** — literals take no `l` suffix.
+10. **`text`, not `string`; `integer` (64-bit), not `long`** — a literal needs no suffix (`l` and
+    `d` matter only in a `#width 32` file).
 11. **A bare variant (`c = Red`) needs one owning enum** — when two enums share `Red`, write
     `Color.Red` unless the context picks one (§ Enums).
 12. **`text as integer` is `integer?`** — a parse can fail; write `s as integer ?? 0`.
@@ -76,7 +77,9 @@ operator table only (@C132); to put an operator on your own type write `operator
 `now()` / `File.size` return a full-range `integer`.  **Narrow / sized integers are aliases of
 `integer`** (defined in `default/01_code.loft`), for byte-width-sensitive file / wire formats:
 `i8` `size(1)`, `i16`/`u16` `size(2)`, `i32`/`u32` `size(4)`.  Cast with `x as i32` etc.  Use
-plain `integer` for ordinary arithmetic — it has the full 64-bit range.
+plain `integer` for ordinary arithmetic — it has the full 64-bit range.  A file that declares
+`#width 32` makes plain `integer` an `i32` and `float` a `single`; there `i64` and `f64` (aliases
+of `integer` and `float` everywhere else) keep 64 bits, and `now()` answers an `i64`.
 
 ---
 
@@ -102,8 +105,9 @@ when you discharge a `τ?` or parse text, or when the default `x?` picks matters
   Inside one block, `if c is NdCall { args } { … }`.
 - **Bind a nullable or leave:** `x = lookup(k) ?? return null` (also `?? break`, `?? continue`).
 - **An index needs no `??` when the compiler trusts it:** a constant (`args[0]`, `v[-1]`),
-  `v[len(v) - 1]`, a `for j in 0..len(v)` variable, or an index a guard proved (`if i < len(v)`).
-  `n = len(v); v[n - 1]` and `v[x#index]` are not trusted — write `v[len(v) - 1]`, read `x`
+  `v[len(v) - 1]`, a `for j in 0..len(v)` variable, `v[x#index]` inside `for x in v`, a length
+  local (`n = len(v); v[n - 1]`, with `v` not written after it), or an index a guard proved
+  (`if i < len(v)`).  Any other local is not trusted (`i = x#index; v[i]`, `k = n - 1; v[k]`)
   ([LOFT_DATA.md § Vectors](../../../doc/claude/LOFT_DATA.md#vectors)).
 - **Discharge the rest by intent:** `v[i]!` when an invariant guarantees it (halts otherwise),
   `v[i]?` for the type's default, `v[i] ?? d` for your own default.
@@ -677,9 +681,9 @@ width (`f += (n as i32)`).
 | `Variable <x> is never read` | A **warning** (program still runs, exit 0) — use the variable, or name an unused loop var `_` |
 | `The value parameter 'p' receives is never read` / `Dead assignment — … a parameter's assignment stays in this function` | A plain parameter is the callee's own local: the assignment reaches no caller.  Write `p: &T` if the caller is meant to see it, else a local (DIAGNOSTICS.md `never-read` / `dead-assignment`) |
 | `Indexing a non vector` | You indexed a scalar (`x = 5; x[0]`) — index a vector/collection, not a single value |
-| `Cannot assign <T> to a field of type null` | A local named `null` (a literal keyword) — rename it |
+| `Unknown type null — did you mean 'JNull'?` on `null = …` | A local named `null` (a literal keyword) — rename it |
 | `Undefined type string — did you mean 'text'?` | Use `text`, not `string` |
-| `Undefined type long — did you mean 'integer'?` | `integer` is already 64-bit; literals are plain (`86400000`, not `86400000l`) |
+| `Undefined type long — did you mean 'integer'?` | `integer` is already 64-bit; a plain literal (`86400000`) needs no suffix |
 | `variant-cast-default` / `enum-parse-default` (warnings) | The cast answers a default on a miss — check first (`if s is Circle`), or write `as V?` / `?? default` |
 | `Unknown function say` | Use `println()` |
 | `Cannot pass a literal or expression to a '&' parameter` | Assign to a named variable first, then pass it. `v[i]` and `s.field` work directly. |

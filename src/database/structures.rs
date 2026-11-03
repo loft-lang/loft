@@ -3942,11 +3942,11 @@ impl Stores {
     /// the wrong value, or to absence, for present input.
     pub fn write_narrow_value(&mut self, tp: u16, n: i64, slot: &DbRef) -> bool {
         enum Enc {
-            Byte(i32),
-            Short(i32),
-            ShortRaw(i32),
-            Int,
-            IntRaw,
+            Byte(i32, bool),
+            Short(i32, bool),
+            ShortRaw(i32, bool),
+            Int(i32, bool),
+            IntRaw(i32, bool),
         }
         if tp == u16::MAX || tp <= 6 {
             return false;
@@ -3954,35 +3954,78 @@ impl Stores {
         // Copy the encoding out before taking the store's mutable borrow.  Every narrow
         // `Parts` carries just `(min, nullable)`, so this clones no field list.
         let enc = match self.types[tp as usize].parts {
-            Parts::Byte(from, _) => Enc::Byte(from),
-            Parts::Short(from, _) => Enc::Short(from),
-            Parts::ShortRaw(from, _) => Enc::ShortRaw(from),
-            Parts::Int(_, _) => Enc::Int,
-            Parts::IntRaw(_, _) => Enc::IntRaw,
+            Parts::Byte(from, nullable) => Enc::Byte(from, nullable),
+            Parts::Short(from, nullable) => Enc::Short(from, nullable),
+            Parts::ShortRaw(from, nullable) => Enc::ShortRaw(from, nullable),
+            Parts::Int(min, nullable) => Enc::Int(min, nullable),
+            Parts::IntRaw(min, nullable) => Enc::IntRaw(min, nullable),
             _ => return false,
         };
+        // `i64::MIN` is the wide null (`@FR-L-Null`): every width's setter is handed its own
+        // null, `i32::MIN`, never the truncated `0`, which would store a live value.
+        // A number outside 32 bits does not fit any of these widths (loft#984's rule: it stores
+        // the type's default), so it reaches a narrow setter as a value outside that setter's
+        // range — never as its low 32 bits, which read as a different, in-range value
+        // (loft#2373).  `span` is the encoding's top above its `min`.
+        let wide_misfit = n != i64::MIN && i32::try_from(n).is_err();
+        let out_of = |from: i32, span: i32| from.checked_add(span + 1).unwrap_or(from - 1);
         #[allow(clippy::cast_possible_truncation)]
-        let v = n as i32;
+        let v = if n == i64::MIN {
+            i32::MIN
+        } else if wide_misfit {
+            match enc {
+                Enc::Byte(from, _) => out_of(from, 255),
+                Enc::Short(from, _) => out_of(from, 65534),
+                Enc::ShortRaw(from, _) => out_of(from, 65535),
+                Enc::Int(..) | Enc::IntRaw(..) => 0,
+            }
+        } else {
+            n as i32
+        };
+        // A nullable narrow field answers a misfit with its null, not its lowest value: absence
+        // is a value it can hold (loft#984's rule), as a checked `as u8?` answers.
+        let v = match enc {
+            Enc::Byte(from, true) if !crate::store::Store::byte_fits(from, v) => i32::MIN,
+            Enc::Short(from, true) if !crate::store::Store::short_fits(from, v) => i32::MIN,
+            Enc::ShortRaw(from, true) if !crate::store::Store::short_raw_fits(from, v) => i32::MIN,
+            _ => v,
+        };
         let store = self.store_mut(slot);
         // The setters answer whether the value FIT the slot's range; out-of-range is
         // theirs to handle (they store the slot's default) and both walkers have always
         // let that stand.  The answer here is the narrower question the caller asked:
         // was this a narrow slot at all?
         let _fits = match enc {
-            Enc::Byte(from) => store.set_byte(slot.rec, slot.pos, from, v),
-            Enc::Short(from) => store.set_short(slot.rec, slot.pos, from, v),
-            Enc::ShortRaw(from) => store.set_i16_raw(slot.rec, slot.pos, from, v),
+            Enc::Byte(from, _) => store.set_byte(slot.rec, slot.pos, from, v),
+            Enc::Short(from, _) => store.set_short(slot.rec, slot.pos, from, v),
+            Enc::ShortRaw(from, _) => store.set_i16_raw(slot.rec, slot.pos, from, v),
             // `i64::MIN` is the wide null, and it must not truncate to a live `i32`.
-            Enc::Int => {
-                store.set_i32_raw(slot.rec, slot.pos, if n == i64::MIN { i32::MIN } else { v })
-            }
+            Enc::Int(min, nullable) => store.set_i32_raw(
+                slot.rec,
+                slot.pos,
+                if n == i64::MIN || (wide_misfit && nullable) {
+                    i32::MIN
+                } else if wide_misfit {
+                    min
+                } else {
+                    v
+                },
+            ),
             // The unsigned twin, whose absence is the top code — and whose value must
             // NOT go through `v`, an `i32`, or every value past 2147483647 truncates.
             #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-            Enc::IntRaw => store.set_u32_raw(
+            Enc::IntRaw(min, nullable) => store.set_u32_raw(
                 slot.rec,
                 slot.pos,
-                if n == i64::MIN { u32::MAX } else { n as u32 },
+                // The nullable encoding spends `u32::MAX` on absence, so there it does not fit
+                // either; a non-null `u32` holds it.
+                if n == i64::MIN || (nullable && u32::try_from(n).map_or(true, |u| u == u32::MAX)) {
+                    u32::MAX
+                } else if u32::try_from(n).is_err() {
+                    min as u32
+                } else {
+                    n as u32
+                },
             ),
         };
         true

@@ -68,6 +68,21 @@ const CASES: &[(&str, &[i64], &str)] = &[
     ("square", &[3_037_000_500], "null"),
 ];
 
+/// Where the body of the function `name` opens in `text` (its definition, `… name(…) {`, not a
+/// prototype): the byte of the `{` line's end.
+fn definition_of(text: &str, name: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(i) = text[from..].find(&format!("{name}(")) {
+        let at = from + i;
+        let eol = text[at..].find('\n').map_or(text.len(), |e| at + e);
+        if text[at..eol].ends_with(") {") {
+            return Some(eol - 1);
+        }
+        from = eol;
+    }
+    None
+}
+
 fn have_cc() -> bool {
     loft::platform::process::harness_command("cc")
         .arg("--version")
@@ -211,19 +226,19 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
     // A native the C runtime has not ported is refused by its name, never written as C that
-    // answers differently.  Every native a program can call from the standard library has a C
-    // port, so the subject is one of loft's own binary that the runtime does not carry:
-    // `lib/engine_host`'s build swap (`in_binary_native`).
+    // answers differently.  Every native a program can call from the standard library or a
+    // library of loft's own binary has a C port, so the subject is a native of the binary's
+    // table (`native::FUNCTIONS`) that no declaration reaches: an internal destination twin.
     let p = parsed(
-        "fn swap_start(artifact: text) -> boolean;\n#native\n\
-         fn up() -> integer { if swap_start(\"x\") { 1 } else { 0 } }\n",
+        "fn store_memory_dest() -> integer;\n#native\n\
+         fn up() -> integer { store_memory_dest() }\n",
     );
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
         .expect_err("a native without a C port is not carried");
-    assert_eq!(refusal.function, "swap_start");
+    assert_eq!(refusal.function, "store_memory_dest");
     assert!(
-        refusal.why.contains("native swap_start"),
+        refusal.why.contains("native store_memory_dest"),
         "names the construct: {refusal}"
     );
 }
@@ -535,6 +550,154 @@ fn main() {
             want,
             "{mode}: the C program"
         );
+    }
+}
+
+/// Every hash table draws its own unpredictable seed (the hash-DoS defence), from keys the
+/// program reads from `/dev/urandom` ONCE at start-up: making 500 tables opens it at most once.
+/// Read per table it cost an open, an fstat, a read and a close each — a third of gridmesh's
+/// `collect_dirty_inputs` was kernel time.  `fopen` is routed through a counter compiled apart.
+/// Hand-computed: each call holds four entries and reads `v = 3` back, `3 + 4` per call, 3500.
+#[test]
+fn a_program_reads_its_hash_seed_entropy_once() {
+    // approved exemption: the count is of `/dev/urandom` opens, a file Windows does not have — its keys come from the clock and an address, with no file to open; Windows substitute: c_emit's other hash tests and the nightly MSVC / MinGW sweeps run every hash on Windows
+    if !have_cc() || !cfg!(unix) {
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("seed-once");
+    let file = dir.join("h.loft");
+    fa::write(
+        &file,
+        "struct E { k: integer, v: integer }\n\
+         fn one(i: integer) -> integer {\n  h: hash<E[k]> = [];\n  \
+         for j in 0..4 { h += [E { k: i * 10 + j, v: j }]; }\n  e = h[i * 10 + 3];\n  \
+         if e { e.v + len(h) } else { -1 }\n}\n\
+         fn main() {\n  t = 0;\n  for i in 0..500 { t += one(i); }\n  println(\"{t}\");\n}\n",
+    )
+    .expect("write program");
+    let counter = dir.join("count.c");
+    fa::write(
+        &counter,
+        "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\
+         static int n;\nstatic void report(void) { fprintf(stderr, \"urandom opens %d\\n\", n); }\n\
+         FILE *loft_test_fopen(const char *p, const char *m) {\n    static int armed;\n    \
+         if (!armed) { armed = 1; atexit(report); }\n    \
+         if (strcmp(p, \"/dev/urandom\") == 0) n++;\n    return fopen(p, m);\n}\n",
+    )
+    .expect("write counter");
+    let c = dir.join("h.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let obj = dir.join("count.o");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-c", "-o"])
+        .arg(&obj)
+        .arg(&counter)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let exe = dir.join("h");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-Dfopen=loft_test_fopen"])
+        .arg(&c)
+        .args(unit_links(&c))
+        .arg(&obj)
+        .arg("-o")
+        .arg(&exe)
+        .args(["-lm", "-ldl", "-pthread"])
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the C program");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3500\n");
+    let err = String::from_utf8_lossy(&out.stderr);
+    let opens: u32 = err
+        .lines()
+        .find_map(|l| l.strip_prefix("urandom opens "))
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no count reported:\n{err}"));
+    assert!(
+        opens <= 1,
+        "a program of 500 hash tables opened /dev/urandom {opens} times"
+    );
+}
+
+/// A `main` that takes `vector<text>` gets the program's arguments, as the interpreter's does:
+/// "alpha" and "b c" are two arguments of 5 + 3 characters, the last "b c"; with none the
+/// vector is empty and its last element null.  Hand-computed; the interpreter answers the same.
+#[test]
+fn a_main_taking_texts_gets_the_programs_arguments() {
+    if !have_cc() {
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("main-args");
+    let file = dir.join("m.loft");
+    fa::write(
+        &file,
+        "fn main(args: vector<text>) {\n  n = 0;\n  for a in args { n += len(a); }\n  \
+         println(\"{len(args)} {n} {args[len(args) - 1]}\");\n}\n",
+    )
+    .expect("write program");
+    let c = dir.join("m.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "a main with arguments is carried: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let exe = dir.join("m");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-pedantic", "-Werror"])
+        .arg(&c)
+        .args(unit_links(&c))
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        // The host's thread and loader libraries, as the driver names them: none on Windows,
+        // whose C runtime carries both (MinGW has no `-ldl`).
+        .args(loft::platform::c_thread_link_args())
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the C:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    for (args, want) in [
+        (&["alpha", "b c"][..], "2 8 b c\n"),
+        (&[][..], "0 0 null\n"),
+    ] {
+        let out = loft::platform::process::harness_command(&exe)
+            .args(args)
+            .output()
+            .expect("run the C program");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{args:?}");
     }
 }
 
@@ -1407,7 +1570,9 @@ fn main() {
             String::from_utf8_lossy(&emit.stderr)
         );
         let text = fa::read_to_string(&c).expect("read the C");
-        let body = &text[text.find("static void loft_drop_closure").unwrap_or(0)..];
+        // The written code: everything after the runtime's pragma region (whose close is the
+        // last line naming `LOFT_LINT_RUNTIME_UNUSED`; the runtime has pragmas of its own).
+        let body = &text[text.rfind("LOFT_LINT_RUNTIME_UNUSED").unwrap_or(0)..];
         let calls = body
             .lines()
             .filter(|l| l.contains("__inv(") && !l.trim_start().starts_with("static"))
@@ -1431,7 +1596,7 @@ fn main() {
             .count();
         let mints_headers = body
             .find("n_mints__fr(")
-            .and_then(|at| body[at..].find("{\n").map(|o| at + o))
+            .and_then(|_| definition_of(body, "n_mints__fr"))
             .map_or(0, |at| {
                 body[at..at + body[at..].find("\n}\n").unwrap_or(0)]
                     .lines()
@@ -1446,7 +1611,7 @@ fn main() {
         );
         let scal = body
             .find("n_scal__fr(")
-            .and_then(|at| body[at..].find("{\n").map(|o| at + o))
+            .and_then(|_| definition_of(body, "n_scal__fr"))
             .map_or("", |at| {
                 &body[at..at + body[at..].find("\n}\n").unwrap_or(0)]
             });
@@ -6234,10 +6399,10 @@ fn a_halted_c_test_releases_the_texts_its_frames_hold() {
 /// does not.  `lib/process`'s `process_run` is carried (`loft_process.h`): the values below are
 /// computed by hand — a run's code and both streams, a signal as 128 + n, a program that cannot
 /// start, a timeout's -2, a cursor's lines — and the interpreter must give the same lines.
-/// `engine_host`'s `rebuild_status` is not carried: the C must refuse the unit naming it, never
-/// emit the "not loaded" stub, which the interpreter cannot give for a native of its own binary.
+/// `engine_host`'s `rebuild_status` runs on both: a program the driver did not start has no build
+/// in flight, so both answer idle (0) rather than the "not loaded" stub.
 #[test]
-fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
+fn in_binary_natives_run_on_the_c_as_on_the_interpreter() {
     if !have_cc() || !loft::platform::c_runtime_posix_host() {
         eprintln!("skipped: no cc on PATH, or not a POSIX host");
         return;
@@ -6284,20 +6449,22 @@ fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
         "use engine_host;\nfn main() { println(\"{engine_host::rebuild_status()}\"); }\n",
     )
     .expect("write program");
-    let out = loft::platform::process::harness_command(loft)
-        .args(["--emit-c"])
-        .arg(dir.join("h.c"))
-        .arg("--lib")
-        .arg(&lib)
-        .arg(&host)
-        .output()
-        .expect("run loft --emit-c");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(2), "a refusal: {err}");
-    assert!(
-        err.contains("rebuild_status") && err.contains("the C runtime does not carry it"),
-        "the refusal names the native: {err}"
-    );
+    for backend in ["--native-c", "--interpret"] {
+        let out = loft::platform::process::harness_command(loft)
+            .arg(backend)
+            .arg("--lib")
+            .arg(&lib)
+            .arg(&host)
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "0\n",
+            "{backend}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
 
 /// @PLN203 C5 — `lib/engine_host`'s kernel on the C (`loft_engine.h`) and on the interpreter,
@@ -6306,6 +6473,20 @@ fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
 /// (`hello 0`, the first slot's cid); a text frame is echoed; `H:<cookie>` is acked `A:0`; a
 /// seq-stamped datagram of a declared sync kind reaches `on_event` at the next tick and is
 /// echoed over the WebSocket; `quit` stops the run and the program exits 0.
+/// A port free for TCP AND UDP at once: the engine host binds both on one number, and a port
+/// free for TCP alone was taken for UDP by a test running beside it on a busy Windows leg — the
+/// host then served without UDP (no `X-Loft-UDP` cookie), as it should.
+fn free_tcp_and_udp_port() -> u16 {
+    for _ in 0..64 {
+        let tcp = std::net::TcpListener::bind("127.0.0.1:0").expect("a free TCP port");
+        let port = tcp.local_addr().expect("its address").port();
+        if std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    panic!("no port free for both TCP and UDP in 64 tries")
+}
+
 #[test]
 fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
     use std::io::{Read, Write};
@@ -6317,10 +6498,7 @@ fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
     let loft = env!("CARGO_BIN_EXE_loft");
     let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
     for backend in ["--native-c", "--interpret"] {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .and_then(|l| l.local_addr())
-            .map(|a| a.port())
-            .expect("a free port");
+        let port = free_tcp_and_udp_port();
         let dir = scratch(&format!("kernel{}", &backend[2..]));
         let file = dir.join("k.loft");
         fa::write(
@@ -6464,10 +6642,7 @@ fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
     let loft = env!("CARGO_BIN_EXE_loft");
     let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
     for backend in ["--native-c", "--interpret"] {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .and_then(|l| l.local_addr())
-            .map(|a| a.port())
-            .expect("a free port");
+        let port = free_tcp_and_udp_port();
         let dir = scratch(&format!("seat{}", &backend[2..]));
         let file = dir.join("pair.loft");
         fa::write(
@@ -7752,4 +7927,62 @@ fn a_return_inside_a_loop_frees_the_texts_a_later_statement_declares() {
         returns >= 3,
         "the two returns in the loop and the tail\n{c}"
     );
+}
+
+/// The C the backend writes compiles without a lint warning (`LOFT_C_LINT=strict`: `-Wall
+/// -Wextra` as errors, a local or label nothing names included) — over units that reach the
+/// runtime's store converter and its drain, the engine host with its build swap and rebuild, a
+/// `par` loop and slice bounds.  A positional `loft_ref` initializer that leaves out its pad is
+/// the warning this held at zero first; the census across the corpus is the same compile.  On
+/// Linux only, where it is measured: each compiler warns its own set, so another host's `cc`
+/// is no evidence about this one's.
+#[test]
+// approved exemption: a compiler's lint set is its own, so another host's `cc` warning list is no evidence about gcc's; Windows substitute: the nightly MSVC and MinGW C sweeps compile every corpus program, and `scripts/c_lint_census.py` runs under any LOFT_CC
+#[cfg(target_os = "linux")]
+fn the_written_c_compiles_without_a_lint_warning() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
+    let dir = scratch("lint");
+    let programs = [
+        (
+            "upgrade",
+            "struct T { k: integer, n: text, m: integer = len($.n) }\n\
+             struct W { a: integer, items: vector<T>, h: hash<T[k]> }\n\
+             fn main() {\n  w = W {};\n  if !store_load(w, \"a.store\") { println(\"not loaded\"); return; }\n  \
+             println(\"{len(w.items)} {store_persist_copy(w, \\\"b.store\\\")}\");\n}\n",
+        ),
+        (
+            "swap",
+            "use engine_host;\nstruct W { n: integer }\nfn main() {\n  w = W { n: 0 };\n  \
+             r = engine_host::swap_world(w);\n  \
+             println(\"{r} {engine_host::rebuild_status()} {engine_host::rebuild_artifact()} {engine_host::swap_retired()}\");\n  \
+             if r { println(\"{engine_host::rebuild_start()} {engine_host::swap_start(\\\"x\\\")}\"); }\n}\n",
+        ),
+        (
+            "par",
+            "fn sq(x: integer) -> integer { x * x }\nfn main() {\n  v = [1, 2, 3, 4, 5];\n  s = 0;\n  \
+             for x in v par(r = sq(x), 2) { s += r; }\n  w = v[1..-1];\n  println(\"{s} {len(w)} {v[-2..]}\");\n}\n",
+        ),
+    ];
+    for (name, src) in programs {
+        let file = dir.join(format!("{name}.loft"));
+        fa::write(&file, src).expect("write program");
+        let out = loft::platform::process::harness_command(loft)
+            .args(["--no-warnings", "--check", "--native-c", "--lib"])
+            .arg(&lib)
+            .arg(&file)
+            .env("LOFT_C_LINT", "strict")
+            .env("LOFT_TIMEOUT", "300")
+            .output()
+            .expect("run loft");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success() && !err.contains("warning:") && !err.contains("error:"),
+            "{name}: the C did not compile cleanly under the lint:\n{err}"
+        );
+    }
 }

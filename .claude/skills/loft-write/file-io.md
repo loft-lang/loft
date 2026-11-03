@@ -91,8 +91,8 @@ Notes:
   The byte count is inferred from the type — `as i32` reads 4
   bytes, `as u8` reads 1, `as u16` reads 2, `as integer` reads 8.
   The legacy `f#read(n) as T` form still works but the `(n)` must
-  match the type's storage width exactly or the runtime panics.  The inferred form makes that mismatch
-  impossible.  `as text` still needs `f#read(n) as text` because
+  match the type's storage width exactly — a mismatch reads `null`, silently.  The inferred
+  form makes that mismatch impossible.  `as text` still needs `f#read(n) as text` because
   text has no fixed width.
 - **`s.field = f#read` (no `as T`) infers width from the LHS field's
   declared type** — symmetric with `f += s.field`.  For a struct

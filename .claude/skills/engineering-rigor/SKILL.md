@@ -313,10 +313,11 @@ debugging policy and test layout.
 - **Heavyweight investigations** — `doc/claude/plans/_INVESTIGATION_TEMPLATE.md`.
 - **The deep why** — `doc/claude/GOALS.md` § Stability trumps features: robustness by
   *subtraction* — remove the mechanism rather than guard it; the reason the short version is
-  usually the robust one.  Goal E there is the "own the medium" step: one owned home for a
-  shared thing.
+  usually the robust one.  § Don't tolerate re-derivation patterns there is the "own the
+  medium" step: one explicit home for shared state, and the second derivation deleted.
 - **The cheapest probe in loft** — `loft introspect prog.loft` (IR, bytecode and the native
-  Rust in one capture), `--native-emit`, a `LOFT_LOG` preset; the `loft-debug` skill has the
+  Rust in one capture), `--emit-c out.c` for the C backend's source, `--native-emit`, a
+  `LOFT_LOG` preset; the `loft-debug` skill has the
   question-to-instrument table.
 - **When the special case wants to become the normal case** — `doc/claude/STABILITY_METHOD.md`
   § The trigger: the full story of evolving the representation.

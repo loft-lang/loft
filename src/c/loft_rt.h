@@ -134,9 +134,19 @@ static int loft_text_le(loft_str a, loft_str b) {
     return loft_str_cmp(a, b) <= 0;
 }
 
+/* The compare reads `len` bytes of both only where both hold `len`; gcc's overread check, which
+ * cannot see a text's length beside its pointer (a parked work text made it look at the empty
+ * literal's one byte), would fail strict mode on a read that does not run. */
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overread"
+#endif
 static int loft_str_eq(loft_str a, loft_str b) {
     return a.len == b.len && (a.len == 0 || memcmp(a.p, b.p, a.len) == 0);
 }
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
+#pragma GCC diagnostic pop
+#endif
 
 /* Unicode scalar values in `s`: the bytes that do not continue a UTF-8 sequence. */
 static size_t loft_chars(loft_str s) {
@@ -1099,17 +1109,22 @@ static uint32_t loft_text_char(loft_str t, int64_t from) {
 }
 
 /* OpAppendCharacter: the null character appends nothing.  An ASCII character into a buffer with
- * room is one store and a length bump (`-DLOFT_NO_SHORT_APPEND` encodes and pushes it). */
-static void loft_push_code(loft_text *t, uint32_t c) {
+ * room is one store and a length bump (`-DLOFT_NO_SHORT_APPEND` encodes and pushes it), always
+ * inlined: in a large unit clang left the whole function a call per character (zttext's
+ * `materialise` 3.7x its twin, 2.3x inlined); the encoding and the growth stay out of line. */
+LOFT_COLD static void loft_push_code_slow(loft_text *t, uint32_t c) {
+    char buf[8]; /* loft_utf8 writes at most 4; the room keeps gcc's bounds check quiet */
+    size_t n = c == 0 ? 0 : loft_utf8(c, buf);
+    loft_push(t, buf, n);
+}
+LOFT_HOT_INLINE void loft_push_code(loft_text *t, uint32_t c) {
 #ifndef LOFT_NO_SHORT_APPEND
-    if (c - 1u < 0x7Fu && t->len < t->cap) {
+    if (LOFT_LIKELY(c - 1u < 0x7Fu && t->len < t->cap)) {
         t->p[t->len++] = (char) c;
         return;
     }
 #endif
-    char buf[4];
-    size_t n = c == 0 ? 0 : loft_utf8(c, buf);
-    loft_push(t, buf, n);
+    loft_push_code_slow(t, c);
 }
 
 /* A function value: the definition it names (LOFT_NULL for the absent one) and the closure
@@ -1666,10 +1681,19 @@ static inline void *loft_ta_vec_push(loft_ta_vec *v, size_t size) {
     return e;
 }
 
-/* Element `i` of `v`, or 0 past either end — what a store vector's read answers as null. */
+/* Element `i` of `v` — a negative `i` counting from the end, as a store vector's read does —
+ * or 0 past either end, what that read answers as null. */
 static inline void *loft_ta_vec_at(const loft_ta_vec *v, int64_t i, size_t size) {
+    if (i < 0) i += (int64_t) v->n;
     if (i < 0 || i >= (int64_t) v->n) return 0;
     return (unsigned char *) v->p + (size_t) i * size;
+}
+
+/* A zeroed record nothing writes: what a `v[i]?` that missed answers in a transient tree (a
+ * type whose default is all zeros).  One past the static block's size takes arena room. */
+static inline void *loft_ta_zero(size_t n) {
+    static const uint64_t z[128];
+    return n <= sizeof z ? (void *) z : loft_ta_alloc(n);
 }
 
 /* A text's bytes copied into the arena. */
@@ -1771,11 +1795,11 @@ static void loft_free_ref(loft_ref r) {
  * them.  The interpreter runs each test in a fork of its own program, so nothing a test made
  * outlives it; here every store made since `mark` (`loft_stores_allocated` as the test began)
  * that is still live and not pinned is released (@PLN206 D31). */
-static void loft_release_stores_since(uint64_t mark) {
+LOFT_NOINLINE static void loft_release_stores_since(uint64_t mark) {
     for (uint32_t i = 0; i < loft_nstores; i++) {
         const loft_store_t *s = &loft_stores[i];
         if (s->live && !s->pinned && s->serial > mark) {
-            loft_ref r = { (uint16_t) i, 1, 8 };
+            loft_ref r = { (uint16_t) i, 1, 8, 0 };
             loft_free_ref(r);
         }
     }
@@ -1893,7 +1917,7 @@ static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
     loft_st_resync(s);
     s->pinned = 1;
     s->read_only = 1; /* `Store::lock_constant`: constant data is read-only, as on the interpreter */
-    loft_ref r = { (uint16_t) nr, 1, 8 };
+    loft_ref r = { (uint16_t) nr, 1, 8, 0 };
     return r;
 }
 
@@ -2469,6 +2493,13 @@ LOFT_HOT_INLINE int64_t loft_vh_get_int(loft_vh h, uint32_t size, int64_t from, 
     return v;
 }
 
+/* The address of element `from` (negative from the end) through the held base, or the null
+ * address outside the vector — the `loft_pa_*` readers answer null there. */
+LOFT_HOT_INLINE uint8_t *loft_vh_addr(loft_vh h, uint32_t size, int64_t from) {
+    int64_t f = loft_vh_index(h, from);
+    return f < 0 ? (uint8_t *) 0 : h.base + (size_t) f * size;
+}
+
 LOFT_HOT_INLINE void loft_vh_set_int(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v) {
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return;
@@ -2487,6 +2518,83 @@ LOFT_HOT_INLINE void loft_vh_set_float(loft_vh h, uint32_t size, int64_t from, u
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return;
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+
+/* @FR-R-Version — a fast twin's element read and write at an index its precondition proved in
+ * [0, len). */
+LOFT_HOT_INLINE int64_t loft_vh_at_int(loft_vh h, uint32_t size, int64_t f, uint32_t fld) {
+    LOFT_PROVED(f >= 0 && f < h.len, "a proven index: int");
+    int64_t v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+
+LOFT_HOT_INLINE void loft_vh_put_int(loft_vh h, uint32_t size, int64_t f, uint32_t fld, int64_t v) {
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+
+/* @FR-R-Base's counter clause — an element of a held vector at a range counter proven in
+ * [0, len): its float, its reference and its address, no index test. */
+LOFT_HOT_INLINE double loft_vh_at_float(loft_vh h, uint32_t size, int64_t f, uint32_t fld) {
+    LOFT_PROVED(f >= 0 && f < h.len, "R-Base counter: float");
+    double v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE loft_ref loft_vh_at_ref(loft_vh h, uint32_t size, int64_t f) {
+    LOFT_PROVED(f >= 0 && f < h.len, "R-Base counter: element");
+    loft_ref e = loft_ref_null();
+    e.store_nr = h.store_nr;
+    e.rec = h.rec;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
+}
+LOFT_HOT_INLINE uint8_t *loft_vh_at_addr(loft_vh h, uint32_t size, int64_t f) {
+    LOFT_PROVED(f >= 0 && f < h.len, "R-Base counter: address");
+    return h.base + (size_t) f * size;
+}
+
+/* @FR-R-Version — a precondition's arithmetic: a null operand, an overflow or a null result
+ * clears `*ok` (the checked operator would answer null where the plain one does not). */
+static inline int64_t loft_vg_add(int64_t a, int64_t b, int *ok) {
+    int64_t r;
+    if (a == LOFT_NULL || b == LOFT_NULL || LOFT_ADD_OVF(a, b, &r) || r == LOFT_NULL) { *ok = 0; return 0; }
+    return r;
+}
+static inline int64_t loft_vg_sub(int64_t a, int64_t b, int *ok) {
+    int64_t r;
+    if (a == LOFT_NULL || b == LOFT_NULL || LOFT_SUB_OVF(a, b, &r) || r == LOFT_NULL) { *ok = 0; return 0; }
+    return r;
+}
+static inline int64_t loft_vg_mul(int64_t a, int64_t b, int *ok) {
+    int64_t r;
+    if (a == LOFT_NULL || b == LOFT_NULL || LOFT_MUL_OVF(a, b, &r) || r == LOFT_NULL) { *ok = 0; return 0; }
+    return r;
+}
+static inline int64_t loft_vg_neg(int64_t a, int *ok) {
+    if (a == LOFT_NULL) { *ok = 0; return 0; }
+    return -a;
+}
+/* The counter's last value from its first, `first`: `end` itself (`inclusive`) or the value
+ * below it; 0 when the range holds fewer than `min` values, where asking the precondition twice
+ * costs more than the tests it saves. */
+static inline int loft_vg_span(int64_t first, int64_t end, int inclusive, int64_t min, int64_t *last) {
+    int64_t d;
+    if (inclusive) {
+        *last = end;
+    } else {
+        if (end == LOFT_NULL) return 0;
+        *last = end - 1;
+    }
+    if (first > *last) return 0;
+    return LOFT_SUB_OVF(*last, first, &d) || d >= min - 1;
+}
+/* An argument `x + c * t` at counter value `t`: 0 where it does not fit or is null, or where
+ * `x` is null (a checked argument that answered null does not move with the counter). */
+static inline int loft_vg_lin(int64_t x, int64_t c, int64_t t, int64_t *out) {
+    int64_t m;
+    if (x == LOFT_NULL || LOFT_MUL_OVF(c, t, &m) || LOFT_ADD_OVF(x, m, out)) return 0;
+    return *out != LOFT_NULL;
 }
 
 /* @FR-R-Fill — the run `base + lo ..= base + last` of a held vector, as `Stores::fill_hoisted`
@@ -2598,6 +2706,53 @@ LOFT_HOT_INLINE void loft_free_var(loft_ref *v) {
     if (v->store_nr == 0xFFFF) return;
     loft_free_ref(*v);
     v->store_nr = 0xFFFF;
+}
+
+/* @FR-R-FnRefBuffer's frame clause: a kept record store parked between calls of the function
+ * that keeps it, one slot per function and thread.  Taking empties the slot, so a recursive or
+ * re-entered frame mints its own; parking into a full slot frees instead. */
+static inline void loft_park_take(loft_ref *slot, loft_ref *v) {
+    if (v->store_nr != 0xFFFF || slot->store_nr == 0xFFFF) return;
+    *v = *slot;
+    slot->store_nr = 0xFFFF;
+    slot->rec = 0;
+    slot->pos = 0;
+}
+/* The slots a store was ever parked in, so the program's end can give their stores back
+ * (`loft_parks_drain`): a parked store is a cache of the next call's, and at exit there is no
+ * next call — left in its slot it reads as a store never freed.  `par` workers never park
+ * (`loft_no_park`), so the main thread's list holds every slot. */
+static LOFT_TLS loft_ref **loft_park_slots = 0;
+static LOFT_TLS uint32_t loft_npark_slots = 0, loft_park_slots_cap = 0;
+static void loft_park_register(loft_ref *slot) {
+    for (uint32_t i = 0; i < loft_npark_slots; i++)
+        if (loft_park_slots[i] == slot) return;
+    if (loft_npark_slots == loft_park_slots_cap) {
+        loft_park_slots_cap = loft_park_slots_cap ? loft_park_slots_cap * 2 : 8;
+        loft_park_slots = (loft_ref **) realloc(loft_park_slots, loft_park_slots_cap * sizeof *loft_park_slots);
+        if (!loft_park_slots) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_park_slots[loft_npark_slots++] = slot;
+}
+static inline void loft_park_put(loft_ref *slot, loft_ref *v) {
+    if (!loft_no_park && slot->store_nr == 0xFFFF && v->store_nr != 0xFFFF) {
+        loft_park_register(slot);
+        *slot = *v;
+        v->store_nr = 0xFFFF;
+        v->rec = 0;
+        v->pos = 0;
+    } else {
+        loft_free_var(v);
+    }
+}
+
+/* The program's end: every parked store given back, so a store kept for a next call that never
+ * comes is not reported as never freed (`loft_leak_report`). */
+static void loft_parks_drain(void) {
+    for (uint32_t i = 0; i < loft_npark_slots; i++) loft_free_var(loft_park_slots[i]);
+    free(loft_park_slots);
+    loft_park_slots = 0;
+    loft_npark_slots = loft_park_slots_cap = 0;
 }
 
 /* OpFreeRefIfDistinct of a variable: released and reset when it names another store than the
@@ -3004,8 +3159,8 @@ static void loft_copy_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref from
         uint32_t size = T[d->elem].size;
         uint32_t into = loft_st_claim(loft_store_of(to), 1 + (uint32_t) (((uint64_t) size * len + 7) / 8));
         loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
-        loft_ref src_v = { from.store_nr, cur, 0 };
-        loft_ref dst_v = { to.store_nr, into, 0 };
+        loft_ref src_v = { from.store_nr, cur, 0, 0 };
+        loft_ref dst_v = { to.store_nr, into, 0, 0 };
         loft_copy_bytes(dst_v, 4, src_v, 4, (size_t) len * size + 4);
         /* Stores::zero_element_tails: into a DEFINED store (an image's), a struct element's
          * tail past its last field is zeroed — the bulk copy brought the source's leftover
@@ -3024,8 +3179,8 @@ static void loft_copy_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref from
          * block copy — no element has a claim to copy. */
         if (!T[d->elem].owns_heap) return;
         for (uint32_t i = 0; i < len; i++) {
-            loft_ref a = { from.store_nr, cur, 8 + i * size };
-            loft_ref b = { to.store_nr, into, 8 + i * size };
+            loft_ref a = { from.store_nr, cur, 8 + i * size, 0 };
+            loft_ref b = { to.store_nr, into, 8 + i * size, 0 };
             loft_copy_claims(T, d->elem, a, b);
         }
         return;
@@ -3060,8 +3215,8 @@ static void loft_copy_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref from
                 loft_set_u32(loft_store_of(to), into, 8 + 4 * i, 0);
                 continue;
             }
-            loft_ref a = { from.store_nr, elm, 8 };
-            loft_ref b = { to.store_nr, loft_st_claim(loft_store_of(to), 1 + (size + 7) / 8), 8 };
+            loft_ref a = { from.store_nr, elm, 8, 0 };
+            loft_ref b = { to.store_nr, loft_st_claim(loft_store_of(to), 1 + (size + 7) / 8), 8, 0 };
             loft_copy_bytes(b, 0, a, 0, size);
             loft_set_u32(loft_store_of(to), into, 8 + 4 * i, b.rec);
             loft_copy_claims(T, d->elem, a, b);
@@ -3073,8 +3228,8 @@ static void loft_copy_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref from
         if (cur == 0) { loft_set_u32(loft_store_of(to), to.rec, to.pos, 0); return; }
         uint32_t size = T[d->elem].size;
         uint32_t into = loft_st_claim(loft_store_of(to), 1 + (size + 7) / 8);
-        loft_ref a = { from.store_nr, cur, 8 };
-        loft_ref b = { to.store_nr, into, 8 };
+        loft_ref a = { from.store_nr, cur, 8, 0 };
+        loft_ref b = { to.store_nr, into, 8, 0 };
         loft_copy_bytes(b, 0, a, 0, size);
         loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
         loft_child_push(d->elem, 0, a, b);
@@ -3194,7 +3349,7 @@ static void loft_copy_cmp(const loft_tdesc *T, uint16_t tp, loft_ref s, loft_ref
         int64_t n = sl < dl ? sl : dl;
         int w = snprintf(path + at, 256 - at, "[]");
         for (int64_t i = 0; i < n; i++) {
-            loft_ref es = { s.store_nr, sv, 8 + (uint32_t) i * e->size }, ed = { d.store_nr, dv, 8 + (uint32_t) i * e->size };
+            loft_ref es = { s.store_nr, sv, 8 + (uint32_t) i * e->size, 0 }, ed = { d.store_nr, dv, 8 + (uint32_t) i * e->size, 0 };
             loft_copy_cmp(T, t->elem, es, ed, label, path, at + (size_t) (w > 0 ? w : 0), depth + 1);
         }
         return;
@@ -3212,7 +3367,7 @@ static void loft_copy_cmp(const loft_tdesc *T, uint16_t tp, loft_ref s, loft_ref
     case LOFT_T_CHILD: {
         uint32_t sc = loft_u32(loft_store_of(s), s.rec, s.pos), dc = loft_u32(loft_store_of(d), d.rec, d.pos);
         if (sc == 0 || dc == 0) return;
-        loft_ref cs = { s.store_nr, sc, 8 }, cd = { d.store_nr, dc, 8 };
+        loft_ref cs = { s.store_nr, sc, 8, 0 }, cd = { d.store_nr, dc, 8, 0 };
         loft_copy_cmp(T, t->elem, cs, cd, label, path, at, depth + 1);
         return;
     }
@@ -3359,7 +3514,7 @@ static loft_ref loft_vec_insert(loft_ref v, uint32_t size, int64_t index) {
                     (size_t) (len - real) * size);
     }
     loft_set_u32(s, r, 4, nl);
-    loft_ref e = { v.store_nr, r, 8 + (uint32_t) real * size };
+    loft_ref e = { v.store_nr, r, 8 + (uint32_t) real * size, 0 };
     return e;
 }
 
@@ -3801,9 +3956,9 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
         done += n;
     }
     if (T[ctp].kind != LOFT_T_SCALAR && T[ctp].kind != LOFT_T_DBREF) {
-        loft_ref a = { v.store_nr, r, from };
+        loft_ref a = { v.store_nr, r, from, 0 };
         for (uint32_t i = 1; i <= extra; i++) {
-            loft_ref e = { v.store_nr, r, from + i * size };
+            loft_ref e = { v.store_nr, r, from + i * size, 0 };
             loft_copy_claims(T, ctp, a, e);
         }
     }
@@ -3860,7 +4015,7 @@ static void loft_remove_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref r,
             uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
             if (T[d->elem].owns_heap) {
                 for (uint32_t i = 0; i < len; i++) {
-                    loft_ref e = { r.store_nr, cur, 8 + i * size };
+                    loft_ref e = { r.store_nr, cur, 8 + i * size, 0 };
                     loft_remove_claims(T, d->elem, e);
                 }
             }
@@ -3873,7 +4028,7 @@ static void loft_remove_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref r,
         uint32_t cur = loft_u32(s, r.rec, r.pos);
         loft_set_u32(loft_store_of(r), r.rec, r.pos, 0);
         if (cur != 0) {
-            loft_ref c = { r.store_nr, cur, 8 };
+            loft_ref c = { r.store_nr, cur, 8, 0 };
             loft_child_push(d->elem, 1, c, c);
         }
         return;
@@ -3901,7 +4056,7 @@ static void loft_remove_claims_one(const loft_tdesc *T, uint16_t tp, loft_ref r,
                 for (uint32_t i = 0; i < loft_u32(s, cur, 4); i++) {
                     uint32_t elm = loft_u32(s, cur, 8 + 4 * i);
                     if (elm == 0) continue;
-                    loft_ref e = { r.store_nr, elm, 8 };
+                    loft_ref e = { r.store_nr, elm, 8, 0 };
                     loft_remove_claims(T, d->elem, e);
                     loft_st_delete(s, elm);
                 }
@@ -3990,7 +4145,7 @@ static void loft_vec_clear_release_body(const loft_tdesc *T, uint32_t loft_ntype
             if (r != 0) {
                 uint32_t len = loft_u32(s, r, 4);
                 for (uint32_t i = 0; i < len; i++) {
-                    loft_ref e = { v.store_nr, r, 8 + i * size };
+                    loft_ref e = { v.store_nr, r, 8 + i * size, 0 };
                     loft_remove_claims(T, elem, e);
                 }
             }
@@ -4069,7 +4224,7 @@ static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref 
         uint32_t len = loft_u32(s, d_rec, 4);
         uint32_t cap = (uint32_t) (((uint64_t) (claimed > 0 ? claimed : 0) * 8 - 8) / size);
         if (claimed > 0 && (uint64_t) len + n <= cap) {
-            loft_ref dst = { v.store_nr, d_rec, 0 }, src = { o.store_nr, o_rec, 0 };
+            loft_ref dst = { v.store_nr, d_rec, 0, 0 }, src = { o.store_nr, o_rec, 0, 0 };
             loft_copy_bytes(dst, 8 + len * size, src, 8, (size_t) n * size);
             loft_set_u32(s, d_rec, 4, len + n);
             return;
@@ -4085,12 +4240,12 @@ static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref 
     loft_vec_set_size(v, n, size);
     uint32_t dest = loft_u32(s, v.rec, v.pos);
     if (v.store_nr == o.store_nr) o_rec = loft_u32(loft_store_of(o), o.rec, o.pos);
-    loft_ref dst = { v.store_nr, dest, 0 }, src = { o.store_nr, o_rec, 0 };
+    loft_ref dst = { v.store_nr, dest, 0, 0 }, src = { o.store_nr, o_rec, 0, 0 };
     loft_copy_bytes(dst, append_pos, src, 8, (size_t) n * size);
     if (!T[tp].owns_heap) return;
     for (uint32_t i = 0; i < n; i++) {
-        loft_ref a = { o.store_nr, o_rec, 8 + i * size };
-        loft_ref b = { v.store_nr, dest, append_pos + i * size };
+        loft_ref a = { o.store_nr, o_rec, 8 + i * size, 0 };
+        loft_ref b = { v.store_nr, dest, append_pos + i * size, 0 };
         loft_copy_claims(T, tp, a, b);
     }
 }
@@ -4440,7 +4595,7 @@ static void loft_keep_vector_range(const loft_tdesc *T, uint16_t tp, loft_ref v,
             if ((int64_t) i >= lo && (int64_t) i < hi) continue;
             uint32_t rec = loft_u32(s, r, 8 + i * 4);
             if (rec == 0) continue;
-            loft_ref elem = { v.store_nr, rec, 8 };
+            loft_ref elem = { v.store_nr, rec, 8, 0 };
             loft_remove_claims(T, tp, elem);
             loft_remove_record(loft_store_of(v), rec);
         }
@@ -4450,7 +4605,7 @@ static void loft_keep_vector_range(const loft_tdesc *T, uint16_t tp, loft_ref v,
     } else if (T[tp].owns_heap) {
         for (uint32_t i = 0; i < len; i++) {
             if ((int64_t) i >= lo && (int64_t) i < hi) continue;
-            loft_ref elem = { v.store_nr, r, 8 + i * size };
+            loft_ref elem = { v.store_nr, r, 8 + i * size, 0 };
             loft_remove_claims(T, tp, elem);
         }
         s = loft_store_of(v);
@@ -4523,8 +4678,8 @@ static int loft_dc_find(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_re
         if (T[e].kind == LOFT_T_SCALAR || T[e].kind == LOFT_T_DBREF || T[e].kind == LOFT_T_TEXT) return 0;
         uint32_t len = loft_u32(fs, cur, 4), size = T[e].size;
         for (uint32_t i = 0; i < len; i++) {
-            loft_ref a = { from.store_nr, cur, 8 + i * size };
-            loft_ref b = { to.store_nr, into, 8 + i * size };
+            loft_ref a = { from.store_nr, cur, 8 + i * size, 0 };
+            loft_ref b = { to.store_nr, into, 8 + i * size, 0 };
             if (loft_dc_find(T, e, a, b, y, out)) return 1;
         }
         return 0;
@@ -5066,7 +5221,7 @@ static void loft_show_text(loft_text *s, loft_ref r, int fmt, int ind) {
 static void loft_show_char(loft_text *s, loft_ref r, int fmt, int ind) {
     (void) ind;
     uint32_t c = loft_u32(loft_store_of(r), r.rec, r.pos);
-    char buf[4];
+    char buf[8]; /* loft_utf8 writes at most 4; the room keeps gcc's bounds check quiet */
     size_t n = c == 0 ? 0 : loft_utf8(c, buf);
     if (n == 0) { loft_push(s, "null", 4); return; }
     if (fmt & 2) { loft_push_json(s, loft_lit(buf, n)); return; }
@@ -5299,7 +5454,7 @@ static void loft_show_list(loft_text *s, loft_ref r, int fmt, int ind, uint32_t 
             loft_push_char(s, ',');
             if (pretty) { if (struct_elem) loft_nl(s, ind + 1); else loft_push_char(s, ' '); }
         }
-        loft_ref e = { r.store_nr, vr, 8 + i * size };
+        loft_ref e = { r.store_nr, vr, 8 + i * size, 0 };
         loft_rr_push_index(i);
         f(s, e, fmt, ind + 1);
         loft_rr_pop();
@@ -5537,7 +5692,7 @@ static void loft_show_top(loft_text *s, loft_show_fn f, loft_ref r, int fmt) {
         loft_rr_push_raw(seg, (size_t) n);
         loft_rr_place_at(t.nr, t.rec, t.pos, loft_rr_path.p, loft_rr_path.len);
         if (nrefs) loft_push_char(&list, ',');
-        loft_ref tr = { t.nr, t.rec, t.pos };
+        loft_ref tr = { t.nr, t.rec, t.pos, 0 };
         t.f(&list, tr, fmt, 1);
         nrefs++;
     }
@@ -5614,6 +5769,49 @@ static loft_ref loft_arguments(void) {
         loft_vec_finish(r);
     }
     return r;
+}
+
+/* web's byte builder (`src/web_bytes.rs`, the `pack_*` natives) in the binary: a per-thread
+ * buffer the appends grow and `pack_take` hands over as a text, bytes verbatim, emptying it. */
+static LOFT_TLS uint8_t *loft_pk_p = 0;
+static LOFT_TLS size_t loft_pk_n = 0, loft_pk_cap = 0;
+static void loft_pk_push(const uint8_t *b, size_t n) {
+    if (loft_pk_n + n > loft_pk_cap) {
+        size_t cap = loft_pk_cap ? loft_pk_cap * 2 : 64;
+        while (cap < loft_pk_n + n) cap *= 2;
+        uint8_t *p = (uint8_t *) realloc(loft_pk_p, cap);
+        if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
+        loft_pk_p = p;
+        loft_pk_cap = cap;
+    }
+    memcpy(loft_pk_p + loft_pk_n, b, n);
+    loft_pk_n += n;
+}
+static inline void loft_pack_reset(void) { loft_pk_n = 0; }
+static inline void loft_pack_u8(int64_t b) {
+    if (loft_pk_n < loft_pk_cap) {
+        loft_pk_p[loft_pk_n++] = (uint8_t) b;
+    } else {
+        uint8_t x = (uint8_t) b;
+        loft_pk_push(&x, 1);
+    }
+}
+static void loft_pack_u16_le(int64_t v) {
+    uint8_t x[2] = { (uint8_t) v, (uint8_t) (v >> 8) };
+    loft_pk_push(x, 2);
+}
+static void loft_pack_u32_le(int64_t v) {
+    uint8_t x[4] = { (uint8_t) v, (uint8_t) (v >> 8), (uint8_t) (v >> 16), (uint8_t) (v >> 24) };
+    loft_pk_push(x, 4);
+}
+static loft_text loft_pack_take(void) {
+    loft_text t = loft_text_own(loft_lit(loft_pk_n ? (const char *) loft_pk_p : "", loft_pk_n));
+    loft_pk_n = 0;
+    return t;
+}
+/* byte_at(idx, t): the byte at `idx`, or -1 outside the text. */
+static inline int64_t loft_web_byte_at(int64_t idx, loft_str t) {
+    return idx < 0 || (uint64_t) idx >= (uint64_t) t.len ? -1 : (int64_t) (uint8_t) t.p[idx];
 }
 
 /* ticks(): microseconds since the program started, monotonic; LOFT_FAKE_TICKS_US pins it. */
@@ -6247,6 +6445,23 @@ static void loft_c_bind_libraries(void) {
 }
 #endif
 
+/* The keys every hash table's seed is drawn under (`loft_fresh_seed`, loft_keys.h): the
+ * operating system's entropy, read ONCE, at start-up — a hash made or grown never touches
+ * `/dev/urandom`.  A unit that never runs `loft_start` (a library replayed by a test) reads them
+ * at its first seed instead.  Without an entropy source: the clock and an address. */
+static uint64_t loft_seed_k0 = 0, loft_seed_k1 = 0;
+static void loft_seed_keys(void) {
+    uint64_t k[2] = { 0, 0 };
+    FILE *f = fopen("/dev/urandom", "rb");
+    if (!f || fread(k, 1, sizeof k, f) != sizeof k) {
+        k[0] = (uint64_t) time(0) ^ ((uint64_t) clock() << 20) ^ (uint64_t) (size_t) &loft_seed_k0;
+        k[1] = (uint64_t) (size_t) &loft_seed_k1 * UINT64_C(0x9E3779B97F4A7C15);
+    }
+    if (f) fclose(f);
+    loft_seed_k1 = k[1];
+    loft_seed_k0 = k[0] | 1;
+}
+
 static void loft_start(int argc, char **argv) {
 #if defined(_WIN32)
     /* The bytes a program writes are the bytes the other backends write: no `\r\n` for `\n`. */
@@ -6257,6 +6472,7 @@ static void loft_start(int argc, char **argv) {
     loft_argv = argv;
     loft_start_us = loft_now_us();
     loft_heap_read_limit();
+    loft_seed_keys();
     loft_arm_timeout();
 #if defined(LOFT_POSIX_HOST)
     signal(SIGPIPE, SIG_IGN);
@@ -6357,8 +6573,8 @@ static LOFT_TLS size_t loft_eq_njobs = 0, loft_eq_jobs_cap = 0;
 static int loft_eq_child(loft_ref a, loft_ref b, loft_eq_fn f) {
     int s = loft_eq_start(a, b);
     if (s >= 0) return s;
-    loft_ref ca = { a.store_nr, loft_u32(loft_store_of(a), a.rec, a.pos), 8 };
-    loft_ref cb = { b.store_nr, loft_u32(loft_store_of(b), b.rec, b.pos), 8 };
+    loft_ref ca = { a.store_nr, loft_u32(loft_store_of(a), a.rec, a.pos), 8, 0 };
+    loft_ref cb = { b.store_nr, loft_u32(loft_store_of(b), b.rec, b.pos), 8, 0 };
     if (ca.rec == 0 || cb.rec == 0) return ca.rec == 0 && cb.rec == 0;
     if (loft_eq_njobs == loft_eq_jobs_cap) {
         loft_eq_jobs_cap = loft_eq_jobs_cap ? loft_eq_jobs_cap * 2 : 64;
@@ -6386,7 +6602,7 @@ static int loft_eq_reference(loft_ref fa, loft_ref fb, uint16_t target, loft_eq_
         loft_eq_seen = (loft_ref *) realloc(loft_eq_seen, loft_eq_seen_cap * sizeof *loft_eq_seen);
         if (!loft_eq_seen) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    loft_ref t = { 0, target, 0 };
+    loft_ref t = { 0, target, 0, 0 };
     loft_eq_seen[loft_eq_seen_n++] = ra;
     loft_eq_seen[loft_eq_seen_n++] = rb;
     loft_eq_seen[loft_eq_seen_n++] = t;
@@ -6548,7 +6764,7 @@ static void loft_vec_slice(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint3
         uint32_t len = loft_u32(s, d_rec, 4);
         uint64_t cap = claimed > 0 ? ((uint64_t) claimed * 8 - 8) / size : 0;
         if ((uint64_t) len + n <= cap) {
-            loft_ref dst = { v.store_nr, d_rec, 0 }, src = { o.store_nr, o_rec, 0 };
+            loft_ref dst = { v.store_nr, d_rec, 0, 0 }, src = { o.store_nr, o_rec, 0, 0 };
             loft_copy_bytes(dst, 8 + len * size, src, from, (size_t) n * size);
             loft_set_u32(s, d_rec, 4, len + n);
             return;
@@ -6558,7 +6774,7 @@ static void loft_vec_slice(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint3
     loft_vec_set_size(v, n, size);
     uint32_t dest = loft_u32(loft_store_of(v), v.rec, v.pos);
     if (v.store_nr == o.store_nr) o_rec = loft_collection_rec(loft_store_of(o), o.rec, o.pos);
-    loft_ref dst = { v.store_nr, dest, 0 }, src = { o.store_nr, o_rec, 0 };
+    loft_ref dst = { v.store_nr, dest, 0, 0 }, src = { o.store_nr, o_rec, 0, 0 };
     loft_copy_bytes(dst, at, src, from, (size_t) n * size);
 }
 
@@ -6814,6 +7030,10 @@ LOFT_HOT_INLINE loft_ref loft_vh_get_at(loft_vh h, uint32_t size, int64_t from, 
         return loft_ref_null_reported();
     }
     return loft_vh_get(h, size, from);
+}
+LOFT_HOT_INLINE uint8_t *loft_vh_addr_at(loft_vh h, uint32_t size, int64_t from, const char *file, uint32_t line) {
+    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
+    return loft_vh_addr(h, size, from);
 }
 LOFT_HOT_INLINE int64_t loft_vh_get_int_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, const char *file,
                                            uint32_t line) {

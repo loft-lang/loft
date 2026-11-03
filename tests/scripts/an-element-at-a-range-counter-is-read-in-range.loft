@@ -1,0 +1,134 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Three rules reading an element at a range counter.  `@FR-R-InRange`'s field clause: inside
+// `for i in 0..len(d.f)` a record element's `?` is the element read, when the body neither
+// reassigns `d`, hands it whole to a call, nor names `d.f` other than to read it.  `@FR-R-Base`'s
+// counter clause: in such a loop, the walked vector held, the element at the counter is read
+// with no index test.  `@FR-R-RecPtr`'s held-element clause: a record bound from a held
+// vector's element takes its address from the held base, and a miss keeps the store's.  Each
+// cell answers what the interpreter answers, and the declining shapes (a range over one vector
+// reading another, a body that empties the vector itself or through a `&` alias, a range from
+// 1) keep the `?`.
+//
+// The interpreter applies the first rule too (it is IR); the C writer applies the other two.
+// Hand-computed in each cell's comment.
+//
+// @falsified-at: 312286c41 — by hand, each plant alone failing a cell: the field clause's body
+//   check struck (r4: the `?` dropped while the body empties the vector — the interpreter's read
+//   of a missing element answers no zero record, and the cell fails); the counter clause taking
+//   a counter of one vector as inside another (r9: d.other read at counters past its one element
+//   — the read lands on store memory that happens to hold 0, so the value holds, and the
+//   LOFT_VERIFY build stops on the clause's own proof "R-Base counter: element"); the
+//   held-element clause using the held address on a miss too (r8: the minted default's fields
+//   read through the null address, 109 → not 109).
+// CHANNEL: the asserts (each cell's value hand-computed in its comment), and for r9 the
+//   LOFT_VERIFY build's stop on the clause's own proof.
+// ARMED: LOFT_VERIFY for the counter clause; the other cells need no instrument.
+// WITNESS: each assert message prints the value it read.
+// HOLDS: the declining shapes are cells of this file (a range over one vector reading another,
+//   a body that empties the vector itself or through a `&` alias, a range from 1); a plainly
+//   passed alias is a-parameters-vector-holds-its-header-where-the-buffer-is-apart.loft h7.
+struct Pc { start: integer, count: integer }
+struct Dc { pieces: vector<Pc>, other: vector<Pc> }
+
+fn dc() -> Dc {
+  Dc { pieces: [Pc { start: 1, count: 3 }, Pc { start: 7, count: 5 }, Pc { start: 20, count: 2 }],
+       other: [Pc { start: 100, count: 9 }] }
+}
+
+// r1: a field-path walk — the `?` is the element read: 3 + 5 + 2 = 10.
+fn r1(d: Dc) -> integer {
+  n = 0;
+  for i in 0..len(d.pieces) { n += (d.pieces[i]?).count; }
+  n
+}
+
+// r2: the first in-range piece whose running total passes a: locate(d, 9) is piece 2 (totals 3, 8, 10), offset 1: 21.
+fn r2(d: Dc, a: integer) -> integer {
+  cum = 0;
+  for i in 0..len(d.pieces) {
+    p = d.pieces[i]?;
+    if a < cum + p.count { return i * 10 + (a - cum); }
+    cum += p.count;
+  }
+  -1
+}
+
+// r3: the range is d.other's length (1) but the read is d.pieces at the same counter: in range only
+// by accident of lengths — counts piece 0: 3.  And with a range over d.pieces reading d.other: other[0]
+// is 9, other[1] and other[2] miss and read a zero record: 9.
+fn r3(d: Dc) -> integer {
+  a = 0;
+  for i in 0..len(d.other) { a += (d.pieces[i]?).count; }
+  b = 0;
+  for j in 0..len(d.pieces) { b += (d.other[j]?).count; }
+  a * 100 + b
+}
+
+// r4: the body shrinks the walked vector: after piece 0, the vector is cleared, so pieces 1 and 2 miss
+// and read zero records: 3 + 0 + 0 = 3, and the length after is 0: 300.
+fn r4(d: Dc) -> integer {
+  n = 0;
+  for i in 0..len(d.pieces) {
+    n += (d.pieces[i]?).count;
+    if i == 0 { d.pieces = []; }
+  }
+  n * 100 + len(d.pieces)
+}
+
+// r5: a `&` parameter that is the same record, shrinking it: as r4 through the alias: 300.
+fn shrink(e: &Dc) { e.pieces = []; }
+fn r5(d: Dc) -> integer {
+  n = 0;
+  for i in 0..len(d.pieces) {
+    n += (d.pieces[i]?).count;
+    if i == 0 { shrink(d); }
+  }
+  n * 100 + len(d.pieces)
+}
+
+// r6: a range that starts at 1: pieces 1 and 2: 5 + 2 = 7.
+fn r6(d: Dc) -> integer {
+  n = 0;
+  for i in 1..len(d.pieces) { n += (d.pieces[i]?).count; }
+  n
+}
+
+// r7: a record bound per element, two fields read, through a parameter vector:
+// (1 + 3) + (7 + 5) + (20 + 2) = 38.
+fn r7(ps: vector<Pc>) -> integer {
+  n = 0;
+  for i in 0..len(ps) { p = ps[i]?; n += p.start + p.count; }
+  n
+}
+
+// r8: a record bound from another vector's element at the range counter: other[0] is (100, 9),
+// other[1] and other[2] miss and read a zero record: 109.
+fn r8(d: Dc) -> integer {
+  b = 0;
+  for j in 0..len(d.pieces) { q = d.other[j]?; b += q.start + q.count; }
+  b
+}
+
+// r9: both vectors read in the loop, so both are held: the counter is inside d.pieces (3 + 5 + 2)
+// but not inside d.other past its one element (9, then two misses): 10 + 9 = 19.
+fn r9(d: Dc) -> integer {
+  n = 0;
+  for j in 0..len(d.pieces) { n += (d.pieces[j]?).count + (d.other[j]?).count; }
+  n
+}
+
+fn main() {
+  assert(r1(dc()) == 10, "r1 {r1(dc())}");
+  assert(r2(dc(), 9) == 21, "r2 {r2(dc(), 9)}");
+  assert(r2(dc(), 50) == -1, "r2 past {r2(dc(), 50)}");
+  assert(r3(dc()) == 309, "r3 {r3(dc())}");
+  assert(r4(dc()) == 300, "r4 {r4(dc())}");
+  assert(r5(dc()) == 300, "r5 {r5(dc())}");
+  assert(r6(dc()) == 7, "r6 {r6(dc())}");
+  assert(r7(dc().pieces) == 38, "r7 {r7(dc().pieces)}");
+  assert(r8(dc()) == 109, "r8 {r8(dc())}");
+  assert(r9(dc()) == 19, "r9 {r9(dc())}");
+  println("ok");
+}

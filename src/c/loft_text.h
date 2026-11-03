@@ -120,6 +120,12 @@ static void loft_push_slow(loft_text *t, const char *p, size_t n) {
 LOFT_HOT_INLINE void loft_push(loft_text *t, const char *p, size_t n) {
     if (n == 0) return;
     if (LOFT_LIKELY(t->len + n <= t->cap) && (p < t->p || p >= t->p + t->cap)) {
+        /* Room for `n > 0` bytes means a buffer: said to the compiler, which otherwise reads the
+         * in-place copy of a text made empty (`{ 0, 0, 0 }`) as a memcpy into a null pointer —
+         * gcc 13 under _FORTIFY_SOURCE fails strict mode (-Wnonnull) on a branch that cannot run. */
+#if defined(__GNUC__)
+        if (!t->p) __builtin_unreachable();
+#endif
         char *d = t->p + t->len;
 #ifndef LOFT_NO_SHORT_APPEND
         if (n <= 4) {
@@ -202,6 +208,33 @@ static void loft_text_free(loft_text *t) {
     t->p = 0;
     t->len = 0;
     t->cap = 0;
+}
+
+/* Nothing is parked on a `par` worker: its thread ends with the job (its slots with it), and
+ * the job runs on a store table of its own. */
+static LOFT_TLS int loft_no_park = 0;
+
+/* A frame's work text kept between its calls (`FnWriter::park_work_texts`): taken empty from
+ * its slot at entry — the slot left empty, so a recursive frame takes nothing — and parked
+ * back at each release, or freed when the slot is taken again meanwhile. */
+static inline loft_text loft_wpark_take(loft_text *slot) {
+    loft_text t = *slot;
+    t.len = 0;
+    slot->p = 0;
+    slot->len = 0;
+    slot->cap = 0;
+    return t;
+}
+static inline void loft_wpark_put(loft_text *slot, loft_text *t) {
+    if (!loft_no_park && !slot->p && t->p) {
+        *slot = *t;
+        slot->len = 0;
+        t->p = 0;
+        t->len = 0;
+        t->cap = 0;
+    } else {
+        loft_text_free(t);
+    }
 }
 
 /* `*to = *from` for a `from` nothing else names: `to` releases what it held and takes `from`'s

@@ -351,6 +351,8 @@ impl FnWriter<'_> {
             self.cx.copy_type(tp)?;
             self.cx.name_types();
         }
+        // An image of another layout is converted (@PLN196, `loft_upgrade.h`).
+        self.cx.upgrade_of(tp);
         let sc = self.cx.sidecar_of(tp);
         let mut all: Vec<&Value> = vec![r, url];
         all.extend(rest.iter());
@@ -429,6 +431,41 @@ impl FnWriter<'_> {
         }
     }
 
+    /// `engine_host::swap_world(w)` with the world's type known here: its sidecar, so a world
+    /// handed over as an image is restored through the converter, and its JSON render, for a
+    /// world that shares its store (`loft_engine.h`).  `None` leaves the forwarded native, which
+    /// restores no image.
+    pub(super) fn swap_world_call(
+        &mut self,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let [w] = args else {
+            return Ok(None);
+        };
+        let Some(tp) = self
+            .store_value_type(w)
+            .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+        else {
+            return Ok(None);
+        };
+        self.cx.copy_type(tp)?;
+        self.cx.upgrade_of(tp);
+        self.cx.name_types();
+        let sc = self.cx.sidecar_of(tp);
+        let show = if self.cx.show_type(tp).is_ok() {
+            self.cx.swap_worlds.borrow_mut().insert(tp);
+            format!("loft_swap_show{tp}")
+        } else {
+            "0".to_string()
+        };
+        let w = self.expr(w, ind)?;
+        Ok(Some(E::new(
+            format!("loft_swap_world({}, {sc}, {show})", as_ref(w)?),
+            K::Bool,
+        )))
+    }
+
     /// The natives over a whole store — its image, its verify, its report — or `None` for
     /// another.
     fn store_native(
@@ -452,6 +489,11 @@ impl FnWriter<'_> {
                 // is refused here, as every copy refuses it.
                 self.cx.copy_type(tp)?;
                 self.cx.name_types();
+                // A store holding a stored reference is written through the converter, which
+                // re-points each reference at the copy (`image_rebuild`, `loft_up_rebuild`).
+                if self.cx.holds_stored_refs(tp) {
+                    self.cx.upgrade_of(tp);
+                }
                 let sc = self.cx.sidecar_of(tp);
                 let (r, path) = self.two(name, &[r, path], ind)?;
                 Ok(Some(E::new(
@@ -475,6 +517,8 @@ impl FnWriter<'_> {
                     self.cx.copy_type(tp)?;
                     self.cx.name_types();
                 }
+                // An image of another layout is converted (@PLN196, `loft_upgrade.h`).
+                self.cx.upgrade_of(tp);
                 let sc = self.cx.sidecar_of(tp);
                 let (r, path) = self.two(name, &[r, path], ind)?;
                 Ok(Some(E::new(

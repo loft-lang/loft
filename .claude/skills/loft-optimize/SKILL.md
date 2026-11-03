@@ -32,8 +32,8 @@ symptom.
 
 ## Two backends, one direction
 
-loft runs a program two ways. The compiled build (through Rust and LLVM) is what ships, so it
-is the optimisation target. The interpreter is what people use while they develop and debug; its
+loft runs a program two ways. The compiled build is what ships — the C backend through `cc`
+or the Rust writer through rustc — so it is the optimisation target. The interpreter is what people use while they develop and debug; its
 job is to never be so slow that it becomes unusable — roughly, not more than a hundred times
 slower than the compiled program on the same code. So:
 
@@ -64,7 +64,7 @@ slower than the compiled program on the same code. So:
 3. **Name the work.** What does the slow version do that a fast version would not? A copy of
    each element, a record created and freed per call, a value converted back and forth, a
    function call where the body is one operation, a collection grown step by step. Read the
-   compiled output (the interpreter's bytecode dump, the generated Rust) to see it happen. For
+   compiled output (the interpreter's bytecode dump, the generated C or Rust) to see it happen. For
    "why does this get slower as the input grows", count calls at two input sizes before
    reaching for a profiler. Then name the mechanism behind the waste: not "a store is minted per
    call" but "a temporary value passes through store machinery as if it were permanent". The
@@ -72,7 +72,7 @@ slower than the compiled program on the same code. So:
 
 4. **Write the efficient form by hand and measure it.** Take the one concrete case and write the
    version that avoids the named work — in loft if the language can express it, or as the IR or
-   generated Rust the rewrite would produce. Check it produces byte-identical output, read what
+   generated C or Rust the rewrite would produce. Check it produces byte-identical output, read what
    it compiles to on both backends, and time it exactly as in step 2. This number is the prize.
    If it is not clearly faster, the named work was not the cost: go back to step 3 rather than
    building anything. Expect the built rewrite to land somewhat under this price — two thirds
@@ -145,7 +145,7 @@ slower than the compiled program on the same code. So:
   what the IR says instead, so the work disappears for every spelling.
 - **A hand-written Rust routine standing in for a loop.** It fixes one function name, not the
   pattern, and users' own loops of the same shape stay slow. Make the loft code fast; loft
-  compiles through Rust, so it can be.
+  compiles to C and Rust, so it can be.
 - **A fix for code layout.** A routine that moved because its code moved (alignment, function
   order, a branch predictor's luck) is noted, not fixed, unless the remedy is easy and gains
   consistently across routines and runs (owner): processors are fickle, and a layout tweak that
@@ -192,4 +192,5 @@ The loop with this repository's commands, benchmarks and rules is
 the bench and perf `make` targets are in `CLAUDE.md`'s key commands. Beyond those:
 `make gap-report ARGS="--bench N --fn F"` (where one routine's distance to its Rust twin lives),
 `bench/portal/hand_price.sh` (time a hand-edited generated Rust file), and
-`loft --interpret --dump` / `loft --native-emit` (what a program compiles to).
+`loft --interpret --dump` / `loft --native-emit` / `loft --native-c --native-emit out.c`
+(what a program compiles to).

@@ -34,6 +34,7 @@ pub mod tabulate;
 pub mod tail_self;
 pub mod text_borrow;
 pub mod value_records;
+pub mod version;
 pub mod writes;
 
 /// Forget every analysis memo: the range analysis's call memo (keyed by a definition's

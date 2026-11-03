@@ -50,7 +50,7 @@ never `#cwd`/`#link`.
 - **Built-in TYPE-KEYWORDS are reserved** — you cannot define `struct integer`, `enum vector`,
   etc. (it errors: "conflicts with a type").  Reserved: `integer`, `float`, `single`, `text`,
   `boolean`, `character`, `vector`, `hash`, `sorted`, `index`, `radix`, `spatial`, `iterator`,
-  `i8`/`i16`/`i32`, `u8`/`u16`/`u32`, `reference`.  This holds for `struct`, `enum`, and `type`
+  `i8`/`i16`/`i32`/`i64`, `u8`/`u16`/`u32`, `f64`, `reference`.  This holds for `struct`, `enum`, and `type`
   alike.
 - **A function's name is free as a local.**  Values and functions are separate namespaces:
   `chr = 65` binds a local and `chr(65)` in the same scope still calls the function.  True for

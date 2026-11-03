@@ -312,8 +312,8 @@ Everything above is tree-agnostic.  This section is the **only** loft-specific p
 | Drift checker | `scripts/check_doc_drift.sh` |
 | Incoming-link grep (close/promote) | `./scripts/idx incoming:<path>` (preferred), or `grep -rn "plans/<NN>-<slug>" CLAUDE.md doc/claude/ --include="*.md"` |
 | Investigation regression suite | a cell in `../loft-suite` under its rule (`make suite ARGS="@FR-…"`); `tests/scripts/` only when this repo names it — TESTING.md |
-| Probe gates (leak / exit) | `LOFT_STORES=warn`; the `loft_suite` leak gate; both backends = interpreter + native |
-| Execution modes to verify across | `--interpret` and `--native` |
+| Probe gates (leak / exit) | `LOFT_STORES=warn`; the `loft_suite` leak gate; both backends = interpreter + the C backend |
+| Execution modes to verify across | `--interpret` and `--native-c`; rustc `--native` too when the change touches what it emits (`CLAUDE.md § Debugging policy`, step 6) |
 | Canonical examples | partial defer: @PLN43 (`status:parked`, _LIFECYCLE.md § Pick the outcome) · create-and-move close: `31-html-export → HTML_EXPORT.md` · trim-only close: `04-slot-assignment-redesign → SLOTS.md` |
 | Consumer (dogfood) repos + their trackers | `moros` ([`jjstwerff/moros`](https://github.com/jjstwerff/moros/issues), `plans/<N>-<slug>/`, its own `plan-check` make target) · `dryopea` · `crawler` · `lib/markdown`.  Each keeps its own issue numbers and its own `plans/README.md` binding; the method above is shared verbatim |
 | Where a consumer files an ENGINE defect | `loft-lang/loft` issues (`bug_report`), `sev:`/`area:` + a verified `wa:*` + `hit-by:<project>` label (and `silent-wrong` when it answers wrong quietly; `CLAUDE.md § Bug-filing policy`) — never a plan in the consumer repo |

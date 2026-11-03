@@ -114,13 +114,13 @@ static loft_ref loft_ffi_vector_answer(loft_ffi_ref r) {
     loft_store_t *s = &loft_stores[r.store_nr];
     uint32_t h = loft_claim(s, 1);
     loft_set_u32(s, h, 4, r.rec);
-    loft_ref v = { r.store_nr, h, 4 };
+    loft_ref v = { r.store_nr, h, 4, 0 };
     return v;
 }
 
 static loft_ref loft_ffi_record_answer(loft_ffi_ref r) {
     if (r.rec == 0 && r.pos == 0) return loft_ref_null();
-    loft_ref v = { r.store_nr, r.rec, r.pos };
+    loft_ref v = { r.store_nr, r.rec, r.pos, 0 };
     return v;
 }
 
@@ -204,7 +204,7 @@ static uint16_t loft_ffi_call_store(uint16_t pn) {
 /* The copy a call was given goes once its answer is copied out. */
 static void loft_ffi_drop_call_store(uint16_t cs, uint16_t pn) {
     if (cs != pn) {
-        loft_ref m = { cs, 0, 0 };
+        loft_ref m = { cs, 0, 0, 0 };
         loft_free_ref(m);
     }
 }
@@ -226,7 +226,7 @@ static loft_ref loft_ffi_own_vector(const loft_tdesc *T, uint16_t elem_tp, loft_
     uint16_t ns = (uint16_t) loft_store_new();
     uint32_t root = loft_claim(&loft_stores[ns], 1);
     loft_set_u32(&loft_stores[ns], root, 4, 0);
-    loft_ref v = { ns, root, 4 };
+    loft_ref v = { ns, root, 4, 0 };
     loft_vec_add(T, elem_tp, v, h);
     loft_ffi_log_drop(h.store_nr);
     loft_st_delete(&loft_stores[h.store_nr], h.rec);
@@ -235,7 +235,7 @@ static loft_ref loft_ffi_own_vector(const loft_tdesc *T, uint16_t elem_tp, loft_
 
 static loft_ref loft_ffi_own_record(const loft_tdesc *T, uint16_t tp, loft_ref r) {
     if (r.rec == 0) { loft_ffi_log_on = 0; return r; }
-    loft_ref d = { 0xFFFF, 0, 0 };
+    loft_ref d = { 0xFFFF, 0, 0, 0 };
     loft_database_typed(&d, T[tp].size, tp);
     loft_copy_record(T, tp, r, d, 4);
     loft_ffi_log_drop(r.store_nr);

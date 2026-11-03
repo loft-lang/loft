@@ -9,6 +9,11 @@
     "commit": "708405784386ff58128624f0db09d16fc25aec8e",
     "note": "PLANNING.md brought under DOC_CONTRACT in the code-free PR https://github.com/loft-lang/loft/pull/2029 (branch tuxedo-doc-review-planning on main, auto-merge armed): 913 -> 220 lines, ~30 completed items moved verbatim to PLANNING-history.md, CLAUDE.md index entry reworded, docs-lint baseline re-pinned; the open sketches left are CO1's three unwritten generator cells, A2, A12 (blockers as facts) and game_client"
   },
+  "M-doc-validation": {
+    "at": "2026-11-02 18:11",
+    "commit": "54ce9e165616ae7b3cd7b66e7cef495c7c95d0ea",
+    "note": "Pre-tag pass bounded by the halfway pass (6b80c93b1). Part 1, make libraries-review: default (10 joins) and lib/process (1) moved, no doc-carried signature changed beyond effect tags and JsonValue.as_long -> i64; STDLIB exact-integer JSON claim probed both backends; watermarks bumped (8315fe4ed). Part 2: gendoc changed only doc/search-index.js (regenerated, 3fef90c11); doc_review.py 263/263 \u2014 38 sections re-read against their diffs since 4092e4bf8 (LOFT.md reference samples run both backends, README/install claims checked against release.yml, daily-build.yml and --help), one C defect found and refused (store_persist_copy of a reference-holding type, 54ce9e165), the make-it false positive fixed in both reviewers. Part 3: features-review SINCE=6b80c93b1 nothing cited moved; F127 exempt; features-fetch no diff."
+  },
   "M-doc-validation-mid": {
     "at": "2026-10-16 17:56",
     "commit": "6b80c93b18a1481119be61948c138e3c6fd2c76d",
@@ -63,5 +68,10 @@
     "at": "2026-10-16 19:46",
     "commit": "72055d28b1a6d8eb54e5e0156a4fcbff08eccc1c",
     "note": "make speed at 72055d28b (box shared with loft3's build, load 7-12): 87 timed, 48 drifted beyond 25%, 18 SLOWER - the one past 3x is html_asyncify::html_asyncify_program_resumes_to_completion 0.80 -> 4.91 units, 3.2 s alone twice (still ~4x, +3 s: under the speed gate's 3x AND +5 s rule, the pin is stale rather than the test slow); the rest 1.3-2.4x are browser/engine-host tests under contention; 16 annotated tests no longer slow. Pins NOT blessed on a shared box. Portal read (PERF_PORTAL.md, laptop 2026-10-15 at cbe54eaa2): shipped median 2.00x, 82 of 162 within 2x, 44 over 3x; keyed is the slow class (median 3.26x, 16 of 22 over 3x: reload_and_record 6.86x), then parallel 2.54x, native-boundary 2.51x, call 2.49x; the over-3x library rows name their cause each (pack_instances 7.55x, insert_text 7.14x, check_request 7.97x, flow_layout_full 6.91x). The bar is gated by native_ratio.sh in make ci; no open D-perf deviation blocks"
+  },
+  "M-windows-parity": {
+    "at": "2026-11-02 17:29",
+    "commit": "711e68ddb7d25d8a3d45dd08e5f77920e03b4187",
+    "note": "make windows-parity at 711e68ddb: A 0 opt-outs migrating, B 19 src/ and C 47 tests/ platform gates all in files stating an approved exemption (0 without one), E 0 CI jobs without a Windows leg or exemption. Reports read: 129 direct-access matches, 242 script hazards / 221 scripts without a Windows smoke (both @PLN179 ports, not part of the close)."
   }
 }

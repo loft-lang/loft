@@ -45,7 +45,7 @@ typedef struct loft_jv {
 
 /* A code point onto `t` as UTF-8. */
 static void loft_jv_push_cp(loft_text *t, uint32_t cp) {
-    char buf[4];
+    char buf[8]; /* loft_utf8 writes at most 4; the room keeps gcc's bounds check quiet */
     size_t n = loft_utf8(cp, buf);
     if (n) loft_push(t, buf, n);
 }
@@ -816,7 +816,7 @@ static int loft_jp_value(loft_jp *p, size_t at, loft_jv *v, loft_jfault *f) {
         if (p->pk.tok == '-') return loft_jp_number(p, v, f);
         if (p->pk.tok == '[') return loft_jp_array(p, v, f);
         if (p->pk.tok == '{') return loft_jp_object(p, v, f);
-        /* fall through: a misplaced structural token */
+        /* fall through - a misplaced structural token */
     default: {
         size_t off = loft_jp_at_token(p);
         char m[64];

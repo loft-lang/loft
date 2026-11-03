@@ -149,7 +149,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -e
-          timeout 300 curl -fsSL --retry 3 https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain none
+          # The container's $HOME (/github/home) is not root's passwd home (/root), which
+          # rustup-init's anti-sudo check now refuses outright (run 41548936060).  The mismatch
+          # is the runner's design, not a sudo: skip that check.
+          RUSTUP_INIT_SKIP_SUDO_CHECK=yes timeout 300 curl -fsSL --retry 3 https://sh.rustup.rs | RUSTUP_INIT_SKIP_SUDO_CHECK=yes sh -s -- -y -q --profile minimal --default-toolchain none
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           timeout 300 curl -fsSL --retry 3 -o /etc/yum.repos.d/gh-cli.repo https://cli.github.com/packages/rpm/gh-cli.repo
           timeout 600 dnf -y -q install gh unzip
@@ -158,10 +161,11 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          # A fixed root, so the absolute paths a build embeds are the same ones the
-          # release build embedded.  Per-runner temp dirs would differ and guarantee a
-          # byte mismatch that says nothing about the source.
+          # Where the rebuild works.  Any directory will do: scripts/repro-flags.sh erases the
+          # absolute paths on both sides (the release's and this rebuild's), and
+          # repro-verify.sh resolves this root's symlinks (not on Windows) before use.
           LOFT_REPRO_ROOT: ${{ runner.os == 'Windows' && 'C:\loft-repro' || '/tmp/loft-repro' }}
+          LOFT_REPRO_OUT: ${{ runner.temp }}/repro-out
         run: |
           set +e
           bash scripts/repro-verify.sh --target ${{ matrix.target }} ${{ inputs.version && format('--version {0}', inputs.version) || '' }}
@@ -176,3 +180,12 @@ jobs:
           # state until a release ships BUILD-INFO.  A mismatch still fails.
           [ $code -eq 3 ] && exit 0
           exit $code
+
+      - name: Keep the rebuilt binary when it differs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-rebuilt-${{ matrix.target }}
+          path: ${{ runner.temp }}/repro-out
+          if-no-files-found: ignore
+          retention-days: 7

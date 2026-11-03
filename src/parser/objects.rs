@@ -60,6 +60,21 @@ pub(crate) struct FieldSinks {
     decline_place: bool,
 }
 impl Parser {
+    /// An abandoned construction's work-refs, marked skip-free so nothing frees what it never
+    /// built — on the SECOND pass only.  The marks go by NAME and the names persist from pass 1
+    /// into pass 2, so a pass-1 mark lands on whatever pass 2 mints under that name: an update
+    /// nested in an update's fields is reverted on pass 1 alone (pass 2 goes straight to the
+    /// update), and its mark fell on the function's first literal temporary, which then leaked
+    /// (loft#2371).  Where pass 2 reverts at the same site it marks for itself; the frees are
+    /// computed from pass 2.
+    pub(super) fn abandon_work_refs(&mut self, work: u16, work_p2: u16) {
+        if self.first_pass {
+            return;
+        }
+        self.vars.clean_work_refs(work);
+        self.vars.clean_work_refs_p2(work_p2);
+    }
+
     /// Does `name` name a TYPE — a collection former (`hash`, `vector`, …), a struct, an enum?
     /// `hash<Row[id]>()` is a type written where a value is, which has a refusal of its own; it
     /// is not a call given type arguments.
@@ -5832,8 +5847,7 @@ impl Parser {
                         && (self.lexer.peek_token(",") || self.lexer.peek_token("}")))
                 {
                     self.lexer.revert(nested_link);
-                    self.vars.clean_work_refs(nested_work);
-                    self.vars.clean_work_refs_p2(nested_work_p2);
+                    self.abandon_work_refs(nested_work, nested_work_p2);
                     value = Value::Null;
                     parent_tp = Type::Reference(td_nr, crate::data::Deps::none());
                     if let Value::Var(v) = code
@@ -6789,8 +6803,7 @@ impl Parser {
                 self.update_literals
                     .insert((self.context, literal_pos.line, literal_pos.pos));
                 self.lexer.revert(link);
-                self.vars.clean_work_refs(work);
-                self.vars.clean_work_refs_p2(work_p2);
+                self.abandon_work_refs(work, work_p2);
                 return self.parse_object_update(td_nr, code, update_dest, &literal_pos);
             }
             if !self.parse_object_field(
@@ -6802,8 +6815,7 @@ impl Parser {
                 &mut sinks,
             ) {
                 self.lexer.revert(link);
-                self.vars.clean_work_refs(work);
-                self.vars.clean_work_refs_p2(work_p2);
+                self.abandon_work_refs(work, work_p2);
                 return Type::Unknown(0);
             }
             if !self.lexer.has_token(",") {
@@ -6837,8 +6849,7 @@ impl Parser {
                     || self.lexer.peek_token(")")))
         {
             self.lexer.revert(link);
-            self.vars.clean_work_refs(work);
-            self.vars.clean_work_refs_p2(work_p2);
+            self.abandon_work_refs(work, work_p2);
             *code = Value::Var(v_nr);
             let outer = std::mem::replace(&mut self.inplace_hint_declined, true);
             let tp = self.parse_object(td_nr, code);
@@ -6853,8 +6864,7 @@ impl Parser {
             && let Some(hint) = place_hint.take()
         {
             self.lexer.revert(link);
-            self.vars.clean_work_refs(work);
-            self.vars.clean_work_refs_p2(work_p2);
+            self.abandon_work_refs(work, work_p2);
             *code = hint;
             self.inplace_place_declined = true;
             return self.parse_object(td_nr, code);
@@ -7000,6 +7010,7 @@ impl Parser {
         let parent_tp = Type::Reference(td_nr, crate::data::Deps::none()).depending(dest);
         // The named fields, each as the assignment `dest.f = e`.
         let mut writes: Vec<Value> = Vec::new();
+        let mut reads_dest = false;
         loop {
             if self.lexer.peek_token("..") {
                 break;
@@ -7037,6 +7048,16 @@ impl Parser {
                 let f_type = self.data.attr_type(td_nr, nr);
                 let to = self.get_field(td_nr, nr, Value::Var(dest));
                 let mut target = to.clone();
+                // A value that names the destination reads what it HELD (the field values are
+                // computed before the update stores, `(E-Asgn)`), but in place the bind and
+                // the earlier writes have already replaced it: watch for it, as a rebuilt
+                // literal's collection member does (`Parser::rebuild_watch`).
+                let outer_watch = (!fresh).then(|| {
+                    (
+                        std::mem::replace(&mut self.rebuild_watch, dest),
+                        std::mem::replace(&mut self.rebuild_watch_hit, false),
+                    )
+                });
                 self.parse_assign_op(
                     &mut target,
                     "=",
@@ -7046,6 +7067,11 @@ impl Parser {
                     u16::MAX,
                     false,
                 );
+                if let Some((w, hit)) = outer_watch {
+                    reads_dest |= self.rebuild_watch_hit;
+                    self.rebuild_watch = w;
+                    self.rebuild_watch_hit = hit;
+                }
                 writes.push(target);
             }
             if !self.lexer.has_token(",") {
@@ -7140,14 +7166,16 @@ impl Parser {
         }
         // A postfix on the literal (`m = S { … }.f(…)`) makes it a sub-expression, which the
         // user's variable is not the destination of (loft#1304): built again as a temporary.
+        // So is an update whose field value reads the destination (`p = P { x: p.y, y: p.x,
+        // ..p }`): each value reads what `p` held, never the half-written copy (`@FR-B-Copy`,
+        // loft#2368), so the copy is built apart and then bound.
         let ends_here = self.lexer.peek_token(";")
             || self.lexer.peek_token("}")
             || self.lexer.peek_token(",")
             || self.lexer.peek_token(")");
-        if !fresh && !ends_here {
+        if !fresh && (!ends_here || reads_dest) {
             self.lexer.revert(link);
-            self.vars.clean_work_refs(work);
-            self.vars.clean_work_refs_p2(work_p2);
+            self.abandon_work_refs(work, work_p2);
             return self.parse_object_update(td_nr, code, None, literal_pos);
         }
         // The bind `dest = base`, first — the copy the named fields are written over.  A base
@@ -7164,18 +7192,49 @@ impl Parser {
         // which the bind lowering copies (a field read, an element read): a value branch or
         // a cast of a projection stayed the place itself, so the named fields wrote through
         // to the base and the scope's free of the "copy" freed the base's record.
-        let (base, base_tp) =
-            if !matches!(base.unspan(), Value::Var(_)) && !base_tp.depend().is_empty() {
-                // A plain `Set`, not an assignment: the assignment path may itself copy a value
-                // branch, and this local is to hold the place, not a record of its own.
-                let view = self.vars.work_refs_p2(&base_tp, &mut self.lexer);
-                self.vars.defined(view);
-                ops.push(v_set(view, base));
-                (Value::Var(view), base_tp)
-            } else {
-                (base, base_tp)
-            };
-        if !matches!(base.unspan(), Value::Var(v) if *v == dest) {
+        // A temporary copies a view base explicitly below, straight from the place it reads.
+        let view_base = !matches!(base.unspan(), Value::Var(_)) && !base_tp.depend().is_empty();
+        let (base, base_tp) = if !fresh && view_base {
+            // A plain `Set`, not an assignment: the assignment path may itself copy a value
+            // branch, and this local is to hold the place, not a record of its own.
+            let view = self.vars.work_refs_p2(&base_tp, &mut self.lexer);
+            self.vars.defined(view);
+            // A projection (a field or element read) is the base's place on every backend,
+            // so this local owes it no scope-exit free: one released the base's own store,
+            // inside a loop every iteration (loft#2370).  A checked cast or a value branch
+            // may answer a record of its own, which this local then owns and frees.  Pass
+            // 2 only: the pass-2 sequence re-mints these names, and a pass-1 mark landed
+            // on whichever temporary pass 2 gave the name to.
+            let projection = matches!(base.unspan(), Value::Call(pd, _)
+                    if matches!(self.data.def(*pd).name(),
+                        "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetDbRef"));
+            if projection && !self.first_pass {
+                self.vars.set_skip_free(view);
+            }
+            ops.push(v_set(view, base));
+            (Value::Var(view), base_tp)
+        } else {
+            (base, base_tp)
+        };
+        if fresh && view_base {
+            // A temporary is a work reference, and an assignment between two of those is a
+            // plain `Set`: bound through the assignment path, the "copy" of a view base was
+            // the base's own record, so the named fields wrote through to the base
+            // (loft#2370).  The temporary is given a store of its own and the base copied
+            // into it, as an escaping projection is materialised (`ParserMaterialise`).
+            let kt = self.data.def(td_nr).known_type();
+            ops.push(v_set(dest, Value::Null));
+            ops.push(self.cl("OpDatabase", &[Value::Var(dest), Value::Int(i32::from(kt))]));
+            ops.push(self.copy_ref(&Value::Var(dest), &base, &ret));
+            if !self.first_pass {
+                crate::copy_manifest::record(
+                    self.context,
+                    dest,
+                    kt,
+                    crate::copy_manifest::Origin::ParserMaterialise,
+                );
+            }
+        } else if !matches!(base.unspan(), Value::Var(v) if *v == dest) {
             // The statement that holds this update records the write of `dest` (its own
             // `Set`); the bind inside it is that same write, not one before it, so the
             // dead-store lint's record of it is undone — left standing, the statement's
@@ -7514,6 +7573,8 @@ impl Parser {
             return;
         }
         let mut omitted: Vec<String> = Vec::new();
+        // The fix spells a default for the first omitted field, in the program's own names.
+        let mut example: Option<String> = None;
         for a_nr in 0..self.data.attributes(td_nr) {
             let nm = self.data.attr_name(td_nr, a_nr);
             if found_fields.contains(&nm) {
@@ -7577,6 +7638,13 @@ impl Parser {
                 continue;
             }
             omitted.push(nm);
+            if example.is_none() {
+                example = Some(format!(
+                    "{}: {} = …",
+                    omitted[0],
+                    tp.source_name(&self.data)
+                ));
+            }
         }
         if omitted.is_empty() {
             return;
@@ -7595,8 +7663,10 @@ impl Parser {
         );
         self.lexer.fix_last(crate::diagnostics::Fix {
             kind: crate::diagnostics::FixKind::Conditional,
-            title: "declare the field's default on the type (`palette_pick: integer = -1`)"
-                .to_string(),
+            title: format!(
+                "declare the field's default on `{type_name}` (`{}`)",
+                example.unwrap_or_default()
+            ),
             condition: Some(
                 "the zero is not what an omitting caller should get — adding a default is \
                  additive, so existing callers keep working"

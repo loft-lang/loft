@@ -100,8 +100,11 @@
  * if-converts away, so a discharge stays a branch the processor predicts instead of a select
  * in the dependency chain around it (a float discharge in a division loop was a `cmov` through
  * the integer registers: 32 % of `par`'s worker).  Nothing under strict C99. */
+/* `LOFT_NOINLINE`: a function kept out of its caller — the test runner's release, whose caller
+ * holds a `setjmp`, so its locals stay out of that frame. */
 #if defined(LOFT_GNU)
 #define LOFT_HOT_INLINE static inline __attribute__((always_inline))
+#define LOFT_NOINLINE __attribute__((noinline))
 #define LOFT_COLD __attribute__((cold))
 #define LOFT_LIKELY(x) __builtin_expect(!!(x), 1)
 #define LOFT_UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -112,12 +115,14 @@
 #endif
 #elif defined(LOFT_MSVC)
 #define LOFT_HOT_INLINE static __forceinline
+#define LOFT_NOINLINE __declspec(noinline)
 #define LOFT_COLD
 #define LOFT_LIKELY(x) (x)
 #define LOFT_UNLIKELY(x) (x)
 #define LOFT_COLD_PATH() ((void) 0)
 #else
 #define LOFT_HOT_INLINE static inline
+#define LOFT_NOINLINE
 #define LOFT_COLD
 #define LOFT_LIKELY(x) (x)
 #define LOFT_UNLIKELY(x) (x)
@@ -183,7 +188,9 @@ LOFT_COLD static void loft_proof_failed(const char *site) {
 }
 #define LOFT_PROVED(cond, site) ((cond) ? (void) 0 : loft_proof_failed(site))
 #else
-#define LOFT_PROVED(cond, site) ((void) 0)
+/* The condition is never evaluated (`0 &&` short-circuits it), but what it names counts as read:
+ * a parameter only a proof reads is no unused one. */
+#define LOFT_PROVED(cond, site) ((void) (0 && (cond)))
 #endif
 
 #define LOFT_PLAIN_ADD(a, b, site) ((int64_t) ((uint64_t) (a) + (uint64_t) (b)))

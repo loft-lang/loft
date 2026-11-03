@@ -111,8 +111,22 @@ pub fn is_equal(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
       TyVector { inner: ib } => is_equal(e, ia, ib),
       _ => false
     },
+    // Member by member, whatever each borrows.
+    TyTuple { elems: ea } => match b {
+      TyTuple { elems: eb } => len(ea) == len(eb) && all_equal(e, ea, eb),
+      _ => false
+    },
     _ => a == b
   }
+}
+
+fn all_equal(e: el::El, a: vector<ir::TypeT>, b: vector<ir::TypeT>) -> boolean {
+  for x in a {
+    if !is_equal(e, x, b[x#index] ?? ir::TyVoid) {
+      return false;
+    }
+  }
+  true
 }
 
 // `Type::deps_ref` is some: the type carries a dependency list, through a `&` or a `τ?`.

@@ -1,0 +1,212 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Transient`'s producer half for a VECTOR: a function that builds a `vector` of records
+// its caller only reads (zttext's `slice_runs`, read per token by the layout) builds it in the
+// arena, and the reads go there — by index with `?` (whose miss reads a zero record), inline
+// `(v[i]?).f`, a negative index, `len`, and a run's text handed to a function value without a
+// copy.  The run text itself comes from a helper that answers its caller's work buffer, read
+// from the buffer; that buffer, and a function value's kept record store, are parked between
+// calls.  Each cell answers what the interpreter answers.
+//
+// The C writer applies it; the interpreter applies nothing and is the oracle.  Hand-computed.
+// The document: buf "abcdefghijklmnop", pieces (0, 4, style 1), (10, 3, style 2), (4, 5,
+// style 3) — the text "abcd" + "klm" + "efghi", 12 characters: [0, 4) style 1, [4, 7) style 2,
+// [7, 12) style 3.
+// v1 runs of [2, 9): "cd"/1, "klm"/2, "ef"/3 — measured 10·len + style: 21 + 32 + 23 = 76.
+// v2 [0, 12): 41 + 32 + 53 = 126; [5, 5) is empty: 0; [11, 30): "i"/3 = 13.
+// v3 the styles of [2, 9) are 1 + 2 + 3 = 6; then a second root, [9, 22): "ghi" = 3 · 100;
+//    306.
+// v4 the last run's style: [0, 12) → 3; [0, 5) is "abcd"/1, "k"/2 → 2.
+// v5 a read past the end misses: the zero record, "" and 0 — 0.
+// v6 a function value answering a record (Sty, size 7 · style), kept across the runs and
+//    across calls: [2, 9) is 2·7 + 3·14 + 2·21 = 98, and again 98.
+// v7 a hundred calls in a loop, each [0, 12): 126 · 100 = 12600.
+// v8 two roots whose lives overlap — the first read after the second is bound — keep the
+//    store form: [0, 4) starts "abcd", [4, 12) starts "klm": 4 · 10 + 3 = 43.
+// v9 a run text built from two fills of the work buffer, the first read after the second:
+//    [2, 9) pairs each run with its first character — "cdc", "klmk", "efe" — 3 + 4 + 3 = 10.
+//
+// @falsified-at: 8c055a38c — by hand on the C writer (the interpreter and native build no
+//   transient value, so `falsify.sh` reads them INERT), each plant alone failing its own cell:
+//   the lives check struck (v8: the second root's bind gives the arena back under the first,
+//   43 → 33), and an arena element read without counting a negative index from the end (v4:
+//   the last run misses, 3 → 0).  The work-buffer check — the buffer touched again before the
+//   result's last read — has no cell: each call site's work buffer is its own, so the parser
+//   never writes a second fill before the read.
+// HOLDS: the interpreter's and rustc-native's answers, which no plant reaches (INERT there).
+
+struct Piece {
+  start: integer,
+  count: integer,
+  style: integer
+}
+
+struct Doc {
+  buf: vector<character>,
+  pieces: vector<Piece>
+}
+
+pub struct Run {
+  str: text,
+  style: integer
+}
+
+struct Sty {
+  size: integer
+}
+
+fn buf_text(buf: vector<character>, start: integer, count: integer) -> text {
+  out: text = "";
+  for j in start..(start + count) {
+    ch = buf[j]?;
+    out += "{ch}";
+  }
+  return out;
+}
+
+fn clampi(x: integer, lo: integer, hi: integer) -> integer {
+  if x < lo { return lo; }
+  if x > hi { return hi; }
+  return x;
+}
+
+fn slice(d: Doc, a: integer, b: integer) -> vector<Run> {
+  runs: vector<Run> = [];
+  if b <= a { return runs; }
+  cum = 0;
+  for i in 0..len(d.pieces) {
+    p = d.pieces[i]?;
+    ps = cum;
+    pe = cum + p.count;
+    lo = clampi(a, ps, pe);
+    hi = clampi(b, ps, pe);
+    if hi > lo {
+      s = buf_text(d.buf, p.start + (lo - ps), hi - lo);
+      runs += [Run { str: s, style: p.style }];
+    }
+    cum = pe;
+  }
+  return runs;
+}
+
+fn width(d: Doc, a: integer, b: integer, measure: fn(text, integer) -> integer) -> integer {
+  w = 0;
+  runs = slice(d, a, b);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    w += measure(r.str, r.style);
+  }
+  return w;
+}
+
+fn styles(d: Doc, a: integer, b: integer) -> integer {
+  s = 0;
+  h = slice(d, a, b);
+  for i in 0..len(h) {
+    s += (h[i]?).style;
+  }
+  t = slice(d, b, a + 20);
+  for j in 0..len(t) {
+    s += len((t[j]?).str) * 100;
+  }
+  s
+}
+
+fn last_style(d: Doc, a: integer, b: integer) -> integer {
+  u = slice(d, a, b);
+  (u[-1]?).style
+}
+
+fn miss(d: Doc, a: integer, b: integer) -> integer {
+  u = slice(d, a, b);
+  r = u[99]?;
+  len(r.str) + r.style
+}
+
+fn sized(d: Doc, a: integer, b: integer, resolve: fn(integer) -> Sty) -> integer {
+  w = 0;
+  runs = slice(d, a, b);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    st = resolve(r.style);
+    w += len(r.str) * st.size;
+  }
+  return w;
+}
+
+fn both(d: Doc) -> integer {
+  h = slice(d, 0, 4);
+  t = slice(d, 4, 12);
+  r = h[0]?;
+  q = t[0]?;
+  len(r.str) * 10 + len(q.str)
+}
+
+fn slice2(d: Doc, a: integer, b: integer) -> vector<Run> {
+  runs: vector<Run> = [];
+  cum = 0;
+  for i in 0..len(d.pieces) {
+    p = d.pieces[i]?;
+    ps = cum;
+    pe = cum + p.count;
+    lo = clampi(a, ps, pe);
+    hi = clampi(b, ps, pe);
+    if hi > lo {
+      s = buf_text(d.buf, p.start + (lo - ps), hi - lo);
+      f = buf_text(d.buf, p.start + (lo - ps), 1);
+      runs += [Run { str: s + f, style: p.style }];
+    }
+    cum = pe;
+  }
+  return runs;
+}
+
+fn pair_len(d: Doc, a: integer, b: integer) -> integer {
+  n = 0;
+  rs = slice2(d, a, b);
+  for i in 0..len(rs) {
+    r = rs[i]?;
+    n += len(r.str);
+  }
+  n
+}
+
+fn meas(t: text, st: integer) -> integer {
+  len(t) * 10 + st
+}
+
+fn sty(i: integer) -> Sty {
+  Sty { size: i * 7 }
+}
+
+fn doc() -> Doc {
+  b: vector<character> = [];
+  for c in "abcdefghijklmnop" {
+    b += [c];
+  }
+  Doc { buf: b, pieces: [Piece { start: 0, count: 4, style: 1 }, Piece { start: 10, count: 3, style: 2 },
+                          Piece { start: 4, count: 5, style: 3 }] }
+}
+
+fn main() {
+  d = doc();
+  assert(width(d, 2, 9, meas) == 76, "v1 {width(d, 2, 9, meas)}");
+  assert(width(d, 0, 12, meas) == 126, "v2 all {width(d, 0, 12, meas)}");
+  assert(width(d, 5, 5, meas) == 0, "v2 empty");
+  assert(width(d, 11, 30, meas) == 13, "v2 tail {width(d, 11, 30, meas)}");
+  assert(styles(d, 2, 9) == 306, "v3 {styles(d, 2, 9)}");
+  assert(last_style(d, 0, 12) == 3, "v4 all");
+  assert(last_style(d, 0, 5) == 2, "v4 short {last_style(d, 0, 5)}");
+  assert(miss(d, 0, 12) == 0, "v5 {miss(d, 0, 12)}");
+  assert(sized(d, 2, 9, sty) == 98, "v6 {sized(d, 2, 9, sty)}");
+  assert(sized(d, 2, 9, sty) == 98, "v6 again");
+  total = 0;
+  for k in 0..100 {
+    total += width(d, 0, 12, meas);
+  }
+  assert(total == 12600, "v7 {total}");
+  assert(both(d) == 43, "v8 {both(d)}");
+  assert(pair_len(d, 2, 9) == 10, "v9 {pair_len(d, 2, 9)}");
+  println("ok");
+}

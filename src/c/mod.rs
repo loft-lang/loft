@@ -25,6 +25,7 @@ mod fnval;
 mod parse;
 mod reflect;
 mod show;
+mod tidy;
 pub(crate) mod tls;
 mod unicode;
 
@@ -51,6 +52,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_keyed.h"),
     include_str!("loft_json.h"),
     include_str!("loft_parse.h"),
+    include_str!("loft_upgrade.h"),
     include_str!("loft_reflect.h"),
     include_str!("loft_io.h"),
     include_str!("loft_host_io.h"),
@@ -235,6 +237,12 @@ pub(crate) struct Cx<'a> {
     pub(crate) gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
     pub(crate) gen_bodies: std::cell::RefCell<String>,
+    /// `@FR-R-Version`: each function's leaf plan, and the leaves whose precondition is written
+    /// (into `gen_decls`, `body::version`).
+    pub(crate) version_leaves: std::cell::RefCell<
+        std::collections::HashMap<u32, Option<std::rc::Rc<crate::opt::version::Leaf>>>,
+    >,
+    pub(crate) version_pres: std::cell::RefCell<std::collections::HashSet<u32>>,
     /// `@FR-R-Transient`'s twins and the structs they use (`body::transient`).
     pub(crate) tr: std::cell::RefCell<body::transient::TrState>,
     /// `@FR-R-AppendTwin`'s window clause: per function, the element size its append twin's
@@ -248,6 +256,12 @@ pub(crate) struct Cx<'a> {
     pub(crate) loop_callees: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The types a `T.parse` reaches (`parse.rs`): their rows of `loft_ptypes`.
     parse_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// The store root types a whole-image load converts from another layout (@PLN196,
+    /// `loft_upgrade.h`): each one's sidecar carries the program's own description.
+    upgrades: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// The world types a `swap_world` call names (`loft_engine.h`): each gets the JSON render
+    /// a world that shares its store goes over as (`loft_swap_show<tp>`).
+    pub(crate) swap_worlds: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The unit reaches `stack_trace()`: every function keeps a frame (`loft_frame_push`).
     pub(crate) frames: std::cell::Cell<bool>,
     /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
@@ -334,6 +348,11 @@ pub(crate) const AP_BIT: u64 = 1 << 58;
 /// and its scalar fields answered as a tuple (`lower::destination::shape`).
 pub(crate) const DS_BIT: u64 = 1 << 57;
 
+/// The mask bit of a `__vf` twin (`@FR-R-Version`): a leaf's held-inputs twin written again
+/// with its decided tests taken, its proven element accesses at their index and its tested
+/// operations plain — called where the leaf's precondition holds over a loop's remaining range.
+pub(crate) const VF_BIT: u64 = 1 << 56;
+
 /// The bits of a `__nn` twin (`@FR-R-NonSentinelParam`'s twin clause), one per parameter from
 /// bit 32: the function written again with those parameters seeded as non-sentinel, called by
 /// a call site whose arguments prove them where the program-wide fact cannot (another caller
@@ -343,8 +362,9 @@ pub(crate) const DS_BIT: u64 = 1 << 57;
 pub(crate) const NN_SHIFT: u32 = 32;
 pub(crate) const NN_PARAMS: usize = 24;
 pub(crate) const NN_MASK: u64 = ((1u64 << NN_PARAMS) - 1) << NN_SHIFT;
-const _: () =
-    assert!(NN_MASK & (DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT) == 0);
+const _: () = assert!(
+    NN_MASK & (VF_BIT | DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT) == 0
+);
 
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
@@ -390,11 +410,15 @@ impl<'a> Cx<'a> {
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
+            version_leaves: std::cell::RefCell::new(std::collections::HashMap::new()),
+            version_pres: std::cell::RefCell::new(std::collections::HashSet::new()),
             tr: std::cell::RefCell::new(body::transient::TrState::default()),
             ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),
             hot_candidates: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             loop_callees: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            upgrades: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            swap_worlds: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
             ffi_libs: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -677,6 +701,64 @@ impl<'a> Cx<'a> {
         format!("&loft_sidecar{tp}")
     }
 
+    /// A whole-image load of a store minted as `tp` converts an image of another layout
+    /// (`@FR-L-Sound`, @PLN196): the converter builds its records through the parse table and
+    /// copies through the type table, so `tp`'s closure is in both — with each `upgrade`
+    /// routine's record, `old` struct and `Release`, which a converted record is handed to.
+    ///
+    /// A closure neither table can describe keeps the load refusing such an image, as it did.
+    pub(crate) fn upgrade_of(&self, tp: u16) {
+        if self.upgrades.borrow().contains(&tp) {
+            return;
+        }
+        let mut types = vec![tp];
+        for (item, r) in crate::parser::Parser::upgrade_routines(self.data) {
+            types.extend([item, r.old, r.version]);
+        }
+        if types
+            .iter()
+            .all(|&t| self.parse_type(t).is_ok() && self.copy_type(t).is_ok())
+        {
+            self.upgrades.borrow_mut().insert(tp);
+            self.name_types();
+        }
+    }
+
+    /// The program's description of root `tp` for a converting load (`loft_upgrade`): the
+    /// layout the interpreter's converter derives its map against (`Stores::upgrade_map`, the
+    /// root and every routine's `old`), its type numbers by name, and the release.
+    fn upgrade_table(&self, out: &mut String, tp: u16) {
+        let mut roots = vec![tp];
+        roots.extend(
+            crate::parser::Parser::upgrade_routines(self.data)
+                .values()
+                .map(|r| r.old),
+        );
+        let desc = self.stores.layout_descriptor(&roots);
+        let text = format!("{}--facts--\n{}", desc.render_dump(), desc.render_facts());
+        let mut v: Vec<String> = text.bytes().map(|b| b.to_string()).collect();
+        v.push("0".into());
+        let _ = writeln!(
+            out,
+            "static const char loft_upd{tp}[] = {{ {} }};",
+            v.join(", ")
+        );
+        let names: Vec<String> = desc.names.values().map(|n| body::c_string(n)).collect();
+        let ids: Vec<String> = desc.names.keys().map(u16::to_string).collect();
+        let _ = writeln!(
+            out,
+            "static const char *const loft_upn{tp}[] = {{ {} }};\nstatic const uint16_t loft_upt{tp}[] = {{ {} }};",
+            names.join(", "),
+            ids.join(", ")
+        );
+        let _ = writeln!(
+            out,
+            "static const loft_upgrade loft_up{tp} = {{ loft_upd{tp}, loft_upn{tp}, loft_upt{tp}, {}, {} }};",
+            names.len(),
+            body::c_string(&self.stores.release().version)
+        );
+    }
+
     /// Always written: the heap ceiling's report (`loft_heap_moved`) names a type by it too.
     fn type_name_table(&self) -> String {
         let names: Vec<String> = self
@@ -737,11 +819,18 @@ impl<'a> Cx<'a> {
                 "static const char loft_scd{tp}[] = {};",
                 bytes(&id.dump)
             );
+            let up = if self.upgrades.borrow().contains(&tp) {
+                self.upgrade_table(&mut out, tp);
+                format!("&loft_up{tp}")
+            } else {
+                "0".to_string()
+            };
             let _ = writeln!(
                 out,
-                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {}, {} }};",
+                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {}, {}, {}, {up} }};",
                 id.layout_hash,
                 body::c_string(&self.stores.release().oldest),
+                body::c_string(&self.stores.release().bridge),
                 if self.load_walks_type(tp) {
                     "loft_types"
                 } else {
@@ -867,12 +956,12 @@ impl<'a> Cx<'a> {
             CType::Int32 => "LOFT_NULL32".into(),
             CType::Bool => "LOFT_BOOL_NULL".into(),
             CType::Text => "{ 0, 0, 0 }".into(),
-            CType::Ref => "{ 0xFFFF, 0, 0 }".into(),
+            CType::Ref => "{ 0xFFFF, 0, 0, 0 }".into(),
             CType::Enum => "255".into(),
             CType::Float => "(double) NAN".into(),
             CType::Single => "(float) NAN".into(),
             CType::Char => "0".into(),
-            CType::Fn => "{ LOFT_NULL, { 0xFFFF, 0, 0 } }".into(),
+            CType::Fn => "{ LOFT_NULL, { 0xFFFF, 0, 0, 0 } }".into(),
             CType::Tuple(id) => {
                 let fields: Vec<String> = self
                     .tuple_shapes(id)
@@ -1247,6 +1336,13 @@ impl<'a> Cx<'a> {
             );
         }
         out.push_str(&self.show_code());
+        for &tp in self.swap_worlds.borrow().iter() {
+            let call = self.show_top_call(tp, "s", "r", "2");
+            let _ = writeln!(
+                out,
+                "static void loft_swap_show{tp}(loft_text *s, loft_ref r) {{ {call}; }}"
+            );
+        }
         out.push_str(&self.deliver_code());
         out.push_str(&self.eq_code());
         out.push_str(&self.ser_code());
@@ -1314,8 +1410,16 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    let places =
-        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !NN_MASK;
+    let places = mask
+        & !INV_BIT
+        & !NK_BIT
+        & !APR_BIT
+        & !APV_BIT
+        & !KH_BIT
+        & !AP_BIT
+        & !DS_BIT
+        & !VF_BIT
+        & !NN_MASK;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
     let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
     let nn_bits = (mask & NN_MASK) >> NN_SHIFT;
@@ -1329,11 +1433,12 @@ pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
     let apv = if mask & APV_BIT == 0 { "" } else { "__apv" };
     let ap = if mask & AP_BIT == 0 { "" } else { "__ap" };
     let ds = if mask & DS_BIT == 0 { "" } else { "__d" };
+    let vf = if mask & VF_BIT == 0 { "" } else { "__vf" };
     if places == 0 {
-        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}{ds}", c_name(data, d))
+        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}", c_name(data, d))
     } else {
         format!(
-            "{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}{ds}",
+            "{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}",
             c_name(data, d)
         )
     }
@@ -1861,15 +1966,24 @@ pub fn emit_unit_for(
     let reached = crate::opt::names::reachable_functions(data, &all);
     let (defines, parses, reflects) = unit_defines(data, stores, &cx, &reached);
     out.push_str(&defines);
+    // The runtime is a library every unit carries whole: a helper this program does not call
+    // is no defect of it, so gcc and clang are told not to report one there — and only there,
+    // the program's own functions after it are reported.  `LOFT_C_LINT=all` lifts it.
+    out.push_str(
+        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n",
+    );
     out.push_str(RUNTIME);
-    out.push('\n');
+    out.push_str(RUNTIME_END);
     out.push_str(&c_libraries(data, &cx.ffi_libs.borrow()));
+    out.push_str(&cx.tr_typedefs()); // runtime types alone; a tuple may point at one
     out.push_str(&cx.typedefs());
-    out.push_str(&cx.tr_typedefs());
     out.push_str(&cx.tr_protos());
     if parses {
         out.push_str(&cx.parse_table());
         out.push_str(&cx.main_vector_test());
+    }
+    if !cx.upgrades.borrow().is_empty() {
+        out.push_str("static const loft_ptype *loft_up_ptypes(void) { return loft_ptypes; }\n");
     }
     if reflects {
         out.push_str(&cx.reflect_table());
@@ -1878,7 +1992,19 @@ pub fn emit_unit_for(
     out.push_str(&cx.gen_decls.borrow());
     out.push_str(&protos);
     out.push_str(&dispatch);
-    out.push_str(&cx.drop_code(&fns));
+    // The closure release only where something calls it: a unit with no function value
+    // holding a closure writes none.
+    let calls_drop = [
+        &bodies,
+        &*cx.gen_bodies.borrow(),
+        &dispatch,
+        &cx.tr_bodies(),
+    ]
+    .iter()
+    .any(|t| t.contains("loft_drop_closure("));
+    if calls_drop {
+        out.push_str(&cx.drop_code(&fns));
+    }
     out.push_str(&cx.gen_bodies.borrow());
     out.push_str(&bodies);
     out.push_str(&cx.tr_bodies());
@@ -1908,6 +2034,13 @@ pub fn emit_unit_for(
     }
     bind.push_str("}\n");
     out.push_str(&bind);
+    // What the written functions left unnamed — a label, a local, a parameter, a key table — is
+    // not written (`tidy.rs`).  The runtime before it is the library's, written as it stands.
+    if let Some(at) = out.find(RUNTIME_END).map(|a| a + RUNTIME_END.len()) {
+        let written = tidy::tidy_unit(&out[at..]);
+        out.truncate(at);
+        out.push_str(&written);
+    }
     Ok(out)
 }
 
@@ -2276,6 +2409,11 @@ fn unit_defines(
     if parses {
         out.push_str("#define LOFT_PARSE 1\n");
     }
+    // A unit that converts a store of another layout on load (@PLN196) carries the converter;
+    // it builds records through the parse writer, which `upgrade_of` made this unit hold.
+    if parses && !cx.upgrades.borrow().is_empty() {
+        out.push_str("#define LOFT_UPGRADE 1\n");
+    }
     let reflects = reached.iter().any(|&d| {
         matches!(
             data.def(d).name(),
@@ -2303,7 +2441,10 @@ fn unit_defines(
         out.push_str("#define LOFT_PROCESS 1\n");
     }
     if runtimes.iter().any(|r| {
-        r.starts_with("loft_kernel_") || matches!(*r, "loft_live_flip" | "loft_swap_retired")
+        r.starts_with("loft_kernel_")
+            || r.starts_with("loft_swap_")
+            || r.starts_with("loft_rebuild_")
+            || *r == "loft_live_flip"
     }) {
         out.push_str("#define LOFT_ENGINE 1\n");
     }
@@ -2446,26 +2587,40 @@ fn emit_program_counted(
     if main >= data.definitions() {
         return emit_tests(data, stores, expected);
     }
-    let main = program_main(data, main)?;
+    let (main, call) = program_main(data, main)?;
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    {}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    {call}\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
         anchor(stores),
-        c_name(data, main)
     );
-    Ok(out)
+    // The finished program names what it uses: what nothing names is not written.
+    Ok(tidy::drop_unnamed(&out, RUNTIME_END))
 }
 
-/// The program's `main`, refused when it takes arguments.
-fn program_main(data: &Data, main: u32) -> Result<u32, Refusal> {
-    if data.def(main).attributes().is_empty() {
-        Ok(main)
-    } else {
-        Err(Refusal {
+/// The program's `main` and the C statement that calls it: with nothing, or — as the
+/// interpreter's `State::execute_argv` and native's entry hand it — the program's arguments as
+/// a `vector<text>` (`loft_arguments`, the ones after its name), freed when `main` returns.
+/// Any other parameter is refused.
+fn program_main(data: &Data, main: u32) -> Result<(u32, String), Refusal> {
+    let attrs = data.def(main).attributes();
+    let name = c_name(data, main);
+    match attrs {
+        [] => Ok((main, format!("{name}();"))),
+        [a] if !a.hidden
+            && matches!(a.typedef.base(), Type::Vector(e, _) if matches!(e.base(), Type::Text(_))) =>
+        {
+            Ok((
+                main,
+                format!(
+                    "{{ loft_ref loft_main_args = loft_arguments(); {name}(loft_main_args); loft_free_ref(loft_main_args); }}"
+                ),
+            ))
+        }
+        _ => Err(Refusal {
             function: "main".into(),
-            why: "a main that takes arguments".into(),
-        })
+            why: "a main that takes arguments other than `vector<text>`".into(),
+        }),
     }
 }
 
@@ -2486,7 +2641,7 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
             why: "a page without a main".into(),
         });
     }
-    let main = program_main(data, main)?;
+    let (main, call) = program_main(data, main)?;
     let mut out = emit_unit_for(data, stores, &[main], true)?;
     out.push_str(ASYNCIFY_REGION);
     let _ = write!(
@@ -2494,11 +2649,10 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
         "\nextern void __wasm_call_ctors(void);\n\
          __attribute__((export_name(\"loft_start\"))) void loft_page_start(void) {{\n    \
          static int started = 0;\n    if (!started) {{ started = 1; __wasm_call_ctors(); }}\n    \
-         loft_bind_tables();\n    loft_start(0, 0);\n    {}\n    {}();\n    loft_leak_report();\n    \
+         loft_bind_tables();\n    loft_start(0, 0);\n    {}\n    {call}\n    loft_leak_report();\n    \
          fflush(stdout);\n    fflush(stderr);\n}}\n\
          int main(void) {{ return 0; }}\n",
         anchor(stores),
-        c_name(data, main)
     );
     Ok(out)
 }
@@ -2536,7 +2690,7 @@ fn anchor(stores: &Stores) -> String {
 
 /// The C shape of each of a function's variables, in number order: a `&` parameter its target's,
 /// a local nothing binds or one only ever bound to `null` the integer null's.
-fn variable_shapes(
+pub(crate) fn variable_shapes(
     cx: &Cx,
     vars: &crate::variables::Function,
     args: &[u16],
@@ -2701,8 +2855,16 @@ fn hot_twin(mask: u64, statements: usize) -> bool {
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
-    let places =
-        mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT & !KH_BIT & !AP_BIT & !DS_BIT & !NN_MASK;
+    let places = mask
+        & !INV_BIT
+        & !NK_BIT
+        & !APR_BIT
+        & !APV_BIT
+        & !KH_BIT
+        & !AP_BIT
+        & !DS_BIT
+        & !VF_BIT
+        & !NN_MASK;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -2928,6 +3090,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .apart_value(mask & APV_BIT != 0)
             .append_twin(mask & AP_BIT != 0)
             .destination(mask & DS_BIT != 0)
+            .version_fast(mask & VF_BIT != 0)?
             .write()?,
     };
     let (body, statements) = body;
@@ -3303,12 +3466,31 @@ fn page_web_native(native: &str) -> Option<&'static str> {
     })
 }
 
+/// Where the runtime ends in a unit and the written code starts: the close of the pragma region
+/// that keeps the runtime's uncalled helpers quiet.
+const RUNTIME_END: &str = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n";
+
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
+        // web's byte builder and reader (`src/web_bytes.rs`): a per-thread buffer in the
+        // binary, so a byte costs a store where the component call cost a crossing and a
+        // dynamic thread-local lookup.
+        "n_pack_reset" => Some("loft_pack_reset"),
+        "n_pack_u8" => Some("loft_pack_u8"),
+        "n_pack_u16_le" => Some("loft_pack_u16_le"),
+        "n_pack_u32_le" => Some("loft_pack_u32_le"),
+        "n_pack_take" => Some("loft_pack_take"),
+        "n_byte_at" => Some("loft_web_byte_at"),
         "n_git_query" => Some("loft_git_query"),
-        // `lib/engine_host`'s kernel (`loft_engine.h`).  Its build swap and background rebuild
-        // (`swap_world`, `swap_start`, `rebuild_*`) are not carried: a unit that calls one refuses.
+        // `lib/engine_host`'s kernel (`loft_engine.h`), its build swap and background rebuild
+        // included.  A `swap_world` call whose world type is known is written at its call site
+        // (`swap_world_call`); this forwarded one has no layout and restores no image.
+        "n_swap_world" => Some("loft_swap_world_untyped"),
+        "n_swap_start" => Some("loft_swap_start"),
+        "n_rebuild_start" => Some("loft_rebuild_start"),
+        "n_rebuild_status" => Some("loft_rebuild_status"),
+        "n_kernel_rebuild_artifact" => Some("loft_kernel_rebuild_artifact"),
         "n_kernel_listen" => Some("loft_kernel_listen"),
         "n_kernel_pump" => Some("loft_kernel_pump"),
         "n_kernel_next_event" => Some("loft_kernel_next_event"),
@@ -3793,7 +3975,7 @@ fn foreign_vector_args(
     } else {
         let _ = writeln!(
             post,
-            "    if (pminted) loft_free_ref((loft_ref) {{ (uint16_t) pin, 1, 0 }});"
+            "    if (pminted) loft_free_ref((loft_ref) {{ (uint16_t) pin, 1, 0, 0 }});"
         );
         let _ = writeln!(post, "    else if (!loft_stores[pin].read_only) {{");
     }
@@ -3905,8 +4087,10 @@ fn forwarded_native(
     runtime: &str,
 ) -> Result<(String, String), String> {
     let params = declared_params(cx, d)?;
+    // A one-line forward to the runtime: `inline`, and so quiet in a unit whose calls of it are
+    // all written another way (`swap_world_call`).
     let sig = format!(
-        "static {} {}({})",
+        "static inline {} {}({})",
         held(ret),
         c_name(cx.data, d),
         if params.is_empty() {
@@ -4239,10 +4423,14 @@ pub fn emit_tests_of(
     );
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    volatile uint64_t loft_mark = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {{\n    volatile int failed = 0;\n    volatile uint64_t loft_mark = 0;\n    const char *volatile loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
         anchor(stores)
     );
-    for &d in tests {
+    // Each test runs in a wrapper of its own, called through a `volatile` pointer that no
+    // compiler inlines through: the test's locals then live in a frame the failed assert's
+    // `longjmp` unwinds past, never in `main`'s, where a `setjmp` would leave them clobbered.
+    let mut wrappers = String::new();
+    for (i, &d) in tests.iter().enumerate() {
         let name = data.def(d).original_name();
         let subs = expected(&name);
         let _ = writeln!(
@@ -4265,6 +4453,8 @@ pub fn emit_tests_of(
             Type::Text(_) => format!("loft_text loft_r = {call}(); loft_text_free(&loft_r);"),
             _ => format!("{call}();"),
         };
+        let _ = writeln!(wrappers, "static void loft_test_run{i}(void) {{ {run} }}");
+        let run = format!("{{ void (*volatile loft_f)(void) = loft_test_run{i}; loft_f(); }}");
         if subs.is_empty() {
             let _ = writeln!(
                 out,
@@ -4288,5 +4478,10 @@ pub fn emit_tests_of(
         out.push_str("    }\n");
     }
     out.push_str("    if (!failed) loft_leak_report();\n    return failed ? 1 : 0;\n}\n");
-    Ok(out)
+    // The wrappers go before `main`, which names them.
+    let at = out
+        .rfind("\nint main(int argc, char **argv) {")
+        .unwrap_or(out.len());
+    out.insert_str(at, &format!("\n{wrappers}"));
+    Ok(tidy::drop_unnamed(&out, RUNTIME_END))
 }

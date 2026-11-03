@@ -6,7 +6,8 @@
  * source address to its connection, `S:<seq>:<payload>` conflating to the newest per sender, kind
  * and (for a keyed kind) entity.  Both roles share one queue and one conflation machinery: the
  * listener (`run`) and the connector (`run_client`, or a transportless local kernel).  The
- * `D!:` debug control channel answers as a build with no live tier does.  `http_fetch` returns at
+ * `D!:` debug control channel answers as a build with no live tier does, but for the rebuild
+ * and the swap, which a C build carries (below).  `http_fetch` returns at
  * once and completes as a kind-3 event, its request on a worker thread.  Every host with sockets
  * (`loft_sock.h`: POSIX and Windows); elsewhere the kernel cannot listen or connect.  Compiled in
  * for a unit that reaches a kernel native (LOFT_ENGINE). */
@@ -407,6 +408,12 @@ static int loft_eh_read_frame(int fd, loft_text *out) {
     return answer;
 }
 
+/* glibc declares SO_REUSEPORT only under `_DEFAULT_SOURCE`, which the unit's ISO-and-POSIX feature
+ * macros do not ask for; the kernel's own header defines it per architecture. */
+#if defined(__linux__) && !defined(SO_REUSEPORT)
+#include <asm/socket.h>
+#endif
+
 /* A socket bound on 0.0.0.0:`port` for a hand-over: close-on-exec, SO_REUSEADDR (TCP) and
  * SO_REUSEPORT, so a swap's new build binds while the old one serves.  Windows has no shared
  * port (`platform::bind_tcp_handover` binds plainly there): its listener is exclusive, as the
@@ -563,6 +570,12 @@ static void loft_eh_debug_quote(loft_text *o, const char *p, size_t n) {
     loft_push(o, "\"", 1);
 }
 
+static uint8_t loft_rebuild_start(void);
+static int64_t loft_rebuild_status(void);
+static loft_text loft_kernel_rebuild_artifact(void);
+static const char *loft_rebuild_failure(void);
+static uint8_t loft_swap_start(loft_str artifact);
+
 /* `debug_cmd_dispatch`, the command core both roles share: 1 and the immediate reply in `r`, or 0
  * for a command whose answer would come from the pause loop. */
 static int loft_eh_debug_dispatch(const char *cmd, size_t n, loft_text *r) {
@@ -581,13 +594,21 @@ static int loft_eh_debug_dispatch(const char *cmd, size_t n, loft_text *r) {
     } else if (LOFT_VERB("apply")) {
         loft_push_cstr(r, "D:apply queued");
     } else if (LOFT_VERB("rebuild")) {
-        fputs("loft-live: rebuild needs LOFT_LIVE_DRIVER/LOFT_LIVE_SRC (run through the loft driver)\n", stderr);
-        loft_push_cstr(r, "D:rebuild refused");
+        loft_push_cstr(r, loft_rebuild_start() ? "D:rebuild started" : "D:rebuild refused");
     } else if (LOFT_VERB("rebuild?")) {
-        loft_push_cstr(r, "D:rebuild 0");
+        /* A failed build says why, so the editor shows it beside the build it refused. */
+        char b[640];
+        int64_t st = loft_rebuild_status();
+        if (st == 3) snprintf(b, sizeof b, "D:rebuild 3 %s", loft_rebuild_failure());
+        else snprintf(b, sizeof b, "D:rebuild %lld", (long long) st);
+        loft_push_cstr(r, b);
     } else if (LOFT_VERB("swap")) {
-        fputs("loft-swap: this build cannot hand its world to another — swap refused\n", stderr);
-        loft_push_cstr(r, "D:swap false");
+        loft_text target = { 0, 0, 0 };
+        if (an == 0 || (an == 4 && memcmp(arg, "auto", 4) == 0)) target = loft_kernel_rebuild_artifact();
+        else loft_push(&target, arg, an);
+        uint8_t ok = loft_swap_start(loft_view(&target));
+        loft_text_free(&target);
+        loft_push_cstr(r, ok ? "D:swap true" : "D:swap false");
     } else if (LOFT_VERB("quit")) {
         fputs("loft-debug: quit via the control channel\n", stderr);
         loft_eh_quit = 1;
@@ -1486,10 +1507,594 @@ static loft_text loft_kernel_default_host(void) {
     return t;
 }
 
-/* ── The swap step, with no swap to drive: a compiled C build does not hand its world over, so
- * the step serves (0) and this process never retires. ── */
-static int64_t loft_kernel_swap_step(void) { return 0; }
-static uint8_t loft_swap_retired(void) { return 0; }
+/* ── The live build swap (@PLN18 08-S4/S5, src/engine_host.rs `swap_*`, src/live_rebuild.rs) ──
+ * `swap_world` names the world record: it becomes the snapshot root, and in a process booted AS a
+ * swap target (`LOFT_RESUME`) the previous build's world is restored into it, through the store
+ * converter when its layout moved.  `swap_start` asks for a swap; the run loop's swap step writes
+ * the snapshot at the next frame boundary, boots the new build detached with the snapshot and a
+ * ready file, keeps mechanics alive while meaning waits, and retires once the new build serves
+ * (it touches the ready file when it listens or connects) — or rolls back, the old build never
+ * having stopped.  The background rebuild runs the loft driver's own `--check --native-c` as a
+ * child while this build serves.  Processes are POSIX here; elsewhere every request refuses. */
+
+/* A world type's JSON render, for a world that shares its store (the snapshot then goes as JSON). */
+typedef void (*loft_swap_show_fn)(loft_text *s, loft_ref r);
+
+#define LOFT_SW_IDLE 0
+#define LOFT_SW_REQUESTED 1
+#define LOFT_SW_WAITING 2
+#define LOFT_SW_DONE 3
+
+static struct {
+    int registered;
+    loft_ref w;
+    uint16_t tp;
+    const loft_sidecar *sc;
+    loft_swap_show_fn show;
+    char *layout; /* the world's layout as sidecar text, for a rebuild to check the next build */
+    int phase;
+    char *artifact, *ready, *snap;
+    long pid;
+    int64_t deadline;
+} loft_sw = { 0, { 0xFFFF, 0, 0, 0 }, 0, 0, 0, 0, LOFT_SW_IDLE, 0, 0, 0, -1, 0 };
+
+static char *loft_sw_join(const char *a, const char *b) {
+    size_t n = strlen(a), m = strlen(b);
+    char *c = (char *) malloc(n + m + 1);
+    if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(c, a, n);
+    memcpy(c + n, b, m + 1);
+    return c;
+}
+
+static char *loft_sw_dup(const char *p, size_t n) {
+    char *c = (char *) malloc(n + 1);
+    if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(c, p, n);
+    c[n] = 0;
+    return c;
+}
+
+static int loft_sw_write(const char *path, const char *p, size_t n) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return 0;
+    int ok = fwrite(p, 1, n, f) == n;
+    return (fclose(f) == 0) && ok;
+}
+
+/* A whole file, malloc'd and NUL-terminated, or 0. */
+static char *loft_sw_read(const char *path, size_t *len) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    size_t cap = 4096, n = 0, got;
+    char *b = (char *) malloc(cap + 1);
+    if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+    while ((got = fread(b + n, 1, cap - n, f)) > 0) {
+        n += got;
+        if (n == cap) {
+            cap *= 2;
+            b = (char *) realloc(b, cap + 1);
+            if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+        }
+    }
+    fclose(f);
+    b[n] = 0;
+    if (len) *len = n;
+    return b;
+}
+
+static int loft_sw_exists(const char *path) {
+    FILE *f = path && *path ? fopen(path, "rb") : 0;
+    if (f) fclose(f);
+    return f != 0;
+}
+
+/* `std::env::temp_dir`: TMPDIR, else /tmp. */
+static const char *loft_sw_tmp(void) {
+    const char *t = getenv("TMPDIR");
+    return t && *t ? t : "/tmp";
+}
+
+/* A snapshot and the layout sidecar a store image has beside it. */
+static void loft_sw_remove_snapshot(const char *snap) {
+    if (!snap) return;
+    char *side = loft_sw_join(snap, ".dschema");
+    remove(snap);
+    remove(side);
+    free(side);
+}
+
+/* `swap_world(w)`: register `w` as the snapshot root and, in a swap target, restore the previous
+ * build's world into it in place; 1 when a restore happened. */
+static uint8_t loft_swap_world(loft_ref w, const loft_sidecar *sc, loft_swap_show_fn show) {
+    uint16_t kt = w.store_nr < loft_nstores ? loft_stores[w.store_nr].known : 0xFFFF;
+    if (w.store_nr == 0xFFFF || kt == 0xFFFF) {
+        fputs("loft-swap: swap_world got a record with no known type; swaps disabled\n", stderr);
+        return 0;
+    }
+    loft_sw.registered = 1;
+    loft_sw.w = w;
+    loft_sw.tp = kt;
+    loft_sw.sc = sc && sc->tp == kt ? sc : 0;
+    loft_sw.show = show;
+    /* The layout a live rebuild checks the next instance against; the slot line names this store. */
+    free(loft_sw.layout);
+    loft_sw.layout = 0;
+    if (loft_sw.sc) {
+        loft_text t = { 0, 0, 0 };
+        char slot[32];
+        snprintf(slot, sizeof slot, "slot=%u\n", (unsigned) w.store_nr);
+        loft_push_cstr(&t, loft_sw.sc->before_slot);
+        loft_push_cstr(&t, slot);
+        loft_push_cstr(&t, loft_sw.sc->after_slot);
+        loft_sw.layout = loft_cstr_own(loft_view(&t));
+        loft_text_free(&t);
+        /* An editor serving this game reads it to warn about a change the next build could not
+         * carry the world across; the first line names this process. */
+        const char *out = getenv("LOFT_WORLD_LAYOUT_OUT");
+        if (out) {
+            loft_text o = { 0, 0, 0 };
+            char head[64];
+#if defined(LOFT_POSIX) && !defined(__wasi__)
+            snprintf(head, sizeof head, "loft-world pid=%ld\n", (long) getpid());
+#else
+            snprintf(head, sizeof head, "loft-world pid=0\n");
+#endif
+            loft_push_cstr(&o, head);
+            loft_push_cstr(&o, loft_sw.layout);
+            (void) loft_sw_write(out, o.p, o.len);
+            loft_text_free(&o);
+        }
+    }
+    const char *snap = getenv("LOFT_RESUME");
+    if (!snap) return 0;
+    size_t sl = strlen(snap);
+    if (sl > 6 && strcmp(snap + sl - 6, ".store") == 0) {
+        /* A world handed over as a store image loads through the converter; a change it refuses
+         * ends THIS build before it serves, which the old build reads as a failed swap. */
+        if (loft_sw.sc && loft_image_load(w, loft_lit(snap, sl), loft_sw.sc, 0)) {
+            fprintf(stderr, "loft-swap: world restored from %s\n", snap);
+            return 1;
+        }
+        if (!loft_sw.sc) fprintf(stderr, "store_load: refusing %s \xe2\x80\x94 this build has no layout for the world's type.\n", snap);
+        fputs("loft-swap: this build cannot take over the running world (the reason is above); the running build "
+              "keeps serving\n",
+              stderr);
+        exit(1);
+    }
+    size_t n = 0;
+    char *json = loft_sw_read(snap, &n);
+    if (!json) {
+        fprintf(stderr, "loft-swap: LOFT_RESUME set but %s unreadable; starting fresh\n", snap);
+        return 0;
+    }
+#ifdef LOFT_UPGRADE
+    loft_ref parsed = loft_record_from_text(loft_up_ptypes(), loft_lit(json, n), kt);
+    free(json);
+    if (parsed.store_nr != 0xFFFF) loft_copy_record(loft_T, kt, parsed, w, 1);
+    fprintf(stderr, "loft-swap: world restored from %s\n", snap);
+    return 1;
+#else
+    free(json);
+    fprintf(stderr, "loft-swap: LOFT_RESUME set but %s unreadable; starting fresh\n", snap);
+    return 0;
+#endif
+}
+
+/* The forwarded `swap_world` a call site with no known world type reaches: no layout, so an image
+ * handed over is refused rather than read raw. */
+static uint8_t loft_swap_world_untyped(loft_ref w) { return loft_swap_world(w, 0, 0); }
+
+/* `write_world_snapshot`: the world as a store image with its sidecar when it is the root of a
+ * store of its own (`LOFT_NO_SWAP_IMAGE` sends it as JSON), else as JSON; the path, malloc'd. */
+static char *loft_sw_snapshot(const char *base) {
+    loft_ref w = loft_sw.w;
+    int own = w.store_nr < loft_nstores && loft_stores[w.store_nr].known == loft_sw.tp;
+    if (own && !getenv("LOFT_NO_SWAP_IMAGE")) {
+        if (loft_sw.sc) {
+            char *snap = loft_sw_join(base, ".snap.store");
+            if (loft_image_write(loft_T, loft_T_n, w, loft_lit(snap, strlen(snap)), loft_sw.sc)) return snap;
+            free(snap);
+        }
+        fputs("loft-swap: the world goes over as JSON (the store did not form an image)\n", stderr);
+    }
+    if (!loft_sw.show) return 0;
+    loft_text t = { 0, 0, 0 };
+    loft_sw.show(&t, w);
+    char *snap = loft_sw_join(base, ".snap.json");
+    int ok = loft_sw_write(snap, t.p ? t.p : "", t.len);
+    loft_text_free(&t);
+    if (!ok) { free(snap); return 0; }
+    return snap;
+}
+
+#if defined(LOFT_POSIX) && !defined(__wasi__)
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+/* A child process: `argv[0]` run with `set` (name, value pairs, 0-terminated) added to and `unset`
+ * (0-terminated) taken from the environment, stdin from /dev/null, stdout and stderr into the
+ * files named (or inherited), and in a session of its own when `detached` — a swap's new build is
+ * a handover target, not part of this process tree.  Its pid, or -1 with `errno` set. */
+static long loft_sw_spawn(char *const argv[], const char *const *set, const char *const *unset, const char *out,
+                          const char *err, int detached) {
+    fflush(stdout);
+    fflush(stderr);
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        if (detached) (void) setsid();
+        int in = open("/dev/null", O_RDONLY);
+        if (in >= 0) { dup2(in, 0); close(in); }
+        if (out) { int fd = open(out, O_WRONLY | O_CREAT | O_TRUNC, 0644); if (fd >= 0) { dup2(fd, 1); close(fd); } }
+        if (err) { int fd = open(err, O_WRONLY | O_CREAT | O_TRUNC, 0644); if (fd >= 0) { dup2(fd, 2); close(fd); } }
+        for (size_t i = 0; set && set[i]; i += 2) setenv(set[i], set[i + 1], 1);
+        for (size_t i = 0; unset && unset[i]; i++) unsetenv(unset[i]);
+        execv(argv[0], argv);
+        _exit(127);
+    }
+    return (long) pid;
+}
+
+/* Is child `pid` still running?  When it has ended, `*status` says how (`ExitStatus`'s text). */
+static int loft_sw_alive(long pid, char *status, size_t cap) {
+    int st = 0;
+    pid_t r = waitpid((pid_t) pid, &st, WNOHANG);
+    if (r == 0) return 1;
+    if (r < 0) snprintf(status, cap, "unknown");
+    else if (WIFEXITED(st)) snprintf(status, cap, "exit status: %d", WEXITSTATUS(st));
+    else if (WIFSIGNALED(st)) snprintf(status, cap, "signal: %d", WTERMSIG(st));
+    else snprintf(status, cap, "unknown");
+    return 0;
+}
+
+static void loft_sw_stop_tree(long pid) {
+    (void) kill(-(pid_t) pid, SIGKILL);
+    (void) kill((pid_t) pid, SIGKILL);
+    (void) waitpid((pid_t) pid, 0, 0);
+}
+#define LOFT_SW_CAN 1
+#endif
+
+/* `swap_start(artifact)`: request a swap to that binary; the run loop acts at the next frame
+ * boundary. */
+static uint8_t loft_swap_start(loft_str artifact) {
+    char *a = loft_cstr_own(artifact);
+    if (!*a || !loft_sw_exists(a)) {
+        fprintf(stderr, "loft-swap: no such artifact `%s` \xe2\x80\x94 swap refused\n", a);
+        free(a);
+        return 0;
+    }
+#ifndef LOFT_SW_CAN
+    fputs("loft-swap: this build cannot hand its world to another \xe2\x80\x94 swap refused\n", stderr);
+    free(a);
+    return 0;
+#else
+    if (loft_sw.phase != LOFT_SW_IDLE) {
+        fputs("loft-swap: a swap is already in progress\n", stderr);
+        free(a);
+        return 0;
+    }
+    free(loft_sw.artifact);
+    loft_sw.artifact = a;
+    loft_sw.phase = LOFT_SW_REQUESTED;
+    return 1;
+#endif
+}
+
+static void loft_sw_reset(void) {
+    free(loft_sw.ready);
+    free(loft_sw.snap);
+    loft_sw.ready = loft_sw.snap = 0;
+    loft_sw.pid = -1;
+    loft_sw.phase = LOFT_SW_IDLE;
+}
+
+/* The listener kernel dropped at a handover: its listener, UDP socket and every connection
+ * closed, so seats reconnect into the new process. */
+static void loft_sw_drop_kernel(void) {
+#if defined(LOFT_SOCKETS)
+    if (loft_ehk.up) {
+        loft_eh_close_fd(&loft_ehk.listener);
+        loft_eh_close_fd(&loft_ehk.udp);
+        for (size_t i = 0; i < loft_ehk.nconns; i++) loft_eh_close_fd(&loft_ehk.conns[i].fd);
+    }
+#endif
+    loft_ehk.alive = 0;
+    loft_ehk.up = 0;
+}
+
+/* The swap step the run loop drives each turn: 0 serve normally, 1 FROZEN (mechanics only, meaning
+ * waits), 2 handed over (the loop returns; this process retires).  Every failure rolls back to 0. */
+static int64_t loft_kernel_swap_step(void) {
+    switch (loft_sw.phase) {
+    case LOFT_SW_IDLE: return 0;
+    case LOFT_SW_DONE: return 2;
+#ifdef LOFT_SW_CAN
+    case LOFT_SW_REQUESTED: {
+        if (!loft_sw.registered) {
+            fputs("loft-swap: rolled back (no swap_world registered)\n", stderr);
+            loft_sw_reset();
+            return 0;
+        }
+        /* The frame boundary: meaning is frozen from here on, so this snapshot is THE world
+         * state the new build resumes. */
+        char base[1024];
+        snprintf(base, sizeof base, "%s/loft_swap_%ld", loft_sw_tmp(), (long) getpid());
+        loft_sw.ready = loft_sw_join(base, ".ready");
+        remove(loft_sw.ready);
+        loft_sw.snap = loft_sw_snapshot(base);
+        if (!loft_sw.snap) {
+            fputs("loft-swap: rolled back (cannot write snapshot)\n", stderr);
+            loft_sw_reset();
+            return 0;
+        }
+        char *argv[] = { loft_sw.artifact, 0 };
+        const char *set[] = { "LOFT_RESUME", loft_sw.snap, "LOFT_SWAP_READY", loft_sw.ready, 0 };
+        /* Dispatch reset: the new build has the edits compiled. */
+        const char *unset[] = { "LOFT_FLIP_FNS", 0 };
+        long pid = loft_sw_spawn(argv, set, unset, 0, 0, 1);
+        if (pid < 0) {
+            fprintf(stderr, "loft-swap: rolled back (cannot spawn %s: %s)\n", loft_sw.artifact, strerror(errno));
+            loft_sw_remove_snapshot(loft_sw.snap);
+            loft_sw_reset();
+            return 0;
+        }
+        fprintf(stderr, "loft-swap: booting %s (meaning frozen)\n", loft_sw.artifact);
+        loft_sw.pid = pid;
+        loft_sw.deadline = loft_now_us() + 15000000;
+        loft_sw.phase = LOFT_SW_WAITING;
+        return 1;
+    }
+    case LOFT_SW_WAITING: {
+        char status[64];
+        if (loft_sw_exists(loft_sw.ready)) {
+            fputs("loft-swap: handing over \xe2\x80\x94 this build retires\n", stderr);
+            loft_sw_remove_snapshot(loft_sw.snap);
+            remove(loft_sw.ready);
+            free(loft_sw.ready);
+            free(loft_sw.snap);
+            loft_sw.ready = loft_sw.snap = 0;
+            loft_sw.phase = LOFT_SW_DONE;
+            loft_sw_drop_kernel();
+            return 2;
+        }
+        if (!loft_sw_alive(loft_sw.pid, status, sizeof status)) {
+            fprintf(stderr, "loft-swap: rolled back (new build exited %s before serving)\n", status);
+            loft_sw_remove_snapshot(loft_sw.snap);
+            remove(loft_sw.ready);
+            loft_sw_reset();
+            return 0;
+        }
+        if (loft_now_us() > loft_sw.deadline) {
+            fputs("loft-swap: rolled back (new build never became ready)\n", stderr);
+            loft_sw_stop_tree(loft_sw.pid);
+            loft_sw_remove_snapshot(loft_sw.snap);
+            remove(loft_sw.ready);
+            loft_sw_reset();
+            return 0;
+        }
+        return 1;
+    }
+#endif
+    default: return 0;
+    }
+}
+
+/* Did THIS process hand its world to a new build? */
+static uint8_t loft_swap_retired(void) { return loft_sw.phase == LOFT_SW_DONE; }
+
+/* ── The background rebuild (src/live_rebuild.rs): 0 idle, 1 building, 2 ready, 3 failed ── */
+static struct {
+    int state;
+    long pid;
+    char *snapshot;
+    size_t snap_len;
+    char *out, *err, *artifact;
+    char failure[512];
+    unsigned seq;
+} loft_rb = { 0, -1, 0, 0, 0, 0, 0, { 0 }, 0 };
+
+#ifdef LOFT_SW_CAN
+/* `spawn_build`: one background `--check --native-c` build of `src` through the driver, its output
+ * in files (a failed compile prints more than a pipe holds); 0 with `why` set. */
+static int loft_rb_spawn(const char *driver, const char *src, char *why, size_t cap) {
+    size_t n = 0;
+    char *snapshot = loft_sw_read(src, &n);
+    if (!snapshot) {
+        snprintf(why, cap, "cannot read %s: %s", src, strerror(errno));
+        return 0;
+    }
+    loft_rb.seq++;
+    char base[1024];
+    snprintf(base, sizeof base, "%s/loft_rebuild_%ld_%u", loft_sw_tmp(), (long) getpid(), loft_rb.seq);
+    free(loft_rb.out);
+    free(loft_rb.err);
+    loft_rb.out = loft_sw_join(base, ".out");
+    loft_rb.err = loft_sw_join(base, ".err");
+    /* The argument list: the driver, its flags, a `--lib` per LOFT_LIVE_LIBS entry, the source. */
+    const char *libs = getenv("LOFT_LIVE_LIBS");
+    char *libcopy = libs ? loft_sw_join(libs, "") : 0;
+    size_t nlib = 0;
+    for (const char *q = libcopy; q && *q; q++) nlib += *q == ':';
+    char **argv = (char **) calloc(8 + 2 * (nlib + 1), sizeof *argv);
+    if (!argv) { fputs("loft: out of memory\n", stderr); abort(); }
+    size_t a = 0;
+    argv[a++] = (char *) driver;
+    argv[a++] = (char *) "--no-warnings";
+    argv[a++] = (char *) "--check";
+    /* The running build is a C build: its successor is built the same way. */
+    argv[a++] = (char *) "--native-c";
+    for (char *tok = libcopy ? strtok(libcopy, ":") : 0; tok; tok = strtok(0, ":")) {
+        if (!*tok) continue;
+        argv[a++] = (char *) "--lib";
+        argv[a++] = tok;
+    }
+    argv[a++] = (char *) src;
+    argv[a] = 0;
+    /* The build of the next instance is checked against the running world: a world it cannot
+     * take over fails the build here, never the swap. */
+    char *world = 0;
+    if (loft_sw.layout) {
+        world = loft_sw_join(base, ".world.dschema");
+        if (!loft_sw_write(world, loft_sw.layout, strlen(loft_sw.layout))) {
+            snprintf(why, cap, "%s", strerror(errno));
+            free(world);
+            free(argv);
+            free(libcopy);
+            free(snapshot);
+            return 0;
+        }
+    }
+    const char *set[] = { "LOFT_CHECK_ARTIFACT", "1", world ? "LOFT_CHECK_WORLD" : 0, world, 0 };
+    /* A build legitimately takes minutes: never under the run watchdog. */
+    const char *unset[] = { "LOFT_TIMEOUT", 0 };
+    long pid = loft_sw_spawn(argv, set, unset, loft_rb.out, loft_rb.err, 0);
+    free(world);
+    free(argv);
+    free(libcopy);
+    if (pid < 0) {
+        snprintf(why, cap, "cannot spawn %s: %s", driver, strerror(errno));
+        free(snapshot);
+        return 0;
+    }
+    free(loft_rb.snapshot);
+    loft_rb.snapshot = snapshot;
+    loft_rb.snap_len = n;
+    loft_rb.pid = pid;
+    loft_rb.state = 1;
+    return 1;
+}
+#endif
+
+/* `rebuild_start`: start a background rebuild of the program this binary serves; 1 building
+ * (idempotent while one runs), 0 when the host lacks the live env or the spawn failed. */
+static uint8_t loft_rebuild_start(void) {
+    const char *driver = getenv("LOFT_LIVE_DRIVER"), *src = getenv("LOFT_LIVE_SRC");
+    if (!driver || !src) {
+        fputs("loft-live: rebuild needs LOFT_LIVE_DRIVER/LOFT_LIVE_SRC (run through the loft driver)\n", stderr);
+        return 0;
+    }
+#ifdef LOFT_SW_CAN
+    if (loft_rb.state == 1) return 1;
+    char why[1200];
+    if (loft_rb_spawn(driver, src, why, sizeof why)) {
+        fprintf(stderr, "loft-live: rebuild started (%s)\n", src);
+        return 1;
+    }
+    fprintf(stderr, "loft-live: rebuild failed to start \xe2\x80\x94 %s\n", why);
+    loft_rb.state = 3;
+    return 0;
+#else
+    fputs("loft-live: rebuild failed to start \xe2\x80\x94 this host cannot run the build\n", stderr);
+    return 0;
+#endif
+}
+
+/* `rebuild_status`: completion with a source that changed mid-build requeues (status stays 1), so
+ * a ready artifact always corresponds to the source as of the call. */
+static int64_t loft_rebuild_status(void) {
+#ifdef LOFT_SW_CAN
+    if (loft_rb.state != 1) return loft_rb.state;
+    char status[64];
+    if (loft_sw_alive(loft_rb.pid, status, sizeof status)) return 1;
+    const char *src = getenv("LOFT_LIVE_SRC");
+    if (!src) src = "";
+    size_t n = 0;
+    char *now = loft_sw_read(src, &n);
+    int stale = !now || n != loft_rb.snap_len || memcmp(now, loft_rb.snapshot, n) != 0;
+    free(now);
+    if (stale) {
+        /* The source changed while the build ran: requeue with the current content. */
+        fputs("loft-live: rebuild stale (source changed during build) \xe2\x80\x94 requeued\n", stderr);
+        const char *driver = getenv("LOFT_LIVE_DRIVER");
+        char why[1200];
+        if (!driver || !loft_rb_spawn(driver, src, why, sizeof why)) {
+            fprintf(stderr, "loft-live: requeue failed \xe2\x80\x94 %s\n", driver ? why : "no driver");
+            loft_rb.state = 3;
+            return 3;
+        }
+        return 1;
+    }
+    if (strcmp(status, "exit status: 0") != 0) {
+        /* The last five lines of the build's errors, and the one that says why. */
+        char *err = loft_sw_read(loft_rb.err, 0);
+        const char *tail = err ? err : "";
+        size_t len = strlen(tail);
+        while (len && tail[len - 1] == '\n') len--;
+        size_t start = len;
+        for (int lines = 0; start > 0; start--)
+            if (tail[start - 1] == '\n' && ++lines == 5) break;
+        fprintf(stderr, "loft-live: rebuild FAILED (old build keeps serving):\n%.*s\n", (int) (len - start), tail + start);
+        const char *pick = 0, *last = 0;
+        size_t pick_n = 0, last_n = 0;
+        for (const char *l = tail + start; l < tail + len;) {
+            const char *e = memchr(l, '\n', (size_t) (tail + len - l));
+            size_t ln = e ? (size_t) (e - l) : (size_t) (tail + len - l);
+            char *line = loft_sw_dup(l, ln);
+            if (!pick && (strstr(line, "cannot take over the running world") || strstr(line, "error"))) { pick = l; pick_n = ln; }
+            last = l;
+            last_n = ln;
+            free(line);
+            l = e ? e + 1 : tail + len;
+        }
+        if (!pick) { pick = last; pick_n = last_n; }
+        if (!pick) { pick = "the build failed"; pick_n = strlen(pick); }
+        while (pick_n && isspace((unsigned char) *pick)) { pick++; pick_n--; }
+        while (pick_n && isspace((unsigned char) pick[pick_n - 1])) pick_n--;
+        snprintf(loft_rb.failure, sizeof loft_rb.failure, "%.*s", (int) pick_n, pick);
+        free(err);
+        loft_rb.state = 3;
+        return 3;
+    }
+    /* The artifact rides the driver's ok line: "ok <src> <artifact>". */
+    char *out = loft_sw_read(loft_rb.out, 0);
+    char *prefix = loft_sw_join("ok ", src);
+    char *artifact = 0;
+    for (const char *l = out ? out : ""; *l;) {
+        const char *e = strchr(l, '\n');
+        size_t ln = e ? (size_t) (e - l) : strlen(l);
+        size_t pl = strlen(prefix);
+        if (ln > pl && memcmp(l, prefix, pl) == 0 && l[pl] == ' ') {
+            const char *a = l + pl + 1;
+            size_t an = ln - pl - 1;
+            while (an && isspace((unsigned char) a[an - 1])) an--;
+            artifact = loft_sw_dup(a, an);
+            break;
+        }
+        l = e ? e + 1 : l + ln;
+    }
+    free(prefix);
+    if (!artifact || !loft_sw_exists(artifact)) {
+        fprintf(stderr, "loft-live: rebuild succeeded but no artifact on the ok line (\"%s\")\n", out ? out : "");
+        free(artifact);
+        free(out);
+        loft_rb.state = 3;
+        return 3;
+    }
+    free(out);
+    fprintf(stderr, "loft-live: rebuild ready \xe2\x80\x94 %s\n", artifact);
+    free(loft_rb.artifact);
+    loft_rb.artifact = artifact;
+    loft_rb.state = 2;
+    return 2;
+#else
+    return loft_rb.state;
+#endif
+}
+
+/* Why the last rebuild failed, in one line; "" when none has. */
+static const char *loft_rebuild_failure(void) { return loft_rb.failure; }
+
+/* The READY build's artifact; "" unless `rebuild_status() == 2`. */
+static loft_text loft_kernel_rebuild_artifact(void) {
+    loft_text t = { 0, 0, 0 };
+    if (loft_rb.state == 2 && loft_rb.artifact) loft_push_cstr(&t, loft_rb.artifact);
+    return t;
+}
 /* `live_flip`: no live tier to flip a function into. */
 static uint8_t loft_live_flip(loft_str name, uint8_t on) {
     (void) name;

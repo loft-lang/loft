@@ -2238,14 +2238,20 @@ pub fn validate(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) {
 /// grows (`grow_if_full`).
 const GROWTH: u32 = 2;
 
-/// Zero the `count` slots of table `claim`: an empty slot is a zero first word, and nothing
-/// else in the record is read before it is written.
-fn zero_slots(store: &mut Store, claim: u32, count: u32) {
+/// Zero everything of table `claim` past its header words: the slots (an empty slot is a zero
+/// first word) and the entry area after them.  Loft reads an entry only once it is written,
+/// but an entry's stride holds bytes no field writes (a 12-byte `Word` in a 16-byte stride),
+/// and a table copied into an image carries its whole record, so those bytes must be ones
+/// the store wrote (`@C154`): an image of a `hash<Word[w]>` held 120 bytes nobody wrote, and a
+/// Windows run wrote a 1 among them where the interpreter wrote 0.  One fill per table made or
+/// grown, as an arena chunk is zero-filled when claimed.
+fn zero_table(store: &mut Store, claim: u32) {
+    let bytes = store.record_words(claim) as usize * 8 - BUCKET0 as usize;
     unsafe {
         store
             .base_ptr()
             .add(claim as usize * 8 + BUCKET0 as usize)
-            .write_bytes(0, count as usize * 8);
+            .write_bytes(0, bytes);
     }
 }
 
@@ -2261,7 +2267,7 @@ fn inline_create(store: &mut Store, count: u32, stride: u32, owner: u32) -> u32 
     store.set_u32_raw(claim, arena::NEXT_FLD, 1);
     let count = inline_count(store.record_words(claim) - RESERVED_WORDS, stride);
     store.set_u32_raw(claim, STRIDE_FLD, inline_flags(stride, count));
-    zero_slots(store, claim, count);
+    zero_table(store, claim);
     claim
 }
 
@@ -2298,7 +2304,7 @@ fn inline_rebuild(hash: &DbRef, claim: u32, want: u32, stores: &mut [Store]) -> 
     store.set_u32_raw(new_claim, STRIDE_FLD, inline_flags(h.stride, new_count));
     store.set_u32_raw(new_claim, arena::FREE_FLD, 0);
     let nh = hdr(store, new_claim);
-    zero_slots(store, new_claim, nh.count);
+    zero_table(store, new_claim);
     let mask = nh.count - 1;
     let (old0, new0) = (ent0(h.count), ent0(nh.count));
     let stride = h.stride as usize;
@@ -2986,4 +2992,33 @@ pub fn inline_slack(store: &Store, claim: u32) -> u32 {
     store
         .record_words(claim)
         .saturating_sub(inline_words(need, h.stride))
+}
+
+#[cfg(test)]
+mod zeroed_table {
+    use super::{BUCKET0, inline_create};
+    use crate::store::Store;
+
+    /// `@C154`: a table made in a block that held other bytes leaves no byte of them past its
+    /// header — slots and entry area alike — because an image copies the whole record.  The
+    /// block is poisoned and freed first, so its next claim hands back `0xDEADBEEF` words;
+    /// zeroing the slots alone would leave that poison in every entry's stride padding.
+    #[test]
+    fn a_new_inline_table_holds_no_byte_it_did_not_write() {
+        let mut s = Store::new(64);
+        let words = super::inline_words(16, 16);
+        let old = s.claim(words);
+        s.poison_fill(old);
+        s.delete(old);
+        let claim = inline_create(&mut s, 16, 16, 1);
+        assert_eq!(claim, old, "the table reuses the poisoned block");
+        let end = s.record_words(claim) * 8;
+        for at in (BUCKET0..end).step_by(4) {
+            assert_eq!(
+                s.get_u32_raw(claim, at),
+                0,
+                "byte {at} of a fresh table holds what the block held"
+            );
+        }
+    }
 }

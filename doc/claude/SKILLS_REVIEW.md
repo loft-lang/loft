@@ -79,19 +79,19 @@ row whose skill was deleted.
 
 | skill | reviewed through | commit |
 |---|---|---|
-| `design-protocol` | 2026-10-16 | `9b38efb1a` |
-| `doc-quality` | 2026-10-16 | `9b38efb1a` |
-| `draw` | 2026-09-16 | `9720dfd06` |
-| `engineering-rigor` | 2026-10-16 | `9b38efb1a` |
-| `formal-rules` | 2026-10-16 | `9b38efb1a` |
-| `loft-codegen` | 2026-10-16 | `9b38efb1a` |
-| `loft-debug` | 2026-10-16 | `9b38efb1a` |
-| `loft-optimize` | 2026-10-16 | `49e0cad5d` |
-| `loft-plan-workflow` | 2026-10-16 | `21f750017` |
-| `loft-library` | 2026-10-16 | `46ec215e0` |
-| `loft-test` | 2026-10-16 | `502a37917` |
-| `loft-write` | 2026-10-16 | `9b38efb1a` |
-| `split-file` | 2026-10-16 | `231a813a9` |
+| `design-protocol` | 2026-11-02 | `11f767b68` |
+| `doc-quality` | 2026-11-02 | `dd48b3bd2` |
+| `draw` | 2026-11-02 | `0e95172cd` |
+| `engineering-rigor` | 2026-11-02 | `11f767b68` |
+| `formal-rules` | 2026-11-02 | `11f767b68` |
+| `loft-codegen` | 2026-11-02 | `11f767b68` |
+| `loft-debug` | 2026-11-02 | `11f767b68` |
+| `loft-library` | 2026-11-02 | `11f767b68` |
+| `loft-optimize` | 2026-11-02 | `11f767b68` |
+| `loft-plan-workflow` | 2026-11-02 | `11f767b68` |
+| `loft-test` | 2026-11-02 | `11f767b68` |
+| `loft-write` | 2026-11-02 | `11f767b68` |
+| `split-file` | 2026-11-02 | `0e95172cd` |
 
 ## Findings that outlive a single review
 

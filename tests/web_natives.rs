@@ -42,6 +42,12 @@ fn main() {
   web_natives::pack_u32_le(4294967295);
   p = web_natives::pack_take();
   println("PACK {p.len()} {web_natives::byte_at(0, p)} {web_natives::byte_at(1, p)} {web_natives::byte_at(2, p)} {web_natives::byte_at(3, p)} {web_natives::byte_at(7, p)}");
+  web_natives::pack_reset();
+  web_natives::pack_u8(263);
+  web_natives::pack_u16_le(-1);
+  q = web_natives::pack_take();
+  e = web_natives::pack_take();
+  println("PACK2 {q.len()} {web_natives::byte_at(0, q)} {web_natives::byte_at(2, q)} {web_natives::byte_at(-1, q)} {web_natives::byte_at(3, q)} {e.len()}");
   c = web_natives::ws_connect("{ws}/ws");
   web_natives::ws_client_send(c, "hi");
   got = "";
@@ -86,7 +92,7 @@ fn main() {
 "#;
 
 /// The lines the program prints, fixed by the server's answers.
-const WANT: [&str; 12] = [
+const WANT: [&str; 13] = [
     "BIN 200 5 65 0 255 66 10",
     "HDR true",
     "POST 200 POST hello v1",
@@ -94,6 +100,7 @@ const WANT: [&str; 12] = [
     "REFUSED 0",
     "SIZE 1234",
     "PACK 8 0 255 2 1 255",
+    "PACK2 3 7 255 -1 -1 0",
     "WS echo:hi 1",
     "WSBIN 2 8 255 2",
     "GROUP true echo:g",

@@ -100,7 +100,7 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
-D18–D19j, D20–D23, D25, D29, D31, D34 and D36 are there.
+D18–D19j, D20–D23, D25, D29–D31, D34 and D36 are there.
 
 ### Correctness
 
@@ -135,7 +135,6 @@ D18–D19j, D20–D23, D25, D29, D31, D34 and D36 are there.
 | D27 | the interpreter's store instruments (generation, recording, tag, timestamps, init shadow) | P0b |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | open — P3 |
 | D33 | a call result rebound in a loop (`x = mul(a, x)`): native rotates the call's return buffer (`__rbb`, `@FR-O-Buffer`) and makes no store; the C adopts the result and frees the old store, so it makes and frees one store per iteration; the interpreter exchanges (`@FR-H-SwapRebind`) and also makes one, freeing the TOP slot.  Under `LOFT_STRICT_STORES` the C therefore runs out of numbers in a long loop (`c_sweep.py --strict-stores` files it as beyond the mode) | open — C moves (`@FR-R-RebindBuffer` in the C writer; the performance stream's).  Measured by hand on the emitted unit: the rotation saves about 7 % on a 3 000 000-iteration `x = mul(a, x)` loop at `-O3` (0.14 s → 0.13 s, same answer) — a C store's make and free are cheap |
-| D30 | an image of another layout: the interpreter converts it (`Stores::upgrade_store`), C refuses it by name (`loft_image.h`) — except the null-first key order, which C converts by itself (`loft_rekey_walk`) | open — P0b (port), the key-order case done |
 
 ## How a divergence is closed
 

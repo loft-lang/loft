@@ -137,10 +137,13 @@ compiler can see the place will not survive the binding, it gives `tmp` its own
 copy instead — taken at the bind, so it holds the value you bound — and says so:
 
 ```
-advice: in `f`, `c` was copied out of `bx` because `bx` is reassigned while `c`
-  is in use — a view names a place inside `bx`, and giving `bx` a new value
-  leaves nothing for it to point at. Writes through `c` no longer reach `bx`.
+advice[view-copied]: in `f`, `c` was copied out of `bx` because `bx` is reassigned
+  while `c` is in use — a view names a place inside `bx`, and giving `bx` a new
+  value leaves nothing for it to point at. Writes through `c` no longer reach `bx`.
+  --> prog.loft:6:0
 ```
+
+The location is the statement that ended the place.
 
 Four things end the place: **removing** from the container (`v.remove(i)`
 renumbers the rest), **growing** it (`v += [x]`, an insert, a keyed add — a

@@ -111,47 +111,36 @@ thread_local! {
     static SITES: RefCell<Vec<CopySite>> = const { RefCell::new(Vec::new()) };
 }
 
+/// One view the scope pass copied out of its container: the row its sentence is built from —
+/// `(binding, container, function)`, deduped on all three — and the statement that disturbed
+/// the container, which is where the advice points.
+struct ViewNote {
+    row: (String, String, String),
+    file: String,
+    line: u32,
+}
+
 thread_local! {
     /// @PLN130 F2/F4/F8 — bindings whose alias was taken away because the container they view
-    /// changed under them: `(binding, container, function)`. Recorded by `scopes`, reported to
-    /// the author by [`report_materialised_views`].
+    /// changed under them. Recorded by `scopes`, handed to the author's diagnostics by
+    /// [`drain_materialised_views`].
     ///
     /// The function name is part of the key, not decoration. Entries dedupe on it, and without
     /// it `c` copied out of `bx` reported ONCE for a whole program — every other site with the
     /// same two names went silent, which is the one thing this diagnostic may not do.
-    static MATERIALISED: RefCell<Vec<(String, String, String)>> =
-        const { RefCell::new(Vec::new()) };
+    static MATERIALISED: RefCell<Vec<ViewNote>> = const { RefCell::new(Vec::new()) };
 }
 
-thread_local! {
-    /// The rows [`report_materialised_views`] has already printed.  Kept so the program cache
-    /// can still write them: `main` reports before it saves the bundle, and a warm load has
-    /// no scope pass to note them again.
-    static REPORTED: RefCell<Vec<(String, String, String)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Every materialised view this compilation noted, printed or not — what the program cache
-/// writes beside the parse so a warm run says what the cold run said (`startup_cache`).
-#[must_use]
-pub fn materialised_rows() -> Vec<(String, String, String)> {
-    let mut rows = MATERIALISED.with(|m| m.borrow().clone());
-    REPORTED.with(|r| rows.extend(r.borrow().iter().cloned()));
-    rows
-}
-
-/// Replay the rows a cold run noted, on a warm load that runs no scope pass of its own.
-pub fn restore_materialised(rows: Vec<(String, String, String)>) {
-    for row in rows {
-        note(row);
-    }
-}
-
-/// Record one materialised view, deduped on the whole key.
-fn note(key: (String, String, String)) {
+/// Record one materialised view at `file:line`, deduped on its row.
+fn note(row: (String, String, String), file: &str, line: u32) {
     MATERIALISED.with(|m| {
         let mut m = m.borrow_mut();
-        if !m.contains(&key) {
-            m.push(key);
+        if !m.iter().any(|n| n.row == row) {
+            m.push(ViewNote {
+                row,
+                file: file.to_string(),
+                line,
+            });
         }
     });
 }
@@ -161,12 +150,22 @@ fn note(key: (String, String, String)) {
 /// The author asked for an alias and is getting a copy, so this is not an internal detail —
 /// a write through `var` no longer reaches the container. Reported unconditionally: a silent
 /// copy is the one thing the model does not allow.
-pub fn note_materialised_view(var: &str, container: &str, function: &str, via: Option<&str>) {
-    note((
-        with_via(var, via),
-        container.to_string(),
-        function.to_string(),
-    ));
+pub fn note_materialised_view(
+    var: &str,
+    container: &str,
+    function: &str,
+    via: Option<&str>,
+    at: (&str, u32),
+) {
+    note(
+        (
+            with_via(var, via),
+            container.to_string(),
+            function.to_string(),
+        ),
+        at.0,
+        at.1,
+    );
 }
 
 /// Append the CALLEE a disturbance travelled through to a row's first field (@PLN164 C3).
@@ -196,12 +195,16 @@ fn peel_via(var: &str) -> (&str, String) {
 /// Separate message from [`note_materialised_view`]: the cause is different (a key write, not
 /// a removal) and so is the way out — re-insert with `coll[key] = value` rather than
 /// restructure the loop.
-pub fn note_rekeyed_view(var: &str, coll: &str, field: &str, function: &str) {
-    note((
-        format!("{var}\u{0}rekey\u{0}{field}"),
-        coll.to_string(),
-        function.to_string(),
-    ));
+pub fn note_rekeyed_view(var: &str, coll: &str, field: &str, function: &str, at: (&str, u32)) {
+    note(
+        (
+            format!("{var}\u{0}rekey\u{0}{field}"),
+            coll.to_string(),
+            function.to_string(),
+        ),
+        at.0,
+        at.1,
+    );
 }
 
 /// Note that `var` was copied out of `owner` because `owner` is REASSIGNED while `var` is
@@ -217,83 +220,158 @@ pub fn note_rekeyed_view(var: &str, coll: &str, field: &str, function: &str) {
 /// Separate message from [`note_materialised_view`] for the reason that rule split the event
 /// in two: a removal renumbers the elements after the one removed, a growth can move all of
 /// them at once, and a reader sent looking for the wrong statement pays for the difference.
-pub fn note_grown_view(var: &str, container: &str, function: &str, via: Option<&str>) {
-    note((
-        format!("{}\u{0}grow", with_via(var, via)),
-        container.to_string(),
-        function.to_string(),
-    ));
+pub fn note_grown_view(
+    var: &str,
+    container: &str,
+    function: &str,
+    via: Option<&str>,
+    at: (&str, u32),
+) {
+    note(
+        (
+            format!("{}\u{0}grow", with_via(var, via)),
+            container.to_string(),
+            function.to_string(),
+        ),
+        at.0,
+        at.1,
+    );
 }
 
 /// `@FR-B-OutOfLine` — `var` views a child of `owner` that a write of a possible null releases.
-pub fn note_released_view(var: &str, owner: &str, function: &str, via: Option<&str>) {
-    note((
-        format!("{}\u{0}release", with_via(var, via)),
-        owner.to_string(),
-        function.to_string(),
-    ));
+pub fn note_released_view(
+    var: &str,
+    owner: &str,
+    function: &str,
+    via: Option<&str>,
+    at: (&str, u32),
+) {
+    note(
+        (
+            format!("{}\u{0}release", with_via(var, via)),
+            owner.to_string(),
+            function.to_string(),
+        ),
+        at.0,
+        at.1,
+    );
 }
 
-pub fn note_reassigned_view(var: &str, owner: &str, function: &str, via: Option<&str>) {
-    note((
-        format!("{}\u{0}reassign", with_via(var, via)),
-        owner.to_string(),
-        function.to_string(),
-    ));
+pub fn note_reassigned_view(
+    var: &str,
+    owner: &str,
+    function: &str,
+    via: Option<&str>,
+    at: (&str, u32),
+) {
+    note(
+        (
+            format!("{}\u{0}reassign", with_via(var, via)),
+            owner.to_string(),
+            function.to_string(),
+        ),
+        at.0,
+        at.1,
+    );
 }
 
-/// Tell the author which views lost their alias, and why. Drains.
+/// Tell the author which views lost their alias, and why: one `advice[view-copied]` per row,
+/// at the statement that disturbed the container.  Drains.
 ///
-/// Deliberately not gated: constraint 2 of @PLN130 — where rustc errors on a use-after-move,
-/// loft copies and warns. The copy keeps the program correct; this is what keeps it honest.
-pub fn report_materialised_views() {
-    let rows: Vec<(String, String, String)> =
-        MATERIALISED.with(|m| std::mem::take(&mut *m.borrow_mut()));
-    for (var, container, function) in &rows {
-        if let Some(name) = var.strip_suffix("\u{0}reassign") {
-            let (name, via) = peel_via(name);
-            eprintln!(
-                "advice: in `{function}`, `{name}` was copied out of `{container}` because \
-                 `{container}` is reassigned{via} while `{name}` is in use — a view names a \
-                 place inside `{container}`, and giving `{container}` a new value leaves \
-                 nothing for it to point at. Writes through `{name}` no longer reach \
-                 `{container}`."
-            );
-        } else if let Some(name) = var.strip_suffix("\u{0}release") {
-            let (name, via) = peel_via(name);
-            eprintln!(
-                "advice: in `{function}`, `{name}` was copied out of `{container}` because a \
-                 field of `{container}` that `{name}` views is set to a value that may be \
-                 null{via} while `{name}` is in use — writing null releases the record the \
-                 view names. Writes through `{name}` no longer reach `{container}`."
-            );
-        } else if let Some(name) = var.strip_suffix("\u{0}grow") {
-            let (name, via) = peel_via(name);
-            eprintln!(
-                "advice: in `{function}`, `{name}` was copied out of `{container}` because \
-                 `{container}` grows{via} while `{name}` is in use — a container that outgrows \
-                 its allocation moves every element, so the view could not stay valid. Writes \
-                 through `{name}` no longer reach `{container}`."
-            );
-        } else if let Some((name, field)) = var.split_once("\u{0}rekey\u{0}") {
-            eprintln!(
-                "advice: in `{function}`, `{name}` was copied out of `{container}` because \
-                 `{field}` is one of `{container}`'s keys — writing a key through an element \
-                 would leave it reachable by no key at all. Writes through `{name}` no longer \
-                 reach `{container}`; to change a key, re-insert with \
-                 `{container}[key] = value`."
-            );
-        } else {
-            let (var, via) = peel_via(var);
-            eprintln!(
-                "advice: in `{function}`, `{var}` was copied out of `{container}` because \
-                 `{container}` is modified{via} while `{var}` is in use — removing an element \
-                 renumbers the others, so the view could not stay valid. Writes through \
-                 `{var}` no longer reach `{container}`."
-            );
-        }
+/// Through `Diagnostics` like every other lint, so it is rendered, cached for a warm start
+/// and addressed (`reaches_author`) as they are: a dependency's copied views are its own
+/// author's to read, not its consumer's (loft#2364).  Not a gate — constraint 2 of @PLN130:
+/// where rustc errors on a use-after-move, loft copies and says so.  The copy keeps the
+/// program correct; this is what keeps it honest.
+pub fn drain_materialised_views(diags: &mut crate::diagnostics::Diagnostics) {
+    let rows = MATERIALISED.with(|m| std::mem::take(&mut *m.borrow_mut()));
+    for ViewNote { row, file, line } in rows {
+        diags.add_at_coded(
+            crate::diagnostics::Level::Advice,
+            Some("view-copied"),
+            &view_sentence(&row),
+            &file,
+            line,
+            0,
+        );
+        let name = row.0.split(['\u{0}', '\u{1}']).next().unwrap_or_default();
+        let container = &row.1;
+        // The two ways out LOFT_DATA.md § views names: finish with the view first, or take it
+        // again once the container has changed.  Both keep writes reaching the container.
+        diags.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("finish with `{name}` before line {line}"),
+            condition: Some(format!(
+                "writes through `{name}` are meant to reach `{container}`"
+            )),
+            edit: None,
+            concept: "move",
+            concept_ref: "@F106",
+        });
+        diags.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("bind `{name}` again after line {line}"),
+            condition: Some(format!(
+                "`{name}` should name the place as `{container}` holds it after the change"
+            )),
+            edit: None,
+            concept: "move",
+            concept_ref: "@F106",
+        });
     }
-    REPORTED.with(|r| r.borrow_mut().extend(rows));
+}
+
+/// Forget the noted views unreported — a warm load replays the cold run's diagnostics, these
+/// among them, so a scope pass that noted them again would say each twice.
+pub fn clear_materialised_views() {
+    MATERIALISED.with(|m| m.borrow_mut().clear());
+}
+
+/// The sentence a row earns, by the cause its first field's suffix names.
+fn view_sentence(row: &(String, String, String)) -> String {
+    let (var, container, function) = row;
+    if let Some(name) = var.strip_suffix("\u{0}reassign") {
+        let (name, via) = peel_via(name);
+        format!(
+            "in `{function}`, `{name}` was copied out of `{container}` because \
+             `{container}` is reassigned{via} while `{name}` is in use — a view names a \
+             place inside `{container}`, and giving `{container}` a new value leaves \
+             nothing for it to point at. Writes through `{name}` no longer reach \
+             `{container}`."
+        )
+    } else if let Some(name) = var.strip_suffix("\u{0}release") {
+        let (name, via) = peel_via(name);
+        format!(
+            "in `{function}`, `{name}` was copied out of `{container}` because a \
+             field of `{container}` that `{name}` views is set to a value that may be \
+             null{via} while `{name}` is in use — writing null releases the record the \
+             view names. Writes through `{name}` no longer reach `{container}`."
+        )
+    } else if let Some(name) = var.strip_suffix("\u{0}grow") {
+        let (name, via) = peel_via(name);
+        format!(
+            "in `{function}`, `{name}` was copied out of `{container}` because \
+             `{container}` grows{via} while `{name}` is in use — a container that outgrows \
+             its allocation moves every element, so the view could not stay valid. Writes \
+             through `{name}` no longer reach `{container}`."
+        )
+    } else if let Some((name, field)) = var.split_once("\u{0}rekey\u{0}") {
+        format!(
+            "in `{function}`, `{name}` was copied out of `{container}` because \
+             `{field}` is one of `{container}`'s keys — writing a key through an element \
+             would leave it reachable by no key at all. Writes through `{name}` no longer \
+             reach `{container}`; to change a key, re-insert with \
+             `{container}[key] = value`."
+        )
+    } else {
+        let (var, via) = peel_via(var);
+        format!(
+            "in `{function}`, `{var}` was copied out of `{container}` because \
+             `{container}` is modified{via} while `{var}` is in use — removing an element \
+             renumbers the others, so the view could not stay valid. Writes through \
+             `{var}` no longer reach `{container}`."
+        )
+    }
 }
 
 /// Record a deep copy at the moment it is emitted.
@@ -347,7 +425,6 @@ pub fn clear() {
 pub fn begin_compilation() {
     clear();
     MATERIALISED.with(|s| s.borrow_mut().clear());
-    REPORTED.with(|s| s.borrow_mut().clear());
     clear_lease();
 }
 

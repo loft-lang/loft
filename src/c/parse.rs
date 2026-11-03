@@ -120,7 +120,7 @@ impl Cx<'_> {
             out,
             "static const loft_pfield loft_pf{tp}[] = {{ {} }};",
             if field_rows.is_empty() {
-                "{ \"\", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }".to_string()
+                "{ \"\", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }".to_string()
             } else {
                 field_rows.join(", ")
             }
@@ -361,11 +361,16 @@ impl Cx<'_> {
             }
             Some(Content::Str(s)) => ("LOFT_PD_STR", 0, 0, s.str().to_string()),
         };
-        let target = self
-            .reference_target(f)
-            .map_or_else(String::new, |t| format!(", .target = {t}"));
+        // Every field written, positionally: a row that stopped early would leave the group and
+        // the target to the compiler's zero, which `-Wextra` reports at every row.
+        let group = if group.is_empty() {
+            ", 0, 0, 0, 0, 0"
+        } else {
+            group
+        };
+        let target = self.reference_target(f).unwrap_or(0);
         format!(
-            "{{ {}, {}, {}, {}, {}, {}, {dkind}, {}, UINT64_C({dbits:#x}), {}, {}{group}{target} }}",
+            "{{ {}, {}, {}, {}, {}, {}, {dkind}, {}, UINT64_C({dbits:#x}), {}, {}{group}, {target} }}",
             c_string(&f.name),
             f.content,
             f.position,

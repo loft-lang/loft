@@ -719,6 +719,10 @@ static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
             loft_lazy_refuse(coll, loft_lit(composite, sizeof composite - 1));
             return 0;
         }
+        /* The key crosses the `setjmp` as the rest of this frame's state does: volatile. */
+        volatile int64_t key_i = key_int;
+        const char *volatile key_p = key_text.p;
+        volatile size_t key_n = key_text.len;
         jmp_buf jb;
         jmp_buf *volatile outer = loft_lazy_jmp;
         volatile uint64_t serial0 = loft_stores_allocated;
@@ -734,7 +738,7 @@ static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
 #if defined(LOFT_HALT_RELEASE)
             loft_lazy_held_floor = loft_nheld;
 #endif
-            answer = driver(coll, loft_view(&b->source), key_int, key_text);
+            answer = driver(coll, loft_view(&b->source), key_i, loft_lit(key_p, key_n));
             loft_lazy_jmp = outer;
 #if defined(LOFT_HALT_RELEASE)
             loft_lazy_held_floor = held_outer;
@@ -749,7 +753,7 @@ static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
 #endif
             for (uint32_t i = 0; i < loft_nstores; i++)
                 if (loft_stores[i].live && loft_stores[i].serial > serial0) {
-                    loft_ref r = { (uint16_t) i, 0, 0 };
+                    loft_ref r = { (uint16_t) i, 0, 0, 0 };
                     loft_free_ref(r);
                 }
 #if defined(LOFT_CALL_CHAIN)

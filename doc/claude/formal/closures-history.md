@@ -1259,6 +1259,17 @@ permanent refusal as distance from the spec overstates the register by one.
 Opened and closed in the same change, by the `(T-Chk-Lam)` walk; the chapter's `OPEN:` line
 never carried it.
 
+* **D-clo-52** *(opened 2026-11-01, CLOSED 2026-11-02; loft#2284)* — `(L-CapOwn)`: overwriting a fn field releases a capture its frame still owns
+  when the displaced record was left behind in that frame (loft#2284).  Ownership is marked per
+  closure-record TYPE, and one fn field's record type serves every function that assigns the
+  field, so a record that leaves its frame in one function and stays behind in another cannot
+  both own and borrow.  **Fix** (39635f0c7).  The per-type mark could not answer it, so the answer moved to the build
+  SITE: an overwrite of a fn field whose displaced record the frame built in place keeps that
+  record's captures to the frame (`own_build_keeps_its_captures`), and a release through the
+  displaced record stands down where the frame still names the store
+  (`captures_of_displaced_records`, `ReleaseOps::unless_own_build`).  Guard: loft-suite
+  `rules/closures/L-CapOwn/2284-overwriting-a-fn-field-leaves-the-frames-captures-to-the-frame.loft`.
+
 * **D-clo-51** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(L-Apply)` / `(L-FnAbsent)` on
   `--native`: calling a function VALUE whose result is itself a function did not compile.
   `output_call_ref` set `fn_ref_context` for an argument whose parameter is a function and left

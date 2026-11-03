@@ -10,6 +10,21 @@ use super::{
 // Field access, indexing, and iterator operations.
 
 impl Parser {
+    /// The frame variables a field read through `receiver` borrows from: the receiver's own
+    /// deps, less the `u16::MAX` pointer/share markers.  A `reference<T>` field's declared
+    /// type carries the pointer marker, and a reference read off a TEMPORARY (`mk().to`,
+    /// `T.parse(s).to`) keeps it, having no frame variable to be rebased on as `p.to` is on
+    /// `p`.  A read through it (`.name`) then borrows from no frame variable, exactly as a
+    /// read through a temporary's embedded field (`mk().a.name`) does — asked of the marker,
+    /// `Type::depending` stopped the compile (loft#2369).
+    fn receiver_frame_deps(receiver: &Type) -> Vec<u16> {
+        receiver
+            .depend()
+            .into_iter()
+            .filter(|&on| on != u16::MAX)
+            .collect()
+    }
+
     /// loft#1733 — `Sh.Dot { r: 1 }`, a struct variant named through its enum and then given
     /// fields.  `Sh.Dot` alone is the variant with every field at its default, so the braces
     /// are what a reader reaches for next, and the parser met them as the end of a statement:
@@ -579,7 +594,7 @@ impl Parser {
                 // the layout's `known_type`, assigned in `fill_all`) emits only in
                 // the second pass.
                 let enum_d = *enum_d_nr;
-                let dep = t.depend();
+                let dep = Self::receiver_frame_deps(&t);
                 t = self.data.attr_type(found_d_nr, found_fnr);
                 for on in dep {
                     t = t.depending(on);
@@ -853,13 +868,13 @@ impl Parser {
                 }
             }
             *code = Self::replace_record_ref(expr, &code.clone());
-            let dep = t.depend();
+            let dep = Self::receiver_frame_deps(&t);
             t = self.data.attr_type(dnr, fnr);
             for on in dep {
                 t = t.depending(on);
             }
         } else {
-            let dep = t.depend();
+            let dep = Self::receiver_frame_deps(&t);
             t = self.data.attr_type(dnr, fnr);
             for on in dep {
                 t = t.depending(on);

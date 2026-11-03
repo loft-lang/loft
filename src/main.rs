@@ -9771,10 +9771,6 @@ fn main() {
                 p.diagnostics.restore_from_cache(e);
             }
             report_parse_diagnostics(&p.diagnostics, no_warnings, error_mode_arg.as_deref());
-            // The copied-out views the cold run's scope pass noted, in the cold run's order:
-            // after the parse diagnostics, before the program runs.
-            loft::copy_manifest::restore_materialised(hit.materialised);
-            loft::copy_manifest::report_materialised_views();
             native_utils::touch_cached_binary(&hit.binary);
             exec_native_binary(
                 &hit.binary,
@@ -9986,8 +9982,13 @@ fn main() {
         scopes_ms = t.elapsed().as_secs_f64() * 1000.0;
         // A warm load replays the cold run's diagnostics, these lints' among them; running
         // them again reported each warning twice (loft#1858).
-        if !program_warm {
+        if program_warm {
+            loft::copy_manifest::clear_materialised_views();
+        } else {
             let t = std::time::Instant::now();
+            // @PLN130 F2 — the views the scope pass copied out of a container that changed
+            // under them.  The copy keeps the program correct; this keeps it honest.
+            loft::copy_manifest::drain_materialised_views(&mut p.diagnostics);
             loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
             lints_ms = t.elapsed().as_secs_f64() * 1000.0;
         }
@@ -10076,9 +10077,6 @@ fn main() {
     // @PLN90 Step 5 — the user-facing copy report, emitted ONCE here (the whole program is now
     // loaded + checked) rather than per file-load. Gated on `--report-copies`; a no-op otherwise.
     loft::use_analysis::report_copies(&p.data);
-    // @PLN130 F2 — views whose alias was taken away because their container is reshaped
-    // while they are live.  The copy keeps the program correct; this keeps it honest.
-    loft::copy_manifest::report_materialised_views();
     // @PLN11 Arc N / N3 (Step 2) — auto-compile `use`d libraries that opted in via
     // `[library] compile = "native"`, **build-before-mark**: build each library's
     // cdylib from the post-parse type schema FIRST, then mark its functions native

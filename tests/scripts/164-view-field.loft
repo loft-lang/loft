@@ -414,13 +414,16 @@ fn p17(sc: Sc, n: integer) -> Mark {
 /// Grows the container it is handed — what `b3`'s site calls between the bind and the read.
 fn grow_ops(sc: Sc) { sc.ops += [Op { opts: [], ow: 7 }]; }
 
-fn main() {
+fn the_admitted_forms() {
   // a1 — the admitted form, read as a length and through a `const` argument.
   s1 = Sc { ops: [], seen: 0 };
   m1 = a1(s1, 3);
   ok("a1 natural form       ", "{m1.matched},{m1.bad},{len(m1.mpts)},{totp(m1.mpts)}", "true,false,3,9");
   ok("a1 the container too  ", "{len(s1.ops)},{totp(s1.ops[0]?.opts)}", "1,9");
 
+}
+
+fn a_pooled_callee_in_a_loop() {
   // e1 — the parser's caller: an admitted callee called in a LOOP, so its buffer is pooled
   // and released before each reuse; in the value form that buffer is never minted, and
   // neither is its release.  n = 1..4: len*100 + 3n(n-1)/2 = 100, 203, 309, 418.
@@ -432,6 +435,9 @@ fn main() {
   }
   ok("e1 pooled caller      ", "{e1t},{len(se1.ops)}", "1030,4");
 
+}
+
+fn the_admitted_forms_2() {
   // a2 — both exits of one function: the empty literal and the view.
   s2 = Sc { ops: [], seen: 0 };
   m2a = a2(s2, -1);
@@ -461,6 +467,9 @@ fn main() {
   s5.seen = s5.seen + 1;
   ok("a5 sibling disturbed  ", "{len(m5.mpts)},{totp(m5.mpts)},{s5.seen}", "3,9,1");
 
+}
+
+fn a_copied_source() {
   // d1 — a frame-owned source keeps the copy, and the values are the copy's.
   d1m = d1(3);
   ok("d1 frame-owned source ", "{d1m.matched},{len(d1m.mpts)},{totp(d1m.mpts)}", "true,3,9");
@@ -490,6 +499,9 @@ fn main() {
   md6 = d6(4);
   ok("d6 filled by a literal", "{len(md6.mpts)},{totp(md6.mpts)}", "2,21");
 
+}
+
+fn a_site_that_keeps_the_record() {
   // b1 — a site that WRITES through the field: the write reaches the caller's own copy and
   // NOT the container, which is what the record form promises.
   sb1 = Sc { ops: [], seen: 0 };
@@ -556,6 +568,9 @@ fn main() {
   ok("b8 removed between    ", "{len(mb8a.mpts)},{totp(mb8a.mpts)}", "2,3");
   ok("b8 the later one too  ", "{len(mb8b.mpts)},{totp(mb8b.mpts)}", "5,30");
 
+}
+
+fn the_positive_controls() {
   // c1 — the POSITIVE control for b2: the disturbance comes AFTER the last read, so the
   // view is admitted and answers the same.
   sc1 = Sc { ops: [], seen: 0 };
@@ -574,6 +589,9 @@ fn main() {
   }
   ok("c2 bind dominates     ", "{c2_sum},{len(sc2.ops)}", "612,3");
 
+}
+
+fn the_per_path_cells() {
   // p* — the per-path cells.  mkpts(n): len n, totp 3n(n-1)/2, so 3 → 9, 4 → 18, 5 → 30.
 
   sp = Sc { ops: [], seen: 0 };
@@ -616,6 +634,9 @@ fn main() {
   rp13 = p7d(sp, 3);
   ok("p7d     ", "{rp13.matched},{rp13.bad},{len(rp13.mpts)},{totp(rp13.mpts)}", "true,false,3,109");
   ok("p7 all  ", "{len(sp.ops)},{totp(sp.ops[0]?.opts)},{totp(sp.ops[1]?.opts)},{totp(sp.ops[2]?.opts)},{totp(sp.ops[3]?.opts)}", "4,9,9,9,9");
+}
+
+fn the_per_path_cells_2() {
   sp = Sc { ops: [], seen: 0 };
   rp14 = p8(sp);
   ok("p8      ", "{rp14.matched},{rp14.bad},{len(rp14.mpts)},{totp(rp14.mpts)}", "true,false,3,9");
@@ -671,4 +692,17 @@ fn main() {
   ok("p17 ops ", "{len(sp.ops)},{totp(sp.ops[0]?.opts)}", "1,9");
 
   println("164-view-field: every cell holds");
+}
+
+// One function per family of cells (no local crosses between them): one C function of
+// 3192 lines took MSVC `cl` past the C sweep's compile limit, where gcc takes seconds.
+fn main() {
+  the_admitted_forms();
+  a_pooled_callee_in_a_loop();
+  the_admitted_forms_2();
+  a_copied_source();
+  a_site_that_keeps_the_record();
+  the_positive_controls();
+  the_per_path_cells();
+  the_per_path_cells_2();
 }

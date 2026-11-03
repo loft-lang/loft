@@ -108,12 +108,15 @@ def msvc_args(gnu: list[str]) -> list[str]:
 
 def host_build(flags: list[str], c: str, exe: str, links: list[str]) -> list[str]:
     """The host compiler's command for `c` into `exe`."""
+    # The main thread's stack the driver gives a program on Windows (`platform::c_main_stack_args`,
+    # 8 MiB as on Linux): `cl` takes `/F<bytes>`, MinGW's linker `--stack`.
     if MSVC:
-        return [HOST_CC, "/nologo"] + msvc_args(CC[1:] + flags) + \
+        return [HOST_CC, "/nologo", f"/F{8 << 20}"] + msvc_args(CC[1:] + flags) + \
             [c, f"/Fe:{exe}.exe", f"/Fo:{exe}.obj"] + msvc_args(links)
+    stack = [f"-Wl,--stack,{8 << 20}"] if sys.platform == "win32" else []
     # `-lm` after the shim archives, as the driver links them: a static archive's math calls
     # (an OGG decoder's `cos`) resolve only against a library named after it.
-    return CC + flags + [c, "-o", exe] + links + ["-lm"] + SYSTEM_LIBS
+    return CC + flags + [c, "-o", exe] + links + ["-lm"] + SYSTEM_LIBS + stack
 MODES = {
     "strict": ["-DLOFT_STRICT", "-pedantic", "-Werror"],
     "default": ["-w"],

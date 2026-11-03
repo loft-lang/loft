@@ -16,9 +16,11 @@
 //! The writer is the allow-list.  An operation on a transient value that no arm here answers
 //! is an `Err`, and so is a transient variable reaching the ordinary expression path, so a
 //! twin that cannot be written is declined whole (and every twin tried inside it), and a
-//! function whose site cannot be written is written again without it.  Opt-in while it is
-//! built (`LOFT_TRANSIENT=1`); `LOFT_TRACE_TRANSIENT=1` names each twin and site written and
-//! each declined, with the reason.
+//! function whose site cannot be written is written again without it.  A twin writes only the
+//! records it builds itself (`TrFn::owned`), and a record copy seals its vectors (`lt_seal_*`):
+//! a transient tree may share records where the store form copied them, so nothing reachable
+//! from another tree is written.  `LOFT_NO_TRANSIENT=1` keeps every value in the store;
+//! `LOFT_TRACE_TRANSIENT=1` names each twin and site written and each declined, with the reason.
 
 use super::{E, FnWriter, K, var_name};
 use crate::c::{CType, Cx, c_name, held, passed};
@@ -27,10 +29,10 @@ use crate::database::Parts;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
-/// `LOFT_TRANSIENT=1` turns the rule on; it is off by default while it is built (S8 of
-/// `bench/portal/analysis/transient.md`), so the default emission is unchanged.
+/// `LOFT_NO_TRANSIENT=1` turns the rule off: the same-build oracle of every A/B and the first
+/// bisect step for a wrong answer out of a value read and dropped.
 pub(crate) fn enabled() -> bool {
-    crate::env_once!(std::env::var("LOFT_TRANSIENT").is_ok_and(|v| v != "0"))
+    !crate::env_once!(std::env::var("LOFT_NO_TRANSIENT").is_ok_and(|v| v != "0"))
 }
 
 fn trace() -> bool {
@@ -65,7 +67,8 @@ impl Member {
             Member::Enum => "e",
             Member::Text => "t",
             Member::Vector => "v",
-            Member::Record(_) => "r",
+            // Two variants may hold different records at one offset: the group names it.
+            Member::Record(g) => return format!("r{off}_{g}"),
         };
         format!("{p}{off}")
     }
@@ -80,6 +83,11 @@ pub(crate) struct TrState {
     bodies: String,
     members: BTreeMap<u16, BTreeSet<(i64, Member)>>,
     zeros: BTreeSet<(u16, i64)>,
+    /// The groups a record copy seals (`lt_seal_<g>`): each vector member's room cut to its
+    /// length, so a push into the copy moves it rather than writing past the source's end.
+    seals: BTreeSet<u16>,
+    /// Each function asked for a `__wr` twin, and whether it was written.
+    work_twins: HashMap<u32, bool>,
     groups: BTreeSet<u16>,
     parents: Option<HashMap<u16, u16>>,
 }
@@ -123,6 +131,14 @@ pub(crate) struct TrFn {
     phantom: Option<u16>,
     /// Set while a producer call is evaluated for a transient local.
     want_result: bool,
+    /// The transient locals this twin builds itself — every binding a mint, or its result
+    /// buffer.  Only these are written: a parameter, a call's answer, an element or an alias
+    /// may share its records with a tree the store form would have copied (`pa_get` answers
+    /// a pointer into its argument), so a write through one could reach that tree.
+    owned: HashSet<u16>,
+    /// Text locals served by another text: a lifted argument by the transient text it copies
+    /// (`true`), a work-buffer call's result by the buffer (`false`).
+    text_lifts: Option<HashMap<u16, (Value, bool)>>,
 }
 
 impl TrFn {
@@ -257,6 +273,20 @@ impl Cx<'_> {
 
     /// Is group `g` one of `groups`, or the holder record of a vector of one (the store a
     /// collection local is built in, `main_vector<T>`)?
+    /// A record of scalars and texts alone — the element a vector producer may build in the
+    /// arena (zttext's `Run`); one that holds a vector or a record keeps the store form.
+    fn tr_flat(&self, g: u16) -> bool {
+        match &self.stores.types[g as usize].parts {
+            Parts::Struct(fs) => fs.iter().all(|f| {
+                !matches!(
+                    self.stores.types[f.content as usize].parts,
+                    Parts::Vector(_) | Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_)
+                )
+            }),
+            _ => false,
+        }
+    }
+
     fn tr_in_groups(&self, v: TrVar, groups: &BTreeSet<u16>) -> bool {
         match v {
             TrVar::Rec(g) => {
@@ -289,8 +319,11 @@ impl Cx<'_> {
             (st.protos.len(), st.bodies.len(), st.order.len() - 1)
         };
         match write_twin(self, key, &name) {
-            Ok((sig, body)) => {
+            Ok((sig, body, inner)) => {
                 let mut st = self.tr.borrow_mut();
+                if let Some(inner) = inner {
+                    let _ = writeln!(st.protos, "{inner};");
+                }
                 let _ = writeln!(st.protos, "{sig};");
                 let _ = write!(st.bodies, "\n{sig} {{\n{body}}}\n");
                 if trace() {
@@ -387,6 +420,40 @@ impl Cx<'_> {
                 parts.join(" ")
             );
         }
+        // A sealed copy's nested records are sealed with it.
+        let mut seals: BTreeSet<u16> = BTreeSet::new();
+        let mut todo: Vec<u16> = st.seals.iter().copied().collect();
+        while let Some(g) = todo.pop() {
+            if seals.insert(g) {
+                for (_, m) in st.members.get(&g).into_iter().flatten() {
+                    if let Member::Record(r) = m {
+                        todo.push(*r);
+                    }
+                }
+            }
+        }
+        for g in &seals {
+            let _ = writeln!(out, "static inline void lt_seal_{g}(lt_{g} *s);");
+        }
+        for g in &seals {
+            let none = BTreeSet::new();
+            let body: Vec<String> = st
+                .members
+                .get(g)
+                .unwrap_or(&none)
+                .iter()
+                .filter_map(|(o, m)| match m {
+                    Member::Vector => Some(format!("s->{n}.cap = s->{n}.n;", n = m.name(*o))),
+                    Member::Record(r) => Some(format!("lt_seal_{r}(&s->{});", m.name(*o))),
+                    _ => None,
+                })
+                .collect();
+            let _ = writeln!(
+                out,
+                "static inline void lt_seal_{g}(lt_{g} *s) {{ (void) s; {} }}",
+                body.join(" ")
+            );
+        }
         out
     }
 }
@@ -425,7 +492,11 @@ fn producer_buffer(cx: &Cx, f: u32, args: &[Value]) -> Option<u16> {
 }
 
 /// Write twin `key` as `name`: its signature and body.
-fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String), String> {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one twin: its result, its parameters, its locals' forms, its owned set, its signature"
+)]
+fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option<String>), String> {
     let data = cx.data;
     let def = data.def(key.d);
     if matches!(def.code(), Value::Null) || !def.name().starts_with("n_") {
@@ -439,7 +510,23 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String), Strin
     if args.len() != def.attributes().len() || args.len() > 63 {
         return Err("parameters that do not match their arguments".into());
     }
+    // `@FR-R-ValueRecord` holds a record result as a struct already, and the twin's body is the
+    // ordinary writer's: its value-record locals and pointer parameters keep their shapes.
+    if cx.value_records().fns.contains_key(&key.d) {
+        return Err("a value-record result".into());
+    }
     let mut shapes = crate::c::variable_shapes(cx, vars, &args, data.body_width32(key.d))?;
+    let vr_locals = cx.vr_locals(key.d);
+    let mut vr_sorted: Vec<(u16, u16)> = vr_locals.iter().map(|(v, k)| (*v, *k)).collect();
+    vr_sorted.sort_unstable();
+    for (v, k) in vr_sorted {
+        if let Some(c) = cx.vr_ctype(k)
+            && (v as usize) < shapes.len()
+        {
+            shapes[v as usize] = c;
+        }
+    }
+    let vr_ptr = cx.vr_ptr_params(key.d);
     let mut tf = TrFn {
         builds: true,
         ..TrFn::default()
@@ -454,13 +541,21 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String), Strin
             .hidden_return_buffer_attr()
             .ok_or("a transient result with no return buffer")?;
         let b = args[i];
-        let Some(TrVar::Rec(g)) = cx.tr_var(vars.tp(b)) else {
+        let tv = cx.tr_var(vars.tp(b));
+        let Some(TrVar::Rec(g) | TrVar::Vec(Elem::Rec(g))) = tv else {
             return Err("a transient result that is not a record".into());
         };
-        tf.vars.insert(b, TrVar::Rec(g));
+        let tv = tv.ok_or("a transient result of no shape")?;
+        tf.vars.insert(b, tv);
         tf.phantom = Some(b);
         phantom_at = Some(i);
-        ret = CType::Tr(g);
+        // A vector answered through its own record (`main_vector<T>`): the twin answers the
+        // vector itself, that record's field 0.
+        ret = if matches!(cx.tr_var(def.returned()), Some(TrVar::Vec(Elem::Rec(_)))) {
+            CType::TrVec
+        } else {
+            tv.ctype()
+        };
         cx.tr_reach(g, &mut groups);
     }
     for (i, &a) in args.iter().enumerate() {
@@ -475,6 +570,12 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String), Strin
         }
     }
     tf.dead = dead_buffers(cx, def.code(), &groups);
+    let mut bindings: Vec<(u16, &Value)> = Vec::new();
+    def.code().walk(&mut |n| {
+        if let Value::Set(v, x) = n {
+            bindings.push((*v, x));
+        }
+    });
     for v in 0..vars.count() {
         if vars.is_argument(v) || tf.dead.contains(&v) {
             continue;
@@ -485,8 +586,32 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String), Strin
             tf.vars.insert(v, tv);
         }
     }
+    if let Some(v) = tf.vars.keys().find(|v| vr_locals.contains_key(v)) {
+        return Err(format!("`{}` a value record", vars.name(*v)));
+    }
     for (v, tv) in &tf.vars {
         shapes[*v as usize] = tv.ctype();
+    }
+    // Owned: every binding a mint, or a field of an owned local (the same memory) — a fixpoint
+    // that only removes.
+    tf.owned = tf
+        .vars
+        .keys()
+        .copied()
+        .filter(|v| !vars.is_argument(*v) || tf.phantom == Some(*v))
+        .collect();
+    loop {
+        let out: Vec<u16> = bindings
+            .iter()
+            .filter(|(v, x)| tf.owned.contains(v) && !is_mint(cx, x) && !field_of(cx, x, &tf.owned))
+            .map(|(v, _)| *v)
+            .collect();
+        if out.is_empty() {
+            break;
+        }
+        for v in out {
+            tf.owned.remove(&v);
+        }
     }
     if trace() {
         let mut vs: Vec<String> = tf
@@ -503,26 +628,58 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String), Strin
         .iter()
         .enumerate()
         .filter(|(i, _)| phantom_at != Some(*i))
-        .map(|(_, &a)| {
+        .map(|(i, &a)| {
             let c = shapes[a as usize];
             let n = var_name(vars.name(a), a);
-            if matches!(vars.tp(a).base(), Type::RefVar(_)) {
+            if vars.is_store_text_link(a) {
+                format!("loft_ref {n}")
+            } else if matches!(vars.tp(a).base(), Type::RefVar(_)) {
                 format!("{} *{n}", held(c))
+            } else if vr_ptr.contains(&i) {
+                format!("const {} *{n}", passed(c))
             } else {
                 format!("{} {n}", passed(c))
             }
         })
+        .collect();
+    let call_args: Vec<String> = args
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| phantom_at != Some(*i))
+        .map(|(_, &a)| var_name(vars.name(a), a))
         .collect();
     let params = if params.is_empty() {
         "void".to_string()
     } else {
         params.join(", ")
     };
-    let sig = format!("static {} {name}({params})", held(ret));
+    let rtype = held(ret);
+    let sig = format!("static {rtype} {name}({params})");
     let (body, _) = FnWriter::new(cx, key.d, shapes, ret)
         .transient(tf)
         .write()?;
-    Ok((sig, body))
+    // A twin that holds texts for a halt (`LOFT_HOLD`) gives them back on its way out, as the
+    // ordinary function's wrapper does (`LOFT_HOLD_MARK` / `LOFT_HOLD_BACK`): left on the held
+    // list, a halt after the twin returns frees texts in a frame that has ended — a stack use
+    // after scope.
+    if body.contains("LOFT_HOLD(") {
+        let inner = format!("{name}__in");
+        let call = format!("{inner}({})", call_args.join(", "));
+        let wrapper = if rtype == "void" {
+            format!("    LOFT_HOLD_MARK(hm);\n    {call};\n    LOFT_HOLD_BACK(hm);\n")
+        } else {
+            format!(
+                "    LOFT_HOLD_MARK(hm);\n    {rtype} r = {call};\n    LOFT_HOLD_BACK(hm);\n    return r;\n"
+            )
+        };
+        let inner_sig = format!("static {rtype} {inner}({params})");
+        return Ok((
+            sig,
+            format!("{wrapper}}}\n\n{inner_sig} {{\n{body}"),
+            Some(inner_sig),
+        ));
+    }
+    Ok((sig, body, None))
 }
 
 /// The site plan of ordinary function `d`: its one root local — bound from a call to a
@@ -539,7 +696,11 @@ pub(crate) fn site_plan(cx: &Cx, d: u32) -> Option<TrFn> {
         if let Value::Set(v, x) = n
             && let Value::Call(f, args) = x.unspan()
             && let Some(b) = producer_buffer(cx, *f, args)
-            && matches!(cx.tr_var(cx.data.def(*f).returned()), Some(TrVar::Rec(_)))
+            && match cx.tr_var(cx.data.def(*f).returned()) {
+                Some(TrVar::Rec(_)) => true,
+                Some(TrVar::Vec(Elem::Rec(g))) => cx.tr_flat(g),
+                _ => false,
+            }
             && args
                 .iter()
                 .all(|a| !a.any_node(&mut |m| matches!(m, Value::Var(w) if *w == *v)))
@@ -550,23 +711,22 @@ pub(crate) fn site_plan(cx: &Cx, d: u32) -> Option<TrFn> {
             calls.push(*f);
         }
     });
-    let root = roots.first()?.0;
-    if roots.iter().any(|(v, _)| *v != root) {
-        return None;
-    }
-    for f in &calls {
-        cx.tr_twin(TrKey {
-            d: *f,
-            params: 0,
-            result: true,
-        })?;
-    }
+    roots.first()?;
+    let mut root_vars: Vec<u16> = roots.iter().map(|(v, _)| *v).collect();
+    root_vars.sort_unstable();
+    root_vars.dedup();
     let vars = def.variables();
     let mut tf = TrFn::default();
-    tf.vars.insert(root, cx.tr_var(vars.tp(root))?);
-    tf.roots.insert(root, format!("loft_tm{root}"));
+    // One arena mark for the frame, taken at its entry: every root's bind and free give it
+    // back (`lives`).
+    for &root in &root_vars {
+        tf.vars.insert(root, cx.tr_var(vars.tp(root))?);
+        tf.roots.insert(root, "loft_tmf".to_string());
+    }
     tf.dead = roots.iter().map(|(_, b)| *b).collect();
-    // The locals bound from a projection, an element or an alias of a transient local.
+    // The locals bound from a projection, an element or an alias of a transient local, each
+    // with the root it reads.
+    let mut owner: HashMap<u16, u16> = root_vars.iter().map(|r| (*r, *r)).collect();
     loop {
         let mut grew = false;
         code.walk(&mut |n| {
@@ -575,7 +735,18 @@ pub(crate) fn site_plan(cx: &Cx, d: u32) -> Option<TrFn> {
                 && derives(cx, x, &tf.vars)
                 && let Some(tv) = cx.tr_var(vars.tp(*v))
             {
+                let mut from = None;
+                x.walk(&mut |m| {
+                    if from.is_none()
+                        && let Value::Var(w) = m
+                    {
+                        from = owner.get(w).copied();
+                    }
+                });
                 tf.vars.insert(*v, tv);
+                if let Some(r) = from {
+                    owner.insert(*v, r);
+                }
                 grew = true;
             }
         });
@@ -583,13 +754,325 @@ pub(crate) fn site_plan(cx: &Cx, d: u32) -> Option<TrFn> {
             break;
         }
     }
+    if let Err(why) = lives(cx, code, &root_vars, &owner) {
+        if trace() {
+            eprintln!("[transient] site in {} declined: {why}", def.name());
+        }
+        return None;
+    }
+    // The producers' twins only for a site that can hold them: a declined site leaves none.
+    for f in &calls {
+        cx.tr_twin(TrKey {
+            d: *f,
+            params: 0,
+            result: true,
+        })?;
+    }
     Some(tf)
+}
+
+/// The frame's one arena mark is given back at each root's bind and free, which is sound when
+/// no transient value of the frame is still to be read there: each root is bound once, every
+/// read of it — and of a local derived from it — lies inside the block of its bind and after
+/// it, and the roots' spans from bind to last read, in the IR's order, are apart.
+fn lives(cx: &Cx, code: &Value, roots: &[u16], owner: &HashMap<u16, u16>) -> Result<(), String> {
+    struct Walk<'a> {
+        cx: &'a Cx<'a>,
+        roots: &'a [u16],
+        owner: &'a HashMap<u16, u16>,
+        at: usize,
+        blocks: Vec<usize>,
+        binds: HashMap<u16, Vec<(usize, usize)>>,
+        reads: Vec<(u16, usize, Vec<usize>)>,
+    }
+    impl Walk<'_> {
+        fn free_op(&self, d: u32) -> bool {
+            (d as usize) < self.cx.data.definitions.len()
+                && matches!(
+                    self.cx.data.def(d).name(),
+                    "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRecordIn" | "OpClear"
+                )
+        }
+        fn go(&mut self, v: &Value) {
+            self.at += 1;
+            match v.unspan() {
+                Value::Block(b) => {
+                    self.blocks.push(std::ptr::from_ref(&**b) as usize);
+                    for op in &b.operators {
+                        self.go(op);
+                    }
+                    self.blocks.pop();
+                    return;
+                }
+                Value::Set(x, e) if self.roots.contains(x) => {
+                    if !matches!(e.unspan(), Value::Null) {
+                        let blk = self.blocks.last().copied().unwrap_or(0);
+                        self.binds.entry(*x).or_default().push((self.at, blk));
+                    }
+                    self.go(e);
+                    return;
+                }
+                Value::Call(d, args) if self.free_op(*d) => {
+                    // A free names its root without reading it.
+                    for (i, a) in args.iter().enumerate() {
+                        if i == 0 && matches!(a.unspan(), Value::Var(_)) {
+                            continue;
+                        }
+                        self.go(a);
+                    }
+                    return;
+                }
+                Value::Var(w) => {
+                    if let Some(r) = self.owner.get(w) {
+                        self.reads.push((*r, self.at, self.blocks.clone()));
+                    }
+                }
+                _ => {}
+            }
+            v.for_each_child(&mut |c| self.go(c));
+        }
+    }
+    let mut w = Walk {
+        cx,
+        roots,
+        owner,
+        at: 0,
+        blocks: Vec::new(),
+        binds: HashMap::new(),
+        reads: Vec::new(),
+    };
+    w.go(code);
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for r in roots {
+        let [(bind, blk)] = w.binds.get(r).map_or(&[][..], Vec::as_slice) else {
+            return Err("a root bound more than once".into());
+        };
+        let mut last = *bind;
+        for (_, at, blocks) in w.reads.iter().filter(|(o, _, _)| o == r) {
+            if *at <= *bind || !blocks.contains(blk) {
+                return Err("a root read outside its bind's block".into());
+            }
+            last = last.max(*at);
+        }
+        spans.push((*bind, last));
+    }
+    let apart = spans
+        .iter()
+        .enumerate()
+        .all(|(i, a)| spans[i + 1..].iter().all(|b| a.1 < b.0 || b.1 < a.0));
+    if apart {
+        Ok(())
+    } else {
+        Err("its roots live together".into())
+    }
+}
+
+/// The work text an argument hands a callee: the variable, or the `{ w = ""; OpCreateStack(w) }`
+/// block a work argument is lowered to.
+fn work_buffer(x: &Value) -> Option<u16> {
+    match x.unspan() {
+        Value::Var(w) => Some(*w),
+        Value::Block(b) => match b.operators.last().map(Value::unspan) {
+            Some(Value::Call(_, a)) if a.len() == 1 => match a[0].unspan() {
+                Value::Var(w) => Some(*w),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+impl Cx<'_> {
+    /// `d` answers its `&text` parameter — every `return` and its tail name it: that
+    /// parameter's position.
+    pub(crate) fn work_return(&self, func: u32) -> Option<usize> {
+        if (func as usize) >= self.data.definitions.len() {
+            return None;
+        }
+        let def = self.data.def(func);
+        if !def.name().starts_with("n_")
+            || matches!(def.code(), Value::Null)
+            || !matches!(def.returned().base(), Type::Text(_))
+        {
+            return None;
+        }
+        let vars = def.variables();
+        let args = vars.arguments();
+        let mut found = None;
+        for (pos, &arg) in args.iter().enumerate() {
+            if matches!(vars.tp(arg).base(), Type::RefVar(t) if matches!(t.base(), Type::Text(_))) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some((pos, arg));
+            }
+        }
+        let (at, param) = found?;
+        let mut ok = true;
+        def.code().walk(&mut |n| {
+            if let Value::Return(x) = n
+                && !matches!(x.unspan(), Value::Var(w) if *w == param)
+            {
+                ok = false;
+            }
+        });
+        let Value::Block(body) = def.code() else {
+            return None;
+        };
+        let tail_ok = match body.operators.last()?.unspan() {
+            Value::Return(x) => matches!(x.unspan(), Value::Var(w) if *w == param),
+            Value::Var(w) => *w == param,
+            _ => false,
+        };
+        (ok && tail_ok).then_some(at)
+    }
+
+    /// `d`'s `__wr` twin: its body, answering nothing — the caller reads the buffer it filled.
+    pub(crate) fn work_twin(&self, d: u32) -> Option<String> {
+        let name = format!("{}__wr", c_name(self.data, d));
+        if let Some(r) = self.tr.borrow().work_twins.get(&d) {
+            return r.then(|| name.clone());
+        }
+        let r = self.write_work_twin(d, &name);
+        if trace() {
+            match &r {
+                Ok(()) => eprintln!("[transient] work twin {name}"),
+                Err(why) => eprintln!("[transient] work twin {name} declined: {why}"),
+            }
+        }
+        self.tr.borrow_mut().work_twins.insert(d, r.is_ok());
+        r.ok().map(|()| name)
+    }
+
+    fn write_work_twin(&self, d: u32, name: &str) -> Result<(), String> {
+        let p = self.work_return(d).ok_or("no work return")?;
+        let def = self.data.def(d);
+        let vars = def.variables();
+        let args = vars.arguments();
+        if args.len() != def.attributes().len()
+            || !self.vr_ptr_params(d).is_empty()
+            || self.value_records().fns.contains_key(&d)
+            || def.hidden_return_buffer_attr().is_some()
+        {
+            return Err("a signature the twin does not take".into());
+        }
+        let shapes = crate::c::variable_shapes(self, vars, &args, self.data.body_width32(d))?;
+        let mut params = Vec::new();
+        for &a in &args {
+            if vars.is_store_text_link(a) {
+                return Err("a store text link".into());
+            }
+            let c = shapes[a as usize];
+            let n = var_name(vars.name(a), a);
+            params.push(if matches!(vars.tp(a).base(), Type::RefVar(_)) {
+                format!("{} *{n}", held(c))
+            } else {
+                format!("{} {n}", passed(c))
+            });
+        }
+        let params = if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.join(", ")
+        };
+        let sig = format!("static inline void {name}({params})");
+        let (body, _) = FnWriter::new(self, d, shapes, CType::Void)
+            .work_return(args[p])
+            .write()?;
+        let _ = writeln!(self.gen_decls.borrow_mut(), "{sig};");
+        let _ = write!(self.gen_bodies.borrow_mut(), "\n{sig} {{\n{body}}}\n");
+        Ok(())
+    }
+}
+
+/// Does binding `x` make a fresh record — a mint, a placement, a new element, or nothing yet?
+fn is_mint(cx: &Cx, x: &Value) -> bool {
+    match x.unspan() {
+        Value::Null => true,
+        Value::Call(op, _) if (*op as usize) < cx.data.definitions.len() => matches!(
+            cx.data.def(*op).name(),
+            "OpNewRecord" | "OpPlaceRecord" | "OpDatabase" | "OpDatabaseNP" | "OpNullRefSentinel"
+        ),
+        Value::Block(b) => b.operators.last().is_some_and(|t| is_mint(cx, t)),
+        _ => false,
+    }
+}
+
+/// `x` is the record a `?` builds where its read misses — `{ OpDatabase(r, tp); OpSet…(r, off,
+/// zero)…; r }` of a type whose default is all zeros — and answers that type.
+fn default_object(cx: &Cx, value: &Value) -> Option<u16> {
+    let Value::Block(block) = value.unspan() else {
+        return None;
+    };
+    let ops: Vec<&Value> = block
+        .operators
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+        .collect();
+    let (last, body) = ops.split_last()?;
+    let Value::Var(rec) = last.unspan() else {
+        return None;
+    };
+    let is_r = |v: &Value| matches!(v.unspan(), Value::Var(w) if w == rec);
+    let zero = |lit: &Value| {
+        matches!(
+            lit.unspan(),
+            Value::Int(0) | Value::Long(0) | Value::Boolean(false) | Value::Null
+        ) || matches!(lit.unspan(), Value::Text(t) if t.is_empty())
+            || matches!(lit.unspan(), Value::Float(fl) if *fl == 0.0)
+    };
+    let mut tp = None;
+    for op in body {
+        let Value::Call(func, opargs) = op.unspan() else {
+            return None;
+        };
+        if (*func as usize) >= cx.data.definitions.len() {
+            return None;
+        }
+        match (cx.data.def(*func).name(), opargs.as_slice()) {
+            ("OpDatabase" | "OpDatabaseNP", [target, ty]) if is_r(target) && tp.is_none() => {
+                let Value::Int(ty) = ty.unspan() else {
+                    return None;
+                };
+                tp = Some(u16::try_from(*ty).ok()?);
+            }
+            (
+                "OpSetInt" | "OpSetText" | "OpSetBoolean" | "OpSetFloat" | "OpSetInt4",
+                [target, _, val],
+            ) if is_r(target) && zero(val) && tp.is_some() => {}
+            _ => return None,
+        }
+    }
+    let tp = tp?;
+    cx.tr_zero_default(tp).then_some(tp)
+}
+
+/// Is `x` a field (at any depth) of one of `owned`?
+fn field_of(cx: &Cx, x: &Value, owned: &HashSet<u16>) -> bool {
+    match x.unspan() {
+        Value::Call(op, a) if (*op as usize) < cx.data.definitions.len() => {
+            cx.data.def(*op).name() == "OpGetField"
+                && a.first().is_some_and(|b| match b.unspan() {
+                    Value::Var(w) => owned.contains(w),
+                    _ => field_of(cx, b, owned),
+                })
+        }
+        Value::Block(b) => b.operators.last().is_some_and(|t| field_of(cx, t, owned)),
+        _ => false,
+    }
 }
 
 /// Does `x` answer a part of a transient value — a field, an element, an alias?
 fn derives(cx: &Cx, x: &Value, vars: &HashMap<u16, TrVar>) -> bool {
     match x.unspan() {
         Value::Var(w) => vars.contains_key(w),
+        Value::Block(b) => b.operators.last().is_some_and(|t| derives(cx, t, vars)),
+        // `v[i]?`: the element, or the record the miss builds.
+        Value::If(_, a, b) => {
+            (derives(cx, a, vars) && default_object(cx, b).is_some())
+                || (derives(cx, b, vars) && default_object(cx, a).is_some())
+        }
         Value::Call(op, a) if (*op as usize) < cx.data.definitions.len() => {
             matches!(
                 cx.data.def(*op).name(),
@@ -601,13 +1084,28 @@ fn derives(cx: &Cx, x: &Value, vars: &HashMap<u16, TrVar>) -> bool {
 }
 
 impl FnWriter<'_> {
+    /// A `__wr` twin: `return p` answers nothing, the caller reads its buffer.
+    pub(crate) fn work_return(mut self, p: u16) -> Self {
+        self.work_ret = Some(p);
+        self
+    }
+
     /// Write this body with transient facts `tf`: a twin or a site.
     pub(crate) fn transient(mut self, tf: TrFn) -> Self {
         if let Some(p) = tf.phantom {
             self.params[p as usize] = false;
+            // A vector result the IR never mints — its local promoted into the caller's
+            // buffer, which exists already — is the twin's own from its entry.
+            if matches!(tf.vars.get(&p), Some(TrVar::Vec(_))) {
+                let n = self.var(p);
+                self.decls.push(format!(
+                    "{n} = (loft_ta_vec *) loft_ta_alloc(sizeof(loft_ta_vec));"
+                ));
+            }
         }
-        for r in tf.roots.values() {
-            self.decls.push(format!("loft_ta_mark_t {r};"));
+        if !tf.roots.is_empty() {
+            self.decls
+                .push("loft_ta_mark_t loft_tmf = loft_ta_mark();".to_string());
         }
         self.vr = None;
         self.adopt = None;
@@ -627,6 +1125,19 @@ impl FnWriter<'_> {
         self.tr.as_ref().is_some_and(|t| t.builds)
     }
 
+    /// A write into transient value `dst`: only into a record this twin built itself.
+    fn tr_writable(&self, dst: &Value) -> Result<(), String> {
+        let root = self.tr_root(dst);
+        if root.is_some_and(|r| self.tr.as_ref().is_some_and(|t| t.owned.contains(&r))) {
+            Ok(())
+        } else {
+            Err(format!(
+                "a write into a transient value this body did not build (`{}`)",
+                root.map_or("?", |r| self.vars.name(r))
+            ))
+        }
+    }
+
     /// The transient variable `v` is rooted at — a variable, or the base of a field or element
     /// read — when it is one.
     fn tr_root(&self, v: &Value) -> Option<u16> {
@@ -641,7 +1152,17 @@ impl FnWriter<'_> {
                 a.first().and_then(|b| self.tr_root(b))
             }
             Value::Block(b) => b.operators.last().and_then(|t| self.tr_root(t)),
+            Value::If(_, a, b) => self.tr_root(a).or_else(|| self.tr_root(b)),
             _ => None,
+        }
+    }
+
+    /// Is `v` a choice (`v[i]?`), through a block's tail?  Its place is never null.
+    fn tr_choice(v: &Value) -> bool {
+        match v.unspan() {
+            Value::Block(b) => b.operators.last().is_some_and(Self::tr_choice),
+            Value::If(..) => true,
+            _ => false,
         }
     }
 
@@ -654,6 +1175,10 @@ impl FnWriter<'_> {
     }
 
     /// Where transient value `v` lives.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per place a transient value has"
+    )]
     fn tr_place(&mut self, v: &Value, ind: usize) -> Result<Place, String> {
         match v.unspan() {
             Value::Var(w) => {
@@ -661,7 +1186,12 @@ impl FnWriter<'_> {
                     .tr
                     .as_ref()
                     .and_then(|t| t.vars.get(w))
-                    .ok_or("a store value where a transient one was meant")?;
+                    .ok_or_else(|| {
+                        format!(
+                            "a store value where a transient one was meant (`{}`)",
+                            self.vars.name(*w)
+                        )
+                    })?;
                 let n = self.var(*w);
                 Ok(match tv {
                     TrVar::Rec(g) => Place::Rec(format!("(*{n})"), g),
@@ -675,6 +1205,35 @@ impl FnWriter<'_> {
                 }
                 self.tr_place(b.operators.last().ok_or("an empty block")?, ind)
             }
+            // `v[i]?` read in place: the element, or the zero record nothing writes.
+            Value::If(cond, yes, no) => {
+                let (arm, tp, first) = if let Some(tp) = default_object(self.cx, no) {
+                    (yes, tp, true)
+                } else if let Some(tp) = default_object(self.cx, yes) {
+                    (no, tp, false)
+                } else {
+                    return Err("a choice between two transient values".into());
+                };
+                let g = self.cx.tr_group(tp);
+                let tmp = format!("trp{}", self.decls.len() + 1);
+                self.decls.push(format!("lt_{g} *{tmp} = 0;"));
+                let zero = format!("{tmp} = (lt_{g} *) loft_ta_zero(sizeof(lt_{g}));");
+                let test = super::as_cond(self.expr(cond, ind)?)?;
+                self.line(ind, &format!("if ({}) {{", super::bare(&test)));
+                if first {
+                    let p = self.tr_ptr(arm, ind + 1)?;
+                    self.line(ind + 1, &format!("{tmp} = {p};"));
+                    self.line(ind, "} else {");
+                    self.line(ind + 1, &zero);
+                } else {
+                    self.line(ind + 1, &zero);
+                    self.line(ind, "} else {");
+                    let p = self.tr_ptr(arm, ind + 1)?;
+                    self.line(ind + 1, &format!("{tmp} = {p};"));
+                }
+                self.line(ind, "}");
+                Ok(Place::Rec(format!("(*{tmp})"), g))
+            }
             Value::Call(op, a) if self.cx.data.def(*op).name() == "OpGetField" => {
                 let [base, off, tp] = a.as_slice() else {
                     return Err("a field read of another shape".into());
@@ -684,7 +1243,14 @@ impl FnWriter<'_> {
                 };
                 let off = i64::from(*off);
                 let tp = Self::tr_field_type(tp)?;
-                let Place::Rec(lv, g) = self.tr_place(base, ind)? else {
+                let place = self.tr_place(base, ind)?;
+                if let Place::Vec(lv, e) = &place
+                    && off == 0
+                    && matches!(self.cx.stores.types[tp as usize].parts, Parts::Vector(_))
+                {
+                    return Ok(Place::Vec(lv.clone(), *e));
+                }
+                let Place::Rec(lv, g) = place else {
                     return Err("a field of a vector".into());
                 };
                 match &self.cx.stores.types[tp as usize].parts {
@@ -713,8 +1279,58 @@ impl FnWriter<'_> {
                     _ => Err("a field of a kind the transient form does not hold".into()),
                 }
             }
-            _ => Err("a transient value of another shape".into()),
+            other => Err(format!(
+                "a transient value of another shape ({})",
+                match other {
+                    Value::Call(op, _) => self.cx.data.def(*op).name().to_string(),
+                    Value::If(..) => "an if".to_string(),
+                    Value::Insert(_) => "an insert".to_string(),
+                    _ => format!("{other:?}").chars().take(60).collect(),
+                }
+            )),
         }
+    }
+
+    /// The vector `OpNewRecord(data, parent, field)` appends to: `data` itself (no field), or
+    /// the vector field `field` of `parent`, the record `data` names.
+    fn tr_new_record_vec(&mut self, cargs: &[Value], ind: usize) -> Result<String, String> {
+        let field = match cargs.get(2).map(Value::unspan) {
+            Some(Value::Int(f)) => *f,
+            _ => return Err("an element of an unknown field".into()),
+        };
+        if field < 0 || field == i32::from(u16::MAX) {
+            let Place::Vec(lv, _) = self.tr_place(&cargs[0], ind)? else {
+                return Err("an element of a record".into());
+            };
+            return Ok(lv);
+        }
+        // An element appended to a record's vector field: not taken yet — its twins reach
+        // enum layouts whose variants overlap, which the struct derivation does not merge.
+        if crate::env_once!(std::env::var("LOFT_TRANSIENT_FIELD_APPEND").is_err()) {
+            return Err("an element of a record's vector field".into());
+        }
+        let Some(Value::Int(parent)) = cargs.get(1).map(Value::unspan) else {
+            return Err("an element of a record of no known type".into());
+        };
+        let parent = u16::try_from(*parent).map_err(|_| "a type out of range")?;
+        let Parts::Struct(fs) = &self.cx.stores.types[parent as usize].parts else {
+            return Err("an element of a field of no struct".into());
+        };
+        let f = fs
+            .get(usize::try_from(field).map_err(|_| "a field out of range")?)
+            .ok_or("a field index out of range")?;
+        if !matches!(
+            self.cx.stores.types[f.content as usize].parts,
+            Parts::Vector(_)
+        ) {
+            return Err("an element of a field that is no vector".into());
+        }
+        let off = i64::from(f.position);
+        let Place::Rec(rv, g) = self.tr_place(&cargs[0], ind)? else {
+            return Err("a field of a vector".into());
+        };
+        self.cx.tr_member(g, off, Member::Vector);
+        Ok(format!("{rv}.{}", Member::Vector.name(off)))
     }
 
     /// A pointer to the struct transient value `v` names: `&place`, or the variable itself.
@@ -781,6 +1397,7 @@ impl FnWriter<'_> {
                 }
                 void()
             }
+            "OpFreeText" if first.is_some_and(|v| self.tr_text_lift(v).is_some()) => void(),
             // A free guarded against a transient value: the two are always distinct.
             "OpFreeRefIfDistinct" if dead_or_tr(self, var_of(args.get(1))) => {
                 Ok(Some(self.operator("OpFreeRef", &args[..1], ind)?))
@@ -790,6 +1407,11 @@ impl FnWriter<'_> {
             }
             "OpRefIsNull" | "OpConvBoolFromRef" if args.len() == 1 => {
                 let Some(v) = first else { return Ok(None) };
+                // A dead buffer parameter is one its caller passed: present, and never minted.
+                if self.tr_dead(v) && self.params[v as usize] {
+                    let c = if name == "OpRefIsNull" { "0" } else { "1" };
+                    return Ok(Some(E::new(c, K::Cond)));
+                }
                 if self.tr_dead(v) {
                     return Ok(Some(E::new("1", K::Cond)));
                 }
@@ -807,10 +1429,24 @@ impl FnWriter<'_> {
                 if !self.tr_builds() {
                     return Err("a site that mints into a transient value".into());
                 }
+                self.tr_writable(&args[0])?;
                 let Some(Value::Int(tp)) = args.get(1).map(Value::unspan) else {
                     return Err("a mint of no known type".into());
                 };
                 let tp = u16::try_from(*tp).map_err(|_| "a type out of range")?;
+                // A vector's own record (`main_vector<T>`, its field 0 the vector): the arena
+                // vector itself.
+                if matches!(
+                    self.tr.as_ref().and_then(|t| t.vars.get(&v)),
+                    Some(TrVar::Vec(_))
+                ) {
+                    let n = self.var(v);
+                    self.line(
+                        ind,
+                        &format!("{n} = (loft_ta_vec *) loft_ta_alloc(sizeof(loft_ta_vec));"),
+                    );
+                    return void();
+                }
                 if !self.cx.tr_zero_default(tp) {
                     return Err("a record whose default is not all zeros".into());
                 }
@@ -844,7 +1480,8 @@ impl FnWriter<'_> {
                 };
                 self.cx.tr_member(g, off, m);
                 let read = format!("{lv}.{}", m.name(off));
-                let nullable = self.tr.as_ref().is_some_and(|t| t.nullable.contains(&root));
+                let nullable = !Self::tr_choice(base)
+                    && self.tr.as_ref().is_some_and(|t| t.nullable.contains(&root));
                 Ok(Some(if nullable {
                     let r = self.var(root);
                     let null = if m == Member::Text {
@@ -872,11 +1509,22 @@ impl FnWriter<'_> {
                 let [base, off, val] = args else {
                     return Err("a setter of another shape".into());
                 };
+                self.tr_writable(base)?;
                 let Value::Int(off) = off.unspan() else {
                     return Err("a setter at a computed offset".into());
                 };
                 let off = i64::from(*off);
-                let Place::Rec(lv, g) = self.tr_place(base, ind)? else {
+                let place = self.tr_place(base, ind)?;
+                // The length word of a vector's own record, zeroed at its mint: the arena
+                // vector is born empty.
+                if name == "OpSetInt4"
+                    && off == 0
+                    && matches!(val.unspan(), Value::Int(0))
+                    && matches!(place, Place::Vec(..))
+                {
+                    return void();
+                }
+                let Place::Rec(lv, g) = place else {
                     return Err("a setter of a vector".into());
                 };
                 if name == "OpSetInt4" {
@@ -917,11 +1565,15 @@ impl FnWriter<'_> {
                 if self.tr_root(src).is_none() || self.tr_root(dst).is_none() {
                     return Err("a record copied between a store and a transient value".into());
                 }
+                self.tr_writable(dst)?;
                 let s = self.tr_ptr(src, ind)?;
-                let Place::Rec(d, _) = self.tr_place(dst, ind)? else {
+                let Place::Rec(d, g) = self.tr_place(dst, ind)? else {
                     return Err("a record copied into a vector".into());
                 };
-                self.line(ind, &format!("{d} = *{s};"));
+                // The copy shares its vectors' elements with the source: sealed, a push into
+                // it moves it first.
+                self.cx.tr.borrow_mut().seals.insert(g);
+                self.line(ind, &format!("{d} = *{s}; lt_seal_{g}(&{d});"));
                 void()
             }
             "OpMoveVector" if args.first().and_then(|b| self.tr_root(b)).is_some() => {
@@ -931,6 +1583,7 @@ impl FnWriter<'_> {
                 let [dst, src, ..] = args else {
                     return Err("a vector move of another shape".into());
                 };
+                self.tr_writable(dst)?;
                 let Place::Vec(d, _) = self.tr_place(dst, ind)? else {
                     return Err("a vector moved into a record".into());
                 };
@@ -947,6 +1600,7 @@ impl FnWriter<'_> {
                 let [dst, src, ..] = args else {
                     return Err("an append of another shape".into());
                 };
+                self.tr_writable(dst)?;
                 let Place::Vec(d, Elem::Scalar(size)) = self.tr_place(dst, ind)? else {
                     return Err("an append of records".into());
                 };
@@ -964,11 +1618,36 @@ impl FnWriter<'_> {
             {
                 void()
             }
+            "OpClearVector" if args.first().and_then(|b| self.tr_root(b)).is_some() => {
+                if !self.tr_builds() {
+                    return Err("a site that clears a transient vector".into());
+                }
+                self.tr_writable(&args[0])?;
+                // The result buffer before its mint: a twin starts from nothing.
+                if var_of(args.first())
+                    .is_some_and(|v| self.tr.as_ref().is_some_and(|t| t.phantom == Some(v)))
+                {
+                    return void();
+                }
+                let Place::Vec(lv, _) = self.tr_place(&args[0], ind)? else {
+                    return Err("a clear of a record".into());
+                };
+                // A vector local before its mint is no vector yet: nothing to clear.
+                match lv.strip_prefix("(*").and_then(|r| r.strip_suffix(')')) {
+                    Some(p) if p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => {
+                        self.line(ind, &format!("if ({p}) {lv}.n = 0;"));
+                    }
+                    _ => self.line(ind, &format!("{lv}.n = 0;")),
+                }
+                void()
+            }
             _ => {
                 // Any other operator handed a transient value would read it as a store
                 // reference.
                 if args.iter().any(|a| {
-                    self.tr_root(a).is_some() || var_of(Some(a)).is_some_and(|v| self.tr_dead(v))
+                    self.tr_root(a).is_some()
+                        || var_of(Some(a))
+                            .is_some_and(|v| self.tr_dead(v) && !self.params[v as usize])
                 }) {
                     return Err(format!("{name} of a transient value"));
                 }
@@ -988,6 +1667,15 @@ impl FnWriter<'_> {
                         self.cx.data.def(*op).name(),
                         "OpPlaceRecord" | "OpDatabase" | "OpNullRefSentinel"
                     ) =>
+                {
+                    Ok(())
+                }
+                // A buffer parameter's own mint when its caller passed none (`__ref = W.v`, under
+                // an `if` that a dead parameter's null test answers false).
+                Value::Call(op, a)
+                    if self.params[var as usize]
+                        && self.cx.data.def(*op).name() == "OpGetField"
+                        && matches!(a.first().map(Value::unspan), Some(Value::Var(_))) =>
                 {
                     Ok(())
                 }
@@ -1019,7 +1707,7 @@ impl FnWriter<'_> {
                             let ptr = self.tr_ptr(&cargs[0], ind)?;
                             self.line(ind, &format!("{lhs} = {ptr};"));
                         }
-                        ("OpGetVectorNullable", TrVar::Rec(g)) => {
+                        ("OpGetVectorNullable" | "OpGetVector", TrVar::Rec(g)) => {
                             let Place::Vec(lv, _) = self.tr_place(&cargs[0], ind)? else {
                                 return Err("an element of a record".into());
                             };
@@ -1039,9 +1727,8 @@ impl FnWriter<'_> {
                             if !self.tr_builds() {
                                 return Err("a site that adds to a transient vector".into());
                             }
-                            let Place::Vec(lv, _) = self.tr_place(&cargs[0], ind)? else {
-                                return Err("an element of a record".into());
-                            };
+                            self.tr_writable(&cargs[0])?;
+                            let lv = self.tr_new_record_vec(cargs, ind)?;
                             self.line(
                                 ind,
                                 &format!(
@@ -1063,8 +1750,9 @@ impl FnWriter<'_> {
                     return Ok(());
                 }
                 Value::Call(..) => {
+                    // The frame's arena back to its entry: nothing transient is left to read.
                     if let Some(m) = self.tr.as_ref().and_then(|t| t.roots.get(&var)).cloned() {
-                        self.line(ind, &format!("{m} = loft_ta_mark();"));
+                        self.line(ind, &format!("loft_ta_back({m});"));
                     }
                     let ptr = self.tr_ptr(x, ind)?;
                     self.line(ind, &format!("{lhs} = {ptr};"));
@@ -1082,10 +1770,203 @@ impl FnWriter<'_> {
                         None => Err("a block of another shape".into()),
                     };
                 }
+                Value::If(c, t, e) => {
+                    let cond = super::as_cond(self.expr(c, ind)?)?;
+                    self.line(ind, &format!("if ({}) {{", super::bare(&cond)));
+                    self.tr_set_arm(var, t, ind + 1)?;
+                    self.line(ind, "} else {");
+                    self.tr_set_arm(var, e, ind + 1)?;
+                    self.line(ind, "}");
+                    return Ok(());
+                }
                 _ => {}
             }
             Err("a transient local bound from a value of another shape".into())
         })())
+    }
+
+    /// One arm of `var = if c { a } else { b }`: the record a `?` builds where its read misses
+    /// is the zero record nothing writes; any other arm binds as `tr_set` does.
+    fn tr_set_arm(&mut self, var: u16, arm: &Value, ind: usize) -> Result<(), String> {
+        if let Some(tp) = default_object(self.cx, arm) {
+            let g = self.cx.tr_group(tp);
+            let lhs = self.var(var);
+            self.line(
+                ind,
+                &format!("{lhs} = (lt_{g} *) loft_ta_zero(sizeof(lt_{g}));"),
+            );
+            return Ok(());
+        }
+        match self.tr_set(var, arm, ind) {
+            Some(r) => r,
+            None => Err("a choice arm of another shape".into()),
+        }
+    }
+
+    /// A `text argument copy` block — `{ w = ""; w += t; w }` — of a transient record's text
+    /// `t`: that text.  Nothing writes a transient tree while it lives, so its bytes stay put for
+    /// the argument's whole use.
+    pub(super) fn tr_text_copy<'v>(&self, b: &'v crate::data::Block) -> Option<&'v Value> {
+        if b.name != "text argument copy" {
+            return None;
+        }
+        let ops: Vec<&Value> = b
+            .operators
+            .iter()
+            .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+            .collect();
+        let [set, app, tail] = ops.as_slice() else {
+            return None;
+        };
+        let Value::Set(w, empty) = set.unspan() else {
+            return None;
+        };
+        if !matches!(empty.unspan(), Value::Text(t) if t.is_empty())
+            || !matches!(tail.unspan(), Value::Var(x) if x == w)
+        {
+            return None;
+        }
+        let Value::Call(op, a) = app.unspan() else {
+            return None;
+        };
+        if self.cx.data.def(*op).name() != "OpAppendText"
+            || !matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if x == w)
+        {
+            return None;
+        }
+        let src = a.get(1)?;
+        let Value::Call(g, ga) = src.unspan() else {
+            return None;
+        };
+        (self.cx.data.def(*g).name() == "OpGetText"
+            && ga.first().and_then(|b| self.tr_root(b)).is_some())
+        .then_some(src)
+    }
+
+    /// A text local bound once to a `text argument copy` of a transient text (`tr_text_copy`),
+    /// read only in the block of its bind, after it, before any root there is bound or freed:
+    /// the text it copies.
+    pub(super) fn tr_text_lift(&mut self, v: u16) -> Option<&Value> {
+        if self.tr.as_ref()?.text_lifts.is_none() {
+            let lifts = self.tr_find_text_lifts();
+            if let Some(t) = self.tr.as_mut() {
+                t.text_lifts = Some(lifts);
+            }
+        }
+        self.tr
+            .as_ref()?
+            .text_lifts
+            .as_ref()?
+            .get(&v)
+            .map(|(x, _)| x)
+    }
+
+    /// Is text lift `v` a copied argument (its bind skipped) rather than a work-buffer result?
+    pub(super) fn tr_lift_is_copy(&self, v: u16) -> bool {
+        self.tr
+            .as_ref()
+            .and_then(|t| t.text_lifts.as_ref())
+            .and_then(|l| l.get(&v))
+            .is_some_and(|(_, c)| *c)
+    }
+
+    fn tr_find_text_lifts(&self) -> HashMap<u16, (Value, bool)> {
+        let mut out = HashMap::new();
+        let roots: HashSet<u16> = self
+            .tr
+            .as_ref()
+            .map(|t| t.roots.keys().copied().collect())
+            .unwrap_or_default();
+        let mut sets: HashMap<u16, usize> = HashMap::new();
+        let mut uses: HashMap<u16, usize> = HashMap::new();
+        self.code.walk(&mut |n| match n {
+            Value::Set(v, _) => *sets.entry(*v).or_default() += 1,
+            Value::Var(v) => *uses.entry(*v).or_default() += 1,
+            _ => {}
+        });
+        self.code.walk(&mut |n| {
+            let Value::Block(blk) = n else { return };
+            for (at, op) in blk.operators.iter().enumerate() {
+                let Value::Set(v, bound) = op.unspan() else { continue };
+                if self.params[*v as usize] || sets.get(v) != Some(&1) {
+                    continue;
+                }
+                // A copied transient text, or a call that answers the caller's work buffer.
+                let (src, copy, buffer) = match bound.unspan() {
+                    Value::Block(cb) => match self.tr_text_copy(cb) {
+                        Some(src) => (src.clone(), true, None),
+                        None => continue,
+                    },
+                    Value::Call(callee, cargs) => {
+                        let Some(pos) = self.cx.work_return(*callee) else { continue };
+                        let Some(w) = cargs.get(pos).and_then(work_buffer) else { continue };
+                        if self.params[w as usize] {
+                            continue;
+                        }
+                        (Value::Var(w), false, Some(w))
+                    }
+                    _ => continue,
+                };
+                // Every later mention in this block, none of a root's bind or free between.
+                let mut seen = 0usize;
+                let mut clean = true;
+                for later in &blk.operators[at + 1..] {
+                    let mut here = 0usize;
+                    later.walk(&mut |m| {
+                        if let Value::Var(w) = m
+                            && w == v
+                        {
+                            here += 1;
+                        }
+                    });
+                    if seen < uses.get(v).copied().unwrap_or(0) {
+                        let mut touches_root = false;
+                        later.walk(&mut |m| match m {
+                            Value::Set(w, _) if roots.contains(w) => touches_root = true,
+                            // The buffer itself, before the result's last read: another fill.
+                            Value::Var(w) if Some(*w) == buffer => touches_root = true,
+                            Value::Call(op, opargs)
+                                if matches!(
+                                    self.cx.data.def(*op).name(),
+                                    "OpFreeRef" | "OpFreeRefIfDistinct"
+                                ) && matches!(opargs.first().map(Value::unspan), Some(Value::Var(w)) if roots.contains(w)) =>
+                            {
+                                touches_root = true;
+                            }
+                            _ => {}
+                        });
+                        if touches_root {
+                            clean = false;
+                        }
+                    }
+                    seen += here;
+                }
+                if clean && seen == uses.get(v).copied().unwrap_or(0) {
+                    out.insert(*v, (src, copy));
+                }
+            }
+        });
+        out
+    }
+
+    /// `len(v)` of a transient vector: its count.
+    pub(super) fn tr_length(
+        &mut self,
+        route: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        if self.tr.is_none()
+            || route != "t_6vector_len"
+            || args.len() != 1
+            || self.tr_root(&args[0]).is_none()
+        {
+            return Ok(None);
+        }
+        let Place::Vec(lv, _) = self.tr_place(&args[0], ind)? else {
+            return Err("the length of a record".into());
+        };
+        Ok(Some(E::new(format!("((int64_t) ({lv}).n)"), K::Int)))
     }
 
     /// The arguments a call hands transient values: each a pointer into `xs`, the call going
@@ -1155,7 +2036,30 @@ impl FnWriter<'_> {
 
     /// `return v` from a twin answering its result transient.
     pub(super) fn tr_return(&mut self, v: &Value, ind: usize) -> Result<(), String> {
-        let p = self.tr_ptr(v, ind)?;
+        // The body's tail: a block's statements, then the value it answers — an explicit
+        // `return` there answers its operand.
+        match v.unspan() {
+            Value::Return(x) => return self.tr_return(x, ind),
+            Value::Block(b) if !b.operators.is_empty() => {
+                let n = b.operators.len();
+                for op in &b.operators[..n - 1] {
+                    self.stmt(op, ind)?;
+                }
+                return self.tr_return(&b.operators[n - 1], ind);
+            }
+            _ => {}
+        }
+        let p = if self.ret == CType::TrVec {
+            match self.tr_place(v, ind)? {
+                Place::Vec(lv, _) => format!("&{lv}"),
+                Place::Rec(lv, g) => {
+                    self.cx.tr_member(g, 0, Member::Vector);
+                    format!("&{lv}.{}", Member::Vector.name(0))
+                }
+            }
+        } else {
+            self.tr_ptr(v, ind)?
+        };
         let r = self.temp(self.ret);
         self.line(ind, &format!("{r} = {p};"));
         self.ret_held(&r, ind);

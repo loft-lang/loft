@@ -42,7 +42,7 @@ binary that matches the kind of behaviour you're verifying.
 | Binary | Purpose | Typical macro / harness |
 |---|---|---|
 | `tests/wrap.rs` | Loft script suites in `tests/scripts/*.loft` and `tests/docs/*.loft` driven through the **interpreter** (`dir` / the chunked `loft_suite_NN`), plus the `wasm_dir` leg (`--native-wasm`, run under `wasmtime` when available). | Reads scripts from disk; no Rust-level macro. |
-| `tests/native.rs` | Same scripts driven through `--native` (`native_dir` / `native_features` / `native_scripts`).  Catches codegen vs interp divergence. | Disk-driven; `find_loft_rlib` + `compile_native_job`. |
+| `tests/native.rs` | Same scripts driven through `--native` (`native_dir` / `native_features` / `native_scripts`) — the C backend under `make` and `find_problems.sh` (`LOFT_NATIVE_BACKEND=c`), rustc in a bare `cargo test`.  Catches codegen vs interp divergence. | Disk-driven; `find_loft_rlib` + `compile_native_job`. |
 | `tests/issues.rs` | The regression register — small named pins for fixes.  Prefer a language-suite cell where the fix can be shown as a loft program: it runs on both backends. | `code!(...)` |
 | `tests/expressions.rs` | Language feature tests grouped by topic. | `code!(...)` and `expr!(...)` |
 | `tests/parse_errors.rs` | Negative tests — the loft source must produce a specific diagnostic. | `code!(...).error(...).warning(...)` |
@@ -137,7 +137,8 @@ cross_mode!(my_cell, r#"
 Mechanics:
 1. Writes the body to `<temp_dir>/loft_xmode_<test_name>.loft` (`$TMPDIR`, else `/tmp`).
 2. Runs `loft --interpret` and `loft --native` as subprocesses
-   (uses `env!("CARGO_BIN_EXE_loft")`).
+   (uses `env!("CARGO_BIN_EXE_loft")`); `--native` is whichever backend
+   `LOFT_NATIVE_BACKEND` names (C under `make`).
 3. Captures both stdouts, normalises CRLF→LF and trailing
    whitespace, asserts:
    - both modes succeed (exit 0),
@@ -170,8 +171,9 @@ one** under `tests/docs/`, two under `tests/scripts/`.  The same file is picked 
 
 - `tests/wrap.rs::dir` and the chunked `loft_suite_NN` tests (the chunking is explained at
   wrap.rs § loft_suite) — runs it through the **interpreter** end-to-end.
-- `tests/native.rs::native_dir` / the chunked `native_scripts_NN` — generates Rust source,
-  compiles with `rustc`, runs the **native** binary.
+- `tests/native.rs::native_dir` / the chunked `native_scripts_NN` — compiles the program and
+  runs the **native** binary: through C under `make` / `find_problems.sh`
+  (`LOFT_NATIVE_BACKEND=c`), through `rustc` in a bare `cargo test`.
 - `tests/wrap.rs::wasm_dir` — `tests/docs/` only: compiles via `--native-wasm`, optionally
   runs with `wasmtime` (skipped silently if `wasm32-wasip2` or `wasmtime` is unavailable).
   A `tests/scripts/` file's wasm leg is the corpus sweep (`scripts/corpus_files.sh`), not a

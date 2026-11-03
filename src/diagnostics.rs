@@ -394,9 +394,10 @@ pub fn strip_compact_code(line: &str) -> String {
 /// See [`Diagnostics::reaches_author`], the one home for the question.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LintScope {
-    /// The entry sits in a package: its whole directory TREE is the author's own, which is
-    /// what keeps a `loft test` loud — its entry is `tests/` and the code under review is
-    /// `src/`.
+    /// The entry sits in a package: its directory TREE is the author's own, which is what
+    /// keeps a `loft test` loud — its entry is `tests/` and the code under review is
+    /// `src/`.  Except a package NESTED in that tree: a directory below with a `loft.toml` of
+    /// its own is another project, the consumer's path dependency (loft#2364).
     Project(std::path::PathBuf),
     /// No `loft.toml` above the entry: the files BESIDE it are the author's own, and its
     /// subdirectories are not. A bare program is `main.loft` plus the modules next to it,
@@ -422,6 +423,11 @@ pub struct Diagnostics {
     /// Who this compilation's lints are addressed to; `None` = everything is printed.
     /// Set from the entry file at the start of a program parse.
     lint_scope: Option<LintScope>,
+    /// The last add was dropped for its reach.  The fixes and the suggestion that follow it
+    /// are its own and go with it: attached to the entry before, they read as the cure of a
+    /// diagnostic they were never about (loft#2364 — a library's `avoidable-copy` fix lines
+    /// under a consumer's `omitted-field-zero`).
+    last_dropped: bool,
 }
 
 impl Default for Diagnostics {
@@ -479,6 +485,7 @@ impl Diagnostics {
             entries: Vec::new(),
             level: Level::Debug,
             lint_scope: None,
+            last_dropped: false,
         }
     }
 
@@ -541,11 +548,21 @@ impl Diagnostics {
                 file == entry || canonical_source_path(file) == *entry
             }
             Some(LintScope::Directory(dir)) => at().parent() == Some(dir.as_path()),
-            Some(LintScope::Project(root)) => at().starts_with(root),
+            // A file is the project's when ITS nearest manifest is the project's: a package
+            // nested below the root is a dependency of it, owned by its own `loft.toml`.
+            Some(LintScope::Project(root)) => {
+                let at = at();
+                at.starts_with(root)
+                    && at
+                        .parent()
+                        .and_then(crate::resolution_scope::project_root_from)
+                        .is_some_and(|own| own == *root)
+            }
         }
     }
 
     pub fn add(&mut self, level: Level, message: &str) {
+        self.last_dropped = false;
         self.entries.push(DiagEntry {
             level,
             message: message.to_string(),
@@ -579,7 +596,9 @@ impl Diagnostics {
         // loft#1260 — the reach axis.  A lint is dropped when its cure lies outside the
         // project being built; errors are never dropped, because a program that will not
         // run has to say so whoever is reading.
-        if matches!(level, Level::Advice | Level::Warning) && !self.reaches_author(file) {
+        self.last_dropped =
+            matches!(level, Level::Advice | Level::Warning) && !self.reaches_author(file);
+        if self.last_dropped {
             return;
         }
         self.entries.push(DiagEntry {
@@ -604,6 +623,7 @@ impl Diagnostics {
     /// Separate from `add_at_coded` because this is a REPLAY, not a new finding: the
     /// entry is already complete (suggestion included) and must not be re-derived.
     pub fn restore_from_cache(&mut self, entry: DiagEntry) {
+        self.last_dropped = false;
         if entry.level > self.level {
             self.level = entry.level;
         }
@@ -614,6 +634,9 @@ impl Diagnostics {
     /// most-recently-added diagnostic — call right after emitting a "did you
     /// mean 'X'?" so `codeAction` can offer the fix without parsing prose.
     pub fn suggest_last(&mut self, suggestion: &str) {
+        if self.last_dropped {
+            return;
+        }
         if let Some(last) = self.entries.last_mut() {
             last.suggestion = Some(suggestion.to_string());
         }
@@ -627,6 +650,9 @@ impl Diagnostics {
     pub fn fix_last(&mut self, fix: Fix) {
         if fix.kind == FixKind::Conditional && fix.condition.is_none() {
             debug_assert!(false, "a conditional fix must state its condition");
+            return;
+        }
+        if self.last_dropped {
             return;
         }
         if let Some(last) = self.entries.last_mut() {
@@ -672,9 +698,13 @@ impl Diagnostics {
     pub fn rewind(&mut self, mark: (usize, Level)) {
         self.entries.truncate(mark.0);
         self.level = mark.1;
+        self.last_dropped = false;
     }
 
     pub fn last_index(&self) -> Option<usize> {
+        if self.last_dropped {
+            return None;
+        }
         self.entries.len().checked_sub(1)
     }
 
@@ -693,6 +723,7 @@ impl Diagnostics {
     }
 
     pub fn fill(&mut self, other: &Diagnostics) {
+        self.last_dropped = false;
         for e in &other.entries {
             self.entries.push(e.clone());
         }

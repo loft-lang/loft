@@ -153,6 +153,127 @@ fn a_dependencys_lints_do_not_reach_its_consumer() {
     fa::remove_dir_all(&tmp).ok();
 }
 
+/// loft#2364 — a path dependency NESTED in its consumer's directory is still a dependency.
+///
+/// The project scope was "anything under the consumer's root", so a package below it with a
+/// `loft.toml` of its own printed its lints into every consumer build (`selfhost/crt` into
+/// each `selfhost` build), while the same package placed BESIDE the consumer was silent.
+/// Paired over the same layout: the nested package's own test run stays loud.
+#[test]
+fn a_dependency_nested_below_its_consumer_does_not_reach_it() {
+    let tmp = tempdir("reach-nested");
+    let app = tmp.join("app");
+    write_package(&app);
+    fa::write(
+        app.join("loft.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\nmylib = { path = \"mylib\" }\n",
+    )
+    .expect("app manifest");
+    fa::write(
+        app.join("app.loft"),
+        "use mylib;\nfn main() {\n  t = mylib::make();\n  println(\"{t.a}\");\n}\n",
+    )
+    .expect("app source");
+    let out = loft::platform::process::harness_command(loft_bin())
+        .args(["--interpret", "app.loft"])
+        .current_dir(&app)
+        .output()
+        .expect("loft run");
+    let got = diagnostics(&out);
+    assert!(
+        got.is_empty(),
+        "a nested path dependency is not the consumer's code:\n{}",
+        got.join("\n")
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains('1'),
+        "the program must still have RUN, got:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let own = loft::platform::process::harness_command(loft_bin())
+        .arg("test")
+        .current_dir(app.join("mylib"))
+        .output()
+        .expect("loft test");
+    let joined = diagnostics(&own).join("\n");
+    assert!(
+        joined.contains("omitted-field-zero"),
+        "the nested package's own test run must still show its advice, got:\n{joined}"
+    );
+    fa::remove_dir_all(&tmp).ok();
+}
+
+/// loft#2364 — a dropped lint takes its fix lines with it.
+///
+/// `fix_last` attaches to the last entry, and a lint the reach gate dropped left that entry
+/// to be the one BEFORE it: the library's `avoidable-copy` fixes ("drop the later use of
+/// `s`") were printed under the consumer's own `omitted-field-zero`, naming a variable the
+/// consumer's program does not have.
+#[test]
+fn a_dropped_lint_takes_its_fix_lines_with_it() {
+    let tmp = tempdir("reach-fixes");
+    let lib = tmp.join("dep/src");
+    fa::create_dir_all(&lib).expect("lib dir");
+    fa::write(
+        tmp.join("dep/loft.toml"),
+        "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/dep.loft\"\n",
+    )
+    .expect("lib manifest");
+    // `s` is read again after the literal moved it: `avoidable-copy`, with two fix lines.
+    fa::write(
+        lib.join("dep.loft"),
+        "pub struct H { v: vector<integer> }\nfn u(h: H) -> integer { len(h.v) }\n\
+         pub fn run() -> integer {\n  s = [1, 2, 3];\n  h = H { v: s };\n  n = len(s);\n  u(h) + n\n}\n",
+    )
+    .expect("lib source");
+    let app = tmp.join("app");
+    fa::create_dir_all(&app).expect("app dir");
+    fa::write(
+        app.join("loft.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"../dep\" }\n",
+    )
+    .expect("app manifest");
+    fa::write(
+        app.join("app.loft"),
+        "use dep;\nstruct Own { a: integer, b: integer }\nfn main() {\n  o = Own { a: 1 };\n  \
+         println(\"{o.a} {dep::run()}\");\n}\n",
+    )
+    .expect("app source");
+    let explain = |dir: &Path, file: &str| {
+        let out = loft::platform::process::harness_command(loft_bin())
+            .args(["--interpret", "--explain", file])
+            .current_dir(dir)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("loft run");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    let consumer = explain(&app, "app.loft");
+    assert!(
+        consumer.contains("omitted-field-zero")
+            && consumer.contains("write the field at this literal"),
+        "the consumer's own advice and its fix must stand, got:\n{consumer}"
+    );
+    assert_eq!(
+        consumer.matches("  fix  ").count(),
+        2,
+        "the consumer's advice has two fix lines of its own; the library's dropped \
+         `avoidable-copy` must not lend it more, got:\n{consumer}"
+    );
+    let own = explain(&tmp.join("dep"), "src/dep.loft");
+    assert!(
+        own.contains("avoidable-copy") && own.contains("  fix  "),
+        "the library's own run must show the lint with its fixes, got:\n{own}"
+    );
+    fa::remove_dir_all(&tmp).ok();
+}
+
 /// The consumer's OWN code still lints. The gate is about whose file the caret lands in,
 /// not about being a consumer.
 #[test]

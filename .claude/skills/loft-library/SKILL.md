@@ -30,7 +30,8 @@ row is [PACKAGES_C_BINDING.md](../../../doc/claude/PACKAGES_C_BINDING.md)):
 | `#native` external (Rust) | ✓ rlib | ✓ rlib | ✓ wasm rlib | **✗ → needs a `wasm.bridge` crate** |
 | `#c` over the package's own `[c] shim` (ANSI C) | ✓ `cc` | ✓ linked | ✓ clang → wasm32 | ✓ clang → wasm32 — pure computation only (no files, clock, entropy) |
 
-**The master invariant: `interpret == native == native-wasm == browser`.** A library is not
+**The master invariant: `interpret == native == native-wasm == browser`** — where `native`
+means both compiled backends, the Rust writer and the C backend (`--native-c`). A library is not
 shipped until it produces the *same observable result* on every target it claims. That
 invariant is the whole job — everything below serves it.
 
@@ -51,7 +52,9 @@ step, because the two tiers differ by an order of magnitude:
   that touches files or the OS keeps the host columns and is refused at the call on wasm.
 - **Tier 2 — `#native` external Rust bindings.** The browser column has no automatic path:
   you must hand-build a **`wasm.bridge` crate** (host-import module + JS/WASI host shim). This
-  is where the real cost and nearly all the bugs live. Only pay it when the library needs a
+  is where the real cost and nearly all the bugs live — and a Rust crate does not load in a
+  C build, so the mandatory `--native-c` leg needs a `[c] shim` beside it (Tier 1½ is where
+  native parts are moving: libraries ship C binaries, @PLN206). Only pay it when the library needs a
   CAPABILITY loft lacks (a real host capability: crypto, sockets, the DOM, files) — never
   for speed on a routine loft can express (formal/performance.md `(Perf-Cure)`).
 
@@ -80,9 +83,11 @@ API an `advice` names (`(Perf-Teach)`).
    [LIBRARY_CHECKLIST.md](../../../doc/claude/LIBRARY_CHECKLIST.md) (Goals A–G apply per
    library; the stdlib is just the library every program imports).
 3. **Declare the target matrix in `loft.toml`** — there is NO `targets =` field; the real
-   knobs are `[build] default-targets` / `[build.target.<name>]` and `[test] targets`
-   (PACKAGES_BUILD.md § The build phase), plus a `.wasm_exempt` marker for a justified wasm
-   opt-out (LIBRARY_CHECKLIST.md). The suite runs on `loft test` and `loft test --native`;
+   knobs are `[build] default-targets` / `[build.target.<name>]` and a `[[test]]` entry's
+   `targets` (PACKAGES_BUILD.md § The build phase, § Test phase), plus a `.wasm_exempt` marker for a justified wasm
+   opt-out (LIBRARY_CHECKLIST.md). The suite runs on `loft test`, `loft test --native` and
+   the C backend (`loft --native-c --tests tests`, as the library CI's "Native C" step runs
+   it — mandatory for every library, LIBRARY_AUTHORING.md contract rule 19);
    the test runner has no wasm mode, so the wasm target is checked by the library CI's
    WASM cross-build and by a program entry, `loft --native-wasm <program>.loft`. Tier 2 adds a
    `[wasm.bridge]` block. Don't claim a target you haven't passed the parity gate on — a
@@ -109,6 +114,8 @@ hang). The gate, in order of how often each catches a real bug:
 
 1. `--interpret` — the baseline (fastest; the reference result).
 2. `--native` — compiled Rust. Interp/native divergence is the #1 library bug class.
+   `--native-c` — compiled C, required of EVERY library (contract rule 19): a native part
+   written as a Rust crate does not load in a C build, so it needs a `[c] shim`.
 3. `--native-wasm` — headless wasm (WASI). Catches VirtFS / no-threading assumptions.
 4. `--html` (Tier 2) — the browser bridge. Catches the host-shim + asyncify mistakes.
 

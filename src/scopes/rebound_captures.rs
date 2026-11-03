@@ -204,7 +204,7 @@ fn detach_held_backing(code: &mut Value, facts: &Rebound, data: &Data) {
                 let same = Value::Call(distinct, vec![Value::Var(*b), slot_read(s, data)]);
                 let mut detach = v_set(*b, Value::Call(sentinel, Vec::new()));
                 // A record capture with an OWNER slot takes the store over there, so its
-                // cascade releases it (`@FR-L-CapOwn`): the frame no longer names it.
+                // cascade releases it and the frame's own name is cleared (`@FR-L-CapOwn`).
                 if let Some(&own) = facts.owners.get(&(s.record, c)) {
                     let take = Value::Call(
                         data.def_nr("OpSetDbRef"),

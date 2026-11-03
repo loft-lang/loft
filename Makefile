@@ -621,7 +621,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: c-sweep gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: c-sweep c-lint-census gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -1137,6 +1137,10 @@ bug-review:  ## Monthly bug-review aid: which mechanism classes are still produc
 # cannot answer it, because the parser names most operators by computing the name from
 # the token and the operand types.  A REPORT, never a gate (RELEASE.md § The operator
 # census); `ARGS=--verbose` for every operator with its emission count.
+c-lint-census:  ## The C compiler's warnings on the C the backend writes, over the corpus; exit 1 on any (ARGS="--sample 200", "--unused")
+	cargo build --release --bin loft -q
+	python3 scripts/c_lint_census.py $(ARGS)
+
 ops-census:  ## Which bytecode operators does anything still emit? (report, never a gate)
 	@python3 scripts/op_census.py $(ARGS)
 

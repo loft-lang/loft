@@ -370,9 +370,7 @@ The body above is tree-agnostic. Working in the loft repo, these are the instrum
 tells you to reach for:
 
 - A recommendation's premise is probed like any cell: a `/tmp` program per shape, hand-computed
-  values, `--interpret` and `--native`, the controls beside it. loft#2273 put that rule here: a
-  rule approved on the premise "an owned capture is reachable only through closures" was wrong,
-  and a five-minute control cell showed it after the approval.
+  values, `--interpret` and `--native-c` (the C backend), the controls beside it.
 - The incidents behind the examples in the body (the caching and geometry recoveries, the
   store-delivery diff, the `StableCrateId` collision, loft#2273 in full) are in
   [`DESIGN_PROTOCOL-history.md`](../../../doc/claude/DESIGN_PROTOCOL-history.md).
@@ -389,7 +387,7 @@ tells you to reach for:
   `coverage` · `worklist` — `make rule-coverage`, `make rule-worklist`), and
   `formal/README.md` says how a rule is written and cited.
 - A construct's use cases are measured as one program per shape, run on `--interpret` and
-  `--native` (a batch lets one wrong release corrupt the next cell). The full treatment —
+  `--native-c` (a batch lets one wrong release corrupt the next cell). The full treatment —
   procedure, the copy-lease worked example, the evidence behind the patch signs — is
   `doc/claude/DESIGN_PROTOCOL.md` § Deciding what a construct means.
 - The verification questions a finished design answers are

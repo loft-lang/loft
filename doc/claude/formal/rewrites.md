@@ -974,6 +974,17 @@ struct never earns a header) beside `o.vals[i % 4]?` answered `null` on --native
 `LOFT_NO_RECORD_PUSH=1` a plain struct element answered 3 200 425 for it.  Every mint counts
 now.  Cell r1, pin `a_mint_left_on_its_templates_is_still_a_growth`.
 
+**The counter clause.**  In `for i in 0..len(v)` — the range's end read from `v`'s length in
+the statement before the loop, its counter seeded at the start, the body assigning no counter —
+with `v` held for the loop, so its length is fixed there, every counter value lies in
+`[0, len(v))`, and an element read or field read of `v` at a counter takes no index test:
+`loft_vh_at_ref`, `loft_vh_at_int`, `loft_vh_at_float`, `loft_vh_at_addr`, each proving the
+index under `LOFT_VERIFY`.  A read of ANOTHER held vector at the same counter keeps its test,
+since nothing ties the counter to that vector's length.  zttext `locate` with the field clause
+of `(R-InRange)` and the held-element clause of `(R-RecPtr)`: 3.61× → 1.15× (clang), 1.26×
+(gcc).  Switch `LOFT_NO_COUNTER_IN_RANGE`.  Site: `FnWriter::counters_in_range`.  Guard
+`tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r9, falsified on the verify build's proof).
+
 ### A record local declared in a loop keeps its store
 
 ```
@@ -1767,6 +1778,14 @@ Cells `tests/scripts/158-enum-record.loft`, pins `tests/enum_record.rs`.  Sites:
 `Stores::is_struct_enum`, `hoist::mint_push_qualifies`, `hoist::struct_enum_view`,
 `hoist::TAG_GETTER`, `hoist::iteration_head` (the wrapper), `hoist::mint_window`, the
 registry's `NewRecordEmitter`, `Output::write_elem_first_mint`.
+
+**The held-element clause (C).**  A record bound from an element of a vector held for the loop
+— `p = v[i]`, or its `?` discharge — takes its address from the held base on a hit
+(`loft_vh_addr`, or `loft_vh_at_addr` under `(R-Base)`'s counter clause), and the store lookup
+only on a miss, where the discharge minted a default record; the two are the same address, which
+`LOFT_VERIFY` checks.  Without it clang reloaded the store table on every round after the miss
+branch could have grown it.  Switch `LOFT_NO_RECPTR_HELD`.  Site: `FnWriter::held_element_bind`.
+Guard `tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r7, r8).
 
 ### A stdlib one-op wrapper is its op
 
@@ -2884,16 +2903,43 @@ the store itself, but we can introduce short lived objects as long as the end re
 same"*) the tree need not be in a store while nothing stores it.  `(R-ValueRecord)` already
 returns a scalar record in registers and `(O-ViewField)` a record whose vector field is a view;
 this rule is the same idea for a whole tree: depth, variants, vectors of records, and texts and
-bytes that view the frame.  It is the rule `check_request` needs to approach 2×: the tree's
-claims, copies and the frame's releases all belong to the store-built tree.  NOT BUILT
-(designed, not yet implemented).  Open in the design: the C representation of a transient vector of
-records (a stack array with a heap spill), how the twin is cut from the producer (every
-`OpNewRecord` / `OpSetText` / `OpAppendVector` into the result mapped to its struct form), and
-the decline list's proof on the sites — `(O-ViewField)`'s sites' half is the model.  Priced by
-hand on `read_value` (the emitted C, same hashes): `check_request` 0.109× on gcc,
-0.129× on clang, and 0.087× with the arrays in a bump arena the site owns — 0.7× the twin; the
-`.ok` decode alone, building no tree at all, 0.537×.  The design, the arena and the steps:
-`bench/portal/analysis/transient.md`.
+bytes that view the frame.
+
+**As built (C, on by default).**  A twin `f__tr<params>[r]` is `f` written with its transient
+locals as arena structs (`lt_<group>`, one member per `(offset, kind)` the twins touch) and its
+vectors of records as arena vectors; a producer answers a record or a `vector` of records (the
+latter through its `main_vector` record, whose field 0 the twin answers).  A ROOT SITE binds a
+local from a producer whose twin can be written.  The frame takes ONE arena mark at entry and
+gives it back at every root's bind and free: sound because each root is bound once, every read
+of it — and of a local derived from it, `v[i]?` included, whose miss reads a zero record nothing
+writes — lies in the block of its bind and after it, and the roots' spans from bind to last read
+are apart; a site that fails this keeps the store form.  A buffer the caller handed the
+producer is dead at a transient site (its mint branch statically skipped).  A function
+`(R-ValueRecord)` admits — its record result a struct already — gets no twin, and a twin keeps
+the ordinary writer's shapes for its value-record locals and pointer parameters.  Two copies are
+gone where the source is transient: a `text argument copy` of a transient text is the text
+itself (nothing writes the tree while it lives), and a call whose callee answers the caller's
+`&text` work buffer goes to that callee's `__wr` twin, its result read from the buffer, when it
+is read in the bind's block before the buffer is touched again.  The writer is the allow-list: an
+operation on a transient value no arm answers declines the twin, and the function keeps the
+store form.  Texts are COPIED into the arena (the views of the frame are a later step).  Two
+consequences of sharing, enforced in the writer: a transient tree may share records the store
+form copied — a reader handed back an element gets a pointer into the tree, and a record copy
+shares its vectors' elements — so (1) a twin WRITES only the records it builds itself (every
+binding a mint, or a field of such a record), and a site writes none; and (2) a record copy
+SEALS its vectors (room cut to the length), so a push into the copy moves it rather than
+writing into the source's spare room.  An element read counts a negative index from the end, as
+a store vector's does.  `(R-Destination)`'s rewrite is not applied inside a twin: the placed
+buffer and the move are what its arms answer.  Measured: pluginabi `check_request` 955 → 553 µs
+on gcc (4.35× → 2.1× its twin), 965 → 673 µs on clang (3.82× → 2.6×); zttext
+`flow_layout_full`, with `(R-FnRefBuffer)`'s frame clause and `(R-WorkPark)`, 6.55 → 3.98 ms on
+gcc (4.51× → 2.74×), 6.83 → 4.01 ms on clang (4.50× → 2.76×); same hashes.  Switch
+`LOFT_NO_TRANSIENT=1`; `LOFT_TRACE_TRANSIENT=1` names each twin and site written and each
+declined, with the reason.  Sites: `c::body::transient`; guards
+`tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft`,
+`tests/scripts/a-transient-twin-writes-only-what-it-built.loft`.  Priced by hand on
+`read_value`: with texts as views of the frame and the arrays in the site's arena,
+0.087× on gcc.  The design and the steps: `bench/portal/analysis/transient.md`.
 
 ### A slice handed to a `const` parameter needs no store of its own
 
@@ -4157,6 +4203,19 @@ reads such a `main` as a possible leak, and it is a working set.
                  target fills one store per frame instead of minting one per call.  A
                  target that keeps or returns some other record is unaffected: its
                  answer is not the handed store, and the protocol takes it as before.
+                 THE FRAME CLAUSE: the kept store survives the call — taken from a slot of
+                 the function's own (per thread) before the loop and parked there after
+                 it, in place of the free; taking empties the slot, so a recursive or
+                 re-entered frame mints its own, and parking into a full slot frees.
+                 Nothing is parked on a `par` worker.
+
+  (R-WorkPark)   on the C, a frame's WORK TEXTS — the `__work…` texts the parser builds
+                 a text into, owned by the frame — keep their room between its calls:
+                 taken EMPTY from a slot of the function's own (per thread) at entry, and
+                 parked there at each release in place of the free.  A taken text is an
+                 empty text, as a fresh one is; taking empties the slot, so a recursive
+                 frame takes nothing.  Nothing is parked on a `par` worker, whose thread
+                 ends with its job.
 
   (R-Leaf)       a function whose body calls no user function and no fn-ref (a store
                  bracket, as in (R-LeafChain), is none) — a LEAF — is emitted without a shadow-stack frame push and without a fn-ref
@@ -4192,6 +4251,19 @@ run executes 8 % FEWER instructions — the dropped clear's work moved, gcc inli
 `seg`; clang reads them the same).  Switch `LOFT_NO_FNREF_BUFFER=1`, trace
 `LOFT_TRACE_FNREF_BUFFER=1`, census `R-FnRefBuffer`.  Guard
 `tests/scripts/a-function-value-fills-its-callers-record.loft`.
+
+**The frame clause and `(R-WorkPark)`, in words.**  @PLN210 P13.  zttext's `token_width` runs once
+per token and mints the resolver's `Style` store each call, since `(R-FnRefBuffer)` kept it only
+across the loop inside one call; and every text builder (`buf_slice_text`'s caller, the layout's
+argument copies) freed its work text at exit and grew it again, character by character, on the
+next call.  Both now keep their room in a per-function, per-thread slot.  The values cannot move:
+the kept store is the binding's alone and the target refills it, as across passes; a taken work
+text is empty, as a fresh one is.  A slot taken by one frame is empty for a frame below it, so
+recursion and re-entry mint their own.  A `par` worker parks nothing (`loft_no_park`): its thread
+ends with the job and the job runs on its own store table.  Measured on `flow_layout_full` by
+hand: the work park −6.8 % instructions; the frame clause 88.7 → 78.5 M instructions a run (gcc).
+Switches `LOFT_NO_FNREF_PARK`, `LOFT_NO_WORK_PARK`.  Sites: `FnWriter::loop_stmt`,
+`FnWriter::park_work_texts`, `loft_park_*` / `loft_wpark_*` in the C runtime.
 
 **In words.** @PLN157 N4.  A runtime fault inside a leaf keeps its exact position
 and loses only the innermost frame NAME from the chain.  Switch
@@ -4417,6 +4489,17 @@ line in `Output::output_function`'s prelude.
                  pass already, because the element's own mint grows it.  The append
                  group stands in the body of the LOOP that builds the outer vector, so
                  a loop body's statements consult the same overrides a block's do.
+
+  (R-ElemFirst)'s C clause
+                 the C writer applies the literal-built temp appended into a local
+                 vector: at the first temp's declaration the append site's own
+                 reservation, mint and vector-field zeros run (a fresh C slot is not
+                 zeroed, so the zeros move with the mint), each temp is bound to its
+                 field slot, and the append site skips them and the paired copies.  A
+                 pair whose container the writer holds a header, push header or window
+                 for keeps the plain form, as do an append in each arm, a call-filled
+                 temp and the comprehension clause.  `fronds` −39 % (gcc) / −40 %
+                 (clang).  Site: `c::body::elem_first`; switch `LOFT_NO_ELEMENT_FIRST`.
 
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most eight
                  scalars (an `integer` only at its 8-byte width), an INLINE sub-record
@@ -6078,6 +6161,90 @@ at eight.  `b64_value`'s ten branches on random input are not predicted: `reques
 −49 % (clang).  Switch `LOFT_NO_TABULATE`; `LOFT_TRACE_TABULATE=1` names each admitted function and
 each decline.  Site: `opt::tabulate::table`.
 
+### A leaf's bounds tests are taken once per loop
+
+```
+  (R-Version)    In an innermost counted loop `for t in a..b` (or `a..=b`), a call of the
+                 held-inputs twin `(R-Inputs)` of a LEAF — a function with no loop and no
+                 call but operators — calls its FAST TWIN when the leaf's PRECONDITION
+                 holds at the call's arguments where the call first runs in this entry of
+                 the loop, and at the arguments the counter's last value gives them, when
+                 the range holds at least eight values.  Each
+                 argument the precondition reads is invariant over the loop, or invariant
+                 plus a literal multiple of the counter; the inputs it reads are the twin's
+                 held scalars and held headers' lengths.  The guard is decided at the
+                 loop's prelude, so each such argument is `X`, `X + i`, `i + X` or `X - i`
+                 with `X` invariant.  The precondition is the leaf's
+                 DECIDED TESTS — an `if` whose condition is integer comparisons of linear
+                 expressions over the parameters and inputs (an `and` decided true, an `or`
+                 decided false) and one of whose arms alone reads or writes an element of a
+                 held vector, decided toward that arm — every element index on the way lying
+                 in [0, len), and no operation of those expressions overflowing or taking a
+                 null operand.  The fast twin is the leaf with each decided `if` its decided
+                 arm, each such element read or written at its index, and each such
+                 operation C's plain operator.  APPLIED BY the C writer.
+```
+
+**In words.**  @PLN210 P5.  text2d's `draw_quads` reads the sheet with `get_pixel` and writes the
+canvas with `set_pixel` per texel; each accessor tests both coordinates against its canvas,
+checks the index arithmetic for overflow and tests the index against the data's length, and the
+twin clips once per quad.  The arguments are `x0 + px` and an invariant row, so every expression
+the tests read is LINEAR in the counter with a constant coefficient (a product of two
+counter-dependent factors declines), and a linear value over an interval takes its extremes at
+the ends: a comparison that holds at the counter's first value and at its last holds at every
+value between, and an operation that fits at both ends fits between.  The guard is decided at
+the loop's prelude, where `X` is evaluated and the argument at a counter value is `X ± i`
+refused where it does not fit; the flag is then invariant in the loop and both compilers
+unswitch on it (decided at the first call instead, inside the loop, it measured 2.8× / 3.1×).
+A loop with fewer than eight values left is not versioned: asking the precondition twice per
+entry cost drawing's short `fill_gradient` rows +3–4 % (gcc), and nothing at eight.  A null
+operand is refused, since the checked operator answers null where the plain one would not; a
+null compared is compared as the twin compares it.  The fast twin changes nothing else, so a
+loop that breaks early, or a canvas that is the sheet, runs the same reads and writes in the
+same order.  The call is `vg ? f__inv__vf(…) : f__inv(…)`.  Measured (switch A/B, gcc / clang):
+text2d `draw_quads` −36 % / −52 % (≈ 2.0× / 2.2× its twin, from 3.16× / 3.50×), stage
+`render_stage` −35 % / −49 %, `write_text` −13 % (gcc), drawing `composite` −19 % (clang); the
+other rows unchanged but for code placement (stage `blur_region` +8 % on gcc with its kernel's C
+identical, text2d `layout` and `atlas_cell` +5–7 % on clang with no versioned call in their timed
+loops).  With the checked operator or the checked element access kept in the fast twin the hand
+form measured 2.1× / 2.9×.  Switch `LOFT_NO_VERSION`; `LOFT_TRACE_VERSION=1` names each leaf
+admitted or declined and each call versioned.  Sites: `opt::version::leaf`, `c::body::version`.
+Guard `tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft`.
+
+### A short counted loop is written once per trip
+
+```
+  (R-Peel)       A counted loop `for t in a..b` whose `a` the statements just before it
+                 seed with a constant, whose `b` is a constant, with 1 ≤ b − a ≤ 8 and a
+                 body (times the trips) of at most 1200 IR nodes holding no `break`,
+                 `continue`, yield or `par` and assigning no counter, is written as b − a
+                 blocks, block k setting the counters to a + k and running the body; after
+                 the blocks the counters are as the range leaves them.  APPLIED BY the C
+                 writer.
+```
+
+**In words.**  hex_field's `edgeset_count` walks the three canonical edge slots of each cell
+(`for s in 0..3`, a direction chosen by `s`) and finds each edge's slot with a six-way search
+(`for i in 0..6`, comparing `nb_q`/`nb_r` at `i` with the edge's far cell).  With the counter a
+constant the search folds to the one direction that matches; clang unrolls and folds such loops
+itself, gcc unrolls them only after the passes that fold, so the comparisons survive
+(`#pragma GCC unroll` measured −15 % of the instructions, the peel −43 %).  The copies are the
+loop's own statements in order, so what each trip reads and writes is unchanged; a body that
+leaves its trip early (`break`, `continue`, a filter) keeps its loop, since a copy has no loop
+to name, and a `return` from a copy returns as from the loop.  Measured with the narrow clause
+of (R-Header) below (gcc / clang): `edgeset_count` 3.75× → 2.47× / 1.26× its twin.  Switch
+`LOFT_NO_PEEL`.  Site: `c::body::peel`.  Guard
+`tests/scripts/a-short-counted-loop-is-written-once-per-trip.loft`.
+
+**The narrow clause of (R-Header).**  A `u8`, `i32`, `single` or enum element of a held vector,
+or such a field of a held vector's element, is read at its address through the held base —
+`loft_vh_addr` answering the null address outside the vector — and decoded by the reader a
+record field at a known address uses (`loft_pa_*`), with no store lookup per read; `i64` and
+`float` reads already were (`loft_vh_get_int`/`_float`).  `edgeset_count` reads its `vector<u8>`
+of materials this way: 54.0M → 45.9M instructions per op alone (gcc).  Site:
+`FnWriter::held_access`.  Guard
+`tests/scripts/a-narrow-element-of-a-held-vector-is-read-through-its-base.loft`.
+
 ### A self-call in tail position is a jump
 
 ```
@@ -6487,6 +6654,14 @@ conversion test — the second is defensive, its plant passes.  Measured on `rec
 the hand-written form: −20 % cycles.  `LOFT_NO_IN_RANGE=1`, `LOFT_TRACE_IN_RANGE=1`.  Guards
 `tests/scripts/a-record-element-its-loop-proves-in-range-reads-plainly.loft` and
 `tests/in_range.rs`.
+
+**The field clause.**  The walked vector may be a FIELD of a variable, `for i in 0..len(d.f)`
+reading `d.f[i]?`, when the body neither reassigns `d`, hands `d` whole to a call (which could
+change `d.f`), names `d.f` other than as the vector a read operator reads, nor uses a vector
+local that is a view into `d` (a write through it would name no `d` at all); a `&` parameter
+that could be `d` declines, one holding a text or a scalar (a result buffer) does not.  It
+dropped the `?` in ten of zttext's walks over `d.pieces`.  Guard
+`tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r1, r2, r4, r5).
 
 ### A computed range start is one counter, stepped at the test
 

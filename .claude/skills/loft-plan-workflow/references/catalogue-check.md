@@ -11,10 +11,6 @@ half the change.  **The issue *is* the documentation.**  Code that lands without
 issue being updated publishes a wrong description, and the generated shadow gives
 that wrong description the authority of a checked-in file.
 
-Do this whenever work **adds, changes, renames, or removes a feature** — not only at
-close.  The likeliest thing to drift is a feature whose behaviour moved *during* the
-plan: the issue was written from the design, and then the design changed.
-
 Verify three things, in this order:
 
 1. **Existence** — every feature the work shipped has an issue.  Something built with

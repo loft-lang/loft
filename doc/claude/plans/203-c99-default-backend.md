@@ -98,8 +98,8 @@ them beside the binary, which C8 takes.  The two link-mode tests over `native_sc
 loft's own binary): the C runtime carries `lib/process`'s and `lib/git`'s
 (`loft_process.h`, POSIX hosts); an in-binary native it does not carry refuses the unit by
 name.  `engine_host`'s kernel is carried (`loft_engine.h`: listener, connector, UDP sync, debug
-channel, `http_fetch`); its build swap and background rebuild are not — the swap needs the
-world written and read through the store converter (@PLN196) for a type known only at run time.
+channel, `http_fetch`), its build swap and background rebuild with it on POSIX hosts — the world
+goes over as a store image and comes back through the C store converter (`loft_upgrade.h`).
 HTTPS is BearSSL's engine vendored as crypto's primitives are (owner, 2026-10-27), built once
 into a cached archive (C_BACKEND.md § HTTPS), and every fetch — whole-image, paged by range,
 `http_fetch` — goes through the one HTTP client over it; C8 adds the Windows certificate store, which the

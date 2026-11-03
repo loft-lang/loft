@@ -94,7 +94,10 @@ def skill_text(name: str) -> str:
 # word character or a known extension.  Trailing punctuation from prose (`.`, `,`, `)`)
 # is stripped before the existence test.
 PATH_RE = re.compile(r"(?<![\w./-])((?:doc|scripts|src|tests|default|editors|index|\.github|\.claude)/[\w./+-]*\w)")
-MAKE_RE = re.compile(r"\bmake ([a-z][a-z0-9_-]+)")
+# `make <target>` where it STARTS a command: a span's or a line's start, after a `;` / `&&` /
+# `|` / `(` or a shell prompt, with any `VAR=value` assignments in front.  Prose inside a
+# quoted message (`… — make it \`Node?\``) is not a command.
+MAKE_RE = re.compile(r"(?:^\s*|[;&|(]\s*|\$\s+)(?:[A-Z_][A-Z0-9_]*=\S*\s+)*make ([a-z][a-z0-9_-]+)", re.M)
 ENV_RE = re.compile(r"\b(LOFT_[A-Z][A-Z0-9_]+)\b")
 
 # A path segment that is a stand-in, not a file: `src/my_lib.loft`, `tests/scripts/NN`.
@@ -119,8 +122,12 @@ def code_regions(text: str) -> str:
     """Fenced blocks plus inline backtick spans — the only places a `make <target>`
     citation is a command rather than the English verb ("make sure", "make each…")."""
     fenced = re.findall(r"^```.*?^```", text, re.M | re.S)
-    inline = re.findall(r"`[^`\n]+`", text)
-    return "\n".join(fenced + inline)
+    # A Markdown code span: a run of N backticks, its content, the same run again — so a
+    # double-backtick span that quotes single backticks is ONE span, not three.  Looked for in
+    # the fences too, where a comment cites a target in backticks.
+    plain = re.sub(r"^```[^\n]*$", "", text, flags=re.M)
+    inline = [m.group(2).strip() for m in re.finditer(r"(`+)(?!`)(.+?)(?<!`)\1(?!`)", plain)]
+    return "\n".join([f.strip("`") for f in fenced] + inline)
 
 
 def make_targets() -> set[str]:

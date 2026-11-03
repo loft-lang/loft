@@ -372,8 +372,12 @@ static uint32_t loft_h_inline_flags(uint32_t stride, uint32_t count) {
     return stride | LOFT_H_TAGGED | LOFT_H_INLINE | (loft_ilog2(count) << LOFT_H_COUNT_SHIFT);
 }
 
-static void loft_h_zero_slots(loft_store_t *s, uint32_t claim, uint32_t count) {
-    memset(s->buf + (size_t) claim * 8 + LOFT_H_BUCKET0, 0, (size_t) count * 8);
+/* hash::zero_table: the slots and the entry area after them, every byte past the header words
+ * — an entry's stride holds bytes no field writes, and an image carries the whole record
+ * (`@C154`). */
+static void loft_h_zero_table(loft_store_t *s, uint32_t claim) {
+    memset(s->buf + (size_t) claim * 8 + LOFT_H_BUCKET0, 0,
+           (size_t) loft_rec_words(s, claim) * 8 - LOFT_H_BUCKET0);
 }
 
 static uint32_t loft_h_inline_create(loft_store_t *s, uint32_t count, uint32_t stride, uint32_t owner) {
@@ -386,7 +390,7 @@ static uint32_t loft_h_inline_create(loft_store_t *s, uint32_t count, uint32_t s
     loft_set_u32(s, claim, LOFT_AR_NEXT_FLD, 1);
     count = loft_h_inline_count(loft_rec_words(s, claim) - LOFT_H_RESERVED, stride);
     loft_set_u32(s, claim, LOFT_H_STRIDE_FLD, loft_h_inline_flags(stride, count));
-    loft_h_zero_slots(s, claim, count);
+    loft_h_zero_table(s, claim);
     return claim;
 }
 
@@ -504,7 +508,7 @@ static uint32_t loft_h_inline_rebuild(loft_ref c, uint32_t claim, uint32_t want)
     uint32_t new_count = loft_h_inline_count(loft_rec_words(s, grown) - LOFT_H_RESERVED, h.stride);
     loft_set_u32(s, grown, LOFT_H_STRIDE_FLD, loft_h_inline_flags(h.stride, new_count));
     loft_set_u32(s, grown, LOFT_AR_FREE_FLD, 0);
-    loft_h_zero_slots(s, grown, new_count);
+    loft_h_zero_table(s, grown);
     uint32_t mask = new_count - 1, old0 = loft_h_ent0(h.count), new0 = loft_h_ent0(new_count);
     for (uint32_t i = 0; i < h.count; i++) {
         uint32_t seq = loft_u32(s, claim, LOFT_H_BUCKET0 + i * 8);
@@ -1429,7 +1433,7 @@ static loft_ref loft_hash_entry(loft_ref c, uint32_t size, int linked) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     if (linked) {
         loft_store_t *s = loft_store_of(c);
-        loft_ref e = { c.store_nr, loft_st_claim(s, 1 + (size + 7) / 8), 8 };
+        loft_ref e = { c.store_nr, loft_st_claim(s, 1 + (size + 7) / 8), 8, 0 };
         loft_set_u32(s, e.rec, 4, c.rec);
         return e;
     }
@@ -1470,7 +1474,7 @@ static void loft_hash_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, lof
         loft_free_hash_entry(c, e, slot);
         return;
     }
-    loft_ref rec = { e.store_nr, e.rec, 8 };
+    loft_ref rec = { e.store_nr, e.rec, 8, 0 };
     loft_remove_claims(T, elem, rec);
     loft_st_delete(loft_store_of(c), e.rec);
 }
@@ -1687,7 +1691,7 @@ static loft_ref loft_scratch_of(loft_ref c, const loft_ref *e, const uint32_t *r
     loft_set_u32(s, header, 4, vec);
     loft_set_u32(s, header, 8, c.store_nr);
     loft_set_u32(s, header, 12, LOFT_SCRATCH_MARK | width);
-    loft_ref x = { home, header, 4 };
+    loft_ref x = { home, header, 4, 0 };
     if (loft_nscratches == loft_scratch_cap) {
         loft_scratch_cap = loft_scratch_cap ? loft_scratch_cap * 2 : 8;
         loft_scratches = (loft_live_scratch *) realloc(loft_scratches, (size_t) loft_scratch_cap * sizeof *loft_scratches);
@@ -1731,7 +1735,7 @@ static void loft_free_scratch(loft_ref x) {
     uint32_t vec = loft_u32(s, x.rec, 4);
     /* A snapshot in a store of its own goes with it. */
     if (loft_u32(s, x.rec, 8) != x.store_nr) {
-        loft_ref whole = { x.store_nr, 1, 8 };
+        loft_ref whole = { x.store_nr, 1, 8, 0 };
         loft_free_ref(whole);
         return;
     }

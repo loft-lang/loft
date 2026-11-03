@@ -54,7 +54,8 @@ flag         = nested.1;          // true
 - **No tuple iteration / whole-tuple formatting** — access elements one
   by one.
 - **Scalar elements are NON-NULL by default (@PLN25 DN1)** — a tuple
-  `integer` / `text` / … element rejects `null`; append `?` to the element
-  type (`(integer?, text)`) to allow it.
+  `integer` / `text` / … element is not a slot for `null` (storing one warns,
+  as for any plain slot); append `?` to the element type (`(integer?, text)`)
+  to allow it.
 - **Compound assignment on tuple LHS is rejected** — `(a, b) += (1, 2)`
   is a compile error; rewrite as `a += 1; b += 2;` or rebuild the tuple.

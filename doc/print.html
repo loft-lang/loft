@@ -10,7 +10,7 @@
 <header class="print-header">
 <h1>Loft Language Reference</h1>
 <p class="tagline">Complete language and standard library documentation</p>
-<p class="version">v2026.10.0</p>
+<p class="version">v2026.11.0</p>
 <p><a href="index.html">&#8592; Back to online documentation</a> &nbsp;|&nbsp; <a href="00-vs-rust.html">vs Rust comparison</a></p>
 </header>
 <nav class="print-toc">
@@ -2293,7 +2293,10 @@ User.parse(json_parse(text))   -&gt;  Addr.zip: expected JNumber, got JString
 <pre><code><span class="kw">enum</span> <span class="en">Shade</span> { <span class="en">Red</span>, <span class="en">Green</span> }
 <span class="kw">struct</span> <span class="en">Flag</span>   { on: <span class="en">Shade</span> }
 <span class="kw">struct</span> <span class="en">Pair</span>   { p: (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">text</a></span>) }
-<span class="kw">struct</span> <span class="en">Holder</span> { n: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rows: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Item</span>&gt;? }</code></pre>
+<span class="kw">struct</span> <span class="en">Holder</span> { n: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rows: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Item</span>&gt;? }
+<span class="kw">struct</span> <span class="en">Leaf</span>   { name: <span class="ty"><a href="stdlib-types.html">text</a></span> }
+<span class="kw">struct</span> <span class="en">Pick</span>   { leaves: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Leaf</span>&gt;, best: <span class="ty">reference</span>&lt;<span class="en">Leaf</span>&gt;? }
+<span class="kw">struct</span> <span class="en">Link</span>   { label: <span class="ty"><a href="stdlib-types.html">text</a></span>, to: <span class="ty">reference</span>&lt;<span class="en">Leaf</span>&gt; }</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   u = <span class="en">User</span> { id: <span class="nm">42</span>, name: <span class="st">"Alice"</span>, email: <span class="st">"alice@example.com"</span> };
   json = <span class="st">"{u:j}"</span>;
@@ -2367,7 +2370,7 @@ User.parse(json_parse(text))   -&gt;  Addr.zip: expected JNumber, got JString
   ]);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(reply.<span class="fn-call"><a href="stdlib-json-building-values.html">to_json</a></span>() == `{{<span class="st">"ok"</span>:<span class="kw">true</span>,<span class="st">"n"</span>:<span class="nm">42</span>}}`, <span class="st">"built: {reply.to_json()}"</span>);</code></pre>
 <h2 id="the-shapes-on-the-wire">The shapes on the wire</h2>
-<p>Four encodings a reader interoperating with another system needs, none of which the field declaration makes obvious: * a plain enum variant is an OBJECT keyed by the variant name — <code>Green</code> is <code>{{"Green":{{}}}}</code>, not the string <code>"Green"</code>; * a tuple is an object with <code>_0</code>, <code>_1</code> … keys, not a JSON array; * an absent field is written <code>null</code>, an absent <code>vector&lt;T&gt;?</code> too — it is not <code>[]</code>, which is the present-but-empty collection and a different value; * a keyed member of a linked collection group is left out as well, because it is an INDEX on the same rows rather than data of its own — and parsing the document back rebuilds it from them.</p>
+<p>Five encodings a reader interoperating with another system needs, none of which the field declaration makes obvious: * a plain enum variant is an OBJECT keyed by the variant name — <code>Green</code> is <code>{"Green":{}}</code>, not the string <code>"Green"</code>; * a tuple is an object with <code>_0</code>, <code>_1</code> … keys, not a JSON array; * an absent field is written <code>null</code>, an absent <code>vector&lt;T&gt;?</code> too — it is not <code>[]</code>, which is the present-but-empty collection and a different value; * a keyed member of a linked collection group is left out as well, because it is an INDEX on the same rows rather than data of its own — and parsing the document back rebuilds it from them; * a <code>reference&lt;T&gt;</code> field is a LINK, so it is written as one: a JSON Pointer to the record it names, <code>{"$ref":"#/leaves/1"}</code>. A record the written value does not contain is written once under a last member <code>$refs</code>, and the reference points there. Parsing reads both back, and two references to one record name one record again.</p>
 <pre><code>  colour = <span class="en">Flag</span> { on: <span class="en">Shade</span>.<span class="en">Green</span> };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{colour:j}"</span> == `{{<span class="st">"on"</span>:{{<span class="st">"Green"</span>:{{}}}}}}`, <span class="st">"an enum variant: {colour:j}"</span>);
   pair = <span class="en">Pair</span> { p: (<span class="nm">7</span>, <span class="st">"seven"</span>) };
@@ -2384,7 +2387,22 @@ User.parse(json_parse(text))   -&gt;  Addr.zip: expected JNumber, got JString
          <span class="st">"the index is not written: {cat2:j}"</span>);
   back = <span class="en">Catalogue</span>.<span class="fn-call">parse</span>(<span class="st">"{cat2:j}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(back.by_key) == <span class="nm">1</span>, <span class="st">"…and is rebuilt on the way in: {len(back.by_key)}"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(back.by_key[<span class="st">"a"</span>].count == <span class="nm">1</span>, <span class="st">"the rebuilt index answers a lookup"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(back.by_key[<span class="st">"a"</span>].count == <span class="nm">1</span>, <span class="st">"the rebuilt index answers a lookup"</span>);</code></pre>
+<p>A reference into the same value points at its place in the document.</p>
+<pre><code>  pick = <span class="en">Pick</span> { leaves: [<span class="en">Leaf</span> { name: <span class="st">"a"</span> }, <span class="en">Leaf</span> { name: <span class="st">"b"</span> }] };
+  pick.best = &amp;pick.leaves[<span class="nm">1</span>];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{pick:j}"</span> == `{{<span class="st">"leaves"</span>:[{{<span class="st">"name"</span>:<span class="st">"a"</span>}},{{<span class="st">"name"</span>:<span class="st">"b"</span>}}],<span class="st">"best"</span>:{{<span class="st">"$ref"</span>:<span class="st">"#/leaves/1"</span>}}}}`,
+         <span class="st">"a reference is a pointer: {pick:j}"</span>);
+  picked = <span class="en">Pick</span>.<span class="fn-call">parse</span>(<span class="st">"{pick:j}"</span>);
+  picked.best.name = <span class="st">"B"</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(picked.leaves[<span class="nm">1</span>].name == <span class="st">"B"</span>, <span class="st">"…which reads back as a link to that element"</span>);</code></pre>
+<p>A reference to a record outside the value brings the record along.</p>
+<pre><code>  far = <span class="en">Leaf</span> { name: <span class="st">"far"</span> };
+  link = <span class="en">Link</span> { label: <span class="st">"x"</span>, to: &amp;far };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{link:j}"</span> == `{{<span class="st">"label"</span>:<span class="st">"x"</span>,<span class="st">"to"</span>:{{<span class="st">"$ref"</span>:<span class="st">"#/$refs/0"</span>}},<span class="st">"$refs"</span>:[{{<span class="st">"name"</span>:<span class="st">"far"</span>}}]}}`,
+         <span class="st">"an outside target is written under $refs: {link:j}"</span>);
+  linked = <span class="en">Link</span>.<span class="fn-call">parse</span>(<span class="st">"{link:j}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(linked.to.name == <span class="st">"far"</span>, <span class="st">"…and is read back: {linked.to.name}"</span>);
 }</code></pre>
 </section>
 <section class="print-section" id="25-generics">

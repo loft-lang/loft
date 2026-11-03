@@ -49,7 +49,7 @@ python3 scripts/rule_tags.py check         # citations resolve; no double defini
 python3 scripts/rule_tags.py sites <tag>   # which code sites enforce this rule
 python3 scripts/rule_tags.py registers     # each chapter's stated `OPEN: n` vs its entries;
                                            #   `--issues` flags an open entry whose issue closed
-python3 scripts/rule_tags.py dups          # rules cited from 2+ sites — duplication by MEANING
+python3 scripts/rule_tags.py dups          # rules cited from 2+ files — duplication by MEANING
 python3 scripts/rule_tags.py coverage      # share of rules with a code annotation / an active
                                            #   guard, against the floors (a report)
 ```
@@ -88,7 +88,7 @@ it from one site, and wire `check` into CI before the register grows.
   the `doc_hygiene::every_rule_citation_resolves` test, which shells out to this same command
   so the gate and the tool cannot drift; `selftest`, the gate on `registers`' own parser,
   runs beside it.  A grep of `Makefile` / `.github/` for `rule_tags` shows only the OTHER
-  subcommands (`claims`, `fences`, `sections`, `coverage`, `worklist`), not `check`.
+  subcommands (`claims`, `fences`, `sections`, `coverage`, `pairs`, `worklist`), not `check`.
 - Why `@FR-` and not a bare `@Name`: measured in `formal/README.md` § Rule tags.
 - The standing audit is STABILITY_METHOD.md § The rule-led walk; `make rule-worklist` is its
   queue — the untested rules, ordered by the defects a walk is expected to find.

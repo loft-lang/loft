@@ -127,12 +127,13 @@ fn every_nullable_store_points_at_its_value() {
     .expect("failed to invoke loft");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "the probe must run:\n{err}");
-    let name = file.to_string_lossy().to_string();
-    // Every `--> file:line:col` the run printed.
+    // Every `--> file:line:col` the run printed, found by the file's NAME: on Windows the
+    // temp directory may print in its long form while `temp_dir()` answered the 8.3 one.
+    let name = "caret.loft:";
     let carets: Vec<(usize, usize)> = err
         .lines()
         .filter_map(|l| l.trim_start().strip_prefix("--> "))
-        .filter_map(|at| at.strip_prefix(name.as_str())?.strip_prefix(':'))
+        .filter_map(|at| at.rfind(name).map(|i| &at[i + name.len()..]))
         .filter_map(|lc| {
             let (l, c) = lc.split_once(':')?;
             Some((l.parse().ok()?, c.parse().ok()?))

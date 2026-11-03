@@ -34,11 +34,33 @@ struct Ops {
     vector_len: u32,
     get_vector_nullable: u32,
     conv_bool_from_ref: u32,
+    get_field: u32,
 }
 
 fn var(v: &Value) -> Option<u16> {
     match v.unspan() {
         Value::Var(n) => Some(*n),
+        _ => None,
+    }
+}
+
+/// The vector a range walks: a variable, or a field of one (`d.pieces`: the root and the
+/// field's offset).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Src {
+    Var(u16),
+    Field(u16, i32),
+}
+
+fn src(ops: &Ops, v: &Value) -> Option<Src> {
+    match v.unspan() {
+        Value::Var(n) => Some(Src::Var(*n)),
+        Value::Call(d, a) if *d == ops.get_field && a.len() == 3 => {
+            match (a[0].unspan(), a[1].unspan()) {
+                (Value::Var(root), Value::Int(off)) => Some(Src::Field(*root, *off)),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -51,7 +73,7 @@ fn plain(ops: &[Value]) -> Vec<&Value> {
 
 /// `for i in 0..len(v)` as the parser lowers it: the vector `v`, the counter `i#index`, the
 /// loop variable `i`, and where the body starts in the loop.
-fn match_range(ops: &Ops, block: &Block) -> Option<(u16, u16, u16, usize)> {
+fn match_range(ops: &Ops, block: &Block) -> Option<(Src, u16, u16, usize)> {
     if block.name != "For block" {
         return None;
     }
@@ -70,7 +92,7 @@ fn match_range(ops: &Ops, block: &Block) -> Option<(u16, u16, u16, usize)> {
     if (*ld != ops.length_vector && *ld != ops.vector_len) || largs.len() != 1 {
         return None;
     }
-    let v = var(&largs[0])?;
+    let v = src(ops, &largs[0])?;
     if !matches!(start.unspan(), Value::Int(-1)) || lp.name != "For loop" {
         return None;
     }
@@ -108,7 +130,7 @@ fn match_range(ops: &Ops, block: &Block) -> Option<(u16, u16, u16, usize)> {
 }
 
 /// The record element read a discharge block wraps, when it reads `v` at `i` or `i#index`.
-fn record_discharge(ops: &Ops, node: &Value, v: u16, idx: u16, lv: u16) -> Option<Value> {
+fn record_discharge(ops: &Ops, node: &Value, v: Src, idx: u16, lv: u16) -> Option<Value> {
     let Value::Block(b) = node.unspan() else {
         return None;
     };
@@ -131,12 +153,12 @@ fn record_discharge(ops: &Ops, node: &Value, v: u16, idx: u16, lv: u16) -> Optio
         && var(&cargs[0]) == Some(*t)
         && var(then_arm) == Some(*t)
         && *rd == ops.get_vector_nullable
-        && var(&rargs[0]) == Some(v)
+        && src(ops, &rargs[0]) == Some(v)
         && (at == idx || at == lv))
         .then(|| (**read).clone())
 }
 
-fn strip(ops: &Ops, node: &mut Value, v: u16, idx: u16, lv: u16, n: &mut usize) {
+fn strip(ops: &Ops, node: &mut Value, v: Src, idx: u16, lv: u16, n: &mut usize) {
     if let Some(read) = record_discharge(ops, node, v, idx, lv) {
         *node = read;
         *n += 1;
@@ -171,21 +193,34 @@ fn rewrite_in(
         return n;
     };
     // The body may neither resize `v` nor assign `i` or `i#index`.
-    for counter in [idx, lv] {
-        let w = Walk {
-            vec_t: v,
-            src: v,
-            idx: counter,
-            lv,
-            read: Value::Null,
-            iter_scope: 0,
-        };
-        if vars.is_captured(v)
-            || lp.operators[first_body..]
-                .iter()
-                .any(|o| check_body(data, vars, &w, o).is_err())
-        {
-            return n;
+    match v {
+        Src::Var(v) => {
+            for counter in [idx, lv] {
+                let w = Walk {
+                    vec_t: v,
+                    src: v,
+                    idx: counter,
+                    lv,
+                    read: Value::Null,
+                    iter_scope: 0,
+                };
+                if vars.is_captured(v)
+                    || lp.operators[first_body..]
+                        .iter()
+                        .any(|o| check_body(data, vars, &w, o).is_err())
+                {
+                    return n;
+                }
+            }
+        }
+        Src::Field(root, off) => {
+            let why = field_decline(data, vars, root, off, idx, lv, &lp.operators[first_body..]);
+            if let Some(why) = why {
+                if trace() {
+                    eprintln!("in-range: {fname} {} declined: {why}", vars.name(lv));
+                }
+                return n;
+            }
         }
     }
     let mut k = 0;
@@ -201,6 +236,153 @@ fn rewrite_in(
     n + k
 }
 
+/// The field clause's body check, for `for i in 0..len(d.f)`: why the body might resize
+/// `d.f` or move the counter, or `None`.  `d` is named only through its fields, never assigned,
+/// handed bare to a call or captured; the walked field is named only as the vector a read
+/// operator reads; a `&` parameter that could be `d` itself declines, and so does any vector
+/// local that is a view into `d`, since a write through it would name no `d` at all.
+fn field_decline(
+    data: &Data,
+    vars: &crate::variables::Function,
+    root: u16,
+    off: i32,
+    idx: u16,
+    lv: u16,
+    body: &[Value],
+) -> Option<&'static str> {
+    if vars.is_captured(root) {
+        return Some("a closure captures the record");
+    }
+    for x in 0..vars.count() {
+        if x != root
+            && matches!(vars.tp(x).base(), crate::data::Type::Vector(..))
+            && vars.tp(x).depend().contains(&root)
+            && body
+                .iter()
+                .any(|o| o.any_node(&mut |n| matches!(n, Value::Var(y) if *y == x)))
+        {
+            return Some("a vector local that views the record is used in the body");
+        }
+    }
+    let cx = FieldWalk {
+        data,
+        vars,
+        root,
+        off,
+        root_is_param: vars.is_argument(root),
+        idx,
+        lv,
+    };
+    body.iter().try_for_each(|o| cx.walk(o)).err()
+}
+
+/// What the field clause's body check carries through the walk.
+struct FieldWalk<'a> {
+    data: &'a Data,
+    vars: &'a crate::variables::Function,
+    root: u16,
+    off: i32,
+    root_is_param: bool,
+    idx: u16,
+    lv: u16,
+}
+
+impl FieldWalk<'_> {
+    /// `d.f` itself, the walked field.
+    fn ours(&self, v: &Value) -> bool {
+        matches!(v.unspan(), Value::Call(d, a) if a.len() == 3
+            && self.data.def(*d).name() == "OpGetField"
+            && matches!(a[0].unspan(), Value::Var(r) if *r == self.root)
+            && matches!(a[1].unspan(), Value::Int(o) if *o == self.off))
+    }
+
+    fn walk(&self, node: &Value) -> Result<(), &'static str> {
+        match node {
+            Value::Span(sp) => self.walk(&sp.1),
+            Value::Var(n) if *n == self.root => {
+                Err("the record is used other than through a field")
+            }
+            Value::Set(n, e) => {
+                if *n == self.root || *n == self.idx || *n == self.lv {
+                    return Err("the body assigns the record or the counter");
+                }
+                self.walk(e)
+            }
+            Value::CallRef(..) | Value::Yield(_) | Value::Parallel(_) => {
+                Err("a call through a reference, a yield or a par in the body")
+            }
+            Value::Call(op, args) => {
+                let name = self.data.def(*op).name();
+                if self.ours(node) {
+                    return Err("the walked vector is used other than by a read");
+                }
+                // A field of the record, read whole: another field, or the record's own scalar.
+                if name == "OpGetField"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(r)) if *r == self.root)
+                {
+                    return Ok(());
+                }
+                let reads = READS.contains(&name);
+                for a in args {
+                    if self.ours(a) {
+                        if reads {
+                            continue;
+                        }
+                        return Err(
+                            "the walked vector is handed to an operator that may resize it",
+                        );
+                    }
+                    if let Value::Var(n) = a.unspan()
+                        && self.root_is_param
+                        && *n != self.root
+                        && self.vars.is_argument(*n)
+                        && match self.vars.tp(*n).base() {
+                            crate::data::Type::RefVar(t) => matches!(
+                                t.base(),
+                                crate::data::Type::Reference(..) | crate::data::Type::Vector(..)
+                            ),
+                            // A record or vector passed plainly names the caller's record too:
+                            // `drain(y, y)` empties `y.pieces` through `e` while `d.pieces` is
+                            // walked (a-parameters-vector-holds-its-header-where-the-buffer-is-
+                            // apart.loft, h7).  Its use is a field read, so the operator alone
+                            // cannot tell a write.
+                            crate::data::Type::Reference(..) | crate::data::Type::Vector(..) => {
+                                true
+                            }
+                            _ => false,
+                        }
+                    {
+                        // A `&text` or a `&` scalar (a result buffer among them) holds no record.
+                        return Err("another record parameter, which may be the same record");
+                    }
+                    self.walk(a)?;
+                }
+                Ok(())
+            }
+            other => {
+                let mut res = Ok(());
+                let mut node = other.clone();
+                node.for_each_child_mut(&mut |c| {
+                    if res.is_ok() {
+                        res = self.walk(c);
+                    }
+                });
+                res
+            }
+        }
+    }
+}
+
+/// The operators that read the walked vector and change nothing about it.
+const READS: [&str; 6] = [
+    "OpGetVector",
+    "OpGetVectorNullable",
+    "OpLengthVector",
+    "t_6vector_len",
+    "OpVecGetInt",
+    "OpVecGetIntNullable",
+];
+
 /// Drop the discharge of every in-range record element read; answers how many.
 pub fn rewrite_program(data: &mut Data) -> usize {
     if off() {
@@ -213,6 +395,7 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         vector_len: data.def_nr("t_6vector_len"),
         get_vector_nullable: data.def_nr("OpGetVectorNullable"),
         conv_bool_from_ref: data.def_nr("OpConvBoolFromRef"),
+        get_field: data.def_nr("OpGetField"),
     };
     let mut total = 0;
     for d in 0..data.definitions() {

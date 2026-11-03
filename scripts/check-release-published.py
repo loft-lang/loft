@@ -139,7 +139,17 @@ def main() -> None:
     # Present is not the same as usable: an entry missing a platform, or missing the
     # anchor, is a release that half-exists -- which is harder to notice than one that
     # is absent, because `self-update` reports success for whoever it does cover.
-    missing = [t for t in published_triples() if t not in ver.get("binaries", {})]
+    # The triples THAT release built — its own `loft-<v>-<triple>.zip` assets — not today's
+    # PUBLISHED_TRIPLES: the list changes between releases (2026.11 moved Linux from musl to
+    # glibc), and a release cannot be asked for a platform it never shipped.  Without
+    # per-triple assets (an older layout) the current list stands in.
+    built = sorted(
+        a[len(f"loft-{tag}-") : -len(".zip")]
+        for a in assets
+        if a.startswith(f"loft-{tag}-") and a.endswith(".zip") and a != f"loft-{tag}-src.zip"
+    )
+    expected = built or published_triples()
+    missing = [t for t in expected if t not in ver.get("binaries", {})]
     if missing:
         fail(
             f"v{tag}'s registry entry is incomplete",

@@ -10,7 +10,7 @@ description: >-
   template — ESPECIALLY when a fix looks obvious and you are tempted to patch the generator
   and run the suite. The one instrument: loft introspect on every backend BEFORE touching
   the compiler. A BUG FIX proves the WORKING bytecode standalone beside the broken one; a
-  behaviour-preserving REFACTOR proves the emitted IR and native Rust byte-identical before
+  behaviour-preserving REFACTOR proves the emitted IR, Rust and C byte-identical before
   and after. The design and diagnosis halves are engineering-rigor and design-protocol; this
   is the emit-mode sibling. Routes to CODEGEN_METHOD.md and OWNERSHIP_MODEL.md.
 user-invocable: true
@@ -47,8 +47,8 @@ if you learn it by hand instead:
    the rule they failed, with the measurement that killed them.
 2. **Where does the spec say the unsound step IS?** It usually names a site, and it is usually
    not the site where the symptom appears.
-3. **What guards it now?** Each closure names its `tests/scripts/` cell, so you get a working
-   control for free.
+3. **What guards it now?** Each closure names its guard cell (`tests/scripts/` or a
+   `../loft-suite` rule cell), so you get a working control for free.
 
 Grep the mechanism, not the symptom — the op or the pass (`OpFreeRefIfDistinct`, `work-ref`,
 `classify_ret_promotion`), across `formal/*.md`. `IMPLEMENTATIONS.md` is the index of what is
@@ -113,18 +113,20 @@ byte-identical before/after diff, and an EMPTY diff is the proof.**
    misses a path can't catch a regression in it. Save it under the plan's
    `bytecode-comparisons/`.
 2. **Capture BEFORE.** `loft introspect corpus.loft > before.txt` (it carries the IR
-   + bytecode AND the native Rust, so one capture covers both backends). Confirm the
-   corpus runs clean on `--interpret` and `--native` (`LOFT_STORES=warn` /
+   + bytecode AND the native Rust — not the C); the C backend's emission is a second
+   capture, `loft --native-c --native-emit before.c corpus.loft`. Confirm the
+   corpus runs clean on `--interpret` and `--native-c` (`LOFT_STORES=warn` /
    `LOFT_NATIVE_LEAK_CHECK`).
-3. **Refactor, then prove AFTER == BEFORE.** `loft introspect corpus.loft >
-   after.txt; diff before.txt after.txt` — **empty means you changed nothing
+3. **Refactor, then prove AFTER == BEFORE.** Capture both again and diff each pair —
+   **empty means you changed nothing
    emitted**, on both backends, which is the whole claim of a behaviour-preserving
    refactor. Re-run after `cargo fmt` (it touches the file). One commit per
    sub-step; if the diff is non-empty and you didn't intend it, that line is the
    bug — bisect by sub-step, don't push through. Your corpus proves the branches
    you touched; **`scripts/introspect_diff.sh` is the corpus-WIDE gate** (every
    corpus file (tests/scripts, tests/docs, examples and `../loft-suite`;
-   `scripts/corpus_files.sh` is the one list), per-file verdict — DEBUG_INTROSPECT.md
+   `scripts/corpus_files.sh` is the one list), per-file verdict, `--c` for the C writer's
+   output — DEBUG_INTROSPECT.md
    § Introspection CLI: "verified by this and by nothing weaker"). Run it before
    calling the refactor done.
 
@@ -170,9 +172,8 @@ works" closes it.
 ## Before you add the arm: does this predicate already exist?
 
 Emitters accrete duplicates faster than anything else in the tree, because a fix arrives at
-ONE site and the sibling that asks the same question is in another file. "Is this a keyed
-collection" once had two helpers (same variants, reordered) and over a dozen inline `matches!`
-copies, so adding a keyed kind meant finding every one of them.
+ONE site and the sibling that asks the same question is in another file — and a new variant
+then has to be added at every copy.
 
 So before adding a match arm or a type list, ask where that question already lives:
 
@@ -258,13 +259,14 @@ lowering change.  The full order is
 [CODEGEN_METHOD.md § The order of a lowering change](../../../doc/claude/CODEGEN_METHOD.md#the-order-of-a-lowering-change-and-what-each-build-is-for);
 the checklist:
 
-1. **The cause named from an artefact, not a guess** — the IR and the emitted Rust of the
-   failing function (`loft introspect`, `--native-emit`), pointing at the wrong node or line,
+1. **The cause named from an artefact, not a guess** — the IR and the emitted Rust or C of
+   the failing function (`loft introspect`, `--native-emit`, `--native-c --native-emit`),
+   pointing at the wrong node or line,
    BEFORE any build (step 1 above).  A fix built on a hypothesis the artefact never showed is
    a build that may change nothing.
 2. **Compile questions go to `cargo check --bin loft`**; the loop runs on the dev binary
-   (`cargo build --bin loft`, then `target/debug/loft --interpret | --native | introspect |
-   --native-emit …` — its `--native` links the `deps/` rlib the same build wrote; `make iter
+   (`cargo build --bin loft`, then `target/debug/loft --interpret | --native-c | introspect |
+   --native-emit …` — its rustc `--native` links the `deps/` rlib the same build wrote; `make iter
    TEST=…` for one test).  One release build per fix, at the end, never one per hypothesis:
    it refreshes `target/release/libloft.rlib`, which only the `cargo test --release` native
    suites link, and `make check-rlib` says whether it is due.

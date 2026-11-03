@@ -39,13 +39,13 @@ my_lib/
    @PLN84 was one WebSocket regression's payload, `ws_cbor.loft`, not the bridge ABI).
    This is the silent-corruption surface; see the traps.
 
-## Asyncify — the suspend trap (this one cost real time)
+## Asyncify — the suspend trap
 
 If a bridge function **yields or awaits** (a socket read, a frame yield, anything async on the
 host), the wasm must be asyncify-transformed so it can suspend and resume. ⚠ You do NOT run
 `wasm-opt` yourself: `loft --html` runs it unconditionally with a **hardcoded** asyncify
-import allowlist (`src/main.rs`, currently `loft_gl.loft_gl_swap_buffers`,
-`loft_web.ws_yield`, `loft_io.loft_host_http_get`, `loft_io.loft_host_http_range`) — an
+import allowlist (the `--pass-arg=asyncify-imports@…` string in `src/main.rs`; grep it for
+the current entries) — an
 import left OFF that list corrupts the stack, so a new library's suspending import means
 **editing that list in loft** and rebuilding, not an author-side wasm-opt pass.
 

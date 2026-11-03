@@ -466,15 +466,39 @@ static int loft_pw_primitive(const loft_jv *v, uint16_t kind, loft_ref to, size_
 }
 
 /* `write_narrow_value`: `n` through the slot's encoding (a value out of range takes the
- * type's default, as the setters do). */
+ * type's default, as the setters do); the wide null is every width's null (`@FR-L-Null`). */
+/* A number outside 32 bits fits none of these widths (loft#984: it stores the type's default),
+ * so it reaches a narrow setter as a value outside that setter's range, never as its low 32 bits
+ * (loft#2373) — the interpreter's `Stores::write_narrow_value`. */
+static int64_t loft_pw_out_of(int32_t from, int64_t span) {
+    return (int64_t) from + span + 1 <= INT32_MAX ? (int64_t) from + span + 1 : (int64_t) from - 1;
+}
 static void loft_pw_narrow(const loft_ptype *t, int64_t n, loft_ref to) {
-    int32_t v = (int32_t) (uint32_t) (uint64_t) n;
+    int wide = n != INT64_MIN && (n < INT32_MIN || n > INT32_MAX);
+    int32_t v = n == INT64_MIN ? INT32_MIN : (int32_t) (uint32_t) (uint64_t) n;
+    /* A nullable narrow field answers a misfit with its null (loft#984), as `as u8?` does. */
+    int64_t span = t->kind == LOFT_P_BYTE ? 255 : t->kind == LOFT_P_SHORT ? 65534 : 65535;
+    if (t->nullable && v != INT32_MIN && (t->kind == LOFT_P_BYTE || t->kind == LOFT_P_SHORT || t->kind == LOFT_P_SHORTRAW)
+        && (wide || (int64_t) v < t->min || (int64_t) v > (int64_t) t->min + span))
+        v = INT32_MIN;
     switch (t->kind) {
-    case LOFT_P_BYTE: loft_set_byte_v(to, 0, t->min, v == INT32_MIN ? LOFT_NULL : v); break;
-    case LOFT_P_SHORT: loft_set_short(to, 0, t->min, v == INT32_MIN ? LOFT_NULL : v); break;
-    case LOFT_P_SHORTRAW: loft_set_short_raw(to, 0, t->min, v == INT32_MIN ? LOFT_NULL : v); break;
-    case LOFT_P_NINT: loft_p_bytes(to, &v, 4); break;
-    default: loft_p_u32(to, n == INT64_MIN ? 0xFFFFFFFFu : (uint32_t) (uint64_t) n); break;
+    /* The byte encoding reads its null as the 32-bit `INT32_MIN` (`loft_byte_raw`, which takes
+     * the low 32 bits of `LOFT_NULL` as 0, a live value). */
+    case LOFT_P_BYTE: loft_set_byte_v(to, 0, t->min, v == INT32_MIN ? (int64_t) INT32_MIN : wide ? loft_pw_out_of(t->min, 255) : v); break;
+    case LOFT_P_SHORT: loft_set_short(to, 0, t->min, v == INT32_MIN ? LOFT_NULL : wide ? loft_pw_out_of(t->min, 65534) : v); break;
+    case LOFT_P_SHORTRAW: loft_set_short_raw(to, 0, t->min, v == INT32_MIN ? LOFT_NULL : wide ? loft_pw_out_of(t->min, 65535) : v); break;
+    case LOFT_P_NINT:
+        if (wide) v = t->nullable ? INT32_MIN : t->min;
+        loft_p_bytes(to, &v, 4);
+        break;
+    default: {
+        /* The nullable encoding spends 0xFFFFFFFF on absence, so there it does not fit either;
+         * a non-null `u32` holds it. */
+        int misfit = n != INT64_MIN && (n < 0 || n > (int64_t) 0xFFFFFFFFu);
+        int absent = n == INT64_MIN || (t->nullable && (misfit || n == (int64_t) 0xFFFFFFFFu));
+        loft_p_u32(to, absent ? 0xFFFFFFFFu : misfit ? (uint32_t) t->min : (uint32_t) (uint64_t) n);
+        break;
+    }
     }
 }
 
@@ -550,12 +574,12 @@ static int loft_pw_walk(loft_pw *w, const loft_jv *v, uint16_t tp, uint16_t rec_
         const loft_tdesc *T = loft_parse_types();
         uint32_t old = loft_u32(loft_store_of(to), to.rec, to.pos);
         if (old != 0) {
-            loft_ref o = { to.store_nr, old, 8 };
+            loft_ref o = { to.store_nr, old, 8, 0 };
             loft_remove_claims(T, t->elem, o);
             loft_st_delete(loft_store_of(to), old);
         }
         uint32_t nr = loft_claim(loft_store_of(to), 1 + (w->P[t->elem].size + 7u) / 8u);
-        loft_ref ch = { to.store_nr, nr, 8 };
+        loft_ref ch = { to.store_nr, nr, 8, 0 };
         loft_set_u32(loft_store_of(to), to.rec, to.pos, nr);
         loft_pw_default(w, t->elem, 0, 0, ch);
         return loft_pw_walk(w, v, t->elem, 0xFFFF, 0xFFFF, ch, at, errs);
@@ -836,7 +860,7 @@ static int loft_rd_refs_list(loft_pw *w, loft_jp *p, loft_werrs *errs, loft_ref 
         }
         if (tp != 0 && tp != 0xFFFF && w->P[tp].kind == LOFT_P_RECORD) {
             uint32_t nr = loft_claim(loft_store_of(to), 1 + (w->P[tp].size + 7u) / 8u);
-            loft_ref rec = { to.store_nr, nr, 8 };
+            loft_ref rec = { to.store_nr, nr, 8, 0 };
             loft_pw_default(w, tp, 0, 0, rec);
             loft_rd_path.len = 0;
             loft_rd_nmarks = 0;
@@ -965,7 +989,7 @@ static void loft_pr_frame_open(loft_pw *w, loft_pr_frame *fr, loft_jp *p, uint16
     fr->rec = to.rec == 0 ? loft_claim(loft_store_of(to), (t->size + 7u) / 8u) : to.rec;
     /* `@FR-F-Read-Ref` — this record's pointer is the path it is read at, first one wins. */
     if (loft_rd_on) {
-        loft_ref me = { to.store_nr, fr->rec, fr->fld };
+        loft_ref me = { to.store_nr, fr->rec, fr->fld, 0 };
         loft_rd_record(me);
         fr->top = loft_rd_path.len == 0;
     }
@@ -989,12 +1013,12 @@ static loft_ref loft_pr_child(loft_pw *w, uint16_t elem, loft_ref slot) {
     const loft_tdesc *T = loft_parse_types();
     uint32_t old = loft_u32(loft_store_of(slot), slot.rec, slot.pos);
     if (old != 0) {
-        loft_ref o = { slot.store_nr, old, 8 };
+        loft_ref o = { slot.store_nr, old, 8, 0 };
         loft_remove_claims(T, elem, o);
         loft_st_delete(loft_store_of(slot), old);
     }
     uint32_t nr = loft_claim(loft_store_of(slot), 1 + (w->P[elem].size + 7u) / 8u);
-    loft_ref ch = { slot.store_nr, nr, 8 };
+    loft_ref ch = { slot.store_nr, nr, 8, 0 };
     loft_set_u32(loft_store_of(slot), slot.rec, slot.pos, nr);
     loft_pw_default(w, elem, 0, 0, ch);
     return ch;

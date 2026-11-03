@@ -27,7 +27,12 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         .env("LOFT_TIMEOUT", "120")
         .env_remove("LOFT_NO_NULL_BUFFER_HOIST")
         .env_remove("LOFT_NO_VECTOR_HOIST")
-        .env_remove("LOFT_NO_VECTOR_BASE");
+        .env_remove("LOFT_NO_VECTOR_BASE")
+        // `(R-InRange)` drops the `?` of a read at a range counter (`m.chunks[i]?` inside
+        // `for i in 0..len(m.chunks)`) in the IR, before this rewrite sees a discharge; these
+        // pins are about the discharge, so that rule is held off (its own guard is
+        // tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft).
+        .env("LOFT_NO_IN_RANGE", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }

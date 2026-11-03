@@ -47,12 +47,6 @@ LOFT_HOT_INLINE loft_ref loft_entry_new(loft_ref c, uint32_t size) {
     return e;
 }
 
-/* OpClearKeyed on a view member: the collection holds nothing. */
-static void loft_keyed_clear(loft_ref c) {
-    if (c.store_nr == 0xFFFF || c.rec == 0) return;
-    loft_set_u32(loft_store_of(c), c.rec, c.pos, 0);
-}
-
 /* ── sorted and index: one key-ordered sequence each ── */
 
 /* An ordered sequence: a sorted's inline elements of `size`, or (size 0) an index's record
@@ -133,7 +127,7 @@ static loft_ref loft_sorted_new(loft_ref c, uint32_t size) {
     if (LOFT_WRITE_REFUSED(loft_store_of(c))) return loft_ref_null();
     loft_store_t *s = loft_store_of(c);
     uint32_t r = loft_collection_rec(s, c.rec, c.pos);
-    loft_ref e = { c.store_nr, 0, 8 };
+    loft_ref e = { c.store_nr, 0, 8, 0 };
     if (r == 0) {
         r = loft_st_claim(s, loft_vec_cap_words(loft_vec_grown(2, size), size));
         loft_set_u32(s, c.rec, c.pos, r);
@@ -226,7 +220,7 @@ static loft_ref loft_ordered_insert(const loft_tdesc *T, uint16_t elem, loft_ref
                                     int nk, int secondary) {
     uint32_t gone = loft_ordered_finish(c, e, keys, nk);
     if (gone == 0) return loft_ref_null();
-    loft_ref old = { c.store_nr, gone, 8 };
+    loft_ref old = { c.store_nr, gone, 8, 0 };
     if (!secondary) {
         loft_remove_claims(T, elem, old);
         loft_st_delete(loft_store_of(c), gone);
@@ -266,7 +260,7 @@ static void loft_ordered_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, 
         return;
     }
     loft_index_remove(c, e);
-    loft_ref rec = { e.store_nr, e.rec, 8 };
+    loft_ref rec = { e.store_nr, e.rec, 8, 0 };
     loft_remove_claims(T, elem, rec);
     loft_st_delete(loft_store_of(c), e.rec);
 }
@@ -889,7 +883,7 @@ static void loft_fill_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_
         if (linked) {
             uint32_t rec = loft_u32(loft_store_of(slot), slot.rec, slot.pos);
             if (rec == 0) continue;
-            loft_ref r = { src.store_nr, rec, 8 };
+            loft_ref r = { src.store_nr, rec, 8, 0 };
             recs[n++] = r;
         } else {
             recs[n++] = slot;
@@ -932,7 +926,7 @@ static loft_ref loft_ref_from_child_rec(loft_ref f) {
     if (f.store_nr == 0xFFFF || f.rec == 0) return loft_ref_null();
     uint32_t rec = loft_u32(loft_store_of(f), f.rec, f.pos);
     if (rec == 0) return loft_ref_null();
-    loft_ref r = { f.store_nr, rec, 8 };
+    loft_ref r = { f.store_nr, rec, 8, 0 };
     return r;
 }
 
@@ -944,12 +938,12 @@ static loft_ref loft_new_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f,
     if (f.store_nr == 0xFFFF || f.rec == 0) return loft_ref_null();
     uint32_t old = loft_u32(loft_store_of(f), f.rec, f.pos);
     if (old != 0) {
-        loft_ref o = { f.store_nr, old, 8 };
+        loft_ref o = { f.store_nr, old, 8, 0 };
         loft_remove_claims(T, tp, o);
         loft_st_delete(loft_store_of(f), old);
     }
     uint32_t rec = loft_claim(loft_store_of(f), 1 + (T[tp].size + 7) / 8);
-    loft_ref db = { f.store_nr, rec, 8 };
+    loft_ref db = { f.store_nr, rec, 8, 0 };
     loft_fill(db, image, n);
     loft_set_u32(loft_store_of(f), f.rec, f.pos, rec);
     return db;
@@ -991,7 +985,7 @@ static void loft_set_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, lof
     if (!present) {
         if (old != 0) {
             loft_set_u32(loft_store_of(f), f.rec, f.pos, 0);
-            loft_ref o = { f.store_nr, old, 8 };
+            loft_ref o = { f.store_nr, old, 8, 0 };
             loft_remove_claims(T, tp, o);
             loft_st_delete(loft_store_of(f), old);
         }
@@ -999,13 +993,13 @@ static void loft_set_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, lof
     }
     uint32_t size = T[tp].size;
     uint32_t fresh = loft_claim(loft_store_of(f), 1 + (size + 7) / 8);
-    loft_ref nw = { f.store_nr, fresh, 8 };
+    loft_ref nw = { f.store_nr, fresh, 8, 0 };
     loft_copy_bytes(nw, 0, src, 0, size);
     loft_copy_claims(T, tp, src, nw);
     if (old == 0) {
         loft_set_u32(loft_store_of(f), f.rec, f.pos, fresh);
     } else {
-        loft_ref o = { f.store_nr, old, 8 };
+        loft_ref o = { f.store_nr, old, 8, 0 };
         loft_remove_claims(T, tp, o);
         loft_copy_bytes(o, 0, nw, 0, size);
         loft_st_delete(loft_store_of(f), fresh);
@@ -1029,7 +1023,7 @@ static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, lof
             loft_set_u32(loft_store_of(v), slot.rec, slot.pos, 0);
         } else {
             uint32_t nr = loft_claim(loft_store_of(v), words);
-            loft_ref from = { o.store_nr, src, 8 }, to = { v.store_nr, nr, 8 };
+            loft_ref from = { o.store_nr, src, 8, 0 }, to = { v.store_nr, nr, 8, 0 };
             loft_copy_bytes(to, 0, from, 0, size);
             loft_copy_claims(T, tp, from, to);
             loft_set_u32(loft_store_of(v), slot.rec, slot.pos, nr);
@@ -1081,7 +1075,7 @@ static loft_ref loft_vec_insert_linked(loft_ref v, uint32_t size, int64_t index)
     uint32_t nr = loft_claim(s, 1 + (size + 7) / 8);
     loft_set_u32(s, nr, 4, v.rec);
     loft_set_u32(s, slot.rec, slot.pos, nr);
-    loft_ref e = { v.store_nr, nr, 8 };
+    loft_ref e = { v.store_nr, nr, 8, 0 };
     return e;
 }
 
@@ -1094,7 +1088,7 @@ static int loft_vec_remove_linked(const loft_tdesc *T, uint16_t tp, loft_ref v, 
     uint32_t rec = loft_u32(loft_store_of(v), slot.rec, slot.pos);
     int shifted = loft_vec_remove(v, 4, index);
     if (rec != 0) {
-        loft_ref elem = { v.store_nr, rec, 8 };
+        loft_ref elem = { v.store_nr, rec, 8, 0 };
         loft_remove_claims(T, tp, elem);
         loft_st_delete(loft_store_of(v), rec);
     }
@@ -1133,7 +1127,7 @@ static void loft_array_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *
     if (slot.rec == 0) return;
     (void) loft_vec_remove(v, 4, *state);
     if (rec != 0) {
-        loft_ref e = { v.store_nr, rec, 8 };
+        loft_ref e = { v.store_nr, rec, 8, 0 };
         loft_remove_claims(T, elem, e);
         loft_st_delete(loft_store_of(v), rec);
     }
@@ -1146,7 +1140,7 @@ static void loft_sorted_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t 
     if (c.store_nr != 0xFFFF && c.rec != 0 && LOFT_WRITE_REFUSED(loft_store_of(c))) return;
     uint32_t at, r = loft_keyed_rec(c), size = T[elem].size;
     if (r == 0 || !loft_walk_removed_at(*state, reverse, &at) || at >= loft_u32(loft_store_of(c), r, 4)) return;
-    loft_ref e = { c.store_nr, r, 8 + at * size };
+    loft_ref e = { c.store_nr, r, 8 + at * size, 0 };
     loft_remove_claims(T, elem, e);
     loft_seq_remove(state, c, size, reverse);
 }
@@ -1167,7 +1161,7 @@ static void loft_ordered_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t
     uint32_t rec = loft_u32(loft_store_of(c), r, 8 + at * 4);
     loft_seq_remove(state, c, 0, reverse);
     if (rec != 0) {
-        loft_ref e = { c.store_nr, rec, 8 };
+        loft_ref e = { c.store_nr, rec, 8, 0 };
         loft_remove_claims(T, elem, e);
         loft_st_delete(loft_store_of(c), rec);
     }
@@ -1185,7 +1179,7 @@ static loft_ref loft_array_get(loft_ref v, int64_t from) {
     if (slot.store_nr == 0xFFFF || slot.rec == 0) return loft_ref_null();
     uint32_t r = loft_u32(loft_store_of(slot), slot.rec, slot.pos);
     if (r == 0) return loft_ref_null();
-    loft_ref e = { slot.store_nr, r, 8 };
+    loft_ref e = { slot.store_nr, r, 8, 0 };
     return e;
 }
 
@@ -1281,7 +1275,7 @@ static void loft_group_finish(const loft_tdesc *T, uint16_t elem, int held, int 
         if (!seen) gone[ng++] = d;
     }
     for (int g = 0; g < ng; g++) {
-        loft_ref dr = { rec.store_nr, gone[g], 8 };
+        loft_ref dr = { rec.store_nr, gone[g], 8, 0 };
         loft_group_unfile(parent, dr, m, n);
         /* No vector member holds the displaced record: nothing names it any more. */
         if (!held) {
@@ -1300,14 +1294,14 @@ static void loft_group_finish(const loft_tdesc *T, uint16_t elem, int held, int 
 static void loft_index_group(loft_ref primary, uint32_t prim, int nullable, const loft_member *v, const loft_member *m,
                              int n) {
     if (primary.store_nr == 0xFFFF || primary.rec == 0 || primary.pos < prim) return;
-    loft_ref parent = { primary.store_nr, primary.rec, primary.pos - prim };
+    loft_ref parent = { primary.store_nr, primary.rec, primary.pos - prim, 0 };
     int64_t len = loft_vec_len(primary);
     loft_store_t *s = loft_store_of(primary);
     uint32_t arr = loft_collection_rec(s, primary.rec, primary.pos);
     if (len == 0 || arr == 0) return;
     loft_ref c = loft_field(parent, v->pos);
     for (int64_t i = 0; i < len; i++) {
-        loft_ref r = { primary.store_nr, loft_u32(loft_store_of(primary), arr, 8 + 4 * (uint32_t) i), 8 };
+        loft_ref r = { primary.store_nr, loft_u32(loft_store_of(primary), arr, 8 + 4 * (uint32_t) i), 8, 0 };
         if (r.rec == 0 || (nullable && *loft_at(loft_store_of(r), r.rec, 8) != 2)) continue;
         if (v->kind == LOFT_M_HASH) (void) loft_hash_insert(0, 0, c, r, v->keys, v->nk, 1);
         else if (v->kind == LOFT_M_INDEX) (void) loft_ix_insert(0, 0, c, r, v->keys, v->nk, 1);
@@ -1316,7 +1310,7 @@ static void loft_index_group(loft_ref primary, uint32_t prim, int nullable, cons
         else (void) loft_ordered_insert(0, 0, c, r, v->keys, v->nk, 1);
     }
     for (int64_t i = 0; i < len; i++) {
-        loft_ref r = { primary.store_nr, loft_u32(loft_store_of(primary), arr, 8 + 4 * (uint32_t) i), 8 };
+        loft_ref r = { primary.store_nr, loft_u32(loft_store_of(primary), arr, 8 + 4 * (uint32_t) i), 8, 0 };
         if (r.rec == 0 || (nullable && *loft_at(loft_store_of(r), r.rec, 8) != 2)) continue;
         int displaced = 0;
         for (int j = 0; j < n && !displaced; j++) {
@@ -1374,7 +1368,7 @@ static void loft_relink_group_views(const loft_tdesc *T, uint16_t tp, loft_ref t
             for (int64_t i = 0; i < len; i++) ids[n++] = loft_u32(loft_store_of(owner), arr, 8 + 4 * (uint32_t) i);
         }
         for (uint32_t i = 0; i < n; i++) {
-            loft_ref r = { owner.store_nr, ids[i], 8 };
+            loft_ref r = { owner.store_nr, ids[i], 8, 0 };
             if (r.rec != 0) loft_relink_record(T, d, o, to, r);
         }
         free(ids);
@@ -1598,6 +1592,7 @@ static void loft_par_free_table(loft_store_t *table, uint32_t from, uint32_t n) 
 /* A worker's end: the stores it made are destroyed with its table and its frames — or, when it
  * keeps them, its table as it now stands handed back for the caller to adopt from. */
 static void loft_par_job_run(loft_par_job *j) {
+    loft_no_park = 1;
     loft_stores = j->table;
     loft_nstores = j->n;
     j->body(j->ctx, j->lo, j->hi);

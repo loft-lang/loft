@@ -103,6 +103,11 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     let mut flags: Vec<String> = vec!["-std=c99".into()];
     match lint() {
         Lint::Off => flags.push("-w".into()),
+        Lint::All => flags.extend([
+            "-Wall".to_string(),
+            "-Wextra".to_string(),
+            "-DLOFT_LINT_RUNTIME_UNUSED".to_string(),
+        ]),
         on => {
             flags.extend(LINT_WARNINGS.iter().map(|w| (*w).to_string()));
             if on == Lint::Strict {
@@ -172,39 +177,34 @@ fn cc_flags(tier: Tier) -> Vec<String> {
 }
 
 /// `LOFT_C_LINT`: the C a program is written as compiled with the warnings below instead of
-/// `-w`, on request — `1` reports them, `strict` makes each one an error.  Never on by default:
-/// a user does not read warnings about C they did not write, and a lint of every build is time
-/// spent for no reader.  It is the instrument for a larger C99 program the moment there is a
-/// reason to look (a new compiler, a new platform, a crash that smells of UB).
+/// `-w`, on request — `1` reports them, `strict` makes each one an error, `all` adds the
+/// `unused` family.  Never on by default: a user does not read warnings about C they did not
+/// write, and a lint of every build is time spent for no reader.  The count over the corpus is
+/// held at zero by `scripts/c_lint_census.py` (`make c-lint-census`), because a warning can mean
+/// a wrong program.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Lint {
     Off,
     Report,
     Strict,
+    /// `-Wall -Wextra` whole, the `unused` family included (`scripts/c_lint_census.py --unused`).
+    All,
 }
 
 fn lint() -> Lint {
     match std::env::var("LOFT_C_LINT").as_deref() {
         Ok("strict") => Lint::Strict,
+        Ok("all") => Lint::All,
         Ok("1" | "true" | "report") => Lint::Report,
         _ => Lint::Off,
     }
 }
 
-/// The lint's warnings: everything `-Wall -Wextra` reports that can mean a wrong program (a
-/// conversion, an uninitialised read, a missing declaration, a format), without the `unused`
-/// family, which generated code trips by design (a parameter the body ignores, a helper the
-/// unit does not call).
-const LINT_WARNINGS: &[&str] = &[
-    "-Wall",
-    "-Wextra",
-    "-Wno-unused-parameter",
-    "-Wno-unused-function",
-    "-Wno-unused-variable",
-    "-Wno-unused-but-set-variable",
-    "-Wno-unused-label",
-    "-Wno-unused-value",
-];
+/// The lint's warnings: everything `-Wall -Wextra` reports, the `unused` family included — a
+/// local nothing reads can be a lost value.  The written code names nothing it does not use
+/// (`src/c/tidy.rs`); the one exception is the runtime's helpers a unit does not call, which a
+/// pragma around the runtime keeps out (`LOFT_C_LINT=all` lifts it).
+const LINT_WARNINGS: &[&str] = &["-Wall", "-Wextra"];
 
 fn env_on(name: &str) -> bool {
     std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -321,57 +321,19 @@ struct WasmToolchain {
     no_wasm_opt: bool,
 }
 
-/// Measured on each runner's packages (C10): Debian's wasi-libc lays its headers out for
-/// `wasm32-wasi` (and Ubuntu's clang keeps its wasm32 builtins under that name too), wasi-sdk ≥
-/// 25 and Homebrew's wasi-libc for `wasm32-wasip1` alone — so the triple is the first one a
-/// small program links under, `wasm32-wasip1` before `wasm32-wasi`, rather than assumed.  A clang named by
-/// `LOFT_WASM_CC` wins; on macOS Homebrew's LLVM comes before Apple's clang, which has no wasm
-/// target, with Homebrew's `wasm-ld` (a keg of its own) and wasi-libc's sysroot.
+/// The wasm32 C toolchain, from [`loft::platform::wasm_c_toolchain`] (which clang, sysroot and
+/// triple a WASI program links under), plus the optional flags this clang takes.
 fn wasm_toolchain() -> &'static WasmToolchain {
     static TC: std::sync::OnceLock<WasmToolchain> = std::sync::OnceLock::new();
     TC.get_or_init(|| {
-        let named = std::env::var("LOFT_WASM_CC").ok().filter(|s| !s.is_empty());
-        let (cc, ld) = match named {
-            Some(cc) => (cc, None),
-            None => {
-                loft::platform::host_wasm_clang().unwrap_or_else(|| ("clang".to_string(), None))
-            }
+        let found = loft::platform::wasm_c_toolchain();
+        let (cc, ld, sysroot) = (found.cc.clone(), found.ld.clone(), found.sysroot.clone());
+        let (triple, links) = match found.triple {
+            Some(t) => (t, true),
+            None => ("wasm32-wasi", false),
         };
-        let sysroot = std::env::var("WASI_SYSROOT")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                loft::platform::wasi_sysroot_candidates()
-                    .iter()
-                    .find(|p| fa::exists(p))
-                    .map(|p| (*p).to_string())
-            });
-        // A whole link, not the headers alone: a sysroot can answer to one triple while the
-        // compiler's builtins live under the other's directory (Ubuntu: headers for both,
-        // `libclang_rt.builtins` under `lib/wasi` only).
         let probe_out = loft::platform::scratch_dir()
             .join(format!("loft_wasm_probe_{}.wasm", std::process::id()));
-        let reaches = |triple: &str| {
-            let mut probe = Spawn::new(Program::os(&cc));
-            probe.push_arg(format!("--target={triple}"));
-            if let Some(root) = &sysroot {
-                probe.push_arg(format!("--sysroot={root}"));
-            }
-            if let Some(ld) = &ld {
-                probe.push_arg(format!("--ld-path={ld}"));
-            }
-            probe.push_args(["-x", "c", "-", "-o"]).push_arg(&probe_out);
-            let linked = probe
-                .run(b"#include <stdio.h>\nint main(void) { puts(\"\"); return 0; }\n")
-                .is_ok_and(|r| r.status.success());
-            let _ = fa::remove_file(&probe_out);
-            linked
-        };
-        let (triple, links) = if reaches("wasm32-wasip1") {
-            ("wasm32-wasip1", true)
-        } else {
-            ("wasm32-wasi", reaches("wasm32-wasi"))
-        };
         // An optional flag is passed only where this clang knows it: a compile of an empty
         // unit with the flag, which an older clang refuses as an unknown argument.
         let takes = |flags: &[&str]| {
@@ -577,9 +539,13 @@ fn compile_command(
             cmd.push_args(link_args);
             cmd.push_arg("-lm");
             cmd.push_args(loft::platform::c_system_link_libs());
+            // A program's main thread gets the stack a Linux one has (8 MiB): Windows defaults
+            // to 1 MiB, and the same recursion must not overflow on one platform only.
+            cmd.push_args(loft::platform::c_main_stack_args(false));
         }
         Dialect::Msvc => {
             cmd.push_arg("/nologo").push_args(msvc_args(flags));
+            cmd.push_args(loft::platform::c_main_stack_args(true));
             cmd.push_arg(src);
             cmd.push_arg(format!("/Fe:{}", binary.display()));
             cmd.push_arg(format!("/Fo:{}", obj.display()));
