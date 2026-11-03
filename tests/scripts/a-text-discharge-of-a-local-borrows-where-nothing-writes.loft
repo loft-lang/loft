@@ -11,8 +11,16 @@
 //
 // The C writer applies it (`borrowed_store_texts` with its local roots); the interpreter and
 // rustc-native apply nothing and are the oracle.  Hand-computed in each cell's comment.
-// Borrowed: d1, d2, d3.  Copied: d4, d5, d6.
+// Borrowed: d1, d2, d3.  Copied: d4, d5, d6.  A local bound from such a temp is a block
+// binding in every shape the parser writes (d6), which the clause never admits; the rule that
+// a local-root temp is no source of a local keeps it so for any other shape.
 //
+// @falsified-at: a5fe0ab00 — by hand on the C writer, plain, `LOFT_POISON=1` and ASan.  The
+//   clause's scope check skipped (every local-root temp admitted) is INERT alone: d4 then
+//   borrows its read, but the writer still copies an operand a later operand may write
+//   (`arg_with`'s later-writes test).  That copy skipped alone is INERT too: the scope check
+//   declines d4.  Both skipped, d4 fails — `d4` asserts on plain and poison, ASan reports a
+//   heap-use-after-free — so each condition is sufficient and the cell sees their loss.
 // HOLDS: the interpreter's and rustc-native's answers, which no plant on the C writer reaches.
 struct Bag { names: vector<text>, n: integer }
 
@@ -52,11 +60,13 @@ fn grow(v: &vector<text>) -> text {
   for k in 0..40 { v += ["filler-{k}-padding-to-move-the-store"]; }
   "+"
 }
-// d4: a callee that grows the local's store in the same expression keeps the copy: the text
-// read first is "head", then the growth; "head" + "+" = "head+", and v has 41 texts
+fn both(a: text, b: text) -> text { "{a}{b}" }
+// d4: a callee that grows the local's store between the read and its use keeps the copy: the
+// first argument "head" is read, the second grows v by forty, then both are joined: "head+",
+// and v has 41 texts
 fn d4() -> text {
   v: vector<text> = ["head"];
-  r = (v[0] ?? "") + grow(v);
+  r = both(v[0] ?? "", grow(v));
   "{r} {len(v)}"
 }
 // d5: the local rebound in the temp's scope keeps the copy: "first" read, then v rebound to
