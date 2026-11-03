@@ -50,22 +50,57 @@ pub(super) fn seeds(ops: &[Value], i: usize) -> Vec<(u16, i64)> {
 
 /// The range ends the (at most two) statements before `ops[i]` set to a vector's length
 /// (`end = len(v)`), when `ops[i]` is a loop: `@FR-R-Base`'s counter clause reads them.
-pub(super) fn range_lens(data: &crate::data::Data, ops: &[Value], i: usize) -> Vec<(u16, Value)> {
+pub(super) fn range_lens(
+    data: &crate::data::Data,
+    ops: &[Value],
+    i: usize,
+    alias: Option<&(u16, Value)>,
+) -> Vec<(u16, Value)> {
     if !matches!(ops[i].unspan(), Value::Loop(_)) {
         return Vec::new();
     }
     let mut out = Vec::new();
     for op in ops[i.saturating_sub(2)..i].iter().rev() {
-        if let Value::Set(v, x) = op.unspan()
-            && let Value::Call(d, a) = x.unspan()
-            && a.len() == 1
-            && (*d as usize) < data.definitions.len()
-            && matches!(data.def(*d).name(), "t_6vector_len" | "OpLengthVector")
+        if let Some(bind) = len_bind(data, op) {
+            out.push(bind);
+        } else if let Value::Set(end, x) = op.unspan()
+            && let (Value::Var(n), Some((an, v))) = (x.unspan(), alias)
+            && n == an
         {
-            out.push((*v, a[0].clone()));
+            // `end = n` where the statement before the `for` block was `n = len(v)`; the
+            // loop body may not assign `n` (`counters_in_range` checks).
+            out.push((*end, v.clone()));
         }
     }
     out
+}
+
+/// The values the (at most two) statements before `ops[i]` give variables, when `ops[i]` is a
+/// loop — a range's end among them (`@FR-R-Base`'s grid clause reads it).
+pub(super) fn range_ends(ops: &[Value], i: usize) -> Vec<(u16, Value)> {
+    if !matches!(ops[i].unspan(), Value::Loop(_)) {
+        return Vec::new();
+    }
+    ops[i.saturating_sub(2)..i]
+        .iter()
+        .filter_map(|op| match op.unspan() {
+            Value::Set(v, x) => Some((*v, (**x).clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `n = len(v)`: the variable and the vector.
+pub(super) fn len_bind(data: &crate::data::Data, op: &Value) -> Option<(u16, Value)> {
+    if let Value::Set(v, x) = op.unspan()
+        && let Value::Call(d, a) = x.unspan()
+        && a.len() == 1
+        && (*d as usize) < data.definitions.len()
+        && matches!(data.def(*d).name(), "t_6vector_len" | "OpLengthVector")
+    {
+        return Some((*v, a[0].clone()));
+    }
+    None
 }
 
 fn disabled() -> bool {

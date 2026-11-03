@@ -2549,6 +2549,14 @@ LOFT_HOT_INLINE loft_ref loft_vh_at_ref(loft_vh h, uint32_t size, int64_t f) {
     e.pos = (uint32_t) (8 + (uint64_t) f * size);
     return e;
 }
+/* @FR-R-Base's grid clause — does a held vector hold every index a * w + b with 0 <= a < rows and
+ * 0 <= b < w?  The largest is rows * w - 1, so: rows and w not negative (a null is not) and
+ * rows * w, not overflowing, no more than the length.  A multiply, not a division: asked at
+ * every read, a division was what the compiler did not hoist (terrain 3.06x; 1.70x so). */
+LOFT_HOT_INLINE int loft_grid_fits(loft_vh h, int64_t rows, int64_t w) {
+    int64_t p;
+    return rows >= 0 && w >= 0 && !LOFT_MUL_OVF(rows, w, &p) && p <= h.len;
+}
 LOFT_HOT_INLINE uint8_t *loft_vh_at_addr(loft_vh h, uint32_t size, int64_t f) {
     LOFT_PROVED(f >= 0 && f < h.len, "R-Base counter: address");
     return h.base + (size_t) f * size;

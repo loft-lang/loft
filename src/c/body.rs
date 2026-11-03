@@ -267,6 +267,16 @@ pub(crate) struct FnWriter<'a> {
     /// proven inside the held vector (counter, header).
     range_lens: Vec<(u16, Value)>,
     in_range: Vec<(u16, String)>,
+    /// `n = len(v)` as the statement right before the `for` block being written (`v` by `n`).
+    len_alias: Option<(u16, Value)>,
+    /// `@FR-R-Base`'s grid clause: the facts `0 <= x < bound` that hold where the code is
+    /// being written (a range counter, an enclosing test), and the integer locals bound in an
+    /// enclosing block, by their expression.
+    grid_facts: Vec<(u16, Value)>,
+    grid_binds: Vec<(u16, Value)>,
+    /// The values the statements just before a loop gave its range ends (`end = x`).
+    range_ends: Vec<(u16, Value)>,
+    set_once: Option<std::rc::Rc<std::collections::HashSet<u16>>>,
     /// `@FR-R-Transient`'s work clause: the `&text` parameter a `__wr` twin answers (its result
     /// is the caller's buffer), and the call a transient body sends to such a twin.
     work_ret: Option<u16>,
@@ -729,6 +739,11 @@ impl<'a> FnWriter<'a> {
             peel_seeds: Vec::new(),
             range_lens: Vec::new(),
             in_range: Vec::new(),
+            len_alias: None,
+            grid_facts: Vec::new(),
+            grid_binds: Vec::new(),
+            range_ends: Vec::new(),
+            set_once: None,
             work_ret: None,
             wr_call: None,
             chain_guards: 0,
@@ -2528,6 +2543,22 @@ impl<'a> FnWriter<'a> {
                         k,
                     )));
                 }
+                if let Some(fits) = self.grid_index(&idx, &held) {
+                    let (raw, checked, k) = if name == "OpGetInt" {
+                        ("loft_vh_at_int", "loft_vh_get_int", K::Int)
+                    } else {
+                        ("loft_vh_at_float", "loft_vh_get_float", K::Float)
+                    };
+                    let proof = self.held_proof(&vec, &held);
+                    let i = as_int(index)?;
+                    let (at, tail) = at(report);
+                    return Ok(Some(E::new(
+                        format!(
+                            "({proof}, {fits} ? {raw}({held}, {size}, {i}, {fld}) : {checked}{at}({held}, {size}, {i}, {fld}{tail}))"
+                        ),
+                        k,
+                    )));
+                }
                 let (f, k) = if name == "OpGetInt" {
                     ("loft_vh_get_int", K::Int)
                 } else {
@@ -2759,7 +2790,9 @@ impl<'a> FnWriter<'a> {
     fn stmts(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let held = self.rec_ptrs.len();
         let frames = self.headers.len();
+        let binds = self.grid_binds.len();
         let r = self.stmts_in(ops, ind);
+        self.grid_binds.truncate(binds);
         self.rec_ptrs.truncate(held);
         // The view headers this block bound (`@FR-R-View`) close with it.
         self.headers.truncate(frames.min(self.headers.len()));
@@ -2813,8 +2846,21 @@ impl<'a> FnWriter<'a> {
                 i = last + 1;
                 continue;
             }
+            if let Value::Set(var, x) = ops[i].unspan() {
+                self.grid_bind(*var, x);
+            }
             self.peel_seeds = peel::seeds(ops, i);
-            self.range_lens = peel::range_lens(self.cx.data, ops, i);
+            self.range_lens = peel::range_lens(self.cx.data, ops, i, self.len_alias.as_ref());
+            self.range_ends = peel::range_ends(ops, i);
+            // `n = len(v)` right before a `for` block: the block's range end `n` is `len(v)`.
+            // Set afresh at every `for` block, so it never outlives the statement it reads.
+            if matches!(ops[i].unspan(), Value::Block(b) if b.name == "For block") {
+                self.len_alias = ops[..i]
+                    .iter()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                    .and_then(|prev| peel::len_bind(self.cx.data, prev));
+            }
             self.stmt(&ops[i], ind)?;
             self.bind_record_ptr(ops, i, ind);
             self.bind_view_header(ops, i, ind);
@@ -3347,7 +3393,14 @@ impl<'a> FnWriter<'a> {
         {
             return;
         }
-        let counters = [Some(rc.index), Some(rc.loop_var), rc.next];
+        // The counters, and a length bound just before the `for` block, which the body may not
+        // move either.
+        let counters = [
+            Some(rc.index),
+            Some(rc.loop_var),
+            rc.next,
+            self.len_alias.as_ref().map(|(n, _)| *n),
+        ];
         let mut assigned = false;
         for op in &b.operators[1..] {
             op.walk(&mut |n| {
@@ -3361,6 +3414,229 @@ impl<'a> FnWriter<'a> {
         }
         self.in_range.push((rc.index, h.clone()));
         self.in_range.push((rc.loop_var, h));
+    }
+
+    /// The variables the function sets in one place only (`grid_bind` trusts their values).
+    fn set_once(&mut self) -> std::rc::Rc<std::collections::HashSet<u16>> {
+        if let Some(s) = &self.set_once {
+            return s.clone();
+        }
+        let mut count: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
+        self.cx.data.def(self.d).code().walk(&mut |n| {
+            if let Value::Set(v, _) = n {
+                *count.entry(*v).or_default() += 1;
+            }
+        });
+        let once: std::collections::HashSet<u16> = count
+            .into_iter()
+            .filter(|(_, c)| *c == 1)
+            .map(|(v, _)| v)
+            .collect();
+        let once = std::rc::Rc::new(once);
+        self.set_once = Some(once.clone());
+        once
+    }
+
+    /// `@FR-R-Base`'s grid clause: an integer local set in one place from variables each set
+    /// in one place is its expression wherever the block that binds it encloses the read.
+    fn grid_bind(&mut self, var: u16, x: &Value) {
+        let once = self.set_once();
+        if !once.contains(&var) {
+            return;
+        }
+        let mut operands_once = true;
+        x.walk(&mut |n| {
+            if let Value::Var(v) = n {
+                operands_once &= once.contains(v);
+            }
+        });
+        if operands_once {
+            self.grid_binds.push((var, x.clone()));
+        }
+    }
+
+    /// Does `body` assign any variable `v` names (a variable, or the variables of a bound)?
+    fn assigns_any(body: &Value, vars: &[u16]) -> bool {
+        body.any_node(&mut |n| matches!(n, Value::Set(x, _) if vars.contains(x)))
+    }
+
+    fn bound_vars(bound: &Value) -> Vec<u16> {
+        match bound.unspan() {
+            Value::Var(v) => vec![*v],
+            _ => Vec::new(),
+        }
+    }
+
+    /// The grid clause's range facts: in `for i in 0..n` (counter seeded at 0, `n` a variable or
+    /// a literal the body assigns no more than the counters), `0 <= i < n` and `0 <= i#index < n`.
+    fn grid_counter_facts(&mut self, b: &Block) {
+        let Ok(rc) = crate::loop_shape::range_counters(b, self.cx.data) else {
+            return;
+        };
+        if rc.inclusive {
+            return;
+        }
+        let counter = rc.next.unwrap_or(rc.index);
+        let start = if rc.next.is_some() { 0 } else { -1 };
+        if !self
+            .peel_seeds
+            .iter()
+            .any(|(v, k)| *v == counter && *k == start)
+        {
+            return;
+        }
+        let Value::Var(end) = rc.hi.unspan() else {
+            return;
+        };
+        let mut bounds = vec![Value::Var(*end)];
+        if let Some((_, src)) = self.range_ends.iter().find(|(e, _)| e == end)
+            && matches!(src.unspan(), Value::Var(_) | Value::Int(_))
+        {
+            bounds.push(src.unspan().clone());
+        }
+        let mut watched: Vec<u16> = [Some(rc.index), Some(rc.loop_var), rc.next]
+            .into_iter()
+            .flatten()
+            .collect();
+        for bnd in &bounds {
+            watched.extend(Self::bound_vars(bnd));
+        }
+        if b.operators[1..]
+            .iter()
+            .any(|op| Self::assigns_any(op, &watched))
+        {
+            return;
+        }
+        for bnd in bounds {
+            self.grid_facts.push((rc.loop_var, bnd.clone()));
+            self.grid_facts.push((rc.index, bnd));
+        }
+    }
+
+    /// The grid clause's test facts: a then-branch under `0 <= x && x < w` (any order, inside a
+    /// chain of `and`s) knows `0 <= x < w`, when the branch assigns neither `x` nor `w`.
+    fn grid_test_facts(&mut self, cond: &Value, then: &Value) {
+        let data = self.cx.data;
+        let mut conj: Vec<&Value> = Vec::new();
+        let mut stack = vec![cond];
+        while let Some(c) = stack.pop() {
+            match c.unspan() {
+                Value::If(a, b, f) if matches!(f.unspan(), Value::Boolean(false)) => {
+                    stack.push(a);
+                    stack.push(b);
+                }
+                other => conj.push(other),
+            }
+        }
+        let name = |d: u32| {
+            if (d as usize) < data.definitions.len() {
+                data.def(d).name()
+            } else {
+                ""
+            }
+        };
+        let mut lower: Vec<u16> = Vec::new();
+        let mut upper: Vec<(u16, Value)> = Vec::new();
+        for c in conj {
+            let Value::Call(d, a) = c else {
+                continue;
+            };
+            if a.len() != 2 {
+                continue;
+            }
+            match (name(*d), a[0].unspan(), a[1].unspan()) {
+                ("OpLeInt", Value::Int(0), Value::Var(x))
+                | ("OpGeInt", Value::Var(x), Value::Int(0)) => lower.push(*x),
+                ("OpLtInt", Value::Var(x), w @ (Value::Var(_) | Value::Int(_)))
+                | ("OpGtInt", w @ (Value::Var(_) | Value::Int(_)), Value::Var(x)) => {
+                    upper.push((*x, w.clone()))
+                }
+                _ => {}
+            }
+        }
+        for (x, w) in upper {
+            let mut watched = vec![x];
+            watched.extend(Self::bound_vars(&w));
+            if lower.contains(&x) && !Self::assigns_any(then, &watched) {
+                self.grid_facts.push((x, w));
+            }
+        }
+    }
+
+    /// `@FR-R-Base`'s grid clause: an index `a * w + b` with `0 <= a < h` and `0 <= b < w` known
+    /// where it is read lies in `[0, h * w)`, so the vector held as `held` holds it when its length
+    /// is at least `h * w` — the test the answer is (`loft_grid_fits`), read once per loop by
+    /// the C compiler.  `LOFT_NO_GRID_INDEX=1` answers `None`.
+    fn grid_index(&self, idx: &Value, held: &str) -> Option<String> {
+        if crate::env_once!(std::env::var("LOFT_NO_GRID_INDEX").is_ok_and(|v| v != "0")) {
+            return None;
+        }
+        let data = self.cx.data;
+        let name = |d: u32| {
+            if (d as usize) < data.definitions.len() {
+                data.def(d).name()
+            } else {
+                ""
+            }
+        };
+        let mut e = idx.unspan();
+        if let Value::Var(v) = e
+            && let Some((_, x)) = self.grid_binds.iter().rev().find(|(b, _)| b == v)
+        {
+            e = x.unspan();
+        }
+        let Value::Call(add, terms) = e else {
+            return None;
+        };
+        if !matches!(name(*add), "OpAddInt" | "OpAddIntNullable") || terms.len() != 2 {
+            return None;
+        }
+        let fact = |x: &Value| -> Option<&Value> {
+            let Value::Var(v) = x.unspan() else {
+                return None;
+            };
+            self.grid_facts
+                .iter()
+                .rev()
+                .find(|(f, _)| f == v)
+                .map(|(_, b)| b)
+        };
+        let fact_below = |x: &Value, w: &Value| -> bool {
+            let Value::Var(v) = x.unspan() else {
+                return false;
+            };
+            self.grid_facts
+                .iter()
+                .any(|(f, b)| f == v && b.unspan() == w.unspan())
+        };
+        let c_of = |v: &Value| -> Option<String> {
+            match v.unspan() {
+                Value::Var(x) => Some(self.var(*x)),
+                Value::Int(k) => Some(format!("INT64_C({k})")),
+                _ => None,
+            }
+        };
+        for (prod, b) in [(&terms[0], &terms[1]), (&terms[1], &terms[0])] {
+            let Value::Call(mul, f) = prod.unspan() else {
+                continue;
+            };
+            if !matches!(name(*mul), "OpMulInt" | "OpMulIntNullable") || f.len() != 2 {
+                continue;
+            }
+            for (a, w) in [(&f[0], &f[1]), (&f[1], &f[0])] {
+                if let Some(h) = fact(a)
+                    && fact_below(b, w)
+                {
+                    crate::rewrite_census::fired("R-Base/grid", 1);
+                    return Some(format!(
+                        "loft_grid_fits({held}, {}, {})",
+                        c_of(h)?,
+                        c_of(w)?
+                    ));
+                }
+            }
+        }
+        None
     }
 
     /// The counter `idx` names when it is proven inside the held vector `h` (`counters_in_range`).
@@ -4277,7 +4553,9 @@ impl<'a> FnWriter<'a> {
         let mints = self.hold_vectors(b, ind)?;
         self.hold_versions(b, ind)?;
         let in_range_at = self.in_range.len();
+        let grid_at = self.grid_facts.len();
         self.counters_in_range(b);
+        self.grid_counter_facts(b);
         let window = self.open_window(b, ind)?;
         if !window {
             self.hash_reserve(b, ind)?;
@@ -4323,6 +4601,7 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("loft_win_sync({w});"));
         }
         self.in_range.truncate(in_range_at);
+        self.grid_facts.truncate(grid_at);
         self.headers.pop();
         self.loop_calls.pop();
         self.push_heads.pop();
@@ -4676,14 +4955,18 @@ impl<'a> FnWriter<'a> {
                 self.flush(ind);
                 Ok(())
             }
-            Value::If(c, t, e) => {
-                let null_test = self.null_test(c);
+            Value::If(cond, t, e) => {
+                let null_test = self.null_test(cond);
                 // The test first; each arm inside its braces (`@FR-E-And`, `@FR-E-Or`, as in
                 // `assign_if`).
-                let c = self.expr(c, ind)?;
+                let c = self.expr(cond, ind)?;
                 let c = as_cond(c)?;
                 self.line(ind, &format!("if ({}) {{", bare(&c)));
-                self.stmt(t, ind + 1)?;
+                let facts = self.grid_facts.len();
+                self.grid_test_facts(cond, t);
+                let r = self.stmt(t, ind + 1);
+                self.grid_facts.truncate(facts);
+                r?;
                 if !matches!(e.unspan(), Value::Null) {
                     self.line(ind, "} else {");
                     if null_test {
