@@ -87,6 +87,13 @@ both compilers, and (d) the C corpus sweep (`scripts/c_sweep.py`) and the C test
 | P13 | **`(R-FnRefBuffer)` across frames**: the resolver's result record kept across `token_width` calls (undoing it at the end costs +27 % cycles) | extension | `flow_layout_full` −7 % instructions | **BUILT** as `(R-FnRefBuffer)`'s frame clause: the kept store parked per function and thread between calls (88.7 → 78.5 M instructions a run); beside it `(R-WorkPark)`, the frame's work texts parked the same way |
 | P14 | **`(R-PushFill)`'s run clause for a text target**: a character-vector range turned into text in one pass | extension | `flow_layout_full` 2.14 → 1.94 | open |
 | P15 | **the callee half beside `(R-RebindBuffer)`**: `cur = apply_op(cur, op)` — the callee answers inside the document being replaced, so its buffer is not copied | NEW | `invert` 2.57 → 2.33 | open |
+| P16 | **`(R-Peel)`'s exit clause**: a body with a `continue` or `break` of the peeled loop, each copy ending at its own label | extension | `wall_chain_walk` (with P17) 111.4 → 41.9 M instructions clang, 70.4 → 60.2 M gcc | open — [last-three.md](last-three.md) |
+| P17 | **always-inline for a small leaf** (no loop, calls only to such leaves, ≤ N nodes) | NEW | with P16 above; N decided by the full table | open — [last-three.md](last-three.md) |
+| P18 | **a text field of a held element read at its address** (`(R-Header)`'s narrow clause for `OpGetText`) | extension | `parse` −10 % instructions clang | open — [last-three.md](last-three.md) |
+| P19 | **`(R-Transient)`'s view clause**: a text the caller keeps alive held as a view in the arena record | extension | `parse` ≈ −13 % clang (copy-and-free share; to price) | open — [last-three.md](last-three.md) |
+| P20 | **`"{c}" == t` compared without building the text** (IR phase) | NEW | `parse` ≈ −2.5 % (generality) | open — [last-three.md](last-three.md) |
+| P21 | **`(R-Transient)` with a literal root** (a record built by a literal or an inlined destination, only read) | extension | `forms_upto` ≈ −25 % (store share; to price) | open — [last-three.md](last-three.md) |
+| P22 | **a text `??` read as a view where its consumer only reads** (`(R-TextBorrow)`'s discharge clause with a consumer check) | extension | `forms_upto` −12 % | open — [last-three.md](last-three.md) |
 
 **The cross-call facts these phases rest on** ([`formal/facts.md`](../../formal/facts.md),
 [#2351](https://github.com/loft-lang/loft/issues/2351)) — built before P5, P9 and P11–P15, so no
