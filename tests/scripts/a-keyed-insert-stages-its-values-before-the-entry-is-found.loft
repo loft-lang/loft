@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+//
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-KeyedEntry` in the IR phase — `h += [T{k: key, …}]` evaluates the literal's values
+// first, in the order the program wrote them, then asks for the entry under the key and writes
+// the values into it.  What can go wrong is the order: a value read after an earlier field was
+// already written into the entry it reads, an effect moved past another, the key read late, or
+// a value staged in a temporary of the wrong width.  So the cells swap two fields through the
+// entry they replace, log the order of three effects with the key in the middle, read the
+// absent entry a fresh key will become, stage every scalar kind, rebind a text key's variable
+// in a later value (the IR declines that one; the answer is the same), and write a hash field.
+// Values hand-computed in each cell's comment.
+//
+// The IR applies it (`opt::keyed_entry`), so every backend runs the rewritten IR and none is the
+// other's oracle: the oracle is these values, and `LOFT_NO_KEYED_ENTRY=1` is the second answer.
+//
+// @falsified-at: none — by hand on the IR clause, the values written straight into the entry
+//   instead of staged: s1 fails on the interpreter and on the C (a 20, b 20 for a 20, b 10).
+//   CHANNEL: an assertion.
+// HOLDS: the hand-computed values, on both backends, the clause on and off.
+
+enum Shade { Dark, Mid, Light }
+
+struct P { k: integer, a: integer, b: integer }
+
+struct W { x: float, k: integer, s: single, on: boolean, c: character, sh: Shade }
+
+struct Q { name: text, n: integer }
+
+struct Holder { h: hash<P[k]> }
+
+fn note(log: &vector<integer>, x: integer) -> integer {
+  log += [x];
+  x
+}
+
+fn main() {
+  // s1: a repeated key whose two values swap the entry's fields — a 20, b 10
+  h: hash<P[k]> = [];
+  h += [P { k: 1, a: 10, b: 20 }];
+  h += [P { k: 1, a: h[1].b ?? 0, b: h[1].a ?? 0 }];
+  assert(len(h) == 1 && (h[1].a ?? 0) == 20 && (h[1].b ?? 0) == 10, "s1 {h[1].a ?? 0} {h[1].b ?? 0}");
+  // s2: three effects, the key written second — the log reads 3, 2, 1 and the entry k 2 a 1 b 3
+  log: vector<integer> = [];
+  h += [P { b: note(log, 3), k: note(log, 2), a: note(log, 1) }];
+  assert(len(log) == 3 && log[0] == 3 && log[1] == 2 && log[2] == 1, "s2 log");
+  assert((h[2].a ?? 0) == 1 && (h[2].b ?? 0) == 3, "s2 {h[2].a ?? 0} {h[2].b ?? 0}");
+  // s3: a fresh key whose value reads the entry it will become — absent then, so 7
+  h += [P { k: 5, a: h[5].a ?? 7, b: 1 }];
+  assert(len(h) == 3 && (h[5].a ?? 0) == 7, "s3 {h[5].a ?? 0}");
+  // s4: every scalar kind staged — the second insert of key 4 wins in each field
+  hw: hash<W[k]> = [];
+  hw += [W { x: 1.5, k: 4, s: 2.5f, on: true, c: 'a', sh: Mid }];
+  hw += [W { k: 4, x: 0.25, s: 0.5f, on: false, c: 'z', sh: Light }];
+  w = hw[4];
+  assert(len(hw) == 1 && w != null, "s4 present");
+  assert(w.x == 0.25 && w.s == 0.5f && !w.on && w.c == 'z' && w.sh == Light, "s4 fields");
+  // s5: a text key's variable rebound by a later value — the key is the text before, "x"
+  hq: hash<Q[name]> = [];
+  nm = "x";
+  hq += [Q { name: nm, n: { nm = "y"; 3 } }];
+  hq += [Q { name: "x", n: (hq["x"].n ?? 0) + 1 }];
+  assert(len(hq) == 1 && (hq["x"].n ?? 0) == 4 && hq["y"] == null && nm == "y", "s5 {len(hq)}");
+  // s6: a hash field of a record — key 3 bumped twice from 1: a 3, b the old a each time, 2
+  hd = Holder { h: [] };
+  hd.h += [P { k: 3, a: 1, b: 0 }];
+  for _ in 0..2 { hd.h += [P { k: 3, a: (hd.h[3].a ?? 0) + 1, b: hd.h[3].a ?? 0 }]; }
+  assert(len(hd.h) == 1 && (hd.h[3].a ?? 0) == 3 && (hd.h[3].b ?? 0) == 2, "s6");
+  // s7: 200 inserts over 16 keys — the last i of each key: sum a 3064, sum b 6128
+  h7: hash<P[k]> = [];
+  for i in 0..200 { h7 += [P { k: i % 16, a: i, b: i * 2 }]; }
+  sa = 0;
+  sb = 0;
+  for e in h7 {
+    sa += e.a;
+    sb += e.b;
+  }
+  assert(len(h7) == 16 && sa == 3064 && sb == 6128, "s7 {len(h7)} {sa} {sb}");
+  println("ok");
+}
