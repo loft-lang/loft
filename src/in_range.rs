@@ -336,11 +336,24 @@ impl FieldWalk<'_> {
                         && self.root_is_param
                         && *n != self.root
                         && self.vars.is_argument(*n)
-                        && matches!(self.vars.tp(*n).base(), crate::data::Type::RefVar(t)
-                            if matches!(t.base(), crate::data::Type::Reference(..) | crate::data::Type::Vector(..)))
+                        && match self.vars.tp(*n).base() {
+                            crate::data::Type::RefVar(t) => matches!(
+                                t.base(),
+                                crate::data::Type::Reference(..) | crate::data::Type::Vector(..)
+                            ),
+                            // A record or vector passed plainly names the caller's record too:
+                            // `drain(y, y)` empties `y.pieces` through `e` while `d.pieces` is
+                            // walked (a-parameters-vector-holds-its-header-where-the-buffer-is-
+                            // apart.loft, h7).  Its use is a field read, so the operator alone
+                            // cannot tell a write.
+                            crate::data::Type::Reference(..) | crate::data::Type::Vector(..) => {
+                                true
+                            }
+                            _ => false,
+                        }
                     {
                         // A `&text` or a `&` scalar (a result buffer among them) holds no record.
-                        return Err("a `&` parameter, which may be the same record");
+                        return Err("another record parameter, which may be the same record");
                     }
                     self.walk(a)?;
                 }
