@@ -3049,11 +3049,14 @@ impl Output<'_> {
     /// The type an absent (`null`) `if` arm takes: what the arm beside it yields, or — when
     /// that arm never answers, so it yields nothing to copy — the type the whole `if` delivers.
     fn null_arm_type(&self, other: &Value, chain_type: Option<&Type>) -> Option<Type> {
-        match self.infer_type(IrNode::Native(other)) {
-            Some(Type::Never | Type::Void) | None if Self::arm_diverges(other) => {
-                chain_type.cloned()
-            }
-            found => found,
+        let found = self.infer_type(IrNode::Native(other));
+        let answers_nothing = found
+            .as_ref()
+            .is_none_or(|t| matches!(t.base(), Type::Never | Type::Void));
+        if answers_nothing && Self::arm_diverges(other) {
+            chain_type.cloned()
+        } else {
+            found
         }
     }
 
