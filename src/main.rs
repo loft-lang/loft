@@ -9026,6 +9026,7 @@ fn main() {
                             );
                         }
                         if let Err(e) = loft::package::print_summary(&out, &mut lock) {
+                            loft::codegen_runtime::end_on_closed_stdout(&e);
                             eprintln!("loft package: print summary failed: {e}");
                             std::process::exit(1);
                         }
@@ -13194,6 +13195,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         let end_def = p.data.definitions();
         if let Err(e) = loft::interp::introspect::emit_all(&mut p.data, &mut state, end_def, &opts)
         {
+            loft::codegen_runtime::end_on_closed_stdout(&e);
             eprintln!("loft: introspect failed: {e}");
             std::process::exit(1);
         }

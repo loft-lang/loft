@@ -1565,6 +1565,72 @@ fn a_compile_error_still_exits_nonzero_through_a_closed_pipe() {
     let _ = fa::remove_dir_all(&dir);
 }
 
+/// Run `loft <args>` with stdout on a pipe whose read end is ALREADY closed, so the first
+/// write fails every time — no race with a reader, unlike `| head -1`.
+fn run_into_closed_pipe(args: &[&str], dir: &std::path::Path) -> std::process::Output {
+    let (reader, writer) = std::io::pipe().expect("os pipe");
+    drop(reader);
+    loft::platform::process::harness_command(loft_bin())
+        .args(args)
+        .current_dir(dir)
+        .stdout(writer)
+        .stderr(Stdio::piped())
+        .output()
+        .expect("failed to invoke loft binary")
+}
+
+/// loft#2395 — the CLI's OWN output meets a closed reader the way a program's `print` does: the run
+/// ends with exit 0 and says nothing.  `loft --version | head -1` panicked with exit 101,
+/// which under `set -o pipefail` failed the release workflow's smoke step.  `--version` and
+/// `--help` write through `println!` (the panic hook's case); `introspect` gets the error
+/// back as a value (the `end_on_closed_stdout` case).
+#[test]
+fn the_cli_own_output_ends_quietly_when_its_reader_has_left() {
+    let (dir, script) = epipe_fixture("cli", EPIPE_MANY);
+    let script = script.to_string_lossy().to_string();
+    for args in [
+        vec!["--version"],
+        vec!["--help"],
+        vec!["introspect", script.as_str()],
+    ] {
+        let out = run_into_closed_pipe(&args, &dir);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "`loft {}` into a closed pipe is the ordinary end of a pipeline; stderr={stderr:?}",
+            args.join(" ")
+        );
+        assert!(
+            stderr.is_empty(),
+            "`loft {}` must say nothing when its reader left; stderr={stderr:?}",
+            args.join(" ")
+        );
+    }
+    let _ = fa::remove_dir_all(&dir);
+}
+
+/// The CLI's control: `--version` onto a full disk is a real fault, and stays loud.
+#[test]
+// approved exemption: `/dev/full` has no Windows equivalent; Windows substitute: none
+#[cfg(unix)]
+fn the_cli_on_a_full_disk_is_still_a_failure() {
+    if !fa::exists(std::path::Path::new("/dev/full")) {
+        return;
+    }
+    let full = fa::create("/dev/full").expect("open /dev/full");
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("--version")
+        .stdout(Stdio::from(full))
+        .stderr(Stdio::piped())
+        .output()
+        .expect("failed to invoke loft binary");
+    assert!(
+        !out.status.success(),
+        "ENOSPC on the CLI's stdout is a genuine failure and must not be reported as success"
+    );
+}
+
 /// loft#1729, `(R-Const)` — a top-level vector constant handed to a parameter the callee
 /// WRITES travels as B-Copy's copy for that call, as a bind of it does (loft#1686).  Before,
 /// the parameter aliased the write-locked constant store and the write halted the run
