@@ -148,14 +148,13 @@ on that box.
 
 ## When a gap is a bug
 
-A routine whose SHIP time is over 3.5× its Rust twin is a bug: `ship` ÷ `rust` for the Rust
-writer, `cship` ÷ `rust` for the C99 backend — the same bar for both.  The ship column is the
-one that counts because it drops the checks loft guarantees, so what remains is the compiler
-or the runtime being structurally slow; slowness the checks cause (`native` against `ship`,
-`c` against `cship`) is optimised where it can be but is no bug.  File ONE issue per problem
-class — the shared cause, its routines listed in the body — never one per routine.  For the C
-lane the rule starts once its initial store port has landed (bench/portal/analysis/
-c-store-gaps.md is that work's list); until then its rows are that analysis, not issues.
+A routine whose SHIP time is over 3× its Rust twin — `cship` ÷ `rust`, under gcc or under clang,
+each judged on its own — is a bug.  The ship column is the one that counts because it drops
+the checks loft guarantees, so what remains is the compiler or the runtime being structurally
+slow; slowness the checks cause (`c` against `cship`) is optimised where it can be but is no
+bug.  File ONE issue PER ROUTINE over the line, when it first shows up — its routine, compiler,
+ratio and commit in the body — and close it when the routine is under 3× on both compilers
+(`formal/performance.md` § The bug line).
 
 ## Local results: `portal/local.py`
 
