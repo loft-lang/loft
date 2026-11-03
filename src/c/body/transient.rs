@@ -1982,7 +1982,8 @@ impl FnWriter<'_> {
         ind: usize,
     ) -> Result<Option<E>, String> {
         if self.tr.is_none()
-            || route != "t_6vector_len"
+            // The call, or the op `@FR-R-Wrapper` makes of it in the IR.
+            || !matches!(route, "t_6vector_len" | "OpLengthVector")
             || args.len() != 1
             || self.tr_root(&args[0]).is_none()
         {

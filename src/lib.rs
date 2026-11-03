@@ -382,7 +382,6 @@ pub mod shared_call;
 pub mod single_use;
 pub mod siphash;
 pub mod slice_text;
-pub mod wrapper_inline;
 pub mod slot_alias;
 pub mod tail_frame;
 pub mod take_local;
@@ -394,6 +393,7 @@ pub mod value_record;
 mod variables;
 pub mod vec_copy;
 pub mod vector;
+pub mod wrapper_inline;
 pub mod zero_count;
 
 pub mod trace;

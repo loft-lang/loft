@@ -11,23 +11,24 @@
 //! stack — and no text parameter or result).  The call is admitted where every argument is a
 //! LEAF — a variable, a literal — or a PURE VECTOR PATH (constant field projections over a
 //! variable): the op may name a parameter twice or in another order, and a leaf evaluates to
-//! the same value however often and in whatever order it is read.  Two more conditions, which
-//! the IR needs and an emitter did not: the op answers the wrapper's kind of value (a call's
-//! type is what the code generator reads), and no argument is a reference variable (the call
-//! would have read through it; an operand position need not).  Anything else keeps the call.
+//! the same value however often and in whatever order it is read.  A reference variable is a
+//! leaf too: the generator reads through it for an operand as it does for an argument (one
+//! `generate_call` serves both).  One more condition, which the IR needs and an emitter did
+//! not: the op answers the wrapper's kind of value (a call's type is what the code generator
+//! reads).  Anything else keeps the call.
 //!
 //! The pass runs last in the scope pass, so every rewrite before it sees the IR it saw before.
 //! `LOFT_IR_WRAPPER=1` turns it on (opt-in while it is compared with the rustc writer's
 //! clause); `LOFT_TRACE_WRAPPER=1` names each call taken, and each kept with why.
 use crate::data::{Data, DefType, Type, Value};
 use crate::ir_shape::{WrapperOperand, one_op_wrapper};
-use crate::variables::Function;
 use std::collections::HashMap;
 
 const RULE: &str = "R-Wrapper";
 
 fn enabled() -> bool {
     crate::env_once!(std::env::var("LOFT_IR_WRAPPER").is_ok_and(|v| v != "0"))
+        && !crate::env_once!(std::env::var("LOFT_NO_IR_WRAPPER").is_ok_and(|v| v != "0"))
 }
 
 fn trace() -> bool {
@@ -45,7 +46,6 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     let mut fired = 0usize;
     {
         let data: &Data = data;
-        let vars = data.def(d_nr).variables();
         code.map_nodes(&mut |n| {
             let Value::Call(d, args) = &*n else { return };
             let d = *d;
@@ -59,7 +59,7 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
             else {
                 return;
             };
-            let why = if !args.iter().all(|a| leaf(a, vars, get_field)) {
+            let why = if !args.iter().all(|a| leaf(a, get_field)) {
                 Some("an argument is neither a leaf nor a pure vector path")
             } else if !same_kind(data.def(op).returned(), data.def(d).returned()) {
                 Some("the op answers another kind of value than the wrapper")
@@ -103,15 +103,17 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     crate::rewrite_census::fired(RULE, fired);
 }
 
-/// A variable that is not a reference, a literal, or constant field projections over a
-/// variable: a value that reads the same however often and in whatever order it is read.
-fn leaf(v: &Value, vars: &Function, get_field: u32) -> bool {
+/// A variable, a literal, or constant field projections over a variable: a value that reads
+/// the same however often and in whatever order it is read.
+fn leaf(v: &Value, get_field: u32) -> bool {
     match v.unspan() {
-        Value::Var(x) => !matches!(vars.tp(*x), Type::RefVar(_)),
-        Value::Int(_) | Value::Long(_) | Value::Float(_) | Value::Single(_) | Value::Boolean(_) => true,
+        Value::Var(_) => true,
+        Value::Int(_) | Value::Long(_) | Value::Float(_) | Value::Single(_) | Value::Boolean(_) => {
+            true
+        }
         Value::Call(f, args) if *f == get_field => {
             matches!(args.as_slice(), [inner, Value::Int(_), Value::Int(_)]
-                if matches!(inner.unspan(), Value::Var(_) | Value::Call(..)) && leaf(inner, vars, get_field))
+                if matches!(inner.unspan(), Value::Var(_) | Value::Call(..)) && leaf(inner, get_field))
         }
         _ => false,
     }
