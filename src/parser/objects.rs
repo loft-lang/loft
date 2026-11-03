@@ -2629,9 +2629,13 @@ impl Parser {
             // the struct-construct path (`parse_object`, also a plain work-ref): the
             // ownership-transfer logic already claims w for the alias / return
             // consumers, and copy consumers free it at scope end — no double-free.
+            // The block names the work-ref it fills, as `parse_object`'s `Object` block does:
+            // that dep is how a call site finds the literal's owner and hoists it out of an
+            // argument (`Scopes::inline_built_borrow_source`) — without it the call's witness
+            // set read incomplete and the callee's fresh answer was freed by nobody (loft#2385).
             *code = v_block(
                 list,
-                Type::Enum(enum_nr, true, crate::data::Deps::none()),
+                Type::Enum(enum_nr, true, crate::data::Deps::frame1(w)),
                 "EnumUnitLit",
             );
             return ret;

@@ -4735,9 +4735,14 @@ impl State {
         // a retbuf/Database-reused local like `off` keeps its DbRef for in-place
         // `OpDatabase` reuse, and nulling it destabilises the `protect_store_frees`
         // machinery (leaks the returned value).
+        // A LIFT temp is reset too (loft#2385): it is rebound by every evaluation, and the
+        // rebind of a call that may answer a borrow (`Database` + `CopyRefOrNull`) re-inits
+        // the slot's store IN PLACE — after its free, a store the allocator may have handed to
+        // the call's own fresh answer, so the re-init wiped that answer and the copy read an
+        // empty record.  Native resets after every free; a lift's slot holds nothing after it.
         if stack.data.def(op).name() == "OpFreeRef"
             && let Some(Value::Var(v)) = parameters.first()
-            && stack.owned_reassigned.contains(v)
+            && (stack.owned_reassigned.contains(v) || stack.function.is_lift_temp(*v))
         {
             let var_pos = stack.var_pos(*v);
             self.generate(&parameters[0], stack, false);
@@ -4753,7 +4758,7 @@ impl State {
         // way: when the guard declined, the store is the buffer's, which still names it.
         if stack.data.def(op).name() == "OpFreeRefIfDistinct"
             && let [Value::Var(v), witness] = parameters
-            && stack.owned_reassigned.contains(v)
+            && (stack.owned_reassigned.contains(v) || stack.function.is_lift_temp(*v))
         {
             let var_pos = stack.var_pos(*v);
             self.generate(&parameters[0], stack, false);

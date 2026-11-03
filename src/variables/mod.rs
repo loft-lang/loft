@@ -5550,6 +5550,13 @@ impl Function {
         self.inline_ref_vars.contains(&v)
     }
 
+    /// Is `v` a temporary the scope pass LIFTED a call argument into (`Scopes::new_lift_var`,
+    /// named `__lift_N` there, as its other readers recognise it)?  Each evaluation binds it
+    /// afresh and its block's exit frees it, so nothing reuses its store past that free.
+    pub fn is_lift_temp(&self, v: u16) -> bool {
+        (v as usize) < self.variables.len() && self.name(v).starts_with("__lift_")
+    }
+
     /// Must no ownership-derived free ever be emitted for `v` — in ANY of a free's five
     /// spellings (`OpSets::frees`), from the scope-exit sweep, a transition free, a pre-`Set`
     /// free or a move alike?  Its contract is that sentence, and nothing weaker; the one

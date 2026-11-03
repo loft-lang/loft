@@ -857,9 +857,10 @@ impl Parser {
                     // the record and orphans `w`, so a `skip_free` here left nothing to
                     // free it (loft#1344: `xs += [V.Null]` leaked while `xs += [Null]`,
                     // the very same value spelled without its enum, did not).
+                    // Named by the work-ref it fills, as the unqualified form's block is.
                     *code = crate::data::v_block(
                         list,
-                        Type::Enum(dnr, true, crate::data::Deps::none()),
+                        Type::Enum(dnr, true, crate::data::Deps::frame1(w)),
                         "EnumUnitLit",
                     );
                     self.data.attr_used(dnr, fnr);
