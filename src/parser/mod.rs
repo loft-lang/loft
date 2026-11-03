@@ -2722,7 +2722,8 @@ impl Parser {
                     // is a name the stdlib (or a loaded file) already defines: the scan hands
                     // back slices, and only a survivor is allocated — one key buffer serves
                     // every lookup (the allocation pins count each `format!`).
-                    let (bare, fns) = crate::libscan::scan_bare_calls_and_fn_declarations(&src);
+                    let (bare, fns, methods) =
+                        crate::libscan::scan_bare_calls_and_fn_declarations(&src);
                     let mut key = String::with_capacity(64);
                     let bare_calls: Vec<String> = bare
                         .into_iter()
@@ -2735,9 +2736,18 @@ impl Parser {
                         })
                         .map(str::to_string)
                         .collect();
+                    // A method the file DECLARES is in reach (`@FR-Disp-Trigger`): a program's
+                    // own `fn put(self: Cv, …)` must not load a library that exports a `put`
+                    // (loft#2393).  The scan sees names, not receivers, so a same-named method
+                    // of another type needs its `use` — which the library's types usually
+                    // supply through the type half.
+                    let calls: Vec<String> = crate::libscan::scan_method_calls(&src)
+                        .into_iter()
+                        .filter(|m| !methods.contains(&m.as_str()))
+                        .collect();
                     let pair = (
                         crate::libscan::scan_qualified_lib_refs(&src),
-                        crate::libscan::scan_method_calls(&src),
+                        calls,
                         crate::libscan::scan_type_refs(&src)
                             .into_iter()
                             .filter(|t| !declared.contains(t))

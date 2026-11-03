@@ -664,6 +664,17 @@ impl Parser {
                             named.join(" and "),
                             uses.join(" or ")
                         );
+                    } else if let Some(pkg) = self.method_provider(&field) {
+                        // loft#2393 — a library provides the method, and nothing loaded it:
+                        // the file declares a method of that name itself (which keeps the
+                        // trigger from firing), or it manages its libraries by hand.
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "{} has no method `{field}` — the library `{pkg}` provides a \
+                             `{field}` method: write `use {pkg}::*;` to use it",
+                            t.source_name(&self.data)
+                        );
                     } else if has_free_hint {
                         // loft#850 — only the stdlib can be blamed for the stdlib's
                         // choices; a `use`d package that declares `{field}` free-only

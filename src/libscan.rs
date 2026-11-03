@@ -417,11 +417,13 @@ pub fn scan_type_declarations(content: &str) -> Vec<String> {
 /// [`scan_method_calls`] skips them, an interpolation hole is code; a keyword before `(`
 /// (`assert(`, `panic(`) is no call.  Over-collects every call the file makes (the stdlib's
 /// too); the caller keeps only the names a builder map carries, minus the declared ones.
-/// Both lists are deduplicated, in first-seen order, and borrow `content`: a name is
+/// The third list is the declarations whose first parameter is `self` — the methods the file
+/// provides, which the METHOD half of the trigger surface leaves alone (loft#2393).
+/// The lists are deduplicated, in first-seen order, and borrow `content`: a name is
 /// allocated only once the caller has kept it, so a corpus of three hundred functions
 /// costs the front end no three hundred strings (the allocation pins).
 #[must_use]
-pub fn scan_bare_calls_and_fn_declarations(content: &str) -> (Vec<&str>, Vec<&str>) {
+pub fn scan_bare_calls_and_fn_declarations(content: &str) -> (Vec<&str>, Vec<&str>, Vec<&str>) {
     let bytes = content.as_bytes();
     let len = bytes.len();
     let mut scan = BareScan::default();
@@ -480,7 +482,7 @@ pub fn scan_bare_calls_and_fn_declarations(content: &str) -> (Vec<&str>, Vec<&st
         }
         scan.code_byte(content, &mut at);
     }
-    (scan.calls, scan.decls)
+    (scan.calls, scan.decls, scan.methods)
 }
 
 /// The token before the identifier under the cursor: a `.`, a `::`, a `fn` / `operator`
@@ -499,6 +501,7 @@ enum Prev {
 struct BareScan<'a> {
     calls: Vec<&'a str>,
     decls: Vec<&'a str>,
+    methods: Vec<&'a str>,
     prev: Prev,
 }
 
@@ -522,7 +525,12 @@ impl<'a> BareScan<'a> {
             }
             let called = next < len && bytes[next] == b'(';
             match self.prev {
-                Prev::FnKeyword if called => push_once(word, &mut self.decls),
+                Prev::FnKeyword if called => {
+                    push_once(word, &mut self.decls);
+                    if takes_self(&content[next + 1..]) {
+                        push_once(word, &mut self.methods);
+                    }
+                }
                 Prev::Other if called && !crate::lexer::is_keyword(word) => {
                     push_once(word, &mut self.calls);
                 }
@@ -547,6 +555,14 @@ impl<'a> BareScan<'a> {
             *at += 1;
         }
     }
+}
+
+/// Does a parameter list (the text after its `(`) open with `self`?
+fn takes_self(params: &str) -> bool {
+    params
+        .trim_start()
+        .strip_prefix("self")
+        .is_some_and(|rest| !rest.bytes().next().is_some_and(is_ident_char))
 }
 
 fn push_once<'a>(name: &'a str, list: &mut Vec<&'a str>) {
@@ -691,8 +707,9 @@ mod tests {
         let src = "// set(commented)\nfn main() {\n  s = set([\"a\"]);\n  t = x.set(1);\n  u = script::set([]);\n\
                    assert(s.has(\"a\"));\n  println(\"{count(s)} set(\");\n  c = '(';\n  v = keep (2);\n}\n\
                    pub fn count(s: Bag) -> integer { 1 }\noperator to_text(self: Bag) -> text { \"\" }\n";
-        let (calls, decls) = scan_bare_calls_and_fn_declarations(src);
+        let (calls, decls, methods) = scan_bare_calls_and_fn_declarations(src);
         assert_eq!(calls, vec!["set", "println", "count", "keep"], "{calls:?}");
         assert_eq!(decls, vec!["main", "count", "to_text"], "{decls:?}");
+        assert_eq!(methods, vec!["to_text"], "{methods:?}");
     }
 }
