@@ -264,49 +264,67 @@ fn field_decline(
             return Some("a vector local that views the record is used in the body");
         }
     }
-    let root_is_param = vars.is_argument(root);
-    let ours = |v: &Value| -> bool {
-        matches!(v.unspan(), Value::Call(d, a) if a.len() == 3
-            && data.def(*d).name() == "OpGetField"
-            && matches!(a[0].unspan(), Value::Var(r) if *r == root)
-            && matches!(a[1].unspan(), Value::Int(o) if *o == off))
+    let cx = FieldWalk {
+        data,
+        vars,
+        root,
+        off,
+        root_is_param: vars.is_argument(root),
+        idx,
+        lv,
     };
-    fn walk(
-        data: &Data,
-        vars: &crate::variables::Function,
-        node: &Value,
-        root: u16,
-        root_is_param: bool,
-        idx: u16,
-        lv: u16,
-        ours: &dyn Fn(&Value) -> bool,
-    ) -> Result<(), &'static str> {
+    body.iter().try_for_each(|o| cx.walk(o)).err()
+}
+
+/// What the field clause's body check carries through the walk.
+struct FieldWalk<'a> {
+    data: &'a Data,
+    vars: &'a crate::variables::Function,
+    root: u16,
+    off: i32,
+    root_is_param: bool,
+    idx: u16,
+    lv: u16,
+}
+
+impl FieldWalk<'_> {
+    /// `d.f` itself, the walked field.
+    fn ours(&self, v: &Value) -> bool {
+        matches!(v.unspan(), Value::Call(d, a) if a.len() == 3
+            && self.data.def(*d).name() == "OpGetField"
+            && matches!(a[0].unspan(), Value::Var(r) if *r == self.root)
+            && matches!(a[1].unspan(), Value::Int(o) if *o == self.off))
+    }
+
+    fn walk(&self, node: &Value) -> Result<(), &'static str> {
         match node {
-            Value::Span(sp) => walk(data, vars, &sp.1, root, root_is_param, idx, lv, ours),
-            Value::Var(n) if *n == root => Err("the record is used other than through a field"),
+            Value::Span(sp) => self.walk(&sp.1),
+            Value::Var(n) if *n == self.root => {
+                Err("the record is used other than through a field")
+            }
             Value::Set(n, e) => {
-                if *n == root || *n == idx || *n == lv {
+                if *n == self.root || *n == self.idx || *n == self.lv {
                     return Err("the body assigns the record or the counter");
                 }
-                walk(data, vars, e, root, root_is_param, idx, lv, ours)
+                self.walk(e)
             }
             Value::CallRef(..) | Value::Yield(_) | Value::Parallel(_) => {
                 Err("a call through a reference, a yield or a par in the body")
             }
             Value::Call(op, args) => {
-                let name = data.def(*op).name();
-                if ours(node) {
+                let name = self.data.def(*op).name();
+                if self.ours(node) {
                     return Err("the walked vector is used other than by a read");
                 }
                 // A field of the record, read whole: another field, or the record's own scalar.
                 if name == "OpGetField"
-                    && matches!(args.first().map(Value::unspan), Some(Value::Var(r)) if *r == root)
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(r)) if *r == self.root)
                 {
                     return Ok(());
                 }
                 let reads = READS.contains(&name);
                 for a in args {
-                    if ours(a) {
+                    if self.ours(a) {
                         if reads {
                             continue;
                         }
@@ -315,16 +333,16 @@ fn field_decline(
                         );
                     }
                     if let Value::Var(n) = a.unspan()
-                        && root_is_param
-                        && *n != root
-                        && vars.is_argument(*n)
-                        && matches!(vars.tp(*n), crate::data::Type::RefVar(t)
+                        && self.root_is_param
+                        && *n != self.root
+                        && self.vars.is_argument(*n)
+                        && matches!(self.vars.tp(*n), crate::data::Type::RefVar(t)
                             if matches!(t.base(), crate::data::Type::Reference(..) | crate::data::Type::Vector(..)))
                     {
                         // A `&text` or a `&` scalar (a result buffer among them) holds no record.
                         return Err("a `&` parameter, which may be the same record");
                     }
-                    walk(data, vars, a, root, root_is_param, idx, lv, ours)?;
+                    self.walk(a)?;
                 }
                 Ok(())
             }
@@ -333,16 +351,13 @@ fn field_decline(
                 let mut node = other.clone();
                 node.for_each_child_mut(&mut |c| {
                     if res.is_ok() {
-                        res = walk(data, vars, c, root, root_is_param, idx, lv, ours);
+                        res = self.walk(c);
                     }
                 });
                 res
             }
         }
     }
-    body.iter()
-        .try_for_each(|o| walk(data, vars, o, root, root_is_param, idx, lv, &ours))
-        .err()
 }
 
 /// The operators that read the walked vector and change nothing about it.

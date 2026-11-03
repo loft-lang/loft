@@ -3290,40 +3290,7 @@ impl<'a> FnWriter<'a> {
         self.decls.push(format!("uint8_t *{pa} = 0;"));
         self.decls.push(format!("int {pl} = 0;"));
         let rec = self.var(r);
-        match self.held_element_bind(&ops[at]) {
-            // The held-element clause: the record is element `idx` of a vector held for this
-            // loop, so on a hit its address is the held base's; the store lookup is left to
-            // the miss (a discharge's minted default), and the address is the same either way.
-            Some((held, size, idx, ncc, raw)) => {
-                let addr = if raw {
-                    format!("loft_vh_at_addr({held}, {size}, {idx})")
-                } else {
-                    format!("loft_vh_addr({held}, {size}, {idx})")
-                };
-                match ncc {
-                    Some(ncc) => self.line(
-                        ind,
-                        &format!(
-                            "if (LOFT_LIKELY({ncc}.rec != 0)) {pa} = {addr}; else {pa} = loft_rec_ptr({rec});"
-                        ),
-                    ),
-                    None => self.line(ind, &format!("{pa} = {addr};")),
-                }
-                self.line(
-                    ind,
-                    &format!(
-                        "LOFT_PROVED({pa} == loft_rec_ptr({rec}), {});",
-                        c_string(&format!(
-                            "{}:{}",
-                            self.cx.data.def(self.d).original_name(),
-                            self.vars.name(r)
-                        ))
-                    ),
-                );
-                crate::rewrite_census::fired("R-RecPtr/held", 1);
-            }
-            None => self.line(ind, &format!("{pa} = loft_rec_ptr({rec});")),
-        }
+        self.record_ptr_line(&ops[at], r, &pa, &rec, ind);
         // The lock flag only matters to a write through the address.
         let data = self.cx.data;
         let writes = ops[at + 1..].iter().any(|op| {
@@ -3407,6 +3374,41 @@ impl<'a> FnWriter<'a> {
             .then(|| self.var(*i))
     }
 
+    /// The bind of a record's address `pa` (`bind_record_ptr`): the store lookup, or — the
+    /// held-element clause — the held base's address on a hit, the store's only on a miss (a
+    /// discharge's minted default); the address is the same either way, `LOFT_VERIFY` checks.
+    fn record_ptr_line(&mut self, op: &Value, r: u16, pa: &str, rec: &str, ind: usize) {
+        let Some((held, size, idx, ncc, raw)) = self.held_element_bind(op) else {
+            self.line(ind, &format!("{pa} = loft_rec_ptr({rec});"));
+            return;
+        };
+        let addr = if raw {
+            format!("loft_vh_at_addr({held}, {size}, {idx})")
+        } else {
+            format!("loft_vh_addr({held}, {size}, {idx})")
+        };
+        match ncc {
+            Some(ncc) => self.line(
+                ind,
+                &format!("if (LOFT_LIKELY({ncc}.rec != 0)) {pa} = {addr}; else {pa} = loft_rec_ptr({rec});"),
+            ),
+            None => self.line(ind, &format!("{pa} = {addr};")),
+        }
+        let proof_site = format!(
+            "{}:{}",
+            self.cx.data.def(self.d).original_name(),
+            self.vars.name(r)
+        );
+        self.line(
+            ind,
+            &format!(
+                "LOFT_PROVED({pa} == loft_rec_ptr({rec}), {});",
+                c_string(&proof_site)
+            ),
+        );
+        crate::rewrite_census::fired("R-RecPtr/held", 1);
+    }
+
     /// `@FR-R-RecPtr`'s held-element clause: the bind `p = v[i]` (an `OpGetVector[Nullable]`)
     /// or its `?` discharge (`__ncc = v[i]; if __ncc { __ncc } else { a minted default }`), `v`
     /// held for the loop and `i` a variable: the header, the element size, the index, and the
@@ -3415,37 +3417,40 @@ impl<'a> FnWriter<'a> {
         if crate::env_once!(std::env::var("LOFT_NO_RECPTR_HELD").is_ok_and(|v| v != "0")) {
             return None;
         }
-        let Value::Set(_, x) = op.unspan() else {
+        let Value::Set(_, value) = op.unspan() else {
             return None;
         };
         let data = self.cx.data;
-        let read = |v: &Value| -> Option<(String, i64, String, bool)> {
-            let Value::Call(d, a) = v.unspan() else {
+        let read = |node: &Value| -> Option<(String, i64, String, bool)> {
+            let Value::Call(def_nr, args) = node.unspan() else {
                 return None;
             };
-            if a.len() != 3
-                || (*d as usize) >= data.definitions.len()
-                || !matches!(data.def(*d).name(), "OpGetVector" | "OpGetVectorNullable")
+            if args.len() != 3
+                || (*def_nr as usize) >= data.definitions.len()
+                || !matches!(
+                    data.def(*def_nr).name(),
+                    "OpGetVector" | "OpGetVectorNullable"
+                )
             {
                 return None;
             }
-            let Value::Int(size) = a[1].unspan() else {
+            let Value::Int(size) = args[1].unspan() else {
                 return None;
             };
-            let Value::Var(i) = a[2].unspan() else {
+            let Value::Var(index) = args[2].unspan() else {
                 return None;
             };
-            let h = self.held_vector(&a[0])?;
-            let raw = self.counter_index(&a[2], &h).is_some();
-            Some((h, i64::from(*size), self.var(*i), raw))
+            let header = self.held_vector(&args[0])?;
+            let raw = self.counter_index(&args[2], &header).is_some();
+            Some((header, i64::from(*size), self.var(*index), raw))
         };
-        if let Some((h, size, idx, raw)) = read(x) {
-            return Some((h, size, idx, None, raw));
+        if let Some((header, size, idx, raw)) = read(value) {
+            return Some((header, size, idx, None, raw));
         }
-        let Value::Block(b) = x.unspan() else {
+        let Value::Block(block) = value.unspan() else {
             return None;
         };
-        let ops: Vec<&Value> = b
+        let ops: Vec<&Value> = block
             .operators
             .iter()
             .filter(|o| !matches!(o.unspan(), Value::Line(_)))
@@ -3453,19 +3458,19 @@ impl<'a> FnWriter<'a> {
         let [first, last] = ops[..] else {
             return None;
         };
-        let Value::Set(ncc, e) = first.unspan() else {
+        let Value::Set(ncc, elem) = first.unspan() else {
             return None;
         };
-        let (h, size, idx, raw) = read(e)?;
-        let Value::If(c, hit, _) = last.unspan() else {
+        let (header, size, idx, raw) = read(elem)?;
+        let Value::If(cond, hit, _) = last.unspan() else {
             return None;
         };
-        let tests_ncc = matches!(c.unspan(), Value::Call(d, a) if a.len() == 1
-            && (*d as usize) < data.definitions.len()
-            && data.def(*d).name() == "OpConvBoolFromRef"
-            && matches!(a[0].unspan(), Value::Var(v) if v == ncc));
+        let tests_ncc = matches!(cond.unspan(), Value::Call(def_nr, args) if args.len() == 1
+            && (*def_nr as usize) < data.definitions.len()
+            && data.def(*def_nr).name() == "OpConvBoolFromRef"
+            && matches!(args[0].unspan(), Value::Var(v) if v == ncc));
         let answers_ncc = matches!(Self::arm_value(hit).unspan(), Value::Var(v) if v == ncc);
-        (tests_ncc && answers_ncc).then(|| (h, size, idx, Some(self.var(*ncc)), raw))
+        (tests_ncc && answers_ncc).then(|| (header, size, idx, Some(self.var(*ncc)), raw))
     }
 
     /// A scalar field read or in-place write of a record view whose address an enclosing block
