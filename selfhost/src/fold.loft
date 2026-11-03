@@ -1,0 +1,152 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — constant folding (`src/const_eval.rs`): a literal, or a call of a foldable operator
+// over foldable arguments, folded to its value.  Shared by the constant store (`consts`) and the
+// elaborator's domain proofs (`math_arg_in_domain`'s `const_f64`).
+use ir;
+
+// The 32-bit integer the IR's `Int` wraps at.
+pub MIN_I32 = -2147483648;
+
+fn unspan(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { inner } => unspan(inner),
+    _ => n
+  }
+}
+
+// A folded literal (`const_eval`'s `Value`): an `Int` is the IR's 32-bit integer, wrapping as
+// the Rust fold wraps; a `Long` the full width.
+pub enum Folded {
+  VInt { pub n: integer },
+  VLong { pub n: integer },
+  // A float may be NaN (`0.0 / 0.0` folds to it), which loft reads as null.
+  VFloat { pub f: float? },
+  VSingle { pub f: single? },
+  VBool { pub b: boolean },
+}
+
+// `x` wrapped to 32 bits, as `i32::wrapping_*` answers.
+pub fn wrap32(x: integer) -> integer {
+  r = x & 4294967295;
+  if r >= 2147483648 { r - 4294967296 } else { r }
+}
+
+pub fn op_name(b: ir::Bundle, d: integer) -> text {
+  b.data.definitions[d]!.name
+}
+
+// `const_eval`: a literal, or a call of a foldable operator over foldable arguments, or a
+// conditional over a folded boolean; null for anything known only at run time.
+pub fn fold(b: ir::Bundle, n: ir::Node) -> Folded? {
+  at = unspan(n);
+  // A conditional folds to the arm its folded condition picks.
+  while at is NdIf {
+    match at {
+      NdIf { cond, t, f } => match fold(b, cond) {
+        VBool { b: c } => { at = unspan(if c { t } else { f }); }
+        _ => { return null; }
+      },
+      _ => {}
+    }
+  }
+  match at {
+    NdInt { n: v } => VInt { n: v },
+    NdLong { n: v } => VLong { n: v },
+    NdFloat { f } => VFloat { f: f },
+    NdSingle { f } => VSingle { f: f },
+    NdBoolean { b: v } => VBool { b: v },
+    NdCall { def_nr, args } => {
+      vals: vector<Folded> = [];
+      for a in args {
+        v = fold(b, a);
+        if v == null {
+          return null;
+        }
+        vals += [v!];
+      }
+      fold_op(op_name(b, def_nr), vals)
+    }
+    _ => null,
+  }
+}
+
+// `fold_op`: one operator over folded arguments.
+pub fn fold_op(name: text, a: vector<Folded>) -> Folded? {
+  if len(a) == 0 {
+    return match name {
+      "OpMathPiFloat" => VFloat { f: PI },
+      "OpMathEFloat" => VFloat { f: E },
+      _ => null,
+    };
+  }
+  if len(a) == 1 {
+    return match a[0]! {
+      VInt { n } => match name {
+        "OpMinSingleInt" => VInt { n: wrap32(-n) },
+        "OpConvFloatFromInt" => VFloat { f: n as float },
+        "OpConvSingleFromInt" => VSingle { f: n as single },
+        _ => null,
+      },
+      VFloat { f } => match name {
+        "OpMinSingleFloat" => VFloat { f: -f },
+        // `Value::int_const`: an `Int` where it fits 32 bits, else a `Long`.
+        "OpConvIntFromFloat" => if f == null || f - f != 0.0 {
+          null
+        } else {
+          i = f! as integer;
+          if i >= MIN_I32 && i <= 2147483647 { VInt { n: i } } else { VLong { n: i } }
+        },
+        _ => null,
+      },
+      VSingle { f } => if name == "OpMinSingleSingle" { VSingle { f: -f } } else { null },
+      VBool { b: v } => if name == "OpNot" { VBool { b: !v } } else { null },
+      _ => null,
+    };
+  }
+  if len(a) != 2 {
+    return null;
+  }
+  match a[0]! {
+    VInt { n: x } => match a[1]! {
+      VInt { n: y } => match name {
+        "OpAddInt" => VInt { n: wrap32(x + y) },
+        "OpMinInt" => VInt { n: wrap32(x - y) },
+        "OpMulInt" => VInt { n: wrap32(x * y) },
+        "OpDivInt" => if y == 0 || (x == MIN_I32 && y == -1) { null } else { VInt { n: (x / y)! } },
+        "OpModInt" => if y == 0 || (x == MIN_I32 && y == -1) { null } else { VInt { n: (x % y)! } },
+        "OpAndInt" => VInt { n: x & y },
+        "OpOrInt" => VInt { n: x | y },
+        "OpXorInt" => VInt { n: x ^ y },
+        "OpEqInt" => VBool { b: x == y },
+        "OpNeInt" => VBool { b: x != y },
+        "OpLtInt" => VBool { b: x < y },
+        "OpLeInt" => VBool { b: x <= y },
+        _ => null,
+      },
+      _ => null,
+    },
+    VFloat { f: x } => match a[1]! {
+      VFloat { f: y } => match name {
+        "OpAddFloat" => VFloat { f: x + y },
+        "OpMinFloat" => VFloat { f: x - y },
+        "OpMulFloat" => VFloat { f: x * y },
+        "OpDivFloat" => VFloat { f: x / y },
+        _ => null,
+      },
+      _ => null,
+    },
+    VSingle { f: x } => match a[1]! {
+      VSingle { f: y } => match name {
+        "OpAddSingle" => VSingle { f: x + y },
+        "OpMinSingle" => VSingle { f: x - y },
+        "OpMulSingle" => VSingle { f: x * y },
+        "OpDivSingle" => VSingle { f: x / y },
+        _ => null,
+      },
+      _ => null,
+    },
+    _ => null,
+  }
+}
