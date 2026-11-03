@@ -5550,6 +5550,40 @@ impl Function {
         self.inline_ref_vars.contains(&v)
     }
 
+    /// Every local other than `roots` whose deps reach one of `roots`, directly or through
+    /// another such local.
+    pub fn views_of(&self, roots: &[u16]) -> Vec<u16> {
+        let mut reach: Vec<u16> = roots.to_vec();
+        let mut views = Vec::new();
+        loop {
+            let before = views.len();
+            for w in 0..self.count() {
+                if !reach.contains(&w) && self.tp(w).depend().iter().any(|d| reach.contains(d)) {
+                    reach.push(w);
+                    views.push(w);
+                }
+            }
+            if views.len() == before {
+                return views;
+            }
+        }
+    }
+
+    /// The locals `v` views, directly or through another: its deps, their deps, and so on.
+    pub fn viewed_by(&self, v: u16) -> Vec<u16> {
+        let mut out: Vec<u16> = Vec::new();
+        let mut stack = vec![v];
+        while let Some(w) = stack.pop() {
+            for d in self.tp(w).depend() {
+                if d != v && !out.contains(&d) && d < self.count() {
+                    out.push(d);
+                    stack.push(d);
+                }
+            }
+        }
+        out
+    }
+
     /// Is `v` a temporary the scope pass LIFTED a call argument into (`Scopes::new_lift_var`,
     /// named `__lift_N` there, as its other readers recognise it)?  Each evaluation binds it
     /// afresh and its block's exit frees it, so nothing reuses its store past that free.

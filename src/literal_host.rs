@@ -308,7 +308,7 @@ fn check(
     // the vector's own (loft#2118).  A view made THROUGH the literal (`e = cur.src[1]`, a
     // slice match on it) names the literal's elements, which the copy and the move answer
     // alike, so it is no hazard (loft#2135).
-    let views = views_of(function, &[p.src, p.owner]);
+    let views = function.views_of(&[p.src, p.owner]);
     if list[p.mv + 1..]
         .iter()
         .any(|s| views.iter().any(|&w| mentions(s, w) > 0))
@@ -349,25 +349,6 @@ fn check(
         return Err("the literal is not bound once, by its null init and its mint");
     }
     pairing(code, list, p, ops)
-}
-
-/// Every local other than `roots` whose deps reach one of `roots`, directly or through
-/// another such local.
-fn views_of(function: &Function, roots: &[u16]) -> Vec<u16> {
-    let mut reach: Vec<u16> = roots.to_vec();
-    let mut views = Vec::new();
-    loop {
-        let before = views.len();
-        for w in 0..function.count() {
-            if !reach.contains(&w) && function.tp(w).depend().iter().any(|d| reach.contains(d)) {
-                reach.push(w);
-                views.push(w);
-            }
-        }
-        if views.len() == before {
-            return views;
-        }
-    }
 }
 
 fn count_frees(code: &Value, w: u16, ops: &Ops) -> usize {
