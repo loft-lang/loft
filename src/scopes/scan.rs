@@ -537,7 +537,12 @@ impl Scopes<'_> {
                 // hoist: the return delivers its value into the CALLER's buffer, so
                 // freeing the temp at body exit — the behaviour before loft#722 — is
                 // both correct and what the caller's copy relies on.
-                if !matches!(bl.result, Type::Void)
+                // A block that ENDS IN A JUMP (typed `never`: a `return`, `break` or `continue`)
+                // yields no value for the enclosing scope to borrow, and the hoist's promise —
+                // the outer scope frees the temp instead — is one control never reaches past the
+                // jump.  A `return` binds its value before its frees (`bind_return_temp`), so the
+                // jump's own free of the temp is the one that is owed (loft#2382).
+                if !matches!(bl.result, Type::Void | Type::Never)
                     && !is_body_return
                     && self.lift_vars.len() > lift_watermark
                 {
