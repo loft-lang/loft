@@ -4230,6 +4230,20 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     }
   }
   first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
+  // `next(g)` advances a generator's handle (`OpCoroutineNext`, typed as its element) and
+  // `exhausted(g)` asks whether it is done; a tuple element's advance is not carried.
+  if len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
+    step = match el_types::base(first) { TyIterator { step: st } => st, _ => ir::TyVoid };
+    if name == "exhausted" {
+      return ex(el_ir::cl(e, "OpCoroutineExhausted", [list[0]]), ir::TyBoolean);
+    }
+    vs = coroutine_value_size(step);
+    if vs < 0 {
+      el::refuse(e, "a `next` of a generator of this element type: {type_kind(step)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(el_ir::cl(e, "OpCoroutineNext", [list[0], ir::NdInt { n: vs }]), step);
+  }
   d = find_fn(e, name, first);
   if d < 0 {
     // A receiver already refused (untyped on the second pass) chose no method: not refused again.
@@ -7281,6 +7295,18 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
 // `parse_for` over a generator (`Type::Iterator` of a call): the coroutine held in a `___gen_N`,
 // each turn its next value (`OpCoroutineNext`, the element's size), the loop left once it is
 // exhausted (`OpCoroutineExhausted`).
+// `coroutine_layout::next_operands`'s packed size for an element this port carries: the
+// element's argument-slot size (a text 16 bytes, a record its 12-byte reference), its channel
+// tag above it (float 3, single 4, the rest 0); -1 for any other element.
+fn coroutine_value_size(step: ir::TypeT) -> integer {
+  size = if step is TyText { 16 } else if step is TyReference { 12 } else if step is TyTuple { -1 } else { elem_size(step) };
+  if size < 0 {
+    return -1;
+  }
+  tag = if step is TyFloat { 3 } else if step is TySingle { 4 } else { 0 };
+  tag * 256 + size
+}
+
 // A handle already in a local is used in place (a second owner of one coroutine's store would
 // free it under the local): the block's setup is then `null`.
 fn generator_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body: integer, filter: integer?) -> Ex {
@@ -7297,19 +7323,15 @@ fn generator_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, 
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  // The element's argument-slot size (`variables::size`, `Context::Argument`): a text is
-  // carried as 16 bytes, a record as its 12-byte reference.
-  size = if step is TyText { 16 } else if step is TyReference { 12 } else { elem_size(step) };
-  if size < 0 {
+  vs = coroutine_value_size(step);
+  if vs < 0 {
     el::refuse(e, "a `for` over a generator of this element type: {type_kind(step)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   gv = ir::NdVar { n: g };
   brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
-  // `coroutine_layout::next_operands`: the size, its channel tag above it (float 3, single 4).
-  tag = if step is TyFloat { 3 } else if step is TySingle { 4 } else { 0 };
   steps: vector<ir::Node> = [
-    el_ir::v_set(lv, el_ir::cl(e, "OpCoroutineNext", [gv, ir::NdInt { n: tag * 256 + size }])),
+    el_ir::v_set(lv, el_ir::cl(e, "OpCoroutineNext", [gv, ir::NdInt { n: vs }])),
     el_ir::v_if(el_ir::cl(e, "OpCoroutineExhausted", [gv]), brk, ir::NdNull)
   ];
   if fc != null {
@@ -9072,7 +9094,9 @@ fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   if !e.first_pass {
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
   }
-  ex(code, ir::TyText { dep: [] })
+  // A slice of a text held in a store (a record's field) is a view of it, borrowing what that
+  // read borrows, as the whole field read does; a local text's slice borrows nothing.
+  ex(code, ir::TyText { dep: if store_text_view(e, x.code) { el_types::deps(x.tp) } else { [] } })
 }
 
 // `parse_in_range_body` for a slice of a vector local with plain scalar elements, read where an
