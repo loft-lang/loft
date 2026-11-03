@@ -8,9 +8,11 @@
 //! its own late unrolling would reach it; gcc unrolls such a loop only after those passes.
 //!
 //! Admitted: the exclusive range, both counter forms, at most `MAX_TRIPS` trips, a start the
-//! statements just before the loop seed with a constant, and a body with no `break`,
-//! `continue`, yield or `par` (each copy is straight-line code, so no label is needed).  The
-//! counters are left as the whole range leaves them.  `LOFT_NO_PEEL=1` writes every loop.
+//! statements just before the loop seed with a constant, and a body with no yield or `par`.
+//! Each copy has its own loop label: a `continue` of the loop jumps to the end of its copy, a
+//! `break` past the last copy; a `break` or `continue` of an enclosing loop names that loop as
+//! the loop body did.  The counters are left as the whole range leaves them, or, after a
+//! `break`, as the trip it left set them.  `LOFT_NO_PEEL=1` writes every loop.
 
 use super::FnWriter;
 use crate::data::{Block, Value};
@@ -144,10 +146,7 @@ impl FnWriter<'_> {
         for op in &b.operators[1..] {
             op.walk(&mut |n| {
                 nodes += 1;
-                refused |= matches!(
-                    n,
-                    Value::Break(_) | Value::Continue(_) | Value::Yield(_) | Value::Parallel(_)
-                );
+                refused |= matches!(n, Value::Yield(_) | Value::Parallel(_));
             });
         }
         // The counters step only in their iterator.
@@ -171,6 +170,9 @@ impl FnWriter<'_> {
     }
 
     /// The copies: per trip a block setting the counters to the trip's value, then the body.
+    /// Copy `k` is a loop of its own to the body's `break` and `continue`: its label `m` is on
+    /// the loop stack while it is written, `cont_m` ends the copy and `brk_m` follows the
+    /// last copy, after the counters the whole range leaves — so a `break` keeps the trip's.
     pub(super) fn peel_loop(&mut self, b: &Block, p: &Peel, ind: usize) -> Result<(), String> {
         let (idx, var) = (self.var(p.index), self.var(p.loop_var));
         let next = p.next.map(|n| self.var(n));
@@ -181,8 +183,13 @@ impl FnWriter<'_> {
         // the store that buffer still names (157-join-witness under poison).  The body's own
         // frees are per trip already.
         let bound_at_entry = self.bound.clone();
+        let mut labels = Vec::with_capacity(p.values.len());
         for &k in &p.values {
             self.bound.clone_from(&bound_at_entry);
+            self.labels += 1;
+            let m = self.labels;
+            labels.push(m);
+            self.loops.push(m);
             self.line(ind, "{");
             let set = match &next {
                 Some(n) => format!(
@@ -192,7 +199,10 @@ impl FnWriter<'_> {
                 None => format!("{idx} = INT64_C({k}); {var} = INT64_C({k});"),
             };
             self.line(ind + 1, &set);
-            self.stmts(&b.operators[1..], ind + 1)?;
+            let r = self.stmts(&b.operators[1..], ind + 1);
+            self.loops.pop();
+            r?;
+            self.line(ind + 1, &format!("cont_{m}:;"));
             self.line(ind, "}");
         }
         // As the whole range leaves them: the index at the last value yielded and the counter
@@ -205,6 +215,9 @@ impl FnWriter<'_> {
                 &format!("{idx} = INT64_C({last}); {n} = INT64_C({past});"),
             ),
             None => self.line(ind, &format!("{idx} = INT64_C({past});")),
+        }
+        for m in labels {
+            self.line(ind, &format!("brk_{m}:;"));
         }
         crate::rewrite_census::fired("R-Peel", 1);
         Ok(())
