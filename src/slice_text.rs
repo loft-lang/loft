@@ -42,7 +42,10 @@ struct Site {
 }
 
 fn disabled() -> bool {
+    // Opt-in (`LOFT_IR_SLICE_TEXT=1`) until the move protocol's comparison passes: the clause
+    // answered a wrong text on its probe (the range call as a block's value).
     crate::env_once!(std::env::var("LOFT_NO_IR_SLICE_TEXT").is_ok_and(|v| v != "0"))
+        || !crate::env_once!(std::env::var("LOFT_IR_SLICE_TEXT").is_ok_and(|v| v != "0"))
 }
 
 fn trace() -> bool {
@@ -114,11 +117,16 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
             let (prelude, src, lo, hi) = split(block, &site, &ops);
             let mut stmts = prelude;
             stmts.push(Value::Call(ops.from_range, vec![src, lo, hi]));
+            // The bounds' variables belong to the slice block's scope: the new block takes it over.
+            let scope = block.scope;
             *n = v_block(
                 stmts,
                 data.def(ops.from_bytes).returned().clone(),
                 "slice text",
             );
+            if let Value::Block(bl) = n {
+                bl.scope = scope;
+            }
             fired += 1;
             if trace() {
                 eprintln!(
