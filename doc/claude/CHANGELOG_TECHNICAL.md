@@ -17,6 +17,16 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### Every rule's verdict (@PLN211 B2)
+
+- The plan's README § Verdicts holds a verdict per work and rustc-only rule, each with its
+  evidence: a probe on the interpreter, a switch A/B on the rustc build, an emit-and-look on
+  the C, or a cited measurement.  Beyond wave 1: `(R-KeyedEntry)` −89 % per overwriting
+  append, `(R-TextBorrow)`'s parameter clause −8.0 %; `(R-RefillText)` kept (game_protocol's
+  rustc build +148.6 % without it); `(R-RefillBuffer)` measured at no effect and left in its
+  writer; `(R-TextClear)` to drop; `(R-GuardFree)`, `(R-FnHeader)`, `(R-SliceBorrow)` to port
+  to the C.
+
 ### What moving a rule saves the interpreter, probed (@PLN211 B2 wave 1)
 
 - `doc/claude/plans/211-rule-phases/probes/run.py`: per case, the shape as written against the

@@ -14,8 +14,8 @@ Open, `status:next` — the inventory below is measured and the plan is DESIGNED
 removal of the facts routine's three deviations); arc A is built (the census reads both
 writers and the interpreter's generator; every rule reports to it or says why not; the phase
 table `bench/portal/rule_phases.tsv` is measured and gated, and `rewrites.md` § Applied by is
-rendered from it); B1 is built, its weights in [b1-weights.md](b1-weights.md); B2's
-wave 1 is probed (§ Verdicts).  It was to start once
+rendered from it); B1 and B2 are done: weights in [b1-weights.md](b1-weights.md),
+a verdict per rule in § Verdicts.  Next is arc C.  It was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
@@ -202,15 +202,9 @@ that arc C moves is built after the move, in the IR phase.
 
 ## Open design questions
 
-1. **Representation rules and the interpreter.**  `(R-Range)` and `(R-NonSentinelParam)`
-   make an operation plain where a check is proven redundant; the interpreter could carry a
-   plain operator variant.  Is that a fused operator in disguise (forbidden) or the same
-   operator without its check (allowed)?  B2 asks it for these two before closing them as
-   STAYS.
-2. **`(R-Transient)` and `(R-Apart)`** build values outside the store as C structs.  The
-   interpreter's counterpart would be a different representation, not this rule moved;
-   B2 records it as STAYS unless a store-level form (an arena store) shows a gain in its
-   probe.
+Both answered by B2 (§ Verdicts, "The open design questions, answered"): a check-free operator
+variant is no fusion but saves little where dispatch is the cost, and `(R-Transient)` /
+`(R-Apart)` get no store-level form — both STAY, their interpreter gains go to arc D.
 
 ## Cross-arc dependencies
 
@@ -248,9 +242,73 @@ function before and not after.
 | `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector` | MOVE, as that parser path widened to field places; measured on arc C's beside build |
 | `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)) | owed: measured on arc C's beside build |
 
-Not probed yet: `(R-PushFill)`'s hash clause ("only if the probe gains"), the rules that need
-one new piece, the interpreter clauses, and the STAYS and PORT rows of design.md § The first
-verdicts — each owes its row here before arc C builds on it.
+**Wave 2 — the rules that need one new piece.**
+
+| rule | the new piece | weight | evidence | verdict |
+|---|---|--:|---|---|
+| `(R-KeyedEntry)` | find-or-insert answering a reference, a stdlib function through one `OpStaticCall` | 4.2 | `keyed_entry`: an overwriting append of a present key 16 068–16 835 → 1 790 instructions, **−89 %** over two runs (the before form moves with the hash seed; the hand form looks up, then writes or inserts) | MOVE |
+| `(R-RefillText)` | the refill twin | 0.6 | not a DROP: with `LOFT_NO_REFILL_TEXT=1` the rustc build of game_protocol runs **+148.6 %** instructions (`msg_ping`, same hash), so `(R-Reuse)`'s pool reset does not take its cost.  The C takes that cost another way: `ping_op` calls `n_msg_ping__tr0r`, an `(R-Transient)` twin.  No hand form for the interpreter | MOVE (twin), after wave 1; measured on arc C's beside build |
+| `(R-RefillBuffer)` | a REFILL bit on `OpDatabase` | 4.4 | its switch A/B on the rustc build: bench 17 **+0.0 %**, game_protocol **−0.2 %** instructions — it saves nothing measurable where it fires most | STAYS — no flag for a rule with no measured effect; whether to drop it is the owner's call |
+| `(R-FoldCompare)` | `fold_compare`, a stdlib function | 0.0 | admitted in no function a bench routine runs | DEFER until a consumer reaches it |
+| `(R-HandOver)` rotate | `rotate_into` + the `__nk` twin | 0.1 | two routines | DEFER by weight |
+| `(R-AppendTwin)` base | the `__ap` twin | 0.2 | two routines | DEFER by weight |
+| `(R-Destination)` | the `__d` twin + a failure-path release | 0.5 | one routine | DEFER by weight |
+
+**Interpreter clauses** — the interpreter's generator or runtime applies the same fact.
+
+| rule | weight | evidence | verdict |
+|---|--:|---|---|
+| `(R-CompleteWrite)` | 30.9 | the heaviest work rule the interpreter lacks; the skipped prefill cannot be spelled in loft | INTERP-CLAUSE, the first to build; measured on arc C's beside build |
+| `(R-TextBorrow)` | 13.7 | `text_borrow` (the parameter-text clause, 16 borrows a pass): 62 800 → 57 791, **−8.0 %**, about 310 instructions per borrowed text | INTERP-CLAUSE (`mark_text_views` widened); the risk is a view outliving its source on an early exit |
+| `(R-FlatCopy)` | 1.1 | a runtime fast path, not spellable | INTERP-CLAUSE, by weight after the two above |
+| `(R-FieldAppend)` | 2.6 | the interpreter's `Stores::record_new` / `record_finish` already apply it (`plain_field_vector`); the census counts only the writers' clause | done — no move |
+| `(R-Apart)` instance 4 | 2.4 | `(R-Reuse)`'s reset widened to the owner local | arc D, as that widening |
+| `(R-FnRefBuffer)` | 0.0 | — | DEFER |
+
+**Stays in its writer** — representation, each reason checked:
+
+| rule | weight | why |
+|---|--:|---|
+| `(R-Push)`, `(R-PushRec)` header, `(R-PushFill)` window / run / record, `(R-AppendTwin)` window / loop | 17.8 / 6.7 / 17.2 | a vector's length and base held in C locals.  The growth they save is not worth moving: with the whole vector reserved by hand, the interpreter's `push` loop ran 280–283 ms either way and `f32_build` 595–640 → 592–596 ms (INTERPRETER_PERFORMANCE.md § the extra store work); dispatch is the cost.  `push_fill`'s −71.5 % comes from FEWER OPERATORS (the fill form), which is why that form moves and these stay |
+| `(R-Header)` kept / grown / function | 19.7 / 2.7 / 10.7 | a header held across reads; on the interpreter `OpGetVector` derives it per read, and holding one would be a new operator |
+| `(R-Mint)` | 8.8 | classifies mint groups for the representation rules; its one piece of work is already in the interpreter's runtime |
+| `(R-WorkPark)` | 13.8 | a per-thread runtime park; an operator variant would buy one realloc chain per call |
+| `(R-SliceArg)` carrier | — | the interpreter's slot reuse with an in-place `init()` is its analogue |
+| `(R-Transient)` emission, `(R-SliceInto)` transient | 0.6 / — | arena structs and views.  The site PLAN moves to `opt/transient.rs` so the census credits the decision; the interpreter's gains go to arc D (`(R-Place)`, `(R-Destination)`, `(R-DecodeView)` widened) |
+| `(R-Apart)` instances 2, 3 | — | a dynamically indexed value outside the store; the interpreter's tuple is read at constant indices only |
+| `(R-Fill)` | 0.4 | needs a fill kernel; spans under eight lost on `fill_triangle` — the owner decides whether a kernel is wanted |
+| `(R-Leaf)`, `(R-LeafChain)` | 42.4 / 60.6 | a call without its shadow frame.  The interpreter's frame IS its call.  On the C it is inherent: `c_driver` compiles `-DLOFT_CALL_CHAIN` only in the check and debug tiers, so the release tier's `loft_frame_push` / `loft_frame_pop` compile to nothing for every function |
+
+**The rustc-only rules.**
+
+| rule | weight | evidence | verdict |
+|---|--:|---|---|
+| `(R-Wrapper)`, `(R-LoopBuffer)`, `(R-PushFill)` fill form | — | wave 1 | MOVE |
+| `(R-LazySplit)`, `(R-TypedKeyed)`, `(R-TypedRead)` | 3.5 / 2.7 / 0.6 | on the C, counted since A2 | on the C |
+| `(R-LitDiv)` | 25.5 | inherent on the C: `loft_div_at` is always inlined, and its zero test of a literal divisor folds | on the C |
+| `(R-SliceBorrow)` | 0.4 | the C admits it nowhere: markdown's `render_inline`, five slices the analysis admits, kept as `loft_text` copies (A2) | PORT — the C writer's borrow of a slice |
+| `(R-GuardFree)` | 15.1 | the C's release-tier wrapper still marks and checks the fn-ref list around every call (`size_t fm = loft_nfnrefs; … loft_fnref_release(fm)`), for a function that registers none | PORT |
+| `(R-FnHeader)` | 10.7 | a C prologue on `fn_header_params` | PORT, hand-priced on drawing first |
+| `(R-RangedCall)` | 5.8 | needs the interval entry facts | PORT after D-fact-2 |
+| `(R-FaultFlag)` | 1.0 | — | PORT only if `06_newton_sqrt`'s C ratio shows the gap (one `stats.py --only 06 --lanes c,rust`) |
+| `(R-TextClear)` | 7.8 | both other backends reset a text in place (`loft_text_set` on the C, `OpClearText` on the interpreter) | DROP |
+| `(R-FnRefValue)`, `(R-StreamWalk)`, `(R-RebindBuffer)`, `(R-GroupPush)` | 0.0 / 0.1 / 0.0 / 0.2 | — | DEFER by weight (`(R-RebindBuffer)` also waits on `(R-RefillBuffer)`, which stays) |
+
+**The open design questions, answered.**  (1) A check-free operator variant for `(R-Range)` /
+`(R-NonSentinelParam)` merges nothing, so it is not a fused operator; but the interpreter's cost
+is DISPATCH, not the work inside an operator (INTERPRETER_PERFORMANCE.md: `vector_append` is 5 %
+of `push`'s cycles, the dispatch of its 13 ops per element the rest), so removing a
+compare-and-branch inside an op saves little against a second operator per checked one: both
+STAY.  (2) `(R-Transient)` and `(R-Apart)` weigh 0.6 and 2.4 on the interpreter; a store-level
+arena would be a new representation for that, and the gains go to arc D's widenings instead:
+both STAY.
+
+**Arc C's order**, by measured gain and weight: `(R-SliceArg)`'s range clause first (the
+protocol's proof, −56.9 %), then `(R-Wrapper)` (40.9, −66.5 %), `(R-PushFill)`'s fill form (17.2,
+−71.5 %), `(R-KeyedEntry)` (4.2, −89 %), `(R-ElemFirst)`, `(R-LoopBuffer)`, `(R-LoopRecord)`;
+then `(R-CompleteWrite)` and `(R-TextBorrow)` as interpreter clauses; `(R-SliceInto)`,
+`(R-RetAdopt)` and `(R-RefillText)` measured on their beside builds.  The ports to the C
+(`(R-GuardFree)`, `(R-FnHeader)`, `(R-SliceBorrow)`) are their own track.
 
 ## Documentation
 

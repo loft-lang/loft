@@ -15,6 +15,11 @@ The header of `before.loft` names the census rule the case models and the two co
     // probe-n: 20000 60000
     // probe-fn: n_main          (the function the rule fires in; n_main when absent)
 
+and `after.loft` may say why the rule still has a site there (the hand form keeps the
+construct on a path the loop rarely takes):
+
+    // probe-after-admits: the insert of a new key
+
 The runner checks the case before it measures it: the two forms print the same at each count,
 the rule is ADMITTED in the case's function for `before.loft` by a compiled writer
 (`LOFT_REWRITE_CENSUS_FN`, the C and the rustc emission), and in that function for
@@ -79,7 +84,8 @@ def case(d):
     adm_b, adm_a = admitted(before, rule, fn), admitted(after, rule, fn)
     if not any(adm_b.values()):
         notes.append(f"{rule} is admitted in {fn} by neither writer on before.loft: the probe does not model it")
-    if any(adm_a.values()):
+    kept = header(after, "after-admits")
+    if any(adm_a.values()) and not kept:
         notes.append(f"{rule} is still admitted in {fn} on after.loft ({adm_a}): the hand form is not the rewritten shape")
     cost = {}
     for name, src in (("before", before), ("after", after)):
