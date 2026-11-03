@@ -38,6 +38,9 @@ fn top_item(e: el::El, it: integer) {
     SInterface { at, name, members, end } => { parse_interface(e, at, name, members, end); },
     SFn { at, is_op, name, tvars, params, ret, ret_const, cap, body, annots } => {
       parse_function(e, at, is_op, name, tvars, params, ret, ret_const, cap, body, annots);
+      if e.first_pass && el::def_nr(e, "n_{name}") < 0 {
+        e.declined += [name];
+      }
     },
     SStruct { at, value, name, tvars, fields } => { parse_struct(e, at, value, name, tvars, fields); },
     SConst { at } => { el::refuse(e, "constant"); },

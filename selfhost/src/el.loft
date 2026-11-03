@@ -38,6 +38,9 @@ pub struct El {
   pub line: integer,
   // what elaboration does not carry yet, by name: the gate counts a program that reaches one
   pub refused: vector<text>,
+  // the functions the program declares whose definition elaboration refused: a call of one is
+  // not refused again, as a call of an unknown function
+  pub declined: vector<text>,
   // the source text, by line, for a message that quotes the program (`Lexer::text_between`)
   pub lines: vector<text>
 }
@@ -75,6 +78,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     context: -1,
     line: 0,
     refused: [],
+    declined: [],
     lines: []
   }
 }

@@ -3887,6 +3887,10 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
         return b!;
       }
     }
+    // A function the program declares whose definition was refused: that refusal names it.
+    if e.declined.contains(name) {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
     el::refuse(e, "a call of an unknown function: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -6511,11 +6515,11 @@ fn returns_argument_view(def: ir::Definition) -> boolean {
 
 // `Parser::parse_for` for one binding over a vector or an integer range.  The loop's variable
 // takes `loop_binding`'s name; the iterated value and the loop parts are built as `parse_for`
-// assembles them (the "For block" around the "For loop").  Destructuring, a filter, `par`, `_`
+// assembles them (the "For block" around the "For loop").  Destructuring, `par`, a missing body
 // and any other iterated type are refused by name.
 fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer, par: integer?, filter: integer?, body: integer?) -> Ex {
   if len(binds) != 1 || par != null || body == null {
-    el::refuse(e, "a `for` with destructuring, a filter, `par` or `_`");
+    el::refuse(e, "a `for` with destructuring, `par` or no body");
     return ex(ir::NdNull, ir::TyVoid);
   }
   src_id = binds[0];
