@@ -354,11 +354,11 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
   for tv in tvars {
     match e.p.nodes[tv] {
       STVar { at: tat, name: tn, bounds } => {
-        if len(tvars) > 1 || len(bounds) > 0 {
-          el::refuse(e, "a generic with more than one type variable or with bounds");
+        if len(tvars) > 1 {
+          el::refuse(e, "a generic with more than one type variable");
           return "";
         }
-        h = header_var(e, tn, el::pos_at(e, el_expressions::after_paren(e, tat)));
+        h = header_var(e, tn, bounds_key(bounds), el::pos_at(e, el_expressions::after_paren(e, tat)));
         if h < 0 {
           return "";
         }
@@ -503,18 +503,52 @@ fn mentions_type_var(e: el::El, t: ir::TypeT) -> boolean {
   false
 }
 
-// `Parser::bind_header_var` for an unbounded variable: the placeholder the spelling already
-// has — the lowest-numbered `<spelling>#n` definition with no bounds (`holder_for_spelling`),
-// minted by any earlier header, the standard library's included — or, on the first pass, a new
-// `<spelling>#n` under the first `n` no source holds, a struct answering a record of itself.
-// -1 where none exists on the second pass (the first refused the header).
-fn header_var(e: el::El, spelling: text, pos: ir::Position) -> integer {
+// `Parser::type_var_bounds_key`: the bound names sorted, each once, joined by `+`.
+fn bounds_key(names: vector<text>) -> text {
+  sorted: vector<text> = [];
+  for n in names {
+    i = 0;
+    while i < len(sorted) && (sorted[i] ?? "") < n {
+      i += 1;
+    }
+    if (sorted[i] ?? "") != n {
+      sorted = sorted[..i] + [n] + sorted[i..];
+    }
+  }
+  r = "";
+  for n in sorted {
+    r += if n#index == 0 { n } else { "+{n}" };
+  }
+  r
+}
+
+// The bound-set key of a placeholder's own bounds (`placeholder_bounds_key`).
+fn placeholder_key(e: el::El, d: ir::Definition) -> text {
+  names: vector<text> = [];
+  for b in d.bounds {
+    names += [el::def(e, b).name];
+  }
+  bounds_key(names)
+}
+
+// `Parser::bind_header_var`: the placeholder the spelling already has under these bounds — the
+// lowest-numbered `<spelling>#n` definition whose own bounds key is `key`
+// (`holder_for_spelling`), minted by any earlier header, the standard library's included — or,
+// on the first pass, for an unbounded variable, a new `<spelling>#n` under the first `n` no
+// source holds, a struct answering a record of itself.  A new bounded one needs the bound's
+// method stubs (`create_bound_method_stubs`): refused by name.  -1 where none exists on the
+// second pass (the first refused the header).
+fn header_var(e: el::El, spelling: text, key: text, pos: ir::Position) -> integer {
   for d in e.b.data.definitions {
-    if d.def_type == el::DT_STRUCT && len(d.bounds) == 0 && d.name.starts_with("{spelling}#") && el_expressions::type_var(e, ir::TyReference { n: d#index, dep: [] }) >= 0 {
+    if d.def_type == el::DT_STRUCT && d.name.starts_with("{spelling}#") && el_expressions::type_var(e, ir::TyReference { n: d#index, dep: [] }) >= 0 && placeholder_key(e, d) == key {
       return d#index;
     }
   }
   if !e.first_pass {
+    return -1;
+  }
+  if key != "" {
+    el::refuse(e, "a type variable with bounds no earlier header declared");
     return -1;
   }
   n = 1;

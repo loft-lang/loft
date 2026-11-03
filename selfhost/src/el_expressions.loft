@@ -4861,6 +4861,119 @@ pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
 
 // `Data::is_type_var_placeholder`: the definition a type variable reads as — a struct with no
 // fields that is its own type — or -1.
+// `Parser::generic_type_name`: inside a template, a reference to a struct with no fields — the
+// variable's placeholder — or -1.
+fn generic_holder(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n } => {
+      d = el::def(e, n);
+      if d.def_type == el::DT_STRUCT && len(d.attributes) == 0 && e.context >= 0 && el::def(e, e.context).def_type == el::DT_GENERIC { n } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+// `Data::bound_stub_name`: a bound holder's method keyed per signature.
+pub fn bound_stub_name(holder: text, method: text, arity: integer) -> text {
+  h = "{holder}#g{arity}";
+  "t_{len(h)}{h}_{method}"
+}
+
+// `Data::split_key`'s rest of a `t_<LEN><spelling>_<rest>` key, and its spelling; "" for none.
+fn key_rest(name: text) -> text {
+  if !name.starts_with("t_") {
+    return "";
+  }
+  i = 2;
+  n = 0;
+  while i < len(name) && "{name[i]}" >= "0" && "{name[i]}" <= "9" {
+    n = n * 10 + ("{name[i]}" as integer ?? 0);
+    i += 1;
+  }
+  if i == 2 || i + n >= len(name) || "{name[i + n]}" != "_" {
+    return "";
+  }
+  name[i + n + 1..]
+}
+
+fn key_spelling(name: text) -> text {
+  i = 2;
+  n = 0;
+  while i < len(name) && "{name[i]}" >= "0" && "{name[i]}" <= "9" {
+    n = n * 10 + ("{name[i]}" as integer ?? 0);
+    i += 1;
+  }
+  name[i..i + n]
+}
+
+// Is call target `d` a bound's stub over placeholder `h`: a `t_` key spelled `<holder>#g<n>`
+// whose parameters name the variable?
+fn stub_call(e: el::El, d: integer, h: integer) -> boolean {
+  cd = el::def(e, d);
+  if !key_spelling(cd.name).contains("#g") {
+    return false;
+  }
+  for a in cd.attributes {
+    if type_mentions(a.typedef[0] ?? ir::TyVoid, h) {
+      return true;
+    }
+  }
+  false
+}
+
+// Does every stub call in `n` re-resolve at this binding?
+fn stubs_resolve(e: el::El, n: ir::Node, h: integer, bound: ir::TypeT) -> boolean {
+  match n {
+    NdCall { def_nr } => {
+      if stub_call(e, def_nr, h) && re_resolve_stub(e, def_nr, h, bound) < 0 {
+        return false;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if !stubs_resolve(e, c, h, bound) {
+      return false;
+    }
+  }
+  true
+}
+
+// `Parser::re_resolve_call` for a bound stub at a plain scalar or text binding: the method is
+// asked of the concrete type (`Data::candidates`) — its `t_` method, the free `n_` function,
+// else the first builtin operator of that name whose first parameter is the type — and the
+// stub stays where that answers a member of another arity, or anything a user declared
+// (refused by the caller).  -1 where nothing answers.
+fn re_resolve_stub(e: el::El, d: integer, h: integer, bound: ir::TypeT) -> integer {
+  sd = el::def(e, d);
+  fname = key_rest(sd.name);
+  if fname == "" || len(sd.attributes) == 0 {
+    return -1;
+  }
+  arg = el_types::base(substitute(sd.attributes[0].typedef[0] ?? ir::TyVoid, h, bound));
+  tn = type_def_nr(e, arg);
+  if tn < 0 {
+    return -1;
+  }
+  tname = el::def(e, tn).name;
+  if el::def_nr(e, "t_{len(tname)}{tname}_{fname}") >= 0 || el::def_nr(e, "t_{len(tname) + 1}{tname}?_{fname}") >= 0 || el::def_nr(e, "n_{fname}") >= 0 {
+    return -1;
+  }
+  want = 0;
+  for a in sd.attributes {
+    if !a.hidden {
+      want += 1;
+    }
+  }
+  for c in el::possible(e, fname) {
+    cd = el::def(e, c);
+    if len(cd.attributes) > 0 && el_types::is_equal(e, cd.attributes[0].typedef[0] ?? ir::TyVoid, arg) {
+      return if len(cd.attributes) == want { c } else { -1 };
+    }
+  }
+  -1
+}
+
 pub fn type_var(e: el::El, t: ir::TypeT) -> integer {
   match t {
     TyReference { n } => {
@@ -5072,37 +5185,47 @@ fn drop_scalar_deps(f: ir::Function) {
 // `substitute_type_in_value` over a template body this port instantiates: every block's and
 // loop's result type substituted; a call is left as it is (`instance_carried` refuses one whose
 // target a substitution would re-resolve).
-fn substitute_code(n: ir::Node, h: integer, bound: ir::TypeT) -> ir::Node {
+fn substitute_code(e: el::El, n: ir::Node, h: integer, bound: ir::TypeT) -> ir::Node {
   match n {
-    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: substitute_code(inner, h, bound) },
-    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: substitute_all_code(args, h, bound) },
-    NdCallRef { var, args } => ir::NdCallRef { var: var, args: substitute_all_code(args, h, bound) },
-    NdBlock { block } => ir::NdBlock { block: [substitute_block(block[0], h, bound)] },
-    NdLoop { block } => ir::NdLoop { block: [substitute_block(block[0], h, bound)] },
-    NdInsert { items } => ir::NdInsert { items: substitute_all_code(items, h, bound) },
-    NdSet { var, inner } => ir::NdSet { var: var, inner: substitute_code(inner, h, bound) },
-    NdReturn { inner } => ir::NdReturn { inner: substitute_code(inner, h, bound) },
-    NdIf { cond, t, f } => ir::NdIf { cond: substitute_code(cond, h, bound), t: substitute_code(t, h, bound), f: substitute_code(f, h, bound) },
-    NdDrop { inner } => ir::NdDrop { inner: substitute_code(inner, h, bound) },
-    NdIter { var, create, next, init } => ir::NdIter { var: var, create: substitute_code(create, h, bound), next: substitute_code(next, h, bound), init: substitute_code(init, h, bound) },
-    NdTuple { items } => ir::NdTuple { items: substitute_all_code(items, h, bound) },
-    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: substitute_code(inner, h, bound) },
-    NdYield { inner } => ir::NdYield { inner: substitute_code(inner, h, bound) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: substitute_code(e, inner, h, bound) },
+    NdCall { def_nr, args } => {
+      sa = substitute_all_code(e, args, h, bound);
+      // A bound's stub is re-resolved at the binding (`re_resolve_call`), its arguments cut to
+      // the member's (`I9-text`).
+      r = if stub_call(e, def_nr, h) { re_resolve_stub(e, def_nr, h, bound) } else { -1 };
+      if r >= 0 {
+        ir::NdCall { def_nr: r, args: sa[..len(el::def(e, r).attributes)] }
+      } else {
+        ir::NdCall { def_nr: def_nr, args: sa }
+      }
+    },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: substitute_all_code(e, args, h, bound) },
+    NdBlock { block } => ir::NdBlock { block: [substitute_block(e, block[0], h, bound)] },
+    NdLoop { block } => ir::NdLoop { block: [substitute_block(e, block[0], h, bound)] },
+    NdInsert { items } => ir::NdInsert { items: substitute_all_code(e, items, h, bound) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: substitute_code(e, inner, h, bound) },
+    NdReturn { inner } => ir::NdReturn { inner: substitute_code(e, inner, h, bound) },
+    NdIf { cond, t, f } => ir::NdIf { cond: substitute_code(e, cond, h, bound), t: substitute_code(e, t, h, bound), f: substitute_code(e, f, h, bound) },
+    NdDrop { inner } => ir::NdDrop { inner: substitute_code(e, inner, h, bound) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: substitute_code(e, create, h, bound), next: substitute_code(e, next, h, bound), init: substitute_code(e, init, h, bound) },
+    NdTuple { items } => ir::NdTuple { items: substitute_all_code(e, items, h, bound) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: substitute_code(e, inner, h, bound) },
+    NdYield { inner } => ir::NdYield { inner: substitute_code(e, inner, h, bound) },
     _ => n
   }
 }
 
-fn substitute_all_code(ns: vector<ir::Node>, h: integer, bound: ir::TypeT) -> vector<ir::Node> {
+fn substitute_all_code(e: el::El, ns: vector<ir::Node>, h: integer, bound: ir::TypeT) -> vector<ir::Node> {
   r: vector<ir::Node> = [];
   for c in ns {
-    r += [substitute_code(c, h, bound)];
+    r += [substitute_code(e, c, h, bound)];
   }
   r
 }
 
-fn substitute_block(b: ir::Block?, h: integer, bound: ir::TypeT) -> ir::Block {
+fn substitute_block(e: el::El, b: ir::Block?, h: integer, bound: ir::TypeT) -> ir::Block {
   bl = b!;
-  bl.operators = substitute_all_code(bl.operators, h, bound);
+  bl.operators = substitute_all_code(e, bl.operators, h, bound);
   bl.result = [substitute(bl.result[0] ?? ir::TyVoid, h, bound)];
   bl
 }
@@ -5136,8 +5259,9 @@ fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer) -> text {
       if cd.def_type == el::DT_GENERIC {
         return "a call of another generic";
       }
+      stub = stub_call(e, def_nr, h) && key_rest(cd.name).starts_with("Op");
       for a in cd.attributes {
-        if type_mentions(a.typedef[0] ?? ir::TyVoid, h) {
+        if type_mentions(a.typedef[0] ?? ir::TyVoid, h) && !stub {
           return "a call over the variable";
         }
         if (a.name == "tp" || a.name.ends_with("_tp")) && row != el::NO_TYPE {
@@ -5268,7 +5392,11 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
       return false;
     }
   }
-  code = substitute_code(tmpl.code[0] ?? ir::NdNull, h, bound);
+  if !stubs_resolve(e, code_of(tmpl), h, bound) {
+    el::refuse(e, "a generic body calling a bound's method this binding answers with no builtin");
+    return false;
+  }
+  code = substitute_code(e, tmpl.code[0] ?? ir::NdNull, h, bound);
   // `strip_scalar_instance_rebinds`: a parameter the template rebinds keeps an entry witness of
   // the caller's store; one that became a scalar has no store, so the witness and its stash go.
   for v in f.variables {
@@ -6788,7 +6916,9 @@ fn has_operator_method(e: el::El, d: integer) -> boolean {
 // null, arms of different types and a value without an `else` are refused by name.
 fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: integer?) -> Ex {
   c = expression(e, vars, cond);
-  if !el_types::is_unknown(c.tp) && !(c.tp is TyBoolean) {
+  // A template's first pass types an operator over its variable as the variable (`call_op`);
+  // the second resolves it to the bound's stub.
+  if !el_types::is_unknown(c.tp) && !(c.tp is TyBoolean) && !(e.first_pass && generic_holder(e, c.tp) >= 0) {
     el::refuse(e, "an `if` condition that is not a boolean: {type_kind(c.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -10689,6 +10819,25 @@ pub fn call_op(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>,
   // construct already refused by name, which this refusal would only count again.
   for t in types {
     if el_types::is_unknown(t) {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+  }
+  // I8.1: an operand of a type variable takes its bound's stub, `t_<LEN><holder>#g<arity>_Op…`
+  // (`Data::bound_stub_name`), never a builtin; the first pass types it as the variable.
+  for t in types {
+    tv = generic_holder(e, t);
+    if tv >= 0 {
+      if e.first_pass {
+        return ex(list[0] ?? ir::NdNull, ir::TyReference { n: tv, dep: [] });
+      }
+      stub = el::def_nr(e, bound_stub_name(el::def(e, tv).name, "Op{rename(op)}", len(list)));
+      if stub >= 0 {
+        r = call_nr(e, vars, stub, list, types);
+        if r != null {
+          return r!;
+        }
+      }
+      el::refuse(e, "an operator on a type variable its bounds do not declare: {op}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
   }
