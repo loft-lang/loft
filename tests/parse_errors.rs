@@ -2394,6 +2394,32 @@ fn p85b_constant_shadowing_stdlib_constant_emits_diagnostic() {
     ));
 }
 
+// A second `struct` of a taken name reports the conflict ONCE: its fields used to be parsed
+// into the first definition, so every shared field name also read "already declared".
+#[test]
+fn struct_defined_twice_reports_only_the_conflict() {
+    code!(
+        "struct Range { lo: integer, hi: integer }\n\
+         struct Range { lo: integer, hi: integer, step: integer }\n\
+         fn test() {}"
+    )
+    .error(
+        "struct 'Range' conflicts with a struct of the same name already defined \
+         at struct_defined_twice_reports_only_the_conflict:1:15 — pick a different name \
+         at struct_defined_twice_reports_only_the_conflict:2:15",
+    );
+}
+
+// The kind is named with its article: "an enum", not "a enum".
+#[test]
+fn enum_defined_twice_names_the_kind_with_its_article() {
+    code!("enum Shape { A, B }\nenum Shape { A, C }\nfn test() {}").error(
+        "enum 'Shape' conflicts with an enum of the same name already defined \
+         at enum_defined_twice_names_the_kind_with_its_article:1:13 — pick a different name \
+         at enum_defined_twice_names_the_kind_with_its_article:2:13",
+    );
+}
+
 // ── P85c: file-scope-only declarations rejected with a clean diagnostic ─────
 //
 // Putting `struct`, `enum`, `type`, `interface`, `use`, `pub`, or a named

@@ -1134,11 +1134,11 @@ impl Parser {
             // `set_returned` below.  Emit a clear diagnostic naming the
             // existing definition's location.
             let prev_pos = *self.data.def(d_nr).position();
-            let prev_kind = format!("{:?}", self.data.def(d_nr).def_type()).to_lowercase();
+            let prev_kind = self.data.def(d_nr).def_type().described();
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "enum '{type_name}' conflicts with a {prev_kind} of the same name \
+                "enum '{type_name}' conflicts with {prev_kind} of the same name \
                  already defined at {prev_pos} — pick a different name"
             );
             conflict = true;
@@ -1234,11 +1234,11 @@ impl Parser {
                 adopted = existing;
             } else if existing != u32::MAX {
                 let prev_pos = *self.data.def(existing).position();
-                let prev_kind = format!("{:?}", self.data.def(existing).def_type()).to_lowercase();
+                let prev_kind = self.data.def(existing).def_type().described();
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "type '{type_name}' conflicts with a {prev_kind} of the same name \
+                    "type '{type_name}' conflicts with {prev_kind} of the same name \
                      already defined at {prev_pos} — pick a different name"
                 );
                 conflict = true;
@@ -2210,12 +2210,11 @@ impl Parser {
                     self.data.definitions[c_nr as usize].code = val;
                 } else {
                     let prev_pos = *self.data.def(existing).position();
-                    let prev_kind =
-                        format!("{:?}", self.data.def(existing).def_type()).to_lowercase();
+                    let prev_kind = self.data.def(existing).def_type().described();
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "constant '{id}' conflicts with a {prev_kind} of the same name \
+                        "constant '{id}' conflicts with {prev_kind} of the same name \
                          already defined at {prev_pos} — pick a different name"
                     );
                 }
@@ -6239,6 +6238,9 @@ impl Parser {
         if self.prelude_shadowed(&id) || (self.first_pass && self.release_unseen_stub(d_nr, &id)) {
             d_nr = u32::MAX;
         }
+        // A second definition of a taken name: its fields would land in the FIRST one, so
+        // every shared field name would report again as "already declared".
+        let mut conflict = false;
         if d_nr == u32::MAX {
             d_nr = self.data.add_def(&id, self.lexer.pos(), DefType::Struct);
             self.data.definitions[d_nr as usize].returned =
@@ -6266,13 +6268,14 @@ impl Parser {
                 self.data.note_stub_adopted(d_nr);
             } else {
                 let prev_pos = *self.data.def(d_nr).position();
-                let prev_kind = format!("{:?}", self.data.def(d_nr).def_type()).to_lowercase();
+                let prev_kind = self.data.def(d_nr).def_type().described();
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "struct '{id}' conflicts with a {prev_kind} of the same name \
+                    "struct '{id}' conflicts with {prev_kind} of the same name \
                      already defined at {prev_pos} — pick a different name"
                 );
+                conflict = true;
             }
         }
         // `D-Template` — a struct with a header is a type template: its variables are types
@@ -6311,7 +6314,7 @@ impl Parser {
                 self.context = context;
                 return true;
             };
-            if self.first_pass && self.data.attr(d_nr, &a_name) != usize::MAX {
+            if self.first_pass && !conflict && self.data.attr(d_nr, &a_name) != usize::MAX {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
