@@ -384,9 +384,13 @@ impl Parser {
                                 let tmp = self.create_unique("__trail_tmp", f_type);
                                 self.vars.defined(tmp);
                                 let mut mat = self.vector_db(tp, tmp);
+                                // The OPERAND's value, not `v`'s: they are the same only for
+                                // a bare `v`.  An operand that merely READS `v` (`v =
+                                // v[..-1] + [v[-1] * 10]`) was replaced by a copy of the
+                                // whole of `v`, and its own value was lost (loft#2387).
                                 mat.push(self.cl(
                                     "OpAppendVector",
-                                    &[Value::Var(tmp), Value::Var(var_nr), rec],
+                                    &[Value::Var(tmp), args[1].clone(), rec],
                                 ));
                                 prefix.extend(mat);
                                 args[1] = Value::Var(tmp);
