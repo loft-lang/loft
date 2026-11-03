@@ -51,8 +51,6 @@ pub struct Vars {
   pub adopted: vector<integer>,
   // The visible parameters a mid-body `return` hands back as they are (`mid_return_param_deps`).
   pub mid_params: vector<integer>,
-  // The locals a `for` destructuring bound (`for (a, b) in …`).
-  pub destructured: vector<integer>,
   // The `SIndex` node an assignment is about to bind, whose vector slice it lowers itself
   // (`materialize_iterator`); -1 for none.
   pub slice_node: integer,
@@ -104,7 +102,7 @@ pub struct Vars {
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], destructured: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, concat_dest: -1 }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, concat_dest: -1 }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
