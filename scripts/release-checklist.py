@@ -1672,7 +1672,10 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
     # squash merge is the same tree, so the gate's run still counts (`same_tree_gate_runs`).  A
     # commit after it is another PR and another gate.  Resolved after the rows above it, so it
     # reads their states.
-    pr_prereqs = ("A-changelog", "M-changelog-read", "A-pdf", "A-pdf-version", "A-pdf-content",
+    # `A-main` and `A-clean` first: the squash merge keeps the gate's evidence only when the
+    # branch already holds main and nothing uncommitted — then merged tree == gated tree.
+    pr_prereqs = ("A-main", "A-clean",
+                  "A-changelog", "M-changelog-read", "A-pdf", "A-pdf-version", "A-pdf-content",
                   "A-reference-review", "A-skills-review", "A-docs-lint", "M-doc-validation",
                   "M-ndb", "M-wasm", "A-ci", "A-release-gate")
 
@@ -1689,8 +1692,9 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "A-release-pr",
             "Open the release-day PR — ONE that day, the branch complete and its gate green",
             "gh pr create … && gh pr merge --auto --squash   # ONCE; after it only the tag and "
-            "the release window, which change no file — the window's manual ticks are committed "
-            "with the next cycle's first PR, never a PR of their own",
+            "the release window: READ-ONLY rows that change no file, which the owner may set "
+            "aside to get on with the release — their manual ticks are committed with the next "
+            "cycle's first PR, never a PR of their own",
             check=check_release_pr_ready,
             cadence="pre",
         )
