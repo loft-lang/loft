@@ -31,8 +31,9 @@ struct Ops {
     from_range: u32,
     slice: [u32; 2],
     keep: [u32; 4],
-    frees: [u32; 2],
+    frees: [u32; 3],
     get_field: u32,
+    append_text: u32,
 }
 
 /// One admitted site: the temporary `T`, its store `W`.
@@ -67,8 +68,14 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
             data.def_nr("OpSetInt4"),
             data.def_nr("OpClearVector"),
         ],
-        frees: [data.def_nr("OpFreeRef"), data.def_nr("OpFreeRecordIn")],
+        // Every one passes a null store by (`free_displaced`, `loft_free_displaced`).
+        frees: [
+            data.def_nr("OpFreeRef"),
+            data.def_nr("OpFreeRecordIn"),
+            data.def_nr("OpFreeRefIfDistinct"),
+        ],
         get_field: data.def_nr("OpGetField"),
+        append_text: data.def_nr("OpAppendText"),
     };
     if ops.from_bytes == u32::MAX || ops.from_range == u32::MAX {
         return;
@@ -77,18 +84,36 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     let mut sites: Vec<Site> = Vec::new();
     {
         let vars = data.def(d_nr).variables();
+        let mut assigned = 0usize;
+        let mut calls = 0usize;
         code.walk(&mut |n| {
-            if let Value::Call(f, args) = n
-                && *f == ops.from_bytes
-                && let [arg] = args.as_slice()
-                && let Some(block) = slice_block(arg)
-            {
+            if let Some(block) = host(n, &ops) {
+                assigned += 1;
                 match admit(block, vars, &ops) {
                     Ok(site) => sites.push(site),
                     Err(why) => decline(data, d_nr, None, why),
                 }
             }
+            if let Value::Call(f, args) = n
+                && *f == ops.from_bytes
+                && args.len() == 1
+                && slice_block(&args[0]).is_some()
+            {
+                calls += 1;
+            }
         });
+        // A call held anywhere else is left alone: as a block's value the code generator would
+        // have no destination to write the text into (the parser's own text calls are always
+        // assigned or appended), and inside a larger operand an earlier operand would run after
+        // the hoisted bounds.
+        for _ in assigned..calls {
+            decline(
+                data,
+                d_nr,
+                None,
+                "the text is neither assigned nor appended to a variable",
+            );
+        }
         sites.retain(|s| match outside_mentions(&code, s, &ops) {
             Ok(()) => true,
             Err(why) => {
@@ -101,11 +126,9 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     if !sites.is_empty() {
         let vars = data.def(d_nr).variables();
         code.map_nodes(&mut |n| {
-            let Value::Call(f, args) = n else { return };
-            if *f != ops.from_bytes || args.len() != 1 {
-                return;
-            }
-            let Some(block) = slice_block(&args[0]) else {
+            // The bare statement, not a span around it: `map_nodes` reaches the node inside a
+            // span too, and rewriting that one keeps the statement's source line.
+            let Some(block) = host(n, &ops) else {
                 return;
             };
             let Ok(site) = admit(block, vars, &ops) else {
@@ -116,14 +139,15 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
             }
             let (prelude, src, lo, hi) = split(block, &site, &ops);
             let mut stmts = prelude;
-            stmts.push(Value::Call(ops.from_range, vec![src, lo, hi]));
-            // The bounds' variables belong to the slice block's scope: the new block takes it over.
+            stmts.push(rebuilt(
+                n,
+                Value::Call(ops.from_range, vec![src, lo, hi]),
+                &ops,
+            ));
+            // The bounds' variables belong to the slice block's scope: the statement block that
+            // replaces the assignment takes it over.
             let scope = block.scope;
-            *n = v_block(
-                stmts,
-                data.def(ops.from_bytes).returned().clone(),
-                "slice text",
-            );
+            *n = v_block(stmts, crate::data::Type::Void, "slice text");
             if let Value::Block(bl) = n {
                 bl.scope = scope;
             }
@@ -139,6 +163,43 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     }
     data.definitions[d_nr as usize].code = code;
     crate::rewrite_census::fired(RULE, fired);
+}
+
+/// A statement that holds the call where nothing is evaluated before it: the assignment
+/// `x = text_from_bytes(<slice>)`, or the append `OpAppendText(w, text_from_bytes(<slice>))`
+/// into a plain variable `w` — the parser's text build.  Each is rebuilt around the range call
+/// with the bound statements before it, so no operand that ran before the call runs after them.
+fn host<'v>(n: &'v Value, ops: &Ops) -> Option<&'v crate::data::Block> {
+    match n {
+        Value::Set(_, rhs) => slice_call(rhs, ops),
+        Value::Call(f, args)
+            if *f == ops.append_text
+                && let [w, call] = args.as_slice()
+                && matches!(w.unspan(), Value::Var(_)) =>
+        {
+            slice_call(call, ops)
+        }
+        _ => None,
+    }
+}
+
+/// `n` (a [`host`]) with its call replaced by `range`.
+fn rebuilt(n: &Value, range: Value, ops: &Ops) -> Value {
+    match n {
+        Value::Set(x, _) => Value::Set(*x, Box::new(range)),
+        Value::Call(f, args) if *f == ops.append_text => {
+            Value::Call(*f, vec![args[0].clone(), range])
+        }
+        _ => unreachable!("not a host"),
+    }
+}
+
+/// The slice block of `text_from_bytes(<block>)`, when `v` is that call.
+fn slice_call<'v>(v: &'v Value, ops: &Ops) -> Option<&'v crate::data::Block> {
+    match v.unspan() {
+        Value::Call(f, args) if *f == ops.from_bytes && args.len() == 1 => slice_block(&args[0]),
+        _ => None,
+    }
 }
 
 /// The block a slice value is lowered to, when `v` is one.

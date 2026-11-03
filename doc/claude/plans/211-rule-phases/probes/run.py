@@ -95,6 +95,8 @@ def case(d):
         notes.append(f"{rule} is still admitted in {fn} on after.loft ({adm_a}): the hand form is not the rewritten shape")
     cost = {}
     for name, src in (("before", before), ("after", after)):
+        # A first run after a rebuild fills the compile cache, which would count against n1.
+        instructions(src, n1)
         got = [instructions(src, n) for n in (n1, n2)]
         if any(rc != 0 or c is None for c, _, rc in got):
             return rule, None, None, adm_b, [f"{name}.loft failed to run"] + notes
