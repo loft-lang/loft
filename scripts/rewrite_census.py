@@ -115,7 +115,7 @@ def census(loft, prog):
             proc = subprocess.run(
                 [loft, "--native-emit", str(out), "--lean", *argv],
                 cwd=cwd, capture_output=True, text=True, timeout=300,
-                env={**os.environ, "LOFT_NO_NATIVE_LIBS": "1",
+                env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
                      "LOFT_REWRITE_CENSUS": str(tsv) if i == 0 else ""},
             )
             if proc.returncode != 0 or not out.exists() or (i == 0 and not tsv.exists()):
@@ -129,6 +129,14 @@ def census(loft, prog):
             rule, _, n = line.partition("\t")
             counts[rule] = int(n)
         return name, commit, counts, None
+
+
+def rust_writer_env():
+    """The environment for a census run, minus `LOFT_NATIVE_BACKEND`: the baseline counts the
+    rustc writer's admissions (`--native-emit` writes Rust), and `make ci` exports
+    `LOFT_NATIVE_BACKEND=c` to every step — with it the census counted the C writer's rewrites
+    against the Rust baseline and failed on 4624 admissions where 11877 were recorded."""
+    return {k: v for k, v in os.environ.items() if k != "LOFT_NATIVE_BACKEND"}
 
 
 def warm_dependencies(loft, progs):
@@ -146,7 +154,7 @@ def warm_dependencies(loft, progs):
             subprocess.run(
                 [loft, "--native-emit", str(Path(tmp) / "warm.rs"), "--lean", *argv],
                 cwd=cwd, capture_output=True, timeout=600,
-                env={**os.environ, "LOFT_REWRITE_CENSUS": ""},
+                env={**rust_writer_env(), "LOFT_REWRITE_CENSUS": ""},
             )
 
 
