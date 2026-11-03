@@ -4377,6 +4377,11 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     tt = ir::TyText { dep: ds };
     return ex(ir::NdCall { def_nr: d, args: list }, if ret is TyOptional { ir::TyOptional { inner: tt } } else { tt });
   }
+  // A native answering a record (or `record?`) with no buffer and no borrows — the store
+  // builtins, reflection's `type_named` — is the call as it is, typed as declared.
+  if el_types::base(ret) is TyReference && len(el_types::deps(ret)) == 0 && el_ir::is_null(def.code[0] ?? ir::NdNull) {
+    return ex(ir::NdCall { def_nr: d, args: list }, ret);
+  }
   if !scalar(el_types::base(ret)) {
     el::refuse(e, "a call returning a heap value: {type_kind(el_types::base(ret))}");
     return null;
@@ -5420,6 +5425,13 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
       if t != null {
         return ex(if op == "!=" { t! } else { el_ir::cl(e, "OpNot", [t!]) }, ir::TyBoolean);
       }
+    }
+    // `null_test`'s struct arm: a nullable struct reference holds the store sentinel, which
+    // `OpRefIsNull` reads (`OpEqRef`'s `rec` test stays for a bare reference).
+    sd = struct_ref(e, vb);
+    if v.tp is TyOptional && sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") {
+      isn = el_ir::cl(e, "OpRefIsNull", [v.code]);
+      return ex(if op == "!=" { el_ir::cl(e, "OpNot", [isn]) } else { isn }, ir::TyBoolean);
     }
   }
   if op == ">" {
