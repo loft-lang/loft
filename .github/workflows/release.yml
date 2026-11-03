@@ -163,7 +163,10 @@ jobs:
           #     named for one version carrying the binary of another is the failure the
           #     hashes cannot see: every digest would be internally consistent.
           # The first line: the second names the toolchain a native build would use (@C102).
-          got="$("./$exe" --version | head -n 1)"
+          # Taken in the shell, not through `head`: `head -n 1` closes the pipe after the first
+          # line, loft dies writing the second, and `pipefail` fails the step on that exit.
+          got="$("./$exe" --version)"
+          got="${got%%$'\n'*}"
           if [ "$got" != "loft $version" ]; then
             echo "version mismatch: tag says 'loft $version', binary says '$got'" >&2
             exit 1
@@ -176,7 +179,10 @@ jobs:
           #      not of the source: the same source built static, or on the runner's
           #      own glibc, compiles and runs here and fails on a user's machine.
           if [ -n "${{ matrix.glibc }}" ]; then
-            if ! readelf -l "$exe" | grep -q 'program interpreter'; then
+            # Read whole, then tested with no pipe: `grep -q` stops at its match, and a writer
+            # that dies on the closed pipe fails the pipeline under `pipefail`.
+            headers=$(readelf -l "$exe")
+            if ! grep -q 'program interpreter' <<<"$headers"; then
               echo "$exe is statically linked, so it cannot load a library's native code" >&2
               exit 1
             fi
