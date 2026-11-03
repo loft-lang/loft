@@ -4992,7 +4992,11 @@ struct Binding { vars: vector<integer>, types: vector<ir::TypeT>, ok: boolean }
 fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
   tv = type_var(e, el_types::base(p));
   if tv >= 0 {
-    at = if p is TyOptional { el_types::base(a) } else { a };
+    picked = if p is TyOptional { el_types::base(a) } else { a };
+    // `resolve_type_var`: the argument's borrows are the caller's, not part of the shape — a
+    // record, a vector, an enum and a text bind without them.  A new name, not a reassignment
+    // of `picked`: that frees the caller's type (loft#2398).
+    at = if picked is TyReference || picked is TyVector || picked is TyEnum || picked is TyText { el_types::with_deps(picked, []) } else { picked };
     for v in b.vars {
       if v == tv {
         if !el_types::is_equal(e, b.types[v#index] ?? ir::TyVoid, at) {
@@ -5298,7 +5302,8 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   }
   h = b!.vars[0] ?? -1;
   bound = b!.types[0] ?? ir::TyVoid;
-  if !(scalar_type(bound) || bound is TyText) || bound is TyEnum || bound is TyOptional || identity_spelling(e, bound) == "" {
+  record = match bound { TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT && type_var(e, bound) < 0 && !el::def(e, n).name.starts_with("__"), _ => false };
+  if !(scalar_type(bound) || bound is TyText || record) || bound is TyEnum || bound is TyOptional || identity_spelling(e, bound) == "" {
     el::refuse(e, "a generic instance at this type: {type_kind(bound)}");
     return -1;
   }
@@ -5352,6 +5357,7 @@ pub fn rebuild_stale(e: el::El) {
 fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT) -> boolean {
   tmpl = el::def(e, g);
   textual = bound is TyText;
+  record = bound is TyReference;
   for v in tmpl.variables.variables {
     t = v.type_def[0] ?? ir::TyVoid;
     if !bare_over(t, h) || t is TyFunction {
@@ -5385,10 +5391,10 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
       f.variables[v#index].type_def = [el_types::without_deps(v.type_def[0] ?? ir::TyVoid)];
     }
   }
-  if textual {
-    why2 = text_instance_carried(e, tmpl, f, code_of(tmpl), h);
+  if textual || record {
+    why2 = text_instance_carried(e, tmpl, f, code_of(tmpl), h, textual);
     if why2 != "" {
-      el::refuse(e, "a generic instance at text whose body holds {why2}");
+      el::refuse(e, "a generic instance at {if textual { "text" } else { "a record" }} whose body holds {why2}");
       return false;
     }
   }
@@ -5410,9 +5416,9 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
   }
   e.b.data.definitions[d].variables = f;
   e.b.data.definitions[d].code = [code];
-  // `derive_monomorph_return_deps`: a text result every return of which is a bare parameter
-  // borrows that parameter, by its attribute number (`-> text["x"]`).
-  if textual && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyText {
+  // `derive_monomorph_return_deps`: a text or record result every return of which is a bare
+  // parameter borrows that parameter, by its attribute number (`-> text["x"]`, `-> P["x"]`).
+  if (textual && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyText) || (record && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyReference) {
     tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
     match tail {
       NdVar { n } => {
@@ -5431,17 +5437,27 @@ fn code_of(d: ir::Definition) -> ir::Node {
   d.code[0] ?? ir::NdNull
 }
 
-// What a text instance's later passes would rewrite, or "": a text tail other than a bare
-// parameter (`promote_monomorph_text_return`) or any `return` beside it, an assignment to a
-// parameter that became text (`promote_assigned_text_params`), a variable that became text set
-// from a value reading it (`stage_text_self_reads`).
-fn text_instance_carried(e: el::El, tmpl: ir::Definition, f: ir::Function, code: ir::Node, h: integer) -> text {
+// What a text or record instance's later passes would rewrite, or "": an answer over the
+// variable other than a bare parameter, or any `return` beside it (the text and record return
+// passes: `promote_monomorph_text_return`, `copy_param_returns_of_fresh_instance`,
+// `bind_monomorph_join_return`); for a text, an assignment to a parameter that became text
+// (`promote_assigned_text_params`) or a variable that became text set from a value reading it
+// (`stage_text_self_reads`).
+fn text_instance_carried(e: el::El, tmpl: ir::Definition, f: ir::Function, code: ir::Node, h: integer, textual: boolean) -> text {
   if el_types::base(tmpl.returned[0] ?? ir::TyVoid) is TyReference && type_var(e, el_types::base(tmpl.returned[0] ?? ir::TyVoid)) == h {
     tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
-    ok = match tail { NdVar { n } => f.variables[n].argument, _ => false };
-    if !ok || has_return(code) {
-      return "a text answer other than a bare parameter";
+    tv = match tail { NdVar { n } => if f.variables[n].argument { n } else { -1 }, _ => -1 };
+    if tv < 0 || has_return(code) {
+      return "an answer other than a bare parameter";
     }
+    // A parameter the body reassigns is no view of the argument: its record is copied out
+    // (`copy_param_returns_of_fresh_instance`'s `___ret_param_N`).
+    if sets_var(code, tv) {
+      return "an answer that is a parameter the body reassigns";
+    }
+  }
+  if !textual {
+    return "";
   }
   became: vector<integer> = [];
   for v in tmpl.variables.variables {
