@@ -87,7 +87,10 @@ wrap defined, for exactly the operators the Rust probe changes) — the ship tie
 Rust `ship` lane has it ([bench/README.md](../../bench/README.md) § The C lanes).
 
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
-it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy.  It
+it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy — kept
+in `target/release/`, beside the `libloft.rlib` a library's native part is built against: a copy
+elsewhere fails the interpreter side of every program that uses one, which the sweep reports as
+`differ` (the same holds for `bench/stats.py --loft`).  It
 builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`), `slow` or `refused`, and ranks the
 refusals by reason, each with the programs it refused (five, or all of them under `--all`; the
 full list in `refused.tsv` beside the run's directories) — that ranking is the work list.  Each program gets a directory of its own
