@@ -70,6 +70,25 @@ pub fn assignments(e: el::El, i: integer, name: text) -> integer {
   c
 }
 
+// Is local `name` bound anywhere in `i` from an `if` (`name = if …`, `name: τ = if …`)?
+pub fn bound_from_if(e: el::El, i: integer, name: text) -> boolean {
+  hit = match e.p.nodes[i] {
+    SAssign { target, e: v } => root(e, target) == name && is_name(e, target) && v != null && e.p.nodes[v!] is SIf,
+    SLet { name: n, e: v } => n == name && v != null && e.p.nodes[v!] is SIf,
+    SLambda { at: _ } => { return false; },
+    _ => false
+  };
+  if hit {
+    return true;
+  }
+  for ch in children(e, i) {
+    if bound_from_if(e, ch, name) {
+      return true;
+    }
+  }
+  false
+}
+
 // Does a closure in `i` name `name`?
 fn mentions_in_lambda(e: el::El, i: integer, name: text) -> boolean {
   if e.p.nodes[i] is SLambda {

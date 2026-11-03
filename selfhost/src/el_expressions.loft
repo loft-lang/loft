@@ -176,6 +176,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       if built == null && null_sentinel_tail(e, code) {
         built = code;
       }
+      // A body ending in a `return` delivered its value already (`record_return`).
+      if built == null && ends_in_return(code) {
+        built = code;
+      }
       kind = tail_kind(e, vars, code);
       // A tail already refused is no second refusal.
       if built != null {
@@ -1321,6 +1325,24 @@ fn tail_syntax(e: el::El, body: integer) -> integer {
       }
     },
     _ => -1
+  }
+}
+
+// Is a body's last statement a `return` of something other than a bare variable (a returned
+// local may be one Rust renames onto the buffer, which the port follows for a literal-bound
+// local only)?
+fn ends_in_return(code: ir::Node) -> boolean {
+  match code {
+    NdBlock { block } => {
+      if len(block[0].operators) == 0 {
+        return false;
+      }
+      match el_ir::unspan(block[0].operators[-1] ?? ir::NdNull) {
+        NdReturn { inner } => !(el_ir::unspan(inner) is NdVar),
+        _ => false
+      }
+    },
+    _ => false
   }
 }
 
@@ -5929,6 +5951,14 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
       return ex(ir::NdReturn { inner: buffer_chain(x, w, result) }, ir::TyNever);
     }
     return ex(ir::NdReturn { inner: x }, ir::TyNever);
+  }
+  // A local the port's rename does not take, at an exit that finds the buffer still unbound
+// on the first pass, where Rust decides the rename:
+  // Rust's rename admits more locals (one bound from an `if`, 2194's `m12`), so which of
+  // `Rename` and `Bind` it takes is not decided here yet.
+  if e.first_pass && unrenamed && !buffer_bound(e) && !chain && w >= 0 && !el_vars::was_built(vars, w) && !el_vars::was_adopted(vars, w) && !vars.vars[w].argument && el_length::bound_from_if(e, vars.body, el_vars::name_of(vars, w)) {
+    el::refuse(e, "a `return` of a local Rust's rename may take");
+    return ex(ir::NdNull, ir::TyNever);
   }
   // `RetPromotion::Bind`: no rename took this value (an earlier exit renamed or bound the buffer,
   // or the local cannot be the buffer), so it is delivered into the buffer — a call by handing
