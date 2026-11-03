@@ -326,6 +326,18 @@ struct Argument {
   constant: boolean
 }
 
+// A block whose one statement is a vector literal.
+fn sole_vector_literal(e: el::El, body: integer) -> boolean {
+  stmts = match e.p.nodes[body] { SBlock { stmts: ss } => ss, _ => [] };
+  if len(stmts) != 1 {
+    return false;
+  }
+  match e.p.nodes[stmts[0]] {
+    SStmt { e: x } => if x == null { false } else { e.p.nodes[x!] is SVecLit },
+    _ => false
+  }
+}
+
 // `fn name(params) (-> type)? (; / block)`                    Parser::parse_function
 // The plain path: no type variables, no operator form, no capability, no annotation, no `both`.
 // A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
@@ -334,6 +346,12 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
   if is_op || len(tvars) > 0 || cap != null || len(annots) > 0 || ret_const {
     kind = if is_op { "an operator form" } else if len(tvars) > 0 { "type variables" } else if cap != null { "a capability" } else if len(annots) > 0 { "annotations" } else { "`-> const`" };
     el::refuse(e, "a function with an operator form, type variables, a capability, annotations or `-> const`: {kind}");
+    return "";
+  }
+  // `@FR-R-Const`: a function of no parameters whose whole body is one vector literal gets a
+  // constant twin (`__const_n_<name>`) the calls of it read — not carried: refused by name.
+  if len(params) == 0 && body != null && sole_vector_literal(e, body!) {
+    el::refuse(e, "a function whose body is one vector literal (a constant twin)");
     return "";
   }
   vars = el_vars::new_vars(name, e.file);

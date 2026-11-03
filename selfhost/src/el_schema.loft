@@ -175,9 +175,11 @@ fn fill_database(e: el::El, d: integer) {
     if a.constant {
       continue;
     }
-    c = match a.typedef[0] {
+    // `τ?` is stored at `τ`'s own layout (`@FR-L-Null`).
+    ft = el_types::base(a.typedef[0]);
+    c = match ft {
       TyInteger { spec } => int_part(e, spec, a.alias_d_nr, a.nullable),
-      _ => content_type(e, a.typedef[0])
+      _ => content_type(e, ft)
     };
     if c < 0 {
       el::refuse(e, "a struct field of this type");
@@ -224,9 +226,17 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),
     TyCharacter => known(e, "character"),
+    // A struct with no row yet is filled here, as Rust's `fill_database` fills a field's type
+    // when it meets one — which numbers it after the struct whose field it is.
     TyReference { n } => {
+      if el::def(e, n).def_type != el::DT_STRUCT {
+        return -1;
+      }
+      if el::def(e, n).known_type == NO_TYPE && el::def(e, n).source == e.source {
+        fill_database(e, n);
+      }
       k = el::def(e, n).known_type;
-      if k == NO_TYPE || el::def(e, n).def_type != el::DT_STRUCT { -1 } else { k }
+      if k == NO_TYPE { -1 } else { k }
     },
     // `database.vector(content)`, deduplicated by name, made where it is missing; the element's
     // `vector<T>` definition takes its number (`check_vector`).

@@ -3066,6 +3066,13 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     el::refuse(e, "an append to a collection that is not a field of a record local");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // A field of a `for` variable's element (`c.hexes += [Ent { id: i, q: c.cx }]`): Rust stages
+  // the items' field values ahead of the build (`self_read_root` over the loop's view) — not
+  // carried: refused by name.
+  if !e.first_pass && vars.active_loops.contains(rec) {
+    el::refuse(e, "an append to a field of a loop variable's element");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   pkt = if pd >= 0 { el::def(e, pd).known_type } else { -1 };
   fnr = -1;
   if !e.first_pass {
