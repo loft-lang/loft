@@ -90,11 +90,15 @@ pub struct Vars {
   pub inline_refs: vector<integer>,
   // `Function::set_annotated`: the locals declared with a written `: τ` — this pass's
   // declarations, which precede any assignment the mark is read at
-  pub annotated: vector<integer>
+  pub annotated: vector<integer>,
+  // `Function::rebind_orig`: each rebound heap parameter, by number, and the entry witness
+  // that holds the caller's store (`ensure_rebind_witness`), pairwise
+  pub rebind_params: vector<integer>,
+  pub rebind_origs: vector<integer>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -353,6 +357,8 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   // `append` keeps the inline marks: a work-ref the first pass marked stays marked.
   v.inline_refs = kept.inline_refs;
   v.annotated = [];
+  v.rebind_params = [];
+  v.rebind_origs = [];
   v.unique = [];
   v.work_vdb = 0;
   v.work_ref = 0;
@@ -520,6 +526,22 @@ pub fn work_ref(v: Vars, t: ir::TypeT) -> integer {
   nr = add_variable(v, "__ref_{v.work_ref}", t);
   v.work_refs = sorted_in(v.work_refs, nr);
   nr
+}
+
+// `Parser::ensure_rebind_witness`: the work-ref that witnesses parameter `p`'s entry store —
+// never freed and never owning one (skip-free, inline), filled by the function's entry stash.
+pub fn rebind_witness(v: Vars, p: integer) -> integer {
+  for x in v.rebind_params {
+    if x == p {
+      return v.rebind_origs[x#index] ?? -1;
+    }
+  }
+  orig = work_ref(v, tp(v, p));
+  v.vars[orig].skip_free = true;
+  mark_inline(v, orig);
+  v.rebind_params += [p];
+  v.rebind_origs += [orig];
+  orig
 }
 
 // `Function::work_refs_p2`: the second pass's `__ref_p2_N`, a record literal's own buffer.

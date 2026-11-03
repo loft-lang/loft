@@ -1446,6 +1446,16 @@ fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
   match code {
     NdBlock { block } => {
       bl = block[0];
+      // @PLN87 P2.1: each rebound heap parameter's entry store stashed in its witness — the
+      // null-init a first definition, then a raw `OpPutRef` copy of the handle.
+      for p in vars.rebind_params {
+        orig = vars.rebind_origs[p#index] ?? -1;
+        ops: vector<ir::Node> = [el_ir::v_set(orig, ir::NdNull), el_ir::cl(e, "OpPutRef", [ir::NdVar { n: orig }, ir::NdVar { n: p }])];
+        for op in bl.operators {
+          ops += [op];
+        }
+        bl.operators = ops;
+      }
       for wt in vars.work_texts {
         ops: vector<ir::Node> = [el_ir::v_set(wt, ir::NdText { s: "" })];
         for op in bl.operators {
@@ -2145,6 +2155,32 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
       }
     },
     _ => {}
+  }
+  // `rebind_local_heap_param` (`@FR-F-ParamRebind`, @PLN87 P2.1): a struct parameter rebound
+  // whole rebinds locally — a prior rebind's store freed (never the caller's: the entry witness
+  // says which), the slot detached, the value put in.  A value that reads the parameter is
+  // computed into a work-ref first (`@FR-O-Detach`).  A literal has its own lowering inside the
+  // build; it and every other heap type stay refused below.
+  pt0 = el_types::base(el_vars::tp(vars, v));
+  if vars.vars[v].argument && struct_ref(e, pt0) >= 0 && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && !(e.p.nodes[rhs!] is SStructLit) && !(e.p.nodes[rhs!] is SVecLit) {
+    x = expression(e, vars, rhs!);
+    sd = struct_ref(e, el_types::base(x.tp));
+    if !e.first_pass && (sd < 0 || !copies_as(e, struct_ref(e, pt0), sd)) {
+      el::refuse(e, "a rebound parameter given another type: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    if e.first_pass {
+      return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+    }
+    orig = el_vars::rebind_witness(vars, v);
+    free = el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: v }, ir::NdVar { n: orig }]);
+    detach = el_ir::cl(e, "OpInitRefSentinel", [ir::NdVar { n: v }]);
+    if el_ir::reads_var(x.code, v) {
+      held = el_vars::work_ref(vars, el_vars::tp(vars, v));
+      return ex(ir::NdInsert { items: [el_ir::v_set(held, x.code), free, detach, el_ir::v_set(v, ir::NdVar { n: held })] }, ir::TyVoid);
+    }
+    return ex(ir::NdInsert { items: [free, detach, el_ir::v_set(v, x.code)] }, ir::TyVoid);
   }
   // A parameter of a heap type rebound whole takes the rebound-parameter road (an entry witness,
   // the detach before the bind) or, for a text, a shadow local — not carried yet.
