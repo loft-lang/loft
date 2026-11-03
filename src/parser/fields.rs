@@ -3563,16 +3563,33 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // projection's.  Its type comes from the call's own return type, the only place
         // the bag is written down by the time the subscript asks.
         if let Some(root) = self.projection_root_mut(code) {
-            let Value::Call(d_nr, _) = root.unspan() else {
+            let Value::Call(d_nr, args) = root.unspan() else {
                 return None;
             };
             if !self.data.def(*d_nr).is_loft_defined() {
                 return None;
             }
-            // The return type's deps are the CALLEE's attribute numbers, which name nothing in
-            // this frame: read as a caller variable they made the work-ref look borrowed, so the
-            // scope pass gave the copy a borrowing callee's bind makes no owner (loft#2376).
-            let root_tp = self.data.def(*d_nr).returned().without_deps();
+            // The return type's deps are the CALLEE's attribute numbers, bridged to this frame
+            // (`@FR-O-Deps`): one naming the callee's hidden RETURN BUFFER is the buffer this
+            // call hands it — the container is that buffer, as the pool reads it (`@FR-R-Reuse`).
+            // One naming a visible parameter is dropped: the bind copies what a borrowing callee
+            // answers (`@FR-O-Move`), and read as a caller variable it made the work-ref look
+            // borrowed, so the copy had no owner (loft#2376).
+            let def = self.data.def(*d_nr);
+            let buffers: Vec<u16> = def
+                .returned()
+                .depend()
+                .into_iter()
+                .filter(|&a| def.attributes().get(a as usize).is_some_and(|at| at.hidden))
+                .filter_map(|a| match args.get(a as usize).map(Value::unspan) {
+                    Some(Value::Var(v)) => Some(*v),
+                    _ => None,
+                })
+                .collect();
+            let root_tp = def
+                .returned()
+                .without_deps()
+                .with_deps(&crate::data::Deps::frame(buffers));
             return Some(self.bind_inline_container(root, &root_tp));
         }
         let Value::Call(d_nr, _) = code.unspan() else {
