@@ -2440,7 +2440,31 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // A plain scalar place whose read is `τ?` — an element whose index is not proven in range, or a
+  // field declared `τ?` — is a slot of `τ`: a value is written at `τ` (the `@PLN25` index flip
+  // peels the read's `?`), a `null` into a field as `τ`'s null.  A nullable value
+  // (`@FR-N-Store`'s question) and any other nullable place stay refused.
   if pt is TyOptional {
+    pb = el_types::base(pt);
+    rd_place = el_ir::unspan(p.code);
+    field_place = match rd_place {
+      NdCall { args } => len(args) > 0 && !(el_ir::unspan(args[0]) is NdCall && calls(e, el_ir::unspan(args[0]), "OpGetVector")) && !calls(e, rd_place, "OpGetVector"),
+      _ => false
+    };
+    if op == "=" && el_convert::plain_scalar(pb) && !(x.tp is TyOptional) {
+      nv: ir::Node? = null;
+      if x.tp is TyNull {
+        nv = if field_place { el_convert::null_of(e, pb) } else { null };
+      } else {
+        nv = stored(e, vars, x, pb);
+      }
+      if nv != null {
+        w0 = place_write(e, rd_place, nv!);
+        if w0 != null {
+          return ex(w0!, ir::TyVoid);
+        }
+      }
+    }
     el::refuse(e, "an assignment to a nullable place");
     return ex(ir::NdNull, ir::TyVoid);
   }
