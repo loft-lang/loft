@@ -5130,6 +5130,11 @@ fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
 // a struct; "" for any other, which no instance is looked up for.
 fn identity_spelling(e: el::El, t: ir::TypeT) -> text {
   match t {
+    // `Pt` and `Pt?` are two instantiations (@PLN165 B1).
+    TyOptional { inner } => {
+      sp = identity_spelling(e, inner);
+      if sp == "" { "" } else { "{sp}?" }
+    },
     TyInteger { spec } => if el_types::narrow_width(spec) == 0 && spec.forced_size == 0 { "integer" } else { "" },
     TyFloat => "float",
     TySingle => "single",
@@ -5486,7 +5491,10 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   h = b!.vars[0] ?? -1;
   bound = b!.types[0] ?? ir::TyVoid;
   record = match bound { TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT && type_var(e, bound) < 0 && !el::def(e, n).name.starts_with("__"), _ => false };
-  if !(scalar_type(bound) || bound is TyText || record) || bound is TyEnum || bound is TyOptional || identity_spelling(e, bound) == "" {
+  // A nullable binding is carried for a plain scalar (`integer?`): its value is the scalar's
+  // own slot with a sentinel (@FR-L-Null).
+  nullable_scalar = match bound { TyOptional { inner } => scalar_type(inner) && !(inner is TyEnum), _ => false };
+  if !(scalar_type(bound) || bound is TyText || record) || el_types::base(bound) is TyEnum || (bound is TyOptional && !nullable_scalar) || identity_spelling(e, bound) == "" {
     // A reference says which definition kind it names: a struct-enum variant, a tuple's or a
     // nullable's synthetic record, a type variable not yet bound.
     kind = match bound { TyReference { n } => "TyReference of a {def_kind(el::def(e, n))}", _ => type_kind(bound) };
@@ -5514,7 +5522,7 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   }
   el::set_returned(e, d, substitute(tmpl.returned[0] ?? ir::TyVoid, h, bound));
   // `rewrite_vector_write_triplets` registers `vector<T>`'s row on the first fill, at the call.
-  el_schema::vector_type(e, el::def(e, type_def_nr(e, bound)).known_type);
+  el_schema::vector_type(e, el::def(e, type_def_nr(e, el_types::base(bound))).known_type);
   // `stale_monomorphs`: a template whose second-pass body is not read yet (declared below the
   // call) is filled once the pass is through (`rebuild_stale_monomorphs`).
   if !e.bodies2.contains(g) {
