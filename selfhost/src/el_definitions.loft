@@ -18,6 +18,7 @@ use el_schema;
 pub fn elab_file(e: el::El, file: integer) {
   match e.p.nodes[file] {
     SFile { items } => {
+      claim_declared_type_names(e, items);
       for it in items {
         top_item(e, it);
       }
@@ -59,6 +60,27 @@ fn top_item(e: el::El, it: integer) {
 // field an attribute of its declared type, mutable, nullable only when the type is `τ?` (an
 // integer field's spec records it).  The second pass adds nothing.  A value struct, a template,
 // a field modifier, a default and a capture are refused by name.
+// `Parser::claim_declared_type_names`: before the first pass reads a file, each type it
+// declares (`struct`, `enum`, `type`, a capitalised name) that would shadow a standard-library
+// name takes a stub of its own, so the file's lookups find it first and the declaration adopts
+// it — which numbers such a type ahead of every other definition of the file.
+fn claim_declared_type_names(e: el::El, items: vector<integer>) {
+  if !e.first_pass || e.source == el::STD_SOURCE {
+    return;
+  }
+  for it in items {
+    nm = match e.p.nodes[it] {
+      SStruct { name } => name,
+      SEnum { name } => name,
+      SAlias { name } => name,
+      _ => ""
+    };
+    if nm != "" && nm[0] >= 'A' && nm[0] <= 'Z' && el::prelude_shadowed(e, nm) {
+      el::add_def(e, nm, el::pos_at(e, 0), el::DT_UNKNOWN);
+    }
+  }
+}
+
 fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vector<integer>, fields: vector<integer>) {
   if value || len(tvars) > 0 {
     el::refuse(e, "a value struct or a struct template");
@@ -67,11 +89,16 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
   nt = el::name_tok(e, at, name);
   d = if e.first_pass && el::prelude_shadowed(e, name) { -1 } else { el::def_nr(e, name) };
   if e.first_pass {
-    if d >= 0 {
+    // A stub this file claimed for the name (`claim_declared_type_names`) is adopted.
+    if d >= 0 && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source == e.source {
+      e.b.data.definitions[d].def_type = el::DT_STRUCT;
+      e.b.data.definitions[d].position = el::pos_at(e, nt + 1);
+    } else if d >= 0 {
       el::refuse(e, "a struct over an existing name");
       return;
+    } else {
+      d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_STRUCT);
     }
-    d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_STRUCT);
     el::set_returned(e, d, ir::TyReference { n: d, dep: [] });
   }
   if d < 0 {

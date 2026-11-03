@@ -2511,6 +2511,14 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   if op == "+=" && e.p.nodes[rhs] is SVecLit && el_types::is_collection(p.tp) {
     return field_append(e, vars, p, rhs);
   }
+  // An empty literal into a vector place empties it where it lies (`OpClearVector`): the place's
+  // type is the literal's, which on its own has none.
+  if op == "=" && p.tp is TyVector && vec_lit_len(e, rhs) == 0 {
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(el_ir::cl(e, "OpClearVector", [el_ir::unspan(p.code)]), ir::TyVoid);
+  }
   if op == "=" && e.p.nodes[rhs] is SStructLit && !(p.tp is TyOptional) && struct_ref(e, el_types::base(p.tp)) >= 0 {
     return literal_into_place(e, vars, el_ir::unspan(p.code), struct_ref(e, el_types::base(p.tp)), rhs);
   }
@@ -2598,6 +2606,14 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     return ex(ir::NdNull, ir::TyVoid);
   }
   ex(w!, ir::TyVoid)
+}
+
+// The item count of a vector literal node, or -1 for any other node.
+fn vec_lit_len(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SVecLit { items } => len(items),
+    _ => -1
+  }
 }
 
 // `Parser::copy_ref` for a whole record written into a record field or a vector element
