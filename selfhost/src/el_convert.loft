@@ -307,6 +307,83 @@ pub fn guard_discharge(e: el::El, vars: el_vars::Vars, code: ir::Node, should: i
   }
 }
 
+// `declared_range`: the range a store target DECLARES and the default a value outside it takes
+// — none for the plain `integer` templates, a non-integer, and a NON-nullable narrow alias
+// (guarded at compile time).  A nullable slot's bound is its usable range (`@FR-N-Reserve`: a
+// `u8?` is `0..=254`) and its default is null.
+pub struct DeclaredRange {
+  pub some: boolean,
+  pub lo: integer,
+  pub hi: integer,
+  pub dflt: integer?
+}
+
+pub fn declared_range(t: ir::TypeT, nullable: boolean) -> DeclaredRange {
+  match el_types::base(t) {
+    TyInteger { spec } => {
+      if full_integer(spec) || (spec.forced_size > 0 && !nullable) {
+        return DeclaredRange { some: false, lo: 0, hi: 0, dflt: 0 };
+      }
+      width = spec.max - spec.min + 1;
+      reserve = nullable && ((spec.forced_size == 1 && width == 256) || (spec.forced_size == 2 && width == 65536));
+      lo = if reserve && spec.min < 0 { spec.min + 1 } else { spec.min };
+      hi = if reserve && spec.min >= 0 { spec.max - 1 } else { spec.max };
+      dflt: integer? = if nullable { null } else if lo <= 0 && 0 <= hi { 0 } else if lo > 0 { lo } else { hi };
+      DeclaredRange { some: true, lo: lo, hi: hi, dflt: dflt }
+    },
+    _ => DeclaredRange { some: false, lo: 0, hi: 0, dflt: 0 }
+  }
+}
+
+// `Parser::guard_declared_range` (loft#984): a value stored into a slot that declares a range
+// takes the slot's default where it falls outside it — `OpRangeDefault(v, lo, hi, default)`.  A
+// constant has its answer now; a source whose range lies inside needs no guard; a guard is
+// never wrapped twice.
+pub fn guard_range(e: el::El, code: ir::Node, target: ir::TypeT, source: ir::TypeT, nullable: boolean) -> ir::Node {
+  r = declared_range(target, nullable);
+  if !r.some || calls_op(e, code, "OpRangeDefault") {
+    return code;
+  }
+  lo = r.lo;
+  hi = r.hi;
+  // A nullable slot's default is the integer null, which is `i64::MIN`: read as it is.
+  dflt = r.dflt;
+  c = const_int(e, code);
+  if c != null {
+    if c! < lo || c! > hi {
+      return if nullable { el_ir::cl(e, "OpConvIntFromNull", []) } else { ir::NdLong { n: dflt } };
+    }
+    return code;
+  }
+  match el_types::base(source) {
+    TyInteger { spec } => {
+      if spec.min >= lo && spec.max <= hi {
+        return code;
+      }
+    },
+    _ => {}
+  }
+  el_ir::cl(e, "OpRangeDefault", [code, ir::NdLong { n: lo }, ir::NdLong { n: hi }, ir::NdLong { n: dflt }])
+}
+
+fn calls_op(e: el::El, n: ir::Node, name: text) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr } => el::def(e, def_nr).name == name,
+    _ => false
+  }
+}
+
+// `Parser::is_null_source`: a `null`, in any of the spellings a conversion lowers it to.
+pub fn null_source(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdNull => true,
+    NdCall { def_nr, args } => len(args) == 0 && (ends_with(el::def(e, def_nr).name, "FromNull") || el::def(e, def_nr).name == "OpNullRefSentinel"),
+    _ => false
+  }
+}
+
+// `Parser::convert`: the conversion (`convert_value`), then the range guard of a store into a
+// slot that declares one — a `??` in the value is guarded inside instead.
 pub fn convert(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, should: ir::TypeT, explicit: boolean) -> ir::Node? {
   if !explicit && !e.first_pass {
     g = guard_discharge(e, vars, code, should);
@@ -314,6 +391,14 @@ pub fn convert(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, s
       return g;
     }
   }
+  c = convert_value(e, vars, code, src, should, explicit);
+  if c == null || explicit || e.first_pass || null_source(e, code) {
+    return c;
+  }
+  guard_range(e, c!, should, src, should is TyOptional)
+}
+
+fn convert_value(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, should: ir::TypeT, explicit: boolean) -> ir::Node? {
   if src is TyNever {
     return code;
   }

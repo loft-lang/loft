@@ -1700,7 +1700,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
     t = result;
   }
   // A function body's tail is a store into its result (`convert_store`): converted to it.
-  if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(result) && el_convert::plain_scalar(el_types::base(t)) && !el_types::is_equal(e, result, t) {
+  if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(el_types::base(result)) && el_convert::plain_scalar(el_types::base(t)) && !el_types::is_equal(e, result, t) {
     tc = el_convert::convert_store(e, vars, l[-1], t, result);
     if tc == null {
       el::refuse(e, "a function's value its declared result converts: {type_kind(t)} to {type_kind(result)}");
@@ -1708,6 +1708,10 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
       l = l[..-1] + [tc!];
       t = result;
     }
+  }
+  // …and takes the declared result's range (`guard_declared_range`), the types equal or not.
+  if !e.first_pass && context == "return from block" && len(l) > 0 && el_types::base(result) is TyInteger && !el_convert::null_source(e, l[-1]) {
+    l = l[..-1] + [el_convert::guard_range(e, l[-1], result, t, result is TyOptional)];
   }
   // A value block whose tail is a text local the block defines answers a borrow of that local,
   // not of what the local borrows (`{ r = R {…}; s = r.name; s }` is `text["s"]`).
@@ -2430,12 +2434,12 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
       el_ir::v_set(v, ir::NdVar { n: w })
     ] }, ir::TyVoid);
   }
-  // `narrow_store_checks`: a `??` stored into a narrow local is guarded inside.
+  // `narrow_store_checks`: a `??` stored into a narrow local is guarded inside; any other value
+  // takes the slot's declared range (`guard_declared_range`).
   if !e.first_pass {
-    g = el_convert::guard_discharge(e, vars, x.code, el_vars::tp(vars, v));
-    if g != null {
-      x.code = g!;
-    }
+    slot = el_vars::tp(vars, v);
+    g = el_convert::guard_discharge(e, vars, x.code, slot);
+    x.code = g ?? el_convert::guard_range(e, x.code, slot, x.tp, slot is TyOptional);
   }
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
 }
@@ -3946,7 +3950,7 @@ fn const_float(n: ir::Node) -> float? {
     NdFloat { f } => f,
     NdSingle { f } => f as float,
     NdInt { n } => n as float,
-    NdLong { n } => n as float,
+    NdLong { n } => if n == null { -9223372036854775808.0 } else { n! as float },
     _ => null
   }
 }
@@ -4540,6 +4544,12 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     pt = a.typedef[0];
     at = types[a#index] ?? ir::TyUnknown { n: 0 };
     arg = given[a#index] ?? ir::NdNull;
+    // Pass 1 converts nothing: an argument it could not type yet is taken as it is, so the
+    // call still mints its buffers there.
+    if e.first_pass && el_types::is_unknown(at) {
+      conv += [arg];
+      continue;
+    }
     c = el_convert::convert_store(e, vars, arg, at, pt);
     if c != null {
       conv += [c!];
@@ -4652,7 +4662,9 @@ fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vector<i
     }
   }
   nm = el_types::elem_name(e, inner);
-  if !(el_types::base(ret) is TyVector) || nm == "" || el::def_nr(e, "vector<{nm}>") < 0 {
+  // The element's `vector<…>` definition may be made later on pass 1; the buffer is minted
+  // there all the same, as `add_defaults` mints it, so its number is pass 1's.
+  if !(el_types::base(ret) is TyVector) || nm == "" || (!e.first_pass && el::def_nr(e, "vector<{nm}>") < 0) {
     el::refuse(e, "a call delivering into a vector buffer of this type: {type_kind(ret)}");
     return null;
   }
@@ -4939,8 +4951,9 @@ fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, t
     TyVector { inner } => {
       nm = el_types::elem_name(e, inner);
       vk = if nm == "" { -1 } else { vector_store(e, inner, nm) };
+      // A 4-byte element (`vector<i32>`) is not carried; the 1- and 2-byte ones are.
       narrow = match inner {
-        TyInteger { spec } => spec.forced_size != 0,
+        TyInteger { spec } => spec.forced_size == 4,
         _ => false
       };
       if vk < 0 || narrow || el::def_nr(e, "vector<{nm}>") < 0 {
@@ -6952,8 +6965,9 @@ fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
       } else if el_convert::plain_scalar(inner) && !el_convert::narrowing_int(src, inner) {
         b = cast_expr_to(e, vars, ex(x.code, src), inner);
         return ex(b.code, if el_types::is_unknown(b.tp) { b.tp } else { to });
-      } else if !e.first_pass && el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) && !el_convert::value_fits(e, vars, x.code, inner) {
-        return dn4_cast(e, vars, x, inner);
+      } else if el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) && (e.first_pass || !el_convert::value_fits(e, vars, x.code, inner)) {
+        // Pass 1 converts nothing: the cast is typed `τ?` there and built on pass 2.
+        return if e.first_pass { ex(ir::NdNull, to) } else { dn4_cast(e, vars, x, inner) };
       }
       el::refuse(e, "a checked narrowing cast");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -8844,6 +8858,16 @@ fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts: ve
   if !e.first_pass && (!ok_first || !is_scalar(elm)) {
     el::refuse(e, "a vector concatenation of this shape: a first operand that is no other local, or elements that are no plain scalars");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // A later operand that reads the destination is materialised into a `__trail_tmp_N` before the
+  // destination is cleared (`create_vector`'s trailing self-reference): not carried.
+  if !e.first_pass && dest >= 0 {
+    for p in parts {
+      if el_ir::reads_var(p.code, dest) {
+        el::refuse(e, "a vector concatenation whose later operand reads its destination");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+    }
   }
   if e.first_pass {
     if dest >= 0 {

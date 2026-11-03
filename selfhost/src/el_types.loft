@@ -302,6 +302,17 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         return null;
       }
       t = el::def(e, d).returned[0] ?? ir::TyUnknown { n: d };
+      // An integer alias with a `size(n)` (`u8`, `i32`) stamps that width onto the spec, so it
+      // travels with the type into a collection's element and a narrow store's checks.
+      fs = el::def(e, d).forced_size;
+      match t {
+        TyInteger { spec } => {
+          if name != "integer" && fs > 0 && fs != 8 {
+            t = ir::TyInteger { spec: ir::IntegerSpec { min: spec.min, max: spec.max, not_null: spec.not_null, forced_size: fs } };
+          }
+        },
+        _ => {}
+      }
       // `T?`: the optional former over the base.
       if nullable { ir::TyOptional { inner: t } } else { t }
     },

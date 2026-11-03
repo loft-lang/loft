@@ -115,7 +115,7 @@ enum Node {
   NdEnum { ord: integer, tp: integer },
   NdBoolean { b: boolean },
   NdFloat { f: float },
-  NdLong { n: integer },
+  NdLong { n: integer? },  // `Value::Long` holds every i64, its minimum included: loft reads that as null
   NdSingle { f: single },
   NdText { s: text },
   NdCall { def_nr: integer, args: vector<Node> },
