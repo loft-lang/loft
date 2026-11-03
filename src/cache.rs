@@ -736,7 +736,6 @@ pub fn loft_build_fingerprint() -> u64 {
     use std::sync::OnceLock;
     static FP: OnceLock<u64> = OnceLock::new();
     *FP.get_or_init(|| {
-        warn_if_uplifted_rlib_stale();
         let fp = loft_rlib_path()
             .or_else(|| std::env::current_exe().ok())
             .map_or(0, |p| stamped_content_fp(&p));
@@ -810,39 +809,6 @@ fn file_stat_tag(path: &std::path::Path) -> Option<String> {
         mtime.as_secs(),
         mtime.subsec_nanos()
     ))
-}
-
-/// Loud staleness signal for the dev `target/<profile>/` layout: the uplifted
-/// bare `libloft.rlib` is refreshed only by an explicit `cargo build --lib`, so
-/// after a `--bin` rebuild it lags the `deps/libloft.rlib` loft actually links
-/// (deps-first, #304).  The fingerprint paths route around it, but the bare copy
-/// is a trap for anything that reads it directly (a hand-rolled `rustc --extern`,
-/// a script, future code).  Warn once when the bare copy is older than deps — a
-/// cheap, definitive signal that the visible-but-unused rlib is stale.  Both
-/// absent (installed / prebuilt loft) → no bare-vs-deps split, nothing to warn.
-fn warn_if_uplifted_rlib_stale() {
-    let Some(exe_dir) = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
-    else {
-        return;
-    };
-    let deps = exe_dir.join("deps").join("libloft.rlib");
-    let bare = exe_dir.join("libloft.rlib");
-    let (Ok(deps_t), Ok(bare_t)) = (
-        crate::file_access::metadata(&deps).and_then(|m| m.modified()),
-        crate::file_access::metadata(&bare).and_then(|m| m.modified()),
-    ) else {
-        return;
-    };
-    if bare_t < deps_t {
-        eprintln!(
-            "loft: warning — {} is STALE (older than deps/libloft.rlib, which loft links). \
-             loft routes around it (deps-first), but tools reading the bare path get an \
-             outdated rlib. Run `cargo build --lib` to refresh it, or delete it.",
-            bare.display()
-        );
-    }
 }
 
 /// Fingerprint for REGISTRY-cdylib cache validity (`extensions::auto_build_native`).
