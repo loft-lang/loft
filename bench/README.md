@@ -266,7 +266,12 @@ make interp-gap ARGS="--only 14,16"               # some lanes
 make interp-gap ARGS="--no-timing"                # the censuses only: a minute, no ratio column
 make interp-gap ARGS="--timing old.tsv"           # reuse a `stats.py --lanes native,interp --tsv` run
 make interp-gap ARGS="--package <scratch clone>/drawing=drawing"
+make interp-gap ARGS="--writer c"                 # against the C writer: its rewrites, its lane
 ```
+
+`--writer` picks the compiled side: `native` (the rustc writer, the default) or `c`.  The
+rewrite census comes from that writer's emission, the ratio from its `stats.py` lane, and the
+compiled store census column exists for `native` only (it links the census rlib).
 
 Per routine it reports:
 
@@ -276,11 +281,12 @@ Per routine it reports:
   `records` (records, vectors and texts built, copied, appended, freed), `control`,
   `compute`;
 - the bytes it moved (copy / relocate / text);
-- the **native-only** rewrites admitted in the functions the routine ran, each with the
+- the **writer-only** rewrites admitted in the functions the routine ran, each with the
   share of the routine's interpreter ops those functions carry.
 
-A second table turns this around, one row per generator rule: the routines and functions
-the rule fires in, weighed by the interpreter time those functions carry. These are the
+A second table turns this around, one row per writer rule: the routines and functions
+the rule fires in, weighed by the interpreter time those functions carry, beside the
+phases that apply the rule over every bench (`bench/portal/rule_phases.tsv`). These are the
 candidates for the IR phase. The weight is the time the functions carry, not a promise of
 what porting the rule saves. The per-routine detail (functions, their top operators, their
 rewrites) says what the interpreter does there instead.

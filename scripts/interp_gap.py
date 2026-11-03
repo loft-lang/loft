@@ -8,6 +8,7 @@
     scripts/interp_gap.py --package <clone>/drawing=drawing   # a library's own bench as well
     scripts/interp_gap.py --timing old.tsv       # reuse a `stats.py --lanes native,interp --tsv` run
     scripts/interp_gap.py --no-timing            # the censuses only (seconds, no ratio column)
+    scripts/interp_gap.py --writer c             # against the C writer: its rewrites, its lane
 
 A REPORT, run by hand, never a gate (`make interp-gap`).
 
@@ -26,11 +27,16 @@ ranks the candidates by evidence:
    Operators are grouped into families: `frame` (a value onto the stack and back — native keeps
    these in registers), `store` (field and element reads and writes), `records` (records,
    vectors and texts built, copied, appended, freed), `control`, `compute`.
-3. WHAT NATIVE DOES INSTEAD — `LOFT_REWRITE_CENSUS_FN` (src/rewrite_census.rs): each rewrite
-   admission with the function and the PHASE it was decided in.  `native` is generator-only;
-   `ir` and `parse` already reach both backends and are listed apart.
+3. WHAT THE COMPILED CODE DOES INSTEAD — `LOFT_REWRITE_CENSUS_FN` (src/rewrite_census.rs): each
+   rewrite admission with the function and the PHASE it was decided in, from the emission of
+   `--writer` (`native`, the rustc writer, by default; `c`, the C writer).  That writer's phase
+   is writer-only; `ir` and `parse` already reach both backends and are listed apart; `interp`
+   (the interpreter's own generator) is neither.  Each rule's applied-by comes from the phase
+   table (`bench/portal/rule_phases.tsv`, `scripts/rule_phases.py`).  Every `use`d library is
+   emitted into the program (`LOFT_NO_NATIVE_LIBS=1`), so its functions are credited by name,
+   as the interpreter's census names them.
 
-A routine's native-only rewrites are those admitted in the functions its interpreter run
+A routine's writer-only rewrites are those admitted in the functions its interpreter run
 executed.  The per-rule table weighs each rule by the interpreter time spent in the functions it
 fires in — the time the rule's function carries, NOT a promise of what porting it saves.
 
@@ -77,6 +83,11 @@ FAMILIES = [
 ]
 FAMILY_RE = [(f, re.compile(r)) for f, r in FAMILIES]
 FAMILY_ORDER = ["frame", "store", "records", "control", "compute"]
+sys.path.insert(0, str(ROOT / "scripts"))
+from rewrite_census import WRITERS  # noqa: E402  (each writer's emission flags)
+import rule_phases  # noqa: E402  (the measured applied-by of each rule)
+# `--writer` → its census phase, its stats.py lane and its name in the report.
+WRITER = {"native": ("native", "native", "native"), "c": ("c", "c", "C")}
 
 
 def family(op):
@@ -205,13 +216,14 @@ def native_store(census_loft, prog, n, timeout):
         return store_by_routine(store.read_text(), p.stdout), None
 
 
-def rewrite_census(loft, prog, timeout):
-    """(phase, function, rule) → admissions, from one native emission."""
+def rewrite_census(loft, prog, timeout, writer="native"):
+    """(phase, function, rule) → admissions, from one emission by `writer`."""
     name, cwd, _src, argv = prog
+    ext, flags = WRITERS["rust" if writer == "native" else writer]
     with tempfile.TemporaryDirectory() as tmp:
         tsv = Path(tmp) / "rw.tsv"
-        p = run([loft, "--native-emit", str(Path(tmp) / "out.rs"), "--lean", *argv], cwd,
-                {"LOFT_REWRITE_CENSUS_FN": str(tsv)}, timeout)
+        p = run([loft, *flags(Path(tmp) / f"out{ext}"), *argv], cwd,
+                {"LOFT_REWRITE_CENSUS_FN": str(tsv), "LOFT_NO_NATIVE_LIBS": "1"}, timeout)
         if p.returncode != 0 or not tsv.exists():
             return None, (p.stderr or p.stdout).strip().splitlines()[-1:] or ["no rewrite census written"]
         out = {}
@@ -258,7 +270,8 @@ def timing(a, progs):
         if a.no_timing:
             return {}
         path = str(Path(a.work) / "timing.tsv")
-        cmd = [sys.executable, str(BENCH / "stats.py"), "--lanes", "native,interp", "--samples", str(a.samples),
+        lane = WRITER[a.writer][1]
+        cmd = [sys.executable, str(BENCH / "stats.py"), "--lanes", f"{lane},interp", "--samples", str(a.samples),
                "--tsv", path, "--loft", a.loft]
         suite = [p[0] for p in progs if p[1] == ROOT]
         if suite:
@@ -283,7 +296,7 @@ def timing(a, progs):
             continue
         r = dict(zip(head, parts))
         try:
-            out[(r["bench"], r["routine"])] = (float(r["interp_ns"]), float(r["native_ns"]))
+            out[(r["bench"], r["routine"])] = (float(r["interp_ns"]), float(r[f"{WRITER[a.writer][1]}_ns"]))
         except (KeyError, ValueError):
             pass
     return out
@@ -299,20 +312,26 @@ def fmt_bytes(b):
         b /= 1024
 
 
-def analyse(prog, census, printed, rw):
+def analyse(prog, census, printed, rw, writer="native"):
     """One program → a list of routine records."""
     name, _cwd, src, _argv = prog
     reg = regions(src, printed)
     if isinstance(reg, str):
         return None, reg
-    native = defaultdict(dict)   # fn → rule → count (generator-only)
+    native = defaultdict(dict)   # fn → rule → count (the writer's own: writer-only)
     shared = defaultdict(dict)   # fn → rule → count (ir / parse)
+    own = WRITER[writer][0]
     for (phase, fn, rule), n in (rw or {}).items():
         # `interp` is the interpreter's own generator: run by neither compiled backend, so
-        # neither a native-only nor a shared rewrite.
-        if phase == "interp":
+        # neither a writer-only nor a shared rewrite.  The writer's unit-level admissions
+        # name no function, so no routine's ops weigh them.
+        if phase == "interp" or not fn:
             continue
-        (native if phase == "native" else shared)[fn][rule] = n
+        if phase in ("c", "native"):
+            if phase == own:
+                native[fn][rule] = n
+        else:
+            shared[fn][rule] = n
     iters = dict(printed)
     out = []
     for routine, lines in reg.items():
@@ -359,18 +378,19 @@ def render(recs, times, failures, a):
         r["interp_ns"], r["native_ns"] = t if t else (None, None)
         r["ratio"] = (t[0] / t[1]) if t and t[1] > 0 else None
     recs.sort(key=lambda r: (r["ratio"] is None, -(r["ratio"] or 0), -r["ops"]))
-    md = ["# Interpreter against native — where the interpreter still moves data", ""]
+    w = WRITER[a.writer][2]
+    md = [f"# Interpreter against {w} — where the interpreter still moves data", ""]
     md.append("Generated by `scripts/interp_gap.py` (`make interp-gap`); a report, never a gate.  Ratios are "
-              "interp ns/op over native ns/op from `bench/stats.py`; ops and bytes are the interpreter's, per "
+              f"interp ns/op over {w} ns/op from `bench/stats.py`; ops and bytes are the interpreter's, per "
               "op of the routine.  Families: frame = values onto the stack and back, store = field/element "
               "reads and writes, records = records/vectors/texts built, copied, appended, freed.  "
-              "Native-only rewrites are the generator's admissions in the functions the routine ran.")
+              f"{w}-only rewrites are the {w} writer's admissions in the functions the routine ran.")
     md.append("")
     md += store_section(recs)
-    md.append("## Routines, by interp/native")
+    md.append("## Routines, by interp/" + w)
     md.append("")
-    md.append("| bench | routine | interp ns/op | native ns/op | interp/native | interp ops/op | frame | store | records | "
-              "bytes moved/op | native-only rewrites (share of ops in their functions) |")
+    md.append(f"| bench | routine | interp ns/op | {w} ns/op | interp/{w} | interp ops/op | frame | store | records | "
+              f"bytes moved/op | {w}-only rewrites (share of ops in their functions) |")
     md.append("|---|---|--:|--:|--:|--:|--:|--:|--:|--:|---|")
     for r in recs:
         ops = r["ops"] or 1
@@ -383,7 +403,7 @@ def render(recs, times, failures, a):
                   f"{r['ops']:,.0f} | {pct('frame')} | {pct('store')} | {pct('records')} | "
                   f"{fmt_bytes(sum(r['moved']))} | {rules} |")
     md.append("")
-    md += port_candidates(recs)
+    md += port_candidates(recs, w)
     md += details(recs, a)
     if failures:
         md.append("## Not read")
@@ -433,9 +453,9 @@ def store_section(recs):
     return md
 
 
-def port_candidates(recs):
-    """Per generator rule: the routines and functions it fires in, weighed by the interpreter
-    time those functions carry."""
+def port_candidates(recs, w="native"):
+    """Per writer rule: the routines and functions it fires in, weighed by the interpreter
+    time those functions carry, beside the phases that apply it (the phase table)."""
     by_rule = defaultdict(lambda: dict(weight=0.0, share=0.0, routines=set(), fns=set(), sites=0))
     for r in recs:
         ops = sum(f["ops"] for f in r["fns"].values()) or 1
@@ -452,17 +472,20 @@ def port_candidates(recs):
                 e["sites"] += c
     if not by_rule:
         return []
-    md = ["## Native-only rewrites — the candidates for the IR phase", "",
-          "Each generator rule and the interpreter work in the functions it is admitted in, two ways: "
+    phases = rule_phases.read_table()
+    md = [f"## {w}-only rewrites — the candidates for the IR phase", "",
+          f"Each {w} writer rule and the interpreter work in the functions it is admitted in, two ways: "
           "`routines' worth` sums, over the routines, the share of each routine's interpreter ops those functions "
           "carry (scale-free: every routine counts once), and `interp ns` sums the time they carry (dominated by "
           "the slowest lanes).  Neither is what porting the rule saves: read the routine's detail below for what "
-          "the interpreter does there.", "",
-          "| rule | routines' worth | interp ns in its functions | routines | functions | sites |",
-          "|---|--:|--:|--:|---|--:|"]
+          "the interpreter does there.  `applied by` is the rule's row of the phase table over every "
+          "bench: a rule the other writer applies too is a writer rule either way.", "",
+          "| rule | applied by | routines' worth | interp ns in its functions | routines | functions | sites |",
+          "|---|---|--:|--:|--:|---|--:|"]
     for rule, e in sorted(by_rule.items(), key=lambda kv: -kv[1]["share"]):
         fns = ", ".join(sorted(e["fns"])[:8]) + (" …" if len(e["fns"]) > 8 else "")
-        md.append(f"| {rule} | {e['share']:.1f} | {e['weight']:,.0f} | {len(e['routines'])} | {fns} | {e['sites']} |")
+        applied = ",".join(phases[rule]["applied"]) if rule in phases else "?"
+        md.append(f"| {rule} | {applied} | {e['share']:.1f} | {e['weight']:,.0f} | {len(e['routines'])} | {fns} | {e['sites']} |")
     md.append("")
     return md
 
@@ -484,7 +507,7 @@ def details(recs, a):
                       + ".")
         md.append("")
         md.append("| function | ops/op | frame | store | records | control | compute | bytes/op | top operators "
-                  "| native-only rewrites |")
+                  f"| {WRITER[a.writer][2]}-only rewrites |")
         md.append("|---|--:|--:|--:|--:|--:|--:|--:|---|---|")
         n = r["iters"]
         for fn, f in sorted(r["fns"].items(), key=lambda kv: -kv[1]["ops"])[:a.functions]:
@@ -533,6 +556,7 @@ def as_json(recs, failures, a):
                 e["fns"].add(short(fn))
                 e["sites"] += c
     return dict(
+        writer=a.writer,
         routines=routines,
         rules=[dict(rule=k, share=v["share"], ns=v["ns"], routines=sorted(v["routines"]),
                     functions=sorted(v["fns"]), sites=v["sites"])
@@ -553,6 +577,9 @@ def main():
     ap.add_argument("--functions", type=int, default=8, help="functions listed per routine")
     ap.add_argument("--out", default=str(ROOT / "target" / "interp-gap" / "report.md"))
     ap.add_argument("--timeout", type=int, default=900)
+    ap.add_argument("--writer", choices=sorted(WRITER), default="native",
+                    help="the compiled writer the interpreter is set against: its rewrite census and "
+                         "its stats.py lane (native = rustc, c = the C writer)")
     ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", str(ROOT / "target" / "release" / "loft")),
                     help="the binary the TIMING runs (an ordinary release build)")
     ap.add_argument("--census-loft", default=str(ROOT / "target" / "op-census" / "release" / "loft"),
@@ -581,12 +608,13 @@ def main():
     a.work = str(Path(a.out).parent)
     os.makedirs(a.work, exist_ok=True)
 
-    print(f"# census of {len(progs)} program(s): interpreter ops (--n {a.n}) and native rewrites", flush=True)
+    print(f"# census of {len(progs)} program(s): interpreter ops (--n {a.n}) and {a.writer} rewrites", flush=True)
 
     def both(prog):
         census, printed, store_i, err = op_census(a.census_loft, prog, a.n, a.timeout)
-        rw, rerr = rewrite_census(a.census_loft, prog, a.timeout)
-        store_n, serr = native_store(a.census_loft, prog, a.n, a.timeout)
+        rw, rerr = rewrite_census(a.census_loft, prog, a.timeout, a.writer)
+        # The compiled store census is the rustc build's (it links the census rlib).
+        store_n, serr = native_store(a.census_loft, prog, a.n, a.timeout) if a.writer == "native" else (None, None)
         return prog, census, printed, err, rw, rerr, (store_i or {}, store_n or {}, serr)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -597,8 +625,8 @@ def main():
             failures.append(f"{prog[0]}: the interpreter census failed — {err[0]}")
             continue
         if rw is None:
-            failures.append(f"{prog[0]}: no native rewrite census — {rerr[0]}")
-        got, why = analyse(prog, census, printed, rw)
+            failures.append(f"{prog[0]}: no {a.writer} rewrite census — {rerr[0]}")
+        got, why = analyse(prog, census, printed, rw, a.writer)
         if got is None:
             failures.append(f"{prog[0]}: routines not attributed — {why}")
             continue
@@ -617,8 +645,9 @@ def main():
     store_md = report.split("## Store work: interpreter against native")
     if len(store_md) > 1:
         print("## Store work: interpreter against native" + store_md[1].split("## Routines, by")[0].rstrip())
-    table = report.split("## Native-only rewrites")[0]
-    print(table.split("## Routines, by interp/native")[1].strip() if "## Routines" in table else table)
+    w = WRITER[a.writer][2]
+    table = report.split(f"## {w}-only rewrites")[0]
+    print(table.split(f"## Routines, by interp/{w}")[1].strip() if "## Routines" in table else table)
     for f in failures:
         print(f"  not read: {f}")
     print(f"wrote {os.path.relpath(a.out, ROOT)}")
