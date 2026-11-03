@@ -173,6 +173,25 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**`loft --native-c` compiles a program through C.**  loft writes the program as C99, builds it
+with your C compiler (`LOFT_CC`, else `CC`, else `cc`) and runs the binary; `--ship --native-c`
+builds the optimised one you hand to someone.  It works on Linux, on macOS with Apple's clang and
+on Windows with MSVC's `cl` or MinGW's gcc.  The C reads the same compiled program the
+interpreter runs and answers the same; a program it cannot carry yet is refused by name, never
+compiled to answer differently.  `--native` still compiles through `rustc`;
+`LOFT_NATIVE_BACKEND=c` makes it mean the C.
+
+**A C program loads a store image written under an older layout.**  `store_load` and the paged
+loaders convert an image whose struct has changed since it was written — fields added, removed or
+reordered — as the interpreter does, reading the layout from the image's `.dschema` sidecar.
+
+**A running game rebuilds and swaps in its new build on the C backend too.**  An `engine_host`
+program can rebuild itself in the background (`rebuild_start`, `rebuild_status`,
+`rebuild_artifact`) and switch to the new build without stopping (`swap_start`): the world named
+by `swap_world` is handed over as a store image, the new build restores it — converting it when
+its layout changed — and the old one retires once the new one serves, or keeps serving when it
+does not.
+
 **A field written into a copy, and never read, is reported.**  `v = pick(f, 0)` binds a COPY of
 what `pick` returns, so `v.on = true` never reaches `f`; reading `v.name` afterwards used to
 hide that, because the copy as a whole was read.  `lost-write` now looks at each field: bind a
