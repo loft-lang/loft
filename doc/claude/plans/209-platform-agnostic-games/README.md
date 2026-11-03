@@ -261,6 +261,8 @@ is a target, else through ANGLE.
 
 ## See also
 
+- [TANMATSU.md § Games for the Tanmatsu](../../TANMATSU.md#games-for-the-tanmatsu) — the device side: which games fit, and one hex world drawn at high, low (a column renderer) and lowest (a character map) fidelity.
+
 [HARDWARE_BACKENDS.md](../../HARDWARE_BACKENDS.md) · [TANMATSU.md](../../TANMATSU.md) ·
 [PACKAGES_C_BINDING.md](../../PACKAGES_C_BINDING.md) ·
 [@PLN208 graphics objects](../208-graphics-objects-c/README.md)
