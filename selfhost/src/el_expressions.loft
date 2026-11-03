@@ -5236,6 +5236,15 @@ fn substitute_code(e: el::El, n: ir::Node, h: integer, bound: ir::TypeT) -> ir::
       sa = substitute_all_code(e, args, h, bound);
       // A bound's stub is re-resolved at the binding (`re_resolve_call`), its arguments cut to
       // the member's (`I9-text`).
+      // I9-vec: an element read baked with the variable's marker (or a legacy 0) takes the
+      // bound element's stride and the value read its twin uses (`wrap_vector_get_val`).
+      nm = el::def(e, def_nr).name;
+      if (nm == "OpGetVector" || nm == "OpGetVectorNullable") && len(sa) == 3 && (sa[1] == ir::NdInt { n: -1 - h } || sa[1] == ir::NdInt { n: 0 }) {
+        st = element_stride(e, bound);
+        read = ir::NdCall { def_nr: def_nr, args: [sa[0] ?? ir::NdNull, ir::NdInt { n: st }, sa[2] ?? ir::NdNull] };
+        by_ref = bound is TyReference;
+        return if by_ref { read } else { elem_read(e, bound, read) };
+      }
       r = if stub_call(e, def_nr, h) { re_resolve_stub(e, def_nr, h, bound) } else { -1 };
       if r >= 0 {
         ir::NdCall { def_nr: r, args: sa[..len(el::def(e, r).attributes)] }
@@ -5274,10 +5283,18 @@ fn substitute_block(e: el::El, b: ir::Block?, h: integer, bound: ir::TypeT) -> i
   bl
 }
 
+// `vector_elem_iter_stride` for a bound element this port instantiates: a scalar's or a text's
+// slot, a record's own size.
+fn element_stride(e: el::El, t: ir::TypeT) -> integer {
+  sz = elem_size(t);
+  if sz == -2 { record_size(e, t) } else { sz }
+}
+
 // Does `t` hold placeholder `h` only bare, if at all — the shapes `substitute` carries?
 fn bare_over(t: ir::TypeT, h: integer) -> boolean {
   match t {
     TyReference { n } => true,
+    TyVector { inner } => bare_over(inner, h),
     _ => !type_mentions(t, h)
   }
 }
@@ -5287,7 +5304,7 @@ fn bare_over(t: ir::TypeT, h: integer) -> boolean {
 // copy, a materialised view return), a result over the variable in a shape `substitute` does
 // not carry, a call whose target substitution re-resolves (one over the variable, or another
 // generic), a type row the instance would retarget (`retarget_parametric_type_rows`).
-fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer) -> text {
+fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir::Function) -> text {
   match n {
     NdBlock { block } => {
       bl = block[0]!;
@@ -5302,6 +5319,13 @@ fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer) -> text {
       cd = el::def(e, def_nr);
       if cd.def_type == el::DT_GENERIC {
         return "a call of another generic";
+      }
+      // A vector write's triplet, a collection format and a liveness test over the variable are
+      // rewritten per instance (`rewrite_generic_vector_writes`,
+      // `retarget_parametric_vector_format`, P239): not carried.
+      w = cd.name;
+      if (w == "OpNewRecord" || w == "OpFinishRecord" || w == "OpCopyRecord" || w == "OpAppendVector" || w == "OpPreAllocVector" || w == "OpFormatDatabase" || w == "OpFormatStackDatabase" || w == "OpConvBoolFromRef") && reads_over(n, tv, h) {
+        return "a `{w}` over the variable";
       }
       stub = stub_call(e, def_nr, h);
       for a in cd.attributes {
@@ -5320,12 +5344,30 @@ fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer) -> text {
     _ => {}
   }
   for c in el_ir::children(n) {
-    w = instance_carried(e, c, h, row);
+    w = instance_carried(e, c, h, row, tv);
     if w != "" {
       return w;
     }
   }
   ""
+}
+
+// Does `n` read a variable whose template type names placeholder `h`?
+fn reads_over(n: ir::Node, tv: ir::Function, h: integer) -> boolean {
+  match n {
+    NdVar { n: v } => {
+      if type_mentions(tv.variables[v]!.type_def[0] ?? ir::TyVoid, h) {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if reads_over(c, tv, h) {
+      return true;
+    }
+  }
+  false
 }
 
 // `Parser::instantiate_template` for a template of one unbounded variable bound to a plain
@@ -5400,12 +5442,15 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
   record = bound is TyReference;
   for v in tmpl.variables.variables {
     t = v.type_def[0] ?? ir::TyVoid;
-    if !bare_over(t, h) || t is TyFunction {
+    // A vector backing's wrapper over the variable (`main_vector<T>`) is re-derived per
+    // instance (`instance_vector_wrapper`): not carried.
+    wrapper = match el_types::base(t) { TyReference { n } => el::def(e, n).name.starts_with("main_vector<") && type_mentions(el::def(e, n).attributes[0]!.typedef[0] ?? ir::TyVoid, h), _ => false };
+    if !bare_over(t, h) || t is TyFunction || wrapper {
       el::refuse(e, "a generic local over the type variable in another shape or of a function type");
       return false;
     }
   }
-  why = instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, el::def(e, h).known_type);
+  why = instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, el::def(e, h).known_type, tmpl.variables);
   if why != "" {
     el::refuse(e, "a generic body holding {why}");
     return false;
@@ -8135,11 +8180,20 @@ fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT) -> ir::No
   size = elem_size(elem);
   op = read_op(elem);
   record = false;
+  marked = false;
   if size == -2 {
     size = if e.first_pass { 0 } else { record_size(e, elem) };
     record = size >= 0;
+    // A template's element of its own variable has no width yet: the read carries the
+    // variable's marker (`type_var_stride`), which each instance rewrites.
+    hv = generic_holder(e, el_types::base(elem));
+    if hv >= 0 {
+      size = -1 - hv;
+      record = true;
+      marked = true;
+    }
   }
-  if size < 0 || (op == "" && !record) {
+  if (size < 0 && !marked) || (op == "" && !record) {
     return null;
   }
   i = ir::NdVar { n: idx };
@@ -10219,12 +10273,20 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   op = read_op(inner);
   // A record element is the element itself (`OpGetVector`), a view of the container.
   record = false;
+  marked = false;
   if size == -2 {
     // Laid out after the first pass, whose code is not kept.
     size = if e.first_pass { 0 } else { record_size(e, inner) };
     record = size >= 0;
+    // A template's element of its own variable: the variable's marker (`type_var_stride`).
+    hv = generic_holder(e, el_types::base(inner));
+    if hv >= 0 {
+      size = -1 - hv;
+      record = true;
+      marked = true;
+    }
   }
-  if size < 0 || (op == "" && !record) {
+  if (size < 0 && !marked) || (op == "" && !record) {
     el::refuse(e, "an index into a vector of records");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
