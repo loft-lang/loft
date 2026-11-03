@@ -225,6 +225,18 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
             _ => {}
           }
         }
+        // A tail answering another record local than the one an earlier exit renamed the buffer
+        // onto (`return to; … mid`) is copied into it (`materialize_view_return`): not carried.
+        if buf >= 0 && bound == null {
+          match el_ir::unspan(el_ir::last(bl.operators)) {
+            NdVar { n: tv } => {
+              if tv != buf && heap_def(el_vars::tp(vars, tv)) >= 0 {
+                el::refuse(e, "a record tail other than the local the return buffer was renamed onto");
+              }
+            },
+            _ => {}
+          }
+        }
         bl.result = [el_types::with_deps(el_types::without_deps(result), [rb])];
         code = ir::NdBlock { block: [bl] };
       },
@@ -2229,7 +2241,16 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   }
   // A parameter of a heap type rebound whole takes the rebound-parameter road (an entry witness,
   // the detach before the bind) or, for a text, a shadow local — not carried yet.
-  if vars.vars[v].argument && !scalar(el_types::base(el_vars::tp(vars, v))) && !hidden_param(e, vars, v) {
+  // A `&` parameter is written through below: a scalar link writes the place it names.
+  link = match el_vars::tp(vars, v) {
+    TyRefVar { inner } => !(inner is TyText),
+    _ => false
+  };
+  if link && !scalar_link(vars, v) {
+    el::refuse(e, "a whole value written through a `&` link");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if !link && vars.vars[v].argument && !scalar(el_types::base(el_vars::tp(vars, v))) && !hidden_param(e, vars, v) {
     el::refuse(e, "a rebound parameter of a heap type");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -3024,11 +3045,16 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     // Already refused where its type was lost.
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if !scalar(vt) || vt is TyVoid {
-    el::refuse(e, "a compound assignment to a local of this type: {type_kind(vt)}");
+  // A link to a scalar (`n: &integer`) is read and written as the scalar it names.
+  sv = match vt {
+    TyRefVar { inner } => if el_convert::plain_scalar(inner) { inner } else { vt },
+    _ => vt
+  };
+  if !scalar(sv) || sv is TyVoid {
+    el::refuse(e, "a compound assignment to a local of this type: {type_kind(sv)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  r = call_op(e, vars, bin, [ir::NdVar { n: v }, x.code], [vt, x.tp]);
+  r = call_op(e, vars, bin, [ir::NdVar { n: v }, x.code], [sv, x.tp]);
   el_vars::drop_use(vars, v);
   ex(el_ir::v_set(v, r.code), ir::TyVoid)
 }
@@ -3714,7 +3740,12 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
   }
   x = expression(e, vars, re!);
   d = -1;
-  match el_types::base(x.tp) {
+  // A link to a record (`p: &P`) reaches its fields as the record does (`@FR-C-Ref`).
+  rt = match x.tp {
+    TyRefVar { inner } => inner,
+    _ => x.tp
+  };
+  match el_types::base(rt) {
     TyReference { n } => { d = n; },
     TyUnknown { n: _ } => {
       if e.first_pass {
@@ -4536,6 +4567,14 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     // call still mints its buffers there.
     if e.first_pass && el_types::is_unknown(at) {
       conv += [arg];
+      continue;
+    }
+    if pt is TyRefVar && !(a.hidden) {
+      l = link_argument(e, vars, arg, at, pt);
+      if l == null {
+        return null;
+      }
+      conv += [l!];
       continue;
     }
     c = el_convert::convert_store(e, vars, arg, at, pt);
@@ -6511,6 +6550,59 @@ fn returns_argument_view(def: ir::Definition) -> boolean {
     }
   }
   false
+}
+
+// Is local `v` a link to a plain scalar (`n: &integer`)?
+fn scalar_link(vars: el_vars::Vars, v: integer) -> boolean {
+  match el_vars::tp(vars, v) {
+    TyRefVar { inner } => el_convert::plain_scalar(inner),
+    _ => false
+  }
+}
+
+// `Parser::convert`'s `RefVar` arm for an argument handed to a `&T` parameter: a local holding a
+// `T` is linked (`OpCreateStack`), and a local that is itself a `&T` link is forwarded as it is
+// (a link to the link would point at this frame's slot).  A place — a field, an element, a tuple
+// member — a narrow or collection local and any other value are refused by name.
+fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
+  inner = match pt {
+    TyRefVar { inner } => inner,
+    _ => pt
+  };
+  v = match arg {
+    NdVar { n } => n,
+    _ => -1
+  };
+  if v < 0 {
+    refuse_known(e, at, "a `&` argument that is not a local");
+    return null;
+  }
+  vt = el_vars::tp(vars, v);
+  if vt is TyRefVar {
+    if el_types::is_equal(e, vt, pt) && !(el_types::base(inner) is TyText) {
+      return arg;
+    }
+    el::refuse(e, "a `&` argument that is a link of another type");
+    return null;
+  }
+  if !el_types::is_equal(e, el_types::base(inner), el_types::base(at)) {
+    refuse_known(e, at, "a `&` argument of another type: {type_kind(at)} to {type_kind(inner)}");
+    return null;
+  }
+  match el_types::base(vt) {
+    TyInteger { spec } => {
+      if spec.forced_size > 0 {
+        el::refuse(e, "a narrow local handed to a `&` parameter");
+        return null;
+      }
+    },
+    _ => {}
+  }
+  if el_types::is_collection(vt) {
+    el::refuse(e, "a collection local handed to a `&` parameter");
+    return null;
+  }
+  el_ir::cl(e, "OpCreateStack", [arg])
 }
 
 // `Parser::parse_for` for one binding over a vector or an integer range.  The loop's variable
@@ -8726,7 +8818,8 @@ fn logical(e: el::El, vars: el_vars::Vars, is_or: boolean, l: integer, r: intege
 
 // `Parser::parse_single`'s prefix operators: `-x`, `!x` and `~x` call the one-operand builtin
 // candidates (`OpMinSingle…`, `OpNot`, `OpBitNotSingle…`) on the operand.  `&a` of a scalar local
-// is a link to it (`OpCreateStack`, typed `&τ`); any other `&` is refused by name.
+// is a link to it (`OpCreateStack`, typed `&τ`), of a link a copy of it (`OpVarRef`); any other
+// `&` is refused by name.
 fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
   if n == null {
     el::refuse(e, "a prefix operator with no operand");
@@ -8735,7 +8828,13 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
   if op == "&" {
     a = expression(e, vars, n!);
     if a.code is NdVar && el_convert::plain_scalar(a.tp) {
-      return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: a.tp });
+      // A local that is itself a link (`p: &integer`) is copied as the link (`OpVarRef`): a
+      // link to it would point at this frame's slot (`formal/binding.md` D-bind-41).
+      linked = match a.code {
+        NdVar { n: lv } => scalar_link(vars, lv),
+        _ => false
+      };
+      return ex(el_ir::cl(e, if linked { "OpVarRef" } else { "OpCreateStack" }, [a.code]), ir::TyRefVar { inner: a.tp });
     }
     // A link to a vector is the vector's view itself — a local or a field of one, typed as
     // borrowing it — where a bare bind would copy (`@FR-B-Copy`).

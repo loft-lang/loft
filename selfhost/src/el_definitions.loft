@@ -305,13 +305,23 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
   for pn in params {
     match e.p.nodes[pn] {
       SParam { name: an, amp, fixed, tp, init, cap: pcap } => {
-        if amp || init != null || pcap != null || tp == null {
-          el::refuse(e, "a parameter with `&`, a default, a capability or no type");
+        if init != null || pcap != null || tp == null {
+          kind = if init != null { "a default" } else if pcap != null { "a capability" } else { "no type" };
+          el::refuse(e, "a parameter with a default, a capability or no type: {kind}");
           return;
         }
         t = el_types::parse_type(e, tp ?? 0);
         if t == null {
           return;
+        }
+        // `Parser::ref_var_type`: a `&T` parameter is a link to the caller's `T`.  A tuple's
+        // record form is not carried.
+        if amp {
+          if t! is TyTuple {
+            el::refuse(e, "a `&` parameter of a tuple");
+            return;
+          }
+          t = ir::TyRefVar { inner: t! };
         }
         if an == "self" || an == "both" {
           el::refuse(e, "a method");
