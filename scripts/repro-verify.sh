@@ -212,8 +212,9 @@ fi
 # A Mach-O binary's LC_UUID is the one field no path remap reaches: the linker derives it
 # from the debug map it writes before the strip, which names each object file by its
 # absolute path on the machine that linked.  v2026.10.0's x86_64-apple-darwin rebuild
-# matched in every byte but those 16.  So a Mach-O that differs is compared again with that
-# field zeroed on both sides, and the verdict says the UUID was left out.
+# matched in every byte but those 16, and the arm64 one also in the ad-hoc code signature's
+# hash of the page holding them.  So a Mach-O that differs is compared again with the UUID
+# and the signature blob zeroed on both sides, and the verdict says so.
 case "$TARGET" in
   *apple-darwin)
     if python3 - "$rebuilt" "$published" <<'PY'
@@ -228,12 +229,16 @@ def masked(path):
         cmd, size = struct.unpack_from("<II", b, off)
         if cmd == 0x1B:  # LC_UUID
             b[off + 8:off + 24] = bytes(16)
+        if cmd == 0x1D:  # LC_CODE_SIGNATURE: an arm64 binary's ad-hoc signature hashes its
+            # pages, the UUID's included; every byte it hashes is compared outside it.
+            dataoff, datasize = struct.unpack_from("<II", b, off + 8)
+            b[dataoff:dataoff + datasize] = bytes(datasize)
         off += size
     return bytes(b)
 sys.exit(0 if masked(sys.argv[1]) == masked(sys.argv[2]) else 1)
 PY
     then
-      echo "IDENTICAL apart from the Mach-O LC_UUID — v$VERSION/$TARGET reproduces from source"
+      echo "IDENTICAL apart from the Mach-O LC_UUID and code signature — v$VERSION/$TARGET reproduces from source"
       echo "  (the linker derives the UUID from the absolute object paths of the machine that linked)"
       exit 0
     fi ;;

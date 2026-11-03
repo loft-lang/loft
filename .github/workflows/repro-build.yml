@@ -149,7 +149,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -e
-          timeout 300 curl -fsSL --retry 3 https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain none
+          # The container's $HOME (/github/home) is not root's passwd home (/root), which
+          # rustup-init's anti-sudo check now refuses outright (run 41548936060).  The mismatch
+          # is the runner's design, not a sudo: skip that check.
+          RUSTUP_INIT_SKIP_SUDO_CHECK=yes timeout 300 curl -fsSL --retry 3 https://sh.rustup.rs | RUSTUP_INIT_SKIP_SUDO_CHECK=yes sh -s -- -y -q --profile minimal --default-toolchain none
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           timeout 300 curl -fsSL --retry 3 -o /etc/yum.repos.d/gh-cli.repo https://cli.github.com/packages/rpm/gh-cli.repo
           timeout 600 dnf -y -q install gh unzip
