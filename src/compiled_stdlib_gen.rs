@@ -634,6 +634,8 @@ fn t_4File_content(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mu
 // loft:default/02_files.loft:185
 fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var___retbuf: DbRef) -> DbRef { //block_1: vector<text>["__retbuf"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
+  let mut var__elm_1: DbRef = DbRef::NULL;
+  let mut var__elm_2: DbRef = DbRef::NULL;
   let mut var___vdb_1: DbRef = DbRef::NULL;
   var___vdb_1 = DbRef::NULL;
   let mut var___work_c1: String = "".to_string();
@@ -675,8 +677,8 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
         } /*break_8: void*/ else {()};
       { //block_9: void
         // loft:default/02_files.loft:192
-        let mut var__elm_1: DbRef = DbRef::NULL;
-        let mut var__elm_2: DbRef = DbRef::NULL;
+        var__elm_1 = DbRef::NULL;
+        var__elm_2 = DbRef::NULL;
         if (((({{ let _v_v1 = (ops::to_char(var_ch)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } }}) as i64) == ((10_i64) as i64)) as u8) == 1 { //block_10: void
           // loft:default/02_files.loft:193
           let mut var_e: i64 = var_ch__index;
@@ -726,6 +728,7 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
 // loft:default/02_files.loft:209
 fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_separator: i32, mut var___retbuf: DbRef) -> DbRef { //block_1: vector<text>["__retbuf"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
+  let mut var__elm_1: DbRef = DbRef::NULL;
   let mut var___vdb_1: DbRef = DbRef::NULL;
   var___vdb_1 = DbRef::NULL;
   if var___retbuf.rec != 0 { stores.clear_vector_release(&var___retbuf); };
@@ -753,7 +756,7 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
         } /*break_6: void*/ else {()};
       { //block_7: void
         // loft:default/02_files.loft:213
-        let mut var__elm_1: DbRef = DbRef::NULL;
+        var__elm_1 = DbRef::NULL;
         if (((({{ let _v_v1 = (ops::to_char(var_c)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } }}) as i64) == (({{ let _v_v1 = (ops::to_char(var_separator)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } }}) as i64)) as u8) == 1 { //block_8: void
           // loft:default/02_files.loft:214
           {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
@@ -790,6 +793,7 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
 // loft:default/02_files.loft:232
 fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_separator: &str, mut var___retbuf: DbRef) -> DbRef { //block_1: vector<text>["__retbuf"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
+  let mut var__elm_2: DbRef = DbRef::NULL;
   let mut var___vdb_1: DbRef = DbRef::NULL;
   var___vdb_1 = DbRef::NULL;
   if var___retbuf.rec != 0 { stores.clear_vector_release(&var___retbuf); };
@@ -832,7 +836,7 @@ fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
       } /*break_5: void*/ else {()};
     { //block_6: void
       // loft:default/02_files.loft:243
-      let mut var__elm_2: DbRef = DbRef::NULL;
+      var__elm_2 = DbRef::NULL;
       if ((ops::op_eq_text((&*(OpGetTextSub(var_self, var_i, ops::op_add_int((var_i), (var_sl))))), (var_separator))) as u8) == 1 { //block_7: void
         // loft:default/02_files.loft:244
         {vector::pre_alloc_vector(&(var_out), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};

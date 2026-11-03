@@ -1299,7 +1299,9 @@ impl Output<'_> {
                     if matches!(returned, Type::Function(..)) {
                         self.fn_ref_context = true;
                     }
+                    let prev_if_type = self.if_value_type.replace(returned.clone());
                     self.output_if_inner(w, test, true_v, false_v, true)?;
+                    self.if_value_type = prev_if_type;
                     self.fn_ref_context = prev_fn_ref_ctx;
                     if outer_owned {
                         write!(w, ").to_string()")?;
@@ -2798,6 +2800,8 @@ impl Output<'_> {
         false_v: &Value,
         pre_declared: bool,
     ) -> std::io::Result<()> {
+        // The hint covers this `if` and its `else if` chain, never its test or an arm's body.
+        let chain_type = self.if_value_type.take();
         // When the test carries pre-statements (an `Insert` — e.g. a boolean operand that lifted a
         // value-struct-returning call), the if-expression emits as `<lift>; if <pred> {…} else {…}`,
         // a STATEMENT sequence. Every consumer that needs a VALUE (a pre-eval `(…) as i64`, a
@@ -2958,7 +2962,7 @@ impl Output<'_> {
         // emitted `()` and the arm failed to unify with the value-producing else
         // (rustc E0308 `()` vs `DbRef`, breaking the whole --native compile).
         if matches!(true_v, Value::Null)
-            && let Some(tp) = self.infer_type(IrNode::Native(false_v))
+            && let Some(tp) = self.null_arm_type(false_v, chain_type.as_ref())
         {
             Self::write_typed_null(w, &tp)?;
         } else {
@@ -3011,12 +3015,16 @@ impl Output<'_> {
         // When the else branch is Null and the true branch returns a value,
         // emit a typed null sentinel instead of () to match the true branch type.
         if matches!(false_v, Value::Null)
-            && let Some(tp) = self.infer_type(IrNode::Native(true_v))
+            && let Some(tp) = self.null_arm_type(true_v, chain_type.as_ref())
         {
             Self::write_typed_null(w, &tp)?;
         } else {
             self.clone_handed_tuple_local = self.arm_moves_a_live_tuple_local(false_v);
+            if matches!(false_v.unspan(), Value::If(..)) {
+                self.if_value_type.clone_from(&chain_type);
+            }
             self.output_code_inner(w, false_v)?;
+            self.if_value_type = None;
             self.clone_handed_tuple_local = None;
         }
         self.close_arm_pre_evals(false_pre);
@@ -3036,6 +3044,17 @@ impl Output<'_> {
             write!(w, " }}")?;
         }
         Ok(())
+    }
+
+    /// The type an absent (`null`) `if` arm takes: what the arm beside it yields, or — when
+    /// that arm never answers, so it yields nothing to copy — the type the whole `if` delivers.
+    fn null_arm_type(&self, other: &Value, chain_type: Option<&Type>) -> Option<Type> {
+        match self.infer_type(IrNode::Native(other)) {
+            Some(Type::Never | Type::Void) | None if Self::arm_diverges(other) => {
+                chain_type.cloned()
+            }
+            found => found,
+        }
     }
 
     /// What an `if` ARM yields, as the emitter can see it: a `Block`'s declared result, or

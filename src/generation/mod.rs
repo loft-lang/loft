@@ -1034,6 +1034,10 @@ pub struct Output<'a> {
     /// instead of `d_nr_i32`.  Set during fn-ref variable assignment so
     /// if-else branches produce the correct tuple type.
     pub fn_ref_context: bool,
+    /// The type a value `if` delivers, while its `else if` chain is emitted: an absent arm
+    /// (`null`) beside one that never answers — the `match` fallback after arms that all
+    /// `return` — takes this type's null, since the arm beside it gives none to copy.
+    pub if_value_type: Option<Type>,
     /// When true, `Value::Int` emits `{v}_i32` instead of the post-2c
     /// default `{v}_i64`.  Set when emitting a tp-number / field-index /
     /// flag-enum slot (where the runtime signature is still i32) so
@@ -1977,6 +1981,7 @@ impl<'a> Output<'a> {
             coroutine_link_fields: HashMap::new(),
             coroutine_allocated_vars: HashSet::new(),
             fn_ref_context: false,
+            if_value_type: None,
             i32_literal_context: false,
             tuple_text_to_string: false,
             tuple_text_elem: false,
@@ -7219,22 +7224,46 @@ impl Output<'_> {
             .for_each_child(&mut |child| Self::collect_if_test_sets(child, out));
     }
 
-    /// The locals a CALL ARGUMENT null-inits — a `Set(v, null)` the scope pass placed inside an
-    /// argument, at any depth.  It does that for a temp it frees at the function's end that is
-    /// first bound in an `if` arm the argument holds (`assert(c && D { n: 7 } == D { n: 7 })`
-    /// binds each literal operand to a `__veq` temp).  Native's pre-eval lifts such an argument
-    /// into `let _pre_N = { … }`, so a `let` there ends with that block (loft#1852).
-    fn collect_call_arg_null_inits(node: &Value, in_arg: bool, out: &mut Vec<u16>) {
-        if in_arg
-            && let Value::Set(v, init) = node.unspan()
-            && matches!(init.unspan(), Value::Null)
-            && !out.contains(v)
-        {
-            out.push(*v);
+    /// The locals whose FIRST bind is a null-init the scope pass placed below the function's
+    /// top level — inside an `if` arm, a call argument, a loop.  Native writes a local's `let`
+    /// where emission first reaches it, so a later mention outside that block was `E0425`: a
+    /// function-level free after a call argument pre-eval lifts into `let _pre_N = { … }`
+    /// (`assert(c && D { n: 7 } == D { n: 7 })`, loft#1852), after the arm of a `match` that
+    /// holds a `match` (the inner subject's pre-init lands at the head of the outer arm), and
+    /// in a self tail call's jump, which frees the local in an arm emitted before the arm that
+    /// binds it.  Binding such a local up front turns that `let` into an assignment of the same
+    /// sentinel, so nothing changes meaning; an owning first bind is never taken (#354).
+    fn collect_nested_null_inits(code: &Value, out: &mut Vec<u16>) {
+        let Value::Block(body) = code.unspan() else {
+            return;
+        };
+        // Per local: is its first bind a null-init below the top level?
+        let mut first: HashMap<u16, bool> = HashMap::new();
+        for op in &body.operators {
+            Self::first_binds(op, false, &mut first);
         }
-        let in_arg = in_arg || matches!(node.unspan(), Value::Call(..));
-        node.unspan()
-            .for_each_child(&mut |child| Self::collect_call_arg_null_inits(child, in_arg, out));
+        let mut found: Vec<u16> = first
+            .into_iter()
+            .filter_map(|(v, nested_null)| nested_null.then_some(v))
+            .collect();
+        found.sort_unstable();
+        for v in found {
+            if !out.contains(&v) {
+                out.push(v);
+            }
+        }
+    }
+
+    /// Records, in emission order, whether each local's first bind is a null-init below the
+    /// top level.
+    fn first_binds(node: &Value, nested: bool, first: &mut HashMap<u16, bool>) {
+        let node = node.unspan();
+        if let Value::Set(v, init) = node {
+            first
+                .entry(*v)
+                .or_insert(nested && matches!(init.unspan(), Value::Null));
+        }
+        node.for_each_child(&mut |child| Self::first_binds(child, true, first));
     }
 
     fn collect_returned_vars(node: &Value, out: &mut Vec<u16>) {
@@ -11782,11 +11811,20 @@ extern crate loft;"
             // marked DECLARED — never `predeclared`, which would make the test's assignment a
             // second, shadowing `let` and orphan the store it receives — so that assignment
             // lands in this binding.  Not the #354 hazard below: nothing is allocated here.
-            // The same for a local a CALL ARGUMENT null-inits (loft#1852): pre-eval lifts the
-            // argument into a block of its own, and the init's `let` would end with it.
+            // The same for a local first null-initialised below the top level and freed there
+            // (`collect_nested_null_inits`): in a call argument pre-eval lifts into a block of
+            // its own (loft#1852), in an `if` arm, and the init's `let` would end with it.
             let mut if_test_sets: Vec<u16> = Vec::new();
             Self::collect_if_test_sets(def.code(), &mut if_test_sets);
-            Self::collect_call_arg_null_inits(def.code(), false, &mut if_test_sets);
+            let mut nested_null_inits: Vec<u16> = Vec::new();
+            Self::collect_nested_null_inits(def.code(), &mut nested_null_inits);
+            // A record `@FR-R-LoopRecord` keeps across a loop's passes is declared by that
+            // rewrite, before its loop.
+            for v in nested_null_inits {
+                if !self.loop_records.contains_key(&v) && !if_test_sets.contains(&v) {
+                    if_test_sets.push(v);
+                }
+            }
             for &v in &if_test_sets {
                 if !vars.is_argument(v)
                     && !self.declared.contains(&v)
