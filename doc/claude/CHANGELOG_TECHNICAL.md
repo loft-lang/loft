@@ -17,6 +17,23 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### Every rewrite rule reports to the census or says why not (@PLN211 A2)
+
+- `scripts/rule_tags.py phases --check` (in `make rewrite-census`, `make ci` and CI's census
+  step) fails on an entry of `formal/rewrites.md` with no `fired` call and no `CENSUS_EXEMPT`
+  line, and on a census name that is no entry: 137 entries, 112 counted, 25 exempt with a kind
+  and a reason.
+- New counts: on the C, `R-Transient`, `R-LazySplit`, `R-TypedKeyed` (and `/compound`,
+  `/text`), `R-SliceBorrow`, `R-TypedRead`, `R-Inline` (and `/helper`), `R-NoLocks`; in the
+  interpreter's bytecode generator, under the new `interp` phase, `R-Fuse` (and `/field`,
+  `/jump`, `/tag`, `/text`), `R-Rotate`, `R-StartStep`, `R-LoopSlot`, `R-FirstClaim`.
+- One name per clause: `R-Kept` → `R-Header/kept` (rustc) and `R-Header/grown-held` (C),
+  `R-KeptTwin` → `R-Header/kept-twin`, `R-FnHeader` → `R-Header/function`, `R-HandOver` →
+  `R-HandOver/rotate` (both writers), `R-AliasVersion` → `R-Alias/versioned`, `R-KernelSum` →
+  `R-BoundedNest/kernel`; rustc counts `R-LoopRecord/refill` apart, as the C does.  Every
+  renamed count equals its old one.  `(R-LiteralAppend)`, built and counted, gains its
+  register entry and its `BOTH_BACKEND_SWITCHES.md` line.
+
 ### A `match` is lowered once per arm (`@FR-M-Once`, `@FR-M-Fixed`)
 
 A guarded arm folds its guard into its condition, `cmp && { bindings; guard }`

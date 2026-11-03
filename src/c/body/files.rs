@@ -302,6 +302,8 @@ impl FnWriter<'_> {
             && let Some((w, signed)) =
                 self.held_read_shape(&[f.clone(), v.clone(), n.clone(), Value::Int(i32::from(tp))])
         {
+            // `@FR-R-TypedRead`: the width and sign fixed at the site, as native counts them.
+            crate::rewrite_census::fired("R-TypedRead", 1);
             let name = self.var(var);
             self.line(
                 ind,
@@ -320,6 +322,11 @@ impl FnWriter<'_> {
         let width = self.cx.stores.binary_size(tp);
         let name = self.var(var);
         let take = |n: u8| format!("loft_take(loft_d, {n}, loft_le)");
+        // `@FR-R-TypedRead`: the C decodes every read at its site; the census counts the
+        // rule's own domain, a fixed-width integer into an `integer` local, as native does.
+        if matches!(tp, 0 | 1) || (!text && self.narrow_kind(tp).is_some()) {
+            crate::rewrite_census::fired("R-TypedRead", 1);
+        }
         let set = match (tp, self.narrow_kind(tp)) {
             _ if text => {
                 if !(self.shapes[var as usize] == CType::Text && self.text_held(var)) {

@@ -2606,7 +2606,9 @@ impl Output<'_> {
         fired("R-SliceBorrow", self.slice_borrow_count);
         fired("R-CharWalk", self.char_walks.len());
         fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
-        fired("R-LoopRecord", self.loop_records.len());
+        let refill = self.loop_records.values().filter(|r| r.refill).count();
+        fired("R-LoopRecord", self.loop_records.len() - refill);
+        fired("R-LoopRecord/refill", refill);
         fired("R-LoopBuffer", self.loop_buffers.len());
     }
 
@@ -4750,7 +4752,7 @@ impl Output<'_> {
             self.indent(w)?;
             writeln!(w, "{line}")?;
         }
-        crate::rewrite_census::fired("R-FnHeader", frame.len());
+        crate::rewrite_census::fired("R-Header/function", frame.len());
         self.vec_headers.push(frame);
         self.vec_bases.push(HashMap::new());
         self.vec_bounds.push(HashMap::new());

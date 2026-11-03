@@ -334,6 +334,12 @@ was a buffer reset, three appends and three element reads through the store) —
 first bisect step for a wrong value, order or count out of a loop over a literal of scalars.
 `LOFT_REWRITE_CENSUS` counts its admissions as `R-LiteralWalk`.
 
+**`LOFT_NO_LITERAL_APPEND=1`** (`@FR-R-LiteralAppend`, default-ON, scope pass, BOTH backends)
+keeps `t = T { … }; v += [t]` as a record minted for `t`, copied into the element and freed —
+with it off, the literal is built in the element, as `v += [T { … }]` is — and is the first
+bisect step for a wrong field in an element appended from a bound literal.
+`LOFT_TRACE_LITERAL_APPEND=1` names each rewrite.
+
 ## Lowering: adopting and minting call buffers
 
 **`LOFT_NO_NULLABLE_RETBUF=1`** (`@FR-N-Road`, default-ON, parse time,

@@ -357,6 +357,9 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-TextBorrow`'s tested clause: the borrowed locals that view a parameter's text only
     /// while each root parameter's store is not the return buffer's, with those roots.
     tested: std::collections::HashMap<u16, Vec<u16>>,
+    /// `@FR-R-SliceBorrow`: how many of the borrowed locals are a value slice of a text
+    /// parameter (counted by the census beside `R-TextBorrow`, as native counts them).
+    slice_borrows: usize,
     /// `@FR-R-CharWalk` (`opt::char_walk::char_walks`, which the interpreter and native read):
     /// this function's `for c in t` walks by loop scope — their step takes an ASCII byte without
     /// decoding it, and their null test is asked once where the loop never writes `t`.
@@ -417,14 +420,26 @@ struct WindowLoop<'b> {
 /// EVERY bind of it is a shape the view form writes without a temporary — another borrowed
 /// local or a text parameter, a literal, a text field read, a block ending in one — so
 /// admitting it never turns a carried program into a refused one.
-/// `LOFT_NO_TEXT_BORROW=1` keeps every copy, as on native.
-fn borrowed_texts(cx: &Cx, d: u32) -> (Vec<bool>, std::collections::HashMap<u16, Vec<u16>>) {
+/// `LOFT_NO_TEXT_BORROW=1` keeps every copy, as on native.  The third answer is the
+/// `@FR-R-SliceBorrow` candidates (a value slice of a text parameter), for the census.
+fn borrowed_texts(
+    cx: &Cx,
+    d: u32,
+) -> (
+    Vec<bool>,
+    std::collections::HashMap<u16, Vec<u16>>,
+    std::collections::HashSet<u16>,
+) {
     let def = cx.data.def(d);
     let vars = def.variables();
     let n = vars.count() as usize;
     let mut b = vec![false; n];
     if std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0") {
-        return (b, std::collections::HashMap::new());
+        return (
+            b,
+            std::collections::HashMap::new(),
+            std::collections::HashSet::new(),
+        );
     }
     // As native's setup: the lazy splits' and the split tables' walks need no store
     // condition — their pieces are slices of a text — and a `?` discharge of a table's
@@ -525,7 +540,7 @@ fn borrowed_texts(cx: &Cx, d: u32) -> (Vec<bool>, std::collections::HashMap<u16,
                 .into_iter()
                 .filter(|(v, _)| b.get(*v as usize).copied().unwrap_or(false))
                 .collect();
-            return (b, tested);
+            return (b, tested, store.slices);
         }
     }
 }
@@ -670,7 +685,11 @@ impl<'a> FnWriter<'a> {
     #[expect(clippy::too_many_lines)]
     pub(crate) fn new(cx: &'a Cx<'a>, d: u32, shapes: Vec<CType>, ret: CType) -> FnWriter<'a> {
         let def = cx.data.def(d);
-        let (borrowed, tested) = borrowed_texts(cx, d);
+        let (borrowed, tested, slices) = borrowed_texts(cx, d);
+        let slice_borrows = slices
+            .iter()
+            .filter(|v| borrowed.get(**v as usize).copied().unwrap_or(false))
+            .count();
         FnWriter {
             cx,
             d,
@@ -774,6 +793,7 @@ impl<'a> FnWriter<'a> {
             file_holds: Vec::new(),
             borrowed,
             tested,
+            slice_borrows,
             lazy: if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
                 std::collections::BTreeMap::new()
             } else {
@@ -1022,6 +1042,8 @@ impl<'a> FnWriter<'a> {
         {
             use crate::rewrite_census::fired;
             fired("R-TextBorrow", self.borrowed.iter().filter(|b| **b).count());
+            fired("R-SliceBorrow", self.slice_borrows);
+            fired("R-LazySplit", self.lazy.len());
             fired("R-CharWalk", self.char_walks.len());
             fired("R-RetAdopt", usize::from(self.adopt.is_some()));
         }
@@ -1424,8 +1446,10 @@ impl<'a> FnWriter<'a> {
             use crate::rewrite_census::fired;
             fired("R-Header", frame.len());
             fired("R-Base", frame.iter().filter(|(_, _, b)| *b).count());
+            // The grown headers this loop copy HOLDS; `R-Header/grown` counts the analysis'
+            // admissions (`opt::apart`), once per loop.
             fired(
-                "R-Kept",
+                "R-Header/grown-held",
                 frame
                     .iter()
                     .filter(|(_, h, _)| self.grown_headers.contains(h))
@@ -4596,7 +4620,7 @@ impl<'a> FnWriter<'a> {
             self.line(ind, "} else {");
             self.loop_copy(b, ind + 1)?;
             self.line(ind, "}");
-            crate::rewrite_census::fired("R-AliasVersion", 1);
+            crate::rewrite_census::fired("R-Alias/versioned", 1);
             return Ok(());
         }
         self.loop_copy(b, ind)
@@ -7198,7 +7222,7 @@ impl<'a> FnWriter<'a> {
                 xs.push(format!("&{h}"));
                 self.kh_passed.insert(h);
                 mask |= super::KH_BIT;
-                crate::rewrite_census::fired("R-KeptTwin", 1);
+                crate::rewrite_census::fired("R-Header/kept-twin", 1);
             }
             // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
             if mask & super::KH_BIT == 0

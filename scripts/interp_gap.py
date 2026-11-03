@@ -308,6 +308,10 @@ def analyse(prog, census, printed, rw):
     native = defaultdict(dict)   # fn → rule → count (generator-only)
     shared = defaultdict(dict)   # fn → rule → count (ir / parse)
     for (phase, fn, rule), n in (rw or {}).items():
+        # `interp` is the interpreter's own generator: run by neither compiled backend, so
+        # neither a native-only nor a shared rewrite.
+        if phase == "interp":
+            continue
         (native if phase == "native" else shared)[fn][rule] = n
     iters = dict(printed)
     out = []

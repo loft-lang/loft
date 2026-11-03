@@ -64,18 +64,23 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  condition shows as a DROP, named by rule, bench and writer, in
                  `make rewrite-census` and on the PR — a loss no timing resolves.  A
                  deliberate decline lands with `make rewrite-census-bless` in its
-                 own commit.  Counted: every rewrite but three — (R-Prefill) admits per
-                 TYPE at its first mint, and (R-Cold) and (R-FlatCopy) are the
-                 runtime's own shape, none an emission-time fact.  A parser or scope-pass rewrite
-                 counts at its admission (the standard library's own admissions
-                 included, one constant per program); a generator rewrite counts
-                 where it emits.
+                 own commit.  Counted: every entry of this register, under the name
+                 `R-<Entry>` or `R-<Entry>/<clause>`, unless `CENSUS_EXEMPT`
+                 (`scripts/rule_tags.py`) lists it with its kind and reason — a rule
+                 about rules, a condition other admissions ask, the interpreter
+                 executor's shape, a per-type runtime shape, or a rule not built.
+                 `rule_tags.py phases --check` (in `make rewrite-census` and `make
+                 ci`) fails on an entry neither counted nor listed and on a census
+                 name that is no entry.  A parser or scope-pass rewrite counts at its
+                 admission (the standard library's own admissions included, one
+                 constant per program), the interpreter's bytecode generator per
+                 function it generates, a writer where it emits.
                  INTERPRETER CLAUSE: a rewrite the interpreter's bytecode generator or
                  runtime applies — native never sees it — has NATIVE as its oracle, the
                  mirror of the generator rewrites: the guard's cells run on both
-                 backends and agree, the switch off and on, and an emission pin on the
-                 bytecode (`loft introspect`) is the census, since the generator's
-                 admissions are not counted.  A TIMING of such a rewrite is read on
+                 backends and agree, the switch off and on, an emission pin on the
+                 bytecode (`loft introspect`), and the census, which counts the
+                 generator's admissions under the `interp` phase.  A TIMING of such a rewrite is read on
                  two builds that differ only in it with the layout pinned
                  (INTERPRETER_PERFORMANCE.md § Measuring an interpreter change):
                  two ordinary builds differ by 15 % at identical instruction counts.
@@ -4567,6 +4572,22 @@ line in `Output::output_function`'s prelude.
                  for keeps the plain form, as do an append in each arm, a call-filled
                  temp and the comprehension clause.  `fronds` −39 % (gcc) / −40 %
                  (clang).  Site: `c::body::elem_first`; switch `LOFT_NO_ELEMENT_FIRST`.
+
+  (R-LiteralAppend) a record literal bound to a local L whose one use is its append
+                 (`t = T { … }; v += [t]`) is built in the appended element, as
+                 `v += [T { … }]` already is: the element is minted first and the
+                 literal's field writes go to it, then the finish; L's store, its
+                 copy into the element and its free are gone.  Admitted per statement
+                 list where the mint, the scalar field writes, the element's mint, the
+                 copy, the finish and L's free are consecutive statements, L is named
+                 nowhere else in the function, and every field value is SIMPLE — a
+                 literal, a scalar variable, or a store-free scalar operator over
+                 those — because the values now run after the element's mint, which
+                 may move the vector's records, and a value that reads no record
+                 cannot read a moved one.  Every decline keeps the copy.  Decided in
+                 the scope pass, so both backends run the rewritten IR.  Site:
+                 `literal_append::rewrite`; switch `LOFT_NO_LITERAL_APPEND`; trace
+                 `LOFT_TRACE_LITERAL_APPEND`.
 
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most eight
                  scalars (an `integer` only at its 8-byte width), an INLINE sub-record

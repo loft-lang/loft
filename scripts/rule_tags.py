@@ -547,6 +547,86 @@ def census_listed():
     return out
 
 
+# The rewrite register's entries the census does NOT count, each with its kind and why
+# (`phases --check`; formal/rewrites.md's CENSUS CLAUSE).  Every other entry of
+# `formal/rewrites.md` must have a `rewrite_census::fired("R-<Entry>…", n)` call in `src/`.
+# Kinds: `meta` (a rule about rules), `condition` (a test other rules' admissions ask, counted
+# under them), `executor` (the interpreter's run loop or runtime shape — nothing is admitted
+# per site), `runtime` (a per-type or per-helper runtime shape), `unbuilt` (no code applies it).
+CENSUS_EXEMPT = {
+    "R-Phase": ("meta", "says which phase applies each rule"),
+    "R-Escape": ("meta", "the contract every rewrite keeps"),
+    "R-Switch": ("meta", "every rewrite's switch and falsifier"),
+    "R-State": ("condition", "the hoist state the header rules share; counted under them"),
+    "R-InPlace": ("condition", "the write test the header hoists ask; counted under them"),
+    "R-CallLine": ("executor", "a frame's line derived from its call position"),
+    "R-CodeBase": ("executor", "bytecode reads through a cached base"),
+    "R-DispatchPublish": ("executor", "the lean loop publishes one position per op"),
+    "R-DispatchStop": ("executor", "the lean loop tests one flag per op"),
+    "R-ElementPath": ("executor", "the interpreter's element read operator"),
+    "R-FastTable": ("executor", "the stack access mode fixed per run"),
+    "R-FrameHeadroom": ("executor", "one capacity test per frame entry"),
+    "R-HotInline": ("executor", "#hot operators inlined into the lean loop"),
+    "R-KeyList": ("executor", "key descriptors derived once per type"),
+    "R-OpPriority": ("executor", "opcode numbering by priority"),
+    "R-OperandSpan": ("executor", "fixed-width operands bounds-checked once"),
+    "R-RegisterTable": ("executor", "position and stack top passed in registers"),
+    "R-StackBase": ("executor", "a slot addressed from a cached base"),
+    "R-WorkerLean": ("executor", "par workers on the lean loop"),
+    "R-Prefill": ("runtime", "admitted per TYPE at its first mint"),
+    "R-Cold": ("runtime", "the runtime helpers' own shape"),
+    "R-DeadResult": ("unbuilt", "designed; its switch is planned"),
+    "R-PathRelease": ("unbuilt", "designed, not built"),
+    "R-SharedCall": ("unbuilt", "only its narrow case is built, counted as R-PureReuse/shared"),
+    "R-WorkView": ("unbuilt", "no code; the C's (R-TextBorrow) format clause covers the shape"),
+}
+
+
+def census_calls(src=None):
+    """{census name: {file:line, …}} — every `R-…`/`H-…` string literal inside the argument list
+    of a `fired(` call under `src/`, so a name chosen by a condition
+    (`if shared { "R-PureReuse/shared" } else { "R-PureReuse" }`) counts as well."""
+    src = src or os.path.join(ROOT, "src")
+    out = collections.defaultdict(set)
+    for path in sorted(glob.glob(os.path.join(src, "**", "*.rs"), recursive=True)):
+        if path.endswith(os.path.join("src", "rewrite_census.rs")):
+            continue
+        text = open(path, encoding="utf-8", errors="replace").read()
+        for m in re.finditer(r"\bfired\(", text):
+            depth, i = 1, m.end()
+            while depth and i < len(text):
+                depth += {"(": 1, ")": -1}.get(text[i], 0)
+                i += 1
+            line = text.count("\n", 0, m.start()) + 1
+            for name in re.findall(r'"((?:R|H)-[A-Za-z0-9/_-]+)"', text[m.end():i]):
+                out[name].add(f"{os.path.relpath(path, ROOT)}:{line}")
+    return out
+
+
+def phase_problems(rules, calls):
+    """What `phases --check` fails on: a register entry neither counted nor exempt, a census name
+    whose rule (the part before `/`) is no defined rule, and an exemption that is stale (the
+    rule is counted) or names no register entry."""
+    register = {t for t, files in rules.items() if "rewrites.md" in files}
+    roots = collections.defaultdict(set)
+    for name in calls:
+        roots[name.split("/")[0]].add(name)
+    problems = []
+    for tag in sorted(register - set(roots) - set(CENSUS_EXEMPT)):
+        problems.append(f"({tag}) has no census call and no CENSUS_EXEMPT line: add "
+                        f"`rewrite_census::fired(\"{tag}\", n)` where it is admitted, or say why not")
+    for root in sorted(set(roots) - set(rules)):
+        for name in sorted(roots[root]):
+            where = ", ".join(sorted(calls[name]))
+            problems.append(f"census name {name} ({where}) names no defined rule ({root})")
+    for tag in sorted(set(CENSUS_EXEMPT) & set(roots)):
+        problems.append(f"({tag}) is exempt but counted ({', '.join(sorted(roots[tag]))}): drop "
+                        "its CENSUS_EXEMPT line")
+    for tag in sorted(set(CENSUS_EXEMPT) - register):
+        problems.append(f"CENSUS_EXEMPT names ({tag}), which is no entry of formal/rewrites.md")
+    return register, roots, problems
+
+
 def guard_tags(rules):
     """The rules an active guard names: a test under GUARD_DIRS citing the rule, or a rewrite
     census row admitting it.  The ONE answer to "is this rule guarded", so `coverage` and
@@ -1640,6 +1720,27 @@ def main():
                   "(`<!-- from tests/reference/<file>.loft -->`); a shape or signature that is "
                   "not a program is a ```grammar fence.  DOC_CONTRACT rule 22.")
         return 1 if (gate and bad) else 0
+
+    if cmd == "phases":
+        # Which census names count each rewrite rule, or why it is not counted (CENSUS_EXEMPT).
+        # `--check` fails on what `phase_problems` names.
+        calls = census_calls()
+        register, roots, problems = phase_problems(rules, calls)
+        if "--check" not in sys.argv:
+            for tag in sorted(register):
+                if tag in roots:
+                    print(f"{tag:<26} {', '.join(sorted(roots[tag]))}")
+                elif tag in CENSUS_EXEMPT:
+                    kind, why = CENSUS_EXEMPT[tag]
+                    print(f"{tag:<26} not counted — {kind}: {why}")
+                else:
+                    print(f"{tag:<26} NOT COUNTED")
+        counted = sum(1 for t in register if t in roots)
+        print(f"{len(register)} rewrite rules: {counted} counted under {len(calls)} census "
+              f"names, {len(set(CENSUS_EXEMPT) & register)} exempt")
+        for p in problems:
+            print(f"  {p}")
+        return 1 if problems and "--check" in sys.argv else 0
 
     if cmd == "dups":
         multi = {t: v for t, v in cites.items() if len({f for f, _ in v}) >= 2}

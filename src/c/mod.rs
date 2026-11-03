@@ -2388,6 +2388,9 @@ fn unit_defines(
             .any(|&d| data.def(d).const_ref.is_some());
     if !locks && !crate::env_once!(std::env::var("LOFT_NO_LOCK_FACT").is_ok_and(|v| v != "0")) {
         out.push_str("#define LOFT_NO_LOCKS 1\n");
+        // The unit is the site: credited to the C writer, no function.
+        let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        crate::rewrite_census::fired("R-NoLocks", 1);
     }
     // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
     // tree with its layout read from this program's type table for one that reaches a JSON
@@ -2807,6 +2810,16 @@ pub(crate) fn dest_scalar_ctype(s: &crate::lower::destination::Scalar) -> CType 
 /// plain `static` otherwise — in the unit's own text and in the frame wrappers'.
 fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) {
     let hot = cx.hot_helpers();
+    {
+        let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        let inlined = cx
+            .hot_candidates
+            .borrow()
+            .iter()
+            .filter(|d| hot.contains(d))
+            .count();
+        crate::rewrite_census::fired("R-Inline/helper", inlined);
+    }
     let resolve = |text: &str| -> String {
         let mut out = text.to_string();
         for d in cx.hot_candidates.borrow().iter() {
@@ -3070,7 +3083,10 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .transient(tf)
             .write()
         {
-            Ok(b) => Some(b),
+            Ok(b) => {
+                crate::rewrite_census::fired("R-Transient", 1);
+                Some(b)
+            }
             Err(why) => {
                 body::transient::declined(cx, d, &why);
                 None
@@ -3097,6 +3113,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let body = tabulated(cx, d, ret, &params, body);
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
     let inline = small_function(statements) || hot_twin(mask, statements);
+    crate::rewrite_census::fired("R-Inline", usize::from(inline));
     let helper = !inline && hot_helper_size(mask, statements);
     let storage = if inline {
         "static inline".to_string()

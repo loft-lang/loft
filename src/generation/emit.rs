@@ -984,7 +984,7 @@ impl Output<'_> {
                     writeln!(w)?;
                     self.indent(w)?;
                     write!(w, "}}")?;
-                    crate::rewrite_census::fired("R-AliasVersion", 1);
+                    crate::rewrite_census::fired("R-Alias/versioned", 1);
                 } else {
                     self.in_distinct_copy = true;
                     let r = self.output_code_inner(w, code);
@@ -3553,7 +3553,7 @@ impl Output<'_> {
                 self.data.def(self.def_nr).name()
             );
         }
-        crate::rewrite_census::fired("R-HandOver", 1);
+        crate::rewrite_census::fired("R-HandOver/rotate", 1);
         Ok(())
     }
 
