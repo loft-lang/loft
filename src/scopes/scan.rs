@@ -1281,8 +1281,20 @@ impl Scopes<'_> {
         else {
             return HashSet::default();
         };
+        // A FREE inside the result is no borrow of what it frees: an early `return`'s own
+        // scope-exit `OpFreeRef(__lift_1)` sits inside the block's last operator, and read as a
+        // root it hoisted the lift and dropped that very free — the record the lift held leaked
+        // once per call (loft#2382).  So the walk does not descend into a free.
+        fn visit<'a>(n: &'a Value, data: &Data, f: &mut impl FnMut(&'a Value)) {
+            let n = n.unspan();
+            if scope_free_op_var(n, data).is_some() {
+                return;
+            }
+            f(n);
+            n.for_each_child(&mut |c| visit(c, data, f));
+        }
         let mut roots = HashSet::default();
-        result.walk(&mut |n| {
+        visit(result, data, &mut |n| {
             if let Some(r) = Self::borrow_root(n, data) {
                 let mut cur = r;
                 // Follow the in-block assignment chain, bounded by its own size so
