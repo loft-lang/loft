@@ -1276,7 +1276,9 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
     bl.result = [el_types::without_deps(el_types::base(result))];
   } else if local >= 0 {
     nm = el_types::elem_name(e, elem);
-    rec = match el_types::base(elem) { TyReference { n } => el::def(e, n).known_type, _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) } };
+    // A record element's own row; any other's content type (a narrow integer is stored at its
+    // width, `byte` for `u8`, which its name does not say).
+    rec = match el_types::base(elem) { TyReference { n } => el::def(e, n).known_type, _ => if nm == "" { -1 } else { el_schema::content_type(e, elem) } };
     if rec < 0 {
       el::refuse(e, "a function returning a vector of this element type: {type_kind(elem)}");
       return code;
@@ -3286,6 +3288,12 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   }
   if !vars.annotated.contains(v) {
     vars.annotated += [v];
+  }
+  if e.p.nodes[rhs!] is SComprehension {
+    match declared! {
+      TyVector { inner } => return comprehension_into(e, vars, v, rhs!, declared: inner),
+      _ => {}
+    }
   }
   if e.p.nodes[rhs!] is SVecLit {
     match declared! {
@@ -7169,7 +7177,9 @@ fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   ex(el_ir::v_block(ops, vt, "Vector comprehension"), vt)
 }
 
-fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
+// `declared`: the element a declared local gives it (`v: vector<u8> = [for …]`), which the
+// items are stored at, where the body would answer a wider one.
+fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT = ir::TyUnknown { n: 0 }) -> Ex {
   binds: vector<text> = [];
   source = 0;
   filter: integer? = null;
@@ -7236,6 +7246,9 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) ->
   vars.active_loops = vars.active_loops[..-1];
   vars.active_values = vars.active_values[..-1];
   in_t = el_types::without_deps(b.tp);
+  if !el_types::is_unknown(declared) && el_types::base(declared) is TyInteger && el_types::base(in_t) is TyInteger {
+    in_t = declared;
+  }
   if el_types::is_unknown(in_t) || el_types::is_unknown(elem) {
     return ex(ir::NdNull, ir::TyVoid);
   }
