@@ -299,6 +299,7 @@ function buildLoftImports(canvas, output, getMem, asyncCtrl) {
   function ggImports() {
     const objs = [null], locs = [], shaderType = new Map(), queue = [];
     let open = false;
+    let filling = false;
     const mem = () => getMem().buffer;
     const dv = () => new DataView(mem());
     const add = (o) => { objs.push(o); return objs.length - 1; };
@@ -423,7 +424,22 @@ function buildLoftImports(canvas, output, getMem, asyncCtrl) {
       gg_js_open(w, h, fullscreen) {
         if (!gl) return 0;
         dpr = window.devicePixelRatio || 1;
-        if (fullscreen) { w = window.innerWidth; h = window.innerHeight; }
+        if (fullscreen) {
+          w = window.innerWidth; h = window.innerHeight;
+          // The whole window, whatever the page's layout: fixed at its top-left.
+          canvas.style.position = 'fixed'; canvas.style.left = '0'; canvas.style.top = '0';
+          if (!filling) {
+            filling = true;
+            // A resize keeps the canvas the window's size, in device pixels, and tells the
+            // program (tag 8: the new width and height) so it can draw at the new size.
+            window.addEventListener('resize', () => {
+              dpr = window.devicePixelRatio || 1;
+              canvas.width = toDevice(window.innerWidth); canvas.height = toDevice(window.innerHeight);
+              canvas.style.width = window.innerWidth + 'px'; canvas.style.height = window.innerHeight + 'px';
+              if (open) queue.push({ tag: 8, v: [canvas.width, canvas.height] });
+            });
+          }
+        }
         canvas.width = toDevice(w); canvas.height = toDevice(h);
         canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
         canvas.style.display = 'block';
