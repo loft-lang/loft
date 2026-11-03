@@ -84,8 +84,8 @@ that wants one.  Fix, gate, push, and say what is done.  A PR is a GATHERING: wh
 across the agents' active branches is stabilising, the owner asks for it, and it joins those
 branches in one.  Nothing that lands on one branch — a fix, a feature, a workflow that only
 works from `main` — is a reason to mention one.  The cadence — one or two stable PRs a
-day, arcs that finish inside it — is [CLAUDE.md § Branch policy](../../CLAUDE.md) rule 3, with
-the short list of what must hold before opening.
+day, arcs that finish inside it — is [CLAUDE.md § Branch policy](../../CLAUDE.md) rule 3; what
+must hold before opening is below.
 
 The two costs it balances:
 - **A PR serialises the stream.**  GitHub has no stacked PRs, so a second PR branches off the
@@ -96,8 +96,19 @@ The two costs it balances:
 
 They reconcile on time-to-MERGE: a PR is cheap exactly when it lands promptly.  So once the
 owner asks, opening takes minutes — the PR's own `ci.yml` runs the same gate on the exact sha,
-so the opening is not held for a local `make ci`.  **A branch a sibling has joined twice is
-overdue**; that is a fact to report, not a request to make.
+so the opening is not held for a local `make ci` (a slower duplicate, which on a shared box a
+sibling's `pkill` can kill).  **A branch a sibling has joined twice is overdue**; that is a fact
+to report, not a request to make.
+
+The bar for a unit of work is not "green": a PR that looks right while carrying internal
+regressions is worse for a language's users than no PR, so an arc ships only with its own
+verification complete — both backends, the matrix built and hand-checked, guards falsified,
+side-findings filed rather than left implicit.  What must hold BEFORE opening is cheap to check
+and is the whole list: the head is current on `origin/main`, everything is pushed, the tree is
+clean, derived artefacts are REGENERATED rather than picked (audit rows re-measured,
+`falsified_docs.baseline`, the browser bundle), and each fix in the arc carries the
+verification it owed when it landed.  The measurements behind these rules:
+[DEVELOPMENT-history.md § The branch policy's costs, measured](DEVELOPMENT-history.md#the-branch-policys-costs-measured).
 
 ### The PR cycle
 

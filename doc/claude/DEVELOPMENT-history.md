@@ -145,3 +145,15 @@ issue and `Contract: strained … (owner-ruled)` trailer had already named that 
 A second batch of a source's commits, taken after a join that had passed the gate, was checked
 by build, ratchet and bundle stamp only.  It carried four defects that only the union had, and
 six gates went red through one test.
+
+## The branch policy's costs, measured
+
+- **Holding a PR's opening for a local `make ci`** (2026-09-10): three local gates were killed by
+  a sibling's `pkill`, about 50 minutes were lost, and the PR stayed unopened while three streams
+  kept re-joining.
+- **Not PRing** (2026-09-10): one branch carried 9 joins before its PR; the walker-audit rows were
+  re-measured five times, `falsified_docs.baseline` was regenerated and the browser bundle rebuilt
+  — and the siblings paid the same cost in their own trees (@PLN157 carries its own "re-measure
+  the derived rows, re-falsify both guards" commit).  Two join-only defects existed only on that
+  union.  This replaced the older rule "accumulated commits are not a reason", whose premise was
+  that cherry-picking makes batching free.

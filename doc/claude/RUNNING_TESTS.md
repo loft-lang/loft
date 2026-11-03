@@ -252,7 +252,7 @@ LOFT_LOG=variables cargo test --test slot_assign             # variable table pe
 | `alloc_free` | full + `trace_alloc_free` | `[alloc #N at pc=…]` / `[free #N …]` lines, so a `Database N not correctly freed` panic traces back to its allocation by grepping `alloc #N` |
 | `poison_free` | full + `poison_free` | Freed text/ref slots are poisoned, so a later read panics with "read from poisoned slot" |
 | `locks` | full + `trace_locks` | Every store lock/unlock to stderr with its caller — the first tool for a "Write to read-only store" panic |
-| `type_timeline:<var>` | full + `trace_type_timeline` | Every type change of variable `<var>`, naming the site (`LOFT_TIMELINE_BT=1` adds the stack) |
+| `type_timeline:<var>` | full + `trace_type_timeline` | Every type change of variable `<var>`, naming the site (`LOFT_TIMELINE_BT=1` adds the stack) — deps REMOVED (`make_independent`) as well as added, so a borrow that is never promoted to an owner shows |
 
 An unrecognised value falls back to `full`.  `scope_debug`, `locks` and `type_timeline` are read
 by the module that emits them, so they also work in runs that build no `LogConfig`.

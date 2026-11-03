@@ -188,7 +188,9 @@ length from a leak, which you would otherwise have to go and measure.
 
 A limit that cannot be parsed is reported and the default is **kept** — a typo must never
 silently remove the ceiling.  A repeat-run harness for a corruption repro also caps the PROCESS
-(`ulimit -v`): the runaway is not necessarily the process the kernel kills.
+(`ulimit -v`): the runaway is not necessarily the process the kernel kills.  `LOFT_MEMORY_LIMIT` is
+the portable bound — macOS ignores an address-space `rlimit`.  The incidents behind both bounds:
+[RUN_BOUNDS-history.md](RUN_BOUNDS-history.md).
 
 Implementation is `src/store_budget.rs` (accounting, ceiling, report) with the accounting
 asserted at every site in `src/store.rs` that allocates, reallocates or frees a store buffer:
