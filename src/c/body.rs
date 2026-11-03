@@ -449,7 +449,7 @@ fn borrowed_texts(cx: &Cx, d: u32) -> (Vec<bool>, std::collections::HashMap<u16,
         cx.data, d, &tables,
     ));
     // `@FR-R-SliceBorrow` rides on the same analysis: a value slice of a text parameter.
-    let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks);
+    let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks, true);
     // Every variable the clause admits — the `?` / `??` temps it borrows a parameter's text
     // for as well as its statement-bound locals, as native's `walks.extend(store.borrows)`.
     let plain = store

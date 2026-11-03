@@ -1,0 +1,90 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-TextBorrow`'s local-root clause — the temp of a `?` / `?? d` over a text read out of a
+// frame LOCAL (`texts[si] ?? ""`, `f.names[i] ?? ""`) borrows the text where nothing in the
+// temp's scope writes any store or rebinds the local: the comparison reads the bytes the local
+// holds, with no copy.  Where something does — a callee that grows the local's store in the
+// same expression, the local rebound — the copy stays, and a local bound from such a temp is
+// never a borrow (its scope may write the store).  Every cell answers what the interpreter
+// answers.
+//
+// The C writer applies it (`borrowed_store_texts` with its local roots); the interpreter and
+// rustc-native apply nothing and are the oracle.  Hand-computed in each cell's comment.
+// Borrowed: d1, d2, d3.  Copied: d4, d5, d6.
+//
+// HOLDS: the interpreter's and rustc-native's answers, which no plant on the C writer reaches.
+struct Bag { names: vector<text>, n: integer }
+
+// d1: forms_upto's dedup — a text added only when no stored text equals it: "ab", "cd", "ab"
+// (seen), "ef", "cd" (seen) keeps three, joined "ab,cd,ef"
+fn d1() -> text {
+  texts: vector<text> = [];
+  for w in ["ab", "cd", "ab", "ef", "cd"] {
+    seen = false;
+    for si in 0..len(texts) { if (texts[si] ?? "") == w { seen = true; } }
+    if !seen { texts += [w]; }
+  }
+  r = "";
+  for t in texts { if len(r) > 0 { r += ","; } r += t; }
+  r
+}
+// d2: a read past the end answers the default: texts has two, index 5 is "" — so of the reads
+// at 0, 1, 5 the lengths are 3, 4, 0: 340
+fn d2() -> integer {
+  texts: vector<text> = ["one", "four"];
+  t = 0;
+  for i in [0, 1, 5] { t = t * 10 + len(texts[i] ?? ""); }
+  t
+}
+// d3: a field of a local record: names "x", "yy", "zzz", the ones starting with "y" or "z"
+// count 2
+fn d3() -> integer {
+  b = Bag { names: ["x", "yy", "zzz"], n: 0 };
+  c = 0;
+  for i in 0..len(b.names) {
+    if (b.names[i] ?? "").starts_with("y") || (b.names[i] ?? "").starts_with("z") { c += 1; }
+  }
+  c
+}
+// Appends forty texts to `v`, growing its store past every room it had, and answers "+".
+fn grow(v: &vector<text>) -> text {
+  for k in 0..40 { v += ["filler-{k}-padding-to-move-the-store"]; }
+  "+"
+}
+// d4: a callee that grows the local's store in the same expression keeps the copy: the text
+// read first is "head", then the growth; "head" + "+" = "head+", and v has 41 texts
+fn d4() -> text {
+  v: vector<text> = ["head"];
+  r = (v[0] ?? "") + grow(v);
+  "{r} {len(v)}"
+}
+// d5: the local rebound in the temp's scope keeps the copy: "first" read, then v rebound to
+// ["second"]; "first|second"
+fn d5() -> text {
+  v: vector<text> = ["first"];
+  r = "";
+  {
+    a = v[0] ?? "";
+    v = ["second"];
+    r = "{a}|{v[0] ?? ""}";
+  }
+  r
+}
+// d6: a local bound from the temp is a copy: n = "keep" read, then 40 appends move the store,
+// then n is read: "keep 41"
+fn d6() -> text {
+  v: vector<text> = ["keep"];
+  n = v[0] ?? "";
+  for k in 0..40 { v += ["more-{k}-text-to-make-the-store-grow"]; }
+  "{n} {len(v)}"
+}
+fn main() {
+  assert(d1() == "ab,cd,ef", "d1 {d1()}");
+  assert(d2() == 340, "d2 {d2()}");
+  assert(d3() == 2, "d3 {d3()}");
+  assert(d4() == "head+ 41", "d4 {d4()}");
+  assert(d5() == "first|second", "d5 {d5()}");
+  assert(d6() == "keep 41", "d6 {d6()}");
+  println("ok");
+}

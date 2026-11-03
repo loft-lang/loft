@@ -2473,7 +2473,7 @@ impl Output<'_> {
                 def_nr,
                 &self.split_tables,
             ));
-            let store = hoist::borrowed_store_texts(self.data, def_nr, &walks);
+            let store = hoist::borrowed_store_texts(self.data, def_nr, &walks, false);
             walks.extend(store.borrows);
             self.borrowed_store_locals = store.locals;
             self.tested_store_texts = store.tested;

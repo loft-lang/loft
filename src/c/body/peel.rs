@@ -8,7 +8,8 @@
 //! its own late unrolling would reach it; gcc unrolls such a loop only after those passes.
 //!
 //! Admitted: the exclusive range, both counter forms, at most `MAX_TRIPS` trips, a start the
-//! statements just before the loop seed with a constant, and a body with no yield or `par`.
+//! statements just before the loop seed with a constant, and a body with no inner loop, yield
+//! or `par` (an inner loop would be copied whole per trip, the fold reaching none of it).
 //! Each copy has its own loop label: a `continue` of the loop jumps to the end of its copy, a
 //! `break` past the last copy; a `break` or `continue` of an enclosing loop names that loop as
 //! the loop body did.  The counters are left as the whole range leaves them, or, after a
@@ -146,7 +147,7 @@ impl FnWriter<'_> {
         for op in &b.operators[1..] {
             op.walk(&mut |n| {
                 nodes += 1;
-                refused |= matches!(n, Value::Yield(_) | Value::Parallel(_));
+                refused |= matches!(n, Value::Loop(_) | Value::Yield(_) | Value::Parallel(_));
             });
         }
         // The counters step only in their iterator.

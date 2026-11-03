@@ -6223,8 +6223,8 @@ Guard `tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft`.
 ```
   (R-Peel)       A counted loop `for t in a..b` whose `a` the statements just before it
                  seed with a constant, whose `b` is a constant, with 1 ≤ b − a ≤ 8 and a
-                 body (times the trips) of at most 1200 IR nodes holding no yield or `par`
-                 and assigning no counter, is written as b − a blocks, block k setting the
+                 body (times the trips) of at most 1200 IR nodes holding no inner loop,
+                 yield or `par` and assigning no counter, is written as b − a blocks, block k setting the
                  counters to a + k and running the body; a `continue` of the loop ends its
                  block, a `break` of it leaves after the last block, an exit of an
                  enclosing loop leaves as from the loop; after the blocks the counters are

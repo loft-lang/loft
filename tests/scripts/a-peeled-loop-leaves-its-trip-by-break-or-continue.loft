@@ -7,8 +7,9 @@
 // in.  Every cell answers what the interpreter answers.
 //
 // The C writer applies it; the interpreter applies nothing and is the oracle.  Hand-computed in
-// each cell's comment.  Peeled: every loop of a constant range below nine trips here (the
-// outer loops of e7, e8 run 0..20 and are written as loops).
+// each cell's comment.  Peeled: every loop of a constant range below nine trips here but the
+// outer loops of e14 and e15, whose bodies hold an inner loop (copied whole per trip, it would
+// fold nothing); the outer loops of e7, e8 run 0..20 and are written as loops.
 //
 // @falsified-at: efbdcc591 — by hand on the C writer (the interpreter and native build run every
 //   loop as written, so `falsify.sh` reads them INERT), each plant alone failing a cell: a
@@ -151,7 +152,7 @@ fn e13() -> integer {
   for i in 0..6 if i % 2 == 1 { t += i; }
   t
 }
-// e14: peeled in peeled, the inner one left by `break` at b == a: a = 0 adds nothing, a = 1
+// e14: a peeled loop in a loop, the inner one left by `break` at b == a: a = 0 adds nothing, a = 1
 // adds b = 0, a = 2 adds b = 0, 1: 1 + 2 = 3 trips, each adding a * 10 + b + 1:
 // (10 + 0 + 1) + (20 + 0 + 1) + (20 + 1 + 1) = 11 + 21 + 22 = 54
 fn e14() -> integer {
@@ -164,7 +165,8 @@ fn e14() -> integer {
   }
   t
 }
-// e15: an unpeeled loop inside a copy, its own `continue` and a `break` of the copy's loop:
+// e15: a loop whose body holds an unpeeled loop (so it is written as a loop), its own
+// `continue` and a `break` of the outer loop from inside it:
 // s = 0: j in 0..12 adds the odd j (36); s = 1: j = 0 breaks the peeled loop -> 36
 fn e15() -> integer {
   t = 0;
