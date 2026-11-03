@@ -333,4 +333,4 @@ Opened and closed in the same change; the chapter's `OPEN:` line never carried i
   or text element's parts are evaluated into temps before the clear, a record element's literal
   is built into a buffer of its own that the field's assignment delivers, and a comprehension
   takes its own buffer.  Guard
-  `tests/scripts/2397-a-literal-reads-its-field-under-another-name.loft`.
+  the loft-suite cell `rules/ownership/O-Detach/2397-a-literal-reads-its-field-under-another-name.loft`.
