@@ -235,8 +235,9 @@ def repo_row(sha):
         parts = line.split("\t")
         if len(parts) >= 4 and not line.startswith("#"):
             try:
-                if int(parts[3]) > 0:
-                    census.add(parts[2].strip())
+                # Rule and count are the last two columns, with or without the writer column.
+                if int(parts[-1]) > 0:
+                    census.add(parts[-2].strip())
             except ValueError:
                 pass
     named = cited["tests"] & rules

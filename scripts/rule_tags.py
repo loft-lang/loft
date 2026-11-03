@@ -521,12 +521,14 @@ def census_rules():
         parts = line.rstrip("\n").split("\t")
         if len(parts) < 4:
             continue
+        # The rule and its count are the last two columns, whether the row names its writer
+        # (`program commit writer rule count`) or not (the older four-column form).
         try:
-            count = int(parts[3])
+            count = int(parts[-1])
         except ValueError:
             continue
         if count > 0:
-            out.add(parts[2].strip())
+            out.add(parts[-2].strip())
     return out
 
 
@@ -541,7 +543,7 @@ def census_listed():
     for line in lines:
         parts = line.rstrip("\n").split("\t")
         if not line.startswith("#") and len(parts) >= 4:
-            out.add(parts[2].strip())
+            out.add(parts[-2].strip())
     return out
 
 

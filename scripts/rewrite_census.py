@@ -8,6 +8,7 @@
     scripts/rewrite_census.py --bless-unless-drop   # one run that checks and records: fails on a
                                          #   drop (writing nothing), else writes the counts
     scripts/rewrite_census.py --only 12_drawing,drawing
+    scripts/rewrite_census.py --writer c # one writer only (`rust`, `c`; default both)
     scripts/rewrite_census.py --verbose  # also list every rise and new row
     LOFT_BIN=<loft> scripts/rewrite_census.py   # census another build (default target/release/loft)
 
@@ -21,9 +22,12 @@ it, and nothing but a compiler change can move it.
 
 How
 ---
-Each program is compiled to native Rust only (`--native-emit --lean`, no rustc, ~0.2 s) with
+Each program is written by BOTH compiled writers without compiling the result — as Rust
+(`--native-emit --lean`, no rustc) and as C (`--emit-c`, no C compiler), ~0.2 s each — with
 `LOFT_REWRITE_CENSUS` set; the compiler counts each rewrite where it is ADMITTED
-(`src/rewrite_census.rs`).  The body is the benches, the code whose speed is the goal: every
+(`src/rewrite_census.rs`).  A row is per (program, writer, rule): a writer's count holds the
+admissions decided before any writer (the parse and IR phases, which both runs repeat) and that
+writer's own, so a clause one writer drops fails on that writer's row alone.  The body is the benches, the code whose speed is the goal: every
 `bench/NN_*/bench.loft` lane in this repo, and the portal libraries' own benches wherever a
 checkout exists (`bench/portal/libs.tsv`, `checkout_libs.sh`).  A library row carries the
 checkout's commit and every dependency version its lane's `loft.lock` resolved
@@ -40,11 +44,12 @@ counted them all, so a rule's count moved between programs from build to build w
 unchanged (loft#1886).  With the libraries in the program, the count depends on the compiler and
 the sources alone.
 
-Each program is emitted TWICE and the two sources must be the same bytes: the census needs a
+Each program is emitted TWICE per writer and the two sources must be the same bytes: the census needs a
 deterministic emitter, and so does every native cache keyed on the source (a hash-ordered walk
 once made a work-buffer function's exit frees change order from run to run).
 
-The baseline is `bench/portal/rewrite_census.tsv`.  A DROP fails; a rise, a new program or a
+The baseline is `bench/portal/rewrite_census.tsv`; a row of the older four-column form (no writer)
+reads as the Rust writer's.  A DROP fails; a rise, a new program or a
 new rule is printed and passes.  A deliberate decline lands with `--bless` in the same commit,
 so the drop is visible in its review.  A program absent from this run (no checkout) is skipped.
 """
@@ -60,6 +65,13 @@ ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "bench" / "portal" / "rewrite_census.tsv"
 sys.path.insert(0, str(ROOT / "bench" / "portal"))
 from portal import library_packages  # noqa: E402  (the one home of which libraries)
+
+# Each compiled writer: its name in the baseline, the source it writes, its flags.  `rust` is
+# the rustc writer (census phase `native`), `c` the C writer (phase `c`).
+WRITERS = {
+    "rust": (".rs", lambda out: ["--native-emit", str(out), "--lean"]),
+    "c": (".c", lambda out: ["--emit-c", str(out)]),
+}
 
 
 def programs():
@@ -102,33 +114,35 @@ def resolved(pkg):
     return "".join(sorted(deps))
 
 
-def census(loft, prog):
-    """The program's admissions, from the first of two emissions; the second must be the
-    same bytes — the emitter is deterministic, and a hash-ordered walk that is not makes the
-    same program a different source from run to run (a native cache miss for nothing)."""
+def census(loft, prog, writer):
+    """The program's admissions under `writer`, from the first of two emissions; the second
+    must be the same bytes — the emitter is deterministic, and a hash-ordered walk that is not
+    makes the same program a different source from run to run (a native cache miss for
+    nothing)."""
     name, commit, cwd, argv = prog
+    ext, flags = WRITERS[writer]
     with tempfile.TemporaryDirectory() as tmp:
         tsv = Path(tmp) / "census.tsv"
         emitted = []
         for i in range(2):
-            out = Path(tmp) / f"out{i}.rs"
+            out = Path(tmp) / f"out{i}{ext}"
             proc = subprocess.run(
-                [loft, "--native-emit", str(out), "--lean", *argv],
+                [loft, *flags(out), *argv],
                 cwd=cwd, capture_output=True, text=True, timeout=300,
                 env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
                      "LOFT_REWRITE_CENSUS": str(tsv) if i == 0 else ""},
             )
             if proc.returncode != 0 or not out.exists() or (i == 0 and not tsv.exists()):
-                return name, commit, None, proc.stderr.strip().splitlines()[-1:] or ["no output"]
+                return name, commit, writer, None, proc.stderr.strip().splitlines()[-1:] or ["no output"]
             emitted.append(out.read_bytes().splitlines())
         if emitted[0] != emitted[1]:
             at = next((k for k, (a, b) in enumerate(zip(*emitted)) if a != b), min(map(len, emitted)))
-            return name, commit, None, [f"two emissions differ from line {at + 1} — the emitter is not deterministic"]
+            return name, commit, writer, None, [f"two emissions differ from line {at + 1} — the emitter is not deterministic"]
         counts = {}
         for line in tsv.read_text().splitlines():
             rule, _, n = line.partition("\t")
             counts[rule] = int(n)
-        return name, commit, counts, None
+        return name, commit, writer, counts, None
 
 
 def rust_writer_env():
@@ -159,13 +173,16 @@ def warm_dependencies(loft, progs):
 
 
 def read_baseline():
+    """`(program, writer) → (commit, {rule: count})`; a four-column row is the Rust writer's."""
     rows = {}
     if BASELINE.is_file():
         for line in BASELINE.read_text().splitlines():
             if line.startswith("#") or not line.strip():
                 continue
-            name, commit, rule, n = line.split("\t")
-            rows.setdefault(name, (commit, {}))[1][rule] = int(n)
+            parts = line.split("\t")
+            name, commit, rule, n = parts[0], parts[1], parts[-2], parts[-1]
+            writer = parts[2] if len(parts) == 5 else "rust"
+            rows.setdefault((name, writer), (commit, {}))[1][rule] = int(n)
     return rows
 
 
@@ -174,11 +191,11 @@ def write_baseline(results):
         "# The rewrite census: how often each rewrite is admitted per bench program.",
         "# Written by `scripts/rewrite_census.py --bless`; a drop against it fails `make rewrite-census`.",
         "# program <TAB> commit (a library checkout's, then `+name@version` per dependency its lane "
-        "resolved; `-` for an in-repo lane) <TAB> rule <TAB> count",
+        "resolved; `-` for an in-repo lane) <TAB> writer (`rust`, `c`) <TAB> rule <TAB> count",
     ]
-    for name, commit, counts in sorted(results, key=lambda r: r[0]):
+    for name, commit, writer, counts in sorted(results, key=lambda r: (r[0], r[2])):
         for rule, n in sorted(counts.items()):
-            lines.append(f"{name}\t{commit}\t{rule}\t{n}")
+            lines.append(f"{name}\t{commit}\t{writer}\t{rule}\t{n}")
     BASELINE.write_text("\n".join(lines) + "\n")
 
 
@@ -192,37 +209,49 @@ def main() -> int:
     only = None
     if "--only" in args:
         only = set(args[args.index("--only") + 1].split(","))
+    writers = list(WRITERS)
+    if "--writer" in args:
+        writers = args[args.index("--writer") + 1].split(",")
+        unknown = [w for w in writers if w not in WRITERS]
+        if unknown:
+            print(f"rewrite census: no writer {', '.join(unknown)} (the writers: {', '.join(WRITERS)})")
+            return 2
     # Absolute: each program is compiled from its own directory, where a relative path
     # (`make after-fix` passes `target/probe/probe/loft`) names nothing.
     loft = os.path.abspath(os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft"))
     progs = [p for p in programs() if only is None or p[0] in only]
     warm_dependencies(loft, progs)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        done = list(pool.map(lambda p: census(loft, p), progs))
+        done = list(pool.map(lambda pw: census(loft, *pw),
+                             [(p, w) for p in progs for w in writers]))
     results, failed = [], []
-    for name, commit, counts, err in done:
+    for name, commit, writer, counts, err in done:
         if counts is None:
-            failed.append(f"{name}: {err[0]}")
+            failed.append(f"{name} ({writer}): {err[0]}")
         else:
-            results.append((name, commit, counts))
+            results.append((name, commit, writer, counts))
     base = read_baseline()
     drops, notes = [], []
-    for name, commit, counts in results:
-        if name not in base:
-            notes.append(f"{name}: no baseline row yet")
+    for name, commit, writer, counts in results:
+        if (name, writer) not in base:
+            notes.append(f"{name} ({writer}): no baseline row yet")
             continue
-        bcommit, bcounts = base[name]
+        bcommit, bcounts = base[(name, writer)]
         if bcommit != commit:
-            notes.append(f"{name}: the checkout moved ({bcommit} → {commit}), not judged")
+            notes.append(f"{name} ({writer}): the checkout moved ({bcommit} → {commit}), not judged")
             continue
+        # The writer goes after the counts: `perf_check.py` reads the program off
+        # "<rule> in <program>:".
         for rule in sorted(set(bcounts) | set(counts)):
             was, now = bcounts.get(rule, 0), counts.get(rule, 0)
             if now < was:
-                drops.append(f"{rule} in {name}: {was} → {now}")
+                drops.append(f"{rule} in {name}: {was} → {now} ({writer})")
             elif now > was:
-                notes.append(f"{rule} in {name}: {was} → {now}")
-    print(f"rewrite census: {len(results)} programs, "
-          f"{sum(sum(c.values()) for _, _, c in results)} admissions")
+                notes.append(f"{rule} in {name}: {was} → {now} ({writer})")
+    for writer in writers:
+        mine = [c for _, _, w, c in results if w == writer]
+        print(f"rewrite census ({writer}): {len(mine)} programs, "
+              f"{sum(sum(c.values()) for c in mine)} admissions")
     if notes and ("--verbose" in args or bless is False and len(notes) <= 10):
         for n in notes:
             print(f"  note: {n}")
@@ -233,7 +262,8 @@ def main() -> int:
     if guarded and not drops and not failed:
         bless = True
     if bless:
-        kept = [(n, *base[n]) for n in base if n not in {r[0] for r in results}]
+        ran = {(r[0], r[2]) for r in results}
+        kept = [(n, base[(n, w)][0], w, base[(n, w)][1]) for n, w in base if (n, w) not in ran]
         write_baseline(results + kept)
         print(f"wrote {BASELINE.relative_to(ROOT)}")
         return 0
