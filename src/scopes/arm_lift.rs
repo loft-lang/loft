@@ -758,7 +758,7 @@ impl Scopes<'_> {
             crate::use_analysis::Own::Owned if bound == u16::MAX => {
                 Some(ArmBind::Bind(Self::reopt(opt, tp)))
             }
-            // @PLN155 phase 2 — `None` means "no bind needed", the answer for a tail that owns.
+            // `None` means "no bind needed", the answer for a tail that owns.
             // Declining on `Unknown` would BIND a temp on a shape the oracle cannot read, which
             // adds a store rather than withholding a free; the safe direction here is not
             // obviously the conservative one.

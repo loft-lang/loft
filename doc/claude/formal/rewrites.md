@@ -3228,9 +3228,9 @@ the C ship lane.  Switch `LOFT_NO_SLICE_INTO`; cells
                  the field's; anything else keeps the slice.
 ```
 
-**In words.**  @PLN210 P23.  Once the decoder's tree was built outside the store the place was
-no longer a store vector, and this rule stopped firing: each byte string minted a store, sliced
-into it, copied the slice into the tree and freed the store.  The copy from the source is the
+**In words.**  A decoder's tree built outside the store holds no store vector at the place, so
+the store form of this rule cannot fire there: each byte string would mint a store, slice
+into it, copy the slice into the tree and free the store.  The copy from the source is the
 one copy left.  pluginabi `check_request` 516 → 377 µs on gcc, 572 → 426 µs on clang, after
 the range clause above (2.22× → 1.42× and 2.6× → 1.6× its twin).  No admitted site reads a
 transient vector field yet (`(R-Transient)` declines an `OpGetField` of one), so no value shows
