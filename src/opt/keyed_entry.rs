@@ -446,6 +446,9 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             // A generator's body is a state machine the writers build per yield.
             || matches!(def.returned().base(), crate::data::Type::Iterator(..))
         {
+            if trace() && matches!(def.returned().base(), crate::data::Type::Iterator(..)) {
+                eprintln!("[keyed-entry] fn={} declined: a generator", def.name());
+            }
             continue;
         }
         let mut mints = false;
@@ -550,6 +553,9 @@ fn replacement(
             _ => false,
         };
         if !ok {
+            if trace() {
+                eprintln!("[keyed-entry] fn={} declined: a text key read late", data.def(d).name());
+            }
             return None;
         }
     }

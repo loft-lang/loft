@@ -1,0 +1,304 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
+//! `@FR-R-ElemFirst` in the IR phase: a local vector built by a literal and consumed once as a
+//! field of an appended record (`t = []; …t += …; out += [R { f: t, … }]`) is built INSIDE the
+//! appended element.  The pairing is `opt::hoist::element_first`'s, the analysis the writers
+//! read; this writes its answer into the IR, so every backend runs it:
+//!
+//! * at the first temp's declaration, the append's reservation and mint
+//!   (`OpPreAllocVector(out, 1, size) · elm = OpNewRecord(out, tp, fld)`) and a zero for every
+//!   paired field's vector handle;
+//! * each temp's declaration (`OpDatabase(vdb) · t = OpGetField(vdb, 0, ftp) · OpSetInt4(vdb,
+//!   0, 0)`) becomes `t = OpGetField(elm, off, ftp)` — the temp IS the element's field;
+//! * at the append, the reservation, the mint, the paired zeros and the paired
+//!   `OpAppendVector` copies go; the scalar sets and the finish stay, so the element is
+//!   invisible until the finish exactly as before.
+//!
+//! Applied to a pair whose every temp is literal-built and whose append stands once.  A temp a
+//! call fills, an append in each arm of an `if`, a comprehension's row and a function whose
+//! exits copy a temp (`@FR-O-ViewField`) are still the writers' (they ask the same analysis of
+//! the IR they receive, which no longer shows a pair this pass took).
+//!
+//! `LOFT_IR_ELEM_FIRST=1` turns it on while it is compared with the writers' clauses;
+//! `LOFT_NO_ELEMENT_FIRST=1` turns the rule off; `LOFT_TRACE_IR_ELEM_FIRST=1` names each pair.
+use crate::data::{Data, DefType, Value};
+use crate::database::Stores;
+use crate::opt::hoist::{ElemFirst, element_first};
+use std::collections::HashMap;
+
+fn enabled() -> bool {
+    crate::env_once!(std::env::var("LOFT_IR_ELEM_FIRST").is_ok_and(|v| v != "0"))
+        && !crate::env_once!(std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"))
+}
+
+fn trace() -> bool {
+    crate::env_once!(std::env::var("LOFT_TRACE_IR_ELEM_FIRST").is_ok_and(|v| v != "0"))
+}
+
+struct Ops {
+    database: u32,
+    get_field: u32,
+    set_int4: u32,
+    pre_alloc: u32,
+    new_record: u32,
+    append_vector: u32,
+}
+
+/// What one function's rewrite does, keyed by variable.
+#[derive(Default)]
+struct Plan {
+    /// A temp's `__vdb` witness → (pair, bind).
+    decl: HashMap<u16, (usize, usize)>,
+    /// An element variable → its pair.
+    elm: HashMap<u16, usize>,
+}
+
+/// Rewrite every admitted pair of the program; answers how many.
+pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
+    if !enabled() {
+        return 0;
+    }
+    let ops = Ops {
+        database: data.def_nr("OpDatabase"),
+        get_field: data.def_nr("OpGetField"),
+        set_int4: data.def_nr("OpSetInt4"),
+        pre_alloc: data.def_nr("OpPreAllocVector"),
+        new_record: data.def_nr("OpNewRecord"),
+        append_vector: data.def_nr("OpAppendVector"),
+    };
+    if [
+        ops.database,
+        ops.get_field,
+        ops.set_int4,
+        ops.pre_alloc,
+        ops.new_record,
+        ops.append_vector,
+    ]
+    .contains(&u32::MAX)
+    {
+        return 0;
+    }
+    let mut total = 0usize;
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if def.def_type != DefType::Function
+            || matches!(def.code(), Value::Null)
+            || def.is_operator()
+            || !def.rust().is_empty()
+            || !def.native().is_empty()
+        {
+            continue;
+        }
+        let mut appends = false;
+        def.code().walk(&mut |n| {
+            if matches!(n, Value::Call(c, _) if *c == ops.append_vector) {
+                appends = true;
+            }
+        });
+        if !appends {
+            continue;
+        }
+        let map = element_first(data, stores, d, None);
+        let pairs: Vec<&ElemFirst> = map
+            .pairs
+            .iter()
+            .filter(|p| {
+                p.aliases.is_empty()
+                    && p.binds.iter().all(|b| !b.from_call)
+                    && !map.whole_copies.iter().any(|(_, e)| *e == p.elm)
+            })
+            .collect();
+        if pairs.is_empty() {
+            continue;
+        }
+        let mut plan = Plan::default();
+        for (pi, p) in pairs.iter().enumerate() {
+            plan.elm.insert(p.elm, pi);
+            for (bi, b) in p.binds.iter().enumerate() {
+                plan.decl.insert(b.vdb, (pi, bi));
+            }
+        }
+        let _census = crate::rewrite_census::InBody::enter("ir", def.name());
+        let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
+        let mut minted = vec![false; pairs.len()];
+        rewrite(&mut code, &pairs, &plan, &ops, &mut minted);
+        data.definitions[d as usize].code = code;
+        let n = minted.iter().filter(|m| **m).count();
+        assert_eq!(
+            n,
+            pairs.len(),
+            "internal compiler error — (R-ElemFirst) paired an append in `{}` whose temp's \
+             declaration the IR form did not find; LOFT_NO_ELEMENT_FIRST=1 keeps the copy",
+            data.def(d).name()
+        );
+        data.definitions[d as usize].variables.reset_intervals();
+        crate::scopes::compute_function_intervals(data, d);
+        crate::scopes::assign_function_slots(data, d);
+        if trace() {
+            eprintln!(
+                "[ir-elem-first] fn={} {n} element(s) built in place",
+                data.def(d).name()
+            );
+        }
+        crate::rewrite_census::fired("R-ElemFirst", n);
+        total += n;
+    }
+    total
+}
+
+fn var_of(v: Option<&Value>) -> Option<u16> {
+    match v.map(Value::unspan) {
+        Some(Value::Var(x)) => Some(*x),
+        _ => None,
+    }
+}
+
+fn int_of(v: Option<&Value>) -> Option<i32> {
+    match v.map(Value::unspan) {
+        Some(Value::Int(n)) => Some(*n),
+        _ => None,
+    }
+}
+
+/// Rewrite the statements of every block under `v`.
+fn rewrite(v: &mut Value, pairs: &[&ElemFirst], plan: &Plan, ops: &Ops, minted: &mut [bool]) {
+    if let Value::Block(bl) | Value::Loop(bl) = v.unspan_mut() {
+        let old = std::mem::take(&mut bl.operators);
+        let mut out: Vec<Value> = Vec::with_capacity(old.len());
+        let mut i = 0;
+        while i < old.len() {
+            i += statement(&old, i, pairs, plan, ops, minted, &mut out);
+        }
+        bl.operators = out;
+    }
+    v.for_each_child_mut(&mut |c| rewrite(c, pairs, plan, ops, minted));
+}
+
+/// Emit `ops[i]` (or what replaces it) into `out`; answers how many statements it consumed.
+#[allow(clippy::too_many_arguments)]
+fn statement(
+    stmts: &[Value],
+    i: usize,
+    pairs: &[&ElemFirst],
+    plan: &Plan,
+    ops: &Ops,
+    minted: &mut [bool],
+    out: &mut Vec<Value>,
+) -> usize {
+    let s = &stmts[i];
+    match s.unspan() {
+        // A temp's declaration: `OpDatabase(vdb, …) · t = OpGetField(vdb, 0, ftp) ·
+        // OpSetInt4(vdb, 0, 0)` — the element's mint (first temp), then the field-slot bind.
+        Value::Call(c, a) if *c == ops.database => {
+            let Some(&(pi, bi)) = var_of(a.first()).and_then(|vdb| plan.decl.get(&vdb)) else {
+                out.push(s.clone());
+                return 1;
+            };
+            let p = pairs[pi];
+            let b = &p.binds[bi];
+            let vdb = b.vdb;
+            let Some(Value::Set(tmp, bind)) = stmts.get(i + 1).map(Value::unspan) else {
+                out.push(s.clone());
+                return 1;
+            };
+            let Value::Call(gf, gargs) = bind.unspan() else {
+                out.push(s.clone());
+                return 1;
+            };
+            if *gf != ops.get_field || var_of(gargs.first()) != Some(vdb) || *tmp != b.tmp {
+                out.push(s.clone());
+                return 1;
+            }
+            let ftp = gargs.get(2).cloned().unwrap_or(Value::Int(0));
+            if b.first {
+                if p.out_fld == 65535 {
+                    out.push(Value::Call(
+                        ops.pre_alloc,
+                        vec![Value::Var(p.out), Value::Int(1), Value::Int(p.prealloc_size)],
+                    ));
+                }
+                out.push(Value::Set(
+                    p.elm,
+                    Box::new(Value::Call(
+                        ops.new_record,
+                        vec![Value::Var(p.out), Value::Int(p.out_tp), Value::Int(p.out_fld)],
+                    )),
+                ));
+                for pb in &p.binds {
+                    out.push(Value::Call(
+                        ops.set_int4,
+                        vec![Value::Var(p.elm), Value::Int(pb.field_off), Value::Int(0)],
+                    ));
+                }
+                minted[pi] = true;
+            }
+            out.push(Value::Set(
+                b.tmp,
+                Box::new(Value::Call(
+                    ops.get_field,
+                    vec![Value::Var(p.elm), Value::Int(b.field_off), ftp],
+                )),
+            ));
+            // The declaration's length reset on the witness goes with it.
+            let reset = stmts.get(i + 2).is_some_and(|r| {
+                matches!(r.unspan(), Value::Call(c, ra) if *c == ops.set_int4
+                    && var_of(ra.first()) == Some(vdb))
+            });
+            if reset { 3 } else { 2 }
+        }
+        // The append's reservation, when the next statement is a paired mint.
+        Value::Call(c, a) if *c == ops.pre_alloc && int_of(a.get(1)) == Some(1) => {
+            let next = stmts[i + 1..]
+                .iter()
+                .find(|o| !matches!(o.unspan(), Value::Line(_)));
+            let paired = next.is_some_and(|n| {
+                matches!(n.unspan(), Value::Set(e, m) if plan.elm.contains_key(e)
+                    && matches!(m.unspan(), Value::Call(md, ma) if *md == ops.new_record
+                        && var_of(ma.first()) == var_of(a.first())))
+            });
+            if !paired {
+                out.push(s.clone());
+            }
+            1
+        }
+        // The append's mint, and an element's null pre-init (it would reset the element the
+        // declaration minted).
+        Value::Set(e, m)
+            if plan.elm.contains_key(e)
+                && (matches!(m.unspan(), Value::Null)
+                    || matches!(m.unspan(), Value::Call(md, _) if *md == ops.new_record)) =>
+        {
+            1
+        }
+        // The paired zeros on the element.
+        Value::Call(c, a)
+            if *c == ops.set_int4
+                && var_of(a.first())
+                    .and_then(|e| plan.elm.get(&e))
+                    .is_some_and(|&pi| {
+                        int_of(a.get(1))
+                            .is_some_and(|off| pairs[pi].binds.iter().any(|b| b.field_off == off))
+                    }) =>
+        {
+            1
+        }
+        // The paired copies into the element's field.
+        Value::Call(c, a)
+            if *c == ops.append_vector
+                && matches!(a.first().map(Value::unspan), Some(Value::Call(gd, ga))
+                    if *gd == ops.get_field
+                        && var_of(ga.first())
+                            .and_then(|e| plan.elm.get(&e))
+                            .is_some_and(|&pi| int_of(ga.get(1)).is_some_and(|off| {
+                                pairs[pi].binds.iter().any(|b| b.field_off == off)
+                            }))) =>
+        {
+            1
+        }
+        _ => {
+            out.push(s.clone());
+            1
+        }
+    }
+}

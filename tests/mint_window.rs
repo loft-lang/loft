@@ -32,9 +32,11 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     // Two literal groups, four elements.
     ("n_m6", 4, 8),
     // Keyed inserts: the sorted insert's claimed record takes the address and the finish
-    // files it by its key; the hash insert is `(R-KeyedEntry)`'s — one probe answers the
-    // entry under the key and the values are written into it, no record claimed, no window.
-    ("n_m7", 1, 2),
+    // files it by its key; the hash insert is `(R-KeyedEntry)`'s — the IR's one probe answers
+    // the entry under the key (no record claimed, no window), and the entry is a record
+    // reference the view clause holds the address of for its one write (the loop emitted
+    // twice behind its guard): three addresses, four writes.
+    ("n_m7", 3, 4),
     ("n_m10", 1, 2),
     ("n_m11", 2, 4),
     // m12's and m13's callees answer a TUPLE (two and seven scalars), delivered into the
@@ -185,10 +187,13 @@ fn each_cell_emits_exactly_the_forms_predicted() {
 fn the_switch_restores_the_store_write() {
     let got = counts(&emit("off", &[("LOFT_NO_MINT_WINDOW", "1")]));
     for (name, _, _) in EXPECTED {
+        // m7's hash entries are no mint: the view clause holds their two addresses, which
+        // this switch does not govern.
+        let kept = if *name == "n_m7" { 2 } else { 0 };
         assert_eq!(
             got.get(*name).copied().unwrap_or_default().0,
-            0,
-            "{name}: no element holds an address with the switch on"
+            kept,
+            "{name}: no minted element holds an address with the switch on"
         );
     }
 }

@@ -639,8 +639,10 @@ mod tests {
         // clause adds two, `PresenceEmitter` for `OpConvBoolFromRef` and `OpRefIsNull`: the
         // presence test of a `τ?` value local reads its tuple's presence word; every other
         // operand falls through to the template.
+        // `@FR-R-KeyedEntry` adds two, `KeyedEntryEmitter` for the IR's `n_keyed_entry_ints`
+        // and `n_keyed_entry_text`: each key shape's fastest store call.
         assert!(
-            count <= 140,
+            count <= 142,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

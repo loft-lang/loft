@@ -108,6 +108,10 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     laps.lap("fill_loop");
     crate::opt::keyed_entry::rewrite_program(data, database);
     laps.lap("keyed_entry");
+    // `@FR-R-ElemFirst` — a literal-built vector appended once as a record field is built in
+    // the appended element, on both backends.
+    crate::opt::elem_first::rewrite_program(data, database);
+    laps.lap("elem_first");
     // `@FR-R-TextLen` — a loop counts a text's length once, until the text is written: the
     // last IR pass, so the self-tail calls are loops and no later pass reads a memo where it
     // knew `len`.
