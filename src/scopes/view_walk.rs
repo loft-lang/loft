@@ -151,7 +151,13 @@ fn reshaped_via_call(stmt: &Value, data: &Data, removed: &RemovedParams) -> Hash
 /// Record `d` for `view`, keeping [`ViewCause::Reshaped`] when both apply.
 fn record_cause(map: &mut HashMap<u16, Disturbance>, view: u16, d: Disturbance) {
     let slot = map.entry(view).or_insert(d);
-    if d.cause == ViewCause::Reshaped {
+    if d.cause == slot.cause && d.provisional != slot.provisional {
+        // One event seen twice — by a loop's whole-body shake and by its own statement: the
+        // statement's record names the line that disturbs.
+        if slot.provisional {
+            *slot = d;
+        }
+    } else if d.cause == ViewCause::Reshaped {
         *slot = d;
     }
 }
@@ -360,6 +366,8 @@ pub(super) struct ViewWalk<'a> {
     /// THROUGH such a variable names its root and the variable's own place too: on the path
     /// where the variable holds its own store, reassigning it releases what the view reads.
     maybe_own: HashSet<u16>,
+    /// Set while a loop's whole body is shaken ahead of its walk (`Disturbance::provisional`).
+    loop_edge: bool,
 }
 
 /// Does this `if` arm end by leaving the function — its last statement a `return`?
@@ -412,6 +420,7 @@ impl ViewWalk<'_> {
             rebound: None,
             ended_below: usize::MAX,
             maybe_own: HashSet::default(),
+            loop_edge: false,
         };
         walk.walk_block(std::slice::from_ref(code));
         walk.out
@@ -436,7 +445,7 @@ impl ViewWalk<'_> {
         // body come out live across a removal at the bottom of it.
         let floor = self.open.len();
         let outer_ended = std::mem::replace(&mut self.ended_below, usize::MAX);
-        self.disturb(stmt);
+        self.disturb_loop_edge(stmt);
         self.scoped(&b.operators);
         // The BACK EDGE. The shake above could only reach views that already existed;
         // a view the body itself binds is disturbed by the same statements one turn
@@ -449,11 +458,19 @@ impl ViewWalk<'_> {
         // pass reaches the fixpoint: it starts from the state the back edge carries,
         // and a third would start from the same one.
         let before: HashSet<u16> = self.shaken.keys().copied().collect();
-        self.disturb(stmt);
+        self.disturb_loop_edge(stmt);
         if self.shaken.keys().any(|v| !before.contains(v)) || self.ended_below < floor {
             self.scoped(&b.operators);
         }
         self.ended_below = outer_ended.min(self.ended_below);
+    }
+
+    /// A loop's whole body shaken at once, ahead of its walk: what it records is provisional,
+    /// to be replaced by the disturbing statement's own record when the walk reaches it.
+    fn disturb_loop_edge(&mut self, stmt: &Value) {
+        let outer = std::mem::replace(&mut self.loop_edge, true);
+        self.disturb(stmt);
+        self.loop_edge = outer;
     }
 
     /// Descend in SOURCE ORDER, because the whole point is which came first.
@@ -1409,8 +1426,17 @@ impl ViewWalk<'_> {
                 replaced: cause == ViewCause::Grown
                     && via.is_none()
                     && self.rebound == Some(container),
+                provisional: self.loop_edge,
             };
             record_cause(&mut self.shaken, view, d);
+            // A view already condemned on the provisional record takes the line too.
+            if let Some(used) = self.out.get_mut(&view)
+                && used.provisional
+                && !d.provisional
+                && used.cause == d.cause
+            {
+                *used = d;
+            }
         }
     }
 
