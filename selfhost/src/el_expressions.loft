@@ -1505,6 +1505,10 @@ fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       // the latest statement first so the earlier places stay where they were found.
       nulls: vector<InlineNull> = [];
       for r in vars.inline_refs {
+        // Only a ref that borrows nothing: one viewing a local holds no store of its own.
+        if vars.vars[r].argument || len(el_types::deps(el_vars::tp(vars, r))) > 0 {
+          continue;
+        }
         at = -1;
         for op in bl.operators {
           if at < 0 && el_ir::reads_var(op, r) {
@@ -2546,7 +2550,7 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     return vector_field_bind(e, vars, el_ir::unspan(p.code), pt, x);
   }
   if op == "=" && struct_ref(e, el_types::base(pt)) >= 0 {
-    return record_place_write(e, el_ir::unspan(p.code), el_types::base(pt), x);
+    return record_place_write(e, vars, el_ir::unspan(p.code), el_types::base(pt), x);
   }
   v = stored(e, vars, x, pt);
   if v == null {
@@ -2565,7 +2569,7 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
 // (`w.p = v`, `xs[i] = mk(9)`): the value copied into the place (`OpCopyRecord`), the source's
 // store freed after when the value is a call that gives it away (`call_gives_away_its_store`).
 // Another record's value and a record holding a closure are refused by name.
-fn record_place_write(e: el::El, place: ir::Node, pt: ir::TypeT, x: Ex) -> Ex {
+fn record_place_write(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir::TypeT, x: Ex) -> Ex {
   rd = struct_ref(e, pt);
   if !(place is NdCall) || !(calls(e, place, "OpGetField") || calls(e, place, "OpGetVector")) {
     el::refuse(e, "an assignment to a place that is not a plain local: {place_read(e, place)}");
@@ -2591,7 +2595,116 @@ fn record_place_write(e: el::El, place: ir::Node, pt: ir::TypeT, x: Ex) -> Ex {
     },
     _ => {}
   }
-  ex(el_ir::cl(e, "OpCopyRecord", [x.code, place, ir::NdInt { n: kt + bit }]), ir::TyVoid)
+  src_code = if e.first_pass { x.code } else { staged_place_source(e, vars, place, x.code, rd, kt) };
+  ex(el_ir::cl(e, "OpCopyRecord", [src_code, place, ir::NdInt { n: kt + bit }]), ir::TyVoid)
+}
+
+// Does `n` read THROUGH `place` — a call whose first argument is the place itself (positions
+// ignored, `same_expression`)?
+fn reads_through(e: el::El, n: ir::Node, place: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => reads_through(e, inner, place),
+    NdCall { args } => {
+      if len(args) > 0 && same_expression(args[0], place) {
+        return true;
+      }
+      for a in args {
+        if reads_through(e, a, place) {
+          return true;
+        }
+      }
+      false
+    },
+    NdIf { cond, t, f } => reads_through(e, cond, place) || reads_through(e, t, place) || reads_through(e, f, place),
+    NdBlock { block } => {
+      for op in block[0].operators {
+        if reads_through(e, op, place) {
+          return true;
+        }
+      }
+      false
+    },
+    NdInsert { items } => {
+      for op in items {
+        if reads_through(e, op, place) {
+          return true;
+        }
+      }
+      false
+    },
+    NdSet { inner } => reads_through(e, inner, place),
+    _ => false
+  }
+}
+
+// Two expressions alike but for their source positions.
+fn same_expression(a: ir::Node, b: ir::Node) -> boolean {
+  match a {
+    NdSpan { inner } => same_expression(inner, b),
+    _ => match b {
+      NdSpan { inner } => same_expression(a, inner),
+      NdCall { def_nr: db, args: bs } => match a {
+        NdCall { def_nr: da, args: as_ } => {
+          if da != db || len(as_) != len(bs) {
+            return false;
+          }
+          for x in as_ {
+            if !same_expression(x, bs[x#index] ?? ir::NdNull) {
+              return false;
+            }
+          }
+          true
+        },
+        _ => false
+      },
+      _ => a == b
+    }
+  }
+}
+
+// `use_analysis::place_root`: the variable itself, or the root of an `OpGet…` read's first
+// argument; -1 for anything else.
+fn use_place_root(e: el::El, n: ir::Node) -> integer {
+  match n {
+    NdSpan { inner } => use_place_root(e, inner),
+    NdVar { n: v } => v,
+    NdCall { def_nr, args } => if starts_with(el::def(e, def_nr).name, "OpGet") && len(args) > 0 { use_place_root(e, args[0]) } else { -1 },
+    _ => -1
+  }
+}
+
+// `Parser::stage_source_inside_place` (`@FR-H-Copy`, loft#2391): a source that may lie inside the
+// place — it reads the place's root, or is a local viewing it, or a call whose result borrows a
+// parameter — is copied into a `__ref_p2_N` of its own before the write releases the place.  A
+// call's answer bound to a local is that copy; any other source is read once into a view, and an
+// absent one stays absent.
+fn staged_place_source(e: el::El, vars: el_vars::Vars, place: ir::Node, code: ir::Node, rd: integer, kt: integer) -> ir::Node {
+  root = use_place_root(e, place);
+  if root < 0 {
+    return code;
+  }
+  call = false;
+  views_root = match el_ir::unspan(code) {
+    NdVar { n: _ } => false,
+    NdBlock { block } => block[0].name != "Object" && reads_through(e, code, place),
+    NdCall { def_nr } => if starts_with(el::def(e, def_nr).name, "Op") { reads_through(e, code, place) } else { call = true; returns_argument_view(el::def(e, def_nr)) && el_ir::reads_var(code, root) },
+    _ => reads_through(e, code, place)
+  };
+  if !views_root {
+    return code;
+  }
+  if call {
+    w = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+    return el_ir::v_block([el_ir::v_set(w, code), ir::NdVar { n: w }], ir::TyReference { n: rd, dep: [w] }, "staged_place_source");
+  }
+  view = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [root] });
+  vars.vars[view].skip_free = true;
+  el_vars::mark_inline(vars, view);
+  w = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+  k = ir::NdInt { n: kt };
+  copy = el_ir::v_block([el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, k]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: view }, ir::NdVar { n: w }, k]), ir::NdVar { n: w }], ir::TyReference { n: rd, dep: [w] }, "staged_place_source");
+  absent = el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: view }]);
+  el_ir::v_block([el_ir::v_set(view, code), el_ir::v_if(absent, el_ir::cl(e, "OpNullRefSentinel", []), copy)], ir::TyReference { n: rd, dep: [w] }, "staged_place_source")
 }
 
 // `@FR-R-InPlaceLiteral` for a record literal written into a field or a vector element

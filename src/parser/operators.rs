@@ -1236,7 +1236,113 @@ impl Parser {
         // loft#1877 — the closure records the overwrite displaces release what they adopted,
         // between the right-hand side (argument one) and the copy.
         let place = self.release_displaced_closures(to, f_type);
-        self.cl("OpCopyRecord", &[code.clone(), place, Value::Int(tp_val)])
+        let (code, tp_val) = self.stage_source_inside_place(to, code, d_nr, tp, tp_val);
+        self.cl("OpCopyRecord", &[code, place, Value::Int(tp_val)])
+    }
+
+    /// `@FR-H-Copy` — a record delivered into a place leaves it holding the source's VALUE.  The
+    /// copy releases what the place owns before it writes, so a source that may lie INSIDE the
+    /// place — one that reads through it (`c.tp = match c.tp { Opt { inner } => inner, _ =>
+    /// c.tp }`, `v[0] = match v[0] { … }`), or a call whose result borrows a parameter reading
+    /// its root — would be read after its record was released, and the place took neither value
+    /// (loft#2391).  Such a
+    /// source is copied into a record of its own first, as `__p154_rhs` stages a vector field's.
+    /// A construction needs no stage.  Answers the source and the copy's type argument: a call's
+    /// give-away flag moves to the stage's own copy, the one that reads the call's answer.
+    ///
+    /// Pass 2 only, from the `__ref_p2_N` sequence: the decision reads deps, which pass 1 has not
+    /// finished, and a pass-1 mint would shift every later `__ref_N`.
+    fn stage_source_inside_place(
+        &mut self,
+        to: &Value,
+        code: &Value,
+        td: u32,
+        kt: u16,
+        tp_val: i32,
+    ) -> (Value, i32) {
+        if self.first_pass || td == u32::MAX || kt == u16::MAX {
+            return (code.clone(), tp_val);
+        }
+        let Some(root) = crate::use_analysis::place_root(to, &self.data) else {
+            return (code.clone(), tp_val);
+        };
+        // A user function answers in a store of its own (a `?` result copied into the caller's
+        // buffer) unless its result borrows a parameter; only then can its answer lie in the
+        // place.
+        // Any other source lies inside the place only by reading THROUGH it: a projection whose
+        // base is the place itself.  A sibling (`v[1] = v[0]`) is disjoint, and the place itself
+        // (`c.tp = c.tp`) is the copy's identity no-op (`(H-CopySelf)`).
+        let through = |n: &Value| {
+            matches!(n.unspan(), Value::Call(_, args)
+                if args.first().is_some_and(|a| same_expression(a, to)))
+        };
+        let views_root = match code.unspan() {
+            // A local viewing the place may view the place itself (`e = v[0]; …; v[0] = e`, the
+            // identity) or a record inside it; which, the type's deps cannot say.  That half is
+            // the scope pass's (`(H-Materialise)` for a place write) and is still open.
+            Value::Var(_) => false,
+            Value::Block(b) if b.name == "Object" => false,
+            Value::Call(d, _) if !self.data.def(*d).name().starts_with("Op") => {
+                self.data.def(*d).returns_borrowed_view() && code.reads_var(root)
+            }
+            _ => code.any_node(&mut |n| through(n)),
+        };
+        if !views_root {
+            return (code.clone(), tp_val);
+        }
+        // A call's answer bound to a local of its own is already a copy (`(H-Copy)`), owned and
+        // released by that local — absent where the call answers null.
+        if matches!(code.unspan(), Value::Call(d, _) if !self.data.def(*d).name().starts_with("Op"))
+        {
+            let w = self.vars.work_refs_p2(
+                &Type::Reference(td, crate::data::Deps::none()),
+                &mut self.lexer,
+            );
+            let staged = crate::data::v_block(
+                vec![v_set(w, code.clone()), Value::Var(w)],
+                Type::Reference(td, crate::data::Deps::frame1(w)),
+                "staged_place_source",
+            );
+            return (staged, tp_val);
+        }
+        // Any other source is read ONCE, into a view that borrows the root; an absent source
+        // stays absent, so the write remains the no-op a `null` delivery is (`(N-Store)`).
+        let view = self.vars.work_refs_p2(
+            &Type::Reference(td, crate::data::Deps::frame1(root)),
+            &mut self.lexer,
+        );
+        self.vars.set_skip_free(view);
+        self.vars.mark_inline_ref(view);
+        let w = self.vars.work_refs_p2(
+            &Type::Reference(td, crate::data::Deps::none()),
+            &mut self.lexer,
+        );
+        let plain = i32::from(kt);
+        let kt = Value::Int(plain);
+        let copy = crate::data::v_block(
+            vec![
+                v_set(w, Value::Null),
+                self.cl("OpDatabase", &[Value::Var(w), kt]),
+                self.cl(
+                    "OpCopyRecord",
+                    &[Value::Var(view), Value::Var(w), Value::Int(tp_val)],
+                ),
+                Value::Var(w),
+            ],
+            Type::Reference(td, crate::data::Deps::frame1(w)),
+            "staged_place_source",
+        );
+        let absent = self.cl("OpRefIsNull", &[Value::Var(view)]);
+        let sentinel = self.cl("OpNullRefSentinel", &[]);
+        let staged = crate::data::v_block(
+            vec![
+                v_set(view, code.clone()),
+                crate::data::v_if(absent, sentinel, copy),
+            ],
+            Type::Reference(td, crate::data::Deps::frame1(w)),
+            "staged_place_source",
+        );
+        (staged, plain)
     }
 
     /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
@@ -7570,6 +7676,20 @@ fn fault_warnings_retired() -> bool {
     ]
     .into_iter()
     .all(fault_warning_retired)
+}
+
+/// Are two expressions the same, read through their source positions?  A place and the base of a
+/// projection over it are spelled at different columns, and each carries its own `Span`s down to
+/// an index literal, so plain equality never matched them.
+fn same_expression(a: &Value, b: &Value) -> bool {
+    match (a.unspan(), b.unspan()) {
+        (Value::Call(dx, ax), Value::Call(dy, ay)) => {
+            dx == dy
+                && ax.len() == ay.len()
+                && ax.iter().zip(ay).all(|(p, q)| same_expression(p, q))
+        }
+        (x, y) => x == y,
+    }
 }
 
 #[cfg(test)]
