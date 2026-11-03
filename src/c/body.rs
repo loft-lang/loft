@@ -3521,7 +3521,7 @@ impl<'a> FnWriter<'a> {
     /// chain of `and`s) knows `0 <= x < w`, when the branch assigns neither `x` nor `w`.
     fn grid_test_facts(&mut self, cond: &Value, then: &Value) {
         let data = self.cx.data;
-        let mut conj: Vec<&Value> = Vec::new();
+        let mut conjuncts: Vec<&Value> = Vec::new();
         let mut stack = vec![cond];
         while let Some(c) = stack.pop() {
             match c.unspan() {
@@ -3529,7 +3529,7 @@ impl<'a> FnWriter<'a> {
                     stack.push(a);
                     stack.push(b);
                 }
-                other => conj.push(other),
+                other => conjuncts.push(other),
             }
         }
         let name = |d: u32| {
@@ -3541,7 +3541,7 @@ impl<'a> FnWriter<'a> {
         };
         let mut lower: Vec<u16> = Vec::new();
         let mut upper: Vec<(u16, Value)> = Vec::new();
-        for c in conj {
+        for c in conjuncts {
             let Value::Call(d, a) = c else {
                 continue;
             };
@@ -4959,24 +4959,24 @@ impl<'a> FnWriter<'a> {
                 self.flush(ind);
                 Ok(())
             }
-            Value::If(cond, t, e) => {
+            Value::If(cond, then_arm, else_arm) => {
                 let null_test = self.null_test(cond);
                 // The test first; each arm inside its braces (`@FR-E-And`, `@FR-E-Or`, as in
                 // `assign_if`).
-                let c = self.expr(cond, ind)?;
-                let c = as_cond(c)?;
-                self.line(ind, &format!("if ({}) {{", bare(&c)));
+                let test = self.expr(cond, ind)?;
+                let test = as_cond(test)?;
+                self.line(ind, &format!("if ({}) {{", bare(&test)));
                 let facts = self.grid_facts.len();
-                self.grid_test_facts(cond, t);
-                let r = self.stmt(t, ind + 1);
+                self.grid_test_facts(cond, then_arm);
+                let written = self.stmt(then_arm, ind + 1);
                 self.grid_facts.truncate(facts);
-                r?;
-                if !matches!(e.unspan(), Value::Null) {
+                written?;
+                if !matches!(else_arm.unspan(), Value::Null) {
                     self.line(ind, "} else {");
                     if null_test {
                         self.line(ind + 1, "LOFT_COLD_PATH();");
                     }
-                    self.stmt(e, ind + 1)?;
+                    self.stmt(else_arm, ind + 1)?;
                 }
                 self.line(ind, "}");
                 self.flush(ind);
