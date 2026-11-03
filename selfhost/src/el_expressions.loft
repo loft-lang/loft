@@ -8772,7 +8772,13 @@ fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts: ve
     }
   }
   first = el_ir::unspan(a.code);
-  ok_first = match first {
+  // A fresh first operand (a slice's `iter_vec`, a built `Vector`) is ADOPTED by a bound
+  // destination — `v = <block>`, no store of its own — and appended like any other in a value.
+  fresh = match first {
+    NdBlock { block } => block[0].name == "iter_vec" || block[0].name == "Vector",
+    _ => false
+  };
+  ok_first = fresh || match first {
     NdVar { n } => n != dest,
     _ => false
   };
@@ -8797,6 +8803,13 @@ fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts: ve
   if rec < 0 {
     el::refuse(e, "a vector concatenation of this element type: {type_kind(elm)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if dest >= 0 && fresh {
+    adopt: vector<ir::Node> = [el_ir::v_set(dest, a.code)];
+    for p in parts {
+      adopt += [el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: dest }, p.code, ir::NdInt { n: rec }])];
+    }
+    return ex(ir::NdInsert { items: adopt }, ir::TyRewritten { inner: vt });
   }
   target = if dest >= 0 { dest } else { el_vars::create_unique(vars, "vec", vt) };
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
