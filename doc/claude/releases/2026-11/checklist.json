@@ -1,4 +1,9 @@
 {
+  "M-changelog-read": {
+    "at": "2026-11-03 14:59",
+    "commit": "4db9a938f6a6e706f0eb3885145b8a71f2be5502",
+    "note": "read at 4db9a938f: the 2026-11 section described the cycle's language changes, fixes and stdlib additions, and nothing of its headline work \u2014 the C backend (new to users this release), its store upgrade and its live build swap; three entries added under New (c09cda4c1)."
+  },
   "M-close-plans": {
     "at": "2026-10-16 15:41",
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
