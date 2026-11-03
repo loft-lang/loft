@@ -175,6 +175,7 @@ pub(super) fn run_scan_phase(
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
+        arm_projection_temps: arm_projection_temps_in(orig_code, orig_vars, data),
         null_led: null_led_in(orig_code, data),
         null_led_first: null_led_first_binds_in(orig_code, data),
         split_binds: HashMap::default(),
@@ -775,6 +776,45 @@ fn whole_value_hoists_in(code: &Value, function: &Function, data: &Data) -> Hash
         }
     });
     whole
+}
+
+/// The compiler temps a value block binds from a PROJECTION and hands back as its tail — `{
+/// _mv_inner = OpRefFromChildRec(..); _mv_inner }`, a `match` arm's payload binding.
+/// `@FR-B-View`, `@FR-H-Materialise`.
+///
+/// Such a tail is the projection wearing a compiler name, exactly as a `??` hoist is
+/// ([`is_discharge_hoist`]), so an arm that ends in it copies where the projection spelled
+/// inline would (`Scopes::arm_bind`).  Read off the block that binds it, not off the name: a
+/// temp counts only when every bind of it that is not null is a projection.
+fn arm_projection_temps_in(code: &Value, function: &Function, data: &Data) -> HashSet<u16> {
+    let is_projection = |rhs: &Value| matches!(rhs.unspan(), Value::Call(d, _) if crate::use_analysis::is_projection_op(data, *d));
+    let mut temps: HashSet<u16> = HashSet::default();
+    code.walk(&mut |n| {
+        if let Value::Block(bl) = n.unspan()
+            && let Some(Value::Var(x)) = bl.operators.last().map(Value::unspan)
+            && function.is_compiler_generated(*x)
+            && !is_discharge_hoist(function, *x)
+            && bl
+                .operators
+                .iter()
+                .any(|op| matches!(op.unspan(), Value::Set(v, rhs) if v == x && is_projection(rhs)))
+        {
+            temps.insert(*x);
+        }
+    });
+    if temps.is_empty() {
+        return temps;
+    }
+    code.walk(&mut |n| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && temps.contains(v)
+            && !matches!(rhs.unspan(), Value::Null)
+            && !is_projection(rhs)
+        {
+            temps.remove(v);
+        }
+    });
+    temps
 }
 
 /// Variables with exactly ONE bind that is not a `null` (a `Value::Null` or the

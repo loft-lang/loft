@@ -219,9 +219,13 @@ fn the_summary_admits_the_disturbing_callees_and_no_others() {
             "n_remove_first",
             "n_remove_last",
             // A METHOD is a callee like any other (loft#2267): `vector.clear` removes every
-            // element of its `self`.  `sort` and `sort_by` overwrite the places they have, and a
-            // promoted result buffer (`File.files`' `result`) is hidden, so neither is here.
+            // element of its `self`.  `sort` and `sort_by` write each element whole
+            // (`self[at] = e`), which releases what the old element owned: a view OF an element
+            // survives, a view deeper than one ends (`(B-Disturb)`, loft#2391).  A promoted
+            // result buffer (`File.files`' `result`) is hidden, so it is not here.
             "t_6vector_clear",
+            "t_6vector_sort",
+            "t_6vector_sort_by",
         ],
         "the summary must name every definition that disturbs a caller's container through a \
          parameter, and nothing else.  The absences are the load-bearing half: `n_mk` GROWS \

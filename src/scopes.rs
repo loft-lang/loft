@@ -292,6 +292,9 @@ struct Scopes<'s> {
     multi_assigned: HashSet<u16>,
     /// The `??` hoists that hold a whole LOCAL rather than a projection ([`whole_value_hoists_in`]).
     whole_value_hoists: HashSet<u16>,
+    /// The compiler temps a value block binds from a PROJECTION and hands back as its tail —
+    /// a `match` arm's payload binding ([`arm_projection_temps_in`]).
+    arm_projection_temps: HashSet<u16>,
     /// Variables every bind of which but ONE writes `null` ([`null_led_in`]): the author's
     /// `x: T? = null; if c { x = mk() }`, which `(B-Scope)` makes the spelling of a local an
     /// arm assigns and a later statement reads.

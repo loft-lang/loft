@@ -257,6 +257,24 @@ pub fn note_released_view(
     );
 }
 
+pub fn note_overwritten_view(
+    var: &str,
+    owner: &str,
+    function: &str,
+    via: Option<&str>,
+    at: (&str, u32),
+) {
+    note(
+        (
+            format!("{}\u{0}overwrite", with_via(var, via)),
+            owner.to_string(),
+            function.to_string(),
+        ),
+        at.0,
+        at.1,
+    );
+}
+
 pub fn note_reassigned_view(
     var: &str,
     owner: &str,
@@ -346,6 +364,14 @@ fn view_sentence(row: &(String, String, String)) -> String {
              field of `{container}` that `{name}` views is set to a value that may be \
              null{via} while `{name}` is in use — writing null releases the record the \
              view names. Writes through `{name}` no longer reach `{container}`."
+        )
+    } else if let Some(name) = var.strip_suffix("\u{0}overwrite") {
+        let (name, via) = peel_via(name);
+        format!(
+            "in `{function}`, `{name}` was copied out of `{container}` because the part \
+             of `{container}` that holds it is given a whole new value{via} while `{name}` \
+             is in use — the write releases what the old value owned, and `{name}` names a \
+             piece of it. Writes through `{name}` no longer reach `{container}`."
         )
     } else if let Some(name) = var.strip_suffix("\u{0}grow") {
         let (name, via) = peel_via(name);

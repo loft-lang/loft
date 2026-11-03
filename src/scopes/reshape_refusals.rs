@@ -392,6 +392,13 @@ fn def_reshape_refusals(
                      `{container}` leaves that place with nothing to point at"
                 ),
             ),
+            ViewCause::Overwritten => (
+                format!("overwrite the part of `{container}` that holds `{view_name}`"),
+                format!(
+                    "the write releases what the old value owned, so a write through \
+                     `{view_name}` would no longer reach `{container}`"
+                ),
+            ),
             ViewCause::Released => (
                 format!("write a value that may be null into a field of `{container}`"),
                 format!(
@@ -540,30 +547,45 @@ fn def_reshape_refusals(
                     continue;
                 }
                 reported.insert((k, j));
-                let (does, why, after) = match cause {
-                    ViewCause::Grown => (
-                        "grows",
-                        "and a container that outgrows its allocation moves every element",
-                        "growth",
-                    ),
-                    _ => (
-                        "removes from",
-                        "which renumbers the remaining elements",
-                        "removal",
-                    ),
+                let cname = function.name(place.0);
+                let fname = cdef.original_name();
+                let cparam = &cdef.attributes[k].name;
+                let vparam = &attr.name;
+                // An overwrite moves no element: it releases the old value's records, so the
+                // cure is a value that does not live inside the container.
+                let reason = if cause == ViewCause::Overwritten {
+                    format!(
+                        "`{fname}` gives a part of `{cparam}` a whole new value, which releases \
+                         what the old value owned while `{vparam}` still references part of \
+                         it, so `{vparam}` would name a released record. Pass a value that \
+                         does not live inside `{cname}` instead"
+                    )
+                } else {
+                    let (does, why, after) = if cause == ViewCause::Grown {
+                        (
+                            "grows",
+                            "and a container that outgrows its allocation moves every element",
+                            "growth",
+                        )
+                    } else {
+                        (
+                            "removes from",
+                            "which renumbers the remaining elements",
+                            "removal",
+                        )
+                    };
+                    format!(
+                        "`{fname}` {does} `{cparam}`, {why} while `{vparam}` still \
+                         references one, so a write through `{vparam}` would be lost. Pass \
+                         the INDEX instead and read the element again after the {after}"
+                    )
                 };
                 out.push(ReshapeRefusal {
                     file: file.to_string(),
                     line,
                     message: format!(
                         "cannot pass both `{cname}` and a reference into it to `{fname}` — \
-                         `{fname}` {does} `{cparam}`, {why} while `{vparam}` still references \
-                         one, so a write through `{vparam}` would be lost. Pass the INDEX \
-                         instead and read the element again after the {after}",
-                        cname = function.name(place.0),
-                        fname = cdef.original_name(),
-                        cparam = cdef.attributes[k].name,
-                        vparam = attr.name,
+                         {reason}"
                     ),
                 });
             }

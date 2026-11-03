@@ -883,7 +883,8 @@ impl Scopes<'_> {
                 // itself, which `(B-Copy)` copies wherever it is spelled — the temp only saved a
                 // second evaluation of the subject (loft#1752, `whole_value_hoists_in`).
                 if function.is_compiler_generated(*x) && !self.whole_value_hoists.contains(x) {
-                    if !(is_discharge_hoist(function, *x)
+                    if !((is_discharge_hoist(function, *x)
+                        || self.arm_projection_temps.contains(x))
                         && self.views_to_materialise.contains_key(&bound))
                     {
                         return None;
