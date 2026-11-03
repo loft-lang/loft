@@ -1855,6 +1855,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       }
     },
     SVecLit { items: _ } => vector_value(e, vars, n).x,
+    SComprehension { at: _ } => comprehension_value(e, vars, n),
     SAs { at, e: ae, tp: at_tp, checked } => cast_expr(e, vars, ae, at_tp),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     SSizeof { kind, tp: st } => sizeof_expr(e, vars, kind, st),
@@ -7144,6 +7145,30 @@ fn vector_past_end(e: el::El, vec: integer, idx: integer) -> ir::Node {
 // `_comp_N` (the second pass) and pushed (`fuse_scalar_append`), the local given its store first
 // (`insert_new`).  A range walks as a range `for` does.  A literal source, a reversed or sliced
 // walk, a constant fill or unroll, and an element that is not a plain scalar are refused by name.
+// `parse_vector_for` in value position: the comprehension built into a `_vec_N` of its own, the
+// build a "Vector comprehension" block answering it — the walk's start grouped as one insert,
+// as Rust's value form keeps it.
+fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
+  built = comprehension_into(e, vars, v, n);
+  vt = el_vars::tp(vars, v);
+  if e.first_pass || len(e.refused) > 0 {
+    return ex(ir::NdNull, vt);
+  }
+  items = match built.code { NdInsert { items: its } => its, _ => return ex(ir::NdNull, ir::TyUnknown { n: 0 }) };
+  ops: vector<ir::Node> = [];
+  for it in items {
+    if it#index < 3 {
+      ops += [it];
+    }
+  }
+  if len(items) > 3 && items[-1] is NdLoop {
+    ops += [ir::NdInsert { items: items[3..-1] }, items[-1]];
+  }
+  ops += [ir::NdVar { n: v }];
+  ex(el_ir::v_block(ops, vt, "Vector comprehension"), vt)
+}
+
 fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   binds: vector<text> = [];
   source = 0;
