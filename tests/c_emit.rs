@@ -6473,6 +6473,20 @@ fn in_binary_natives_run_on_the_c_as_on_the_interpreter() {
 /// (`hello 0`, the first slot's cid); a text frame is echoed; `H:<cookie>` is acked `A:0`; a
 /// seq-stamped datagram of a declared sync kind reaches `on_event` at the next tick and is
 /// echoed over the WebSocket; `quit` stops the run and the program exits 0.
+/// A port free for TCP AND UDP at once: the engine host binds both on one number, and a port
+/// free for TCP alone was taken for UDP by a test running beside it on a busy Windows leg — the
+/// host then served without UDP (no `X-Loft-UDP` cookie), as it should.
+fn free_tcp_and_udp_port() -> u16 {
+    for _ in 0..64 {
+        let tcp = std::net::TcpListener::bind("127.0.0.1:0").expect("a free TCP port");
+        let port = tcp.local_addr().expect("its address").port();
+        if std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    panic!("no port free for both TCP and UDP in 64 tries")
+}
+
 #[test]
 fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
     use std::io::{Read, Write};
@@ -6484,10 +6498,7 @@ fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
     let loft = env!("CARGO_BIN_EXE_loft");
     let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
     for backend in ["--native-c", "--interpret"] {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .and_then(|l| l.local_addr())
-            .map(|a| a.port())
-            .expect("a free port");
+        let port = free_tcp_and_udp_port();
         let dir = scratch(&format!("kernel{}", &backend[2..]));
         let file = dir.join("k.loft");
         fa::write(
@@ -6631,10 +6642,7 @@ fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
     let loft = env!("CARGO_BIN_EXE_loft");
     let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
     for backend in ["--native-c", "--interpret"] {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .and_then(|l| l.local_addr())
-            .map(|a| a.port())
-            .expect("a free port");
+        let port = free_tcp_and_udp_port();
         let dir = scratch(&format!("seat{}", &backend[2..]));
         let file = dir.join("pair.loft");
         fa::write(
