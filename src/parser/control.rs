@@ -1315,7 +1315,7 @@ impl Parser {
             if !self.first_pass
                 && self.lexer.diagnostics().error_count() == 0
                 && let Value::Set(v, rhs) = n.unspan()
-                && matches!(self.vars.tp(*v), Type::Never)
+                && matches!(self.vars.tp(*v).base(), Type::Never)
                 && !matches!(rhs.unspan(), Value::Null)
             {
                 n = (**rhs).clone();
