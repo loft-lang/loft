@@ -111,39 +111,57 @@ SPIFFS area.
 
 ## Apps
 
-An app is an ESP-IDF project built for the `esp32p4`.  The Tanmatsu app template
-(`Nicolai-Electronics/tanmatsu-template`) names the ESP-IDF version and the BSP version an
-app uses.  Its `make install` uploads `application.bin` with **badgelink**, which talks over
-USB to the running launcher:
+An app is an ESP-IDF project built for the `esp32p4`, installed into `appfs` with
+**badgelink** (`badgeteam/esp32-component-badgelink`, its `tools/`).  The launcher writes the
+app there and lists it in its menu; the launcher itself is never touched.  **`idf.py flash` is
+the command to avoid**: it writes the app over the launcher.
+
+badgelink talks to the launcher over USB in **USB device mode**, not over the serial port:
+
+1. Once per machine, the udev rule that lets it open the device without root:
+   `sudo cp tools/60-badgelink.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
+   && sudo udevadm trigger`.
+2. On the launcher's home screen, press the **purple diamond key** (second from the top right)
+   **once**.  The icon at the top right turns from a bug into a USB symbol, and the P4 shows up
+   as `16d0:0f9a` instead of its serial port.  A second press switches back to debugging mode.
 
 ```sh
-badgelink.sh appfs upload application "<title>" 0 application.bin
-badgelink.sh start application
+badgelink.sh appfs list                                     # what is installed, read-only
+badgelink.sh appfs usage                                    # how full appfs is
+badgelink.sh appfs upload <slug> "<title>" <version> application.bin
+badgelink.sh appfs crc32 <slug>                             # compare with the local file's CRC-32
+badgelink.sh start <slug>
 ```
 
-The launcher writes the app into `appfs` and lists it in its menu, beside the launcher, which
-is never touched.  **`idf.py flash` is the command to avoid**: it writes the app over the
-launcher itself.
+A started app boots with the port back in debugging mode, so its console is the P4's serial
+port again while it runs.
 
 ## A loft program as an app
 
-A loft program goes onto the device as C.  The C backend writes the program and the runtime
-as one C file.  A C build loads no library's Rust part ([HARDWARE_BACKENDS.md § The
-processor](HARDWARE_BACKENDS.md#the-processor)), so an app holds only that file and the
-libraries' `[c]` parts.  `tile-world-game/sheet.loft`, Kenney's Tiny Dungeon sheet on the
-screen until space is pressed, needs four of them: `tiles.c`, `imaging_png.c`, `screen.c`
-and `input`'s `keys.c`.  It logs each step as `@t <microseconds> <event>` on the console,
-which is the USB serial port on the device.
+`loft --native-esp <dir> prog.loft` writes an ESP-IDF project into `<dir>` and builds
+`<dir>/build/application.bin`, the file badgelink uploads.  It needs ESP-IDF (the version
+`src/esp_app.rs` names, installed for `esp32p4`, found through `IDF_PATH` or under
+`~/.espressif`).
 
-What is built so far:
+- **No Rust.**  The project holds the C file the C backend writes (the program and the runtime)
+  and the `[c]` parts of the libraries the program uses.  A C build loads no library's Rust part
+  ([HARDWARE_BACKENDS.md § The processor](HARDWARE_BACKENDS.md#the-processor)).
+- **Assets.**  `--assets a,b` names the files to pack, relative to the program (a directory is
+  packed whole; the default is `assets`).  The app serves them read-only under the same
+  relative paths, so `file("assets/x.png")` finds on the device what it found on the PC.
+- **The board.**  `app_main` starts NVS and the BSP (display in RGB565, keys, audio), mounts the
+  assets, runs `main` and goes back to the launcher when it returns.
+- **Timing.**  Each start-up step prints `@boot <µs since boot> <step>` on the console, and
+  `@loft exit <n>` when the program ends.
+- **Built for speed and size.**  The shipped tier (no call chain; `--native-debug` keeps it),
+  `-O2`, a 1 kHz scheduler tick, a 64 KB main stack, no task watchdog and no radio.  ESP-IDF
+  compiles with `-ffunction-sections -fdata-sections` and links with `--gc-sections`, so only
+  the runtime functions the program reaches stay in the binary.
 
-- The program runs on the interpreter and through the C backend on a PC, with the same
-  answers.
-- The ESP-IDF project around it is not built yet ([Not yet run on a device](#verified-and-how)).
-  That project is the C file plus the four C parts, an `app_main` that starts the BSP and runs
-  the program, and the template's partition table.
-- Building it needs ESP-IDF installed.  The template's `make prepare` installs it into the
-  project, and `make eim-sdk` installs it through Espressif's installation manager.
+`tile-world-game/sheet.loft` is the worked example: Kenney's Tiny Dungeon sheet on the screen
+until space is pressed, every step logged as `@t <µs> <event>`.  Its libraries' C parts are
+`tiles.c`, `imaging_png.c`, `screen.c` and `input`'s `keys.c`, and with
+`--assets assets/sheets/tiny-dungeon.png` the app is about 520 KB.
 
 ## What runs there
 
@@ -182,13 +200,19 @@ behind the same loft API it has everywhere.
   BSP headers, with small stand-ins for the FreeRTOS and ESP-IDF headers
   ([HARDWARE_BACKENDS.md § Checking a platform section](HARDWARE_BACKENDS.md#checking-a-platform-section)).
 
-**Not yet run on a device.**  These are open:
+**On the device.**  `tile-world-game/sheet.loft`, built with `--native-esp` and installed
+with badgelink, runs: the asset filesystem, `screen`'s display section, `input`'s key polling,
+the console timing lines and the return to the launcher.  The steps that cost the most on that
+run are the open work below.
 
-- A loft program built into a Tanmatsu app: the ESP-IDF component that carries loft's C, its
-  runtime and the libraries' C parts.
-- The I2S output task and the key polling, which only real hardware (or
-  `virtual-tanmatsu-graceloader`, with the `riscv32-esp-elf` toolchain) can run.
-- A display layer that hands `tiles::present` to the panel, sized from the BSP's parameters.
+**Open:**
+
+- The BSP's start-up takes about 1.6 s of the app's launch; which part, and whether an app can
+  skip what it does not use, is not measured yet.
+- `screen`'s Tanmatsu section rotates and scales the frame one pixel at a time: showing one
+  800x480 frame takes about 63 ms, which caps a game near 15 frames a second.
+- The panel shows the restart's colours between an app's end and the launcher's first frame.
+- The I2S output task (`audio`) has not run on the device.
 - The screen's physical size, for a game that draws to scale: a loft call with a defined
   "unknown" answer, filled on the Tanmatsu from the panel's specification until the BSP
   reports it.
