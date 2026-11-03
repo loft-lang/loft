@@ -630,11 +630,13 @@ pub(super) struct Disturbance {
     /// because that is what decides which bindings survive; this only picks the SENTENCE —
     /// "cannot grow `v`" named an act the line does not perform.
     pub(super) replaced: bool,
-    /// Recorded by a LOOP's whole-body shake, which runs before the body is walked and so
-    /// carries the loop's line, not the line of the statement inside it that disturbs.  The
-    /// walk of the body replaces it with that statement's own record of the same cause
-    /// ([`super::view_walk`]'s `record_cause`), so the report points at the write.
-    pub(super) provisional: bool,
+    /// Non-zero when recorded by a LOOP's whole-body shake: the nesting level of that loop
+    /// (1 = outermost).  The shake runs at the loop's head, before the body is walked, so it
+    /// stands for a disturbance somewhere INSIDE the body and carries the loop's line.  The
+    /// walk of the body CONFIRMS it — replaces it with the disturbing statement's own record —
+    /// on every path that passes through that statement; an unconfirmed one ends at the loop's
+    /// exit, which the head reaches without passing through the body.
+    pub(super) provisional: u8,
 }
 
 impl Disturbance {

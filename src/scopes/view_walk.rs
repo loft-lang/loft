@@ -151,14 +151,15 @@ fn reshaped_via_call(stmt: &Value, data: &Data, removed: &RemovedParams) -> Hash
 /// Record `d` for `view`, keeping [`ViewCause::Reshaped`] when both apply.
 fn record_cause(map: &mut HashMap<u16, Disturbance>, view: u16, d: Disturbance) {
     let slot = map.entry(view).or_insert(d);
-    if d.cause == slot.cause && d.provisional != slot.provisional {
-        // One event seen twice — by a loop's whole-body shake and by its own statement: the
-        // statement's record names the line that disturbs.
-        if slot.provisional {
-            *slot = d;
-        }
-    } else if d.cause == ViewCause::Reshaped {
-        *slot = d;
+    match (slot.provisional, d.provisional) {
+        // A loop-head record confirmed by the statement that disturbs (`Disturbance::provisional`).
+        (p, 0) if p > 0 => *slot = d,
+        // A confirmed record is never demoted, and an outer loop's record outlives an inner one's.
+        (0, _) if d.provisional > 0 => {}
+        (p, q) if p != q && p > 0 && q > p => {}
+        (p, q) if p != q && p > 0 => *slot = d,
+        _ if d.cause == ViewCause::Reshaped => *slot = d,
+        _ => {}
     }
 }
 
@@ -366,8 +367,11 @@ pub(super) struct ViewWalk<'a> {
     /// THROUGH such a variable names its root and the variable's own place too: on the path
     /// where the variable holds its own store, reassigning it releases what the view reads.
     maybe_own: HashSet<u16>,
-    /// Set while a loop's whole body is shaken ahead of its walk (`Disturbance::provisional`).
-    loop_edge: bool,
+    /// The nesting level of the loop being walked (0: none).
+    loop_level: u8,
+    /// While a loop's whole body is shaken ahead of its walk, that loop's level; 0 otherwise
+    /// (`Disturbance::provisional`).
+    loop_edge: u8,
 }
 
 /// Does this `if` arm end by leaving the function — its last statement a `return`?
@@ -420,7 +424,8 @@ impl ViewWalk<'_> {
             rebound: None,
             ended_below: usize::MAX,
             maybe_own: HashSet::default(),
-            loop_edge: false,
+            loop_level: 0,
+            loop_edge: 0,
         };
         walk.walk_block(std::slice::from_ref(code));
         walk.out
@@ -445,7 +450,9 @@ impl ViewWalk<'_> {
         // body come out live across a removal at the bottom of it.
         let floor = self.open.len();
         let outer_ended = std::mem::replace(&mut self.ended_below, usize::MAX);
-        self.disturb_loop_edge(stmt);
+        self.loop_level = self.loop_level.saturating_add(1);
+        let level = self.loop_level;
+        self.disturb_loop_edge(stmt, level);
         self.scoped(&b.operators);
         // The BACK EDGE. The shake above could only reach views that already existed;
         // a view the body itself binds is disturbed by the same statements one turn
@@ -458,17 +465,23 @@ impl ViewWalk<'_> {
         // pass reaches the fixpoint: it starts from the state the back edge carries,
         // and a third would start from the same one.
         let before: HashSet<u16> = self.shaken.keys().copied().collect();
-        self.disturb_loop_edge(stmt);
+        self.disturb_loop_edge(stmt, level);
         if self.shaken.keys().any(|v| !before.contains(v)) || self.ended_below < floor {
             self.scoped(&b.operators);
         }
+        // The EXIT leaves from the head without passing through the body, so what the head
+        // shake stood for has not happened on it: a record no path confirmed ends here.  Read
+        // after the loop, it copied a view bound AFTER the body's disturbance on one path and
+        // never disturbed on the other (`t = x.tp` behind `x = …` in one `match` arm).
+        self.shaken.retain(|_, d| d.provisional != level);
+        self.loop_level -= 1;
         self.ended_below = outer_ended.min(self.ended_below);
     }
 
     /// A loop's whole body shaken at once, ahead of its walk: what it records is provisional,
     /// to be replaced by the disturbing statement's own record when the walk reaches it.
-    fn disturb_loop_edge(&mut self, stmt: &Value) {
-        let outer = std::mem::replace(&mut self.loop_edge, true);
+    fn disturb_loop_edge(&mut self, stmt: &Value, level: u8) {
+        let outer = std::mem::replace(&mut self.loop_edge, level);
         self.disturb(stmt);
         self.loop_edge = outer;
     }
@@ -608,8 +621,12 @@ impl ViewWalk<'_> {
                 }
             }
         }
+        // A record either arm CONFIRMED outranks a loop-head one the other arm left standing.
         for (v, d) in e_shaken {
-            shaken.entry(v).or_insert(d);
+            let slot = shaken.entry(v).or_insert(d);
+            if slot.provisional > 0 && d.provisional == 0 {
+                *slot = d;
+            }
         }
         self.open = open;
         self.shaken = shaken;
@@ -1431,8 +1448,8 @@ impl ViewWalk<'_> {
             record_cause(&mut self.shaken, view, d);
             // A view already condemned on the provisional record takes the line too.
             if let Some(used) = self.out.get_mut(&view)
-                && used.provisional
-                && !d.provisional
+                && used.provisional > 0
+                && d.provisional == 0
                 && used.cause == d.cause
             {
                 *used = d;
