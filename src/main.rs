@@ -7659,8 +7659,9 @@ fn main() {
     let mut native_wasm: Option<String> = None;
     // @PLN204 — `--native-esp [dir]`: the program as an ESP-IDF app for the Tanmatsu, through the C.
     let mut native_esp: Option<String> = None;
-    // `--assets a,b`: what the app packs, beside the program (default its `assets/`).
-    let mut esp_assets: Vec<String> = vec!["assets".to_string()];
+    // `--assets a,b`: what the app packs, beside the program; none given, the files the
+    // program and its data name (esp_app.rs `named_assets`).
+    let mut esp_assets: Vec<String> = Vec::new();
     let mut native_android: Option<String> = None;
     // Plan-07 phase 2: --errors=compact|pretty CLI flag (overrides
     // LOFT_ERRORS env var).  None = use env-or-default (Pretty).

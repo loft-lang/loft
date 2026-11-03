@@ -37,7 +37,9 @@ app,      app,  factory, 0x20000,  8128K,
 /// the console on the USB serial port, the RTC memory the launcher reads which app to start
 /// from, no test of all 32 MB of PSRAM at every start), then speed: `-O2`, a 1 kHz scheduler tick so a
 /// `poll(15)` waits 15 ms, a main task stack for loft's recursion, and no task watchdog to stop
-/// a long computation.  No radio: an app that uses none starts faster and is smaller.
+/// a long computation.  No radio: an app that uses none starts faster and is smaller.  For size:
+/// ESP-IDF's assertions keep their check but drop their message, no table of error names, and
+/// only warnings and errors logged (a loft app's own `@boot` lines are not log lines).
 const SDKCONFIG: &str = "\
 CONFIG_IDF_TARGET=\"esp32p4\"
 CONFIG_BSP_TARGET_TANMATSU=y
@@ -63,6 +65,9 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=65536
 CONFIG_ESP_TASK_WDT_INIT=n
 CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
+CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
 CONFIG_BT_ENABLED=n
 ";
 
@@ -150,28 +155,297 @@ fn files_under(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
     out.sort();
 }
 
+/// `*` in a pattern matches any run of characters inside one name (never a `/`).
+fn glob_match(pattern: &[u8], path: &[u8]) -> bool {
+    match pattern.split_first() {
+        None => path.is_empty(),
+        Some((b'*', rest)) => (0..=path.len())
+            .take_while(|&k| k == 0 || path[k - 1] != b'/')
+            .any(|k| glob_match(rest, &path[k..])),
+        Some((c, rest)) => path
+            .split_first()
+            .is_some_and(|(p, tail)| p == c && glob_match(rest, tail)),
+    }
+}
+
+/// The files `assets` names, relative to `program_dir` with `/` between names: a file, a
+/// directory (every file under it), or a pattern with `*` (every file it matches); an entry
+/// starting with `!` takes what it matches out again.  An entry that matches nothing is refused,
+/// so a typing error does not ship an app without its files — except the default `assets`.
+///
+/// # Errors
+/// An entry that names nothing beside the program.
+fn asset_files(program_dir: &Path, assets: &[String]) -> Result<Vec<(String, PathBuf)>, String> {
+    let mut files = Vec::new();
+    let mut every = Vec::new();
+    files_under(program_dir, program_dir, &mut every);
+    let mut drop = Vec::new();
+    for a in assets {
+        let a = a.trim_start_matches("./").replace('\\', "/");
+        if let Some(out) = a.strip_prefix('!') {
+            drop.push(out.to_string());
+            continue;
+        }
+        let p = program_dir.join(&a);
+        let before = files.len();
+        if a.contains('*') {
+            files.extend(
+                every
+                    .iter()
+                    .filter(|(rel, _)| glob_match(a.as_bytes(), rel.as_bytes()))
+                    .cloned(),
+            );
+        } else if fa::is_dir(&p) {
+            files_under(program_dir, &p, &mut files);
+        } else if fa::is_file(&p) {
+            files.push((a.clone(), p));
+        }
+        if files.len() == before && a != "assets" {
+            return Err(format!("--assets: `{a}` names no file beside the program"));
+        }
+    }
+    files.retain(|(rel, _)| {
+        !drop.iter().any(|d| {
+            glob_match(d.as_bytes(), rel.as_bytes())
+                || rel.starts_with(&format!("{}/", d.trim_end_matches('/')))
+        })
+    });
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
 /// `loft_assets.c`: each file `assets` names (a directory: every file under it) as a byte
 /// array, and the table `loft_esp.h` serves them from by their path relative to the program.
 /// Answers the C and the packed byte count.
 ///
 /// # Errors
 /// A named asset that does not exist, or one that cannot be read.
-fn assets_c(program_dir: &Path, assets: &[String]) -> Result<(String, usize), String> {
-    let mut files = Vec::new();
-    for a in assets {
-        let p = program_dir.join(a);
-        if fa::is_dir(&p) {
-            files_under(program_dir, &p, &mut files);
-        } else if fa::is_file(&p) {
-            files.push((a.trim_start_matches("./").replace('\\', "/"), p));
-        } else if a != "assets" {
-            return Err(format!(
-                "--assets: `{a}` is not a file or directory beside the program"
-            ));
+/// Every string literal of a C text, unescaped as far as a path needs (`\\"`, `\\\\`).
+fn c_literals(c: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let b = c.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                i = c[i + 2..].find("*/").map_or(b.len(), |e| i + 2 + e + 2);
+            }
+            b'/' if b.get(i + 1) == Some(&b'/') => {
+                i = c[i..].find('\n').map_or(b.len(), |e| i + e);
+            }
+            b'\'' => {
+                // a character literal: skip it, so a `'"'` opens no string
+                i += 1;
+                while i < b.len() && b[i] != b'\'' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            b'"' => {
+                let mut lit = Vec::new();
+                // A text constant of the program is `loft_lit("…", n)`; a fault's location
+                // (`"game.loft", 120`) is not, and names a source file, never one opened.
+                let constant = c[..i].ends_with("loft_lit(");
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    if b[i] == b'\\' && i + 1 < b.len() {
+                        lit.push(b[i + 1]);
+                        i += 2;
+                    } else {
+                        lit.push(b[i]);
+                        i += 1;
+                    }
+                }
+                i += 1;
+                let after = &c[i.min(c.len())..];
+                let location = !constant
+                    && after
+                        .strip_prefix(", ")
+                        .is_some_and(|r| r.starts_with(|ch: char| ch.is_ascii_digit()));
+                if !location {
+                    out.push(String::from_utf8_lossy(&lit).into_owned());
+                }
+            }
+            _ => i += 1,
         }
     }
-    files.sort();
-    files.dedup();
+    out
+}
+
+/// Why a file goes into the app: what named it.
+type Reason = String;
+
+/// The files beside the program that the program can open, found from what names them, never
+/// from a list:
+///
+/// - its path written in the program (a text constant of the unit), or in a file already
+///   packed (theme.json naming a sheet), with nothing but a `/` or a quote before it;
+/// - a directory and an extension the program writes as constants of their own, which is how
+///   a path built at run time leaves them in the C (`"{dir}/levels/{name}.json"` is the
+///   constants `/levels/` and `.json`): every file directly in that directory with that
+///   extension.
+///
+/// A file packed for the second reason is read for paths too.  What nothing names stays out.
+fn named_assets(program_dir: &Path, c: &str) -> Vec<(String, PathBuf, Reason)> {
+    let literals = c_literals(c);
+    let dirs: Vec<String> = literals
+        .iter()
+        .filter(|l| l.ends_with('/') && l.len() > 1 && !l.contains(' '))
+        .map(|l| l.trim_start_matches("./").trim_matches('/').to_string())
+        .filter(|d| !d.is_empty())
+        .collect();
+    let exts: Vec<&str> = literals
+        .iter()
+        .map(String::as_str)
+        .filter(|l| {
+            l.len() > 1
+                && l.len() <= 9
+                && l.starts_with('.')
+                && l[1..].bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+        .collect();
+    let mut every = Vec::new();
+    files_under(program_dir, program_dir, &mut every);
+    // A constant of the program names a file by its path relative to the program, or by that
+    // path's tail after a directory built at run time (`"{dir}/theme.json"` leaves `/theme.json`).
+    // An absolute path (a library's file on the build machine) reaches no packed file on the
+    // device, where only relative paths fall through to the assets.
+    let program_names = |rel: &str| {
+        literals.iter().any(|l| {
+            let l = l.strip_prefix("./").unwrap_or(l);
+            l == rel || l.strip_prefix('/').is_some_and(|tail| tail == rel)
+        })
+    };
+    // The packed texts a path can be named in, each with its file.
+    let mut texts: Vec<(String, String)> = Vec::new();
+    let mut chosen: Vec<(String, PathBuf, Reason)> = Vec::new();
+    let names = |text: &str, rel: &str| {
+        text.match_indices(rel).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + rel.len()..].chars().next();
+            matches!(before, None | Some('/' | '"' | '\'' | '\n'))
+                && matches!(after, None | Some('"' | '\'' | '\n'))
+        })
+    };
+    let mut read = 0;
+    loop {
+        let mut grew = false;
+        for (rel, path) in &every {
+            if chosen.iter().any(|(r, _, _)| r == rel) {
+                continue;
+            }
+            let reason = program_names(rel)
+                .then(|| "named in the program".to_string())
+                .or_else(|| {
+                    texts[read.min(texts.len())..]
+                        .iter()
+                        .chain(texts[..read.min(texts.len())].iter())
+                        .find(|(t, _)| names(t, rel))
+                        .map(|(_, from)| format!("named in {from}"))
+                })
+                .or_else(|| {
+                    let (dir, name) = rel.rsplit_once('/').unwrap_or(("", rel.as_str()));
+                    let ext = name.rfind('.').map(|k| &name[k..])?;
+                    (dirs.iter().any(|d| d == dir) && exts.contains(&ext))
+                        .then(|| format!("in `{dir}/`, a `{ext}` the program builds a path to"))
+                });
+            if let Some(reason) = reason {
+                chosen.push((rel.clone(), path.clone(), reason));
+                grew = true;
+            }
+        }
+        read = texts.len();
+        // A packed text file can name more files: read each one once.
+        for (rel, path, _) in &chosen {
+            if texts.iter().any(|(_, from)| from == rel) {
+                continue;
+            }
+            if let Ok(t) = fa::read_to_string(path) {
+                if t.len() <= 1 << 20 {
+                    texts.push((t, rel.clone()));
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    chosen.sort();
+    chosen
+}
+
+/// The board's parts `loft_esp.h` can start, the BSP prefix whose use asks for each, and
+/// whether it is started whatever the C calls: the clock (a program's wall time reads it, no
+/// BSP call names it), the SD card's supply (files reach it through the VFS), power and the
+/// LEDs (they hold the board's defaults).  The display is `loft_esp.h`'s own: it blanks it.
+const PARTS: &[(&str, &str, bool)] = &[
+    ("DISPLAY", "bsp_display_", true),
+    ("INPUT", "bsp_input_", false),
+    ("POWER", "bsp_power_", true),
+    ("RTC", "bsp_rtc_", true),
+    ("AUDIO", "bsp_audio_", false),
+    ("LED", "bsp_led_", true),
+    ("STORAGE", "bsp_storage_", true),
+    ("ORIENTATION", "bsp_orientation_", false),
+    ("SENSOR", "bsp_sensor_", false),
+    ("CATT", "bsp_catt_", false),
+    ("SAO", "bsp_sao_", false),
+];
+
+/// A C file's text with every file it includes by a local name (`#include "x.c"`) after it,
+/// as the compiler reads it: where a library keeps a platform's section.
+fn with_includes(path: &Path, seen: &mut Vec<PathBuf>) -> String {
+    if seen.iter().any(|p| p == path) {
+        return String::new();
+    }
+    seen.push(path.to_path_buf());
+    let Ok(text) = fa::read_to_string(path) else {
+        return String::new();
+    };
+    let mut all = text.clone();
+    for line in text.lines() {
+        let line = line.trim_start();
+        if let Some(rest) = line.strip_prefix("#include \"") {
+            if let (Some(name), Some(dir)) = (rest.split('"').next(), path.parent()) {
+                all.push_str(&with_includes(&dir.join(name), seen));
+            }
+        }
+    }
+    all
+}
+
+/// Which parts the app starts: each the libraries' C calls (with the first file that calls it),
+/// and those started regardless.  Answers `(part, why)` for the started and the left-off ones.
+fn board_parts(shims: &[String]) -> (Vec<(&'static str, String)>, Vec<&'static str>) {
+    let sources: Vec<(String, String)> = shims
+        .iter()
+        .map(|s| {
+            let p = Path::new(s);
+            let name = p
+                .file_name()
+                .map_or_else(|| s.clone(), |n| n.to_string_lossy().into_owned());
+            (name, with_includes(p, &mut Vec::new()))
+        })
+        .collect();
+    let mut on = Vec::new();
+    let mut off = Vec::new();
+    for (part, prefix, always) in PARTS {
+        let caller = sources
+            .iter()
+            .find(|(_, t)| t.contains(prefix))
+            .map(|(n, _)| n.clone());
+        match (caller, always) {
+            (Some(c), _) => on.push((*part, format!("called by {c}"))),
+            (None, true) => on.push((*part, "always".to_string())),
+            (None, false) => off.push(*part),
+        }
+    }
+    (on, off)
+}
+
+fn assets_c(files: &[(String, PathBuf)]) -> Result<(String, usize), String> {
     let mut c = String::from(
         "/* The program's assets, packed by `loft --native-esp`: served read-only by loft_esp.h. */\n\
          #include <stddef.h>\n\nstruct loft_asset { const char *path; const unsigned char *data; size_t size; };\n",
@@ -245,8 +519,48 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
             &IDF_VERSION[1..]
         ),
     )?;
-    put(main.join("loft_app.c"), app.c)?;
-    let (assets, packed) = assets_c(app.program_dir, app.assets)?;
+    let (on, off) = board_parts(app.shims);
+    let mut unit = String::from(
+        "/* The board's parts this app starts: found in the C it holds (loft-esp-report.txt). */\n",
+    );
+    for (part, _) in &on {
+        let _ = writeln!(unit, "#define LOFT_ESP_{part} 1");
+    }
+    unit.push_str(app.c);
+    put(main.join("loft_app.c"), &unit)?;
+    let named: Vec<(String, PathBuf, Reason)> = if app.assets.is_empty() {
+        named_assets(app.program_dir, app.c)
+    } else {
+        asset_files(app.program_dir, app.assets)?
+            .into_iter()
+            .map(|(r, p)| (r, p, "named by --assets".to_string()))
+            .collect()
+    };
+    let files: Vec<(String, PathBuf)> = named
+        .iter()
+        .map(|(r, p, _)| (r.clone(), p.clone()))
+        .collect();
+    let (assets, packed) = assets_c(&files)?;
+    let mut report = String::from(
+        "# What `loft --native-esp` put into this app, and why.\n\n## Board parts started\n",
+    );
+    for (part, why) in &on {
+        let _ = writeln!(report, "{:12} {why}", part.to_lowercase());
+    }
+    let _ = writeln!(
+        report,
+        "\n## Board parts left off: nothing in the app's C calls them\n{}",
+        off.iter()
+            .map(|p| p.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let _ = writeln!(report, "\n## Files packed ({packed} bytes)");
+    for (rel, path, why) in &named {
+        let size = fa::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let _ = writeln!(report, "{size:9} {rel}  ({why})");
+    }
+    put(out.join("loft-esp-report.txt"), &report)?;
     put(main.join("loft_assets.c"), &assets)?;
     let mut srcs = String::from("\"loft_app.c\" \"loft_assets.c\"");
     let mut dirs = String::from("\".\"");
@@ -262,6 +576,10 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
     }
     // The ship tier drops the call chain a fault names its frames by, as on every C target.
     let tier = if app.ship { "" } else { " -DLOFT_CALL_CHAIN" };
+    // loft's C (the program and the runtime) is built for size: most of it runs once (loading,
+    // set-up, the editor), and with the hot helpers forced inline it was the larger part of the
+    // app.  The libraries' C, where a game's pixels are drawn and its pictures decoded, keeps the
+    // project's -O2.
     put(
         main.join("CMakeLists.txt"),
         &format!(
@@ -269,7 +587,8 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
              PRIV_REQUIRES badge-bsp vfs nvs_flash esp_timer esp_lcd esp_driver_gpio heap\n)\n\
              # The program's C and its libraries' are loft's, not the app author's: they are built\n\
              # without warnings, as every C target builds them.\n\
-             target_compile_options(${{COMPONENT_LIB}} PRIVATE -w{tier})\n"
+             target_compile_options(${{COMPONENT_LIB}} PRIVATE -w{tier})\n\
+             set_source_files_properties(loft_app.c PROPERTIES COMPILE_OPTIONS \"-Os;-DLOFT_SIZE\")\n"
         ),
     )?;
     Ok(packed)
@@ -312,5 +631,127 @@ pub(crate) fn build_project(out: &Path) -> Result<PathBuf, String> {
             tail.join("\n")
         ));
     }
+    let map = fa::read_to_string(out.join("build").join("application.map")).unwrap_or_default();
+    let report = out.join("loft-esp-report.txt");
+    if let Ok(mut text) = fa::read_to_string(&report) {
+        text.push_str(&size_report(&map));
+        let _ = fa::write(&report, text);
+    }
     Ok(out.join("build").join("application.bin"))
+}
+
+/// Where a section of the app came from, as the linker's map names its object: a member of the
+/// app's own component (`loft_app.c`: the program, whose functions are `n_`/`t_`, or the
+/// runtime; `loft_assets.c`; a library's C file), or an ESP-IDF archive (`libfreertos.a`).
+fn origin(object: &str, section: &str) -> String {
+    let member = object
+        .rsplit_once('(')
+        .map_or(object, |(_, m)| m.trim_end_matches(')'));
+    let member = member.trim_end_matches(".obj").trim_end_matches(".o");
+    if member == "loft_app.c" {
+        let name = section.splitn(3, '.').nth(2).unwrap_or("");
+        return if name.starts_with("n_") || name.starts_with("t_") {
+            "the program (loft_app.c)".to_string()
+        } else {
+            "loft runtime (loft_app.c)".to_string()
+        };
+    }
+    if object.contains("libmain.a") {
+        return member.to_string();
+    }
+    object
+        .rsplit('/')
+        .next()
+        .unwrap_or(object)
+        .split('(')
+        .next()
+        .unwrap_or(object)
+        .to_string()
+}
+
+/// What the app's flash and RAM hold, by where each part came from, and its largest functions —
+/// read from the linker's map, so it describes the app as linked: what nothing calls is already
+/// gone.  The part of the report that says where to look when an app is too large.
+fn size_report(map: &str) -> String {
+    use std::collections::HashMap;
+    let Some(at) = map.find("Linker script and memory map") else {
+        return String::new();
+    };
+    let lines: Vec<&str> = map[at..].lines().collect();
+    let mut flash: HashMap<String, u64> = HashMap::new();
+    let mut ram: HashMap<String, u64> = HashMap::new();
+    let mut functions: Vec<(u64, String, String)> = Vec::new();
+    for (k, line) in lines.iter().enumerate() {
+        let Some(rest) = line.strip_prefix(' ') else {
+            continue;
+        };
+        if !rest.starts_with('.') || rest.starts_with(' ') {
+            continue;
+        }
+        let mut words: Vec<&str> = rest.split_whitespace().collect();
+        if words.len() == 1 {
+            words.extend(
+                lines
+                    .get(k + 1)
+                    .map_or(Vec::new(), |n| n.split_whitespace().collect()),
+            );
+        }
+        let [section, addr, size, object, ..] = words.as_slice() else {
+            continue;
+        };
+        let (Some(addr), Some(size)) = (
+            addr.strip_prefix("0x")
+                .and_then(|a| u64::from_str_radix(a, 16).ok()),
+            size.strip_prefix("0x")
+                .and_then(|z| u64::from_str_radix(z, 16).ok()),
+        ) else {
+            continue;
+        };
+        if size == 0 || addr == 0 {
+            continue;
+        }
+        let from = origin(object, section);
+        // What the image stores (code, constants, initial data) and what RAM is zeroed for; the
+        // map's other sections (debug information, attributes) stay on the build machine.
+        let stored = [
+            ".text", ".literal", ".iram", ".rodata", ".srodata", ".data", ".sdata", ".dram",
+            ".tdata",
+        ];
+        let zeroed = [".bss", ".sbss", ".tbss", ".noinit"];
+        if zeroed.iter().any(|z| section.starts_with(z)) {
+            *ram.entry(from).or_insert(0) += size;
+        } else if stored.iter().any(|z| section.starts_with(z)) {
+            if section.starts_with(".text") || section.starts_with(".iram") {
+                let name = section.splitn(3, '.').nth(2).unwrap_or(section).to_string();
+                functions.push((size, name, from.clone()));
+            }
+            *flash.entry(from).or_insert(0) += size;
+        }
+    }
+    let mut out = String::from("\n## Image by origin (bytes stored; from the linker's map)\n");
+    let mut by: Vec<(u64, String)> = flash.into_iter().map(|(o, s)| (s, o)).collect();
+    by.sort_by(|a, b| b.cmp(a));
+    for (size, o) in by.iter().take(16) {
+        let _ = writeln!(out, "{size:9} {o}");
+    }
+    let rest: u64 = by.iter().skip(16).map(|(s, _)| s).sum();
+    let _ = writeln!(
+        out,
+        "{rest:9} the other {} origins",
+        by.len().saturating_sub(16)
+    );
+    let total: u64 = by.iter().map(|(s, _)| s).sum();
+    let _ = writeln!(out, "{total:9} in all");
+    let _ = writeln!(out, "\n## RAM taken at start, zeroed (.bss)");
+    let mut by: Vec<(u64, String)> = ram.into_iter().map(|(o, s)| (s, o)).collect();
+    by.sort_by(|a, b| b.cmp(a));
+    for (size, o) in by.iter().take(8) {
+        let _ = writeln!(out, "{size:9} {o}");
+    }
+    let _ = writeln!(out, "\n## Largest functions");
+    functions.sort_by(|a, b| b.cmp(a));
+    for (size, name, o) in functions.iter().take(20) {
+        let _ = writeln!(out, "{size:9} {name}  ({o})");
+    }
+    out
 }

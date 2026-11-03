@@ -107,8 +107,17 @@
  * the integer registers: 32 % of `par`'s worker).  Nothing under strict C99. */
 /* `LOFT_NOINLINE`: a function kept out of its caller — the test runner's release, whose caller
  * holds a `setjmp`, so its locals stay out of that frame. */
+/* `-DLOFT_SIZE`: a build for a small binary (an ESP-IDF app, `--native-esp`).  The hot helpers
+ * are offered for inlining rather than forced: forced, every one of a program's field and
+ * element accesses carries the whole helper, one-time code included (a 30-entry key table was
+ * 20 KB of code), and an `-Os` build cannot take it back.  Speed only: the answers are the
+ * same. */
 #if defined(LOFT_GNU)
+#if defined(LOFT_SIZE)
+#define LOFT_HOT_INLINE static inline
+#else
 #define LOFT_HOT_INLINE static inline __attribute__((always_inline))
+#endif
 #define LOFT_NOINLINE __attribute__((noinline))
 #define LOFT_COLD __attribute__((cold))
 #define LOFT_LIKELY(x) __builtin_expect(!!(x), 1)
