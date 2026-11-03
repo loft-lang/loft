@@ -259,6 +259,18 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         if inner == null {
           return null;
         }
+        // A vector over a type variable the program mints (`T#n` not in the standard library)
+        // has rows and wrapper definitions registered for it (`vector<__typevar_T#n>`), which
+        // the standard library's placeholders already carry: not carried.
+        match inner! {
+          TyReference { n } => {
+            if el::def(e, n).source != el::STD_SOURCE && el::def(e, n).def_type == el::DT_STRUCT && len(el::def(e, n).attributes) == 0 && el::def(e, n).name.contains("#") {
+              el::refuse(e, "a vector over a type variable the program declares");
+              return null;
+            }
+          },
+          _ => {}
+        }
         return ir::TyVector { inner: inner!, dep: [] };
       }
       if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
