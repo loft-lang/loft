@@ -2328,6 +2328,13 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
       _ => {}
     }
   }
+  // `(I-Join)` D4: an inferred integer local reassigned a wider integer that is not proven to fit
+  // widens to the full `integer` — the join of its writes (#433's `arg = b[0]; arg = arg * 256
+  // + b[1]`).  A declared one stays constrained.
+  cur = el_vars::tp(vars, v);
+  if cur is TyInteger && !vars.annotated.contains(v) && el_convert::narrowing_int(el_types::base(x.tp), cur) && !el_convert::value_fits(e, vars, x.code, cur) {
+    el_vars::set_var_type(vars, v, ir::TyInteger { spec: wide_spec() });
+  }
   // `@FR-N-Decl` (`declared_nullable_write`): a local the author declared, or a parameter,
   // written a `τ?` keeps its type, the value stored into it as `convert_store` stores — on
   // both passes, so the first never retypes it.
@@ -2830,10 +2837,10 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       continue;
     }
     if push != "" {
-      ls += [el_ir::cl(e, push, [place, x.code])];
-    } else if inner is TyText {
+      ls += [el_ir::cl(e, push, push_args(inner, place, x.code))];
+    } else if inner is TyText || elem_size(inner) == 2 {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
-      ls += [el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, x.code])];
+      ls += [elem_write(e, inner, at, x.code)];
       ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
     } else if struct_ref(e, inner) >= 0 {
       el_vars::set_var_type(vars, elm, ir::TyReference { n: struct_ref(e, inner), dep: [rec] });
@@ -3371,7 +3378,7 @@ fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fn
   }
   nm = el_types::elem_name(e, inner);
   rec = match el_types::base(inner) { TyReference { n: rn } => el::def(e, rn).known_type, _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) } };
-  vk = el_schema::schema_type(e, "vector<{nm}>");
+  vk = vector_store(e, inner, nm);
   if rec < 0 || vk < 0 {
     el::refuse(e, "a vector field of this element type written from a vector place: {type_kind(inner)}");
     return null;
@@ -3401,7 +3408,7 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
   def = el::def(e, d);
   kt = def.known_type;
   pos = field_position(e, d, fname);
-  vk = el_schema::schema_type(e, "vector<{el_types::elem_name(e, inner)}>");
+  vk = vector_store(e, inner, el_types::elem_name(e, inner));
   fnr = el_schema::field_nr(e, kt, fname);
   push = push_op(inner);
   if e.first_pass && elm >= 0 {
@@ -3452,11 +3459,11 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
       continue;
     }
     if push != "" {
-      out += [el_ir::cl(e, push, [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: vk }]), x.code])];
-    } else if inner is TyText {
+      out += [el_ir::cl(e, push, push_args(inner, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: vk }]), x.code))];
+    } else if inner is TyText || elem_size(inner) == 2 {
       at = ir::NdVar { n: elm };
       out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))];
-      out += [el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, x.code])];
+      out += [elem_write(e, inner, at, x.code)];
       out += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
     } else {
       el::refuse(e, "a vector field of records written from a literal: an item that is no literal");
@@ -3698,7 +3705,7 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
   code = match ft {
     TyVector { inner } => {
       // The schema is laid out after the first pass, whose code is not kept.
-      vk = if e.first_pass { 0 } else { el_schema::schema_type(e, "vector<{el_types::elem_name(e, inner)}>") };
+      vk = if e.first_pass { 0 } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
       if vk < 0 {
         el::refuse(e, "a field read of a vector the library has no rows for");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -4812,7 +4819,7 @@ fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, t
     // format); a struct with an operator `to_text` of its own is refused by name.
     TyVector { inner } => {
       nm = el_types::elem_name(e, inner);
-      vk = if nm == "" { -1 } else { el_schema::schema_type(e, "vector<{nm}>") };
+      vk = if nm == "" { -1 } else { vector_store(e, inner, nm) };
       narrow = match inner {
         TyInteger { spec } => spec.forced_size != 0,
         _ => false
@@ -5064,7 +5071,11 @@ fn truncate_nonzero(vars: el_vars::Vars, n: integer) {
 // or nullable keeps the result nullable.  A `return`, `break` or `continue` default, arithmetic as
 // the subject and a subject that is not a plain scalar are refused by name.
 fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
+  // `e as N ?? d`: the `??` supplies a narrowing cast's fallback, so the cast is checked.
+  outer = vars.dn4_coalesce;
+  vars.dn4_coalesce = e.p.nodes[l] is SAs;
   x = expression(e, vars, l);
+  vars.dn4_coalesce = outer;
   if e.p.nodes[r] is SJump {
     el::refuse(e, "a `??` that returns, breaks or continues");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -5213,6 +5224,13 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   pick = el_ir::v_if(check!, taken!, dc!);
   if held < 0 {
     return ex(pick, rt);
+  }
+  // `store_check`: the subject stored into a narrow holder that no range proves it fits takes
+  // the checked cast (`dn4_checked_cast`) — the rewrite above made its top op one no range
+  // walk reads.
+  wide = ir::TyInteger { spec: i32_spec() };
+  if lhs is TyInteger && el_convert::narrowing_int(wide, lhs) && !el_convert::value_fits(e, vars, x.code, lhs) {
+    x.code = dn4_cast(e, vars, ex(x.code, wide), lhs).code;
   }
   ex(el_ir::v_block([el_ir::v_set(held, x.code), pick], result, "ncc"), rt)
 }
@@ -6307,6 +6325,13 @@ fn record_item_copy(e: el::El, vars: el_vars::Vars, elm: integer, rd: integer, x
       return [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + 16384 }])];
     },
     NdCall { def_nr, args } => {
+      // A record with a field no literal writes straight into a fresh element (a collection, a
+      // struct-enum) keeps the copy: the call's answer copied into the fresh element, its
+      // store freed after when it gives it away (`record_fields_placeable`).
+      if len(args) > 0 && takes_record_buffer(e, def_nr, rd) && !fields_placeable(e, rd, 0) {
+        bit = if returns_argument_view(el::def(e, def_nr)) { 0 } else { 32768 };
+        return [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + bit + 16384 }])];
+      }
       if len(args) > 0 && takes_record_buffer(e, def_nr, rd) {
         a2 = args;
         a2[len(a2) - 1] = at;
@@ -6321,6 +6346,23 @@ fn record_item_copy(e: el::El, vars: el_vars::Vars, elm: integer, rd: integer, x
   }
   el::refuse(e, "a record item that is neither a local nor a call answering a fresh record");
   null
+}
+
+// `record_fields_placeable`: every field of record `rd` is one a literal may write straight into
+// a fresh element — a constant, a function, a scalar, a text, or an inline record whose fields
+// are (to a depth of 8) the same.
+fn fields_placeable(e: el::El, rd: integer, depth: integer) -> boolean {
+  if depth > 8 {
+    return false;
+  }
+  for a in el::def(e, rd).attributes {
+    t = el_types::base(a.typedef[0] ?? ir::TyVoid);
+    ok = a.constant || t is TyFunction || scalar(t) || t is TyText || (struct_ref(e, t) >= 0 && fields_placeable(e, struct_ref(e, t), depth + 1));
+    if !ok {
+      return false;
+    }
+  }
+  true
 }
 
 // The plain struct a type references, or -1.
@@ -6470,7 +6512,7 @@ fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT) -> ir::No
   i = ir::NdVar { n: idx };
   get = el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: vec }, ir::NdInt { n: size }, i]);
   if !record {
-    get = el_ir::cl(e, op, [get, ir::NdInt { n: 0 }]);
+    get = elem_read(e, elem, get);
   }
   el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), get], el_types::without_deps(elem), "iter next")
 }
@@ -6596,7 +6638,7 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) ->
   if fc != null {
     steps += [fc!];
   }
-  steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, [ir::NdVar { n: v }, ir::NdVar { n: comp }])];
+  steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, push_args(in_t, ir::NdVar { n: v }, ir::NdVar { n: comp }))];
   r = rows!;
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   el_vars::depend(vars, v, db);
@@ -6772,6 +6814,8 @@ fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
   if ae == null || tn == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  coalesced = vars.dn4_coalesce;
+  vars.dn4_coalesce = false;
   x = expression(e, vars, ae!);
   t = el_types::parse_type(e, tn!);
   if t == null {
@@ -6796,6 +6840,8 @@ fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
       } else if el_convert::plain_scalar(inner) && !el_convert::narrowing_int(src, inner) {
         b = cast_expr_to(e, vars, ex(x.code, src), inner);
         return ex(b.code, if el_types::is_unknown(b.tp) { b.tp } else { to });
+      } else if !e.first_pass && el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) && !el_convert::value_fits(e, vars, x.code, inner) {
+        return dn4_cast(e, vars, x, inner);
       }
       el::refuse(e, "a checked narrowing cast");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -6810,7 +6856,35 @@ fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
     },
     _ => {}
   }
+  // A bare narrowing cast directly left of `??` is checked: the `??` is its fallback.
+  xb = el_types::base(x.tp);
+  if coalesced && !e.first_pass && el_convert::plain_scalar(xb) && el_convert::narrowing_int(xb, to) && !el_convert::value_fits(e, vars, x.code, to) {
+    return dn4_cast(e, vars, ex(x.code, xb), to);
+  }
   cast_expr_to(e, vars, x, to)
+}
+
+// `Parser::dn4_checked_cast` (`@FR-N-Cast`'s checked half, DN4): the value bound once in a
+// `__dn4_N` and answered where it lies in the target's range, else the integer null — typed
+// `τ?`.  A constant has its answer now.
+fn dn4_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
+  res = ir::TyOptional { inner: to };
+  lo = 0;
+  hi = 0;
+  match to {
+    TyInteger { spec } => { lo = spec.min; hi = spec.max; },
+    _ => {}
+  }
+  c = el_convert::const_int(e, x.code);
+  if c != null {
+    return ex(if c! < lo || c! > hi { el_ir::cl(e, "OpConvIntFromNull", []) } else { x.code }, res);
+  }
+  tmp = el_vars::create_unique(vars, "_dn4", x.tp);
+  t = ir::NdVar { n: tmp };
+  nl = el_ir::cl(e, "OpConvIntFromNull", []);
+  inner = el_ir::v_if(el_ir::cl(e, "OpLeInt", [t, ir::NdInt { n: hi }]), t, nl);
+  outer = el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: lo }, t]), inner, nl);
+  ex(el_ir::v_block([el_ir::v_set(tmp, x.code), outer], res, "dn4cast"), res)
 }
 
 fn cast_expr_to(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
@@ -7361,7 +7435,7 @@ fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecR
     vector_def(e, t, nm, tok, declared);
   }
   md = el::def_nr(e, "main_vector<{nm}>");
-  vk = el_schema::schema_type(e, "vector<{nm}>");
+  vk = vector_store(e, t, nm);
   if md < 0 || vk < 0 || el::def(e, md).known_type == el_schema::NO_TYPE {
     // Laid out by `fill_all` after the first pass.
     if !e.first_pass {
@@ -7439,7 +7513,7 @@ fn vector_of(e: el::El, t: ir::TypeT) {
 fn elem_size(t: ir::TypeT) -> integer {
   match t {
     TyReference { n: _ } => -2,
-    TyInteger { spec: _ } => 8,
+    TyInteger { spec } => if el_types::narrow_width(spec) > 0 { el_types::narrow_width(spec) } else { 8 },
     TyFloat => 8,
     TySingle => 4,
     TyText { dep: _ } => 4,
@@ -7453,7 +7527,7 @@ fn elem_size(t: ir::TypeT) -> integer {
 // which keeps its record build.
 fn push_op(t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec: _ } => "OpPushInt",
+    TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpPushByte" } else if el_types::narrow_width(spec) == 2 { "" } else { "OpPushInt" },
     TyFloat => "OpPushFloat",
     TySingle => "OpPushSingle",
     TyBoolean => "OpPushBoolean",
@@ -7462,11 +7536,67 @@ fn push_op(t: ir::TypeT) -> text {
   }
 }
 
+// The store type of a `vector<T>` (`vector<…>` of the element's store type): a narrow integer's
+// is named after its width (`vector<byte>`), not its definition (`vector<integer(0, 255)>`).
+fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
+  match t {
+    TyInteger { spec } => {
+      if el_types::narrow_width(spec) > 0 {
+        c = el_schema::narrow_element(e, spec);
+        return if c < 0 { -1 } else { el_schema::schema_type(e, "vector<{e.b.types[c].name}>") };
+      }
+    },
+    _ => {}
+  }
+  el_schema::schema_type(e, "vector<{nm}>")
+}
+
+// A plain element's read at offset 0 of `get` — a narrow integer's with its range's start.
+fn elem_read(e: el::El, t: ir::TypeT, get: ir::Node) -> ir::Node {
+  args: vector<ir::Node> = [get, ir::NdInt { n: 0 }];
+  match t {
+    TyInteger { spec } => {
+      if el_types::narrow_width(spec) > 0 {
+        args += [ir::NdInt { n: spec.min }];
+      }
+    },
+    _ => {}
+  }
+  el_ir::cl(e, read_op(t), args)
+}
+
+// A record-built element's value written at offset 0: a text's `OpSetText`, a two-byte integer's
+// `OpSetShortRaw` with its range's start.
+fn elem_write(e: el::El, t: ir::TypeT, at: ir::Node, x: ir::Node) -> ir::Node {
+  match t {
+    TyInteger { spec } => {
+      if el_types::narrow_width(spec) == 2 {
+        return el_ir::cl(e, "OpSetShortRaw", [at, ir::NdInt { n: 0 }, ir::NdInt { n: spec.min }, x]);
+      }
+    },
+    _ => {}
+  }
+  el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, x])
+}
+
+// A pushed narrow integer names its range's start (`OpPushByte(v, min, x)`).
+fn push_args(t: ir::TypeT, w: ir::Node, x: ir::Node) -> vector<ir::Node> {
+  match t {
+    TyInteger { spec } => {
+      if el_types::narrow_width(spec) > 0 {
+        return [w, ir::NdInt { n: spec.min }, x];
+      }
+    },
+    _ => {}
+  }
+  [w, x]
+}
+
 // `get_val` for an element or field of a plain type at `pos`: the read op its type loads
 // through, or "".
 fn read_op(t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec } => if spec.forced_size == 0 { "OpGetInt" } else { "" },
+    TyInteger { spec } => if el_types::narrow_width(spec) == 1 { "OpGetByte" } else if el_types::narrow_width(spec) == 2 { "OpGetShortRaw" } else if spec.forced_size == 0 { "OpGetInt" } else { "" },
     TyText { dep: _ } => "OpGetText",
     TyBoolean => "OpGetBoolean",
     TyFloat => "OpGetFloat",
@@ -7790,11 +7920,11 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   }
   for x in xs {
     if push != "" {
-      ls += [el_ir::cl(e, push, [w, x.code])];
+      ls += [el_ir::cl(e, push, push_args(in_t, w, x.code))];
     } else {
       at = ir::NdVar { n: elm };
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
-      ls += [el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, x.code])];
+      ls += [elem_write(e, in_t, at, x.code)];
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
   }
@@ -7991,7 +8121,7 @@ fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
     el_ir::v_set(nxt, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }])),
     ir::NdVar { n: st.idx }
   ], ir::TyInteger { spec: i32_spec() }, "Iter range");
-  el_ir::v_block([el_ir::cl(e, op, [el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step]), ir::NdInt { n: 0 }])], st.elem, "Vector Index")
+  el_ir::v_block([elem_read(e, st.elem, el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step]))], st.elem, "Vector Index")
 }
 
 // A `for` over a vector slice (`parse_for` with the range's preamble as its start).
@@ -8196,7 +8326,7 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   }
   code = el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: size }, i.code]);
   if !record {
-    code = el_ir::cl(e, op, [code, ir::NdInt { n: 0 }]);
+    code = elem_read(e, inner, code);
   }
   if !e.first_pass {
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };

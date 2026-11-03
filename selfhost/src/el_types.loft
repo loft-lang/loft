@@ -170,9 +170,19 @@ pub fn with_deps(t: ir::TypeT, deps: vector<integer>) -> ir::TypeT {
 }
 
 // The name a vector of `t` is registered under (`vector<integer>`, `main_vector<P>`), or "".
+// The width a narrow integer is stored in as an element (`int_part`'s rule, not nullable):
+// 1 or 2 bytes, or 0 for any other integer.
+pub fn narrow_width(spec: ir::IntegerSpec) -> integer {
+  if spec.forced_size == 0 && spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295) {
+    return 0;
+  }
+  s = if spec.forced_size > 0 { spec.forced_size } else if spec.max - spec.min + 1 <= 256 { 1 } else if spec.max - spec.min + 1 <= 65536 { 2 } else { 8 };
+  if s == 1 || s == 2 { s } else { 0 }
+}
+
 pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec } => if spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647 { "integer" } else { "" },
+    TyInteger { spec } => if spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647 { "integer" } else if narrow_width(spec) > 0 { "integer({spec.min}, {spec.max})" } else { "" },
     TyText { dep: _ } => "text",
     TyBoolean => "boolean",
     TyFloat => "float",

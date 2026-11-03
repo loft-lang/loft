@@ -100,8 +100,19 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     e.b.data.definitions[vd].returned = [vt];
     e.b.data.definitions[vd].parent = match t {
       TyReference { n } => n,
+      TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
       _ => el::source_nr(e, 0, nm)
     };
+  }
+  // A narrow integer's element and `vector<…>` store types are made with the definitions, ahead
+  // of every struct the schema fills.
+  match t {
+    TyInteger { spec } => {
+      if el_types::narrow_width(spec) > 0 {
+        vector_type(e, content_type(e, t));
+      }
+    },
+    _ => {}
   }
   // The schema's own pass makes the `vector<T>` store type at once where `T` has one already.
   if !typed {
@@ -186,7 +197,7 @@ pub fn keyed_type(e: el::El, t: ir::TypeT) -> integer {
   store_type(e, t, false)
 }
 
-fn content_type(e: el::El, t: ir::TypeT) -> integer {
+pub fn content_type(e: el::El, t: ir::TypeT) -> integer {
   store_type(e, t, true)
 }
 
@@ -194,6 +205,10 @@ fn content_type(e: el::El, t: ir::TypeT) -> integer {
 fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
   match t {
     TyInteger { spec } => {
+      // A narrow element is stored at its width (`byte`, `short_raw<min,false>`, …).
+      if el_types::narrow_width(spec) > 0 {
+        return int_part(e, spec, el::NONE, false);
+      }
       if spec.forced_size != 0 {
         return -1;
       }
@@ -220,8 +235,10 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
         return -1;
       }
       vt = vector_type(e, c);
+      // `check_vector` finds the store type by the definition's name, which a narrow element's
+      // (`vector<integer(0, 255)>` over `vector<byte>`) does not carry.
       vd = el::def_nr(e, "vector<{nm}>");
-      if vd >= 0 {
+      if vd >= 0 && e.b.types[vt].name == "vector<{nm}>" {
         e.b.data.definitions[vd].known_type = vt;
       }
       vt
@@ -379,7 +396,7 @@ fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean)
   }
   unsigned_wide = spec.min >= 0 && spec.max > 2147483647;
   if s == 1 {
-    return narrow_part(e, if m == 0 && !nullable { "byte" } else { "byte<{m},{nullable}>" }, ir::PtByte { start: m, nullable: nullable }, 1);
+    return narrow_part(e, byte_name(m, nullable), ir::PtByte { start: m, nullable: nullable }, 1);
   }
   if s == 2 {
     if nullable {
@@ -394,6 +411,23 @@ fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean)
     return narrow_part(e, "int<{m},{nullable}>", ir::PtInt { start: m, nullable: nullable }, 4);
   }
   schema_type(e, "integer")
+}
+
+fn byte_name(m: integer, nullable: boolean) -> text {
+  if m == 0 && !nullable { "byte" } else { "byte<{m},{nullable}>" }
+}
+
+// The store type a narrow element of `spec` already has (`byte`, `short_raw<min,false>`), or -1
+// — a lookup that makes nothing, for a read that must not mint a type out of order.
+pub fn narrow_element(e: el::El, spec: ir::IntegerSpec) -> integer {
+  w = el_types::narrow_width(spec);
+  if w == 1 {
+    return schema_type(e, byte_name(spec.min, false));
+  }
+  if w == 2 {
+    return schema_type(e, "short_raw<{spec.min},false>");
+  }
+  -1
 }
 
 // `Stores::byte` / `short` / `short_raw` / `int` / `int_raw`: the type of that name, made at the
