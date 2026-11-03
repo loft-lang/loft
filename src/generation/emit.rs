@@ -1086,13 +1086,6 @@ impl Output<'_> {
                 } else {
                     self.chain_fast_path(w, lp)?
                 };
-                // @PLN157 § V-am (`@FR-R-PushFill`) — one push of an invariant is one fill
-                // of the tail, the per-element loop its fallback exactly as the fill's.
-                let pushed = self.push_fast_path(w, lp)?;
-                if pushed {
-                    self.indent(w)?;
-                    writeln!(w, "if !__pf_{} {{", lp.scope)?;
-                }
                 self.loop_stack.push(lp.scope);
                 writeln!(w, "'l{}: loop {{ //{}_{}", lp.scope, lp.name, lp.scope)?;
                 // `@FR-R-RecPtr` — the loop's own statements are emitted here, not through
@@ -1138,9 +1131,6 @@ impl Output<'_> {
                 self.indent(w)?;
                 write!(w, "}} /*{}_{}*/", lp.name, lp.scope)?;
                 self.loop_stack.pop();
-                if pushed {
-                    self.push_fast_path_tail(w, lp)?;
-                }
                 if nested {
                     write!(w, "\n}} /* checked nest */")?;
                 }

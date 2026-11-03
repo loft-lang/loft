@@ -3944,60 +3944,6 @@ impl Output<'_> {
             .map(|(_, w)| w.as_str())
     }
 
-    /// @PLN157 § V-am (`@FR-R-PushFill`) — when `lp` is ONE push of an invariant over a
-    /// path a push header is held for, emit the guarded `let __pf_N = stores.push_fill(…)`
-    /// and answer `true` — the caller then emits the per-element loop under `if !__pf_N`
-    /// and [`Self::push_fast_path_tail`] leaves the counters as the loop would.  Every
-    /// other counted push loop is [`Self::push_reserve`]'s.
-    fn push_fast_path(
-        &mut self,
-        w: &mut dyn Write,
-        lp: &crate::data::Block,
-    ) -> std::io::Result<bool> {
-        if self.switches.push_fill_disabled {
-            return Ok(false);
-        }
-        let Some(p) = hoist::push_loop(lp, self.data) else {
-            return Ok(false);
-        };
-        let Some(val) = p.fill else {
-            return Ok(false);
-        };
-        // A loop nested in one that holds a window on the path pushes through it: a fill
-        // writes the record's length, which the window defers.
-        if self.active_push_window(&p.path).is_some() {
-            return Ok(false);
-        }
-        let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
-            return Ok(false);
-        };
-        let count = self.push_trip_count(&p)?;
-        let vec = self.expr_string(p.vector)?;
-        let val = self.expr_string(val)?;
-        let verify = if self.hoist_verify { "true" } else { "false" };
-        self.indent(w)?;
-        writeln!(
-            w,
-            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, {}); //@PLN157 § V-am push fill",
-            lp.scope,
-            p.rust_type,
-            p.size,
-            // The fill runs only unbiased (`push_loop` declines a biased one).
-            hoist::push_element(p.rust_type, &val)
-        )?;
-        Ok(true)
-    }
-
-    /// The `else` arm of the push fill's guard — [`Self::range_tail`] over the push loop.
-    fn push_fast_path_tail(
-        &mut self,
-        w: &mut dyn Write,
-        lp: &crate::data::Block,
-    ) -> std::io::Result<()> {
-        let p = hoist::push_loop(lp, self.data).expect("the shape that emitted the push fill");
-        self.range_tail(w, p.index_var, p.next_var, p.hi, p.inclusive)
-    }
-
     /// `@FR-R-Base` — the held header whose length a read of range end `var` stands for: the
     /// header the innermost loop holding the vector's element BASE derived that base from —
     /// its own, or one an enclosing frame holds (an outer loop's, or the function's

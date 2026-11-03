@@ -18,15 +18,14 @@
 //! non-nullable type: a field path's owner may be absent, which a fill would read where the
 //! loop's push does not.
 //!
-//! `LOFT_IR_FILL=1` turns it on (opt-in while it is compared with the rustc writer's fill);
-//! `LOFT_TRACE_IR_FILL=1` names each loop taken.
+//! `LOFT_NO_PUSH_FILL=1` turns the rule off on every backend (the writers' reservation and
+//! window clauses with it); `LOFT_TRACE_IR_FILL=1` names each loop taken.
 use crate::data::{Data, DefType, Type, Value, v_block, v_if};
 use crate::database::Stores;
 use crate::opt::push_window::{push_loop, push_loop_body};
 
 fn enabled() -> bool {
-    crate::env_once!(std::env::var("LOFT_IR_FILL").is_ok_and(|v| v != "0"))
-        && !crate::env_once!(std::env::var("LOFT_NO_IR_FILL").is_ok_and(|v| v != "0"))
+    crate::keys::push_fill_enabled()
 }
 
 fn trace() -> bool {
