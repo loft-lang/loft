@@ -10,6 +10,7 @@ use lex;
 use syntax;
 use el;
 use el_definitions;
+use el_expressions;
 use report;
 use load;
 use el_buffers;
@@ -70,6 +71,8 @@ fn program(image: text, f: text, std_image: text) {
   e.first_pass = false;
   e.line = 0;
   el_definitions::elab_file(e, tree ?? 0);
+  // `resolve_deferred_unknowns`: the instances made above their template are filled now.
+  el_expressions::rebuild_stale(e);
   // After the second pass, on the settled IR (`Parser::promote_work_buffers`).
   el_buffers::promote_work_buffers(e);
   print(report::defs_report(e.b, upto, templates: env_variable("LOFT_DEFS_TEMPLATES") == "1"));

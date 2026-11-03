@@ -5161,12 +5161,10 @@ fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer) -> text {
 }
 
 // `Parser::instantiate_template` for a template of one unbounded variable bound to a plain
-// scalar (@FR-G-Mono): the instance `i_<LEN><T>_<template>` the second pass makes once the
-// template's own second-pass body is read, its parameters, result, variables and body the
-// template's with the variable replaced.  Each later pass of `fill_monomorph_body` that would
-// change such a body is refused by its trigger (`instance_carried`); the one side effect it
-// has, `rewrite_vector_write_triplets` registering `vector<T>`'s row, is made.  -1, refused by
-// name, for anything else.
+// scalar or a text (@FR-G-Mono): the instance `i_<LEN><T>_<template>` the second pass makes,
+// its parameters and result the template's with the variable replaced; its body is filled by
+// `fill_instance`, at once or — for a template declared below the call — after the pass.
+// -1, refused by name, for a binding or a signature shape this port does not carry.
 fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   tmpl = el::def(e, g);
   b = template_binding(e, g, types);
@@ -5176,18 +5174,11 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   }
   h = b!.vars[0] ?? -1;
   bound = b!.types[0] ?? ir::TyVoid;
-  textual = bound is TyText;
-  if !(scalar_type(bound) || textual) || bound is TyEnum || bound is TyOptional || identity_spelling(e, bound) == "" {
+  if !(scalar_type(bound) || bound is TyText) || bound is TyEnum || bound is TyOptional || identity_spelling(e, bound) == "" {
     el::refuse(e, "a generic instance at this type: {type_kind(bound)}");
     return -1;
   }
   nm = instance_name(e, g, b!);
-  if !e.bodies2.contains(g) {
-    // `stale_monomorphs`: an instance made before its template's second-pass body is rebuilt
-    // once the file is through — not carried.
-    el::refuse(e, "a generic called above its declaration");
-    return -1;
-  }
   for a in tmpl.attributes {
     if !bare_over(a.typedef[0] ?? ir::TyVoid, h) {
       el::refuse(e, "a generic parameter over the type variable in another shape");
@@ -5196,18 +5187,6 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   }
   if !bare_over(tmpl.returned[0] ?? ir::TyVoid, h) {
     el::refuse(e, "a generic result over the type variable in another shape");
-    return -1;
-  }
-  for v in tmpl.variables.variables {
-    t = v.type_def[0] ?? ir::TyVoid;
-    if !bare_over(t, h) || t is TyFunction {
-      el::refuse(e, "a generic local over the type variable in another shape or of a function type");
-      return -1;
-    }
-  }
-  why = instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, el::def(e, h).known_type);
-  if why != "" {
-    el::refuse(e, "a generic body holding {why}");
     return -1;
   }
   d = el::add_def(e, nm, tmpl.position, el::DT_FUNCTION);
@@ -5219,6 +5198,48 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
     e.b.data.definitions[d].attributes += [na];
   }
   el::set_returned(e, d, substitute(tmpl.returned[0] ?? ir::TyVoid, h, bound));
+  // `rewrite_vector_write_triplets` registers `vector<T>`'s row on the first fill, at the call.
+  el_schema::vector_type(e, el::def(e, type_def_nr(e, bound)).known_type);
+  // `stale_monomorphs`: a template whose second-pass body is not read yet (declared below the
+  // call) is filled once the pass is through (`rebuild_stale_monomorphs`).
+  if !e.bodies2.contains(g) {
+    e.stale += [el::StaleInstance { d: d, g: g, holder: h, bound: bound }];
+  } else if !fill_instance(e, d, g, h, bound) {
+    return -1;
+  }
+  d
+}
+
+// `rebuild_stale_monomorphs`, after the second pass: each instance made before its template's
+// second-pass body was read is filled from that body.
+pub fn rebuild_stale(e: el::El) {
+  for st in e.stale {
+    if !e.bodies2.contains(st.g) {
+      el::refuse(e, "a generic instance whose template has no second-pass body");
+    } else {
+      fill_instance(e, st.d, st.g, st.holder, st.bound);
+    }
+  }
+}
+
+// `fill_monomorph_body` for instance `d` of template `g` at `[h ↦ bound]`: the variable table,
+// the body and the passes this port carries; false, refused by name, where the body holds what
+// a later pass would rewrite.
+fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT) -> boolean {
+  tmpl = el::def(e, g);
+  textual = bound is TyText;
+  for v in tmpl.variables.variables {
+    t = v.type_def[0] ?? ir::TyVoid;
+    if !bare_over(t, h) || t is TyFunction {
+      el::refuse(e, "a generic local over the type variable in another shape or of a function type");
+      return false;
+    }
+  }
+  why = instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, el::def(e, h).known_type);
+  if why != "" {
+    el::refuse(e, "a generic body holding {why}");
+    return false;
+  }
   // A table of the instance's own: the template's is the template's, and stays as it is.
   tv = tmpl.variables;
   f = ir::Function { name: tv.name, file: tv.file, variables: [], names: [], inline_refs: tv.inline_refs };
@@ -5244,10 +5265,9 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
     why2 = text_instance_carried(e, tmpl, f, code_of(tmpl), h);
     if why2 != "" {
       el::refuse(e, "a generic instance at text whose body holds {why2}");
-      return -1;
+      return false;
     }
   }
-  el_schema::vector_type(e, el::def(e, type_def_nr(e, bound)).known_type);
   code = substitute_code(tmpl.code[0] ?? ir::NdNull, h, bound);
   // `strip_scalar_instance_rebinds`: a parameter the template rebinds keeps an entry witness of
   // the caller's store; one that became a scalar has no store, so the witness and its stash go.
@@ -5276,7 +5296,7 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
       _ => {}
     }
   }
-  d
+  true
 }
 
 fn code_of(d: ir::Definition) -> ir::Node {
