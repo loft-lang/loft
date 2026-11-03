@@ -89,7 +89,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // own whose answer is not a borrow of the caller's arguments — a literal, a call's buffer in
   // this frame, anything it owns — is promoted to a hidden `___tret_N` after the second pass and
   // its callers patched: not carried yet.
-  if !e.first_pass && el_types::base(result) is TyText && !has_text_buffer(el::def(e, e.context)) && !borrows_arguments_only(el::def(e, e.context)) {
+  if !e.first_pass && el_types::base(result) is TyText && el::def(e, e.context).def_type != el::DT_GENERIC && !has_text_buffer(el::def(e, e.context)) && !borrows_arguments_only(el::def(e, e.context)) {
     el::refuse(e, "a text answered by value with no buffer of its own (a `___tret` promotion)");
   }
   code = b.code;
@@ -593,6 +593,11 @@ fn format_append(e: el::El, v: integer, code: ir::Node, stack: boolean) -> ir::N
 // buffer, which the body then writes through.  The declared result takes those deps.
 fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
   d = e.context;
+  // A generic template takes none of the return promotion (`generic_promote_ok`): each instance
+  // decides its own delivery once its types are known.
+  if el::def(e, d).def_type == el::DT_GENERIC {
+    return;
+  }
   ret = el::def(e, d).returned[0];
   opt = ret is TyOptional;
   rt = el_types::base(ret);

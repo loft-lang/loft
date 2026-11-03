@@ -644,8 +644,9 @@ fn bound_stubs(e: el::El, holder: integer, pos: ir::Position) -> boolean {
       }
       rt = el_expressions::substitute(c.returned[0] ?? ir::TyVoid, self_nr, href);
       rb = el_types::base(rt);
-      if rb is TyText || rb is TyReference || rb is TyVector || rb is TyTuple || keyed(rb) || match rb { TyEnum { is_ref } => is_ref, _ => false } {
-        el::refuse(e, "a bound method answering a text or a heap value");
+      heap = rb is TyReference || rb is TyVector || match rb { TyEnum { is_ref } => is_ref, _ => false };
+      if rb is TyTuple || keyed(rb) || (heap && rt is TyOptional) {
+        el::refuse(e, "a bound method answering a tuple, a keyed collection or a nullable heap value");
         return false;
       }
       sd = el::add_def(e, stub, pos, el::DT_FUNCTION);
@@ -653,6 +654,21 @@ fn bound_stubs(e: el::El, holder: integer, pos: ir::Position) -> boolean {
         na = el::attribute(a.name, el_expressions::substitute(a.typedef[0] ?? ir::TyVoid, self_nr, href));
         na.value_const = a.value_const;
         e.b.data.definitions[sd].attributes += [na];
+      }
+      // A stub's ABI is its implementation's (I9-text, @PLAN59): a text answer takes the hidden
+      // `__work_1: &text` a concrete method's text return adds, a heap answer the hidden
+      // `__retbuf` of its base, which the stub's result borrows.  A builtin implementation
+      // takes neither, and the instance drops the trailing argument.
+      if rb is TyText {
+        wb = el::attribute("__work_1", ir::TyRefVar { inner: ir::TyText { dep: [] } });
+        wb.hidden = true;
+        e.b.data.definitions[sd].attributes += [wb];
+      }
+      if heap {
+        rbuf = el::attribute("__retbuf", el_types::without_deps(rb));
+        rbuf.hidden = true;
+        e.b.data.definitions[sd].attributes += [rbuf];
+        rt = el_types::with_deps(el_types::without_deps(rb), [len(el::def(e, sd).attributes) - 1]);
       }
       e.b.data.definitions[sd].returned = [rt];
       e.b.data.definitions[sd].operator_form = c.operator_form;
