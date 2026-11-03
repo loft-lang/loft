@@ -39,6 +39,112 @@ asks which batch it runs on.  What follows from that:
   needs to draw something the same size on every screen, is not available yet: the BSP reports
   pixels only, and no platform of the graphics library reports millimetres or density.
 
+## Getting a Tanmatsu running
+
+Everything in this section reads from the device and writes nothing to it.  The one step
+that changes the device, installing an app, is in [Apps](#apps).
+
+**Connect it.**  Use a USB-C cable that carries data and switch the device on.  It shows up
+as two Espressif "USB JTAG/serial debug unit" ports (USB ID `303a:1001`) behind a small hub
+inside the device:
+
+| Chip | What it is | Flash |
+|---|---|---|
+| ESP32-P4 | the main processor: runs the launcher and every app | 16 MB |
+| ESP32-C6 | the radio: Wi-Fi 6, Bluetooth 5 LE, 802.15.4 | 8 MB |
+
+Both ports are the chips' own USB peripheral, built into the silicon, so they answer
+whatever firmware is running.  Which one is `/dev/ttyACM0` is not fixed; use the stable
+names under `/dev/serial/by-id/`, or ask with `esptool chip-id` (below).
+
+**Permission.**  The ports belong to the `dialout` group:
+`sudo usermod -aG dialout $USER`, then log in again.  Until then, `sg dialout -c "<cmd>"`
+runs one command with the group.
+
+**esptool.**  Version 5 or newer, which knows the P4's current revisions:
+`sudo apt install pipx && pipx install esptool` (`sudo pipx install --global esptool` for
+every user).  A distribution's own `esptool` package can be too old for the P4.
+
+**Ask the chips** — each of these only reads.  Each restarts the chip into its ROM
+bootloader and back, so the device reboots:
+
+```sh
+esptool --port /dev/ttyACM0 flash-id            # chip, revision, flash size
+esptool --port /dev/ttyACM0 get-security-info   # secure boot, flash encryption
+```
+
+With secure boot and flash encryption both off, a backup is a plain copy of the flash, and
+writing it back restores the device exactly.  Never run `write-flash`, `erase-flash` or any
+`espefuse` command while exploring: an eFuse write can never be undone.
+
+**Back up both chips before anything else:**
+
+```sh
+esptool --port <P4 port> read-flash 0 ALL p4.bin && esptool --port <P4 port> verify-flash 0 p4.bin
+```
+
+The C6 needs the P4 held still.  While the launcher runs, it restarts the radio when the
+radio goes quiet, which drops the C6's USB port a few seconds into a long read.  Park the P4
+in its ROM bootloader first, read the C6, then restart the P4:
+
+```sh
+esptool --port <P4 port> --after no-reset chip-id     # the P4 stays in its bootloader
+esptool --port <C6 port> read-flash 0 ALL c6.bin && esptool --port <C6 port> verify-flash 0 c6.bin
+esptool --port <P4 port> chip-id                      # restarts the P4 normally
+```
+
+Keep the images and their `sha256sum` off the machine.  Restoring one is
+`esptool --port <port> write-flash 0 <image>`.
+
+**The flash layout** — the partition table at `0x8000`, as the launcher ships it (and as
+the app template's `partition_tables/esp32p4-16mb.csv` declares it):
+
+| P4 partition | Offset | Size | Holds |
+|---|---|---|---|
+| `nvs`, `otadata`, `phy_init` | `0x19000` | 28 KB | settings, which launcher slot boots, radio calibration |
+| `ota_0`, `ota_1` | `0x20000`, `0x220000` | 2 MB each | the launcher, two slots so an update can switch |
+| `appfs` | `0x420000` | 8 MB | the installed apps |
+| `locfd` | `0xC20000` | 3.9 MB | a FAT file area |
+
+The C6 holds its own firmware (`factory`, 2 MB), an `appfs`, Zigbee storage and a 1.9 MB
+SPIFFS area.
+
+## Apps
+
+An app is an ESP-IDF project built for the `esp32p4`.  The Tanmatsu app template
+(`Nicolai-Electronics/tanmatsu-template`) names the ESP-IDF version and the BSP version an
+app uses.  Its `make install` uploads `application.bin` with **badgelink**, which talks over
+USB to the running launcher:
+
+```sh
+badgelink.sh appfs upload application "<title>" 0 application.bin
+badgelink.sh start application
+```
+
+The launcher writes the app into `appfs` and lists it in its menu, beside the launcher, which
+is never touched.  **`idf.py flash` is the command to avoid**: it writes the app over the
+launcher itself.
+
+## A loft program as an app
+
+A loft program goes onto the device as C.  The C backend writes the program and the runtime
+as one C file.  A C build loads no library's Rust part ([HARDWARE_BACKENDS.md § The
+processor](HARDWARE_BACKENDS.md#the-processor)), so an app holds only that file and the
+libraries' `[c]` parts.  `tile-world-game/sheet.loft`, Kenney's Tiny Dungeon sheet on the
+screen until space is pressed, needs four of them: `tiles.c`, `imaging_png.c`, `screen.c`
+and `input`'s `keys.c`.  It logs each step as `@t <microseconds> <event>` on the console,
+which is the USB serial port on the device.
+
+What is built so far:
+
+- The program runs on the interpreter and through the C backend on a PC, with the same
+  answers.
+- The ESP-IDF project around it is not built yet ([Not yet run on a device](#verified-and-how)).
+  That project is the C file plus the four C parts, an `app_main` that starts the BSP and runs
+  the program, and the template's partition table.
+- Building it needs ESP-IDF installed.  The template's `make prepare` installs it into the
+  project, and `make eim-sdk` installs it through Espressif's installation manager.
+
 ## What runs there
 
 **The language.**
