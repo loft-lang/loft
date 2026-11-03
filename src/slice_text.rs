@@ -82,22 +82,12 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     }
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
     let mut sites: Vec<Site> = Vec::new();
-    // The targets an admitted assignment host DECLARES (their first `Set`).
-    let mut declares: HashSet<u16> = HashSet::new();
+    let mut declares = first_assignments(&code, &ops);
     {
         let vars = data.def(d_nr).variables();
         let mut assigned = 0usize;
         let mut calls = 0usize;
-        let mut set_before: HashSet<u16> = HashSet::new();
         code.walk(&mut |n| {
-            // The walk is in emission order: an assignment host no earlier `Set` names is the
-            // variable's declaration, which the statement block would otherwise move inside it.
-            if let Value::Set(x, _) = n {
-                if host(n, &ops).is_some() && !set_before.contains(x) {
-                    declares.insert(*x);
-                }
-                set_before.insert(*x);
-            }
             if let Some(block) = host(n, &ops) {
                 assigned += 1;
                 match admit(block, vars, &ops) {
@@ -163,20 +153,39 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
                 bl.scope = scope;
             }
             fired += 1;
-            if trace() {
-                eprintln!(
-                    "[slice-text] fn={} {} reads its span in place",
-                    data.def(d_nr).name(),
-                    vars.name(site.tmp)
-                );
-            }
+            trace_site(data, d_nr, vars.name(site.tmp));
         });
     }
-    if fired > 0 && !declares.is_empty() {
-        declare_before(&mut code, &mut declares, &ops);
-    }
+    declare_before(&mut code, &mut declares, &ops);
     data.definitions[d_nr as usize].code = code;
     crate::rewrite_census::fired("R-SliceArg/range", fired);
+}
+
+/// `LOFT_TRACE_SLICE_TEXT=1`: the site taken.
+fn trace_site(data: &Data, d_nr: u32, var: &str) {
+    if trace() {
+        eprintln!(
+            "[slice-text] fn={} {var} reads its span in place",
+            data.def(d_nr).name()
+        );
+    }
+}
+
+/// The variables an assignment host DECLARES: the walk is in emission order, so a host no
+/// earlier `Set` names is its variable's first assignment, which the statement block would
+/// otherwise move inside it ([`declare_before`]).
+fn first_assignments(code: &Value, ops: &Ops) -> HashSet<u16> {
+    let mut set_before: HashSet<u16> = HashSet::new();
+    let mut declares: HashSet<u16> = HashSet::new();
+    code.walk(&mut |n| {
+        if let Value::Set(x, _) = n {
+            if host(n, ops).is_some() && !set_before.contains(x) {
+                declares.insert(*x);
+            }
+            set_before.insert(*x);
+        }
+    });
+    declares
 }
 
 /// A rewritten assignment that was its variable's declaration now sits inside the statement
@@ -185,6 +194,9 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
 /// nested block is a declaration in the enclosing list: `x = ""` in front of the block (a text,
 /// the only result the range call has; the block reads no `x`, which nothing assigned before).
 fn declare_before(v: &mut Value, declares: &mut HashSet<u16>, ops: &Ops) {
+    if declares.is_empty() {
+        return;
+    }
     if let Value::Block(bl) | Value::Loop(bl) = v.unspan_mut() {
         let mut i = 0;
         while i < bl.operators.len() {
