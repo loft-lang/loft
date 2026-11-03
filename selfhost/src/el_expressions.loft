@@ -5437,6 +5437,20 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
       nl = el_ir::cl(e, "OpNullRefSentinel", []);
       return ex(el_ir::cl(e, "OpNeRef", if b.tp is TyNull { [v.code, nl] } else { [nl, v.code] }), ir::TyBoolean);
     }
+    // A bare struct reference keeps the generic identity dispatch against the null reference
+    // (`OpEqRef`'s `rec` test is total over what a read answers), in the operands' order.
+    if !(v.tp is TyOptional) && sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") && !has_operator_method(e, sd) {
+      nl = el_ir::cl(e, "OpNullRefSentinel", []);
+      return ex(el_ir::cl(e, if op == "==" { "OpEqRef" } else { "OpNeRef" }, if b.tp is TyNull { [v.code, nl] } else { [nl, v.code] }), ir::TyBoolean);
+    }
+  }
+  // `content_eq_type`: two references of one struct compare by content (`OpEqContent`),
+  // through every field — where the struct has no `OpEq` / `OpNe` method of its own.
+  if op == "==" || op == "!=" {
+    ad = struct_ref(e, el_types::base(a.tp));
+    if ad >= 0 && ad == struct_ref(e, el_types::base(b.tp)) && !starts_with(el::def(e, ad).name, "__tuple<") && !has_operator_method(e, ad) {
+      return ex(el_ir::cl(e, if op == "==" { "OpEqContent" } else { "OpNeContent" }, [a.code, b.code, ir::NdInt { n: el::def(e, ad).known_type }]), ir::TyBoolean);
+    }
   }
   if op == ">" {
     return call_op(e, vars, "<", [b.code, a.code], [b.tp, a.tp]);
@@ -5445,6 +5459,12 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
     return call_op(e, vars, "<=", [b.code, a.code], [b.tp, a.tp]);
   }
   call_op(e, vars, op, [a.code, b.code], [a.tp, b.tp])
+}
+
+// Does struct `d` declare an `==` / `!=` of its own (`user_op_method`'s `t_<len><Type>_OpEq`)?
+fn has_operator_method(e: el::El, d: integer) -> boolean {
+  nm = el::def(e, d).name;
+  el::def_nr(e, "t_{len(nm)}{nm}_OpEq") >= 0 || el::def_nr(e, "t_{len(nm)}{nm}_OpNe") >= 0
 }
 
 // `Parser::parse_if_expecting`: the condition (a boolean, which `convert_condition` leaves as it
