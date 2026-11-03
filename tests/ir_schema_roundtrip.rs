@@ -275,8 +275,9 @@ fn tests_scripts_round_trip_body() {
         let mut p = loft::parser::Parser::new();
         p.data = stdlib_data.clone();
         p.database = stdlib_db.clone();
-        // Skip scripts that don't parse clean (error-path / lib-dependent fixtures):
-        // their IR is intentionally malformed or incomplete, not a codec target.
+        p.lib_dirs = args_lib_dirs(script);
+        // Skip scripts that don't parse clean (error-path fixtures): their IR is
+        // intentionally malformed or incomplete, not a codec target.
         if !p.parse(&script.to_string_lossy(), false) {
             continue;
         }
@@ -319,6 +320,28 @@ fn tests_scripts_round_trip_body() {
     );
 }
 
+/// The `--lib <dir>` directories a corpus file's `// @ARGS:` lines name, as `tests/wrap.rs`
+/// hands them to the parser.  Without them a program that uses a `tests/lib/` fixture fails to
+/// parse — after a library search that costs it most of a second — and the sweep skips it, so
+/// both its codec coverage and that second are lost.
+fn args_lib_dirs(script: &std::path::Path) -> Vec<String> {
+    let source = fa::read_to_string(script).unwrap_or_default();
+    let mut dirs = Vec::new();
+    for line in source.lines().take(20) {
+        if let Some(args) = line.trim().strip_prefix("// @ARGS:") {
+            let mut tokens = args.split_whitespace();
+            while let Some(tok) = tokens.next() {
+                if tok == "--lib"
+                    && let Some(dir) = tokens.next()
+                {
+                    dirs.push(dir.to_string());
+                }
+            }
+        }
+    }
+    dirs
+}
+
 /// H7 — the STORE codec (`ir_store::materialize_data` → `ir_read::read_data`),
 /// the path the **startup cache** uses, round-trips the whole stdlib + every
 /// `tests/scripts/` program's `Data` exactly.
@@ -355,8 +378,9 @@ fn corpus_store_codec_round_trips_body() {
         let mut p = loft::parser::Parser::new();
         p.data = stdlib_data.clone();
         p.database = stdlib_db.clone();
-        // Skip scripts that don't parse clean (error-path / lib-dependent
-        // fixtures) — same gate as `tests_scripts_round_trip`.
+        p.lib_dirs = args_lib_dirs(script);
+        // Skip scripts that don't parse clean (error-path fixtures) — same gate as
+        // `tests_scripts_round_trip`.
         if !p.parse(&script.to_string_lossy(), false) {
             continue;
         }

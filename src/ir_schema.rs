@@ -1472,9 +1472,28 @@ pub fn data_to_json(data: &Data) -> String {
         }
         write_definition(&mut out, data.def(d_nr));
     }
+    out.push(']');
+    write_data_tables(&mut out, data);
+    out
+}
+
+/// The `Data`-level part of [`data_to_json`] without the definitions: what a comparison
+/// that already matched every definition one by one still has to compare.  Serialising the
+/// definitions a second time there doubled the cost of every whole-`Data` comparison.
+#[must_use]
+pub fn data_header_json(data: &Data) -> String {
+    let mut out = String::new();
+    let _ = write!(out, "{{\"source\":{}", data.source);
+    write_data_tables(&mut out, data);
+    out
+}
+
+/// The tables a `Data` carries beside its definitions, as `,"imports":[…],…}` — the shared
+/// tail of [`data_to_json`] and [`data_header_json`].
+fn write_data_tables(out: &mut String, data: &Data) {
     // The import tables (loft#1359): a load replays `imports` into `def_names`
     // and restores `use_names` verbatim — neither derives from the definitions.
-    out.push_str("],\"imports\":[");
+    out.push_str(",\"imports\":[");
     for (i, imp) in data.applied_imports().iter().enumerate() {
         if i > 0 {
             out.push(',');
@@ -1488,9 +1507,9 @@ pub fn data_to_json(data: &Data) -> String {
             "{{\"lib\":{},\"into\":{},\"name\":",
             imp.lib_source, imp.into_source
         );
-        write_str(&mut out, name);
+        write_str(out, name);
         out.push_str(",\"bind\":");
-        write_str(&mut out, bind);
+        write_str(out, bind);
         out.push('}');
     }
     out.push_str("],\"use_names\":[");
@@ -1499,7 +1518,7 @@ pub fn data_to_json(data: &Data) -> String {
             out.push(',');
         }
         out.push_str("{\"name\":");
-        write_str(&mut out, name);
+        write_str(out, name);
         let _ = write!(out, ",\"source\":{source}}}");
     }
     // @PLN199 G0b-2 — the name each library source was loaded under, which a library
@@ -1510,7 +1529,7 @@ pub fn data_to_json(data: &Data) -> String {
             out.push(',');
         }
         let _ = write!(out, "{{\"source\":{source},\"name\":");
-        write_str(&mut out, name);
+        write_str(out, name);
         out.push('}');
     }
     // The type-variable placeholders' bound keys: like `use_names`, not derivable from the
@@ -1523,11 +1542,10 @@ pub fn data_to_json(data: &Data) -> String {
             out.push(',');
         }
         let _ = write!(out, "{{\"holder\":{holder},\"bounds\":");
-        write_str(&mut out, bounds);
+        write_str(out, bounds);
         out.push('}');
     }
     out.push_str("]}");
-    out
 }
 
 /// One retained import from its snapshot object; an empty `name` is a
@@ -1641,8 +1659,8 @@ pub enum DataDiff {
         reference: String,
         loaded: String,
     },
-    /// The whole-`Data` re-encode differs but every definition matched — a
-    /// `Data`-level field (e.g. `source`) diverged.
+    /// Every definition matched but a `Data`-level field diverged — `source` or one of
+    /// the tables [`data_header_json`] writes.
     Header { reference: String, loaded: String },
 }
 
@@ -1687,8 +1705,8 @@ pub fn compare_data(reference: &Data, loaded: &Data) -> Result<(), DataDiff> {
         }
     }
     // Every definition matched; catch any Data-level (header) difference.
-    let r = data_to_json(reference);
-    let l = data_to_json(loaded);
+    let r = data_header_json(reference);
+    let l = data_header_json(loaded);
     if r != l {
         return Err(DataDiff::Header {
             reference: r,
