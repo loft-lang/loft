@@ -96,11 +96,13 @@ pub struct Vars {
   pub rebind_params: vector<integer>,
   pub rebind_origs: vector<integer>,
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
-  pub dn4_coalesce: boolean
+  pub dn4_coalesce: boolean,
+  // the local a `+` chain of vectors is bound to (`a = v + w` builds into it), or -1
+  pub concat_dest: integer
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, concat_dest: -1 }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {

@@ -2250,8 +2250,21 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   vars.len_read = false;
   outer_slice = vars.slice_node;
   vars.slice_node = slice_target(e, rhs!);
+  // A `+` chain of vectors bound to a plain local is built into it (`parse_append_vector`).
+  concat = match e.p.nodes[rhs!] { SBin { op: bo } => bo == "+", _ => false } && !vars.vars[v].argument && !(el_vars::tp(vars, v) is TyRefVar);
+  if concat {
+    vars.concat_dest = v;
+  }
   x = expression(e, vars, rhs!);
+  vars.concat_dest = -1;
   vars.slice_node = outer_slice;
+  if concat && x.tp is TyRewritten {
+    if !el_vars::change_var_type(e, vars, v, el_types::unrewritten(x.tp)) {
+      el::refuse(e, "a local that changes type");
+    }
+    el_vars::drop_use(vars, v);
+    return ex(x.code, ir::TyVoid);
+  }
   if x.code is NdIter {
     return slice_bind(e, vars, v, x);
   }
@@ -8715,6 +8728,8 @@ fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: integer)
       _ => {}
     }
   }
+  dest = vars.concat_dest;
+  vars.concat_dest = -1;
   a = expression(e, vars, first);
   if el_types::base(a.tp) is TyText && !(a.tp is TyOptional) {
     parts: vector<Ex> = [];
@@ -8722,6 +8737,13 @@ fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: integer)
       parts += [expression(e, vars, n)];
     }
     return append_text(e, vars, a, parts);
+  }
+  if el_types::base(a.tp) is TyVector && !(a.tp is TyOptional) {
+    parts: vector<Ex> = [];
+    for n in rights {
+      parts += [expression(e, vars, n)];
+    }
+    return vector_concat(e, vars, dest, a, parts);
   }
   if a.tp is TyCharacter {
     el::refuse(e, "a concatenation that starts with a character");
@@ -8732,6 +8754,69 @@ fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: integer)
     acc = arithmetic_span(e, ats[n#index] ?? at, "+", builtin_op(e, vars, "+", acc, expression(e, vars, n)));
   }
   acc
+}
+
+// `Parser::parse_append_vector` (`@FR-Col-Concat`) for vectors of one element type: a fresh store
+// (`vector_db`) made after the operands are read, each operand appended (`OpAppendVector`, the
+// element's store type) — into `dest` when the chain is bound to that local (the type rewritten
+// to borrow its store), else into a `_vec_N` an "Append Vector" block answers.  A first operand
+// that is a literal (built into the destination), a call (adopted), the destination itself (an
+// in-place grow), an element type with no rows and mixed element types are refused by name.
+fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts: vector<Ex>) -> Ex {
+  vt = el_types::without_deps(el_types::base(a.tp));
+  elm = match vt { TyVector { inner } => inner, _ => ir::TyVoid };
+  for p in parts {
+    if !el_types::is_unknown(p.tp) && !el_types::is_equal(e, el_types::base(p.tp), vt) {
+      el::refuse(e, "a concatenation of vectors of different element types");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+  }
+  first = el_ir::unspan(a.code);
+  ok_first = match first {
+    NdVar { n } => n != dest,
+    _ => false
+  };
+  if !e.first_pass && (!ok_first || !is_scalar(elm)) {
+    el::refuse(e, "a vector concatenation of this shape: a first operand that is no other local, or elements that are no plain scalars");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if e.first_pass {
+    if dest >= 0 {
+      return ex(ir::NdNull, ir::TyRewritten { inner: vt });
+    }
+    el_vars::create_unique(vars, "vec", vt);
+    return ex(ir::NdNull, vt);
+  }
+  rows = vector_rows(e, elm, 0, true);
+  nm = el_types::elem_name(e, elm);
+  if rows == null || nm == "" {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  r = rows!;
+  rec = el_schema::schema_type(e, nm);
+  if rec < 0 {
+    el::refuse(e, "a vector concatenation of this element type: {type_kind(elm)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  target = if dest >= 0 { dest } else { el_vars::create_unique(vars, "vec", vt) };
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  w = ir::NdVar { n: target };
+  ls: vector<ir::Node> = [
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+    el_ir::v_set(target, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
+    el_ir::cl(e, "OpAppendVector", [w, a.code, ir::NdInt { n: rec }])
+  ];
+  for p in parts {
+    ls += [el_ir::cl(e, "OpAppendVector", [w, p.code, ir::NdInt { n: rec }])];
+  }
+  tt = ir::TyVector { inner: elm, dep: [db] };
+  el_vars::set_var_type(vars, target, tt);
+  if dest >= 0 {
+    return ex(ir::NdInsert { items: ls }, ir::TyRewritten { inner: tt });
+  }
+  ls += [w];
+  ex(el_ir::v_block(ls, tt, "Append Vector"), tt)
 }
 
 // The operands after the first of a `+` chain whose first operand is the local `name`, or none.
