@@ -560,6 +560,7 @@ fn main() {
 /// Hand-computed: each call holds four entries and reads `v = 3` back, `3 + 4` per call, 3500.
 #[test]
 fn a_program_reads_its_hash_seed_entropy_once() {
+    // approved exemption: the count is of `/dev/urandom` opens, a file Windows does not have — its keys come from the clock and an address, with no file to open; Windows substitute: c_emit's other hash tests and the nightly MSVC / MinGW sweeps run every hash on Windows
     if !have_cc() || !cfg!(unix) {
         return;
     }
