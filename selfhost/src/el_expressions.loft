@@ -4751,6 +4751,25 @@ fn find_fn(e: el::El, name: text, receiver: ir::TypeT) -> integer {
     el::refuse(e, "a method receiver that is a variant or a generic instance");
     return -1;
   }
+  // A bound HOLDER's stubs are keyed per signature, and a method call offers no arity: every
+  // arity is probed, and one stub is the answer (two are ambiguous, none the free function).
+  if len(td.bounds) > 0 && type_var(e, ir::TyReference { n: tn, dep: [] }) >= 0 {
+    stubs: vector<integer> = [];
+    for a in 1..10 {
+      st = el::def_nr(e, bound_stub_name(td.name, name, a));
+      if st >= 0 {
+        stubs += [st];
+      }
+    }
+    if len(stubs) == 1 {
+      return stubs[0] ?? -1;
+    }
+    if len(stubs) > 1 {
+      el::refuse(e, "a method a bound declares at two arities");
+      return -1;
+    }
+    return free;
+  }
   base = td.name;
   optional = "{base}?";
   spellings = if first is TyOptional { [optional, base] } else { [base, optional] };
@@ -4921,6 +4940,16 @@ fn stub_call(e: el::El, d: integer, h: integer) -> boolean {
   false
 }
 
+fn visible_count(d: ir::Definition) -> integer {
+  n = 0;
+  for a in d.attributes {
+    if !a.hidden {
+      n += 1;
+    }
+  }
+  n
+}
+
 // Does every stub call in `n` re-resolve at this binding?
 fn stubs_resolve(e: el::El, n: ir::Node, h: integer, bound: ir::TypeT) -> boolean {
   match n {
@@ -4956,14 +4985,25 @@ fn re_resolve_stub(e: el::El, d: integer, h: integer, bound: ir::TypeT) -> integ
     return -1;
   }
   tname = el::def(e, tn).name;
-  if el::def_nr(e, "t_{len(tname)}{tname}_{fname}") >= 0 || el::def_nr(e, "t_{len(tname) + 1}{tname}?_{fname}") >= 0 || el::def_nr(e, "n_{fname}") >= 0 {
-    return -1;
-  }
   want = 0;
   for a in sd.attributes {
     if !a.hidden {
       want += 1;
     }
+  }
+  // The type's own method, in its nullability spellings, taking this receiver; a program's
+  // `fn Op…` is never a bound's operator (`@FR-Op-Std`, C132).
+  for key in ["t_{len(tname)}{tname}_{fname}", "t_{len(tname) + 1}{tname}?_{fname}"] {
+    m = el::def_nr(e, key);
+    if m >= 0 && receives(e, m, tn) {
+      if fname.starts_with("Op") || visible_count(el::def(e, m)) != want {
+        return -1;
+      }
+      return m;
+    }
+  }
+  if el::def_nr(e, "n_{fname}") >= 0 {
+    return -1;
   }
   for c in el::possible(e, fname) {
     cd = el::def(e, c);
@@ -5131,7 +5171,7 @@ pub fn type_mentions(t: ir::TypeT, h: integer) -> boolean {
 // `Type::substitute` `[h ↦ bound]` for the shapes this port instantiates: the placeholder
 // itself becomes the bound type (its own deps dropped), a vector's element is substituted, and
 // any other type is left as it is (the caller refuses a template that holds one over `h`).
-fn substitute(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
+pub fn substitute(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
   match t {
     TyReference { n } => if n == h { bound } else { t },
     TyVector { inner, dep } => ir::TyVector { inner: substitute(inner, h, bound), dep: dep },
@@ -5263,7 +5303,7 @@ fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer) -> text {
       if cd.def_type == el::DT_GENERIC {
         return "a call of another generic";
       }
-      stub = stub_call(e, def_nr, h) && key_rest(cd.name).starts_with("Op");
+      stub = stub_call(e, def_nr, h);
       for a in cd.attributes {
         if type_mentions(a.typedef[0] ?? ir::TyVoid, h) && !stub {
           return "a call over the variable";

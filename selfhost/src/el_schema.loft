@@ -164,12 +164,16 @@ fn register_enum(e: el::El, d: integer) {
 // stored attribute a field of its content type, in declaration order.
 fn fill_database(e: el::El, d: integer) {
   def = el::def(e, d);
-  if schema_type(e, def.name) >= 0 {
+  // A type variable's placeholder (`is_type_var_placeholder`: a struct with no fields answering
+  // a record of itself) is registered under a name no program type can take.
+  own = match def.returned[0] ?? ir::TyVoid { TyReference { n } => n == d, _ => false };
+  reg = if len(def.attributes) == 0 && own { "__typevar_{def.name}" } else { def.name };
+  if schema_type(e, reg) >= 0 {
     el::refuse(e, "a struct named like a type the schema already has");
     return;
   }
   // The structure first, then each field's content — a narrow Part is made after it.
-  s = structure(e, def.name);
+  s = structure(e, reg);
   e.b.data.definitions[d].known_type = s;
   for a in def.attributes {
     if a.constant {
