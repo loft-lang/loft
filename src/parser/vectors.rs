@@ -5658,7 +5658,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let mut work = vec![from.clone()];
         while let Some(t) = work.pop() {
             let t = match t {
-                Type::RefVar(b) | Type::Rewritten(b) => *b,
+                // A wrapper says nothing about what its value can hold, so it is looked
+                // through — `τ?` included (`@FR-N-Shape`): a nullable view of the destination
+                // holds it as surely as a plain one, and a wrapper inside another is peeled
+                // on the next turn.
+                Type::RefVar(b) | Type::Rewritten(b) | Type::Optional(b) => {
+                    work.push(*b);
+                    continue;
+                }
                 other => other,
             };
             if goals.iter().any(|g| shape_eq(&t, g)) {
