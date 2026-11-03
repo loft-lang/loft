@@ -1667,7 +1667,7 @@ cbor	1add14001	c	R-Base/counter	2
 cbor	1add14001	c	R-BoundAppend	1
 cbor	1add14001	c	R-BoundedNest/kernel	1
 cbor	1add14001	c	R-ByteCopy	2
-cbor	1add14001	c	R-CompleteWrite	60
+cbor	1add14001	c	R-CompleteWrite	58
 cbor	1add14001	c	R-Counter	165
 cbor	1add14001	c	R-Destination	6
 cbor	1add14001	c	R-DischargeInto	1
@@ -1714,7 +1714,7 @@ cbor	1add14001	c	R-Reuse	8
 cbor	1add14001	c	R-Rotate	37
 cbor	1add14001	c	R-SelfReplace	1
 cbor	1add14001	c	R-SingleUse	7
-cbor	1add14001	c	R-SliceArg/range	2
+cbor	1add14001	c	R-SliceArg/range	1
 cbor	1add14001	c	R-SliceInto	2
 cbor	1add14001	c	R-TextBorrow	7
 cbor	1add14001	c	R-TextBorrow/tested	2
@@ -1730,7 +1730,7 @@ cbor	1add14001	rust	R-BoundAppend	1
 cbor	1add14001	rust	R-BoundedNest/kernel	1
 cbor	1add14001	rust	R-ByteCopy	2
 cbor	1add14001	rust	R-CharWalk	10
-cbor	1add14001	rust	R-CompleteWrite	70
+cbor	1add14001	rust	R-CompleteWrite	67
 cbor	1add14001	rust	R-Counter	165
 cbor	1add14001	rust	R-Destination	15
 cbor	1add14001	rust	R-DischargeInto	1
@@ -1778,6 +1778,7 @@ cbor	1add14001	rust	R-Reuse	8
 cbor	1add14001	rust	R-Rotate	37
 cbor	1add14001	rust	R-SelfReplace	1
 cbor	1add14001	rust	R-SingleUse	7
+cbor	1add14001	rust	R-SliceArg/range	1
 cbor	1add14001	rust	R-SplitTable	1
 cbor	1add14001	rust	R-TextBorrow	13
 cbor	1add14001	rust	R-TextBorrow/tested	2
@@ -4342,7 +4343,7 @@ pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Base/counter	2
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-BoundAppend	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-BoundedNest/kernel	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-ByteCopy	2
-pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-CompleteWrite	61
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-CompleteWrite	58
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Counter	173
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Destination	6
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-DischargeInto	1
@@ -4390,7 +4391,7 @@ pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Reuse	11
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Rotate	41
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-SelfReplace	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-SingleUse	2
-pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-SliceArg/range	3
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-SliceArg/range	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-SliceInto	2
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-SliceInto/transient	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Tabulate	1
@@ -4409,7 +4410,7 @@ pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-BoundAppend	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-BoundedNest/kernel	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-ByteCopy	2
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-CharWalk	11
-pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-CompleteWrite	78
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-CompleteWrite	75
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Counter	129
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Destination	15
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-DischargeInto	1
@@ -4457,6 +4458,7 @@ pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Reuse	11
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Rotate	41
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-SelfReplace	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-SingleUse	2
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-SliceArg/range	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-SplitTable	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-TextBorrow	25
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-TextBorrow/tested	2

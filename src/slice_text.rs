@@ -16,11 +16,13 @@
 //! `W` is the mint, the bind, the zero or the one slice, and the slice's operands name
 //! neither — and where, outside the block, `W` is only declared null and freed and `T` is not
 //! named at all: then `W` is never minted and its frees pass a null by.  Anything else keeps
-//! the slice.  The C writer's clause (`FnWriter::call`, the `n_text_from_bytes` arm) matches
-//! the same block; with this pass on it finds none.
+//! the slice.  The statement that holds the call is rebuilt around the range call — an
+//! assignment, or an append into a plain variable (the parser's text build) — with the bound
+//! statements first, so nothing evaluated before the call runs after them; a call held anywhere
+//! else keeps its slice.  Both backends run the rewritten IR (`@FR-R-Phase`).
 //!
-//! `LOFT_NO_IR_SLICE_TEXT=1` keeps every slice (the IR clause off); `LOFT_TRACE_SLICE_TEXT=1`
-//! names each site admitted and each declined with why.
+//! `LOFT_NO_SLICE_TEXT=1` keeps every slice; `LOFT_TRACE_SLICE_TEXT=1` names each site admitted
+//! and each declined with why.
 use crate::data::{Data, DefType, Value, v_block};
 use crate::variables::Function;
 
@@ -43,10 +45,7 @@ struct Site {
 }
 
 fn disabled() -> bool {
-    // Opt-in (`LOFT_IR_SLICE_TEXT=1`) until the move protocol's comparison passes: the clause
-    // answered a wrong text on its probe (the range call as a block's value).
-    crate::env_once!(std::env::var("LOFT_NO_IR_SLICE_TEXT").is_ok_and(|v| v != "0"))
-        || !crate::env_once!(std::env::var("LOFT_IR_SLICE_TEXT").is_ok_and(|v| v != "0"))
+    crate::env_once!(std::env::var("LOFT_NO_SLICE_TEXT").is_ok_and(|v| v != "0"))
 }
 
 fn trace() -> bool {

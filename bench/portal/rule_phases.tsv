@@ -23,7 +23,7 @@ R-Callee	c,native	20	0	0	0	62	164
 R-CharWalk	c,native	58	0	0	0	30	619
 R-Compact	ir	1	0	2	0	0	0
 R-Compact/prepend	ir	1	0	1	0	0	0
-R-CompleteWrite	c,native	58	0	0	0	1103	2368
+R-CompleteWrite	c,native	58	0	0	0	1098	2362
 R-Const	ir	2	0	3	0	0	0
 R-Const/fn	parse	2	3	0	0	0	0
 R-CopyView	ir	4	0	8	0	0	0
@@ -138,7 +138,7 @@ R-Scalar	c,native	24	0	0	0	716	7593
 R-ScaleFold	parse	1	2	0	0	0	0
 R-SelfReplace	parse	3	19	0	0	0	0
 R-SingleUse	parse	58	415	0	0	0	0
-R-SliceArg/range	c	2	0	0	0	5	0
+R-SliceArg/range	ir	2	0	2	0	0	0
 R-SliceBorrow	native	2	0	0	0	0	12
 R-SliceInto	c	2	0	0	0	4	0
 R-SliceInto/transient	c	1	0	0	0	1	0

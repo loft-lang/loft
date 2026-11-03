@@ -7093,24 +7093,6 @@ impl<'a> FnWriter<'a> {
             return self.call_operator(d, args, ind);
         }
         let def = cx.data.def(d);
-        // `@FR-R-SliceArg`'s range clause: `text_from_bytes(v[lo..hi])` is the bounds'
-        // statements and `text_from_byte_range(v, lo, hi)` — the span read where it lies, under
-        // the slice's own bounds, with no temporary for the slice.
-        if route == "n_text_from_bytes"
-            && let [arg] = args
-            && !crate::env_once!(std::env::var("LOFT_NO_SLICE_TEXT").is_ok_and(|v| v != "0"))
-            && let Some((prelude, slice)) = self.slice_fill(arg)
-            && let [from, lo, hi, _] = slice
-        {
-            let range = cx.data.def_nr("n_text_from_byte_range");
-            if range != u32::MAX {
-                for op in prelude {
-                    self.stmt(op, ind)?;
-                }
-                crate::rewrite_census::fired("R-SliceArg/range", 1);
-                return self.call(range, &[from.clone(), lo.clone(), hi.clone()], ind);
-            }
-        }
         if let Some(e) = self.keyed_native(route, args, ind)? {
             return Ok(e);
         }

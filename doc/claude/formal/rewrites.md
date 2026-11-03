@@ -275,7 +275,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SelfReplace)` | `R-SelfReplace` parse |
 | `(R-SharedCall)` | not counted — unbuilt: only its narrow case is built, counted as R-PureReuse/shared |
 | `(R-SingleUse)` | `R-SingleUse` parse |
-| `(R-SliceArg)` | `/range` c |
+| `(R-SliceArg)` | `/range` ir |
 | `(R-SliceBorrow)` | `R-SliceBorrow` native |
 | `(R-SliceInto)` | `R-SliceInto` c · `/transient` c |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
@@ -3177,12 +3177,12 @@ c4 reads "world+world").  Sites: `slice_carrier` and the `OpDatabase` / `OpSetIn
 
 ```
   (R-SliceArg)'s range clause
-                 a slice value handed to `text_from_bytes` — `text_from_bytes(v[lo..hi])`,
-                 the block `FnWriter::slice_fill` reads — is the bounds' statements and
-                 `text_from_byte_range(v, lo, hi)`: the same bytes, under the slice's own
-                 bounds (already clamped by the statements, which the range read keeps),
-                 decoded by the same conversion, with no slice built; the interpreter
-                 builds the slice.
+                 a slice value handed to `text_from_bytes` — `text_from_bytes(v[lo..hi])`
+                 assigned to a variable or appended to one — is the bounds' statements
+                 and `text_from_byte_range(v, lo, hi)`: the same bytes, under the slice's
+                 own bounds (already clamped by the statements, which the range read
+                 keeps), decoded by the same conversion, with no slice built.  Decided
+                 and applied in the scope pass, so both backends run it.
 ```
 
 **In words.**  @PLN210 P23.  The carrier above made the slice's store cheap; the range read
@@ -3190,8 +3190,10 @@ makes it absent — the slice's copy, the carrier's take and give, and the vecto
 then copied again.  `text_from_byte_range` is the native a decoder could have written itself
 (`default/03_text.loft`), so the clause writes what the natural spelling means.  pluginabi
 `check_request` 591 → 516 µs on gcc, 693 → 572 µs on clang with the clause alone.  Switch
-`LOFT_NO_SLICE_TEXT`; cells `tests/scripts/a-text-of-a-slice-reads-the-span-in-place.loft`.
-Site: the `n_text_from_bytes` arm at the head of `FnWriter::call`.
+`LOFT_NO_SLICE_TEXT`; trace `LOFT_TRACE_SLICE_TEXT`; cells
+`tests/scripts/a-text-of-a-slice-reads-the-span-in-place.loft`.  Site: `slice_text::rewrite`
+(the scope pass).  On the interpreter it takes 30.6 % of the instructions of a loop that reads a
+32-byte text out of a byte vector (@PLN211's `slice_arg` probe, 7 779 → 5 397 per pass).
 
 ### A slice appended to a place is sliced into it
 
