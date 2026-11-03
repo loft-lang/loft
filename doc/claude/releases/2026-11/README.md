@@ -63,9 +63,9 @@ candidate, and loft#2024..#2028 fixed.
 ## The pre-tag pass (opened 2026-11-02 on `tuxedo-release-2026-11`)
 
 **The release waits for @PLN210** (owner, 2026-11-02): 2026.11.0 ships WITH the C performance
-work that brings the test programs under 3x their Rust twins.  The rule is **under 3x**; 2x is the
-nice-to-have (the plan's stretch target: every library bench routine under 2x on the C ship lane,
-gcc and clang).  That work is in development on
+work that brings the test programs under 3x their Rust twins.  The release RULE is **no routine
+above 5x** (owner, 2026-11-03); under 3x is the aim and 2x the nice-to-have (the plan's stretch
+target: every library bench routine under 2x on the C ship lane, gcc and clang).  That work is in development on
 `laptop-c-perf`; the tag candidate is cut after it joins.  Until then this branch works the rows
 that do not depend on the candidate: `[pre]` and `[mid+pre]` rows are finished here, the `[cand]`
 rows (`M-valgrind`, `M-wasm`) and the release-window rows wait for the candidate.
@@ -92,3 +92,17 @@ filed.  If the port is not in by the candidate, `store_load`'s doc says the upgr
 interpreter-only so far, so 2026.11.0 does not promise it on `--native-c`.  When it joins it also lifts 54ce9e165's refusal (`loft_type_has_dbref` in `loft_image_write`):
 a reference-holding type goes through the same converter.
 
+
+## The candidate (2026-11-03)
+
+**What ships is `main` @ `096397bba`** — PR #2374 squashed; its tree is the PR head `54576fabe`,
+whose CI was green on every check (112), the informational nightly-health line aside.  The frozen
+release gate ran on `692174cd7` (run 41600514860): green on every job but one Windows test whose
+port pick collided with a sibling test's UDP port — fixed in `54576fabe`, which changes only that
+test (`tests/c_emit.rs`).
+
+**The post-freeze perf fixes stay out** (owner, 2026-11-03: "those routines are fixed today, but
+I do not want to rerun every validation again because those will be broken on merging").  The
+three routines over the 3x aim on the C ship lane — `wall_chain_walk` (hex_shape, clang 3.07x),
+`parse` (arguments, clang 3.04x), `terrain_relief_pass` (hex_terrain, gcc 3.06x), loft#2379..#2381
+— are under the 5x rule; their fixes reach `main` after the tag.

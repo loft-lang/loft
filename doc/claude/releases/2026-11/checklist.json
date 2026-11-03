@@ -59,6 +59,11 @@
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
     "note": "make bug-review 2026-10-16: narrow-int/width is the one RISING class (8.5% in the newest band, +2.2pp over its peak); Parser::nstore_unwrap_report reads NO EFFECT on null/sentinel (10.8% -> 18.6%, 15.1% minus PLN153's own finds) - premise to re-open; owns/proxy/N-Road keystones paid off; contract pressure 9.4% strained in 2026-10, 4 unjudged"
   },
+  "M-ndb": {
+    "at": "2026-11-03 13:54",
+    "commit": "c09cda4c193d5315e3aaab39202b7a42b7079e35",
+    "note": "gdb (stock, no plugin) on a --native-debug build at c09cda4c1: rustc \u2014 the cached binary carries DWARF whose decodedline names the preserved loft_native_<pid>.rs (which exists); 'break loft_native_<pid>::n_main' resolves to its line 3861, next steps, info locals and bt name the frames (n_main <- main::{closure}).  C (--native-c --native-debug, -O0 -g) \u2014 'break n_main' resolves to the emitted .c at its line, next steps.  A binary written with --out is the stripped ship form (no line table), as intended.  lldb not installed on this host."
+  },
   "M-ops-census": {
     "at": "2026-10-16 16:33",
     "commit": "b3c430a5c56e10a7434320f9ca0de0da6c2dbd19",
