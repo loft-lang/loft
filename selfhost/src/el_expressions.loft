@@ -8311,6 +8311,21 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   x = expression(e, vars, n!);
+  // `!` of a nullable operand is the negation of its truth: a `boolean?` as it is, anything
+  // else first converted to a boolean (`OpConvBoolFromRef`, `OpConvBoolFromInt`, …).
+  if op == "!" && x.tp is TyOptional {
+    if el_types::base(x.tp) is TyBoolean {
+      return call_op(e, vars, op, [x.code], [ir::TyBoolean]);
+    }
+    // A struct reference converts as a `reference` (`convert`'s `check_type`).
+    if struct_ref(e, el_types::base(x.tp)) >= 0 {
+      return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [x.code])]), ir::TyBoolean);
+    }
+    c = el_convert::convert_admitting(e, vars, x.code, x.tp, ir::TyBoolean);
+    if c != null {
+      return ex(el_ir::cl(e, "OpNot", [c!]), ir::TyBoolean);
+    }
+  }
   call_op(e, vars, op, [x.code], [x.tp])
 }
 
