@@ -170,8 +170,10 @@ fn eval(nodes: vector<Node>, i: integer, env: hash<Binding[name]>) -> integer {
       b = env[name];
       if b {
         v = b.value;
-        // The entry with one field changed, put back under its key.
-        env += [Binding { uses: b.uses + 1, ..b }];
+        // The entry with one field changed, put back under its key — built first, so the
+        // view `b` is done with before `env` grows.
+        updated = Binding { uses: b.uses + 1, ..b };
+        env += [updated];
         v
       } else { 0 }
     },
