@@ -40,7 +40,8 @@ loft commit and the library commit the base was emitted from.
 Baseline (gcc ship, `bench/stats.py --lanes rust,cship`, tip `3cfb11fb9`): median 1.93× over
 42 routines; over 3×: `insert_text` 5.11, `request` 4.58, `check_request` 4.58,
 `flow_layout_full` 4.32, `encode_bytes` 4.04, `fill_polygon` 3.63, `canvas` 3.57, `fronds` 3.29,
-`fill_rect` 3.20, `req_state_b64` 3.19, `draw_quads` 3.10, `invert` 3.05.
+`fill_rect` 3.20, `req_state_b64` 3.19, `draw_quads` 3.10, `invert` 3.05.  Where it stands now:
+the newest `handoff-*.md` here carries the full table on both compilers.
 
 ## Where each routine lands by hand
 
