@@ -336,7 +336,7 @@ impl FieldWalk<'_> {
                         && self.root_is_param
                         && *n != self.root
                         && self.vars.is_argument(*n)
-                        && matches!(self.vars.tp(*n), crate::data::Type::RefVar(t)
+                        && matches!(self.vars.tp(*n).base(), crate::data::Type::RefVar(t)
                             if matches!(t.base(), crate::data::Type::Reference(..) | crate::data::Type::Vector(..)))
                     {
                         // A `&text` or a `&` scalar (a result buffer among them) holds no record.
