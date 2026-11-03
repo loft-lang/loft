@@ -169,6 +169,11 @@ pub fn become_argument(v: Vars, nr: integer) {
   v.vars[nr].stack_allocated = true;
 }
 
+// Is the variable bound already (a parameter, or a local an earlier statement set)?
+pub fn was_defined(v: Vars, nr: integer) -> boolean {
+  v.defined[nr] ?? false
+}
+
 pub fn set_defined(v: Vars, nr: integer) {
   v.defined[nr] = true;
 }

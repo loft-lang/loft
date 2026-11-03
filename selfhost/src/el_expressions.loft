@@ -2135,6 +2135,17 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
     el::refuse(e, "an assignment to a place that is not a plain local");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // #330: `x = x` of a name already bound is the identity and emits nothing — a deep copy onto
+  // itself would free what it reads.  (A parameter whose type leases a copy keeps the rebind;
+  // such types are refused at their declaration here.)
+  match e.p.nodes[rhs!] {
+    SName { name: rn, member: rm } => {
+      if rm == "" && rn == written && el_vars::var(vars, rn) == v && el_vars::was_defined(vars, v) {
+        return ex(ir::NdInsert { items: [] }, ir::TyVoid);
+      }
+    },
+    _ => {}
+  }
   // A parameter of a heap type rebound whole takes the rebound-parameter road (an entry witness,
   // the detach before the bind) or, for a text, a shadow local — not carried yet.
   if vars.vars[v].argument && !scalar(el_types::base(el_vars::tp(vars, v))) && !hidden_param(e, vars, v) {
