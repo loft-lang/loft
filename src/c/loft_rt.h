@@ -2949,6 +2949,16 @@ static loft_str loft_store_str(loft_store_t *s, uint32_t srec) {
     return loft_lit((const char *) loft_at(s, srec, 8), len);
 }
 
+/* @FR-R-RecPtr's text clause — a text field through a held element's address: its string
+ * record at `p + fld`, resolved in the element's store (its texts are records there); the null
+ * address answers the null text, as loft_get_text of the null record. */
+LOFT_HOT_INLINE loft_str loft_pa_text(const uint8_t *p, uint32_t fld, uint16_t store_nr) {
+    if (!p) return loft_null_text();
+    uint32_t srec;
+    memcpy(&srec, p + fld, 4);
+    return loft_store_str(&loft_stores[store_nr], srec);
+}
+
 static loft_str loft_get_text(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return loft_null_text();
     loft_store_t *s = loft_store_of(r);

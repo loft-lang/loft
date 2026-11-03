@@ -286,6 +286,9 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-RecPtr` — the record views whose address the enclosing blocks hold: the view,
     /// the address local and its store's lock flag, innermost last.
     rec_ptrs: Vec<(u16, String, String)>,
+    /// `@FR-R-RecPtr`'s text clause — the addresses of `rec_ptrs` taken under the base clause
+    /// (a held vector's element), the only ones that serve a text field read.
+    text_ptrs: std::collections::HashSet<String>,
     /// A formatted value's work text written straight into the text it is appended to
     /// (`format_into_dest`): the work variable and the destination's C name.
     work_alias: Option<(u16, String)>,
@@ -748,6 +751,7 @@ impl<'a> FnWriter<'a> {
             wr_call: None,
             chain_guards: 0,
             rec_ptrs: Vec::new(),
+            text_ptrs: std::collections::HashSet::new(),
             work_alias: None,
             scalars: Vec::new(),
             invariants: Vec::new(),
@@ -3296,6 +3300,14 @@ impl<'a> FnWriter<'a> {
         let Some(last) = ops.iter().rposition(field_use).filter(|&l| l > at) else {
             return;
         };
+        // The text clause: an element of a held vector serves its text field reads through
+        // the address — a record element's texts are records of its vector's store.  The
+        // verdict's walk counts scalar uses only, so this one enters as `extra_use`.
+        let held_elem = self.held_element_bind(&ops[at]).is_some();
+        let reads_text = crate::opt::hoist::reads_text_field(&ops[at + 1..=last], r, data);
+        let text = !crate::env_once!(std::env::var("LOFT_NO_TEXT_FIELD").is_ok_and(|v| v != "0"))
+            && held_elem
+            && reads_text;
         let mut cache = std::mem::take(&mut self.hoist_cache);
         let verdict = {
             let facts = self.store_facts();
@@ -3311,7 +3323,7 @@ impl<'a> FnWriter<'a> {
                 &std::collections::HashSet::new(),
                 facts.as_ref(),
                 None,
-                false,
+                text,
             )
         };
         self.hoist_cache = cache;
@@ -3319,7 +3331,7 @@ impl<'a> FnWriter<'a> {
         if let Err(why) = verdict {
             if trace {
                 eprintln!(
-                    "recptr: {} {} declined: {why}",
+                    "recptr: {} {} declined: {why} (held element {held_elem}, text read {reads_text})",
                     self.cx.data.def(self.d).name(),
                     self.vars.name(r)
                 );
@@ -3354,6 +3366,9 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("{pl} = loft_rec_locked({rec});"));
         }
         crate::rewrite_census::fired("R-RecPtr", 1);
+        if text {
+            self.text_ptrs.insert(pa.clone());
+        }
         self.rec_ptrs.push((r, pa, pl));
     }
 
@@ -3689,8 +3704,9 @@ impl<'a> FnWriter<'a> {
         crate::rewrite_census::fired("R-RecPtr/held", 1);
     }
 
-    /// `@FR-R-RecPtr`'s held-element clause: the bind `p = v[i]` (an `OpGetVector[Nullable]`)
-    /// or its `?` discharge (`__ncc = v[i]; if __ncc { __ncc } else { a minted default }`), `v`
+    /// `@FR-R-RecPtr`'s held-element clause: the bind `p = v[i]` (an `OpGetVector[Nullable]`),
+    /// a `for p in v` iterator's `{ i = i + 1; v[i] }`, or the `?` discharge
+    /// (`__ncc = v[i]; if __ncc { __ncc } else { a minted default }`), `v`
     /// held for the loop and `i` a variable: the header, the element size, the index, and the
     /// discharge's tested temporary.  `None` for any other bind.
     fn held_element_bind(&self, op: &Value) -> Option<(String, i64, String, Option<String>, bool)> {
@@ -3735,6 +3751,16 @@ impl<'a> FnWriter<'a> {
             .iter()
             .filter(|o| !matches!(o.unspan(), Value::Line(_)))
             .collect();
+        // A `for e in v` element: the iterator's step of its index, then the read at it — the
+        // read is the block's last operation, so the index after the statement is the one read.
+        if let [step, elem] = ops[..]
+            && let Value::Set(i, _) = step.unspan()
+            && let Value::Call(_, ra) = elem.unspan()
+            && matches!(ra.get(2).map(Value::unspan), Some(Value::Var(v)) if v == i)
+            && let Some((header, size, idx, raw)) = read(elem)
+        {
+            return Some((header, size, idx, None, raw));
+        }
         let [first, last] = ops[..] else {
             return None;
         };
@@ -3775,6 +3801,7 @@ impl<'a> FnWriter<'a> {
             ("OpSetInt" | "OpSetFloat" | "OpSetSingle" | "OpSetEnum", [base, fld, _]) => {
                 (false, base, fld)
             }
+            ("OpGetText", [base, fld]) => return self.rec_ptr_text(base, fld, ind),
             _ => return Ok(None),
         };
         let Some((root, off)) = crate::opt::body_writes::view_field(self.cx.data, base, fld) else {
@@ -3822,6 +3849,34 @@ impl<'a> FnWriter<'a> {
             ),
             K::Void,
         )))
+    }
+
+    /// `@FR-R-RecPtr`'s text clause — `OpGetText(r, off)` of a view whose address was taken
+    /// under the base clause (`text_ptrs`): the string record one load at the address,
+    /// resolved in the view's own store; the null address answers the null text, as the store
+    /// read of the null record does.  A view where the operand is read (`field_view`), else
+    /// the owned copy the plain read makes.
+    fn rec_ptr_text(&mut self, base: &Value, fld: &Value, ind: usize) -> Result<Option<E>, String> {
+        let Value::Var(root) = base.unspan() else {
+            return Ok(None);
+        };
+        let Some((_, pa, _)) = self.rec_ptrs.iter().rev().find(|(v, _, _)| v == root).cloned()
+        else {
+            return Ok(None);
+        };
+        if !self.text_ptrs.contains(&pa) {
+            return Ok(None);
+        }
+        let off = Self::literal(fld, "field")?;
+        let read = format!("loft_pa_text({pa}, {off}, {}.store_nr)", self.var(*root));
+        crate::rewrite_census::fired("R-RecPtr/text", 1);
+        if std::mem::take(&mut self.field_view) {
+            return Ok(Some(E::new(read, K::View)));
+        }
+        let t = self.temp(CType::Text);
+        self.line(ind, &format!("loft_text_free(&{t});"));
+        self.line(ind, &format!("{t} = loft_text_own({read});"));
+        Ok(Some(self.held(t, CType::Text)))
     }
 
     /// `@FR-R-FormatAppend` at emission: `dest += { w = ""; <writes into w>; w }`, where every

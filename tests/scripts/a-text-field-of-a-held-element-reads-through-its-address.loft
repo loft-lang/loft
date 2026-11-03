@@ -10,7 +10,9 @@
 // them), t2 (the prefix walk: the field read twice under `len > 0`), t3 (two text fields of
 // one element, at offsets past the first), t4 (an in-place scalar write in the same walk),
 // t5 (the search called from a loop over the same vector: its twin takes the caller's held
-// base).  Declined, the store read kept: t6 (the walk appends to another vector of the same
+// base), t8 (an element bound by index — in range, past the end, from the end), t9 (no
+// elements).  On C (`loft_pa_text`) the same cells, through the held element's address and
+// the element's store.  Declined, the store read kept: t6 (the walk appends to another vector of the same
 // store, which may move the records it reads), t7
 // (the walk sets a text field, then reads it).
 //
@@ -78,6 +80,15 @@ fn rename(v: vector<Opt>) -> text {
   r
 }
 
+fn pick(v: vector<Opt>, at: vector<integer>) -> text {
+  r = "";
+  for i in at {
+    o = v[i];
+    r += "[{o.long}]";
+  }
+  r
+}
+
 fn mk() -> Args {
   Args { options: [
     Opt { long: "verbose", n: 1, short: "v" },
@@ -111,5 +122,12 @@ fn main() {
   // t7 — each name read back after its write.
   h = mk().options;
   assert(rename(h) == "verbose!!version!café!", "t7 {rename(h)}");
+  // t8 — an element bound by index, its address through the held base: 2 is version, 9 is
+  // past the end (the null address answers the null text, formatted `null`), -1 is the last.
+  t8 = pick(mk().options, [2, 9, -1]);
+  assert(t8 == "[version][null][café]", "t8 {t8}");
+  // t9 — a walk over no elements finds nothing.
+  e = Args { options: [], hits: 0, extra: [] };
+  assert(find(e, "") == -1 && prefix(e, "") == 0, "t9 {find(e, "")}");
   println("ok");
 }
