@@ -7407,11 +7407,14 @@ fn vector_past_end(e: el::El, vec: integer, idx: integer) -> ir::Node {
 // type, as a `return` is into the return type.  `yield from`, and a yield outside a function
 // answering an iterator, are refused by name.
 fn yield_expr(e: el::El, vars: el_vars::Vars, from: boolean, ye: integer?) -> Ex {
-  if from || ye == null {
-    el::refuse(e, "a `yield from`");
+  if ye == null {
+    el::refuse(e, "a `yield` with no value");
     return ex(ir::NdNull, ir::TyVoid);
   }
   step = match el::def(e, e.context).returned[0] ?? ir::TyVoid { TyIterator { step: st } => st, _ => ir::TyVoid };
+  if from {
+    return yield_from(e, vars, ye!);
+  }
   x = expression(e, vars, ye!);
   if step is TyVoid {
     el::refuse(e, "a `yield` outside a generator");
@@ -7433,6 +7436,36 @@ fn yield_expr(e: el::El, vars: el_vars::Vars, from: boolean, ye: integer?) -> Ex
     return ex(ir::NdYield { inner: owned! }, ir::TyVoid);
   }
   ex(ir::NdYield { inner: v! }, ir::TyVoid)
+}
+
+// `yield from sub` (`@FR-G-Delegate`, CO1.4): the sub-generator held in `___yf_sub_N`, each of
+// its values advanced into `___yf_item_N` and yielded on until it is exhausted — the question
+// the streaming `for` asks too, so the two consumers agree on when one has ended.
+fn yield_from(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  sub = expression(e, vars, n);
+  if !(sub.tp is TyIterator) {
+    if !e.first_pass {
+      el::refuse(e, "a `yield from` of something other than a generator");
+    }
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  elem = match sub.tp { TyIterator { step: st } => st, _ => ir::TyVoid };
+  sv = el_vars::create_unique(vars, "__yf_sub", sub.tp);
+  el_vars::set_defined(vars, sv);
+  iv = el_vars::create_unique(vars, "__yf_item", elem);
+  el_vars::set_defined(vars, iv);
+  vs = coroutine_value_size(elem);
+  if vs < 0 {
+    el::refuse(e, "a `yield from` a generator of this element type: {type_kind(elem)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  s = ir::NdVar { n: sv };
+  lp: vector<ir::Node> = [
+    el_ir::v_set(iv, el_ir::cl(e, "OpCoroutineNext", [s, ir::NdInt { n: vs }])),
+    el_ir::v_if(el_ir::cl(e, "OpCoroutineExhausted", [s]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull),
+    ir::NdYield { inner: ir::NdVar { n: iv } }
+  ];
+  ex(el_ir::v_block([el_ir::v_set(sv, sub.code), el_ir::v_loop(lp, "yield from")], ir::TyVoid, "yield from block"), ir::TyVoid)
 }
 
 // `yield_owned_value` for a record: a yield hands the consumer a record it owns, so a value that
