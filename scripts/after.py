@@ -43,7 +43,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-STATE = ROOT / ".git" / "loft-after"
+# The checkout's own git directory: `.git` is a FILE in a worktree, naming the real one.
+STATE = Path(subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=ROOT,
+                            capture_output=True, text=True, check=True).stdout.strip()) / "loft-after"
 # The PROBE profile's binary (`[profile.probe]`, opt-level 0, its own target directory): an
 # incremental rebuild after an edit is seconds on an idle box where the dev profile's was
 # minutes (@PLN194).  The ratchets, guards and probes run on it; clippy and `cargo check`
