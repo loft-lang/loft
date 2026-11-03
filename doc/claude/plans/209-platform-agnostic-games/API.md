@@ -67,6 +67,12 @@ it.
   (nearest), so pixel art stays crisp at every scale and angle and a turned figure is a true
   rotation of its texels; transparency is the texel's, and a shade or the ghost's checkerboard is
   applied per texel, so they turn and stretch with the sprite.
+- **C holds only what depends on the platform; everything else is loft.**  The drawing
+  primitives are a general library, not a game's: what to draw, where the camera goes and when
+  it zooms is the game's loft.  And of the library, only what differs between machines is C —
+  putting pixels on a panel, the page's GPU calls, the P4's pixel accelerator.  The rasteriser
+  is the same on every machine, so its home is loft, compiled through the C backend; the C one
+  `tiles` carries now is the reference that port is measured against, pixel for pixel.
 - **Backends, one per kind of machine**, each implementing every primitive (rule 6):
   - **the CPU rasteriser**, in a library's C: the reference.  It draws a desktop window, an
     image, an off-screen test surface and the Tanmatsu's panel.  The Tanmatsu rasterises at its
