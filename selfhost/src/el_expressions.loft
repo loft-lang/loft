@@ -2268,6 +2268,24 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     el::refuse(e, "a rebound parameter of a heap type");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // An empty literal rebinding a local takes the local's own type: a keyed local starts over
+  // with no store, as its declaration does; a vector local gets a fresh one of its element.
+  if vec_lit_len(e, rhs!) == 0 {
+    cur = el_vars::tp(vars, v);
+    if keyed_kind(cur) && !(cur is TyOptional) {
+      el_vars::drop_use(vars, v);
+      // Rebound, the local names itself among its borrows, as Rust types it — on the second
+      // pass, after its declaration has set its type there.
+      if !e.first_pass {
+        el_vars::depend(vars, v, v);
+      }
+      return ex(el_ir::v_set(v, ir::NdNull), ir::TyVoid);
+    }
+    match cur {
+      TyVector { inner } => return vector_into(e, vars, v, rhs!, inner),
+      _ => {}
+    }
+  }
   if e.p.nodes[rhs!] is SVecLit {
     return vector_into(e, vars, v, rhs!, ir::TyUnknown { n: 0 });
   }
@@ -6115,15 +6133,12 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
       }
     }
     // `null_test`'s struct arm: a nullable struct reference holds the store sentinel, which
-    // `OpRefIsNull` reads (`OpEqRef`'s `rec` test stays for a bare reference).  Only `==`
-    // asks it; `x != null` is `OpNeRef` against the null reference.
+    // `OpRefIsNull` reads (`OpEqRef`'s `rec` test stays for a bare reference); `!=` is its
+    // negation.
     sd = struct_ref(e, vb);
     if v.tp is TyOptional && sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") {
-      if op == "==" {
-        return ex(el_ir::cl(e, "OpRefIsNull", [v.code]), ir::TyBoolean);
-      }
-      nl = el_ir::cl(e, "OpNullRefSentinel", []);
-      return ex(el_ir::cl(e, "OpNeRef", if b.tp is TyNull { [v.code, nl] } else { [nl, v.code] }), ir::TyBoolean);
+      is_null = el_ir::cl(e, "OpRefIsNull", [v.code]);
+      return ex(if op == "==" { is_null } else { el_ir::cl(e, "OpNot", [is_null]) }, ir::TyBoolean);
     }
     // A bare struct reference keeps the generic identity dispatch against the null reference
     // (`OpEqRef`'s `rec` test is total over what a read answers), in the operands' order.
