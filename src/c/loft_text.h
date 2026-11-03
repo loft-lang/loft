@@ -120,6 +120,12 @@ static void loft_push_slow(loft_text *t, const char *p, size_t n) {
 LOFT_HOT_INLINE void loft_push(loft_text *t, const char *p, size_t n) {
     if (n == 0) return;
     if (LOFT_LIKELY(t->len + n <= t->cap) && (p < t->p || p >= t->p + t->cap)) {
+        /* Room for `n > 0` bytes means a buffer: said to the compiler, which otherwise reads the
+         * in-place copy of a text made empty (`{ 0, 0, 0 }`) as a memcpy into a null pointer —
+         * gcc 13 under _FORTIFY_SOURCE fails strict mode (-Wnonnull) on a branch that cannot run. */
+#if defined(__GNUC__)
+        if (!t->p) __builtin_unreachable();
+#endif
         char *d = t->p + t->len;
 #ifndef LOFT_NO_SHORT_APPEND
         if (n <= 4) {
