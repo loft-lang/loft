@@ -1,4 +1,9 @@
 {
+  "M-changelog-read": {
+    "at": "2026-11-03 14:59",
+    "commit": "4db9a938f6a6e706f0eb3885145b8a71f2be5502",
+    "note": "read at 4db9a938f: the 2026-11 section described the cycle's language changes, fixes and stdlib additions, and nothing of its headline work \u2014 the C backend (new to users this release), its store upgrade and its live build swap; three entries added under New (c09cda4c1)."
+  },
   "M-close-plans": {
     "at": "2026-10-16 15:41",
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
@@ -59,6 +64,11 @@
     "commit": "0a923a1694aa13b11ec3213b71c8f7bd9eb7fb34",
     "note": "make bug-review 2026-10-16: narrow-int/width is the one RISING class (8.5% in the newest band, +2.2pp over its peak); Parser::nstore_unwrap_report reads NO EFFECT on null/sentinel (10.8% -> 18.6%, 15.1% minus PLN153's own finds) - premise to re-open; owns/proxy/N-Road keystones paid off; contract pressure 9.4% strained in 2026-10, 4 unjudged"
   },
+  "M-ndb": {
+    "at": "2026-11-03 13:54",
+    "commit": "c09cda4c193d5315e3aaab39202b7a42b7079e35",
+    "note": "gdb (stock, no plugin) on a --native-debug build at c09cda4c1: rustc \u2014 the cached binary carries DWARF whose decodedline names the preserved loft_native_<pid>.rs (which exists); 'break loft_native_<pid>::n_main' resolves to its line 3861, next steps, info locals and bt name the frames (n_main <- main::{closure}).  C (--native-c --native-debug, -O0 -g) \u2014 'break n_main' resolves to the emitted .c at its line, next steps.  A binary written with --out is the stripped ship form (no line table), as intended.  lldb not installed on this host."
+  },
   "M-ops-census": {
     "at": "2026-10-16 16:33",
     "commit": "b3c430a5c56e10a7434320f9ca0de0da6c2dbd19",
@@ -68,6 +78,11 @@
     "at": "2026-10-16 19:46",
     "commit": "72055d28b1a6d8eb54e5e0156a4fcbff08eccc1c",
     "note": "make speed at 72055d28b (box shared with loft3's build, load 7-12): 87 timed, 48 drifted beyond 25%, 18 SLOWER - the one past 3x is html_asyncify::html_asyncify_program_resumes_to_completion 0.80 -> 4.91 units, 3.2 s alone twice (still ~4x, +3 s: under the speed gate's 3x AND +5 s rule, the pin is stale rather than the test slow); the rest 1.3-2.4x are browser/engine-host tests under contention; 16 annotated tests no longer slow. Pins NOT blessed on a shared box. Portal read (PERF_PORTAL.md, laptop 2026-10-15 at cbe54eaa2): shipped median 2.00x, 82 of 162 within 2x, 44 over 3x; keyed is the slow class (median 3.26x, 16 of 22 over 3x: reload_and_record 6.86x), then parallel 2.54x, native-boundary 2.51x, call 2.49x; the over-3x library rows name their cause each (pack_instances 7.55x, insert_text 7.14x, check_request 7.97x, flow_layout_full 6.91x). The bar is gated by native_ratio.sh in make ci; no open D-perf deviation blocks"
+  },
+  "M-wasm": {
+    "at": "2026-11-03 14:11",
+    "commit": "04589af6b1b4f42c74ee24b6407a5f4a973794de",
+    "note": "at 04589af6b: make wasm-html-test 36 / 36 (after rebuilding this box's stale wasm32-wasip2 rlib, E0463 sha2), make gallery 8 / 8 \u2014 scripts/gallery_render_check.sh: every gallery example reaches a running state in a real browser.  The gallery build's regenerated browser bundle (doc/pkg, playground, gallery-run) is runner-owned and was left as committed (derive.yml found it current)."
   },
   "M-windows-parity": {
     "at": "2026-11-02 17:29",

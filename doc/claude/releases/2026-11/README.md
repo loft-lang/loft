@@ -63,9 +63,10 @@ candidate, and loft#2024..#2028 fixed.
 ## The pre-tag pass (opened 2026-11-02 on `tuxedo-release-2026-11`)
 
 **The release waits for @PLN210** (owner, 2026-11-02): 2026.11.0 ships WITH the C performance
-work that brings the test programs under 3x their Rust twins.  The rule is **under 3x**; 2x is the
-nice-to-have (the plan's stretch target: every library bench routine under 2x on the C ship lane,
-gcc and clang).  That work is in development on
+work that brings the test programs under 3x their Rust twins.  The release RULE is **no routine
+above 5x** (owner, 2026-11-03); a routine over 3x is filed as a bug (a separate rule, and a release
+may ship with open bugs), and 2x is the nice-to-have (the plan's stretch target: every library
+bench routine under 2x on the C ship lane, gcc and clang).  That work is in development on
 `laptop-c-perf`; the tag candidate is cut after it joins.  Until then this branch works the rows
 that do not depend on the candidate: `[pre]` and `[mid+pre]` rows are finished here, the `[cand]`
 rows (`M-valgrind`, `M-wasm`) and the release-window rows wait for the candidate.
@@ -92,3 +93,40 @@ filed.  If the port is not in by the candidate, `store_load`'s doc says the upgr
 interpreter-only so far, so 2026.11.0 does not promise it on `--native-c`.  When it joins it also lifts 54ce9e165's refusal (`loft_type_has_dbref` in `loft_image_write`):
 a reference-holding type goes through the same converter.
 
+
+## The candidate (2026-11-03)
+
+**What ships is `main` @ `096397bba`** — PR #2374 squashed; its tree is the PR head `54576fabe`,
+whose CI was green on every check (112), the informational nightly-health line aside.  The frozen
+release gate ran on `692174cd7` (run 41600514860): green on every job but one Windows test whose
+port pick collided with a sibling test's UDP port — fixed in `54576fabe`, which changes only that
+test (`tests/c_emit.rs`).
+
+**The post-freeze perf fixes stay out** (owner, 2026-11-03: "those routines are fixed today, but
+I do not want to rerun every validation again because those will be broken on merging").  The
+three routines over the 3x aim on the C ship lane — `wall_chain_walk` (hex_shape, clang 3.07x),
+`parse` (arguments, clang 3.04x), `terrain_relief_pass` (hex_terrain, gcc 3.06x), loft#2379..#2381
+— are under the 5x rule; their fixes reach `main` after the tag.
+
+**The 5x rule holds** on the C ship lane (`bench/stats.py --lanes rust,cship`, every hash
+agreeing): the 2026-11-02 full table of 126 routines, taken BEFORE the release's last two perf
+batches (which only make routines faster), so an upper bound — gcc median 1.42x, worst 3.07x
+(`terrain_relief_pass`); clang median 1.55x, worst 3.93x (zttext `materialise`); none above 5x.
+Re-measured on the build with those batches, the worst is 3.08x (`wall_chain_walk`, clang).
+Committed numbers: `doc/claude/plans/210-c-worst-to-2x/handoff-2026-11-03.md` § The numbers on
+`laptop-c-perf`.  The rustc-native lane was not re-measured this cycle.
+
+**D-fact-1..3 ship open** (owner, 2026-11-03: "ship with them, I am very much tasking the perf
+agent right now to harmonize a lot of optimizations across the project, this will be part of
+it").  `A-deviations` reads red on them by design: each is a fact computed apart from the one
+routine `facts(kind, reach)` (`formal/facts.md`), so no program answers differently — a callee
+fact with its own walk (D-fact-1), interval entry facts only in the rustc writer (D-fact-2, an
+index check the C keeps), each twin kind keyed by hand (D-fact-3).  Their removal is loft#2351,
+in the perf agent's harmonisation work after the tag.
+
+**`A-ci` on the paperwork branch** (`4db9a938f`): the local `make ci` does not finish in its 20-minute
+budget on this box under the sibling sessions' load (average 31-36; it reached test 5548 of 6540,
+one test flaky, none failing), so the gate ran on a runner — `ci.yml -f os=ubuntu-latest`, run
+41647930783: every job green but `Native static link`, whose runner was lost mid-step (no log).
+That job's step, run here as CI runs it (`LOFT_NATIVE_CABI=0`, the same nextest filter): 111 / 111
+passed, one test flaky on its first try.

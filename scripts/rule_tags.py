@@ -969,8 +969,9 @@ SIG_PSEUDO = {"func", "method", "takes", "limit", "size", "default", "virtual", 
               "init", "check", "assert", "panic", "http"}
 # Names the PARSER lowers rather than the stdlib declaring them — each verified against its
 # site: `remove`/`clear` (src/parser/fields.rs), `type_of`/`field_value`
-# (src/parser/control.rs), `sizeof`/`type_name` (src/parser/objects.rs).
-PARSER_BUILTINS = {"remove", "clear", "type_of", "field_value", "sizeof", "type_name"}
+# (src/parser/control.rs), `sizeof`/`type_name` (src/parser/objects.rs), `rev` — a `for`
+# loop's reverse walk (src/parser/objects.rs, `for … in rev(…)`).
+PARSER_BUILTINS = {"remove", "clear", "type_of", "field_value", "sizeof", "type_name", "rev"}
 TYPE_NAME = re.compile(r"`([A-Z][A-Za-z0-9]*)(?:\.[A-Z][A-Za-z0-9]*)?`")
 CONST_NAME = re.compile(r"`([A-Z][A-Z0-9_]+)`")
 TEST_PATH = re.compile(r"\b((?:tests|default)/[A-Za-z0-9_./-]+\.(?:loft|rs|expect))\b")
