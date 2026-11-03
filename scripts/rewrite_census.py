@@ -245,9 +245,18 @@ def main() -> int:
         else:
             results.append((name, commit, writer, got[0]))
             splits.append((name, writer, got[1]))
-    # The phase table is judged over the whole body only: a partial run sees part of it.
-    whole = only is None and writers == list(WRITERS) and not failed
+    # The phase table is judged over the whole body only: a partial run sees part of it.  So is
+    # a run on a box without every library checkout the table was measured with: a rule applied
+    # only in a library bench reads "applied nowhere" where the library is absent, which says
+    # where the run was made, not what the compiler did.
+    base_programs = {name for name, _writer in read_baseline()}
+    seen = {p[0] for p in progs}
+    whole = (only is None and writers == list(WRITERS) and not failed
+             and base_programs <= seen)
     phase_changes = []
+    if not whole and only is None and not failed and not base_programs <= seen:
+        print(f"phase table not judged: {len(base_programs - seen)} of the baseline's programs "
+              f"have no checkout here (checkout_libs.sh)")
     if whole:
         phases = rule_phases.aggregate(splits)
         phase_changes = rule_phases.changes(phases, rule_phases.read_table())
