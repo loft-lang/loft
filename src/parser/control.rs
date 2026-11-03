@@ -18387,6 +18387,7 @@ impl Parser {
         // A source that may be nothing but cannot be RE-READ, because a user call is in it
         // (loft#2006), is read once into a local first, and the copy tests that local.
         let bind = self.bind_return_source(td, &mut orig);
+        let bind = bind.or_else(|| self.bind_leaving_source(td, &mut orig));
         // A NULLABLE local as the source (`cur: Node?` after a walk) may hold nothing, and
         // `OpCopyRecord` of a null source leaves the destination an allocated EMPTY record —
         // presence standing in for absence.  Copy only where the source is present; the
@@ -18660,6 +18661,42 @@ impl Parser {
             }
             _ => None,
         }
+    }
+
+    /// loft#2384 — run a return copy's SOURCE before its buffer is minted when the source can
+    /// LEAVE the function first: a `match` arm or a block with a `return` of its own.  The copy
+    /// mints the buffer, then copies the source into it, so a `return` inside the source left
+    /// that mint behind — the buffer is a parameter, so no free on the return path names it,
+    /// and the caller frees only the result it is handed (`@FR-O-Complete`).  A pooled buffer
+    /// (`@FR-R-Reuse`) hid it: the mint then refilled the caller's own store.  The source is
+    /// read into a view local (`_ret_src_N`, never freed: what it views is released by its own
+    /// owner) and the copy reads that, so only the path that copies mints.
+    fn bind_leaving_source(&mut self, td: u32, src: &mut Value) -> Option<Value> {
+        if self.first_pass
+            || matches!(self.data.def(self.context).def_type(), DefType::Generic)
+            || self.data.is_type_var_placeholder(td)
+        {
+            return None;
+        }
+        let mut leaves = false;
+        src.walk(&mut |n| {
+            if matches!(n, Value::Return(_)) {
+                leaves = true;
+            }
+        });
+        if !leaves {
+            return None;
+        }
+        let deps = match src.unspan() {
+            Value::Block(bl) => bl.result.depend(),
+            _ => Vec::new(),
+        };
+        let tp = Type::Optional(Box::new(Type::Reference(td, Deps::frame(deps))));
+        let v = self.create_unique("_ret_src", &tp);
+        self.vars.defined(v);
+        self.vars.set_skip_free(v);
+        let path = std::mem::replace(src, Value::Var(v));
+        Some(crate::data::v_set(v, path))
     }
 
     /// Is `v` a BRANCH (or a block) one of whose arms ends in a local typed `τ?` — a leaf that
