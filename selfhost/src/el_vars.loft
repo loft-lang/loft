@@ -283,6 +283,17 @@ pub fn mark_built(v: Vars, nr: integer) {
   v.built += [nr];
 }
 
+// A parameter rebuilt in place is rebound again freely: its build marks nothing.
+pub fn unmark_built(v: Vars, nr: integer) {
+  kept: vector<integer> = [];
+  for b in v.built {
+    if b != nr {
+      kept += [b];
+    }
+  }
+  v.built = kept;
+}
+
 // `Parser::var_usages(nr, false)`: take back a use, never below none.
 pub fn drop_use(v: Vars, nr: integer) {
   if v.vars[nr].uses > 0 {

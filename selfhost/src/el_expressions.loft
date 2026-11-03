@@ -2162,6 +2162,34 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
   // computed into a work-ref first (`@FR-O-Detach`).  A literal has its own lowering inside the
   // build; it and every other heap type stay refused below.
   pt0 = el_types::base(el_vars::tp(vars, v));
+  // The literal's own lowering (P2.1 inside `parse_object`): its reads of the parameter staged
+  // first, the detach where a local's build resets it, the record built into the slot.
+  if vars.vars[v].argument && struct_ref(e, pt0) >= 0 && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && e.p.nodes[rhs!] is SStructLit && struct_literal_def(e, rhs!) == struct_ref(e, pt0) {
+    orig = if e.first_pass { -1 } else { el_vars::rebind_witness(vars, v) };
+    vars.vars[v].argument = false;
+    o = object_into(e, vars, v, rhs!);
+    vars.vars[v].argument = true;
+    el_vars::unmark_built(vars, v);
+    if e.first_pass {
+      return ex(o.code, ir::TyVoid);
+    }
+    items: vector<ir::Node> = [];
+    match o.code {
+      NdInsert { items: its } => { items = its; },
+      _ => { return ex(o.code, ir::TyVoid); }
+    }
+    out: vector<ir::Node> = [];
+    done = false;
+    for it in items {
+      if !done && it == el_ir::v_set(v, ir::NdNull) {
+        out += [el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: v }, ir::NdVar { n: orig }]), el_ir::cl(e, "OpInitRefSentinel", [ir::NdVar { n: v }])];
+        done = true;
+        continue;
+      }
+      out += [it];
+    }
+    return ex(ir::NdInsert { items: out }, ir::TyVoid);
+  }
   if vars.vars[v].argument && struct_ref(e, pt0) >= 0 && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && !(e.p.nodes[rhs!] is SStructLit) && !(e.p.nodes[rhs!] is SVecLit) {
     x = expression(e, vars, rhs!);
     sd = struct_ref(e, el_types::base(x.tp));
@@ -2993,6 +3021,12 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
       return ex(ir::NdInsert { items: list }, ir::TyVoid);
     }
   }
+  // A struct literal of the declared struct is built in place in the local, as without the
+  // annotation (`parse_object`'s destination hint).
+  if e.p.nodes[rhs!] is SStructLit && struct_ref(e, declared!) >= 0 && struct_literal_def(e, rhs!) == struct_ref(e, declared!) {
+    o = object_into(e, vars, v, rhs!);
+    return ex(o.code, ir::TyVoid);
+  }
   // A declared vector whose value is an `if`: its definitions are made where the right side
   // starts, after the `=` — before either arm's literal is read.
   if e.p.nodes[rhs!] is SIf {
@@ -3717,6 +3751,12 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
 // local yet becomes one, untyped (`create_var`); a known local counts a use; on the second
 // pass the assignment marks it defined.
 fn binding_var(e: el::El, vars: el_vars::Vars, name: text) -> integer {
+  // `_` is a slot of its own at each assignment (`_discard_N`), so one discard takes any type.
+  if name == "_" {
+    d = el_vars::create_unique(vars, "discard", ir::TyUnknown { n: 0 });
+    el_vars::in_use(vars, d, true);
+    return d;
+  }
   v = el_vars::var(vars, name);
   if v < 0 {
     if !e.first_pass {
