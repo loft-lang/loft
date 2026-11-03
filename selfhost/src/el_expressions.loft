@@ -7986,6 +7986,26 @@ fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   if bound && el_types::base(x.tp) is TyVector {
     return vector_slice(e, vars, x, lo, hi, inclusive);
   }
+  // A vector slice in any other value position (an argument, a concatenation's operand) is the
+  // fresh vector its range copies (`___iter_vec_N`), as a block's value is.
+  if el_types::base(x.tp) is TyVector {
+    it = vector_slice(e, vars, x, lo, hi, inclusive);
+    step = match it.tp { TyIterator { step: st } => st, _ => ir::TyVoid };
+    if step is TyVoid {
+      return it;
+    }
+    vec_t = ir::TyVector { inner: step, dep: [] };
+    if e.first_pass {
+      return ex(ir::NdNull, vec_t);
+    }
+    tmp = el_vars::create_unique(vars, "__iter_vec", vec_t);
+    el_vars::set_defined(vars, tmp);
+    copy = slice_copy(e, vars, tmp, it);
+    if copy == null {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(el_ir::v_block([copy!, ir::NdVar { n: tmp }], vec_t, "iter_vec"), vec_t);
+  }
   if !(el_types::base(x.tp) is TyText) {
     if !el_types::is_unknown(x.tp) {
       el::refuse(e, "an index that is a range, a key list or a limit");
