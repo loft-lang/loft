@@ -40,6 +40,7 @@ use loft::log_config;
 use loft::logger;
 use loft::manifest;
 mod android;
+mod app_files;
 mod c_driver;
 mod esp_app;
 mod native_utils;
@@ -11028,7 +11029,8 @@ fn main() {
         // @PLN146 F4 — the page's own filesystem, decided (and read) before the build
         // for F5's reason: a manifest naming a file that is not there should not cost
         // a wasm compile before it says so.
-        let base_fs_js = {
+        let embeds_declared: bool;
+        let mut base_fs_js = {
             // The entry program's own declarations resolve against the PROGRAM, not
             // against its manifest.  `path` is the string the program passes, and loft
             // resolves what a program passes relative to the program file — so
@@ -11058,6 +11060,7 @@ fn main() {
                 eprintln!("{e}");
                 std::process::exit(1);
             });
+            embeds_declared = !files.is_empty();
             loft::html_embed::base_fs_js(&files).unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(1);
@@ -11080,6 +11083,37 @@ fn main() {
                     std::process::exit(2);
                 }
             };
+            // A page that declares no `[[embed]]` carries the files its program names, found
+            // as `--native-esp` finds an app's (app_files.rs), or the ones `--assets` names: the
+            // page and the device then carry the same files.
+            if !embeds_declared {
+                let program_dir = std::path::Path::new(&abs_file).parent().map_or_else(
+                    || std::path::PathBuf::from("."),
+                    std::path::Path::to_path_buf,
+                );
+                let named: Vec<(String, std::path::PathBuf)> = if esp_assets.is_empty() {
+                    app_files::named_assets(&program_dir, &c)
+                        .into_iter()
+                        .map(|(r, p, _)| (r, p))
+                        .collect()
+                } else {
+                    app_files::asset_files(&program_dir, &esp_assets).unwrap_or_else(|e| {
+                        eprintln!("loft: {e}");
+                        std::process::exit(1);
+                    })
+                };
+                let files: Vec<loft::html_embed::PageFile> = named
+                    .into_iter()
+                    .map(|(rel, source)| loft::html_embed::PageFile {
+                        page_path: format!("/{rel}"),
+                        source,
+                    })
+                    .collect();
+                base_fs_js = loft::html_embed::base_fs_js(&files).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                });
+            }
             let shim_sources: Vec<String> = p
                 .data
                 .c_libraries
