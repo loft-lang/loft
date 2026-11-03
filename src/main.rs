@@ -12059,7 +12059,7 @@ loftInstantiate(wasmBytes,imports).then(({{instance,memory}})=>{{
             format!(
                 r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>{title}</title>
-<style>body{{margin:0;background:#000;display:flex;justify-content:center;align-items:center;height:100vh}}canvas{{display:block}}pre{{color:#0f0;font-size:14px}}</style>{fonts_head}
+<style>body{{margin:0;background:#000;display:flex;justify-content:safe center;align-items:safe center;min-height:100vh}}canvas{{display:block}}pre{{color:#0f0;font-size:14px}}</style>{fonts_head}
 </head><body>
 <canvas id="c" tabindex="0" style="display:none"></canvas>
 <pre id="out"></pre>
