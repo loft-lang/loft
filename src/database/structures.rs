@@ -491,7 +491,7 @@ impl Stores {
     /// `@FR-R-KeyedEntry` — the record `c += [T{k: key, …}]` writes its other fields into, with
     /// the key already written and the record already filed: the entry under `key` when there
     /// is one, else a fresh one.  The emitter calls it in place of `record_new` … `record_finish`
-    /// for an element type that owns no heap (`generation::keyed_entry`), so on a repeated key
+    /// for an element type that owns no heap (`opt::keyed_entry`), so on a repeated key
     /// the overwrite IS the replace (`@FR-Col-Insert`: latest insert wins) and nothing is
     /// claimed or released.
     ///
@@ -503,7 +503,7 @@ impl Stores {
     ///
     /// # Panics
     /// When `parent_tp` / `field` name no keyed collection with a key — the admission
-    /// (`generation::keyed_entry`) only emits this for an integer-keyed hash.
+    /// (`opt::keyed_entry`) only emits this for an integer-keyed hash.
     pub fn keyed_entry_long(
         &mut self,
         data: &DbRef,
@@ -683,7 +683,7 @@ impl Stores {
     ///
     /// # Panics
     /// When `parent_tp` / `field` name no keyed collection with a key — the admission
-    /// (`generation::keyed_entry`) only emits this for a hash keyed by one text — and under
+    /// (`opt::keyed_entry`) only emits this for a hash keyed by one text — and under
     /// `LOFT_KEYED_VERIFY=1` when the entry differs from the general lookup's.
     pub fn keyed_entry_text(
         &mut self,

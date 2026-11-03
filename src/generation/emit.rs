@@ -3776,104 +3776,6 @@ impl Output<'_> {
         Ok(())
     }
 
-    /// `@FR-R-KeyedEntry`: the literal's values staged in program order, the entry under the
-    /// key answered (filed already, its key written), then the other fields written into it.
-    fn output_keyed_entry(
-        &mut self,
-        w: &mut dyn Write,
-        ke: &super::keyed_entry::Site<'_>,
-    ) -> std::io::Result<()> {
-        self.dest_counter += 1;
-        let site = self.dest_counter;
-        self.indent(w)?;
-        writeln!(w, "{{ //@FR-R-KeyedEntry")?;
-        let mut writes: Vec<Value> = Vec::new();
-        let mut parts: Vec<Option<String>> = vec![None; ke.keys.len()];
-        let mut nth = 0usize;
-        for op in &ke.writes {
-            let Value::Call(d, args) = op.unspan() else {
-                continue;
-            };
-            let part = args
-                .get(2)
-                .and_then(|a| ke.keys.iter().position(|k| std::ptr::eq(a, *k)));
-            let mut staged: Vec<Value> = Vec::with_capacity(args.len());
-            for (i, a) in args.iter().enumerate() {
-                if i == 0 {
-                    staged.push(Value::RawExpr(format!("__ke{site}")));
-                } else if super::keyed_place::constant(a) {
-                    staged.push(a.clone());
-                } else {
-                    let name = format!("__kv{site}_{nth}");
-                    nth += 1;
-                    self.indent(w)?;
-                    write!(w, "let {name} = ")?;
-                    self.output_code_inner(w, a)?;
-                    writeln!(w, ";")?;
-                    staged.push(Value::RawExpr(name));
-                }
-            }
-            if let Some(part) = part {
-                parts[part] = Some(match staged.get(2) {
-                    Some(Value::RawExpr(n)) => n.clone(),
-                    _ => self.expr_string(ke.keys[part])?,
-                });
-            } else {
-                writes.push(Value::Call(*d, staged));
-            }
-        }
-        let key = parts.first().cloned().flatten();
-        let coll = self.expr_string(ke.coll)?;
-        self.indent(w)?;
-        if ke.keys.len() > 1 {
-            let list: Vec<String> = parts
-                .into_iter()
-                .map(|p| format!("({}) as i64", p.unwrap_or_else(|| "i64::MIN".to_string())))
-                .collect();
-            writeln!(
-                w,
-                "let __ke{site}: DbRef = stores.keyed_entry_ints_at(&({coll}), {}, {}_u16, &[{}]);",
-                self.type_lit_u16(ke.parent_tp),
-                ke.field,
-                list.join(", ")
-            )?;
-        } else if ke.text_key {
-            let key = key.unwrap_or_else(|| "\"\"".to_string());
-            writeln!(
-                w,
-                "let __ke{site}: DbRef = stores.keyed_entry_text(&({coll}), {}, {}_u16, &*({key}));",
-                self.type_lit_u16(ke.parent_tp),
-                ke.field
-            )?;
-        } else {
-            let key = key.unwrap_or_else(|| "i64::MIN".to_string());
-            // The field's offset and element type resolved here, where they are constants.
-            let (off, etp) = self.stores.keyed_field_consts(ke.parent_tp, ke.field);
-            // An 8-byte integer key's position, for the inline walk; a narrow key takes none.
-            let kp = self.stores.types[etp as usize]
-                .keys
-                .first()
-                .filter(|k| matches!(k.type_nr.unsigned_abs(), 1 | 2))
-                .map_or(u32::MAX, |k| u32::from(k.position));
-            writeln!(
-                w,
-                "let __ke{site}: DbRef = stores.keyed_entry_long_at(&({coll}), {}, {}_u16, {off}_u32, {}, {kp}_u32, ({key}) as i64);",
-                self.type_lit_u16(ke.parent_tp),
-                ke.field,
-                self.type_lit_u16(etp)
-            )?;
-        }
-        for wr in &writes {
-            self.indent(w)?;
-            self.output_code_inner(w, wr)?;
-            writeln!(w, ";")?;
-        }
-        self.indent(w)?;
-        writeln!(w, "}}")?;
-        crate::rewrite_census::fired("R-KeyedEntry", 1);
-        Ok(())
-    }
-
     /// `@FR-R-Destination`'s caller half: the element's mint, hoisted above the chain, then
     /// each call into its destination and its `ok` arm with the moves gone — the element
     /// finished only where the plain form moved every result, and each destination filled so
@@ -4648,18 +4550,6 @@ impl Output<'_> {
             {
                 self.output_push_run(w, &run, operators, vnr)?;
                 repeat_skip = Some(run.last);
-                continue;
-            }
-            // `@FR-R-KeyedEntry` — a keyed insert of a heap-free literal written into the entry
-            // its key names: a repeated key overwrites in place instead of claiming a slot,
-            // replacing the entry and releasing it.
-            if super::keyed_entry::enabled()
-                && !self.in_coroutine_body
-                && let Some(ke) =
-                    super::keyed_entry::site(operators, vnr, self.data, self.stores, self.def_nr)
-            {
-                self.output_keyed_entry(w, &ke)?;
-                repeat_skip = Some(ke.last);
                 continue;
             }
             // loft#1753 — a statement that calls into a frame first records the line it calls

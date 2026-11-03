@@ -70,3 +70,8 @@ resolution it removes costs more than the arithmetic it saves.
   ~15.6×), `join` −19 %, `replace` −18 %, `dot_product` −14 %; the largest loss, `char_roundtrip`
   +5 %, was function layout — both arms read the same once `-align-all-functions=6
   -align-loops=64` pins it.
+
+## `LOFT_NO_BASE_RECPTR` — the address it does not derive (moved 2026-11-03)
+
+An address derived from the element's `DbRef` instead of the index measured +46 % SLOWER, so
+the clause derives it from the index; the `DbRef` form is not what ships.

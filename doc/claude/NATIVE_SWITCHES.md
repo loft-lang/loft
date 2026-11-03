@@ -345,8 +345,7 @@ sentinel, `@FR-R-Counter`'s iteration clause, `LOFT_NO_NN_FAST`) steps through t
 add (`record_walk` −49 %, 2.98× → 1.50× of Rust; `tuple_kernel` −20 %; `entity_tick`
 −30 %) — and is the first bisect step for a wrong field read through a `for e in v` loop
 variable on native; `LOFT_HOIST_VERIFY=1` compares the address with a fresh `rec_ptr` at
-every use.  An address derived from the element's `DbRef` instead of the index measured
-+46 % SLOWER and is not what ships.
+every use.
 **`LOFT_NO_INDEX_RECPTR=1`** (`@FR-R-RecPtr`'s index clause, default-ON, generation time,
 `--native` only) makes `r = v[IDX]?` over a vector whose header and base the frame holds read
 its element through `get_vector_hoisted` and resolve the store for its address again — with it
@@ -896,7 +895,8 @@ claim, write and file a fresh entry again, replacing the one under a
 repeated key, and makes `h[a, b] = T{…}` on a hash keyed by integer parts take
 `LOFT_NO_KEYED_IN_PLACE`'s removal and claim again — with it on, one probe answers the entry the
 key names and the literal's staged values are written into it — and is the first bisect step
-for a wrong value or count after a keyed insert or keyed literal assignment on native;
+for a wrong value or count after a keyed insert (every backend: the IR applies it, and
+`LOFT_TRACE_KEYED_ENTRY=1` names each function) or a keyed literal assignment (native);
 `LOFT_KEYED_VERIFY=1` checks every answered entry against the general lookup.
 **`LOFT_NO_VIEW_RETURN=1`** (`@FR-R-ViewReturn`) makes a lookup that returns a view of its
 parameter's entry materialise it again — a buffer minted per call, the entry deep-copied — and

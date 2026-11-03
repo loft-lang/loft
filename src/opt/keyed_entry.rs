@@ -9,9 +9,12 @@
 //! releases it: a slot claimed and a slot released per repeated key.  Here the literal's values
 //! are evaluated first (STAGED, in program order — the plain form evaluates them while its
 //! entry is claimed but not yet filed, and nothing a value can read sees an unfiled entry),
-//! then `Stores::keyed_entry_long` answers the entry under the key — the existing one, or a
+//! then `keyed_entry_ints` / `keyed_entry_text` (stdlib, one `OpStaticCall` on the interpreter;
+//! each writer spells it its own way) answers the entry under the key — the existing one, or a
 //! fresh one filed where the probe for it ended — and the staged values are written into it.
-//! Native only; the interpreter keeps the plain form.
+//! Decided and applied in the IR ([`rewrite_program`]), so every backend runs it; the
+//! subscript clause ([`subscript_keys`]) is still the writers'.  `LOFT_TRACE_KEYED_ENTRY=1`
+//! names each function rewritten.
 //!
 //! Admitted when overwriting the entry IS replacing it: a `hash` with one `integer` or `long`
 //! key, whose element owns no heap (an overwrite releases nothing, so a replaced text or
@@ -386,12 +389,6 @@ fn constant(v: &Value) -> bool {
     )
 }
 
-/// The IR form is applied when this is set (`LOFT_IR_KEYED_ENTRY=1`), while it is compared with
-/// the writers' clauses.
-fn ir_enabled() -> bool {
-    crate::env_once!(std::env::var("LOFT_IR_KEYED_ENTRY").is_ok_and(|v| v != "0"))
-}
-
 fn trace() -> bool {
     crate::env_once!(std::env::var("LOFT_TRACE_KEYED_ENTRY").is_ok_and(|v| v != "0"))
 }
@@ -424,7 +421,7 @@ impl Temps {
 /// entry where the plain form claimed a record, filed it over the entry and released that one.
 /// Answers how many inserts it rewrote.
 pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
-    if !enabled() || !ir_enabled() {
+    if !enabled() {
         return 0;
     }
     let calls = Calls {

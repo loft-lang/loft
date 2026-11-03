@@ -3850,10 +3850,17 @@ index the claim answers (no `arena::index_of` scan to recover it), so new keys g
 gridmesh `field_add_cell` 22.97 → 15.06 ms, `build_index` 10.16 → 7.49 ms (hand price of
 the repeated-key half alone −26 %).  Switch `LOFT_NO_KEYED_ENTRY`.  Falsifier
 `LOFT_KEYED_VERIFY=1`, which looks every answered entry up again through the general
-entry and panics where the two differ.  Cells
-`loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-entry-its-key-names.loft`.  Sites:
-`generation::keyed_entry` (the admission), `Output::output_keyed_entry`,
-`Stores::keyed_entry_long`, `hash::entry_long`.
+entry and panics where the two differ.  Decided and applied in the IR, for every backend
+(`opt::keyed_entry::rewrite_program`): the values staged into temporaries, then `B =
+keyed_entry_ints(c, tp, fld, k₁, …)` or `keyed_entry_text(…)` — stdlib declarations, one
+`OpStaticCall` on the interpreter, `Stores::keyed_entry_long_at`'s inline walk on rustc,
+`loft_keyed_entry_ints` on the C — then the other fields written into `B`.  A text key is
+read at the probe, so the IR admits one only when it is a literal or a variable no later
+value rebinds.  Cells
+`loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-entry-its-key-names.loft`,
+`tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft`.  Sites:
+`opt::keyed_entry::site` (the admission), `opt::keyed_entry::rewrite_program`,
+`Stores::keyed_entry`, `Stores::keyed_entry_long`, `hash::entry_long`.
 
 ```
   (R-KeyedEntry)'s subscript clause

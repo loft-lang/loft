@@ -2815,7 +2815,7 @@ impl<'a> FnWriter<'a> {
         Ok(())
     }
 
-    /// A block's statements in order; a run of them a rewrite emits whole (`keyed_entry_site`)
+    /// A block's statements in order; a run of them a rewrite emits whole (`destination_site`)
     /// is taken together.
     fn stmts(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let held = self.rec_ptrs.len();
@@ -2866,13 +2866,6 @@ impl<'a> FnWriter<'a> {
                 continue;
             }
             if let Some(last) = self.destination_site(ops, i, ind)? {
-                i = last + 1;
-                continue;
-            }
-            if let Some(last) = self.keyed_entry_site(ops, i, ind)? {
-                ops[i..=last]
-                    .iter()
-                    .for_each(|o| self.refresh_grown_header(o, ind));
                 i = last + 1;
                 continue;
             }
