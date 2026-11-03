@@ -14,7 +14,8 @@ Open, `status:next` — the inventory below is measured and the plan is DESIGNED
 removal of the facts routine's three deviations); arc A is built (the census reads both
 writers and the interpreter's generator; every rule reports to it or says why not; the phase
 table `bench/portal/rule_phases.tsv` is measured and gated, and `rewrites.md` § Applied by is
-rendered from it); B1 is built, its weights in [b1-weights.md](b1-weights.md).  It was to start once
+rendered from it); B1 is built, its weights in [b1-weights.md](b1-weights.md); B2's
+wave 1 is probed (§ Verdicts).  It was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
@@ -229,6 +230,27 @@ that arc C moves is built after the move, in the IR phase.
 Filled by B2: one row per WORK and rustc-only rule — rule · decidable on the IR · expressible
 · weight · probe result · verdict · phase that moves it.  The first verdicts, from reading the
 code and each still owed its probe, are in [design.md § The first verdicts](design.md#the-first-verdicts).
+
+**Wave 1 — the rules that can move with what exists**, probed.  Weight is B1's routines' worth
+([b1-weights.md](b1-weights.md)); the probe is `probes/<case>/` run by `probes/run.py`:
+instructions per iteration on `--interpret`, the shape as written against the same work in the
+form the IR rule would leave, both printing the same answer, the rule admitted in the case's
+function before and not after.
+
+| rule | decidable on the IR | expressible | weight | probe (before → after) | verdict |
+|---|---|---|--:|---|---|
+| `(R-Wrapper)` | yes — `ir_shape::one_op_wrapper` | `Call(op, operands)` | 40.9 | `wrapper`: 920 → 308, **−66.5 %** (upper bound: the operator itself is left out) | MOVE.  The interpreter calls `t_6vector_len` every pass; `(R-InlineLeaf)` does not take stdlib wrappers |
+| `(R-PushFill)` fill form | yes — IR facts | `OpPush` + `OpAppendCopy`, as `[c; n]` lowers | 17.2 | `push_fill`: 10 580 → 3 017, **−71.5 %** | MOVE.  The C admits this shape too (the census, not "rustc only") |
+| `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %** | MOVE |
+| `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** | MOVE — the first move (the protocol's proof) |
+| `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %** | MOVE |
+| `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %** | MOVE (light) |
+| `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector` | MOVE, as that parser path widened to field places; measured on arc C's beside build |
+| `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)) | owed: measured on arc C's beside build |
+
+Not probed yet: `(R-PushFill)`'s hash clause ("only if the probe gains"), the rules that need
+one new piece, the interpreter clauses, and the STAYS and PORT rows of design.md § The first
+verdicts — each owes its row here before arc C builds on it.
 
 ## Documentation
 

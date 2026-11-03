@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// One record kept across the passes, its fields rewritten.
+struct Pair { a: integer, b: integer, c: integer }
+
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  s = 0;
+  p = Pair { a: 0, b: 0, c: 0 };
+  for i in 0..n {
+    p.a = i;
+    p.b = i * 2;
+    p.c = i % 7;
+    s += p.a + p.b + p.c;
+  }
+  println("{s}");
+}

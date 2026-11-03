@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The vector built inside the appended element, through a view of it: no temporary, no copy.
+struct Row { id: integer, f: vector<integer> }
+
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  out: vector<Row> = [];
+  s = 0;
+  for i in 0..n {
+    if len(out) >= 64 { out.clear(); }
+    out += [Row { id: i, f: [] }];
+    e = out[len(out) - 1];
+    for j in 0..4 { e.f += [i + j]; }
+    s += len(out) + out[len(out) - 1].f[3];
+  }
+  println("{s}");
+}

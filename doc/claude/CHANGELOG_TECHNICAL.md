@@ -17,6 +17,15 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### What moving a rule saves the interpreter, probed (@PLN211 B2 wave 1)
+
+- `doc/claude/plans/211-rule-phases/probes/run.py`: per case, the shape as written against the
+  same work written in the form the IR rule would leave, on `--interpret`: instructions per
+  iteration (user space, one core, two counts so start-up drops out), the same answer, and the
+  rule admitted in the case's function before and gone after.  Six MOVE verdicts with their
+  savings: `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-SliceArg)`, `(R-LoopRecord)`,
+  `(R-ElemFirst)`, `(R-LoopBuffer)` (plan README § Verdicts).
+
 ### `interp_gap.py --writer c` — the interpreter set against either writer (@PLN211 B1)
 
 - `--writer c|native` takes the rewrite census from that writer's emission (libraries emitted

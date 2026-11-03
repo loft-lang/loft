@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// probe-rule: R-SliceArg/range
+// probe-n: 20000 60000
+// A byte slice handed to a const parameter: the slice is built in a store of its own.
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  bytes: vector<u8> = [for k in 0..64 { (97 + k % 26) as u8 }];
+  s = 0;
+  for i in 0..n {
+    lo = i % 16;
+    t = text_from_bytes(bytes[lo..lo + 32]);
+    s += len(t) + (t.byte_at(3) ?? 0);
+  }
+  println("{s}");
+}
