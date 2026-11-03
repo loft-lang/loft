@@ -28,7 +28,7 @@ fn main() {
   if std != null && a[1] == "program" {
     from = el::std_count(std!);
   }
-  print(report::defs_report(b!, from));
+  print(report::defs_report(b!, from, templates: env_variable("LOFT_DEFS_TEMPLATES") == "1"));
   if std != null {
     print(report::schema_from(b!, el::type_count(std!)));
   }

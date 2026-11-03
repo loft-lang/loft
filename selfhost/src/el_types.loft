@@ -309,6 +309,13 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;
       }
+      // `def_nr_in_scope`: a header variable of the function being read is its placeholder.
+      for tv in e.type_vars {
+        if tv.spelling == name {
+          h = ir::TyReference { n: tv.holder, dep: [] };
+          return if nullable { ir::TyOptional { inner: h } } else { h };
+        }
+      }
       d = el::def_nr(e, name);
       if d < 0 {
         el::refuse(e, "a forward type reference");

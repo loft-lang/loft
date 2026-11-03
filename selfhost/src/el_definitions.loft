@@ -45,6 +45,7 @@ fn top_item(e: el::El, it: integer) {
     SInterface { at, name, members, end } => { parse_interface(e, at, name, members, end); },
     SFn { at, is_op, name, tvars, params, ret, ret_const, cap, body, annots } => {
       key = parse_function(e, at, is_op, name, tvars, params, ret, ret_const, cap, body, annots);
+      e.type_vars = [];
       if e.first_pass && (key == "" || el::def_nr(e, key) < 0) {
         e.declined += [name];
       }
@@ -343,10 +344,28 @@ fn sole_vector_literal(e: el::El, body: integer) -> boolean {
 // A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
 // the definition's key, or "" where the declaration was refused before one was known.
 fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) -> text {
-  if is_op || len(tvars) > 0 || cap != null || len(annots) > 0 || ret_const {
-    kind = if is_op { "an operator form" } else if len(tvars) > 0 { "type variables" } else if cap != null { "a capability" } else if len(annots) > 0 { "annotations" } else { "`-> const`" };
-    el::refuse(e, "a function with an operator form, type variables, a capability, annotations or `-> const`: {kind}");
+  if is_op || cap != null || len(annots) > 0 || ret_const {
+    kind = if is_op { "an operator form" } else if cap != null { "a capability" } else if len(annots) > 0 { "annotations" } else { "`-> const`" };
+    el::refuse(e, "a function with an operator form, a capability, annotations or `-> const`: {kind}");
     return "";
+  }
+  // `parse_type_var_header` (@F25): each header variable bound to its placeholder before the
+  // parameters are read, so `parse_type` resolves its spelling.
+  for tv in tvars {
+    match e.p.nodes[tv] {
+      STVar { at: tat, name: tn, bounds } => {
+        if len(tvars) > 1 || len(bounds) > 0 {
+          el::refuse(e, "a generic with more than one type variable or with bounds");
+          return "";
+        }
+        h = header_var(e, tn, el::pos_at(e, el_expressions::after_paren(e, tat)));
+        if h < 0 {
+          return "";
+        }
+        e.type_vars += [el::TypeVar { spelling: tn, holder: h }];
+      },
+      _ => {}
+    }
   }
   // `@FR-R-Const`: a function of no parameters whose whole body is one vector literal gets a
   // constant twin (`__const_n_<name>`) the calls of it read — not carried: refused by name.
@@ -413,6 +432,9 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
       return "";
     }
     e.context = add_fn(e, key, name, arguments, el::pos_at(e, after));
+    if len(e.type_vars) > 0 && e.context >= 0 {
+      e.b.data.definitions[e.context].def_type = el::DT_GENERIC;
+    }
   } else {
     e.context = el::def_nr(e, key);
   }
@@ -450,7 +472,9 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
     }
     // `Parser::parse_function`'s return buffer (pass 1): a record, struct-enum or vector result
     // is delivered through a last, hidden `__retbuf` parameter of the result's base type.
-    if e.first_pass && takes_ret_buffer(e, rt) {
+    // A template whose result depends on its variable takes no buffer: its instances decide
+    // their own delivery (`generic_return_promotable`).
+    if e.first_pass && takes_ret_buffer(e, rt) && !mentions_type_var(e, rt) {
       d = e.context;
       a = el::attribute("__retbuf", el_types::without_deps(rt));
       a.hidden = true;
@@ -460,10 +484,46 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
     }
     code = el_expressions::parse_code(e, vars, body ?? 0);
     e.b.data.definitions[e.context].code = [code];
+    if !e.first_pass && len(e.type_vars) > 0 {
+      e.bodies2 += [e.context];
+    }
   }
   e.b.data.definitions[e.context].variables = el_vars::stored(vars);
   e.context = -1;
   key
+}
+
+// Does `t` name a header variable of the function being read?
+fn mentions_type_var(e: el::El, t: ir::TypeT) -> boolean {
+  for tv in e.type_vars {
+    if el_expressions::type_mentions(t, tv.holder) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Parser::bind_header_var` for an unbounded variable: the placeholder the spelling already
+// has — the lowest-numbered `<spelling>#n` definition with no bounds (`holder_for_spelling`),
+// minted by any earlier header, the standard library's included — or, on the first pass, a new
+// `<spelling>#n` under the first `n` no source holds, a struct answering a record of itself.
+// -1 where none exists on the second pass (the first refused the header).
+fn header_var(e: el::El, spelling: text, pos: ir::Position) -> integer {
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_STRUCT && len(d.bounds) == 0 && d.name.starts_with("{spelling}#") && el_expressions::type_var(e, ir::TyReference { n: d#index, dep: [] }) >= 0 {
+      return d#index;
+    }
+  }
+  if !e.first_pass {
+    return -1;
+  }
+  n = 1;
+  while el::source_nr(e, el::STD_SOURCE, "{spelling}#{n}") >= 0 || el::source_nr(e, el::MAIN_SOURCE, "{spelling}#{n}") >= 0 {
+    n += 1;
+  }
+  h = el::add_def(e, "{spelling}#{n}", pos, el::DT_STRUCT);
+  el::set_returned(e, h, ir::TyReference { n: h, dep: [] });
+  h
 }
 
 // `Type::takes_ret_buffer`: a struct record, a struct-enum or a vector.

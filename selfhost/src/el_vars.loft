@@ -625,6 +625,10 @@ pub fn stored(v: Vars) -> ir::Function {
   for x in v.vars {
     f.variables += [x];
   }
+  // `Function::rebind_orig` is stored per variable: the witness of each rebound parameter.
+  for p in v.rebind_params {
+    f.variables[p].rebind_orig = v.rebind_origs[p#index] ?? 65535;
+  }
   for n in v.names {
     f.names += [ir::NameNr { name: n.name, nr: n.nr }];
   }

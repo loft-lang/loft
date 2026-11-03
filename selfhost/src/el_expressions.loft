@@ -255,8 +255,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
   }
   // The body of a record-returning function is typed as the declared result as the pass found
-  // it — the deps the first pass gave it, in attribute numbering.
-  if rb >= 0 && !e.first_pass && result is TyReference {
+  // it — the deps the first pass gave it, in attribute numbering.  So is a template's answering
+  // its variable, which takes none of the record delivery (`generic_promote_ok`).
+  templated = el::def(e, e.context).def_type == el::DT_GENERIC && type_var(e, el_types::base(result)) >= 0;
+  if (rb >= 0 && !e.first_pass && result is TyReference) || templated {
     match code {
       NdBlock { block } => {
         bl = block[0];
@@ -4709,7 +4711,7 @@ fn assert_text(pos: ir::Position) -> text {
 }
 
 // The token after a call's `(`: the parser's peek when `parse_call` starts.
-fn after_paren(e: el::El, from: integer) -> integer {
+pub fn after_paren(e: el::El, from: integer) -> integer {
   i = from;
   while i < len(e.p.src) {
     if e.p.src[i] is LParen {
@@ -4859,7 +4861,7 @@ pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
 
 // `Data::is_type_var_placeholder`: the definition a type variable reads as — a struct with no
 // fields that is its own type — or -1.
-fn type_var(e: el::El, t: ir::TypeT) -> integer {
+pub fn type_var(e: el::El, t: ir::TypeT) -> integer {
   match t {
     TyReference { n } => {
       d = el::def(e, n);
@@ -4920,24 +4922,392 @@ fn identity_spelling(e: el::El, t: ir::TypeT) -> text {
 // The instance of generic `d` the argument types bind (`Data::mangle_instance`:
 // `i_<LEN><spelling>_<template>`, the bound types joined by `#`), or -1.
 fn generic_instance(e: el::El, d: integer, types: vector<ir::TypeT>) -> integer {
+  b = template_binding(e, d, types);
+  if b == null {
+    return -1;
+  }
+  nm = instance_name(e, d, b!);
+  if nm == "" { -1 } else { el::def_nr(e, nm) }
+}
+
+// What the template's variables bind to at a call with these argument types (`bind_template`),
+// or null where a variable is met by no argument or two meet it differently.
+fn template_binding(e: el::El, d: integer, types: vector<ir::TypeT>) -> Binding? {
   b = Binding { vars: [], types: [], ok: true };
   for a in el::def(e, d).attributes {
     if a#index < len(types) {
       bind_type_vars(e, a.typedef[0], types[a#index] ?? ir::TyUnknown { n: 0 }, b);
     }
   }
-  if !b.ok || len(b.vars) == 0 {
-    return -1;
-  }
+  if !b.ok || len(b.vars) == 0 { null } else { b }
+}
+
+// `Data::mangle_instance`: `i_<LEN><spelling>_<template>`, the bound types' identity spellings
+// joined by `#` — "" for a bound type this port spells no identity for.
+fn instance_name(e: el::El, d: integer, b: Binding) -> text {
   spelling = "";
   for t in b.types {
     sp = identity_spelling(e, t);
     if sp == "" {
-      return -1;
+      return "";
     }
     spelling = if t#index == 0 { sp } else { "{spelling}#{sp}" };
   }
-  el::def_nr(e, "i_{len(spelling)}{spelling}_{el::def(e, d).name}")
+  "i_{len(spelling)}{spelling}_{el::def(e, d).name}"
+}
+
+// `Parser::predict_template_return`: the first pass's type for a call of a template — its
+// declared result with each variable replaced by what this call binds it to; null where a
+// variable binds to nothing known yet.
+fn predict_template_return(e: el::El, d: integer, types: vector<ir::TypeT>) -> ir::TypeT? {
+  b = template_binding(e, d, types);
+  if b == null {
+    return null;
+  }
+  r = el::def(e, d).returned[0] ?? ir::TyVoid;
+  for t in b!.types {
+    if el_types::is_unknown(t) {
+      return null;
+    }
+    r = substitute(r, b!.vars[t#index] ?? -1, t);
+  }
+  r
+}
+
+// `Type::contains_def` for a placeholder: does `t` name definition `h` anywhere?
+pub fn type_mentions(t: ir::TypeT, h: integer) -> boolean {
+  match t {
+    TyReference { n } => n == h,
+    TyEnum { n } => n == h,
+    TyUnknown { n } => n == h,
+    TyRoutine { n } => n == h,
+    TySorted { n } => n == h,
+    TyIndex { n } => n == h,
+    TyRadix { n } => n == h,
+    TyHash { n } => n == h,
+    TyTrie { n } => n == h,
+    TyRefVar { inner } => type_mentions(inner, h),
+    TyRewritten { inner } => type_mentions(inner, h),
+    TyOptional { inner } => type_mentions(inner, h),
+    TyVector { inner } => type_mentions(inner, h),
+    TyIterator { step, inner } => type_mentions(step, h) || type_mentions(inner, h),
+    TyTuple { elems } => {
+      for m in elems {
+        if type_mentions(m, h) {
+          return true;
+        }
+      }
+      false
+    },
+    TyFunction { args, result } => {
+      for m in args {
+        if type_mentions(m, h) {
+          return true;
+        }
+      }
+      type_mentions(result, h)
+    },
+    _ => false
+  }
+}
+
+// `Type::substitute` `[h ↦ bound]` for the shapes this port instantiates: the placeholder
+// itself becomes the bound type (its own deps dropped), a vector's element is substituted, and
+// any other type is left as it is (the caller refuses a template that holds one over `h`).
+fn substitute(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyReference { n } => if n == h { bound } else { t },
+    TyVector { inner, dep } => ir::TyVector { inner: substitute(inner, h, bound), dep: dep },
+    _ => t
+  }
+}
+
+// `Function::subst_type`: the variable table's twin of `substitute`, which keeps the
+// placeholder's deps on the bound type.
+fn substitute_var(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyReference { n, dep } => if n == h { el_types::with_deps(bound, el_types::deps(bound) + dep) } else { t },
+    _ => substitute(t, h, bound)
+  }
+}
+
+// `data::is_scalar`: a value with no store behind it.
+fn scalar_type(t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { is_ref } => !is_ref,
+    _ => false
+  }
+}
+
+// `Function::drop_scalar_deps`: a variable keeps a dep only on what can lend to it — a text on
+// a text or a store, anything else on a store; never on a scalar.
+fn drop_scalar_deps(f: ir::Function) {
+  lends: vector<integer> = [];
+  for v in f.variables {
+    t = v.type_def[0] ?? ir::TyVoid;
+    lends += [if scalar_type(t) { 0 } else if el_types::base(t) is TyText { 1 } else { 2 }];
+  }
+  for v in f.variables {
+    t = v.type_def[0] ?? ir::TyVoid;
+    is_text = el_types::base(t) is TyText;
+    ds = el_types::deps(t);
+    kept: vector<integer> = [];
+    for d in ds {
+      l = lends[d] ?? 2;
+      if l == 2 || (l == 1 && is_text) {
+        kept += [d];
+      }
+    }
+    if len(kept) != len(ds) {
+      f.variables[v#index].type_def = [el_types::with_deps(t, kept)];
+    }
+  }
+}
+
+// `substitute_type_in_value` over a template body this port instantiates: every block's and
+// loop's result type substituted; a call is left as it is (`instance_carried` refuses one whose
+// target a substitution would re-resolve).
+fn substitute_code(n: ir::Node, h: integer, bound: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: substitute_code(inner, h, bound) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: substitute_all_code(args, h, bound) },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: substitute_all_code(args, h, bound) },
+    NdBlock { block } => ir::NdBlock { block: [substitute_block(block[0], h, bound)] },
+    NdLoop { block } => ir::NdLoop { block: [substitute_block(block[0], h, bound)] },
+    NdInsert { items } => ir::NdInsert { items: substitute_all_code(items, h, bound) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: substitute_code(inner, h, bound) },
+    NdReturn { inner } => ir::NdReturn { inner: substitute_code(inner, h, bound) },
+    NdIf { cond, t, f } => ir::NdIf { cond: substitute_code(cond, h, bound), t: substitute_code(t, h, bound), f: substitute_code(f, h, bound) },
+    NdDrop { inner } => ir::NdDrop { inner: substitute_code(inner, h, bound) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: substitute_code(create, h, bound), next: substitute_code(next, h, bound), init: substitute_code(init, h, bound) },
+    NdTuple { items } => ir::NdTuple { items: substitute_all_code(items, h, bound) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: substitute_code(inner, h, bound) },
+    NdYield { inner } => ir::NdYield { inner: substitute_code(inner, h, bound) },
+    _ => n
+  }
+}
+
+fn substitute_all_code(ns: vector<ir::Node>, h: integer, bound: ir::TypeT) -> vector<ir::Node> {
+  r: vector<ir::Node> = [];
+  for c in ns {
+    r += [substitute_code(c, h, bound)];
+  }
+  r
+}
+
+fn substitute_block(b: ir::Block?, h: integer, bound: ir::TypeT) -> ir::Block {
+  bl = b!;
+  bl.operators = substitute_all_code(bl.operators, h, bound);
+  bl.result = [substitute(bl.result[0] ?? ir::TyVoid, h, bound)];
+  bl
+}
+
+// Does `t` hold placeholder `h` only bare, if at all — the shapes `substitute` carries?
+fn bare_over(t: ir::TypeT, h: integer) -> boolean {
+  match t {
+    TyReference { n } => true,
+    _ => !type_mentions(t, h)
+  }
+}
+
+// The template body as this port instantiates it, or the first construct it does not carry: a
+// block one of the instance's later passes rewrites (a `tv…` marker, a yield or tuple-member
+// copy, a materialised view return), a result over the variable in a shape `substitute` does
+// not carry, a call whose target substitution re-resolves (one over the variable, or another
+// generic), a type row the instance would retarget (`retarget_parametric_type_rows`).
+fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer) -> text {
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name.starts_with("tv") || bl.name == "yield_copy" || bl.name == "tuple_member_copy" || bl.name == "tuple_member_move" || bl.name == "materialized_view_return" {
+        return "a `{bl.name}` block";
+      }
+      if !bare_over(bl.result[0] ?? ir::TyVoid, h) {
+        return "a block over the variable";
+      }
+    },
+    NdCall { def_nr, args } => {
+      cd = el::def(e, def_nr);
+      if cd.def_type == el::DT_GENERIC {
+        return "a call of another generic";
+      }
+      for a in cd.attributes {
+        if type_mentions(a.typedef[0] ?? ir::TyVoid, h) {
+          return "a call over the variable";
+        }
+        if (a.name == "tp" || a.name.ends_with("_tp")) && row != el::NO_TYPE {
+          match args[a#index] ?? ir::NdNull {
+            NdInt { n: r } => { if r == row { return "a type row of the variable"; } },
+            _ => {}
+          }
+        }
+      }
+    },
+    NdParallel { arms: _ } => { return "a parallel block"; },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    w = instance_carried(e, c, h, row);
+    if w != "" {
+      return w;
+    }
+  }
+  ""
+}
+
+// `Parser::instantiate_template` for a template of one unbounded variable bound to a plain
+// scalar (@FR-G-Mono): the instance `i_<LEN><T>_<template>` the second pass makes once the
+// template's own second-pass body is read, its parameters, result, variables and body the
+// template's with the variable replaced.  Each later pass of `fill_monomorph_body` that would
+// change such a body is refused by its trigger (`instance_carried`); the one side effect it
+// has, `rewrite_vector_write_triplets` registering `vector<T>`'s row, is made.  -1, refused by
+// name, for anything else.
+fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
+  tmpl = el::def(e, g);
+  b = template_binding(e, g, types);
+  if b == null {
+    el::refuse(e, "a generic call whose argument types bind no type");
+    return -1;
+  }
+  h = b!.vars[0] ?? -1;
+  bound = b!.types[0] ?? ir::TyVoid;
+  if !scalar_type(bound) || bound is TyEnum || bound is TyOptional || identity_spelling(e, bound) == "" {
+    el::refuse(e, "a generic instance at this type: {type_kind(bound)}");
+    return -1;
+  }
+  nm = instance_name(e, g, b!);
+  if !e.bodies2.contains(g) {
+    // `stale_monomorphs`: an instance made before its template's second-pass body is rebuilt
+    // once the file is through — not carried.
+    el::refuse(e, "a generic called above its declaration");
+    return -1;
+  }
+  for a in tmpl.attributes {
+    if !bare_over(a.typedef[0] ?? ir::TyVoid, h) {
+      el::refuse(e, "a generic parameter over the type variable in another shape");
+      return -1;
+    }
+  }
+  if !bare_over(tmpl.returned[0] ?? ir::TyVoid, h) {
+    el::refuse(e, "a generic result over the type variable in another shape");
+    return -1;
+  }
+  for v in tmpl.variables.variables {
+    t = v.type_def[0] ?? ir::TyVoid;
+    if !bare_over(t, h) || t is TyFunction {
+      el::refuse(e, "a generic local over the type variable in another shape or of a function type");
+      return -1;
+    }
+  }
+  why = instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, el::def(e, h).known_type);
+  if why != "" {
+    el::refuse(e, "a generic body holding {why}");
+    return -1;
+  }
+  d = el::add_def(e, nm, tmpl.position, el::DT_FUNCTION);
+  for a in tmpl.attributes {
+    na = el::attribute(a.name, substitute(a.typedef[0] ?? ir::TyVoid, h, bound));
+    na.value = a.value;
+    na.value_const = a.value_const;
+    na.hidden = a.hidden;
+    e.b.data.definitions[d].attributes += [na];
+  }
+  el::set_returned(e, d, substitute(tmpl.returned[0] ?? ir::TyVoid, h, bound));
+  // A table of the instance's own: the template's is the template's, and stays as it is.
+  tv = tmpl.variables;
+  f = ir::Function { name: tv.name, file: tv.file, variables: [], names: [], inline_refs: tv.inline_refs };
+  for v in tv.variables {
+    t = substitute_var(v.type_def[0] ?? ir::TyVoid, h, bound);
+    c = v;
+    c.type_def = [t];
+    f.variables += [c];
+  }
+  for n in tv.names {
+    f.names += [ir::NameNr { name: n.name, nr: n.nr }];
+  }
+  drop_scalar_deps(f);
+  el_schema::vector_type(e, el::def(e, type_def_nr(e, bound)).known_type);
+  code = substitute_code(tmpl.code[0] ?? ir::NdNull, h, bound);
+  // `strip_scalar_instance_rebinds`: a parameter the template rebinds keeps an entry witness of
+  // the caller's store; one that became a scalar has no store, so the witness and its stash go.
+  for v in f.variables {
+    orig = v.rebind_orig;
+    t = v.type_def[0] ?? ir::TyVoid;
+    heap = el_types::base(t) is TyReference || keyed_kind(t) || match el_types::base(t) { TyEnum { is_ref } => is_ref, _ => false };
+    if orig != el::NO_TYPE && !heap {
+      code = strip_rebind(e, code, v#index, orig);
+      f.variables[v#index].rebind_orig = el::NO_TYPE;
+    }
+  }
+  e.b.data.definitions[d].variables = f;
+  e.b.data.definitions[d].code = [code];
+  d
+}
+
+// Is `o` one of parameter `p`'s rebind witness operations — its stash into the witness `orig`
+// (`OpPutRef`, a set of `orig`), or the free and detach of its rebind?
+fn rebind_witness_op(e: el::El, o: ir::Node, p: integer, orig: integer) -> boolean {
+  match el_ir::unspan(o) {
+    NdSet { var } => var == orig,
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      a0 = el_ir::unspan(args[0] ?? ir::NdNull);
+      a1 = el_ir::unspan(args[1] ?? ir::NdNull);
+      if nm == "OpFreeRefIfDistinct" { len(args) == 2 && a0 == ir::NdVar { n: p } && a1 == ir::NdVar { n: orig } }
+      else if nm == "OpInitRefSentinel" { len(args) == 1 && a0 == ir::NdVar { n: p } }
+      else if nm == "OpPutRef" { len(args) == 2 && a0 == ir::NdVar { n: orig } }
+      else { false }
+    },
+    _ => false
+  }
+}
+
+fn without_witness(e: el::El, ops: vector<ir::Node>, p: integer, orig: integer) -> vector<ir::Node> {
+  r: vector<ir::Node> = [];
+  for o in ops {
+    if !rebind_witness_op(e, o, p, orig) {
+      r += [strip_rebind(e, o, p, orig)];
+    }
+  }
+  r
+}
+
+fn strip_rebind_all(e: el::El, ns: vector<ir::Node>, p: integer, orig: integer) -> vector<ir::Node> {
+  r: vector<ir::Node> = [];
+  for c in ns {
+    r += [strip_rebind(e, c, p, orig)];
+  }
+  r
+}
+
+// The walk of `strip_scalar_instance_rebinds`: the witness operations leave the operator list of
+// every block and insert (not a loop's), and every node below is walked.
+fn strip_rebind(e: el::El, n: ir::Node, p: integer, orig: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: strip_rebind(e, inner, p, orig) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      bl.operators = without_witness(e, bl.operators, p, orig);
+      ir::NdBlock { block: [bl] }
+    },
+    NdInsert { items } => ir::NdInsert { items: without_witness(e, items, p, orig) },
+    NdLoop { block } => {
+      bl = block[0]!;
+      bl.operators = strip_rebind_all(e, bl.operators, p, orig);
+      ir::NdLoop { block: [bl] }
+    },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: strip_rebind_all(e, args, p, orig) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: strip_rebind(e, inner, p, orig) },
+    NdReturn { inner } => ir::NdReturn { inner: strip_rebind(e, inner, p, orig) },
+    NdIf { cond, t, f } => ir::NdIf { cond: strip_rebind(e, cond, p, orig), t: strip_rebind(e, t, p, orig), f: strip_rebind(e, f, p, orig) },
+    NdDrop { inner } => ir::NdDrop { inner: strip_rebind(e, inner, p, orig) },
+    _ => n
+  }
 }
 
 // A parameter default the call site can take as it is: it names none of the callee's `n`
@@ -4970,18 +5340,22 @@ fn receives(e: el::El, m: integer, tn: integer) -> boolean {
 // its declared result.  Defaults, hidden buffers, conversions and heap results are refused.
 fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
-  // A generic is called through its instance for the argument types (`@FR-G-Key`): one the
-  // image already holds — making one is monomorphisation, not carried.  The first pass, which
-  // may not know an argument's type yet, takes the template as it is.
+  // A generic is called through its instance for the argument types (`@FR-G-Key`): the first
+  // pass types the call by the template's predicted result and leaves it `null`; the second
+  // calls the instance, made here when none exists yet.
   if def.def_type == el::DT_GENERIC {
-    inst = generic_instance(e, d, types);
-    if inst >= 0 {
-      return call_args(e, vars, inst, given, types);
+    if e.first_pass {
+      p = predict_template_return(e, d, types);
+      return ex(ir::NdNull, p ?? ir::TyUnknown { n: 0 });
     }
-    if !e.first_pass {
-      el::refuse(e, "a call of a generic function with no instance made yet: {def.name}");
+    inst = generic_instance(e, d, types);
+    if inst < 0 {
+      inst = instantiate(e, d, types);
+    }
+    if inst < 0 {
       return null;
     }
+    return call_args(e, vars, inst, given, types);
   }
   // `synth_upgrade_drain` (@PLN196): every store load is wrapped in a synthesised
   // `__upgrade_drain(…)` after the parse, with the fill functions it calls — not carried.
