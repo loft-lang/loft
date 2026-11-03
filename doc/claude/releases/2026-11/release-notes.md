@@ -8,7 +8,7 @@ loft 2026.11.0 is the C backend release.
 
 **Smaller things you may enjoy.** A struct can hold its own type (`left: Tree?`). `d = Unit { hp: 0, ..u }` copies a record with a few fields changed. Your own types can use `<` and `>`. `exit(2)` ends a program with its own exit code. A write that lands nowhere can say so with `else`. The Linux download can now load libraries with native code.
 
-Also more than fifty bug fixes, most of them in `match`, generators and stored data.
+And more than 300 bugs fixed this cycle; the changelog describes the fifty-odd you are most likely to notice, most of them in `match`, generators and stored data.
 
 The whole list, and what to change in your code: [CHANGELOG.md](https://github.com/loft-lang/loft/blob/v2026.11.0/CHANGELOG.md#2026-11).
 
