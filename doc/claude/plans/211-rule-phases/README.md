@@ -9,8 +9,12 @@ Tracker: [@PLN211](https://github.com/loft-lang/plans/issues/211).
 
 ## Status
 
-Open, `status:next` — the inventory below is measured, nothing is built.  It starts once
-#1743 (every routine within 3×) and #2351 (the facts routine) are fixed (owner).  Four arcs: **A** keeps the register honest about where
+Open, `status:next` — the inventory below is measured and the plan is DESIGNED
+([design.md](design.md): every arc's files and checks, the first verdict for each rule, and the
+removal of the facts routine's three deviations); nothing is built.  It was to start once
+#1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
+`laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
+three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
 each rule runs, **B** decides per rule whether it can run earlier, **C** moves the ones that
 can, **D** widens the rules we already have to the shapes they refuse today — the general
 performance fixes, by class, behind the per-routine issues of the 3× bug line.
@@ -46,6 +50,13 @@ declined to emit), so the rustc-only list is a floor.
 **The register.**  6 of the 123 rule entries state their APPLIED BY line.  `(R-Transient)`
 reports to no census at all.
 
+**Corrections found while designing** ([design.md § What the code already has](design.md#what-the-code-already-has)):
+the census reads only the rustc emission, so no C admission reaches a baseline; five rules
+fire on the C under no census name (four of them listed below as rustc-only); census names
+disagree between the writers (`R-Kept`, `R-HandOver/rotate`, `R-LoopRecord/refill`); and most
+rules listed as decided in the C writer DECIDE in a shared analysis (`src/opt/`, `src/lower/`)
+and only EMIT in the writer, which makes them cheaper to move than this table suggests.
+
 **Decided before any writer** (both backends already run them), 38 rules — among them
 `(R-InlineLeaf)`, `(R-WorkBuffer)`, `(R-ValueRecord)`, `(R-ValueLocal)`, `(R-ExitVector)`,
 `(R-Reuse)`, `(R-MoveLast)`, `(R-Place)`, `(R-Rebind)`, `(R-CopyView)`, `(R-VecCopy)`;
@@ -67,6 +78,9 @@ reports to no census at all.
 the IR phase is a C-writer port or a recorded loss.
 
 ## Arc A — the administration
+
+**A0 — the census reads the C.**  `rewrite_census.py` emits every bench with `--emit-c` beside
+`--native-emit` and fails a drop on either writer (design.md § Arc A).  Effort S.
 
 **A1 — the phase table, derived.**  `scripts/rule_phases.py` runs the census over the bench
 set on both writers and writes `bench/portal/rule_phases.tsv`: per rule, the phases that
@@ -174,8 +188,11 @@ Seeds measured 2026-11-02 (to be ranked by D1):
 
 ## Phase ordering
 
-A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 → B2 ·
-C, rule by rule, after its B2 verdict · D1, then D2…, each clause in its rule's phase.  A, B
+A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
+B2 · D-fact-1 → D-fact-3 → D-fact-2 (design.md § The facts deviations) · C in three waves —
+existing operators, then one stdlib function or flag each, then the IR twins after D-fact-3 —
+each rule after its B2 verdict · the ports to the C as their own track · D1, then D2…, each
+clause in its rule's phase.  A, B
 and D1 are independent; C needs A1 (the bless) and its rule's B2 row; a D clause of a rule
 that arc C moves is built after the move, in the IR phase.
 
@@ -193,7 +210,8 @@ that arc C moves is built after the move, in the IR phase.
 
 ## Cross-arc dependencies
 
-- **#2351 / `formal/facts.md`** — a moved rule's callee facts come from the facts routine;
+- **#2351 / `formal/facts.md`** — its three deviations are removed inside this plan
+  (design.md § The facts deviations); a moved rule's callee facts come from the facts routine;
   D-fact-2 (interval entry facts) is `(R-RangedCall)`'s precondition to leave the rustc
   writer.  The two plans share B2's "decidable on the IR" question.
 - **@PLN210** — the source of most C-only rules.
@@ -206,7 +224,8 @@ that arc C moves is built after the move, in the IR phase.
 ## Verdicts
 
 Filled by B2: one row per WORK and rustc-only rule — rule · decidable on the IR · expressible
-· weight · probe result · verdict · phase that moves it.
+· weight · probe result · verdict · phase that moves it.  The first verdicts, from reading the
+code and each still owed its probe, are in [design.md § The first verdicts](design.md#the-first-verdicts).
 
 ## Documentation
 
