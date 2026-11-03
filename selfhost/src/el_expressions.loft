@@ -8267,7 +8267,12 @@ fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
       _ => {}
     }
   }
-  vector_build(e, vars, v, n, inner, append: true).x
+  b = vector_build(e, vars, v, n, inner, append: true);
+  // A local whose element the first pass had not met yet (`counts = []`) takes the items'.
+  if el_types::is_unknown(inner) && !el_types::is_unknown(b.elem) {
+    el_vars::change_var_type(e, vars, v, ir::TyVector { inner: b.elem, dep: el_types::deps(el_vars::tp(vars, v)) });
+  }
+  b.x
 }
 
 // A literal's build, the items' code and the element type, for a `for` that may walk the items
@@ -8394,6 +8399,14 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   if el_types::is_unknown(in_t) {
     if len(xs) == 0 && value {
       el::refuse(e, "an empty vector literal in value position");
+      return refused_build();
+    }
+    // The first pass may not know the local's type yet (`counts = []`, then appends); the
+    // second reads it off the local.
+    if len(xs) == 0 && e.first_pass {
+      if v >= 0 && !value && el_types::is_unknown(el_vars::tp(vars, v)) {
+        el_vars::set_var_type(vars, v, ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
+      }
       return refused_build();
     }
     if len(xs) == 0 {
