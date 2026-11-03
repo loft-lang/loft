@@ -55,10 +55,13 @@ static void loft_set_anchor(int program_relative) {
     loft_program_relative = program_relative;
     env = getenv("LOFT_PATHS");
     if (env) loft_program_relative = (env[0] == 'p' || env[0] == 'P');
-#if defined(LOFT_POSIX)
     /* The interpreter runs a program-relative program in its own directory (main.rs, before
-     * the run), so the working directory `directory()` answers is that one. */
+     * the run), so the working directory `directory()` answers is that one — and a C library's
+     * own relative `fopen` finds what lies beside the program, on every platform. */
+#if defined(LOFT_POSIX)
     if (loft_program_relative && *loft_anchor && chdir(loft_anchor) != 0) {}
+#elif defined(_WIN32)
+    if (loft_program_relative && *loft_anchor && _chdir(loft_anchor) != 0) {}
 #endif
 }
 
