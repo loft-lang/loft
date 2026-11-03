@@ -850,6 +850,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-VecCopy` — a vector copied into an exclusive one element at a time is one
         // append: decided on the same settled IR.
         crate::vec_copy::rewrite(data, database, d_nr);
+        // `@FR-R-SliceArg`'s range clause — `text_from_bytes(v[lo..hi])` reads the span in place:
+        // decided on the same settled IR, so neither backend builds the slice.
+        crate::slice_text::rewrite(data, d_nr);
         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
         // variants (gated; no-op in normal builds).
         if tag_mode {
