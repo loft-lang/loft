@@ -131,10 +131,11 @@ make speed-gate                          # the one speed GATE: a test 3x and +5 
                                          #   main (median speed divided out) that is STILL that slow
                                          #   rerun alone.  Runs in `make ci` and on every Linux PR leg;
                                          #   contention never repeats alone — scripts/test_speed_gate.py
-make rewrite-census                      # which REWRITES still fire where they did: per bench,
-                                         #   the admissions of each R- rule against a committed
-                                         #   baseline — a DROP (a fix tightened a condition) fails,
-                                         #   named by rule and bench; seconds, exact, in `make ci`
+make rewrite-census                      # which REWRITES still fire where they did: per bench
+                                         #   and per compiled writer (Rust, C), the admissions of
+                                         #   each R- rule against a committed baseline — a DROP (a
+                                         #   fix tightened a condition) fails, named by rule, bench
+                                         #   and writer; seconds, exact, in `make ci`
                                          #   and on the PR.  `-bless` records a deliberate decline
 make decline-census                      # HOW FAR EACH REWRITE REACHES: per R- rule, the sites it
                                          #   admitted against the sites it REFUSED, the refusals

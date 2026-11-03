@@ -58,10 +58,11 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  program is compared under the cure's switch as under a rewrite's.
                  CENSUS CLAUSE: a rewrite counts each site it ADMITS
                  (`rewrite_census::fired("R-…", n)`, never at a decline), and the
-                 counts over the benches are a committed baseline
+                 counts over the benches, per compiled writer (the Rust and the C
+                 emission), are a committed baseline
                  (`bench/portal/rewrite_census.tsv`): a later fix that tightens a
-                 condition shows as a DROP, named by rule and bench, in `make
-                 rewrite-census` and on the PR — a loss no timing resolves.  A
+                 condition shows as a DROP, named by rule, bench and writer, in
+                 `make rewrite-census` and on the PR — a loss no timing resolves.  A
                  deliberate decline lands with `make rewrite-census-bless` in its
                  own commit.  Counted: every rewrite but three — (R-Prefill) admits per
                  TYPE at its first mint, and (R-Cold) and (R-FlatCopy) are the

@@ -84,8 +84,8 @@ the feature, the file's first line says the bytes were not counted. Armed, a run
 
 **`LOFT_REWRITE_CENSUS_FN=<file>`** splits `LOFT_REWRITE_CENSUS` by WHERE each rewrite was
 admitted, written as `phase<TAB>function<TAB>rule<TAB>count`. The phase is `native` for the
-generator (the interpreter never gets that form), `ir` for the scope pass (both backends)
-and `parse` for everything earlier. The per-function totals equal the per-rule census.
+rustc writer and `c` for the C writer (the interpreter never gets either form), `ir` for the
+scope pass (both backends) and `parse` for everything earlier. The per-function totals equal the per-rule census.
 
 **`LOFT_OP_NGRAMS=<file>`** (with `LOFT_OP_CENSUS`) counts the runs of two to four operators
 that execute one after the other within a function, keeping only runs whose control operators

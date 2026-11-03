@@ -10,6 +10,13 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The rewrite census reads the C writer (@PLN211 A0)
+
+- `scripts/rewrite_census.py` writes every bench program with `--emit-c` as well as
+  `--native-emit`, and `bench/portal/rewrite_census.tsv` holds one row per (program, writer,
+  rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
+  reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
+
 ### A `match` is lowered once per arm (`@FR-M-Once`, `@FR-M-Fixed`)
 
 A guarded arm folds its guard into its condition, `cmp && { bindings; guard }`

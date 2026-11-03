@@ -11,7 +11,8 @@ Tracker: [@PLN211](https://github.com/loft-lang/plans/issues/211).
 
 Open, `status:next` — the inventory below is measured and the plan is DESIGNED
 ([design.md](design.md): every arc's files and checks, the first verdict for each rule, and the
-removal of the facts routine's three deviations); nothing is built.  It was to start once
+removal of the facts routine's three deviations); A0 is built (the census reads both
+writers).  It was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
