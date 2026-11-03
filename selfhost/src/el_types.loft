@@ -292,14 +292,15 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         }
         return if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
       }
-      // `sub_type`'s iterator arm: a generator's `iterator<T>`, carried for a plain scalar `T`.
+      // `sub_type`'s iterator arm: a generator's `iterator<T>`, carried for a plain scalar, a text
+      // or a record `T`.
       if name == "iterator" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
         step = parse_type(e, args[0]);
         if step == null {
           return null;
         }
         if !plain_step(step!) {
-          el::refuse(e, "an iterator of an element other than a plain scalar");
+          el::refuse(e, "an iterator of an element other than a plain scalar, a text or a record");
           return null;
         }
         return ir::TyIterator { step: step!, inner: ir::TyNull };
@@ -433,9 +434,11 @@ pub fn tuple_def_of(e: el::El, elems: vector<ir::TypeT>) -> integer {
   if sp == "" { -1 } else { el::def_nr(e, "__tuple<{sp}>") }
 }
 
-// An iterator element this port carries: a plain scalar (no narrow width).
+// An iterator element this port carries: a plain scalar (no narrow width), a text, a record.
 fn plain_step(t: ir::TypeT) -> boolean {
   match t {
+    TyText { dep: _ } => true,
+    TyReference { n: _ } => true,
     TyInteger { spec } => narrow_width(spec) == 0 && spec.forced_size == 0,
     TyFloat => true,
     TySingle => true,

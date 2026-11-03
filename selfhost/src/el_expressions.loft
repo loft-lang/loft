@@ -7297,7 +7297,9 @@ fn generator_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, 
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  size = elem_size(step);
+  // The element's argument-slot size (`variables::size`, `Context::Argument`): a text is
+  // carried as 16 bytes, a record as its 12-byte reference.
+  size = if step is TyText { 16 } else if step is TyReference { 12 } else { elem_size(step) };
   if size < 0 {
     el::refuse(e, "a `for` over a generator of this element type: {type_kind(step)}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -7393,7 +7395,65 @@ fn yield_expr(e: el::El, vars: el_vars::Vars, from: boolean, ye: integer?) -> Ex
     refuse_known(e, x.tp, "a yielded value its element type converts: {type_kind(x.tp)} to {type_kind(step)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  if step is TyReference {
+    owned = yield_owned_record(e, vars, v!, x.tp, step);
+    if owned == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(ir::NdYield { inner: owned! }, ir::TyVoid);
+  }
   ex(ir::NdYield { inner: v! }, ir::TyVoid)
+}
+
+// `yield_owned_value` for a record: a yield hands the consumer a record it owns, so a value that
+// is not fresh (`yield_is_fresh`: a named local or parameter, a projection, or anything borrowing
+// one) is copied into a pass-2 backing first (`yield_copy`).  Carried for a record of plain
+// scalars and texts; any other record is refused by name, since one owning a resource cannot be
+// copied at all (`owns_droppable`).
+fn yield_owned_record(e: el::El, vars: el_vars::Vars, v: ir::Node, tp: ir::TypeT, step: ir::TypeT) -> ir::Node? {
+  if yield_is_fresh(e, vars, v, tp) {
+    return v;
+  }
+  rd = struct_ref(e, step);
+  for a in el::def(e, rd).attributes {
+    at = a.typedef[0] ?? ir::TyVoid;
+    if !el_convert::plain_scalar(at) && !(at is TyText) {
+      el::refuse(e, "a yield of an existing record that holds something other than plain scalars and texts");
+      return null;
+    }
+  }
+  if tp is TyOptional {
+    el::refuse(e, "a yield of an existing nullable record");
+    return null;
+  }
+  kt = el::def(e, rd).known_type;
+  o = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+  k = ir::NdInt { n: kt };
+  fill = el_ir::v_block([el_ir::cl(e, "OpDatabase", [ir::NdVar { n: o }, k]), el_ir::cl(e, "OpCopyRecord", [v, ir::NdVar { n: o }, k])], ir::TyVoid, "yield_copy_fill");
+  el_ir::v_block([el_ir::v_set(o, ir::NdNull), fill, ir::NdVar { n: o }], ir::TyReference { n: rd, dep: [o] }, "yield_copy")
+}
+
+// `yield_is_fresh`: the yielded value is a record nothing else names — not a local the program
+// named or a parameter, not a projection, nor a value borrowing one.
+fn yield_is_fresh(e: el::El, vars: el_vars::Vars, v: ir::Node, tp: ir::TypeT) -> boolean {
+  for d in el_types::deps(tp) {
+    if vars.vars[d].argument || !el_vars::is_compiler_generated(vars, d) {
+      return false;
+    }
+  }
+  tail = el_ir::unspan(v);
+  while tail is NdBlock {
+    ops = match tail { NdBlock { block } => block[0].operators, _ => [] };
+    if len(ops) == 0 {
+      return false;
+    }
+    tail = el_ir::unspan(ops[-1]);
+  }
+  match tail {
+    NdVar { n } => !(vars.vars[n].argument || !el_vars::is_compiler_generated(vars, n)),
+    NdCall { def_nr } => !projection_op(el::def(e, def_nr).name),
+    _ => false
+  }
 }
 
 // `parse_vector_for` in value position: the comprehension built into a `_vec_N` of its own, the
