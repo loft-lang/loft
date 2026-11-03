@@ -2664,6 +2664,42 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
     Ok(out)
 }
 
+/// C99 for an ESP-IDF app (`--native-esp`, @PLN204): the unit, then `loft_esp.h` (the packed
+/// assets as a read-only filesystem, the board's start-up), then the `app_main` ESP-IDF starts
+/// in.  It runs the program as `main` would and goes back to the launcher when it ends.
+///
+/// # Errors
+/// A program without a `main` that takes nothing, or the first [`Refusal`].
+pub fn emit_esp_program(data: &Data, stores: &Stores) -> Result<String, Refusal> {
+    let main = data.def_nr("n_main");
+    if main >= data.definitions() {
+        return Err(Refusal {
+            function: "main".into(),
+            why: "an app without a main".into(),
+        });
+    }
+    let (main, call) = program_main(data, main)?;
+    let mut out = emit_unit(data, stores, &[main])?;
+    let _ = write!(
+        out,
+        "{ESP_ENTRY}\n    loft_esp_note(\"app\", -1);\n    loft_esp_nvs();\n    \
+         loft_esp_board();\n    loft_esp_assets();\n    loft_bind_tables();\n    \
+         loft_start(0, 0);\n    {}\n    loft_esp_note(\"main\", -1);\n    {call}\n    \
+         loft_leak_report();\n    loft_esp_end(loft_had_fatal);\n}}\n",
+        anchor(stores),
+    );
+    crate::rewrite_census::write();
+    // The tidy pass reads the written program only; the ESP half is the runtime's, so it goes in
+    // after, just before the entry that calls it.
+    let mut out = tidy::drop_unnamed(&out, RUNTIME_END);
+    let at = out.rfind(ESP_ENTRY).unwrap_or(out.len());
+    out.insert_str(at, include_str!("loft_esp.h"));
+    Ok(out)
+}
+
+/// The first line of an ESP app's entry, where [`emit_esp_program`] puts `loft_esp.h`.
+const ESP_ENTRY: &str = "\nvoid app_main(void) {";
+
 /// loft#950 — the asyncify save region a page's module owns, as the Rust writer's
 /// (`emit_asyncify_region`): the 8-byte control struct asyncify takes, the save area after it,
 /// and a canary after that, so an overflow is reported (`loft_asyncify_ok`) instead of

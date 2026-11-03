@@ -41,6 +41,7 @@ use loft::logger;
 use loft::manifest;
 mod android;
 mod c_driver;
+mod esp_app;
 mod native_utils;
 use loft::file_access;
 use loft::parser;
@@ -7656,6 +7657,8 @@ fn main() {
     // Some(path) = explicit output path
     let mut native_emit: Option<String> = None;
     let mut native_wasm: Option<String> = None;
+    // @PLN204 — `--native-esp [dir]`: the program as an ESP-IDF app for the Tanmatsu, through the C.
+    let mut native_esp: Option<String> = None;
     let mut native_android: Option<String> = None;
     // Plan-07 phase 2: --errors=compact|pretty CLI flag (overrides
     // LOFT_ERRORS env var).  None = use env-or-default (Pretty).
@@ -8037,6 +8040,22 @@ fn main() {
             } else {
                 String::new() // sentinel: compute default from file_name later
             });
+        } else if a == "--native-esp" {
+            // The project directory is optional, as `--native-wasm`'s output is.
+            native_esp = Some(
+                if argv
+                    .get(i)
+                    .is_some_and(|s| !s.ends_with(".loft") && !s.starts_with('-'))
+                {
+                    let p = argv[i].clone();
+                    i += 1;
+                    p
+                } else {
+                    String::new()
+                },
+            );
+            native_c = true;
+            native_rust = false;
         } else if a == "--native-android" {
             // @PLN-android B1 — cross-compile to an Android cdylib `.so` via the
             // NDK (aarch64-linux-android by default; ANDROID_NDK_HOME required).
@@ -9324,6 +9343,7 @@ fn main() {
             Some("--emit-c writes C source only; compile it with your C compiler's release flags")
         } else if !native_mode
             && native_wasm.is_none()
+            && native_esp.is_none()
             && html_out.is_none()
             && native_android.is_none()
         {
@@ -9456,6 +9476,7 @@ fn main() {
             ("--native-wasm", native_wasm.is_some()),
             ("--html", html_out.is_some()),
             ("--native-android", native_android.is_some()),
+            ("--native-esp", native_esp.is_some()),
             ("--native-emit", native_emit.is_some()),
         ] {
             if set {
@@ -9808,7 +9829,7 @@ fn main() {
     // A C build with no fallback skips every host cdylib.  A default run that the C backend
     // refuses falls back to the interpreter (`native_fallback_reason`), which needs them, so
     // `LOFT_NATIVE_BACKEND=c` alone does not set it.
-    if emit_c.is_some() || (native_c && native_requested) {
+    if emit_c.is_some() || (native_c && native_requested) || native_esp.is_some() {
         loft::interp::extensions::set_c_target();
     }
     // #358 — a warm hit returns the def-table index where user definitions
@@ -10712,6 +10733,57 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+
+    // @PLN204 — the ESP-IDF app: the unit with its `app_main`, the project around it, `idf.py`.
+    if let Some(ref esp_out) = native_esp {
+        let out = if esp_out.is_empty() {
+            default_artifact_path(&abs_file, "esp")
+        } else {
+            std::path::PathBuf::from(esp_out)
+        };
+        let c = match loft::c::emit_esp_program(&p.data, &state.database) {
+            Ok(c) => c,
+            Err(r) => {
+                eprintln!("loft: {}", r.message());
+                std::process::exit(2);
+            }
+        };
+        let shims: Vec<String> = p
+            .data
+            .c_libraries
+            .iter()
+            .flat_map(|l| l.shim.iter().cloned())
+            .collect();
+        let program_dir = std::path::Path::new(&abs_file).parent().map_or_else(
+            || std::path::PathBuf::from("."),
+            std::path::Path::to_path_buf,
+        );
+        let app = esp_app::EspApp {
+            c: &c,
+            shims: &shims,
+            program_dir: &program_dir,
+            // An app ships optimised; `--native-debug` keeps the call chain a fault names.
+            ship: ship_build || !native_debug,
+        };
+        let packed = match esp_app::write_project(&app, &out) {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+        };
+        match esp_app::build_project(&out) {
+            Ok(bin) => {
+                let size = fa::metadata(&bin).map(|m| m.len()).unwrap_or(0);
+                println!("{} ({size} bytes, {packed} of them assets)", bin.display());
+            }
+            Err(e) => {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
     }
 
     // WASM codegen pipeline: --native-wasm

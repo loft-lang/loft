@@ -23,10 +23,15 @@
  * clock is `clock()` and the directory operations answer Other.  The request precedes every
  * system header.  WASI (wasm32-wasi) is POSIX for files, directories and clocks, and has no
  * sockets, `mmap` or `realpath`: those stand under `LOFT_POSIX_HOST`, a POSIX host OS. */
-#if !defined(LOFT_NO_POSIX) && (defined(__unix__) || defined(__unix) || defined(__APPLE__) || defined(__wasi__))
+#if !defined(LOFT_NO_POSIX) && (defined(__unix__) || defined(__unix) || defined(__APPLE__) || defined(__wasi__) || defined(ESP_PLATFORM))
 #define LOFT_POSIX 1
+/* ESP-IDF (newlib with its VFS) is POSIX for files, directories and clocks, as WASI is, and
+ * has no `mmap`, processes or `realpath` either: it is no POSIX host.  Its headers declare
+ * what it has without the request, which would hide newlib's extensions the drivers use. */
+#if !defined(ESP_PLATFORM)
 #define _POSIX_C_SOURCE 200809L
-#if !defined(__wasi__)
+#endif
+#if !defined(__wasi__) && !defined(ESP_PLATFORM)
 #define LOFT_POSIX_HOST 1
 #endif
 /* `realpath` is XSI, not base POSIX: glibc declares it only under _XOPEN_SOURCE (or by accident
