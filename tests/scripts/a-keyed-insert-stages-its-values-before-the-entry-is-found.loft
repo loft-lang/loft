@@ -16,7 +16,7 @@
 // other's oracle: the oracle is these values, and `LOFT_NO_KEYED_ENTRY=1` is the second answer.
 //
 // @falsified-at: none — by hand on the IR clause, the values written straight into the entry
-//   instead of staged: s1 fails on the interpreter and on the C (a 20, b 20 for a 20, b 10).
+//   instead of staged: s2 fails on the interpreter and on the C (the key's effect runs first).
 //   CHANNEL: an assertion.
 // HOLDS: the hand-computed values, on both backends, the clause on and off.
 
@@ -41,6 +41,12 @@ fn main() {
   h += [P { k: 1, a: 10, b: 20 }];
   h += [P { k: 1, a: h[1].b ?? 0, b: h[1].a ?? 0 }];
   assert(len(h) == 1 && (h[1].a ?? 0) == 20 && (h[1].b ?? 0) == 10, "s1 {h[1].a ?? 0} {h[1].b ?? 0}");
+  // s1b: the same swap through a view taken before the insert, its reads the literal's own
+  // values (s1's `??` is bound by the parser already) — the view reads the values it had, as
+  // the main cell's c12 says: a 10, b 20
+  e1 = h[1];
+  if e1 != null { h += [P { k: 1, a: e1.b, b: e1.a }]; }
+  assert(len(h) == 1 && (h[1].a ?? 0) == 10 && (h[1].b ?? 0) == 20, "s1b {h[1].a ?? 0} {h[1].b ?? 0}");
   // s2: three effects, the key written second — the log reads 3, 2, 1 and the entry k 2 a 1 b 3
   log: vector<integer> = [];
   h += [P { b: note(log, 3), k: note(log, 2), a: note(log, 1) }];
