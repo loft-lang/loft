@@ -1,0 +1,185 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A vector literal assigned to a FIELD reads what the field held when the statement began,
+// whatever NAME the read reaches it by (loft#2397).
+//
+// `formal/operational.md` `(E-Asgn-Compound)` reduces the right-hand side before the write,
+// `formal/iteration.md` `(I-Comp)` is stated over the PLACE and not the spelling, and
+// `@FR-O-Detach` sequences the field's clear after every read of it.  The literal's reads of
+// its own place (`f.vars[0].tp`) were already carried — renamed onto a snapshot taken before
+// the clear.  Two other names for the same place were not, and read the emptied field on both
+// backends, silently (`[null]`, `[TB {}]`, `[]`):
+//
+//   * a local that VIEWS the destination — a `for` element over the container, a projection
+//     (`w = f.vars[0]`, `t = f.vars[0].tp`), a `&` link, a view of a record holding the field.
+//     `Parser::reads_destination_by_another_name` asks whether its deps reach the
+//     destination's root;
+//   * the destination's root through an index that MAY be the same element — another index
+//     variable, or an index the statement cannot name (`f.vars[j].tp`, `f.vars[i * 1].tp`).
+//
+// Neither names a place a rename can redirect, so a scalar or text element is evaluated into
+// a temp ahead of the clear, and a record element (struct, struct-enum, vector, tuple) is
+// built into a buffer of its own that the field's assignment hands over.  A comprehension
+// takes its own buffer for the same question.  `+=` is the same rule: a later part read the
+// field the earlier parts had grown.
+//
+// The CONTROLS keep the answer from being over-wide where it matters: a local viewing ANOTHER
+// record (`w = g.vars[0]`) and the plain same-path read keep their emission, and a view of a
+// SIBLING element (`w = f.vars[1]`) — staged, since a view cannot say which element it names
+// — still answers the sibling.
+//
+// @falsified-at: 262528945 — measured by hand on a debug build of that commit (the base
+//   this fix sits on), `loft --tests` and `loft --tests --native-c`.
+//   CHANNEL: asserts, BOTH backends equally — 14 of the 18 tests fail on the control, every
+//   one silently (no diagnostic, exit 0 outside the test runner).
+//   WITNESS: the for-element cell answers `[null] [null]` where the file says `[8] [9]`; the
+//   struct-enum cell reads `TB` (`-1`) where it says `7`; the comprehension answers `[]`; the
+//   append answers `[7,1,2]` where it says `[7,1,1]`.
+//   HOLDS: the four `test_control_*` cells pass on both trees; leak and panic are clean on
+//   both.
+
+struct V { name: text, tp: vector<integer> }
+struct F { vars: vector<V> }
+enum Ty { TA { n: integer }, TB }
+struct VE { name: text, tp: vector<Ty> }
+struct FE { vars: vector<VE> }
+struct P { k: integer }
+struct VP { name: text, tp: vector<P> }
+struct FP { vars: vector<VP> }
+
+fn test_a_for_element_reads_the_field_it_overwrites() {
+  f = F { vars: [V { name: "p", tp: [7] }, V { name: "q", tp: [8] }] };
+  for v in f.vars { f.vars[v#index].tp = [v.tp[0] + 1]; }
+  assert_eq("{f.vars[0].tp} {f.vars[1].tp}", "[8] [9]", "for element, integer");
+}
+
+fn test_a_bound_element_reads_a_struct_enum_field() {
+  f = FE { vars: [VE { name: "p", tp: [TA { n: 7 }] }] };
+  w = f.vars[0];
+  f.vars[0].tp = [w.tp[0] ?? TB];
+  got = match f.vars[0].tp[0] ?? TB {
+    TA { n } => n,
+    TB => -1
+  };
+  assert_eq(got, 7, "bound element, struct-enum: {f.vars[0].tp}");
+  assert_eq(len(f.vars[0].tp), 1, "bound element, struct-enum length");
+}
+
+fn test_a_for_element_builds_a_struct_from_the_field() {
+  f = FP { vars: [VP { name: "p", tp: [P { k: 7 }] }, VP { name: "q", tp: [P { k: 8 }] }] };
+  for v in f.vars { f.vars[v#index].tp = [P { k: v.tp[0].k + 1 }]; }
+  assert_eq(f.vars[0].tp[0].k * 100 + f.vars[1].tp[0].k, 809, "for element, struct: {f.vars[0].tp} {f.vars[1].tp}");
+  assert_eq(len(f.vars[0].tp) + len(f.vars[1].tp), 2, "for element, struct lengths");
+}
+
+fn test_text_parts_through_a_view() {
+  f = F { vars: [V { name: "p", tp: [7, 70] }] };
+  w = f.vars[0];
+  f.vars[0].tp = [w.tp[0], 5, f.vars[0].tp[0], w.tp[1], len(w.tp)];
+  assert_eq("{f.vars[0].tp}", "[7,5,7,70,2]", "view, same path and length mixed");
+}
+
+fn test_a_projection_of_the_field_itself() {
+  f = F { vars: [V { name: "p", tp: [7] }] };
+  t = f.vars[0].tp;
+  f.vars[0].tp = [t[0] + 1];
+  assert_eq("{f.vars[0].tp}", "[8]", "view of the field");
+}
+
+fn test_a_view_of_a_containing_record_two_levels_up() {
+  f = F { vars: [V { name: "p", tp: [7] }] };
+  r = &f.vars[0];
+  f.vars[0].tp = [r.tp[0] + 1];
+  assert_eq("{f.vars[0].tp}", "[8]", "& link to the element");
+}
+
+fn test_another_index_variable_may_name_the_same_element() {
+  f = F { vars: [V { name: "p", tp: [7] }] };
+  i = 0;
+  j = 0;
+  f.vars[i].tp = [(f.vars[j].tp[0] ?? 0) + 1];
+  assert_eq("{f.vars[0].tp}", "[8]", "index j for destination index i");
+}
+
+fn test_an_index_the_statement_cannot_name() {
+  f = F { vars: [V { name: "p", tp: [7] }] };
+  i = 0;
+  f.vars[i * 1].tp = [(f.vars[i * 1].tp[0] ?? 0) + 1];
+  assert_eq("{f.vars[0].tp}", "[8]", "computed index on both sides");
+}
+
+fn test_a_comprehension_over_the_view() {
+  f = F { vars: [V { name: "p", tp: [7, 8] }] };
+  w = f.vars[0];
+  f.vars[0].tp = [for x in w.tp { x + 1 }];
+  assert_eq("{f.vars[0].tp}", "[8,9]", "comprehension");
+}
+
+fn test_an_append_reads_the_length_it_began_with() {
+  f = F { vars: [V { name: "p", tp: [7] }] };
+  w = f.vars[0];
+  f.vars[0].tp += [len(w.tp), len(w.tp)];
+  assert_eq("{f.vars[0].tp}", "[7,1,1]", "+= through a view");
+}
+
+fn test_a_for_element_through_a_plain_vector_of_structs() {
+  gs = [VP { name: "a", tp: [P { k: 7 }] }, VP { name: "b", tp: [P { k: 8 }] }];
+  for g in gs { gs[g#index].tp = [g.tp[0]]; }
+  assert_eq(gs[0].tp[0].k * 100 + gs[1].tp[0].k, 708, "for element, whole struct copied: {gs[0].tp} {gs[1].tp}");
+  assert_eq(len(gs[0].tp) + len(gs[1].tp), 2, "for element, whole struct lengths");
+}
+
+struct VV { name: text, tp: vector<vector<integer>> }
+struct FV { vars: vector<VV> }
+struct VF { name: text, tp: vector<float> }
+
+fn bump_all(f: F) {
+  for v in f.vars { f.vars[v#index].tp = [v.tp[0] * 10]; }
+}
+
+fn test_the_destination_root_is_a_parameter() {
+  f = F { vars: [V { name: "p", tp: [7] }, V { name: "q", tp: [8] }] };
+  bump_all(f);
+  assert_eq("{f.vars[0].tp} {f.vars[1].tp}", "[70] [80]", "parameter root, for element");
+}
+
+fn test_a_nested_vector_element_through_a_view() {
+  f = FV { vars: [VV { name: "p", tp: [[7, 8]] }] };
+  w = f.vars[0];
+  f.vars[0].tp = [w.tp[0], [len(w.tp)]];
+  assert_eq("{f.vars[0].tp}", "[[7,8],[1]]", "nested vector element");
+}
+
+fn test_a_float_element_through_a_view_in_a_loop() {
+  vs = [VF { name: "a", tp: [1.5] }, VF { name: "b", tp: [2.5] }, VF { name: "c", tp: [3.5] }];
+  for v in vs { vs[v#index].tp = [v.tp[0] * 2.0, v.tp[0]]; }
+  assert_eq("{vs[0].tp} {vs[1].tp} {vs[2].tp}", "[3,1.5] [5,2.5] [7,3.5]", "float, three turns");
+}
+
+fn test_control_a_view_of_another_record() {
+  f = F { vars: [V { name: "p", tp: [7] }] };
+  g = F { vars: [V { name: "z", tp: [42] }] };
+  w = g.vars[0];
+  f.vars[0].tp = [w.tp[0] + 1];
+  assert_eq("{f.vars[0].tp}", "[43]", "control: other record");
+}
+
+fn test_control_a_view_of_a_sibling_element() {
+  f = F { vars: [V { name: "p", tp: [7] }, V { name: "q", tp: [8] }] };
+  w = f.vars[1];
+  f.vars[0].tp = [w.tp[0] + 1];
+  assert_eq("{f.vars[0].tp} {f.vars[1].tp}", "[9] [8]", "control: sibling");
+}
+
+fn test_control_the_same_path() {
+  f = F { vars: [V { name: "p", tp: [7] }] };
+  f.vars[0].tp = [f.vars[0].tp[0] + 1];
+  assert_eq("{f.vars[0].tp}", "[8]", "control: same path");
+}
+
+fn test_control_a_write_through_the_view() {
+  f = F { vars: [V { name: "p", tp: [7] }, V { name: "q", tp: [8] }] };
+  for v in f.vars { v.tp = [v.tp[0] + 1]; }
+  assert_eq("{f.vars[0].tp} {f.vars[1].tp}", "[8] [9]", "control: written through the view");
+}
