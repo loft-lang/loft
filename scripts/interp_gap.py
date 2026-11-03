@@ -239,8 +239,20 @@ ROW_LINE = re.compile(r'(\brow\s*\(|\bprint_row\s*\(|println\s*\(\s*"[A-Za-z_][A
 TICKS_ASSIGN = re.compile(r"^\s*[A-Za-z_][A-Za-z_0-9]*\s*=\s*ticks\(\)\s*;")
 
 
+# The one region of a program whose rows are all built under one line of `main` — a library
+# bench's `rows = [bench_a(n), bench_b(n), …]` printed by one `print_row` in a loop: its
+# routines cannot be told apart by the line they ran under, so the program is read whole.
+ALL_ROWS = "(all rows)"
+# Below this share of a program's operators inside its routines' regions, the pairing of rows
+# and row lines is not where the work ran: the program is read whole.  The paired benches hold
+# 41–72 % (their calibration and warm-up runs fall outside); the misread ones held 0 %.
+MIN_REGION_SHARE = 0.05
+
+
 def regions(src, printed):
-    """routine → set of `main` lines, or an error string when rows and lines do not pair."""
+    """routine → set of `main` lines, or an error string when rows and lines do not pair.  A
+    program with one row line and several rows is one region, `ALL_ROWS`, over all of `main`:
+    its rules are weighed per program, with no ratio and no per-op figures."""
     lines = src.read_text().splitlines()
     start = next((i for i, l in enumerate(lines) if re.match(r"\s*(pub\s+)?fn\s+main\s*\(", l)), None)
     if start is None:
@@ -248,6 +260,8 @@ def regions(src, printed):
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("}")), len(lines))
     body = range(start + 1, end)
     row_lines = [i for i in body if ROW_LINE.search(lines[i]) and not lines[i].lstrip().startswith("//")]
+    if len(row_lines) == 1 and len(printed) > 1:
+        return {ALL_ROWS: set(range(start + 2, end + 1))}
     if len(row_lines) != len(printed):
         return f"{len(printed)} rows printed, {len(row_lines)} row lines in main"
     out = {}
@@ -318,6 +332,14 @@ def analyse(prog, census, printed, rw, writer="native"):
     reg = regions(src, printed)
     if isinstance(reg, str):
         return None, reg
+    # Rows that pair with row lines while the routines' work runs elsewhere — the rows built
+    # first, then printed one line each (markdown, drawing): the regions hold next to none of
+    # the program's operators, and every routine would read as idle.  Such a program is read
+    # whole, as one with a single row line is.
+    total = sum(c for _ln, _fn, _op, c, *_ in census)
+    held = sum(c for ln, _fn, _op, c, *_ in census if any(ln in r for r in reg.values()))
+    if reg and ALL_ROWS not in reg and held < MIN_REGION_SHARE * total:
+        reg = {ALL_ROWS: {ln for ln, *_ in census}}
     native = defaultdict(dict)   # fn → rule → count (the writer's own: writer-only)
     shared = defaultdict(dict)   # fn → rule → count (ir / parse)
     own = WRITER[writer][0]
@@ -335,7 +357,7 @@ def analyse(prog, census, printed, rw, writer="native"):
     iters = dict(printed)
     out = []
     for routine, lines in reg.items():
-        n = max(iters[routine], 1)
+        n = max(iters.get(routine, 1), 1)
         fns = defaultdict(lambda: dict(ops=0, fam=defaultdict(int), bytes=[0, 0, 0], opc=defaultdict(int)))
         for ln, fn, op, cnt, copy, reloc, text in census:
             if ln not in lines:

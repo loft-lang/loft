@@ -296,7 +296,13 @@ two censuses behind it are `LOFT_OP_CENSUS` and `LOFT_REWRITE_CENSUS_FN`
 ([PROFILING.md](../doc/claude/PROFILING.md)). A routine is found by pairing the k-th
 row-printing line of `main` with the k-th row the program printed. The region runs from the
 last `… = ticks()` before that line up to it. So a new lane needs no annotation as long as
-it keeps that shape, and one that does not is reported as not attributed.
+it keeps that shape, and one that does not is reported as not attributed.  A program that
+builds all its rows under one line of `main` (a library bench's `rows = [bench_a(n), …]`
+printed by one `print_row` in a loop) is read whole, as one region named `(all rows)`: its
+rules are weighed per program, with no ratio and no per-op figures.  So is a program whose
+rows pair with its row lines while the work runs elsewhere (the rows built first, then
+printed a line each): its regions hold under 5 % of its operators, where a paired bench's
+hold 41–72 % (calibration and warm-up runs fall outside them).
 
 ## The row protocol
 

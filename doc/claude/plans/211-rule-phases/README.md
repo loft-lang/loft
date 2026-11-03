@@ -14,7 +14,7 @@ Open, `status:next` — the inventory below is measured and the plan is DESIGNED
 removal of the facts routine's three deviations); arc A is built (the census reads both
 writers and the interpreter's generator; every rule reports to it or says why not; the phase
 table `bench/portal/rule_phases.tsv` is measured and gated, and `rewrites.md` § Applied by is
-rendered from it).  It was to start once
+rendered from it); B1 is built, its weights in [b1-weights.md](b1-weights.md).  It was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where

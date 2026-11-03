@@ -17,6 +17,16 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### `interp_gap.py --writer c` — the interpreter set against either writer (@PLN211 B1)
+
+- `--writer c|native` takes the rewrite census from that writer's emission (libraries emitted
+  into the program) and the ratio from its `stats.py` lane; the per-rule table carries each
+  rule's applied-by from `bench/portal/rule_phases.tsv`, and the JSON names its `writer`.
+- A program whose routines cannot be told apart by the line of `main` they ran under — one
+  row line for several rows, or regions that hold under 5 % of its operators — is read whole as
+  `(all rows)`.  Before, 22 library benches were not read and five programs (`random`,
+  `gridmesh`, `drawing`, `markdown`, `html`) were reported as idle routines with no rules.
+
 ### The register states each rule's phase from the measurement (@PLN211 A3)
 
 - `formal/rewrites.md` § Applied by is rendered from `bench/portal/rule_phases.tsv`
