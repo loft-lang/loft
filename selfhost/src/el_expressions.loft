@@ -2846,7 +2846,8 @@ fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: integ
     return ex(ir::NdNull, ir::TyVoid);
   }
   for a in el::def(e, rd).attributes {
-    if !el_convert::plain_scalar(a.typedef[0] ?? ir::TyVoid) {
+    at = a.typedef[0] ?? ir::TyVoid;
+    if !el_convert::plain_scalar(at) && !(at is TyText) {
       el::refuse(e, "a record literal written into a field or an element: a field that is no plain scalar");
       return ex(ir::NdNull, ir::TyVoid);
     }
