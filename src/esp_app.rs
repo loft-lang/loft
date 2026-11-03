@@ -21,17 +21,16 @@ const BSP: &str = "badgeteam/badge-bsp: \"=1.6.4\"";
 /// The ESP-IDF release the template builds with.
 const IDF_VERSION: &str = "v6.0.2";
 
-/// The Tanmatsu's flash layout, as the launcher ships it: the app is built against it, and
-/// installed into `appfs`.
+/// The partition table the build checks the app against.  It is never installed: badgelink
+/// uploads `application.bin` alone, into the launcher's `appfs` (8 MB on a Tanmatsu, shared by
+/// every installed app; TANMATSU.md § The flash layout).  So the one app partition here is as
+/// large as `appfs`, where the launcher's own table has two 2 MB slots for itself that would
+/// refuse any app over 2 MB.
 const PARTITIONS: &str = "\
 # Name,   Type, SubType, Offset,   Size,   Flags
 nvs,      data, nvs,     0x19000,  16K,
-otadata,  data, ota,     0x1D000,  8K,
 phy_init, data, phy,     0x1F000,  4K,
-ota_0,    0,    ota_0,   0x20000,  2048K,
-ota_1,    0,    ota_1,   0x220000, 2048K,
-appfs,    0x43, 3,       0x420000, 8192K,
-locfd,    data, fat,     0xC20000, 3968K,
+app,      app,  factory, 0x20000,  8128K,
 ";
 
 /// The configuration: the Tanmatsu's board (P4 revision 1, 16 MB QIO flash, PSRAM at 200 MHz,

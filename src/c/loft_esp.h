@@ -28,7 +28,8 @@
 
 /* The BSP's own start-up steps, in the order `bsp_device_initialize` runs them (badge-bsp
  * 1.6.4, the version the project pins): run here one by one, so each step's time is on the
- * console and the screen is black as soon as the display can show it. */
+ * console, the screen is black as soon as the display can show it, and the parts no loft
+ * library uses are left off. */
 esp_err_t bsp_i2c_primary_bus_initialize(void);
 esp_err_t bsp_device_initialize_custom(void);
 esp_err_t bsp_display_initialize(const bsp_display_configuration_t *configuration);
@@ -39,10 +40,6 @@ esp_err_t bsp_rtc_initialize(void);
 esp_err_t bsp_audio_initialize(void);
 esp_err_t bsp_led_initialize(void);
 esp_err_t bsp_storage_initialize(void);
-esp_err_t bsp_orientation_initialize(void);
-esp_err_t bsp_sensor_initialize(void);
-esp_err_t bsp_catt_initialize(void);
-esp_err_t bsp_sao_initialize(void);
 
 struct loft_asset {
     const char *path;
@@ -278,8 +275,8 @@ static void loft_esp_black(void) {
     loft_esp_note("black", -1);
 }
 
-/* The board: display (RGB565, one frame buffer — what `screen` writes), keys, audio and the
- * rest, as `bsp_device_initialize` starts them.  A step that fails is reported and the next
+/* The board: display (RGB565, one frame buffer — what `screen` writes), keys, power, the
+ * clock, audio, the LEDs and the SD card's supply, as `bsp_device_initialize` starts them.  A step that fails is reported and the next
  * runs, as there; a board the BSP does not start still runs the program, which then finds no
  * screen. */
 static void loft_esp_board(void) {
@@ -305,10 +302,10 @@ static void loft_esp_board(void) {
     loft_esp_note("audio", (long long) bsp_audio_initialize());
     loft_esp_note("led", (long long) bsp_led_initialize());
     loft_esp_note("storage", (long long) bsp_storage_initialize());
-    loft_esp_note("orientation", (long long) bsp_orientation_initialize());
-    loft_esp_note("sensor", (long long) bsp_sensor_initialize());
-    loft_esp_note("catt", (long long) bsp_catt_initialize());
-    loft_esp_note("sao", (long long) bsp_sao_initialize());
+    /* Not started: the motion sensor (`bsp_orientation_initialize` loads the BMI270's
+     * configuration over I2C, 1.16 s of every start measured on the device), the environment
+     * sensors and the two expansion ports, CATT and SAO (60 ms).  No loft library reads them;
+     * one that does starts its part through the same exported call. */
 }
 
 static void loft_esp_assets(void) {
