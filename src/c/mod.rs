@@ -2576,7 +2576,11 @@ pub fn emit_program(
 ) -> Result<String, Refusal> {
     // The rewrites this unit admitted, written where `LOFT_REWRITE_CENSUS` asks, as the native
     // writer writes its own after emitting: the census can then set the two writers side by side.
+    // What the writer admits outside any function body (a signature, the unit's analyses) is
+    // the C phase's too, under no function.
+    let census_unit = crate::rewrite_census::InBody::enter("c", "");
     let out = emit_program_counted(data, stores, expected);
+    drop(census_unit);
     crate::rewrite_census::write();
     out
 }

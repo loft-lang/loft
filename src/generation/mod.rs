@@ -8679,6 +8679,9 @@ extern crate loft;"
         // program source passes the `crate::rpc::`/`crate::store::` invariant
         // exactly once, regardless of which template path emitted it.
         let mut buf: Vec<u8> = Vec::new();
+        // What the writer admits outside any function body is the native phase's, under no
+        // function (the bodies enter their own scope).
+        let _census_unit = crate::rewrite_census::InBody::enter("native", "");
         self.output_native_emit(&mut buf, from, till)?;
         w.write_all(&scrub_generated_crate_refs(&buf))
     }
@@ -8798,6 +8801,7 @@ extern crate loft;"
         // Buffer then scrub the assembled source (see
         // `scrub_generated_crate_refs`), then write to the real `w`.
         let mut buf: Vec<u8> = Vec::new();
+        let _census_unit = crate::rewrite_census::InBody::enter("native", "");
         self.emit_native_reachable_body(&mut buf, till, entry_defs)?;
         // Emit a Rust entry point that bootstraps the loft `main` function, if present.
         if (0..till).any(|d| self.data.def(d).name() == "n_main") {

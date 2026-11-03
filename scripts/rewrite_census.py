@@ -48,6 +48,11 @@ Each program is emitted TWICE per writer and the two sources must be the same by
 deterministic emitter, and so does every native cache keyed on the source (a hash-ordered walk
 once made a work-buffer function's exit frees change order from run to run).
 
+The same run records WHICH PHASE made each admission (`LOFT_REWRITE_CENSUS_FN`) and checks the
+phase table `bench/portal/rule_phases.tsv` (`scripts/rule_phases.py`): a rule whose set of
+applying phases changed fails like a drop, and `--bless` rewrites it.  A partial run (`--only`,
+`--writer`) cannot judge the table and leaves it alone.
+
 The baseline is `bench/portal/rewrite_census.tsv`; a row of the older four-column form (no writer)
 reads as the Rust writer's.  A DROP fails; a rise, a new program or a
 new rule is printed and passes.  A deliberate decline lands with `--bless` in the same commit,
@@ -65,6 +70,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "bench" / "portal" / "rewrite_census.tsv"
 sys.path.insert(0, str(ROOT / "bench" / "portal"))
 from portal import library_packages  # noqa: E402  (the one home of which libraries)
+import rule_phases  # noqa: E402  (the phase table, beside this script)
 
 # Each compiled writer: its name in the baseline, the source it writes, its flags.  `rust` is
 # the rustc writer (census phase `native`), `c` the C writer (phase `c`).
@@ -123,6 +129,7 @@ def census(loft, prog, writer):
     ext, flags = WRITERS[writer]
     with tempfile.TemporaryDirectory() as tmp:
         tsv = Path(tmp) / "census.tsv"
+        by_fn = Path(tmp) / "census_fn.tsv"
         emitted = []
         for i in range(2):
             out = Path(tmp) / f"out{i}{ext}"
@@ -130,7 +137,8 @@ def census(loft, prog, writer):
                 [loft, *flags(out), *argv],
                 cwd=cwd, capture_output=True, text=True, timeout=300,
                 env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
-                     "LOFT_REWRITE_CENSUS": str(tsv) if i == 0 else ""},
+                     "LOFT_REWRITE_CENSUS": str(tsv) if i == 0 else "",
+                     "LOFT_REWRITE_CENSUS_FN": str(by_fn) if i == 0 else ""},
             )
             if proc.returncode != 0 or not out.exists() or (i == 0 and not tsv.exists()):
                 return name, commit, writer, None, proc.stderr.strip().splitlines()[-1:] or ["no output"]
@@ -142,14 +150,20 @@ def census(loft, prog, writer):
         for line in tsv.read_text().splitlines():
             rule, _, n = line.partition("\t")
             counts[rule] = int(n)
-        return name, commit, writer, counts, None
+        # `phase<TAB>function<TAB>rule<TAB>count` → admissions per (phase, rule).
+        split = {}
+        if by_fn.exists():
+            for line in by_fn.read_text().splitlines():
+                phase, _fn, rule, n = line.split("\t")
+                split[(phase, rule)] = split.get((phase, rule), 0) + int(n)
+        return name, commit, writer, (counts, split), None
 
 
 def rust_writer_env():
-    """The environment for a census run, minus `LOFT_NATIVE_BACKEND`: the baseline counts the
-    rustc writer's admissions (`--native-emit` writes Rust), and `make ci` exports
-    `LOFT_NATIVE_BACKEND=c` to every step — with it the census counted the C writer's rewrites
-    against the Rust baseline and failed on 4624 admissions where 11877 were recorded."""
+    """The environment for a census run, minus `LOFT_NATIVE_BACKEND`: each writer is chosen by
+    its flag (`WRITERS` — `--native-emit` for Rust, `--emit-c` for C), and `make ci` exports
+    `LOFT_NATIVE_BACKEND=c` to every step, under which `--native-emit` writes C — the Rust row
+    then counted the C writer's rewrites and read every rule the C does not fire as a drop."""
     return {k: v for k, v in os.environ.items() if k != "LOFT_NATIVE_BACKEND"}
 
 
@@ -224,12 +238,19 @@ def main() -> int:
     with ThreadPoolExecutor(max_workers=4) as pool:
         done = list(pool.map(lambda pw: census(loft, *pw),
                              [(p, w) for p in progs for w in writers]))
-    results, failed = [], []
-    for name, commit, writer, counts, err in done:
-        if counts is None:
+    results, failed, splits = [], [], []
+    for name, commit, writer, got, err in done:
+        if got is None:
             failed.append(f"{name} ({writer}): {err[0]}")
         else:
-            results.append((name, commit, writer, counts))
+            results.append((name, commit, writer, got[0]))
+            splits.append((name, writer, got[1]))
+    # The phase table is judged over the whole body only: a partial run sees part of it.
+    whole = only is None and writers == list(WRITERS) and not failed
+    phase_changes = []
+    if whole:
+        phases = rule_phases.aggregate(splits)
+        phase_changes = rule_phases.changes(phases, rule_phases.read_table())
     base = read_baseline()
     drops, notes = [], []
     for name, commit, writer, counts in results:
@@ -259,20 +280,35 @@ def main() -> int:
         print(f"  {len(notes)} rises / new rows (--verbose lists them)")
     for f in failed:
         print(f"  could not census {f}")
-    if guarded and not drops and not failed:
+    if guarded and not drops and not failed and not phase_changes:
         bless = True
     if bless:
         ran = {(r[0], r[2]) for r in results}
         kept = [(n, base[(n, w)][0], w, base[(n, w)][1]) for n, w in base if (n, w) not in ran]
         write_baseline(results + kept)
         print(f"wrote {BASELINE.relative_to(ROOT)}")
+        for c in phase_changes:
+            print(f"  phase: {c}")
+        if whole:
+            rule_phases.write_table(phases)
+            print(f"wrote {rule_phases.TABLE.relative_to(ROOT)}")
+        else:
+            print(f"  {rule_phases.TABLE.relative_to(ROOT)} left as it is: a partial run")
         return 0
     for d in drops:
         print(f"::error::rewrite admitted less often — {d}")
     if drops:
         print("A rewrite fires at fewer sites than the baseline: a condition tightened.  If that was "
               "deliberate, `scripts/rewrite_census.py --bless` records it in this commit.")
-    return 1 if drops or failed else 0
+    for c in phase_changes:
+        print(f"::error::rewrite applied by other phases — {c}")
+    if phase_changes:
+        print("A rewrite is applied by a different set of phases than bench/portal/rule_phases.tsv "
+              "says (`scripts/rule_phases.py`).  A deliberate move lands with "
+              "`scripts/rewrite_census.py --bless` in its own commit.")
+    if not whole:
+        print("  the phase table is judged on a full run only (no --only, --writer)")
+    return 1 if drops or failed or phase_changes else 0
 
 
 if __name__ == "__main__":
