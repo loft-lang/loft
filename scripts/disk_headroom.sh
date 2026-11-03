@@ -33,6 +33,12 @@
 # stops as soon as --min-gb is free, between batches, so a short disk is not swept to the end
 # first; step 2 runs whatever the clock says, as the cheapest room there is to take.
 #
+# The TEMP filesystem is checked first, on its own bar, when it is not the checkout's: on a box
+# whose `/tmp` is a RAM tmpfs (a few GB) the tests' and sweeps' scratch fills it long before the
+# checkout's disk notices, and the desktop warns at 5 %.  Under LOFT_TMP_MIN_GB (2) free there,
+# loft's own scratch on it is swept (the standing rules, nothing newer) and the line names what
+# is left; under LOFT_TMP_FLOOR_GB (0.5, in MB as LOFT_TMP_FLOOR_MB=512) it exits 1 as below.
+#
 # Prints one line when it acted or is still short, nothing when nothing needed doing; exits 1
 # only below --floor-gb (2), so the gate stops HERE instead of running to a fiction.  Never
 # another program's files, never a sibling checkout's scratch (the tag names this one).
@@ -60,6 +66,28 @@ PID_FILE="/tmp/loft_test.$REPO_TAG.pid"
 # macOS, so every comparison below failed and the guard could neither sweep nor stop a gate.
 free_gb() { df -Pk "$REPO_ROOT" | awk 'NR == 2 { print int($4 / 1048576) }'; }
 alive() { local p; p=$(cat "$1" 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
+
+# The temp filesystem, when it is a different one (a RAM tmpfs `/tmp`).
+tmp_dir=${TMPDIR:-/tmp}
+mount_of() { df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print $6 }'; }
+free_mb_of() { df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print int($4 / 1024) }'; }
+if [ -d "$tmp_dir" ] && [ "$(mount_of "$tmp_dir")" != "$(mount_of "$REPO_ROOT")" ]; then
+  tmp_min_mb=$(( ${LOFT_TMP_MIN_GB:-2} * 1024 )); tmp_floor_mb=${LOFT_TMP_FLOOR_MB:-512}
+  tmp_start=$(free_mb_of "$tmp_dir")
+  if [ "$tmp_start" -lt "$tmp_min_mb" ]; then
+    scripts/sweep_scratch.sh --sessions --enough-gb "${LOFT_TMP_MIN_GB:-2}" --on "$tmp_dir" \
+      "$tmp_dir" >/dev/null 2>&1
+    tmp_end=$(free_mb_of "$tmp_dir")
+    tmp_line="temp ($tmp_dir): ${tmp_end} MB free (was ${tmp_start} MB; loft scratch swept)"
+    if [ "$tmp_end" -lt "$tmp_floor_mb" ]; then
+      echo "$tmp_line — below ${tmp_floor_mb} MB, a run writing scratch there would fail; what is left:" >&2
+      du -sh "$tmp_dir"/* "$tmp_dir"/claude-*/* 2>/dev/null | sort -rh | head -5 | sed 's/^/  /' >&2
+      exit 1
+    fi
+    [ "$tmp_end" -lt "$tmp_min_mb" ] && tmp_line="$tmp_line — still under ${LOFT_TMP_MIN_GB:-2} GB"
+    echo "$tmp_line"
+  fi
+fi
 
 start=$(free_gb)
 [ "$start" -ge "$min_gb" ] && exit 0

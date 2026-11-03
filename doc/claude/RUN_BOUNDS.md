@@ -28,6 +28,7 @@ that removes it — scratch nobody removes grows into hundreds of GB.
 | `loft_native_cache_<checkout>/loft_native_<stem>{.rs,_bin,_bin.key}` | the native test harness (`tests/native.rs`): this checkout's per-program binary cache, in a directory named for the checkout so nothing else ever writes there | **the harness itself, at the start of a run against a loft build the directory has not seen** (`platform::sweep_own_native_cache`: the rlib's path and content hash are the stamp in `.build`; a new stamp drops every entry older than two minutes — a concurrent shard's are younger — so the tmpfs never holds two builds' binaries).  Only its own directory, so never another checkout's or another process's work.  `sweep_scratch.sh` runs its dead-pid rule inside it and removes the whole directory when nothing in it moved for a day |
 | `loft_test_native_<stem>_<key>_bin` (built in `loft_test_native_<pid>/`, published by rename) | `--tests --native`, a per-PROGRAM binary cache keyed by the native cache key — never a shared path a sibling process writes (loft#1626) | the low-space reclaim (aged entries) and `sweep_scratch.sh --days` |
 | `<dir>/.loft/cache/<entry>` | the program cache a test writes beside its probe — every probe has a fresh name, so the cache only grows | `sweep_scratch.sh` (entries older than a day, in a temp dir); `scripts/disk_janitor.sh` (under a checkout's `tests/`, older than two days; anywhere else in a checkout, the ignored-data rule below) |
+| `loft-c-emit-<pid>-<name>/` | `tests/c_emit.rs`, one directory per test (~2.7 MB each, ~180 MB a run), never removed by the test | `sweep_scratch.sh`, as soon as `<pid>` is dead |
 | `loft_html_*`, `loft_p*`, `loft_rebuild_*`, `loft-*` | the html, probe, rebuild and serve suites | `sweep_scratch.sh` (older than a day) |
 | `~/.cache/loft-falsify/<ref>{,-target}` (`LOFT_FALSIFY_CACHE`) | `make falsify` control builds | the script itself, LRU to `LOFT_FALSIFY_KEEP` after a successful build; `sweep_scratch.sh` a control unused for `--falsify-days` (7), a failed build's included |
 | `~/.cache/tmp/claude-<uid>/<project>/<session>`, or `/tmp/claude-<uid>/…` where `TMPDIR` is unset | the agent harness's per-session scratch | `make sweep-scratch` (nothing in it changed for two weeks — two days on a RAM tmpfs); within those two days, the agent that wrote it — see below |
@@ -127,7 +128,11 @@ stops there instead of reporting truncated object files and missing rlibs as tes
 (measured: 71 of 5312 red with 2 MB free).  It is bounded in time too: its steps share
 `LOFT_HEADROOM_SECS` (300), the sweep stops as soon as the room is there, and a step that would
 start past the budget is skipped and named in its line — so a short disk costs the gate minutes,
-never its whole 20-minute budget.  The sweep removes in batches, one `rm` per few hundred
+never its whole 20-minute budget.  The TEMP filesystem is checked first, on its own bar, when
+it is not the checkout's — a RAM-tmpfs `/tmp` of a few GB fills long before the checkout's disk
+does, and the desktop warns at 5 % free: under `LOFT_TMP_MIN_GB` (2) the sweep runs there and
+the line names what is left, under `LOFT_TMP_FLOOR_MB` (512) it refuses.  Run it between
+heavy jobs on such a box as well, not only before a gate.  The sweep removes in batches, one `rm` per few hundred
 entries, and reads the live pids once from `ps` (a `/proc` test called every process dead on
 macOS).  Beside it, `scripts/sweep_scratch.sh`
 alone runs on the checkout's scratch at the start of every gate, and `make sweep-scratch` runs
