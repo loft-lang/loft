@@ -25,6 +25,7 @@
 //! and each declined with why.
 use crate::data::{Data, DefType, Value, v_block};
 use crate::variables::Function;
+use std::collections::HashSet;
 
 const RULE: &str = "R-SliceArg/range";
 
@@ -81,11 +82,22 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     }
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
     let mut sites: Vec<Site> = Vec::new();
+    // The targets an admitted assignment host DECLARES (their first `Set`).
+    let mut declares: HashSet<u16> = HashSet::new();
     {
         let vars = data.def(d_nr).variables();
         let mut assigned = 0usize;
         let mut calls = 0usize;
+        let mut set_before: HashSet<u16> = HashSet::new();
         code.walk(&mut |n| {
+            // The walk is in emission order: an assignment host no earlier `Set` names is the
+            // variable's declaration, which the statement block would otherwise move inside it.
+            if let Value::Set(x, _) = n {
+                if host(n, &ops).is_some() && !set_before.contains(x) {
+                    declares.insert(*x);
+                }
+                set_before.insert(*x);
+            }
             if let Some(block) = host(n, &ops) {
                 assigned += 1;
                 match admit(block, vars, &ops) {
@@ -160,8 +172,46 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
             }
         });
     }
+    if fired > 0 && !declares.is_empty() {
+        declare_before(&mut code, &mut declares, &ops);
+    }
     data.definitions[d_nr as usize].code = code;
     crate::rewrite_census::fired("R-SliceArg/range", fired);
+}
+
+/// A rewritten assignment that was its variable's declaration now sits inside the statement
+/// block, and a code generator that declares a local at its first assignment (rustc's `let`)
+/// would scope it to that block.  The IR's own convention for a variable first assigned in a
+/// nested block is a declaration in the enclosing list: `x = ""` in front of the block (a text,
+/// the only result the range call has; the block reads no `x`, which nothing assigned before).
+fn declare_before(v: &mut Value, declares: &mut HashSet<u16>, ops: &Ops) {
+    if let Value::Block(bl) | Value::Loop(bl) = v.unspan_mut() {
+        let mut i = 0;
+        while i < bl.operators.len() {
+            let target = match bl.operators[i].unspan() {
+                Value::Block(inner) if inner.name == "slice text" => {
+                    inner.operators.last().and_then(|last| match last.unspan() {
+                        Value::Set(x, rhs)
+                            if matches!(rhs.unspan(), Value::Call(f, _) if *f == ops.from_range)
+                                && declares.contains(x) =>
+                        {
+                            Some(*x)
+                        }
+                        _ => None,
+                    })
+                }
+                _ => None,
+            };
+            if let Some(x) = target {
+                declares.remove(&x);
+                bl.operators
+                    .insert(i, Value::Set(x, Box::new(Value::Text(String::new()))));
+                i += 1;
+            }
+            i += 1;
+        }
+    }
+    v.for_each_child_mut(&mut |c| declare_before(c, declares, ops));
 }
 
 /// A statement that holds the call where nothing is evaluated before it: the assignment
