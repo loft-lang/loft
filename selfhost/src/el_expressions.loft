@@ -2624,22 +2624,12 @@ fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: integ
 // The variable a projection place reads into (`w` of `w.a[i].p`), through repeatable
 // projections only (`is_repeatable_place`), or -1.
 fn place_root(e: el::El, n: ir::Node) -> integer {
-  at = el_ir::unspan(n);
-  root = -2;
-  while root == -2 {
-    match at {
-      NdVar { n: v } => { root = v; },
-      NdCall { def_nr, args } => {
-        if projection_op(el::def(e, def_nr).name) && len(args) > 0 {
-          at = el_ir::unspan(args[0]);
-        } else {
-          root = -1;
-        }
-      },
-      _ => { root = -1; }
-    }
+  match n {
+    NdSpan { inner } => place_root(e, inner),
+    NdVar { n: v } => v,
+    NdCall { def_nr, args } => if projection_op(el::def(e, def_nr).name) && len(args) > 0 { place_root(e, args[0]) } else { -1 },
+    _ => -1
   }
-  root
 }
 
 // Does record `rd` hold a closure, itself or in a record field it holds inline
@@ -2996,16 +2986,10 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
   x = expression(e, vars, rhs);
   // A promoted text buffer (`&text`) appends through the stack ops.
   stack = false;
-  match vt {
-    TyRefVar { inner } => {
-      if inner is TyText {
-        stack = true;
-        vt = inner;
-      }
-    },
-    _ => {}
+  if vt is TyRefVar { inner } {
+    stack = inner is TyText;
   }
-  if el_types::base(vt) is TyText && !(vt is TyOptional) {
+  if stack || (el_types::base(vt) is TyText && !(vt is TyOptional)) {
     if bin != "+" {
       el::refuse(e, "a text compound assignment other than `+=`");
       return ex(ir::NdNull, ir::TyVoid);

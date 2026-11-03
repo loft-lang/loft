@@ -400,12 +400,12 @@ fn one_op_wrapper(e: el::El, d: integer) -> integer {
   if count != 1 {
     return -1;
   }
-  s = el_ir::unspan(stmt);
-  match s {
-    NdReturn { inner } => { s = el_ir::unspan(inner); },
-    _ => {}
-  }
-  match s {
+  // The one statement, through a `return` it may be wrapped in.
+  body = match el_ir::unspan(stmt) {
+    NdReturn { inner } => el_ir::unspan(inner),
+    other: _ => other
+  };
+  match body {
     NdCall { def_nr, args } => {
       cd = el::def(e, def_nr);
       if !el_ir::is_null(cd.code[0] ?? ir::NdNull) || cd.rust == "" {
