@@ -2284,6 +2284,29 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     }
     return ex(el_ir::v_set(v, x.code), ir::TyVoid);
   }
+  // A whole record written through a link to a record local (`cur = b`, `cur` a `&` of `a`):
+  // a fresh copy of the value (`materialized_amp_field`), written through the link — `a` takes
+  // `b`'s contents.  A source other than a record local of the link's type stays refused.
+  link_rd = match el_vars::tp(vars, v) { TyRefVar { inner } => struct_ref(e, el_types::base(inner)), _ => -1 };
+  if link && link_rd >= 0 {
+    x = expression(e, vars, rhs!);
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if !(x.code is NdVar) || struct_ref(e, el_types::base(x.tp)) != link_rd {
+      el::refuse(e, "a whole value written through a `&` link");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    kt = el::def(e, link_rd).known_type;
+    tmp = el_vars::work_ref(vars, ir::TyReference { n: link_rd, dep: [] });
+    copy = el_ir::v_block([
+      el_ir::v_set(tmp, ir::NdNull),
+      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: tmp }, ir::NdInt { n: kt }]),
+      el_ir::cl(e, "OpCopyRecord", [x.code, ir::NdVar { n: tmp }, ir::NdInt { n: kt }]),
+      ir::NdVar { n: tmp }
+    ], ir::TyReference { n: link_rd, dep: [tmp] }, "materialized_amp_field");
+    return ex(el_ir::v_set(v, copy), ir::TyVoid);
+  }
   if link && !scalar_link(vars, v) {
     el::refuse(e, "a whole value written through a `&` link");
     return ex(ir::NdNull, ir::TyVoid);
@@ -4646,8 +4669,10 @@ fn after_paren(e: el::El, from: integer) -> integer {
 // other, then the free `n_<name>`.  A receiver that is a variant or a generic instance is
 // refused by name, as is the operator fallback; a bound holder is never one yet, since the
 // elaboration does not read generic bounds.
-fn find_fn(e: el::El, name: text, first: ir::TypeT) -> integer {
+fn find_fn(e: el::El, name: text, receiver: ir::TypeT) -> integer {
   free = el::def_nr(e, "n_{name}");
+  // A method dispatches on the REFERENT of a `&τ`, not on the link (`Data::candidates`, loft#824).
+  first = match receiver { TyRefVar { inner } => inner, _ => receiver };
   if el_types::is_unknown(first) || first is TyNull {
     return free;
   }
@@ -4759,6 +4784,8 @@ pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
     TyEnum { n } => n,
     TyReference { n } => n,
     TyUnknown { n } => n,
+    // A link to a record is named by the record; any other link by `reference` (its layout).
+    TyRefVar { inner } => if inner is TyReference { type_def_nr(e, inner) } else { el::source_nr(e, 0, "reference") },
     _ => {
       el::refuse(e, "a call whose first argument is a collection, a tuple or a function: {type_kind(t)}");
       -1
@@ -4974,6 +5001,13 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
         return null;
       }
       conv += [l!];
+      continue;
+    }
+    // `@FR-B-Ref-Uniform`: a link is passed where its referent is taken, as it is — the callee
+    // reads through it.
+    referent = match at { TyRefVar { inner } => inner, _ => ir::TyVoid };
+    if !(pt is TyRefVar) && !(referent is TyVoid) && el_types::is_equal(e, el_types::without_deps(el_types::base(pt)), el_types::without_deps(referent)) {
+      conv += [arg];
       continue;
     }
     c = el_convert::convert_store(e, vars, arg, at, pt);
@@ -9361,7 +9395,9 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     }
     // A link to a record local or parameter (`g = &e`) is its slot (`OpCreateStack`), typed as
     // a link to the record borrowing that local alone.  A link to a link is not carried.
-    if a.code is NdVar && !(a.tp is TyOptional) && !(a.tp is TyRefVar) && struct_ref(e, el_types::base(a.tp)) >= 0 {
+    // A text local is linked the same way, as the variable-kind text link (`formal/binding.md`
+    // `(B-Ref)`'s text link kinds).
+    if a.code is NdVar && !(a.tp is TyOptional) && !(a.tp is TyRefVar) && (struct_ref(e, el_types::base(a.tp)) >= 0 || a.tp is TyText) {
       lv = match a.code { NdVar { n: x } => x, _ => -1 };
       return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: el_types::with_deps(el_types::without_deps(el_types::base(a.tp)), [lv]) });
     }
