@@ -5316,8 +5316,8 @@ fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir::Fu
     },
     NdCall { def_nr, args } => {
       cd = el::def(e, def_nr);
-      if cd.def_type == el::DT_GENERIC {
-        return "a call of another generic";
+      if cd.def_type == el::DT_GENERIC && !e.bodies2.contains(def_nr) {
+        return "a call of a generic whose second-pass body is not read yet";
       }
       // A vector write's triplet, a collection format and a liveness test over the variable are
       // rewritten per instance (`rewrite_generic_vector_writes`,
@@ -5328,7 +5328,7 @@ fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir::Fu
       }
       stub = stub_call(e, def_nr, h);
       for a in cd.attributes {
-        if type_mentions(a.typedef[0] ?? ir::TyVoid, h) && !stub {
+        if type_mentions(a.typedef[0] ?? ir::TyVoid, h) && !stub && cd.def_type != el::DT_GENERIC {
           return "a call over the variable";
         }
         if (a.name == "tp" || a.name.ends_with("_tp")) && row != el::NO_TYPE {
@@ -5369,6 +5369,42 @@ fn reads_over(n: ir::Node, tv: ir::Function, h: integer) -> boolean {
   false
 }
 
+// The instance of template `g` these argument types bind: the one the program holds, or a new
+// one (`instantiate`).
+fn instance_for(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
+  inst = generic_instance(e, g, types);
+  if inst < 0 { instantiate(e, g, types) } else { inst }
+}
+
+// Does this call bind each of template `g`'s variables to a type naming one of its own
+// variables (`instantiate_template`'s loft#761 arm) — inside a template that shares the
+// callee's placeholder?  A binding to ANOTHER variable is an open instance: refused by name.
+fn binds_to_itself(e: el::El, g: integer, types: vector<ir::TypeT>) -> boolean {
+  if e.context < 0 || el::def(e, e.context).def_type != el::DT_GENERIC {
+    return false;
+  }
+  b = template_binding(e, g, types);
+  if b == null {
+    return false;
+  }
+  for t in b!.types {
+    own = false;
+    for v in b!.vars {
+      if type_mentions(t, v) {
+        own = true;
+      }
+    }
+    if !own && type_var(e, el_types::base(t)) >= 0 {
+      el::refuse(e, "a generic called at another generic's type variable");
+      return false;
+    }
+    if own {
+      return true;
+    }
+  }
+  false
+}
+
 // `Parser::instantiate_template` for a template of one unbounded variable bound to a plain
 // scalar or a text (@FR-G-Mono): the instance `i_<LEN><T>_<template>` the second pass makes,
 // its parameters and result the template's with the variable replaced; its body is filled by
@@ -5385,7 +5421,10 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   bound = b!.types[0] ?? ir::TyVoid;
   record = match bound { TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT && type_var(e, bound) < 0 && !el::def(e, n).name.starts_with("__"), _ => false };
   if !(scalar_type(bound) || bound is TyText || record) || bound is TyEnum || bound is TyOptional || identity_spelling(e, bound) == "" {
-    el::refuse(e, "a generic instance at this type: {type_kind(bound)}");
+    // A reference says which definition kind it names: a struct-enum variant, a tuple's or a
+    // nullable's synthetic record, a type variable not yet bound.
+    kind = match bound { TyReference { n } => "TyReference of a {def_kind(el::def(e, n))}", _ => type_kind(bound) };
+    el::refuse(e, "a generic instance at this type: {kind}");
     return -1;
   }
   nm = instance_name(e, g, b!);
@@ -5500,6 +5539,23 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
   }
   e.b.data.definitions[d].variables = f;
   e.b.data.definitions[d].code = [code];
+  // `instantiate_nested_generics`: each call of a template in the body is aimed at that
+  // template's instance for the argument types it now has — the first argument's own type where
+  // it is a variable (else the callee's first parameter at this binding), the later ones the
+  // callee's parameters at this binding.  A callee instance whose signature grew (a hidden
+  // buffer, `patch_tret_call`) is refused by name.
+  nested = nested_targets(e, code, f, h, bound);
+  for nt in nested {
+    if nt.inst < 0 {
+      return false;
+    }
+    if len(el::def(e, nt.inst).attributes) != len(el::def(e, nt.callee).attributes) {
+      el::refuse(e, "a nested generic instance whose signature grew");
+      return false;
+    }
+    code = retarget(code, nt.callee, nt.inst);
+  }
+  e.b.data.definitions[d].code = [code];
   // `derive_monomorph_return_deps`: a text or record result every return of which is a bare
   // parameter borrows that parameter, by its attribute number (`-> text["x"]`, `-> P["x"]`).
   rt = el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid);
@@ -5559,6 +5615,88 @@ fn view_root(e: el::El, f: ir::Function, n: ir::Node) -> integer {
     },
     _ => -1
   }
+}
+
+struct Nested { callee: integer, inst: integer }
+
+// The template calls of an instance body, in walk order, each with the instance it is aimed at.
+fn nested_targets(e: el::El, code: ir::Node, f: ir::Function, h: integer, bound: ir::TypeT) -> vector<Nested> {
+  r: vector<Nested> = [];
+  collect_nested(e, code, f, h, bound, r);
+  r
+}
+
+fn collect_nested(e: el::El, n: ir::Node, f: ir::Function, h: integer, bound: ir::TypeT, r: vector<Nested>) {
+  match n {
+    NdCall { def_nr, args } => {
+      cd = el::def(e, def_nr);
+      seen = false;
+      for x in r {
+        if x.callee == def_nr {
+          seen = true;
+        }
+      }
+      if cd.def_type == el::DT_GENERIC && !seen {
+        ts: vector<ir::TypeT> = [];
+        k = 0;
+        for a in cd.attributes {
+          if a.hidden {
+            continue;
+          }
+          pt = substitute(a.typedef[0] ?? ir::TyVoid, h, bound);
+          if k == 0 {
+            first = match el_ir::unspan(args[0] ?? ir::NdNull) { NdVar { n: v } => f.variables[v]!.type_def[0] ?? ir::TyVoid, _ => pt };
+            ts += [first];
+          } else {
+            ts += [pt];
+          }
+          k += 1;
+        }
+        r += [Nested { callee: def_nr, inst: instance_for(e, def_nr, ts) }];
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    collect_nested(e, c, f, h, bound, r);
+  }
+}
+
+// `retarget_calls`: every call of `from` in `n` aimed at `to`.
+fn retarget(n: ir::Node, from: integer, to: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: retarget(inner, from, to) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: if def_nr == from { to } else { def_nr }, args: retarget_all(args, from, to) },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: retarget_all(args, from, to) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      bl.operators = retarget_all(bl.operators, from, to);
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0]!;
+      bl.operators = retarget_all(bl.operators, from, to);
+      ir::NdLoop { block: [bl] }
+    },
+    NdInsert { items } => ir::NdInsert { items: retarget_all(items, from, to) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: retarget(inner, from, to) },
+    NdReturn { inner } => ir::NdReturn { inner: retarget(inner, from, to) },
+    NdIf { cond, t, f } => ir::NdIf { cond: retarget(cond, from, to), t: retarget(t, from, to), f: retarget(f, from, to) },
+    NdDrop { inner } => ir::NdDrop { inner: retarget(inner, from, to) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: retarget(create, from, to), next: retarget(next, from, to), init: retarget(init, from, to) },
+    NdTuple { items } => ir::NdTuple { items: retarget_all(items, from, to) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: retarget(inner, from, to) },
+    NdYield { inner } => ir::NdYield { inner: retarget(inner, from, to) },
+    _ => n
+  }
+}
+
+fn retarget_all(ns: vector<ir::Node>, from: integer, to: integer) -> vector<ir::Node> {
+  r: vector<ir::Node> = [];
+  for c in ns {
+    r += [retarget(c, from, to)];
+  }
+  r
 }
 
 fn code_of(d: ir::Definition) -> ir::Node {
@@ -5630,6 +5768,18 @@ fn text_sets(f: ir::Function, n: ir::Node, became: vector<integer>) -> text {
     }
   }
   ""
+}
+
+// What kind of definition a reference names, for a refusal: a placeholder, a synthetic
+// record (`__…`), or its definition type.
+fn def_kind(d: ir::Definition) -> text {
+  if d.name.starts_with("__") {
+    return "synthetic record";
+  }
+  if d.def_type == el::DT_STRUCT && len(d.attributes) == 0 {
+    return "type variable";
+  }
+  "definition of type {d.def_type}"
 }
 
 // Is `o` one of parameter `p`'s rebind witness operations — its stash into the witness `orig`
@@ -5726,15 +5876,15 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
   // A generic is called through its instance for the argument types (`@FR-G-Key`): the first
   // pass types the call by the template's predicted result and leaves it `null`; the second
   // calls the instance, made here when none exists yet.
-  if def.def_type == el::DT_GENERIC {
+  // Inside a template, a call that binds the callee's variables to themselves (its argument
+  // is the shared placeholder) has no concrete type yet: it targets the callee's TEMPLATE
+  // (loft#761), and each instance of this template retargets it (`instantiate_nested_generics`).
+  if def.def_type == el::DT_GENERIC && !(!e.first_pass && binds_to_itself(e, d, types)) {
     if e.first_pass {
       p = predict_template_return(e, d, types);
       return ex(ir::NdNull, p ?? ir::TyUnknown { n: 0 });
     }
-    inst = generic_instance(e, d, types);
-    if inst < 0 {
-      inst = instantiate(e, d, types);
-    }
+    inst = instance_for(e, d, types);
     if inst < 0 {
       return null;
     }
