@@ -22,6 +22,13 @@
 //   LOFT_VERIFY build stops on the clause's own proof "R-Base counter: element"); the
 //   held-element clause using the held address on a miss too (r8: the minted default's fields
 //   read through the null address, 109 → not 109).
+// CHANNEL: the asserts (each cell's value hand-computed in its comment), and for r9 the
+//   LOFT_VERIFY build's stop on the clause's own proof.
+// ARMED: LOFT_VERIFY for the counter clause; the other cells need no instrument.
+// WITNESS: each assert message prints the value it read.
+// HOLDS: the declining shapes are cells of this file (a range over one vector reading another,
+//   a body that empties the vector itself or through a `&` alias, a range from 1); a plainly
+//   passed alias is a-parameters-vector-holds-its-header-where-the-buffer-is-apart.loft h7.
 struct Pc { start: integer, count: integer }
 struct Dc { pieces: vector<Pc>, other: vector<Pc> }
 
