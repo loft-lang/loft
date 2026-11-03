@@ -168,22 +168,94 @@ the port while the board starts still gets them.
 - **No Rust.**  The project holds the C file the C backend writes (the program and the runtime)
   and the `[c]` parts of the libraries the program uses.  A C build loads no library's Rust part
   ([HARDWARE_BACKENDS.md § The processor](HARDWARE_BACKENDS.md#the-processor)).
-- **Assets.**  `--assets a,b` names the files to pack, relative to the program (a directory is
-  packed whole; the default is `assets`).  The app serves them read-only under the same
-  relative paths, so `file("assets/x.png")` finds on the device what it found on the PC.
-- **The board.**  `app_main` starts NVS and the BSP (display in RGB565, keys, audio), mounts the
-  assets, runs `main` and goes back to the launcher when it returns.
-- **Timing.**  Each start-up step prints `@boot <µs since boot> <step>` on the console, and
-  `@loft exit <n>` when the program ends.
-- **Built for speed and size.**  The shipped tier (no call chain; `--native-debug` keeps it),
-  `-O2`, a 1 kHz scheduler tick, a 64 KB main stack, no task watchdog and no radio.  ESP-IDF
-  compiles with `-ffunction-sections -fdata-sections` and links with `--gc-sections`, so only
-  the runtime functions the program reaches stay in the binary.
+- **Files, found from what names them.**  Without `--assets`, the app packs each file beside
+  the program that something names: a text constant of the program (`"kinds.json"`, or the
+  `/theme.json` a path built at run time leaves), a path written in a file already packed
+  (`theme.json` naming its sheets), or a directory and an extension the program writes as
+  constants of their own, which is what `"{dir}/levels/{name}.json"` leaves in the C
+  (`/levels/` and `.json`).  What nothing names stays out.  The app serves the files read-only
+  under the same relative paths, so `file("assets/x.png")` finds on the device what it found on
+  the PC.  `--assets a,b` names them by hand instead: files, directories, `*` inside a name,
+  `!` to take a match out again.
+- **The board, found from what calls it.**  `app_main` starts NVS, then the BSP's parts one by
+  one: each part the app's C calls (a library's file and what it includes), and the ones a
+  program reaches without a BSP call (the clock, the SD card's supply, power, the LEDs).  The
+  motion sensor, the environment sensors and the two expansion ports stay off for an app that
+  calls none of them; the motion sensor alone takes more than a second to start.  The screen is
+  black as soon as the display is up.  When `main` returns, the backlight goes off and the app
+  restarts into the launcher.
+- **The report.**  `<dir>/loft-esp-report.txt` says why each file and board part is in, what the
+  image holds by origin (the program, the runtime, each library's C file, each ESP-IDF
+  component), and its largest functions, read from the linker's map.  It is the place to start
+  when an app is too large.
+- **Timing.**  Each start-up step prints `@boot <µs since boot> <step>` on the console, held
+  until the program starts, and `@loft exit <n>` when it ends.
+- **Built for size where it runs once, for speed where it loops.**  The shipped tier (no call
+  chain; `--native-debug` keeps it).  loft's C is built with `-Os -DLOFT_SIZE`, where the
+  runtime's hot helpers are offered for inlining rather than forced; the libraries' C, where
+  the pixels are drawn and the pictures decoded, keeps `-O2`.  ESP-IDF compiles with
+  `-ffunction-sections -fdata-sections` and links with `--gc-sections`, so only what the program
+  reaches stays in the binary; its assertions keep their checks without their messages, and it
+  logs warnings only.  A 1 kHz scheduler tick, a 64 KB main stack, no task watchdog, no radio,
+  and no test of all of PSRAM at every start.
 
-`tile-world-game/sheet.loft` is the worked example: Kenney's Tiny Dungeon sheet on the screen
+`tile-world-game/sheet.loft` is the smallest example: Kenney's Tiny Dungeon sheet on the screen
 until space is pressed, every step logged as `@t <µs> <event>`.  Its libraries' C parts are
-`tiles.c`, `imaging_png.c`, `screen.c` and `input`'s `keys.c`, and with
-`--assets assets/sheets/tiny-dungeon.png` the app is about 520 KB.
+`tiles.c`, `imaging_png.c`, `screen.c` and `input`'s `keys.c`, and the app is about 510 KB.
+`tile-world-game/main.loft`, the game, builds whole for the P4 at about 1.8 MB, 740 KB of it its
+files.
+
+## Memory and storage for a larger game
+
+**Where an app lives while it runs.**  An app runs from the flash it is installed in: its code
+executes in place through the chip's 128 KB cache, and its packed files are read in place.
+Neither is copied into RAM, so code that does not run and files that are not read cost flash,
+not memory.  RAM holds what the program builds:
+
+| Memory | Size | Holds |
+|---|---|---|
+| flash, `appfs` | 8 MB, shared by every installed app | the app: code and packed files |
+| internal RAM | 768 KB, fast | the stack, allocations under 16 KB, loft's 64 KB arena for temporary values |
+| PSRAM | 32 MB | allocations of 16 KB and more: decoded sheets and sounds, levels, loft's stores |
+
+The two limits for a larger game are flash for what it stores and PSRAM for what it has decoded
+at once.
+
+**Where a game's data can live.**
+
+| Place | Room | Read | Notes |
+|---|---|---|---|
+| inside the app | the free part of `appfs` | in place, no copy | what `--native-esp` does now; a change to any file means uploading the app again |
+| a data pack as its own `appfs` entry | the same 8 MB | in place, no copy | updated without the code; needs a reader in `loft_esp.h`, which does not exist yet |
+| the internal FAT area (`locfd`) | 3.9 MB | copied into RAM | writable: saved games, the level editor; `badgelink fs upload` writes it |
+| an SD card | gigabytes | copied into RAM, slowest | needs a card; the same file calls as the FAT area |
+| a server, over Wi-Fi | unlimited | over the network | loft serves stores over HTTP ranges ([REMOTE_STORES.md](REMOTE_STORES.md)); the radio adds size and start-up time |
+
+loft's lazy stores ([LAZY_STORES.md](LAZY_STORES.md)) fetch what a collection is missing when it
+is read, which fits a game's area held as a store image and loaded when the player enters it.
+They have not run on the device.
+
+**Code per scene.**  Code runs in place, so a scene's code that is not running takes no RAM, and
+the question is only whether all of it fits in flash: `tile-world-game`'s program is about
+500 KB of it.  Loading code at run time is possible: Espressif's `elf_loader` component runs a
+relocatable ELF from PSRAM on the P4.  For loft that needs a scene written as a module of its own
+that calls the main app's runtime, while the C backend writes one file per program, so it is
+compiler work no game needs yet.  Two other ways exist: a game split into apps with a restart
+between them (about half a second, the state carried in a file), and behaviour held as data, as
+`tile-world-game` already holds its kinds and rules, so an area is mostly new data.
+
+**The way to grow a game.**
+
+1. Keep the code in the app; running in place keeps the code that is not running out of RAM.
+2. Give each area its own files (its levels, sheets and sounds), loaded when the player enters
+   it and freed when the player leaves, so the RAM a game needs is one area's, not the game's.
+3. Read every file by a path relative to the program.  loft's file calls go through ESP-IDF's
+   VFS, so the game's code is the same wherever a file is stored: in the app until the app
+   nears the free part of `appfs`, then in an `appfs` data pack, the FAT area or an SD card.
+4. Saved games and the editor need the FAT area, whatever holds the rest.
+
+Not measured yet: how long entering an area takes (decoding its sheets and sounds), and how much
+PSRAM one area needs.
 
 ## What runs there
 
@@ -224,17 +296,21 @@ behind the same loft API it has everywhere.
 
 **On the device.**  `tile-world-game/sheet.loft`, built with `--native-esp` and installed
 with badgelink, runs: the asset filesystem, `screen`'s display section, `input`'s key polling,
-the console timing lines and the return to the launcher.  The steps that cost the most on that
-run are the open work below.
+the console timing lines and the return to the launcher, black at both ends.  On that run the
+display is up about 0.4 s after the app starts; showing one 192x176 frame at scale 2 takes
+11 ms with `screen`'s row-at-a-time path (`loft-libs-game` branch `tuxedo-screen-esp-present`,
+not yet published), where the pixel-by-pixel path took 63 ms.
 
 **Open:**
 
-- The BSP's start-up takes about 1.6 s of the app's launch; which part, and whether an app can
-  skip what it does not use, is not measured yet.
-- `screen`'s Tanmatsu section rotates and scales the frame one pixel at a time: showing one
-  800x480 frame takes about 63 ms, which caps a game near 15 frames a second.
-- The panel shows the restart's colours between an app's end and the launcher's first frame.
+- `tile-world-game`'s game has not run on the device: it opens its frame at scale 4, wider than
+  the panel (scale 3 fits), and its frame time, sound and area switch are unmeasured.
 - The I2S output task (`audio`) has not run on the device.
+- From reset to the app's start the panel shows blue, before any of the app's code runs.
+- The P4's pixel accelerator (PPA) can scale and rotate a frame in hardware, which `screen`
+  does on the CPU; the chip's ROM has an inflater (`tinfl_decompress`) lodepng could use; the
+  runtime's hash seed reads `/dev/urandom`, which ESP-IDF does not have, where the hardware
+  random number generator is (`esp_fill_random`).
 - The screen's physical size, for a game that draws to scale: a loft call with a defined
   "unknown" answer, filled on the Tanmatsu from the panel's specification until the BSP
   reports it.
