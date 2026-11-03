@@ -15,6 +15,7 @@
 //! what it did.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 /// Every identifier in `body` with how often it occurs, string and character literals and
 /// comments skipped.
@@ -393,8 +394,9 @@ pub(crate) fn tidy_unit(written: &str) -> String {
                 .map(str::to_string)
                 .collect();
             let body = lines[i + 1..end].join("\n");
-            push(&mut out, l, true);
             let tidied = tidy(&params, &format!("{body}\n"));
+            let (sig, tidied) = ref_params_copied(l, open, close, &params, tidied);
+            push(&mut out, &sig, true);
             out.push_str(&tidied);
             push(&mut out, "}", end + 1 < lines.len());
             i = end + 1;
@@ -404,6 +406,46 @@ pub(crate) fn tidy_unit(written: &str) -> String {
         i += 1;
     }
     out
+}
+
+/// `@FR-R-RefParam`: every `loft_ref` parameter the body names taken as `<name>__in` and copied
+/// into the local `<name>` by `LOFT_REF_IN` as the body's first statement — field by field under
+/// gcc, which then keeps `rec` and `pos` apart instead of reloading them with one load across the
+/// two spilled halves of the argument (loft_rt.h, at `LOFT_REF_IN`).  The body is unchanged.
+/// Switch `LOFT_NO_REF_PARAM_COPY`.
+fn ref_params_copied(
+    sig: &str,
+    open: usize,
+    close: usize,
+    params: &[String],
+    body: String,
+) -> (String, String) {
+    if crate::env_once!(std::env::var("LOFT_NO_REF_PARAM_COPY").is_ok_and(|v| v != "0")) {
+        return (sig.to_string(), body);
+    }
+    let counts = identifier_counts(&body);
+    let copied: Vec<&str> = params
+        .iter()
+        .filter_map(|p| p.strip_prefix("loft_ref "))
+        .filter(|n| is_ident(n) && counts.get(n).is_some_and(|c| *c > 0))
+        .collect();
+    if copied.is_empty() {
+        return (sig.to_string(), body);
+    }
+    let list: Vec<String> = sig[open + 1..close]
+        .split(", ")
+        .map(|p| match p.strip_prefix("loft_ref ") {
+            Some(n) if copied.contains(&n) => format!("loft_ref {n}__in"),
+            _ => p.to_string(),
+        })
+        .collect();
+    let sig = format!("{}{}{}", &sig[..=open], list.join(", "), &sig[close..]);
+    let mut head = String::new();
+    for n in &copied {
+        let _ = writeln!(head, "    LOFT_REF_IN({n});");
+    }
+    crate::rewrite_census::fired("R-RefParam", copied.len());
+    (sig, head + &body)
 }
 
 /// The name a column-0 line defines or declares: a function (`static T name(…) {` or its

@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-SliceArg`'s range clause — `text_from_bytes(v[a..b])` reads the bytes `[a, b)` of `v`
+// where they lie (`text_from_byte_range`), under the slice's own bounds, and builds no slice.
+// What can go wrong is the clamping — a negative bound, one past either end, an empty or
+// reversed span — a span that splits a character, a foreign (file-mapped) source, a source
+// written after the text was read, and a text read inside a value a decoder builds outside the
+// store (`@FR-R-Transient`).  Every cell answers what the interpreter answers; values
+// hand-computed in each cell's comment, the text AND its length.
+//
+// The C writer applies it (`FnWriter::call`, through `FnWriter::slice_fill`); the interpreter
+// and rustc-native build the slice and are the oracle.
+//
+// @falsified-at: none — by hand on the C writer (the interpreter and native build apply nothing,
+//   so `falsify.sh` reads them INERT), planted in the emitted C's range read: ending one byte
+//   early fails t1 ("é/2" for "él/3"), starting one byte late fails t1 ("/0").
+//   CHANNEL: an assertion.
+// HOLDS: the interpreter's and rustc-native's answers, which no plant on the C writer reaches.
+
+enum Piece { PB { b: vector<u8> }, PT { t: text }, PN }
+
+struct Cut {
+  const piece: Piece,
+  const at: integer,
+}
+
+// "héllo, world" as its thirteen bytes: h, é (2), l, l, o, ',', ' ', w, o, r, l, d
+fn hello() -> vector<u8> {
+  v: vector<u8> = [];
+  for i in 0..size("héllo, world") { v += ["héllo, world".byte_at(i) as u8? ?? 0]; }
+  v
+}
+
+// A local's text read from a span: the text, then its length in bytes.
+fn read(v: const vector<u8>, a: integer, b: integer) -> text {
+  t = text_from_bytes(v[a..b]);
+  "{t}/{size(t)}"
+}
+
+// A decoder's shape: the text in a variant field of the record it answers.
+fn cut_text(v: const vector<u8>, a: integer, b: integer) -> Cut {
+  return Cut { piece: PT { t: text_from_bytes(v[a..b]) }, at: a };
+}
+fn text_of(p: Piece) -> text { match p { PT { t } => "{t}/{size(t)}", _ => "none" } }
+
+fn main() {
+  h = hello();
+  // t1: 1..4 is é (two bytes) and l: "él", three bytes
+  assert(read(h, 1, 4) == "él/3", "t1 {read(h, 1, 4)}");
+  // t2: 2..4 starts inside é: not UTF-8, the empty text
+  assert(read(h, 2, 4) == "/0", "t2 {read(h, 2, 4)}");
+  // t3: a negative lower bound counts from the end, -5..12 is 8..12: "worl"
+  assert(read(h, -5, 12) == "worl/4", "t3 {read(h, -5, 12)}");
+  // t4: past the end, 9..99 clamps to 9..13: "orld"
+  assert(read(h, 9, 99) == "orld/4", "t4 {read(h, 9, 99)}");
+  // t5: an empty span and a reversed one: the empty text
+  assert(read(h, 4, 4) == "/0", "t5 {read(h, 4, 4)}");
+  assert(read(h, 6, 2) == "/0", "t5r {read(h, 6, 2)}");
+  // t6: a negative bound past the start, -40..3 clamps to 0..3: "hé"; a negative upper bound,
+  // 4..-7 is 4..6: "lo"
+  assert(read(h, -40, 3) == "hé/3", "t6 {read(h, -40, 3)}");
+  assert(read(h, 4, -7) == "lo/2", "t6b {read(h, 4, -7)}");
+  // t7: a foreign (file-mapped) source, 8..13: "world"
+  fp = "loft_text_of_a_slice_{now()}_{ticks()}.tmp";
+  assert(write_bytes(fp, h), "write");
+  m = file_map(fp) ?? [];
+  got = read(m, 8, 13);
+  delete(fp);
+  assert(got == "world/5", "t7 {got}");
+  // t8: the source written after the read: the text keeps what it read — 0..5 is "héll",
+  // then h[0] = 'H' leaves it alone
+  w = text_from_bytes(h[0..5]);
+  h[0] = 72 as u8;
+  assert(w == "héll" && size(w) == 5, "t8 {w}");
+  assert(read(h, 0, 1) == "H/1", "t8 source {read(h, 0, 1)}");
+  // t9: inside a value built outside the store, a decoder's text: 6..12 is ", worl"
+  assert(text_of(cut_text(h, 6, 12).piece) == ", worl/6", "t9 {text_of(cut_text(h, 6, 12).piece)}");
+  println("ok");
+}

@@ -3003,6 +3003,24 @@ c4 reads "world+world").  Sites: `slice_carrier` and the `OpDatabase` / `OpSetIn
 `FnWriter::store_operator` (`src/c/body.rs`), the carrier registration in `FnWriter::call`,
 `loft_slice_take` / `loft_slice_give` (`src/c/loft_rt.h`).
 
+```
+  (R-SliceArg)'s range clause
+                 a slice value handed to `text_from_bytes` — `text_from_bytes(v[lo..hi])`,
+                 the block `FnWriter::slice_fill` reads — is the bounds' statements and
+                 `text_from_byte_range(v, lo, hi)`: the same bytes, under the slice's own
+                 bounds (already clamped by the statements, which the range read keeps),
+                 decoded by the same conversion, with no slice built.  APPLIED BY the C
+                 writer; the interpreter builds the slice and is the reference.
+```
+
+**In words.**  @PLN210 P23.  The carrier above made the slice's store cheap; the range read
+makes it absent — the slice's copy, the carrier's take and give, and the vector the conversion
+then copied again.  `text_from_byte_range` is the native a decoder could have written itself
+(`default/03_text.loft`), so the clause writes what the natural spelling means.  pluginabi
+`check_request` 591 → 516 µs on gcc, 693 → 572 µs on clang with the clause alone.  Switch
+`LOFT_NO_SLICE_TEXT`; cells `tests/scripts/a-text-of-a-slice-reads-the-span-in-place.loft`.
+Site: the `n_text_from_bytes` arm at the head of `FnWriter::call`.
+
 ### A slice appended to a place is sliced into it
 
 ```
@@ -3027,6 +3045,27 @@ cbor's `CBytes { value: bytes[a..b] }`: pluginabi `check_request` −10 %, `req_
 the C ship lane.  Switch `LOFT_NO_SLICE_INTO`; cells
 `tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft`.  Sites: `slice_fill` /
 `slice_into` / `append_vector_op` in `src/c/body.rs`.
+
+```
+  (R-SliceInto)'s transient clause
+                 the same slice appended to a vector field of a value built outside the
+                 store (`(R-Transient)`, a twin's `CBytes { value: bytes[a..b] }`) is the
+                 bounds' statements and `loft_ta_vec_copy_range(field, src, lo, hi, size)`:
+                 `[lo, hi)` clamped as `loft_vec_slice` clamps it, copied into the field's
+                 own buffer, with no temporary store.  The element size of the slice must be
+                 the field's; anything else keeps the slice.  APPLIED BY the C writer.
+```
+
+**In words.**  @PLN210 P23.  Once the decoder's tree was built outside the store the place was
+no longer a store vector, and this rule stopped firing: each byte string minted a store, sliced
+into it, copied the slice into the tree and freed the store.  The copy from the source is the
+one copy left.  pluginabi `check_request` 516 → 377 µs on gcc, 572 → 426 µs on clang, after
+the range clause above (2.22× → 1.42× and 2.6× → 1.6× its twin).  No admitted site reads a
+transient vector field yet (`(R-Transient)` declines an `OpGetField` of one), so no value shows
+the copy; the cell `c10` of `tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft`
+runs it beside the text its site reads, under the sweeps' poison and ASan modes.  Switch
+`LOFT_NO_SLICE_INTO` (both clauses).  Site: the `OpAppendVector` arm of the transient writer
+(`src/c/body/transient.rs`), `loft_ta_vec_copy_range` (`src/c/loft_rt.h`).
 
 ### A slice of a parameter is read where it lies
 
@@ -7831,6 +7870,32 @@ The general hand-over (a death before a birth, paired by the scope phase) stays 
 for the reason the truncating take measured: on the exact-size free lists a release followed by
 a claim of the same plan already reuses the block, so a hand-over pays only where it also
 removes bookkeeping — the slot claim, the record finish, the shift — as the rotate does.
+
+### A reference parameter is a local the body copies in once
+
+```
+  (R-RefParam)   every `loft_ref` parameter `p` a written C function's body names is taken
+                 as `p__in`, and the body's first statement makes the local `p` of it
+                 (`LOFT_REF_IN(p)`): under gcc field by field, `store_nr`, `rec`, `pos` and
+                 the pad each written on its own; under any other compiler the plain copy.
+                 The body is unchanged, so it reads and writes the same values; nothing else
+                 names `p__in`.  APPLIED BY the C writer's last pass over each function
+                 (`tidy_unit`); the program is the same program on every backend.
+```
+
+**In words.**  @PLN210 P23.  A reference is 16 bytes and travels in two registers; gcc spills
+them as the two eightbytes they are, and a body that then reads `rec` and `pos` together —
+a held address, a compare of two references — reloads them with ONE 8-byte load across the
+two stores, which the processor cannot forward: a stall of a dozen cycles on every call.  The
+trailing pad (`loft_ref`'s comment in loft_rt.h) took `rec|pos` out of one register but not out
+of one load.  Copied field by field, the local's `rec` and `pos` are values gcc keeps apart.
+cbor `decode` 3.77 → 2.55 ms on gcc (2.47× → 1.67× its twin), hex_recover `forms_upto` −18 %,
+zttext `materialise` +6 %, every other library routine within ±3 %.  clang never stalled
+here and paid for the field-wise copy (cbor `encode_bytes` +31 %), so clang keeps the plain
+copy, which it folds away.  Switch `LOFT_NO_REF_PARAM_COPY`; its guard is every program the C
+sweep runs, since every function with a reference parameter takes the copy (a copy that drops a
+field fails the corpus at once).  Site: `ref_params_copied` in `src/c/tidy.rs`, `LOFT_REF_IN`
+in `src/c/loft_rt.h`.
 
 ### Proposed clauses on existing rules
 
