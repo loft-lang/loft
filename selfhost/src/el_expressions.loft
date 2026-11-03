@@ -1847,7 +1847,14 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SUnary { op, e: ue } => unary(e, vars, op, ue),
     SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
     SStructLit { name, member, fields, base } => object_expr(e, vars, name, member, fields, base),
-    SFor { binds, source, par, filter, body } => for_expr(e, vars, binds, source, par, filter, body),
+    SFor { at, binds, source, par, filter, body } => {
+      if par != null {
+        el::refuse(e, "a `for` with `par`");
+        ex(ir::NdNull, ir::TyVoid)
+      } else {
+        for_expr(e, vars, binds, source, in_token(e, at), filter, body)
+      }
+    },
     SWhile { cond, body } => while_expr(e, vars, cond, body),
     SMatch { subject, arms } => match_expr(e, vars, subject, arms),
     SBlock { at: _ } => parse_block(e, vars, n, "block", ir::TyUnknown { n: 0 }),
@@ -3991,6 +3998,18 @@ fn slot_takes_min(k: text) -> boolean {
 // `NarrowIntKind::set_op`.
 fn slot_set_op(k: text) -> text {
   if k == "ShortFull" { "OpSetShortRaw" } else if k == "Int4Full" { "OpSetInt4Raw" } else { "OpSet{k}" }
+}
+
+// The op a tuple member of this type is set through in its record.
+fn tuple_set_op(t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec: _ } => "OpSetInt",
+    TyText { dep: _ } => "OpSetText",
+    TyBoolean => "OpSetBoolean",
+    TyFloat => "OpSetFloat",
+    TySingle => "OpSetSingle",
+    _ => "OpSetCharacter"
+  }
 }
 
 // The op a plain field of this attribute's type is written through, or "".
@@ -7091,19 +7110,32 @@ fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::TypeT, p
 // takes `loop_binding`'s name; the iterated value and the loop parts are built as `parse_for`
 // assembles them (the "For block" around the "For loop").  Destructuring, `par`, a missing body
 // and any other iterated type are refused by name.
-fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer, par: integer?, filter: integer?, body: integer?) -> Ex {
-  if len(binds) != 1 || par != null || body == null {
-    el::refuse(e, "a `for` with destructuring, `par` or no body");
+// The `in` token of the `for` at token `at`.
+fn in_token(e: el::El, at: integer) -> integer {
+  i = at;
+  while i < len(e.p.src) && !(e.p.src[i] is KwIn) {
+    i += 1;
+  }
+  i
+}
+
+// `in_tok`: the `for`'s `in`, whose start names a destructuring loop's variable.
+fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer, in_tok: integer, filter: integer?, body: integer?) -> Ex {
+  if len(binds) == 0 || body == null {
+    el::refuse(e, "a `for` with no body");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  src_id = binds[0];
+  // `parse_for`'s tuple destructure (P235): the loop's variable is named by where the `in`
+  // starts, and each named member is bound from it at the body's head.
+  destructure = len(binds) > 1;
+  src_id = if destructure { "__destructure_t_{e.p.line[in_tok] ?? 0}_{e.p.col[in_tok] ?? 0}" } else { binds[0] };
   id = if src_id == "_" { "_" } else { el_vars::loop_binding(vars, src_id) };
   if e.p.nodes[source] is SRange {
     return range_for(e, vars, src_id, id, source, body!, filter);
   }
   x = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   if e.p.nodes[source] is SVecLit {
-    lit = vector_value(e, vars, source);
+    lit = vector_value(e, vars, source, hinted: false);
     if len(lit.items) >= 1 && len(lit.items) <= 16 && walkable_scalar(lit.elem) {
       return literal_walk(e, vars, src_id, id, lit, body!, filter);
     }
@@ -7151,14 +7183,60 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
     TyVector { inner } => { elem = inner; },
     _ => {}
   }
-  // `for_type`: the element, borrowing the hoisted vector.
+  // `for_type`: the element, borrowing the hoisted vector; a tuple element as its record.
   var_tp = el_types::with_deps(elem, [vec]);
+  members: vector<ir::TypeT> = [];
+  if destructure {
+    members = match elem { TyTuple { elems } => elems, _ => [] };
+    td = el_schema::tuple_def_of(e, members);
+    if len(members) != len(binds) || td < 0 {
+      if !e.first_pass || !el_types::is_unknown(elem) {
+        el::refuse(e, "a `for` destructuring something other than a tuple of its arity");
+      }
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    var_tp = ir::TyReference { n: td, dep: [vec] };
+  }
   idx = loop_index(vars, id);
   lv = loop_var(vars, src_id, id, var_tp);
   vars.active_loops += [lv];
   vars.active_values += [x.code];
+  // The named members, made before the body is read so it resolves them.
+  bound: vector<integer> = [];
+  for nm in binds {
+    if destructure {
+      // A `_` member is bound too, to a fresh `___N`.
+      // Each a binding of this loop (`loop_binding`): a sibling loop's same name is another.
+      mt = el_types::without_deps(members[nm#index] ?? ir::TyUnknown { n: 0 });
+      // A spelling an earlier plain binding holds is renamed by Rust's block-scope rebinding
+      // (`rebind_after_block`), which is not carried: refused by name.
+      held = vars.names[nm];
+      if nm != "_" && held != null && !vars.destructured.contains(held!.nr) {
+        el::refuse(e, "a destructured member reusing an earlier binding's name: {nm}");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      mv = loop_var(vars, nm, if nm == "_" { "_" } else { el_vars::loop_binding(vars, nm) }, mt);
+      if !vars.destructured.contains(mv) {
+        vars.destructured += [mv];
+      }
+      bound += [mv];
+    }
+  }
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
+  heads: vector<ir::Node> = if destructure && !e.first_pass { destructure_head(e, lv, members, bound) } else { [] };
+  // Without a filter the members are read at the head of the body; with one, before its test.
+  if fc == null && len(heads) > 0 {
+    match b.code {
+      NdBlock { block } => {
+        bl = block[0];
+        bl.operators = heads + bl.operators;
+        b.code = ir::NdBlock { block: [bl] };
+        heads = [];
+      },
+      _ => {}
+    }
+  }
   vars.active_loops = vars.active_loops[..-1];
   vars.active_values = vars.active_values[..-1];
   if e.first_pass || el_types::is_unknown(elem) {
@@ -7175,12 +7253,31 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   past_end = vector_past_end(e, vec, idx);
   before = el_ir::v_if(el_ir::cl(e, "OpLtInt", [i, ir::NdInt { n: 0 }]), brk, ir::NdNull);
   steps: vector<ir::Node> = [el_ir::v_set(lv, next), past_end, before];
+  steps += heads;
   if fc != null {
     steps += [fc!];
   }
   steps += [b.code];
   lp = el_ir::v_loop(steps, "For loop");
   ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
+// The destructured members' binds (`Set(name_i, loop_var._i)`), each read out of the loop's
+// record at its offset.
+fn destructure_head(e: el::El, lv: integer, members: vector<ir::TypeT>, bound: vector<integer>) -> vector<ir::Node> {
+  td = el_schema::tuple_def_of(e, members);
+  fs = el_schema::struct_fields(e, el::def(e, td).known_type);
+  sets: vector<ir::Node> = [];
+  for v in bound {
+    if v >= 0 {
+      t = members[v#index] ?? ir::TyVoid;
+      f = fs[v#index];
+      if f != null {
+        sets += [el_ir::v_set(v, el_ir::cl(e, read_op(t), [ir::NdVar { n: lv }, ir::NdInt { n: f!.position }]))];
+      }
+    }
+  }
+  sets
 }
 
 // `iterator`'s vector arm, one step: `{ i = i + 1; <element i of the hoisted vector> }` — a plain
@@ -7201,7 +7298,9 @@ fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT) -> ir::No
   if !record {
     get = elem_read(e, elem, get);
   }
-  el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), get], el_types::without_deps(elem), "iter next")
+  // A tuple element is read as its record.
+  st = match elem { TyTuple { elems } => ir::TyReference { n: el_schema::tuple_def_of(e, elems), dep: [] }, _ => el_types::without_deps(elem) };
+  el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), get], st, "iter next")
 }
 
 // `vector_loop_break`'s forward test: the walk ends past the hoisted vector's last element.
@@ -8125,6 +8224,9 @@ pub struct VecRows {
 }
 
 fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
+  if t is TyTuple {
+    return tuple_vector_rows(e, t, lit);
+  }
   nm = el_types::elem_name(e, t);
   if nm == "" {
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
@@ -8147,6 +8249,46 @@ fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecR
       el::refuse(e, "a vector of an element type the library has no rows for: {nm}");
     }
     return null;
+  }
+  VecRows { main_def: md, main_known: el::def(e, md).known_type, vec_known: vk }
+}
+
+// `vector_rows` for a tuple element (`Data::vector_def` with `ensure_tuple_defs`): at the
+// literal's `]`, the `__tuple<…>` struct, `vector<(…)>` owned by it and the `main_vector<(…)>`
+// wrapper; on the second pass, once the rows are laid out, `check_vector`'s
+// `vector<__tuple<…>>` under the row's own name, at the same place.
+fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer) -> VecRows? {
+  elems = match t { TyTuple { elems: es } => es, _ => [] };
+  sp = el_schema::tuple_spelling(elems, ", ");
+  if sp == "" {
+    el::refuse(e, "a vector of tuples with a member of this kind");
+    return null;
+  }
+  tok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
+  pos = el::pos_at(e, closing_bracket(e, tok));
+  td = el_schema::tuple_def(e, elems, pos);
+  nm = "({sp})";
+  if el::def_nr(e, "main_vector<{nm}>") < 0 {
+    el_schema::make_vector_def(e, t, nm, pos, true);
+    vd = el::def_nr(e, "vector<{nm}>");
+    if vd >= 0 {
+      e.b.data.definitions[vd].parent = td;
+    }
+  }
+  md = el::def_nr(e, "main_vector<{nm}>");
+  tk = el::def(e, td).known_type;
+  if e.first_pass || md < 0 || tk == el_schema::NO_TYPE || el::def(e, md).known_type == el_schema::NO_TYPE {
+    return null;
+  }
+  vname = "vector<{el::def(e, td).name}>";
+  vk = el_schema::schema_type(e, vname);
+  if vk < 0 {
+    return null;
+  }
+  if el::def_nr(e, vname) < 0 {
+    cv = el::add_def(e, vname, pos, el::DT_VECTOR);
+    e.b.data.definitions[cv].parent = td;
+    e.b.data.definitions[cv].known_type = vk;
   }
   VecRows { main_def: md, main_known: el::def(e, md).known_type, vec_known: vk }
 }
@@ -8207,6 +8349,11 @@ fn closing_bracket(e: el::El, lit: integer) -> integer {
 // A struct's record size, from its laid-out store type.
 fn record_size(e: el::El, t: ir::TypeT) -> integer {
   match t {
+    TyTuple { elems } => {
+      td = el_schema::tuple_def_of(e, elems);
+      k = if td < 0 { el_schema::NO_TYPE } else { el::def(e, td).known_type };
+      if k == el_schema::NO_TYPE { -1 } else { e.b.types[k]!.size }
+    },
     TyReference { n } => {
       k = el::def(e, n).known_type;
       if k == el_schema::NO_TYPE { -1 } else { e.b.types[k]!.size }
@@ -8237,6 +8384,7 @@ fn vector_of(e: el::El, t: ir::TypeT) {
 fn elem_size(t: ir::TypeT) -> integer {
   match t {
     TyReference { n: _ } => -2,
+    TyTuple { elems: _ } => -2,
     TyInteger { spec } => if el_types::narrow_width(spec) > 0 { el_types::narrow_width(spec) } else { 8 },
     TyFloat => 8,
     TySingle => 4,
@@ -8345,9 +8493,11 @@ fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared:
 
 // A literal in value position (`parse_vector_inner` with no destination, `block`): built the
 // same way into a `_vec_N` of its own, the build a "Vector" block answering it.
-fn vector_value(e: el::El, vars: el_vars::Vars, n: integer) -> Built {
+// `hinted`: false for a literal no context types (a `for`'s source), whose element temp keeps
+// the bare reference it is made with.
+fn vector_value(e: el::El, vars: el_vars::Vars, n: integer, hinted: boolean = true) -> Built {
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
-  vector_build(e, vars, v, n, ir::TyUnknown { n: 0 }, value: true)
+  vector_build(e, vars, v, n, ir::TyUnknown { n: 0 }, value: true, hinted: hinted)
 }
 
 // `w += [items]` on a vector local that already has its store: the same build appended to it —
@@ -8445,7 +8595,7 @@ fn refused_build() -> Built {
 
 // The one build behind the three literal forms: into a local (`vector_into`), in value position
 // (`value`, `vector_value`) and appended to a local that has its store (`append`, `vector_append`).
-fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false) -> Built {
+fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true) -> Built {
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
@@ -8599,7 +8749,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   }
   if len(xs) > 0 {
     size = elem_size(in_t);
-    if size == -2 && (len(recs) > 0 || struct_ref(e, in_t) >= 0) {
+    if size == -2 && (len(recs) > 0 || struct_ref(e, in_t) >= 0 || in_t is TyTuple) {
       size = record_size(e, in_t);
     }
     if size < 0 {
@@ -8611,7 +8761,11 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   push = push_op(in_t);
   if len(recs) > 0 {
     rd = struct_literal_def(e, recs[0]);
-    el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+    // The element temp is typed as its record (`Reference(type_def_nr(parent_tp.content()))`),
+    // except where no context gives the literal an element type: it keeps the bare reference.
+    if hinted {
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+    }
     at = ir::NdVar { n: elm };
     for it in recs {
       fields: vector<integer> = [];
@@ -8629,6 +8783,27 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
         if op#index >= 2 {
           ls += [op];
         }
+      }
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+    xs = [];
+  }
+  // A tuple item (`build_vector_list`'s tuple arm): the element made through the vector and each
+  // member set at its offset in the `__tuple<…>` record.
+  if in_t is TyTuple && len(xs) > 0 {
+    elems = match in_t { TyTuple { elems: es } => es, _ => [] };
+    td = el_schema::tuple_def_of(e, elems);
+    fs = el_schema::struct_fields(e, el::def(e, td).known_type);
+    at = ir::NdVar { n: elm };
+    for x in xs {
+      parts = match el_ir::unspan(x.code) { NdTuple { items } => items, _ => [] };
+      if len(parts) != len(elems) || len(fs) != len(elems) {
+        el::refuse(e, "a vector of tuples with an item that is no tuple literal");
+        return refused_build();
+      }
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      for m in parts {
+        ls += [el_ir::cl(e, tuple_set_op(elems[m#index] ?? ir::TyVoid), [at, ir::NdInt { n: fs[m#index]!.position }, m])];
       }
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
