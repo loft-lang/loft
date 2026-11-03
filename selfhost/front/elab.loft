@@ -12,6 +12,7 @@ use el;
 use el_definitions;
 use report;
 use load;
+use el_buffers;
 
 fn main() {
   files = arguments();
@@ -65,6 +66,8 @@ fn program(image: text, f: text, std_image: text) {
   e.first_pass = false;
   e.line = 0;
   el_definitions::elab_file(e, tree ?? 0);
+  // After the second pass, on the settled IR (`Parser::promote_work_buffers`).
+  el_buffers::promote_work_buffers(e);
   print(report::defs_report(e.b, upto));
   if len(std_image) > 0 {
     print(report::schema_from(e.b, types_upto));

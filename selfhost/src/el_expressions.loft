@@ -107,10 +107,20 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     el::refuse(e, "a text function answering a local bound to a record's text field");
   }
   if !e.first_pass && tt != b.tp {
+    // A promoted local is read as the hidden parameter it became: the borrow names it by its
+    // ATTRIBUTE number, as the declared result does (`n_a2`'s `text[1]` with `x` at frame 6).
+    shown = tt;
+    tv = el_types::deps(tt)[0] ?? -1;
+    if tv >= 0 && vars.vars[tv].argument {
+      a = attr_nr(el::def(e, e.context), el_vars::name_of(vars, tv));
+      if a >= 0 {
+        shown = ir::TyText { dep: [a] };
+      }
+    }
     match code {
       NdBlock { block } => {
         bl = block[0];
-        bl.result = [tt];
+        bl.result = [shown];
         code = ir::NdBlock { block: [bl] };
       },
       _ => {}
@@ -227,9 +237,6 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
-  if !e.first_pass && work_buffer_candidate(e, vars, code) {
-    el::refuse(e, "a vector local the work-buffer pass may hand to its caller");
-  }
   finish_body(e, vars, code)
 }
 
@@ -281,7 +288,7 @@ fn work_buffer_admits(e: el::El, code: ir::Node, v: integer, db: integer) -> boo
 // The walk's "bound as a copy of another vector" (`copy_bound`): the local filled by exactly one
 // `OpAppendVector` / `OpReplaceVector` outside a loop, and never pushed or inserted into — the
 // whole-vector copy bind.
-fn copy_bound(e: el::El, code: ir::Node, v: integer) -> boolean {
+pub fn copy_bound(e: el::El, code: ir::Node, v: integer) -> boolean {
   counts: vector<integer> = [0, 0];
   fills(e, code, v, false, counts);
   counts[0] == 1 && counts[1] == 0
@@ -384,7 +391,7 @@ fn any_bare(l: vector<ir::Node>, v: integer) -> boolean {
 
 // The blocks of `n` that hold the declaration trio of `v` over `db` (`is_trio`); with `looped`,
 // only those inside a loop.
-fn trios(e: el::El, n: ir::Node, v: integer, db: integer, looped: boolean) -> integer {
+pub fn trios(e: el::El, n: ir::Node, v: integer, db: integer, looped: boolean) -> integer {
   c = 0;
   match n {
     NdBlock { block } => {
@@ -438,7 +445,7 @@ fn set_of(e: el::El, n: ir::Node, v: integer, db: integer) -> boolean {
 }
 
 // How many `Set`s target `x` (`set_counts`).
-fn sets(n: ir::Node, x: integer) -> integer {
+pub fn sets(n: ir::Node, x: integer) -> integer {
   match n {
     NdSet { var, inner } => (if var == x { 1 } else { 0 }) + sets(inner, x),
     NdSpan { inner } => sets(inner, x),
@@ -2093,7 +2100,7 @@ fn is_link(e: el::El, n: integer) -> boolean {
 }
 
 // Is `n` (through its span) a call of the definition named `name`?
-fn calls(e: el::El, n: ir::Node, name: text) -> boolean {
+pub fn calls(e: el::El, n: ir::Node, name: text) -> boolean {
   match el_ir::unspan(n) {
     NdCall { def_nr } => el::def(e, def_nr).name == name,
     _ => false
@@ -2416,6 +2423,13 @@ fn assignment(e: el::El, vars: el_vars::Vars, fixed: boolean, op: text, target: 
       el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, x.code]),
       el_ir::v_set(v, ir::NdVar { n: w })
     ] }, ir::TyVoid);
+  }
+  // `narrow_store_checks`: a `??` stored into a narrow local is guarded inside.
+  if !e.first_pass {
+    g = el_convert::guard_discharge(e, vars, x.code, el_vars::tp(vars, v));
+    if g != null {
+      x.code = g!;
+    }
   }
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
 }
@@ -2874,7 +2888,7 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       continue;
     }
     if push != "" {
-      ls += [el_ir::cl(e, push, push_args(inner, place, x.code))];
+      ls += [el_ir::cl(e, push, push_args(e, vars, inner, place, x.code))];
     } else if inner is TyText || elem_size(inner) == 2 {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
       ls += [elem_write(e, inner, at, x.code)];
@@ -3496,7 +3510,7 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
       continue;
     }
     if push != "" {
-      out += [el_ir::cl(e, push, push_args(inner, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: vk }]), x.code))];
+      out += [el_ir::cl(e, push, push_args(e, vars, inner, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: vk }]), x.code))];
     } else if inner is TyText || elem_size(inner) == 2 {
       at = ir::NdVar { n: elm };
       out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))];
@@ -3882,6 +3896,9 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     el::refuse(e, "a call of an unknown function: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  if hinted_literal(e, d, args, 0) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   r = call_args(e, vars, d, list, types);
   if r == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -4095,6 +4112,39 @@ fn null_transparent(e: el::El, vars: el_vars::Vars, call: ir::Node, types: vecto
   ex(el_ir::v_block(sets, opt, "null_transparent"), opt)
 }
 
+// `vector_hint` (#432): a bare non-empty `[…]` argument is built at its PARAMETER's element
+// type, so a `vector<u8>` parameter gets a byte-stride literal.  The arguments here are
+// elaborated before the callee is known, so a literal whose parameter's element is one a
+// literal does not infer — a narrow integer, a `single` — is refused by name.  `first` is the
+// parameter the first argument meets (1 past a method's receiver).
+fn hinted_literal(e: el::El, d: integer, args: vector<integer>, first: integer) -> boolean {
+  for a in args {
+    match e.p.nodes[a] {
+      SArg { e: ae } => {
+        match e.p.nodes[ae ?? 0] {
+          SVecLit { items } => {
+            at = el::def(e, d).attributes[a#index + first];
+            if len(items) > 0 && at != null {
+              match at!.typedef[0] ?? ir::TyVoid {
+                TyVector { inner } => {
+                  if inner is TySingle || (inner is TyInteger && el_convert::narrowing_int(ir::TyInteger { spec: i32_spec() }, inner)) {
+                    el::refuse(e, "a vector literal argument built at its parameter's element type");
+                    return true;
+                  }
+                },
+                _ => {}
+              }
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
 // `Parser::parse_method` for `x.name(args)`: the method the receiver's type selects
 // (`find_fn`'s rungs over the receiver), called with the receiver first, as the same call
 // spelled `name(x, args)` is; wrapped on the second pass in the `.`'s position (`wrap_chain`).
@@ -4124,6 +4174,9 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
     if !e.first_pass {
       el::refuse(e, "a method call: {name}");
     }
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if hinted_literal(e, d, args, 1) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   r = call_args(e, vars, d, list, types);
@@ -4617,7 +4670,7 @@ fn takes(e: el::El, param: ir::TypeT, arg: ir::TypeT) -> boolean {
   }
 }
 
-fn scalar(t: ir::TypeT) -> boolean {
+pub fn scalar(t: ir::TypeT) -> boolean {
   match t {
     TyVoid => true,
     TyEnum { n: _, is_ref } => !is_ref,
@@ -5261,13 +5314,6 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   pick = el_ir::v_if(check!, taken!, dc!);
   if held < 0 {
     return ex(pick, rt);
-  }
-  // `store_check`: the subject stored into a narrow holder that no range proves it fits takes
-  // the checked cast (`dn4_checked_cast`) — the rewrite above made its top op one no range
-  // walk reads.
-  wide = ir::TyInteger { spec: i32_spec() };
-  if lhs is TyInteger && el_convert::narrowing_int(wide, lhs) && !el_convert::value_fits(e, vars, x.code, lhs) {
-    x.code = dn4_cast(e, vars, ex(x.code, wide), lhs).code;
   }
   ex(el_ir::v_block([el_ir::v_set(held, x.code), pick], result, "ncc"), rt)
 }
@@ -6675,7 +6721,7 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) ->
   if fc != null {
     steps += [fc!];
   }
-  steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, push_args(in_t, ir::NdVar { n: v }, ir::NdVar { n: comp }))];
+  steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, push_args(e, vars, in_t, ir::NdVar { n: v }, ir::NdVar { n: comp }))];
   r = rows!;
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   el_vars::depend(vars, v, db);
@@ -6901,27 +6947,9 @@ fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
   cast_expr_to(e, vars, x, to)
 }
 
-// `Parser::dn4_checked_cast` (`@FR-N-Cast`'s checked half, DN4): the value bound once in a
-// `__dn4_N` and answered where it lies in the target's range, else the integer null — typed
-// `τ?`.  A constant has its answer now.
+// `Parser::dn4_checked_cast` — `el_convert::dn4_cast`, typed as an `Ex`.
 fn dn4_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
-  res = ir::TyOptional { inner: to };
-  lo = 0;
-  hi = 0;
-  match to {
-    TyInteger { spec } => { lo = spec.min; hi = spec.max; },
-    _ => {}
-  }
-  c = el_convert::const_int(e, x.code);
-  if c != null {
-    return ex(if c! < lo || c! > hi { el_ir::cl(e, "OpConvIntFromNull", []) } else { x.code }, res);
-  }
-  tmp = el_vars::create_unique(vars, "_dn4", x.tp);
-  t = ir::NdVar { n: tmp };
-  nl = el_ir::cl(e, "OpConvIntFromNull", []);
-  inner = el_ir::v_if(el_ir::cl(e, "OpLeInt", [t, ir::NdInt { n: hi }]), t, nl);
-  outer = el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: lo }, t]), inner, nl);
-  ex(el_ir::v_block([el_ir::v_set(tmp, x.code), outer], res, "dn4cast"), res)
+  ex(el_convert::dn4_cast(e, vars, x.code, x.tp, to), ir::TyOptional { inner: to })
 }
 
 fn cast_expr_to(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
@@ -7617,11 +7645,13 @@ fn elem_write(e: el::El, t: ir::TypeT, at: ir::Node, x: ir::Node) -> ir::Node {
 }
 
 // A pushed narrow integer names its range's start (`OpPushByte(v, min, x)`).
-fn push_args(t: ir::TypeT, w: ir::Node, x: ir::Node) -> vector<ir::Node> {
+// A `??` pushed into a narrow element is guarded inside (`range_guard_inside_discharge`).
+fn push_args(e: el::El, vars: el_vars::Vars, t: ir::TypeT, w: ir::Node, x: ir::Node) -> vector<ir::Node> {
   match t {
     TyInteger { spec } => {
       if el_types::narrow_width(spec) > 0 {
-        return [w, ir::NdInt { n: spec.min }, x];
+        g = if e.first_pass { null } else { el_convert::guard_discharge(e, vars, x, t) };
+        return [w, ir::NdInt { n: spec.min }, g ?? x];
       }
     },
     _ => {}
@@ -7957,7 +7987,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   }
   for x in xs {
     if push != "" {
-      ls += [el_ir::cl(e, push, push_args(in_t, w, x.code))];
+      ls += [el_ir::cl(e, push, push_args(e, vars, in_t, w, x.code))];
     } else {
       at = ir::NdVar { n: elm };
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];

@@ -598,6 +598,27 @@ fn set_type(v: Vars, nr: integer, t: ir::TypeT) {
   v.vars[nr].type_def = [t];
 }
 
+// A stored table taken up again after the passes (the inverse of `stored`), its work-ref counter
+// past every `__ref_N` the table names (`sync_work_counters`) so a new one is a fresh name.
+pub fn load(f: ir::Function) -> Vars {
+  v = new_vars(f.name, f.file);
+  for x in f.variables {
+    v.vars += [x];
+    v.defined += [x.argument];
+  }
+  for n in f.names {
+    v.names += [VarName { name: n.name, nr: n.nr }];
+    if starts_with(n.name, "__ref_") && !starts_with(n.name, "__ref_p2_") {
+      k = (n.name[6..] as integer?) ?? -1;
+      if k > v.work_ref {
+        v.work_ref = k;
+      }
+    }
+  }
+  v.inline_refs = f.inline_refs;
+  v
+}
+
 // What the image keeps of the table (`ir::Function`).
 pub fn stored(v: Vars) -> ir::Function {
   f = ir::Function { name: v.name, file: v.file, variables: [], names: [], inline_refs: [] };
