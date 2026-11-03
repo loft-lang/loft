@@ -4729,6 +4729,14 @@ fn find_fn(e: el::El, name: text, receiver: ir::TypeT) -> integer {
   if el_types::is_unknown(first) || first is TyNull {
     return free;
   }
+  // A generator's handle has no definition to dispatch on: only `next` and `exhausted` take it
+  // (answered by the caller), so any other call of it is named.
+  if el_types::base(first) is TyIterator {
+    if free < 0 {
+      el::refuse(e, "a call of `{name}` on a generator's handle");
+    }
+    return free;
+  }
   tn = type_def_nr(e, first);
   if tn < 0 {
     return free;
