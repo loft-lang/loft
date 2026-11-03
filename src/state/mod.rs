@@ -8138,6 +8138,13 @@ impl State {
     /// `execute_argv` to detect store leaks. Panics in debug builds
     /// if any stores are still alive (except the stack store).
     pub fn check_store_leaks(&self) {
+        self.check_store_leaks_in(None);
+    }
+
+    /// [`Self::check_store_leaks`] with the definitions at hand, so `LOFT_LEAK_SITES` names
+    /// the FUNCTION and file each leaked store was made in, as the C backend's report does —
+    /// a bare `pc` and a line with no file is not something a reader can act on.
+    pub fn check_store_leaks_in(&self, data: Option<&crate::data::Data>) {
         // @PLN101 Slice 0 — alloc-count harness: report total heap record allocations at
         // exit. A `value struct` program (Slice 1+) must drive its struct's contribution to
         // zero vs the reference-struct baseline. Gated so normal runs are unaffected.
@@ -8220,18 +8227,39 @@ impl State {
                 let mut sites: Vec<_> = by_site.into_iter().collect();
                 sites.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
                 for ((created_at, kt, protd), n) in sites {
-                    let line = self
-                        .line_numbers
-                        .range(..=created_at)
-                        .next_back()
-                        .map_or(0, |(_, &v)| v);
+                    let owner = data.and_then(|data| {
+                        let d = data.definitions.iter().position(|def| {
+                            def.code_length > 0
+                                && (def.code_position..def.code_position + def.code_length)
+                                    .contains(&created_at)
+                        })?;
+                        Some((data, d as u32))
+                    });
+                    let line = if let Some((data, d)) = owner {
+                        self.line_at_in_fn(created_at, d, data)
+                    } else {
+                        self.line_numbers
+                            .range(..=created_at)
+                            .next_back()
+                            .map_or(0, |(_, &v)| v)
+                    };
+                    let place = owner.map_or_else(
+                        || format!("pc={created_at} (line {line})"),
+                        |(data, d)| {
+                            let def = data.def(d);
+                            format!(
+                                "{}:{line} in fn {}() (pc={created_at})",
+                                def.position.file, def.name
+                            )
+                        },
+                    );
                     let tn = self
                         .database
                         .types
                         .get(kt as usize)
                         .map_or("?", |t| t.name.as_str());
                     eprintln!(
-                        "  [leak-site] {n}× {tn} (kt={kt}) allocated at pc={created_at} (line {line}) \
+                        "  [leak-site] {n}× {tn} (kt={kt}) allocated at {place} \
                          free_protected={protd}"
                     );
                 }

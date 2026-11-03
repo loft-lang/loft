@@ -13373,7 +13373,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // leak check for clean exits where it still surfaces real bugs.
     let runtime_err = state.database.runtime_error.take();
     if runtime_err.is_none() {
-        state.check_store_leaks();
+        state.check_store_leaks_in(Some(&data));
     }
     // @PLN140 — the profiling reports. Outside the leak guard on purpose: a run that
     // ended in a fault still spent its time and its memory somewhere, and that is
