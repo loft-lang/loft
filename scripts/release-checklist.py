@@ -1072,6 +1072,32 @@ _GATE_RUN: dict = {}   # memo: HEAD sha -> (state, evidence, run or None)
 _GATE_JOBS: dict = {}  # memo: run id -> list of jobs, or None when unreadable
 
 
+def same_tree_gate_runs(sha: str):
+    """The newest release-gate runs whose commit has HEAD's tree: (runs of that commit, its sha).
+
+    Asked only when HEAD's own commit has no run.  A commit this clone lacks cannot be
+    compared, so it is skipped rather than assumed — `git fetch` brings the branch's."""
+    code, tree = sh("git", "rev-parse", f"{sha}^{{tree}}")
+    if code != 0:
+        return [], ""
+    code, out = sh(
+        "gh", "run", "list", "--workflow", "release-gate.yml", "--json",
+        "databaseId,conclusion,status,createdAt,url,headSha", "--limit", "40", timeout=90,
+    )
+    if code != 0:
+        return [], ""
+    try:
+        runs = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        return [], ""
+    for run in sorted(runs, key=lambda r: r.get("createdAt", ""), reverse=True):
+        other = run.get("headSha", "")
+        c, t = sh("git", "rev-parse", f"{other}^{{tree}}")
+        if c == 0 and t == tree:
+            return [r for r in runs if r.get("headSha") == other], other
+    return [], ""
+
+
 def gate_run(network: bool):
     """The newest completed `release-gate.yml` run for HEAD's commit: (state, evidence, run).
 
@@ -1108,9 +1134,17 @@ def gate_run(network: bool):
         runs = json.loads(out or "[]")
     except json.JSONDecodeError:
         return memo(UNKNOWN, "could not parse `gh run list`")
+    same_tree = ""
     if not runs:
-        return memo(UNKNOWN, f"no release-gate run for {short} — `make release-gate` (the branch must be pushed)")
+        # The release gate runs on the release BRANCH, before its one PR; the squash merge makes
+        # a new commit of the SAME tree, which is what the tag names.  A run on a commit whose
+        # tree is HEAD's is a run on what ships — the files are the files, the build the build.
+        runs, same_tree = same_tree_gate_runs(sha)
+    if not runs:
+        return memo(UNKNOWN, f"no release-gate run for {short} or its tree — `make release-gate` on the release branch (pushed)")
     run = max(runs, key=lambda r: r.get("createdAt", ""))
+    if same_tree:
+        run = {**run, "url": f"{run.get('url')} (on {same_tree[:12]}, the same tree as {short})"}
     when = run.get("createdAt", "")[:16].replace("T", " ")
     if run.get("status") != "completed":
         return memo(UNKNOWN, f"run for {short} still {run.get('status')} (started {when}) — {run.get('url')}", run)
@@ -1615,6 +1649,34 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
         ),
     ]
 
+    # The ONE release PR, opened last: a branch carries every change the release needs, the
+    # rows above are finished on it, the release gate runs green on it, then this PR — whose
+    # squash merge is the same tree, so the gate's run still counts (`same_tree_gate_runs`).  A
+    # commit after it is another PR and another gate.  Resolved after the rows above it, so it
+    # reads their states.
+    pr_prereqs = ("A-changelog", "M-changelog-read", "A-pdf", "A-pdf-version", "A-pdf-content",
+                  "A-reference-review", "A-skills-review", "A-docs-lint", "M-doc-validation",
+                  "M-ndb", "M-wasm", "A-ci", "A-release-gate")
+
+    def check_release_pr_ready():
+        rows = {i.id: i for i in before + nightly_items}
+        open_rows = [r for r in pr_prereqs
+                     if r in rows and rows[r].applies and rows[r].state not in (OK, DONE, NA)]
+        if open_rows:
+            return FAIL, ("finish these on the release branch first: " + ", ".join(open_rows))
+        return OK, "the branch carries the release and its gate is green — open the release PR, once"
+
+    release_pr = [
+        Item(
+            "A-release-pr",
+            "Open THE release PR once — the branch is complete and its release gate green",
+            "gh pr create … && gh pr merge --auto --squash   # ONCE; after it only the tag and "
+            "the release window, which change no file",
+            check=check_release_pr_ready,
+            cadence="pre",
+        )
+    ]
+
     # Every nightly, run deliberately against THIS commit in one CI run with one verdict
     # (`release-gate.yml`).  This used to be six manual items, one per nightly, each
     # dispatched by hand and ticked by a person; keyed by HEAD's commit it is now
@@ -1756,7 +1818,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
     ]
 
     return [
-        ("Before the tag", before + nightly_items),
+        ("Before the tag", before + nightly_items + release_pr),
         ("After pushing the tag — CI's own answers", after_tag),
         ("Before clicking Publish", before_publish),
         ("After publishing", after_publish),

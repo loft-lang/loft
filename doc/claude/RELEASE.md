@@ -296,8 +296,13 @@ commit**, not a historical result — and it is one command:
 
 ```
 make release-gate          # every nightly, THIS commit, one CI run, one verdict
-make release-checklist     # `A-release-gate` reads the newest run for HEAD's sha
+make release-checklist     # `A-release-gate` reads the newest run for HEAD's sha, or for a
+                           #   commit with HEAD's TREE (the release branch the PR squashed)
 ```
+
+The gate runs on the release BRANCH, once it carries everything the release needs, and the one
+release PR opens after it is green (`A-release-pr`): the squash merge is a new commit of the
+same tree, so the run still counts for the tag.
 
 `release-gate.yml` calls the nightlies as reusable workflows — the full
 `ci.yml` matrix incl. Windows with the stdlib round-trip and the differential
