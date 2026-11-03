@@ -174,6 +174,7 @@ pub(super) fn run_scan_phase(
         lift_join_witness: HashMap::default(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        first_set: u16::MAX,
         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
         arm_projection_temps: arm_projection_temps_in(orig_code, orig_vars, data),
         null_led: null_led_in(orig_code, data),

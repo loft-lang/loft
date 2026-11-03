@@ -916,9 +916,17 @@ impl Scopes<'_> {
                 let whole_into_view = (self.whole_value_hoists.contains(x)
                     || !function.is_compiler_generated(*x))
                     && !function.tp(bound).depend().is_empty();
+                // A binding's FIRST assignment is the exception: no other Set has given it a
+                // store yet, and the deps strip makes it an owner from here on, so a plain adopt
+                // of a variable's store would let its next rebind release that variable's — the
+                // caller's record for a parameter arm (`@FR-B-Copy`, loft#2398).  The lift copies
+                // the arm as the bare `at = a` copies it, and `lift_join_arm_tails` keeps the
+                // binding's own fact for a multi-assigned binding.  Not for a WITNESSED binding
+                // (`@FR-O-Witness`): its witness already names the store it holds on each path.
                 if self.multi_assigned.contains(&bound)
                     && !self.views_to_materialise.contains_key(&bound)
                     && !whole_into_view
+                    && (self.first_set != bound || self.owner_witness.contains_key(&bound))
                 {
                     return None;
                 }

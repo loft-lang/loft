@@ -5034,8 +5034,7 @@ fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
   if tv >= 0 {
     picked = if p is TyOptional { el_types::base(a) } else { a };
     // `resolve_type_var`: the argument's borrows are the caller's, not part of the shape — a
-    // record, a vector, an enum and a text bind without them.  A new name, not a reassignment
-    // of `picked`: that frees the caller's type (loft#2398).
+    // record, a vector, an enum and a text bind without them.
     at = if picked is TyReference || picked is TyVector || picked is TyEnum || picked is TyText { el_types::with_deps(picked, []) } else { picked };
     for v in b.vars {
       if v == tv {

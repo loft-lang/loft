@@ -1597,9 +1597,11 @@ impl Scopes<'_> {
         } else {
             false
         };
-        let value: &Value = if (Self::is_value_branch(value) || local_tail)
-            && self.arm_tails_need_binding(value, v, data, function)
-        {
+        // The arm bind reads whether this is the binding's first assignment (`first_set`).
+        self.first_set = if was_in_scope { u16::MAX } else { v };
+        let lift = (Self::is_value_branch(value) || local_tail)
+            && self.arm_tails_need_binding(value, v, data, function);
+        let value: &Value = if lift {
             let mut rw = value.clone();
             // The temps live where the BINDING lives: a binding declared outside a loop and
             // re-Set inside it still names the arm's store after the loop, so a temp scoped
@@ -1630,6 +1632,7 @@ impl Scopes<'_> {
         } else {
             value
         };
+        self.first_set = u16::MAX;
         // A branch JOIN hands over each arm's construction the way a single construction does
         // above: the binding adopts the one that ran, and the other arms' work-refs hold
         // nothing, so every one is disarmed (`construction_work_refs`).  Decided HERE, after the
