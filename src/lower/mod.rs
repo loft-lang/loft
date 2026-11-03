@@ -16,7 +16,6 @@ pub mod decode_view;
 pub mod destination;
 pub mod file_hold;
 pub mod hand_over;
-pub mod keyed_entry;
 pub mod keyed_place;
 pub mod plan;
 pub mod stream_walk;

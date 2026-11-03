@@ -1652,6 +1652,8 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "t_4text_byte_at" => Some("loft_byte_at"),
         "n_hash_sorted" => Some("loft_hash_sorted"),
         "n_hash_unsorted" => Some("loft_hash_unsorted"),
+        "n_keyed_entry_ints" => Some("loft_keyed_entry_ints"),
+        "n_keyed_entry_text" => Some("loft_keyed_entry_text"),
         "n_radix_sorted" => Some("loft_radix_sorted"),
         "n_spatial_range" => Some("loft_spatial_range"),
         "n_trie_prefix" => Some("loft_trie_prefix"),
@@ -1728,6 +1730,8 @@ pub(crate) fn plain_native(name: &str) -> Option<&'static str> {
     const OWN: &[&str] = &[
         "n_hash_sorted",
         "n_hash_unsorted",
+        "n_keyed_entry_ints",
+        "n_keyed_entry_text",
         "n_radix_sorted",
         "n_spatial_range",
         "n_trie_prefix",

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator
+// @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! `@FR-R-KeyedEntry` — `h += [T{k: key, …}]` written into the entry the key names.
 //!
@@ -351,20 +351,20 @@ pub fn site<'a>(
         return None;
     }
     // The buffer is the literal's alone: outside these statements nothing reads it, and
-    // nothing binds it but a null (a `Set` names its variable by number, not as a `Var`).
+    // nothing binds it but a null (a `Set` names its variable by number, not as a `Var`) —
+    // the mint is its one binding to a value.  Counted, not compared by node, so the answer
+    // is the same on a copy of the body (the IR pass rewrites one).
     let inside: usize = ops[at..=last].iter().map(|o| mentions(o, buf)).sum();
-    let mint_node = std::ptr::from_ref(mint.unspan());
-    let mut foreign_bind = false;
+    let mut binds = 0usize;
     data.def(d_nr).code().walk(&mut |n| {
         if let Value::Set(x, v) = n
             && *x == buf
             && !matches!(v.unspan(), Value::Null)
-            && !std::ptr::eq(v.unspan(), mint_node)
         {
-            foreign_bind = true;
+            binds += 1;
         }
     });
-    if foreign_bind || mentions(data.def(d_nr).code(), buf) != inside {
+    if binds != 1 || mentions(data.def(d_nr).code(), buf) != inside {
         return None;
     }
     Some(Site {
@@ -376,4 +376,234 @@ pub fn site<'a>(
         writes,
         last,
     })
+}
+
+/// A setter's constant operand (an offset, a bias) or a constant value: nothing to stage.
+fn constant(v: &Value) -> bool {
+    matches!(
+        v.unspan(),
+        Value::Int(_) | Value::Long(_) | Value::Float(_) | Value::Single(_) | Value::Boolean(_)
+    )
+}
+
+/// The IR form is applied when this is set (`LOFT_IR_KEYED_ENTRY=1`), while it is compared with
+/// the writers' clauses.
+fn ir_enabled() -> bool {
+    crate::env_once!(std::env::var("LOFT_IR_KEYED_ENTRY").is_ok_and(|v| v != "0"))
+}
+
+fn trace() -> bool {
+    crate::env_once!(std::env::var("LOFT_TRACE_KEYED_ENTRY").is_ok_and(|v| v != "0"))
+}
+
+/// The functions the IR form calls.
+struct Calls {
+    ints: u32,
+    text: u32,
+}
+
+/// The temporaries one function's rewrite asks for, numbered from `next` in the order asked.
+struct Temps {
+    next: u16,
+    types: Vec<(crate::data::Type, u16)>,
+}
+
+impl Temps {
+    fn add(&mut self, tp: crate::data::Type, scope: u16) -> u16 {
+        let v = self.next;
+        self.next += 1;
+        self.types.push((tp, scope));
+        v
+    }
+}
+
+/// `@FR-R-KeyedEntry` in the IR phase, for every backend: each admitted `c += [T{k: key, …}]`
+/// (`site`) becomes its values staged in program order, `B = keyed_entry_ints(c, tp, fld, key…)`
+/// (or `keyed_entry_text`) — the entry already under the key, or a fresh one with the key
+/// written and filed — and the other fields written into `B`.  A repeated key overwrites its
+/// entry where the plain form claimed a record, filed it over the entry and released that one.
+/// Answers how many inserts it rewrote.
+pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
+    if !enabled() || !ir_enabled() {
+        return 0;
+    }
+    let calls = Calls {
+        ints: data.def_nr("n_keyed_entry_ints"),
+        text: data.def_nr("n_keyed_entry_text"),
+    };
+    let new_record = data.def_nr("OpNewRecord");
+    if [calls.ints, calls.text, new_record].contains(&u32::MAX) {
+        if trace() {
+            eprintln!("[keyed-entry] off: a function the IR form is written with is not defined");
+        }
+        return 0;
+    }
+    let mut total = 0usize;
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if def.def_type != crate::data::DefType::Function
+            || matches!(def.code(), Value::Null)
+            || def.is_operator()
+            || !def.rust().is_empty()
+            || !def.native().is_empty()
+            // A generator's body is a state machine the writers build per yield.
+            || matches!(def.returned().base(), crate::data::Type::Iterator(..))
+        {
+            continue;
+        }
+        let mut mints = false;
+        def.code().walk(&mut |n| {
+            if matches!(n, Value::Call(c, _) if *c == new_record) {
+                mints = true;
+            }
+        });
+        if !mints {
+            continue;
+        }
+        let _census = crate::rewrite_census::InBody::enter("ir", def.name());
+        let mut code = def.code().clone();
+        let mut temps = Temps {
+            next: def.variables().count(),
+            types: Vec::new(),
+        };
+        let n = rewrite(&mut code, data, stores, d, &calls, &mut temps);
+        if n == 0 {
+            continue;
+        }
+        let vars = &mut data.definitions[d as usize].variables;
+        for (tp, scope) in &temps.types {
+            vars.add_unique("ke", tp, *scope);
+        }
+        data.definitions[d as usize].code = code;
+        data.definitions[d as usize].variables.reset_intervals();
+        crate::scopes::compute_function_intervals(data, d);
+        crate::scopes::assign_function_slots(data, d);
+        if trace() {
+            eprintln!(
+                "[keyed-entry] fn={} {n} insert(s) written into their entry",
+                data.def(d).name()
+            );
+        }
+        crate::rewrite_census::fired("R-KeyedEntry", n);
+        total += n;
+    }
+    total
+}
+
+/// Rewrite every admitted insert in the blocks under `v`.
+fn rewrite(
+    v: &mut Value,
+    data: &Data,
+    stores: &Stores,
+    d: u32,
+    calls: &Calls,
+    temps: &mut Temps,
+) -> usize {
+    let mut n = 0;
+    if let Value::Block(bl) | Value::Loop(bl) = v.unspan_mut() {
+        let scope = bl.scope;
+        let mut i = 0;
+        while i < bl.operators.len() {
+            if let Some((last, stmts)) =
+                replacement(&bl.operators, i, data, stores, d, calls, scope, temps)
+            {
+                let len = stmts.len();
+                bl.operators.splice(i..=last, stmts);
+                n += 1;
+                i += len;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    v.for_each_child_mut(&mut |c| n += rewrite(c, data, stores, d, calls, temps));
+    n
+}
+
+/// The statements that replace the insert opened by `ops[at]`, and the index of its last
+/// statement, when `site` admits it.
+#[allow(clippy::too_many_arguments)]
+fn replacement(
+    ops: &[Value],
+    at: usize,
+    data: &Data,
+    stores: &Stores,
+    d: u32,
+    calls: &Calls,
+    scope: u16,
+    temps: &mut Temps,
+) -> Option<(usize, Vec<Value>)> {
+    let ke = site(ops, at, data, stores, d)?;
+    let Value::Set(buf, _) = ops[at].unspan() else {
+        return None;
+    };
+    let buf = *buf;
+    // A text key is read where the entry is asked for, after every staged value: a variable
+    // or a literal no later value can rebind.
+    if ke.text_key {
+        let key = ke.keys[0].unspan();
+        let after: &[&Value] = ke
+            .writes
+            .iter()
+            .position(|w| matches!(w.unspan(), Value::Call(_, a) if a.get(2).is_some_and(|x| std::ptr::eq(x, ke.keys[0]))))
+            .map_or(&[], |p| &ke.writes[p + 1..]);
+        let ok = match key {
+            Value::Text(_) => true,
+            Value::Var(x) => !after.iter().any(|w| rebinds(w, &[*x])),
+            _ => false,
+        };
+        if !ok {
+            return None;
+        }
+    }
+    let mut stmts: Vec<Value> = ops[at..=ke.last]
+        .iter()
+        .filter(|o| matches!(o.unspan(), Value::Line(_)))
+        .cloned()
+        .collect();
+    let mut parts: Vec<Option<Value>> = vec![None; ke.keys.len()];
+    let mut writes: Vec<Value> = Vec::new();
+    for op in &ke.writes {
+        let Value::Call(setter, args) = op.unspan() else {
+            return None;
+        };
+        let part = args
+            .get(2)
+            .and_then(|a| ke.keys.iter().position(|k| std::ptr::eq(a, *k)));
+        let val_tp = data.def(*setter).attributes().last()?.typedef.clone();
+        let mut staged = vec![Value::Var(buf)];
+        for (i, a) in args.iter().enumerate().skip(1) {
+            let keep = constant(a) || (ke.text_key && part.is_some() && i == 2);
+            if keep {
+                staged.push(a.clone());
+            } else {
+                let t = temps.add(val_tp.clone(), scope);
+                stmts.push(Value::Set(t, Box::new(a.clone())));
+                staged.push(Value::Var(t));
+            }
+        }
+        match part {
+            Some(p) => parts[p] = staged.get(2).cloned(),
+            None => writes.push(Value::Call(*setter, staged)),
+        }
+    }
+    let mut args = vec![
+        ke.coll.clone(),
+        Value::Int(i32::from(ke.parent_tp)),
+        Value::Int(i32::from(ke.field)),
+    ];
+    let keys: Vec<Value> = parts.into_iter().collect::<Option<_>>()?;
+    let call = if ke.text_key {
+        args.extend(keys);
+        calls.text
+    } else {
+        args.extend(keys);
+        while args.len() < 7 {
+            args.push(Value::Int(0));
+        }
+        calls.ints
+    };
+    stmts.push(Value::Set(buf, Box::new(Value::Call(call, args))));
+    stmts.extend(writes);
+    Some((ke.last, stmts))
 }

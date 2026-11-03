@@ -264,6 +264,37 @@ impl FnWriter<'_> {
                     K::Ref,
                 )))
             }
+            // `@FR-R-KeyedEntry` — the IR's find-or-insert (`opt::keyed_entry`): the entry under
+            // the key in the hash `data`'s field names, found or filed.
+            ("n_keyed_entry_ints" | "n_keyed_entry_text", [data, ptp, fld, keys @ ..]) => {
+                let (v, elem, kind) = self.record_collection(data, ptp, fld, ind)?;
+                let Coll::Keyed(tp) = kind else {
+                    return Err("a keyed entry outside a hash".into());
+                };
+                self.cx.copy_type(elem)?;
+                let ct = self.temp(CType::Ref);
+                self.line(ind, &format!("{ct} = {v};"));
+                let (kd, nk) = self.cx.keys_of(tp);
+                let text = name == "n_keyed_entry_text";
+                let parts = usize::try_from(nk).unwrap_or(0).clamp(1, keys.len());
+                let mut codes = Vec::with_capacity(parts);
+                for k in &keys[..parts] {
+                    let e = self.expr(k, ind)?;
+                    codes.push(if text { as_view(e)? } else { as_int(e)? });
+                }
+                let code = if text {
+                    format!(
+                        "loft_keyed_entry_text(loft_types, {elem}, {ct}, {kd}, {nk}, {})",
+                        codes[0]
+                    )
+                } else {
+                    format!(
+                        "loft_keyed_entry_ints(loft_types, {elem}, {ct}, {kd}, {nk}, (int64_t[]){{ {} }})",
+                        codes.join(", ")
+                    )
+                };
+                Ok(Some(E::new(code, K::Ref)))
+            }
             ("n_hash_unsorted", [h, _]) => {
                 let h = self.expr(h, ind)?;
                 Ok(Some(E::new(
@@ -1297,7 +1328,7 @@ impl FnWriter<'_> {
         // entry under the key overwritten in place of removed and claimed again, its key parts
         // the subscript's, so the literal's key-field writes are staged and dropped.
         let entry_keys = if kind == Keyed::Hash {
-            crate::lower::keyed_entry::subscript_keys(self.cx.stores, site.tp, &site.setters(data))
+            crate::opt::keyed_entry::subscript_keys(self.cx.stores, site.tp, &site.setters(data))
                 .filter(|k| k.len() == site.keys.len())
         } else {
             None
@@ -1420,7 +1451,7 @@ impl FnWriter<'_> {
     }
 
     /// `@FR-R-KeyedEntry` (native's `Output::output_keyed_entry`): `c += [T{…}]` over a hash the
-    /// rule admits (`lower::keyed_entry::site`) — the literal's values staged in program order,
+    /// rule admits (`opt::keyed_entry::site`) — the literal's values staged in program order,
     /// then ONE probe for its key that answers the entry already under it or a fresh one with
     /// the key written and filed (`loft_keyed_entry_ints` / `_text`), then the other fields
     /// written into it.  The index of the site's last statement, or `None` where `ops[at]`
@@ -1432,12 +1463,11 @@ impl FnWriter<'_> {
         at: usize,
         ind: usize,
     ) -> Result<Option<usize>, String> {
-        if !crate::lower::keyed_entry::enabled() || self.gen_elem.is_some() {
+        if !crate::opt::keyed_entry::enabled() || self.gen_elem.is_some() {
             return Ok(None);
         }
         let data = self.cx.data;
-        let Some(ke) = crate::lower::keyed_entry::site(ops, at, data, self.cx.stores, self.d)
-        else {
+        let Some(ke) = crate::opt::keyed_entry::site(ops, at, data, self.cx.stores, self.d) else {
             return Ok(None);
         };
         let Value::Set(_, mint) = ops[at].unspan() else {

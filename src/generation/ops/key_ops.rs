@@ -232,6 +232,72 @@ impl OpEmitter for OpReplaceKeyedEmitter {
     }
 }
 
+/// `@FR-R-KeyedEntry` — the IR's find-or-insert (`opt::keyed_entry`):
+/// `n_keyed_entry_ints(data, parent_tp, fld, k1, k2, k3, k4)` and
+/// `n_keyed_entry_text(data, parent_tp, fld, key)`.  One integer part takes the inline walk
+/// (`Stores::keyed_entry_long_at`, the field's offset and element type resolved here, where
+/// they are constants); two to four take `keyed_entry_ints_at`; a text key `keyed_entry_text`.
+pub struct KeyedEntryEmitter {
+    pub text: bool,
+}
+
+impl OpEmitter for KeyedEntryEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let [data, Value::Int(ptp), Value::Int(fld), keys @ ..] = args else {
+            return Err(io::Error::other(
+                "a keyed entry without its constant type and field",
+            ));
+        };
+        let (Ok(ptp), Ok(fld)) = (u16::try_from(*ptp), u16::try_from(*fld)) else {
+            return Err(io::Error::other(
+                "a keyed entry's type or field out of range",
+            ));
+        };
+        let coll = ctx.output.expr_string(data)?;
+        let tp_lit = ctx.output.type_lit_u16(ptp);
+        let (off, etp) = ctx.output.stores.keyed_field_consts(ptp, fld);
+        let key_types: Vec<i8> = ctx.output.stores.types[etp as usize]
+            .keys
+            .iter()
+            .map(|k| k.type_nr)
+            .collect();
+        let n = key_types.len().clamp(1, keys.len());
+        let mut parts = Vec::with_capacity(n);
+        for k in &keys[..n] {
+            parts.push(ctx.output.expr_string(k)?);
+        }
+        write!(ctx.w, "{{ let __ked: DbRef = {coll}; ")?;
+        if self.text {
+            write!(
+                ctx.w,
+                "let __kek = {}; stores.keyed_entry_text(&__ked, {tp_lit}, {fld}_u16, &*__kek) }}",
+                parts[0]
+            )?;
+        } else if n == 1 {
+            // An 8-byte integer key's position, for the inline walk; a narrow key takes none.
+            let kp = ctx.output.stores.types[etp as usize]
+                .keys
+                .first()
+                .filter(|k| matches!(k.type_nr.unsigned_abs(), 1 | 2))
+                .map_or(u32::MAX, |k| u32::from(k.position));
+            write!(
+                ctx.w,
+                "let __kek = ({}) as i64; stores.keyed_entry_long_at(&__ked, {tp_lit}, {fld}_u16, {off}_u32, {}, {kp}_u32, __kek) }}",
+                parts[0],
+                ctx.output.type_lit_u16(etp)
+            )?;
+        } else {
+            let list: Vec<String> = parts.iter().map(|p| format!("({p}) as i64")).collect();
+            write!(
+                ctx.w,
+                "let __kek = [{}]; stores.keyed_entry_ints_at(&__ked, {tp_lit}, {fld}_u16, &__kek) }}",
+                list.join(", ")
+            )?;
+        }
+        Ok(())
+    }
+}
+
 /// `OpSetKeyed` emitter — @P305 keyed insert-or-replace (`coll[key] = value`).
 ///
 /// `args`: `[coll, value, tp, count, key1, …]` →

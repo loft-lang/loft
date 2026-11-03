@@ -20,6 +20,7 @@ pub mod frame_calls;
 pub mod header;
 pub mod hoist;
 pub mod iteration;
+pub mod keyed_entry;
 pub mod laps;
 pub mod lazy_split;
 pub mod ledger_sites;

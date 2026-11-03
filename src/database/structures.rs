@@ -641,6 +641,27 @@ impl Stores {
         self.keyed_entry_long(data, parent_tp, field, key)
     }
 
+    /// The entry `keyed_entry_ints(data, parent_tp, field, k1, k2, k3, k4)` answers
+    /// (`@FR-R-KeyedEntry`, the interpreter's call): [`Self::keyed_entry_long`] for a one-part
+    /// key, [`Self::keyed_entry_ints_at`] on the parts the hash's key has for a compound one.
+    pub fn keyed_entry(
+        &mut self,
+        data: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        key: &[i64; 4],
+    ) -> DbRef {
+        let n = self.types[self.sub_record_type(parent_tp, field) as usize]
+            .keys
+            .len()
+            .clamp(1, 4);
+        if n == 1 {
+            self.keyed_entry_long(data, parent_tp, field, key[0])
+        } else {
+            self.keyed_entry_ints_at(data, parent_tp, field, &key[..n])
+        }
+    }
+
     /// [`Self::keyed_entry_long`] for a hash keyed by one to four integer parts
     /// (`@FR-R-KeyedEntry`'s compound clause): [`Self::keyed_entry_ints`] on the hash the field
     /// holds.

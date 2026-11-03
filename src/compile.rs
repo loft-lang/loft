@@ -106,6 +106,8 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // variable is one fill of its tail, on both backends.
     crate::opt::fill_loop::rewrite_program(data, database);
     laps.lap("fill_loop");
+    crate::opt::keyed_entry::rewrite_program(data, database);
+    laps.lap("keyed_entry");
     // `@FR-R-TextLen` — a loop counts a text's length once, until the text is written: the
     // last IR pass, so the self-tail calls are loops and no later pass reads a memo where it
     // knew `len`.
