@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+//
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-PushFill`'s fill form — a counted loop whose whole body pushes one simple invariant onto
+// a vector variable is one fill of the vector's tail: the push of the value, then the copies up to
+// the trip count.  What can go wrong is the count (an inclusive end, a computed start, an empty or
+// reversed range, a trip of one), the element width (a one-byte element copies as the vector's own
+// type), and what was in the vector before.  So the cells cover each range shape, each element
+// width, a non-empty start, the comprehension spelling, and two shapes the clause declines.
+// Values hand-computed in each cell's comment, the length AND the elements.
+//
+// The IR applies it (`opt::fill_loop`), so every backend runs the rewritten IR and none is the
+// other's oracle: the oracle is these values, and the switch is the second answer.
+//
+// @falsified-at: none — by hand on the IR clause, the trip count one short: f1 fails on the
+//   interpreter and on the C (4 elements for 5).
+//   CHANNEL: an assertion.
+// HOLDS: the hand-computed values, on both backends, the clause on and off.
+
+enum Shade { Dark, Mid, Light }
+
+struct Box { v: vector<integer>, w: integer }
+
+fn total(v: vector<integer>) -> integer {
+  s = 0;
+  for x in v { s += x; }
+  s
+}
+
+fn main() {
+  // f1: an exclusive range, an integer literal — five 7s, 35
+  a: vector<integer> = [];
+  for _ in 0..5 { a += [7]; }
+  assert(len(a) == 5 && total(a) == 35, "f1 {len(a)} {total(a)}");
+  // f2: an inclusive range — 0..=3 is four 9s
+  b: vector<integer> = [];
+  for _ in 0..=3 { b += [9]; }
+  assert(len(b) == 4 && total(b) == 36, "f2 {len(b)} {total(b)}");
+  // f3: a computed start — lo..hi with lo = 2, hi = 6 is four 1s
+  lo = 2;
+  hi = 6;
+  c: vector<integer> = [];
+  for _ in lo..hi { c += [1]; }
+  assert(len(c) == 4, "f3 {len(c)}");
+  // f4: an empty and a reversed range push nothing; a trip of one pushes one
+  e: vector<integer> = [];
+  for _ in 3..3 { e += [5]; }
+  for _ in hi..lo { e += [5]; }
+  for _ in 0..1 { e += [5]; }
+  assert(len(e) == 1 && total(e) == 5, "f4 {len(e)}");
+  // f5: a non-empty start — [1, 2] then three 4s: length 5, sum 15
+  g = [1, 2];
+  for _ in 0..3 { g += [4]; }
+  assert(len(g) == 5 && total(g) == 15 && g[1] == 2 && g[4] == 4, "f5 {len(g)} {total(g)}");
+  // f6: an invariant expression — k * 2 + 1 with k = 10 is 21, six times: 126
+  k = 10;
+  h: vector<integer> = [];
+  for _ in 0..6 { h += [k * 2 + 1]; }
+  assert(len(h) == 6 && total(h) == 126, "f6 {len(h)} {total(h)}");
+  // f7: a float (8 bytes) and a single (4 bytes) — 2.5 four times is 10.0; 1.5f three times
+  fl: vector<float> = [];
+  for _ in 0..4 { fl += [2.5]; }
+  sg: vector<single> = [];
+  for _ in 0..3 { sg += [1.5f]; }
+  assert(len(fl) == 4 && fl[3] == 2.5 && len(sg) == 3 && sg[2] == 1.5f, "f7 {len(fl)} {len(sg)}");
+  // f8: one-byte elements — booleans and an enum, copied as the vector's own type
+  bs: vector<boolean> = [];
+  for _ in 0..5 { bs += [true]; }
+  ss: vector<Shade> = [];
+  for _ in 0..3 { ss += [Light]; }
+  assert(len(bs) == 5 && bs[4] && len(ss) == 3 && ss[2] == Light, "f8 {len(bs)} {len(ss)}");
+  // f9: a record's field as the value, the record not written in the loop — 3 eights
+  bx = Box { v: [], w: 8 };
+  m: vector<integer> = [];
+  for _ in 0..3 { m += [bx.w]; }
+  assert(len(m) == 3 && total(m) == 24, "f9 {len(m)}");
+  // f10: the comprehension spelling — [for _ in 0..4 { 3 }] is four 3s
+  cm = [for _ in 0..4 { 3 }];
+  assert(len(cm) == 4 && total(cm) == 12, "f10 {len(cm)}");
+  // f11: declined — a field path (bx.v), and a value that reads the loop variable (0+1+2+3)
+  for _ in 0..2 { bx.v += [6]; }
+  dv: vector<integer> = [];
+  for i in 0..4 { dv += [i]; }
+  assert(len(bx.v) == 2 && total(bx.v) == 12 && total(dv) == 6, "f11 {len(bx.v)} {total(dv)}");
+  println("ok");
+}

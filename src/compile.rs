@@ -102,6 +102,10 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // `@FR-R-DischargeInto` — a text discharge read straight into the local it assigns.
     crate::discharge_into::rewrite_program(data);
     laps.lap("discharge_into");
+    // `@FR-R-PushFill`'s fill form — a counted loop that pushes one invariant onto a vector
+    // variable is one fill of its tail, on both backends.
+    crate::opt::fill_loop::rewrite_program(data, database);
+    laps.lap("fill_loop");
     // `@FR-R-TextLen` — a loop counts a text's length once, until the text is written: the
     // last IR pass, so the self-tail calls are loops and no later pass reads a memo where it
     // knew `len`.
