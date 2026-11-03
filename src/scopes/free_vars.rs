@@ -1311,6 +1311,12 @@ impl Scopes<'_> {
                         expr.unspan(),
                         Value::Call(_, _) | Value::CallRef(_, _) | Value::If(_, _, _)
                     )
+                    // …or such a call behind the preamble of an argument the scan LIFTED
+                    // (`Insert([__lift_1 = view(h, 0), same(__lift_1, …)])`) — the shape
+                    // `bind_return_temp` already splits.  Left out, the call ran as a dropped
+                    // statement and the return fabricated `null` (loft#2383).
+                    || matches!(expr.unspan(), Value::Insert(ops) if ops.last().is_some_and(
+                        |l| matches!(l.unspan(), Value::Call(_, _) | Value::CallRef(_, _))))
                     // …or the return type is a fn-ref, whatever the tail's shape.  This one
                     // is keyed on the TYPE and not on the node because it CANNOT be keyed on
                     // the node: a non-capturing lambda lowers to a bare `Value::Int` holding
