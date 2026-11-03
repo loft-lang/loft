@@ -372,8 +372,12 @@ static uint32_t loft_h_inline_flags(uint32_t stride, uint32_t count) {
     return stride | LOFT_H_TAGGED | LOFT_H_INLINE | (loft_ilog2(count) << LOFT_H_COUNT_SHIFT);
 }
 
-static void loft_h_zero_slots(loft_store_t *s, uint32_t claim, uint32_t count) {
-    memset(s->buf + (size_t) claim * 8 + LOFT_H_BUCKET0, 0, (size_t) count * 8);
+/* hash::zero_table: the slots and the entry area after them, every byte past the header words
+ * — an entry's stride holds bytes no field writes, and an image carries the whole record
+ * (`@C154`). */
+static void loft_h_zero_table(loft_store_t *s, uint32_t claim) {
+    memset(s->buf + (size_t) claim * 8 + LOFT_H_BUCKET0, 0,
+           (size_t) loft_rec_words(s, claim) * 8 - LOFT_H_BUCKET0);
 }
 
 static uint32_t loft_h_inline_create(loft_store_t *s, uint32_t count, uint32_t stride, uint32_t owner) {
@@ -386,7 +390,7 @@ static uint32_t loft_h_inline_create(loft_store_t *s, uint32_t count, uint32_t s
     loft_set_u32(s, claim, LOFT_AR_NEXT_FLD, 1);
     count = loft_h_inline_count(loft_rec_words(s, claim) - LOFT_H_RESERVED, stride);
     loft_set_u32(s, claim, LOFT_H_STRIDE_FLD, loft_h_inline_flags(stride, count));
-    loft_h_zero_slots(s, claim, count);
+    loft_h_zero_table(s, claim);
     return claim;
 }
 
@@ -504,7 +508,7 @@ static uint32_t loft_h_inline_rebuild(loft_ref c, uint32_t claim, uint32_t want)
     uint32_t new_count = loft_h_inline_count(loft_rec_words(s, grown) - LOFT_H_RESERVED, h.stride);
     loft_set_u32(s, grown, LOFT_H_STRIDE_FLD, loft_h_inline_flags(h.stride, new_count));
     loft_set_u32(s, grown, LOFT_AR_FREE_FLD, 0);
-    loft_h_zero_slots(s, grown, new_count);
+    loft_h_zero_table(s, grown);
     uint32_t mask = new_count - 1, old0 = loft_h_ent0(h.count), new0 = loft_h_ent0(new_count);
     for (uint32_t i = 0; i < h.count; i++) {
         uint32_t seq = loft_u32(s, claim, LOFT_H_BUCKET0 + i * 8);
