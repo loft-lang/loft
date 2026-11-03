@@ -1728,8 +1728,12 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   if !e.first_pass {
     l = defend_faults(e, l);
   }
-  // A function body that ends in a jump is typed as its declared result.
+  // A function body that ends in a jump is typed as its declared result, and so is a
+  // generator's: what it answers is the iterator its `yield`s feed, not its last statement.
   if context == "return from block" && t is TyNever && !(result is TyVoid) && !el_types::is_unknown(result) {
+    t = result;
+  }
+  if context == "return from block" && result is TyIterator {
     t = result;
   }
   // A function body's tail is a store into its result (`convert_store`): converted to it.
@@ -1869,6 +1873,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       }
     },
     SVecLit { items: _ } => vector_value(e, vars, n).x,
+    SYield { from, e: ye } => yield_expr(e, vars, from, ye),
     SComprehension { at: _ } => comprehension_value(e, vars, n),
     SAs { at, e: ae, tp: at_tp, checked } => cast_expr(e, vars, ae, at_tp),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
@@ -2393,6 +2398,13 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     return slice_bind(e, vars, v, x);
   }
   read_through_length = vars.len_read;
+  // A generator's handle is bound as it is, the local typed as its iterator.
+  if x.tp is TyIterator && el_ir::unspan(x.code) is NdCall {
+    if !el_vars::change_var_type(e, vars, v, x.tp) {
+      el::refuse(e, "a local that changes type");
+    }
+    return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+  }
   if x.tp is TyIterator {
     sb = slice_block_value(e, vars, x);
     if sb == null {
@@ -5128,7 +5140,8 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     rt = el_types::with_deps(rb, ds);
     return ex(ir::NdCall { def_nr: d, args: list }, if ret is TyOptional { ir::TyOptional { inner: rt } } else { rt });
   }
-  if !scalar(el_types::base(ret)) {
+  // A generator answers its coroutine's handle, typed as its iterator.
+  if !scalar(el_types::base(ret)) && !(ret is TyIterator) {
     el::refuse(e, "a call returning a heap value: {type_kind(el_types::base(ret))}");
     return null;
   }
@@ -7152,6 +7165,9 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   if keyed_kind(x.tp) && !(x.tp is TyOptional) {
     return keyed_for(e, vars, src_id, id, x, body!, filter);
   }
+  if x.tp is TyIterator && (el_ir::unspan(x.code) is NdCall || el_ir::unspan(x.code) is NdVar) {
+    return generator_for(e, vars, src_id, id, x, body!, filter);
+  }
   if x.tp is TyText {
     return text_for(e, vars, src_id, id, x, body!, filter);
   }
@@ -7262,6 +7278,46 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid)
 }
 
+// `parse_for` over a generator (`Type::Iterator` of a call): the coroutine held in a `___gen_N`,
+// each turn its next value (`OpCoroutineNext`, the element's size), the loop left once it is
+// exhausted (`OpCoroutineExhausted`).
+// A handle already in a local is used in place (a second owner of one coroutine's store would
+// free it under the local): the block's setup is then `null`.
+fn generator_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body: integer, filter: integer?) -> Ex {
+  step = match x.tp { TyIterator { step: st } => st, _ => ir::TyVoid };
+  held = match el_ir::unspan(x.code) { NdVar { n } => n, _ => -1 };
+  g = if held >= 0 { held } else { el_vars::create_unique(vars, "__gen", el_types::without_deps(x.tp)) };
+  lv = loop_var(vars, src_id, id, step);
+  vars.active_loops += [lv];
+  vars.active_values += [x.code];
+  fc = loop_filter(e, vars, filter);
+  b = parse_block(e, vars, body, "for", ir::TyVoid);
+  vars.active_loops = vars.active_loops[..-1];
+  vars.active_values = vars.active_values[..-1];
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  size = elem_size(step);
+  if size < 0 {
+    el::refuse(e, "a `for` over a generator of this element type: {type_kind(step)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  gv = ir::NdVar { n: g };
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  // `coroutine_layout::next_operands`: the size, its channel tag above it (float 3, single 4).
+  tag = if step is TyFloat { 3 } else if step is TySingle { 4 } else { 0 };
+  steps: vector<ir::Node> = [
+    el_ir::v_set(lv, el_ir::cl(e, "OpCoroutineNext", [gv, ir::NdInt { n: tag * 256 + size }])),
+    el_ir::v_if(el_ir::cl(e, "OpCoroutineExhausted", [gv]), brk, ir::NdNull)
+  ];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  setup = if held >= 0 { ir::NdNull } else { el_ir::v_set(g, x.code) };
+  ex(el_ir::v_block([setup, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
 // The destructured members' binds (`Set(name_i, loop_var._i)`), each read out of the loop's
 // record at its offset.
 fn destructure_head(e: el::El, lv: integer, members: vector<ir::TypeT>, bound: vector<integer>) -> vector<ir::Node> {
@@ -7315,6 +7371,31 @@ fn vector_past_end(e: el::El, vec: integer, idx: integer) -> ir::Node {
 // `_comp_N` (the second pass) and pushed (`fuse_scalar_append`), the local given its store first
 // (`insert_new`).  A range walks as a range `for` does.  A literal source, a reversed or sliced
 // walk, a constant fill or unroll, and an element that is not a plain scalar are refused by name.
+// `yield v` in a generator (`@FR-G-Yield`): the value stored into the iterator's element
+// type, as a `return` is into the return type.  `yield from`, and a yield outside a function
+// answering an iterator, are refused by name.
+fn yield_expr(e: el::El, vars: el_vars::Vars, from: boolean, ye: integer?) -> Ex {
+  if from || ye == null {
+    el::refuse(e, "a `yield from`");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  step = match el::def(e, e.context).returned[0] ?? ir::TyVoid { TyIterator { step: st } => st, _ => ir::TyVoid };
+  x = expression(e, vars, ye!);
+  if step is TyVoid {
+    el::refuse(e, "a `yield` outside a generator");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if e.first_pass {
+    return ex(ir::NdYield { inner: x.code }, ir::TyVoid);
+  }
+  v = stored(e, vars, x, step);
+  if v == null {
+    refuse_known(e, x.tp, "a yielded value its element type converts: {type_kind(x.tp)} to {type_kind(step)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(ir::NdYield { inner: v! }, ir::TyVoid)
+}
+
 // `parse_vector_for` in value position: the comprehension built into a `_vec_N` of its own, the
 // build a "Vector comprehension" block answering it — the walk's start grouped as one insert,
 // as Rust's value form keeps it.

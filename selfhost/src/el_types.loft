@@ -292,6 +292,18 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         }
         return if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
       }
+      // `sub_type`'s iterator arm: a generator's `iterator<T>`, carried for a plain scalar `T`.
+      if name == "iterator" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+        step = parse_type(e, args[0]);
+        if step == null {
+          return null;
+        }
+        if !plain_step(step!) {
+          el::refuse(e, "an iterator of an element other than a plain scalar");
+          return null;
+        }
+        return ir::TyIterator { step: step!, inner: ir::TyNull };
+      }
       if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;
@@ -419,6 +431,18 @@ pub fn tuple_def(e: el::El, elems: vector<ir::TypeT>, pos: ir::Position) -> inte
 pub fn tuple_def_of(e: el::El, elems: vector<ir::TypeT>) -> integer {
   sp = tuple_spelling(elems, ",");
   if sp == "" { -1 } else { el::def_nr(e, "__tuple<{sp}>") }
+}
+
+// An iterator element this port carries: a plain scalar (no narrow width).
+fn plain_step(t: ir::TypeT) -> boolean {
+  match t {
+    TyInteger { spec } => narrow_width(spec) == 0 && spec.forced_size == 0,
+    TyFloat => true,
+    TySingle => true,
+    TyBoolean => true,
+    TyCharacter => true,
+    _ => false
+  }
 }
 
 // The `)` closing the `(` at token `open`.
