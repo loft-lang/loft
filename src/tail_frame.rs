@@ -215,9 +215,20 @@ fn part_of_params(arg: &Value, params: &[u16], code: &Value, data: &Data, depth:
         Value::Var(q) => depth < 4 && binds_a_part(*q, params, code, data, depth + 1),
         Value::Call(op, items) if !items.is_empty() => {
             let name = data.def(*op).name();
-            (crate::use_analysis::is_projection_op(data, *op) || name == "OpGetDbRef")
+            // An element read through its nullable spelling (`v[i]!`, `v[i] ?? …`) is the same
+            // element, and a stored reference read the record it names.
+            (crate::use_analysis::is_projection_op(data, *op)
+                || name == "OpGetDbRef"
+                || name == "OpGetVectorNullable")
                 && part_of_params(&items[0], params, code, data, depth)
         }
+        // The non-null unwrap of a part (`p.items[i]!`, `p.next ?? return …`): the `ncr` block
+        // answers its tail — the local its test bound to the value, or the value itself — and
+        // its exit runs before the jump binds any parameter, so the block is the part it holds.
+        Value::Block(bl) if bl.name == "ncr" => bl
+            .operators
+            .last()
+            .is_some_and(|tail| part_of_params(tail, params, code, data, depth)),
         Value::If(_, a, b) => {
             let sentinel_a = is_null_ref_sentinel(a, data);
             let sentinel_b = is_null_ref_sentinel(b, data);

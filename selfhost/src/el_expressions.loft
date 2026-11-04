@@ -2358,8 +2358,8 @@ fn leftmost(e: el::El, n: integer) -> integer {
   match e.p.nodes[n] {
     SBin { l } => leftmost(e, l),
     SMember { e: re } => if re == null { n } else { leftmost(e, re!) },
-    SIndex { e: ie } => leftmost(e, ie),
-    SPostfix { e: pe } => leftmost(e, pe),
+    SIndex { e: ie } => if ie == null { n } else { leftmost(e, ie!) },
+    SPostfix { e: pe } => if pe == null { n } else { leftmost(e, pe!) },
     SParen { e: pe } => if pe == null { n } else { leftmost(e, pe!) },
     _ => n
   }
@@ -3391,7 +3391,7 @@ fn alias_reads(e: el::El, vars: el_vars::Vars, rec: integer, inner: ir::TypeT, i
   goals = [ir::TyVector { inner: inner, dep: [] }, inner];
   held: vector<integer> = [];
   for a in aliases {
-    if !vars.inline_refs.contains(a) && type_may_hold(e, el_vars::tp(vars, a), goals) {
+    if !vars.inline_refs.contains(a) && type_may_hold(e, el_vars::tp(vars, a), goals, []) {
       held += [a];
     }
   }
@@ -3464,52 +3464,52 @@ fn viewed_by(vars: el_vars::Vars, v: integer) -> vector<integer> {
   out
 }
 
-// `type_may_hold`: a value of type `from` can contain one of `goals` — by shape, through a
-// vector's element, a tuple's members and a record's (or a struct enum's variants') fields.
-fn type_may_hold(e: el::El, from: ir::TypeT, goals: vector<ir::TypeT>) -> boolean {
-  seen: vector<integer> = [];
-  work = [from];
-  while len(work) > 0 {
-    t = work[-1] ?? ir::TyVoid;
-    work = work[..-1];
-    match t {
-      TyRefVar { inner } => { work += [inner]; continue; },
-      TyRewritten { inner } => { work += [inner]; continue; },
-      TyOptional { inner } => { work += [inner]; continue; },
-      _ => {}
+// `type_may_hold`: a value of type `t` can contain one of `goals` — by shape, through a vector's
+// element, a tuple's members and a record's (or a struct enum's variants') fields, each record
+// met once (`seen`).
+fn type_may_hold(e: el::El, t: ir::TypeT, goals: vector<ir::TypeT>, seen: vector<integer>) -> boolean {
+  match t {
+    TyRefVar { inner } => return type_may_hold(e, inner, goals, seen),
+    TyRewritten { inner } => return type_may_hold(e, inner, goals, seen),
+    TyOptional { inner } => return type_may_hold(e, inner, goals, seen),
+    TyUnknown { n: _ } => return true,
+    TyFunction { args: _ } => return true,
+    TyIterator { step: _ } => return true,
+    _ => {}
+  }
+  for g in goals {
+    if shape_eq(t, g) {
+      return true;
     }
-    for g in goals {
-      if shape_eq(t, g) {
-        return true;
-      }
-    }
-    d = -1;
-    match t {
-      TyVector { inner } => { work += [inner]; },
-      TyTuple { elems } => { work += elems; },
-      TyReference { n } => { d = n; },
-      TyEnum { n, is_ref } => { if is_ref { d = n; } },
-      TySorted { n } => { d = n; },
-      TyIndex { n } => { d = n; },
-      TyHash { n } => { d = n; },
-      TyRadix { n } => { d = n; },
-      TyTrie { n } => { d = n; },
-      TyUnknown { n: _ } => return true,
-      TyFunction { args: _ } => return true,
-      TyIterator { step: _ } => return true,
-      _ => {}
-    }
-    if d >= 0 && !seen.contains(d) {
-      seen += [d];
-      defs = [d];
-      for x in e.b.data.definitions {
-        if x.parent == d && x.def_type == el::DT_ENUM_VALUE {
-          defs += [x#index];
+  }
+  d = match t {
+    TyVector { inner } => return type_may_hold(e, inner, goals, seen),
+    TyTuple { elems } => {
+      for m in elems {
+        if type_may_hold(e, m, goals, seen) {
+          return true;
         }
       }
-      for r in defs {
-        for a in el::def(e, r).attributes {
-          work += [a.typedef[0] ?? ir::TyVoid];
+      return false;
+    },
+    TyReference { n } => n,
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    TySorted { n } => n,
+    TyIndex { n } => n,
+    TyHash { n } => n,
+    TyRadix { n } => n,
+    TyTrie { n } => n,
+    _ => -1
+  };
+  if d < 0 || seen.contains(d) {
+    return false;
+  }
+  seen += [d];
+  for x in e.b.data.definitions {
+    if x#index == d || x.parent == d && x.def_type == el::DT_ENUM_VALUE {
+      for at in x.attributes {
+        if type_may_hold(e, at.typedef[0] ?? ir::TyVoid, goals, seen) {
+          return true;
         }
       }
     }
