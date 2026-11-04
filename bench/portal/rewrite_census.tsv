@@ -796,9 +796,10 @@
 14_stdlib_vector	-	c	R-Base	15
 14_stdlib_vector	-	c	R-Base/counter	6
 14_stdlib_vector	-	c	R-BoundedNest/kernel	1
-14_stdlib_vector	-	c	R-CompleteWrite	14
+14_stdlib_vector	-	c	R-CompleteWrite	13
 14_stdlib_vector	-	c	R-Counter	77
 14_stdlib_vector	-	c	R-DischargeInto	1
+14_stdlib_vector	-	c	R-ElemFirst	1
 14_stdlib_vector	-	c	R-FieldAppend/bare	1
 14_stdlib_vector	-	c	R-FormatAppend	1
 14_stdlib_vector	-	c	R-ForwardWalk	1
@@ -834,11 +835,11 @@
 14_stdlib_vector	-	rust	R-Base	20
 14_stdlib_vector	-	rust	R-BoundedNest/kernel	1
 14_stdlib_vector	-	rust	R-CharWalk	10
-14_stdlib_vector	-	rust	R-CompleteWrite	30
+14_stdlib_vector	-	rust	R-CompleteWrite	28
 14_stdlib_vector	-	rust	R-Counter	77
 14_stdlib_vector	-	rust	R-DischargeInto	1
-14_stdlib_vector	-	rust	R-ElemFirst	2
-14_stdlib_vector	-	rust	R-FieldAppend/bare	8
+14_stdlib_vector	-	rust	R-ElemFirst	1
+14_stdlib_vector	-	rust	R-FieldAppend/bare	10
 14_stdlib_vector	-	rust	R-FormatAppend	1
 14_stdlib_vector	-	rust	R-ForwardWalk	1
 14_stdlib_vector	-	rust	R-Fuse	86
@@ -857,7 +858,7 @@
 14_stdlib_vector	-	rust	R-LeafChain	29
 14_stdlib_vector	-	rust	R-LitDiv	5
 14_stdlib_vector	-	rust	R-LoopSlot	28
-14_stdlib_vector	-	rust	R-Mint	15
+14_stdlib_vector	-	rust	R-Mint	13
 14_stdlib_vector	-	rust	R-Push	10
 14_stdlib_vector	-	rust	R-PushFill	10
 14_stdlib_vector	-	rust	R-PushFill/record	3

@@ -16,11 +16,12 @@
 //!   invisible until the finish exactly as before.
 //!
 //! Also a temp a CALL fills (its lazy-buffer guard becomes the mint, and the call is handed the
-//! element's field for its buffer) and an append in EACH arm of an `if` (each arm's element is
-//! renamed to the one minted at the declaration).  A comprehension's row and a function whose
-//! exits copy a temp (`@FR-O-ViewField`, which needs the writers' view plan) are still the
-//! writers' (they ask the same analysis of the IR they receive, which no longer shows a pair
-//! this pass took).
+//! element's field for its buffer), an append in EACH arm of an `if` (each arm's element is
+//! renamed to the one minted at the declaration), and a comprehension's row appended as a whole
+//! element (its declaration inside the comprehension, the whole-row `OpCopyRecord` dropped).  A
+//! function whose exits copy a temp (`@FR-O-ViewField`, which needs the writers' view plan) is
+//! still the writers' (they ask the same analysis of the IR they receive, which no longer shows
+//! a pair this pass took).
 //!
 //! `LOFT_NO_ELEMENT_FIRST=1` turns the rule off on every backend; `LOFT_NO_IR_ELEM_FIRST=1`
 //! this clause alone, its pairs then left to the writers; `LOFT_TRACE_IR_ELEM_FIRST=1` names

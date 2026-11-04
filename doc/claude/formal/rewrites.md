@@ -200,7 +200,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
 | `(R-DispatchStop)` | not counted — executor: the lean loop tests one flag per op |
-| `(R-ElemFirst)` | `R-ElemFirst` ir, native |
+| `(R-ElemFirst)` | `R-ElemFirst` ir |
 | `(R-ElementPath)` | not counted — executor: the interpreter's element read operator |
 | `(R-Escape)` | not counted — meta: the contract every rewrite keeps |
 | `(R-ExitVector)` | `R-ExitVector` ir · `/record` ir |
