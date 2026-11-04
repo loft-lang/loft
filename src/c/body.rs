@@ -159,7 +159,7 @@ pub(crate) struct FnWriter<'a> {
     /// The locals whose copy is deferred to the first statement that may write its source
     /// (`@FR-R-DeferredCopy`, `deferred::deferred_plan`).
     dc: deferred::DeferredCopies,
-    /// `@FR-R-LoopRecord`'s refill clause: the loop records this function keeps.
+    /// `@FR-R-FnRefBuffer`: the records a function value fills that this function keeps.
     lr: loop_record::LoopRecordPort,
     /// `@FR-R-ElemFirst`: the element-first pairs and the statements they rewrite.
     ef: elem_first::ElemFirstPort,
@@ -4343,7 +4343,7 @@ impl<'a> FnWriter<'a> {
         if let Some(r) = self.elem_first_stmt(v, ind) {
             return r;
         }
-        if !self.lr.is_empty() && self.loop_record_stmt(v, ind) {
+        if !self.lr.is_empty() && self.loop_record_stmt(v) {
             return Ok(());
         }
         if !self.room_minted.is_empty() && !self.room_keeps(v) {
@@ -4508,7 +4508,7 @@ impl<'a> FnWriter<'a> {
             crate::rewrite_census::fired("R-FnRefBuffer/frame", parked.len());
         }
         self.loop_stmt_inner(b, ind)?;
-        // `@FR-R-LoopRecord`: the records this loop keeps are freed once, after every copy of it.
+        // `@FR-R-FnRefBuffer`: the records this loop keeps are freed once, after every copy of it.
         for v in kept {
             let var = self.var(v);
             if parked.contains(&v) {
@@ -8798,24 +8798,6 @@ impl<'a> FnWriter<'a> {
         let size = self.cx.stores.enum_parent_size(tp);
         self.cx.describe_type(tp);
         let var = self.var(v);
-        // `@FR-R-LoopRecord`'s refill clause: a kept record mints only where it holds no store.
-        if self.lr_kept(v) && !self.lr.fnref_bufs.contains(&v) {
-            let fresh = format!("lrf{v}");
-            if !self
-                .decls
-                .iter()
-                .any(|d| d.starts_with(&format!("int {fresh} ")))
-            {
-                self.decls.push(format!("int {fresh} = 0;"));
-            }
-            crate::rewrite_census::fired("R-LoopRecord/refill", 1);
-            return Ok(E::new(
-                format!(
-                    "(({var}.store_nr == 0xFFFF) ? (loft_database_typed(&{var}, {size}, {tp}), {fresh} = 1) : ({fresh} = 0))"
-                ),
-                K::Void,
-            ));
-        }
         if self.cx.stores.is_vector_wrapper(tp) {
             // A place's old collection is released through the wrapper's descriptor; a
             // reused buffer keeps the room its vector reached (`@FR-H-KeepRoom`).

@@ -808,10 +808,6 @@ pub struct Output<'a> {
     /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
     /// appended element instead of its own store.
     pub elem_first: hoist::ElemFirstMap,
-    /// `@FR-R-LoopRecord` — the current function's LOOP RECORDS (`hoist::loop_records`): a
-    /// plain no-heap record local declared and minted inside a loop, keyed by variable, with
-    /// the loop that owns its reuse and the block that declares it.
-    pub loop_records: HashMap<u16, hoist::LoopRecord>,
     /// `@FR-R-RefillBuffer`'s in-place clause (`LOFT_NO_REFILL_IN_PLACE` turns it off).
     pub refill_in_place: bool,
     /// `LOFT_NO_INLINE_HINT` (generation time): loft functions carry no `#[inline]`
@@ -1924,7 +1920,6 @@ impl<'a> Output<'a> {
             dead_buffers: HashSet::new(),
             forward_sites: HashMap::new(),
             elem_first: hoist::ElemFirstMap::default(),
-            loop_records: HashMap::new(),
             refill_in_place: crate::keys::refill_in_place_enabled(),
             rebind_buffer: None,
             rebind_buffer_used: false,
@@ -2507,17 +2502,6 @@ impl Output<'_> {
         } else {
             hoist::ret_adopt(self.data, def_nr)
         };
-        self.loop_records.clear();
-        if !self.switches.loop_record_disabled {
-            let lr = hoist::loop_records(self.data, self.stores, def_nr);
-            self.loop_records = lr.recs;
-            // `@FR-R-Apart` instance 4 — an apart record is no store record to keep.
-            if let Some(ctx) = &self.apart_ctx {
-                self.loop_records.retain(|v, _| !ctx.recs.holds(*v));
-            }
-            // The refill clause's vector-field zeros are `@FR-R-RefillBuffer`'s empties.
-            self.refill.field_zeros.extend(lr.field_zeros);
-        }
         // `(R-Mint)`'s rebound clause — the buffer vars whose mint the hoist admission lets
         // through: what the emitter itself owns the mint of.
         self.hoist_owned = hoist::HoistOwned {
@@ -2528,7 +2512,7 @@ impl Output<'_> {
                 .iter()
                 .flat_map(|p| p.binds.iter().map(move |b| (p.elm, i64::from(b.field_off))))
                 .collect(),
-            records: self.loop_records.keys().copied().collect(),
+            records: HashSet::new(),
             value_locals: self.value_record_locals.keys().copied().collect(),
             dead_buffers: self.dead_buffers.clone(),
             dead_by_fn: std::rc::Rc::clone(&self.plan.dead_by_fn),
@@ -2582,9 +2566,6 @@ impl Output<'_> {
         fired("R-SliceBorrow", self.slice_borrow_count);
         fired("R-CharWalk", self.char_walks.len());
         fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
-        let refill = self.loop_records.values().filter(|r| r.refill).count();
-        fired("R-LoopRecord", self.loop_records.len() - refill);
-        fired("R-LoopRecord/refill", refill);
     }
 
     /// loft#885 — open a loop with the headers of the vectors it only reads, and
@@ -3968,8 +3949,8 @@ impl Output<'_> {
     /// buffer's (`StoreFacts::distinct` cannot prove that statically: a caller may hand a
     /// field of the record it passes), answer the pairs to test at run time.  The loop is
     /// then emitted twice: under the test with those pairs assumed, and as before.  `None`
-    /// for a loop that gains nothing, cannot be copied (a `yield`, a `par`, a fn-ref call),
-    /// declares a loop record the copies would have to share, or sits in a generator.
+    /// for a loop that gains nothing, cannot be copied (a `yield`, a `par`, a fn-ref call), or
+    /// sits in a generator.
     /// Answers the pairs the run-time test compares and the pairs the copy may assume apart:
     /// the same, except that an adopted result local's `__vdb` witness is assumed and never
     /// tested (the adoption leaves it unallocated).
@@ -3983,7 +3964,6 @@ impl Output<'_> {
             || self.switches.distinct_growth_disabled
             || self.in_coroutine_body
             || !self.assumed_distinct.is_empty()
-            || self.loop_records.values().any(|r| r.loop_scope == lp.scope)
             || lp.operators.iter().any(|op| {
                 op.any_node(&mut |n| {
                     matches!(

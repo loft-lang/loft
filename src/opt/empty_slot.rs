@@ -58,11 +58,34 @@ fn block_empties(data: &Data, ops: &[Value], slot: (u16, i32)) -> bool {
         if empties(data, op, slot) {
             return true;
         }
-        if op.any_node(&mut |n| matches!(n, Value::Var(x) if *x == slot.0)) {
+        if op.any_node(&mut |n| matches!(n, Value::Var(x) if *x == slot.0))
+            && !only_elsewhere(data, op, slot)
+        {
             return false;
         }
     }
     false
+}
+
+/// Does `o` name the slot's record only through ANOTHER field — `OpGetField(r, off2, …)` or a
+/// write `OpSet…(r, off2, …)`, `off2` not the slot's — which leaves the slot as it was?
+fn only_elsewhere(data: &Data, o: &Value, slot: (u16, i32)) -> bool {
+    let (mut all, mut other) = (0usize, 0usize);
+    o.any_node(&mut |n| {
+        if matches!(n, Value::Var(x) if *x == slot.0) {
+            all += 1;
+        }
+        if let Value::Call(d, a) = n
+            && (*d as usize) < data.definitions.len()
+            && (data.def(*d).name() == "OpGetField" || data.def(*d).name().starts_with("OpSet"))
+            && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == slot.0)
+            && matches!(a.get(1).map(Value::unspan), Some(Value::Int(off)) if *off != slot.1)
+        {
+            other += 1;
+        }
+        false
+    });
+    all == other
 }
 
 /// Whether `vector` is EMPTY where statement list `ops` ends: its slot was zeroed —
@@ -104,24 +127,7 @@ pub fn known_empty(data: &Data, ops: &[Value], vector: &Value) -> bool {
     let names = |o: &Value, var: u16| o.any_node(&mut |n| matches!(n, Value::Var(x) if *x == var));
     // A mention of the root that only reaches ANOTHER field — `OpGetField(r, off2, …)` or a
     // write `OpSet…(r, off2, …)`, `off2` not the slot — leaves the slot as it was.
-    let elsewhere = |o: &Value| -> bool {
-        let (mut all, mut other) = (0usize, 0usize);
-        o.any_node(&mut |n| {
-            if matches!(n, Value::Var(x) if *x == slot.0) {
-                all += 1;
-            }
-            if let Value::Call(d, a) = n
-                && (*d as usize) < data.definitions.len()
-                && (data.def(*d).name() == "OpGetField" || data.def(*d).name().starts_with("OpSet"))
-                && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == slot.0)
-                && matches!(a.get(1).map(Value::unspan), Some(Value::Int(off)) if *off != slot.1)
-            {
-                other += 1;
-            }
-            false
-        });
-        all == other
-    };
+    let elsewhere = |o: &Value| only_elsewhere(data, o, slot);
     for op in ops.iter().rev() {
         if empties(data, op, slot) {
             return true;

@@ -23,7 +23,7 @@ R-Callee	c,native	20	0	0	0	62	163
 R-CharWalk	c,native	58	0	0	0	30	619
 R-Compact	ir	1	0	2	0	0	0
 R-Compact/prepend	ir	1	0	1	0	0	0
-R-CompleteWrite	c,native	58	0	0	0	1062	2318
+R-CompleteWrite	c,native	58	0	0	0	1057	2306
 R-Const	ir	2	0	3	0	0	0
 R-Const/fn	parse	2	3	0	0	0	0
 R-CopyView	ir	4	0	8	0	0	0
@@ -89,8 +89,8 @@ R-LitHoist	native	1	0	0	0	0	1
 R-LiteralAppend	ir	1	0	1	0	0	0
 R-LiteralWalk	parse	8	14	0	0	0	0
 R-LoopBuffer	ir	21	0	192	0	0	0
-R-LoopRecord	native	1	0	0	0	0	2
-R-LoopRecord/refill	c,native	2	0	0	0	3	10
+R-LoopRecord	ir	1	0	2	0	0	0
+R-LoopRecord/refill	ir	2	0	6	0	0	0
 R-LoopSlot	interp	58	0	0	3185	0	0
 R-MaskRange	parse	7	41	0	0	0	0
 R-Mint	c,native	58	0	0	0	158	858

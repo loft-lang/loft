@@ -677,3 +677,40 @@ inserted between the attribute and the item: a +24 % slowdown on `truncate_to` f
 out-of-line raw read, found by a flat profile of the two runtimes (8.6 % of samples in a
 symbol the fast build does not have).
 
+## (R-LoopRecord) in the writers
+
+Until 2026-11-04 `(R-LoopRecord)` was two writer clauses; @PLN211 moved it into the IR
+(`opt::loop_record`) and deleted both.  What they were, as `rewrites.md` stated them:
+
+Sites: `hoist::loop_records`, the `Value::Loop`
+emission in `emit.rs` (prelude and postlude), `output_block` (the two dropped statements),
+`ops::misc_ops` (the kept-record mint).  Cells `tests/scripts/157-loop-record.loft` l1–l15,
+pins `tests/loop_record.rs`.  The refill clause: a kept record's vectors keep their records
+and capacity, so a literal of vectors refills them where the plain form claimed new ones
+every pass.  Sites `hoist::loop_record_zeros` (the groups and their zeros) and the
+`(R-RefillBuffer)` empty in `emit.rs`; cells `tests/scripts/157-a-loop-record-keeps-its-vectors.loft`,
+pins `tests/ctor_literal.rs`.
+
+**On the C (a port).**  The C writer does not ask
+`crate::opt::loop_records::loop_records`, so a record literal in a loop mints a store, claims
+its vectors and frees it every pass.  The port is the same three moves in the C's spelling: the
+mint is taken only where the local holds no store (`if (r.store_nr == 0xFFFF)`), a refill
+record's literal zero of a vector field (`loft_set_int4(r, off, 0)`, in `field_zeros`) becomes
+`loft_vec_clear` of that field on a kept pass — length 0, block kept — and the end-of-body
+free moves after the loop.  Priced on hex_recover's `forms_upto` (gcc), on top of the run's
+header clause: 0.17 s → 0.11 s, **−35 %**; together 0.30 → 0.11 s (0.37×, ≈ 6.3× → ≈ 2.3×
+the Rust twin).  Resetting the store (`loft_reset_pool_root`) instead measured NOTHING — the
+cost is the two vectors' claims, not the store — and so did skipping the run's reservation on
+a kept pass and hinting `head_step` inline.  Built to the hand form (0.12 s against 0.11:
+the fresh flag below): `src/c/body/loop_record.rs` reads the shared analysis once per
+function; the mint is `((v.store_nr == 0xFFFF) ? (mint, lrf = 1) : (lrf = 0))`, each vector-field
+zero `if (lrf) zero; else loft_vec_clear(field)` — a fresh mint keeps its zero, because the C's
+claim is not promised to be zeroed — and the declaring block's `Set(v, null)` and end-of-pass
+free are skipped by node address, with one free after every copy of the keeping loop
+(`loop_stmt`).  The refill records only: a plain no-heap record keeps the plain mint on the C,
+where a reset measured nothing.  Bench (A/B, both clauses off against on): hex_recover
+`forms_upto` **0.302×** gcc (1045 → 315 µs, ≈ 2.5× the twin), **0.234×** clang (799 → 187 µs,
+≈ 1.5×).  Switch `LOFT_NO_LOOP_RECORD_REFILL=1` (and `LOFT_NO_LOOP_RECORD`); census
+`R-LoopRecord/refill`.  Guard: `157-a-loop-record-keeps-its-vectors.loft` and
+`157-loop-record.loft` now run on the C too (both pass, and under `LOFT_NATIVE_LEAK_CHECK`) —
+a kept pass that does not empty its vectors fails r1 with 102280.

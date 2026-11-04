@@ -72,6 +72,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     {
         return 0;
     }
+    let apr = crate::opt::apart_records::plan(data, stores);
     let mut total = 0usize;
     for d in 0..data.definitions() {
         let def = data.def(d);
@@ -97,7 +98,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         if buffers.is_empty() {
             continue;
         }
-        leave_owned(data, stores, d, &mut buffers);
+        leave_owned(data, stores, d, &apr, &mut buffers);
         if buffers.is_empty() {
             continue;
         }
@@ -129,8 +130,14 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
 }
 
 /// Leave every buffer another rewrite owns (`opt::buffer_owner`, the one answer).
-fn leave_owned(data: &Data, stores: &Stores, d: u32, buffers: &mut HashSet<u16>) {
-    let owners = crate::opt::buffer_owner::owners(data, stores, d);
+fn leave_owned(
+    data: &Data,
+    stores: &Stores,
+    d: u32,
+    apr: &crate::opt::apart_records::RecPlan,
+    buffers: &mut HashSet<u16>,
+) {
+    let owners = crate::opt::buffer_owner::owners(data, stores, d, apr);
     buffers.retain(|v| {
         let Some(owner) = owners.get(v) else {
             return true;

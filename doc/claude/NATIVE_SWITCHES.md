@@ -406,26 +406,23 @@ loop.  Only for elements that own no heap (a `text`
 vector keeps the re-mint: a length reset would strand what its elements own), a buffer no
 other call reaches, and a declaration outside the loop.  `LOFT_TRACE_LOOP_BUFFER=1` names
 each buffer declined, `LOFT_TRACE_IR_LOOP_BUFFER=1` each kept.
-**`LOFT_NO_LOOP_RECORD=1`** (`@FR-R-LoopRecord`, default-ON, generation time, `--native`
-only) makes a plain no-heap record local declared and minted by a literal INSIDE a loop
+**`LOFT_NO_LOOP_RECORD=1`** (`@FR-R-LoopRecord`, default-ON, the IR phase, every backend)
+makes a plain no-heap record local declared and minted by a literal INSIDE a loop
 (`sub = Spec {…}` per pass) free its store at the iteration's end and take a fresh one next
-pass again — with it off, the local is declared at the loop's prelude, keeps its store and
-its record across passes (a complete literal re-mints nothing, a partial one re-establishes
-its declared defaults) and is freed once after the loop — and is the first bisect step for a
-stale field, a leak or a double free out of a record literal in a loop on native.  Declined
-where the local is copied, returned, captured, appended, handed to a callee whose return
-borrows it, or owns heap other than refillable vectors.  `LOFT_TRACE_LOOP_RECORD=1` names each kept local and each decline.
-**`LOFT_NO_LOOP_RECORD_REFILL=1`** (`@FR-R-LoopRecord`'s refill clause, default-ON, generation
-time, `--native` only) declines again a loop record whose type holds vectors of no-heap
-elements — with it off, such a record keeps its vectors across passes and each literal zero of
-a vector field empties the kept vector in place.  First bisect step for a stale element or a
-store that grows pass by pass out of a record literal with vector fields in a loop.
-
-**`LOFT_NO_LOOP_RECORD_NEST=1`** (`@FR-R-LoopRecord`'s nest clause, default-ON, generation time,
-`--native` only) keeps a loop record across its INNERMOST loop again — with it off, a record
-declared inside a nest is kept across the outermost loop around it and freed once after that
-loop (`forms_upto` 761 → 638 µs).  First bisect step for a leak or a stale field out of a
-record literal inside nested loops.
+pass again — with it off, the local is declared before the outermost loop, keeps its store
+across passes (a complete literal mints nothing on a kept pass, a partial one takes the
+store's clear) and is freed once after the loop — and is the first bisect step for a stale
+field, a leak or a double free out of a record literal in a loop.  Declined where the local is
+copied, returned, captured, appended, handed to a callee whose return borrows it, or owns heap
+other than refillable vectors.  `LOFT_TRACE_LOOP_RECORD=1` names each admission and decline,
+`LOFT_TRACE_IR_LOOP_RECORD=1` each record the IR keeps.
+**`LOFT_NO_LOOP_RECORD_REFILL=1`** (its refill clause) declines again a record whose type holds
+vectors of no-heap elements — with it off, such a record keeps its vectors and a kept pass
+empties each in place.  First bisect step for a stale element or a store that grows pass by
+pass out of a record literal with vector fields in a loop.
+**`LOFT_NO_LOOP_RECORD_NEST=1`** (its nest clause) keeps a record across its INNERMOST loop
+again, rather than the outermost loop around it.  First bisect step for a leak or a stale field
+out of a record literal inside nested loops.
 
 ## Generators
 

@@ -22,16 +22,15 @@
 //!   later pass mints afresh (the interpreter's free leaves the variable as it was).
 //!
 //! A function that yields or calls a generator is declined (a live frame may hold the store).
-//! `LOFT_IR_LOOP_RECORD=1` turns it on while it is compared with the writers' clauses;
-//! `LOFT_NO_LOOP_RECORD=1` turns the rule off; `LOFT_TRACE_IR_LOOP_RECORD=1` names each record.
+//! `LOFT_NO_LOOP_RECORD=1` turns the rule off on every backend (and `LOFT_NO_LOOP_BUFFER_REUSE=1`
+//! with the loop buffers); `LOFT_TRACE_IR_LOOP_RECORD=1` names each record.
 use crate::data::{Data, DefType, Type, Value, v_block, v_if};
 use crate::database::{Parts, Stores};
 use crate::opt::loop_records::{LoopRecord, loop_records};
 use std::collections::HashMap;
 
 fn enabled() -> bool {
-    crate::env_once!(std::env::var("LOFT_IR_LOOP_RECORD").is_ok_and(|v| v != "0"))
-        && !crate::env_once!(std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0"))
+    !crate::env_once!(std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0"))
         && crate::keys::loop_buffer_reuse_enabled()
 }
 
@@ -51,7 +50,7 @@ struct Ops {
 
 /// One admitted record, as the rewrite needs it.
 struct Rec {
-    rec: LoopRecord,
+    lr: LoopRecord,
     complete: bool,
     /// The record's vector fields: `(byte offset, the field's type number)`.
     vectors: Vec<(i32, i32)>,
@@ -75,6 +74,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         clear_vector: data.def_nr("OpClearVector"),
         free_ref: data.def_nr("OpFreeRef"),
     };
+    let apr = crate::opt::apart_records::plan(data, stores);
     let mut total = 0usize;
     for d in 0..data.definitions() {
         let def = data.def(d);
@@ -90,35 +90,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         if found.recs.is_empty() {
             continue;
         }
-        let complete = crate::opt::ret_adopt::complete_writes(data, stores, d).db_vars;
-        let vars = def.variables();
-        let mut recs: HashMap<u16, Rec> = HashMap::new();
-        for (v, rec) in found.recs {
-            let Type::Reference(_, _) = vars.tp(v) else {
-                continue;
-            };
-            let vectors = if rec.refill {
-                record_type(def.code(), v, &ops)
-                    .map(|tp| vector_fields(stores, tp))
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            // The refill clause keeps its vectors only under a complete literal: a partial
-            // one's prefill would zero a kept vector's slot and strand its block.
-            let complete = complete.contains(&v);
-            if rec.refill && (!complete || vectors.is_empty()) {
-                continue;
-            }
-            recs.insert(
-                v,
-                Rec {
-                    rec,
-                    complete,
-                    vectors,
-                },
-            );
-        }
+        let recs = admit(data, stores, d, found, &apr, &ops);
         if recs.is_empty() {
             continue;
         }
@@ -138,7 +110,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         data.definitions[d as usize].variables.reset_intervals();
         crate::scopes::compute_function_intervals(data, d);
         crate::scopes::assign_function_slots(data, d);
-        let refill = hoisted.keys().filter(|v| recs[v].rec.refill).count();
+        let refill = hoisted.keys().filter(|v| recs[v].lr.refill).count();
         if trace() {
             let vars = data.def(d).variables();
             for v in hoisted.keys() {
@@ -146,7 +118,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
                     "[ir-loop-record] fn={} {} kept across the passes{}",
                     data.def(d).name(),
                     vars.name(*v),
-                    if recs[v].rec.refill { " (refill)" } else { "" }
+                    if recs[v].lr.refill { " (refill)" } else { "" }
                 );
             }
         }
@@ -155,6 +127,63 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         total += n;
     }
     total
+}
+
+/// The admitted records of function `d` the rewrite takes: a reference local no other rule
+/// owns, and — for the refill clause — a complete literal with vector fields to keep.
+fn admit(
+    data: &Data,
+    stores: &Stores,
+    d: u32,
+    found: crate::opt::loop_records::LoopRecords,
+    apr: &crate::opt::apart_records::RecPlan,
+    ops: &Ops,
+) -> HashMap<u16, Rec> {
+    let complete = crate::opt::ret_adopt::complete_writes(data, stores, d).db_vars;
+    // A record another rule owns (`opt::buffer_owner`: an apart record holds no store at
+    // all, which a kept store cannot beat) is left to it.
+    let owned = crate::opt::buffer_owner::owners(data, stores, d, apr);
+    let def = data.def(d);
+    let vars = def.variables();
+    let mut recs: HashMap<u16, Rec> = HashMap::new();
+    for (v, rec) in found.recs {
+        let Type::Reference(_, _) = vars.tp(v) else {
+            continue;
+        };
+        if let Some(owner) = owned.get(&v) {
+            if trace() {
+                eprintln!(
+                    "[ir-loop-record] fn={} {} left: {}",
+                    def.name(),
+                    vars.name(v),
+                    owner.why()
+                );
+            }
+            continue;
+        }
+        let vectors = if rec.refill {
+            record_type(def.code(), v, ops)
+                .map(|tp| vector_fields(stores, tp))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        // The refill clause keeps its vectors only under a complete literal: a partial
+        // one's prefill would zero a kept vector's slot and strand its block.
+        let complete = complete.contains(&v);
+        if rec.refill && (!complete || vectors.is_empty()) {
+            continue;
+        }
+        recs.insert(
+            v,
+            Rec {
+                lr: rec,
+                complete,
+                vectors,
+            },
+        );
+    }
+    recs
 }
 
 /// Does `code` call a function that answers a generator, or yield itself?
@@ -237,7 +266,7 @@ fn rewrite(
                 .map(|ls| {
                     let mut m: Vec<u16> = recs
                         .iter()
-                        .filter(|(_, r)| r.rec.loop_scope == ls)
+                        .filter(|(_, r)| r.lr.loop_scope == ls)
                         .map(|(v, _)| *v)
                         .collect();
                     m.sort_unstable();
@@ -265,7 +294,7 @@ fn statement(stmt: Value, scope: u16, recs: &HashMap<u16, Rec>, ops: &Ops, out: 
         // The per-pass declaration, in the block that declared the record.
         Value::Set(v, rhs)
             if matches!(rhs.unspan(), Value::Null)
-                && recs.get(v).is_some_and(|r| r.rec.decl_block == scope) => {}
+                && recs.get(v).is_some_and(|r| r.lr.decl_block == scope) => {}
         // A free of the record: its end-of-body free goes; any other (an early exit's) stays
         // and nulls the local, so a later pass mints afresh.
         Value::Call(op, a)
@@ -273,7 +302,7 @@ fn statement(stmt: Value, scope: u16, recs: &HashMap<u16, Rec>, ops: &Ops, out: 
                 && var_of(a.first()).is_some_and(|v| recs.contains_key(&v)) =>
         {
             let v = var_of(a.first()).unwrap_or(u16::MAX);
-            if recs[&v].rec.decl_block != scope {
+            if recs[&v].lr.decl_block != scope {
                 out.push(stmt.clone());
                 out.push(Value::Set(v, Box::new(Value::Null)));
             }
@@ -284,7 +313,7 @@ fn statement(stmt: Value, scope: u16, recs: &HashMap<u16, Rec>, ops: &Ops, out: 
             if ops.database.contains(op)
                 && var_of(a.first()).is_some_and(|v| {
                     recs.get(&v)
-                        .is_some_and(|r| r.complete && r.rec.decl_block == scope)
+                        .is_some_and(|r| r.complete && r.lr.decl_block == scope)
                 }) =>
         {
             let v = var_of(a.first()).unwrap_or(u16::MAX);
@@ -322,7 +351,7 @@ fn statement(stmt: Value, scope: u16, recs: &HashMap<u16, Rec>, ops: &Ops, out: 
                 && var_of(a.first()).is_some_and(|v| {
                     recs.get(&v).is_some_and(|r| {
                         r.complete
-                            && r.rec.decl_block == scope
+                            && r.lr.decl_block == scope
                             && int_of(a.get(1))
                                 .is_some_and(|off| r.vectors.iter().any(|(o, _)| *o == off))
                     })

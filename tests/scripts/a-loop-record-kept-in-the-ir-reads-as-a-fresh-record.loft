@@ -13,8 +13,10 @@
 // other's oracle: the oracle is these values, and `LOFT_NO_LOOP_RECORD=1` is the second.
 //
 // @falsified-at: none — by hand on the IR clause, the early exit's free left without its null:
-//   r2 fails on the interpreter (the next pass writes the freed store).
-//   CHANNEL: an assertion, or a stop naming the freed store.
+//   under LOFT_STRICT_STORES=1 the interpreter stops naming the freed store the next pass writes
+//   (r2's `continue`: "freed at pc=…, write now at pc=…"); plain, the answer stays right by
+//   accident, which is why the cell is run under the store checks too.
+//   CHANNEL: the strict-stores stop (`c_sweep.py --strict-stores` runs it on the C too).
 // HOLDS: the hand-computed values, on both backends, the clause on and off.
 
 struct P { a: integer, b: integer }

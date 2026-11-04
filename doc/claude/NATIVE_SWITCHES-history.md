@@ -80,3 +80,9 @@ the clause derives it from the index; the `DbRef` form is not what ships.
 
 Returning a no-heap record's fields in registers measured 1.65× on the call, `smooth` −25 %
 standalone and `lock_curved` −3 %.
+
+## `LOFT_NO_LOOP_RECORD` — a native generation-time switch until 2026-11-04
+
+`(R-LoopRecord)` and its refill and nest clauses were rustc's (and the refill clause the C's
+port) until @PLN211 moved them into the IR; the three switches now turn the IR pass's rule off
+on every backend.  The nest clause measured `forms_upto` 761 → 638 µs on native.

@@ -1007,30 +1007,6 @@ impl Output<'_> {
                 self.in_distinct_copy = false;
                 let file_held = self.begin_file_hold(w, lp)?;
                 let hoisted = self.begin_vector_hoist(w, lp)?;
-                // `@FR-R-LoopRecord` — a record local declared inside this loop is declared
-                // here instead, so its store survives the iteration: the per-pass mint takes
-                // `OpDatabase`'s clear arm, and the one free follows the loop.  Declared
-                // BEFORE any guarded arm (`@FR-R-BoundedNest`, `@FR-R-GuardedChain`) so both
-                // copies of the loop see it, and freed after both arms close.
-                let mut loop_recs: Vec<u16> = self
-                    .loop_records
-                    .iter()
-                    .filter(|(_, r)| r.loop_scope == lp.scope)
-                    .map(|(v, _)| *v)
-                    .collect();
-                loop_recs.sort_unstable();
-                let variables = self.data.def(self.def_nr).variables();
-                for &v in &loop_recs {
-                    if !self.declared.contains(&v) {
-                        let name = sanitize(variables.name(v));
-                        self.indent(w)?;
-                        writeln!(
-                            w,
-                            "let mut var_{name}: DbRef = DbRef::NULL; //@FR-R-LoopRecord kept across iterations"
-                        )?;
-                        self.declared.insert(v);
-                    }
-                }
                 // `@FR-R-CharWalk` — a character walk over a text nothing in the loop
                 // writes asks its null test ONCE, here, and the loop skips the statement;
                 // the checking form keeps the statement as an assertion.  Opened before
@@ -1150,15 +1126,6 @@ impl Output<'_> {
                 // written once, whichever arm ran.
                 for window in window.iter().rev() {
                     self.push_window_close(w, window)?;
-                }
-                for &v in &loop_recs {
-                    let name = sanitize(self.data.def(self.def_nr).variables().name(v));
-                    writeln!(w, ";")?;
-                    self.indent(w)?;
-                    write!(
-                        w,
-                        "OpFreeRef(cell,var_{name}, \"var_{name}\"); var_{name}.store_nr = u16::MAX /*@FR-R-LoopRecord freed after the loop*/"
-                    )?;
                 }
                 if char_walk.is_some() {
                     writeln!(w)?;
@@ -4549,32 +4516,6 @@ impl Output<'_> {
                 && self.elem_first_override(w, operators, vnr, v)?
             {
                 continue;
-            }
-            // `@FR-R-LoopRecord` — a loop record's per-pass declaration (`Set(v, null)`) and
-            // its end-of-body free are not emitted from the block that declares it: the local
-            // was declared at the loop's prelude and is freed once after the loop.  A free on
-            // a `return`/`continue` path sits in an `Insert`, not here, and stays.
-            if !self.loop_records.is_empty() {
-                let dropped = match v.unspan() {
-                    Value::Set(lv, rhs) if matches!(rhs.unspan(), Value::Null) => self
-                        .loop_records
-                        .get(lv)
-                        .is_some_and(|r| r.decl_block == bl.scope),
-                    Value::Call(d, args)
-                        if (*d as usize) < self.data.definitions.len()
-                            && matches!(
-                                self.data.def(*d).name(),
-                                "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag"
-                            ) =>
-                    {
-                        matches!(args.first().map(Value::unspan), Some(Value::Var(lv))
-                            if self.loop_records.get(lv).is_some_and(|r| r.decl_block == bl.scope))
-                    }
-                    _ => false,
-                };
-                if dropped {
-                    continue;
-                }
             }
             // `@FR-R-RetAdopt` — the adopted result local's witness is never allocated
             // (`OpDatabaseEmitter`), so its literal zero has no record to write: emitted, it

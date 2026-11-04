@@ -20,7 +20,8 @@ range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-KeyedEntry)`, `(R-E
 `(R-LoopBuffer)` (§ Arc C's moves); **arc C′ is next** — those moves brought to ONE place each,
 no writer clause or writer compensation left (§ Arc C′), before any further rule moves; **arc C′
 is closed** (C′1–C′4), with `(R-ElemFirst)`'s view-exit form deferred to the `(R-ValueRecord)`
-view-clause move (§ What arc C′ skips).  It
+view-clause move (§ What arc C′ skips); then `(R-LoopRecord)` moved (§ Arc C's moves),
+`(R-CompleteWrite)` is next.  It
 was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
@@ -512,6 +513,38 @@ C and rustc, the rule on and off; c_emit 71/71; `tests/loop_buffer.rs` re-pinned
 apart_value, element_first, mint_window.  On the interpreter: 7 311 → 6 106 instructions a pass
 of the probe, −16.5 %.
 
+**`(R-LoopRecord)` — moved.**  `src/opt/loop_record.rs`, after `opt::loop_buffer` in
+`close_program`: an admitted record (`opt::loop_records`, the nest and refill clauses with it)
+is declared `= null` before the outermost loop (`Function::move_scope`, new for this), its
+per-pass null and end-of-body free go, a complete literal's mint becomes `if OpRefIsNull(v) {
+mint; vector zeros } else { OpClearVector of each vector field }`, an early exit's free nulls
+the local, and one free follows the loop.  rustc's clause (its prelude declaration, postlude
+free, dropped statements and kept-record mint) and the C's refill port are deleted; the C keeps
+only `(R-FnRefBuffer)`'s records in `c/body/loop_record.rs`, and now keeps plain records too
+(drawing, 2 — the IR's kept pass mints nothing, where the C's port had measured a store reset as
+no gain).  Ownership goes through `opt::buffer_owner`, which gained the apart RECORD owners
+(`opt::apart_records`, moved from `lower` for this, with `ident_part` and `apart_disabled`
+given their one home there): an apart record holds no store to keep.  `opt::empty_slot`'s
+block scan learned that a write to ANOTHER field of the record leaves a vector slot empty —
+without it the C's push-run reservation lost hex_recover's `forms_upto` (8 → 6), whose kept
+record's other fields are written between the clear and the push.  Census: the rustc rows
+count sites rather than emitted copies (hex_fit and hex_recover refill 5 → 3); the
+`(R-CompleteWrite)` drops (drawing −2, hex_fit −5 and hex_recover −5 on rustc, −2 / −3 on the C)
+are exactly the kept complete records, whose mint now sits in the guard's arm away from its
+literal group, so the writers prefill that one store on the first pass — the order to fix when
+`(R-CompleteWrite)` moves (its IR pass runs ahead of this one; the IR has no no-prefill mint
+operator yet, `OpDatabaseNP` is a writer spelling).  Evidence: the switch A/B
+(`LOFT_NO_LOOP_RECORD`, 2 916 programs): 0 defects; the C sweep (2 952 programs) 2 583 match and under `--strict-stores` 2 582, the one differ in both an attic cell that expects a parse error and parses (the same with the rule off); the rule's cells
+(`157-loop-record.loft`, `157-a-loop-record-keeps-its-vectors.loft`, the nest cells,
+`a-function-value-fills-its-callers-record.loft`) and the new
+`a-loop-record-kept-in-the-ir-reads-as-a-fresh-record.loft` (r1–r6: `continue`, `break`,
+`return`, a partial literal, the nest) on the interpreter, the C and rustc, the rule on and off;
+the new cell falsified by the early exit's null left out (caught under `LOFT_STRICT_STORES=1`
+only — the plain answer stays right by accident); `tests/loop_record.rs` re-pinned on the IR
+(it counts the pass's trace), c_emit 71/71, push_window, push_fill, work_buffer, heap_sound,
+locked_writes, loop_buffer.  On the interpreter: 3 058 → 1 613 instructions a pass of the
+probe, −47.3 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -560,7 +593,7 @@ function before and not after.
 | `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %**; moved: 8 252 → 5 886, **−28.7 %** | **MOVED: the literal-built temp, the call-filled temp, the joined arms** (`opt::elem_first`, arc C's fifth); the comprehension row and the view-plan exits are still the writers' |
 | `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** (the hand form skips the slice's bound normalisation); moved: 7 779 → 5 385, **−30.8 %** | **MOVED** (`slice_text::rewrite`, arc C's first) |
 | `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %**; moved: 7 311 → 6 106, **−16.5 %** | **MOVED** (`opt::loop_buffer`, arc C's sixth) |
-| `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %** | MOVE (light) |
+| `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %**; moved: 3 058 → 1 613, **−47.3 %** | **MOVED** (`opt::loop_record`, arc C's seventh) |
 | `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector` | MOVE, as that parser path widened to field places; measured on arc C's beside build |
 | `(R-ValueRecord)` view clause | yes — `opt::value_records`' view leaves, decided on the IR already (by each writer) | a value-record tuple element that is a REFERENCE to a place — new to the IR's tuple | — (not in B1) | no probe yet; S0's count: `R-ValueRecord/view` 3 bench functions, drawing's `parse_lock` / `parse_poly` among them | MOVE — c4-view-plan.md S1–S3; carries `(R-ElemFirst)`'s view-exit form with it (D-phase-4, D-phase-5) |
 | `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)) | owed: measured on arc C's beside build |

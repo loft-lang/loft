@@ -1922,7 +1922,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Base/
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-BoundedNest/kernel	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Callee	5
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CharWalk	1
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CompleteWrite	156
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CompleteWrite	154
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CopyView	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Counter	625
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-DischargeInto	1
@@ -1958,6 +1958,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Keyed
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LazySplit	3
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LiteralWalk	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LoopBuffer	8
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LoopRecord	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LoopSlot	140
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-MaskRange	5
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Mint	33
@@ -2007,7 +2008,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Bo
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-BoundedNest/kernel	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Callee	9
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CharWalk	10
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CompleteWrite	257
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CompleteWrite	255
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CopyView	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Counter	580
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-DischargeInto	1
@@ -3100,6 +3101,7 @@ hex_fit	7db0174ab	c	R-Inputs	35
 hex_fit	7db0174ab	c	R-Invariant	4
 hex_fit	7db0174ab	c	R-LiteralWalk	1
 hex_fit	7db0174ab	c	R-LoopBuffer	33
+hex_fit	7db0174ab	c	R-LoopRecord/refill	3
 hex_fit	7db0174ab	c	R-LoopSlot	416
 hex_fit	7db0174ab	c	R-NoLocks	1
 hex_fit	7db0174ab	c	R-NonSentinelParam	98
@@ -3134,7 +3136,7 @@ hex_fit	7db0174ab	rust	R-Base	785
 hex_fit	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_fit	7db0174ab	rust	R-Callee	12
 hex_fit	7db0174ab	rust	R-CharWalk	10
-hex_fit	7db0174ab	rust	R-CompleteWrite	157
+hex_fit	7db0174ab	rust	R-CompleteWrite	152
 hex_fit	7db0174ab	rust	R-Counter	1187
 hex_fit	7db0174ab	rust	R-CtorLiteral	4
 hex_fit	7db0174ab	rust	R-DischargeInto	7
@@ -3167,7 +3169,7 @@ hex_fit	7db0174ab	rust	R-LeafChain	569
 hex_fit	7db0174ab	rust	R-LitDiv	218
 hex_fit	7db0174ab	rust	R-LiteralWalk	1
 hex_fit	7db0174ab	rust	R-LoopBuffer	33
-hex_fit	7db0174ab	rust	R-LoopRecord/refill	5
+hex_fit	7db0174ab	rust	R-LoopRecord/refill	3
 hex_fit	7db0174ab	rust	R-LoopSlot	416
 hex_fit	7db0174ab	rust	R-Mint	19
 hex_fit	7db0174ab	rust	R-Push	137
@@ -3512,7 +3514,7 @@ hex_recover	7db0174ab	c	R-Base	42
 hex_recover	7db0174ab	c	R-Base/counter	13
 hex_recover	7db0174ab	c	R-BoundedNest/kernel	1
 hex_recover	7db0174ab	c	R-Callee	1
-hex_recover	7db0174ab	c	R-CompleteWrite	32
+hex_recover	7db0174ab	c	R-CompleteWrite	29
 hex_recover	7db0174ab	c	R-Counter	720
 hex_recover	7db0174ab	c	R-CtorLiteral	3
 hex_recover	7db0174ab	c	R-DischargeInto	5
@@ -3580,7 +3582,7 @@ hex_recover	7db0174ab	rust	R-Base	301
 hex_recover	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_recover	7db0174ab	rust	R-Callee	8
 hex_recover	7db0174ab	rust	R-CharWalk	10
-hex_recover	7db0174ab	rust	R-CompleteWrite	95
+hex_recover	7db0174ab	rust	R-CompleteWrite	90
 hex_recover	7db0174ab	rust	R-Counter	668
 hex_recover	7db0174ab	rust	R-CtorLiteral	3
 hex_recover	7db0174ab	rust	R-DischargeInto	5
@@ -3611,7 +3613,7 @@ hex_recover	7db0174ab	rust	R-Leaf	307
 hex_recover	7db0174ab	rust	R-LeafChain	224
 hex_recover	7db0174ab	rust	R-LitDiv	169
 hex_recover	7db0174ab	rust	R-LoopBuffer	23
-hex_recover	7db0174ab	rust	R-LoopRecord/refill	5
+hex_recover	7db0174ab	rust	R-LoopRecord/refill	3
 hex_recover	7db0174ab	rust	R-LoopSlot	208
 hex_recover	7db0174ab	rust	R-Mint	24
 hex_recover	7db0174ab	rust	R-Push	94

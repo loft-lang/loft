@@ -62,44 +62,6 @@ impl OpEmitter for OpDatabaseEmitter {
             {
                 return write!(ctx.w, "()");
             }
-            // `@FR-R-LoopRecord` — a LOOP RECORD: a plain no-heap record local minted by a
-            // literal inside a loop keeps its store and its record across iterations.  The
-            // first pass mints; every later pass finds the record where the previous pass
-            // left it, so a complete-write literal (`OpDatabaseNP`: every field written by the
-            // statements that follow) needs nothing, and a partial literal (`OpDatabase`) needs
-            // only the prefill that re-establishes the omitted fields' defaults — never the
-            // clear, claim, zero and tag the mint would repeat on the same record.
-            // The refill clause (a record with vector fields) is kept only under a complete
-            // literal: the prefill would zero a kept vector's slot and strand its record, so a
-            // partial one takes the plain mint, whose clear arm reclaims the store.
-            if let Value::Var(w) = var_val.unspan()
-                && let Some(lr) = ctx.output.loop_records.get(w)
-                && (!lr.refill || ctx.output.complete_writes.db_vars.contains(w))
-            {
-                let name = super::super::sanitize(
-                    ctx.output.data.def(ctx.output.def_nr).variables().name(*w),
-                );
-                let complete = ctx.output.complete_writes.db_vars.contains(w);
-                let mint = if complete {
-                    "OpDatabaseNP"
-                } else {
-                    "OpDatabase"
-                };
-                write!(
-                    ctx.w,
-                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 || stores.is_frame_held(var_{name}.store_nr) {{ var_{name} = {mint}(cell,var_{name}, "
-                )?;
-                ctx.emit_type_slot(tp_val)?;
-                if complete {
-                    return write!(ctx.w, ") }} /* @FR-R-LoopRecord kept record */");
-                }
-                write!(ctx.w, ") }} else {{ stores.set_default_value(")?;
-                ctx.emit_type_slot(tp_val)?;
-                return write!(
-                    ctx.w,
-                    " as u16, &var_{name}) }} /* @FR-R-LoopRecord kept record, defaults re-established */"
-                );
-            }
             // Both kept-store forms take the mint for a store a live generator frame names
             // (`@FR-G-Arg-Rebind`): the mint gives the rebind a fresh store, keeping the
             // frame's value.

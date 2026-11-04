@@ -107,8 +107,7 @@ pub struct ApartPlan {
 /// answer out of a record of fixed-length vectors.
 #[must_use]
 pub fn apart_disabled() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("LOFT_NO_APART").is_ok_and(|v| v != "0"))
+    crate::opt::apart_records::apart_disabled()
 }
 
 /// `LOFT_TRACE_APART=1` — every type, twin and region the plan admits, and each component it
@@ -1065,8 +1064,4 @@ pub fn plan(data: &Data, stores: &Stores, value_fns: &HashSet<u32>) -> ApartPlan
 }
 
 /// `s` as part of a Rust identifier: a source label can be a module path (`mesh3d::math`).
-pub(super) fn ident_part(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect()
-}
+use crate::opt::apart_records::ident_part;

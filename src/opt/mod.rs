@@ -9,6 +9,7 @@
 //! from `generation/` keeps a re-export at its old path.
 
 pub mod apart;
+pub mod apart_records;
 pub mod apart_vector;
 pub mod append_twin;
 pub mod arg_copy;

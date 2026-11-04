@@ -7,7 +7,7 @@
 //! decode in place, which walks stream — held as plain data that every emitter reads.  The
 //! Rust writer (`generation`) spells these decisions; a second emitter reads the same ones.
 //! Nothing here writes target text, names the Rust writer, or names the interpreter.
-pub mod apart_records;
+pub use crate::opt::apart_records;
 pub mod apart_value;
 pub use crate::opt::apart_vector;
 pub mod decode_structure;

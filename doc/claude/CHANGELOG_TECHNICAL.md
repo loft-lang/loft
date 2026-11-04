@@ -17,6 +17,14 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### `(R-LoopRecord)` runs in the IR (@PLN211 arc C)
+
+- A record local built by a literal inside a loop keeps its store across the passes on every
+  backend (`src/opt/loop_record.rs`): declared before the outermost loop, minted on the first
+  pass only (a record with vector fields empties them in place on a later pass), freed once
+  after the loop.  The interpreter runs 47.3 % fewer instructions on such a loop, and the C now
+  keeps a plain record too.  `LOFT_NO_LOOP_RECORD` still turns it off, now on every backend.
+
 ### `(R-LoopBuffer)` runs in the IR (@PLN211 arc C)
 
 - A vector local declared `[]` inside a loop keeps its store across the passes on every backend
