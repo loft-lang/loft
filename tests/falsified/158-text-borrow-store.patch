@@ -1,10 +1,11 @@
 diff --git a/src/opt/store_text_borrow.rs b/src/opt/store_text_borrow.rs
+index 27f0f7ead..7d51bc73d 100644
 --- a/src/opt/store_text_borrow.rs
 +++ b/src/opt/store_text_borrow.rs
-@@ -258,7 +258,9 @@
+@@ -286,7 +286,9 @@ pub fn borrowed_store_texts(
+             }
              continue;
          }
-         let scope = mention_scope(body, v);
 -        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut fx, None) {
 +        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut fx, None)
 +            .filter(|_| false)

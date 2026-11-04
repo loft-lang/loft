@@ -1,8 +1,8 @@
 diff --git a/src/scopes.rs b/src/scopes.rs
-index 1a1c0144d..ab145b4cf 100644
+index dd4a39681..a44924c6a 100644
 --- a/src/scopes.rs
 +++ b/src/scopes.rs
-@@ -297,11 +297,6 @@ struct Scopes<'s> {
+@@ -306,11 +306,6 @@ struct Scopes<'s> {
      /// The locals whose one real bind follows an enclosing null on every path and every pass
      /// ([`null_led_first_binds_in`]): that bind displaces no store.
      null_led_first: HashSet<u16>,
@@ -15,10 +15,10 @@ index 1a1c0144d..ab145b4cf 100644
      /// `scan_if` a local whose every mention lies inside one arm.
      mentions: HashMap<u16, usize>,
 diff --git a/src/scopes/buffers.rs b/src/scopes/buffers.rs
-index 1a8b2c700..1ba9d28ca 100644
+index c13a3f61e..f3846e067 100644
 --- a/src/scopes/buffers.rs
 +++ b/src/scopes/buffers.rs
-@@ -140,14 +140,12 @@ pub(super) fn reuse_record_buffers(
+@@ -211,14 +211,12 @@ pub(super) fn reuse_record_buffers(
              continue;
          }
          if !ungated
@@ -38,18 +38,18 @@ index 1a8b2c700..1ba9d28ca 100644
              continue;
          }
 diff --git a/src/scopes/phase.rs b/src/scopes/phase.rs
-index 72602b4d2..e8de03abb 100644
+index e5dff293c..dfdec0d8c 100644
 --- a/src/scopes/phase.rs
 +++ b/src/scopes/phase.rs
-@@ -176,7 +176,6 @@ pub(super) fn run_scan_phase(
-         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
+@@ -179,7 +179,6 @@ pub(super) fn run_scan_phase(
+         arm_projection_temps: arm_projection_temps_in(orig_code, orig_vars, data),
          null_led: null_led_in(orig_code, data),
          null_led_first: null_led_first_binds_in(orig_code, data),
 -        split_binds: HashMap::default(),
          mentions: var_mentions_in(orig_code),
          sunk: sunk.clone(),
          assigned: assigned_in(orig_code),
-@@ -541,7 +540,13 @@ pub(super) fn run_scan_phase(
+@@ -597,7 +596,13 @@ pub(super) fn run_scan_phase(
          d_nr,
          &scopes.witness_buffer,
          &scopes.minted_pairs,
@@ -64,7 +64,7 @@ index 72602b4d2..e8de03abb 100644
      );
      lazy_buffer_mints(&mut code, &mut function, data);
      function.set_capture_builds(std::mem::take(&mut scopes.capture_build_backing));
-@@ -615,32 +620,6 @@ pub(crate) fn assigned_in(node: &Value) -> HashSet<u16> {
+@@ -671,32 +676,6 @@ pub(crate) fn assigned_in(node: &Value) -> HashSet<u16> {
      out
  }
  
@@ -98,10 +98,10 @@ index 72602b4d2..e8de03abb 100644
  pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
      fn count(node: &Value, out: &mut HashMap<u16, usize>) {
 diff --git a/src/scopes/scan_set.rs b/src/scopes/scan_set.rs
-index 86e8c8123..3f29f2508 100644
+index e55b409a4..e26315fcf 100644
 --- a/src/scopes/scan_set.rs
 +++ b/src/scopes/scan_set.rs
-@@ -259,9 +259,6 @@ impl Scopes<'_> {
+@@ -355,9 +355,6 @@ impl Scopes<'_> {
              }
          }
          let v = *self.var_mapping.get(&ov).unwrap_or(&ov);
@@ -112,10 +112,10 @@ index 86e8c8123..3f29f2508 100644
          // (loft#1585) records which in the arm itself: after the `Set` nothing tells them apart.
          // A view the walk will copy, read through the silent element peer: respelled so the
 diff --git a/src/variables/mod.rs b/src/variables/mod.rs
-index bd0bc17a5..759159559 100644
+index bc58d7ef4..654b65586 100644
 --- a/src/variables/mod.rs
 +++ b/src/variables/mod.rs
-@@ -5328,20 +5328,10 @@ impl Function {
+@@ -5501,20 +5501,10 @@ impl Function {
              // proxy answers "owned" for such a local because the adoption leaves its dep list
              // empty, so without this the rebind released the buffer's store out from under it;
              // the buffer's own scope-exit free is what releases it, once.

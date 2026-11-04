@@ -18,6 +18,8 @@
 // strict stores) reads that half.
 //
 // @falsified-by: tests/falsified/2052-a-lifted-call-result-is-released-once-per-pass.patch — interpret exit 101 -> 0, interpret panicked -> clean; native INERT (expected for a backend-divergence guard — only one side can move)
+//   ARMED: LOFT_POISON=1 — unarmed, the control answers the same as this tree on both
+//     backends: the store the stale slot releases keeps its bytes until the allocator reuses it.
 //   CHANNEL: the PANIC on `--interpret` under `LOFT_POISON=1` — l1's second pass reads the
 //     poison pattern in the store the stale slot released.
 //   WITNESS: `LOFT_STRICT_STORES=1` on the control: `USE AFTER FREE (read) … type=Ht`, the

@@ -33,15 +33,16 @@
 //
 // @falsified-at: 3de09bdee — interpret exit 1 -> 0, interpret leaked kt=100 S1954×3 -> clean,
 //   native exit 1 -> 0, native leaked kt=100 S1954×3 -> clean (under `LOFT_STRICT_STORES=1`)
-// @falsified-by: tests/falsified/1954-a-sibling-rebind-keeps-the-pooled-buffer.patch — interpret exit 1 -> 0, interpret leaked kt=100 S1954×3 -> clean, native exit 1 -> 0, native leaked kt=100 S1954×3 -> clean
+// @falsified-by: tests/falsified/1954-a-sibling-rebind-keeps-the-pooled-buffer.patch — interpret exit 1 -> 0, native exit 1 -> 0
 //   ARMED: LOFT_STRICT_STORES=1 (`tests/store_lifetime_1954.rs` runs that leg per backend).
-//   CHANNEL: the exit is the strict census's USE AFTER FREE in the dense sibling cells; the
-//   leak is the nullable cells.  The two halves of the cure score apart, each by its own
-//   files of the patch: the split-copy count alone (`scopes.rs`, `phase.rs`, `scan_set.rs`)
-//   moves exit only, leak none on both trees and both backends; the veto reading alone
-//   (`buffers.rs`, `variables/mod.rs`) moves exit AND leak, S1954×6 -> clean on both
-//   backends — without it the nullable copies are left unpooled and retain one store a pass.
-//   HOLDS: a plain run on the control answers every value right and warns of the leak only.
+//   CHANNEL: the exit is the strict census's USE AFTER FREE, in the dense cells and the
+//     nullable ones alike: the nullable cells, which leaked `S1954×3` on the control the
+//     `@falsified-at:` line names, read a freed `S1954` on this one (`nullable()` and
+//     `nullable_alone()` run alone report `USE AFTER FREE (read) store #7 type=S1954`), so no
+//     cell moves the leak.
+//   WITNESS: the control's first report is `[strict-store] USE AFTER FREE (read) … type=S1954`.
+//   HOLDS: a plain run on the control answers every value right and prints the file's OK line,
+//     with no leak warning; this tree is clean under strict stores on both backends.
 
 struct S1954 { n: integer, tag: text, xs: vector<integer> }
 struct O1954 { opt: S1954? }
