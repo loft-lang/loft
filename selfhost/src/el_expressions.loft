@@ -9904,6 +9904,10 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
     el::refuse(e, "a match on a struct enum that is not a local");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  pd = struct_ref(e, el_types::base(st));
+  if !scalar_subject && !enum_subject && sd < 0 && pd >= 0 && el::def(e, pd).def_type == el::DT_STRUCT && !(st is TyOptional) {
+    return struct_match(e, vars, x, pd, arms);
+  }
   if !scalar_subject && !enum_subject && sd < 0 {
     if !el_types::is_unknown(st) {
       el::refuse(e, "a match on this type: {type_kind(st)}");
@@ -10060,6 +10064,225 @@ fn struct_enum_of(e: el::El, t: ir::TypeT) -> integer {
     TyEnum { n, is_ref } => if is_ref { n } else { -1 },
     TyReference { n } => if el::def(e, n).def_type == el::DT_ENUM_VALUE { el::def(e, n).parent } else { -1 },
     _ => -1
+  }
+}
+
+// One arm of a plain struct's match: its test (null where it always matches) and its code.
+struct SMArm { guard: ir::Node?, code: ir::Node }
+
+// One `S { … }` alternative of a struct arm: the bindings it makes, the tests it adds, and the
+// names it binds with their variables.
+struct SAlt { binds: vector<ir::Node>, conds: vector<ir::Node>, names: vector<el_vars::VarName> }
+
+// `parse_match_struct_arm` over plain struct `pd`: each arm one `S { … }` pattern, alternatives
+// of them, or `_`; a bare field a binding (`pattern_binding`'s `name#N`), a field with a
+// sub-pattern a test of a `_fp_subj_N` copy (`field_sub`), and a guard and-ed after them.  One
+// pattern hoists its bindings ahead of the arms and answers its code in a `struct_match` block;
+// alternatives each bind into the first's variables (`parse_pattern_alternatives`), an
+// alternative with tests guarding its bindings (`guarded_arm`'s `match_guard`) and one without
+// matching always.  The chain runs from the last arm back, ending in the arm that always matches
+// or the result's null.  A name not every alternative binds, a binding of a heap field and a
+// qualified or foreign pattern are refused by name.
+fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: vector<integer>) -> Ex {
+  result = ir::TyVoid;
+  hoisted: vector<ir::Node> = [];
+  out: vector<SMArm> = [];
+  for an in arms {
+    match e.p.nodes[an] {
+      SArm { pats, guard, body } => {
+        alts: vector<SAlt> = [];
+        for pn in pats {
+          al = struct_alternative(e, vars, x, pd, pn, if len(alts) > 0 { alts[0]!.names } else { [] });
+          if al == null {
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          alts += [al!];
+        }
+        for al in alts {
+          if al#index > 0 && len(al.names) != len(alts[0]!.names) {
+            el::refuse(e, "a struct match alternative binding other names than the first");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+        }
+        ug: ir::Node? = null;
+        if guard != null {
+          g = expression(e, vars, guard!);
+          if !e.first_pass && !(g.tp is TyBoolean) {
+            el::refuse(e, "a match guard that is not a boolean: {type_kind(g.tp)}");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          ug = g.code;
+        }
+        expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { arm_expectation(result) };
+        b = arm_body(e, vars, body, expected);
+        if unsettled(result) {
+          result = b.tp;
+        }
+        wild = e.p.nodes[pats[0]!] is PWild;
+        done = false;
+        for al in alts {
+          if done {
+            break;
+          }
+          cs = al.conds;
+          if ug != null {
+            cs += [ug!];
+          }
+          test: ir::Node? = null;
+          for c in cs {
+            test = if test == null { c } else { el_ir::v_if(test!, c, ir::NdBoolean { b: false }) };
+          }
+          done = test == null;
+          if len(alts) == 1 {
+            // One pattern: its bindings ahead of the arms; `_` answers its code as it is.
+            hoisted += al.binds;
+            out += [SMArm { guard: test, code: if wild { b.code } else { el_ir::v_block([b.code], b.tp, "struct_match") } }];
+          } else if test == null {
+            out += [SMArm { guard: null, code: el_ir::v_block(al.binds + [b.code], b.tp, "struct_match") }];
+          } else {
+            cond = if len(al.binds) == 0 { test! } else { el_ir::v_block(al.binds + [test!], ir::TyBoolean, "match_guard") };
+            out += [SMArm { guard: el_ir::v_if(ir::NdBoolean { b: true }, cond, ir::NdBoolean { b: false }), code: el_ir::v_block([b.code], b.tp, "struct_match") }];
+          }
+        }
+        for al in rev(alts[0]!.names) {
+          el_vars::restore_name(vars, al.name, al.nr);
+        }
+        if done {
+          break;
+        }
+      },
+      _ => {}
+    }
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, result);
+  }
+  chain = ir::NdNull;
+  rbase = el_types::base(result);
+  if !(rbase is TyVoid) && !(rbase is TyNull) && (out[-1] ?? SMArm { guard: null, code: ir::NdNull }).guard != null {
+    fb = el_convert::null_of(e, rbase);
+    if fb == null {
+      el::refuse(e, "a match whose result has no null: {type_kind(result)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    chain = fb!;
+  }
+  for a in rev(out) {
+    chain = if a.guard == null { a.code } else { el_ir::v_if(a.guard!, a.code, chain) };
+  }
+  if len(hoisted) > 0 {
+    return ex(el_ir::v_block(hoisted + [chain], result, "match"), result);
+  }
+  ex(chain, result)
+}
+
+// One alternative `S { … }` (or `_`) of a struct arm over the subject `x`: each bare field bound
+// to a fresh `name#N` — copied into the first alternative's variable of that name where there is
+// one (`shared`), whose spelling then names it — and each sub-pattern a `field_sub` test.  The
+// names it binds keep what they named before, for the arm's end.
+fn struct_alternative(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, pn: integer, shared: vector<el_vars::VarName>) -> SAlt? {
+  r = SAlt { binds: [], conds: [], names: [] };
+  match e.p.nodes[pn] {
+    PWild => {},
+    PName { name, member, fields } => {
+      if member != "" || name != el::def(e, pd).name {
+        el::refuse(e, "a struct pattern of another type than the subject");
+        return null;
+      }
+      for f in fields {
+        match e.p.nodes[f] {
+          PFieldPat { name: fname, pat } => {
+            a = attr_nr(el::def(e, pd), fname);
+            if a < 0 {
+              el::refuse(e, "a field the struct does not declare");
+              return null;
+            }
+            ft = el::def(e, pd).attributes[a]!.typedef[0];
+            read = field_get(e, pd, a, x.code);
+            if read == null {
+              return null;
+            }
+            // `field_pattern_rename`: `field: name` with a binding name binds the field as `name`.
+            bname = if pat == null { fname } else { rename_of(e, pat!) };
+            if bname != "" {
+              if !el_convert::plain_scalar(el_types::base(ft)) {
+                el::refuse(e, "a struct pattern binding of this type: {type_kind(ft)}");
+                return null;
+              }
+              id = el_vars::loop_binding(vars, bname);
+              if id == bname {
+                id = el_vars::loop_binding(vars, bname);
+              }
+              bv = el_vars::loop_variable(vars, id, ft);
+              el_vars::set_defined(vars, bv);
+              r.binds += [el_ir::v_set(bv, read!)];
+              slot = -1;
+              for s0 in shared {
+                if s0.name == bname {
+                  slot = el_vars::var(vars, bname);
+                }
+              }
+              if slot >= 0 {
+                r.binds += [el_ir::v_set(slot, ir::NdVar { n: bv })];
+                r.names += [el_vars::VarName { name: bname, nr: slot }];
+              } else {
+                r.names += [el_vars::VarName { name: bname, nr: el_vars::var(vars, bname) }];
+                el_vars::set_name(vars, bname, bv);
+              }
+            } else if !(e.p.nodes[pat!] is PWild) {
+              tmp = el_vars::create_unique(vars, "fp_subj", ft);
+              el_vars::set_defined(vars, tmp);
+              c = sub_pattern_cond(e, vars, pat!, tmp, ft);
+              if c == null {
+                return null;
+              }
+              r.conds += [el_ir::v_block([el_ir::v_set(tmp, read!), c!], ir::TyBoolean, "field_sub")];
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {
+      el::refuse(e, "a struct match pattern of this form: {syn_kind(e, pn)}");
+      return null;
+    }
+  }
+  r
+}
+
+// `field_pattern_rename` / `is_binding_name`: the name a sub-pattern that is one binding name
+// binds its field as, or "".
+fn rename_of(e: el::El, pat: integer) -> text {
+  match e.p.nodes[pat] {
+    PName { name, member, fields, braces } => {
+      first = name[0..1];
+      if member == "" && len(fields) == 0 && !braces && name != "_" && (first == "_" || (first >= "a" && first <= "z")) { name } else { "" }
+    },
+    _ => ""
+  }
+}
+
+// `scalar_field_test` and its `|` alternatives over the field's copy `tmp`; a range is its own
+// `range_pattern` block there (`parse_match_pattern`).
+fn sub_pattern_cond(e: el::El, vars: el_vars::Vars, pat: integer, tmp: integer, ft: ir::TypeT) -> ir::Node? {
+  if e.p.nodes[pat] is PRange {
+    c = pattern_cond(e, vars, pat, tmp, ft, false);
+    return if c == null { null } else { el_ir::v_block([c!], ir::TyBoolean, "range_pattern") };
+  }
+  match e.p.nodes[pat] {
+    PAlt { alts } => {
+      c: ir::Node? = null;
+      for a in alts {
+        n = sub_pattern_cond(e, vars, a, tmp, ft);
+        if n == null {
+          return null;
+        }
+        c = if c == null { n } else { el_ir::v_if(c!, ir::NdBoolean { b: true }, n!) };
+      }
+      c
+    },
+    _ => pattern_cond(e, vars, pat, tmp, ft, false)
   }
 }
 
