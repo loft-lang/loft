@@ -105,6 +105,13 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
   if d < 0 {
     return;
   }
+  parse_fields(e, d, fields);
+}
+
+// `Parser::parse_field` for each field of struct or struct variant `d`, on the first pass: an
+// attribute of its declared type, mutable, nullable only when the type is `τ?` (an integer
+// field's spec records it).  A field modifier, a default and a capture are refused by name.
+fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
   ctx = e.context;
   e.context = d;
   for f in fields {
@@ -221,8 +228,11 @@ fn parse_enum(e: el::El, at: integer, name: text, tvars: vector<integer>, varian
 }
 
 // The variants, in order: each a definition whose parent is the enum.   parse_enum_values
-// A plain value (pass 1): typed as the enum, and an attribute of the enum of that type, constant,
-// valued its ordinal (1-based; the store type is stamped by `fill_all`).
+// Each is an attribute of the enum of the enum's type, constant, valued its ordinal (1-based;
+// the store type is stamped by `fill_all`).  A struct variant (pass 1) makes the enum a
+// reference to its record (`TyEnum { is_ref }`), and its own definition a record whose first
+// field, `enum`, holds the ordinal; its fields follow as a struct's do.  Once every variant is
+// read, a reference enum's variants and attributes all take the enum's type.
 fn parse_enum_values(e: el::El, d: integer, variants: vector<integer>) {
   nr = 0;
   for vn in variants {
@@ -232,23 +242,54 @@ fn parse_enum_values(e: el::El, d: integer, variants: vector<integer>) {
         if e.first_pass {
           v = el::add_def(e, name, el::pos_at(e, at + 1), el::DT_ENUM_VALUE);
           e.b.data.definitions[v].parent = d;
+        } else {
+          v = el::variant_of(e, d, name);
         }
         if len(fields) > 0 {
-          el::refuse(e, "a struct variant");
+          if e.first_pass {
+            tp = ir::TyEnum { n: d, is_ref: true, dep: [] };
+            el::set_returned(e, d, tp);
+            el::set_returned(e, v, tp);
+            enum_attribute(e, d, name, tp, nr);
+            disc = el::attribute("enum", ir::TyEnum { n: el::def_nr(e, "enumerate"), is_ref: false, dep: [] });
+            disc.value = [ir::NdEnum { ord: nr + 1, tp: 65535 }];
+            e.b.data.definitions[v].attributes += [disc];
+          }
+          if v >= 0 {
+            parse_fields(e, v, fields);
+          }
         } else if e.first_pass {
           tp = ir::TyEnum { n: d, is_ref: false, dep: [] };
           el::set_returned(e, v, tp);
-          a = el::attribute(name, tp);
-          a.constant = true;
-          a.value = [ir::NdEnum { ord: nr + 1, tp: 65535 }];
-          e.b.data.definitions[d].attributes += [a];
+          enum_attribute(e, d, name, tp, nr);
         }
         nr += 1;
       },
       _ => {}
     }
   }
+  if e.first_pass {
+    rt = el::def(e, d).returned[0] ?? ir::TyVoid;
+    if rt == ir::TyEnum { n: d, is_ref: true, dep: [] } {
+      for a in el::def(e, d).attributes {
+        vd = el::variant_of(e, d, a.name);
+        if vd >= 0 {
+          el::set_returned(e, vd, rt);
+        }
+        e.b.data.definitions[d].attributes[a#index].typedef = [rt];
+      }
+    }
+  }
 }
+
+// The enum's attribute for its variant `name`: of type `tp`, constant, valued ordinal `nr + 1`.
+fn enum_attribute(e: el::El, d: integer, name: text, tp: ir::TypeT, nr: integer) {
+  a = el::attribute(name, tp);
+  a.constant = true;
+  a.value = [ir::NdEnum { ord: nr + 1, tp: 65535 }];
+  e.b.data.definitions[d].attributes += [a];
+}
+
 
 // `interface Name { member… }`                                     Parser::parse_interface
 fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>, end: integer) {
