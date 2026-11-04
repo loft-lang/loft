@@ -153,7 +153,12 @@ One phase per rule, in B1's weight order.  Each is a parallel run:
    cells also run on `--native` with `LOFT_NATIVE_BACKEND` unset, and `find_problems.sh
    --subject codegen` runs once with it unset: rustc's own pins (`apart_value`,
    `decode_view`, `mint_window`, …) and its declaration-at-first-assignment are what the C
-   checks cannot see (a moved assignment declared inside a block was an E0425 there).
+   checks cannot see (a moved assignment declared inside a block was an E0425 there).  Two
+   more reaches an IR clause has that a writer clause did not, both met on #2400: the REPL
+   (its input keeps source 0, so "is this the stdlib?" reads `is_stdlib()`, never the source
+   number — a breakpoint stopped pausing), and every caller of a function the move makes a
+   LEAF (the leaf inliner then exposes a value kind the C only ever saw behind a call — a
+   dropped tuple).  Run the REPL tests and the library gate's `--native-c` leg for such a move.
 3. **Then deleted.**  The writer clause is removed, its switch becomes the IR clause's, the
    rule's applied-by changes in the table (A1's bless), and the rewrite census shows no
    drop on the C side.
@@ -312,6 +317,21 @@ level or better (`fronds` 64 650 → 62 280 ns); rustc native `fronds` 50 626 �
 follow-up is `R-Scalar`'s decline in `fronds`' build loops.  On the interpreter: 8 252 → 5 886
 instructions a pass of the probe, −28.7 %.
 
+**`(R-ElemFirst)`'s call-filled temp and joined arms — moved.**  The call-filled temp's lazy-buffer
+guard becomes the mint, and the call is handed `OpGetField(elm, off, ftp)` for its buffer (`ftp`
+read from the append's paired copy).  The joined arms are NOT aliased: a `Set` of one record
+variable from another binds a COPY (`(B-Copy)`; the C wrote `loft_bind_copy`, and the arm wrote and
+filed the copy — two leaked records, the arm's values lost), so every use of the other arm's
+element is renamed to the minted one, and that element's mint and pre-init go.  Most pairs of
+these forms also need the view plan (a function returning the temp in a record), which only the
+writers build, so the benches show no census move; `164-element-place.loft` takes 4 pairs (its
+record-collection cells).  Cells:
+`an-element-is-built-in-place-by-its-call-and-in-either-arm.loft` (e1 joined arms, e2 a call, e3
+both), falsified by the rename left out (the interpreter stops naming the element, the C exits
+101); the rule's other cells and the four pins pass on the interpreter, the C and rustc, the clause
+on and off.  Taking the view-plan forms needs that plan in `opt` read AFTER this pass — the writers
+recompute it on the rewritten IR, and a plan read before could disagree.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -357,7 +377,7 @@ function before and not after.
 |---|---|---|--:|---|---|
 | `(R-Wrapper)` | yes — `ir_shape::one_op_wrapper` | `Call(op, operands)` | 40.9 | `wrapper`: 920 → 308, **−66.5 %** (upper bound: the operator itself is left out); moved: 921 → 479, **−48.0 %** | **MOVED** (`wrapper_inline::rewrite`, arc C's second) |
 | `(R-PushFill)` fill form | yes — IR facts | `OpPush` + `OpAppendCopy`, as `[c; n]` lowers | 17.2 | `push_fill`: 10 580 → 3 017, **−71.5 %**; moved: 9 847 → 2 776, **−71.8 %** | **MOVED** (`opt::fill_loop`, arc C's third).  The C's admission on the probe was its window clause, and rustc's fill had no census name |
-| `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %**; moved: 8 252 → 5 886, **−28.7 %** | **MOVED, the literal-built temp** (`opt::elem_first`, arc C's fifth); the other forms are still the writers' |
+| `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %**; moved: 8 252 → 5 886, **−28.7 %** | **MOVED: the literal-built temp, the call-filled temp, the joined arms** (`opt::elem_first`, arc C's fifth); the comprehension row and the view-plan exits are still the writers' |
 | `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** (the hand form skips the slice's bound normalisation); moved: 7 779 → 5 385, **−30.8 %** | **MOVED** (`slice_text::rewrite`, arc C's first) |
 | `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %** | MOVE |
 | `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %** | MOVE (light) |

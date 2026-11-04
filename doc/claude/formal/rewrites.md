@@ -4724,13 +4724,15 @@ line in `Output::output_function`'s prelude.
                  callee that FILLS its buffer and never mints into it — and its
                  argument condition — no other argument names `out`.  A value the
                  list does not declare keeps its copy into the early element.  The
-                 LITERAL-built temp appended once (no joined arms, no comprehension
-                 row) is applied in the IR, for every backend (`opt::elem_first`):
-                 the mint, the vector-handle zero and `t = OpGetField(elm, off, ftp)`
-                 at the declaration, the append keeping its scalar sets and finish.
-                 The call-filled temp, the joined arms, the comprehension row and a
-                 function whose exits copy a temp (the view plan) are still the
-                 writers' (`LOFT_NO_IR_ELEM_FIRST=1` hands them the literal case too).
+                 literal-built temp, the call-filled temp and the joined arms are
+                 applied in the IR, for every backend (`opt::elem_first`): the mint
+                 and the vector-handle zeros at the first declaration, `t =
+                 OpGetField(elm, off, ftp)` (or the call handed that field), the other
+                 arms' element renamed to the minted one — an ALIAS would be a `Set`
+                 between record variables, which binds a copy (`(B-Copy)`).  The
+                 comprehension row and a function whose exits copy a temp (the view
+                 plan) are still the writers' (`LOFT_NO_IR_ELEM_FIRST=1` hands them
+                 every form).
                  THE COMPREHENSION CLAUSE: a row built by a comprehension and appended
                  as a WHOLE element of a local vector of vectors (`[for y { [for x {
                  … }] }]`) is the same build with a third declaration shape and a

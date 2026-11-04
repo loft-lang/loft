@@ -15,10 +15,12 @@
 //!   `OpAppendVector` copies go; the scalar sets and the finish stay, so the element is
 //!   invisible until the finish exactly as before.
 //!
-//! Applied to a pair whose every temp is literal-built and whose append stands once.  A temp a
-//! call fills, an append in each arm of an `if`, a comprehension's row and a function whose
-//! exits copy a temp (`@FR-O-ViewField`) are still the writers' (they ask the same analysis of
-//! the IR they receive, which no longer shows a pair this pass took).
+//! Also a temp a CALL fills (its lazy-buffer guard becomes the mint, and the call is handed the
+//! element's field for its buffer) and an append in EACH arm of an `if` (each arm's element is
+//! renamed to the one minted at the declaration).  A comprehension's row and a function whose
+//! exits copy a temp (`@FR-O-ViewField`, which needs the writers' view plan) are still the
+//! writers' (they ask the same analysis of the IR they receive, which no longer shows a pair
+//! this pass took).
 //!
 //! `LOFT_NO_ELEMENT_FIRST=1` turns the rule off on every backend; `LOFT_NO_IR_ELEM_FIRST=1`
 //! this clause alone, its pairs then left to the writers; `LOFT_TRACE_IR_ELEM_FIRST=1` names
@@ -118,36 +120,9 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         if pairs.is_empty() {
             continue;
         }
-        let mut plan = Plan::default();
-        for (pi, p) in pairs.iter().enumerate() {
-            plan.elm.insert(p.elm, pi);
-            for a in &p.aliases {
-                plan.elm.insert(*a, pi);
-            }
-            for (bi, b) in p.binds.iter().enumerate() {
-                if b.from_call {
-                    let Some(ftp) = copy_field_type(def.code(), &ops, &plan, pi, b) else {
-                        continue;
-                    };
-                    plan.call_buf.insert(b.vdb, (pi, bi, ftp));
-                } else {
-                    plan.decl.insert(b.vdb, (pi, bi));
-                }
-            }
-        }
-        // A call-filled temp whose copy names no field type cannot be bound: its pair keeps
-        // the writers' form.
-        let complete: Vec<bool> = pairs
-            .iter()
-            .map(|p| {
-                p.binds
-                    .iter()
-                    .all(|b| !b.from_call || plan.call_buf.contains_key(&b.vdb))
-            })
-            .collect();
-        if complete.iter().any(|c| !c) {
+        let Some(plan) = plan_of(def.code(), &pairs, &ops) else {
             continue;
-        }
+        };
         let _census = crate::rewrite_census::InBody::enter("ir", def.name());
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
         merge_arms(&mut code, &pairs);
@@ -177,6 +152,43 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         total += n;
     }
     total
+}
+
+/// What the rewrite does with `pairs` in `code`, keyed by variable; `None` when a call-filled
+/// temp's copy names no field type, so its pair cannot be bound and every pair keeps the
+/// writers' form.
+fn plan_of(code: &Value, pairs: &[&ElemFirst], ops: &Ops) -> Option<Plan> {
+    let mut plan = Plan::default();
+    for (pi, p) in pairs.iter().enumerate() {
+        plan.elm.insert(p.elm, pi);
+        for a in &p.aliases {
+            plan.elm.insert(*a, pi);
+        }
+        for (bi, b) in p.binds.iter().enumerate() {
+            if b.from_call {
+                let Some(ftp) = copy_field_type(code, ops, &plan, pi, b) else {
+                    continue;
+                };
+                plan.call_buf.insert(b.vdb, (pi, bi, ftp));
+            } else {
+                plan.decl.insert(b.vdb, (pi, bi));
+            }
+        }
+    }
+    // A call-filled temp whose copy names no field type cannot be bound: its pair keeps
+    // the writers' form.
+    let complete: Vec<bool> = pairs
+        .iter()
+        .map(|p| {
+            p.binds
+                .iter()
+                .all(|b| !b.from_call || plan.call_buf.contains_key(&b.vdb))
+        })
+        .collect();
+    if complete.iter().any(|c| !c) {
+        return None;
+    }
+    Some(plan)
 }
 
 fn var_of(v: Option<&Value>) -> Option<u16> {

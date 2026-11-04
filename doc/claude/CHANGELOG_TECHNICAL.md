@@ -21,8 +21,9 @@ All notable changes to the loft language and interpreter.
 
 - `t = []; …t += …; out += [R { f: t, … }]` builds `t` inside the appended element on every
   backend (`src/opt/elem_first.rs`); the interpreter runs 28.7 % fewer instructions on such a
-  loop.  The call-filled temp, the joined arms and the comprehension row are still applied by
-  the writers.  `LOFT_NO_IR_ELEM_FIRST` switches the IR clause off alone.
+  loop.  A temp a call fills and an append in each arm of an `if` take the same build; the
+  comprehension row and a function returning the temp in a record are still applied by the
+  writers.  `LOFT_NO_IR_ELEM_FIRST` switches the IR clause off alone.
 
 ### `(R-KeyedEntry)` runs in the IR (@PLN211 arc C)
 
