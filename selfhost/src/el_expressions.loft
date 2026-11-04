@@ -2186,7 +2186,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SMember { at, e: re, name, args, call } => member(e, vars, at, re, name, args, call),
     SBin { at, op, l, r } => binary(e, vars, at, op, l, r),
     SUnary { op, e: ue } => unary(e, vars, op, ue),
-    SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
+    SIf { cond, then, other } => if_expr(e, vars, cond, then, other, if n == vars.expect_node { el_types::without_deps(vars.expect) } else { ir::TyVoid }),
     SStructLit { name, member, fields, base } => object_expr(e, vars, name, member, fields, base),
     SFor { at: _ } => for_expr(e, vars, n),
     SWhile { cond, body } => while_expr(e, vars, cond, body),
@@ -2869,7 +2869,10 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   }
   outer_into = vars.read_into;
   vars.read_into = leftmost(e, rhs!);
+  vars.expect_node = rhs!;
+  vars.expect = el_vars::tp(vars, v);
   x = expression(e, vars, rhs!);
+  vars.expect_node = -1;
   vars.read_into = outer_into;
   vars.concat_dest = -1;
   vars.slice_node = outer_slice;
@@ -4092,7 +4095,10 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   vars.slice_node = if declared! is TyVector { slice_target(e, rhs!) } else { -1 };
   outer_into = vars.read_into;
   vars.read_into = leftmost(e, rhs!);
+  vars.expect_node = rhs!;
+  vars.expect = declared!;
   x = expression(e, vars, rhs!);
+  vars.expect_node = -1;
   vars.read_into = outer_into;
   vars.slice_node = outer_slice;
   if x.code is NdIter {
@@ -8400,7 +8406,7 @@ fn has_operator_method(e: el::El, d: integer) -> boolean {
 // block expecting the then arm's type (`arm_expectation`); `else null` without one.  The `if` is
 // typed as its then arm.  A condition that is not a boolean, a then arm that never finishes or is
 // null, arms of different types and a value without an `else` are refused by name.
-fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: integer?) -> Ex {
+fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: integer?, expected: ir::TypeT) -> Ex {
   c = expression(e, vars, cond);
   // A template's first pass types an operator over its variable as the variable (`call_op`);
   // the second resolves it to the bound's stub.
@@ -8421,6 +8427,10 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   t = parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
   truncate_nonzero(vars, dz);
   vars.present = vars.present[0..dp];
+  // An untyped `[]` arm where the bind's target names the vector is built in its place.
+  if el_types::base(expected) is TyVector && syntax_tail_empty(e, then) {
+    t = empty_arm(e, vars, t, expected, ir::TyVoid);
+  }
   if other == null && t.tp is TyNever {
     // A then arm that only jumps, with nothing after it: a statement — after which the test
     // failed, for the rest of the block (`(N-Guard)`).
@@ -8445,13 +8455,24 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   if !pp.then {
     push_present(vars, pp.v);
   }
+  // An untyped `[]` then arm gives the `else` nothing to be read against (`true_type`
+  // unknown, as a `null` arm's).
+  then_empty = syntax_tail_empty(e, then) && !(el_types::base(expected) is TyVector);
   f = if e.p.nodes[other!] is SIf {
     expression(e, vars, other!)
   } else {
-    parse_block(e, vars, other!, "else", arm_expectation(t.tp))
+    parse_block(e, vars, other!, "else", if then_empty { ir::TyUnknown { n: 0 } } else { arm_expectation(t.tp) })
   };
   truncate_nonzero(vars, dz);
   vars.present = vars.present[0..dp];
+  // `@FR-Col-Cons` (loft#2407): an arm answering an untyped `[]` beside a vector arm is that
+  // vector's empty literal, built once the other arm is read.
+  if then_empty && el_types::base(f.tp) is TyVector {
+    // Built after the `else`, the arm takes the `else`'s type (`true_type = false_type`).
+    t = empty_arm(e, vars, t, f.tp, f.tp);
+  } else if syntax_tail_empty(e, other!) && el_types::base(t.tp) is TyVector {
+    f = empty_arm(e, vars, f, t.tp, ir::TyVoid);
+  }
   // `@FR-N-Join`: a null else arm beside a scalar then arm is that scalar's null, read against
   // the then arm's type (`convert_admitting` at the block's tail), and the `if` is the scalar `?`.
   // A record arm beside a `null` one: the null arm answers the record's null sentinel, typed as
@@ -11654,6 +11675,42 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   Built { x: ex(ir::NdInsert { items: ls }, ir::TyVoid), items: codes, elem: in_t }
 }
 
+
+// The block at syntax node `n` ends in a `[]` with no items (`block_tail_empty_literal`).
+fn syntax_tail_empty(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SBlock { stmts } => {
+      if len(stmts) == 0 {
+        return false;
+      }
+      match e.p.nodes[stmts[-1]!] {
+        SStmt { e: se, semi } => {
+          if semi || se == null {
+            return false;
+          }
+          match e.p.nodes[se!] {
+            SVecLit { items } => len(items) == 0,
+            _ => false
+          }
+        },
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+// An arm answering the untyped `[]`, built as an empty vector of `like`'s element; typed as
+// `as_tp`, or as the literal it now answers where that is void.
+fn empty_arm(e: el::El, vars: el_vars::Vars, arm: Ex, like: ir::TypeT, as_tp: ir::TypeT) -> Ex {
+  vt = el_types::without_deps(el_types::base(like));
+  if e.first_pass {
+    return ex(arm.code, vt);
+  }
+  lit = empty_literal_to(e, vars, vt);
+  lt = if as_tp is TyVoid { match el_ir::unspan(lit) { NdBlock { block } => block[0].result[0] ?? vt, _ => vt } } else { as_tp };
+  ex(retail(arm.code, lit, lt) ?? lit, lt)
+}
 
 // `parse_vector`'s marker for `[]` read with no element type.
 fn is_empty_literal(n: ir::Node) -> boolean {
