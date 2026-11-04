@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a build target, the ESP-IDF app for the Tanmatsu (`--native-esp`)
 
 //! @PLN204 — `--native-esp`: a loft program as an ESP-IDF app for the Tanmatsu
 //! (TANMATSU.md § A loft program as an app).  The project holds the unit

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: the files a built target carries (an ESP app, a C page)
 
 //! The files a built program carries with it, found from what names them: an ESP-IDF app's
 //! packed assets (`--native-esp`, esp_app.rs) and a page's base filesystem (`--native-c
