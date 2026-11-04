@@ -8572,11 +8572,23 @@ impl Parser {
         }
         let v = self.vars.loop_variable(&id, tp, &mut self.lexer);
         if v != u16::MAX {
-            self.vars.set_name(name, v);
+            self.name_capture(name, v);
             self.pattern_binds_pending
                 .push((name.to_string(), (before != u16::MAX).then_some(before)));
         }
         v
+    }
+
+    /// `@FR-B-Scope` — `spelling` names the capture `v` a PATTERN binds.  The binding is the
+    /// pattern's, into the arm (or the `is` body) it guards, as a `for` header binds its
+    /// variable into the loop's body, so it is recorded where the pattern stands: a write to
+    /// the capture inside a block nested in the arm is a write, not that block's binding.
+    /// Unrecorded, the first such write was recorded as the binding there and the read after
+    /// the block was refused as out of scope (loft#2401).  Answers what the spelling named.
+    fn name_capture(&mut self, spelling: &str, v: u16) -> Option<u16> {
+        let before = self.vars.set_name(spelling, v);
+        self.record_binding(v);
+        before
     }
 
     /// The end of a match arm: the names its pattern bound stop naming its bindings, and name
@@ -8848,7 +8860,7 @@ impl Parser {
                 continue;
             }
             self.vars.defined(v);
-            let old = self.vars.set_name(&name, v);
+            let old = self.name_capture(&name, v);
             aliases.push((name, old));
         }
         Some(aliases)
@@ -10826,7 +10838,7 @@ impl Parser {
                 }
             }
             bindings.push(v_set(v_nr, acc));
-            self.vars.set_name(fname, v_nr);
+            self.name_capture(fname, v_nr);
             // Heap capture = a borrowed view of the subject element (mirror the field-sub-pattern
             // path): skip its free, record the borrow dep — through an `option<T>` wrapper too.
             if !matches!(ftype.base(), Type::Text(_)) {
@@ -11107,7 +11119,7 @@ impl Parser {
                 }
             }
             bindings.push(v_set(v_nr, acc));
-            let before = self.vars.set_name(fname, v_nr); // stays in scope for the arm body (as sub-patterns do)
+            let before = self.name_capture(fname, v_nr); // stays in scope for the arm body (as sub-patterns do)
             if !parens {
                 self.pattern_binds_pending.push((fname.clone(), before));
             }
@@ -11160,7 +11172,7 @@ impl Parser {
                 ),
             );
             arm_stmts.push(v_set(v_nr, bound));
-            let old = self.vars.set_name(field_name, v_nr);
+            let old = self.name_capture(field_name, v_nr);
             name_aliases.push((field_name.to_string(), old));
             // B5 remaining half (2026-04-14): a HEAP match-arm
             // binding is a field extraction from the subject —
@@ -11295,7 +11307,7 @@ impl Parser {
             if let Some((slot, slot_ty)) = shared.get(name).cloned() {
                 self.shared_slot_accepts(name, &tp, &slot_ty);
                 stmts.push(v_set(slot, Value::Var(v_nr)));
-                self.vars.set_name(name, slot);
+                self.name_capture(name, slot);
                 copied.insert(name.clone());
             } else {
                 shared.insert(name.clone(), (v_nr, tp));
@@ -14312,7 +14324,7 @@ impl Parser {
                     // The copy reads this pattern's variable: it is not a never-read binding.
                     self.var_usages(own, true);
                     binds_i.push(v_set(slot, Value::Var(own)));
-                    self.vars.set_name(&name, slot);
+                    self.name_capture(&name, slot);
                 } else {
                     // A name no earlier pattern bound: its own variable is the shared slot,
                     // and the arm's end restores what the name meant before the arm.
@@ -15027,12 +15039,12 @@ impl Parser {
                                 stable_subject.clone(),
                             );
                             self.is_capture_bindings.push(v_set(v_nr, bound));
-                            let old = self.vars.set_name(&field_name, v_nr);
+                            let old = self.name_capture(&field_name, v_nr);
                             self.is_capture_aliases.push((field_name.clone(), old));
                             // The refused rename's name reads the same capture, so the body's
                             // use of it adds no second error.
                             if let Some(alias) = rename.as_ref().filter(|a| !a.is_empty()) {
-                                let old = self.vars.set_name(alias, v_nr);
+                                let old = self.name_capture(alias, v_nr);
                                 self.is_capture_aliases.push((alias.clone(), old));
                             }
                         }
