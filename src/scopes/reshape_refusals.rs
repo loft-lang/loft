@@ -355,7 +355,12 @@ fn def_reshape_refusals(
         );
         // The two causes destroy the place differently, so they read differently and have
         // different ways out — but the verdict is the same.
-        let (what, why) = match d.cause {
+        let cause = if d.rebuilt_part {
+            ViewCause::Overwritten
+        } else {
+            d.cause
+        };
+        let (what, why) = match cause {
             ViewCause::Reshaped if record_per_element => (
                 format!("remove from `{container}`"),
                 format!(
