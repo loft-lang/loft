@@ -18,7 +18,9 @@ rendered from it); B1 and B2 are done: weights in [b1-weights.md](b1-weights.md)
 a verdict per rule in § Verdicts.  Arc C has moved `(R-SliceArg)`'s
 range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-KeyedEntry)`, `(R-ElemFirst)`'s literal-built temp, call-filled temp and joined arms, and
 `(R-LoopBuffer)` (§ Arc C's moves); **arc C′ is next** — those moves brought to ONE place each,
-no writer clause or writer compensation left (§ Arc C′), before any further rule moves.  It
+no writer clause or writer compensation left (§ Arc C′), before any further rule moves; **arc C′
+is closed** (C′1–C′4), with `(R-ElemFirst)`'s view-exit form deferred to the `(R-ValueRecord)`
+view-clause move (§ What arc C′ skips).  It
 was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
@@ -255,7 +257,7 @@ census, every move attributed; rustc's pins).
 | C′1 **DONE** (`opt::empty_slot`) | `c::body::emptied_either_way`: the C's `known_empty` taught `(R-LoopBuffer)`'s `if … else OpClearVector` shape, so its push-run reservation applies | a front fact, `opt`: a vector slot is EMPTY after a statement that empties it on every path — its zero, an `OpClearVector` of it, an `if` whose arms both do — read by the C's run clause and by any writer that asks; no knowledge of the loop-buffer shape | the C function is gone; the C's `R-PushFill/run` census unchanged |
 | C′2 **DONE** (`opt::buffer_owner`) | buffer ownership derived per consumer: `opt::loop_buffer` recomputes five rules' analyses (invariant literal, element-first pair, move host, adopted witness, inline-buffer companion) and each writer its own | one `opt::hoist::buffer_owner(data, stores, d)` answering, per `__vdb` witness, the ONE rule that owns it, in a stated priority; the IR passes and the writers read it | no consumer computes another rule's analysis to decide ownership; the census unchanged |
 | C′3 **DONE** (`opt::keyed_entry`) | `(R-KeyedEntry)`'s subscript clause (`coll[k₁, …] = T{…}`) still in both writers (`output_keyed_entry_subscript`, the C's `keyed_place` arm) | the IR form: the literal's values staged, the entry answered by the stdlib probe, the fields written — `opt::keyed_entry`'s own staging, one more host shape | both writer clauses deleted; `R-KeyedEntry/subscript` applied by `ir` |
-| C′4 | `(R-ElemFirst)`'s comprehension row and view-plan exits still the writers' (rustc's and the C's clauses kept whole for them; the C's applies nowhere on the benches) | the comprehension row as an IR form; the view plan (`opt::value_records`) read by the pass AFTER it is final — decided once, at the front, so the pass and the writers cannot disagree | both writers' element-first clauses deleted; `R-ElemFirst` applied by `ir` alone |
+| C′4 **DONE, one form deferred** (`opt::elem_first`) | `(R-ElemFirst)`'s comprehension row and view-plan exits still the writers' | the comprehension row as an IR form — done; the view-exit form deferred with `(R-ValueRecord)`'s view clause (§ What arc C′ skips) | the comprehension row applied by `ir`; the view-exit form registered as D-phase-4, waiting on D-phase-5 |
 
 This is [STABILITY_METHOD.md § The rule-led walk](../../STABILITY_METHOD.md#the-rule-led-walk--the-standing-practice)
 on a rewrite rule: the question its sites share is WHERE it is decided, and each row is a
@@ -269,10 +271,53 @@ rustc writer / C writer): `R-ElemFirst` 4 / 4 / 4, `R-KeyedEntry` 5 / 6 / 2, `R-
 C′4's design: [c4-view-plan.md](c4-view-plan.md) — the view leaf is `(R-ValueRecord)`'s own
 writer clause, so the front fact is that clause moved into the IR (a tuple element that is a
 reference), after which the element-first form needs no plan.  The comprehension row is done.
-C′4 carries the design question: the view plan is computed by the writers today
-(`lower::plan`), after every IR pass; read before the pass it could differ from the plan the
-writers compute on the rewritten IR.  The design step is to make the value-record decision a
-front fact that the writers read rather than recompute.
+
+**Arc C′ is closed (owner, 2026-11-04)**, with one form deferred by decision: every rule arc C
+moved now takes in the IR every form its conditions can be decided on there, and the one form
+left in the writers depends on a rule arc C has not moved yet.
+
+### What arc C′ skips
+
+The owner chose, between doing c4-view-plan.md's S1–S3 now (several days) and closing the arc
+with the remainder reclassified, the second — on the ground that the remainder is no duplicate
+of a moved rule but a rule not yet moved, which belongs in arc C's queue ranked by its weight
+like every other move rather than inside a harmonisation arc.  What that leaves, all of it
+registered (`formal/rewrites.md` D-phase-4, D-phase-5):
+
+- **`(R-ElemFirst)`'s view-exit form stays a writer clause.**  A temp its function also returns
+  inside its record (`164-element-place.loft` g1, g2, g4, g10, g16 — the `parse_circle` shape —
+  and g20) is built in the appended element only by rustc and the C, which pair it through
+  `element_first`'s view plan; the interpreter keeps the temp's own store and its copy there.
+  Both writers' element-first clauses (`generation::emit`'s statement handling, `generation::calls`'
+  buffer place, `c::body::elem_first`) therefore stay, with this ONE job: the IR takes every
+  other pair first, so they find nothing else.  On the benches they apply nowhere.
+- **`(R-ValueRecord)`'s view-leaf clause stays the writers' alone.**  The IR's value-record pass
+  carries FLAT records only (two or more fields, each an 8-byte integer, a float, a single or a
+  boolean) and declines a view in a result position (`value_record::body_shape`); rustc
+  (`lower::plan`) and the C (`FnWriter::value_records`) each compute `opt::value_records` with
+  its view leaves and deliver the reference themselves.  The interpreter returns those records
+  through a buffer.  Weight, measured (`R-ValueRecord/view`): 3 bench functions — drawing's
+  `parse_lock` and `parse_poly` (the parser behind drawing's `parse` routine, over 2× its twin
+  on both lanes) and two in the moros/dryopea consumer.
+- **The plan is still computed three times** (the IR pass, rustc, the C), keyed by node address
+  for the view leaves; D-phase-5's removal makes the IR the one place.
+
+**Why it is not done here.**  The view leaf is a vector field delivered as a REFERENCE to a
+place, so the IR's tuple needs an element kind it lacks: the interpreter's tuple layout must
+carry a `DbRef` part that a frame never frees and that a copy out of it copies as the place it
+views (`formal/binding.md` `(B-View)`); the value-record call-site gates must admit it; and the
+C and rustc must spell it.  Several days, on all three backends — an arc C move, not a cleanup.
+
+**What the deferral risks, and what holds it.**  The writers' element-first code, kept for one
+form, could drift from the IR pass that took the rest; the cells pin both (`164-element-place.loft`
+for the writers' form, `tests/element_first.rs` counting the IR trace and the writers' marks
+together).  The register states both deviations, so neither reads as finished.
+
+**When and how it resumes.**  `(R-ValueRecord)`'s view clause is a wave-1 move below (§
+Verdicts), taken in arc C's order by its weight; its steps are c4-view-plan.md S1 (a reference
+element in the IR tuple), S2 (the writers read the IR's tuple instead of recomputing view
+leaves, emission byte-identical elsewhere) and S3 (`(R-ElemFirst)` takes the view-exit form;
+both writers' element-first clauses deleted; D-phase-4 and D-phase-5 closed).
 
 ## Arc D — the class remainders: widening the rules we have
 
@@ -517,6 +562,7 @@ function before and not after.
 | `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %**; moved: 7 311 → 6 106, **−16.5 %** | **MOVED** (`opt::loop_buffer`, arc C's sixth) |
 | `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %** | MOVE (light) |
 | `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector` | MOVE, as that parser path widened to field places; measured on arc C's beside build |
+| `(R-ValueRecord)` view clause | yes — `opt::value_records`' view leaves, decided on the IR already (by each writer) | a value-record tuple element that is a REFERENCE to a place — new to the IR's tuple | — (not in B1) | no probe yet; S0's count: `R-ValueRecord/view` 3 bench functions, drawing's `parse_lock` / `parse_poly` among them | MOVE — c4-view-plan.md S1–S3; carries `(R-ElemFirst)`'s view-exit form with it (D-phase-4, D-phase-5) |
 | `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)) | owed: measured on arc C's beside build |
 
 **Wave 2 — the rules that need one new piece.**

@@ -5,6 +5,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # C′4 — the view plan as a front fact
 
+**Status: deferred by the owner's decision (2026-11-04)** — arc C′ closed with this form left in
+the writers; the work below is the `(R-ValueRecord)` view-clause move in arc C's queue
+([README.md § What arc C′ skips](README.md#what-arc-c-skips), `formal/rewrites.md` D-phase-4,
+D-phase-5).  S0 is done; S1–S3 are that move's steps.
+
 Arc C′'s last item ([README.md § Arc C′](README.md#arc-c--harmonising-the-moves-made)):
 `(R-ElemFirst)`'s one form the IR does not take — a temp a function also returns inside its
 record — and with it D-phase-4 (`formal/rewrites.md`).  The owner chose this design over

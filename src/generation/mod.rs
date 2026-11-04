@@ -2324,6 +2324,10 @@ impl Output<'_> {
                     .filter(|v| *v != u16::MAX);
             }
         }
+        // `@FR-R-ElemFirst` is decided and applied in the IR (`opt::elem_first`); what this map
+        // still finds is the ONE form the IR declines — a temp its function also returns inside
+        // its record, paired only through the view plan (`formal/rewrites.md` D-phase-4, which
+        // waits on `(R-ValueRecord)`'s view clause moving into the IR, D-phase-5).
         self.elem_first = if self.switches.element_first_disabled {
             hoist::ElemFirstMap::default()
         } else {

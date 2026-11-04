@@ -4,6 +4,11 @@
 //! `@FR-R-ElemFirst` on the C: a local vector consumed once as a record-literal field of an
 //! append (`out += [R { f: v, … }]`) is built INSIDE the appended element.
 //!
+//! The rule is decided and applied in the IR (`opt::elem_first`), which takes every pair it can
+//! first; this clause stays for the ONE form the IR declines — a temp its function also returns
+//! inside its record, paired only through the view plan — until `(R-ValueRecord)`'s view clause
+//! moves into the IR (`formal/rewrites.md` D-phase-4 and D-phase-5).
+//!
 //! The admission is the shared analysis (`hoist::element_first`), the one native reads.  The C
 //! spells its moves over the IR the parser wrote: at the first temp's declaration the append
 //! site's own reservation, mint and vector-field zeros run (the C does not zero a fresh slot,
