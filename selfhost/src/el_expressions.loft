@@ -2300,6 +2300,12 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, int
         return ex(el::def(e, d2).code[0], ct);
       }
     }
+    // A function's name read as a value: its definition number, typed as the function
+    // (`fn_ref_arg_types`); a name bound as a value shadows it.
+    fd = el::def_nr(e, "n_{name}");
+    if fd >= 0 && el::def(e, fd).def_type == el::DT_FUNCTION {
+      return ex(ir::NdInt { n: fd }, el_types::function_value_type(e, fd));
+    }
     el::refuse(e, "a name that is not a variable: {kind}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -4813,6 +4819,66 @@ fn binding_var(e: el::El, vars: el_vars::Vars, name: text) -> integer {
   v
 }
 
+// A call through a local or parameter holding a function (`fn_ref[v](…)`, `Value::CallRef`):
+// each argument converted to the function type's parameter; typed by its result.  A named
+// argument, a wrong count and a closure-carrying value are refused by name.
+fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -> Ex {
+  ft = el_types::base(el_vars::tp(vars, v));
+  pts: vector<ir::TypeT> = [];
+  rt = ir::TyVoid;
+  match ft {
+    TyFunction { args: fa, result, dep } => {
+      if len(dep) > 0 {
+        el::refuse(e, "a call through a function value that carries a closure");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      pts = fa;
+      // The function type's result, borrowing nothing (its definition's deps name parameters).
+      rt = el_types::without_deps(result);
+      // A text answered through a function value takes a work text of its own — not carried.
+      if el_types::base(rt) is TyText {
+        el::refuse(e, "a text answered through a function value");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+    },
+    _ => {}
+  }
+  el_vars::in_use(vars, v, true);
+  list: vector<ir::Node> = [];
+  for a in args {
+    an = "";
+    ae: integer? = null;
+    match e.p.nodes[a] {
+      SArg { name: n, e: x } => { an = n; ae = x; },
+      _ => { ae = a; }
+    }
+    if an != "" || ae == null {
+      el::refuse(e, "a named argument to a function value");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    x = expression(e, vars, ae!);
+    if e.first_pass {
+      continue;
+    }
+    pt = pts[len(list)] ?? ir::TyVoid;
+    if len(list) >= len(pts) {
+      el::refuse(e, "a call through a function value with too many arguments");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    c = stored(e, vars, x, pt);
+    if c == null {
+      refuse_known(e, x.tp, "an argument to a function value of another type: {type_kind(x.tp)} for {type_kind(pt)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    list += [c!];
+  }
+  if !e.first_pass && len(list) != len(pts) {
+    el::refuse(e, "a call through a function value with too few arguments");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ex(ir::NdCallRef { var: v, args: list }, rt)
+}
+
 // `Parser::parse_call` of a bare function name: the arguments read in order, then the
 // definition the name and the first argument's type select (`call`, `Data::candidates`), each
 // argument converted to its parameter (`process_call_args`).  On the second pass the call is
@@ -4826,6 +4892,9 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
       }
     },
     _ => {}
+  }
+  if name != "" && el_vars::var(vars, name) >= 0 && el_types::base(el_vars::tp(vars, el_vars::var(vars, name))) is TyFunction {
+    return call_ref(e, vars, el_vars::var(vars, name), args);
   }
   if name == "" || el_vars::var(vars, name) >= 0 {
     el::refuse(e, "a call that is not of a function by its bare name");
@@ -5512,6 +5581,8 @@ pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
     TyUnknown { n } => n,
     // A link to a record is named by the record; any other link by `reference` (its layout).
     TyRefVar { inner } => if inner is TyReference { type_def_nr(e, inner) } else { el::source_nr(e, 0, "reference") },
+    // A function value is its definition number: named by `i32`.
+    TyFunction { args: _ } => el::def_nr(e, "i32"),
     _ => {
       el::refuse(e, "a call whose first argument is a collection, a tuple or a function: {type_kind(t)}");
       -1
@@ -6938,8 +7009,10 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     rt = el_types::with_deps(rb, ds);
     return ex(ir::NdCall { def_nr: d, args: list }, if ret is TyOptional { ir::TyOptional { inner: rt } } else { rt });
   }
-  // A generator answers its coroutine's handle, typed as its iterator.
-  if !scalar(el_types::base(ret)) && !(ret is TyIterator) {
+  // A generator answers its coroutine's handle, typed as its iterator; a function value that
+  // carries no closure is a value as a scalar is.
+  plain_fn = el_types::base(ret) is TyFunction && len(el_types::deps(ret)) == 0;
+  if !scalar(el_types::base(ret)) && !(ret is TyIterator) && !plain_fn {
     el::refuse(e, "a call returning a heap value: {type_kind(el_types::base(ret))}");
     return null;
   }

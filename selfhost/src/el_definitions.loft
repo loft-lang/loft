@@ -494,11 +494,11 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
   after = at;
   rt: ir::TypeT = ir::TyVoid;
   if ret != null {
+    // `-> T` (or `-> const T`, a function or a tuple type): the lexer stood on the `->`.
     match e.p.nodes[ret ?? 0] {
-      STy { at: tat } => {
-        // `-> T` (or `-> const T`): the lexer stood on the `->`.
-        after = tat - 1;
-      },
+      STy { at: tat } => { after = tat - 1; },
+      STyFn { at: tat } => { after = tat - 1; },
+      STyTuple { at: tat } => { after = tat - 1; },
       _ => {}
     }
   } else if body != null {

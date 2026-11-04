@@ -116,6 +116,11 @@ pub fn is_equal(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
       TyTuple { elems: eb } => len(ea) == len(eb) && all_equal(e, ea, eb),
       _ => false
     },
+    // Argument by argument and the result, whatever the value carries or holds `const`.
+    TyFunction { args: fa, result: ra } => match b {
+      TyFunction { args: fb, result: rb } => len(fa) == len(fb) && all_equal(e, fa, fb) && is_equal(e, ra, rb),
+      _ => false
+    },
     _ => a == b
   }
 }
@@ -417,11 +422,65 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
       }
       ir::TyTuple { elems: ts }
     },
+    // `fn(T, …) -> R`: the argument types, a `const` one's bit in `consts` (`ConstParams`), and
+    // the result (`void` when none is written).  A `&` argument is refused by name.
+    STyFn { at: _, args, ret } => {
+      ts: vector<ir::TypeT> = [];
+      bits = 0;
+      for a in args {
+        match e.p.nodes[a] {
+          STyArg { amp, fixed, tp } => {
+            if amp {
+              el::refuse(e, "a function type with a `&` argument");
+              return null;
+            }
+            at = if tp == null { null } else { parse_type(e, tp!) };
+            if at == null {
+              return null;
+            }
+            if fixed && len(ts) < 32 {
+              bits += 1 << len(ts);
+            }
+            ts += [at!];
+          },
+          _ => {
+            el::refuse(e, "a function type argument of this form");
+            return null;
+          }
+        }
+      }
+      rt = ir::TyVoid;
+      if ret != null {
+        r = parse_type(e, ret!);
+        if r == null {
+          return null;
+        }
+        rt = r!;
+      }
+      ir::TyFunction { args: ts, result: rt, dep: [], consts: bits }
+    },
     _ => {
-      el::refuse(e, "a function type");
+      el::refuse(e, "a type of this form");
       null
     }
   }
+}
+
+// `fn_ref_arg_types` / `fn_ref_consts`: the type of function `d` read as a value — its
+// visible parameters (no hidden or `__` one), each `const` one's bit, and its result.
+pub fn function_value_type(e: el::El, d: integer) -> ir::TypeT {
+  ts: vector<ir::TypeT> = [];
+  bits = 0;
+  for a in el::def(e, d).attributes {
+    if a.hidden || starts_with(a.name, "__") {
+      continue;
+    }
+    if a.value_const && len(ts) < 32 {
+      bits += 1 << len(ts);
+    }
+    ts += [a.typedef[0] ?? ir::TyVoid];
+  }
+  ir::TyFunction { args: ts, result: el::def(e, d).returned[0] ?? ir::TyVoid, dep: [], consts: bits }
 }
 
 // A tuple member's stored spelling and width, for the members this port carries: a plain

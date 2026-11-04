@@ -30,6 +30,11 @@ pub fn promote_work_buffers(e: el::El) {
     if def_decline(e, d#index, taken) {
       continue;
     }
+    // `@FR-R-WorkBuffer`'s result clause (`result_buffer.rs`): a call's vector result only read
+    // where it stands is filled into the caller's buffer — not carried: refused by name.
+    if hands_result_buffer(e, d.code[0] ?? ir::NdNull, el_vars::load(d.variables)) {
+      el::refuse(e, "a call's vector result filled into a caller's buffer (the result clause)");
+    }
     if promote_in(e, d#index) > 0 {
       promoted += [d#index];
     }
@@ -63,6 +68,40 @@ pub fn promote_work_buffers(e: el::El) {
     }
     patch_callers(e, promoted, pool, fresh);
   }
+}
+
+// A call in `n` handed a local `__ref_N` vector of scalars for a hidden result parameter.
+fn hands_result_buffer(e: el::El, n: ir::Node, vars: el_vars::Vars) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      for a in args {
+        match el_ir::unspan(a) {
+          NdVar { n: r } => {
+            at = el::def(e, def_nr).attributes[a#index];
+            x = vars.vars[r];
+            if at != null && at!.hidden && !at!.work_buffer && x != null && !x!.argument && starts_with(x!.name, "__ref_") {
+              match x!.type_def[0] ?? ir::TyVoid {
+                TyVector { inner } => {
+                  if el_expressions::scalar(inner) {
+                    return true;
+                  }
+                },
+                _ => {}
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if hands_result_buffer(e, c, vars) {
+      return true;
+    }
+  }
+  false
 }
 
 // `work_buffer_def_decline`: what keeps a definition's locals its own.
