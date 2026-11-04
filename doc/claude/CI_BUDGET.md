@@ -411,6 +411,12 @@ the ~30-min Windows leg; reach for it when the change touches a platform seam.  
 release-gate` is the heavier sibling (every nightly against one commit, 60–90 min) and is
 release evidence, not a branch gate.
 
+**A fix is verified by probing the tests that were red, nothing more.**  Take the failing names
+from the red job's log and probe those on the platform that failed; the PR's own run is the full
+verdict, so dispatching `ci.yml`, `miri.yml` or `revalidate-libs.yml` beside it only fills the
+shared job slots (about twenty at once) and leaves the PR's own jobs queued behind it.  A whole
+workflow is dispatched only for a gate that has no per-test probe.
+
 **A question about a few tests on one platform is a focused probe, not a gate.**  Each runs
 a nextest filterset (or a bash snippet) on one runner, has no concurrency group — so it can
 run beside a `ci.yml` dispatch without cancelling it — and never saves a cache:
