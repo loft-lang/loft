@@ -77,6 +77,34 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
+  // `block_result`'s `do_if_acc`: where no `___tret_N` bind was made, a text `if` or `match` at
+  // the tail whose every arm answers a text writes each arm's answer into a fresh `___acc_N`
+  // (`push_text_arms_into`), set to "" ahead of it, and the body answers that — which
+  // `text_return` below makes the hidden `&text` buffer.  On both passes, so pass 2 reaches the
+  // answer pass 1 published (the attribute it minted).  A lambda's text buffer is not carried.
+  tret_made = false;
+  match b.code { NdBlock { block } => { tret_made = len(block[0].operators) > 0 && match el_ir::unspan(el_ir::last(block[0].operators)) { NdVar { n } => starts_with(el_vars::name_of(vars, n), "___tret_"), _ => false }; }, _ => {} }
+  dd = el::def(e, e.context);
+  if !tret_made && el_types::base(result) is TyText && dd.def_type != el::DT_GENERIC && !starts_with(dd.name, "n___lambda_") && (e.first_pass || def_has_attr_prefix(dd, "___acc")) {
+    match b.code {
+      NdBlock { block } => {
+        bl = block[0];
+        n = len(bl.operators);
+        if n > 0 && if_tail_yields_text(bl.operators[n - 1]!) {
+          av = el_vars::create_unique(vars, "__acc", if result is TyOptional { ir::TyOptional { inner: ir::TyText { dep: [] } } } else { ir::TyText { dep: [] } });
+          tail = bl.operators[n - 1]!;
+          is_ret = el_ir::unspan(tail) is NdReturn;
+          if is_ret {
+            tail = peel_return(tail);
+          }
+          tail = push_text_arms(e, tail, av);
+          bl.operators = bl.operators[0..n - 1] + [el_ir::v_set(av, ir::NdText { s: "" }), tail, if is_ret { ir::NdReturn { inner: ir::NdVar { n: av } } } else { ir::NdVar { n: av } }];
+          b = ex(ir::NdBlock { block: [bl] }, ir::TyText { dep: [av] });
+        }
+      },
+      _ => {}
+    }
+  }
   // A `[…]` answered where the declared result is KEYED is built as a keyed literal (`__kvb_N`,
   // `parse_vector`'s keyed arm), which is not carried: refused by name rather than built as the
   // vector it reads as.
@@ -694,6 +722,87 @@ pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
   }
   nt = ir::TyText { dep: dep };
   e.b.data.definitions[d].returned = [if opt { ir::TyOptional { inner: nt } } else { nt }];
+}
+
+// Has this definition an attribute whose name starts with `prefix` (`def_has_acc_attr`)?
+fn def_has_attr_prefix(def: ir::Definition, prefix: text) -> boolean {
+  for a in def.attributes {
+    if starts_with(a.name, prefix) {
+      return true;
+    }
+  }
+  false
+}
+
+// `if_tail_yields_text`: an `if` (through a `return`, a `??` block or a match wrapper) whose
+// every arm answers a value.
+fn if_tail_yields_text(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => if_tail_yields_text(inner),
+    NdReturn { inner } => if_tail_yields_text(inner),
+    NdDrop { inner } => if_tail_yields_text(inner),
+    NdIf { cond: _, t, f } => arm_yields_text(t) && arm_yields_text(f),
+    NdBlock { block } => {
+      nm = block[0].name;
+      wrapper = nm == "ncc" || nm == "ncr" || nm == "match" || nm == "scalar_match" || nm == "vector_match" || nm == "struct_match" || nm == "tuple_match";
+      wrapper && len(block[0].operators) > 0 && if_tail_yields_text(block[0].operators[-1]!)
+    },
+    _ => false
+  }
+}
+
+// `arm_yields_text`: an arm that answers a value — not an exit, not a missing `else`.
+fn arm_yields_text(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => arm_yields_text(inner),
+    NdReturn { inner: _ } => false,
+    NdBreak { n: _ } => false,
+    NdContinue { n: _ } => false,
+    NdNull => false,
+    NdBlock { block } => len(block[0].operators) > 0 && arm_yields_text(block[0].operators[-1]!),
+    NdInsert { items } => len(items) > 0 && arm_yields_text(items[-1]!),
+    NdIf { cond: _, t, f } => arm_yields_text(t) && arm_yields_text(f),
+    _ => true
+  }
+}
+
+// `push_text_arms_into`: each arm's answer written into `av` — a block's tail, both arms of an
+// `if`; a block then answers nothing, a void call is left as it is, an `OpCreateStack` wrapper
+// is peeled.
+fn push_text_arms(e: el::El, n: ir::Node, av: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: push_text_arms(e, inner, av) },
+    NdReturn { inner } => ir::NdReturn { inner: push_text_arms(e, inner, av) },
+    NdDrop { inner } => ir::NdDrop { inner: push_text_arms(e, inner, av) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: push_text_arms(e, t, av), f: push_text_arms(e, f, av) },
+    NdBlock { block } => {
+      bl = block[0];
+      k = len(bl.operators);
+      if k > 0 {
+        bl.operators[k - 1] = push_text_arms(e, bl.operators[-1]!, av);
+      }
+      bl.result = [ir::TyVoid];
+      ir::NdBlock { block: [bl] }
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k > 0 {
+        items[k - 1] = push_text_arms(e, items[-1]!, av);
+      }
+      ir::NdInsert { items: items }
+    },
+    NdCall { def_nr, args } => {
+      d = el::def(e, def_nr);
+      if el_types::base(d.returned[0] ?? ir::TyVoid) is TyVoid {
+        return n;
+      }
+      if d.name == "OpCreateStack" && len(args) == 1 {
+        return el_ir::v_set(av, args[0]!);
+      }
+      el_ir::v_set(av, n)
+    },
+    _ => el_ir::v_set(av, n)
+  }
 }
 
 // `def_has_tret_attr`: did pass 1 bind this function's tail to a `___tret` buffer?
@@ -10898,14 +11007,12 @@ fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) ->
       _ => {}
     }
   }
-  if e.first_pass {
-    return ex(ir::NdNull, result);
-  }
-  if el_types::base(result) is TyReference || el_types::base(result) is TyVector {
+  // Built on the first pass too: what the body answers there decides its text delivery.
+  if !e.first_pass && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
     el::refuse(e, "a vector match answering a record or a vector");
     return void;
   }
-  if !total && !lengths_covered(shapes) {
+  if !e.first_pass && !total && !lengths_covered(shapes) {
     el::refuse(e, "a vector match whose arms leave a length unmatched");
     return void;
   }
@@ -12343,6 +12450,8 @@ fn is_empty_literal(n: ir::Node) -> boolean {
 fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> ir::Node {
   inner = match t { TyVector { inner: i } => i, _ => ir::TyUnknown { n: 0 } };
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: inner, dep: [] });
+  // `parse_vector` with the element type known mints the literal's `elm` too (`unique_elm_var`).
+  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
   db = el_vars::work_vec_db(vars, ir::TyReference { n: el::def_nr(e, "main_vector<{el_types::elem_name(e, inner)}>"), dep: [] });
   el_vars::depend(vars, v, db);
   r = vector_rows(e, inner, 0, true);
