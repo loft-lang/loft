@@ -88,7 +88,7 @@ def write_table(agg):
         counts, progs = agg[name]
         lines.append("\t".join([name, ",".join(applied_by(counts)), str(len(progs))]
                                + [str(counts.get(p, 0)) for p in PHASES]))
-    TABLE.write_text("\n".join(lines) + "\n")
+    TABLE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def read_table(path=TABLE):
@@ -97,7 +97,7 @@ def read_table(path=TABLE):
     if not Path(path).is_file():
         return rows
     header = None
-    for line in Path(path).read_text().splitlines():
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
         if line.startswith("#") or not line.strip():
             continue
         parts = line.split("\t")
@@ -170,10 +170,10 @@ def render(table):
     sys.path.insert(0, str(ROOT / "scripts"))
     import rule_tags  # noqa: E402
     register = sorted(t for t, f in rule_tags.defined_rules().items() if "rewrites.md" in f)
-    counted = {n.split("/")[0] for n in rule_tags.census_calls()}
+    counted = {n.partition("/")[0] for n in rule_tags.census_calls()}
     names = collections.defaultdict(list)
     for n in sorted(table):
-        names[n.split("/")[0]].append(n)
+        names[n.partition("/")[0]].append(n)
     out = [BEGIN, "",
            "Per entry, each census name with the phases whose admissions over the bench",
            "programs are not zero; `make rewrite-census` fails when a set changes.  The phases:",
@@ -211,14 +211,14 @@ def main():
     args = sys.argv[1:]
     table = read_table()
     if "--render" in args or "--check-doc" in args:
-        text = DOC.read_text()
+        text = DOC.read_text(encoding="utf-8")
         want = doc_with(text, render(table))
         if want is None:
             print(f"{DOC.relative_to(ROOT)} has no applied-by markers")
             return 1
         if "--render" in args:
             if want != text:
-                DOC.write_text(want)
+                DOC.write_text(want, encoding="utf-8")
                 print(f"wrote {DOC.relative_to(ROOT)} § Applied by")
             return 0
         if want != text:
@@ -230,14 +230,14 @@ def main():
         print(f"no {TABLE.relative_to(ROOT)} yet: `scripts/rewrite_census.py --bless` writes it")
         return 1
     only = args[args.index("--rule") + 1] if "--rule" in args else None
-    names = [n for n in sorted(table) if only is None or n.split("/")[0] == only]
-    dec = decided_in({n.split("/")[0] for n in names})
+    names = [n for n in sorted(table) if only is None or n.partition("/")[0] == only]
+    dec = decided_in({n.partition("/")[0] for n in names})
     width = max((len(n) for n in names), default=10)
     print(f"{'name':<{width}}  {'decided in':<18} {'applied by':<18} {'programs':>8}  "
           + "  ".join(f"{p:>7}" for p in PHASES))
     for n in names:
         r = table[n]
-        print(f"{n:<{width}}  {','.join(dec[n.split('/')[0]]) or '-':<18} "
+        print(f"{n:<{width}}  {','.join(dec[n.partition('/')[0]]) or '-':<18} "
               f"{','.join(r['applied']):<18} {r['programs']:>8}  "
               + "  ".join(f"{r[p]:>7}" for p in PHASES))
     return 0

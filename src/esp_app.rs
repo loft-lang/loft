@@ -237,7 +237,7 @@ fn assets_c(files: &[(String, PathBuf)]) -> Result<(String, usize), String> {
 
 /// A path as CMake reads it inside a quoted argument.
 fn cmake_path(p: &Path) -> String {
-    p.to_string_lossy().replace('\\', "/").replace('"', "\\\"")
+    fa::portable(p).replace('"', "\\\"")
 }
 
 /// Write the ESP-IDF project for `app` into `out`.  Answers the packed asset byte count.

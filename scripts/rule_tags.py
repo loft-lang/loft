@@ -610,7 +610,7 @@ def phase_problems(rules, calls):
     register = {t for t, files in rules.items() if "rewrites.md" in files}
     roots = collections.defaultdict(set)
     for name in calls:
-        roots[name.split("/")[0]].add(name)
+        roots[name.partition("/")[0]].add(name)
     problems = []
     for tag in sorted(register - set(roots) - set(CENSUS_EXEMPT)):
         problems.append(f"({tag}) has no census call and no CENSUS_EXEMPT line: add "
@@ -1513,11 +1513,11 @@ def main():
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             os.makedirs(os.path.join(td, "scripts"))
-            open(os.path.join(td, "scripts", "14330-not-this-one.loft"), "w").close()
+            open(os.path.join(td, "scripts", "14330-not-this-one.loft"), "w", encoding="utf-8").close()
             if guard_for("1433", tests_dir=td) is not None:
                 bad.append("  s4 guard_for matches the number exactly — `14330-…` does not "
                            "speak for loft#1433")
-            open(os.path.join(td, "scripts", "1433-a-keyed-alias.loft"), "w").close()
+            open(os.path.join(td, "scripts", "1433-a-keyed-alias.loft"), "w", encoding="utf-8").close()
             g = guard_for("1433", tests_dir=td)
             if not g or not g.endswith("1433-a-keyed-alias.loft"):
                 bad.append(f"  s5 guard_for finds the issue-numbered guard\n    got {g}")

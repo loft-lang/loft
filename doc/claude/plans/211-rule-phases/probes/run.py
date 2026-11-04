@@ -44,7 +44,7 @@ CORE = os.environ.get("PROBE_CORE", "2")
 
 
 def header(path, key):
-    m = re.search(rf"//\s*probe-{key}:\s*(.+)", path.read_text())
+    m = re.search(rf"//\s*probe-{key}:\s*(.+)", path.read_text(encoding="utf-8"))
     return m.group(1).strip() if m else None
 
 
@@ -76,7 +76,7 @@ def admitted(src, rule, fn):
             extra = [] if writer == "c" else ["--lean"]
             subprocess.run([LOFT, *flags, str(target), *extra, str(src)], capture_output=True,
                            timeout=300, env={**writer_env(), "LOFT_REWRITE_CENSUS_FN": str(tsv)})
-            rows = [line.split("\t") for line in tsv.read_text().splitlines()] if tsv.exists() else []
+            rows = [line.split("\t") for line in tsv.read_text(encoding="utf-8").splitlines()] if tsv.exists() else []
             out[writer] = sum(int(n) for _phase, f, r, n in rows if r == rule and f == fn)
     return out
 

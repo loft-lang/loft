@@ -147,13 +147,13 @@ def census(loft, prog, writer):
             at = next((k for k, (a, b) in enumerate(zip(*emitted)) if a != b), min(map(len, emitted)))
             return name, commit, writer, None, [f"two emissions differ from line {at + 1} — the emitter is not deterministic"]
         counts = {}
-        for line in tsv.read_text().splitlines():
+        for line in tsv.read_text(encoding="utf-8").splitlines():
             rule, _, n = line.partition("\t")
             counts[rule] = int(n)
         # `phase<TAB>function<TAB>rule<TAB>count` → admissions per (phase, rule).
         split = {}
         if by_fn.exists():
-            for line in by_fn.read_text().splitlines():
+            for line in by_fn.read_text(encoding="utf-8").splitlines():
                 phase, _fn, rule, n = line.split("\t")
                 split[(phase, rule)] = split.get((phase, rule), 0) + int(n)
         return name, commit, writer, (counts, split), None
@@ -190,7 +190,7 @@ def read_baseline():
     """`(program, writer) → (commit, {rule: count})`; a four-column row is the Rust writer's."""
     rows = {}
     if BASELINE.is_file():
-        for line in BASELINE.read_text().splitlines():
+        for line in BASELINE.read_text(encoding="utf-8").splitlines():
             if line.startswith("#") or not line.strip():
                 continue
             parts = line.split("\t")
@@ -210,7 +210,7 @@ def write_baseline(results):
     for name, commit, writer, counts in sorted(results, key=lambda r: (r[0], r[2])):
         for rule, n in sorted(counts.items()):
             lines.append(f"{name}\t{commit}\t{writer}\t{rule}\t{n}")
-    BASELINE.write_text("\n".join(lines) + "\n")
+    BASELINE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> int:
@@ -302,10 +302,10 @@ def main() -> int:
             rule_phases.write_table(phases)
             print(f"wrote {rule_phases.TABLE.relative_to(ROOT)}")
             # The register's `## Applied by` is the table rendered: kept in the same step.
-            doc = rule_phases.DOC.read_text()
+            doc = rule_phases.DOC.read_text(encoding="utf-8")
             rendered = rule_phases.doc_with(doc, rule_phases.render(rule_phases.read_table()))
             if rendered is not None and rendered != doc:
-                rule_phases.DOC.write_text(rendered)
+                rule_phases.DOC.write_text(rendered, encoding="utf-8")
                 print(f"wrote {rule_phases.DOC.relative_to(ROOT)} § Applied by")
         else:
             print(f"  {rule_phases.TABLE.relative_to(ROOT)} left as it is: a partial run")

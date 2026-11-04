@@ -1548,6 +1548,19 @@ fn a_full_disk_is_still_a_failure() {
         !out.status.success(),
         "ENOSPC on stdout is a genuine failure and must not be reported as success"
     );
+    // The CLI's own output keeps the same promise (loft#2395): `--version` onto a full disk
+    // is a real fault and stays loud, while a closed reader ends the run quietly.
+    let full = fa::create("/dev/full").expect("open /dev/full");
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("--version")
+        .stdout(Stdio::from(full))
+        .stderr(Stdio::piped())
+        .output()
+        .expect("failed to invoke loft binary");
+    assert!(
+        !out.status.success(),
+        "ENOSPC on the CLI's stdout is a genuine failure and must not be reported as success"
+    );
     let _ = fa::remove_dir_all(&dir);
 }
 
@@ -1608,27 +1621,6 @@ fn the_cli_own_output_ends_quietly_when_its_reader_has_left() {
         );
     }
     let _ = fa::remove_dir_all(&dir);
-}
-
-/// The CLI's control: `--version` onto a full disk is a real fault, and stays loud.
-#[test]
-// approved exemption: `/dev/full` has no Windows equivalent; Windows substitute: none
-#[cfg(unix)]
-fn the_cli_on_a_full_disk_is_still_a_failure() {
-    if !fa::exists(std::path::Path::new("/dev/full")) {
-        return;
-    }
-    let full = fa::create("/dev/full").expect("open /dev/full");
-    let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--version")
-        .stdout(Stdio::from(full))
-        .stderr(Stdio::piped())
-        .output()
-        .expect("failed to invoke loft binary");
-    assert!(
-        !out.status.success(),
-        "ENOSPC on the CLI's stdout is a genuine failure and must not be reported as success"
-    );
 }
 
 /// loft#1729, `(R-Const)` — a top-level vector constant handed to a parameter the callee

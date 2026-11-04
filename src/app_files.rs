@@ -64,7 +64,7 @@ pub(crate) fn asset_files(
     files_under(program_dir, program_dir, &mut every);
     let mut drop = Vec::new();
     for a in assets {
-        let a = a.trim_start_matches("./").replace('\\', "/");
+        let a = fa::portable_str(a.trim_start_matches("./"));
         if let Some(out) = a.strip_prefix('!') {
             drop.push(out.to_string());
             continue;
