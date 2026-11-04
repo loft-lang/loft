@@ -74,6 +74,7 @@ fn program(image: text, f: text, std_image: text) {
   el_definitions::elab_file(e, tree ?? 0);
   // `resolve_deferred_unknowns`: the instances made above their template are filled now.
   el_expressions::rebuild_stale(e);
+  el_definitions::refuse_drop_cascades(e);
   // After the second pass, on the settled IR (`Parser::after_pass2`): the text-return
   // promotion, then the work buffers.
   el_tret::promote_text_returns(e);
