@@ -1443,6 +1443,7 @@ impl ViewWalk<'_> {
                 replaced: cause == ViewCause::Grown
                     && via.is_none()
                     && self.rebound == Some(container),
+                rebuilt_part: cause == ViewCause::Reassigned && min_depth > 0,
                 provisional: self.loop_edge,
             };
             record_cause(&mut self.shaken, view, d);
