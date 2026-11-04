@@ -4529,12 +4529,12 @@ impl Parser {
                 super::collections::find_text_coll(for_next, tcn).unwrap_or_else(|| source.clone());
             return self.text_loop_break(&coll, idx);
         }
-        if matches!(in_type, Type::Vector(_, _)) {
+        if matches!(in_type.base(), Type::Vector(_, _)) {
             let reversible =
                 for_next.any_node(&mut |n| matches!(n, Value::Block(bl) if bl.name == "rev step"));
             return self.vector_loop_break(source, iter_var, reversible);
         }
-        if matches!(in_type, Type::Iterator(_, _)) {
+        if matches!(in_type.base(), Type::Iterator(_, _)) {
             return Vec::new();
         }
         let absent = self.item_absent(for_var, var_tp);
