@@ -4427,6 +4427,9 @@ impl Parser {
             } else {
                 Value::Null
             };
+            // The source as written, before `iterator` rewrites it: a vector walk ends on its
+            // length (loft#1000), as the statement `for` and the comprehension end.
+            let src_coll = expr.clone();
             let mut create_iter = expr;
             let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
             let iter_next = self.iterator(&mut create_iter, &in_type, &it, iter_var, pre_var);
@@ -4454,13 +4457,20 @@ impl Parser {
             self.change_var_type(*append_value, &format_type);
             self.in_loop = in_loop;
             let mut lp = vec![for_next];
-            if !matches!(in_type, Type::Iterator(_, _)) {
-                lp.push(v_if(
-                    self.single_op("!", Value::Var(for_var), var_tp.clone()),
-                    v_block(vec![Value::Break(0)], Type::Void, "break"),
-                    Value::Null,
-                ));
-            }
+            let source = if pre_var.is_some() {
+                &create_iter
+            } else {
+                &src_coll
+            };
+            let end = self.iter_for_end(
+                &lp[0],
+                source,
+                &in_type,
+                (iter_var, pre_var),
+                for_var,
+                &var_tp,
+            );
+            lp.extend(end);
             if if_step != Value::Null {
                 lp.push(v_if(if_step, Value::Null, Value::Continue(0)));
             }
@@ -4479,9 +4489,14 @@ impl Parser {
             } else {
                 Box::new(Value::Null)
             };
+            // The text source's bind and cursor init stand in the loop's own prelude
+            // (`iter_init_steps`): kept as their nested block, `c#next` was that block's local,
+            // its slot reused by `c#count` after it, and a text walk never ended.
             *val = Value::Iter(
                 for_var,
-                Box::new(create_iter),
+                Box::new(Value::Insert(super::collections::iter_init_steps(
+                    create_iter,
+                ))),
                 Box::new(v_block(lp, result_tp, "Iter For")),
                 extra_init,
             );
@@ -4490,6 +4505,44 @@ impl Parser {
         }
         diagnostic!(self.lexer, Level::Error, "Expect variable after for");
         Type::Null
+    }
+
+    /// Where a format string's `for` ends — where a comprehension's does (`vectors.rs`): a text
+    /// on its position (loft#755), a vector on its length (loft#1000), anything else on its
+    /// item's null test (`item_absent`, `@FR-I-For`) — never on the item's truthiness, which
+    /// stopped a `boolean` walk at its first `false` and refused a vector or struct-enum item
+    /// (loft#2415).  `source` is the text the walk reads, or the vector as written before
+    /// `iterator` rewrote it; `cursor` is the walk's counter and a text walk's index.
+    fn iter_for_end(
+        &mut self,
+        for_next: &Value,
+        source: &Value,
+        in_type: &Type,
+        cursor: (u16, Option<u16>),
+        for_var: u16,
+        var_tp: &Type,
+    ) -> Vec<Value> {
+        let (iter_var, pre_var) = cursor;
+        if let Some(idx) = pre_var {
+            let tcn = self.data.def_nr("OpTextCharacterNullable");
+            let coll =
+                super::collections::find_text_coll(for_next, tcn).unwrap_or_else(|| source.clone());
+            return self.text_loop_break(&coll, idx);
+        }
+        if matches!(in_type, Type::Vector(_, _)) {
+            let reversible =
+                for_next.any_node(&mut |n| matches!(n, Value::Block(bl) if bl.name == "rev step"));
+            return self.vector_loop_break(source, iter_var, reversible);
+        }
+        if matches!(in_type, Type::Iterator(_, _)) {
+            return Vec::new();
+        }
+        let absent = self.item_absent(for_var, var_tp);
+        vec![v_if(
+            absent,
+            v_block(vec![Value::Break(0)], Type::Void, "break"),
+            Value::Null,
+        )]
     }
 
     /// Resolve one slice bound to a valid `[0, len]` index: a negative bound

@@ -4527,9 +4527,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 lp.push(step);
             }
         } else if !matches!(in_type.base(), Type::Iterator(_, _)) {
-            let mut test_for = Value::Var(for_var);
-            self.convert(&mut test_for, var_tp, &Type::Boolean);
-            test_for = self.cl("OpNot", &[test_for]);
+            // `item_absent`, the loop's end test the statement `for` asks too: a truthiness
+            // test ended a custom iterator's `boolean` walk at its first `false` and a vector
+            // walk before its first item (loft#2415, the loft#1310 shape).
+            let test_for = self.item_absent(for_var, var_tp);
             lp.push(v_if(
                 test_for,
                 v_block(vec![Value::Break(0)], Type::Void, "break"),

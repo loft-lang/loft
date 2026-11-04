@@ -4119,6 +4119,31 @@ use #count instead"
         *if_step = Value::Insert(ops);
     }
 
+    /// *"Has the loop run out?"* for a loop variable `for_var` of type `var_tp`: the question
+    /// `x == null` asks, answered where every other spelling of it is — `null_test`, the ONE
+    /// place that knows `τ`'s null.  A statement `for` and a format string's `for`
+    /// (`iter_for`) both end on it.
+    ///
+    /// A truthiness test (`convert(τ, Boolean)`, or `!x`) is a second spelling that merely
+    /// coincides for most types: a `boolean`'s conversion is the IDENTITY and its null the
+    /// three-state `255` (@C73), so the loop broke on its first `false` item, and a vector or
+    /// struct-enum item has no `!` at all (loft#1310, loft#2415).  The types with no dedicated
+    /// test take `null_test`'s documented fallthrough, a comparison against the TYPED null —
+    /// an `integer`'s `0` and a `text`'s `""` keep iterating.
+    pub(crate) fn item_absent(&mut self, for_var: u16, var_tp: &Type) -> Value {
+        if let Some(is_null) = self.null_test(Value::Var(for_var), var_tp, false) {
+            return is_null;
+        }
+        let mut t = Value::Var(for_var);
+        self.call_op(
+            &mut t,
+            "==",
+            &[Value::Var(for_var), Value::Null],
+            &[var_tp.clone(), Type::Null],
+        );
+        t
+    }
+
     /// Append a loop's filter step to its step list `lp`: `if cond … else continue`.  A filter that
     /// carries statements ahead of its condition (`Insert` — a destructuring header's unpack,
     /// `destructure_into_filter`) has them run as steps of the loop itself, so what they bind is
@@ -4819,45 +4844,10 @@ use #count instead"
                     lp.push(step);
                 }
             } else if !matches!(in_type, Type::Iterator(_, _)) || is_coroutine_loop {
-                // "Has the iterator run out?" is the question `x == null` asks, so it is
-                // asked where every other spelling of it is asked — `null_test`, which
-                // documents itself as the ONE place that answers *what is `τ`'s null*.
-                //
-                // Reaching for `convert(τ, Boolean)` instead was a second spelling, and it
-                // silently disagreed for every item type whose truthiness rule is written
-                // against the NULLABLE form.  A custom iterator's loop variable is
-                // deliberately typed as the non-null item (@PLN102 D1 — the body only ever
-                // binds a present value), so the test saw the bare type: `vector` and
-                // struct-enum items got no conversion at all and `OpNot` inverted the raw
-                // handle, ending the loop before its first iteration.  Four of the ten item
-                // types a `next` can declare returned zero elements and exit 0 — no
-                // diagnostic, no crash (loft#1310).
-                //
-                // `None` is the answer for the types that have no dedicated test — an
-                // `integer`, a `text`, a bare `Reference` — and those take `null_test`'s
-                // own documented fallthrough, the comparison against the TYPED null.
-                let test_for =
-                    if let Some(is_null) = self.null_test(Value::Var(for_var), &var_tp, false) {
-                        is_null
-                    } else {
-                        // `null_test`'s documented fallthrough: the types with no dedicated
-                        // test answer it by comparing against the TYPED null.  Reaching for
-                        // `convert(τ, Boolean)` here instead asked whether the item was FALSY,
-                        // which is a different question that merely coincides for most types —
-                        // an `integer`'s conversion is `!= i64::MIN` and a `text`'s is
-                        // out-of-band, so a `0` and an `""` element correctly kept iterating.
-                        // A `boolean`'s conversion is the IDENTITY, and its null is the
-                        // three-state `255` (@C73), so the loop broke on the first `false`
-                        // element it was handed and yielded nothing at all.
-                        let mut t = Value::Var(for_var);
-                        self.call_op(
-                            &mut t,
-                            "==",
-                            &[Value::Var(for_var), Value::Null],
-                            &[var_tp.clone(), Type::Null],
-                        );
-                        t
-                    };
+                // `item_absent`: the type's null test.  A custom iterator's loop variable is
+                // typed as the non-null item (@PLN102 D1), so a truthiness test of it ended a
+                // vector or struct-enum loop before its first iteration (loft#1310).
+                let test_for = self.item_absent(for_var, &var_tp);
                 lp.push(v_if(
                     test_for,
                     v_block(vec![Value::Break(0)], Type::Void, "break"),
