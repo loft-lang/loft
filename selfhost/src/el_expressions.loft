@@ -4700,7 +4700,7 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
 // `Parser::get_val` of field `a` of record `d` at `r`: a collection or record field is the place
 // itself (`OpGetField` with the field's store type), a plain field its read.  Null where the
 // field's type is refused.
-fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
+pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
   def = el::def(e, d);
   pos = ir::NdInt { n: field_position(e, d, def.attributes[a]!.name) };
   ft = el_types::base(def.attributes[a]!.typedef[0]);
@@ -5889,9 +5889,9 @@ fn substitute_block(e: el::El, b: ir::Block?, h: integer, bound: ir::TypeT) -> i
   bl
 }
 
-// `vector_elem_iter_stride` for a bound element this port instantiates: a scalar's or a text's
-// slot, a record's own size.
-fn element_stride(e: el::El, t: ir::TypeT) -> integer {
+// `vector_elem_iter_stride`: a scalar's or a text's slot, a record's (or a struct enum's) own
+// size.
+pub fn element_stride(e: el::El, t: ir::TypeT) -> integer {
   sz = elem_size(t);
   if sz == -2 { record_size(e, t) } else { sz }
 }
@@ -10521,6 +10521,10 @@ fn closing_bracket(e: el::El, lit: integer) -> integer {
 // A struct's record size, from its laid-out store type.
 fn record_size(e: el::El, t: ir::TypeT) -> integer {
   match t {
+    TyEnum { n, is_ref } => {
+      k = if is_ref { el::def(e, n).known_type } else { el_schema::NO_TYPE };
+      if k == el_schema::NO_TYPE { -1 } else { e.b.types[k]!.size }
+    },
     TyTuple { elems } => {
       td = el_types::tuple_def_of(e, elems);
       k = if td < 0 { el_schema::NO_TYPE } else { el::def(e, td).known_type };
@@ -10563,7 +10567,7 @@ fn elem_size(t: ir::TypeT) -> integer {
     TyText { dep: _ } => 4,
     TyBoolean => 1,
     TyCharacter => 4,
-    TyEnum { n: _, is_ref } => if is_ref { -1 } else { 1 },
+    TyEnum { n: _, is_ref } => if is_ref { -2 } else { 1 },
     _ => -1
   }
 }
@@ -11029,6 +11033,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   }
   Built { x: ex(ir::NdInsert { items: ls }, ir::TyVoid), items: codes, elem: in_t }
 }
+
 
 // `Parser::parse_text_index`'s range: `s[lo..hi]` is `OpGetTextSub(s, lo, hi)` — an open start
 // `0`, an open end `i32::MAX`, `..=` one past its bound.  A range over anything but a text (a
