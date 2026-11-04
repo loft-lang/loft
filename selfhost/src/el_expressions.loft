@@ -8530,7 +8530,7 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
       // A temporary (a call answering a collection that borrows nothing) is held in a work ref
       // for its free, and tested there (`vec-null-workref`).
       if !(v.code is NdVar) && len(el_types::deps(v.tp)) == 0 && !e.first_pass {
-        w = el_vars::work_ref(vars, el_types::without_deps(v.tp));
+        w = el_vars::work_ref(vars, el_types::with_deps(v.tp, []));
         if !vars.inline_refs.contains(w) {
           vars.inline_refs += [w];
         }

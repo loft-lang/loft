@@ -179,7 +179,9 @@ pub fn add_variable(v: Vars, name: text, t: ir::TypeT) -> integer {
   e = v.names[name];
   if e != null {
     nr = e.nr;
-    if is_unknown(tp(v, nr)) {
+    // A work ref's counter can name another site on each pass: there the second pass's type
+    // wins (`add_variable(reuse)`; Rust's other `__` families come through paths of their own).
+    if is_unknown(tp(v, nr)) || (starts_with(name, "__ref_") && !is_unknown(t) && tp(v, nr) != t) {
       v.vars[nr].type_def = [t];
     }
     return nr;
