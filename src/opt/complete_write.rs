@@ -12,7 +12,11 @@
 //! OpNewRecord(data, ptp, fld)    →  OpNewRecordNP(data, ptp, fld)
 //! ```
 //!
-//! The twins take the same operands and do the same work, minus `set_default_value`.  Runs in
+//! The twins take the same operands and do the same work, minus `set_default_value`.  Each record
+//! copy into a FIELD of an element such a group builds (`CompleteWrites::fresh_fields`) is
+//! flagged `COPY_FRESH_DEST`: its destination was just created, so it releases nothing there and
+//! a null source writes the field type's defaults (`Stores::copy_null_into`, `@C137`) — what the
+//! prefill would have left, which a no-prefill element does not hold.  Runs in
 //! `close_program` ahead of `opt::loop_record`, which moves a kept record's mint into a guard's
 //! arm, away from the literal group the coverage proof reads.
 //!
@@ -37,6 +41,7 @@ struct Ops {
     database_np: u32,
     new_record: u32,
     new_record_np: u32,
+    copy_record: u32,
 }
 
 /// Rewrite every covered mint of the program to its no-prefill twin; answers how many.
@@ -49,6 +54,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         database_np: data.def_nr("OpDatabaseNP"),
         new_record: data.def_nr("OpNewRecord"),
         new_record_np: data.def_nr("OpNewRecordNP"),
+        copy_record: data.def_nr("OpCopyRecord"),
     };
     if ops.database_np == u32::MAX || ops.new_record_np == u32::MAX {
         return 0;
@@ -64,7 +70,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             continue;
         }
         let c = crate::opt::ret_adopt::complete_writes(data, stores, d);
-        if c.db_vars.is_empty() && c.mint_tps.is_empty() {
+        if c.db_vars.is_empty() && c.mint_tps.is_empty() && c.fresh_fields.is_empty() {
             continue;
         }
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
@@ -90,6 +96,12 @@ fn twin(v: &mut Value, c: &crate::opt::ret_adopt::CompleteWrites, ops: &Ops, n: 
         {
             *op = ops.database_np;
             *n += 1;
+        } else if *op == ops.copy_record
+            && c.fresh_fields.contains_key(&(args.as_ptr() as usize))
+            && let Some(Value::Int(raw)) = args.get_mut(2)
+        {
+            // The field's copy writes into a destination just created (`@C137`).
+            *raw |= i32::from(crate::keys::COPY_FRESH_DEST);
         } else if *op == ops.new_record
             && args.len() == 3
             && matches!(args.get(1).map(Value::unspan), Some(Value::Int(t))
