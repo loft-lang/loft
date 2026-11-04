@@ -64,7 +64,7 @@ fn promote_def(e: el::El, d: integer) {
   }
   tail = bl.operators[last]!;
   if el_ir::unspan(tail) is NdReturn {
-    ops += [el_ir::v_set(tv, peel_return(tail)), ir::NdReturn { inner: ir::NdVar { n: tv } }];
+    ops += [el_ir::v_set(tv, el_expressions::peel_return(tail)), ir::NdReturn { inner: ir::NdVar { n: tv } }];
   } else if diverges(tail) {
     ops += [into_buffer(tail, tv), ir::NdVar { n: tv }];
   } else {
@@ -91,7 +91,7 @@ fn promote_def(e: el::El, d: integer) {
 fn into_buffer(n: ir::Node, tv: integer) -> ir::Node {
   match n {
     NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: into_buffer(inner, tv) },
-    NdReturn { inner: _ } => ir::NdInsert { items: [el_ir::v_set(tv, peel_return(n)), ir::NdReturn { inner: ir::NdVar { n: tv } }] },
+    NdReturn { inner: _ } => ir::NdInsert { items: [el_ir::v_set(tv, el_expressions::peel_return(n)), ir::NdReturn { inner: ir::NdVar { n: tv } }] },
     NdIf { cond, t, f } => ir::NdIf { cond: cond, t: into_buffer(t, tv), f: into_buffer(f, tv) },
     NdBlock { block } => {
       b = block[0];
@@ -106,15 +106,6 @@ fn into_buffer(n: ir::Node, tv: integer) -> ir::Node {
     NdInsert { items } => ir::NdInsert { items: [for o in items { into_buffer(o, tv) }] },
     NdIter { var, create, next, init } => ir::NdIter { var: var, create: into_buffer(create, tv), next: into_buffer(next, tv), init: into_buffer(init, tv) },
     NdDrop { inner } => ir::NdDrop { inner: into_buffer(inner, tv) },
-    _ => n
-  }
-}
-
-// `peel_to_inner_call`: the value a `return` hands up, its spans and the `return` peeled.
-fn peel_return(n: ir::Node) -> ir::Node {
-  match n {
-    NdSpan { inner } => peel_return(inner),
-    NdReturn { inner } => peel_return(inner),
     _ => n
   }
 }
