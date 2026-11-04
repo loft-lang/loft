@@ -107,8 +107,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // accumulator (`___acc_N`, `text_return`'s join arm) — not carried yet.
   match b.code {
     NdBlock { block } => {
-      if !e.first_pass && len(block[0].operators) > 0 && el_ir::unspan(el_ir::last(block[0].operators)) is NdIf && el_types::base(b.tp) is TyText && len(el_types::deps(el_types::base(b.tp))) > 0 {
-        el::refuse(e, "a text `if` at a text function's tail, answered through an accumulator");
+      tl = if len(block[0].operators) > 0 { el_ir::unspan(el_ir::last(block[0].operators)) } else { ir::NdNull };
+      joins = tl is NdIf || match tl { NdBlock { block: tb } => tb[0].name == "vector_match", _ => false };
+      if !e.first_pass && joins && el_types::base(b.tp) is TyText && len(el_types::deps(el_types::base(b.tp))) > 0 {
+        el::refuse(e, "a text `if` or vector match at a text function's tail, answered through an accumulator");
       }
     },
     _ => {}
@@ -10549,6 +10551,9 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   if !scalar_subject && !enum_subject && sd < 0 && pd >= 0 && el::def(e, pd).def_type == el::DT_STRUCT && !(st is TyOptional) {
     return struct_match(e, vars, x, pd, arms);
   }
+  if st is TyVector {
+    return vector_match(e, vars, x, arms);
+  }
   if !scalar_subject && !enum_subject && sd < 0 {
     if !el_types::is_unknown(st) {
       el::refuse(e, "a match on this type: {type_kind(st)}");
@@ -10815,6 +10820,280 @@ fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: vector
     return ex(el_ir::v_block(hoisted + [chain], result, "match"), result);
   }
   ex(chain, result)
+}
+
+// `Parser::parse_vector_match` for a vector of plain scalars or texts: the subject held in
+// `_match_subj_N`; an arm `[a, b, ..rest, z]` tests the length (`len == fixed`, or
+// `fixed <= len` with a rest) and binds each named element at its position — the tail's from the
+// end — and the rest as a fresh vector copied from the elements between (`materialize_named_rest`),
+// inside the arm's `slice_binding` block.  `_` and a bare name (bound to the whole subject) end
+// the chain; arms that cover every length (`[]` and `[x, ..rest]`) do too, the last arm the
+// chain's end.  A guard, alternatives, a literal or any other element pattern, a record result
+// and another element type are refused by name.
+fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) -> Ex {
+  void = ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
+  narrow = match elm { TyInteger { spec } => el_types::narrow_width(spec) > 0 || spec.forced_size != 0, _ => false };
+  if !(el_convert::plain_scalar(elm) || elm is TyText) || narrow || elm is TyEnum {
+    el::refuse(e, "a vector match over this element type: {type_kind(elm)}");
+    return void;
+  }
+  sv = el_vars::create_unique(vars, "match_subj", x.tp);
+  el_vars::set_defined(vars, sv);
+  result = ir::TyVoid;
+  out: vector<SMArm> = [];
+  shapes: vector<SliceShape> = [];
+  total = false;
+  for an in arms {
+    match e.p.nodes[an] {
+      SArm { pats, guard, body } => {
+        if len(pats) != 1 || guard != null {
+          el::refuse(e, "a vector match arm with alternatives or a guard");
+          return void;
+        }
+        pn = pats[0]!;
+        names: vector<el_vars::VarName> = [];
+        binds: vector<ir::Node> = [];
+        cond: ir::Node? = null;
+        match e.p.nodes[pn] {
+          PWild => { total = true; },
+          PSlice { elems } => {
+            sa = slice_arm(e, vars, sv, elm, elems, names);
+            if sa == null {
+              return void;
+            }
+            binds = sa!.binds;
+            cond = sa!.cond;
+            shapes += [sa!.shape];
+          },
+          _ => {
+            bn = rename_of(e, pn);
+            if bn == "" {
+              el::refuse(e, "a vector match pattern of this form: {syn_kind(e, pn)}");
+              return void;
+            }
+            bv = pattern_bind(vars, bn, x.tp, names);
+            binds = [el_ir::v_set(bv, ir::NdVar { n: sv })];
+            total = true;
+          }
+        }
+        expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { arm_expectation(result) };
+        b = arm_body(e, vars, body, expected);
+        if unsettled(result) {
+          result = b.tp;
+        }
+        for nm in rev(names) {
+          el_vars::restore_name(vars, nm.name, nm.nr);
+        }
+        out += [SMArm { guard: cond, code: if len(binds) == 0 { b.code } else { el_ir::v_block(binds + [b.code], b.tp, "slice_binding") } }];
+        // A text arm answering an element it bound is a view of the subject: the match borrows
+        // `_match_subj_N` (`join_arm_into`).
+        if el_types::base(result) is TyText && answers_binding(b.code, binds) {
+          result = el_types::with_deps(result, [sv]);
+        }
+        if total {
+          break;
+        }
+      },
+      _ => {}
+    }
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, result);
+  }
+  if el_types::base(result) is TyReference || el_types::base(result) is TyVector {
+    el::refuse(e, "a vector match answering a record or a vector");
+    return void;
+  }
+  if !total && !lengths_covered(shapes) {
+    el::refuse(e, "a vector match whose arms leave a length unmatched");
+    return void;
+  }
+  // The last arm is the chain's end: it is the one every length left over reaches.
+  chain = (out[-1] ?? SMArm { guard: null, code: ir::NdNull }).code;
+  for a in rev(out[..len(out) - 1]) {
+    chain = if a.guard == null { a.code } else { el_ir::v_if(a.guard!, a.code, chain) };
+  }
+  ex(el_ir::v_block([el_ir::v_set(sv, x.code), chain], result, "vector_match"), result)
+}
+
+// Does an arm's code answer a variable one of its `binds` set?
+fn answers_binding(code: ir::Node, binds: vector<ir::Node>) -> boolean {
+  u = el_ir::unspan(code);
+  t = match u { NdBlock { block } => if len(block[0].operators) > 0 { el_ir::unspan(block[0].operators[-1]) } else { ir::NdNull }, _ => u };
+  match t {
+    NdVar { n } => {
+      for b0 in binds {
+        if b0 is NdSet && match b0 { NdSet { var } => var == n, _ => false } {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// A slice arm's length shape: `min` elements, exactly that many where `exact`.
+pub struct SliceShape {
+  pub min: integer,
+  pub exact: boolean
+}
+
+pub struct SliceArm {
+  pub binds: vector<ir::Node>,
+  pub cond: ir::Node?,
+  pub shape: SliceShape
+}
+
+// `slice_arms_cover_every_length`: one arm open from some length (a rest), and an exact arm for
+// every length below it.
+fn lengths_covered(shapes: vector<SliceShape>) -> boolean {
+  if len(shapes) == 0 || shapes[-1]!.exact {
+    return false;
+  }
+  open = -1;
+  for s0 in shapes {
+    if !s0.exact && (open < 0 || s0.min < open) {
+      open = s0.min;
+    }
+  }
+  for n in 0..open {
+    found = false;
+    for s0 in shapes {
+      if s0.exact && s0.min == n {
+        found = true;
+      }
+    }
+    if !found {
+      return false;
+    }
+  }
+  true
+}
+
+// `pattern_binding`: a fresh `name#N` for a pattern's binding, the spelling naming it until the
+// arm ends (`names` keeps what it named before).
+fn pattern_bind(vars: el_vars::Vars, name: text, tp: ir::TypeT, names: vector<el_vars::VarName>) -> integer {
+  id = el_vars::loop_binding(vars, name);
+  if id == name {
+    id = el_vars::loop_binding(vars, name);
+  }
+  bv = el_vars::loop_variable(vars, id, tp);
+  el_vars::set_defined(vars, bv);
+  names += [el_vars::VarName { name: name, nr: el_vars::var(vars, name) }];
+  el_vars::set_name(vars, name, bv);
+  bv
+}
+
+// `parse_slice_pattern` for plain names, `_` and one `..` / `..rest` over `sv`.
+fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
+  head: vector<text> = [];
+  tail: vector<text> = [];
+  has_rest = false;
+  rest = "";
+  for el0 in elems {
+    nm = "";
+    match e.p.nodes[el0] {
+      PRest { name } => {
+        if has_rest {
+          el::refuse(e, "a slice pattern with two rests");
+          return null;
+        }
+        has_rest = true;
+        rest = name;
+        continue;
+      },
+      PWild => { nm = "_"; },
+      _ => {
+        nm = rename_of(e, el0);
+        if nm == "" {
+          el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
+          return null;
+        }
+      }
+    }
+    if has_rest { tail += [nm]; } else { head += [nm]; }
+  }
+  fixed = len(head) + len(tail);
+  ln = el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: sv }]);
+  cond = if has_rest { el_ir::cl(e, "OpLeInt", [ir::NdInt { n: fixed }, ln]) } else { el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: fixed }]) };
+  es = elem_size(elm);
+  binds: vector<ir::Node> = [];
+  for h in head {
+    if h != "_" {
+      bv = pattern_bind(vars, h, elm, names);
+      binds += [el_ir::v_set(bv, elem_read(e, elm, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: h#index }])))];
+    }
+  }
+  for t in tail {
+    if t != "_" {
+      bv = pattern_bind(vars, t, elm, names);
+      binds += [el_ir::v_set(bv, elem_read(e, elm, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: t#index - len(tail) }])))];
+    }
+  }
+  if rest != "" {
+    rv = pattern_bind(vars, rest, ir::TyVector { inner: elm, dep: [] }, names);
+    if !e.first_pass {
+      m = named_rest(e, vars, sv, elm, rv, len(head), len(tail));
+      if m == null {
+        return null;
+      }
+      binds += [m!];
+    }
+  }
+  SliceArm { binds: binds, cond: cond, shape: SliceShape { min: fixed, exact: !has_rest } }
+}
+
+// `materialize_named_rest` + `materialize_iterator`'s element loop: the rest `rv` a fresh vector
+// in a store of its own, each element from `lo` up to `len - tail` read off `sv` and appended.
+fn named_rest(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, rv: integer, lo: integer, tail: integer) -> ir::Node? {
+  int_t = ir::TyInteger { spec: i32_spec() };
+  vt = ir::TyVector { inner: elm, dep: [] };
+  el_vars::set_var_type(vars, rv, vt);
+  lo_v = el_vars::create_unique(vars, "rest_lo", int_t);
+  hi_v = el_vars::create_unique(vars, "rest_hi", int_t);
+  idx = el_vars::create_unique(vars, "rest_idx", int_t);
+  init = ir::NdInsert { items: [
+    el_ir::v_set(lo_v, ir::NdInt { n: lo }),
+    el_ir::v_set(hi_v, el_ir::cl(e, "OpMinInt", [el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: sv }]), ir::NdInt { n: tail }])),
+    el_ir::v_set(idx, el_ir::cl(e, "OpConvIntFromNull", []))
+  ] };
+  i = ir::NdVar { n: idx };
+  advance = el_ir::v_set(idx, el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [i])]), ir::NdVar { n: lo_v }, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])));
+  brk = el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: hi_v }, i]), ir::NdBreak { n: 0 }, ir::NdNull);
+  at = el_ir::v_block([advance, brk, i], int_t, "Iter range");
+  read = el_ir::v_block([elem_read(e, elm, el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: sv }, ir::NdInt { n: elem_size(elm) }, at]))], elm, "Vector Index");
+  nm = el_types::elem_name(e, elm);
+  rows = vector_rows(e, elm, 0, true);
+  if nm == "" || rows == null {
+    el::refuse(e, "a slice pattern rest of this element type: {type_kind(elm)}");
+    return null;
+  }
+  r = rows!;
+  ev = el_vars::create_unique(vars, "elm", ir::TyReference { n: el::def_nr(e, nm), dep: [rv] });
+  fv = el_vars::create_unique(vars, "slice_elm", elm);
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  el_vars::depend(vars, rv, db);
+  el_vars::set_var_type(vars, ev, ir::TyReference { n: el::def_nr(e, nm), dep: [db] });
+  w = ir::NdVar { n: ev };
+  body = [
+    el_ir::v_set(fv, read),
+    el_ir::v_set(ev, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: rv }, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])),
+    el_ir::cl(e, tuple_set_op(elm), [w, ir::NdInt { n: 0 }, ir::NdVar { n: fv }]),
+    el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: rv }, w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])
+  ];
+  ops: vector<ir::Node> = [
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+    el_ir::v_set(rv, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
+    init
+  ];
+  if elm is TyText {
+    ops += [el_ir::v_set(fv, ir::NdText { s: "" })];
+  }
+  ops += [el_ir::v_loop(body, "Slice materialise")];
+  ir::NdInsert { items: ops }
 }
 
 // One alternative `S { … }` (or `_`) of a struct arm over the subject `x`: each bare field bound
