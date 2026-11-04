@@ -442,7 +442,8 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             || matches!(def.code(), Value::Null)
             || def.is_operator()
             || !def.rust().is_empty()
-            || !def.native().is_empty()
+            // A native NAME is no reason to skip: a library export or a compiled stdlib
+            // function keeps the loft body a native build emits.
             // A generator's body is a state machine the writers build per yield.
             || matches!(def.returned().base(), crate::data::Type::Iterator(..))
         {

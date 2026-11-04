@@ -79,13 +79,17 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             || matches!(def.code(), Value::Null)
             || def.is_operator()
             || !def.rust().is_empty()
-            || !def.native().is_empty()
+        // A native NAME is no reason to skip: a library export or a compiled stdlib
+        // function keeps the loft body a native build emits.
         {
             continue;
         }
         if calls_a_generator(data, def.code()) {
             if trace() && !hoist::loop_buffers(data, stores, d).is_empty() {
-                eprintln!("[ir-loop-buffer] fn={} declined: it calls a generator", def.name());
+                eprintln!(
+                    "[ir-loop-buffer] fn={} declined: it calls a generator",
+                    def.name()
+                );
             }
             continue;
         }
@@ -101,10 +105,25 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         // an inline buffer — no store at all, which a kept store cannot beat — and it reads
         // the plain declaration, so its companions keep it.
         let apart = crate::opt::apart_vector::roles(data, d).unwrap_or_default();
+        // A literal `@FR-R-LitHoist` builds ONCE (a one-`Set` value) is better than a buffer
+        // kept per pass: the buffers its value builds from keep their plain declaration, which
+        // is what the hoist reads as invariant.
+        let mut in_hoisted: HashSet<u16> = HashSet::new();
+        def.code().walk(&mut |n| {
+            if let Value::Set(w, init) = n
+                && lits.wrapped.contains(w)
+            {
+                init.walk(&mut |m| {
+                    if let Value::Var(x) = m {
+                        in_hoisted.insert(*x);
+                    }
+                });
+            }
+        });
         buffers.retain(|v| {
             let why = if apart.holds(*v) {
                 "an inline buffer's companion"
-            } else if lits.flat.contains_key(v) {
+            } else if lits.flat.contains_key(v) || in_hoisted.contains(v) {
                 "an invariant literal's"
             } else if pairs.by_vdb.contains_key(v) {
                 "an element-first pair's"

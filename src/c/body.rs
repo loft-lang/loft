@@ -2998,11 +2998,61 @@ impl<'a> FnWriter<'a> {
             {
                 continue;
             }
+            if self.emptied_either_way(op, slot) {
+                return true;
+            }
             if (names(op, slot.0) && !elsewhere(op)) || root.is_some_and(|l| names(op, l)) {
                 return false;
             }
         }
         false
+    }
+
+    /// `@FR-R-LoopBuffer`'s IR form — `if OpRefIsNull(r) { …; OpSetInt4(r, off, 0) } else {
+    /// OpClearVector(OpGetField(r, off, …)) }` (`opt::loop_buffer`): the slot `(r, off)` is
+    /// EMPTY after it on both paths, zeroed by the first pass's mint or cleared by every later
+    /// one, which is what [`Self::known_empty`] asks of the zero alone.
+    fn emptied_either_way(&self, op: &Value, slot: (u16, i32)) -> bool {
+        let data = self.cx.data;
+        let named = |v: &Value, n: &str| -> Option<Vec<Value>> {
+            match v.unspan() {
+                Value::Call(d, a)
+                    if (*d as usize) < data.definitions.len() && data.def(*d).name() == n =>
+                {
+                    Some(a.clone())
+                }
+                _ => None,
+            }
+        };
+        let on_slot = |a: &[Value]| {
+            matches!(
+                (a.first().map(Value::unspan), a.get(1).map(Value::unspan)),
+                (Some(Value::Var(r)), Some(Value::Int(off))) if (*r, *off) == slot
+            )
+        };
+        let Value::If(test, then, other) = op.unspan() else {
+            return false;
+        };
+        let null_test = named(test, "OpRefIsNull").is_some_and(
+            |a| matches!(a.first().map(Value::unspan), Some(Value::Var(r)) if *r == slot.0),
+        );
+        let stmts = |v: &Value| match v.unspan() {
+            Value::Block(bl) => bl.operators.clone(),
+            other => vec![other.clone()],
+        };
+        let zeroed = stmts(then).iter().any(|o| {
+            named(o, "OpSetInt4").is_some_and(|a| {
+                on_slot(&a) && matches!(a.get(2).map(Value::unspan), Some(Value::Int(0)))
+            })
+        });
+        let cleared = stmts(other).iter().any(|o| {
+            named(o, "OpClearVector").is_some_and(|a| {
+                a.first()
+                    .and_then(|f| named(f, "OpGetField"))
+                    .is_some_and(|g| on_slot(&g))
+            })
+        });
+        null_test && zeroed && cleared
     }
 
     /// `@FR-H-KeepRoom`'s prologue clause: statement `i` clears a vector buffer `x`
