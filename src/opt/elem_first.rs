@@ -150,6 +150,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         }
         let _census = crate::rewrite_census::InBody::enter("ir", def.name());
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
+        merge_arms(&mut code, &pairs);
         let mut minted = vec![false; pairs.len()];
         rewrite(&mut code, &pairs, &plan, &ops, &mut minted);
         data.definitions[d as usize].code = code;
@@ -279,18 +280,14 @@ fn statement(
             out.push(s2);
             1
         }
-        // The append's mint — or, in another arm of a joined append, the alias of the element
-        // minted at the declaration — and an element's null pre-init (it would reset the
-        // element the declaration minted).
+        // The append's mint and the element's null pre-init (it would reset the element the
+        // declaration minted) — and, for another arm of a joined append, that arm's own
+        // element's: its uses name the minted element already ([`merge_arms`]).
         Value::Set(elm_var, mint)
             if plan.elm.contains_key(elm_var)
                 && (matches!(mint.unspan(), Value::Null)
                     || matches!(mint.unspan(), Value::Call(md, _) if *md == ops.new_record)) =>
         {
-            let first = pairs[plan.elm[elm_var]].elm;
-            if first != *elm_var && !matches!(mint.unspan(), Value::Null) {
-                out.push(Value::Set(*elm_var, Box::new(Value::Var(first))));
-            }
             1
         }
         // The paired zeros on the element.
@@ -380,6 +377,19 @@ fn copy_field_type(
         }
     });
     ftp
+}
+
+/// A joined append (@PLN164 E-2b): every arm's element is the one minted at the declaration.
+/// The other arms' elements are not aliased — a `Set` of one record variable from another
+/// binds a COPY (`(B-Copy)`), so the arm would write and file the copy — but renamed: each use
+/// of an alias names the pair's element instead.  Its own mint and pre-init stay as `Set`s of
+/// the alias, which [`statement`] drops.
+fn merge_arms(code: &mut Value, pairs: &[&ElemFirst]) {
+    for p in pairs {
+        for a in &p.aliases {
+            replace_var(code, *a, &Value::Var(p.elm));
+        }
+    }
 }
 
 /// `v` with every `Var(buf)` replaced by `place`.
