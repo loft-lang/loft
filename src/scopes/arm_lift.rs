@@ -20,8 +20,7 @@ use crate::variables::Function;
 /// ([`Scopes::lift_arm_tails_into`]), and whether that arm needs a store of its own
 /// ([`Scopes::arm_bind`]) — and one home keeps them from drifting apart.
 pub(super) fn is_discharge_hoist(function: &Function, v: u16) -> bool {
-    let name = function.name(v);
-    name.starts_with("__ncc_") || name.starts_with("_ncr_")
+    crate::variables::is_discharge_hoist_name(function.name(v))
 }
 
 /// The call a `join-arm-owner` block binds — `{ buf = call; buf }`, exactly as

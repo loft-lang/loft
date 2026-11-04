@@ -3037,8 +3037,13 @@ impl Function {
             // `ref(Img)` type, mis-emitting native (`E0605 as DbRef`) AND mis-reading
             // interp (a silent wrong value). A user variable keeps the old behaviour
             // (its name IS its cross-pass identity; type evolution has its own checks).
+            // A discharge hoist is a generated temp under either spelling
+            // (`is_discharge_hoist_name`): `_ncr_N` lacks the `__`, and keeping its pass-1
+            // type dropped the subject's deps, so the view freed its container's store.
             if existing.is_unknown()
-                || (name.starts_with("__") && !type_def.is_unknown() && existing != type_def)
+                || ((name.starts_with("__") || is_discharge_hoist_name(name))
+                    && !type_def.is_unknown()
+                    && existing != type_def)
             {
                 self.trace_type_change(nr, type_def, "add_variable(reuse)");
                 self.variables[nr as usize].type_def = type_def.clone();
@@ -6460,6 +6465,22 @@ mod loop_binding_dep_tests {
 #[must_use]
 pub fn owns_literal_backing_store(name: &str) -> bool {
     name.starts_with("__vdb") || name.starts_with("__kvb")
+}
+
+/// Is `name` the temp a null DISCHARGE hoists its subject into — `__ncc_N` for `e ?? d` and
+/// `e?`, `_ncr_N` for `e!`, `e ?? panic(…)` and `e ?? return|break|continue`?
+///
+/// The temp is the subject's value wearing a compiler name, so its type is the subject's as
+/// pass 2 types it, deps included (`@FR-B-View`: a struct element read through a discharge
+/// is a view of the container).  The two families are one notion with two spellings, and
+/// only `__ncc_` carries the `__` prefix [`Function::add_variable`] reads as "generated":
+/// asked by spelling alone, a `_ncr_` temp kept pass 1's type — `Unknown(S)` where `S` was
+/// declared below its holder, resolved to a dep-less `ref(S)` between the passes — and so
+/// was read as an OWNER, and its scope-exit free released the store of the struct whose
+/// vector it views.
+#[must_use]
+pub fn is_discharge_hoist_name(name: &str) -> bool {
+    name.starts_with("__ncc_") || name.starts_with("_ncr_")
 }
 
 /// `LOFT_LINK_ALL_NARROW=1`: treat every narrow integer local as linked, so the linked
