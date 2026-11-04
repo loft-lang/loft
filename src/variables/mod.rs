@@ -1810,6 +1810,14 @@ impl Function {
         without_binding_number(self.name(var_nr))
     }
 
+    /// Move `var_nr`, which has a scope already, to `scope` — for a pass that hoists the
+    /// variable's declaration out of a loop (`opt::loop_record`), whose intervals and slots it
+    /// then lays out again.
+    pub fn move_scope(&mut self, var_nr: u16, scope: u16) {
+        assert!((var_nr as usize) < self.variables.len(), "Unknown variable");
+        self.variables[var_nr as usize].scope = scope;
+    }
+
     pub fn set_scope(&mut self, var_nr: u16, scope: u16) {
         assert!((var_nr as usize) < self.variables.len(), "Unknown variable");
         assert_eq!(

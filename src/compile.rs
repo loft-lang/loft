@@ -122,6 +122,10 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // owns, asking those rewrites of the IR the writers will see.
     crate::opt::loop_buffer::rewrite_program(data, database);
     laps.lap("loop_buffer");
+    // `@FR-R-LoopRecord` — a record local minted by a literal inside a loop keeps its store
+    // across the passes, on both backends (after the loop buffers: a different variable kind).
+    crate::opt::loop_record::rewrite_program(data, database);
+    laps.lap("loop_record");
     laps.report("close_program", data.definitions());
 }
 

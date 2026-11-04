@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+//
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-LoopRecord` in the IR phase — a record local minted by a literal inside a loop keeps its
+// store across the passes: declared before the outermost loop, minted only where it holds no
+// store, freed once after the loop.  What can go wrong is a pass reading what an earlier pass
+// left: a field a partial literal omits keeping the last pass's write, a pass left by `continue`
+// or `return` whose free leaves the next pass a freed store, a `break` freeing twice, a nest whose
+// inner loop re-mints over the kept record.  Values hand-computed in each cell's comment.
+//
+// The IR applies it (`opt::loop_record`), so every backend runs the rewritten IR and none is the
+// other's oracle: the oracle is these values, and `LOFT_NO_LOOP_RECORD=1` is the second.
+//
+// @falsified-at: none — by hand on the IR clause, the early exit's free left without its null:
+//   r2 fails on the interpreter (the next pass writes the freed store).
+//   CHANNEL: an assertion, or a stop naming the freed store.
+// HOLDS: the hand-computed values, on both backends, the clause on and off.
+
+struct P { a: integer, b: integer }
+
+struct Q { a: integer, b: integer = 7 }
+
+fn find(n: integer) -> integer {
+  for i in 0..n {
+    p = P { a: i, b: i * i };
+    if p.b > 10 { return p.a; }
+  }
+  -1
+}
+
+fn r1() {
+  // r1: a complete literal each pass — Σ (i + 2i) for i < 5: 3 * 10 = 30
+  s = 0;
+  for i in 0..5 {
+    p = P { a: i, b: i * 2 };
+    s += p.a + p.b;
+  }
+  assert(s == 30, "r1 {s}");
+}
+
+fn r2() {
+  // r2: a `continue` before the record is read — the odd passes: 3 * (1 + 3 + 5) = 27
+  s = 0;
+  for i in 0..6 {
+    p = P { a: i, b: i * 2 };
+    if i % 2 == 0 { continue; }
+    s += p.a + p.b;
+  }
+  assert(s == 27, "r2 {s}");
+}
+
+fn r3() {
+  // r3: a `break` — passes 0..3: Σ (10i + 1) = 60 + 4 = 64
+  s = 0;
+  for i in 0..10 {
+    p = P { a: i, b: 1 };
+    if i == 4 { break; }
+    s += p.a * 10 + p.b;
+  }
+  assert(s == 64, "r3 {s}");
+}
+
+fn r4() {
+  // r4: a `return` from inside the loop — the first i with i*i > 10 is 4; none below 3
+  assert(find(10) == 4 && find(3) == -1, "r4 {find(10)} {find(3)}");
+}
+
+fn r5() {
+  // r5: a partial literal — `b` takes its default 7 every pass though the last pass wrote 100:
+  // Σ (i + 7) for i < 3 = 3 + 21 = 24
+  t = 0;
+  for i in 0..3 {
+    q = Q { a: i };
+    t += q.a + q.b;
+    q.b = 100;
+  }
+  assert(t == 24, "r5 {t}");
+}
+
+fn r6() {
+  // r6: the nest — the record kept across both loops: Σ (10o + k), o < 2, k < 3 = 3 + 33 = 36
+  s = 0;
+  for o in 0..2 {
+    for k in 0..3 {
+      p = P { a: o, b: k };
+      s += p.a * 10 + p.b;
+    }
+  }
+  assert(s == 36, "r6 {s}");
+}
+
+fn main() {
+  r1();
+  r2();
+  r3();
+  r4();
+  r5();
+  r6();
+  println("ok");
+}
