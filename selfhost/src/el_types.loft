@@ -189,6 +189,7 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     TySingle => "single",
     TyCharacter => "character",
     TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
+    TyEnum { n, is_ref } => if is_ref { "" } else { el::def(e, n).name },
     _ => ""
   }
 }

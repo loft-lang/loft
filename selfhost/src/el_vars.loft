@@ -629,6 +629,13 @@ pub fn load(f: ir::Function) -> Vars {
         v.work_ref = k;
       }
     }
+    // `sync_work_counters`: a caller's text buffer minted after the passes numbers on.
+    if starts_with(n.name, "__work_c") {
+      k = (n.name[8..] as integer?) ?? -1;
+      if k > v.work_ctext {
+        v.work_ctext = k;
+      }
+    }
   }
   v.inline_refs = f.inline_refs;
   v
