@@ -4094,7 +4094,11 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
       SFieldInit { name: fname, quoted, e: fe } => {
         a = attr_nr(def, fname);
         if quoted || fe == null || a < 0 {
-          el::refuse(e, "a struct field that is quoted, valueless or not declared: {if quoted { "quoted" } else if fe == null { "valueless" } else { "undeclared" }}");
+          // A field missing after an earlier refusal is that refusal's consequence (a field
+          // whose type was refused is never declared): it is not a gap of its own.
+          if a >= 0 || len(e.refused) == 0 {
+            el::refuse(e, "a struct field that is quoted, valueless or not declared: {if quoted { "quoted" } else if fe == null { "valueless" } else { "undeclared" }}");
+          }
           return null;
         }
         at = def.attributes[a]!.typedef[0];
