@@ -538,6 +538,12 @@ pub struct Function {
     /// Lives on the `Function` rather than on the parser because a var number is unique per
     /// FUNCTION, and the parser swaps this whole table for a lambda's.
     pass2_rebuilt: std::collections::HashSet<u16>,
+    /// The undeclared locals whose latest PASS-1 bind had no type yet (a call to a function
+    /// defined further down): pass 1 cannot say what they hold there, so a read of one answers
+    /// `Unknown` as a fresh local's would (`Parser::parse_var`) — its type from an earlier bind
+    /// is stale, and checking against it reports errors pass 2 would never make, before pass 2
+    /// can report the bind's own retype.  Cleared by the local's next typed bind.
+    pass1_untyped_bind: std::collections::HashSet<u16>,
     /// loft#1616 — the `text?` locals `text_return` promoted to a hidden `&text` work buffer.
     /// Set on pass 1 and read on pass 2, where such a local's own declaration
     /// (`a: text? = null`) stores into the buffer.
@@ -908,6 +914,7 @@ impl Function {
         Function {
             capture_builds: None,
             pass2_rebuilt: std::collections::HashSet::new(),
+            pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
             join_owners: HashMap::new(),
             ref_evacuations: Vec::new(),
@@ -1231,6 +1238,7 @@ impl Function {
             // The build facts belong to one finished scope pass, and a copy starts another.
             capture_builds: None,
             pass2_rebuilt: std::collections::HashSet::new(),
+            pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
             join_owners: other.join_owners.clone(),
             ref_evacuations: other.ref_evacuations.clone(),
@@ -6171,6 +6179,22 @@ impl Function {
     /// loft#1466: see [`Self::pass2_rebuilt`].
     pub(crate) fn mark_pass2_rebuilt(&mut self, var_nr: u16) -> bool {
         self.pass2_rebuilt.insert(var_nr)
+    }
+
+    /// Record a pass-1 bind of `var_nr`: `untyped` when its value had no type yet while the
+    /// local had one ([`Self::pass1_untyped_bind`]).
+    pub(crate) fn note_pass1_bind(&mut self, var_nr: u16, untyped: bool) {
+        if untyped {
+            self.pass1_untyped_bind.insert(var_nr);
+        } else {
+            self.pass1_untyped_bind.remove(&var_nr);
+        }
+    }
+
+    /// Whether `var_nr`'s latest pass-1 bind had no type yet.
+    #[must_use]
+    pub(crate) fn is_pass1_untyped_bind(&self, var_nr: u16) -> bool {
+        self.pass1_untyped_bind.contains(&var_nr)
     }
 
     #[track_caller]

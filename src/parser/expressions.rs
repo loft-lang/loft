@@ -1829,6 +1829,13 @@ impl Parser {
             } else {
                 tp
             };
+            if self.first_pass && self.vars.exists(*v_nr) {
+                // A declared local's type is its declaration's, never stale.
+                let untyped = tp.is_unknown()
+                    && !self.vars.tp(*v_nr).is_unknown()
+                    && !self.vars.is_declared(*v_nr);
+                self.vars.note_pass1_bind(*v_nr, untyped);
+            }
             if !is_text || *tp != Type::Character {
                 self.change_var_type(*v_nr, tp);
             }

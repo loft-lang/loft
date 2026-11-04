@@ -602,8 +602,27 @@ impl Parser {
         v
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_var(
+        &mut self,
+        code: &mut Value,
+        name: &str,
+        parent_tp: &mut Type,
+        name_pos: &Position,
+    ) -> Type {
+        let t = self.parse_var_inner(code, name, parent_tp, name_pos);
+        // A local whose latest pass-1 bind had no type yet reads as untyped there, as a fresh
+        // local bound from that call would (`Function::pass1_untyped_bind`).
+        if self.first_pass
+            && let Value::Var(v) = code
+            && self.vars.is_pass1_untyped_bind(*v)
+        {
+            return Type::Unknown(0);
+        }
+        t
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_var_inner(
         &mut self,
         code: &mut Value,
         name: &str,
