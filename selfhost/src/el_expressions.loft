@@ -1024,9 +1024,27 @@ fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     },
     _ => {}
   }
-  v = rename_candidate(e, vars, code, tail);
+  v = if tail is NdIf { arms_rename_candidate(e, vars, code, tail) } else { rename_candidate(e, vars, code, tail) };
   if v >= 0 {
     rename_onto(e, vars, rb, v);
+  }
+}
+
+// An `if` tail's candidate: the one its arms hand back where every other arm answers null
+// (the arm's result borrows that buffer alone, `ref_return`'s `ls`); -1 for none or several,
+// -2 for an arm that answers null.
+fn arms_rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, n: ir::Node) -> integer {
+  match n {
+    NdSpan { pos: _, inner } => arms_rename_candidate(e, vars, code, inner),
+    NdIf { cond: _, t, f } => {
+      a = arms_rename_candidate(e, vars, code, t);
+      b = arms_rename_candidate(e, vars, code, f);
+      if a == -2 { b } else if b == -2 || a == b { a } else { -1 }
+    },
+    NdBlock { block } => if len(block[0].operators) == 0 { -1 } else { arms_rename_candidate(e, vars, code, block[0].operators[-1]) },
+    NdNull => -2,
+    NdCall { def_nr, args } => if len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel" { -2 } else { rename_candidate(e, vars, code, n) },
+    _ => rename_candidate(e, vars, code, n)
   }
 }
 
