@@ -113,8 +113,8 @@ impl Parser {
         // The whole body is parsed before the score exists, so the cursor has
         // drifted to the NEXT definition — the caret pointed at the following
         // `fn` while the prose named this one, which reads as a diagnostic about
-        // a function that is fine.  Point at the definition's own position.
-        let at_pos = self.data.def(self.context).position;
+        // a function that is fine.  Point at the function's name.
+        let at_pos = self.name_position(self.context);
         diagnostic_at!(
             self.lexer,
             &at_pos,
@@ -131,6 +131,15 @@ impl Parser {
             concept: "functions",
             concept_ref: "@F16",
         });
+    }
+
+    /// Where definition `d`'s name is written, for advice about the function as a whole; its
+    /// `position` (past the signature) where the name was not recorded.
+    fn name_position(&self, d: u32) -> crate::lexer::Position {
+        self.fn_name_at
+            .get(&d)
+            .copied()
+            .unwrap_or(self.data.def(d).position)
     }
 
     /// Advice: this function asks its callers for too many separate things.
@@ -169,7 +178,7 @@ impl Parser {
         let name = def.original_name().clone();
         let at = crate::keys::PARAM_ADVICE_AT;
         // Emitted after the body is parsed — see `warn_function_complexity`.
-        let at_pos = def.position;
+        let at_pos = self.name_position(self.context);
         diagnostic_at!(
             self.lexer,
             &at_pos,
@@ -230,7 +239,7 @@ impl Parser {
         }
         let name = def.original_name().clone();
         // Emitted after the body is parsed — see `warn_function_complexity`.
-        let at_pos = def.position;
+        let at_pos = self.name_position(self.context);
         diagnostic_at!(
             self.lexer,
             &at_pos,
