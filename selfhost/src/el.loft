@@ -63,7 +63,10 @@ pub struct El {
   pub type_vars: vector<TypeVar>,
   // `Parser::pass2_bodies`: the generic templates whose second-pass body has been read
   pub bodies2: vector<integer>,
-  pub stale: vector<StaleInstance>
+  pub stale: vector<StaleInstance>,
+  // `Parser::force_tret`: the text functions whose answer the second pass found frame-owned,
+  // promoted to a hidden `___tret_N` buffer after it (`el_tret`)
+  pub tret: vector<integer>
 }
 
 pub const STD_SOURCE = 0;
@@ -103,7 +106,8 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     lines: [],
     type_vars: [],
     bodies2: [],
-    stale: []
+    stale: [],
+    tret: []
   }
 }
 

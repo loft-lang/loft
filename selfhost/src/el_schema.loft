@@ -115,6 +115,7 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     e.b.data.definitions[vd].returned = [vt];
     e.b.data.definitions[vd].parent = match t {
       TyReference { n } => n,
+      TyEnum { n } => n,
       TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
       _ => el::source_nr(e, 0, nm)
     };
@@ -238,7 +239,6 @@ fn fill_database(e: el::El, d: integer) {
     ft = el_types::base(a.typedef[0]);
     c = match ft {
       TyInteger { spec } => int_part(e, spec, a.alias_d_nr, a.nullable),
-      TyEnum { n, is_ref } => enum_content(e, n, is_ref),
       _ => content_type(e, ft)
     };
     if c < 0 {
@@ -296,6 +296,7 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       td = el_types::tuple_def_of(e, elems);
       if td < 0 || el::def(e, td).known_type == NO_TYPE { -1 } else { el::def(e, td).known_type }
     },
+    TyEnum { n, is_ref } => enum_content(e, n, is_ref),
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),

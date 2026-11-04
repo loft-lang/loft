@@ -111,7 +111,7 @@ fn suspends(n: ir::Node) -> boolean {
 }
 
 // `address_taken_defs`: every definition a `FnRef` names, and every `par` worker.
-fn address_taken(e: el::El) -> vector<integer> {
+pub fn address_taken(e: el::El) -> vector<integer> {
   out: vector<integer> = [];
   for d in e.b.data.definitions {
     taken_in(e, d.code[0] ?? ir::NdNull, out);

@@ -88,9 +88,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // `report_tret_promotions` (`text_return_orphan_risk`): a text function with no buffer of its
   // own whose answer is not a borrow of the caller's arguments — a literal, a call's buffer in
   // this frame, anything it owns — is promoted to a hidden `___tret_N` after the second pass and
-  // its callers patched: not carried yet.
-  if !e.first_pass && el_types::base(result) is TyText && el::def(e, e.context).def_type != el::DT_GENERIC && !has_text_buffer(el::def(e, e.context)) && !borrows_arguments_only(el::def(e, e.context)) {
-    el::refuse(e, "a text answered by value with no buffer of its own (a `___tret` promotion)");
+  // its callers patched (`el_tret`).
+  if !e.first_pass && el_types::base(result) is TyText && el::def(e, e.context).def_type != el::DT_GENERIC && !has_text_buffer(el::def(e, e.context)) && !borrows_arguments_only(el::def(e, e.context)) && !e.tret.contains(e.context) {
+    e.tret += [e.context];
   }
   code = b.code;
   // A text answered through a hidden `&text` the body's own work text became: the body is typed
@@ -591,7 +591,7 @@ fn format_append(e: el::El, v: integer, code: ir::Node, stack: boolean) -> ir::N
 // part of the result's deps — a parameter by its number; a text local (on the first pass, or a
 // compiler buffer on either) promoted to a hidden `&text` parameter (`PromoteHidden`), the caller's
 // buffer, which the body then writes through.  The declared result takes those deps.
-fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
+pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
   d = e.context;
   // A generic template takes none of the return promotion (`generic_promote_ok`): each instance
   // decides its own delivery once its types are known.
@@ -638,6 +638,13 @@ fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
   }
   nt = ir::TyText { dep: dep };
   e.b.data.definitions[d].returned = [if opt { ir::TyOptional { inner: nt } } else { nt }];
+}
+
+// `add_defaults`' `&text` arm: a hidden text buffer handed in as a fresh `__work_cN` of the
+// caller's, set empty and passed as a stack reference ("default ref").
+pub fn default_text_ref(e: el::El, vars: el_vars::Vars) -> ir::Node {
+  wv = el_vars::caller_text_buf(vars);
+  el_ir::v_block([el_ir::v_set(wv, ir::NdText { s: "" }), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])], ir::TyReference { n: el::def_nr(e, "reference"), dep: [wv] }, "default ref")
 }
 
 // `Parser::wrap_value_text_dest` (@PLN10): a call of a text-dest native (or of a native or
@@ -2114,6 +2121,9 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text) -> 
           return ex(val, ir::TyEnum { n: pd, is_ref: false, dep: [] });
         }
       }
+      if (el::def(e, pd).returned[0]) == ir::TyEnum { n: pd, is_ref: true, dep: [] } {
+        return unit_variant(e, vars, pd, d);
+      }
     }
     d2 = el::def_nr(e, name);
     kind = if d2 < 0 { "unknown" } else { "definition type {el::def(e, d2).def_type}" };
@@ -2141,6 +2151,25 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text) -> 
   }
   is_text = el_types::base(t) is TyText;
   ex(ir::NdVar { n: v }, if is_text { t } else { el_types::with_deps(t, [v]) })
+}
+
+// `Parser::emit_variant_value` for unit variant `vd` of struct enum `en`: on the second pass a
+// record of the variant made in a `__ref_N` work reference with its omitted fields — its
+// `enum` ordinal — written ("EnumUnitLit", borrowing the reference); on the first, the
+// variant's ordinal.  Typed as the enum.
+fn unit_variant(e: el::El, vars: el_vars::Vars, en: integer, vd: integer) -> Ex {
+  ret = ir::TyEnum { n: en, is_ref: true, dep: [] };
+  if e.first_pass || el::def(e, vd).known_type == el_schema::NO_TYPE {
+    a = attr_nr(el::def(e, en), el::def(e, vd).name);
+    return ex(if a < 0 { ir::NdNull } else { el::def(e, en).attributes[a]!.value[0] }, ret);
+  }
+  w = el_vars::work_ref(vars, ret);
+  body = fields_at(e, vars, w, ir::NdVar { n: w }, vd, []);
+  if body == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  list = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: el::def(e, vd).known_type }])] + body! + [ir::NdVar { n: w }];
+  ex(el_ir::v_block(list, ir::TyEnum { n: en, is_ref: true, dep: [w] }, "EnumUnitLit"), ret)
 }
 
 // `collection_bind_source`'s copy verdicts for a vector source: a bare variable, or a one-level
@@ -6258,8 +6287,7 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     for a in def.attributes {
       if a#index >= len(given) {
         // Minted on both passes, as `add_defaults` mints it, so the buffers number alike.
-        wv = el_vars::caller_text_buf(vars);
-        g2 += [el_ir::v_block([el_ir::v_set(wv, ir::NdText { s: "" }), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])], ir::TyReference { n: el::def_nr(e, "reference"), dep: [wv] }, "default ref")];
+        g2 += [default_text_ref(e, vars)];
         t2 += [a.typedef[0]];
       }
     }
@@ -10058,6 +10086,7 @@ fn elem_size(t: ir::TypeT) -> integer {
     TyText { dep: _ } => 4,
     TyBoolean => 1,
     TyCharacter => 4,
+    TyEnum { n: _, is_ref } => if is_ref { -1 } else { 1 },
     _ => -1
   }
 }
@@ -10071,6 +10100,7 @@ fn push_op(t: ir::TypeT) -> text {
     TySingle => "OpPushSingle",
     TyBoolean => "OpPushBoolean",
     TyCharacter => "OpPushCharacter",
+    TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpPushEnum" },
     _ => ""
   }
 }
@@ -10143,6 +10173,7 @@ fn read_op(t: ir::TypeT) -> text {
     TyFloat => "OpGetFloat",
     TySingle => "OpGetSingle",
     TyCharacter => "OpGetCharacter",
+    TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpGetEnum" },
     _ => ""
   }
 }
