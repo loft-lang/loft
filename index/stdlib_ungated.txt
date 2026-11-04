@@ -341,7 +341,7 @@ __iface_32#2_OpMin
 __iface_32#2_minus
 __iface_35#2_scale
 __iface_37#1_to_text
-__iface_522#1_children
+__iface_524#1_children
 i_7integer_n_sum
 n___ledger
 n___ledger_div
@@ -359,6 +359,8 @@ n_json_number
 n_json_object
 n_json_parse
 n_json_string
+n_keyed_entry_ints
+n_keyed_entry_text
 n_panic
 n_parallel_buf_drop
 n_parallel_buf_drop_fn
