@@ -664,6 +664,17 @@ impl Parser {
                             named.join(" and "),
                             uses.join(" or ")
                         );
+                    } else if let Some(pkg) = self.method_provider(&field) {
+                        // loft#2393 — a library provides the method, and nothing loaded it:
+                        // the file declares a method of that name itself (which keeps the
+                        // trigger from firing), or it manages its libraries by hand.
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "{} has no method `{field}` — the library `{pkg}` provides a \
+                             `{field}` method: write `use {pkg}::*;` to use it",
+                            t.source_name(&self.data)
+                        );
                     } else if has_free_hint {
                         // loft#850 — only the stdlib can be blamed for the stdlib's
                         // choices; a `use`d package that declares `{field}` free-only
@@ -857,9 +868,10 @@ impl Parser {
                     // the record and orphans `w`, so a `skip_free` here left nothing to
                     // free it (loft#1344: `xs += [V.Null]` leaked while `xs += [Null]`,
                     // the very same value spelled without its enum, did not).
+                    // Named by the work-ref it fills, as the unqualified form's block is.
                     *code = crate::data::v_block(
                         list,
-                        Type::Enum(dnr, true, crate::data::Deps::none()),
+                        Type::Enum(dnr, true, crate::data::Deps::frame1(w)),
                         "EnumUnitLit",
                     );
                     self.data.attr_used(dnr, fnr);
@@ -3563,13 +3575,33 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // projection's.  Its type comes from the call's own return type, the only place
         // the bag is written down by the time the subscript asks.
         if let Some(root) = self.projection_root_mut(code) {
-            let Value::Call(d_nr, _) = root.unspan() else {
+            let Value::Call(d_nr, args) = root.unspan() else {
                 return None;
             };
             if !self.data.def(*d_nr).is_loft_defined() {
                 return None;
             }
-            let root_tp = self.data.def(*d_nr).returned().clone();
+            // The return type's deps are the CALLEE's attribute numbers, bridged to this frame
+            // (`@FR-O-Deps`): one naming the callee's hidden RETURN BUFFER is the buffer this
+            // call hands it — the container is that buffer, as the pool reads it (`@FR-R-Reuse`).
+            // One naming a visible parameter is dropped: the bind copies what a borrowing callee
+            // answers (`@FR-O-Move`), and read as a caller variable it made the work-ref look
+            // borrowed, so the copy had no owner (loft#2376).
+            let def = self.data.def(*d_nr);
+            let buffers: Vec<u16> = def
+                .returned()
+                .depend()
+                .into_iter()
+                .filter(|&a| def.attributes().get(a as usize).is_some_and(|at| at.hidden))
+                .filter_map(|a| match args.get(a as usize).map(Value::unspan) {
+                    Some(Value::Var(v)) => Some(*v),
+                    _ => None,
+                })
+                .collect();
+            let root_tp = def
+                .returned()
+                .without_deps()
+                .with_deps(&crate::data::Deps::frame(buffers));
             return Some(self.bind_inline_container(root, &root_tp));
         }
         let Value::Call(d_nr, _) = code.unspan() else {

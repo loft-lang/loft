@@ -740,6 +740,35 @@ impl Scopes<'_> {
         }
     }
 
+    /// [`Self::arm_bind`] for a CALL tail: the temp its record answer takes, if it needs one.
+    fn call_arm_bind(&self, d: u32, tail: &Value, bound: u16, data: &Data) -> Option<ArmBind> {
+        let def = data.def(d);
+        if !def.is_loft_defined() {
+            return None;
+        }
+        let (returned, opt) = def.returned().peel_optional();
+        let tp = match returned {
+            Type::Reference(r, _) => Type::Reference(*r, Deps::none()),
+            Type::Enum(r, true, _) => Type::Enum(*r, true, Deps::none()),
+            _ => return None,
+        };
+        match crate::use_analysis::ownership_of(data, self.d_nr, tail) {
+            // An OWNED tail of a call ARGUMENT's branch (`bound == u16::MAX`): no binding adopts
+            // it there, so it takes a temp, as the call alone would (loft#2386).
+            crate::use_analysis::Own::Owned if bound == u16::MAX => {
+                Some(ArmBind::Bind(Self::reopt(opt, tp)))
+            }
+            // `None` means "no bind needed", the answer for a tail that owns.
+            // Declining on `Unknown` would BIND a temp on a shape the oracle cannot read, which
+            // adds a store rather than withholding a free; the safe direction here is not
+            // obviously the conservative one.
+            crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => None,
+            crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. } => {
+                Some(ArmBind::Bind(Self::reopt(opt, tp)))
+            }
+        }
+    }
+
     /// What gives this arm tail a binding of its own, or `None` where the arm keeps the value
     /// it has.  The answer is what the SINGLE bind `t = <tail>` would leave `t` holding, and
     /// the temp is bound by that single bind's own lowering — nothing here re-derives a copy:
@@ -826,29 +855,7 @@ impl Scopes<'_> {
                     _ => None,
                 }
             }
-            Value::Call(d, _) => {
-                let def = data.def(*d);
-                if !def.is_loft_defined() {
-                    return None;
-                }
-                let (returned, opt) = def.returned().peel_optional();
-                let tp = match returned {
-                    Type::Reference(r, _) => Type::Reference(*r, Deps::none()),
-                    Type::Enum(r, true, _) => Type::Enum(*r, true, Deps::none()),
-                    _ => return None,
-                };
-                match crate::use_analysis::ownership_of(data, self.d_nr, tail) {
-                    // @PLN155 phase 2 — `None` means "no bind needed", the answer for a tail
-                    // that owns.  Declining on `Unknown` would BIND a temp on a shape the
-                    // oracle cannot read, which adds a store rather than withholding a free;
-                    // the safe direction here is not obviously the conservative one.
-                    crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown => None,
-                    crate::use_analysis::Own::Borrowed { .. }
-                    | crate::use_analysis::Own::Join { .. } => {
-                        Some(ArmBind::Bind(Self::reopt(opt, tp)))
-                    }
-                }
-            }
+            Value::Call(d, _) => self.call_arm_bind(*d, tail, bound, data),
             Value::Var(x) => {
                 // A branch consumed as a call ARGUMENT binds nothing: the argument ALIASES
                 // the caller's variable (calls.md F-ParamHeap), and a callee that hands its
@@ -876,7 +883,8 @@ impl Scopes<'_> {
                 // itself, which `(B-Copy)` copies wherever it is spelled — the temp only saved a
                 // second evaluation of the subject (loft#1752, `whole_value_hoists_in`).
                 if function.is_compiler_generated(*x) && !self.whole_value_hoists.contains(x) {
-                    if !(is_discharge_hoist(function, *x)
+                    if !((is_discharge_hoist(function, *x)
+                        || self.arm_projection_temps.contains(x))
                         && self.views_to_materialise.contains_key(&bound))
                     {
                         return None;
@@ -908,9 +916,17 @@ impl Scopes<'_> {
                 let whole_into_view = (self.whole_value_hoists.contains(x)
                     || !function.is_compiler_generated(*x))
                     && !function.tp(bound).depend().is_empty();
+                // A binding's FIRST assignment is the exception: no other Set has given it a
+                // store yet, and the deps strip makes it an owner from here on, so a plain adopt
+                // of a variable's store would let its next rebind release that variable's — the
+                // caller's record for a parameter arm (`@FR-B-Copy`, loft#2398).  The lift copies
+                // the arm as the bare `at = a` copies it, and `lift_join_arm_tails` keeps the
+                // binding's own fact for a multi-assigned binding.  Not for a WITNESSED binding
+                // (`@FR-O-Witness`): its witness already names the store it holds on each path.
                 if self.multi_assigned.contains(&bound)
                     && !self.views_to_materialise.contains_key(&bound)
                     && !whole_into_view
+                    && (self.first_set != bound || self.owner_witness.contains_key(&bound))
                 {
                     return None;
                 }

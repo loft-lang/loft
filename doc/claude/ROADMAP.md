@@ -120,6 +120,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | Plan | status | What it is |
 |---|---|---|
 | [@PLN210](https://github.com/loft-lang/plans/issues/210) | active | The worst C ship routines to 2× their Rust twin — each hand-priced form kept as the target, then the mechanisms in yield order ([plan](plans/210-c-worst-to-2x/README.md)) |
+| [@PLN211](https://github.com/loft-lang/plans/issues/211) | next | Every rewrite rule at its proper phase — the applied-by register derived from the census and gated, then each rule that removes work moved from a writer into the IR phase so the interpreter stops doing it too ([plan](plans/211-rule-phases/README.md)) |
 | [@PLN185](https://github.com/loft-lang/plans/issues/185) | next | A slow routine is an ordinary bug — the measurement, the 3× bar and the classes before issue-driven performance work |
 | [@PLN158](https://github.com/loft-lang/plans/issues/158) | future | Release performance pass — every routine against an industry reference twin ([PERF_PORTAL.md](PERF_PORTAL.md)) |
 | [@PLN179](https://github.com/loft-lang/plans/issues/179) | future | Scripts in loft — the repo's Python/bash tooling ported, each port proven against its original |

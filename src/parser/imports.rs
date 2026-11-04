@@ -423,6 +423,18 @@ impl Parser {
         std::collections::HashMap::new()
     }
 
+    /// The one package that provides the method `name` by its trigger, the declared
+    /// packages' first and then the catalogue's, when the program has not loaded it — the
+    /// hint for a method call nothing answers (loft#2393).
+    pub(super) fn method_provider(&mut self, name: &str) -> Option<String> {
+        let file = self.lexer.pos().file.to_string();
+        let pkg = match self.trigger_map(&file).get(name) {
+            Some(p) => p.clone(),
+            None => self.catalog_trigger_map().get(name)?.clone(),
+        };
+        (!self.data.use_exists(&pkg)).then_some(pkg)
+    }
+
     /// The packages that each provide the method `name` with none of them chosen
     /// (`@FR-Disp-Trigger`, loft#2094): two of one library-directory step, or — when no
     /// declared or library-directory copy answers the name — two of the catalogue.  `None`

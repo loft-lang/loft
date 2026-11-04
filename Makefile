@@ -662,7 +662,8 @@ fences:  ## Every code sample on LOFT.md / STDLIB.md / the comparison pages, and
 	python3 scripts/rule_tags.py fences
 sections:  ## Every section of LOFT.md / STDLIB.md and what keeps it — a sample, a rule, a feature, a stdlib name (@PLN176; gated in ci)
 	python3 scripts/rule_tags.py sections
-rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline
+rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline, on either writer, or a rule reports to no census
+	python3 scripts/rule_tags.py phases --check
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py
 runtime-surface:  ## What emitted Rust names in the loft crate, over the corpus, and what of it lies outside the runtime set (doc/claude/RUNTIME_SURFACE.md; a report)
@@ -2482,6 +2483,7 @@ ci: ci-guard
 	python3 scripts/ci_shards.py proof >> result.txt 2>&1 && \
 	python3 scripts/rule_tags.py fences --gate >> result.txt 2>&1 && \
 	python3 scripts/rule_tags.py sections --gate >> result.txt 2>&1 && \
+	python3 scripts/rule_tags.py phases --check >> result.txt 2>&1 && \
 	$(MAKE) --no-print-directory label-guard-test >> result.txt 2>&1 && \
 	python3 scripts/contract_labels.py --self-test >> result.txt 2>&1 && \
 	scripts/gate_lock.sh selftest >> result.txt 2>&1 && \

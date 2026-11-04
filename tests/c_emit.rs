@@ -583,7 +583,13 @@ fn a_program_reads_its_hash_seed_entropy_once() {
          static int n;\nstatic void report(void) { fprintf(stderr, \"urandom opens %d\\n\", n); }\n\
          FILE *loft_test_fopen(const char *p, const char *m) {\n    static int armed;\n    \
          if (!armed) { armed = 1; atexit(report); }\n    \
-         if (strcmp(p, \"/dev/urandom\") == 0) n++;\n    return fopen(p, m);\n}\n",
+         if (strcmp(p, \"/dev/urandom\") == 0) n++;\n    return fopen(p, m);\n}\n\
+         /* `-Dfopen=` renames stdio's declaration too, and Apple's carries an assembler\n\
+            label, so the program calls `loft_test_fopen$DARWIN_EXTSN`: answer under it. */\n\
+         #if defined(__APPLE__)\n\
+         FILE *loft_test_fopen_darwin(const char *p, const char *m) __asm(\"_loft_test_fopen$DARWIN_EXTSN\");\n\
+         FILE *loft_test_fopen_darwin(const char *p, const char *m) { return loft_test_fopen(p, m); }\n\
+         #endif\n",
     )
     .expect("write counter");
     let c = dir.join("h.c");

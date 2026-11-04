@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-SliceArg`'s range clause — `text_from_bytes(v[a..b])` reads the bytes `[a, b)` of `v`
+// where they lie (`text_from_byte_range`), under the slice's own bounds, and builds no slice.
+// What can go wrong is the clamping — a negative bound, one past either end, an empty or
+// reversed span — a span that splits a character, a foreign (file-mapped) source, a source
+// written after the text was read, and a text read inside a value a decoder builds outside the
+// store (`@FR-R-Transient`).  Values hand-computed in each cell's comment, the text AND its
+// length.
+//
+// The scope pass applies it (`slice_text::rewrite`), so every backend runs the rewritten IR and
+// none is the other's oracle: the oracle is these hand-computed values, and
+// `LOFT_NO_SLICE_TEXT=1`, which builds the slice, is the second answer.
+//
+// @falsified-at: none — by hand on the IR clause, the range call's bounds swapped
+//   (`text_from_byte_range(v, hi, lo)`): t1 fails on the interpreter and on the C ("/0" for
+//   "él/3").
+//   CHANNEL: an assertion.
+// HOLDS: the hand-computed values, on both backends, the clause on and off.
+
+enum Piece { PB { b: vector<u8> }, PT { t: text }, PN }
+
+struct Cut {
+  const piece: Piece,
+  const at: integer,
+}
+
+// "héllo, world" as its thirteen bytes: h, é (2), l, l, o, ',', ' ', w, o, r, l, d
+fn hello() -> vector<u8> {
+  v: vector<u8> = [];
+  for i in 0..size("héllo, world") { v += ["héllo, world".byte_at(i) as u8? ?? 0]; }
+  v
+}
+
+// A local's text read from a span: the text, then its length in bytes.
+fn read(v: const vector<u8>, a: integer, b: integer) -> text {
+  t = text_from_bytes(v[a..b]);
+  "{t}/{size(t)}"
+}
+
+// A decoder's shape: the text in a variant field of the record it answers.
+fn cut_text(v: const vector<u8>, a: integer, b: integer) -> Cut {
+  return Cut { piece: PT { t: text_from_bytes(v[a..b]) }, at: a };
+}
+fn text_of(p: Piece) -> text { match p { PT { t } => "{t}/{size(t)}", _ => "none" } }
+
+// A source with an effect: the range read names the source again, so it must not run twice.
+fn counted(n: &integer) -> vector<u8> {
+  n += 1;
+  hello()
+}
+
+fn main() {
+  h = hello();
+  // t1: 1..4 is é (two bytes) and l: "él", three bytes
+  assert(read(h, 1, 4) == "él/3", "t1 {read(h, 1, 4)}");
+  // t2: 2..4 starts inside é: not UTF-8, the empty text
+  assert(read(h, 2, 4) == "/0", "t2 {read(h, 2, 4)}");
+  // t3: a negative lower bound counts from the end, -5..12 is 8..12: "worl"
+  assert(read(h, -5, 12) == "worl/4", "t3 {read(h, -5, 12)}");
+  // t4: past the end, 9..99 clamps to 9..13: "orld"
+  assert(read(h, 9, 99) == "orld/4", "t4 {read(h, 9, 99)}");
+  // t5: an empty span and a reversed one: the empty text
+  assert(read(h, 4, 4) == "/0", "t5 {read(h, 4, 4)}");
+  assert(read(h, 6, 2) == "/0", "t5r {read(h, 6, 2)}");
+  // t6: a negative bound past the start, -40..3 clamps to 0..3: "hé"; a negative upper bound,
+  // 4..-7 is 4..6: "lo"
+  assert(read(h, -40, 3) == "hé/3", "t6 {read(h, -40, 3)}");
+  assert(read(h, 4, -7) == "lo/2", "t6b {read(h, 4, -7)}");
+  // t7: a foreign (file-mapped) source, 8..13: "world"
+  fp = "loft_text_of_a_slice_{now()}_{ticks()}.tmp";
+  assert(write_bytes(fp, h), "write");
+  m = file_map(fp) ?? [];
+  got = read(m, 8, 13);
+  delete(fp);
+  assert(got == "world/5", "t7 {got}");
+  // t8: the source written after the read: the text keeps what it read — 0..5 is "héll",
+  // then h[0] = 'H' leaves it alone
+  w = text_from_bytes(h[0..5]);
+  h[0] = 72 as u8;
+  assert(w == "héll" && size(w) == 5, "t8 {w}");
+  assert(read(h, 0, 1) == "H/1", "t8 source {read(h, 0, 1)}");
+  // t9: inside a value built outside the store, a decoder's text: 6..12 is ", worl"
+  assert(text_of(cut_text(h, 6, 12).piece) == ", worl/6", "t9 {text_of(cut_text(h, 6, 12).piece)}");
+  // t10: the source is a call with an effect — read once: bytes 8..12 (w o r l) are "worl"
+  calls = 0;
+  t10 = text_from_bytes(counted(calls)[8..12]);
+  assert(t10 == "worl" && calls == 1, "t10 {t10} {calls}");
+  // t11: the text appended inside a `+` build (the append host), with a growing bound:
+  //   0..1 "H", 0..2 "Hé" — one byte short of é's two bytes, an empty decode — 0..3 "Hé"
+  acc = "";
+  for k in 1..4 { acc += text_from_bytes(h[0..k]) + "|"; }
+  assert(acc == "H||Hé|", "t11 {acc}");
+  println("ok");
+}

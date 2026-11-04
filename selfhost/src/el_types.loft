@@ -170,9 +170,19 @@ pub fn with_deps(t: ir::TypeT, deps: vector<integer>) -> ir::TypeT {
 }
 
 // The name a vector of `t` is registered under (`vector<integer>`, `main_vector<P>`), or "".
+// The width a narrow integer is stored in as an element (`int_part`'s rule, not nullable):
+// 1 or 2 bytes, or 0 for any other integer.
+pub fn narrow_width(spec: ir::IntegerSpec) -> integer {
+  if spec.forced_size == 0 && spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295) {
+    return 0;
+  }
+  s = if spec.forced_size > 0 { spec.forced_size } else if spec.max - spec.min + 1 <= 256 { 1 } else if spec.max - spec.min + 1 <= 65536 { 2 } else { 8 };
+  if s == 1 || s == 2 { s } else { 0 }
+}
+
 pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
   match t {
-    TyInteger { spec } => if spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647 { "integer" } else { "" },
+    TyInteger { spec } => if spec.forced_size == 0 && spec.min == -2147483647 && spec.max == 2147483647 { "integer" } else if narrow_width(spec) > 0 { "integer({spec.min}, {spec.max})" } else { "" },
     TyText { dep: _ } => "text",
     TyBoolean => "boolean",
     TyFloat => "float",
@@ -282,9 +292,29 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         }
         return if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
       }
+      // `sub_type`'s iterator arm: a generator's `iterator<T>`, carried for a plain scalar, a text
+      // or a record `T`.
+      if name == "iterator" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+        step = parse_type(e, args[0]);
+        if step == null {
+          return null;
+        }
+        if !carried_step(step!) {
+          el::refuse(e, "an iterator of an element other than a plain scalar, a text, a record or a tuple of those");
+          return null;
+        }
+        return ir::TyIterator { step: step!, inner: ir::TyNull };
+      }
       if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;
+      }
+      // `def_nr_in_scope`: a header variable of the function being read is its placeholder.
+      for tv in e.type_vars {
+        if tv.spelling == name {
+          h = ir::TyReference { n: tv.holder, dep: [] };
+          return if nullable { ir::TyOptional { inner: h } } else { h };
+        }
       }
       d = el::def_nr(e, name);
       if d < 0 {
@@ -292,12 +322,162 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         return null;
       }
       t = el::def(e, d).returned[0] ?? ir::TyUnknown { n: d };
+      // An integer alias with a `size(n)` (`u8`, `i32`) stamps that width onto the spec, so it
+      // travels with the type into a collection's element and a narrow store's checks.
+      fs = el::def(e, d).forced_size;
+      match t {
+        TyInteger { spec } => {
+          if name != "integer" && fs > 0 && fs != 8 {
+            t = ir::TyInteger { spec: ir::IntegerSpec { min: spec.min, max: spec.max, not_null: spec.not_null, forced_size: fs } };
+          }
+        },
+        _ => {}
+      }
       // `T?`: the optional former over the base.
       if nullable { ir::TyOptional { inner: t } } else { t }
     },
+    // `parse_type_full`'s tuple arm (P189): the members read as types, and the shape's
+    // `__tuple<…>` struct registered once the `)` is read (the lexer then stands at the end of
+    // the token after it), as every tuple type registers it.
+    STyTuple { at, elems } => {
+      ts: vector<ir::TypeT> = [];
+      for m in elems {
+        mt = parse_type(e, m);
+        if mt == null {
+          return null;
+        }
+        ts += [mt!];
+      }
+      if tuple_def(e, ts, el::pos_at(e, closing_paren(e, at) + 1)) < 0 {
+        el::refuse(e, "a tuple type with a member of this kind");
+        return null;
+      }
+      ir::TyTuple { elems: ts }
+    },
     _ => {
-      el::refuse(e, "a tuple or function type");
+      el::refuse(e, "a function type");
       null
     }
   }
+}
+
+// A tuple member's stored spelling and width, for the members this port carries: a plain
+// scalar or a text (`Data::tuple_member_stored`, `element_stack_size`/`_align`); "" otherwise.
+pub fn tuple_member(t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => if narrow_width(spec) == 0 && spec.forced_size == 0 { "integer" } else { "" },
+    TyFloat => "float",
+    TySingle => "single",
+    TyBoolean => "boolean",
+    TyCharacter => "character",
+    TyText { dep: _ } => "text",
+    _ => ""
+  }
+}
+
+fn tuple_member_width(t: ir::TypeT) -> integer {
+  match t {
+    TyInteger { spec: _ } => 8,
+    TyFloat => 8,
+    TyBoolean => 1,
+    _ => 4
+  }
+}
+
+// The members' spellings joined as a tuple names them (`integer,text`), or "" for a member
+// this port does not carry.
+pub fn tuple_spelling(elems: vector<ir::TypeT>, sep: text) -> text {
+  r = "";
+  for t in elems {
+    m = tuple_member(t);
+    if m == "" {
+      return "";
+    }
+    r = if t#index == 0 { m } else { "{r}{sep}{m}" };
+  }
+  r
+}
+
+// `Data::tuple_def` (P189): the synthetic struct a tuple shape is stored as, `__tuple<…>` with
+// members `_0`, `_1`, … in element order — registered in the standard library's source so
+// every file shares it, its members not-null, its one Tuple field group covering them all.
+// The existing definition where the shape has one; -1 for a member this port does not carry.
+pub fn tuple_def(e: el::El, elems: vector<ir::TypeT>, pos: ir::Position) -> integer {
+  sp = tuple_spelling(elems, ",");
+  if sp == "" {
+    return -1;
+  }
+  nm = "__tuple<{sp}>";
+  d = el::def_nr(e, nm);
+  if d >= 0 {
+    return d;
+  }
+  d = el::add_def(e, nm, pos, el::DT_STRUCT);
+  e.b.data.definitions[d].source = el::STD_SOURCE;
+  e.b.data.definitions[d].returned = [ir::TyReference { n: d, dep: [] }];
+  idx: vector<integer> = [];
+  size = 0;
+  align = 1;
+  for t in elems {
+    a = el::attribute("_{t#index}", t);
+    a.nullable = false;
+    e.b.data.definitions[d].attributes += [a];
+    idx += [t#index];
+    w = tuple_member_width(t);
+    // Each member at its natural alignment (`LinkedFieldGroup::group_size`); `w` is never 0.
+    q = (size + w - 1) / w;
+    size = (q ?? 0) * w + w;
+    if w > align {
+      align = w;
+    }
+  }
+  e.b.data.definitions[d].field_groups += [ir::LinkedFieldGroup { kind: 0, instance: 0, field_indices: idx, alignment: align, size: size }];
+  d
+}
+
+// The definition a tuple type is stored as, or -1 where none is made yet.
+pub fn tuple_def_of(e: el::El, elems: vector<ir::TypeT>) -> integer {
+  sp = tuple_spelling(elems, ",");
+  if sp == "" { -1 } else { el::def_nr(e, "__tuple<{sp}>") }
+}
+
+// An iterator element this port carries: a plain scalar (no narrow width), a text, a record, or
+// a tuple of plain scalars and texts.
+pub fn carried_step(t: ir::TypeT) -> boolean {
+  match t {
+    TyTuple { elems } => {
+      for m in elems {
+        if tuple_member(m) == "" {
+          return false;
+        }
+      }
+      len(elems) > 0
+    },
+    TyText { dep: _ } => true,
+    TyReference { n: _ } => true,
+    TyInteger { spec } => narrow_width(spec) == 0 && spec.forced_size == 0,
+    TyFloat => true,
+    TySingle => true,
+    TyBoolean => true,
+    TyCharacter => true,
+    _ => false
+  }
+}
+
+// The `)` closing the `(` at token `open`.
+fn closing_paren(e: el::El, open: integer) -> integer {
+  depth = 0;
+  i = open;
+  while i < len(e.p.src) {
+    if e.p.src[i] is LParen {
+      depth += 1;
+    } else if e.p.src[i] is RParen {
+      depth -= 1;
+      if depth == 0 {
+        return i;
+      }
+    }
+    i += 1;
+  }
+  open
 }

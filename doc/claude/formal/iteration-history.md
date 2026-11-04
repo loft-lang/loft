@@ -317,3 +317,20 @@ Opened and closed in the same change; the chapter's `OPEN:` line never carried i
   through a prefix, whether or not the callee may write the destination.  A struct-enum element is
   a record here as a struct is.  Guard
   `loft-suite rules/iteration/I-Comp/2335-a-literal-whose-item-reads-its-destination-through-a-call-reads-what-it-held.loft`.
+
+* **D-iter-16** *(opened 2026-11-03, CLOSED 2026-11-03; loft#2397)* — `(I-Comp)` /
+  `(E-Asgn-Compound)` over the PLACE, not the spelling: a literal or comprehension assigned to a
+  FIELD read the field under another name AFTER the field's clear.  Two names were missed: a local
+  that views the destination — a `for` element over its container
+  (`for v in f.vars { f.vars[v#index].tp = [v.tp[0] + 1] }`), a projection (`w = f.vars[0]`,
+  `t = f.vars[0].tp`), a `&` link — and the destination's root through an index that may be the
+  same element (`f.vars[j].tp`, `f.vars[i * 1].tp` for `f.vars[i].tp`).  The read test compared
+  places for equality, and a rename onto a snapshot cannot redirect either name, since neither
+  says at compile time which record it reads.  `[null]`, `TB`, `[]` and a grown `+=` length on
+  both backends, silently, on released builds.  **Fix.**
+  `Parser::reads_destination_by_another_name` asks both questions (a local whose deps reach the
+  destination's root or what the root views; an element step not provably different); a scalar
+  or text element's parts are evaluated into temps before the clear, a record element's literal
+  is built into a buffer of its own that the field's assignment delivers, and a comprehension
+  takes its own buffer.  Guard
+  the loft-suite cell `rules/ownership/O-Detach/2397-a-literal-reads-its-field-under-another-name.loft`.

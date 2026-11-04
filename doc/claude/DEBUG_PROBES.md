@@ -184,7 +184,13 @@ reaches. On that same file it named three it did not — a PARAMETER-provenance 
 a LOOP, and `(Col-Lookup)`'s keyed miss — and all three were on the ISSUE'S OWN list of rules that
 construct a `τ?`. None was broken, which is the ordinary outcome and still worth the minute: an
 unreached axis with a bug history is a probe to build, and the ones that pass become cells rather
-than neighbours.
+than neighbours.  Its vocabulary is fixed, each axis with the DOMAIN the language offers, so the answer is
+DERIVED, not declared: an axis named in your own closing paragraph is not an axis measured by
+it (`formal/ownership.md` D-own-6).  `matrix_axes.py cross <A> <B>` asks the sharper question,
+which pairs the whole corpus never crosses; an absence it reports is checked by building that
+case and asking again.  A sweep that varies one axis while pinning four reads as proof and is
+not: @PLN130's broken cell needed nesting depth, Set-count, parameter kind and caller count moved
+TOGETHER.
 
 **A deviation's measured cells are a claim to re-measure, not a record to cite.** `D-tup-10`
 listed four cells as REFUSED; three of them answer correctly today, carried along by unrelated

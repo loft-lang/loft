@@ -15,6 +15,7 @@ bench/portal/hand_price_c.sh	--help
 bench/portal/local.py	--help
 bench/run_bench.sh	--help
 bench/stats.py	--help
+doc/claude/plans/211-rule-phases/probes/run.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/grammar_gen.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/ownership_fuzz.py	--help
 doc/claude/presentations/par/build_par_slides.sh	--help
@@ -78,6 +79,7 @@ scripts/repeat-test.sh	--help
 scripts/repro-verify.sh	--help
 scripts/revalidate_libs_local.sh	--help
 scripts/rule_depth.py	--help
+scripts/rule_phases.py	--help
 scripts/run_scratch.py	--help
 scripts/runtime_bundle.sh	--help
 scripts/runtime_surface.py	--help
@@ -88,6 +90,7 @@ scripts/stability_read.py	--help
 scripts/steering_rate.py	--help
 scripts/sweep_ignored.sh	--help
 scripts/sweep_scratch.sh	--help
+scripts/tanmatsu_log.py	--help
 scripts/test_speed.py	--help
 scripts/timing_compare.py	--help
 scripts/unreleased-work.py	--help

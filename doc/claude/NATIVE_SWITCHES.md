@@ -48,9 +48,8 @@ scalar in a loop over a record; `LOFT_HOIST_VERIFY=1` re-reads each hoisted scal
 panics on a stale one.  **`LOFT_NO_VIEW_HOIST=1`** (@PLN157 § V-n) makes a `&`-bound vector
 view (`d = &cv.data`) derive no header at its binding — with it on, the rest of the block
 reads `d[i]` through one header derived once — and is the bisect step for a wrong element
-read through a view outside a loop.  **`LOFT_NO_WRAPPER_INLINE=1`** (@PLN157 § V-o) emits a
-call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`) as the CALL again instead of as its
-op — the bisect step for a wrong length or libm value on native.  **`LOFT_NO_CALLEE_INPUTS=1`**
+read through a view outside a loop.  `LOFT_NO_WRAPPER_INLINE=1` is a
+both-backend switch (BOTH_BACKEND_SWITCHES.md).  **`LOFT_NO_CALLEE_INPUTS=1`**
 (@PLN157 § V-p, § V-ac) emits no callee TWIN — with it on, a callee that reads a record
 parameter's scalar fields, views or indexes its vector fields, or indexes a plain VECTOR
 parameter gets a `<fn>__inv` twin taking those as extra parameters, and a loop that hoisted
@@ -447,8 +446,9 @@ cannot hoist, or a carried local no struct field can hold.
 makes a counted push loop grow per push again — with it off, `for i in a..b { v += [x, y] }`
 reserves two elements times its trip count once before it runs, and `for _ in a..b
 { v += [c] }` with `c` invariant is ONE fill of the vector's tail with the per-element
-loop as its fallback (the resample's plane prefill: −2 % on the row) — and is the first
-bisect step for a wrong element or length out of a counted push loop on native.  A body
+loop as its fallback — that clause on every backend, decided in the IR
+(BOTH_BACKEND_SWITCHES.md, `LOFT_NO_FILL_LOOP`) — and is the first bisect step for a
+wrong element or length out of a counted push loop.  A body
 that can `break`, `return` or loop again, a push under a branch, another write to the
 path, or a range end that is not a simple invariant declines the loop.
 `LOFT_TRACE_PUSH_FILL=1` names each decline; `LOFT_HOIST_VERIFY=1` re-derives the push

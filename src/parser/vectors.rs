@@ -204,6 +204,22 @@ impl Parser {
         );
     }
 
+    /// May the destination `orig_var` of a concatenation ADOPT its first operand `code` (of
+    /// type `tp`) — take that operand's store as its own and append the rest into it, with no
+    /// copy?  `@FR-Col-Concat`: `a + b` is a NEW vector and neither operand changes, so the
+    /// adopt is sound only when nothing else can see the store and the write replaces the
+    /// destination.  Three ways it is not (loft#2399):
+    ///
+    /// - the operand is not fresh — a view of a vector something else holds (`h[i]`, `g.v`,
+    ///   a borrowing call): adopting it appends into that vector;
+    /// - the destination is an element slot, which never owns a store (loft#664's marker):
+    ///   adopting re-points the slot's handle and leaves the element itself empty;
+    /// - the write is a `+=`: adopting REPLACES what the destination already held.
+    fn concat_may_adopt(&self, code: &Value, tp: &Type, orig_var: u16) -> bool {
+        let appending = orig_var == self.assign_target && !self.assign_replaces;
+        !self.vars.is_inline_ref(orig_var) && !appending && self.value_is_fresh(code, tp)
+    }
+
     pub(crate) fn parse_append_vector(
         &mut self,
         code: &mut Value,
@@ -300,6 +316,18 @@ impl Parser {
             // `Set(v, Var(v))` below so create_vector's self_ref / in-place path
             // still fires; a fresh-storage temp (Call/Block, not a Var) also
             // keeps `Set` so v adopts the temp's store with no extra copy.
+            ls.push(self.cl(
+                "OpAppendVector",
+                &[Value::Var(orig_var), code.clone(), Value::Int(rec_tp)],
+            ));
+            orig_var
+        } else if !matches!(code.unspan(), Value::Var(x) if *x == orig_var)
+            && !self.concat_may_adopt(code, tp, orig_var)
+        {
+            // @FR-Col-Concat — `a + b` is a NEW vector and neither operand changes.  A first
+            // operand the destination may not adopt (a view of a vector something else holds,
+            // or a destination that must keep its own store) is deep-COPIED in, exactly as a
+            // named local is above (loft#2399).
             ls.push(self.cl(
                 "OpAppendVector",
                 &[Value::Var(orig_var), code.clone(), Value::Int(rec_tp)],
@@ -4071,6 +4099,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             val,
             is_var,
             is_field,
+            in_t,
             &[&fill, &create_iter, &for_next, &if_step, &body],
         ) {
             let out_tp = Type::Vector(Box::new(in_t.clone()), Deps::none());
@@ -4807,6 +4836,41 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         } else {
             Type::Vector(Box::new(in_t.clone()), Deps::frame(parent_tp.depend()))
         };
+        // A RECORD-element literal into a field that reads the field under ANOTHER name — a
+        // local viewing it, or an index that may be the same element (loft#2397) — has no
+        // read a snapshot rename can redirect and no part a temp can carry: it is built into
+        // a buffer of its own, and the field's assignment hands that over AFTER every part
+        // has been read, the delivery the comprehension takes for the same question.  A
+        // scalar or text element is staged into temps instead (`snapshot_read_destination`).
+        // @FR-E-Asgn-Compound @FR-I-Comp
+        if !self.first_pass
+            && is_field
+            && !keyed_dest
+            && !crate::data::is_scalar(&in_t)
+            && !matches!(in_t.base(), Type::Text(_))
+            && self.reads_destination_by_another_name(val, &in_t, &res.iter().collect::<Vec<_>>())
+        {
+            let out_tp = Type::Vector(Box::new(in_t.clone()), Deps::none());
+            let out = self.create_unique("vec", &out_tp);
+            self.vars.defined(out);
+            self.vars.depend(elm, out);
+            self.data.vector_def(&mut self.lexer, &in_t);
+            *val = Value::Null;
+            let (tp, ls) = self.build_vector_list(
+                val,
+                &out_tp,
+                elm,
+                out,
+                &res,
+                &in_t,
+                out_tp.clone(),
+                false,
+                false,
+            );
+            self.lexer.token("]");
+            *val = v_block(ls, tp.clone(), "Vector");
+            return tp;
+        }
         // A literal that READS its destination reads what the destination held when the
         // statement began (`I-Comp`, @FR-O-Detach) — take the snapshot before the build.
         let snapshot = {
@@ -5450,30 +5514,37 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// the nesting is what makes it bite, since a one-level `s.v` has only a bare `Var`
     /// under it.
     pub(crate) fn field_place(&self, v: &Value) -> Option<(u16, Vec<PlaceStep>)> {
+        let (root, steps) = self.loose_place(v)?;
+        Some((root, steps.into_iter().collect::<Option<Vec<_>>>()?))
+    }
+
+    /// [`Self::field_place`] with an element step this statement cannot name kept as `None`
+    /// rather than declining the whole place — `f.vars[i * 1].tp` is `(f, [vars, ?, tp])`.
+    /// Only an ELEMENT step is ever `None`; `field_place` declines any place holding one.
+    fn loose_place(&self, v: &Value) -> Option<(u16, Vec<Option<PlaceStep>>)> {
         match v.unspan() {
             Value::Var(x) => Some((*x, Vec::new())),
             Value::Call(d, args) if *d == self.data.def_nr("OpGetField") => {
                 let Value::Int(off) = args.get(1)?.unspan() else {
                     return None;
                 };
-                let (root, mut path) = self.field_place(args.first()?)?;
-                path.push(PlaceStep::Field(*off));
+                let (root, mut path) = self.loose_place(args.first()?)?;
+                path.push(Some(PlaceStep::Field(*off)));
                 Some((root, path))
             }
             // An ELEMENT step, so `xs[0].items` is a place of its own rather than nothing.
             // Both spellings of the read are the SAME place — a nullable read of an element
             // is that element — so they normalise to one step; the index decides which
-            // element, and only an index this statement cannot change is admitted: a
-            // constant, or a variable, which no expression inside one statement rewrites.
-            // Anything else (a computed index) is not named and falls back to declining, as
-            // every unnameable destination here does.
+            // element, and only an index this statement cannot change is named: a constant,
+            // or a variable, which no expression inside one statement rewrites.  Anything
+            // else (a computed index) is the unnamed step `None`.
             Value::Call(d, args) if let Some(at) = element_index_arg(self.data.def(*d).name()) => {
                 let step = match args.get(at)?.unspan() {
-                    Value::Int(i) => PlaceStep::ElemConst(*i),
-                    Value::Var(i) => PlaceStep::ElemVar(*i),
-                    _ => return None,
+                    Value::Int(i) => Some(PlaceStep::ElemConst(*i)),
+                    Value::Var(i) => Some(PlaceStep::ElemVar(*i)),
+                    _ => None,
                 };
-                let (root, mut path) = self.field_place(args.first()?)?;
+                let (root, mut path) = self.loose_place(args.first()?)?;
                 path.push(step);
                 Some((root, path))
             }
@@ -5486,12 +5557,147 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 let Value::Int(off) = args.get(1)?.unspan() else {
                     return None;
                 };
-                let (root, mut path) = self.field_place(args.first()?)?;
-                path.push(PlaceStep::Capture(*off));
+                let (root, mut path) = self.loose_place(args.first()?)?;
+                path.push(Some(PlaceStep::Capture(*off)));
                 Some((root, path))
             }
             _ => None,
         }
+    }
+
+    /// `(I-Comp)` and `(E-Asgn-Compound)` are stated over the PLACE, not the spelling: does a
+    /// part read the destination `dest` under a name other than the destination's own place?
+    ///
+    /// Two such names exist, and a rename onto a snapshot can serve neither, because neither
+    /// says at compile time WHICH record it reads:
+    ///
+    /// * a local that may VIEW the destination — one whose deps reach the destination's root
+    ///   or anything the root itself views, and whose type can hold the destination vector or
+    ///   (for a record element) one of its elements: a `for` element over the container
+    ///   (`for v in f.vars { f.vars[v#index].tp = [v.tp[0] + 1] }`), a projection
+    ///   (`w = f.vars[0]`, `t = f.vars[0].tp`), a `&` link, a view of a record that holds
+    ///   the destination (loft#2397);
+    /// * the destination's own root reached through an element step that may be the same
+    ///   element — another index variable, or an index the statement cannot name
+    ///   (`f.vars[j].tp`, `f.vars[i * 1].tp` for the destination `f.vars[i].tp`).
+    ///
+    /// A construction slot (an inline-ref element) is the build's own record, not a read.
+    /// Over-wide costs a temp or a buffer, never a wrong answer: a sibling element read
+    /// through a view (`w = f.vars[1]`) is staged although it is not the destination.
+    /// `false` for a bare variable destination, whose build reads go through
+    /// `comprehension_reads_target` and the `&` link partners.
+    pub(crate) fn reads_destination_by_another_name(
+        &self,
+        dest: &Value,
+        in_t: &Type,
+        parts: &[&Value],
+    ) -> bool {
+        if matches!(dest.unspan(), Value::Var(_)) {
+            return false;
+        }
+        let Some((root, steps)) = self.loose_place(dest) else {
+            return false;
+        };
+        let mut base = vec![root];
+        base.extend(self.vars.viewed_by(root));
+        let mut aliases = self.vars.views_of(&base);
+        aliases.extend(base.into_iter().filter(|v| *v != root));
+        // What a view of the destination holds: the vector itself, and — for a record
+        // element — one of its elements.  A local whose type can hold neither names some
+        // other place of the same root (`for a in d.src { d.out += [T { name: a }] }`).
+        let mut goals = vec![Type::Vector(Box::new(in_t.clone()), Deps::none())];
+        if !crate::data::is_scalar(in_t) && !matches!(in_t.base(), Type::Text(_)) {
+            goals.push(in_t.clone());
+        }
+        aliases.retain(|v| {
+            !self.vars.is_inline_ref(*v) && self.type_may_hold(self.vars.tp(*v), &goals)
+        });
+        let compatible = |a: &Option<PlaceStep>, b: &Option<PlaceStep>| match (a, b) {
+            (Some(PlaceStep::Field(x)), Some(PlaceStep::Field(y)))
+            | (Some(PlaceStep::Capture(x)), Some(PlaceStep::Capture(y)))
+            | (Some(PlaceStep::ElemConst(x)), Some(PlaceStep::ElemConst(y))) => x == y,
+            (Some(PlaceStep::Field(_) | PlaceStep::Capture(_)), _)
+            | (_, Some(PlaceStep::Field(_) | PlaceStep::Capture(_))) => false,
+            // Two element steps, at least one by a variable or an unnamed index.
+            _ => true,
+        };
+        let exact =
+            |s: &[Option<PlaceStep>]| s == steps.as_slice() && s.iter().all(Option::is_some);
+        parts.iter().any(|p| {
+            p.any_node(&mut |n| match n {
+                Value::Var(x) | Value::TupleGet(x, _) => aliases.contains(x),
+                _ => self.loose_place(n).is_some_and(|(r, s)| {
+                    r == root
+                        && s.len() == steps.len()
+                        && s.iter().zip(&steps).all(|(a, b)| compatible(a, b))
+                        && !exact(&s)
+                }),
+            })
+        })
+    }
+
+    /// Can a value of type `from` be, or hold inside it, a value shaped like one of `goals`
+    /// — through vector elements, tuple members, struct fields and enum variants?  Types
+    /// compare by SHAPE (a record by its definition, a number by its kind), so a narrowed
+    /// integer and its plain spelling are one.  An unresolved or opaque type answers `true`.
+    fn type_may_hold(&self, from: &Type, goals: &[Type]) -> bool {
+        fn shape_eq(a: &Type, b: &Type) -> bool {
+            match (a.base(), b.base()) {
+                (Type::Vector(x, _), Type::Vector(y, _)) => shape_eq(x, y),
+                (
+                    Type::Reference(x, _) | Type::Enum(x, true, _),
+                    Type::Reference(y, _) | Type::Enum(y, true, _),
+                ) => x == y,
+                (Type::Tuple(x), Type::Tuple(y)) => {
+                    x.len() == y.len() && x.iter().zip(y).all(|(p, q)| shape_eq(p, q))
+                }
+                (x, y) => std::mem::discriminant(x) == std::mem::discriminant(y),
+            }
+        }
+        let mut seen: Vec<u32> = Vec::new();
+        let mut work = vec![from.clone()];
+        while let Some(t) = work.pop() {
+            let t = match t {
+                // A wrapper says nothing about what its value can hold, so it is looked
+                // through — `τ?` included (`@FR-N-Shape`): a nullable view of the destination
+                // holds it as surely as a plain one, and a wrapper inside another is peeled
+                // on the next turn.
+                Type::RefVar(b) | Type::Rewritten(b) | Type::Optional(b) => {
+                    work.push(*b);
+                    continue;
+                }
+                other => other,
+            };
+            if goals.iter().any(|g| shape_eq(&t, g)) {
+                return true;
+            }
+            match t.base() {
+                Type::Vector(e, _) => work.push((**e).clone()),
+                Type::Tuple(ms) => work.extend(ms.iter().cloned()),
+                Type::Reference(d, _)
+                | Type::Enum(d, true, _)
+                | Type::Sorted(d, _, _)
+                | Type::Index(d, _, _)
+                | Type::Hash(d, _, _)
+                | Type::Radix(d, _, _)
+                | Type::Trie(d, _, _) => {
+                    if seen.contains(d) {
+                        continue;
+                    }
+                    seen.push(*d);
+                    let mut defs = vec![*d];
+                    defs.extend(self.data.children_of(*d));
+                    for r in defs {
+                        for a in 0..self.data.attributes(r) {
+                            work.push(self.data.attr_type(r, a));
+                        }
+                    }
+                }
+                Type::Unknown(_) | Type::Function(..) | Type::Iterator(..) => return true,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// § V-w — may this literal part be hoisted into a pre-build temp?  Primitives (a
@@ -5610,6 +5816,21 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if self.first_pass || self.keyed_destination(vec, dest) {
             return None;
         }
+        let scalar_elem = crate::data::is_scalar(in_t) || matches!(in_t.base(), Type::Text(_));
+        // A part that reads the destination under ANOTHER name — a local viewing it, or its
+        // root through an index that may be the same element (loft#2397) — names no place the
+        // snapshot's rename can redirect, and the field's clear runs before the build: the
+        // read saw the emptied field.  `(E-Asgn-Compound)` reduces the right-hand side
+        // before the write, so every part is evaluated into a temp ahead of the clear, as a
+        // part that may write the destination already is.  A SCALAR or TEXT element only: a
+        // record element is built, and its literal takes a buffer of its own instead
+        // (`parse_vector`, `comprehension_needs_own_buffer`).  @FR-O-Detach
+        if literal && scalar_elem && crate::keys::append_staging_enabled() {
+            let ro: Vec<&Value> = parts.iter().map(|p| &**p).collect();
+            if self.reads_destination_by_another_name(dest, in_t, &ro) {
+                return Some(self.stage_literal_parts(in_t, parts, true));
+            }
+        }
         // Any destination that is not a bare VARIABLE is named by its PLACE, whether the
         // caller called it a field or not.  A CAPTURED collection is neither a variable nor a
         // field — a closure reaches it through `OpGetDbRef(__closure, <offset>)` — so gating
@@ -5644,7 +5865,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 }),
                 None => {
                     self.comprehension_reads_target(vec, is_var, &ro)
-                        || self.comprehension_needs_own_buffer(vec, dest, is_var, is_field, &ro)
+                        || self
+                            .comprehension_needs_own_buffer(vec, dest, is_var, is_field, in_t, &ro)
                 }
             }
         };
@@ -5662,7 +5884,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // element's mint: built into the element (§ V-d) it met a container its own call had
         // grown.  A record part of any other shape that names the destination — a record
         // literal reading it — keeps the snapshot, whose reads it needs under `=`.
-        let scalar_elem = crate::data::is_scalar(in_t) || matches!(in_t.base(), Type::Text(_));
         // A struct-enum is a heap record exactly as a struct is (`Type::heap_def_nr`).
         let record_elem = matches!(
             in_t.base(),
@@ -5676,18 +5897,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     this.field_place(n).is_some_and(|p| p == *place) || reads_through(this, n)
                 }
                 None => names.iter().any(|v| Self::mentions_var(n, *v)),
-            };
-            let constant = |p: &Value| {
-                matches!(
-                    p.unspan(),
-                    Value::Int(_)
-                        | Value::Long(_)
-                        | Value::Float(_)
-                        | Value::Single(_)
-                        | Value::Boolean(_)
-                        | Value::Text(_)
-                        | Value::Null
-                )
             };
             let user_call = |p: &Value| matches!(p.unspan(), Value::Call(_, _));
             // The destination is an ARGUMENT of a call that is not a primitive or `#pure`, at
@@ -5734,36 +5943,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 .iter()
                 .any(|p| p.any_node(&mut |n| reads_through(self, n)));
             if (writes || record_call_reads || prefix_reads) && stageable {
-                let mut temps: Vec<Value> = Vec::new();
-                for part in parts.iter_mut() {
-                    if constant(part) {
-                        continue;
-                    }
-                    if scalar_elem {
-                        let tmp = self.vars.work_refs(in_t, &mut self.lexer);
-                        self.change_var_type(tmp, in_t);
-                        temps.push(crate::data::v_set(
-                            tmp,
-                            std::mem::replace(*part, Value::Var(tmp)),
-                        ));
-                    } else if user_call(part) {
-                        // The temp holds the answer as a local bound from the call would: a
-                        // record it OWNS (the scope pass frees it, and the call's buffer
-                        // where distinct), a vector as a VIEW of the call's buffer.
-                        let tp = match (in_t.base(), self.call_retbuf(part)) {
-                            (Type::Vector(elem, _), Some(buf)) => {
-                                Type::Vector(elem.clone(), Deps::frame1(buf))
-                            }
-                            _ => in_t.clone(),
-                        };
-                        let tmp = self.vars.work_refs_p2(&tp, &mut self.lexer);
-                        temps.push(crate::data::v_set(
-                            tmp,
-                            std::mem::replace(*part, Value::Var(tmp)),
-                        ));
-                    }
-                }
-                return Some(temps);
+                return Some(self.stage_literal_parts(in_t, parts, scalar_elem));
             }
         }
         // @PLN157 § V-w — a LITERAL's reads ride TEMPS instead of the whole-vector
@@ -5862,6 +6042,59 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
         }
         Some(snap)
+    }
+
+    /// `(E-Asgn-Compound)` for a literal: evaluate each non-constant part into a temp, in
+    /// source order, and hand back the ops that do it — to run before the build writes the
+    /// destination.  A SCALAR or TEXT part is held by value; a record part only when it is a
+    /// call, whose answer the temp holds as a local bound from the call would: a record it
+    /// OWNS (the scope pass frees it, and the call's buffer where distinct), a vector as a
+    /// VIEW of the call's buffer.  Any other record part keeps its place.
+    fn stage_literal_parts(
+        &mut self,
+        in_t: &Type,
+        parts: &mut [&mut Value],
+        scalar_elem: bool,
+    ) -> Vec<Value> {
+        let constant = |p: &Value| {
+            matches!(
+                p.unspan(),
+                Value::Int(_)
+                    | Value::Long(_)
+                    | Value::Float(_)
+                    | Value::Single(_)
+                    | Value::Boolean(_)
+                    | Value::Text(_)
+                    | Value::Null
+            )
+        };
+        let mut temps: Vec<Value> = Vec::new();
+        for part in parts.iter_mut() {
+            if constant(part) {
+                continue;
+            }
+            if scalar_elem {
+                let tmp = self.vars.work_refs(in_t, &mut self.lexer);
+                self.change_var_type(tmp, in_t);
+                temps.push(crate::data::v_set(
+                    tmp,
+                    std::mem::replace(*part, Value::Var(tmp)),
+                ));
+            } else if matches!(part.unspan(), Value::Call(_, _)) {
+                let tp = match (in_t.base(), self.call_retbuf(part)) {
+                    (Type::Vector(elem, _), Some(buf)) => {
+                        Type::Vector(elem.clone(), Deps::frame1(buf))
+                    }
+                    _ => in_t.clone(),
+                };
+                let tmp = self.vars.work_refs_p2(&tp, &mut self.lexer);
+                temps.push(crate::data::v_set(
+                    tmp,
+                    std::mem::replace(*part, Value::Var(tmp)),
+                ));
+            }
+        }
+        temps
     }
 
     /// loft#2163 — the snapshot rename of an APPEND, sparing the place a `reference<T>` field
@@ -6041,6 +6274,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         dest: &Value,
         is_var: bool,
         is_field: bool,
+        in_t: &Type,
         parts: &[&Value],
     ) -> bool {
         if is_field {
@@ -6051,11 +6285,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             let Some(dest_place) = self.field_place(dest) else {
                 return dest
                     .base_var()
-                    .is_some_and(|root| parts.iter().any(|v| v.reads_var(root)));
+                    .is_some_and(|root| parts.iter().any(|v| v.reads_var(root)))
+                    || self.reads_destination_by_another_name(dest, in_t, parts);
             };
+            // A read under another name — a view of the field, an index that may be the same
+            // element — reads it too (loft#2397).
             return parts.iter().any(|v| {
                 v.any_node(&mut |n| self.field_place(n).is_some_and(|p| p == dest_place))
-            });
+            }) || self.reads_destination_by_another_name(dest, in_t, parts);
         }
         is_var
             && vec != u16::MAX
@@ -8291,7 +8528,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
             return;
         }
-        if self.yield_is_fresh(val, tp) {
+        if self.value_is_fresh(val, tp) {
             return;
         }
         let rec = tp.heap_def_nr();
@@ -8370,12 +8607,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         );
     }
 
-    /// Is the value a `yield` hands over FRESH — held by nothing of the generator's but the
-    /// compiler temp it was built in?  A record built in place ends in such a temp, and a call
-    /// result is fresh unless its type views one of the generator's own variables or
-    /// parameters.  Anything the author named — a local, a parameter, a member read, a view —
-    /// is an existing value (see [`Self::yield_owned_value`]).
-    fn yield_is_fresh(&self, val: &Value, tp: &Type) -> bool {
+    /// Is the value FRESH — held by nothing of the function's but the compiler temp it was
+    /// built in?  A record built in place ends in such a temp, and a call result is fresh
+    /// unless its type views one of the function's own variables or parameters.  Anything the
+    /// author named — a local, a parameter, a member read, a view — is an existing value.
+    /// Two readers: what a `yield` may hand over without a copy
+    /// ([`Self::yield_owned_value`]), and what a concatenation's destination may adopt
+    /// ([`Self::concat_may_adopt`]).
+    fn value_is_fresh(&self, val: &Value, tp: &Type) -> bool {
         let named = |v: u16| {
             v < self.vars.count()
                 && (self.vars.is_argument(v) || !self.vars.is_compiler_generated(v))

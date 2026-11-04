@@ -148,14 +148,13 @@ on that box.
 
 ## When a gap is a bug
 
-A routine whose SHIP time is over 3.5× its Rust twin is a bug: `ship` ÷ `rust` for the Rust
-writer, `cship` ÷ `rust` for the C99 backend — the same bar for both.  The ship column is the
-one that counts because it drops the checks loft guarantees, so what remains is the compiler
-or the runtime being structurally slow; slowness the checks cause (`native` against `ship`,
-`c` against `cship`) is optimised where it can be but is no bug.  File ONE issue per problem
-class — the shared cause, its routines listed in the body — never one per routine.  For the C
-lane the rule starts once its initial store port has landed (bench/portal/analysis/
-c-store-gaps.md is that work's list); until then its rows are that analysis, not issues.
+A routine whose SHIP time is over 3× its Rust twin — `cship` ÷ `rust`, under gcc or under clang,
+each judged on its own — is a bug.  The ship column is the one that counts because it drops
+the checks loft guarantees, so what remains is the compiler or the runtime being structurally
+slow; slowness the checks cause (`c` against `cship`) is optimised where it can be but is no
+bug.  File ONE issue PER ROUTINE over the line, when it first shows up — its routine, compiler,
+ratio and commit in the body — and close it when the routine is under 3× on both compilers
+(`formal/performance.md` § The bug line).
 
 ## Local results: `portal/local.py`
 
@@ -267,7 +266,12 @@ make interp-gap ARGS="--only 14,16"               # some lanes
 make interp-gap ARGS="--no-timing"                # the censuses only: a minute, no ratio column
 make interp-gap ARGS="--timing old.tsv"           # reuse a `stats.py --lanes native,interp --tsv` run
 make interp-gap ARGS="--package <scratch clone>/drawing=drawing"
+make interp-gap ARGS="--writer c"                 # against the C writer: its rewrites, its lane
 ```
+
+`--writer` picks the compiled side: `native` (the rustc writer, the default) or `c`.  The
+rewrite census comes from that writer's emission, the ratio from its `stats.py` lane, and the
+compiled store census column exists for `native` only (it links the census rlib).
 
 Per routine it reports:
 
@@ -277,11 +281,12 @@ Per routine it reports:
   `records` (records, vectors and texts built, copied, appended, freed), `control`,
   `compute`;
 - the bytes it moved (copy / relocate / text);
-- the **native-only** rewrites admitted in the functions the routine ran, each with the
+- the **writer-only** rewrites admitted in the functions the routine ran, each with the
   share of the routine's interpreter ops those functions carry.
 
-A second table turns this around, one row per generator rule: the routines and functions
-the rule fires in, weighed by the interpreter time those functions carry. These are the
+A second table turns this around, one row per writer rule: the routines and functions
+the rule fires in, weighed by the interpreter time those functions carry, beside the
+phases that apply the rule over every bench (`bench/portal/rule_phases.tsv`). These are the
 candidates for the IR phase. The weight is the time the functions carry, not a promise of
 what porting the rule saves. The per-routine detail (functions, their top operators, their
 rewrites) says what the interpreter does there instead.
@@ -291,7 +296,13 @@ two censuses behind it are `LOFT_OP_CENSUS` and `LOFT_REWRITE_CENSUS_FN`
 ([PROFILING.md](../doc/claude/PROFILING.md)). A routine is found by pairing the k-th
 row-printing line of `main` with the k-th row the program printed. The region runs from the
 last `… = ticks()` before that line up to it. So a new lane needs no annotation as long as
-it keeps that shape, and one that does not is reported as not attributed.
+it keeps that shape, and one that does not is reported as not attributed.  A program that
+builds all its rows under one line of `main` (a library bench's `rows = [bench_a(n), …]`
+printed by one `print_row` in a loop) is read whole, as one region named `(all rows)`: its
+rules are weighed per program, with no ratio and no per-op figures.  So is a program whose
+rows pair with its row lines while the work runs elsewhere (the rows built first, then
+printed a line each): its regions hold under 5 % of its operators, where a paired bench's
+hold 41–72 % (calibration and warm-up runs fall outside them).
 
 ## The row protocol
 

@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The range form: the bytes read where they lie.
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  bytes: vector<u8> = [for k in 0..64 { (97 + k % 26) as u8 }];
+  s = 0;
+  for i in 0..n {
+    lo = i % 16;
+    t = text_from_byte_range(bytes, lo, lo + 32);
+    s += len(t) + (t.byte_at(3) ?? 0);
+  }
+  println("{s}");
+}

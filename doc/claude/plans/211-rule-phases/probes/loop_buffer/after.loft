@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// One vector kept across the passes, its length reset: the store and capacity stay.
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  s = 0;
+  b: vector<integer> = [];
+  for i in 0..n {
+    b.clear();
+    for j in 0..8 { b += [i * j]; }
+    s += len(b) + b[7];
+  }
+  println("{s}");
+}

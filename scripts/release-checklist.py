@@ -289,6 +289,29 @@ def previous_tag(version: str) -> str:
     return tags[0] if tags else ""
 
 
+def check_release_notes(version: str):
+    """The release's description, `releases/<cycle>/release-notes.md`: a short readable text
+    for a person deciding whether to download, which `release.yml` puts on the draft.  The
+    owner asked for readable text, not a full list: the generated list of every pull request
+    is what a reader cannot use, so a text that is mostly list lines does not pass.
+    """
+    path = os.path.join(os.path.dirname(state_path(version)), "release-notes.md")
+    rel = os.path.relpath(path, ROOT)
+    if not os.path.isfile(path):
+        return FAIL, f"no {rel} — write a short readable description of this release"
+    text = open(path, encoding="utf-8").read()
+    words = len(text.split())
+    lines = [l for l in text.splitlines() if l.strip()]
+    listed = sum(1 for l in lines if l.lstrip().startswith(("- ", "* ", "+ ")))
+    if words < 80:
+        return FAIL, f"{rel} is {words} words — too short to say what this release brings"
+    if words > 600:
+        return FAIL, f"{rel} is {words} words — a description, not the changelog; link CHANGELOG.md"
+    if listed > len(lines) // 3:
+        return FAIL, f"{rel} is mostly a list ({listed} of {len(lines)} lines) — write it as text"
+    return OK, f"{rel}: {words} words"
+
+
 def check_changelog(version: str, path: str, label: str, heading: bool):
     """Did this file gain this release's entries?
 
@@ -402,6 +425,23 @@ def check_reference_pdf():
     pdf = os.path.join(ROOT, PDF)
     if not os.path.isfile(pdf):
         return FAIL, f"no {PDF} — every bundle ships without a reference"
+    # On a committed tree the question is answered by COMMITS: was the PDF committed after the
+    # last commit that touched what decides its content?  A file's mtime is not that — a test
+    # run rewrites inputs (untracked ones among them) with the same bytes, and the row read red
+    # on a release candidate whose PDF had not changed, asking for a commit after the release PR.
+    code, dirty = sh("git", "status", "--porcelain", "--untracked-files=no", "--", PDF, *PDF_INPUTS)
+    if code == 0 and not dirty.strip():
+        c1, pdf_ct = sh("git", "log", "-1", "--format=%ct", "--", PDF)
+        c2, src_ct = sh("git", "log", "-1", "--format=%ct", "--", *PDF_INPUTS)
+        if c1 == 0 and c2 == 0 and pdf_ct.strip() and src_ct.strip():
+            when = datetime.datetime.fromtimestamp(int(pdf_ct)).strftime("%Y-%m-%d %H:%M")
+            if int(src_ct) > int(pdf_ct):
+                _, who = sh("git", "log", "-1", "--format=%h %s", "--", *PDF_INPUTS)
+                return FAIL, (
+                    f"committed {when}, but `{who.strip()[:70]}` changed its inputs after it — "
+                    f"run `cargo run --bin gendoc && make pdf` and commit it"
+                )
+            return OK, f"committed {when}, after every commit that changed its inputs"
     pdf_at = os.path.getmtime(pdf)
     when = datetime.datetime.fromtimestamp(pdf_at).strftime("%Y-%m-%d %H:%M")
     src_at, who = newest_mtime(PDF_INPUTS)
@@ -997,11 +1037,11 @@ def check_consumers(version: str, network: bool):
 
 
 def check_smoke_ran(version: str, network: bool):
-    """Did the bundle smoke actually RUN on all four legs, or did one skip?
+    """Did the bundle smoke actually RUN on every leg, or did one skip?
 
-    The Rosetta skip exits 0 -- correctly, since no release should be blocked by a runner
-    image -- so the leg's conclusion is `success` either way.  The distinction lives in
-    the warning annotation, which is why this reads annotations rather than conclusions.
+    Every leg runs its own bundle (a target CI cannot run is not shipped), so a skip is a
+    failure.  A skip would exit 0 with a warning annotation, which is why this reads
+    annotations rather than conclusions.
     """
     if not network:
         return UNKNOWN, "skipped (--no-network)"
@@ -1063,13 +1103,39 @@ def check_smoke_ran(version: str, network: bool):
     if skipped:
         return FAIL, (
             "smoke SKIPPED on " + ", ".join(skipped)
-            + " — those bundles were never executed; smoke them by hand (M-rosetta)"
+            + " — those bundles were never executed, and a release ships only what CI ran"
         )
     return OK, f"bundle smoke ran and passed on all {len(ran)} legs"
 
 
 _GATE_RUN: dict = {}   # memo: HEAD sha -> (state, evidence, run or None)
 _GATE_JOBS: dict = {}  # memo: run id -> list of jobs, or None when unreadable
+
+
+def same_tree_gate_runs(sha: str):
+    """The newest release-gate runs whose commit has HEAD's tree: (runs of that commit, its sha).
+
+    Asked only when HEAD's own commit has no run.  A commit this clone lacks cannot be
+    compared, so it is skipped rather than assumed — `git fetch` brings the branch's."""
+    code, tree = sh("git", "rev-parse", f"{sha}^{{tree}}")
+    if code != 0:
+        return [], ""
+    code, out = sh(
+        "gh", "run", "list", "--workflow", "release-gate.yml", "--json",
+        "databaseId,conclusion,status,createdAt,url,headSha", "--limit", "40", timeout=90,
+    )
+    if code != 0:
+        return [], ""
+    try:
+        runs = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        return [], ""
+    for run in sorted(runs, key=lambda r: r.get("createdAt", ""), reverse=True):
+        other = run.get("headSha", "")
+        c, t = sh("git", "rev-parse", f"{other}^{{tree}}")
+        if c == 0 and t == tree:
+            return [r for r in runs if r.get("headSha") == other], other
+    return [], ""
 
 
 def gate_run(network: bool):
@@ -1108,9 +1174,17 @@ def gate_run(network: bool):
         runs = json.loads(out or "[]")
     except json.JSONDecodeError:
         return memo(UNKNOWN, "could not parse `gh run list`")
+    same_tree = ""
     if not runs:
-        return memo(UNKNOWN, f"no release-gate run for {short} — `make release-gate` (the branch must be pushed)")
+        # The release gate runs on the release BRANCH, before its one PR; the squash merge makes
+        # a new commit of the SAME tree, which is what the tag names.  A run on a commit whose
+        # tree is HEAD's is a run on what ships — the files are the files, the build the build.
+        runs, same_tree = same_tree_gate_runs(sha)
+    if not runs:
+        return memo(UNKNOWN, f"no release-gate run for {short} or its tree — `make release-gate` on the release branch (pushed)")
     run = max(runs, key=lambda r: r.get("createdAt", ""))
+    if same_tree:
+        run = {**run, "url": f"{run.get('url')} (on {same_tree[:12]}, the same tree as {short})"}
     when = run.get("createdAt", "")[:16].replace("T", " ")
     if run.get("status") != "completed":
         return memo(UNKNOWN, f"run for {short} still {run.get('status')} (started {when}) — {run.get('url')}", run)
@@ -1255,10 +1329,8 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
     ]
     editor_touched = changed_since_last_tag(version, prev_tag_paths_editor)
     debug_touched = changed_since_last_tag(version, prev_tag_paths_debug)
-    # The bundle smoke is read ONCE: `A-smoke` reports it, and `M-rosetta` exists only
-    # for a leg it reports as skipped (with no network it cannot say, so the row stays).
+    # The bundle smoke is read ONCE, by `A-smoke`.
     smoke = check_smoke_ran(version, network)
-    smoke_skipped = smoke[0] != OK
 
     before = [
         Item(
@@ -1272,6 +1344,13 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "CHANGELOG.md has this release's section",
             "write it",
             check=lambda: check_changelog(version, "CHANGELOG.md", "CHANGELOG.md", True),
+            cadence="pre",
+        ),
+        Item(
+            "A-release-notes",
+            "The release has a short readable description (it becomes the release's text)",
+            f"write {os.path.relpath(os.path.join(os.path.dirname(state_path(version)), 'release-notes.md'), ROOT)}",
+            check=lambda: check_release_notes(version),
             cadence="pre",
         ),
         Item(
@@ -1615,6 +1694,40 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
         ),
     ]
 
+    # The release-day PR — ONE that day, opened last.  The cycle merges its daily PRs as usual;
+    # on release day a branch carries every change the release still needs, the rows above are
+    # finished on it, the release gate runs green on it, then this PR — whose
+    # squash merge is the same tree, so the gate's run still counts (`same_tree_gate_runs`).  A
+    # commit after it is another PR and another gate.  Resolved after the rows above it, so it
+    # reads their states.
+    # `A-main` and `A-clean` first: the squash merge keeps the gate's evidence only when the
+    # branch already holds main and nothing uncommitted — then merged tree == gated tree.
+    pr_prereqs = ("A-main", "A-clean",
+                  "A-changelog", "A-release-notes", "M-changelog-read", "A-pdf", "A-pdf-version", "A-pdf-content",
+                  "A-reference-review", "A-skills-review", "A-docs-lint", "M-doc-validation",
+                  "M-ndb", "M-wasm", "A-ci", "A-release-gate")
+
+    def check_release_pr_ready():
+        rows = {i.id: i for i in before + nightly_items}
+        open_rows = [r for r in pr_prereqs
+                     if r in rows and rows[r].applies and rows[r].state not in (OK, DONE, NA)]
+        if open_rows:
+            return FAIL, ("finish these on the release branch first: " + ", ".join(open_rows))
+        return OK, "the branch carries the release and its gate is green — open the release PR, once"
+
+    release_pr = [
+        Item(
+            "A-release-pr",
+            "Open the release-day PR — ONE that day, the branch complete and its gate green",
+            "gh pr create … && gh pr merge --auto --squash   # ONCE; after it only the tag and "
+            "the release window: READ-ONLY rows that change no file, which the owner may set "
+            "aside to get on with the release — their manual ticks are committed with the next "
+            "cycle's first PR, never a PR of their own",
+            check=check_release_pr_ready,
+            cadence="pre",
+        )
+    ]
+
     # Every nightly, run deliberately against THIS commit in one CI run with one verdict
     # (`release-gate.yml`).  This used to be six manual items, one per nightly, each
     # dispatched by hand and ticked by a person; keyed by HEAD's commit it is now
@@ -1654,15 +1767,6 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             f"gh run list --workflow release.yml --branch v{version}   # the consumer-main-health.yml legs",
             check=lambda: check_consumers(version, network),
         ),
-        Item(
-            "M-rosetta",
-            "Any bundle the smoke SKIPPED, run by hand",
-            "unzip the bundle A-smoke names, then: bin/loft --version && "
-            "bin/loft verify-self && bin/loft --interpret examples/*.loft",
-            "listed only while A-smoke reports a skip (or cannot read the run); an "
-            "unexecuted bundle is the one least likely to work",
-            applies=smoke_skipped,
-        ),
     ]
 
     before_publish = [
@@ -1693,9 +1797,11 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
         ),
         Item(
             "M-publish",
-            "Click Publish on the reviewed draft",
-            f"gh release view v{version} --web",
-            "the click FREEZES the assets — nothing can be added afterwards",
+            "Publish THE draft release.yml made — the one carrying the assets",
+            f"gh release edit v{version} --draft=false",
+            "the release's page shows every asset and the description from release-notes.md.  "
+            "Never create a release by hand from the tag page: that is a second, EMPTY release, "
+            "and publishing it while deleting the draft shipped 2026.11.0 with no downloads",
         ),
     ]
 
@@ -1756,7 +1862,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
     ]
 
     return [
-        ("Before the tag", before + nightly_items),
+        ("Before the tag", before + nightly_items + release_pr),
         ("After pushing the tag — CI's own answers", after_tag),
         ("Before clicking Publish", before_publish),
         ("After publishing", after_publish),

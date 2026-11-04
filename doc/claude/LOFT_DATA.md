@@ -171,15 +171,17 @@ whereas a view still in use after the change is copied first, and the late write
 c = v[0];  v.remove(2);  c.n = 99;   // copied — `c` is used after `v` changed
 ```
 
-Overwriting a place is not ending it: `o.inner = Box{…}` writes into the place
-`o.inner` already occupies, so a view of it sees the new value and still writes
-through.
+Overwriting a place keeps the place: `o.inner = Box{…}` writes into the place
+`o.inner` already occupies, so a view OF it sees the new value and still writes
+through.  What the old value owned is released, though, so a view INTO it
+(`x = o.inner.v[0]`) is copied, as on the changes above.
 
 **Write `&` and you get an error instead of a copy.**  `c = &v[0]` says *"I want a
 live link"* — an ownership decision, not a hint — so loft will not quietly hand you a
-copy.  Where it cannot honour the link, it refuses the program instead.  All four
+copy.  Where it cannot honour the link, it refuses the program instead.  All five
 things that end a place do this: removing from the container, growing it, writing a
-KEY field through the reference, and replacing the container itself.
+KEY field through the reference, replacing the container itself, and overwriting a
+record the reference points into.
 
 ```
 error: cannot remove from `v` while `c` references an element of it — a removal

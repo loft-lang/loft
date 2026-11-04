@@ -18,8 +18,10 @@
 //! `LOFT_REWRITE_CENSUS_FN=<file>` writes the same admissions split by WHERE they were
 //! decided — `phase<TAB>function<TAB>rule<TAB>count` — so a routine's rewrites can be read
 //! off the functions it runs (`scripts/interp_gap.py`).  The phase is `native` for a body the
-//! generator emits (the interpreter never sees that form), `ir` for the scope pass's per-body
-//! rewrites (both backends run them), and `parse` for everything decided before either.
+//! rustc writer emits and `c` for one the C writer emits (the interpreter never sees either
+//! form), `interp` for a body the interpreter's bytecode generator writes (compiled code never
+//! sees that form), `ir` for the scope pass's per-body rewrites (both backends run them), and
+//! `parse` for everything decided before any of them.
 //!
 //! `declined(rule, site, why)` is the complement — called where a rewrite REFUSED a site it
 //! was shaped for, with the reason the site's trace names — and `LOFT_DECLINE_CENSUS=<file>`
@@ -49,7 +51,8 @@ static DECLINED_SITES: Mutex<Option<HashSet<(&'static str, String)>>> = Mutex::n
 /// every emitted copy of a loop (a guarded loop is emitted twice), these count the loop.
 static ADMITTED_SITES: Mutex<Option<HashSet<(&'static str, String)>>> = Mutex::new(None);
 
-/// While one lives, admissions are credited to `function` in `phase` (`"ir"`, `"native"`);
+/// While one lives, admissions are credited to `function` in `phase` (`"ir"`, `"interp"`,
+/// `"c"`, `"native"`);
 /// outside every such scope they are `parse`-phase with no function.
 pub struct InBody {
     prev: Option<(&'static str, String)>,

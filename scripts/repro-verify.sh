@@ -35,7 +35,7 @@
 # Usage:
 #   scripts/repro-verify.sh                 # newest release, this platform's target
 #   scripts/repro-verify.sh --version 2026.7.3
-#   scripts/repro-verify.sh --target x86_64-apple-darwin
+#   scripts/repro-verify.sh --target x86_64-pc-windows-msvc
 #   scripts/repro-verify.sh --keep          # leave the work tree for inspection
 #
 # Exit: 0 identical · 1 differs · 3 cannot verify (says why; never a silent pass).
@@ -69,18 +69,13 @@ if command -v sha256sum >/dev/null; then SHA="sha256sum"; else SHA="shasum -a 25
 . "$(dirname "$0")/repro-toolchain.sh" 2>/dev/null || die "needs scripts/repro-toolchain.sh beside this script"
 
 # The target this runner natively builds — matched to release.yml's matrix, because a
-# cross-compiled binary is not expected to equal a natively built one.
-#
-# One triple is the exception BY CONSTRUCTION of the release: GitHub retired its Intel
-# macOS image, so release.yml builds `x86_64-apple-darwin` by cross-compiling on an Apple
-# Silicon runner.  The published bundle IS a cross-build, and the faithful reproduction is
-# the same cross-build on the same runner class — so an aarch64 macOS host may verify it.
+# cross-compiled binary is not expected to equal a natively built one.  An Intel Mac
+# still verifies the releases that shipped an `x86_64-apple-darwin` bundle.
 host=$(rustc -vV | sed -n 's/^host: //p')
-CROSS_OK=""
 case "$host" in
   x86_64-unknown-linux-gnu)  NATIVE="x86_64-unknown-linux-gnu" ;;
   x86_64-apple-darwin)       NATIVE="x86_64-apple-darwin" ;;
-  aarch64-apple-darwin)      NATIVE="aarch64-apple-darwin"; CROSS_OK="x86_64-apple-darwin" ;;
+  aarch64-apple-darwin)      NATIVE="aarch64-apple-darwin" ;;
   x86_64-pc-windows-msvc)    NATIVE="x86_64-pc-windows-msvc" ;;
   *) die "no published target for host $host" ;;
 esac
@@ -96,7 +91,7 @@ esac
 # a silent pass" rule exists to prevent — so a mismatch is `cannot verify` (3), not a
 # difference (1).
 TARGET="${TARGET_REQ:-$NATIVE}"
-if [ "$TARGET" != "$NATIVE" ] && [ "$TARGET" != "$CROSS_OK" ]; then
+if [ "$TARGET" != "$NATIVE" ]; then
   die "asked to verify $TARGET, but this host ($host) natively builds $NATIVE. A cross-compiled binary is not expected to equal a natively built one, so this runner cannot verify that target — give the job a $TARGET runner"
 fi
 

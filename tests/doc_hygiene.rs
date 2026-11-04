@@ -1958,16 +1958,11 @@ fn repro_matrix_covers_every_published_triple() {
     }
 
     // And each row's RUNNER must be the one the RELEASE builds that target on. Coverage
-    // alone let a row pass while proving nothing: `x86_64-apple-darwin` sat on `macos-14`
-    // (arm64) while the release built it natively on `macos-13` (x86_64), so the job
-    // rebuilt aarch64 and reported it under the x86_64 name — x86_64 was never verified
-    // while looking verified. A rebuild proves reproducibility only when it repeats the
-    // release's own build: same runner architecture, hence the same toolchain and the
-    // same cross-or-native decision. Since GitHub retired its Intel macOS image the
-    // release CROSS-builds `x86_64-apple-darwin` on Apple Silicon, and the rebuild has to
-    // do exactly that too — so the check compares the two workflows' runners for each
-    // target rather than the runner against the target's own architecture, which no
-    // longer has an image to satisfy it.
+    // alone lets a row pass while proving nothing: a row on an arm64 runner under an x86_64
+    // name rebuilds aarch64 and reports it as x86_64. A rebuild proves reproducibility only
+    // when it repeats the release's own build: same runner architecture, hence the same
+    // toolchain and the same cross-or-native decision — so the check compares the two
+    // workflows' runners for each target.
     //
     // Keyed on the runner image's architecture, which is the fact that went wrong:
     // `macos-13` was the x86_64 image, `macos-14`/`macos-15`/`macos-latest` are arm64.

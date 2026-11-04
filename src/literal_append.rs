@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I60 — Scope & dependency/lifetime tracker (deps)
-//! `(R-LiteralAppend)` — a record literal bound to a local whose one use is the append of it
+//! `@FR-R-LiteralAppend` — a record literal bound to a local whose one use is the append of it
 //! is built in its element.
 //!
 //! `tri = Triangle { a: …, b: …, c: … }; m.triangles += [tri]` mints a store for `tri`,

@@ -77,7 +77,7 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     replace_loops(&mut code, &whole, &ops, &mut fired);
     data.definitions[d_nr as usize].code = code;
     if fired > 0 {
-        crate::rewrite_census::fired("R-KernelSum", fired);
+        crate::rewrite_census::fired("R-BoundedNest/kernel", fired);
     }
 }
 

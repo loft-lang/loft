@@ -1043,6 +1043,10 @@ impl Parser {
         // Whether a statement of THIS block left it unconditionally — `terminated` is cleared
         // once its warning is out, and this is the fact that outlives the warning.
         let mut diverged = false;
+        // `(C-Never)` — a statement whose value never arrives (`x = if c { return 1 } else {
+        // return 2 }`) ends the block's reachable part: the statements after it are parsed for
+        // their diagnostics and kept out of the IR, which no run reaches (loft#2388).
+        let mut unreachable_rest = false;
         // @PLN25/#585 guard-clause flow-narrowing: a `narrowed_non_null` push made INSIDE this
         // block (by a fall-through guard, below) holds only for the rest of THIS block, so record
         // the entry depth and restore it before returning. Without the restore the proof leaks to
@@ -1291,6 +1295,34 @@ impl Parser {
             if self.lexer.peek_token("else") {
                 self.parse_store_else(&mut n);
                 t = Type::Void;
+            }
+            if unreachable_rest {
+                // Behind a value that never arrives: parsed, not kept.
+                self.lexer.has_token(";");
+                if self.lexer.peek_token("}") {
+                    break;
+                }
+                continue;
+            }
+            // `(C-Never)` — a local bound to a value that never arrives has no value to hold:
+            // the statement is the diverging value itself.  Its local is typed `Never`, which
+            // the slot allocator gives no slot, so the store into it was dropped with its
+            // `return`s (a text local: the function answered the code after it) or its read
+            // was an internal error (an integer).  An error's poison is a `Never` local too —
+            // reported already, in a program that will not run — so a parse with an error
+            // leaves the statement as it was: rewritten there, the parse lost its footing and
+            // added an "Expect token ;" to a program's own two errors.
+            if !self.first_pass
+                && self.lexer.diagnostics().error_count() == 0
+                && let Value::Set(v, rhs) = n.unspan()
+                && matches!(self.vars.tp(*v).base(), Type::Never)
+                && !matches!(rhs.unspan(), Value::Null)
+            {
+                n = (**rhs).clone();
+                t = Type::Never;
+                unreachable_rest = true;
+                terminated = Some("a value that never arrives");
+                self.lexer.has_token(";");
             }
             self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if *tok == "null")
                 && matches!(n.unspan(), Value::Null);
@@ -1599,6 +1631,9 @@ impl Parser {
         self.lexer.token("}");
         if matches!(l.last(), Some(Value::Line(_))) {
             l.pop();
+        }
+        if unreachable_rest {
+            t = Type::Never;
         }
         // A function body that RETURNED before its last statement cannot fall off its end:
         // the statements after the `return` are the `unreachable-code` warning's, and the
@@ -6690,6 +6725,9 @@ impl Parser {
         let mut arms: Vec<EnumArm> = Vec::new();
         let mut covered: HashSet<u32> = HashSet::new();
         let mut has_wildcard = false;
+        // An arm read as a catch-all only to recover from a bare lowercase name: it covers the
+        // rest for the exhaustiveness check, but arms after it are not reported unreachable.
+        let mut recovered_catch_all = false;
         let mut result_type = Type::Void;
         // L2: field bindings in conditional arms are hoisted before the if-chain
         // to avoid codegen stack-layout issues with text operations inside branches.
@@ -6846,6 +6884,44 @@ impl Parser {
                 first_ident.clone()
             };
 
+            // A bare lowercase name at the arm root binds nothing: the catch-all that binds the
+            // subject is spelled `other: _` (`@FR-P-Cap`).  Say so, and parse the arm as that
+            // catch-all, so its body and the match's exhaustiveness do not report the same
+            // mistake twice more ("Unknown variable", "not exhaustive").
+            let recovering = root_capture.is_none()
+                && pattern_name == first_ident
+                && Self::is_binding_name(&pattern_name)
+                && e_nr != u32::MAX
+                && self.data.variant_of(e_nr, &pattern_name) == u32::MAX
+                && self.data.def_nr(&pattern_name) == u32::MAX
+                && (self.lexer.peek_token("=>") || self.lexer.peek_token("if"));
+            let pattern_name = if recovering {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "'{pattern_name}' is not a variant of {} — to bind the matched value, \
+                         write `{pattern_name}: _`",
+                        self.data.def(e_nr).name()
+                    );
+                }
+                // A name that is already a local keeps meaning that local in the body; a new
+                // one is bound, and counted read, so the recovery adds no lint of its own.
+                if !self.vars.name_exists(&pattern_name)
+                    && let Some(v) = self.bind_root_capture(
+                        &pattern_name,
+                        &subject_val,
+                        &subject_type,
+                        &mut hoisted_bindings,
+                    )
+                {
+                    self.vars.in_use(v, true);
+                }
+                "_".to_string()
+            } else {
+                pattern_name
+            };
+
             if pattern_name == "_" {
                 // loft#1682 / loft#1793 — a result the wildcard can still widen: an open tuple
                 // member, or a numeric type a wider arm joins past.
@@ -6853,6 +6929,8 @@ impl Parser {
                     || matches!(result_type.base(), Type::Integer(_) | Type::Single))
                 .then(|| result_type.clone());
                 let (arm, is_exhaustive) = self.parse_match_wildcard_arm(&mut result_type);
+                recovered_catch_all |= recovering;
+                let is_exhaustive = is_exhaustive && !recovering;
                 if before.is_some_and(|b| !b.is_equal(&result_type)) {
                     // The wildcard arm named the member or widened the join; the earlier arms
                     // follow.
@@ -7487,7 +7565,7 @@ impl Parser {
         // (an unguarded arm only), so the two halves of the totality judgment share one fact.
         //
         // Exhaustiveness check (second pass only, when no wildcard, when subject is a known enum).
-        if !self.first_pass && !has_wildcard && valid_enum {
+        if !self.first_pass && !has_wildcard && !recovered_catch_all && valid_enum {
             let missing: Vec<String> = self
                 .data
                 .definitions
@@ -8069,7 +8147,18 @@ impl Parser {
         }
         self.lexer.has_identifier();
         self.lexer.token(":");
-        let v = self.pattern_binding(&name, subject_type);
+        self.bind_root_capture(&name, subject_val, subject_type, hoisted)
+    }
+
+    /// Binds `name` to the matched subject itself — the binding half of [`Self::root_capture`].
+    fn bind_root_capture(
+        &mut self,
+        name: &str,
+        subject_val: &Value,
+        subject_type: &Type,
+        hoisted: &mut Vec<Value>,
+    ) -> Option<u16> {
+        let v = self.pattern_binding(name, subject_type);
         if v != u16::MAX {
             self.vars.defined(v);
             // A record subject is bound through the projection node a view is spelled as
@@ -18387,6 +18476,7 @@ impl Parser {
         // A source that may be nothing but cannot be RE-READ, because a user call is in it
         // (loft#2006), is read once into a local first, and the copy tests that local.
         let bind = self.bind_return_source(td, &mut orig);
+        let bind = bind.or_else(|| self.bind_leaving_source(td, &mut orig));
         // A NULLABLE local as the source (`cur: Node?` after a walk) may hold nothing, and
         // `OpCopyRecord` of a null source leaves the destination an allocated EMPTY record —
         // presence standing in for absence.  Copy only where the source is present; the
@@ -18660,6 +18750,42 @@ impl Parser {
             }
             _ => None,
         }
+    }
+
+    /// loft#2384 — run a return copy's SOURCE before its buffer is minted when the source can
+    /// LEAVE the function first: a `match` arm or a block with a `return` of its own.  The copy
+    /// mints the buffer, then copies the source into it, so a `return` inside the source left
+    /// that mint behind — the buffer is a parameter, so no free on the return path names it,
+    /// and the caller frees only the result it is handed (`@FR-O-Complete`).  A pooled buffer
+    /// (`@FR-R-Reuse`) hid it: the mint then refilled the caller's own store.  The source is
+    /// read into a view local (`_ret_src_N`, never freed: what it views is released by its own
+    /// owner) and the copy reads that, so only the path that copies mints.
+    fn bind_leaving_source(&mut self, td: u32, src: &mut Value) -> Option<Value> {
+        if self.first_pass
+            || matches!(self.data.def(self.context).def_type(), DefType::Generic)
+            || self.data.is_type_var_placeholder(td)
+        {
+            return None;
+        }
+        let mut leaves = false;
+        src.walk(&mut |n| {
+            if matches!(n, Value::Return(_)) {
+                leaves = true;
+            }
+        });
+        if !leaves {
+            return None;
+        }
+        let deps = match src.unspan() {
+            Value::Block(bl) => bl.result.depend(),
+            _ => Vec::new(),
+        };
+        let tp = Type::Optional(Box::new(Type::Reference(td, Deps::frame(deps))));
+        let v = self.create_unique("_ret_src", &tp);
+        self.vars.defined(v);
+        self.vars.set_skip_free(v);
+        let path = std::mem::replace(src, Value::Var(v));
+        Some(crate::data::v_set(v, path))
     }
 
     /// Is `v` a BRANCH (or a block) one of whose arms ends in a local typed `τ?` — a leaf that

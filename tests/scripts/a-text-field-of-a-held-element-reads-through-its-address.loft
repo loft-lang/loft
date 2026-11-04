@@ -10,13 +10,21 @@
 // them), t2 (the prefix walk: the field read twice under `len > 0`), t3 (two text fields of
 // one element, at offsets past the first), t4 (an in-place scalar write in the same walk),
 // t5 (the search called from a loop over the same vector: its twin takes the caller's held
-// base).  Declined, the store read kept: t6 (the walk appends to another vector of the same
+// base), t8 (an element bound by index — in range, past the end, from the end), t9 (no
+// elements).  On C (`loft_pa_text`) the same cells, through the held element's address and
+// the element's store.  Declined, the store read kept: t6 (the walk appends to another vector of the same
 // store, which may move the records it reads), t7
 // (the walk sets a text field, then reads it).
 //
 // @falsified-by: tests/falsified/a-text-field-of-a-held-element-reads-through-its-address.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected: the rewrite is the native emitter's)
 //   CHANNEL: the VALUE channel on native — the patch reads every text field at offset 0, so
 //   t1's search compares the wrong bytes and finds nothing it should (`t1 -1,-1,1,-1`).
+// @falsified-at: f4f9d2760 — by hand on the C writer (`loft_pa_text`), each plant alone failing
+//   t1: the field read at offset 0 (`t1 -1,-1,1,-1`), and a `for` element's address taken one
+//   element early (`t1 3,0,2,-1`).
+//   CHANNEL: the VALUE channel on C — the search compares the wrong bytes (an offset, or an
+//   element) and answers indexes it should not.
+// HOLDS: the interpreter's answers, which no plant on either emitter reaches.
 
 struct Opt { long: text, n: integer, short: text }
 struct Args { options: vector<Opt>, hits: integer, extra: vector<Opt> }
@@ -78,6 +86,15 @@ fn rename(v: vector<Opt>) -> text {
   r
 }
 
+fn pick(v: vector<Opt>, at: vector<integer>) -> text {
+  r = "";
+  for i in at {
+    o = v[i];
+    r += "[{o.long}]";
+  }
+  r
+}
+
 fn mk() -> Args {
   Args { options: [
     Opt { long: "verbose", n: 1, short: "v" },
@@ -111,5 +128,12 @@ fn main() {
   // t7 — each name read back after its write.
   h = mk().options;
   assert(rename(h) == "verbose!!version!café!", "t7 {rename(h)}");
+  // t8 — an element bound by index, its address through the held base: 2 is version, 9 is
+  // past the end (the null address answers the null text, formatted `null`), -1 is the last.
+  t8 = pick(mk().options, [2, 9, -1]);
+  assert(t8 == "[version][null][café]", "t8 {t8}");
+  // t9 — a walk over no elements finds nothing.
+  e = Args { options: [], hits: 0, extra: [] };
+  assert(find(e, "") == -1 && prefix(e, "") == 0, "t9 {find(e, "")}");
   println("ok");
 }

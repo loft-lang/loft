@@ -1593,6 +1593,12 @@ impl FnWriter<'_> {
                     .map(|key| format!("loft_h_find_text({data}, {keys}, {key})"))
             })
             .flatten();
+        match (&ints, &text_find) {
+            (Some(ks), _) if ks.len() == 1 => crate::rewrite_census::fired("R-TypedKeyed", 1),
+            (Some(_), _) => crate::rewrite_census::fired("R-TypedKeyed/compound", 1),
+            (None, Some(_)) => crate::rewrite_census::fired("R-TypedKeyed/text", 1),
+            (None, None) => {}
+        }
         let typed_find = ints
             .map(|ks| match ks.as_slice() {
                 [key] => format!("loft_h_find_i64({data}, {keys}, {key})"),

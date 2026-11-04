@@ -57,10 +57,12 @@ it and run it; nothing else is required.
 | **Stable** | the monthly release, through the full release checklist | [Releases](https://github.com/loft-lang/loft/releases) — pick the `.zip` for your platform |
 | **Daily build** | the newest code, built for every pull request and every push to `main` | the [Daily build](https://github.com/loft-lang/loft/actions/workflows/daily-build.yml) workflow → open the newest green run → **Artifacts** |
 
-Four platforms are built each time: `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`,
-`aarch64-apple-darwin` (Apple Silicon), and `x86_64-unknown-linux-gnu` (runs on any Linux
+Three platforms are built each time: `x86_64-pc-windows-msvc`, `aarch64-apple-darwin`
+(Apple Silicon), and `x86_64-unknown-linux-gnu` (runs on any Linux
 with glibc 2.28 or newer: RHEL 8, Debian 10, Ubuntu 20.04 and later; on a musl system such
-as Alpine, build from source).
+as Alpine, build from source).  On an Intel Mac, build from source too: 2026.11.0 is the last release with an Intel
+Mac bundle, because a release ships only what CI has run and GitHub has no lasting Intel
+macOS runner.
 
 The fastest way to the daily build is the [`gh` CLI](https://cli.github.com), which skips
 the web UI entirely — replace the target with your own:

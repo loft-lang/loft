@@ -73,7 +73,26 @@ fn plain(ops: &[Value]) -> Vec<&Value> {
 
 /// `for i in 0..len(v)` as the parser lowers it: the vector `v`, the counter `i#index`, the
 /// loop variable `i`, and where the body starts in the loop.
-fn match_range(ops: &Ops, block: &Block) -> Option<(Src, u16, u16, usize)> {
+/// `n = len(v)` — a length bound to a variable: the variable and the vector.
+fn len_bind(ops: &Ops, stmt: &Value) -> Option<(u16, Src)> {
+    let Value::Set(n, len) = stmt.unspan() else {
+        return None;
+    };
+    let Value::Call(ld, largs) = len.unspan() else {
+        return None;
+    };
+    if (*ld != ops.length_vector && *ld != ops.vector_len) || largs.len() != 1 {
+        return None;
+    }
+    Some((*n, src(ops, &largs[0])?))
+}
+
+/// `for i in 0..len(v)`, or `for i in 0..n` right after `n = len(v)` (`alias`).
+fn match_range(
+    ops: &Ops,
+    block: &Block,
+    alias: Option<(u16, Src)>,
+) -> Option<(Src, u16, u16, usize)> {
     if block.name != "For block" {
         return None;
     }
@@ -86,13 +105,10 @@ fn match_range(ops: &Ops, block: &Block) -> Option<(Src, u16, u16, usize)> {
     else {
         return None;
     };
-    let Value::Call(ld, largs) = len.unspan() else {
-        return None;
+    let v = match (len.unspan(), alias) {
+        (Value::Var(n), Some((an, v))) if *n == an => v,
+        _ => len_bind(ops, &Value::Set(*end, Box::new((**len).clone())))?.1,
     };
-    if (*ld != ops.length_vector && *ld != ops.vector_len) || largs.len() != 1 {
-        return None;
-    }
-    let v = src(ops, &largs[0])?;
     if !matches!(start.unspan(), Value::Int(-1)) || lp.name != "For loop" {
         return None;
     }
@@ -182,7 +198,38 @@ fn rewrite_in(
         Value::Span(_) => return n,
         _ => return n,
     };
-    let Some((v, idx, lv, first_body)) = match_range(ops, block) else {
+    // `n = len(v)` and, as the very next statement, `for i in 0..n`: nothing between them can
+    // shrink `v`, so `n` is its length where the loop starts.
+    for k in 1..block.operators.len() {
+        // The statement before, past the line marks.
+        let Some(prev) = block.operators[..k]
+            .iter()
+            .rev()
+            .find(|o| !matches!(o.unspan(), Value::Line(_)))
+        else {
+            continue;
+        };
+        let Some(alias) = len_bind(ops, prev) else {
+            continue;
+        };
+        if let Value::Block(fb) = block.operators[k].unspan_mut() {
+            n += rewrite_for(data, ops, vars, fb, Some(alias), fname);
+        }
+    }
+    n + rewrite_for(data, ops, vars, block, None, fname)
+}
+
+/// One `for` block: its in-range discharges dropped when the range and the body allow.
+fn rewrite_for(
+    data: &Data,
+    ops: &Ops,
+    vars: &crate::variables::Function,
+    block: &mut Block,
+    alias: Option<(u16, Src)>,
+    fname: &str,
+) -> usize {
+    let n = 0;
+    let Some((v, idx, lv, first_body)) = match_range(ops, block, alias) else {
         return n;
     };
     let Some(Value::Loop(lp)) = block
@@ -192,6 +239,14 @@ fn rewrite_in(
     else {
         return n;
     };
+    // The body may not assign the bound length either.
+    if let Some((len_var, _)) = alias
+        && lp.operators[first_body..]
+            .iter()
+            .any(|o| o.any_node(&mut |x| matches!(x, Value::Set(y, _) if *y == len_var)))
+    {
+        return n;
+    }
     // The body may neither resize `v` nor assign `i` or `i#index`.
     match v {
         Src::Var(v) => {

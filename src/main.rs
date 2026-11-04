@@ -40,7 +40,9 @@ use loft::log_config;
 use loft::logger;
 use loft::manifest;
 mod android;
+mod app_files;
 mod c_driver;
+mod esp_app;
 mod native_utils;
 use loft::file_access;
 use loft::parser;
@@ -7656,6 +7658,11 @@ fn main() {
     // Some(path) = explicit output path
     let mut native_emit: Option<String> = None;
     let mut native_wasm: Option<String> = None;
+    // @PLN204 — `--native-esp [dir]`: the program as an ESP-IDF app for the Tanmatsu, through the C.
+    let mut native_esp: Option<String> = None;
+    // `--assets a,b`: what the app packs, beside the program; none given, the files the
+    // program and its data name (esp_app.rs `named_assets`).
+    let mut esp_assets: Vec<String> = Vec::new();
     let mut native_android: Option<String> = None;
     // Plan-07 phase 2: --errors=compact|pretty CLI flag (overrides
     // LOFT_ERRORS env var).  None = use env-or-default (Pretty).
@@ -8037,6 +8044,31 @@ fn main() {
             } else {
                 String::new() // sentinel: compute default from file_name later
             });
+        } else if a == "--assets" {
+            if let Some(v) = argv.get(i) {
+                esp_assets = v
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                i += 1;
+            }
+        } else if a == "--native-esp" {
+            // The project directory is optional, as `--native-wasm`'s output is.
+            native_esp = Some(
+                if argv
+                    .get(i)
+                    .is_some_and(|s| !fa::has_extension(s.as_str(), "loft") && !s.starts_with('-'))
+                {
+                    let p = argv[i].clone();
+                    i += 1;
+                    p
+                } else {
+                    String::new()
+                },
+            );
+            native_c = true;
+            native_rust = false;
         } else if a == "--native-android" {
             // @PLN-android B1 — cross-compile to an Android cdylib `.so` via the
             // NDK (aarch64-linux-android by default; ANDROID_NDK_HOME required).
@@ -9026,6 +9058,7 @@ fn main() {
                             );
                         }
                         if let Err(e) = loft::package::print_summary(&out, &mut lock) {
+                            loft::codegen_runtime::end_on_closed_stdout(&e);
                             eprintln!("loft package: print summary failed: {e}");
                             std::process::exit(1);
                         }
@@ -9323,6 +9356,7 @@ fn main() {
             Some("--emit-c writes C source only; compile it with your C compiler's release flags")
         } else if !native_mode
             && native_wasm.is_none()
+            && native_esp.is_none()
             && html_out.is_none()
             && native_android.is_none()
         {
@@ -9455,6 +9489,7 @@ fn main() {
             ("--native-wasm", native_wasm.is_some()),
             ("--html", html_out.is_some()),
             ("--native-android", native_android.is_some()),
+            ("--native-esp", native_esp.is_some()),
             ("--native-emit", native_emit.is_some()),
         ] {
             if set {
@@ -9807,7 +9842,7 @@ fn main() {
     // A C build with no fallback skips every host cdylib.  A default run that the C backend
     // refuses falls back to the interpreter (`native_fallback_reason`), which needs them, so
     // `LOFT_NATIVE_BACKEND=c` alone does not set it.
-    if emit_c.is_some() || (native_c && native_requested) {
+    if emit_c.is_some() || (native_c && native_requested) || native_esp.is_some() {
         loft::interp::extensions::set_c_target();
     }
     // #358 — a warm hit returns the def-table index where user definitions
@@ -10713,6 +10748,58 @@ fn main() {
         }
     }
 
+    // @PLN204 — the ESP-IDF app: the unit with its `app_main`, the project around it, `idf.py`.
+    if let Some(ref esp_out) = native_esp {
+        let out = if esp_out.is_empty() {
+            default_artifact_path(&abs_file, "esp")
+        } else {
+            std::path::PathBuf::from(esp_out)
+        };
+        let c = match loft::c::emit_esp_program(&p.data, &state.database) {
+            Ok(c) => c,
+            Err(r) => {
+                eprintln!("loft: {}", r.message());
+                std::process::exit(2);
+            }
+        };
+        let shims: Vec<String> = p
+            .data
+            .c_libraries
+            .iter()
+            .flat_map(|l| l.shim.iter().cloned())
+            .collect();
+        let program_dir = std::path::Path::new(&abs_file).parent().map_or_else(
+            || std::path::PathBuf::from("."),
+            std::path::Path::to_path_buf,
+        );
+        let app = esp_app::EspApp {
+            c: &c,
+            shims: &shims,
+            program_dir: &program_dir,
+            assets: &esp_assets,
+            // An app ships optimised; `--native-debug` keeps the call chain a fault names.
+            ship: ship_build || !native_debug,
+        };
+        let packed = match esp_app::write_project(&app, &out) {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+        };
+        match esp_app::build_project(&out) {
+            Ok(bin) => {
+                let size = fa::metadata(&bin).map(|m| m.len()).unwrap_or(0);
+                println!("{} ({size} bytes, {packed} of them assets)", bin.display());
+            }
+            Err(e) => {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     // WASM codegen pipeline: --native-wasm
     if let Some(ref wasm_out) = native_wasm {
         let wasm_out = if wasm_out.is_empty() {
@@ -10943,7 +11030,8 @@ fn main() {
         // @PLN146 F4 — the page's own filesystem, decided (and read) before the build
         // for F5's reason: a manifest naming a file that is not there should not cost
         // a wasm compile before it says so.
-        let base_fs_js = {
+        let embeds_declared: bool;
+        let mut base_fs_js = {
             // The entry program's own declarations resolve against the PROGRAM, not
             // against its manifest.  `path` is the string the program passes, and loft
             // resolves what a program passes relative to the program file — so
@@ -10973,6 +11061,7 @@ fn main() {
                 eprintln!("{e}");
                 std::process::exit(1);
             });
+            embeds_declared = !files.is_empty();
             loft::html_embed::base_fs_js(&files).unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(1);
@@ -10995,6 +11084,37 @@ fn main() {
                     std::process::exit(2);
                 }
             };
+            // A page that declares no `[[embed]]` carries the files its program names, found
+            // as `--native-esp` finds an app's (app_files.rs), or the ones `--assets` names: the
+            // page and the device then carry the same files.
+            if !embeds_declared {
+                let program_dir = std::path::Path::new(&abs_file).parent().map_or_else(
+                    || std::path::PathBuf::from("."),
+                    std::path::Path::to_path_buf,
+                );
+                let named: Vec<(String, std::path::PathBuf)> = if esp_assets.is_empty() {
+                    app_files::named_assets(&program_dir, &c)
+                        .into_iter()
+                        .map(|(r, p, _)| (r, p))
+                        .collect()
+                } else {
+                    app_files::asset_files(&program_dir, &esp_assets).unwrap_or_else(|e| {
+                        eprintln!("loft: {e}");
+                        std::process::exit(1);
+                    })
+                };
+                let files: Vec<loft::html_embed::PageFile> = named
+                    .into_iter()
+                    .map(|(rel, source)| loft::html_embed::PageFile {
+                        page_path: format!("/{rel}"),
+                        source,
+                    })
+                    .collect();
+                base_fs_js = loft::html_embed::base_fs_js(&files).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                });
+            }
             let shim_sources: Vec<String> = p
                 .data
                 .c_libraries
@@ -11940,7 +12060,7 @@ loftInstantiate(wasmBytes,imports).then(({{instance,memory}})=>{{
             format!(
                 r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>{title}</title>
-<style>body{{margin:0;background:#000;display:flex;justify-content:center;align-items:center;height:100vh}}canvas{{display:block}}pre{{color:#0f0;font-size:14px}}</style>{fonts_head}
+<style>body{{margin:0;background:#000;display:flex;justify-content:safe center;align-items:safe center;min-height:100vh}}canvas{{display:block}}pre{{color:#0f0;font-size:14px}}</style>{fonts_head}
 </head><body>
 <canvas id="c" tabindex="0" style="display:none"></canvas>
 <pre id="out"></pre>
@@ -13194,6 +13314,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         let end_def = p.data.definitions();
         if let Err(e) = loft::interp::introspect::emit_all(&mut p.data, &mut state, end_def, &opts)
         {
+            loft::codegen_runtime::end_on_closed_stdout(&e);
             eprintln!("loft: introspect failed: {e}");
             std::process::exit(1);
         }
@@ -13373,7 +13494,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // leak check for clean exits where it still surfaces real bugs.
     let runtime_err = state.database.runtime_error.take();
     if runtime_err.is_none() {
-        state.check_store_leaks();
+        state.check_store_leaks_in(Some(&data));
     }
     // @PLN140 — the profiling reports. Outside the leak guard on purpose: a run that
     // ended in a fault still spent its time and its memory somewhere, and that is

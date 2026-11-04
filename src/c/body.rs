@@ -267,6 +267,16 @@ pub(crate) struct FnWriter<'a> {
     /// proven inside the held vector (counter, header).
     range_lens: Vec<(u16, Value)>,
     in_range: Vec<(u16, String)>,
+    /// `n = len(v)` as the statement right before the `for` block being written (`v` by `n`).
+    len_alias: Option<(u16, Value)>,
+    /// `@FR-R-Base`'s grid clause: the facts `0 <= x < bound` that hold where the code is
+    /// being written (a range counter, an enclosing test), and the integer locals bound in an
+    /// enclosing block, by their expression.
+    grid_facts: Vec<(u16, Value)>,
+    grid_binds: Vec<(u16, Value)>,
+    /// The values the statements just before a loop gave its range ends (`end = x`).
+    range_ends: Vec<(u16, Value)>,
+    set_once: Option<std::rc::Rc<std::collections::HashSet<u16>>>,
     /// `@FR-R-Transient`'s work clause: the `&text` parameter a `__wr` twin answers (its result
     /// is the caller's buffer), and the call a transient body sends to such a twin.
     work_ret: Option<u16>,
@@ -276,6 +286,9 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-RecPtr` — the record views whose address the enclosing blocks hold: the view,
     /// the address local and its store's lock flag, innermost last.
     rec_ptrs: Vec<(u16, String, String)>,
+    /// `@FR-R-RecPtr`'s text clause — the addresses of `rec_ptrs` taken under the base clause
+    /// (a held vector's element), the only ones that serve a text field read.
+    text_ptrs: std::collections::HashSet<String>,
     /// A formatted value's work text written straight into the text it is appended to
     /// (`format_into_dest`): the work variable and the destination's C name.
     work_alias: Option<(u16, String)>,
@@ -344,6 +357,9 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-TextBorrow`'s tested clause: the borrowed locals that view a parameter's text only
     /// while each root parameter's store is not the return buffer's, with those roots.
     tested: std::collections::HashMap<u16, Vec<u16>>,
+    /// `@FR-R-SliceBorrow`: how many of the borrowed locals are a value slice of a text
+    /// parameter (counted by the census beside `R-TextBorrow`, as native counts them).
+    slice_borrows: usize,
     /// `@FR-R-CharWalk` (`opt::char_walk::char_walks`, which the interpreter and native read):
     /// this function's `for c in t` walks by loop scope — their step takes an ASCII byte without
     /// decoding it, and their null test is asked once where the loop never writes `t`.
@@ -404,14 +420,26 @@ struct WindowLoop<'b> {
 /// EVERY bind of it is a shape the view form writes without a temporary — another borrowed
 /// local or a text parameter, a literal, a text field read, a block ending in one — so
 /// admitting it never turns a carried program into a refused one.
-/// `LOFT_NO_TEXT_BORROW=1` keeps every copy, as on native.
-fn borrowed_texts(cx: &Cx, d: u32) -> (Vec<bool>, std::collections::HashMap<u16, Vec<u16>>) {
+/// `LOFT_NO_TEXT_BORROW=1` keeps every copy, as on native.  The third answer is the
+/// `@FR-R-SliceBorrow` candidates (a value slice of a text parameter), for the census.
+fn borrowed_texts(
+    cx: &Cx,
+    d: u32,
+) -> (
+    Vec<bool>,
+    std::collections::HashMap<u16, Vec<u16>>,
+    std::collections::HashSet<u16>,
+) {
     let def = cx.data.def(d);
     let vars = def.variables();
     let n = vars.count() as usize;
     let mut b = vec![false; n];
     if std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0") {
-        return (b, std::collections::HashMap::new());
+        return (
+            b,
+            std::collections::HashMap::new(),
+            std::collections::HashSet::new(),
+        );
     }
     // As native's setup: the lazy splits' and the split tables' walks need no store
     // condition — their pieces are slices of a text — and a `?` discharge of a table's
@@ -436,7 +464,7 @@ fn borrowed_texts(cx: &Cx, d: u32) -> (Vec<bool>, std::collections::HashMap<u16,
         cx.data, d, &tables,
     ));
     // `@FR-R-SliceBorrow` rides on the same analysis: a value slice of a text parameter.
-    let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks);
+    let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks, true);
     // Every variable the clause admits — the `?` / `??` temps it borrows a parameter's text
     // for as well as its statement-bound locals, as native's `walks.extend(store.borrows)`.
     let plain = store
@@ -512,7 +540,7 @@ fn borrowed_texts(cx: &Cx, d: u32) -> (Vec<bool>, std::collections::HashMap<u16,
                 .into_iter()
                 .filter(|(v, _)| b.get(*v as usize).copied().unwrap_or(false))
                 .collect();
-            return (b, tested);
+            return (b, tested, store.slices);
         }
     }
 }
@@ -657,7 +685,11 @@ impl<'a> FnWriter<'a> {
     #[expect(clippy::too_many_lines)]
     pub(crate) fn new(cx: &'a Cx<'a>, d: u32, shapes: Vec<CType>, ret: CType) -> FnWriter<'a> {
         let def = cx.data.def(d);
-        let (borrowed, tested) = borrowed_texts(cx, d);
+        let (borrowed, tested, slices) = borrowed_texts(cx, d);
+        let slice_borrows = slices
+            .iter()
+            .filter(|v| borrowed.get(**v as usize).copied().unwrap_or(false))
+            .count();
         FnWriter {
             cx,
             d,
@@ -729,10 +761,16 @@ impl<'a> FnWriter<'a> {
             peel_seeds: Vec::new(),
             range_lens: Vec::new(),
             in_range: Vec::new(),
+            len_alias: None,
+            grid_facts: Vec::new(),
+            grid_binds: Vec::new(),
+            range_ends: Vec::new(),
+            set_once: None,
             work_ret: None,
             wr_call: None,
             chain_guards: 0,
             rec_ptrs: Vec::new(),
+            text_ptrs: std::collections::HashSet::new(),
             work_alias: None,
             scalars: Vec::new(),
             invariants: Vec::new(),
@@ -755,6 +793,7 @@ impl<'a> FnWriter<'a> {
             file_holds: Vec::new(),
             borrowed,
             tested,
+            slice_borrows,
             lazy: if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
                 std::collections::BTreeMap::new()
             } else {
@@ -1003,6 +1042,8 @@ impl<'a> FnWriter<'a> {
         {
             use crate::rewrite_census::fired;
             fired("R-TextBorrow", self.borrowed.iter().filter(|b| **b).count());
+            fired("R-SliceBorrow", self.slice_borrows);
+            fired("R-LazySplit", self.lazy.len());
             fired("R-CharWalk", self.char_walks.len());
             fired("R-RetAdopt", usize::from(self.adopt.is_some()));
         }
@@ -1405,8 +1446,10 @@ impl<'a> FnWriter<'a> {
             use crate::rewrite_census::fired;
             fired("R-Header", frame.len());
             fired("R-Base", frame.iter().filter(|(_, _, b)| *b).count());
+            // The grown headers this loop copy HOLDS; `R-Header/grown` counts the analysis'
+            // admissions (`opt::apart`), once per loop.
             fired(
-                "R-Kept",
+                "R-Header/grown-held",
                 frame
                     .iter()
                     .filter(|(_, h, _)| self.grown_headers.contains(h))
@@ -2441,6 +2484,7 @@ impl<'a> FnWriter<'a> {
             "OpGetByteNullable" => ("loft_pa_byte_nullable", K::Int),
             "OpGetShort" => ("loft_pa_short", K::Int),
             "OpGetShortRaw" | "OpGetShortFull" => ("loft_pa_short_raw", K::Int),
+            "OpGetBoolean" => ("loft_pa_bool", K::Bool),
             _ => return None,
         })
     }
@@ -2528,6 +2572,22 @@ impl<'a> FnWriter<'a> {
                         k,
                     )));
                 }
+                if let Some(fits) = self.grid_index(&idx, &held) {
+                    let (raw, checked, k) = if name == "OpGetInt" {
+                        ("loft_vh_at_int", "loft_vh_get_int", K::Int)
+                    } else {
+                        ("loft_vh_at_float", "loft_vh_get_float", K::Float)
+                    };
+                    let proof = self.held_proof(&vec, &held);
+                    let i = as_int(index)?;
+                    let (at, tail) = at(report);
+                    return Ok(Some(E::new(
+                        format!(
+                            "({proof}, {fits} ? {raw}({held}, {size}, {i}, {fld}) : {checked}{at}({held}, {size}, {i}, {fld}{tail}))"
+                        ),
+                        k,
+                    )));
+                }
                 let (f, k) = if name == "OpGetInt" {
                     ("loft_vh_get_int", K::Int)
                 } else {
@@ -2543,11 +2603,12 @@ impl<'a> FnWriter<'a> {
                     k,
                 )))
             }
-            // A narrow field of a held element (`u8`, `i32`, a `single`, an enum): its address
+            // A narrow field of a held element (`u8`, `i32`, a `single`, an enum, a `boolean`): its address
             // through the held base — null outside the vector — decoded as a record pointer's
             // field is (`pa_reader`), with no store lookup per read.
             (
-                "OpGetSingle" | "OpGetEnum" | "OpGetInt4" | "OpGetInt4Raw" | "OpGetInt4Full",
+                "OpGetSingle" | "OpGetEnum" | "OpGetInt4" | "OpGetInt4Raw" | "OpGetInt4Full"
+                | "OpGetBoolean",
                 [inner, fld],
             )
             | (
@@ -2759,7 +2820,9 @@ impl<'a> FnWriter<'a> {
     fn stmts(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let held = self.rec_ptrs.len();
         let frames = self.headers.len();
+        let binds = self.grid_binds.len();
         let r = self.stmts_in(ops, ind);
+        self.grid_binds.truncate(binds);
         self.rec_ptrs.truncate(held);
         // The view headers this block bound (`@FR-R-View`) close with it.
         self.headers.truncate(frames.min(self.headers.len()));
@@ -2813,8 +2876,21 @@ impl<'a> FnWriter<'a> {
                 i = last + 1;
                 continue;
             }
+            if let Value::Set(var, x) = ops[i].unspan() {
+                self.grid_bind(*var, x);
+            }
             self.peel_seeds = peel::seeds(ops, i);
-            self.range_lens = peel::range_lens(self.cx.data, ops, i);
+            self.range_lens = peel::range_lens(self.cx.data, ops, i, self.len_alias.as_ref());
+            self.range_ends = peel::range_ends(ops, i);
+            // `n = len(v)` right before a `for` block: the block's range end `n` is `len(v)`.
+            // Set afresh at every `for` block, so it never outlives the statement it reads.
+            if matches!(ops[i].unspan(), Value::Block(b) if b.name == "For block") {
+                self.len_alias = ops[..i]
+                    .iter()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                    .and_then(|prev| peel::len_bind(self.cx.data, prev));
+            }
             self.stmt(&ops[i], ind)?;
             self.bind_record_ptr(ops, i, ind);
             self.bind_view_header(ops, i, ind);
@@ -3248,6 +3324,14 @@ impl<'a> FnWriter<'a> {
         let Some(last) = ops.iter().rposition(field_use).filter(|&l| l > at) else {
             return;
         };
+        // The text clause: an element of a held vector serves its text field reads through
+        // the address — a record element's texts are records of its vector's store.  The
+        // verdict's walk counts scalar uses only, so this one enters as `extra_use`.
+        let held_elem = self.held_element_bind(&ops[at]).is_some();
+        let reads_text = crate::opt::hoist::reads_text_field(&ops[at + 1..=last], r, data);
+        let text = !crate::env_once!(std::env::var("LOFT_NO_TEXT_FIELD").is_ok_and(|v| v != "0"))
+            && held_elem
+            && reads_text;
         let mut cache = std::mem::take(&mut self.hoist_cache);
         let verdict = {
             let facts = self.store_facts();
@@ -3263,7 +3347,7 @@ impl<'a> FnWriter<'a> {
                 &std::collections::HashSet::new(),
                 facts.as_ref(),
                 None,
-                false,
+                text,
             )
         };
         self.hoist_cache = cache;
@@ -3271,7 +3355,7 @@ impl<'a> FnWriter<'a> {
         if let Err(why) = verdict {
             if trace {
                 eprintln!(
-                    "recptr: {} {} declined: {why}",
+                    "recptr: {} {} declined: {why} (held element {held_elem}, text read {reads_text})",
                     self.cx.data.def(self.d).name(),
                     self.vars.name(r)
                 );
@@ -3306,6 +3390,9 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("{pl} = loft_rec_locked({rec});"));
         }
         crate::rewrite_census::fired("R-RecPtr", 1);
+        if text {
+            self.text_ptrs.insert(pa.clone());
+        }
         self.rec_ptrs.push((r, pa, pl));
     }
 
@@ -3347,7 +3434,14 @@ impl<'a> FnWriter<'a> {
         {
             return;
         }
-        let counters = [Some(rc.index), Some(rc.loop_var), rc.next];
+        // The counters, and a length bound just before the `for` block, which the body may not
+        // move either.
+        let counters = [
+            Some(rc.index),
+            Some(rc.loop_var),
+            rc.next,
+            self.len_alias.as_ref().map(|(n, _)| *n),
+        ];
         let mut assigned = false;
         for op in &b.operators[1..] {
             op.walk(&mut |n| {
@@ -3361,6 +3455,231 @@ impl<'a> FnWriter<'a> {
         }
         self.in_range.push((rc.index, h.clone()));
         self.in_range.push((rc.loop_var, h));
+    }
+
+    /// The variables the function sets in more than one place (`grid_bind` trusts the others).
+    fn set_once(&mut self) -> std::rc::Rc<std::collections::HashSet<u16>> {
+        if let Some(s) = &self.set_once {
+            return s.clone();
+        }
+        let mut count: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
+        self.cx.data.def(self.d).code().walk(&mut |n| {
+            if let Value::Set(v, _) = n {
+                *count.entry(*v).or_default() += 1;
+            }
+        });
+        let once: std::collections::HashSet<u16> = count
+            .into_iter()
+            // Set more than once: what a binding over it cannot trust.  A parameter (never
+            // set) and a local set in one place can be trusted.
+            .filter(|(_, c)| *c > 1)
+            .map(|(v, _)| v)
+            .collect();
+        let once = std::rc::Rc::new(once);
+        self.set_once = Some(once.clone());
+        once
+    }
+
+    /// `@FR-R-Base`'s grid clause: an integer local set in one place from variables each set
+    /// in one place is its expression wherever the block that binds it encloses the read.
+    fn grid_bind(&mut self, var: u16, x: &Value) {
+        let many = self.set_once();
+        if many.contains(&var) {
+            return;
+        }
+        let mut operands_once = true;
+        x.walk(&mut |n| {
+            if let Value::Var(v) = n {
+                operands_once &= !many.contains(v);
+            }
+        });
+        if operands_once {
+            self.grid_binds.push((var, x.clone()));
+        }
+    }
+
+    /// Does `body` assign any variable `v` names (a variable, or the variables of a bound)?
+    fn assigns_any(body: &Value, vars: &[u16]) -> bool {
+        body.any_node(&mut |n| matches!(n, Value::Set(x, _) if vars.contains(x)))
+    }
+
+    fn bound_vars(bound: &Value) -> Vec<u16> {
+        match bound.unspan() {
+            Value::Var(v) => vec![*v],
+            _ => Vec::new(),
+        }
+    }
+
+    /// The grid clause's range facts: in `for i in 0..n` (counter seeded at 0, `n` a variable or
+    /// a literal the body assigns no more than the counters), `0 <= i < n` and `0 <= i#index < n`.
+    fn grid_counter_facts(&mut self, b: &Block) {
+        let Ok(rc) = crate::loop_shape::range_counters(b, self.cx.data) else {
+            return;
+        };
+        if rc.inclusive {
+            return;
+        }
+        let counter = rc.next.unwrap_or(rc.index);
+        let start = if rc.next.is_some() { 0 } else { -1 };
+        if !self
+            .peel_seeds
+            .iter()
+            .any(|(v, k)| *v == counter && *k == start)
+        {
+            return;
+        }
+        let Value::Var(end) = rc.hi.unspan() else {
+            return;
+        };
+        let mut bounds = vec![Value::Var(*end)];
+        if let Some((_, src)) = self.range_ends.iter().find(|(e, _)| e == end)
+            && matches!(src.unspan(), Value::Var(_) | Value::Int(_))
+        {
+            bounds.push(src.unspan().clone());
+        }
+        let mut watched: Vec<u16> = [Some(rc.index), Some(rc.loop_var), rc.next]
+            .into_iter()
+            .flatten()
+            .collect();
+        for bnd in &bounds {
+            watched.extend(Self::bound_vars(bnd));
+        }
+        if b.operators[1..]
+            .iter()
+            .any(|op| Self::assigns_any(op, &watched))
+        {
+            return;
+        }
+        for bnd in bounds {
+            self.grid_facts.push((rc.loop_var, bnd.clone()));
+            self.grid_facts.push((rc.index, bnd));
+        }
+    }
+
+    /// The grid clause's test facts: a then-branch under `0 <= x && x < w` (any order, inside a
+    /// chain of `and`s) knows `0 <= x < w`, when the branch assigns neither `x` nor `w`.
+    fn grid_test_facts(&mut self, cond: &Value, then: &Value) {
+        let data = self.cx.data;
+        let mut conjuncts: Vec<&Value> = Vec::new();
+        let mut stack = vec![cond];
+        while let Some(c) = stack.pop() {
+            match c.unspan() {
+                Value::If(a, b, f) if matches!(f.unspan(), Value::Boolean(false)) => {
+                    stack.push(a);
+                    stack.push(b);
+                }
+                other => conjuncts.push(other),
+            }
+        }
+        let name = |d: u32| {
+            if (d as usize) < data.definitions.len() {
+                data.def(d).name()
+            } else {
+                ""
+            }
+        };
+        let mut lower: Vec<u16> = Vec::new();
+        let mut upper: Vec<(u16, Value)> = Vec::new();
+        for c in conjuncts {
+            let Value::Call(d, a) = c else {
+                continue;
+            };
+            if a.len() != 2 {
+                continue;
+            }
+            match (name(*d), a[0].unspan(), a[1].unspan()) {
+                ("OpLeInt", Value::Int(0), Value::Var(x))
+                | ("OpGeInt", Value::Var(x), Value::Int(0)) => lower.push(*x),
+                ("OpLtInt", Value::Var(x), w @ (Value::Var(_) | Value::Int(_)))
+                | ("OpGtInt", w @ (Value::Var(_) | Value::Int(_)), Value::Var(x)) => {
+                    upper.push((*x, w.clone()))
+                }
+                _ => {}
+            }
+        }
+        for (x, w) in upper {
+            let mut watched = vec![x];
+            watched.extend(Self::bound_vars(&w));
+            if lower.contains(&x) && !Self::assigns_any(then, &watched) {
+                self.grid_facts.push((x, w));
+            }
+        }
+    }
+
+    /// `@FR-R-Base`'s grid clause: an index `a * w + b` with `0 <= a < h` and `0 <= b < w` known
+    /// where it is read lies in `[0, h * w)`, so the vector held as `held` holds it when its length
+    /// is at least `h * w` — the test the answer is (`loft_grid_fits`), read once per loop by
+    /// the C compiler.  `LOFT_NO_GRID_INDEX=1` answers `None`.
+    fn grid_index(&self, idx: &Value, held: &str) -> Option<String> {
+        if crate::env_once!(std::env::var("LOFT_NO_GRID_INDEX").is_ok_and(|v| v != "0")) {
+            return None;
+        }
+        let data = self.cx.data;
+        let name = |d: u32| {
+            if (d as usize) < data.definitions.len() {
+                data.def(d).name()
+            } else {
+                ""
+            }
+        };
+        let mut e = idx.unspan();
+        if let Value::Var(v) = e
+            && let Some((_, x)) = self.grid_binds.iter().rev().find(|(b, _)| b == v)
+        {
+            e = x.unspan();
+        }
+        let Value::Call(add, terms) = e else {
+            return None;
+        };
+        if !matches!(name(*add), "OpAddInt" | "OpAddIntNullable") || terms.len() != 2 {
+            return None;
+        }
+        let fact = |x: &Value| -> Option<&Value> {
+            let Value::Var(v) = x.unspan() else {
+                return None;
+            };
+            self.grid_facts
+                .iter()
+                .rev()
+                .find(|(f, _)| f == v)
+                .map(|(_, b)| b)
+        };
+        let fact_below = |x: &Value, w: &Value| -> bool {
+            let Value::Var(v) = x.unspan() else {
+                return false;
+            };
+            self.grid_facts
+                .iter()
+                .any(|(f, b)| f == v && b.unspan() == w.unspan())
+        };
+        let c_of = |v: &Value| -> Option<String> {
+            match v.unspan() {
+                Value::Var(x) => Some(self.var(*x)),
+                Value::Int(k) => Some(format!("INT64_C({k})")),
+                _ => None,
+            }
+        };
+        for (prod, b) in [(&terms[0], &terms[1]), (&terms[1], &terms[0])] {
+            let Value::Call(mul, f) = prod.unspan() else {
+                continue;
+            };
+            if !matches!(name(*mul), "OpMulInt" | "OpMulIntNullable") || f.len() != 2 {
+                continue;
+            }
+            for (a, w) in [(&f[0], &f[1]), (&f[1], &f[0])] {
+                if let Some(h) = fact(a)
+                    && fact_below(b, w)
+                {
+                    crate::rewrite_census::fired("R-Base/grid", 1);
+                    return Some(format!(
+                        "loft_grid_fits({held}, {}, {})",
+                        c_of(h)?,
+                        c_of(w)?
+                    ));
+                }
+            }
+        }
+        None
     }
 
     /// The counter `idx` names when it is proven inside the held vector `h` (`counters_in_range`).
@@ -3409,8 +3728,9 @@ impl<'a> FnWriter<'a> {
         crate::rewrite_census::fired("R-RecPtr/held", 1);
     }
 
-    /// `@FR-R-RecPtr`'s held-element clause: the bind `p = v[i]` (an `OpGetVector[Nullable]`)
-    /// or its `?` discharge (`__ncc = v[i]; if __ncc { __ncc } else { a minted default }`), `v`
+    /// `@FR-R-RecPtr`'s held-element clause: the bind `p = v[i]` (an `OpGetVector[Nullable]`),
+    /// a `for p in v` iterator's `{ i = i + 1; v[i] }`, or the `?` discharge
+    /// (`__ncc = v[i]; if __ncc { __ncc } else { a minted default }`), `v`
     /// held for the loop and `i` a variable: the header, the element size, the index, and the
     /// discharge's tested temporary.  `None` for any other bind.
     fn held_element_bind(&self, op: &Value) -> Option<(String, i64, String, Option<String>, bool)> {
@@ -3455,6 +3775,16 @@ impl<'a> FnWriter<'a> {
             .iter()
             .filter(|o| !matches!(o.unspan(), Value::Line(_)))
             .collect();
+        // A `for e in v` element: the iterator's step of its index, then the read at it — the
+        // read is the block's last operation, so the index after the statement is the one read.
+        if let [step, elem] = ops[..]
+            && let Value::Set(i, _) = step.unspan()
+            && let Value::Call(_, ra) = elem.unspan()
+            && matches!(ra.get(2).map(Value::unspan), Some(Value::Var(v)) if v == i)
+            && let Some((header, size, idx, raw)) = read(elem)
+        {
+            return Some((header, size, idx, None, raw));
+        }
         let [first, last] = ops[..] else {
             return None;
         };
@@ -3495,6 +3825,7 @@ impl<'a> FnWriter<'a> {
             ("OpSetInt" | "OpSetFloat" | "OpSetSingle" | "OpSetEnum", [base, fld, _]) => {
                 (false, base, fld)
             }
+            ("OpGetText", [base, fld]) => return self.rec_ptr_text(base, fld, ind),
             _ => return Ok(None),
         };
         let Some((root, off)) = crate::opt::body_writes::view_field(self.cx.data, base, fld) else {
@@ -3542,6 +3873,39 @@ impl<'a> FnWriter<'a> {
             ),
             K::Void,
         )))
+    }
+
+    /// `@FR-R-RecPtr`'s text clause — `OpGetText(r, off)` of a view whose address was taken
+    /// under the base clause (`text_ptrs`): the string record one load at the address,
+    /// resolved in the view's own store; the null address answers the null text, as the store
+    /// read of the null record does.  A view where the operand is read (`field_view`), else
+    /// the owned copy the plain read makes.
+    fn rec_ptr_text(&mut self, base: &Value, fld: &Value, ind: usize) -> Result<Option<E>, String> {
+        let Value::Var(root) = base.unspan() else {
+            return Ok(None);
+        };
+        let Some((_, pa, _)) = self
+            .rec_ptrs
+            .iter()
+            .rev()
+            .find(|(v, _, _)| v == root)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        if !self.text_ptrs.contains(&pa) {
+            return Ok(None);
+        }
+        let off = Self::literal(fld, "field")?;
+        let read = format!("loft_pa_text({pa}, {off}, {}.store_nr)", self.var(*root));
+        crate::rewrite_census::fired("R-RecPtr/text", 1);
+        if std::mem::take(&mut self.field_view) {
+            return Ok(Some(E::new(read, K::View)));
+        }
+        let t = self.temp(CType::Text);
+        self.line(ind, &format!("loft_text_free(&{t});"));
+        self.line(ind, &format!("{t} = loft_text_own({read});"));
+        Ok(Some(self.held(t, CType::Text)))
     }
 
     /// `@FR-R-FormatAppend` at emission: `dest += { w = ""; <writes into w>; w }`, where every
@@ -4256,7 +4620,7 @@ impl<'a> FnWriter<'a> {
             self.line(ind, "} else {");
             self.loop_copy(b, ind + 1)?;
             self.line(ind, "}");
-            crate::rewrite_census::fired("R-AliasVersion", 1);
+            crate::rewrite_census::fired("R-Alias/versioned", 1);
             return Ok(());
         }
         self.loop_copy(b, ind)
@@ -4277,7 +4641,9 @@ impl<'a> FnWriter<'a> {
         let mints = self.hold_vectors(b, ind)?;
         self.hold_versions(b, ind)?;
         let in_range_at = self.in_range.len();
+        let grid_at = self.grid_facts.len();
         self.counters_in_range(b);
+        self.grid_counter_facts(b);
         let window = self.open_window(b, ind)?;
         if !window {
             self.hash_reserve(b, ind)?;
@@ -4323,6 +4689,7 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("loft_win_sync({w});"));
         }
         self.in_range.truncate(in_range_at);
+        self.grid_facts.truncate(grid_at);
         self.headers.pop();
         self.loop_calls.pop();
         self.push_heads.pop();
@@ -4676,20 +5043,24 @@ impl<'a> FnWriter<'a> {
                 self.flush(ind);
                 Ok(())
             }
-            Value::If(c, t, e) => {
-                let null_test = self.null_test(c);
+            Value::If(cond, then_arm, else_arm) => {
+                let null_test = self.null_test(cond);
                 // The test first; each arm inside its braces (`@FR-E-And`, `@FR-E-Or`, as in
                 // `assign_if`).
-                let c = self.expr(c, ind)?;
-                let c = as_cond(c)?;
-                self.line(ind, &format!("if ({}) {{", bare(&c)));
-                self.stmt(t, ind + 1)?;
-                if !matches!(e.unspan(), Value::Null) {
+                let test = self.expr(cond, ind)?;
+                let test = as_cond(test)?;
+                self.line(ind, &format!("if ({}) {{", bare(&test)));
+                let facts = self.grid_facts.len();
+                self.grid_test_facts(cond, then_arm);
+                let written = self.stmt(then_arm, ind + 1);
+                self.grid_facts.truncate(facts);
+                written?;
+                if !matches!(else_arm.unspan(), Value::Null) {
                     self.line(ind, "} else {");
                     if null_test {
                         self.line(ind + 1, "LOFT_COLD_PATH();");
                     }
-                    self.stmt(e, ind + 1)?;
+                    self.stmt(else_arm, ind + 1)?;
                 }
                 self.line(ind, "}");
                 self.flush(ind);
@@ -4754,6 +5125,12 @@ impl<'a> FnWriter<'a> {
                 self.flush(ind);
                 Ok(())
             }
+            // A tuple in statement position is a dropped value — the result of a dropped
+            // block or inlined call (`drop {#Inline … (a, b) }`) — so each member runs for its
+            // effect, in order, and its value is discarded (`@FR-F-Drop`).
+            Value::Tuple(vals) => vals
+                .iter()
+                .try_for_each(|m| self.stmt(&Value::Drop(Box::new(m.clone())), ind)),
             other => Err(unsupported(other)),
         }
     }
@@ -6833,7 +7210,7 @@ impl<'a> FnWriter<'a> {
                 xs.push(format!("&{h}"));
                 self.kh_passed.insert(h);
                 mask |= super::KH_BIT;
-                crate::rewrite_census::fired("R-KeptTwin", 1);
+                crate::rewrite_census::fired("R-Header/kept-twin", 1);
             }
             // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
             if mask & super::KH_BIT == 0

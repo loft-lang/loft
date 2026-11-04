@@ -2218,6 +2218,22 @@ impl Stores {
             .collect()
     }
 
+    /// How many leaked things a [`Self::collect_store_leaks`] report names: the sum of its
+    /// `×N` counts.  A row is one TYPE, so `leaks.len()` read `1 stores not freed` over forty
+    /// leaked records of one type.
+    #[must_use]
+    pub fn leak_total(leaks: &[String]) -> usize {
+        leaks
+            .iter()
+            .map(|row| {
+                row.rsplit('×')
+                    .next()
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .unwrap_or(1)
+            })
+            .sum()
+    }
+
     /// `@FR-H-FreeAll` for the resource a store does not hold: the OS handles `File` records
     /// still name at program exit, as one more entry of the leak report (`open File
     /// handles×N`).  Every record's death releases its lease (`@FR-H-Handle`), so a handle

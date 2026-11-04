@@ -445,3 +445,60 @@ fn a_method_two_catalogue_packages_provide_is_refused_naming_both() {
     }
     let _ = fa::remove_dir_all(&tmp);
 }
+
+/// `@FR-Disp-Trigger` (loft#2393): a method the program DECLARES is in reach, so calling it
+/// loads no library that exports a method of the same name.  The package here cannot
+/// compile, so loading it is visible as a failure: the program calling its own `poke` must
+/// run; the control — a bare `"x".poke()` and no `poke` of the program's own — must load it
+/// and fail; and a `poke` on a receiver the program's own method does not take is refused
+/// naming the library and the `use` that brings it in.
+#[test]
+fn a_method_the_program_declares_loads_no_library() {
+    let tmp = std::env::temp_dir().join(format!("loft_trigger_own_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    let home = tmp.join("home");
+    fa::create_dir_all(&home).expect("mkdir");
+    let lib = tmp.join("lib");
+    let pkg = lib.join("twd");
+    fa::create_dir_all(pkg.join("src")).expect("mkdir");
+    fa::write(
+        pkg.join("loft.toml"),
+        "[package]\nname = \"twd\"\nversion = \"0.1.0\"\n\n[triggers]\nenabled = true\n",
+    )
+    .expect("manifest");
+    fa::write(
+        pkg.join("src/twd.loft"),
+        "pub fn poke(self: text) -> text { not_defined_anywhere(self) }\n",
+    )
+    .expect("source");
+    let own = "struct Cv { n: integer }\nfn poke(self: Cv) -> integer { self.n + 1 }\n\
+               fn main() { c = Cv { n: 41 }; println(\"{c.poke()}\"); }\n";
+    let bare = "fn main() { println(\"x\".poke()); }\n";
+    let other = "struct Cv { n: integer }\nfn poke(self: Cv) -> integer { self.n }\n\
+                 fn main() { println(\"x\".poke()); }\n";
+    for (tag, src) in [("own", own), ("bare", bare), ("other", other)] {
+        fa::write(tmp.join(format!("{tag}.loft")), src).expect("script");
+    }
+    for backend in ["--interpret", "--native-c"] {
+        let (ok, stdout, stderr) =
+            run_trigger(&tmp.join("own.loft"), backend, Some(&lib), None, &home);
+        assert!(
+            ok && stdout == "42",
+            "[{backend}] the program's own `poke` loaded the library:\n{stdout}\n{stderr}"
+        );
+        let (ok, stdout, stderr) =
+            run_trigger(&tmp.join("bare.loft"), backend, Some(&lib), None, &home);
+        assert!(
+            !ok && stderr.contains("not_defined_anywhere"),
+            "[{backend}] the control must load the library and fail on its body:\n{stdout}\n{stderr}"
+        );
+        let (ok, stdout, stderr) =
+            run_trigger(&tmp.join("other.loft"), backend, Some(&lib), None, &home);
+        assert!(
+            !ok && stderr.contains("the library `twd` provides a `poke` method")
+                && stderr.contains("use twd::*;"),
+            "[{backend}] a `poke` on another receiver must name the library and its `use`:\n{stdout}\n{stderr}"
+        );
+    }
+    let _ = fa::remove_dir_all(&tmp);
+}

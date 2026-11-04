@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// probe-after-admits: the insert of a key not yet present, 64 times in all
+// Find or insert: one probe, and the entry found written in place.
+struct E { k: integer, v: integer }
+
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  h: hash<E[k]> = [];
+  s = 0;
+  for i in 0..n {
+    e = h[i % 64];
+    if e == null {
+      h += [E { k: i % 64, v: i }];
+    } else {
+      e.v = i;
+    }
+  }
+  for e in h { s += e.k * 1000003 + e.v; }
+  println("{s} {len(h)}");
+}

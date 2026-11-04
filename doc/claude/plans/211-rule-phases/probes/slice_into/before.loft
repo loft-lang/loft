@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// probe-rule: R-SliceInto
+// probe-n: 20000 60000
+// probe-fn: n_chunk
+// A vector slice as a literal's field: built in a temporary of its own, then appended.
+// (`p += src[lo..hi]` on a local already compiles to one OpSliceVector: not this rule.)
+struct Chunk { bytes: vector<u8>, tag: integer }
+
+fn chunk(v: const vector<u8>, a: integer, b: integer) -> Chunk {
+  Chunk { bytes: v[a..b], tag: a }
+}
+
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  src: vector<u8> = [for k in 0..64 { ((k * 7) & 255) as u8 }];
+  s = 0;
+  for i in 0..n {
+    lo = i % 16;
+    c = chunk(src, lo, lo + 32);
+    s += len(c.bytes) + (c.bytes[5] as integer) + c.tag;
+  }
+  println("{s}");
+}

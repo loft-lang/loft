@@ -96,8 +96,20 @@ pub(crate) fn is_first_arg_write_name(n: &str) -> bool {
 /// may-be-null warning ASKS for (skip-pattern 5), so the two lints were in tension —
 /// satisfying one silenced the other.
 pub(crate) fn is_length_op_name(n: &str) -> bool {
-    // Method naming is `t_<LEN><Type>_<method>` (CODE.md), so match the suffix.
-    n.starts_with("t_") && n.ends_with("_len")
+    // Method naming is `t_<LEN><Type>_<method>` (CODE.md), so match the suffix — and the
+    // collection length OPERATORS those methods are (`@FR-R-Wrapper` turns `len(v)` into
+    // `OpLengthVector(v)` in the IR): one fact, both spellings.  A text's `OpLengthText` is not
+    // here: `len(t)` stays a call, and that spelling is not this rule's to change.
+    (n.starts_with("t_") && n.ends_with("_len"))
+        || matches!(
+            n,
+            "OpLengthVector"
+                | "OpLengthHash"
+                | "OpLengthIndex"
+                | "OpLengthSorted"
+                | "OpLengthSpatial"
+                | "OpLengthTrie"
+        )
 }
 
 /// VALUE-READER ops return a fresh value, not a reference into a container — their

@@ -2394,6 +2394,32 @@ fn p85b_constant_shadowing_stdlib_constant_emits_diagnostic() {
     ));
 }
 
+// A second `struct` of a taken name reports the conflict ONCE: its fields used to be parsed
+// into the first definition, so every shared field name also read "already declared".
+#[test]
+fn struct_defined_twice_reports_only_the_conflict() {
+    code!(
+        "struct Range { lo: integer, hi: integer }\n\
+         struct Range { lo: integer, hi: integer, step: integer }\n\
+         fn test() {}"
+    )
+    .error(
+        "struct 'Range' conflicts with a struct of the same name already defined \
+         at struct_defined_twice_reports_only_the_conflict:1:15 — pick a different name \
+         at struct_defined_twice_reports_only_the_conflict:2:15",
+    );
+}
+
+// The kind is named with its article: "an enum", not "a enum".
+#[test]
+fn enum_defined_twice_names_the_kind_with_its_article() {
+    code!("enum Shape { A, B }\nenum Shape { A, C }\nfn test() {}").error(
+        "enum 'Shape' conflicts with an enum of the same name already defined \
+         at enum_defined_twice_names_the_kind_with_its_article:1:13 — pick a different name \
+         at enum_defined_twice_names_the_kind_with_its_article:2:13",
+    );
+}
+
 // ── P85c: file-scope-only declarations rejected with a clean diagnostic ─────
 //
 // Putting `struct`, `enum`, `type`, `interface`, `use`, `pub`, or a named
@@ -3265,6 +3291,34 @@ fn multi_pattern_union_not_exhaustive() {
 fn alternation_capture_type_mismatch() {
     code!("enum Tk { Ai { n: integer }, At { n: text } }\nfn f(t: vector<Tk>) -> integer { match t { [ (Ai { n } | At { n }) ] => 0, _ => 1 } }")
         .error("alternation capture 'n' is text in one branch but integer in another at alternation_capture_type_mismatch:2:69");
+}
+
+// A bare lowercase name at an arm root binds nothing (`@FR-P-Cap` spells the catch-all
+// `other: _`).  It is reported once, with that spelling: the arm is read as the catch-all, so
+// its body's use of the name and the match's exhaustiveness add nothing.
+#[test]
+fn a_bare_lowercase_arm_name_names_the_binding_spelling() {
+    code!(
+        "enum N { Leaf { v: integer }, Ret { inner: N } }\n\
+         fn f(n: N) -> integer { match n { Leaf { v } => v, other => f(other) } }"
+    )
+    .error(
+        "'other' is not a variant of N — to bind the matched value, write `other: _` \
+         at a_bare_lowercase_arm_name_names_the_binding_spelling:2:60",
+    );
+}
+
+// Arms after the recovered one are not reported unreachable: the `_` was never written.
+#[test]
+fn arms_after_a_bare_lowercase_arm_name_are_not_unreachable() {
+    code!(
+        "enum Colour { Red, Green, Blue }\n\
+         fn f(c: Colour) -> integer { match c { Red => 1, rest => 2, Green => 3 } }"
+    )
+    .error(
+        "'rest' is not a variant of Colour — to bind the matched value, write `rest: _` \
+         at arms_after_a_bare_lowercase_arm_name_are_not_unreachable:2:57",
+    );
 }
 
 // An unknown variant in an alternation branch is a clean error (no panic).

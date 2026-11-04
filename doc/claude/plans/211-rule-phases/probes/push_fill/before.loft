@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// probe-rule: R-PushFill
+// probe-n: 20000 60000
+// One value pushed k times in a counted loop.
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  v: vector<integer> = [];
+  s = 0;
+  for i in 0..n {
+    v.clear();
+    for _ in 0..16 { v += [i]; }
+    s += len(v) + v[3];
+  }
+  println("{s}");
+}

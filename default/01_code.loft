@@ -2377,7 +2377,8 @@ pub fn sort < T: Ordered > (self: vector<T>) {
     width *= 2;
   }
   // Each place takes its sorted element: a sort overwrites the places it has, so a view or a
-  // `&` link into the vector stays valid across it (`@FR-B-Disturb`).
+  // `&` link OF an element stays valid across it, while one deeper than an element ends — the
+  // write releases what the old element owned (`@FR-B-Disturb`).
   at = 0;
   for e in src {
     self[at] = e;

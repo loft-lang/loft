@@ -247,8 +247,10 @@ Outside the routine (D-fact-1, D-fact-2): `view_return::callee` (whether a call 
 
 ### D-fact-3 (OPEN, @PLN210) — each twin kind carries its own key ([#2351](https://github.com/loft-lang/loft/issues/2351))
 - **Violates:** `Fact-Twin` (one key, one registry)
-- **Where:** `src/c/mod.rs` (`INV_BIT` … `DS_BIT`, `NN_MASK`), native's name suffixes
-- **Effect:** a twin under two assumptions is a hand-made combination; the C's mask has seven
+- **Where:** `src/c/mod.rs` (`INV_BIT` … `VF_BIT`, `NN_MASK`); native's name suffixes and its
+  bit keys OR'd into a definition number (`DV_BIT`, `src/lower/decode_view.rs`; `KH_BIT`,
+  `src/generation/kept.rs`); the IR's `_tuple`, `__given_` and `@st` names
+- **Effect:** a twin under two assumptions is a hand-made combination; the C's mask has eight
   named bits and 24 parameter bits left, guarded by a compile-time assert.
 - **Removal:** a key of (function, assumptions) and one registry, the existing twins re-keyed
-  with their emission unchanged.
+  with their emission unchanged — designed in `plans/211-rule-phases/design.md` § D-fact-3.

@@ -24,7 +24,14 @@ impl Output<'_> {
         var: u16,
         to: &Value,
     ) -> std::io::Result<()> {
-        self.output_set_statement(w, var, to)?;
+        // A value `if` bound here delivers the local's type (`null_arm_type`).
+        let prev_if_type = self.if_value_type.take();
+        if matches!(to.unspan(), Value::If(..)) {
+            self.if_value_type = Some(self.data.def(self.def_nr).variables().tp(var).clone());
+        }
+        let done = self.output_set_statement(w, var, to);
+        self.if_value_type = prev_if_type;
+        done?;
         // loft#1899 — a generator's link local is stored back into its field after every bind,
         // so a later state re-reads the pointer this one made.  A write THROUGH the link
         // leaves the pointer as it was, so storing it again is harmless.
@@ -2846,13 +2853,6 @@ impl Output<'_> {
                 output: self,
             };
             return crate::generation::ops::emit_op(&mut ctx, &name_owned, vals);
-        }
-        // @PLN157 § V-o — a stdlib one-op wrapper is emitted as its op, with the caller's
-        // arguments in the op's operand positions, so a header-aware emitter can serve it.
-        if def_fn.rust().is_empty()
-            && let Some((op, args)) = self.wrapper_op(def_nr, vals)
-        {
-            return self.output_call_inner(w, op, &args);
         }
         if def_fn.rust().is_empty() {
             // A USER call is deliberately NOT a checkpoint site.  Wrapping it would make

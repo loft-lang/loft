@@ -61,7 +61,7 @@ type PreEvalEntry = (String, String, String, u32, bool);
 /// runs stay silent, but tests (and a curious developer) can opt in to
 /// the same store-leak report the interpreter prints unconditionally —
 /// giving leak regressions a guard on `--native`, not just `--interpret`.
-const NATIVE_LEAK_CHECK_TAIL: &str = "    if std::env::var(\"LOFT_NATIVE_LEAK_CHECK\").is_ok() {\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            let count = leaks.len();\n            let preview = if count <= 5 { leaks.join(\", \") } else { format!(\"{} ... and {} more\", leaks[..5].join(\", \"), count - 5) };\n            eprintln!(\"Warning: {count} stores not freed at program exit: {preview}\");\n        }\n    }\n";
+const NATIVE_LEAK_CHECK_TAIL: &str = "    if std::env::var(\"LOFT_NATIVE_LEAK_CHECK\").is_ok() {\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            let rows = leaks.len();\n            let preview = if rows <= 5 { leaks.join(\", \") } else { format!(\"{} ... and {} more\", leaks[..5].join(\", \"), rows - 5) };\n            eprintln!(\"Warning: {} stores not freed at program exit: {preview}\", Stores::leak_total(&leaks));\n        }\n    }\n";
 
 /// @PLN130 F8 — the `LOFT_STRICT_STORES` tail for the native `main` bootstrap.
 ///
@@ -78,7 +78,7 @@ const NATIVE_LEAK_CHECK_TAIL: &str = "    if std::env::var(\"LOFT_NATIVE_LEAK_CH
 /// the wasm targets link a SEPARATELY built `libloft` rlib — so a tail referencing a symbol
 /// added to `loft::keys` fails to compile there whenever that rlib is stale, which is a
 /// build break in the generated program rather than anything a probe wanted to know.
-const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))]\n    if std::env::var(\"LOFT_STRICT_STORES\").is_ok() {\n        loft::keys::strict_store_notice();\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            eprintln!(\"[strict-store] NEVER FREED: {} stores not freed at program exit: {}\", leaks.len(), leaks.join(\", \"));\n            loft::keys::strict_store_leaks(leaks.len());\n        }\n        let n = loft::keys::strict_store_violations();\n        if n > 0 {\n            eprintln!(\"[strict-store] FAILED: {n} store-lifetime violation(s)\");\n            std::process::exit(1);\n        }\n    }\n";
+const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))]\n    if std::env::var(\"LOFT_STRICT_STORES\").is_ok() {\n        loft::keys::strict_store_notice();\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            eprintln!(\"[strict-store] NEVER FREED: {} stores not freed at program exit: {}\", Stores::leak_total(&leaks), leaks.join(\", \"));\n            loft::keys::strict_store_leaks(Stores::leak_total(&leaks));\n        }\n        let n = loft::keys::strict_store_violations();\n        if n > 0 {\n            eprintln!(\"[strict-store] FAILED: {n} store-lifetime violation(s)\");\n            std::process::exit(1);\n        }\n    }\n";
 
 /// Walk the Value IR tree and collect all function definition numbers
 /// referenced by `Value::Call(def_nr, _)` nodes.
@@ -660,8 +660,6 @@ pub struct Output<'a> {
     /// Per-callee memo of what an admitted writing callee reaches (@PLN157 P4c), shared
     /// across every loop in the program.
     pub scalar_write_cache: hoist::WriteCache,
-    /// Per-definition memo of [`hoist::one_op_wrapper`].
-    wrapper_cache: HashMap<u32, Option<(u32, Vec<hoist::WrapperOperand>)>>,
     /// @PLN157 § V-q — the push headers of the enclosing loops, innermost last: path → the
     /// Rust local holding its [`crate::vector::PushHeader`] (`__ph_N`); the same path is in
     /// [`Self::vec_headers`] as `__ph_N.h` for every read.  Pushed and popped beside them.
@@ -1034,6 +1032,10 @@ pub struct Output<'a> {
     /// instead of `d_nr_i32`.  Set during fn-ref variable assignment so
     /// if-else branches produce the correct tuple type.
     pub fn_ref_context: bool,
+    /// The type a value `if` delivers, while its `else if` chain is emitted: an absent arm
+    /// (`null`) beside one that never answers — the `match` fallback after arms that all
+    /// `return` — takes this type's null, since the arm beside it gives none to copy.
+    pub if_value_type: Option<Type>,
     /// When true, `Value::Int` emits `{v}_i32` instead of the post-2c
     /// default `{v}_i64`.  Set when emitting a tp-number / field-index /
     /// flag-enum slot (where the runtime signature is still i32) so
@@ -1874,7 +1876,6 @@ impl<'a> Output<'a> {
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             invariant_hoists: Vec::new(),
-            wrapper_cache: HashMap::new(),
             input_cache: hoist::InputCache::default(),
             kept_cache: kept::KeptCache::default(),
             kh_twin: None,
@@ -1977,6 +1978,7 @@ impl<'a> Output<'a> {
             coroutine_link_fields: HashMap::new(),
             coroutine_allocated_vars: HashSet::new(),
             fn_ref_context: false,
+            if_value_type: None,
             i32_literal_context: false,
             tuple_text_to_string: false,
             tuple_text_elem: false,
@@ -2468,7 +2470,7 @@ impl Output<'_> {
                 def_nr,
                 &self.split_tables,
             ));
-            let store = hoist::borrowed_store_texts(self.data, def_nr, &walks);
+            let store = hoist::borrowed_store_texts(self.data, def_nr, &walks, false);
             walks.extend(store.borrows);
             self.borrowed_store_locals = store.locals;
             self.tested_store_texts = store.tested;
@@ -2601,7 +2603,9 @@ impl Output<'_> {
         fired("R-SliceBorrow", self.slice_borrow_count);
         fired("R-CharWalk", self.char_walks.len());
         fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
-        fired("R-LoopRecord", self.loop_records.len());
+        let refill = self.loop_records.values().filter(|r| r.refill).count();
+        fired("R-LoopRecord", self.loop_records.len() - refill);
+        fired("R-LoopRecord/refill", refill);
         fired("R-LoopBuffer", self.loop_buffers.len());
     }
 
@@ -3940,60 +3944,6 @@ impl Output<'_> {
             .map(|(_, w)| w.as_str())
     }
 
-    /// @PLN157 § V-am (`@FR-R-PushFill`) — when `lp` is ONE push of an invariant over a
-    /// path a push header is held for, emit the guarded `let __pf_N = stores.push_fill(…)`
-    /// and answer `true` — the caller then emits the per-element loop under `if !__pf_N`
-    /// and [`Self::push_fast_path_tail`] leaves the counters as the loop would.  Every
-    /// other counted push loop is [`Self::push_reserve`]'s.
-    fn push_fast_path(
-        &mut self,
-        w: &mut dyn Write,
-        lp: &crate::data::Block,
-    ) -> std::io::Result<bool> {
-        if self.switches.push_fill_disabled {
-            return Ok(false);
-        }
-        let Some(p) = hoist::push_loop(lp, self.data) else {
-            return Ok(false);
-        };
-        let Some(val) = p.fill else {
-            return Ok(false);
-        };
-        // A loop nested in one that holds a window on the path pushes through it: a fill
-        // writes the record's length, which the window defers.
-        if self.active_push_window(&p.path).is_some() {
-            return Ok(false);
-        }
-        let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
-            return Ok(false);
-        };
-        let count = self.push_trip_count(&p)?;
-        let vec = self.expr_string(p.vector)?;
-        let val = self.expr_string(val)?;
-        let verify = if self.hoist_verify { "true" } else { "false" };
-        self.indent(w)?;
-        writeln!(
-            w,
-            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, {}); //@PLN157 § V-am push fill",
-            lp.scope,
-            p.rust_type,
-            p.size,
-            // The fill runs only unbiased (`push_loop` declines a biased one).
-            hoist::push_element(p.rust_type, &val)
-        )?;
-        Ok(true)
-    }
-
-    /// The `else` arm of the push fill's guard — [`Self::range_tail`] over the push loop.
-    fn push_fast_path_tail(
-        &mut self,
-        w: &mut dyn Write,
-        lp: &crate::data::Block,
-    ) -> std::io::Result<()> {
-        let p = hoist::push_loop(lp, self.data).expect("the shape that emitted the push fill");
-        self.range_tail(w, p.index_var, p.next_var, p.hi, p.inclusive)
-    }
-
     /// `@FR-R-Base` — the held header whose length a read of range end `var` stands for: the
     /// header the innermost loop holding the vector's element BASE derived that base from —
     /// its own, or one an enclosing frame holds (an outer loop's, or the function's
@@ -4745,7 +4695,7 @@ impl Output<'_> {
             self.indent(w)?;
             writeln!(w, "{line}")?;
         }
-        crate::rewrite_census::fired("R-FnHeader", frame.len());
+        crate::rewrite_census::fired("R-Header/function", frame.len());
         self.vec_headers.push(frame);
         self.vec_bases.push(HashMap::new());
         self.vec_bounds.push(HashMap::new());
@@ -4864,57 +4814,6 @@ impl Output<'_> {
         self.vec_bases.push(bases);
         crate::rewrite_census::fired("R-View", 1);
         Ok(true)
-    }
-
-    /// @PLN157 § V-o — the op a call to `def_nr` stands for, with the caller's `vals` put in
-    /// the op's operand positions, when `def_nr` is a stdlib one-op wrapper and the switch
-    /// is on; `None` otherwise.
-    /// Emits `@FR-R-Wrapper`.
-    pub(super) fn wrapper_op(&mut self, def_nr: u32, vals: &[Value]) -> Option<(u32, Vec<Value>)> {
-        if self.switches.wrapper_inline_disabled {
-            return None;
-        }
-        // LEAF arguments, or a PURE VECTOR PATH (`m.chunks`: constant `OpGetField`s over a
-        // variable) the pre-evaluation map does not hold: the op's operands are emitted from
-        // a fresh list, and that map keys on the original nodes' addresses — a cloned block
-        // or call argument it holds would miss its `_pre_N` binding and be emitted raw (a
-        // `let` inside an expression) or run a second time.  A pure path is side-effect
-        // free and carries no binding of its own, so its clone emits what the original
-        // would; and as the op's operand it is what a held header serves — `len(m.chunks)`
-        // as a loop's bound then reads `__vh_N.len` instead of resolving the store through
-        // a call per iteration (88 loops in the corpus and the libraries are bounded that
-        // way).  Every other argument shape keeps the call.
-        if !vals.iter().all(|v| {
-            matches!(
-                v.unspan(),
-                Value::Var(_)
-                    | Value::Int(_)
-                    | Value::Long(_)
-                    | Value::Float(_)
-                    | Value::Single(_)
-                    | Value::Boolean(_)
-            ) || (hoist::vector_path(self.data, v).is_some_and(|p| !p.1.is_empty())
-                && !self
-                    .active_pre_eval
-                    .contains_key(&(std::ptr::from_ref(v) as usize)))
-        }) {
-            return None;
-        }
-        let data = self.data;
-        let (op, operands) = self
-            .wrapper_cache
-            .entry(def_nr)
-            .or_insert_with(|| hoist::one_op_wrapper(data, def_nr))
-            .as_ref()?;
-        let mut args = Vec::with_capacity(operands.len());
-        for o in operands {
-            match o {
-                hoist::WrapperOperand::Param(i) => args.push(vals.get(*i as usize)?.clone()),
-                hoist::WrapperOperand::Const(c) => args.push(c.clone()),
-            }
-        }
-        crate::rewrite_census::fired("R-Wrapper", 1);
-        Some((*op, args))
     }
 
     /// @PLN157 § V-p — the invariant inputs of `def_nr` (`@FR-R-Inputs`), or `None` when it
@@ -7219,22 +7118,46 @@ impl Output<'_> {
             .for_each_child(&mut |child| Self::collect_if_test_sets(child, out));
     }
 
-    /// The locals a CALL ARGUMENT null-inits — a `Set(v, null)` the scope pass placed inside an
-    /// argument, at any depth.  It does that for a temp it frees at the function's end that is
-    /// first bound in an `if` arm the argument holds (`assert(c && D { n: 7 } == D { n: 7 })`
-    /// binds each literal operand to a `__veq` temp).  Native's pre-eval lifts such an argument
-    /// into `let _pre_N = { … }`, so a `let` there ends with that block (loft#1852).
-    fn collect_call_arg_null_inits(node: &Value, in_arg: bool, out: &mut Vec<u16>) {
-        if in_arg
-            && let Value::Set(v, init) = node.unspan()
-            && matches!(init.unspan(), Value::Null)
-            && !out.contains(v)
-        {
-            out.push(*v);
+    /// The locals whose FIRST bind is a null-init the scope pass placed below the function's
+    /// top level — inside an `if` arm, a call argument, a loop.  Native writes a local's `let`
+    /// where emission first reaches it, so a later mention outside that block was `E0425`: a
+    /// function-level free after a call argument pre-eval lifts into `let _pre_N = { … }`
+    /// (`assert(c && D { n: 7 } == D { n: 7 })`, loft#1852), after the arm of a `match` that
+    /// holds a `match` (the inner subject's pre-init lands at the head of the outer arm), and
+    /// in a self tail call's jump, which frees the local in an arm emitted before the arm that
+    /// binds it.  Binding such a local up front turns that `let` into an assignment of the same
+    /// sentinel, so nothing changes meaning; an owning first bind is never taken (#354).
+    fn collect_nested_null_inits(code: &Value, out: &mut Vec<u16>) {
+        let Value::Block(body) = code.unspan() else {
+            return;
+        };
+        // Per local: is its first bind a null-init below the top level?
+        let mut first: HashMap<u16, bool> = HashMap::new();
+        for op in &body.operators {
+            Self::first_binds(op, false, &mut first);
         }
-        let in_arg = in_arg || matches!(node.unspan(), Value::Call(..));
-        node.unspan()
-            .for_each_child(&mut |child| Self::collect_call_arg_null_inits(child, in_arg, out));
+        let mut found: Vec<u16> = first
+            .into_iter()
+            .filter_map(|(v, nested_null)| nested_null.then_some(v))
+            .collect();
+        found.sort_unstable();
+        for v in found {
+            if !out.contains(&v) {
+                out.push(v);
+            }
+        }
+    }
+
+    /// Records, in emission order, whether each local's first bind is a null-init below the
+    /// top level.
+    fn first_binds(node: &Value, nested: bool, first: &mut HashMap<u16, bool>) {
+        let node = node.unspan();
+        if let Value::Set(v, init) = node {
+            first
+                .entry(*v)
+                .or_insert(nested && matches!(init.unspan(), Value::Null));
+        }
+        node.for_each_child(&mut |child| Self::first_binds(child, true, first));
     }
 
     fn collect_returned_vars(node: &Value, out: &mut Vec<u16>) {
@@ -8648,6 +8571,9 @@ extern crate loft;"
         // program source passes the `crate::rpc::`/`crate::store::` invariant
         // exactly once, regardless of which template path emitted it.
         let mut buf: Vec<u8> = Vec::new();
+        // What the writer admits outside any function body is the native phase's, under no
+        // function (the bodies enter their own scope).
+        let _census_unit = crate::rewrite_census::InBody::enter("native", "");
         self.output_native_emit(&mut buf, from, till)?;
         w.write_all(&scrub_generated_crate_refs(&buf))
     }
@@ -8767,6 +8693,7 @@ extern crate loft;"
         // Buffer then scrub the assembled source (see
         // `scrub_generated_crate_refs`), then write to the real `w`.
         let mut buf: Vec<u8> = Vec::new();
+        let _census_unit = crate::rewrite_census::InBody::enter("native", "");
         self.emit_native_reachable_body(&mut buf, till, entry_defs)?;
         // Emit a Rust entry point that bootstraps the loft `main` function, if present.
         if (0..till).any(|d| self.data.def(d).name() == "n_main") {
@@ -11782,11 +11709,20 @@ extern crate loft;"
             // marked DECLARED — never `predeclared`, which would make the test's assignment a
             // second, shadowing `let` and orphan the store it receives — so that assignment
             // lands in this binding.  Not the #354 hazard below: nothing is allocated here.
-            // The same for a local a CALL ARGUMENT null-inits (loft#1852): pre-eval lifts the
-            // argument into a block of its own, and the init's `let` would end with it.
+            // The same for a local first null-initialised below the top level and freed there
+            // (`collect_nested_null_inits`): in a call argument pre-eval lifts into a block of
+            // its own (loft#1852), in an `if` arm, and the init's `let` would end with it.
             let mut if_test_sets: Vec<u16> = Vec::new();
             Self::collect_if_test_sets(def.code(), &mut if_test_sets);
-            Self::collect_call_arg_null_inits(def.code(), false, &mut if_test_sets);
+            let mut nested_null_inits: Vec<u16> = Vec::new();
+            Self::collect_nested_null_inits(def.code(), &mut nested_null_inits);
+            // A record `@FR-R-LoopRecord` keeps across a loop's passes is declared by that
+            // rewrite, before its loop.
+            for v in nested_null_inits {
+                if !self.loop_records.contains_key(&v) && !if_test_sets.contains(&v) {
+                    if_test_sets.push(v);
+                }
+            }
             for &v in &if_test_sets {
                 if !vars.is_argument(v)
                     && !self.declared.contains(&v)

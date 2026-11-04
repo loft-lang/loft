@@ -92,7 +92,8 @@ fn keyed_content_known(e: el::El, t: ir::TypeT) -> boolean {
 
 // `Data::vector_def`: the `vector<T>` definition where it is missing, and the `main_vector<T>`
 // wrapper struct a vector local's store is (one field, `vector`), both at `pos`; `typed` gives
-// the wrapper its record type, as a construct does (the schema's own pass leaves it unknown).
+// the wrapper its record type, as a construct does (the schema's own pass leaves it unknown,
+// and makes the `vector<T>` store type at once instead — `vector_store_type`).
 pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean) {
   vt = ir::TyVector { inner: t, dep: [] };
   if el::def_nr(e, "vector<{nm}>") < 0 {
@@ -100,18 +101,22 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     e.b.data.definitions[vd].returned = [vt];
     e.b.data.definitions[vd].parent = match t {
       TyReference { n } => n,
+      TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
       _ => el::source_nr(e, 0, nm)
     };
   }
-  // The schema's own pass makes the `vector<T>` store type at once where `T` has one already.
+  // A narrow integer's element and `vector<…>` store types are made with the definitions, ahead
+  // of every struct the schema fills.
+  match t {
+    TyInteger { spec } => {
+      if el_types::narrow_width(spec) > 0 {
+        vector_type(e, content_type(e, t));
+      }
+    },
+    _ => {}
+  }
   if !typed {
-    kt = match t {
-      TyReference { n } => el::def(e, n).known_type,
-      _ => known(e, nm)
-    };
-    if kt >= 0 && kt != NO_TYPE {
-      vector_type(e, kt);
-    }
+    vector_store_type(e, t, nm);
   }
   md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
   e.b.data.definitions[md].source = 0;
@@ -119,6 +124,17 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     e.b.data.definitions[md].returned = [ir::TyReference { n: md, dep: [] }];
   }
   e.b.data.definitions[md].attributes += [el::attribute("vector", vt)];
+}
+
+// The `vector<T>` store type, made at once where `T` has a store type already.
+pub fn vector_store_type(e: el::El, t: ir::TypeT, nm: text) {
+  kt = match t {
+    TyReference { n } => el::def(e, n).known_type,
+    _ => known(e, nm)
+  };
+  if kt >= 0 && kt != NO_TYPE {
+    vector_type(e, kt);
+  }
 }
 
 fn register_enum(e: el::El, d: integer) {
@@ -148,20 +164,26 @@ fn register_enum(e: el::El, d: integer) {
 // stored attribute a field of its content type, in declaration order.
 fn fill_database(e: el::El, d: integer) {
   def = el::def(e, d);
-  if schema_type(e, def.name) >= 0 {
+  // A type variable's placeholder (`is_type_var_placeholder`: a struct with no fields answering
+  // a record of itself) is registered under a name no program type can take.
+  own = match def.returned[0] ?? ir::TyVoid { TyReference { n } => n == d, _ => false };
+  reg = if len(def.attributes) == 0 && own { "__typevar_{def.name}" } else { def.name };
+  if schema_type(e, reg) >= 0 {
     el::refuse(e, "a struct named like a type the schema already has");
     return;
   }
   // The structure first, then each field's content — a narrow Part is made after it.
-  s = structure(e, def.name);
+  s = structure(e, reg);
   e.b.data.definitions[d].known_type = s;
   for a in def.attributes {
     if a.constant {
       continue;
     }
-    c = match a.typedef[0] {
+    // `τ?` is stored at `τ`'s own layout (`@FR-L-Null`).
+    ft = el_types::base(a.typedef[0]);
+    c = match ft {
       TyInteger { spec } => int_part(e, spec, a.alias_d_nr, a.nullable),
-      _ => content_type(e, a.typedef[0])
+      _ => content_type(e, ft)
     };
     if c < 0 {
       el::refuse(e, "a struct field of this type");
@@ -186,7 +208,7 @@ pub fn keyed_type(e: el::El, t: ir::TypeT) -> integer {
   store_type(e, t, false)
 }
 
-fn content_type(e: el::El, t: ir::TypeT) -> integer {
+pub fn content_type(e: el::El, t: ir::TypeT) -> integer {
   store_type(e, t, true)
 }
 
@@ -194,23 +216,44 @@ fn content_type(e: el::El, t: ir::TypeT) -> integer {
 fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
   match t {
     TyInteger { spec } => {
+      // A narrow element is stored at its width (`byte`, `short_raw<min,false>`, …).
+      if el_types::narrow_width(spec) > 0 {
+        return int_part(e, spec, el::NONE, false);
+      }
       if spec.forced_size != 0 {
         return -1;
       }
       schema_type(e, "integer")
     },
     TyText { dep: _ } => known(e, "text"),
+    TyTuple { elems } => {
+      td = el_types::tuple_def_of(e, elems);
+      if td < 0 || el::def(e, td).known_type == NO_TYPE { -1 } else { el::def(e, td).known_type }
+    },
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),
     TyCharacter => known(e, "character"),
+    // A struct with no row yet is filled here, as Rust's `fill_database` fills a field's type
+    // when it meets one — which numbers it after the struct whose field it is.
     TyReference { n } => {
+      if el::def(e, n).def_type != el::DT_STRUCT {
+        return -1;
+      }
+      if el::def(e, n).known_type == NO_TYPE && el::def(e, n).source == e.source {
+        fill_database(e, n);
+      }
       k = el::def(e, n).known_type;
-      if k == NO_TYPE || el::def(e, n).def_type != el::DT_STRUCT { -1 } else { k }
+      if k == NO_TYPE { -1 } else { k }
     },
     // `database.vector(content)`, deduplicated by name, made where it is missing; the element's
     // `vector<T>` definition takes its number (`check_vector`).
     TyVector { inner } => {
+      // A tuple element's row is named by its struct (`vector<__tuple<…>>`), made where missing.
+      if inner is TyTuple {
+        tc = content_type(e, inner);
+        return if tc < 0 { -1 } else { vector_type(e, tc) };
+      }
       nm = el_types::elem_name(e, inner);
       if nm == "" {
         return -1;
@@ -220,8 +263,10 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
         return -1;
       }
       vt = vector_type(e, c);
+      // `check_vector` finds the store type by the definition's name, which a narrow element's
+      // (`vector<integer(0, 255)>` over `vector<byte>`) does not carry.
       vd = el::def_nr(e, "vector<{nm}>");
-      if vd >= 0 {
+      if vd >= 0 && e.b.types[vt].name == "vector<{nm}>" {
         e.b.data.definitions[vd].known_type = vt;
       }
       vt
@@ -379,7 +424,7 @@ fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean)
   }
   unsigned_wide = spec.min >= 0 && spec.max > 2147483647;
   if s == 1 {
-    return narrow_part(e, if m == 0 && !nullable { "byte" } else { "byte<{m},{nullable}>" }, ir::PtByte { start: m, nullable: nullable }, 1);
+    return narrow_part(e, byte_name(m, nullable), ir::PtByte { start: m, nullable: nullable }, 1);
   }
   if s == 2 {
     if nullable {
@@ -394,6 +439,23 @@ fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean)
     return narrow_part(e, "int<{m},{nullable}>", ir::PtInt { start: m, nullable: nullable }, 4);
   }
   schema_type(e, "integer")
+}
+
+fn byte_name(m: integer, nullable: boolean) -> text {
+  if m == 0 && !nullable { "byte" } else { "byte<{m},{nullable}>" }
+}
+
+// The store type a narrow element of `spec` already has (`byte`, `short_raw<min,false>`), or -1
+// — a lookup that makes nothing, for a read that must not mint a type out of order.
+pub fn narrow_element(e: el::El, spec: ir::IntegerSpec) -> integer {
+  w = el_types::narrow_width(spec);
+  if w == 1 {
+    return schema_type(e, byte_name(spec.min, false));
+  }
+  if w == 2 {
+    return schema_type(e, "short_raw<{spec.min},false>");
+  }
+  -1
 }
 
 // `Stores::byte` / `short` / `short_raw` / `int` / `int_raw`: the type of that name, made at the

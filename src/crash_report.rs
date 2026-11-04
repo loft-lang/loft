@@ -491,6 +491,16 @@ pub fn install_panic_hook() {
     }
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // loft#1289 — the CLI's own `println!` (`--version | head -1`) meets a closed reader
+        // exactly as a program's `print` does, and gets the same answer: the end of the run.
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str));
+        if message.is_some_and(crate::codegen_runtime::is_closed_stdout_panic) {
+            std::process::exit(0);
+        }
         // @PLN133 S8 — a fault inside a lazy DRIVER is contained and reported
         // through `store_lazy_error`, so it is not a crash and must not be
         // announced as one. Printing it would be worse than noise: a lookup that

@@ -58,6 +58,9 @@ pub(super) fn report_materialised_view(
         ViewCause::Released => {
             crate::copy_manifest::note_released_view(vname, cname, fname, via, at);
         }
+        ViewCause::Overwritten => {
+            crate::copy_manifest::note_overwritten_view(vname, cname, fname, via, at);
+        }
     }
 }
 
@@ -214,6 +217,81 @@ pub(super) fn released_children(code: &Value, data: &Data) -> HashMap<(u16, u32)
         }
     });
     out
+}
+
+/// A whole record written into a place that already held one — @FR-B-Disturb's fifth event.
+///
+/// `c.tp = y` lowers to `OpCopyRecord(y, c.tp, tp)`, which RELEASES what the old value owns
+/// (its vectors, texts and out-of-line children) before it reads the new one.  The place
+/// itself stays, so a view OF it (`a = c.tp`) re-reads the new value; a view INTO what the old
+/// value owned (`y = c.tp.inner`, `x = o.inner.v[0]`) names a record that is gone.
+///
+/// Each write comes with the place it names, its depth and literal index as a growth's does,
+/// and the byte SIZE of the record written, so the walk can end the views whose slot lies
+/// anywhere inside it — a view carries the offset of its own vector or child slot, which is
+/// inside the written record but not at its start.  `None` without a store to size the type:
+/// the walk then ends every view of the variable deeper than the place, the safe direction.
+///
+/// A copy into a FRESH destination (`COPY_FRESH_DEST`) releases nothing and is skipped.
+///
+/// An OUT-OF-LINE field given a present record (`t.left = T{…}`, `OpSetChildRec` of a
+/// literal) is the same event one level down (`@FR-B-OutOfLine`): the value is copied into
+/// the child IN PLACE, so the child's record stays and a view of it (`l = t.left`) re-reads
+/// it, while what the old child owned is released.  Reported as the child place — one element
+/// read below the field — and the span of the child reference, the one slot every view
+/// through the child carries.  A value that may be null is [`released_children`]' instead,
+/// which ends the view of the child too.
+pub(super) fn overwritten_records(
+    code: &Value,
+    data: &Data,
+    database: Option<&crate::database::Stores>,
+) -> Vec<Overwrite> {
+    let mut out = Vec::new();
+    code.walk(&mut |v| {
+        let Value::Call(d, args) = v else { return };
+        match (data.def(*d).name(), &args[..]) {
+            ("OpCopyRecord", [_, dst, tp]) => {
+                if let Value::Int(raw) = tp.unspan()
+                    && let Ok(raw) = u16::try_from(*raw)
+                    && raw & crate::keys::COPY_FRESH_DEST == 0
+                    && let Some((place, depth)) = named_place_depth(dst, data)
+                {
+                    let tp = raw & crate::keys::COPY_TP_MASK;
+                    out.push(Overwrite {
+                        place,
+                        at: ContainerAt {
+                            depth,
+                            index: crate::use_analysis::root_element_index(data, dst),
+                        },
+                        size: database.map(|db| u32::from(db.size(tp))),
+                    });
+                }
+            }
+            ("OpSetChildRec", [field, value, _]) => {
+                if matches!(value.unspan(), Value::Block(_) | Value::Insert(_))
+                    && let Some((place, depth)) = named_place_depth(field, data)
+                {
+                    out.push(Overwrite {
+                        place,
+                        at: ContainerAt {
+                            depth: depth.saturating_add(1),
+                            index: crate::use_analysis::root_element_index(data, field),
+                        },
+                        size: Some(4),
+                    });
+                }
+            }
+            _ => {}
+        }
+    });
+    out
+}
+
+/// One write [`overwritten_records`] found.
+pub(super) struct Overwrite {
+    pub(super) place: (u16, u32),
+    pub(super) at: ContainerAt,
+    pub(super) size: Option<u32>,
 }
 
 /// Every container variable `code` GROWS — @FR-B-Disturb's fourth place-ending event.
@@ -527,6 +605,9 @@ pub enum ViewCause {
     /// An out-of-line field is written a value that may be null, which releases the child a
     /// view names (`@FR-B-OutOfLine`).
     Released,
+    /// A whole record is written into a place, which releases what the old value owned
+    /// (@FR-B-Disturb's fifth event, loft#2391).
+    Overwritten,
 }
 
 /// One disturbance of a container, as the walk saw it.
@@ -549,6 +630,13 @@ pub(super) struct Disturbance {
     /// because that is what decides which bindings survive; this only picks the SENTENCE —
     /// "cannot grow `v`" named an act the line does not perform.
     pub(super) replaced: bool,
+    /// Non-zero when recorded by a LOOP's whole-body shake: the nesting level of that loop
+    /// (1 = outermost).  The shake runs at the loop's head, before the body is walked, so it
+    /// stands for a disturbance somewhere INSIDE the body and carries the loop's line.  The
+    /// walk of the body CONFIRMS it — replaces it with the disturbing statement's own record —
+    /// on every path that passes through that statement; an unconfirmed one ends at the loop's
+    /// exit, which the head reaches without passing through the body.
+    pub(super) provisional: u8,
 }
 
 impl Disturbance {
@@ -581,6 +669,10 @@ pub type DisturbedParams = HashMap<u32, HashMap<ParamPlace, ParamDisturbance>>;
 pub struct ParamDisturbance {
     pub cause: ViewCause,
     pub at: ContainerAt,
+    /// For a whole record written into the place (`ViewCause::Overwritten`), the bytes it
+    /// covers: the views it ends sit at any slot inside them, not only at the place's offset.
+    /// `None` for every other event, and for a write whose type the walk could not size.
+    pub span: Option<u32>,
 }
 
 impl ParamDisturbance {
@@ -597,6 +689,10 @@ impl ParamDisturbance {
         if other.cause == ViewCause::Reshaped {
             self.cause = ViewCause::Reshaped;
         }
+        self.span = match (self.span, other.span) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
         *self != before
     }
 }
@@ -614,53 +710,6 @@ fn record_param(
         }
         std::collections::hash_map::Entry::Occupied(mut e) => e.get_mut().merge(d),
     }
-}
-
-/// @PLN164 C5 — the places `code` DISTURBS in the frame of `def_nr`: what its own ops grow or
-/// remove from, plus what anything it CALLS grows or removes from, mapped back onto the
-/// arguments this frame passed.
-///
-/// One composer for a consumer outside the scope pass — generation's view-leaf gate asks
-/// *"is the place my leaf views disturbed between this call and the last read of it?"*, which
-/// is [`ViewWalk::disturb`]'s question asked over a statement span instead of a binding, and it
-/// has to be answered off the same producers or the two can disagree about what a disturbance
-/// is.  `disturbed` is [`disturbed_params_map`]'s answer for the whole program; `None` leaves
-/// only this frame's own half, which is the pre-C3 reach and never more.
-///
-/// The answer is a LOWER bound in exactly the ways its producers are — a container named by
-/// something other than a variable or a projection chain is not collected — so a caller that
-/// must be conservative has to treat an unresolvable place as disturbed itself.  What it never
-/// does is report a disturbance that did not happen: every place here comes from a growth, a
-/// removal or a re-establishment the code spells.
-#[must_use]
-pub fn places_disturbed_by(
-    code: &Value,
-    data: &Data,
-    def_nr: u32,
-    database: Option<&crate::database::Stores>,
-    disturbed: Option<&DisturbedParams>,
-) -> HashSet<ParamPlace> {
-    let function = &data.def(def_nr).variables;
-    // Every depth, as the root place: this consumer must be conservative, and a growth of a
-    // container inside an element is still a disturbance of a place rooted where it is.
-    let mut out: HashSet<ParamPlace> = grown_containers(code, data, function, database)
-        .into_keys()
-        .collect();
-    out.extend(reshaped_containers(code, data, function).into_keys());
-    if let Some(map) = disturbed {
-        code.walk(&mut |v| {
-            let Value::Call(d, args) = v else { return };
-            let Some(places) = map.get(d) else { return };
-            for (&(slot, inner), pd) in places {
-                if let Some(arg) = args.get(usize::from(slot))
-                    && let Some((base, base_at)) = call_arg_at(arg, data)
-                {
-                    out.insert(compose_param_at(base, base_at, inner, pd.at).0);
-                }
-            }
-        });
-    }
-    out
 }
 
 /// The parameter places `d_nr`'s OWN body disturbs — the direct answer [`disturbed_params_map`]
@@ -711,6 +760,7 @@ fn disturbed_param_places(
                 ParamDisturbance {
                     cause: ViewCause::Reshaped,
                     at: ContainerAt { depth, index },
+                    span: None,
                 },
             );
         }
@@ -736,7 +786,15 @@ fn disturbed_param_places(
     for (place, at) in grown_containers(&def.code, data, function, database) {
         if visible(place.0) {
             let cause = ViewCause::Grown;
-            record_param(&mut out, place, ParamDisturbance { cause, at });
+            record_param(
+                &mut out,
+                place,
+                ParamDisturbance {
+                    cause,
+                    at,
+                    span: None,
+                },
+            );
         }
     }
     // A place reached by both reports the RESHAPE — the cause with something to act on at the
@@ -744,12 +802,32 @@ fn disturbed_param_places(
     for (place, at) in reshaped_containers(&def.code, data, function) {
         if visible(place.0) {
             let cause = ViewCause::Reshaped;
-            record_param(&mut out, place, ParamDisturbance { cause, at });
+            record_param(
+                &mut out,
+                place,
+                ParamDisturbance {
+                    cause,
+                    at,
+                    span: None,
+                },
+            );
         }
     }
     for (place, d) in cleared {
         if visible(place.0) {
             record_param(&mut out, place, d);
+        }
+    }
+    // A whole record written into a field of a parameter releases what the old value owned,
+    // as the same write inline does (`(B-Disturb)`'s fifth event, loft#2391).
+    for w in overwritten_records(&def.code, data, database) {
+        if visible(w.place.0) {
+            let d = ParamDisturbance {
+                cause: ViewCause::Overwritten,
+                at: w.at,
+                span: w.size,
+            };
+            record_param(&mut out, w.place, d);
         }
     }
     out
@@ -850,7 +928,11 @@ pub fn disturbed_params_map(
         };
         for &(caller, base, base_at) in ups {
             let (place, at) = compose_param_at(base, base_at, inner, d.at);
-            let up = ParamDisturbance { cause: d.cause, at };
+            let up = ParamDisturbance {
+                cause: d.cause,
+                at,
+                span: d.span,
+            };
             if record_param(out.entry(caller).or_default(), place, up) {
                 if trace {
                     say(caller, place, up, Some(callee));

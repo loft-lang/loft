@@ -161,8 +161,9 @@ not duplicate: a deviation entry links to the lens analysis instead of re-explai
 ## Areas
 
 **Open deviations are counted by `python3 scripts/rule_tags.py registers`**, per chapter and
-against each chapter's own `OPEN: n` line; a chapter at 0 is a claim to re-measure against the
-oracle line it names.  The two in operational.md are the **meta** entry,
+against each chapter's own `OPEN: n` line — its `-history` companion's entries included, because a
+chapter that delegates its register states a number nothing beside it can check; a chapter at 0
+is a claim to re-measure against the oracle line it names.  The two in operational.md are the **meta** entry,
 `D-op-1`/`D-op-2` — there being no shared operational semantics, the interpreter is the spec and
 a backend divergence is test-caught rather than definition-caught (@PLN89's differential
 oracle, an open-ended instrument and not a one-shot close); every operational chapter below

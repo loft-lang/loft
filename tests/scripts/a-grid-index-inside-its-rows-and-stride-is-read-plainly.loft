@@ -1,0 +1,111 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Base`'s grid clause — an index `a * w + b` read where `0 <= a < h` and `0 <= b < w` are
+// known (a range counter, or a test the code makes before the read) lies in `[0, h * w)`, so a
+// held vector of at least `h * w` elements holds it and the read takes no index test.  A
+// vector shorter than that, a test against another bound than the stride, a test with no
+// lower bound and an index set twice keep the test; every cell answers what the interpreter
+// answers.
+//
+// The C writer applies it; the interpreter applies nothing and is the oracle.  Hand-computed in
+// each cell's comment.
+//
+// @falsified-at: 4997e3de9 — by hand on the C writer (the interpreter and native build read every index
+//   with its test, so `falsify.sh` reads them INERT), each plant alone failing a cell and stopping
+//   the LOFT_VERIFY build on the raw read's proof: a bound other than the stride accepted (g4:
+//   index 12 read raw, 192 → not 192), the lower bound not required (g5: index -1 read raw, not
+//   from the end, 78 → not 78), and an index set twice trusted as its first expression (g7: the
+//   raw read at 12, 177 → not 177).
+// HOLDS: the interpreter's and rustc-native's answers, which no plant on the C writer reaches.
+//
+// Values 1..n, so a cell's value names its index.
+fn grid(n: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for k in 0..n { v += [k + 1]; }
+  v
+}
+
+// g1: every cell of a 3 x 4 grid, row-major: 1 + 2 + ... + 12 = 78.
+fn g1(v: vector<integer>, h: integer, w: integer) -> integer {
+  s = 0;
+  for r in 0..h { for c in 0..w { s += v[r * w + c] ?? 100; } }
+  s
+}
+
+// g2: each cell's right neighbour, tested inside the row: every cell but column 0's,
+// 78 - (1 + 5 + 9) = 63.
+fn g2(v: vector<integer>, h: integer, w: integer) -> integer {
+  s = 0;
+  for r in 0..h {
+    for c in 0..w {
+      nc = c + 1;
+      if nc >= 0 && nc < w { s += v[r * w + nc] ?? 100; }
+    }
+  }
+  s
+}
+
+// g3: g1 over a vector two cells short (10 values): 1 + ... + 10 and two misses, 55 + 200 = 255.
+// g4: a test against 5 where the stride is 4: indices r*4 + c for c < 5 — rows overlap and the
+// last reads index 12, past the end: (1+2+3+4+5) + (5+6+7+8+9) + (9+10+11+12) + 100 = 192.
+fn g4(v: vector<integer>, h: integer, w: integer) -> integer {
+  s = 0;
+  for r in 0..h {
+    for c in 0..5 {
+      if c >= 0 && c < 5 { s += v[r * w + c] ?? 100; }
+    }
+  }
+  s
+}
+
+// g5: a test with no lower bound: nc = c - 1 reaches -1, and index -1 counts from the end
+// (12): row 0 is 12 + 1 + 2 + 3 = 18, row 1 4 + 5 + 6 + 7 = 22, row 2 8 + 9 + 10 + 11 = 38: 78.
+fn g5(v: vector<integer>, h: integer, w: integer) -> integer {
+  s = 0;
+  for r in 0..h {
+    for c in 0..w {
+      nc = c - 1;
+      if nc < w { s += v[r * w + nc] ?? 100; }
+    }
+  }
+  s
+}
+
+// g6: the index bound to a local first, then read: as g1, 78.
+fn g6(v: vector<integer>, h: integer, w: integer) -> integer {
+  s = 0;
+  for r in 0..h {
+    for c in 0..w {
+      i = r * w + c;
+      s += v[i] ?? 100;
+    }
+  }
+  s
+}
+
+// g7: the index set twice — r*w + c, then one more: indices 1..12, the last past the end:
+// (2 + ... + 12) + 100 = 177.
+fn g7(v: vector<integer>, h: integer, w: integer) -> integer {
+  s = 0;
+  for r in 0..h {
+    for c in 0..w {
+      i = r * w + c;
+      i = i + 1;
+      s += v[i] ?? 100;
+    }
+  }
+  s
+}
+
+fn main() {
+  v = grid(12);
+  assert(g1(v, 3, 4) == 78, "g1 {g1(v, 3, 4)}");
+  assert(g2(v, 3, 4) == 63, "g2 {g2(v, 3, 4)}");
+  assert(g1(grid(10), 3, 4) == 255, "g3 {g1(grid(10), 3, 4)}");
+  assert(g4(v, 3, 4) == 192, "g4 {g4(v, 3, 4)}");
+  assert(g5(v, 3, 4) == 78, "g5 {g5(v, 3, 4)}");
+  assert(g6(v, 3, 4) == 78, "g6 {g6(v, 3, 4)}");
+  assert(g7(v, 3, 4) == 177, "g7 {g7(v, 3, 4)}");
+  println("ok");
+}

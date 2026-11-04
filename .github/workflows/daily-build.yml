@@ -59,10 +59,6 @@ jobs:
             os: ubuntu-latest
             container: quay.io/pypa/manylinux_2_28_x86_64:2026.10.16-1@sha256:1e7b8460ad8fb3fb0fbe1cd818845159ac896b4fd17452d56e892c291f3b97a8
             glibc: '2.28'
-          - target: x86_64-apple-darwin
-            # macos-15 is Apple Silicon, so this leg CROSS-builds — the bundle it
-            # produces cannot run on the runner that made it.  Same note as release.yml.
-            os: macos-15
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-pc-windows-msvc
@@ -156,20 +152,14 @@ jobs:
           } > dist/DAILY-BUILD-INFO.txt
           ls -la dist/
 
-      # A bundle that cannot run is worse than no bundle, so each leg that CAN execute its
-      # own artefact does.  The two cross legs (x86_64 macOS on Apple Silicon) cannot, and
-      # say so rather than skipping silently.
+      # A bundle that cannot run is worse than no bundle, so every leg executes its own
+      # artefact.
       - name: Smoke-test the bundle
         if: steps.want.outputs.run == 'yes'
         shell: bash
         run: |
           set -e
           zip=$(ls dist/*.zip | head -1)
-          case "${{ matrix.target }}" in
-            x86_64-apple-darwin)
-              echo "cross leg (Apple Silicon runner builds x86_64): not executing $zip"
-              exit 0 ;;
-          esac
           rm -rf _smoke && mkdir _smoke
           if command -v unzip >/dev/null; then unzip -q "$zip" -d _smoke; else 7z x -bso0 -bsp0 -o_smoke "$zip"; fi
           root=$(ls -d _smoke/*/ | head -1)
@@ -211,11 +201,10 @@ jobs:
       # (scripts/install_main_ci.sh).  The same target directory as the bundle's binary: the
       # library is already built as that binary's dependency, and the pair must be one build.
       - name: Package the runtime library
-        # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
         # Not Windows: an installed loft there cannot link `--native` yet — the import
         # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
         # output directories only a build tree has (LNK1181 in the smoke).
-        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin' && matrix.target != 'x86_64-pc-windows-msvc'
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-pc-windows-msvc'
         shell: bash
         run: |
           CARGO_INCREMENTAL=0 scripts/lean_build.sh --lib --bin loft --target ${{ matrix.target }}
@@ -224,19 +213,13 @@ jobs:
       # A runtime that cannot link a program is the one failure the download exists to avoid,
       # so each leg that can run its own artefact compiles one with `--native` against it.
       - name: Smoke-test the runtime (--native)
-        # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
         # Not Windows: an installed loft there cannot link `--native` yet — the import
         # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
         # output directories only a build tree has (LNK1181 in the smoke).
-        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin' && matrix.target != 'x86_64-pc-windows-msvc'
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-pc-windows-msvc'
         shell: bash
         run: |
           set -e
-          case "${{ matrix.target }}" in
-            x86_64-apple-darwin)
-              echo "cross leg (Apple Silicon runner builds x86_64): not executing the runtime"
-              exit 0 ;;
-          esac
           rm -rf _rt && mkdir _rt
           tar -C _rt -xzf dist/loft-runtime-${{ matrix.target }}.tar.gz
           root="_rt/loft-runtime-${{ matrix.target }}"
@@ -248,11 +231,10 @@ jobs:
           [ "$out" = "daily runtime ok" ] || { echo "the runtime did not compile and run its own program"; exit 1; }
 
       - name: Upload the runtime
-        # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
         # Not Windows: an installed loft there cannot link `--native` yet — the import
         # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
         # output directories only a build tree has (LNK1181 in the smoke).
-        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin' && matrix.target != 'x86_64-pc-windows-msvc'
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-pc-windows-msvc'
         uses: actions/upload-artifact@v4
         with:
           name: loft-daily-runtime-${{ matrix.target }}

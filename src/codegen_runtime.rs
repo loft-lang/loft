@@ -877,6 +877,32 @@ pub fn host_print(s: &str) {
     }
 }
 
+/// End the run with exit 0 when `e` is a closed stdout — [`host_print`]'s answer, for a
+/// writer that gets the error back instead of panicking (`loft introspect`, the
+/// `loft package` summary).  Any other error returns, so the caller reports it as before.
+pub fn end_on_closed_stdout(e: &std::io::Error) {
+    if e.kind() == std::io::ErrorKind::BrokenPipe {
+        std::process::exit(0);
+    }
+}
+
+/// Whether a panic message is `print!`'s report of a closed stdout, so the CLI's panic hook
+/// can give its own `println!` sites [`host_print`]'s answer without rewriting each one.
+///
+/// It reads the OS error NUMBER, never the message text: the text is the platform's
+/// (`Broken pipe` on Linux, `The pipe is being closed.` on Windows), and the number's kind is
+/// what decides.  Any other message answers false — a full disk keeps the loud panic.
+#[must_use]
+pub fn is_closed_stdout_panic(msg: &str) -> bool {
+    msg.strip_prefix("failed printing to stdout: ")
+        .and_then(|rest| rest.rsplit_once("(os error "))
+        .and_then(|(_, n)| n.strip_suffix(')'))
+        .and_then(|n| n.parse::<i32>().ok())
+        .is_some_and(|n| {
+            std::io::Error::from_raw_os_error(n).kind() == std::io::ErrorKind::BrokenPipe
+        })
+}
+
 /// The `print` builtin: into the capture sink when a debug session captures this thread's
 /// output (`platform::print_or_capture`), else [`host_print`].  The stdlib's `print`
 /// template calls this, so neither the interpreter nor a generated program names the

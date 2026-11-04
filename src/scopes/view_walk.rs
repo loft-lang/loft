@@ -8,7 +8,7 @@
 
 use super::disturbance::{
     ContainerAt, Disturbance, DisturbedParams, RemovedParams, ViewCause, grown_containers,
-    named_place, released_children, reshaped_containers,
+    named_place, overwritten_records, released_children, reshaped_containers,
 };
 use super::places::{
     ParamPlace, add_offset, call_arg_at, compose_param_at, get_record_literal_keys,
@@ -151,8 +151,15 @@ fn reshaped_via_call(stmt: &Value, data: &Data, removed: &RemovedParams) -> Hash
 /// Record `d` for `view`, keeping [`ViewCause::Reshaped`] when both apply.
 fn record_cause(map: &mut HashMap<u16, Disturbance>, view: u16, d: Disturbance) {
     let slot = map.entry(view).or_insert(d);
-    if d.cause == ViewCause::Reshaped {
-        *slot = d;
+    match (slot.provisional, d.provisional) {
+        // A loop-head record confirmed by the statement that disturbs (`Disturbance::provisional`).
+        (p, 0) if p > 0 => *slot = d,
+        // A confirmed record is never demoted, and an outer loop's record outlives an inner one's.
+        (0, _) if d.provisional > 0 => {}
+        (p, q) if p != q && p > 0 && q > p => {}
+        (p, q) if p != q && p > 0 => *slot = d,
+        _ if d.cause == ViewCause::Reshaped => *slot = d,
+        _ => {}
     }
 }
 
@@ -360,6 +367,11 @@ pub(super) struct ViewWalk<'a> {
     /// THROUGH such a variable names its root and the variable's own place too: on the path
     /// where the variable holds its own store, reassigning it releases what the view reads.
     maybe_own: HashSet<u16>,
+    /// The nesting level of the loop being walked (0: none).
+    loop_level: u8,
+    /// While a loop's whole body is shaken ahead of its walk, that loop's level; 0 otherwise
+    /// (`Disturbance::provisional`).
+    loop_edge: u8,
 }
 
 /// Does this `if` arm end by leaving the function — its last statement a `return`?
@@ -412,6 +424,8 @@ impl ViewWalk<'_> {
             rebound: None,
             ended_below: usize::MAX,
             maybe_own: HashSet::default(),
+            loop_level: 0,
+            loop_edge: 0,
         };
         walk.walk_block(std::slice::from_ref(code));
         walk.out
@@ -436,7 +450,9 @@ impl ViewWalk<'_> {
         // body come out live across a removal at the bottom of it.
         let floor = self.open.len();
         let outer_ended = std::mem::replace(&mut self.ended_below, usize::MAX);
-        self.disturb(stmt);
+        self.loop_level = self.loop_level.saturating_add(1);
+        let level = self.loop_level;
+        self.disturb_loop_edge(stmt, level);
         self.scoped(&b.operators);
         // The BACK EDGE. The shake above could only reach views that already existed;
         // a view the body itself binds is disturbed by the same statements one turn
@@ -449,11 +465,25 @@ impl ViewWalk<'_> {
         // pass reaches the fixpoint: it starts from the state the back edge carries,
         // and a third would start from the same one.
         let before: HashSet<u16> = self.shaken.keys().copied().collect();
-        self.disturb(stmt);
+        self.disturb_loop_edge(stmt, level);
         if self.shaken.keys().any(|v| !before.contains(v)) || self.ended_below < floor {
             self.scoped(&b.operators);
         }
+        // The EXIT leaves from the head without passing through the body, so what the head
+        // shake stood for has not happened on it: a record no path confirmed ends here.  Read
+        // after the loop, it copied a view bound AFTER the body's disturbance on one path and
+        // never disturbed on the other (`t = x.tp` behind `x = …` in one `match` arm).
+        self.shaken.retain(|_, d| d.provisional != level);
+        self.loop_level -= 1;
         self.ended_below = outer_ended.min(self.ended_below);
+    }
+
+    /// A loop's whole body shaken at once, ahead of its walk: what it records is provisional,
+    /// to be replaced by the disturbing statement's own record when the walk reaches it.
+    fn disturb_loop_edge(&mut self, stmt: &Value, level: u8) {
+        let outer = std::mem::replace(&mut self.loop_edge, level);
+        self.disturb(stmt);
+        self.loop_edge = outer;
     }
 
     /// Descend in SOURCE ORDER, because the whole point is which came first.
@@ -591,8 +621,12 @@ impl ViewWalk<'_> {
                 }
             }
         }
+        // A record either arm CONFIRMED outranks a loop-head one the other arm left standing.
         for (v, d) in e_shaken {
-            shaken.entry(v).or_insert(d);
+            let slot = shaken.entry(v).or_insert(d);
+            if slot.provisional > 0 && d.provisional == 0 {
+                *slot = d;
+            }
         }
         self.open = open;
         self.shaken = shaken;
@@ -671,7 +705,7 @@ impl ViewWalk<'_> {
         );
         // A REBUILD (`w.a = [..]`, `w.a = f()`: an `OpClearVector` on the field, then the
         // appends or the callee filling it) gives the container a new value.  The view OF the
-        // field survives it — `(B-Disturb)`: overwriting a place is not disturbing it — and
+        // field survives it — `(B-Disturb)`: an overwritten place stays — and
         // the views INTO its elements do not, because every element they named is gone.  Read
         // as an overwrite whole before, so `d = w.a[0]; w.a = [S{901}]` read the new vector's
         // element and a write through `d` landed in it, and `w.a = f()` read the freed block
@@ -690,6 +724,21 @@ impl ViewWalk<'_> {
         });
         for (place, depth, index) in rebuilt {
             self.shake_places_deeper(place, depth, index, ViewCause::Reassigned, None);
+        }
+        // A whole record written into a place releases what the old value owned
+        // (`(B-Disturb)`'s fifth event): the views deeper than the place and inside the record
+        // end, the view OF the place survives (loft#2391).  A view's slot is the offset of its
+        // own vector or child, anywhere in the written record, so each such slot is shaken.
+        for w in overwritten_records(stmt, self.data, self.database) {
+            for place in self.overwritten_slots(w.place, w.size) {
+                self.shake_places_deeper(
+                    place,
+                    w.at.depth,
+                    w.at.index,
+                    ViewCause::Overwritten,
+                    None,
+                );
+            }
         }
         // A growth ends the views deeper than the container it grows (`shake_places_keyed`).
         for (place, at) in grown_containers(stmt, self.data, self.function, self.database) {
@@ -742,7 +791,7 @@ impl ViewWalk<'_> {
         let Some(disturbed) = self.disturbed else {
             return;
         };
-        let mut hits: Vec<(ParamPlace, ContainerAt, ViewCause, u32)> = Vec::new();
+        let mut hits: Vec<(ParamPlace, ContainerAt, ViewCause, Option<u32>, u32)> = Vec::new();
         let data = self.data;
         stmt.walk(&mut |v| {
             let Value::Call(d, args) = v else { return };
@@ -757,12 +806,39 @@ impl ViewWalk<'_> {
                     continue;
                 };
                 let (place, at) = compose_param_at(base, base_at, inner, pd.at);
-                hits.push((place, at, pd.cause, *d));
+                hits.push((place, at, pd.cause, pd.span, *d));
             }
         });
-        for (place, at, cause, callee) in hits {
-            self.shake_plain_places(place, at, cause, Some(callee));
+        for (place, at, cause, span, callee) in hits {
+            let places = match span {
+                Some(_) => self.overwritten_slots(place, span),
+                None => vec![place],
+            };
+            for place in places {
+                self.shake_plain_places(place, at, cause, Some(callee));
+            }
         }
+    }
+
+    /// The places a whole record written at `place` ends views in, `span` bytes long
+    /// (`(B-Disturb)`'s fifth event): the place itself, and every slot inside the record that
+    /// an open view of the same variable reads through — a view carries the offset of its own
+    /// vector or child, which lies inside the written record but not at its start.  Without a
+    /// span (the type could not be sized) the whole variable, the safe direction.
+    fn overwritten_slots(&self, place: (u16, u32), span: Option<u32>) -> Vec<(u16, u32)> {
+        let (var, lo) = place;
+        let Some(size) = span.filter(|_| lo != ANY_FIELD) else {
+            return vec![(var, ANY_FIELD)];
+        };
+        let mut slots: HashSet<u32> = HashSet::from_iter([lo]);
+        slots.extend(
+            self.open
+                .iter()
+                .flatten()
+                .filter(|(_, c, f)| *c == var && *f != ANY_FIELD && *f >= lo && *f < lo + size)
+                .map(|(_, _, f)| *f),
+        );
+        slots.into_iter().map(|f| (var, f)).collect()
     }
 
     /// [`Self::shake_places_deeper`], with the prior state restored afterwards for every binding in
@@ -1367,8 +1443,17 @@ impl ViewWalk<'_> {
                 replaced: cause == ViewCause::Grown
                     && via.is_none()
                     && self.rebound == Some(container),
+                provisional: self.loop_edge,
             };
             record_cause(&mut self.shaken, view, d);
+            // A view already condemned on the provisional record takes the line too.
+            if let Some(used) = self.out.get_mut(&view)
+                && used.provisional > 0
+                && d.provisional == 0
+                && used.cause == d.cause
+            {
+                *used = d;
+            }
         }
     }
 

@@ -41,7 +41,13 @@ the detail, and that place wins if the two ever differ — fix this line, not th
    [§ 2b](#2b-never-leave-a-capability-in-the-fixture-only),
    [§ 5e](LIBRARY_PUBLISH.md#5e-fix-a-library-bug--the-clean-dev-checkout-flow)
 5. **Read a library's API from the catalogue**, never from a clone or an installed copy:
-   `make libcatalogue`, then `doc/claude/LIBRARIES.md` (@PLN112, [CLAUDE.md](../../CLAUDE.md)).
+   `make libcatalogue`, then `doc/claude/LIBRARIES.md` (@PLN112).  The catalogue is a local,
+   git-ignored build — a view of `published` plus each library's `origin/main`, breakage-flagged,
+   rebuilt on demand so it cannot go stale — while a clone or `~/.loft/registry/<pkg>-<ver>/` can
+   silently lag `origin/main`.  For the machine- and context-specific sources run the overlay:
+   `scripts/lib-overlay.py <name>` (local checkout + this project's pin) or
+   `scripts/proposal-review.py <name> <ref>` (a proposed candidate).  No copy is auto-deleted;
+   each is a legitimate source.
    A consumer project reads the stubs of the version it locked (loft-write skill).
 6. **Own your dependencies** — an external library is fine unless the stack already owns
    the capability.  [BUS_FACTOR.md](BUS_FACTOR.md)

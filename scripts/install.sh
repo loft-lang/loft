@@ -57,7 +57,10 @@ case "$arch" in
   *) die "unsupported architecture: $arch (loft publishes x86_64 and aarch64)" ;;
 esac
 case "$(uname -s)" in
-  Darwin) TRIPLE="$arch-apple-darwin" ;;
+  # No Intel Mac release: GitHub has no lasting Intel macOS runner, and loft ships only
+  # what CI has run.  The last one with an x86_64 macOS bundle is 2026.11.0.
+  Darwin) [ "$arch" = aarch64 ] || die "no release for Intel Macs after 2026.11.0 — download that one's x86_64-apple-darwin .zip from the releases page, or build loft from a source checkout (make install-user)"
+          TRIPLE="$arch-apple-darwin" ;;
   Linux)  TRIPLE="$arch-unknown-linux-gnu" ;;
   *) die "unsupported system: $(uname -s) — on Windows use the .zip from the releases page" ;;
 esac

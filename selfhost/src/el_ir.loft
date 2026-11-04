@@ -100,6 +100,28 @@ fn count_in(l: vector<ir::Node>, v: integer, chains: boolean, limit: integer) ->
   c
 }
 
+// The direct child nodes of `n`, in order (`Value::for_each_child`).
+pub fn children(n: ir::Node) -> vector<ir::Node> {
+  match n {
+    NdSpan { inner } => [inner],
+    NdCall { args } => args,
+    NdCallRef { args } => args,
+    NdBlock { block } => block[0].operators,
+    NdLoop { block } => block[0].operators,
+    NdInsert { items } => items,
+    NdTuple { items } => items,
+    NdSet { inner } => [inner],
+    NdReturn { inner } => [inner],
+    NdDrop { inner } => [inner],
+    NdYield { inner } => [inner],
+    NdIf { cond, t, f } => [cond, t, f],
+    NdIter { create, next, init } => [create, next, init],
+    NdTuplePut { inner } => [inner],
+    NdParallel { arms } => arms,
+    _ => []
+  }
+}
+
 // `Value::unspan`.
 // The last of a list of operators — a block's tail — or `NdNull` for an empty list.
 pub fn last(ops: vector<ir::Node>) -> ir::Node {

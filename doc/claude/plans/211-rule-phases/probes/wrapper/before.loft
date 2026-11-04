@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// probe-rule: R-Wrapper
+// probe-n: 20000 60000
+// A one-op stdlib wrapper called in a loop: the interpreter makes the call every pass.
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  v = [1, 2, 3];
+  s = 0;
+  for i in 0..n {
+    s += len(v) + i;
+  }
+  println("{s}");
+}

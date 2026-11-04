@@ -154,6 +154,10 @@ impl State {
         // loft#1697 — generating the body changes no body, so the ownership oracle's
         // whole-function walk is done once for it, not once per question the generator asks.
         let _defs_memo = crate::use_analysis::defs_memo_scope(data, def_nr);
+        // The rewrite census credits what the bytecode generator admits to the `interp` phase.
+        let _census_body = crate::rewrite_census::InBody::enter("interp", data.def(def_nr).name());
+        // `@FR-R-LoopSlot`: the loop variables this frame places in their range index's slot.
+        crate::rewrite_census::fired("R-LoopSlot", super::slot_aliases(data, def_nr).len());
         let logging =
             !crate::file_access::is_stdlib_source(data.def(def_nr).position().file.as_str());
         let console = false; //logging;
@@ -1198,10 +1202,16 @@ impl State {
                         };
                         eprintln!("start-step: {} {} {verdict}", f.name, f.name(lv));
                     }
-                    if holds { s } else { r }
+                    if holds {
+                        crate::rewrite_census::fired("R-StartStep", 1);
+                        s
+                    } else {
+                        r
+                    }
                 }
                 None => r,
             };
+            crate::rewrite_census::fired("R-Rotate", 1);
             return self.gen_rotated_loop(lp, &r, stack);
         }
         stack.add_loop(self.code_pos);
@@ -4666,6 +4676,7 @@ impl State {
             && let (Ok(n), Ok(sz)) = (u32::try_from(*n), u32::try_from(*sz))
             && n == crate::vector::grown_elems(1, sz)
         {
+            crate::rewrite_census::fired("R-FirstClaim", 1);
             return Type::Void;
         }
         // S34: suppress OpFreeRef for variables moved to a shared slot by Option A.
@@ -4735,9 +4746,14 @@ impl State {
         // a retbuf/Database-reused local like `off` keeps its DbRef for in-place
         // `OpDatabase` reuse, and nulling it destabilises the `protect_store_frees`
         // machinery (leaks the returned value).
+        // A LIFT temp is reset too (loft#2385): it is rebound by every evaluation, and the
+        // rebind of a call that may answer a borrow (`Database` + `CopyRefOrNull`) re-inits
+        // the slot's store IN PLACE — after its free, a store the allocator may have handed to
+        // the call's own fresh answer, so the re-init wiped that answer and the copy read an
+        // empty record.  Native resets after every free; a lift's slot holds nothing after it.
         if stack.data.def(op).name() == "OpFreeRef"
             && let Some(Value::Var(v)) = parameters.first()
-            && stack.owned_reassigned.contains(v)
+            && (stack.owned_reassigned.contains(v) || stack.function.is_lift_temp(*v))
         {
             let var_pos = stack.var_pos(*v);
             self.generate(&parameters[0], stack, false);
@@ -4753,7 +4769,7 @@ impl State {
         // way: when the guard declined, the store is the buffer's, which still names it.
         if stack.data.def(op).name() == "OpFreeRefIfDistinct"
             && let [Value::Var(v), witness] = parameters
-            && stack.owned_reassigned.contains(v)
+            && (stack.owned_reassigned.contains(v) || stack.function.is_lift_temp(*v))
         {
             let var_pos = stack.var_pos(*v);
             self.generate(&parameters[0], stack, false);
@@ -5325,6 +5341,7 @@ impl State {
         }
         let code_step = self.code_pos;
         self.code_add(0i32); // temp step
+        crate::rewrite_census::fired("R-Fuse/text", 1);
         Some(code_step)
     }
 
@@ -5383,6 +5400,7 @@ impl State {
         self.code_add(fld);
         self.vars.insert(at + 1, vec);
         self.vars.insert(at + 2, idx);
+        crate::rewrite_census::fired("R-Fuse/field", 1);
         true
     }
 
@@ -5439,6 +5457,7 @@ impl State {
         self.record_store_span(at, w.index);
         self.record_store_span(at, w.next);
         self.fused_away.push(w.result);
+        crate::rewrite_census::fired("R-Fuse/text", 1);
         true
     }
 
@@ -5481,6 +5500,7 @@ impl State {
         {
             let at = self.code_pos;
             let (vp, ip) = (stack.var_pos(vec), stack.var_pos(idx));
+            crate::rewrite_census::fired("R-Fuse/jump", 1);
             stack.add_op("OpVecEndJump", self);
             self.code_add(vp);
             self.code_add(ip);
@@ -5493,6 +5513,7 @@ impl State {
         if let Some((of, v, c)) = tag_test_local(stack, name, &args) {
             let at = self.code_pos;
             let a = stack.var_pos(v);
+            crate::rewrite_census::fired("R-Fuse/tag", 1);
             stack.add_op("OpTagVCJump", self);
             self.code_add(of);
             self.code_add(a);
@@ -5503,6 +5524,7 @@ impl State {
             return code_step;
         }
         if let Some(f) = fused {
+            crate::rewrite_census::fired("R-Fuse/jump", 1);
             let at = self.code_pos;
             let a = stack.var_pos(f.a);
             stack.add_op(
@@ -5536,6 +5558,7 @@ impl State {
     /// height the op starts at — no operand is pushed first — and `dst` is the position an
     /// `OpPutInt` would carry after the result's push, which is how `put_var` addresses it.
     fn emit_fused_int(&mut self, stack: &mut Stack, f: &FusedInt, dst: Option<u16>) {
+        crate::rewrite_census::fired("R-Fuse", 1);
         let at = self.code_pos;
         let a = stack.var_pos(f.a);
         let dst_pos = dst.map(|d| stack.position + stack.step(8) - stack.function.stack(d));

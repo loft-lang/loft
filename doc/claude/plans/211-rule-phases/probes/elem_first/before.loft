@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// probe-rule: R-ElemFirst
+// probe-n: 20000 60000
+// A local vector built, then consumed once as a field of an appended record.
+struct Row { id: integer, f: vector<integer> }
+
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  out: vector<Row> = [];
+  s = 0;
+  for i in 0..n {
+    if len(out) >= 64 { out.clear(); }
+    t: vector<integer> = [];
+    for j in 0..4 { t += [i + j]; }
+    out += [Row { id: i, f: t }];
+    s += len(out) + out[len(out) - 1].f[3];
+  }
+  println("{s}");
+}

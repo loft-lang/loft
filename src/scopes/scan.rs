@@ -537,7 +537,12 @@ impl Scopes<'_> {
                 // hoist: the return delivers its value into the CALLER's buffer, so
                 // freeing the temp at body exit — the behaviour before loft#722 — is
                 // both correct and what the caller's copy relies on.
-                if !matches!(bl.result, Type::Void)
+                // A block that ENDS IN A JUMP (typed `never`: a `return`, `break` or `continue`)
+                // yields no value for the enclosing scope to borrow, and the hoist's promise —
+                // the outer scope frees the temp instead — is one control never reaches past the
+                // jump.  A `return` binds its value before its frees (`bind_return_temp`), so the
+                // jump's own free of the temp is the one that is owed (loft#2382).
+                if !matches!(bl.result, Type::Void | Type::Never)
                     && !is_body_return
                     && self.lift_vars.len() > lift_watermark
                 {
@@ -1281,8 +1286,20 @@ impl Scopes<'_> {
         else {
             return HashSet::default();
         };
+        // A FREE inside the result is no borrow of what it frees: an early `return`'s own
+        // scope-exit `OpFreeRef(__lift_1)` sits inside the block's last operator, and read as a
+        // root it hoisted the lift and dropped that very free — the record the lift held leaked
+        // once per call (loft#2382).  So the walk does not descend into a free.
+        fn visit<'a>(n: &'a Value, data: &Data, f: &mut impl FnMut(&'a Value)) {
+            let n = n.unspan();
+            if scope_free_op_var(n, data).is_some() {
+                return;
+            }
+            f(n);
+            n.for_each_child(&mut |c| visit(c, data, f));
+        }
         let mut roots = HashSet::default();
-        result.walk(&mut |n| {
+        visit(result, data, &mut |n| {
             if let Some(r) = Self::borrow_root(n, data) {
                 let mut cur = r;
                 // Follow the in-block assignment chain, bounded by its own size so

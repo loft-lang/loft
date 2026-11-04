@@ -123,7 +123,7 @@ pub(crate) use capture_builds::CaptureBuilds;
 use closure_keep::ClosureKeep;
 use confinement::{relocate_null_init, rest_store_oracle, store_confinement, store_lifetime_guard};
 use disturbance::Disturbance;
-pub use disturbance::{DisturbedParams, ViewCause, disturbed_params_map, places_disturbed_by};
+pub use disturbance::{DisturbedParams, ViewCause, disturbed_params_map};
 pub(crate) use handles::handle_rhs_kinds;
 use handles::retain_shared_handles;
 pub(crate) use handoff::{
@@ -290,8 +290,15 @@ struct Scopes<'s> {
     /// is already gone, so such a base is not offered as a witness.  Conservative in the safe
     /// direction: declining keeps today's leak, never frees a store twice.
     multi_assigned: HashSet<u16>,
+    /// The binding whose FIRST assignment the `Set` being scanned is, or `u16::MAX`.  A
+    /// multi-assigned binding is first bound with no store of its own, so its value branch's
+    /// arms take the per-arm copy `(B-Copy)` asks (`Scopes::arm_bind`, loft#2398).
+    first_set: u16,
     /// The `??` hoists that hold a whole LOCAL rather than a projection ([`whole_value_hoists_in`]).
     whole_value_hoists: HashSet<u16>,
+    /// The compiler temps a value block binds from a PROJECTION and hands back as its tail —
+    /// a `match` arm's payload binding ([`arm_projection_temps_in`]).
+    arm_projection_temps: HashSet<u16>,
     /// Variables every bind of which but ONE writes `null` ([`null_led_in`]): the author's
     /// `x: T? = null; if c { x = mk() }`, which `(B-Scope)` makes the spelling of a local an
     /// arm assigns and a later statement reads.
@@ -843,6 +850,12 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-VecCopy` — a vector copied into an exclusive one element at a time is one
         // append: decided on the same settled IR.
         crate::vec_copy::rewrite(data, database, d_nr);
+        // `@FR-R-SliceArg`'s range clause — `text_from_bytes(v[lo..hi])` reads the span in place:
+        // decided on the same settled IR, so neither backend builds the slice.
+        crate::slice_text::rewrite(data, d_nr);
+        // `@FR-R-Wrapper` — a stdlib one-op wrapper's call is its op: decided last, so every
+        // rewrite above sees the IR it saw before, and both backends skip the call.
+        crate::wrapper_inline::rewrite(data, d_nr);
         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
         // variants (gated; no-op in normal builds).
         if tag_mode {

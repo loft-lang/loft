@@ -104,6 +104,7 @@ HITS_EXAMPLES_WARN=0
 HITS_EXINDEX=0
 HITS_VALIDATOR=0
 HITS_VALIDATOR_WARN=0
+HITS_PHASES=0
 
 red()    { [ $QUIET -eq 0 ] && printf '\033[31m%s\033[0m\n' "$*"; }
 yellow() { [ $QUIET -eq 0 ] && printf '\033[33m%s\033[0m\n' "$*"; }
@@ -1084,6 +1085,23 @@ check_examples_index() {
   rm -f "$tmp"
 }
 
+# ---- The rewrite register's `## Applied by` is the phase table, rendered ----
+# formal/rewrites.md states each rule's applying phase only in the section
+# `scripts/rule_phases.py --render` writes from bench/portal/rule_phases.tsv, which the
+# rewrite census measures (@PLN211 A3).  A section that differs from the table is drift.
+# Only this repo has the table; elsewhere the check is skipped without a word.
+check_rule_phases() {
+  [ -f scripts/rule_phases.py ] && [ -f bench/portal/rule_phases.tsv ] || return 0
+  say "=== formal/rewrites.md § Applied by matches the phase table ==="
+  local out
+  if out=$(python3 scripts/rule_phases.py --check-doc 2>&1); then
+    green "  ok — rendered from bench/portal/rule_phases.tsv"
+  else
+    red "  $out"
+    HITS_PHASES=1; DRIFT=1
+  fi
+}
+
 # ---- Registry validator: the template and the deployed copy are ONE file ----
 # `doc/claude/registry_ci_template/validate.py` is the file a registry deploys at
 # `tools/validate.py`, and its own docstring says so.  The two drifted for eleven
@@ -1682,6 +1700,7 @@ case "$CHECK" in
     EXAMPLES_PREFLIGHT=1; EXAMPLES_CITE_GATES=1
     check_examples; sep; check_examples_index ;;
   validator) check_validator ;;
+  rule-phases) check_rule_phases ;;
   write-examples-index) write_examples_index; exit 0 ;;
   examples-progress) check_examples_progress; exit 0 ;;   # a REPORT — never in `all`
   features-progress) check_features_progress; exit 0 ;;   # a REVIEW AID — never in `all`, never a gate
@@ -1708,9 +1727,11 @@ case "$CHECK" in
     check_examples_index
     sep
     check_validator
+    sep
+    check_rule_phases
     ;;
   *)
-    echo "Usage: $0 [-q|--quiet] [all|paths|time|stale|roadmap|refs|libs|examples|examples-selftest|examples-index|emit-examples-index|examples-preflight|validator|write-examples-index|examples-progress|features-progress|libraries-progress]" >&2
+    echo "Usage: $0 [-q|--quiet] [all|paths|time|stale|roadmap|refs|libs|examples|examples-selftest|examples-index|emit-examples-index|examples-preflight|validator|rule-phases|write-examples-index|examples-progress|features-progress|libraries-progress]" >&2
     exit 2
     ;;
 esac
@@ -1719,11 +1740,11 @@ esac
 if [ "${EXAMPLES_CITE_GATES:-1}" -eq 0 ]; then
   # Cross-repo run: the worked-example checks ADVISE rather than gate (see the tier note
   # at the top).  They still print in full and still show in the summary.
-  total=$((HITS_PATHS + HITS_STALE + HITS_ROADMAP + HITS_REFS + HITS_VALIDATOR))
+  total=$((HITS_PATHS + HITS_STALE + HITS_ROADMAP + HITS_REFS + HITS_VALIDATOR + HITS_PHASES))
   warns=$((HITS_TIME + HITS_LIBS + HITS_EXAMPLES + HITS_EXAMPLES_WARN + HITS_EXINDEX + HITS_VALIDATOR_WARN))
   tier_note=" [worked-example checks advisory: cross-repo — 'examples-preflight' to gate them here]"
 else
-  total=$((HITS_PATHS + HITS_STALE + HITS_ROADMAP + HITS_REFS + HITS_EXAMPLES + HITS_EXINDEX + HITS_VALIDATOR))
+  total=$((HITS_PATHS + HITS_STALE + HITS_ROADMAP + HITS_REFS + HITS_EXAMPLES + HITS_EXINDEX + HITS_VALIDATOR + HITS_PHASES))
   warns=$((HITS_TIME + HITS_LIBS + HITS_EXAMPLES_WARN + HITS_VALIDATOR_WARN))
   if [ "${EXAMPLES_PREFLIGHT:-0}" -eq 1 ]; then
     tier_note=" [preflight: citation faults GATE, the index is not required]"
@@ -1731,7 +1752,7 @@ else
     tier_note=""
   fi
 fi
-summary="paths=$HITS_PATHS time=$HITS_TIME stale=$HITS_STALE roadmap=$HITS_ROADMAP refs=$HITS_REFS libs=$HITS_LIBS examples=$HITS_EXAMPLES/w$HITS_EXAMPLES_WARN exindex=$HITS_EXINDEX validator=$HITS_VALIDATOR/w$HITS_VALIDATOR_WARN$tier_note"
+summary="paths=$HITS_PATHS time=$HITS_TIME stale=$HITS_STALE roadmap=$HITS_ROADMAP refs=$HITS_REFS libs=$HITS_LIBS examples=$HITS_EXAMPLES/w$HITS_EXAMPLES_WARN exindex=$HITS_EXINDEX validator=$HITS_VALIDATOR/w$HITS_VALIDATOR_WARN phases=$HITS_PHASES$tier_note"
 if [ $DRIFT -eq 0 ] && [ $warns -eq 0 ]; then
   printf '\033[32mclean\033[0m (%s)\n' "$summary"
   exit 0

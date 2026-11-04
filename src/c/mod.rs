@@ -2388,6 +2388,9 @@ fn unit_defines(
             .any(|&d| data.def(d).const_ref.is_some());
     if !locks && !crate::env_once!(std::env::var("LOFT_NO_LOCK_FACT").is_ok_and(|v| v != "0")) {
         out.push_str("#define LOFT_NO_LOCKS 1\n");
+        // The unit is the site: credited to the C writer, no function.
+        let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        crate::rewrite_census::fired("R-NoLocks", 1);
     }
     // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
     // tree with its layout read from this program's type table for one that reaches a JSON
@@ -2573,7 +2576,11 @@ pub fn emit_program(
 ) -> Result<String, Refusal> {
     // The rewrites this unit admitted, written where `LOFT_REWRITE_CENSUS` asks, as the native
     // writer writes its own after emitting: the census can then set the two writers side by side.
+    // What the writer admits outside any function body (a signature, the unit's analyses) is
+    // the C phase's too, under no function.
+    let census_unit = crate::rewrite_census::InBody::enter("c", "");
     let out = emit_program_counted(data, stores, expected);
+    drop(census_unit);
     crate::rewrite_census::write();
     out
 }
@@ -2657,6 +2664,42 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
     Ok(out)
 }
 
+/// C99 for an ESP-IDF app (`--native-esp`, @PLN204): the unit, then `loft_esp.h` (the packed
+/// assets as a read-only filesystem, the board's start-up), then the `app_main` ESP-IDF starts
+/// in.  It runs the program as `main` would and goes back to the launcher when it ends.
+///
+/// # Errors
+/// A program without a `main` that takes nothing, or the first [`Refusal`].
+pub fn emit_esp_program(data: &Data, stores: &Stores) -> Result<String, Refusal> {
+    let main = data.def_nr("n_main");
+    if main >= data.definitions() {
+        return Err(Refusal {
+            function: "main".into(),
+            why: "an app without a main".into(),
+        });
+    }
+    let (main, call) = program_main(data, main)?;
+    let mut out = emit_unit(data, stores, &[main])?;
+    let _ = write!(
+        out,
+        "{ESP_ENTRY}\n    loft_esp_note(\"app\", -1);\n    loft_esp_nvs();\n    \
+         loft_esp_board();\n    loft_esp_assets();\n    loft_bind_tables();\n    \
+         loft_start(0, 0);\n    {}\n    loft_esp_note(\"main\", -1);\n    loft_esp_release();\n    {call}\n    \
+         loft_leak_report();\n    loft_esp_end(loft_had_fatal);\n}}\n",
+        anchor(stores),
+    );
+    crate::rewrite_census::write();
+    // The tidy pass reads the written program only; the ESP half is the runtime's, so it goes in
+    // after, just before the entry that calls it.
+    let mut out = tidy::drop_unnamed(&out, RUNTIME_END);
+    let at = out.rfind(ESP_ENTRY).unwrap_or(out.len());
+    out.insert_str(at, include_str!("loft_esp.h"));
+    Ok(out)
+}
+
+/// The first line of an ESP app's entry, where [`emit_esp_program`] puts `loft_esp.h`.
+const ESP_ENTRY: &str = "\nvoid app_main(void) {";
+
 /// loft#950 — the asyncify save region a page's module owns, as the Rust writer's
 /// (`emit_asyncify_region`): the 8-byte control struct asyncify takes, the save area after it,
 /// and a canary after that, so an overflow is reported (`loft_asyncify_ok`) instead of
@@ -2713,6 +2756,14 @@ pub(crate) fn variable_shapes(
         // A local only ever bound to `null` (`x = null;`, never given a type) holds the
         // integer null; nothing reads it as another kind.
         if matches!(tp, Type::Null) && !args.contains(&v) {
+            shapes.push(CType::Int);
+            continue;
+        }
+        // `(C-Never)` — a local bound to a value that never arrives: the parser keeps the
+        // diverging value as the statement and nothing after it, so no operator names the local
+        // (loft#2388).  It takes the integer shape the null-only local takes, and `tidy` drops
+        // the unused declaration.
+        if matches!(tp, Type::Never) && !args.contains(&v) {
             shapes.push(CType::Int);
             continue;
         }
@@ -2807,6 +2858,16 @@ pub(crate) fn dest_scalar_ctype(s: &crate::lower::destination::Scalar) -> CType 
 /// plain `static` otherwise — in the unit's own text and in the frame wrappers'.
 fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) {
     let hot = cx.hot_helpers();
+    {
+        let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        let inlined = cx
+            .hot_candidates
+            .borrow()
+            .iter()
+            .filter(|d| hot.contains(d))
+            .count();
+        crate::rewrite_census::fired("R-Inline/helper", inlined);
+    }
     let resolve = |text: &str| -> String {
         let mut out = text.to_string();
         for d in cx.hot_candidates.borrow().iter() {
@@ -3070,7 +3131,10 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .transient(tf)
             .write()
         {
-            Ok(b) => Some(b),
+            Ok(b) => {
+                crate::rewrite_census::fired("R-Transient", 1);
+                Some(b)
+            }
             Err(why) => {
                 body::transient::declined(cx, d, &why);
                 None
@@ -3097,6 +3161,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let body = tabulated(cx, d, ret, &params, body);
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
     let inline = small_function(statements) || hot_twin(mask, statements);
+    crate::rewrite_census::fired("R-Inline", usize::from(inline));
     let helper = !inline && hot_helper_size(mask, statements);
     let storage = if inline {
         "static inline".to_string()

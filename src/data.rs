@@ -4403,6 +4403,26 @@ impl Display for DefType {
     }
 }
 
+impl DefType {
+    /// The kind as a diagnostic names it, article included: "an enum", "a type template".
+    #[must_use]
+    pub fn described(&self) -> &'static str {
+        match self {
+            DefType::Unknown => "an undefined name",
+            DefType::Function | DefType::Dynamic => "a function",
+            DefType::Enum => "an enum",
+            DefType::EnumValue => "an enum variant",
+            DefType::Struct => "a struct",
+            DefType::Vector => "a vector type",
+            DefType::Type => "a type",
+            DefType::Constant => "a constant",
+            DefType::Generic => "a generic function",
+            DefType::Interface => "an interface",
+            DefType::TypeTemplate => "a type template",
+        }
+    }
+}
+
 pub use crate::database::{LinkedFieldGroup, LinkedFieldKind};
 
 /// [`Definition::op_priority`] of a `#hot` operator: the first slots, run inline.

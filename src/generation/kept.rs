@@ -876,7 +876,7 @@ impl super::Output<'_> {
         if frame.is_empty() {
             return Ok(false);
         }
-        crate::rewrite_census::fired("R-Kept", frame.len());
+        crate::rewrite_census::fired("R-Header/kept", frame.len());
         self.vec_headers.push(frame);
         self.vec_bases.push(HashMap::new());
         Ok(true)
@@ -1074,7 +1074,7 @@ impl super::Output<'_> {
             out.push(self.kept_holders[at].hand.clone());
         }
         self.kh_twin_sites.insert(vals.as_ptr() as usize);
-        crate::rewrite_census::fired("R-KeptTwin", 1);
+        crate::rewrite_census::fired("R-Header/kept-twin", 1);
         Some(out)
     }
 }

@@ -18,6 +18,21 @@ pub struct DefName {
   pub nr: integer
 }
 
+// A header variable in scope: its spelling and its placeholder definition.  A struct of its
+// own: a second collection of `DefName` in `El` would share the name table's records.
+pub struct TypeVar {
+  pub spelling: text,
+  pub holder: integer
+}
+
+// An instance made before its template's second-pass body was read: filled after the pass.
+pub struct StaleInstance {
+  pub d: integer,
+  pub g: integer,
+  pub holder: integer,
+  pub bound: ir::TypeT
+}
+
 pub struct El {
   // the definitions and the schema being built
   pub b: ir::Bundle,
@@ -38,8 +53,17 @@ pub struct El {
   pub line: integer,
   // what elaboration does not carry yet, by name: the gate counts a program that reaches one
   pub refused: vector<text>,
+  // the functions the program declares whose definition elaboration refused: a call of one is
+  // not refused again, as a call of an unknown function
+  pub declined: vector<text>,
   // the source text, by line, for a message that quotes the program (`Lexer::text_between`)
-  pub lines: vector<text>
+  pub lines: vector<text>,
+  // `Parser::cur_type_vars`: the header variables of the function being read, each spelling
+  // to its placeholder definition
+  pub type_vars: vector<TypeVar>,
+  // `Parser::pass2_bodies`: the generic templates whose second-pass body has been read
+  pub bodies2: vector<integer>,
+  pub stale: vector<StaleInstance>
 }
 
 pub const STD_SOURCE = 0;
@@ -75,7 +99,11 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     context: -1,
     line: 0,
     refused: [],
-    lines: []
+    declined: [],
+    lines: [],
+    type_vars: [],
+    bodies2: [],
+    stale: []
   }
 }
 

@@ -306,7 +306,9 @@ Four shapes that read as correct and are not, each measured in this repo's own s
   by name on a shared box.** `until ! pgrep -f "make ci"` never exits: the poller's own
   `bash -c '…'` command line contains `make ci`. `pkill -f "make ci"` matched — and killed — a
   sibling checkout's run. Wait on an artefact or a pid file instead (`make ci` records its run
-  in `.ci-running`), stop a run through the tool that started it
+  in `.ci-running`) — `scripts/wait_for.sh FILE REGEX [--pid N]` is that wait, and it always
+  ends: a deadline (`--timeout`, 3600 s) and, with `--pid`, the producer's death (`--stale` lists
+  the wait loops on the box that never will) — stop a run through the tool that started it
   (`scripts/find_problems.sh --stop`), and before acting on a "concurrent run" claim read
   the candidates' `readlink /proc/<pid>/cwd`.  A PID is no safer than a name until you know
   whose it is: before `kill <pid>`, walk `ps -o pid,ppid,args` up to a shell this session

@@ -18,6 +18,7 @@ use el_schema;
 pub fn elab_file(e: el::El, file: integer) {
   match e.p.nodes[file] {
     SFile { items } => {
+      claim_declared_type_names(e, items);
       for it in items {
         top_item(e, it);
       }
@@ -30,14 +31,24 @@ pub fn elab_file(e: el::El, file: integer) {
 
 fn top_item(e: el::El, it: integer) {
   match e.p.nodes[it] {
-    SDirective { at } => {},
+    // `#width 32` narrows every integer operation of the file (`OpNarrow32`) and its integer
+    // fields — not carried; the other directives leave the code as it is.
+    SDirective { at, name, arg } => {
+      if name == "width" && arg != "64" {
+        el::refuse(e, "a `#width {arg}` file");
+      }
+    },
     SUse { at } => { el::refuse(e, "use"); },
     SCapability { at } => {},
     SAlias { at, name, tp, size } => { parse_typedef(e, at, name, tp, size); },
     SEnum { at, name, tvars, variants } => { parse_enum(e, at, name, tvars, variants); },
     SInterface { at, name, members, end } => { parse_interface(e, at, name, members, end); },
     SFn { at, is_op, name, tvars, params, ret, ret_const, cap, body, annots } => {
-      parse_function(e, at, is_op, name, tvars, params, ret, ret_const, cap, body, annots);
+      key = parse_function(e, at, is_op, name, tvars, params, ret, ret_const, cap, body, annots);
+      e.type_vars = [];
+      if e.first_pass && (key == "" || el::def_nr(e, key) < 0) {
+        e.declined += [name];
+      }
     },
     SStruct { at, value, name, tvars, fields } => { parse_struct(e, at, value, name, tvars, fields); },
     SConst { at } => { el::refuse(e, "constant"); },
@@ -50,6 +61,27 @@ fn top_item(e: el::El, it: integer) {
 // field an attribute of its declared type, mutable, nullable only when the type is `τ?` (an
 // integer field's spec records it).  The second pass adds nothing.  A value struct, a template,
 // a field modifier, a default and a capture are refused by name.
+// `Parser::claim_declared_type_names`: before the first pass reads a file, each type it
+// declares (`struct`, `enum`, `type`, a capitalised name) that would shadow a standard-library
+// name takes a stub of its own, so the file's lookups find it first and the declaration adopts
+// it — which numbers such a type ahead of every other definition of the file.
+fn claim_declared_type_names(e: el::El, items: vector<integer>) {
+  if !e.first_pass || e.source == el::STD_SOURCE {
+    return;
+  }
+  for it in items {
+    nm = match e.p.nodes[it] {
+      SStruct { name } => name,
+      SEnum { name } => name,
+      SAlias { name } => name,
+      _ => ""
+    };
+    if nm != "" && nm[0] >= 'A' && nm[0] <= 'Z' && el::prelude_shadowed(e, nm) {
+      el::add_def(e, nm, el::pos_at(e, 0), el::DT_UNKNOWN);
+    }
+  }
+}
+
 fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vector<integer>, fields: vector<integer>) {
   if value || len(tvars) > 0 {
     el::refuse(e, "a value struct or a struct template");
@@ -58,11 +90,16 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
   nt = el::name_tok(e, at, name);
   d = if e.first_pass && el::prelude_shadowed(e, name) { -1 } else { el::def_nr(e, name) };
   if e.first_pass {
-    if d >= 0 {
+    // A stub this file claimed for the name (`claim_declared_type_names`) is adopted.
+    if d >= 0 && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source == e.source {
+      e.b.data.definitions[d].def_type = el::DT_STRUCT;
+      e.b.data.definitions[d].position = el::pos_at(e, nt + 1);
+    } else if d >= 0 {
       el::refuse(e, "a struct over an existing name");
       return;
+    } else {
+      d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_STRUCT);
     }
-    d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_STRUCT);
     el::set_returned(e, d, ir::TyReference { n: d, dep: [] });
   }
   if d < 0 {
@@ -236,18 +273,57 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
       SIFn { kind, name: method, params, ret, end: mend } => {
         member = if kind == "op" { "Op{op_rename(method)}" } else { method };
         if e.first_pass && d >= 0 {
+          // The member's signature: its parameters as declared (`self: Self` among them) and
+          // its result, `void` where it writes no `->` (loft#734).
+          sig: vector<ir::Attribute> = [];
+          for pn in params {
+            match e.p.nodes[pn] {
+              SParam { name: an, amp, fixed, tp, init, cap: pcap } => {
+                if amp || init != null || pcap != null || tp == null {
+                  el::refuse(e, "an interface method parameter with a `&`, a default, a capability or no type");
+                  return;
+                }
+                pt = el_types::parse_type(e, tp ?? 0);
+                if pt == null {
+                  return;
+                }
+                ma = el::attribute(an, pt!);
+                ma.value_const = fixed;
+                sig += [ma];
+              },
+              _ => {}
+            }
+          }
+          rt: ir::TypeT = ir::TyVoid;
+          if ret != null {
+            r = el_types::parse_type(e, ret ?? 0);
+            if r == null {
+              return;
+            }
+            rt = r!;
+          }
           stub = "__iface_{d}#{len(params)}_{member}";
           if el::def_nr(e, stub) < 0 {
             sn = el::add_def(e, stub, el::pos_at(e, mend), el::DT_FUNCTION);
+            e.b.data.definitions[sn].attributes = sig;
             e.b.data.definitions[sn].parent = d;
             e.b.data.definitions[sn].operator_form = kind == "operator";
+            el::set_returned(e, sn, rt);
           }
           sym = symbolic_member(member, len(params));
           if kind == "operator" && sym != "" {
             alias = "__iface_{d}#{len(params)}_{sym}";
             if el::def_nr(e, alias) < 0 {
               an = el::add_def(e, alias, el::pos_at(e, mend), el::DT_FUNCTION);
+              plain: vector<ir::Attribute> = [];
+              for a in sig {
+                plain += [el::attribute(a.name, a.typedef[0] ?? ir::TyVoid)];
+              }
+              e.b.data.definitions[an].attributes = plain;
               e.b.data.definitions[an].parent = d;
+              // `operator compare` answers its order as a boolean `<`; the others answer what
+              // the member does.
+              el::set_returned(e, an, if member == "compare" { ir::TyBoolean } else { rt });
             }
           }
         }
@@ -290,34 +366,87 @@ struct Argument {
   constant: boolean
 }
 
+// A block whose one statement is a vector literal.
+fn sole_vector_literal(e: el::El, body: integer) -> boolean {
+  stmts = match e.p.nodes[body] { SBlock { stmts: ss } => ss, _ => [] };
+  if len(stmts) != 1 {
+    return false;
+  }
+  match e.p.nodes[stmts[0]] {
+    SStmt { e: x } => if x == null { false } else { e.p.nodes[x!] is SVecLit },
+    _ => false
+  }
+}
+
 // `fn name(params) (-> type)? (; / block)`                    Parser::parse_function
-// The plain path: no type variables, no operator form, no capability, no annotation, no `self`.
-fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) {
-  if is_op || len(tvars) > 0 || cap != null || len(annots) > 0 || ret_const {
-    el::refuse(e, "a function with an operator form, type variables, a capability, annotations or `-> const`");
-    return;
+// The plain path: no type variables, no operator form, no capability, no annotation, no `both`.
+// A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
+// the definition's key, or "" where the declaration was refused before one was known.
+fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) -> text {
+  if is_op || cap != null || len(annots) > 0 || ret_const {
+    kind = if is_op { "an operator form" } else if cap != null { "a capability" } else if len(annots) > 0 { "annotations" } else { "`-> const`" };
+    el::refuse(e, "a function with an operator form, a capability, annotations or `-> const`: {kind}");
+    return "";
+  }
+  // `parse_type_var_header` (@F25): each header variable bound to its placeholder before the
+  // parameters are read, so `parse_type` resolves its spelling.
+  for tv in tvars {
+    match e.p.nodes[tv] {
+      STVar { at: tat, name: tn, bounds } => {
+        if len(tvars) > 1 {
+          el::refuse(e, "a generic with more than one type variable");
+          return "";
+        }
+        h = header_var(e, tn, bounds, el::pos_at(e, el_expressions::after_paren(e, tat)));
+        if h < 0 {
+          return "";
+        }
+        e.type_vars += [el::TypeVar { spelling: tn, holder: h }];
+      },
+      _ => {}
+    }
+  }
+  // `@FR-R-Const`: a function of no parameters whose whole body is one vector literal gets a
+  // constant twin (`__const_n_<name>`) the calls of it read — not carried: refused by name.
+  if len(params) == 0 && body != null && sole_vector_literal(e, body!) {
+    el::refuse(e, "a function whose body is one vector literal (a constant twin)");
+    return "";
   }
   vars = el_vars::new_vars(name, e.file);
   arguments: vector<Argument> = [];
   for pn in params {
     match e.p.nodes[pn] {
       SParam { name: an, amp, fixed, tp, init, cap: pcap } => {
-        if amp || init != null || pcap != null || tp == null {
-          el::refuse(e, "a parameter with `&`, a default, a capability or no type");
-          return;
+        if init != null || pcap != null || tp == null {
+          kind = if init != null { "a default" } else if pcap != null { "a capability" } else { "no type" };
+          el::refuse(e, "a parameter with a default, a capability or no type: {kind}");
+          return "";
         }
         t = el_types::parse_type(e, tp ?? 0);
         if t == null {
-          return;
+          return "";
         }
-        if an == "self" || an == "both" {
-          el::refuse(e, "a method");
-          return;
+        // `Parser::ref_var_type`: a `&T` parameter is a link to the caller's `T`.  A tuple's
+        // record form is not carried.
+        if amp {
+          if t! is TyTuple {
+            el::refuse(e, "a `&` parameter of a tuple");
+            return "";
+          }
+          t = ir::TyRefVar { inner: t! };
+        }
+        if an == "both" || (an == "self" && pn#index > 0) {
+          el::refuse(e, "a method: {an}");
+          return "";
         }
         arguments += [Argument { name: an, typedef: t!, constant: fixed }];
       },
       _ => {}
     }
+  }
+  key = fn_key(e, name, arguments);
+  if key == "" {
+    return "";
   }
   // Where the Rust lexer stands after `)`: on the `->`, the body's `{` or the `;`.
   after = at;
@@ -330,11 +459,6 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
       },
       _ => {}
     }
-    t = el_types::parse_type(e, ret ?? 0);
-    if t == null {
-      return;
-    }
-    rt = t!;
   } else if body != null {
     match e.p.nodes[body ?? 0] {
       SBlock { at: bat } => { after = bat; },
@@ -342,16 +466,37 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
     }
   }
   if e.first_pass {
-    if el::def_nr(e, "n_{name}") >= 0 {
+    if el::def_nr(e, key) >= 0 {
       el::refuse(e, "a function over an existing name");
-      return;
+      return "";
     }
-    e.context = add_fn(e, name, arguments, el::pos_at(e, after));
+    e.context = add_fn(e, key, name, arguments, el::pos_at(e, after));
+    if len(e.type_vars) > 0 && e.context >= 0 {
+      e.b.data.definitions[e.context].def_type = el::DT_GENERIC;
+    }
   } else {
-    e.context = el::def_nr(e, "n_{name}");
+    e.context = el::def_nr(e, key);
   }
   if e.context < 0 {
-    return;
+    return "";
+  }
+  // Each bounded variable's method stubs, made once the function exists and before its result
+  // type is read (`parse_function`'s I7/I8.1 step).
+  for tv in e.type_vars {
+    if len(el::def(e, tv.holder).bounds) > 0 && !bound_stubs(e, tv.holder, el::pos_at(e, after)) {
+      e.context = -1;
+      return "";
+    }
+  }
+  // The result type is read once the function exists (`parse_function` reads `->` after
+  // `add_fn`), so a definition it makes — a tuple's record, a vector's — follows the function's.
+  if ret != null {
+    t = el_types::parse_type(e, ret ?? 0);
+    if t == null {
+      e.context = -1;
+      return "";
+    }
+    rt = t!;
   }
   el_vars::take_over(vars, el::def(e, e.context).variables);
   if e.first_pass {
@@ -374,7 +519,9 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
     }
     // `Parser::parse_function`'s return buffer (pass 1): a record, struct-enum or vector result
     // is delivered through a last, hidden `__retbuf` parameter of the result's base type.
-    if e.first_pass && takes_ret_buffer(e, rt) {
+    // A template whose result depends on its variable takes no buffer: its instances decide
+    // their own delivery (`generic_return_promotable`).
+    if e.first_pass && takes_ret_buffer(e, rt) && !mentions_type_var(e, rt) {
       d = e.context;
       a = el::attribute("__retbuf", el_types::without_deps(rt));
       a.hidden = true;
@@ -384,9 +531,152 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
     }
     code = el_expressions::parse_code(e, vars, body ?? 0);
     e.b.data.definitions[e.context].code = [code];
+    if !e.first_pass && len(e.type_vars) > 0 {
+      e.bodies2 += [e.context];
+    }
   }
   e.b.data.definitions[e.context].variables = el_vars::stored(vars);
   e.context = -1;
+  key
+}
+
+// Does `t` name a header variable of the function being read?
+fn mentions_type_var(e: el::El, t: ir::TypeT) -> boolean {
+  for tv in e.type_vars {
+    if el_expressions::type_mentions(t, tv.holder) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Parser::type_var_bounds_key`: the bound names sorted, each once, joined by `+`.
+fn bounds_key(names: vector<text>) -> text {
+  sorted: vector<text> = [];
+  for n in names {
+    i = 0;
+    while i < len(sorted) && (sorted[i] ?? "") < n {
+      i += 1;
+    }
+    if (sorted[i] ?? "") != n {
+      sorted = sorted[..i] + [n] + sorted[i..];
+    }
+  }
+  r = "";
+  for n in sorted {
+    r += if n#index == 0 { n } else { "+{n}" };
+  }
+  r
+}
+
+// The bound-set key of a placeholder's own bounds (`placeholder_bounds_key`).
+fn placeholder_key(e: el::El, d: ir::Definition) -> text {
+  names: vector<text> = [];
+  for b in d.bounds {
+    names += [el::def(e, b).name];
+  }
+  bounds_key(names)
+}
+
+// `Parser::bind_header_var`: the placeholder the spelling already has under these bounds — the
+// lowest-numbered `<spelling>#n` definition whose own bounds key is `key`
+// (`holder_for_spelling`), minted by any earlier header, the standard library's included — or,
+// on the first pass, for an unbounded variable, a new `<spelling>#n` under the first `n` no
+// source holds, a struct answering a record of itself.  A new bounded one needs the bound's
+// method stubs (`create_bound_method_stubs`): refused by name.  -1 where none exists on the
+// second pass (the first refused the header).
+fn header_var(e: el::El, spelling: text, bounds: vector<text>, pos: ir::Position) -> integer {
+  key = bounds_key(bounds);
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_STRUCT && d.name.starts_with("{spelling}#") && el_expressions::type_var(e, ir::TyReference { n: d#index, dep: [] }) >= 0 && placeholder_key(e, d) == key {
+      return d#index;
+    }
+  }
+  if !e.first_pass {
+    return -1;
+  }
+  n = 1;
+  while el::source_nr(e, el::STD_SOURCE, "{spelling}#{n}") >= 0 || el::source_nr(e, el::MAIN_SOURCE, "{spelling}#{n}") >= 0 {
+    n += 1;
+  }
+  h = el::add_def(e, "{spelling}#{n}", pos, el::DT_STRUCT);
+  el::set_returned(e, h, ir::TyReference { n: h, dep: [] });
+  // `resolve_bound_names`: the bounds are recorded on the placeholder (@PLN165 C2), which is
+  // what a later header asks of it.
+  for b in bounds {
+    bd = el::def_nr(e, b);
+    if bd < 0 || el::def(e, bd).def_type != el::DT_INTERFACE {
+      el::refuse(e, "a bound that names no interface declared above it");
+      return -1;
+    }
+    e.b.data.definitions[h].bounds += [bd];
+  }
+  h
+}
+
+// `Parser::create_bound_method_stubs` for a header's bounded variable: each method an interface
+// of its bounds declares gets a stub on the holder, `t_<LEN><holder>#g<arity>_<method>`
+// (`bound_stub_name`), the interface method's signature with `Self` replaced by the holder
+// (`set_bound_stub_signature`) and no body, at `pos` — made once, on the first pass.  Carried for
+// a method answering no text and no heap value (those take hidden buffers): refused by name.
+fn bound_stubs(e: el::El, holder: integer, pos: ir::Position) -> boolean {
+  self_nr = el::def_nr(e, "Self");
+  if self_nr < 0 {
+    return true;
+  }
+  hname = el::def(e, holder).name;
+  href = ir::TyReference { n: holder, dep: [] };
+  for iface in el::def(e, holder).bounds {
+    for c in e.b.data.definitions {
+      if c.parent != iface || c.def_type != el::DT_FUNCTION {
+        continue;
+      }
+      method = interface_method_name(c.name);
+      stub = el_expressions::bound_stub_name(hname, method, len(c.attributes));
+      if el::def_nr(e, stub) >= 0 || !e.first_pass {
+        continue;
+      }
+      for a in 1..10 {
+        if a != len(c.attributes) && el::def_nr(e, el_expressions::bound_stub_name(hname, method, a)) >= 0 {
+          el::refuse(e, "two bounds requiring one method at two arities");
+          return false;
+        }
+      }
+      rt = el_expressions::substitute(c.returned[0] ?? ir::TyVoid, self_nr, href);
+      rb = el_types::base(rt);
+      if rb is TyText || rb is TyReference || rb is TyVector || rb is TyTuple || keyed(rb) || match rb { TyEnum { is_ref } => is_ref, _ => false } {
+        el::refuse(e, "a bound method answering a text or a heap value");
+        return false;
+      }
+      sd = el::add_def(e, stub, pos, el::DT_FUNCTION);
+      for a in c.attributes {
+        na = el::attribute(a.name, el_expressions::substitute(a.typedef[0] ?? ir::TyVoid, self_nr, href));
+        na.value_const = a.value_const;
+        e.b.data.definitions[sd].attributes += [na];
+      }
+      e.b.data.definitions[sd].returned = [rt];
+      e.b.data.definitions[sd].operator_form = c.operator_form;
+    }
+  }
+  true
+}
+
+fn keyed(t: ir::TypeT) -> boolean {
+  t is TyHash || t is TyIndex || t is TySorted || t is TyRadix || t is TyTrie
+}
+
+// `Parser::interface_method_name`: the method an interface child stands for —
+// `__iface_<interface>#<arity>_<method>`, or the legacy `t_4Self_<method>`.
+fn interface_method_name(name: text) -> text {
+  if name.starts_with("__iface_") {
+    rest = name[8..];
+    u = rest.find("_");
+    return if u == null { rest } else { rest[u! + 1..] };
+  }
+  if name.starts_with("t_4Self_") {
+    return name[8..];
+  }
+  name
 }
 
 // `Type::takes_ret_buffer`: a struct record, a struct-enum or a vector.
@@ -400,11 +690,66 @@ fn takes_ret_buffer(e: el::El, t: ir::TypeT) -> boolean {
 }
 
 // `Data::add_fn`, a plain function: `n_<name>`, its parameters as attributes.
-fn add_fn(e: el::El, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
-  d = el::add_def(e, "n_{name}", pos, el::DT_FUNCTION);
+// `Data::fn_key`: a function's definition key — `n_<name>`, or for a method (a first `self`
+// parameter) `t_<LEN><receiver>_<name>`, the receiver spelled `T?` when it is nullable.  A
+// receiver that is a variant, a generic instance or a bound holder is refused by name ("").
+fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
+  if len(arguments) == 0 || arguments[0].name != "self" {
+    return "n_{name}";
+  }
+  // An operator method (`OpAdd`, the `OpDrop` / `OpCopy` hooks and their cascades) is its own
+  // port.
+  if starts_with(name, "Op") {
+    el::refuse(e, "a method named as an operator: {name}");
+    return "";
+  }
+  t = arguments[0].typedef;
+  tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+  if tn < 0 {
+    return "";
+  }
+  td = el::def(e, tn);
+  if td.def_type == el::DT_ENUM_VALUE || td.instance_of >= 0 {
+    el::refuse(e, "a method receiver that is a variant or a generic instance");
+    return "";
+  }
+  // The standard library's types come with the image, their members included.
+  if td.source != e.source {
+    el::refuse(e, "a method on a type the program does not declare");
+    return "";
+  }
+  sig = if t is TyOptional { "{td.name}?" } else { td.name };
+  "t_{len(sig)}{sig}_{name}"
+}
+
+// `Data::add_fn` for a key no definition holds yet.
+// A method also takes a constant `Routine` member of its name on the receiver type — the
+// membership `x.name(…)` resolves through.  A receiver that already carries a member of that
+// name (a field, the nullable twin of a method) is refused by name.
+fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
+  tn = -1;
+  if len(arguments) > 0 && arguments[0].name == "self" {
+    t = arguments[0].typedef;
+    tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+    if tn >= 0 {
+      for a in el::def(e, tn).attributes {
+        if a.name == name {
+          el::refuse(e, "a method whose name its receiver already carries: {name}");
+          return -1;
+        }
+      }
+    }
+  }
+  d = el::add_def(e, key, pos, el::DT_FUNCTION);
   for a in arguments {
     e.b.data.definitions[d].attributes += [el::attribute(a.name, a.typedef)];
     e.b.data.definitions[d].attributes[a#index].value_const = a.constant;
+  }
+  if tn >= 0 {
+    m = el::attribute(name, ir::TyRoutine { n: d });
+    m.mutable = false;
+    m.constant = true;
+    e.b.data.definitions[tn].attributes += [m];
   }
   d
 }

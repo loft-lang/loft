@@ -40,7 +40,8 @@ loft commit and the library commit the base was emitted from.
 Baseline (gcc ship, `bench/stats.py --lanes rust,cship`, tip `3cfb11fb9`): median 1.93× over
 42 routines; over 3×: `insert_text` 5.11, `request` 4.58, `check_request` 4.58,
 `flow_layout_full` 4.32, `encode_bytes` 4.04, `fill_polygon` 3.63, `canvas` 3.57, `fronds` 3.29,
-`fill_rect` 3.20, `req_state_b64` 3.19, `draw_quads` 3.10, `invert` 3.05.
+`fill_rect` 3.20, `req_state_b64` 3.19, `draw_quads` 3.10, `invert` 3.05.  Where it stands now:
+the newest `handoff-*.md` here carries the full table on both compilers.
 
 ## Where each routine lands by hand
 
@@ -87,6 +88,15 @@ both compilers, and (d) the C corpus sweep (`scripts/c_sweep.py`) and the C test
 | P13 | **`(R-FnRefBuffer)` across frames**: the resolver's result record kept across `token_width` calls (undoing it at the end costs +27 % cycles) | extension | `flow_layout_full` −7 % instructions | **BUILT** as `(R-FnRefBuffer)`'s frame clause: the kept store parked per function and thread between calls (88.7 → 78.5 M instructions a run); beside it `(R-WorkPark)`, the frame's work texts parked the same way |
 | P14 | **`(R-PushFill)`'s run clause for a text target**: a character-vector range turned into text in one pass | extension | `flow_layout_full` 2.14 → 1.94 | open |
 | P15 | **the callee half beside `(R-RebindBuffer)`**: `cur = apply_op(cur, op)` — the callee answers inside the document being replaced, so its buffer is not copied | NEW | `invert` 2.57 → 2.33 | open |
+| P16 | **`(R-Peel)`'s exit clause**: a body with a `continue` or `break` of the peeled loop, each copy ending at its own label (an inner loop still refuses) | extension | `wall_chain_walk` 120.3 → 44.1 M instructions clang, 75.6 → 59.8 M gcc (twin 30.9 M): 1.42× / 1.68× its twin — without P17 | built — `c::body::peel`, guard `a-peeled-loop-leaves-its-trip-by-break-or-continue.loft` |
+| P17 | **always-inline for a small leaf** (no loop, calls only to such leaves, ≤ N nodes) | NEW | not needed for `wall_chain_walk` once P16 is in (clang inlines the chain itself) | deferred — re-measure against the full table |
+| P18 | **a text field of a held element read at its address** — on the C, `(R-RecPtr)`'s existing text clause (`loft_pa_text`) plus the `for` iterator's bind in the held-element clause | extension | `parse` 168.3 → 143.4 M instructions clang; 3.04× → 2.46× clang, 2.08× → 2.02× gcc | built — `FnWriter::rec_ptr_text`, guard `a-text-field-of-a-held-element-reads-through-its-address.loft` (t8, t9) |
+| P19 | **`(R-Transient)`'s view clause**: a text the caller keeps alive held as a view in the arena record | extension | `parse` ≈ −13 % clang (copy-and-free share; to price) | open — [last-three.md](last-three.md) |
+| P20 | **`"{c}" == t` compared without building the text** | NEW | priced by hand on `parse` after P18: −1.1 % instructions clang, −3.1 % gcc — built and kept out (`target-exp/p16/p20.patch`): too little for a new rule here | deferred — for a routine where the format is the cost |
+| P21 | **`(R-Transient)` with a literal root** (a record built by a literal or an inlined destination, only read) | extension | `forms_upto` ≈ −25 % (store share; to price) | open — [last-three.md](last-three.md) |
+| P22 | **a text `??` read as a view where nothing writes** — `(R-TextBorrow)`'s local-root clause (a temp over a frame local's text, no store writer in its scope) | extension | `forms_upto` 73.3 → 62.7 M instructions gcc; 2.59× → 2.27× gcc, 1.60× → 1.37× clang | built — `opt::store_text_borrow::local_root`, guard `a-text-discharge-of-a-local-borrows-where-nothing-writes.loft` |
+| P23 | **a slice read where it lies** — `(R-SliceArg)`'s range clause (`text_from_bytes(v[a..b])` is `text_from_byte_range`) and `(R-SliceInto)`'s transient clause (a slice into a transient vector field copied from its source) | extension | pluginabi `check_request` 591 → 377 µs gcc, 693 → 426 µs clang (twin 266 µs): 2.22× → 1.42×, 2.6× → 1.6× | built — `FnWriter::call`, the transient `OpAppendVector` arm, guard `a-text-of-a-slice-reads-the-span-in-place.loft`, cell `c10` of the transient guard |
+| P24 | **`(R-RefParam)`: a reference parameter copied in field by field under gcc** — gcc reloads a spilled reference's `rec` and `pos` with one load across its two halves (a store-forwarding stall per call) | NEW | cbor `decode` 3.77 → 2.55 ms gcc (twin 1.52 ms): 2.47× → 1.67×; hex_recover `forms_upto` −18 %; zttext `materialise` +6 %; the rest ±3 %; clang keeps the plain copy | built — `ref_params_copied` in `c::tidy`, `LOFT_REF_IN` |
 
 **The cross-call facts these phases rest on** ([`formal/facts.md`](../../formal/facts.md),
 [#2351](https://github.com/loft-lang/loft/issues/2351)) — built before P5, P9 and P11–P15, so no

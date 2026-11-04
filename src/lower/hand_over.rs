@@ -373,7 +373,10 @@ fn drop_if(
     let k = int_of(depth)?;
     let (fpos, vtp) = field_of(
         data,
-        call(data, length, "t_6vector_len")?.first()?,
+        // The call, or the op `@FR-R-Wrapper` makes of it in the IR.
+        call(data, length, "t_6vector_len")
+            .or_else(|| call(data, length, "OpLengthVector"))?
+            .first()?,
         owner_var,
     )?;
     if fpos != field.0 || k < 1 || !plain_vector(stores, vtp) {

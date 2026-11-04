@@ -200,10 +200,11 @@ fn an_index_out_of_range_reports_as_the_store_path_does() {
 const VECTOR_CELLS: &str = "tests/scripts/a-local-float-vector-lives-in-an-inline-buffer.loft";
 
 /// Instance 3: the bodies holding an inline buffer.  Unlike instance 2 it needs no plan of the
-/// whole program, so a build that ships the live tier makes it too.
-const INLINE: &[&str] = &[
-    "n_main", "n_v1", "n_v10", "n_v12", "n_v3", "n_v4", "n_v5", "n_v6",
-];
+/// whole program, so a build that ships the live tier makes it too.  v5's growth is
+/// `for k in 0..80 { w += [0.0]; }`, which `@FR-R-PushFill`'s fill form (applied in the IR,
+/// `opt::fill_loop`) writes as one push and one `OpAppendCopy`: the buffer existed to make each
+/// push cheap, and the fill removes the pushes, so v5 keeps its vector in the store.
+const INLINE: &[&str] = &["n_main", "n_v1", "n_v10", "n_v12", "n_v3", "n_v4", "n_v6"];
 
 fn inline_bodies(tier: &str, env: &[(&str, &str)], tag: &str) -> Vec<String> {
     let out = std::env::temp_dir().join(format!("loft_apart_vector_{tag}.rs"));

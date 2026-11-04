@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The field read where it lies: no local copy of its bytes.
+struct Item { name: text, n: integer }
+
+fn score(it: Item) -> integer {
+  len(it.name) + (it.name.byte_at(1) ?? 0) + it.n
+}
+
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  items: vector<Item> = [for k in 0..16 { Item { name: "item-{k}-abcdefghijkl", n: k } }];
+  s = 0;
+  for i in 0..n {
+    for it in items { s += score(it) + i; }
+  }
+  println("{s}");
+}

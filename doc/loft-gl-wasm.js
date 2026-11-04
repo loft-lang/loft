@@ -299,6 +299,7 @@ function buildLoftImports(canvas, output, getMem, asyncCtrl) {
   function ggImports() {
     const objs = [null], locs = [], shaderType = new Map(), queue = [];
     let open = false;
+    let filling = false;
     const mem = () => getMem().buffer;
     const dv = () => new DataView(mem());
     const add = (o) => { objs.push(o); return objs.length - 1; };
@@ -378,11 +379,67 @@ function buildLoftImports(canvas, output, getMem, asyncCtrl) {
       if (open && e.deltaY !== 0) queue.push({ tag: 7, v: [e.deltaY < 0 ? 1 : -1, ...point(e)] });
     });
     const ok = (gl ? 1 : 0);
+    // A sound output a library's C mixes into (loft-libs-game `audio`): Web Audio pulls 16-bit
+    // stereo frames from the module's export `loft_audio_pull(frames)`, which answers where they
+    // are.  The pull runs between the program's frames — JavaScript runs nothing at once with it.
+    // A browser starts sound only after a gesture, so the context resumes on the first key or
+    // click.
+    let sound = null;
     return {
+      gg_audio_open(rate) {
+        if (sound) return 1;
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return 0;
+        let ctx;
+        try { ctx = new AC({ sampleRate: rate }); } catch (_e) { return 0; }
+        const node = ctx.createScriptProcessor(2048, 0, 2);
+        node.onaudioprocess = (e) => {
+          const left = e.outputBuffer.getChannelData(0), right = e.outputBuffer.getChannelData(1);
+          const ex = asyncCtrl && asyncCtrl.ac && asyncCtrl.ac.exports;
+          if (!ex || !ex.loft_audio_pull) { left.fill(0); right.fill(0); return; }
+          const n = left.length;
+          const at = ex.loft_audio_pull(n);
+          const pcm = new Int16Array(mem(), at, n * 2);
+          for (let i = 0; i < n; i++) { left[i] = pcm[2 * i] / 32768; right[i] = pcm[2 * i + 1] / 32768; }
+        };
+        node.connect(ctx.destination);
+        const wake = () => { if (ctx.state !== 'running') ctx.resume(); };
+        for (const t of ['keydown', 'mousedown', 'touchstart']) {
+          canvas.addEventListener(t, wake);
+          window.addEventListener(t, wake);
+        }
+        sound = { ctx, node, wake };
+        return 1;
+      },
+      gg_audio_close() {
+        if (!sound) return;
+        sound.node.disconnect();
+        for (const t of ['keydown', 'mousedown', 'touchstart']) {
+          canvas.removeEventListener(t, sound.wake);
+          window.removeEventListener(t, sound.wake);
+        }
+        sound.ctx.close();
+        sound = null;
+      },
       gg_js_open(w, h, fullscreen) {
         if (!gl) return 0;
         dpr = window.devicePixelRatio || 1;
-        if (fullscreen) { w = window.innerWidth; h = window.innerHeight; }
+        if (fullscreen) {
+          w = window.innerWidth; h = window.innerHeight;
+          // The whole window, whatever the page's layout: fixed at its top-left.
+          canvas.style.position = 'fixed'; canvas.style.left = '0'; canvas.style.top = '0';
+          if (!filling) {
+            filling = true;
+            // A resize keeps the canvas the window's size, in device pixels, and tells the
+            // program (tag 8: the new width and height) so it can draw at the new size.
+            window.addEventListener('resize', () => {
+              dpr = window.devicePixelRatio || 1;
+              canvas.width = toDevice(window.innerWidth); canvas.height = toDevice(window.innerHeight);
+              canvas.style.width = window.innerWidth + 'px'; canvas.style.height = window.innerHeight + 'px';
+              if (open) queue.push({ tag: 8, v: [canvas.width, canvas.height] });
+            });
+          }
+        }
         canvas.width = toDevice(w); canvas.height = toDevice(h);
         canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
         canvas.style.display = 'block';

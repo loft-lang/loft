@@ -10,6 +10,9 @@
 #   loft_native_bin_<pid>, loft_native_<pid>.rs   a `--native` run's artefacts; a run that ends
 #                                                  normally removes them, one killed from outside
 #                                                  cannot — removed when <pid> is DEAD
+#   loft-c-emit-<pid>-<name>/                      a `tests/c_emit.rs` process's scratch, one per
+#                                                  test (~2.7 MB each, ~180 MB a run, never removed
+#                                                  by the test) — removed when <pid> is DEAD
 #   loft_native_cache_<checkout>/                  the native test harness's per-checkout cache
 #                                                  (tests/native.rs): the harness itself drops
 #                                                  the entries of an older loft build at the
@@ -66,7 +69,13 @@ done
 [ ${#dirs[@]} -gt 0 ] || { echo "usage: $0 [--sessions] [--days N] [--falsify-days N] [--enough-gb N [--on PATH]] [--deadline EPOCH] <dir>..." >&2; exit 2; }
 removed=0
 free_kb() { df -Pk "$on" 2>/dev/null | awk 'NR == 2 { print $4 }'; }
+# Free space summed over every filesystem the sweep touches, each counted once (a RAM-tmpfs
+# `/tmp` is a different filesystem from the checkout's): what the report says was freed.
+swept_free_kb() {
+  df -Pk "$on" "${dirs[@]}" 2>/dev/null | awk 'NR > 1 && !seen[$6]++ { s += $4 } END { print s + 0 }'
+}
 start_kb=$(free_kb)
+start_swept_kb=$(swept_free_kb)
 # Has the caller's bound been reached: the room it asked for, or its deadline?
 done_yet() {
   [ "$deadline" -gt 0 ] && [ "$(date +%s)" -ge "$deadline" ] && return 0
@@ -124,11 +133,12 @@ dead_pids() { # <dir> — prints each dead process's artefact, NUL-terminated
   local f name pid
   for f in "$1"/loft_native_bin_* "$1"/loft_native_*.rs \
            "$1"/loft_native_*_[0-9]*_args.txt "$1"/loft_native_*_[0-9]*.rs.tmp \
-           "$1"/loft_native_*_[0-9]*_bin.key.tmp; do
+           "$1"/loft_native_*_[0-9]*_bin.key.tmp "$1"/loft-c-emit-[0-9]*-*; do
     [ -e "$f" ] || continue
     name=${f##*/}
     case "$name" in
       loft_native_bin_*) pid=${name#loft_native_bin_};;
+      loft-c-emit-*) pid=${name#loft-c-emit-}; pid=${pid%%-*};;
       *_args.txt) pid=${name%_args.txt}; pid=${pid##*_};;
       *.rs.tmp) pid=${name%.rs.tmp}; pid=${pid##*_};;
       *_bin.key.tmp) pid=${name%_bin.key.tmp}; pid=${pid##*_};;
@@ -168,7 +178,7 @@ for d in "${dirs[@]}"; do
   fi
 done
 # What the disk gained while the sweep ran (df, so another process's writes count against it).
-gained=$(( ($(free_kb) - ${start_kb:-0}) / 1024 ))
+gained=$(( ($(swept_free_kb) - ${start_swept_kb:-0}) / 1024 ))
 [ "$gained" -lt 0 ] && gained=0
 [ "$removed" -gt 0 ] && echo "sweep_scratch: removed $removed entries, ${gained} MB freed"
 exit 0

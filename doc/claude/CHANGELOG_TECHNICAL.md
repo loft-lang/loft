@@ -10,6 +10,107 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The rewrite census reads the C writer (@PLN211 A0)
+
+- `scripts/rewrite_census.py` writes every bench program with `--emit-c` as well as
+  `--native-emit`, and `bench/portal/rewrite_census.tsv` holds one row per (program, writer,
+  rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
+  reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
+
+### `(R-PushFill)`'s fill form runs in the IR (@PLN211 arc C)
+
+- `for _ in a..b { v += [c] }` with `c` a simple invariant and `v` a vector variable is one
+  push and an `OpAppendCopy` on BOTH backends (`src/opt/fill_loop.rs`, in `close_program`),
+  the loop as written its fallback for every range the fill declines.  rustc's fill is gone and
+  the C gains the rule; the interpreter runs 71.8 % fewer instructions on a 16-element fill.
+  `LOFT_NO_FILL_LOOP` switches the clause off alone; `LOFT_NO_PUSH_FILL` still the rule.
+
+### `(R-Wrapper)` runs in the IR (@PLN211 arc C)
+
+- A call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`, `v.clear()`) with leaf or pure-path
+  arguments is its op on BOTH backends, decided in the scope pass (`src/wrapper_inline.rs`);
+  the rustc writer's clause is gone and the C gains the rule.  The interpreter stops making the
+  call: −48 % of the instructions of a loop adding `len(v)`.  `LOFT_NO_WRAPPER_INLINE` is a
+  both-backend switch.  The lost-write lint counts the collection length operators as it
+  counts `len`, and the analyses that recognise a length or a clear by name read both
+  spellings.
+
+### `(R-SliceArg)`'s range clause runs in the IR (@PLN211 arc C)
+
+- `text_from_bytes(v[lo..hi])`, assigned or appended to a variable, is the slice's bound
+  statements and `text_from_byte_range(v, lo, hi)` on BOTH backends, decided in the scope pass
+  (`src/slice_text.rs`); the C writer's clause is gone.  The interpreter stops building the
+  slice's store: −30.8 % of the instructions of a loop reading a 32-byte text out of a byte
+  vector.  `LOFT_NO_SLICE_TEXT` is now a both-backend switch (BOTH_BACKEND_SWITCHES.md).
+
+### Every rule's verdict (@PLN211 B2)
+
+- The plan's README § Verdicts holds a verdict per work and rustc-only rule, each with its
+  evidence: a probe on the interpreter, a switch A/B on the rustc build, an emit-and-look on
+  the C, or a cited measurement.  Beyond wave 1: `(R-KeyedEntry)` −89 % per overwriting
+  append, `(R-TextBorrow)`'s parameter clause −8.0 %; `(R-RefillText)` kept (game_protocol's
+  rustc build +148.6 % without it); `(R-RefillBuffer)` measured at no effect and left in its
+  writer; `(R-TextClear)` to drop; `(R-GuardFree)`, `(R-FnHeader)`, `(R-SliceBorrow)` to port
+  to the C.
+
+### What moving a rule saves the interpreter, probed (@PLN211 B2 wave 1)
+
+- `doc/claude/plans/211-rule-phases/probes/run.py`: per case, the shape as written against the
+  same work written in the form the IR rule would leave, on `--interpret`: instructions per
+  iteration (user space, one core, two counts so start-up drops out), the same answer, and the
+  rule admitted in the case's function before and gone after.  Six MOVE verdicts with their
+  savings: `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-SliceArg)`, `(R-LoopRecord)`,
+  `(R-ElemFirst)`, `(R-LoopBuffer)` (plan README § Verdicts).
+
+### `interp_gap.py --writer c` — the interpreter set against either writer (@PLN211 B1)
+
+- `--writer c|native` takes the rewrite census from that writer's emission (libraries emitted
+  into the program) and the ratio from its `stats.py` lane; the per-rule table carries each
+  rule's applied-by from `bench/portal/rule_phases.tsv`, and the JSON names its `writer`.
+- A program whose routines cannot be told apart by the line of `main` they ran under — one
+  row line for several rows, or regions that hold under 5 % of its operators — is read whole as
+  `(all rows)`.  Before, 22 library benches were not read and five programs (`random`,
+  `gridmesh`, `drawing`, `markdown`, `html`) were reported as idle routines with no rules.
+
+### The register states each rule's phase from the measurement (@PLN211 A3)
+
+- `formal/rewrites.md` § Applied by is rendered from `bench/portal/rule_phases.tsv`
+  (`scripts/rule_phases.py --render`; a census `--bless` re-renders it): every register entry
+  with its census names' applying phases, or why the census does not count it.
+  `scripts/check_doc_drift.sh` fails when the section and the table disagree.
+- The 42 prose "Applied by" lines of the chapter lose their phase claim and keep their sites
+  (`Sites: …`); `(R-InlineLeaf)` is no longer called proposed (it applies at parse time).
+- The index shows three counted rules no bench program reaches: `(R-DecodeView)`,
+  `(R-DeferredCopy)`, `(R-TextRun)`.
+
+### The phase table: which phase applies each rewrite, measured (@PLN211 A1)
+
+- `scripts/rewrite_census.py` records the phase split of every admission in the run it already
+  makes and keeps `bench/portal/rule_phases.tsv`: per census name, the phases that applied it
+  over the benches and the admissions per phase.  A name whose set of phases changes fails the
+  gate like a drop; `--bless` rewrites the table (a full run only).  `scripts/rule_phases.py`
+  reads it, with where each rule is decided derived from the code's `@FR-` citations.
+- Each writer's whole unit is a census scope, so an admission a writer makes outside a function
+  body (a signature, a unit's analysis) is that writer's, no longer `parse`'s.  With it the
+  shared phases (`parse`, `ir`, `interp`) report the same counts whichever writer runs.
+
+### Every rewrite rule reports to the census or says why not (@PLN211 A2)
+
+- `scripts/rule_tags.py phases --check` (in `make rewrite-census`, `make ci` and CI's census
+  step) fails on an entry of `formal/rewrites.md` with no `fired` call and no `CENSUS_EXEMPT`
+  line, and on a census name that is no entry: 137 entries, 112 counted, 25 exempt with a kind
+  and a reason.
+- New counts: on the C, `R-Transient`, `R-LazySplit`, `R-TypedKeyed` (and `/compound`,
+  `/text`), `R-SliceBorrow`, `R-TypedRead`, `R-Inline` (and `/helper`), `R-NoLocks`; in the
+  interpreter's bytecode generator, under the new `interp` phase, `R-Fuse` (and `/field`,
+  `/jump`, `/tag`, `/text`), `R-Rotate`, `R-StartStep`, `R-LoopSlot`, `R-FirstClaim`.
+- One name per clause: `R-Kept` → `R-Header/kept` (rustc) and `R-Header/grown-held` (C),
+  `R-KeptTwin` → `R-Header/kept-twin`, `R-FnHeader` → `R-Header/function`, `R-HandOver` →
+  `R-HandOver/rotate` (both writers), `R-AliasVersion` → `R-Alias/versioned`, `R-KernelSum` →
+  `R-BoundedNest/kernel`; rustc counts `R-LoopRecord/refill` apart, as the C does.  Every
+  renamed count equals its old one.  `(R-LiteralAppend)`, built and counted, gains its
+  register entry and its `BOTH_BACKEND_SWITCHES.md` line.
+
 ### A `match` is lowered once per arm (`@FR-M-Once`, `@FR-M-Fixed`)
 
 A guarded arm folds its guard into its condition, `cmp && { bindings; guard }`

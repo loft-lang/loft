@@ -1,0 +1,841 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-WorkBuffer` (src/parser/work_buffer.rs): a vector local of plain scalars that never
+// leaves its frame becomes a hidden work-buffer parameter its callers hand in.  Decided after
+// the second pass on the settled IR of the program's own definitions: Phase A promotes each
+// admitted local (the declaration's trio becomes the null-or-clear site), Phase B gives every
+// call of a promoted definition its buffers (one pooled `__ref_N` per frame, element and slot),
+// and the transitive rounds promote a caller's buffer onward when it is only handed down.
+// Every walk's fallback is a decline; a shape the port cannot judge yet is refused by name.
+use ir;
+use el;
+use el_ir;
+use el_vars;
+use el_types;
+use el_expressions;
+
+pub struct Pool {
+  pub ctx: integer,
+  pub elem: text,
+  pub k: integer,
+  pub var: integer
+}
+
+// The whole pass, over the program's definitions (the standard library's came promoted).
+pub fn promote_work_buffers(e: el::El) {
+  promoted: vector<integer> = [];
+  taken = address_taken(e);
+  for d in e.b.data.definitions {
+    if def_decline(e, d#index, taken) {
+      continue;
+    }
+    if promote_in(e, d#index) > 0 {
+      promoted += [d#index];
+    }
+  }
+  if len(promoted) == 0 {
+    return;
+  }
+  pool: vector<Pool> = [];
+  fresh: vector<integer> = [];
+  patch_callers(e, promoted, pool, fresh);
+  // The transitive clause: a buffer a caller only hands down climbs one frame per round.
+  round = 0;
+  while round < 16 {
+    round += 1;
+    next: vector<integer> = [];
+    for d in e.b.data.definitions {
+      if def_decline(e, d#index, taken) {
+        continue;
+      }
+      if promote_refs_in(e, d#index, fresh) > 0 {
+        next += [d#index];
+      }
+    }
+    if len(next) == 0 {
+      return;
+    }
+    for n in next {
+      if !promoted.contains(n) {
+        promoted += [n];
+      }
+    }
+    patch_callers(e, promoted, pool, fresh);
+  }
+}
+
+// `work_buffer_def_decline`: what keeps a definition's locals its own.
+fn def_decline(e: el::El, d: integer, taken: vector<integer>) -> boolean {
+  def = el::def(e, d);
+  if def.def_type != el::DT_FUNCTION || def.rust != "" || def.source != e.source || el_ir::is_null(def.code[0] ?? ir::NdNull) {
+    return true;
+  }
+  nm = def.name;
+  if nm == "n_main" || corpus_entry(def) || ends_with(nm, "_OpDrop") || ends_with(nm, "_OpDropAll") || ends_with(nm, "_OpDropAllExcept") || ends_with(nm, "_OpCopy") || starts_with(nm, "n___lambda_") || taken.contains(d) {
+    return true;
+  }
+  if !(el_ir::unspan(def.code[0] ?? ir::NdNull) is NdBlock) {
+    return true;
+  }
+  suspends(def.code[0] ?? ir::NdNull)
+}
+
+// `Definition::is_corpus_entry_point`: a program function with no authored parameter that
+// answers nothing, which a harness may call on its own.
+fn corpus_entry(def: ir::Definition) -> boolean {
+  if !starts_with(def.name, "n_") || starts_with(def.name, "n___lambda_") || starts_with(def.name, "n___dflt_") {
+    return false;
+  }
+  for a in def.attributes {
+    if !starts_with(a.name, "__work_") && !starts_with(a.name, "__ref_") {
+      return false;
+    }
+  }
+  (def.returned[0] ?? ir::TyVoid) == ir::TyVoid
+}
+
+fn suspends(n: ir::Node) -> boolean {
+  match n {
+    NdYield { inner: _ } => true,
+    NdParallel { arms: _ } => true,
+    _ => {
+      for c in el_ir::children(n) {
+        if suspends(c) {
+          return true;
+        }
+      }
+      false
+    }
+  }
+}
+
+// `address_taken_defs`: every definition a `FnRef` names, and every `par` worker.
+fn address_taken(e: el::El) -> vector<integer> {
+  out: vector<integer> = [];
+  for d in e.b.data.definitions {
+    taken_in(e, d.code[0] ?? ir::NdNull, out);
+  }
+  out
+}
+
+fn taken_in(e: el::El, n: ir::Node, out: vector<integer>) {
+  match n {
+    NdFnRef { def_nr } => {
+      if def_nr >= 0 && !out.contains(def_nr) {
+        out += [def_nr];
+      }
+    },
+    NdCall { def_nr, args } => {
+      cd = el::def(e, def_nr);
+      if starts_with(cd.name, "n_parallel_") {
+        for a in cd.attributes {
+          if a.name == "func" {
+            match el_ir::unspan(args[a#index] ?? ir::NdNull) {
+              NdInt { n: f } => {
+                if f >= 0 && !out.contains(f) {
+                  out += [f];
+                }
+              },
+              _ => {}
+            }
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    taken_in(e, c, out);
+  }
+}
+
+// Phase A for one definition: the number of locals promoted.
+fn promote_in(e: el::El, d: integer) -> integer {
+  vars = el_vars::load(el::def(e, d).variables);
+  code = el::def(e, d).code[0] ?? ir::NdNull;
+  promoted = 0;
+  for x in vars.vars {
+    v = x#index;
+    db = candidate(vars, v);
+    if db < 0 {
+      continue;
+    }
+    if !admit(e, code, vars, v, db) {
+      continue;
+    }
+    if dead_store(e, code, v) {
+      el::refuse(e, "a work-buffer candidate written and not read (the dead-store decline)");
+      continue;
+    }
+    for a in vars.vars {
+      if a.argument && a#index > v {
+        el::refuse(e, "a work-buffer candidate numbered before an argument");
+        return promoted;
+      }
+    }
+    code = promote_one(e, d, vars, code, v, db);
+    promoted += 1;
+  }
+  e.b.data.definitions[d].code = [code];
+  e.b.data.definitions[d].variables = el_vars::stored(vars);
+  promoted
+}
+
+// `work_buffer_candidate`: a plain local `v: vector<scalar>` viewing one `__vdb_N`.
+fn candidate(vars: el_vars::Vars, v: integer) -> integer {
+  x = vars.vars[v]!;
+  if x.argument || x.caller_hidden_buf || starts_with(x.name, "_") || starts_with(x.name, "__ref_") {
+    return -1;
+  }
+  t = x.type_def[0] ?? ir::TyVoid;
+  if t is TyOptional {
+    return -1;
+  }
+  match t {
+    TyVector { inner, dep } => {
+      if el_expressions::scalar(inner) && len(dep) == 1 && starts_with(el_vars::name_of(vars, dep[0]), "__vdb_") {
+        return dep[0];
+      }
+    },
+    _ => {}
+  }
+  -1
+}
+
+// `admit`: one trio, a backing named nowhere else, and every mention of `v` and of its aliases
+// an admitted operand (`Walk::node`, rounds until no alias is new).
+fn admit(e: el::El, code: ir::Node, vars: el_vars::Vars, v: integer, db: integer) -> boolean {
+  if !(el_ir::unspan(code) is NdBlock) {
+    return false;
+  }
+  if el_expressions::trios(e, code, v, db, false) != 1 || el_expressions::trios(e, code, v, db, true) > 0 {
+    return false;
+  }
+  if el_expressions::sets(code, v) != 1 || el_expressions::sets(code, db) != 1 || el_ir::mentions(code, db) != 3 || top_null_inits(code, db) != 1 {
+    return false;
+  }
+  tracked: vector<integer> = [v];
+  copy_bound = el_expressions::copy_bound(e, code, v);
+  more = true;
+  while more {
+    aliases: vector<integer> = [];
+    if !walk(e, vars, code, code, v, db, tracked, aliases, copy_bound, -1, -1) {
+      return false;
+    }
+    more = false;
+    for a in aliases {
+      if !tracked.contains(a) {
+        tracked += [a];
+        more = true;
+      }
+    }
+  }
+  true
+}
+
+// The body's top-level `Set(x, null)` statements for `x`.
+fn top_null_inits(code: ir::Node, x: integer) -> integer {
+  n = 0;
+  match el_ir::unspan(code) {
+    NdBlock { block } => {
+      for op in block[0].operators {
+        match el_ir::unspan(op) {
+          NdSet { var, inner } => {
+            if var == x && el_ir::unspan(inner) is NdNull {
+              n += 1;
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  n
+}
+
+// `Walk::node`: `pos_d`/`pos_i` name the call and the operand position the node stands at, or
+// -1 for any other position.
+fn walk(e: el::El, vars: el_vars::Vars, body: ir::Node, n: ir::Node, v: integer, db: integer, tracked: vector<integer>, aliases: vector<integer>, copy_bound: boolean, pos_d: integer, pos_i: integer) -> boolean {
+  match n {
+    NdSpan { inner } => walk(e, vars, body, inner, v, db, tracked, aliases, copy_bound, pos_d, pos_i),
+    NdVar { n: x } => !tracked.contains(x) || (pos_d >= 0 && allowed_operand(e, el::def(e, pos_d).name, pos_d, pos_i)),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      a0 = tracked_var(args[0] ?? ir::NdNull, tracked);
+      if element_place(nm) && a0 && !(pos_i == 0 && pos_d >= 0 && scalar_accessor(el::def(e, pos_d).name)) {
+        return false;
+      }
+      if nm == "OpAppendVector" || nm == "OpReplaceVector" {
+        a1 = tracked_var(args[1] ?? ir::NdNull, tracked);
+        if a1 && !a0 {
+          return false;
+        }
+        if a0 && !a1 && copy_bound {
+          return false;
+        }
+      }
+      for a in args {
+        if !walk(e, vars, body, a, v, db, tracked, aliases, copy_bound, def_nr, a#index) {
+          return false;
+        }
+      }
+      true
+    },
+    NdSet { var, inner } => {
+      if tracked.contains(var) {
+        trio_bind = var == v && el_expressions::calls(e, inner, "OpGetField") && match el_ir::unspan(inner) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, db), _ => false };
+        alias_bind = var != v && tracked_var(inner, tracked);
+        return trio_bind || alias_bind;
+      }
+      if tracked_var(inner, tracked) {
+        if vars.vars[var].argument || el_expressions::sets(body, var) != 1 {
+          return false;
+        }
+        aliases += [var];
+        return true;
+      }
+      walk(e, vars, body, inner, v, db, tracked, aliases, copy_bound, -1, -1)
+    },
+    NdIter { var, create, next, init } => !tracked.contains(var) && walk(e, vars, body, create, v, db, tracked, aliases, copy_bound, -1, -1) && walk(e, vars, body, next, v, db, tracked, aliases, copy_bound, -1, -1) && walk(e, vars, body, init, v, db, tracked, aliases, copy_bound, -1, -1),
+    NdTupleGet { var } => !tracked.contains(var),
+    NdTuplePut { var, inner } => !tracked.contains(var) && walk(e, vars, body, inner, v, db, tracked, aliases, copy_bound, -1, -1),
+    NdCallRef { var, args } => {
+      if tracked.contains(var) {
+        return false;
+      }
+      for a in args {
+        if !walk(e, vars, body, a, v, db, tracked, aliases, copy_bound, -1, -1) {
+          return false;
+        }
+      }
+      true
+    },
+    NdFnRef { var } => !tracked.contains(var),
+    NdFnRefDnr { n: x } => !tracked.contains(x),
+    _ => {
+      for c in el_ir::children(n) {
+        if !walk(e, vars, body, c, v, db, tracked, aliases, copy_bound, -1, -1) {
+          return false;
+        }
+      }
+      true
+    }
+  }
+}
+
+fn tracked_var(n: ir::Node, tracked: vector<integer>) -> boolean {
+  match el_ir::unspan(n) {
+    NdVar { n: x } => tracked.contains(x),
+    _ => false
+  }
+}
+
+fn tracked_db(n: ir::Node, db: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdVar { n: x } => x == db,
+    _ => false
+  }
+}
+
+// `allowed_operand`: may a tracked vector stand as operand `i` of `name`?
+fn allowed_operand(e: el::El, name: text, d: integer, i: integer) -> boolean {
+  if i == 0 && in_place_at_0(name) {
+    return true;
+  }
+  if i == 1 && (name == "OpAppendVector" || name == "OpReplaceVector") {
+    return true;
+  }
+  if i == 0 {
+    op = one_op_wrapper(e, d);
+    if op >= 0 && in_place_at_0(el::def(e, op).name) {
+      return true;
+    }
+  }
+  callee_admits(e, d, i)
+}
+
+fn in_place_at_0(nm: text) -> boolean {
+  starts_with(nm, "OpPush") || nm == "OpPreAllocVector" || nm == "OpReserveVector" || nm == "OpLengthVector" || nm == "OpSizeVector" || nm == "OpVectorIsNull" || nm == "OpClearVector" || nm == "OpRemoveVector" || nm == "OpKeepVectorRange" || nm == "OpPrependVector" || nm == "OpAppendTextBytes" || nm == "OpAppendVector" || nm == "OpReplaceVector" || element_place(nm)
+}
+
+fn element_place(nm: text) -> boolean {
+  nm == "OpGetVector" || nm == "OpGetVectorNullable" || nm == "OpInsertVector" || nm == "OpVectorRef" || nm == "OpVectorRefNullable"
+}
+
+fn scalar_accessor(nm: text) -> boolean {
+  nm == "OpGetInt" || nm == "OpGetInt4" || nm == "OpGetInt4Raw" || nm == "OpGetInt4Full" || nm == "OpGetCharacter" || nm == "OpGetSingle" || nm == "OpGetFloat" || nm == "OpGetByte" || nm == "OpGetByteNullable" || nm == "OpGetEnum" || nm == "OpGetBoolean" || nm == "OpGetShort" || nm == "OpGetShortRaw" || nm == "OpGetShortSpare" || nm == "OpGetShortFull" || nm == "OpSetInt" || nm == "OpSetInt4" || nm == "OpSetInt4Raw" || nm == "OpSetCharacter" || nm == "OpSetSingle" || nm == "OpSetFloat" || nm == "OpSetByte" || nm == "OpSetByteNullable" || nm == "OpSetShort" || nm == "OpSetShortRaw" || nm == "OpSetEnum" || nm == "OpSetBoolean"
+}
+
+// `ir_shape::one_op_wrapper`: a standard-library wrapper whose body is one op call over its
+// parameters (`len(v)` is `OpLengthVector(v)`), its first operand the first parameter and no
+// other operand naming it — the op, or -1.
+fn one_op_wrapper(e: el::El, d: integer) -> integer {
+  def = el::def(e, d);
+  if def.rust != "" || def.source != 0 || el_ir::is_null(def.code[0] ?? ir::NdNull) {
+    return -1;
+  }
+  for a in def.attributes {
+    if a.hidden || el_types::base(a.typedef[0] ?? ir::TyVoid) is TyText {
+      return -1;
+    }
+  }
+  if el_types::base(def.returned[0] ?? ir::TyVoid) is TyText {
+    return -1;
+  }
+  stmt = ir::NdNull;
+  count = 0;
+  match el_ir::unspan(def.code[0] ?? ir::NdNull) {
+    NdBlock { block } => {
+      for op in block[0].operators {
+        if !(el_ir::unspan(op) is NdLine) {
+          stmt = op;
+          count += 1;
+        }
+      }
+    },
+    _ => {}
+  }
+  if count != 1 {
+    return -1;
+  }
+  // The one statement, through a `return` it may be wrapped in.
+  body = match el_ir::unspan(stmt) {
+    NdReturn { inner } => el_ir::unspan(inner),
+    other: _ => other
+  };
+  match body {
+    NdCall { def_nr, args } => {
+      cd = el::def(e, def_nr);
+      if !el_ir::is_null(cd.code[0] ?? ir::NdNull) || cd.rust == "" {
+        return -1;
+      }
+      for a in args {
+        match el_ir::unspan(a) {
+          NdVar { n: p } => {
+            if p >= len(def.attributes) || (p == 0 && a#index > 0) {
+              return -1;
+            }
+            if a#index == 0 && p != 0 {
+              return -1;
+            }
+          },
+          NdInt { n: _ } => {
+            if a#index == 0 {
+              return -1;
+            }
+          },
+          _ => { return -1; }
+        }
+      }
+      def_nr
+    },
+    _ => -1
+  }
+}
+
+// `loft_callee_admits`: a loft-bodied callee takes a tracked vector by value at parameter `i`
+// when its answer cannot hold it.
+fn callee_admits(e: el::El, d: integer, i: integer) -> boolean {
+  def = el::def(e, d);
+  if def.def_type != el::DT_FUNCTION || def.rust != "" || !(el_ir::unspan(def.code[0] ?? ir::NdNull) is NdBlock) {
+    return false;
+  }
+  a = def.attributes[i];
+  if a == null || !(el_types::base(a!.typedef[0] ?? ir::TyVoid) is TyVector) {
+    return false;
+  }
+  r = def.returned[0] ?? ir::TyVoid;
+  for x in el_types::deps(r) {
+    at = def.attributes[x];
+    if at == null || !at!.hidden || x == i {
+      return false;
+    }
+  }
+  !(el_types::base(r) is TyFunction)
+}
+
+// `dead_store_accesses`' decline, read conservatively: `v` named only by its trio and as the
+// destination of writes (`OpSet…`), never read.
+fn dead_store(e: el::El, code: ir::Node, v: integer) -> boolean {
+  reads_of(e, code, v) == 0
+}
+
+fn reads_of(e: el::El, n: ir::Node, v: integer) -> integer {
+  match n {
+    NdSpan { inner } => reads_of(e, inner, v),
+    NdVar { n: x } => if x == v { 1 } else { 0 },
+    NdSet { var, inner } => if var == v && el_expressions::calls(e, inner, "OpGetField") { 0 } else { reads_of(e, inner, v) },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      c = 0;
+      for a in args {
+        if a#index == 0 && starts_with(nm, "OpSet") && tracked_db(a, v) {
+          continue;
+        }
+        c += reads_of(e, a, v);
+      }
+      c
+    },
+    _ => {
+      c = 0;
+      for ch in el_ir::children(n) {
+        c += reads_of(e, ch, v);
+      }
+      c
+    }
+  }
+}
+
+// `promote_one`: the hidden attribute, the argument, the entry witness, and the declaration's
+// trio replaced by the null-or-clear site.
+fn promote_one(e: el::El, d: integer, vars: el_vars::Vars, code: ir::Node, v: integer, db: integer) -> ir::Node {
+  t = el_vars::tp(vars, v);
+  buf_tp = el_types::without_deps(t);
+  a = el::attribute(el_vars::name_of(vars, v), buf_tp);
+  a.hidden = true;
+  a.work_buffer = true;
+  e.b.data.definitions[d].attributes += [a];
+  el_vars::become_argument(vars, v);
+  w = el_vars::rebind_witness(vars, v);
+  vars.vars[db].skip_free = true;
+  el_vars::mark_inline(vars, db);
+  is_null = el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]);
+  free = el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: v }, ir::NdVar { n: w }]);
+  clear = el_ir::cl(e, "t_6vector_clear", [ir::NdVar { n: v }]);
+  body = replace_trio(e, code, v, db, is_null, free, clear);
+  // The entry stash: the witness's null-init first, the raw copy after the leading null-inits.
+  match el_ir::unspan(body) {
+    NdBlock { block } => {
+      bl = block[0];
+      ops: vector<ir::Node> = [el_ir::v_set(w, ir::NdNull)];
+      for op in bl.operators {
+        ops += [op];
+      }
+      at = 0;
+      found = false;
+      for op in ops {
+        if !found {
+          lead = match el_ir::unspan(op) { NdSet { inner } => el_ir::unspan(inner) is NdNull, _ => false };
+          if !lead {
+            at = op#index;
+            found = true;
+          }
+        }
+      }
+      if !found {
+        at = len(ops);
+      }
+      out: vector<ir::Node> = [];
+      for op in ops {
+        if op#index == at {
+          out += [el_ir::cl(e, "OpPutRef", [ir::NdVar { n: w }, ir::NdVar { n: v }])];
+        }
+        out += [op];
+      }
+      if at >= len(ops) {
+        out += [el_ir::cl(e, "OpPutRef", [ir::NdVar { n: w }, ir::NdVar { n: v }])];
+      }
+      bl.operators = out;
+      return el_ir::respan(body, ir::NdBlock { block: [bl] });
+    },
+    _ => {}
+  }
+  body
+}
+
+// The (one) trio of `v` replaced by `if OpRefIsNull(v) { free; trio } else { clear }`.
+fn replace_trio(e: el::El, n: ir::Node, v: integer, db: integer, is_null: ir::Node, free: ir::Node, clear: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_trio(e, inner, v, db, is_null, free, clear) },
+    NdBlock { block } => {
+      bl = block[0];
+      bl.operators = replace_in(e, bl.operators, v, db, is_null, free, clear);
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      bl.operators = replace_in(e, bl.operators, v, db, is_null, free, clear);
+      ir::NdLoop { block: [bl] }
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: replace_trio(e, t, v, db, is_null, free, clear), f: replace_trio(e, f, v, db, is_null, free, clear) },
+    NdInsert { items } => ir::NdInsert { items: replace_in(e, items, v, db, is_null, free, clear) },
+    _ => n
+  }
+}
+
+fn replace_in(e: el::El, ops: vector<ir::Node>, v: integer, db: integer, is_null: ir::Node, free: ir::Node, clear: ir::Node) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  i = 0;
+  while i < len(ops) {
+    if is_trio(e, ops, i, v, db) {
+      trio: vector<ir::Node> = [free, ops[i] ?? ir::NdNull, ops[i + 1] ?? ir::NdNull, ops[i + 2] ?? ir::NdNull];
+      out += [el_ir::v_if(is_null, ir::NdInsert { items: trio }, ir::NdInsert { items: [clear] })];
+      i += 3;
+      continue;
+    }
+    out += [replace_trio(e, ops[i] ?? ir::NdNull, v, db, is_null, free, clear)];
+    i += 1;
+  }
+  out
+}
+
+// `is_trio`: the backing's mint, the local bound as a view of it, the length written 0.
+fn is_trio(e: el::El, ops: vector<ir::Node>, i: integer, v: integer, db: integer) -> boolean {
+  if i + 2 >= len(ops) {
+    return false;
+  }
+  mint = el_expressions::calls(e, ops[i] ?? ir::NdNull, "OpDatabase") && match el_ir::unspan(ops[i] ?? ir::NdNull) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, db), _ => false };
+  bind = match el_ir::unspan(ops[i + 1] ?? ir::NdNull) {
+    NdSet { var, inner } => var == v && el_expressions::calls(e, inner, "OpGetField") && match el_ir::unspan(inner) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, db), _ => false },
+    _ => false
+  };
+  zero = el_expressions::calls(e, ops[i + 2] ?? ir::NdNull, "OpSetInt4") && match el_ir::unspan(ops[i + 2] ?? ir::NdNull) { NdCall { args } => tracked_db(args[0] ?? ir::NdNull, db), _ => false };
+  mint && bind && zero
+}
+
+// Phase B: every call of a promoted definition takes the buffers its callee now declares — a
+// `__ref_N` pooled per frame, element and slot — and each buffer minted gets the top-level
+// null-init the parser's preamble would have given it.
+fn patch_callers(e: el::El, promoted: vector<integer>, pool: vector<Pool>, fresh: vector<integer>) {
+  for c in e.b.data.definitions {
+    cd = c#index;
+    if c.source != e.source || el_ir::is_null(c.code[0] ?? ir::NdNull) || !calls_short(e, c.code[0] ?? ir::NdNull, promoted) {
+      continue;
+    }
+    vars = el_vars::load(c.variables);
+    before = len(vars.vars);
+    code = patch_node(e, cd, vars, c.code[0] ?? ir::NdNull, promoted, pool);
+    match el_ir::unspan(code) {
+      NdBlock { block } => {
+        bl = block[0];
+        for x in vars.vars {
+          if x#index >= before {
+            ops: vector<ir::Node> = [el_ir::v_set(x#index, ir::NdNull)];
+            for op in bl.operators {
+              ops += [op];
+            }
+            bl.operators = ops;
+            fresh += [cd * 65536 + x#index];
+          }
+        }
+        code = el_ir::respan(code, ir::NdBlock { block: [bl] });
+      },
+      _ => {}
+    }
+    e.b.data.definitions[cd].code = [code];
+    e.b.data.definitions[cd].variables = el_vars::stored(vars);
+  }
+}
+
+fn calls_short(e: el::El, n: ir::Node, promoted: vector<integer>) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      if promoted.contains(def_nr) && len(args) < len(el::def(e, def_nr).attributes) {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for ch in el_ir::children(n) {
+    if calls_short(e, ch, promoted) {
+      return true;
+    }
+  }
+  false
+}
+
+// `patch_tret_call` with `add_defaults`' vector arm: arguments first, then this call.
+fn patch_node(e: el::El, ctx: integer, vars: el_vars::Vars, n: ir::Node, promoted: vector<integer>, pool: vector<Pool>) -> ir::Node {
+  match n {
+    NdCall { def_nr, args } => {
+      na: vector<ir::Node> = [];
+      for a in args {
+        na += [patch_node(e, ctx, vars, a, promoted, pool)];
+      }
+      if promoted.contains(def_nr) {
+        def = el::def(e, def_nr);
+        for at in def.attributes {
+          if at#index >= len(na) {
+            if !at.work_buffer {
+              el::refuse(e, "a call missing a parameter the work-buffer pass does not supply");
+              return n;
+            }
+            na += [ir::NdVar { n: pooled(ctx, vars, def, at#index, pool) }];
+          }
+        }
+      }
+      ir::NdCall { def_nr: def_nr, args: na }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: patch_node(e, ctx, vars, inner, promoted, pool) },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: patch_list(e, ctx, vars, args, promoted, pool) },
+    NdBlock { block } => {
+      bl = block[0];
+      bl.operators = patch_list(e, ctx, vars, bl.operators, promoted, pool);
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      bl.operators = patch_list(e, ctx, vars, bl.operators, promoted, pool);
+      ir::NdLoop { block: [bl] }
+    },
+    NdInsert { items } => ir::NdInsert { items: patch_list(e, ctx, vars, items, promoted, pool) },
+    NdTuple { items } => ir::NdTuple { items: patch_list(e, ctx, vars, items, promoted, pool) },
+    NdParallel { arms } => ir::NdParallel { arms: patch_list(e, ctx, vars, arms, promoted, pool) },
+    NdIf { cond, t, f } => ir::NdIf { cond: patch_node(e, ctx, vars, cond, promoted, pool), t: patch_node(e, ctx, vars, t, promoted, pool), f: patch_node(e, ctx, vars, f, promoted, pool) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: patch_node(e, ctx, vars, inner, promoted, pool) },
+    NdReturn { inner } => ir::NdReturn { inner: patch_node(e, ctx, vars, inner, promoted, pool) },
+    NdDrop { inner } => ir::NdDrop { inner: patch_node(e, ctx, vars, inner, promoted, pool) },
+    NdYield { inner } => ir::NdYield { inner: patch_node(e, ctx, vars, inner, promoted, pool) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: patch_node(e, ctx, vars, inner, promoted, pool) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: patch_node(e, ctx, vars, create, promoted, pool), next: patch_node(e, ctx, vars, next, promoted, pool), init: patch_node(e, ctx, vars, init, promoted, pool) },
+    _ => n
+  }
+}
+
+fn patch_list(e: el::El, ctx: integer, vars: el_vars::Vars, l: vector<ir::Node>, promoted: vector<integer>, pool: vector<Pool>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for x in l {
+    out += [patch_node(e, ctx, vars, x, promoted, pool)];
+  }
+  out
+}
+
+// `pooled_work_buffer`: one `__ref_N` per frame, element type and the slot's rank among the
+// callee's work buffers of that element.
+fn pooled(ctx: integer, vars: el_vars::Vars, def: ir::Definition, a_nr: integer, pool: vector<Pool>) -> integer {
+  t = el_types::without_deps(def.attributes[a_nr]!.typedef[0] ?? ir::TyVoid);
+  key = "{t}";
+  k = 0;
+  for a in def.attributes {
+    if a#index < a_nr && a.work_buffer && "{el_types::without_deps(a.typedef[0] ?? ir::TyVoid)}" == key {
+      k += 1;
+    }
+  }
+  for p in pool {
+    if p.ctx == ctx && p.elem == key && p.k == k && p.var < len(vars.vars) {
+      return p.var;
+    }
+  }
+  vr = el_vars::work_ref(vars, t);
+  vars.vars[vr].caller_hidden_buf = true;
+  pool += [Pool { ctx: ctx, elem: key, k: k, var: vr }];
+  vr
+}
+
+// The transitive clause for one definition: each buffer Phase B minted here that is only
+// handed to work-buffer parameters of callees off a cycle with it becomes a hidden parameter.
+fn promote_refs_in(e: el::El, d: integer, fresh: vector<integer>) -> integer {
+  vars = el_vars::load(el::def(e, d).variables);
+  code = el::def(e, d).code[0] ?? ir::NdNull;
+  promoted = 0;
+  for x in vars.vars {
+    r = x#index;
+    if !fresh.contains(d * 65536 + r) || x.argument {
+      continue;
+    }
+    t = x.type_def[0] ?? ir::TyVoid;
+    if t is TyOptional || !(t is TyVector) {
+      continue;
+    }
+    numbered_before = false;
+    for a in vars.vars {
+      if a.argument && a#index > r {
+        numbered_before = true;
+      }
+    }
+    if numbered_before || top_null_inits(code, r) != 1 || el_expressions::sets(code, r) != 1 {
+      continue;
+    }
+    handed = handed_down(e, d, code, r);
+    if handed <= 0 || handed != el_ir::mentions(code, r) {
+      continue;
+    }
+    a = el::attribute(x.name, el_types::without_deps(t));
+    a.hidden = true;
+    a.work_buffer = true;
+    e.b.data.definitions[d].attributes += [a];
+    el_vars::become_argument(vars, r);
+    match el_ir::unspan(code) {
+      NdBlock { block } => {
+        bl = block[0];
+        kept: vector<ir::Node> = [];
+        for op in bl.operators {
+          drop = match el_ir::unspan(op) { NdSet { var, inner } => var == r && el_ir::unspan(inner) is NdNull, _ => false };
+          if !drop {
+            kept += [op];
+          }
+        }
+        bl.operators = kept;
+        code = el_ir::respan(code, ir::NdBlock { block: [bl] });
+      },
+      _ => {}
+    }
+    promoted += 1;
+  }
+  e.b.data.definitions[d].code = [code];
+  e.b.data.definitions[d].variables = el_vars::stored(vars);
+  promoted
+}
+
+// How many times `r` is handed to a work-buffer parameter of a callee that cannot reach back
+// to `d`; -1 when it is handed anywhere else.
+fn handed_down(e: el::El, d: integer, n: ir::Node, r: integer) -> integer {
+  c = 0;
+  match n {
+    NdCall { def_nr, args } => {
+      for a in args {
+        if tracked_db(a, r) {
+          at = el::def(e, def_nr).attributes[a#index];
+          if at == null || !at!.work_buffer || reaches(e, def_nr, d, []) {
+            return -1;
+          }
+          c += 1;
+        }
+      }
+    },
+    _ => {}
+  }
+  for ch in el_ir::children(n) {
+    h = handed_down(e, d, ch, r);
+    if h < 0 {
+      return -1;
+    }
+    c += h;
+  }
+  c
+}
+
+// Does definition `from` reach `to` through direct calls?
+fn reaches(e: el::El, from: integer, to: integer, seen: vector<integer>) -> boolean {
+  if from == to {
+    return true;
+  }
+  if seen.contains(from) {
+    return false;
+  }
+  seen += [from];
+  for c in callees(e, el::def(e, from).code[0] ?? ir::NdNull) {
+    if reaches(e, c, to, seen) {
+      return true;
+    }
+  }
+  false
+}
+
+fn callees(e: el::El, n: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  match n {
+    NdCall { def_nr } => { out += [def_nr]; },
+    _ => {}
+  }
+  for ch in el_ir::children(n) {
+    for c in callees(e, ch) {
+      if !out.contains(c) {
+        out += [c];
+      }
+    }
+  }
+  out
+}

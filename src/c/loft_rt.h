@@ -1137,6 +1137,23 @@ LOFT_HOT_INLINE void loft_push_code(loft_text *t, uint32_t c) {
  * takes.  The pad is never read; a positional initialiser leaves it zero.  Measured over the
  * library benches: gcc −3 % (cbor decode −35 %), clang neutral (@PLN210 P1). */
 typedef struct { uint16_t store_nr; uint32_t rec; uint32_t pos; uint32_t pad_; } loft_ref;
+/* `@FR-R-RefParam`: a reference parameter arrives as `<name>__in` and the body's first statement
+ * makes the local `<name>` of it (`tidy_unit`).  The pad above keeps `rec|pos` out of one
+ * register, but their bytes still lie side by side once gcc spills the two eightbytes, and a body
+ * that reads both reloads them with one 8-byte load spanning the two stores — the stall again,
+ * on every call.  Written field by field, the local's `rec` and `pos` are separate values gcc
+ * never reloads as one.  clang does not stall and pays for the copy (cbor `encode_bytes` +31 %),
+ * so everywhere but gcc it is the plain copy, which every compiler folds away. */
+#if defined(__GNUC__) && !defined(__clang__)
+#define LOFT_REF_IN(v) \
+    loft_ref v; \
+    v.store_nr = v##__in.store_nr; \
+    v.rec = v##__in.rec; \
+    v.pos = v##__in.pos; \
+    v.pad_ = 0
+#else
+#define LOFT_REF_IN(v) loft_ref v = v##__in
+#endif
 typedef struct { int64_t d; loft_ref clos; } loft_fn;
 
 /* ── Stores ────────────────────────────────────────────────────────────────────────────────
@@ -2549,6 +2566,14 @@ LOFT_HOT_INLINE loft_ref loft_vh_at_ref(loft_vh h, uint32_t size, int64_t f) {
     e.pos = (uint32_t) (8 + (uint64_t) f * size);
     return e;
 }
+/* @FR-R-Base's grid clause — does a held vector hold every index a * w + b with 0 <= a < rows and
+ * 0 <= b < w?  The largest is rows * w - 1, so: rows and w not negative (a null is not) and
+ * rows * w, not overflowing, no more than the length.  A multiply, not a division: asked at
+ * every read, a division was what the compiler did not hoist (terrain 3.06x; 1.70x so). */
+LOFT_HOT_INLINE int loft_grid_fits(loft_vh h, int64_t rows, int64_t w) {
+    int64_t p;
+    return rows >= 0 && w >= 0 && !LOFT_MUL_OVF(rows, w, &p) && p <= h.len;
+}
 LOFT_HOT_INLINE uint8_t *loft_vh_at_addr(loft_vh h, uint32_t size, int64_t f) {
     LOFT_PROVED(f >= 0 && f < h.len, "R-Base counter: address");
     return h.base + (size_t) f * size;
@@ -2939,6 +2964,16 @@ static loft_str loft_store_str(loft_store_t *s, uint32_t srec) {
     uint32_t len = loft_u32(s, srec, 4);
     if (len / 8 + srec > s->size) return loft_null_text();
     return loft_lit((const char *) loft_at(s, srec, 8), len);
+}
+
+/* @FR-R-RecPtr's text clause — a text field through a held element's address: its string
+ * record at `p + fld`, resolved in the element's store (its texts are records there); the null
+ * address answers the null text, as loft_get_text of the null record. */
+LOFT_HOT_INLINE loft_str loft_pa_text(const uint8_t *p, uint32_t fld, uint16_t store_nr) {
+    if (!p) return loft_null_text();
+    uint32_t srec;
+    memcpy(&srec, p + fld, 4);
+    return loft_store_str(&loft_stores[store_nr], srec);
 }
 
 static loft_str loft_get_text(loft_ref r, uint32_t fld) {
@@ -6737,6 +6772,27 @@ static void loft_ta_vec_copy(loft_ta_vec *d, loft_ref src, uint32_t size) {
     d->p = loft_ta_alloc((size_t) n * size);
     memcpy(d->p, loft_elem_base(s, r), (size_t) n * size);
     d->n = d->cap = (uint32_t) n;
+}
+
+/* `@FR-R-SliceInto`'s transient clause: the elements [lo, hi) of `src`, clamped to it as
+ * loft_vec_slice clamps them, copied into `d` — what the slice's temporary and the copy of it
+ * made together. */
+static void loft_ta_vec_copy_range(loft_ta_vec *d, loft_ref src, int64_t lo, int64_t hi, uint32_t size) {
+    int64_t n = loft_vec_len(src);
+    d->p = 0;
+    d->n = d->cap = 0;
+    if (src.store_nr == 0xFFFF || src.rec == 0 || src.pos == 0 || n <= 0) return;
+    if (lo < 0) lo = 0;
+    if (lo > n) lo = n;
+    if (hi < lo) hi = lo;
+    if (hi > n) hi = n;
+    if (hi == lo) return;
+    loft_store_t *s = loft_store_of(src);
+    uint32_t r = loft_collection_rec(s, src.rec, src.pos);
+    if (r == 0) return;
+    d->p = loft_ta_alloc((size_t) (hi - lo) * size);
+    memcpy(d->p, loft_elem_base(s, r) + (size_t) lo * size, (size_t) (hi - lo) * size);
+    d->n = d->cap = (uint32_t) (hi - lo);
 }
 
 /* OpSliceVector (Stores::vector_slice): the elements [lo, hi) of `o`, clamped to it, appended to

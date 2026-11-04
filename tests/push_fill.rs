@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! @PLN157 § V-am (`@FR-R-PushFill`) — the EMISSION pins.  A counted loop that is one push
-//! of an invariant is one `stores.push_fill` with the per-element loop under `if !__pf_N`;
+//! of an invariant is one fill — the IR's `if 0 < n { push; OpAppendCopy(v, n, tp) } else
+//! { the loop }` (`opt::fill_loop`, both backends), its block named `fill`;
 //! a counted loop pushing computed values reserves its pushes times its trip count before
 //! it runs (`vector::reserve_more`); a loop with a `break` or a call for its end takes
 //! neither; `LOFT_NO_PUSH_FILL=1` restores the per-push form everywhere.  The cell corpus
@@ -56,19 +57,14 @@ fn body<'a>(rust: &'a str, name: &str) -> &'a str {
 #[test]
 fn one_push_of_an_invariant_is_one_fill_with_the_loop_as_its_fallback() {
     let rust = emit("fill", &[]);
-    for (name, ty) in [
-        ("n_p1", "i64"),
-        ("n_p2", "i64"),
-        ("n_p6", "f64"),
-        ("n_p11", "i64"),
-    ] {
+    for name in ["n_p1", "n_p2", "n_p6", "n_p11"] {
         let b = body(&rust, name);
         assert!(
-            b.contains(&format!("stores.push_fill::<{ty}, false>(&mut __ph_")),
+            b.contains("//fill_") && b.contains("OpAppendCopy(cell, "),
             "{name}: the constant push loop is one fill"
         );
         assert!(
-            b.contains("if !__pf_"),
+            b.contains("} else {"),
             "{name}: the per-element loop is the fallback"
         );
     }
@@ -93,7 +89,7 @@ fn computed_pushes_reserve_their_trip_count_before_the_loop() {
             "{name}: the loop reserves its pushes times its trip count"
         );
         assert!(
-            !b.contains("push_fill::<"),
+            !b.contains("//fill_"),
             "{name}: computed values are no fill"
         );
     }
@@ -109,14 +105,14 @@ fn an_early_exit_declines_and_a_call_for_the_end_does_not() {
     let rust = emit("decline", &[]);
     let p5 = body(&rust, "n_p5");
     assert!(
-        !p5.contains("push_fill::<") && !p5.contains("reserve_more"),
+        !p5.contains("//fill_") && !p5.contains("reserve_more"),
         "p5: a `break` in the body takes no fast path"
     );
     // A call for the range's end is taken ONCE, before the first round (`@FR-I-Range`,
     // loft#1619), so the end is invariant and the loop is the fill it looks like.
     let p9 = body(&rust, "n_p9");
     assert!(
-        p9.contains("push_fill::<") || p9.contains("reserve_more"),
+        p9.contains("//fill_") || p9.contains("reserve_more"),
         "p9: a call for the end is taken once, so the loop takes the fast path:\n{p9}"
     );
 }
@@ -125,7 +121,7 @@ fn an_early_exit_declines_and_a_call_for_the_end_does_not() {
 fn the_switch_restores_the_per_push_form_everywhere() {
     let rust = emit("switch", &[("LOFT_NO_PUSH_FILL", "1")]);
     assert!(
-        !rust.contains("push_fill::<") && !rust.contains("reserve_more"),
+        !rust.contains("//fill_") && !rust.contains("reserve_more"),
         "LOFT_NO_PUSH_FILL=1 must emit no fill and no reserve"
     );
 }

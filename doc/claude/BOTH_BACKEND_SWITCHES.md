@@ -334,6 +334,28 @@ was a buffer reset, three appends and three element reads through the store) —
 first bisect step for a wrong value, order or count out of a loop over a literal of scalars.
 `LOFT_REWRITE_CENSUS` counts its admissions as `R-LiteralWalk`.
 
+**`LOFT_NO_FILL_LOOP=1`** (`@FR-R-PushFill`'s fill form, default-ON, IR phase, BOTH backends)
+keeps `for _ in a..b { v += [c] }` a loop instead of one push and an `OpAppendCopy` — the
+writers' reservation and window clauses then take it; `LOFT_NO_PUSH_FILL=1` turns the whole
+rule off.  `LOFT_TRACE_IR_FILL=1` names each loop taken.
+
+**`LOFT_NO_WRAPPER_INLINE=1`** (`@FR-R-Wrapper`, default-ON, scope pass, BOTH backends) keeps
+a call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`, `v.clear()`) a CALL instead of its op —
+the bisect step for a wrong length or libm value; it also keeps `(R-SplitTable)` from reading
+`len` as its count.  `LOFT_TRACE_WRAPPER=1` names each call taken and each kept with why.
+
+**`LOFT_NO_SLICE_TEXT=1`** (`@FR-R-SliceArg`'s range clause, default-ON, scope pass, BOTH
+backends) keeps `text_from_bytes(v[lo..hi])` as a slice built in a store of its own and then
+converted — with it off, the bytes are read where they lie, `text_from_byte_range(v, lo, hi)`
+after the slice's bound statements — and is the first bisect step for a wrong text out of a
+slice of bytes.  `LOFT_TRACE_SLICE_TEXT=1` names each site taken and each kept with why.
+
+**`LOFT_NO_LITERAL_APPEND=1`** (`@FR-R-LiteralAppend`, default-ON, scope pass, BOTH backends)
+keeps `t = T { … }; v += [t]` as a record minted for `t`, copied into the element and freed —
+with it off, the literal is built in the element, as `v += [T { … }]` is — and is the first
+bisect step for a wrong field in an element appended from a bound literal.
+`LOFT_TRACE_LITERAL_APPEND=1` names each rewrite.
+
 ## Lowering: adopting and minting call buffers
 
 **`LOFT_NO_NULLABLE_RETBUF=1`** (`@FR-N-Road`, default-ON, parse time,

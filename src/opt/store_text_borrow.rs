@@ -64,6 +64,7 @@ pub fn borrowed_store_texts(
     data: &Data,
     def_nr: u32,
     already: &HashMap<u16, TextBorrow>,
+    local_roots: bool,
 ) -> StoreTextBorrows {
     let def = data.def(def_nr);
     let vars = def.variables();
@@ -85,6 +86,17 @@ pub fn borrowed_store_texts(
             .and_then(|a| a.first())
             .is_some_and(|r| param_rooted(r, data, vars, &rebound))
     };
+    // The local-root clause (`local_roots`, the C writer's): a discharge temp's text read
+    // rooted at a frame LOCAL — the local whose store it names.
+    let local_disabled = std::env::var("LOFT_NO_LOCAL_TEXT_BORROW").is_ok_and(|v| v != "0");
+    let local_read = |to: &Value| -> Option<u16> {
+        if !local_roots || local_disabled {
+            return None;
+        }
+        call_named(to, data, "OpGetText")
+            .and_then(|a| a.first())
+            .and_then(|r| local_root(r, data, vars))
+    };
     let text_local = |v: u16| {
         !vars.is_argument(v)
             && !already.contains_key(&v)
@@ -104,13 +116,20 @@ pub fn borrowed_store_texts(
         |to: &Value| call_named(to, data, "OpGetTextSub").and_then(|a| as_var(a.first()));
     // The discharge temps: one bind, to a parameter's text.
     let mut temps: HashSet<u16> = HashSet::new();
+    // The temps bound to a LOCAL's text, each with that local: borrowed only where nothing
+    // in their scope writes any store or rebinds the local, and never a source of a local.
+    let mut local_temps: HashMap<u16, u16> = HashMap::new();
     body.any_node(&mut |n| {
         if let Value::Set(v, to) = n
             && vars.name(*v).starts_with("__ncc_")
             && text_local(*v)
-            && param_read(to)
         {
-            temps.insert(*v);
+            if param_read(to) {
+                temps.insert(*v);
+            } else if let Some(root) = local_read(to) {
+                temps.insert(*v);
+                local_temps.insert(*v, root);
+            }
         }
         false
     });
@@ -190,7 +209,7 @@ pub fn borrowed_store_texts(
             Value::Block(_) => fmt_own(to),
             Value::Call(..) if fmt_own(to) => true,
             Value::Var(s) => {
-                admitted.contains(s)
+                (admitted.contains(s) && !local_temps.contains_key(s))
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
             }
             _ => {
@@ -199,7 +218,7 @@ pub fn borrowed_store_texts(
                         && slice_of(to).is_some_and(|s| plain_text_arg(s) || admitted.contains(&s)))
             }
         };
-        let temp_ok = |to: &Value| param_read(to);
+        let temp_ok = |to: &Value| param_read(to) || local_read(to).is_some();
         let mut drop: Vec<(u16, &'static str)> = Vec::new();
         for &v in &admitted {
             let escape = if temps.contains(&v) {
@@ -252,6 +271,21 @@ pub fn borrowed_store_texts(
             continue;
         }
         let scope = mention_scope(body, v);
+        // The local-root clause: the local's store is the frame's own, so no store writer of
+        // any kind may run in the scope (none counts as minted), nor may the local be rebound.
+        if let Some(&root) = local_temps.get(&v) {
+            let rebinds = scope.any_node(&mut |n| matches!(n, Value::Set(x, _) if *x == root));
+            let w = if rebinds {
+                Some("its local rebound in its scope")
+            } else {
+                foreign_store_writer(scope, data, &HashSet::new(), &mut fx, None)
+            };
+            if let Some(w) = w {
+                temps.remove(&v);
+                why.insert(v, w);
+            }
+            continue;
+        }
         if let Some(w) = foreign_store_writer(scope, data, &minted, &mut fx, None) {
             // The tested clause: a local whose only other writers name the return buffer
             // (or a callee's buffer it is handed) borrows while its parameters' stores are
@@ -301,7 +335,7 @@ pub fn borrowed_store_texts(
             Value::Block(_) => fmt_own(to),
             Value::Call(..) if fmt_own(to) => true,
             Value::Var(s) => {
-                admitted.contains(s)
+                (admitted.contains(s) && !local_temps.contains_key(s))
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
             }
             _ => {
@@ -344,6 +378,8 @@ pub fn borrowed_store_texts(
                 "a parameter's text while its store is not the return buffer's"
             } else if fmt_bound.contains(v) {
                 "a format's or a call's work text"
+            } else if local_temps.contains_key(v) {
+                "a local's text, nothing in its scope writing a store"
             } else {
                 "a parameter's text"
             };
@@ -525,6 +561,24 @@ fn text_bound_only_by(body: &Value, v: u16, ok: &dyn Fn(&Value) -> bool) -> bool
 
 /// Is `r` a PARAMETER reached through field and element reads — a place in a store that was
 /// live when the frame began?  The parameter must be a plain one the body never rebinds.
+/// The frame LOCAL a text read's record is reached from, through field and element reads
+/// (`texts[si]`, `f.names[i]`): `None` for a parameter or any other root.
+fn local_root(r: &Value, data: &Data, vars: &crate::variables::Function) -> Option<u16> {
+    match r.unspan() {
+        Value::Var(a) if !vars.is_argument(*a) => Some(*a),
+        Value::Call(d, args)
+            if (*d as usize) < data.definitions.len()
+                && matches!(
+                    data.def(*d).name(),
+                    "OpGetField" | "OpGetVector" | "OpGetVectorNullable"
+                ) =>
+        {
+            args.first().and_then(|a| local_root(a, data, vars))
+        }
+        _ => None,
+    }
+}
+
 fn param_rooted(
     r: &Value,
     data: &Data,

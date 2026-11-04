@@ -1134,11 +1134,11 @@ impl Parser {
             // `set_returned` below.  Emit a clear diagnostic naming the
             // existing definition's location.
             let prev_pos = *self.data.def(d_nr).position();
-            let prev_kind = format!("{:?}", self.data.def(d_nr).def_type()).to_lowercase();
+            let prev_kind = self.data.def(d_nr).def_type().described();
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "enum '{type_name}' conflicts with a {prev_kind} of the same name \
+                "enum '{type_name}' conflicts with {prev_kind} of the same name \
                  already defined at {prev_pos} — pick a different name"
             );
             conflict = true;
@@ -1234,11 +1234,11 @@ impl Parser {
                 adopted = existing;
             } else if existing != u32::MAX {
                 let prev_pos = *self.data.def(existing).position();
-                let prev_kind = format!("{:?}", self.data.def(existing).def_type()).to_lowercase();
+                let prev_kind = self.data.def(existing).def_type().described();
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "type '{type_name}' conflicts with a {prev_kind} of the same name \
+                    "type '{type_name}' conflicts with {prev_kind} of the same name \
                      already defined at {prev_pos} — pick a different name"
                 );
                 conflict = true;
@@ -1714,6 +1714,11 @@ impl Parser {
         };
         let scalar_or_text =
             |tp: &Type| -> bool { !self.type_owns_heap(tp) && !matches!(tp.base(), Type::Void) };
+        // Per callee, which parameters its body WRITES (`callee_param_writes`, field writes and
+        // forwarded writes included): a call that writes one of its other arguments is no
+        // reader of the intermediate — `work_ref(v, tp(v, p))` adds a variable to `v` on every
+        // call, so answering `tp(v, p)` once would not turn three calls into one.
+        let mut writes_cache = crate::fxhash::FxHashMap::default();
         let mut found: Option<(u32, u16)> = None;
         let mut visit = |n: &Value| {
             if found.is_some() {
@@ -1728,8 +1733,23 @@ impl Parser {
             let scalar_call = (name.starts_with("n_") || name.starts_with("t_"))
                 && data.def(*op).is_loft_defined()
                 && scalar_or_text(data.def(*op).returned());
+            let writes = if scalar_call {
+                super::closures::callee_param_writes(*op, data, &mut writes_cache)
+            } else {
+                Vec::new()
+            };
             for (i, a) in args.iter().enumerate() {
                 if !((projection && i == 0) || scalar_call) {
+                    continue;
+                }
+                // A hidden parameter is the compiler's (a text result's buffer), not the author's.
+                let attrs = data.def(*op).attributes();
+                if scalar_call
+                    && writes
+                        .iter()
+                        .enumerate()
+                        .any(|(j, w)| *w && j != i && attrs.get(j).is_some_and(|at| !at.hidden))
+                {
                     continue;
                 }
                 if let Value::Call(g, g_args) = a.unspan()
@@ -2190,12 +2210,11 @@ impl Parser {
                     self.data.definitions[c_nr as usize].code = val;
                 } else {
                     let prev_pos = *self.data.def(existing).position();
-                    let prev_kind =
-                        format!("{:?}", self.data.def(existing).def_type()).to_lowercase();
+                    let prev_kind = self.data.def(existing).def_type().described();
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "constant '{id}' conflicts with a {prev_kind} of the same name \
+                        "constant '{id}' conflicts with {prev_kind} of the same name \
                          already defined at {prev_pos} — pick a different name"
                     );
                 }
@@ -6219,6 +6238,9 @@ impl Parser {
         if self.prelude_shadowed(&id) || (self.first_pass && self.release_unseen_stub(d_nr, &id)) {
             d_nr = u32::MAX;
         }
+        // A second definition of a taken name: its fields would land in the FIRST one, so
+        // every shared field name would report again as "already declared".
+        let mut conflict = false;
         if d_nr == u32::MAX {
             d_nr = self.data.add_def(&id, self.lexer.pos(), DefType::Struct);
             self.data.definitions[d_nr as usize].returned =
@@ -6246,13 +6268,14 @@ impl Parser {
                 self.data.note_stub_adopted(d_nr);
             } else {
                 let prev_pos = *self.data.def(d_nr).position();
-                let prev_kind = format!("{:?}", self.data.def(d_nr).def_type()).to_lowercase();
+                let prev_kind = self.data.def(d_nr).def_type().described();
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "struct '{id}' conflicts with a {prev_kind} of the same name \
+                    "struct '{id}' conflicts with {prev_kind} of the same name \
                      already defined at {prev_pos} — pick a different name"
                 );
+                conflict = true;
             }
         }
         // `D-Template` — a struct with a header is a type template: its variables are types
@@ -6291,7 +6314,7 @@ impl Parser {
                 self.context = context;
                 return true;
             };
-            if self.first_pass && self.data.attr(d_nr, &a_name) != usize::MAX {
+            if self.first_pass && !conflict && self.data.attr(d_nr, &a_name) != usize::MAX {
                 diagnostic!(
                     self.lexer,
                     Level::Error,

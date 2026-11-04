@@ -23,8 +23,10 @@ const ROOTS: &[&str] = &[
     "n_walk_values",
 ];
 
-/// The region: every function a decoded value reaches from a root, as its `__dv` twin.
-const TWINS: &[&str] = &["n_dec", "n_get", "n_read_v", "n_text_of", "t_6vector_len"];
+/// The region: every function a decoded value reaches from a root, as its `__dv` twin.  `len`
+/// is not in it: `@FR-R-Wrapper` writes the call of its one-op stdlib wrapper as the op itself
+/// (`wrapper_inline`, in the IR), so no decoded value reaches `t_6vector_len`.
+const TWINS: &[&str] = &["n_dec", "n_get", "n_read_v", "n_text_of"];
 
 fn loft() -> Command {
     let mut cmd =

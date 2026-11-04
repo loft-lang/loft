@@ -66,7 +66,11 @@ pub fn one_op_wrapper(data: &Data, d_nr: u32) -> Option<(u32, Vec<WrapperOperand
     // it the op IS the call.  Measured: a one-op user function (`fn reader(w: W) -> integer
     // { w.a }`) flipped to the interpreter ran compiled, and the wasm live-dispatch probe
     // counted 0 dispatches where it expected 2.
-    if def.source() != crate::data::STD_SOURCE {
+    // The source id alone does not say it: a REPL input keeps the stdlib's source 0 (its
+    // names resolve in that scope, `Parser::parse_str`), so a function typed at the prompt
+    // would pass, and its call — the one a breakpoint stops on — vanished.  The definition's
+    // FILE is what says "the standard library" (`Definition::is_stdlib`).
+    if def.source() != crate::data::STD_SOURCE || !def.is_stdlib() {
         return None;
     }
     // A text parameter or result takes the CALL's conversions (a `String` result handed to

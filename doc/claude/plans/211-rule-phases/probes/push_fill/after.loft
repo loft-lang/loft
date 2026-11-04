@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The fill form: one push and one append of its copies, as `[c; n]` lowers.
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  v: vector<integer> = [];
+  s = 0;
+  for i in 0..n {
+    v.clear();
+    v += [i; 16];
+    s += len(v) + v[3];
+  }
+  println("{s}");
+}

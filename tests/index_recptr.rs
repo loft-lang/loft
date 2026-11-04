@@ -42,7 +42,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env("LOFT_TIMEOUT", "300")
-        .env_remove("LOFT_NO_INDEX_RECPTR");
+        .env_remove("LOFT_NO_INDEX_RECPTR")
+        // `(R-InRange)`'s counter clause, through the `n = len(v); for i in 0..n` alias, takes
+        // an element at a proven counter from the held base before the index clause sees it
+        // (`n_bump__inv`, `n_bump_local`, …); these pins are about the index clause, so that
+        // rule is held off (its own guard is
+        // tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft).
+        .env("LOFT_NO_IN_RANGE", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }

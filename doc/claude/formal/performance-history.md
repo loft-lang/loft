@@ -38,3 +38,7 @@ them at 10× or more — `pluginabi` `check_request` 59.9×, `mesh3d` `mat4_mul`
 `bench/portal/results/<host>.tsv`, whose git history `make perf-trend` reads.  Marked not resolvable
 in a release by the owner the same day, for the 2026-10 release.
 
+**The bug line, 2026-10-24 to 2026-11-02.**  The line started at 3.5× on the ship lane and was
+filed ONE issue per problem class (the shared cause, its routines listed), ratcheting down to
+3×.  On 2026-11-02 the owner set it at 3× under gcc and clang alike, with one issue per routine
+over it.

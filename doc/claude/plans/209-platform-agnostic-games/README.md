@@ -63,8 +63,10 @@ platform name to a game.
 
 **Two tiers, one platform layer.**
 
-- **Tier F — the frame.**  The game draws a frame on the CPU (`tiles`, `Canvas`, text) and
-  `screen` shows it.  Runs everywhere, including the Tanmatsu, which has no 3D GPU.
+- **Tier F — 2D primitives at the machine's resolution.**  The game draws sprites, bent quads,
+  fills and text in a view of its own units, and each surface rasterises them at its own pixels:
+  the CPU rasteriser on the Tanmatsu, a desktop and in tests, WebGL in a page (API.md § Drawing
+  at the machine's resolution).  Runs everywhere, including the Tanmatsu, which has no 3D GPU.
 - **Tier G — the GPU.**  `graphics` and `stage`.  Desktops and the browser today.
 - **The platform layer** under both: display, input events, audio output, time, storage — one C
   section per machine (the [HARDWARE_BACKENDS.md](../../HARDWARE_BACKENDS.md) rule: one loft
@@ -260,6 +262,8 @@ is a target, else through ANGLE.
   [LIBRARY_AUTHORING.md § The library contract](../../LIBRARY_AUTHORING.md).
 
 ## See also
+
+- [TANMATSU.md § Games for the Tanmatsu](../../TANMATSU.md#games-for-the-tanmatsu) — the device side: which games fit, and one hex world drawn at high, low (a column renderer) and lowest (a character map) fidelity.
 
 [HARDWARE_BACKENDS.md](../../HARDWARE_BACKENDS.md) · [TANMATSU.md](../../TANMATSU.md) ·
 [PACKAGES_C_BINDING.md](../../PACKAGES_C_BINDING.md) ·

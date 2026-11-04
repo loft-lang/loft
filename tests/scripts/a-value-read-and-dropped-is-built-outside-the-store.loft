@@ -279,4 +279,22 @@ fn main() {
   // c9 — a reader that writes its plain parameter
   assert(touch(pa_decode(m), "op") == "apply3", "c9 touch reads, then writes: {touch(pa_decode(m), "op")}");
   assert(touch(pa_decode(dup), "a") == "13", "c9 touch dup");
+
+  // c10 — byte strings around the text the site reads, as pluginabi's frames carry a state and
+  //   an argument: {"b": h'0102', "op": "apply", "c": h''} — 18 bytes:
+  //   A3 | 61 'b' | 42 01 02 | 62 'o' 'p' | 65 'a' 'p' 'p' 'l' 'y' | 61 'c' | 40
+  //   The tree's byte strings are copied straight from the frame (`@FR-R-SliceInto`'s transient
+  //   clause); no site here reads one, so what the cells see is that the copies leave the text
+  //   beside them, the lengths and the refusals as the store form has them.
+  fb: vector<u8> = [163, 97, 98, 66, 1, 2, 98, 111, 112, 101, 97, 112, 112, 108, 121, 97, 99, 64];
+  assert(pa_text(pa_decode(fb), "op") == "apply", "c10 op beside two byte strings");
+  assert(pa_text(pa_decode(fb), "b") == "", "c10 a byte string is not a text");
+  assert(pa_decode_ok(fb), "c10 ok");
+  assert(next_of(fb) == 18, "c10 next 18: {next_of(fb)}");
+  //   map + 3 keys + 2 byte strings + 1 text = 7 nodes, no integers: 700
+  assert(walk(decode(fb).value) == 700, "c10 walk {walk(decode(fb).value)}");
+  //   {"b": h'01020304'} with its last byte missing — A1 61 62 44 01 02 03: 4 + 4 > 7, refused
+  short: vector<u8> = [161, 97, 98, 68, 1, 2, 3];
+  assert(!ok_of(short), "c10 a byte string past the frame is refused");
+  assert(next_of(short) == 0, "c10 short next 0: {next_of(short)}");
 }

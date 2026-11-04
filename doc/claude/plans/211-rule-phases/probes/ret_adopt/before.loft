@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// probe-rule: R-RetAdopt
+// probe-n: 20000 60000
+// A vector built in a local and returned: delivered into the caller's buffer by a copy.
+fn build(k: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for j in 0..8 { r += [k + j]; }
+  r
+}
+
+fn main(args: vector<text>) {
+  n = args[0] as integer ?? 1000;
+  s = 0;
+  for i in 0..n {
+    v = build(i);
+    s += len(v) + v[7];
+  }
+  println("{s}");
+}
