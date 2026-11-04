@@ -809,6 +809,12 @@ fn split_at(
             None => emit(&mut out, s, &names),
         }
     }
+    // A function whose last statement went into a part ends in that part's call; the call
+    // returns when the function does, and a compiler that warns of a path without a `return`
+    // (MSVC's C4715, an error under `/WX`) is answered with the value the part left.
+    if !void && n > 0 && in_part[n - 1].is_some() {
+        let _ = writeln!(out, "    return loft_fr->loft_split_ret;");
+    }
     let _ = writeln!(out, "}}");
     if trace() {
         let costs: Vec<String> = parts.iter().map(|p| unit_cost(p).to_string()).collect();
@@ -914,6 +920,13 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("    return 0;\n}"), "{out}");
+        // The tail `return` went into the last part, so the function ends returning its value.
+        assert!(
+            out.ends_with(
+                "return loft_fr->loft_split_ret;\n    return loft_fr->loft_split_ret;\n}\n"
+            ),
+            "{out}"
+        );
     }
 
     /// A local whose address is taken stays in the frame even when one part alone names it:
