@@ -2770,6 +2770,43 @@ fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   ] }, ir::TyVoid)
 }
 
+// `vec_arm_copies`: 1 where the `if` at `code` can take the bind into its arms and one arm
+// copies a local, 0 where it can but none copies, -1 where an arm is neither a whole-vector
+// local nor a value the bind takes as it is (a vector literal, a pass-1 placeholder).
+fn sinkable_arms(e: el::El, vars: el_vars::Vars, code: ir::Node) -> integer {
+  match el_ir::unspan(code) {
+    NdIf { cond: _, t, f } => {
+      a = sinkable_arms(e, vars, t);
+      b = sinkable_arms(e, vars, f);
+      if a < 0 || b < 0 { -1 } else if a == 1 || b == 1 { 1 } else { 0 }
+    },
+    NdVar { n } => if el_vars::is_compiler_generated(vars, n) { 0 } else { 1 },
+    NdBlock { block } => if block[0].name == "Vector" { 0 } else { -1 },
+    NdNull => 0,
+    _ => -1
+  }
+}
+
+// `sink_vec_arms`: each arm that copies a local binds as `vec_copy_bind` does, every other arm
+// sets the local to what it answers.
+fn sink_arms(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
+  ex(sink_arm(e, vars, v, x.code, x.tp), ir::TyVoid)
+}
+
+fn sink_arm(e: el::El, vars: el_vars::Vars, v: integer, n: ir::Node, t: ir::TypeT) -> ir::Node {
+  match el_ir::unspan(n) {
+    NdIf { cond, t: a, f } => ir::NdIf { cond: cond, t: sink_arm(e, vars, v, a, t), f: sink_arm(e, vars, v, f, t) },
+    NdVar { n: src } => {
+      if el_vars::is_compiler_generated(vars, src) {
+        return el_ir::v_set(v, n);
+      }
+      // The arm a `??` takes where its subject is present copies it as present.
+      vec_copy_bind(e, vars, v, ex(n, el_types::base(el_vars::tp(vars, src)))).code
+    },
+    _ => el_ir::v_set(v, n)
+  }
+}
+
 fn copies_whole_vector(e: el::El, vars: el_vars::Vars, code: ir::Node) -> boolean {
   match el_ir::unspan(code) {
     NdVar { n: _ } => true,
@@ -3069,6 +3106,10 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !is_link(e, rhs!) {
     first_vector_bind(e, vars, v, el_types::base(x.tp), at);
     return vec_copy_bind(e, vars, v, x);
+  }
+  // `sink_vec_bind_into_arms`: a vector `if` one of whose arms copies a local is bound arm by arm.
+  if el_types::base(x.tp) is TyVector && el_ir::unspan(x.code) is NdIf && !vars.vars[v].argument && sinkable_arms(e, vars, x.code) == 1 {
+    return sink_arms(e, vars, v, x);
   }
   // `length_locals`: a local given a vector's length, remembered with that vector.
   match el_ir::unspan(x.code) {
@@ -8091,6 +8132,32 @@ fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   ex(el_ir::v_block([el_ir::v_set(held, x.code), test], lhs, "ncc"), lhs)
 }
 
+// `build_null_coalesce_default_inner`'s vector-literal default: its `_vec_N` a work ref that
+// borrows nothing, never freed where the subject is a plain vector, otherwise nulled where it is
+// first set (inline).
+fn register_default_literal(vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT) {
+  match el_ir::unspan(d) {
+    NdBlock { block } => {
+      if block[0].name != "Vector" || len(block[0].operators) == 0 {
+        return;
+      }
+      match el_ir::unspan(block[0].operators[-1]!) {
+        NdVar { n: w } => {
+          el_vars::register_work_ref(vars, w);
+          el_vars::set_var_type(vars, w, el_types::with_deps(el_vars::tp(vars, w), []));
+          if lhs is TyVector && len(el_types::deps(lhs)) == 0 {
+            vars.vars[w].skip_free = true;
+          } else {
+            el_vars::mark_inline(vars, w);
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+}
+
 fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if el_types::is_unknown(x.tp) || el_types::is_unknown(d.tp) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -8136,12 +8203,18 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if lhs is TyReference {
     return record_coalesce(e, vars, x, d);
   }
-  // `coalesce_not_null`'s collection arm (`OpVectorIsNull`): a bind of it distributes into the
-  // `if` it is (a copy of a local subject in one arm, the default in the other, the default's
-  // temporary pre-initialised), a call subject is held in `__ncc_N` — not carried: refused.
+  // `coalesce_not_null`'s collection arm (`OpVectorIsNull`) over a vector local: the local where
+  // it is present, the default where it is not — a bind sinks into that `if`'s arms
+  // (`sink_vec_bind_into_arms`).  A call subject (held in `__ncc_N`) is not carried: refused.
   if lhs is TyVector {
-    el::refuse(e, "a vector `??` (its subject held or its bind distributed)");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    if !(x.code is NdVar) || !(el_types::base(d.tp) is TyVector) {
+      el::refuse(e, "a vector `??` on something other than a local");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    register_default_literal(vars, d.code, x.tp);
+    vt = el_types::without_deps(lhs);
+    present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
+    return ex(el_ir::v_if(present, x.code, d.code), el_types::with_deps(vt, el_types::deps(lhs)));
   }
   if !el_convert::plain_scalar(lhs) {
     el::refuse(e, "a `??` on this type: {type_kind(lhs)}");
