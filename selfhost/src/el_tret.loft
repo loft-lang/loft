@@ -4,9 +4,10 @@
 // The text-return promotion (@PLN104, src/parser/control.rs `targeted_tret_promotion`): a text
 // function with no buffer of its own whose answer this frame owns — a literal, a call's buffer,
 // a local's text — would hand back text that dies with the frame.  After the second pass each
-// such function the second pass flagged (`El.tret`, `report_tret_promotions`) is given a hidden
-// `&text` buffer, `___tret_N`, that every answer is written into (Phase A), and every call of it
-// hands one in (Phase B, `patch_tret_callers`).  A function whose address is taken is refused
+// function of the program the ownership oracle finds so (`report_tret_promotions`,
+// `own::text_return_orphan_risk`) is given a hidden `&text` buffer, `___tret_N`, that every
+// answer is written into (Phase A), and every call of it hands one in (Phase B,
+// `patch_tret_callers`).  A function whose address is taken is refused
 // by name: Rust leaves it unpromoted, which this port does not reproduce yet.
 use ir;
 use el;
@@ -14,22 +15,26 @@ use el_ir;
 use el_vars;
 use el_expressions;
 use el_buffers;
+use own;
 
 pub fn promote_text_returns(e: el::El) {
-  if len(e.tret) == 0 {
+  flagged: vector<integer> = [];
+  for d in e.b.data.definitions {
+    if d.source == el::MAIN_SOURCE && d.def_type == el::DT_FUNCTION && own::text_return_orphan_risk(e.b, d#index) != "" {
+      flagged += [d#index];
+    }
+  }
+  if len(flagged) == 0 {
     return;
   }
   taken = el_buffers::address_taken(e);
   promote: vector<integer> = [];
-  for d in e.b.data.definitions {
-    if !e.tret.contains(d#index) {
-      continue;
-    }
-    if taken.contains(d#index) {
+  for d in flagged {
+    if taken.contains(d) {
       el::refuse(e, "a text answered by value from a function whose address is taken");
       continue;
     }
-    promote += [d#index];
+    promote += [d];
   }
   for d in promote {
     promote_def(e, d);

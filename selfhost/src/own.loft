@@ -1689,6 +1689,100 @@ pub fn return_ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer) -> Own {
   return_ownership(b, new_state(ops), d_nr)
 }
 
+// src/use_analysis.rs:4955 fn text_return_orphan_risk: the risk kind when text function `d_nr`
+// hands owned text back by value — a frame-local text local, or a tail or early return the
+// oracle finds owned or a view or join of something other than an argument — and no hidden
+// `&text` buffer delivers it; "" when it is safe.
+pub fn text_return_orphan_risk(b: ir::Bundle, d_nr: integer) -> text {
+  def = b.data.definitions[d_nr]!;
+  if !(peel_optional(def.returned[0] ?? ir::TyVoid) is TyText) {
+    return "";
+  }
+  for a in def.attributes {
+    if a.hidden && (a.typedef[0] ?? ir::TyVoid) == ir::TyRefVar { inner: ir::TyText { dep: [] } } {
+      return "";
+    }
+  }
+  f = def.variables;
+  for c in def.code {
+    if text_local_tail(f, c) || text_local_return(f, c) {
+      return "view-of-local";
+    }
+  }
+  st = new_state(ops_of(b));
+  sites = [return_ownership(b, st, d_nr)] + early_return_ownerships(b, st, d_nr);
+  for o in sites {
+    match o {
+      Owned => return "owned-by-value",
+      Unknown => return "owned-by-value",
+      Borrowed { base } => if !(base != MAX && is_argument(f, base)) { return "view-of-local"; },
+      Join { base } => if !(base != MAX && is_argument(f, base)) { return "join-of-local"; },
+    }
+  }
+  ""
+}
+
+fn peel_optional(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => inner,
+    _ => t,
+  }
+}
+
+// A text local of this frame — not an argument, not a `&text` — as `n`.
+fn is_text_local(f: ir::Function, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => is_text_local(f, inner),
+    NdVar { n: v } => {
+      x = f.variables[v];
+      if x == null || x.argument {
+        return false;
+      }
+      t = x.type_def[0] ?? ir::TyVoid;
+      !(t is TyRefVar) && peel_optional(t) is TyText
+    },
+    _ => false,
+  }
+}
+
+// The body's tail (`fn_body_tail`) is a text local.
+fn text_local_tail(f: ir::Function, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => text_local_tail(f, inner),
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      len(ops) > 0 && is_text_local(f, ops[len(ops) - 1]!)
+    },
+    _ => false,
+  }
+}
+
+// Some `return` in `n` hands up a text local.
+fn text_local_return(f: ir::Function, n: ir::Node) -> boolean {
+  match n {
+    NdReturn { inner } => is_text_local(f, inner) || text_local_return(f, inner),
+    NdSpan { pos: _, inner } => text_local_return(f, inner),
+    NdBlock { block } => any_return(f, block[0]!.operators),
+    NdLoop { block } => any_return(f, block[0]!.operators),
+    NdInsert { items } => any_return(f, items),
+    NdIf { cond, t, f: e } => text_local_return(f, cond) || text_local_return(f, t) || text_local_return(f, e),
+    NdCall { def_nr: _, args } => any_return(f, args),
+    NdSet { var: _, inner } => text_local_return(f, inner),
+    NdDrop { inner } => text_local_return(f, inner),
+    NdIter { var: _, create, next, init } => text_local_return(f, create) || text_local_return(f, next) || text_local_return(f, init),
+    _ => false,
+  }
+}
+
+fn any_return(f: ir::Function, l: vector<ir::Node>) -> boolean {
+  for x in l {
+    if text_local_return(f, x) {
+      return true;
+    }
+  }
+  false
+}
+
 // src/use_analysis.rs:5033 fn ownership_of.
 pub fn ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer, value: ir::Node) -> Own {
   ownership_of_with(b, ops, d_nr, value, function_defs(b, d_nr, ops))
