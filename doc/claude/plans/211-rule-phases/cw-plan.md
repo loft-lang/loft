@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # `(R-CompleteWrite)` in the IR phase
 
-**Status: designed, not built.**  Arc C's next move ([README.md § Arc C](README.md#arc-c--moving-them)).
+**Status: S1 built; S2 onward not built.**  Arc C's next move ([README.md § Arc C](README.md#arc-c--moving-them)).
 
 ## The rule
 
@@ -81,6 +81,15 @@ and marks each fresh-field copy as a copy into a fresh destination.
 | S2 | **The twin ops.**  `OpDatabaseNP` and `OpNewRecordNP` in the stdlib, in the interpreter's three operator tables, and in both writers as plain emitters; `make surface-gen` | a cell minting through each twin answers the hand-computed values on the interpreter, the C and rustc |
 | S3 | **The pass, beside** (`LOFT_IR_COMPLETE_WRITE=1`): `opt::complete_write` rewrites the covered mints and flags the fresh-field copies, leaving the owned buffers | rustc's and the C's emission for each bench program the same with the pass on (and the writers' clause reading the twins) as with the writers' clause alone; the interpreter's probe saves its prefill |
 | S4 | **The move.**  Default-on; both writers' `complete_writes` calls, `fresh_field`, `fresh_null_arm` and the switch handling deleted; the readers that name only `OpDatabase` or `OpNewRecord` checked against the census | `rule_tags.py sites @FR-R-CompleteWrite` shows no writer clause; the census applied by `ir`; switch_ab, c_sweep (plain, `--strict-stores`, `--poison`, claim-unwritten), the rule's cells on three backends |
+
+## What is built
+
+- **One null arm (S1, loft#2414).**  `Stores::copy_null_into` — the interpreter's and rustc's
+  null arm of a `COPY_FRESH_DEST` copy — writes a struct's default walk after the zero fill; a
+  struct-enum keeps the zero fill (discriminant 0 is its null).  The C writer emits the same
+  default image as the null arm of such a copy where the image is not all zero
+  (`FnWriter::fresh_default_tp`, which the fresh-field arm now goes through too).  Cell
+  `2414-a-null-record-copied-into-a-fresh-slot-is-absent.loft`, each half falsified alone.
 
 ## Risks
 

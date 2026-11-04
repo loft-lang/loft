@@ -16,9 +16,10 @@
 // field reads `null`, a `boolean` false, an enum field null; a declared default (`h = 4`) is the
 // literal's, not the type's, so it reads 0.  A struct-enum slot stays all-zero, its null.
 //
-// @falsified-at: none — by hand: `Stores::copy_null_into` without its default walk fails B, C,
-//   D and G on the interpreter and rustc; the C writer without `fresh_default_tp`'s FRESH arm
-//   fails them on the C.  CHANNEL: an assertion.
+// @falsified-at: none — by hand, each half planted alone: `Stores::copy_null_into` without its
+//   default walk fails B ("0/0/0/0/'null'/false/null/0") on the interpreter and rustc; the C
+//   writer without `fresh_default_tp`'s FRESH arm fails B the same on the C.  The installed
+//   2026.11.0 build fails B.  CHANNEL: an assertion.
 // HOLDS: the hand-computed values on the interpreter, the C and rustc.
 
 enum Col { Red, Green }
