@@ -5125,6 +5125,12 @@ impl<'a> FnWriter<'a> {
                 self.flush(ind);
                 Ok(())
             }
+            // A tuple in statement position is a dropped value — the result of a dropped
+            // block or inlined call (`drop {#Inline … (a, b) }`) — so each member runs for its
+            // effect, in order, and its value is discarded (`@FR-F-Drop`).
+            Value::Tuple(vals) => vals
+                .iter()
+                .try_for_each(|m| self.stmt(&Value::Drop(Box::new(m.clone())), ind)),
             other => Err(unsupported(other)),
         }
     }
