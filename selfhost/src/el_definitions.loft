@@ -588,7 +588,7 @@ fn placeholder_key(e: el::El, d: ir::Definition) -> text {
 fn header_var(e: el::El, spelling: text, bounds: vector<text>, pos: ir::Position) -> integer {
   key = bounds_key(bounds);
   for d in e.b.data.definitions {
-    if d.def_type == el::DT_STRUCT && d.name.starts_with("{spelling}#") && el_expressions::type_var(e, ir::TyReference { n: d#index, dep: [] }) >= 0 && placeholder_key(e, d) == key {
+    if d.def_type == el::DT_STRUCT && d.name.starts_with("{spelling}#") && el_types::type_var(e, ir::TyReference { n: d#index, dep: [] }) >= 0 && placeholder_key(e, d) == key {
       return d#index;
     }
   }

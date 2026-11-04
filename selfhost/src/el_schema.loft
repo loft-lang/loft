@@ -179,6 +179,22 @@ fn fill_database(e: el::El, d: integer) {
     if a.constant {
       continue;
     }
+    // An embedded record field `S?` is the tagged `__nullable<S>` (`@FR-L-Null-Which`,
+    // `fill_all`'s rewrite): not carried.  A `reference<S>?` keeps the pointer's own null.
+    match a.typedef[0] {
+      TyOptional { inner } => {
+        match inner {
+          TyReference { n, dep } => {
+            if !dep.contains(el_types::MARKER) && el::def(e, n).def_type == el::DT_STRUCT && el::def(e, n).synthetic == "" && el_types::type_var(e, inner) < 0 {
+              el::refuse(e, "a nullable record field (a `__nullable<S>`)");
+              return;
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
     // `τ?` is stored at `τ`'s own layout (`@FR-L-Null`).
     ft = el_types::base(a.typedef[0]);
     c = match ft {
