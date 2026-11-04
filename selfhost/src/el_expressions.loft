@@ -2339,18 +2339,33 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   if context == "return from block" && result is TyIterator {
     t = result;
   }
-  // A function body's tail is a store into its result (`convert_store`): converted to it.
-  if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(el_types::base(result)) && el_convert::plain_scalar(el_types::base(t)) && !el_types::is_equal(e, result, t) {
-    tc = el_convert::convert_store(e, vars, l[-1], t, result);
-    if tc == null {
-      el::refuse(e, "a function's value its declared result converts: {type_kind(t)} to {type_kind(result)}");
-    } else {
-      l = l[..-1] + [tc!];
+  discharged = false;
+  // A function body's tail is a store into its result (`convert_store`): converted to it, and
+  // the body typed as the result even where the two are equal (a `u8` tail of `-> integer`).
+  if context == "return from block" && len(l) > 0 && el_convert::plain_scalar(el_types::base(result)) && el_convert::plain_scalar(el_types::base(t)) {
+    if el_types::is_equal(e, result, t) {
+      // `convert`'s discharge guard is asked of an equal store too (`range_guard_inside_discharge`).
+      g: ir::Node? = null;
+      if !e.first_pass {
+        g = el_convert::guard_discharge(e, vars, l[-1] ?? ir::NdNull, result);
+      }
+      if g != null {
+        l = l[..-1] + [g!];
+        discharged = true;
+      }
       t = result;
+    } else {
+      tc = el_convert::convert_store(e, vars, l[-1], t, result);
+      if tc == null {
+        el::refuse(e, "a function's value its declared result converts: {type_kind(t)} to {type_kind(result)}");
+      } else {
+        l = l[..-1] + [tc!];
+        t = result;
+      }
     }
   }
   // …and takes the declared result's range (`guard_declared_range`), the types equal or not.
-  if !e.first_pass && context == "return from block" && len(l) > 0 && el_types::base(result) is TyInteger && !el_convert::null_source(e, l[-1]) {
+  if !e.first_pass && !discharged && context == "return from block" && len(l) > 0 && el_types::base(result) is TyInteger && !el_convert::null_source(e, l[-1]) {
     l = l[..-1] + [el_convert::guard_range(e, l[-1], result, t, result is TyOptional)];
   }
   // P236 (`unify_if_branches_work_refs`): a body's `if` tail over a heap result whose arm
@@ -3510,7 +3525,9 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     if op == "=" && el_convert::plain_scalar(pb) && !(x.tp is TyOptional) {
       nv: ir::Node? = null;
       if x.tp is TyNull {
-        nv = if field_place { el_convert::null_of(e, pb) } else { null };
+        // The assignment's range guard is asked of a `null` too (`guard_declared_range`).
+        nl = if field_place { el_convert::null_of(e, pb) } else { null };
+        nv = if nl == null { null } else { el_convert::guard_range(e, nl!, pt, x.tp, true) };
       } else {
         nv = stored(e, vars, x, pb);
       }
@@ -4507,7 +4524,14 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
     el_vars::change_var_type(e, vars, v, x.tp);
   }
   el_vars::drop_use(vars, v);
-  ex(el_ir::v_set(v, c!), ir::TyVoid)
+  // The annotated local is the assignment's store (`narrow_store_checks`, then
+  // `guard_declared_range`), as for a plain `=`.
+  code = c!;
+  if !e.first_pass {
+    g = el_convert::guard_discharge(e, vars, code, declared!);
+    code = g ?? el_convert::guard_range(e, code, declared!, x.tp, declared! is TyOptional);
+  }
+  ex(el_ir::v_set(v, code), ir::TyVoid)
 }
 
 // `Parser::parse_object`'s in-place arm, a struct literal bound to a local that owns its store:

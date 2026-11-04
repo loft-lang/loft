@@ -174,6 +174,35 @@ pub fn with_deps(t: ir::TypeT, deps: vector<integer>) -> ir::TypeT {
   }
 }
 
+// `parse_type_limit`: the bounds of `limit(lo, hi)`.  The lower bound is an `i32` above the
+// null sentinel, the upper one reaches `u32::MAX`; a bound outside those or an empty range is
+// an error in Rust, so the program never reaches here — refused all the same.
+fn type_limit(e: el::El, n: integer) -> ir::IntegerSpec? {
+  match e.p.nodes[n] {
+    SLimit { lo, hi } => {
+      l = bound(e, lo);
+      h = bound(e, hi);
+      if l == null || h == null || l! < -2147483647 || l! > 2147483647 || h! < -2147483647 || h! > 4294967295 || l! > h! {
+        el::refuse(e, "a limit bound outside the range a limit carries");
+        return null;
+      }
+      ir::IntegerSpec { min: l!, max: h!, not_null: false, forced_size: 0 }
+    },
+    _ => null
+  }
+}
+
+fn bound(e: el::El, n: integer?) -> integer? {
+  if n == null {
+    return null;
+  }
+  match e.p.nodes[n!] {
+    SInt { v } => v,
+    SLong { v } => v,
+    _ => null
+  }
+}
+
 // The name a vector of `t` is registered under (`vector<integer>`, `main_vector<P>`), or "".
 // The width a narrow integer is stored in as an element (`int_part`'s rule, not nullable):
 // 1 or 2 bytes, or 0 for any other integer.
@@ -372,6 +401,20 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         field = ctx == el::DT_STRUCT || ctx == el::DT_ENUM_VALUE || ctx == el::DT_TYPE_TEMPLATE;
         r = ir::TyReference { n: rd, dep: if field { [MARKER] } else { [] } };
         return if nullable { ir::TyOptional { inner: r } } else { r };
+      }
+      // `parse_type_inner`'s `integer` arm: `limit(lo, hi)` names the range, and `not null`
+      // (deprecated, no effect on the range) is carried on the spec.
+      if name == "integer" && member == "" && len(args) == 0 && !elem_null && len(keys) == 0 && len(deps) == 0 && assoc == "" && (limit != null || not_null) {
+        spec = ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: not_null, forced_size: 0 };
+        if limit != null {
+          lim = type_limit(e, limit!);
+          if lim == null {
+            return null;
+          }
+          spec = ir::IntegerSpec { min: lim!.min, max: lim!.max, not_null: not_null, forced_size: 0 };
+        }
+        t = ir::TyInteger { spec: spec };
+        return if nullable { ir::TyOptional { inner: t } } else { t };
       }
       if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");

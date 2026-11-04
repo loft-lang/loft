@@ -188,8 +188,15 @@ fn parse_typedef(e: el::El, at: integer, name: text, tp: integer?, size: integer
   if d < 0 {
     return;
   }
+  // `= Type`: read with the alias as the definition it is on, and its result on pass 1.
   if tp != null {
-    el::refuse(e, "a type alias's `= type`");
+    was = e.context;
+    e.context = d;
+    t = el_types::parse_type(e, tp!);
+    e.context = was;
+    if t != null && e.first_pass {
+      el::set_returned(e, d, t!);
+    }
   }
   if size != null && e.first_pass {
     match e.p.nodes[size ?? 0] {
