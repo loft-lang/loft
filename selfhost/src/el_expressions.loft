@@ -17,6 +17,7 @@ use el_schema;
 use el_convert;
 use frame;
 use el_length;
+use el_par;
 
 // An expression's IR and type.
 pub struct Ex {
@@ -24,7 +25,7 @@ pub struct Ex {
   pub tp: ir::TypeT
 }
 
-fn ex(code: ir::Node, tp: ir::TypeT) -> Ex {
+pub fn ex(code: ir::Node, tp: ir::TypeT) -> Ex {
   Ex { code: code, tp: tp }
 }
 
@@ -2120,14 +2121,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SUnary { op, e: ue } => unary(e, vars, op, ue),
     SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
     SStructLit { name, member, fields, base } => object_expr(e, vars, name, member, fields, base),
-    SFor { at, binds, source, par, filter, body } => {
-      if par != null {
-        el::refuse(e, "a `for` with `par`");
-        ex(ir::NdNull, ir::TyVoid)
-      } else {
-        for_expr(e, vars, binds, source, in_token(e, at), filter, body)
-      }
-    },
+    SFor { at, binds, source, par, filter, body } => for_expr(e, vars, binds, source, in_token(e, at), par, filter, body),
     SWhile { cond, body } => while_expr(e, vars, cond, body),
     SMatch { subject, arms } => match_expr(e, vars, subject, arms),
     SBlock { at: _ } => parse_block(e, vars, n, "block", ir::TyUnknown { n: 0 }),
@@ -2282,7 +2276,7 @@ fn is_expr(e: el::El, vars: el_vars::Vars, ie: integer?, variant: text, captures
 }
 
 // A type's variant name, for a refusal that says which operands it met.
-fn type_kind(t: ir::TypeT) -> text {
+pub fn type_kind(t: ir::TypeT) -> text {
   s = "{t}";
   cut = s.find(" ") ?? len(s);
   s[0..cut]
@@ -4552,7 +4546,7 @@ pub struct IntSlot {
   pub min: integer
 }
 
-fn byte_width(spec: ir::IntegerSpec, nullable: boolean) -> integer {
+pub fn byte_width(spec: ir::IntegerSpec, nullable: boolean) -> integer {
   if spec.forced_size > 0 {
     return spec.forced_size;
   }
@@ -8931,9 +8925,16 @@ fn in_token(e: el::El, at: integer) -> integer {
 }
 
 // `in_tok`: the `for`'s `in`, whose start names a destructuring loop's variable.
-fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer, in_tok: integer, filter: integer?, body: integer?) -> Ex {
+fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer, in_tok: integer, par: integer?, filter: integer?, body: integer?) -> Ex {
   if len(binds) == 0 || body == null {
     el::refuse(e, "a `for` with no body");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // A `par` loop over anything but a vector is materialised into one first
+  // (`materialise_iter_for_par`, `materialise_keyed_for_par`): refused by name, as are a
+  // destructure and a filter.
+  if par != null && (len(binds) > 1 || filter != null || e.p.nodes[source] is SRange) {
+    el::refuse(e, "a `par` loop that destructures, filters or walks a range");
     return ex(ir::NdNull, ir::TyVoid);
   }
   // `parse_for`'s tuple destructure (P235): the loop's variable is named by where the `in`
@@ -8947,7 +8948,7 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
   x = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   if e.p.nodes[source] is SVecLit {
     lit = vector_value(e, vars, source, hinted: false);
-    if len(lit.items) >= 1 && len(lit.items) <= 16 && walkable_scalar(lit.elem) {
+    if par == null && len(lit.items) >= 1 && len(lit.items) <= 16 && walkable_scalar(lit.elem) {
       return literal_walk(e, vars, src_id, id, lit, body!, filter);
     }
     x = lit.x;
@@ -8959,6 +8960,10 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
     if x.code is NdIter {
       return slice_for(e, vars, src_id, id, x, body!, filter);
     }
+  }
+  if par != null && (x.code is NdIter || keyed_kind(x.tp) || x.tp is TyIterator || x.tp is TyText) {
+    el::refuse(e, "a `par` loop over this source: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
   }
   if keyed_kind(x.tp) && !(x.tp is TyOptional) {
     return keyed_for(e, vars, src_id, id, x, body!, filter);
@@ -9010,6 +9015,9 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
       return ex(ir::NdNull, ir::TyVoid);
     }
     var_tp = ir::TyReference { n: td, dep: [vec] };
+  }
+  if par != null {
+    return el_par::par_for(e, vars, src_id, id, x, vec, elem, var_tp, par!, body!);
   }
   idx = loop_index(vars, id);
   lv = loop_var(vars, src_id, id, var_tp);
@@ -10354,7 +10362,7 @@ fn loop_index(vars: el_vars::Vars, id: text) -> integer {
 }
 
 // A loop's variable (`loop_variable`), or a fresh `___N` for a `_` binding, defined.
-fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> integer {
+pub fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> integer {
   if id == "_" {
     u = el_vars::create_unique(vars, "_", t);
     el_vars::set_defined(vars, u);
@@ -10519,7 +10527,7 @@ fn closing_bracket(e: el::El, lit: integer) -> integer {
 }
 
 // A struct's record size, from its laid-out store type.
-fn record_size(e: el::El, t: ir::TypeT) -> integer {
+pub fn record_size(e: el::El, t: ir::TypeT) -> integer {
   match t {
     TyEnum { n, is_ref } => {
       k = if is_ref { el::def(e, n).known_type } else { el_schema::NO_TYPE };
@@ -10557,7 +10565,7 @@ fn vector_of(e: el::El, t: ir::TypeT) {
 }
 
 // `database.size` of an element's store type (`base_type`'s widths).
-fn elem_size(t: ir::TypeT) -> integer {
+pub fn elem_size(t: ir::TypeT) -> integer {
   match t {
     TyReference { n: _ } => -2,
     TyTuple { elems: _ } => -2,
@@ -10602,7 +10610,7 @@ fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
 }
 
 // A plain element's read at offset 0 of `get` — a narrow integer's with its range's start.
-fn elem_read(e: el::El, t: ir::TypeT, get: ir::Node) -> ir::Node {
+pub fn elem_read(e: el::El, t: ir::TypeT, get: ir::Node) -> ir::Node {
   args: vector<ir::Node> = [get, ir::NdInt { n: 0 }];
   match t {
     TyInteger { spec } => {
