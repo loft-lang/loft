@@ -1489,9 +1489,22 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
     }
   }
   ba = attr_nr(el::def(e, d), "__retbuf");
-  if result is TyOptional || ba < 0 {
+  if ba < 0 {
     if !e.first_pass {
-      el::refuse(e, "a function returning a nullable vector, or one whose buffer is renamed");
+      el::refuse(e, "a function returning a vector whose buffer is renamed");
+    }
+    return code;
+  }
+  // A whole vector parameter at the tail is copied into the buffer (`copy_borrow_tail_into_
+  // retbuf`); an `if` whose arms are literals (or, for `τ?`, nulls) delivers each literal into
+  // it where it is built.
+  delivered = arm_delivery(e, vars, code, rb, result, ba);
+  if delivered != null {
+    return delivered!;
+  }
+  if result is TyOptional {
+    if !e.first_pass {
+      el::refuse(e, "a function returning a nullable vector from this tail: {tail_kind(e, vars, code)}");
     }
     return code;
   }
@@ -1569,6 +1582,152 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
   }
   bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: buf }]), bl.operators[0]] };
   ir::NdBlock { block: [bl] }
+}
+
+// The tail deliveries `vector_return` takes before its literal and local ones: a whole vector
+// parameter copied into the buffer (`borrow_tail_copy_104`), an `if` whose every arm is a literal
+// (or the null sentinel) delivering each literal into it.  On the first pass each marks the
+// result as delivered in the buffer; null where the tail is neither.
+fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT, ba: integer) -> ir::Node? {
+  d = e.context;
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  tail = el_ir::unspan(bl.operators[-1]!);
+  // A `null` tail of a `τ?` result answers the sentinel and delivers nothing; the body is the
+  // result's `?`.
+  if result is TyOptional && null_sentinel_tail(e, code) {
+    if !e.first_pass {
+      bl.result = [ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) }];
+      return ir::NdBlock { block: [bl] };
+    }
+    return code;
+  }
+  param = match tail { NdVar { n } => vars.vars[n]!.argument && !hidden_param(e, vars, n) && el_types::base(el_vars::tp(vars, n)) is TyVector, _ => false };
+  // The first pass's `if` is a placeholder: its arms are read off the syntax.
+  arms = !param && (if e.first_pass { syntax_literal_arms(e, tail_syntax(e, vars.body)) } else { tail is NdIf && literal_arms(e, tail) });
+  if !param && !arms {
+    return null;
+  }
+  if e.first_pass {
+    ret = el::def(e, d).returned[0];
+    if !el_types::deps(ret).contains(ba) {
+      e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+    }
+    return code;
+  }
+  elem = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
+  rec = element_content(e, elem);
+  if rec < 0 {
+    el::refuse(e, "a function returning a vector of this element type: {type_kind(elem)}");
+    return code;
+  }
+  b = ir::NdVar { n: rb };
+  if param {
+    own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+    bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, tail, ir::NdInt { n: rec }]), b], own, "borrow_tail_copy_104");
+    if result is TyOptional && !((bl.result[0] ?? ir::TyVoid) is TyOptional) {
+      bl.result = [ir::TyOptional { inner: bl.result[0] ?? ir::TyVoid }];
+    }
+    return ir::NdBlock { block: [bl] };
+  }
+  bl.operators[-1] = deliver_arms(e, tail, rb, rec);
+  bl.result = [if result is TyOptional { ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) } } else { el_types::without_deps(el_types::base(result)) }];
+  ir::NdBlock { block: [bl] }
+}
+
+// Is every arm of the `if` at `n` a vector literal (`Vector`, its own `__vdb_N`) or the null
+// sentinel?  A block is read down to its tail.
+fn literal_arms(e: el::El, n: ir::Node) -> boolean {
+  cur = n;
+  while true {
+    match cur {
+      NdIf { cond: _, t, f } => {
+        if !literal_arms(e, t) {
+          return false;
+        }
+        cur = f;
+      },
+      NdBlock { block } => {
+        if len(block[0].operators) == 0 {
+          return false;
+        }
+        if block[0].name == "Vector" {
+          return len(el_types::deps(block[0].result[0] ?? ir::TyVoid)) == 1;
+        }
+        cur = el_ir::unspan(block[0].operators[-1]!);
+      },
+      NdCall { def_nr, args } => {
+        return len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel";
+      },
+      _ => {
+        return false;
+      }
+    }
+  }
+  false
+}
+
+// The same read off the syntax: an `if` whose every arm ends in a non-empty vector literal or
+// `null`.
+fn syntax_literal_arms(e: el::El, n: integer) -> boolean {
+  if n < 0 {
+    return false;
+  }
+  match e.p.nodes[n] {
+    SIf { cond: _, then, other } => other != null && syntax_arm(e, then) && syntax_arm(e, other!),
+    _ => false
+  }
+}
+
+fn syntax_arm(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SIf { cond: _ } => syntax_literal_arms(e, n),
+    SBlock { at: _ } => {
+      t = tail_syntax(e, n);
+      t >= 0 && (e.p.nodes[t] is SNull || (match e.p.nodes[t] { SVecLit { items } => len(items) > 0, _ => false }) || e.p.nodes[t] is SIf && syntax_literal_arms(e, t))
+    },
+    _ => false
+  }
+}
+
+// Each literal arm of `n` ends by copying itself into the buffer and releasing its own store.
+fn deliver_arms(e: el::El, n: ir::Node, rb: integer, rec: integer) -> ir::Node {
+  match n {
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: deliver_arms(e, t, rb, rec), f: deliver_arms(e, f, rb, rec) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: deliver_arms(e, inner, rb, rec) },
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return n;
+      }
+      if bl.name == "Vector" {
+        db = el_types::deps(bl.result[0] ?? ir::TyVoid)[0] ?? -1;
+        b = ir::NdVar { n: rb };
+        bl.operators[-1] = ir::NdInsert { items: [
+          el_ir::cl(e, "OpClearVector", [b]),
+          el_ir::cl(e, "OpAppendVector", [b, bl.operators[-1]!, ir::NdInt { n: rec }]),
+          el_ir::cl(e, "OpFreeRef", [ir::NdVar { n: db }]),
+          b
+        ] };
+        return ir::NdBlock { block: [bl] };
+      }
+      bl.operators[-1] = deliver_arms(e, bl.operators[-1]!, rb, rec);
+      ir::NdBlock { block: [bl] }
+    },
+    _ => n
+  }
+}
+
+// The content type an element is appended as (`append_elem_tp`): a record's own row, any other
+// element's content type; -1 where it has none.
+fn element_content(e: el::El, elem: ir::TypeT) -> integer {
+  nm = el_types::elem_name(e, elem);
+  match el_types::base(elem) {
+    TyReference { n } => el::def(e, n).known_type,
+    _ => if nm == "" { -1 } else { el_schema::content_type(e, elem) }
+  }
 }
 
 // A vector literal whose items are made of literals and operators only — no variable, call or
@@ -8368,9 +8527,15 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
     // absent record (a slot), which `OpVectorIsNull` reads both of, through a `&`.  A temporary
     // is held in a work ref for its free first: not carried.
     if el_types::is_collection(vb) {
-      if !(v.code is NdVar) && len(el_types::deps(v.tp)) == 0 {
-        el::refuse(e, "a null test of a collection temporary");
-        return ex(ir::NdNull, ir::TyBoolean);
+      // A temporary (a call answering a collection that borrows nothing) is held in a work ref
+      // for its free, and tested there (`vec-null-workref`).
+      if !(v.code is NdVar) && len(el_types::deps(v.tp)) == 0 && !e.first_pass {
+        w = el_vars::work_ref(vars, el_types::without_deps(v.tp));
+        if !vars.inline_refs.contains(w) {
+          vars.inline_refs += [w];
+        }
+        held = el_ir::v_block([el_ir::v_set(w, v.code), el_ir::cl(e, "OpVectorIsNull", [ir::NdVar { n: w }])], ir::TyBoolean, "vec-null-workref");
+        return ex(if op == "==" { held } else { el_ir::cl(e, "OpNot", [held]) }, ir::TyBoolean);
       }
       is_null = el_ir::cl(e, "OpVectorIsNull", [v.code]);
       return ex(if op == "==" { is_null } else { el_ir::cl(e, "OpNot", [is_null]) }, ir::TyBoolean);
@@ -8489,13 +8654,15 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   // the then arm's type (`convert_admitting` at the block's tail), and the `if` is the scalar `?`.
   // A record arm beside a `null` one: the null arm answers the record's null sentinel, typed as
   // the record, and the join is the record `?` (`if_join`'s `null_value`).
-  record_null = f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0;
+  // A vector arm beside a `null` one alike: its null is the collection sentinel.
+  vector_null = f.tp is TyNull && !(t.tp is TyOptional) && t.tp is TyVector;
+  record_null = vector_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
   if f.tp is TyNull && (el_convert::sentinel_value(t.tp) || record_null) {
     if e.first_pass {
       // A record join keeps its arms: the first pass reads the parameters they hand back.
       return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: t.tp });
     }
-    nl = el_convert::null_of(e, t.tp);
+    nl = if vector_null { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, t.tp) };
     fb = retail(f.code, nl, t.tp);
     if nl != null && fb != null {
       return ex(el_ir::v_if(c.code, t.code, fb!), ir::TyOptional { inner: t.tp });
