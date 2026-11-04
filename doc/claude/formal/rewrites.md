@@ -4611,6 +4611,9 @@ line in `Output::output_function`'s prelude.
                  null sentinel of a nullable, `false`, the variant TAG — so where
                  the emitter proves coverage of every schema field position by the
                  group's contiguous `OpSet*`s (the tag through `OpSetEnum` at 0),
+                 each write AS WIDE as its field (a struct-enum field primed by a
+                 four-byte `OpSetInt4` keeps its out-of-line child slot to the
+                 prefill: the `OpSetChildRec` that fills it reads the old slot),
                  `set_default_value`'s walk (or its all-zero `zero_range`) writes
                  nothing that survives, and
                  the site calls the no-prefill twin (`OpDatabaseNP` /

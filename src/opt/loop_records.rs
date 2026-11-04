@@ -86,7 +86,9 @@ pub(crate) fn is_scalar(tp: &Type) -> bool {
 /// `@FR-R-CompleteWrite` — do the statements FOLLOWING index `at` in `ops` cover every field
 /// position of `tp` with contiguous `OpSet*`s on `target` (@PLN157 § V-y)?  Coverage is by BYTE OFFSET
 /// against the schema's field list, the variant tag included (its field sits at
-/// position 0 and the literal's `OpSetEnum` writes it).  A field the run never reaches
+/// position 0 and the literal's `OpSetEnum` writes it), and by WIDTH: a write narrower than
+/// its field ([`set_width`] against the field type's size) leaves the field's other bytes to
+/// the prefill.  A field the run never reaches
 /// — a nested struct arriving by `OpCopyRecord`, a vector field bound by an append —
 /// leaves the group incomplete, and the prefill stays: the check can only DECLINE the
 /// elision, never miscompile it.  A struct-ENUM element is covered where the group writes
@@ -120,9 +122,15 @@ pub(crate) fn group_covers_type(
     if fields.is_empty() {
         return false;
     }
-    let mut written: HashSet<u16> = HashSet::new();
-    // An inline record field written member by member: field position → member positions.
-    let mut members: HashMap<u16, HashSet<u16>> = HashMap::new();
+    // Field position → the bytes a write there stored.  A field is covered only by a write as
+    // wide as the field: the parser primes an inline struct-ENUM field with a 4-byte
+    // `OpSetInt4(e, pos, 0)`, and the variant's out-of-line child slot past those four bytes is
+    // READ by the `OpSetChildRec` that fills it — an elided prefill handed it a garbage record
+    // number to release.
+    let mut written: HashMap<u16, u16> = HashMap::new();
+    // An inline record field written member by member: field position → member position → the
+    // bytes written there.
+    let mut members: HashMap<u16, HashMap<u16, u16>> = HashMap::new();
     let mut stop: Option<&Value> = None;
     for stmt in ops.iter().skip(at) {
         match stmt.unspan() {
@@ -194,7 +202,8 @@ pub(crate) fn group_covers_type(
                     stop = Some(stmt);
                     break;
                 }
-                written.insert(off);
+                // The copy writes the field whole: its type is the field's.
+                note_write(&mut written, off, u16::MAX);
             }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
@@ -203,7 +212,7 @@ pub(crate) fn group_covers_type(
                     && let Some(Value::Int(off)) = args.get(1).map(Value::unspan)
                     && let Ok(off) = u16::try_from(*off)
                 {
-                    written.insert(off);
+                    note_write(&mut written, off, set_width(name));
                 } else if name.starts_with("OpSet")
                     && let Some(f) = args.first().and_then(|a| call_named(a, data, "OpGetField"))
                     && matches!(f.first().map(Value::unspan), Some(Value::Var(w)) if *w == target)
@@ -212,7 +221,7 @@ pub(crate) fn group_covers_type(
                     && let Some(Value::Int(m)) = args.get(1).map(Value::unspan)
                     && let Ok(m) = u16::try_from(*m)
                 {
-                    members.entry(off).or_default().insert(m);
+                    note_write(members.entry(off).or_default(), m, set_width(name));
                 } else {
                     stop = Some(stmt);
                     break;
@@ -224,14 +233,18 @@ pub(crate) fn group_covers_type(
             }
         }
     }
+    let whole = |w: &HashMap<u16, u16>, f: &crate::database::Field| {
+        w.get(&f.position)
+            .is_some_and(|n| *n >= stores.size(f.content))
+    };
     let covered = |f: &crate::database::Field| {
-        written.contains(&f.position)
+        whole(&written, f)
             || members.get(&f.position).is_some_and(|m| {
                 let sub = f.content as usize;
                 sub < stores.types.len()
                     && matches!(&stores.types[sub].parts,
                         crate::database::Parts::Struct(sf)
-                            if !sf.is_empty() && sf.iter().all(|x| m.contains(&x.position)))
+                            if !sf.is_empty() && sf.iter().all(|x| whole(m, x)))
             })
     };
     let all = fields.iter().all(covered);
@@ -251,6 +264,28 @@ pub(crate) fn group_covers_type(
         );
     }
     all
+}
+
+/// Record a write of `width` bytes at `pos`, keeping the widest write seen there.
+fn note_write(w: &mut HashMap<u16, u16>, pos: u16, width: u16) {
+    let at = w.entry(pos).or_default();
+    *at = (*at).max(width);
+}
+
+/// `@FR-R-CompleteWrite` — the bytes a field write `OpSet*(rec, pos, …)` stores at `pos`, as
+/// each operator's `#rust` template in `default/01_code.loft` writes them.  An operator this
+/// does not size answers 0: it covers no field, so the group keeps the prefill — a missing
+/// row costs the elision, never correctness.
+fn set_width(name: &str) -> u16 {
+    match name {
+        "OpSetBoolean" | "OpSetByte" | "OpSetByteNullable" | "OpSetEnum" => 1,
+        "OpSetShort" | "OpSetShortRaw" => 2,
+        "OpSetInt4" | "OpSetInt4Raw" | "OpSetSingle" | "OpSetCharacter" | "OpSetText"
+        | "OpSetTextReplace" | "OpSetRef" => 4,
+        "OpSetInt" | "OpSetFloat" => 8,
+        "OpSetDbRef" => 12,
+        _ => 0,
+    }
 }
 
 /// `@FR-R-CompleteWrite`'s struct-enum condition: the fields of every variant of a struct-enum,
