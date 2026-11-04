@@ -4109,15 +4109,25 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 "the comprehension element",
                 Some(&body_pos),
             ) {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "cannot store {} elements in a vector<{}> (would lose precision); \
-                     cast the body explicitly with 'as {}'",
-                    elem_type.source_name(&self.data),
-                    want.source_name(&self.data),
-                    want.source_name(&self.data)
-                );
+                if numeric_narrowing(&elem_type, &want) {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "cannot store {} elements in a vector<{}> (would lose precision); \
+                         cast the body explicitly with 'as {}'",
+                        elem_type.source_name(&self.data),
+                        want.source_name(&self.data),
+                        want.source_name(&self.data)
+                    );
+                } else {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "cannot store {} elements in a vector<{}>",
+                        elem_type.source_name(&self.data),
+                        want.source_name(&self.data)
+                    );
+                }
             }
         }
         self.in_loop = in_loop;
@@ -6845,7 +6855,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                          write `single` literals with the `f` suffix (`[1.0f, 2.0f]`), or cast each \
                          element with 'as single'"
                     );
-                } else {
+                } else if numeric_narrowing(&t, in_t) {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -6853,6 +6863,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                      cast each element explicitly with 'as {}'",
                         t.source_name(&self.data),
                         self.data.written_type_name(in_t),
+                        self.data.written_type_name(in_t)
+                    );
+                } else {
+                    // Not a precision question, and no cast makes one of these the other.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "cannot store {} elements in a vector<{}>",
+                        t.source_name(&self.data),
                         self.data.written_type_name(in_t)
                     );
                 }
@@ -9863,6 +9882,14 @@ fn walk_for_mutations(
         }
         _ => {}
     }
+}
+
+/// Whether storing a `have` where a `want` is declared is a NUMERIC narrowing — the one case the
+/// element refusal's "would lose precision … cast with `as`" describes.  Any other pair (a text,
+/// a vector or a record where a number is declared) is a different type, not a lossy one.
+fn numeric_narrowing(have: &Type, want: &Type) -> bool {
+    let numeric = |t: &Type| matches!(t.base(), Type::Integer(_) | Type::Float | Type::Single);
+    numeric(have) && numeric(want)
 }
 
 #[cfg(test)]

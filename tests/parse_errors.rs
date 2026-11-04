@@ -2889,6 +2889,26 @@ fn p315_float_literal_into_single_vector() {
         );
 }
 
+/// A non-numeric element in a declared numeric vector is another type, not a precision loss:
+/// the refusal said "would lose precision" and offered `as integer` for a text or a vector.
+/// Numeric narrowing keeps that advice, in a literal and in a comprehension body alike.
+#[test]
+fn a_non_numeric_element_refusal_names_no_precision_loss() {
+    code!("fn test() { v: vector<integer> = [\"a\"]; }").error(
+        "cannot store text elements in a vector<integer> at \
+         a_non_numeric_element_refusal_names_no_precision_loss:1:39",
+    );
+    code!("fn test() { v: vector<integer> = [for x in 0..2 { \"{x}\" }]; assert(len(v) == 2, \"n\"); }").error(
+        "cannot store text elements in a vector<integer> at \
+         a_non_numeric_element_refusal_names_no_precision_loss:1:59",
+    );
+    code!("fn test() { v: vector<integer> = [1.5]; }").error(
+        "cannot store float elements in a vector<integer> (would lose precision); cast each \
+         element explicitly with 'as integer' at \
+         a_non_numeric_element_refusal_names_no_precision_loss:1:39",
+    );
+}
+
 /// loft#1146 — every refusal a `single` earns names the `f` literal suffix, which
 /// `LOFT.md` calls the FIRST cure and states three times.  Before this, all three
 /// prescribed `as` and none of them mentioned the suffix, so a reader who did not
