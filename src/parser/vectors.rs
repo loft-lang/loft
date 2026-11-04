@@ -251,8 +251,29 @@ impl Parser {
             && let Some(dest) = dest
             && let Value::Insert(elms) = code
         {
-            let mut ops = std::mem::take(elms);
-            for (val, part_tp) in parts {
+            // `@FR-E-Asgn-Compound`, `@FR-I-Comp` — the first operand is built straight into the
+            // field, so a later operand that reads the field reads what it held before the
+            // statement: a snapshot taken ahead of the build, the reads renamed onto it, as a
+            // literal reading its own destination does (loft#2402).
+            let mut vals: Vec<Value> = parts.iter().map(|(v, _)| v.clone()).collect();
+            let snapshot = {
+                let mut refs: Vec<&mut Value> = vals.iter_mut().collect();
+                self.snapshot_read_destination(
+                    u16::MAX,
+                    dest,
+                    false,
+                    true,
+                    &tp.content(),
+                    &mut refs,
+                    false,
+                )
+            };
+            let mut ops = snapshot.unwrap_or_default();
+            // The field's clear goes after the snapshot (`build_snapshot_len`): it leads the
+            // first operand's own snapshot, if that literal took one.
+            self.build_snapshot_len += ops.len();
+            ops.append(elms);
+            for ((_, part_tp), val) in parts.iter().zip(&vals) {
                 self.refuse_mixed_element_encoding(tp, part_tp);
                 ops.push(self.cl(
                     "OpAppendVector",
