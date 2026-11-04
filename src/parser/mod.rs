@@ -253,6 +253,10 @@ pub struct Parser {
     /// Deepest control-flow nesting reached per definition, with the source line where it
     /// was reached — so the advice can say WHERE to cut instead of only how bad it is.
     pub(crate) cc_deepest: HashMap<u32, (u32, u32)>,
+    /// Where each function's NAME is written.  A definition's `position` is past its signature
+    /// (the `{`), which is what identifies it; a diagnostic ABOUT the function — the
+    /// complexity and parameter-count advice — points at the name instead.
+    pub(crate) fn_name_at: HashMap<u32, crate::lexer::Position>,
     /// Control-flow nesting depth while parsing, for [`Parser::complexity`]. Bumped only
     /// around a construct's BODY, so an `else if` chain — which re-enters `parse_if` after
     /// the `then` body has closed — charges once per link at the chain's own depth rather
@@ -1929,6 +1933,7 @@ impl Parser {
             in_control_head: false,
             complexity: HashMap::new(),
             cc_deepest: HashMap::new(),
+            fn_name_at: HashMap::new(),
             cc_nest: 0,
             in_format_expr: false,
             prefix_operand: false,

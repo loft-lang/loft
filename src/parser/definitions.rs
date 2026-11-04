@@ -3007,6 +3007,7 @@ impl Parser {
         } else {
             return false;
         };
+        let name_at = *self.lexer.peek_pos();
         let Some(fn_name) = self.parse_fn_name() else {
             return false;
         };
@@ -3187,6 +3188,7 @@ impl Parser {
         if self.context == u32::MAX {
             return false;
         }
+        self.fn_name_at.insert(self.context, name_at);
         if is_operator {
             self.data.definitions[self.context as usize].operator_form = true;
         }
