@@ -2202,7 +2202,9 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial)
       }
     },
-    SVecLit { items: _ } => vector_value(e, vars, n).x,
+    // An empty `[]` with no element type yet answers `parse_vector`'s untyped marker
+    // (`Insert([Null])`), which the position it is converted to builds (`empty_literal_to`).
+    SVecLit { items } => if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else { vector_value(e, vars, n).x },
     SYield { from, e: ye } => yield_expr(e, vars, from, ye),
     SComprehension { at: _ } => comprehension_value(e, vars, n),
     SAs { at, e: ae, tp: at_tp, checked } => cast_expr(e, vars, ae, at_tp),
@@ -7106,6 +7108,11 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
       conv += [arg];
       continue;
     }
+    // An untyped `[]` is built as the parameter's vector (`convert`'s empty-literal arm).
+    if is_empty_literal(arg) && el_types::base(pt) is TyVector {
+      conv += [empty_literal_to(e, vars, el_types::base(pt))];
+      continue;
+    }
     c = el_convert::convert_store(e, vars, arg, at, pt);
     if c != null {
       conv += [c!];
@@ -7855,6 +7862,11 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   d = expression(e, vars, r);
+  // `?? []` builds the subject's empty vector — a vector `??` is not carried: refused by name.
+  if is_empty_literal(d.code) {
+    el::refuse(e, "a `??` with an empty vector literal as its default");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   coalesce_with(e, vars, x, d)
 }
 
@@ -11642,6 +11654,35 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   Built { x: ex(ir::NdInsert { items: ls }, ir::TyVoid), items: codes, elem: in_t }
 }
 
+
+// `parse_vector`'s marker for `[]` read with no element type.
+fn is_empty_literal(n: ir::Node) -> boolean {
+  match n {
+    NdInsert { items } => len(items) == 1 && (items[0] ?? ir::NdBoolean { b: false }) is NdNull,
+    _ => false
+  }
+}
+
+// The untyped `[]` converted to vector type `t`: an empty value literal of its element, in a
+// store of its own (`Vector`), its `_vec_N` minted here as the conversion mints it.
+fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> ir::Node {
+  inner = match t { TyVector { inner: i } => i, _ => ir::TyUnknown { n: 0 } };
+  v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: inner, dep: [] });
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: el::def_nr(e, "main_vector<{el_types::elem_name(e, inner)}>"), dep: [] });
+  el_vars::depend(vars, v, db);
+  r = vector_rows(e, inner, 0, true);
+  if r == null {
+    return ir::NdNull;
+  }
+  rows = r!;
+  vt = el_vars::tp(vars, v);
+  el_ir::v_block([
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: rows.main_known }]),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: rows.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
+    ir::NdVar { n: v }
+  ], vt, "Vector")
+}
 
 // `Parser::parse_text_index`'s range: `s[lo..hi]` is `OpGetTextSub(s, lo, hi)` — an open start
 // `0`, an open end `i32::MAX`, `..=` one past its bound.  A range over anything but a text (a
