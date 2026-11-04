@@ -6,6 +6,15 @@
 //! values (the cell asserts them), exits 0 and frees every store — and the trace shows each
 //! function the cell names really was split, so no cell passes by staying whole.  The same
 //! cell runs on the interpreter as the control.
+//!
+//! @falsified-at: 26197a482 — scored by hand against two defects planted in `src/c/split.rs`.
+//!   CHANNEL: value (each cell's own assertion), on `--native-c`.
+//!   ARMED: LOFT_C_SPLIT=4 (set by the test; without it nothing splits).
+//!   WITNESS: (a) every part works on a COPY of the frame, so its writes never reach the
+//!   function: all five cells fail — `members` answers `integer 0`, `liveness` `the view
+//!   writes its slot: null null`, `stores` `items 0`.  (b) a part's `return` answers 0, so the
+//!   function runs on past it: `boundary` fails with `tail ` (empty where `7-7-7-!` is due).
+//!   HOLDS: the interpreter run passes on both trees, and no run reports a leak.
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
