@@ -415,7 +415,8 @@ release evidence, not a branch gate.
 from the red job's log and probe those on the platform that failed; the PR's own run is the full
 verdict, so dispatching `ci.yml`, `miri.yml` or `revalidate-libs.yml` beside it only fills the
 shared job slots (about twenty at once) and leaves the PR's own jobs queued behind it.  A whole
-workflow is dispatched only for a gate that has no per-test probe.
+workflow is dispatched only for a gate that has no per-test probe.  Which probe answers which
+red step: [DEVELOPMENT.md § Probing a red step during PR validation](DEVELOPMENT.md#probing-a-red-step-during-pr-validation).
 
 **A question about a few tests on one platform is a focused probe, not a gate.**  Each runs
 a nextest filterset (or a bash snippet) on one runner, has no concurrency group — so it can
