@@ -555,6 +555,20 @@ pub fn convert_store(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::Ty
   if src is TyNull {
     return null;
   }
+  // `@FR-C-Var`: a variant's record is a value of the enum it belongs to, stored as it is.
+  match should {
+    TyEnum { n: en, is_ref } => {
+      match src {
+        TyReference { n: vd } => {
+          if is_ref && el::def(e, vd).def_type == el::DT_ENUM_VALUE && el::def(e, vd).parent == en {
+            return code;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   // `@FR-N-Store`: a nullable value into a non-null slot is reported (a warning, beside the
   // program) and stored as its base.
   match src {

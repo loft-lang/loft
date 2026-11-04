@@ -3891,6 +3891,25 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
       return ex(ir::NdInsert { items: list }, ir::TyVoid);
     }
   }
+  // A literal of a variant of the declared struct enum is built in a buffer of the enum's type.
+  if e.p.nodes[rhs!] is SStructLit && el_types::struct_enum_def(declared!) >= 0 {
+    sd = -1;
+    fs: vector<integer> = [];
+    match e.p.nodes[rhs!] {
+      SStructLit { name: ln, member, fields, base } => {
+        if member == "" && base == null {
+          sd = el::def_nr(e, ln);
+          fs = fields;
+        }
+      },
+      _ => {}
+    }
+    if sd >= 0 && el::def(e, sd).def_type == el::DT_ENUM_VALUE && el::def(e, sd).parent == el_types::struct_enum_def(declared!) {
+      o = object_fresh(e, vars, sd, fs, el_types::without_deps(el_types::base(declared!)));
+      el_vars::drop_use(vars, v);
+      return ex(el_ir::v_set(v, o.code), ir::TyVoid);
+    }
+  }
   // A struct literal of the declared struct is built in place in the local, as without the
   // annotation (`parse_object`'s destination hint).
   if e.p.nodes[rhs!] is SStructLit && struct_ref(e, el_types::base(declared!)) >= 0 && struct_literal_def(e, rhs!) == struct_ref(e, el_types::base(declared!)) {
@@ -4393,11 +4412,18 @@ fn object_expr(e: el::El, vars: el_vars::Vars, name: text, member: text, fields:
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  object_fresh(e, vars, d, fields, ir::TyReference { n: d, dep: [] })
+}
+
+// The fresh-record build of a literal of `d`: on the first pass its fields read, answering the
+// record's type; on the second built in a `__ref_p2_N` of type `wt` — the record's, or the enum a
+// declaration expects of a variant (`parse_object`'s expected type) — answering the buffer.
+fn object_fresh(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>, wt: ir::TypeT) -> Ex {
   if e.first_pass {
     first_pass_fields(e, vars, d, fields);
     return ex(ir::NdNull, ir::TyReference { n: d, dep: [] });
   }
-  w = el_vars::work_ref_p2(vars, ir::TyReference { n: d, dep: [] });
+  w = el_vars::work_ref_p2(vars, wt);
   list = object_fields(e, vars, w, d, fields);
   if list == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
