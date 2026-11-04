@@ -112,13 +112,6 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     _ => {}
   }
   text_return(e, vars, tt);
-  // `report_tret_promotions` (`text_return_orphan_risk`): a text function with no buffer of its
-  // own whose answer is not a borrow of the caller's arguments — a literal, a call's buffer in
-  // this frame, anything it owns — is promoted to a hidden `___tret_N` after the second pass and
-  // its callers patched (`el_tret`).
-  if !e.first_pass && el_types::base(result) is TyText && el::def(e, e.context).def_type != el::DT_GENERIC && !has_text_buffer(el::def(e, e.context)) && !borrows_arguments_only(el::def(e, e.context)) && !e.tret.contains(e.context) {
-    e.tret += [e.context];
-  }
   code = b.code;
   // A text answered through a hidden `&text` the body's own work text became: the body is typed
   // as the declared result, its dep in attribute numbering — as a record body is (below).  A
@@ -3518,34 +3511,36 @@ fn type_may_hold(e: el::El, t: ir::TypeT, goals: vector<ir::TypeT>, seen: vector
 }
 
 fn shape_eq(a: ir::TypeT, b: ir::TypeT) -> boolean {
-  x = el_types::base(a);
-  y = el_types::base(b);
-  match x {
-    TyVector { inner: xi } => return match y { TyVector { inner: yi } => shape_eq(xi, yi), _ => false },
+  match a {
+    TyOptional { inner } => return shape_eq(inner, b),
+    _ => {}
+  }
+  match b {
+    TyOptional { inner } => return shape_eq(a, inner),
+    _ => {}
+  }
+  match a {
+    TyVector { inner: xi } => return match b { TyVector { inner: yi } => shape_eq(xi, yi), _ => false },
     TyTuple { elems: xs } => {
-      match y {
-        TyTuple { elems: ys } => {
-          if len(xs) != len(ys) {
-            return false;
-          }
-          for m in xs {
-            if !shape_eq(m, ys[m#index] ?? ir::TyVoid) {
-              return false;
-            }
-          }
-          return true;
-        },
-        _ => { return false; }
+      ys = match b { TyTuple { elems } => elems, _ => [] };
+      if !(b is TyTuple) || len(xs) != len(ys) {
+        return false;
       }
+      for m in xs {
+        if !shape_eq(m, ys[m#index] ?? ir::TyVoid) {
+          return false;
+        }
+      }
+      return true;
     },
     _ => {}
   }
-  xr = record_def(x);
-  yr = record_def(y);
+  xr = record_def(a);
+  yr = record_def(b);
   if xr >= 0 || yr >= 0 {
     return xr == yr;
   }
-  type_kind(x) == type_kind(y)
+  type_kind(a) == type_kind(b)
 }
 
 // The definition a record or a struct enum value is of, or -1.
@@ -8368,6 +8363,15 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     if el_types::base(result) is TyReference {
       return record_return(e, vars, v, result);
     }
+    // A text is returned as it is, the declared result borrowing what the value borrows
+    // (`parse_return`'s `text_return(ls)`); one this frame owns is written into the hidden
+    // buffer after the pass (`el_tret`).
+    vt = match v.tp { TyRefVar { inner } => inner, _ => v.tp };
+    if el_types::base(result) is TyText && (el_types::base(vt) is TyText || e.first_pass && el_types::is_unknown(vt)) {
+      text_return(e, vars, v.tp);
+      rt = stored(e, vars, v, result);
+      return ex(ir::NdReturn { inner: rt ?? v.code }, ir::TyNever);
+    }
     if !scalar(result) || result is TyVoid {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
       return ex(ir::NdNull, ir::TyNever);
@@ -11891,16 +11895,6 @@ fn self_concat_parts(e: el::El, n: integer, name: text) -> vector<integer> {
   }
 }
 
-// Does the definition carry a hidden `&text` buffer (`text_work_buffers`)?
-fn has_text_buffer(def: ir::Definition) -> boolean {
-  for a in def.attributes {
-    if a.hidden && (a.typedef[0]) is TyRefVar {
-      return true;
-    }
-  }
-  false
-}
-
 // Is `v` bound anywhere in `n` to a text field read off a record local (`OpGetText(r, …)`)?
 fn field_view_bind(e: el::El, vars: el_vars::Vars, n: ir::Node, v: integer) -> boolean {
   match n {
@@ -11927,20 +11921,6 @@ fn field_view_bind(e: el::El, vars: el_vars::Vars, n: ir::Node, v: integer) -> b
   }
 }
 
-// The result borrows something, and only the function's visible parameters.
-fn borrows_arguments_only(def: ir::Definition) -> boolean {
-  ds = el_types::deps(el_types::base(def.returned[0]));
-  if len(ds) == 0 {
-    return false;
-  }
-  for x in ds {
-    a = def.attributes[x];
-    if a == null || a.hidden {
-      return false;
-    }
-  }
-  true
-}
 
 // `Parser::parse_append_text` into a new work text: cleared, each operand appended
 // (`append_concat_operand`), the block answering the work text and typed as text that depends on
