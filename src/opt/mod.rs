@@ -14,6 +14,7 @@ pub mod append_twin;
 pub mod arg_copy;
 pub mod attrs;
 pub mod body_writes;
+pub mod buffer_owner;
 pub mod char_walk;
 pub mod elem_first;
 pub mod empty_slot;

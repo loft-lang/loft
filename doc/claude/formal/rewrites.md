@@ -8179,15 +8179,7 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 3** — each `(R-Phase)`'s ONE PLACE, left by @PLN211's moves (arc C′ removes them).
-
-### D-phase-2 (OPEN, @PLN211) — buffer ownership is derived per consumer
-- **Violates:** `R-Phase` (one place: no decision recomputed per consumer)
-- **Where:** `opt::loop_buffer::rewrite_program` (five rules' analyses to leave their buffers),
-  `generation::Output` (the loop-buffer exclusions, `hoist_owned`), the C's own reads
-- **Effect:** none while the derivations agree; a rule added to one list and not another would
-  hand one buffer to two rewrites.
-- **Removal:** one `opt::hoist::buffer_owner` answering the owning rule per witness (arc C′2).
+**OPEN: 2** — each `(R-Phase)`'s ONE PLACE, left by @PLN211's moves (arc C′ removes them).
 
 ### D-phase-3 (OPEN, @PLN211) — `(R-KeyedEntry)`'s subscript clause stays in both writers
 - **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)

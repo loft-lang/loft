@@ -138,6 +138,15 @@ this is where it is written down.
 
 ## Deviations carried by rewrites.md, @PLN211 arc C′
 
+### D-phase-2 — CLOSED 2026-11-04 (@PLN211 arc C′2) — buffer ownership is derived per consumer
+- **Violates:** `R-Phase` (one place: no decision recomputed per consumer)
+- **Where:** `opt::loop_buffer::rewrite_program` (five rules' analyses to leave their buffers),
+  `generation::Output` (the loop-buffer exclusions, `hoist_owned`), the C's own reads
+- **Effect:** none while the derivations agree; a rule added to one list and not another would
+  hand one buffer to two rewrites.
+- **Removal:** one `opt::hoist::buffer_owner` answering the owning rule per witness (arc C′2).
+- **Closed by:** `opt::buffer_owner::owners` — the one answer, per witness, of the rule that owns a buffer, in a stated priority (inline buffer, hoisted literal, element-first pair, move host, adopted witness); `opt::loop_buffer` reads it, and rustc's own loop-buffer exclusions went with its clause.  rustc's `kept.rs` keeps a coarser function-level check (a kept twin is not built where an inline buffer or an element-first pair applies) for `(R-Kept)`, a rule that stays in rustc for a stated reason.  The census unchanged.
+
 ### D-phase-1 — CLOSED 2026-11-04 (@PLN211 arc C′1) — the C recognises the loop buffer's IR form
 - **Violates:** `R-Phase` (one place: no writer compensation)
 - **Where:** `c::body::emptied_either_way`, called by `known_empty` for `(R-PushFill)`'s run clause
