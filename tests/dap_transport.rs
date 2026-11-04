@@ -16,15 +16,55 @@
 use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
+use std::time::Duration;
 
 use loft::json::{self, Parsed};
+
+/// How long one message may take to arrive.  The adapter answers in milliseconds, so an
+/// expected message that never comes — a breakpoint that does not fire — fails the test in
+/// this time instead of blocking the read until nextest kills it at 600 s, twice with the
+/// retry (PR #2400's `rest-c`).
+const MESSAGE_DEADLINE: Duration = Duration::from_secs(30);
 
 /// A live loft-dap subprocess with framed read/write over its stdio.
 struct Dap {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    messages: Receiver<Option<Vec<u8>>>,
     seq: i64,
+}
+
+/// Read framed messages off the adapter's stdout on a thread of its own, so `recv` can
+/// wait for one with a deadline; `None` marks the adapter closing its stdout.
+fn read_frames(stdout: ChildStdout) -> Receiver<Option<Vec<u8>>> {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        loop {
+            let mut content_length = 0usize;
+            loop {
+                let mut line = String::new();
+                let n = stdout.read_line(&mut line).unwrap_or(0);
+                if n == 0 {
+                    let _ = tx.send(None);
+                    return;
+                }
+                let header = line.trim_end_matches(['\r', '\n']);
+                if header.is_empty() {
+                    break;
+                }
+                if let Some(v) = header.strip_prefix("Content-Length:") {
+                    content_length = v.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut buf = vec![0u8; content_length];
+            if stdout.read_exact(&mut buf).is_err() || tx.send(Some(buf)).is_err() {
+                return;
+            }
+        }
+    });
+    rx
 }
 
 impl Dap {
@@ -36,11 +76,11 @@ impl Dap {
             .spawn()
             .expect("spawn loft-dap");
         let stdin = child.stdin.take().unwrap();
-        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let messages = read_frames(child.stdout.take().unwrap());
         Dap {
             child,
             stdin,
-            stdout,
+            messages,
             seq: 0,
         }
     }
@@ -60,21 +100,15 @@ impl Dap {
 
     /// Read one framed message and parse it.
     fn recv(&mut self) -> Parsed {
-        let mut content_length = 0usize;
-        loop {
-            let mut line = String::new();
-            let n = self.stdout.read_line(&mut line).unwrap();
-            assert!(n > 0, "adapter closed stdout before replying");
-            let header = line.trim_end_matches(['\r', '\n']);
-            if header.is_empty() {
-                break;
+        let buf = match self.messages.recv_timeout(MESSAGE_DEADLINE) {
+            Ok(Some(buf)) => buf,
+            Ok(None) | Err(RecvTimeoutError::Disconnected) => {
+                panic!("adapter closed stdout before replying")
             }
-            if let Some(v) = header.strip_prefix("Content-Length:") {
-                content_length = v.trim().parse().unwrap();
+            Err(RecvTimeoutError::Timeout) => {
+                panic!("no message from the adapter within {MESSAGE_DEADLINE:?}")
             }
-        }
-        let mut buf = vec![0u8; content_length];
-        self.stdout.read_exact(&mut buf).unwrap();
+        };
         json::parse(&String::from_utf8(buf).unwrap()).expect("reply is valid JSON")
     }
 
