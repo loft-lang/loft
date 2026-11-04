@@ -4094,7 +4094,11 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
       SFieldInit { name: fname, quoted, e: fe } => {
         a = attr_nr(def, fname);
         if quoted || fe == null || a < 0 {
-          el::refuse(e, "a struct field that is quoted, valueless or not declared: {if quoted { "quoted" } else if fe == null { "valueless" } else { "undeclared" }}");
+          // A field missing after an earlier refusal is that refusal's consequence (a field
+          // whose type was refused is never declared): it is not a gap of its own.
+          if a >= 0 || len(e.refused) == 0 {
+            el::refuse(e, "a struct field that is quoted, valueless or not declared: {if quoted { "quoted" } else if fe == null { "valueless" } else { "undeclared" }}");
+          }
           return null;
         }
         at = def.attributes[a]!.typedef[0];
@@ -10921,16 +10925,14 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   r = rows!;
   w = ir::NdVar { n: v };
   ls: vector<ir::Node> = staged;
+  // A local with no store takes one where its literal is built (`build_vector_list`'s
+  // `vector_db`); a literal rebinding a local that has one takes its fresh store after the items
+  // are read (`create_vector`), so the items' buffers are minted first — its ops still lead.
+  late_store = !append && !vars.vars[v].argument && has_store && !value;
   if !append && vars.vars[v].argument {
     ls += [el_ir::cl(e, "OpClearVector", [w])];
-  } else if !append {
-    db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
-    el_vars::depend(vars, v, db);
-    ls += [
-      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
-      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
-    ];
+  } else if !append && !late_store {
+    ls += literal_store(e, vars, v, r);
   }
   if len(xs) > 0 {
     size = elem_size(in_t);
@@ -11029,6 +11031,9 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
   }
+  if late_store {
+    ls = staged + literal_store(e, vars, v, r) + ls[len(staged)..];
+  }
   codes: vector<ir::Node> = [];
   for x in xs {
     codes += [x.code];
@@ -11040,6 +11045,16 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   Built { x: ex(ir::NdInsert { items: ls }, ir::TyVoid), items: codes, elem: in_t }
 }
 
+// `vector_db`: a fresh `__vdb_N` store for vector local `v`, the local borrowing it.
+fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows) -> vector<ir::Node> {
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  el_vars::depend(vars, v, db);
+  [
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+  ]
+}
 
 // `Parser::parse_text_index`'s range: `s[lo..hi]` is `OpGetTextSub(s, lo, hi)` — an open start
 // `0`, an open end `i32::MAX`, `..=` one past its bound.  A range over anything but a text (a

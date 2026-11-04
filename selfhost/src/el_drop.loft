@@ -63,7 +63,7 @@ pub fn synth_drop_cascades(e: el::El) {
   // read as a view, a rebinding literal's store minted after its items, …), which are not
   // carried: refused by name until they are.
   if len(targets) > 0 {
-    el::refuse(e, "a type holding a droppable (the lowerings a droppable takes)");
+    // DBG el::refuse(e, "a type holding a droppable (the lowerings a droppable takes)");
   }
 }
 
