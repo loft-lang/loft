@@ -16,12 +16,15 @@ writers and the interpreter's generator; every rule reports to it or says why no
 table `bench/portal/rule_phases.tsv` is measured and gated, and `rewrites.md` § Applied by is
 rendered from it); B1 and B2 are done: weights in [b1-weights.md](b1-weights.md),
 a verdict per rule in § Verdicts.  Arc C has moved `(R-SliceArg)`'s
-range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-KeyedEntry)` and `(R-ElemFirst)`'s literal-built temp (§ Arc C's moves).  It was to start once
+range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-KeyedEntry)`, `(R-ElemFirst)`'s literal-built temp, call-filled temp and joined arms, and
+`(R-LoopBuffer)` (§ Arc C's moves); **arc C′ is next** — those moves brought to ONE place each,
+no writer clause or writer compensation left (§ Arc C′), before any further rule moves.  It
+was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
 each rule runs, **B** decides per rule whether it can run earlier, **C** moves the ones that
-can, **D** widens the rules we already have to the shapes they refuse today — the general
+can (and **C′** leaves each moved rule in one place), **D** widens the rules we already have to the shapes they refuse today — the general
 performance fixes, by class, behind the per-routine issues of the 3× bug line.
 
 `formal/rewrites.md` `(R-Phase)` says every rule is APPLIED BY one phase and that the phase
@@ -30,14 +33,56 @@ interpreter is the oracle) or the interpreter's generator and runtime (a compile
 the oracle).  The arcs of @PLN157 and @PLN210 optimised for compiled code: most of their
 rules were built in a writer, so the interpreter runs the IR they rewrite away.  A rule that
 removes WORK — an allocation, a copy, a store round trip — belongs in the IR phase wherever
-its conditions can be decided there, because then both backends stop doing that work.
+its conditions can be decided there: then it is decided once, for every backend, and both
+backends stop doing that work.
 
 ## Goal
 
-Every rule's phase stated in the register and checked against what the compiler does,
-every rule that removes work applied in the IR phase (or an interpreter-runtime clause)
-unless a stated reason keeps it in a writer, and each rule's most frequent refusals on the
-benches either admitted by a generalised clause or recorded as the rule's boundary.
+**Harmonisation** (the owner's goal for this plan): every optimisation implemented ONCE, at
+the front, and every backend reading that one decision — no rule built separately in each
+writer, no writer patched to recognise what another phase produced, no decision recomputed per
+consumer — [GOALS.md § Don't tolerate re-derivation patterns](../../GOALS.md#dont-tolerate-re-derivation-patterns--engineer-the-class-away),
+applied to the optimisations.  In detail: every rule's phase stated in the register and checked against what the
+compiler does; every rule that removes work applied in the IR phase (or an
+interpreter-runtime clause) unless a stated reason keeps it in a writer, and then in that one
+writer alone; each moved rule left in one place (§ Arc C's finishing condition, arc C′); and
+each rule's most frequent refusals on the benches either admitted by a generalised clause or
+recorded as the rule's boundary.
+
+A faster interpreter follows from it — work a rule removes in the IR, every backend stops doing
+— and is measured per move, but it is the CONSEQUENCE, not the aim: a move that speeds the
+interpreter while leaving the rule in two places is not finished, and a cleanup that only
+removes a writer's duplicate is in scope even when it speeds nothing.
+
+**Why now** (the owner's timing): the arcs of @PLN157 and @PLN210 built the CORPUS of speed
+optimisations that brought every bench routine within 3× of its hand-written Rust twin — the
+bug line, [`formal/performance.md`](../../formal/performance.md) § The bug line.  Measured, that is a
+position; ingrained, it is a guarantee.  A rule decided once at the front, its phase stated and
+gated (`rule_phases.tsv`), its admissions counted per writer (the rewrite census), its sites
+cited (`@FR-R-…`) and its cells falsified, cannot be lost by one backend drifting from the others
+or by a writer refactor that forgets a copy — so harmonising the corpus is how the 3× bar
+becomes something the compiler holds rather than something a bench run finds.  It is also the
+project's own order ([ROADMAP.md § The order of the large arcs](../../ROADMAP.md#the-order-of-the-large-arcs)):
+the rustc backend in good shape before the C, the language stable before loft-in-loft — the
+corpus harmonised at the front is what the C backend inherits and what the self-hosted
+compiler ports ONCE rather than once per writer.
+
+**What a move also buys.**  A rule moved to the front meets the whole IR and all three backends
+at once, so each move re-verifies the optimisation, retests the language features its cells
+touch, and carries what rustc learned over to the C.  Found by the moves of arc C: the lost-write
+lint and three analyses that matched call names only (`(R-Wrapper)`); the REPL's source 0 and a
+dropped tuple the C emitter had no arm for (#2400); a moved first assignment rustc declared
+inside a block (`(R-SliceArg)`); every IR pass skipping a library function with a native name;
+a `Set` between record variables binding a copy (`(R-ElemFirst)`'s joined arms); a generator
+holding the vector the next pass would clear (`(R-LoopBuffer)`).  And the C gains rules it never
+had — `(R-Wrapper)`, the fill form, `(R-LoopBuffer)`, `(R-ElemFirst)`'s joined arms and call-filled
+temps.  Each finding is fixed in its move, never filed, and its cell stays.  The deepest check
+is still to come: [@PLN91](../91-self-host/README.md) § The path's first stage judges the
+loft-written front end by a byte-identical image against the Rust one, before and after the
+`close_program` passes — so every rule this plan moves into the IR gets a second, independent
+implementation compared with it at the IR, where a duplicate verified on every level exposes
+what one implementation alone hides.  A rule left in a writer waits for stage 3 (the C
+generator in loft); a rustc-only one is never compared.
 
 ## Effort + design
 
@@ -163,9 +208,53 @@ One phase per rule, in B1's weight order.  Each is a parallel run:
    rule's applied-by changes in the table (A1's bless), and the rewrite census shows no
    drop on the C side.
 
+**A move is finished when the rule lives in ONE place** (the owner's goal for this plan: the
+optimisations harmonised, implemented cleanly at the front, not patched at the writers'
+fringes).  Three things the comparison can leave behind, each a reason the move is NOT done:
+
+- **a writer clause for a form the IR does not take yet** — the rule then runs in two or three
+  places, and the writers' copies drift (`(R-ElemFirst)`'s comprehension row);
+- **a writer compensation for the IR form** — code in a writer that recognises one pass's output
+  shape so another writer rule keeps applying.  The fact it needs is stated once in `opt`, in
+  general terms, for every writer to read;
+- **a decision recomputed per consumer** — an IR pass and each writer deriving the same answer
+  (who owns a buffer) on their own.  It is computed once, in `opt`, and read by all.
+
+A shared `opt` analysis taught the IR form (`hoist::hash_fill_loop`, `frame_calls::is_store_entry`
+for `(R-KeyedEntry)`'s call) is the front doing its job, not a compensation: the question it
+answers belongs to every consumer.
+
 Each phase can go red alone: an emission that changes where the census did not, a guard
 cell, a falsified plant.  A rule whose comparison shows the IR clause admitting FEWER sites
 than the writer did is not moved until the gap is closed or recorded as a decline.
+
+## Arc C′ — harmonising the moves made
+
+Before any further rule moves (`(R-LoopRecord)`, `(R-CompleteWrite)`, the ports), the six made
+are brought to "one place", in this order.  Each is a phase that can go red alone, with the
+move protocol's checks (cells on the interpreter, the C and rustc; switch_ab; c_sweep; the
+census, every move attributed; rustc's pins).
+
+| # | what is left | the clean form | done when |
+|---|---|---|---|
+| C′1 | `c::body::emptied_either_way`: the C's `known_empty` taught `(R-LoopBuffer)`'s `if … else OpClearVector` shape, so its push-run reservation applies | a front fact, `opt`: a vector slot is EMPTY after a statement that empties it on every path — its zero, an `OpClearVector` of it, an `if` whose arms both do — read by the C's run clause and by any writer that asks; no knowledge of the loop-buffer shape | the C function is gone; the C's `R-PushFill/run` census unchanged |
+| C′2 | buffer ownership derived per consumer: `opt::loop_buffer` recomputes five rules' analyses (invariant literal, element-first pair, move host, adopted witness, inline-buffer companion) and each writer its own | one `opt::hoist::buffer_owner(data, stores, d)` answering, per `__vdb` witness, the ONE rule that owns it, in a stated priority; the IR passes and the writers read it | no consumer computes another rule's analysis to decide ownership; the census unchanged |
+| C′3 | `(R-KeyedEntry)`'s subscript clause (`coll[k₁, …] = T{…}`) still in both writers (`output_keyed_entry_subscript`, the C's `keyed_place` arm) | the IR form: the literal's values staged, the entry answered by the stdlib probe, the fields written — `opt::keyed_entry`'s own staging, one more host shape | both writer clauses deleted; `R-KeyedEntry/subscript` applied by `ir` |
+| C′4 | `(R-ElemFirst)`'s comprehension row and view-plan exits still the writers' (rustc's and the C's clauses kept whole for them; the C's applies nowhere on the benches) | the comprehension row as an IR form; the view plan (`opt::value_records`) read by the pass AFTER it is final — decided once, at the front, so the pass and the writers cannot disagree | both writers' element-first clauses deleted; `R-ElemFirst` applied by `ir` alone |
+
+This is [STABILITY_METHOD.md § The rule-led walk](../../STABILITY_METHOD.md#the-rule-led-walk--the-standing-practice)
+on a rewrite rule: the question its sites share is WHERE it is decided, and each row is a
+second home.  The four rows are registered as `formal/rewrites.md`'s D-phase-1 … 4, deviations
+of `(R-Phase)`'s ONE PLACE.  The measurable "done" for a rule: `python3 scripts/rule_tags.py
+sites @FR-R-<rule>` names no writer site beyond the ones that spell the IR's decision, each
+saying so in its comment.  The position when arc C′ opens, citing sites per layer (front /
+rustc writer / C writer): `R-ElemFirst` 4 / 4 / 4, `R-KeyedEntry` 5 / 6 / 2, `R-LoopBuffer`
+4 / 1 / 1.
+
+C′4 carries the design question: the view plan is computed by the writers today
+(`lower::plan`), after every IR pass; read before the pass it could differ from the plan the
+writers compute on the rewritten IR.  The design step is to make the value-record decision a
+front fact that the writers read rather than recompute.
 
 ## Arc D — the class remainders: widening the rules we have
 
@@ -332,6 +421,34 @@ both), falsified by the rename left out (the interpreter stops naming the elemen
 on and off.  Taking the view-plan forms needs that plan in `opt` read AFTER this pass — the writers
 recompute it on the rewritten IR, and a plan read before could disagree.
 
+**`(R-LoopBuffer)` — moved.**  `src/opt/loop_buffer.rs`, the LAST `close_program` pass: a
+declaration `OpDatabase(vdb) · t = OpGetField(vdb, 0, ftp) · OpSetInt4(vdb, 0, 0)` of a
+`hoist::loop_buffers` buffer becomes `if OpRefIsNull(vdb) { mint; zero } else {
+OpClearVector(OpGetField(vdb, 0, ftp)) }` then the bind, so the first pass mints and every
+later one clears the vector, keeping its store and capacity; rustc's clause (its mint emitter
+and its dropped field zero) is deleted and the C gains the rule.  It leaves the buffers another
+rewrite owns, asked of the IR the writers see (the reason it runs last): an invariant literal's
+flat group AND the buffers a one-`Set` literal is built from (`R-LitHoist` builds it once,
+reading those declarations as invariant — drawing's `fd_sides`), an element-first pair, a move
+host, the adopted witness, and the companions of a vector `R-Apart` keeps inline
+(`opt::apart_vector`, moved from `lower` for this; the inline buffer is no store at all).  A
+function that yields or calls a generator is declined: a live frame may hold the store, which
+rustc tested at run time (`is_frame_held`).  The C's push-run reservation reads the form as an
+empty vector (`known_empty` → `emptied_either_way`).  Found on the way, in every IR pass of
+this plan: a definition with a native NAME (a library export once its artifact is built) was
+skipped, though a native build emits its loft body — hex_shape with a warm library lost
+`form_read`'s 16 buffers; the filter is gone.  Census: rustc counted once per emitted copy (the
+`__kh` / `__rg` twins), the IR once per site — hex_shape 42 → 30 is exactly the two twins; the
+rustc declines left in drawing (`R-Scalar` −4 / `R-Header` −3 / `R-Callee` −1 in `draw_sky`)
+measured level.  Timed on drawing's 14 routines, the old binary against the new: rustc native
+level on every routine; the C ship lane median 1.61× → 1.55× (`render_lock` 1.67 → 1.56,
+`render_marks` 2.03 → 1.83, `resize` 1.73 → 1.56).  Evidence: switch_ab.sh and c_sweep (in
+the commit), the rule's cells and `a-loop-buffer-kept-in-the-ir-reads-as-a-fresh-vector.loft`
+(b1–b5, falsified by the reset arm left empty: b1 fails on both backends) on the interpreter, the
+C and rustc, the rule on and off; c_emit 71/71; `tests/loop_buffer.rs` re-pinned on the IR form;
+apart_value, element_first, mint_window.  On the interpreter: 7 311 → 6 106 instructions a pass
+of the probe, −16.5 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -379,7 +496,7 @@ function before and not after.
 | `(R-PushFill)` fill form | yes — IR facts | `OpPush` + `OpAppendCopy`, as `[c; n]` lowers | 17.2 | `push_fill`: 10 580 → 3 017, **−71.5 %**; moved: 9 847 → 2 776, **−71.8 %** | **MOVED** (`opt::fill_loop`, arc C's third).  The C's admission on the probe was its window clause, and rustc's fill had no census name |
 | `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %**; moved: 8 252 → 5 886, **−28.7 %** | **MOVED: the literal-built temp, the call-filled temp, the joined arms** (`opt::elem_first`, arc C's fifth); the comprehension row and the view-plan exits are still the writers' |
 | `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** (the hand form skips the slice's bound normalisation); moved: 7 779 → 5 385, **−30.8 %** | **MOVED** (`slice_text::rewrite`, arc C's first) |
-| `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %** | MOVE |
+| `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %**; moved: 7 311 → 6 106, **−16.5 %** | **MOVED** (`opt::loop_buffer`, arc C's sixth) |
 | `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %** | MOVE (light) |
 | `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector` | MOVE, as that parser path widened to field places; measured on arc C's beside build |
 | `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)) | owed: measured on arc C's beside build |

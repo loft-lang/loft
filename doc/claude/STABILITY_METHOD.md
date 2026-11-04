@@ -331,6 +331,15 @@ sites in `src/`, the targets of a site-mutation pass the report does not run. Ru
 ordered by the defects behind them, the walk's own yield order. A report of reach, never a
 gate, and a floor: ROUTE and ESCAPE are not composition axes and stay a by-hand read.
 
+**A rewrite rule's walk asks where it is DECIDED.**  For a rewrite (`@FR-R-…`) the question its
+sites share is not what a program computes but which phase applies it, and `(R-Phase)` answers
+ONE — normally the IR, with each writer only spelling the decision.  `rule_tags.py sites
+@FR-R-<rule>` shows where a rule lives; a writer site that does more than spell is a second
+home (a clause for a form the front does not take, a writer recognising another phase's
+output, a decision every consumer recomputes), the duplication the walk exists to remove, and
+`formal/rewrites.md` registers each one as a deviation of `(R-Phase)`.  @PLN211's arc C′ is
+that walk for the rules @PLN211 moved.
+
 **Where two rules meet.** A third of the defect-born cells cite two rules or more, and the
 questions that reached the owner by hand were mostly of that kind: each rule clear alone, the
 text silent on which applies where both do. A COMPOSITION is stated as prose under the rule

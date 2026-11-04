@@ -12,14 +12,14 @@ R-Apart/vector	c,native	8	0	0	0	22	48
 R-AppendTwin	c,native	2	0	0	0	31	33
 R-AppendTwin/loop-window	c	2	0	0	0	2	0
 R-AppendTwin/mint	c	2	0	0	0	4	0
-R-Base	c,native	58	0	0	0	863	5491
+R-Base	c,native	58	0	0	0	863	5554
 R-Base/counter	c	44	0	0	0	216	0
 R-Base/grid	c	2	0	0	0	69	0
 R-BoundAppend	parse	2	2	0	0	0	0
 R-BoundedNest	native	4	0	0	0	0	20
 R-BoundedNest/kernel	ir	58	0	58	0	0	0
 R-ByteCopy	ir	2	0	4	0	0	0
-R-Callee	c,native	20	0	0	0	62	164
+R-Callee	c,native	20	0	0	0	62	163
 R-CharWalk	c,native	58	0	0	0	30	619
 R-Compact	ir	1	0	2	0	0	0
 R-Compact/prepend	ir	1	0	1	0	0	0
@@ -60,9 +60,9 @@ R-GuardFree	native	58	0	0	0	0	640
 R-GuardedChain	c,native	40	0	0	0	205	1052
 R-GuardedChain/operators	c,native	40	0	0	0	720	3170
 R-HandOver/rotate	c,native	1	0	0	0	2	2
-R-Header	c,native	58	0	0	0	879	6297
-R-Header/apart	c,native	17	0	0	0	130	206
-R-Header/apart-param	c,native	13	0	0	0	36	56
+R-Header	c,native	58	0	0	0	879	6351
+R-Header/apart	c,native	20	0	0	0	130	331
+R-Header/apart-param	c,native	13	0	0	0	36	62
 R-Header/function	native	23	0	0	0	0	101
 R-Header/grown	c	2	0	0	0	20	0
 R-Header/grown-held	c	1	0	0	0	4	0
@@ -88,7 +88,7 @@ R-LitDiv	native	52	0	0	0	0	2361
 R-LitHoist	native	1	0	0	0	0	1
 R-LiteralAppend	ir	1	0	1	0	0	0
 R-LiteralWalk	parse	8	14	0	0	0	0
-R-LoopBuffer	native	21	0	0	0	0	246
+R-LoopBuffer	ir	21	0	192	0	0	0
 R-LoopRecord	native	1	0	0	0	0	2
 R-LoopRecord/refill	c,native	2	0	0	0	3	10
 R-LoopSlot	interp	58	0	0	3185	0	0
@@ -118,7 +118,7 @@ R-Range	c,native	58	0	0	0	3062	10769
 R-RangedCall	native	47	0	0	0	0	1058
 R-Rebind	ir	3	0	5	0	0	0
 R-RebindBuffer	native	1	0	0	0	0	1
-R-RecPtr	c,native	48	0	0	0	321	1435
+R-RecPtr	c,native	48	0	0	0	321	1436
 R-RecPtr/element	native	1	0	0	0	0	2
 R-RecPtr/held	c	37	0	0	0	149	0
 R-RecPtr/index	native	7	0	0	0	0	44
@@ -135,7 +135,7 @@ R-ReturnField	ir	1	0	1	0	0	0
 R-Reuse	ir	23	0	175	0	0	0
 R-Rotate	interp	58	0	0	3817	0	0
 R-SameRead	parse	16	21	0	0	0	0
-R-Scalar	c,native	24	0	0	0	717	7571
+R-Scalar	c,native	24	0	0	0	717	7567
 R-ScaleFold	parse	1	2	0	0	0	0
 R-SelfReplace	parse	3	19	0	0	0	0
 R-SingleUse	parse	58	415	0	0	0	0

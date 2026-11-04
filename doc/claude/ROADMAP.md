@@ -30,6 +30,22 @@ looked like before, and the narratives of past cycles, are in
 for desktop enthusiasts; server/multiplayer comes after the single-player browser experience
 works.
 
+## The order of the large arcs
+
+The project's stages are taken in an order, each standing on ground the one before settled (the
+owner's sequence): **the rustc backend in good shape before the C backend; the language stable
+before loft-in-loft** ([@PLN91](https://github.com/loft-lang/plans/issues/91)).  Each stage
+hands the next a settled thing rather than one to finish: the speed corpus @PLN157 and @PLN210
+built on the writers is harmonised into the front by [@PLN211](https://github.com/loft-lang/plans/issues/211)
+— every optimisation decided once, in the IR phase — so the C backend inherits it instead of
+re-implementing it, and the loft-written compiler ports it once instead of once per writer.  A
+plan that would carry unsettled work across a stage boundary — a rule built in one writer
+only, a language shape still in flux under the self-hosted parser — is reordered or finished
+first.  The self-hosted compiler is also the deepest check on what crosses: a second
+implementation compared byte for byte with the Rust one at every level (@PLN91 § The path), so
+whatever is decided at the front is verified twice, and the intrinsic problems a single
+implementation hides surface as disagreements.
+
 ## Re-measuring this page
 
 The plan list below is a copy of the tracker's open plans, so it is only as current as its

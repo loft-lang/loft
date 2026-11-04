@@ -17,6 +17,15 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### `(R-LoopBuffer)` runs in the IR (@PLN211 arc C)
+
+- A vector local declared `[]` inside a loop keeps its store across the passes on every backend
+  (`src/opt/loop_buffer.rs`): the first pass mints, every later pass clears the vector.  The
+  interpreter runs 16.5 % fewer instructions on such a loop and the C gains the rule (drawing's
+  C ship median 1.61× → 1.55× of Rust).  `LOFT_NO_LOOP_BUFFER_REUSE` still turns it off.
+- The IR passes of @PLN211 now reach a library function whose compiled artifact is built (one
+  with a native name): a native build still emits its loft body.
+
 ### `(R-ElemFirst)`'s literal-built temp runs in the IR (@PLN211 arc C)
 
 - `t = []; …t += …; out += [R { f: t, … }]` builds `t` inside the appended element on every

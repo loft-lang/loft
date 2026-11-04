@@ -163,7 +163,10 @@ agree.  The comparison instrument is `selfhost/compare/` ([1b-compare.md](1b-com
 
 1. **The front end in loft (strand 1a).**  Lexer → parser → scopes and types → the IR
    passes `close_program` runs for both backends (`compile.rs`: `ledger_sites`,
-   `arg_copy`, `value_record`, … `text_len`), compiled through the C backend.  Gates: the
+   `arg_copy`, `value_record`, … `text_len`, `loop_buffer`), compiled through the C backend.
+   Every optimisation decided there — @PLN211 moves the work-removing rules into these passes
+   from the writers — is so checked by a second implementation at the IR, in this stage; a
+   rule left in a writer meets its loft twin only at stage 3, and a rustc-only rule never.  Gates: the
    token stream equals `src/lexer.rs`'s; the image equals the Rust front end's
    `--emit-image`, before and after the IR passes.  **The parser is written with PEG match
    patterns** (@PLN35, [formal/matching.md](../../formal/matching.md)) over a token cursor

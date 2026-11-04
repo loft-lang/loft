@@ -97,52 +97,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         if buffers.is_empty() {
             continue;
         }
-        let lits = hoist::invariant_literals(data, d);
-        let pairs = hoist::element_first(data, stores, d, None);
-        let moves = hoist::move_appends(data, d);
-        let adopt = hoist::ret_adopt(data, d);
-        // `@FR-R-Apart`'s instance 3 keeps a vector the function reads at constant indices in
-        // an inline buffer — no store at all, which a kept store cannot beat — and it reads
-        // the plain declaration, so its companions keep it.
-        let apart = crate::opt::apart_vector::roles(data, d).unwrap_or_default();
-        // A literal `@FR-R-LitHoist` builds ONCE (a one-`Set` value) is better than a buffer
-        // kept per pass: the buffers its value builds from keep their plain declaration, which
-        // is what the hoist reads as invariant.
-        let mut in_hoisted: HashSet<u16> = HashSet::new();
-        def.code().walk(&mut |n| {
-            if let Value::Set(w, init) = n
-                && lits.wrapped.contains(w)
-            {
-                init.walk(&mut |m| {
-                    if let Value::Var(x) = m {
-                        in_hoisted.insert(*x);
-                    }
-                });
-            }
-        });
-        buffers.retain(|v| {
-            let why = if apart.holds(*v) {
-                "an inline buffer's companion"
-            } else if lits.flat.contains_key(v) || in_hoisted.contains(v) {
-                "an invariant literal's"
-            } else if pairs.by_vdb.contains_key(v) {
-                "an element-first pair's"
-            } else if moves.values().any(|p| p.host_vdb == *v) {
-                "a move host"
-            } else if adopt.as_ref().is_some_and(|a| a.vdb == *v) {
-                "the adopted result's witness"
-            } else {
-                return true;
-            };
-            if trace() {
-                eprintln!(
-                    "[ir-loop-buffer] fn={} {} left: {why}",
-                    data.def(d).name(),
-                    data.def(d).variables().name(*v)
-                );
-            }
-            false
-        });
+        leave_owned(data, stores, d, &mut buffers);
         if buffers.is_empty() {
             continue;
         }
@@ -171,6 +126,59 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         total += done.len();
     }
     total
+}
+
+/// Leave every buffer another rewrite owns: an invariant literal's (its flat group, or a buffer
+/// a one-`Set` literal is built from), an element-first pair's, a move host, the adopted result's
+/// witness, an inline buffer's companion — each asked of the IR the writers will see.
+fn leave_owned(data: &Data, stores: &Stores, d: u32, buffers: &mut HashSet<u16>) {
+    let def = data.def(d);
+    let lits = hoist::invariant_literals(data, d);
+    let pairs = hoist::element_first(data, stores, d, None);
+    let moves = hoist::move_appends(data, d);
+    let adopt = hoist::ret_adopt(data, d);
+    // `@FR-R-Apart`'s instance 3 keeps a vector the function reads at constant indices in
+    // an inline buffer — no store at all, which a kept store cannot beat — and it reads
+    // the plain declaration, so its companions keep it.
+    let apart = crate::opt::apart_vector::roles(data, d).unwrap_or_default();
+    // A literal `@FR-R-LitHoist` builds ONCE (a one-`Set` value) is better than a buffer
+    // kept per pass: the buffers its value builds from keep their plain declaration, which
+    // is what the hoist reads as invariant.
+    let mut in_hoisted: HashSet<u16> = HashSet::new();
+    def.code().walk(&mut |n| {
+        if let Value::Set(w, init) = n
+            && lits.wrapped.contains(w)
+        {
+            init.walk(&mut |m| {
+                if let Value::Var(x) = m {
+                    in_hoisted.insert(*x);
+                }
+            });
+        }
+    });
+    buffers.retain(|v| {
+        let why = if apart.holds(*v) {
+            "an inline buffer's companion"
+        } else if lits.flat.contains_key(v) || in_hoisted.contains(v) {
+            "an invariant literal's"
+        } else if pairs.by_vdb.contains_key(v) {
+            "an element-first pair's"
+        } else if moves.values().any(|p| p.host_vdb == *v) {
+            "a move host"
+        } else if adopt.as_ref().is_some_and(|a| a.vdb == *v) {
+            "the adopted result's witness"
+        } else {
+            return true;
+        };
+        if trace() {
+            eprintln!(
+                "[ir-loop-buffer] fn={} {} left: {why}",
+                data.def(d).name(),
+                data.def(d).variables().name(*v)
+            );
+        }
+        false
+    });
 }
 
 /// Does `code` call a function that answers a generator, or yield itself?

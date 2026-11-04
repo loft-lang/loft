@@ -101,7 +101,14 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  that set changes, and the doc-drift check when the section and the
                  table disagree.  A rule
                  moved from a generator into the IR phase keeps its name; the move is
-                 the table's change, blessed in its own commit.
+                 the table's change, blessed in its own commit.  ONE PLACE: a rule the
+                 IR phase applies has no writer clause and no writer compensation —
+                 a writer's site of it only SPELLS what the IR decided (the call it
+                 emits, the form it renders) and its comment says so; a writer clause
+                 for a form the IR does not take, a writer recognising another phase's
+                 output so that a further rule still applies, or a decision each
+                 consumer recomputes is the rule in two places (`rule_tags.py sites
+                 @FR-R-<rule>` shows where it lives).
   (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
                  never a representation: how many stores or copies a value takes, or
                  where it lives, is the compiler's to change wherever the rule's
@@ -234,7 +241,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-LitHoist)` | `R-LitHoist` native |
 | `(R-LiteralAppend)` | `R-LiteralAppend` ir |
 | `(R-LiteralWalk)` | `R-LiteralWalk` parse |
-| `(R-LoopBuffer)` | `R-LoopBuffer` native |
+| `(R-LoopBuffer)` | `R-LoopBuffer` ir |
 | `(R-LoopRecord)` | `R-LoopRecord` native · `/refill` c, native |
 | `(R-LoopSlot)` | `R-LoopSlot` interp |
 | `(R-MaskRange)` | `R-MaskRange` parse |
@@ -8172,4 +8179,35 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 0**.
+**OPEN: 4** — each `(R-Phase)`'s ONE PLACE, left by @PLN211's moves (arc C′ removes them).
+
+### D-phase-1 (OPEN, @PLN211) — the C recognises the loop buffer's IR form
+- **Violates:** `R-Phase` (one place: no writer compensation)
+- **Where:** `c::body::emptied_either_way`, called by `known_empty` for `(R-PushFill)`'s run clause
+- **Effect:** none on values; the C keeps its push-run reservation after `(R-LoopBuffer)`'s
+  `if OpRefIsNull … else OpClearVector` declaration.
+- **Removal:** a front fact in `opt` — a vector slot is empty after a statement that empties it
+  on every path — read by every writer (arc C′1).
+
+### D-phase-2 (OPEN, @PLN211) — buffer ownership is derived per consumer
+- **Violates:** `R-Phase` (one place: no decision recomputed per consumer)
+- **Where:** `opt::loop_buffer::rewrite_program` (five rules' analyses to leave their buffers),
+  `generation::Output` (the loop-buffer exclusions, `hoist_owned`), the C's own reads
+- **Effect:** none while the derivations agree; a rule added to one list and not another would
+  hand one buffer to two rewrites.
+- **Removal:** one `opt::hoist::buffer_owner` answering the owning rule per witness (arc C′2).
+
+### D-phase-3 (OPEN, @PLN211) — `(R-KeyedEntry)`'s subscript clause stays in both writers
+- **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)
+- **Where:** `generation::emit` (`output_keyed_place`'s subscript clause), the C's keyed-place arm
+- **Effect:** the interpreter claims, writes and files on `coll[k] = T{…}` where the writers
+  overwrite the entry in place.
+- **Removal:** the IR form, `opt::keyed_entry`'s staging for one more host (arc C′3).
+
+### D-phase-4 (OPEN, @PLN211) — `(R-ElemFirst)`'s comprehension row and view-plan exits stay in both writers
+- **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)
+- **Where:** `generation::emit` (the element-first statement handling), `c::body::elem_first`
+- **Effect:** the interpreter keeps the temp-store build and the copy for those forms; the C's
+  clause applies nowhere on the benches.
+- **Removal:** the comprehension row as an IR form; the value-record view plan made a front fact
+  the pass and the writers read (arc C′4).
