@@ -10,9 +10,10 @@
 // vector — where no function's exit copies the temp, so the IR applies them — and both together,
 // and read every element's fields and its vector back.  Values hand-computed in each comment.
 //
-// @falsified-at: none — by hand on the IR clause, the other arm's mint kept (no alias): e1
-//   and e3 fail on the interpreter and on the C (an element finished that was never written).
-//   CHANNEL: an assertion.
+// @falsified-at: none — by hand on the IR clause, the other arm's element not renamed to the
+//   minted one (its own mint dropped): the interpreter stops naming that element
+//   (`Incorrect var _elm_3`) and the C build exits 101.
+//   CHANNEL: a compile-time stop on the interpreter, an exit code on the C.
 // HOLDS: the hand-computed values, on both backends, the clause on and off.
 
 struct Row { id: integer, f: vector<integer> }
@@ -60,7 +61,7 @@ fn e2(n: integer) -> integer {
   s = 0;
   for r in out {
     k = len(r.f);
-    s += r.id * 100 + k * 10 + r.f[k - 1];
+    s += r.id * 100 + k * 10 + (r.f[k - 1] ?? 0);
   }
   s
 }
