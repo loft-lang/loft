@@ -41,6 +41,8 @@ fn trace() -> bool {
 
 struct Ops {
     database: u32,
+    database_np: u32,
+    copy_record: u32,
     get_field: u32,
     set_int4: u32,
     pre_alloc: u32,
@@ -58,6 +60,9 @@ struct Plan {
     call_buf: HashMap<u16, (usize, usize, Value)>,
     /// An element variable — the pair's own, or another arm's alias of it — → its pair.
     elm: HashMap<u16, usize>,
+    /// The comprehension clause's `(block value, element)` pairs: the row was built in the
+    /// element, so its whole-row `OpCopyRecord(c, elm, tp)` goes.
+    whole_copies: std::collections::HashSet<(u16, u16)>,
 }
 
 /// Rewrite every admitted pair of the program; answers how many.
@@ -71,6 +76,8 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     }
     let ops = Ops {
         database: data.def_nr("OpDatabase"),
+        database_np: data.def_nr("OpDatabaseNP"),
+        copy_record: data.def_nr("OpCopyRecord"),
         get_field: data.def_nr("OpGetField"),
         set_int4: data.def_nr("OpSetInt4"),
         pre_alloc: data.def_nr("OpPreAllocVector"),
@@ -105,7 +112,9 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         }
         let mut appends = false;
         def.code().walk(&mut |n| {
-            if matches!(n, Value::Call(c, _) if *c == ops.append_vector) {
+            // Every pair's element is a mint the append files; a comprehension row reaches it
+            // through `OpCopyRecord`, not `OpAppendVector`.
+            if matches!(n, Value::Call(c, _) if *c == ops.new_record) {
                 appends = true;
             }
         });
@@ -113,17 +122,15 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             continue;
         }
         let map = element_first(data, stores, d, None);
-        let pairs: Vec<&ElemFirst> = map
-            .pairs
-            .iter()
-            .filter(|p| !map.whole_copies.iter().any(|(_, e)| *e == p.elm))
-            .collect();
+        let pairs: Vec<&ElemFirst> = map.pairs.iter().collect();
+        let whole_copies = map.whole_copies.clone();
         if pairs.is_empty() {
             continue;
         }
-        let Some(plan) = plan_of(def.code(), &pairs, &ops) else {
+        let Some(mut plan) = plan_of(def.code(), &pairs, &ops) else {
             continue;
         };
+        plan.whole_copies = whole_copies;
         let _census = crate::rewrite_census::InBody::enter("ir", def.name());
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
         merge_arms(&mut code, &pairs);
@@ -234,7 +241,7 @@ fn statement(
     let stmt = &stmts[at];
     match stmt.unspan() {
         // A temp's declaration.
-        Value::Call(op, args) if *op == ops.database => {
+        Value::Call(op, args) if *op == ops.database || *op == ops.database_np => {
             declaration(stmts, at, args, pairs, plan, ops, minted, out)
         }
         // The append's reservation, when the next statement is a paired mint.
@@ -312,6 +319,15 @@ fn statement(
                         int_of(args.get(1))
                             .is_some_and(|off| pairs[pi].binds.iter().any(|b| b.field_off == off))
                     }) =>
+        {
+            1
+        }
+        // The comprehension clause's whole-row copy: the row was built in the element.
+        Value::Call(op, args)
+            if *op == ops.copy_record
+                && var_of(args.first())
+                    .zip(var_of(args.get(1)))
+                    .is_some_and(|ce| plan.whole_copies.contains(&ce)) =>
         {
             1
         }
