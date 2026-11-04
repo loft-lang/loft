@@ -44,14 +44,17 @@ struct Ops {
     pre_alloc: u32,
     new_record: u32,
     append_vector: u32,
+    ref_is_null: u32,
 }
 
 /// What one function's rewrite does, keyed by variable.
 #[derive(Default)]
 struct Plan {
-    /// A temp's `__vdb` witness → (pair, bind).
+    /// A literal-built temp's `__vdb` witness → (pair, bind).
     decl: HashMap<u16, (usize, usize)>,
-    /// An element variable → its pair.
+    /// A call-filled temp's hidden buffer → (pair, bind), and the field type its copy names.
+    call_buf: HashMap<u16, (usize, usize, Value)>,
+    /// An element variable — the pair's own, or another arm's alias of it — → its pair.
     elm: HashMap<u16, usize>,
 }
 
@@ -71,8 +74,10 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         pre_alloc: data.def_nr("OpPreAllocVector"),
         new_record: data.def_nr("OpNewRecord"),
         append_vector: data.def_nr("OpAppendVector"),
+        ref_is_null: data.def_nr("OpRefIsNull"),
     };
     if [
+        ops.ref_is_null,
         ops.database,
         ops.get_field,
         ops.set_int4,
@@ -108,11 +113,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         let pairs: Vec<&ElemFirst> = map
             .pairs
             .iter()
-            .filter(|p| {
-                p.aliases.is_empty()
-                    && p.binds.iter().all(|b| !b.from_call)
-                    && !map.whole_copies.iter().any(|(_, e)| *e == p.elm)
-            })
+            .filter(|p| !map.whole_copies.iter().any(|(_, e)| *e == p.elm))
             .collect();
         if pairs.is_empty() {
             continue;
@@ -120,9 +121,32 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         let mut plan = Plan::default();
         for (pi, p) in pairs.iter().enumerate() {
             plan.elm.insert(p.elm, pi);
-            for (bi, b) in p.binds.iter().enumerate() {
-                plan.decl.insert(b.vdb, (pi, bi));
+            for a in &p.aliases {
+                plan.elm.insert(*a, pi);
             }
+            for (bi, b) in p.binds.iter().enumerate() {
+                if b.from_call {
+                    let Some(ftp) = copy_field_type(def.code(), &ops, &plan, pi, b) else {
+                        continue;
+                    };
+                    plan.call_buf.insert(b.vdb, (pi, bi, ftp));
+                } else {
+                    plan.decl.insert(b.vdb, (pi, bi));
+                }
+            }
+        }
+        // A call-filled temp whose copy names no field type cannot be bound: its pair keeps
+        // the writers' form.
+        let complete: Vec<bool> = pairs
+            .iter()
+            .map(|p| {
+                p.binds
+                    .iter()
+                    .all(|b| !b.from_call || plan.call_buf.contains_key(&b.vdb))
+            })
+            .collect();
+        if complete.iter().any(|c| !c) {
+            continue;
         }
         let _census = crate::rewrite_census::InBody::enter("ir", def.name());
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
@@ -199,7 +223,7 @@ fn statement(
         Value::Call(op, args) if *op == ops.database => {
             declaration(stmts, at, args, pairs, plan, ops, minted, out)
         }
-        // The append's reservation, when the next statement is args paired mint.
+        // The append's reservation, when the next statement is a paired mint.
         Value::Call(op, args) if *op == ops.pre_alloc && int_of(args.get(1)) == Some(1) => {
             let next = stmts[at + 1..]
                 .iter()
@@ -214,13 +238,59 @@ fn statement(
             }
             1
         }
-        // The append's mint, and an element's null pre-init (it would reset the element the
-        // declaration minted).
+        // A call-filled temp's lazy buffer guard: the buffer is never minted, and the element
+        // is, when this temp carries the mint.
+        Value::If(cond, _, _)
+            if matches!(cond.unspan(), Value::Call(op, ca) if *op == ops.ref_is_null
+                && var_of(ca.first()).is_some_and(|b| plan.call_buf.contains_key(&b))) =>
+        {
+            if let Value::Call(_, ca) = cond.unspan()
+                && let Some(&(pi, bi, _)) = var_of(ca.first()).and_then(|b| plan.call_buf.get(&b))
+                && pairs[pi].binds[bi].first
+            {
+                mint(pairs[pi], ops, out);
+                minted[pi] = true;
+            }
+            1
+        }
+        // The call that fills the temp: handed the element's field in place of its buffer.
+        Value::Set(tmp, _)
+            if plan.call_buf.iter().any(|(buf, (pi, bi, _))| {
+                pairs[*pi].binds[*bi].tmp == *tmp && stmt.reads_var(*buf)
+            }) =>
+        {
+            let mut s2 = stmt.clone();
+            for (buf, (pi, bi, ftp)) in &plan.call_buf {
+                let b = &pairs[*pi].binds[*bi];
+                if b.tmp == *tmp {
+                    let place = Value::Call(
+                        ops.get_field,
+                        vec![
+                            Value::Var(pairs[*pi].elm),
+                            Value::Int(b.field_off),
+                            ftp.clone(),
+                        ],
+                    );
+                    if let Value::Set(_, val) = s2.unspan_mut() {
+                        replace_var(val, *buf, &place);
+                    }
+                }
+            }
+            out.push(s2);
+            1
+        }
+        // The append's mint — or, in another arm of a joined append, the alias of the element
+        // minted at the declaration — and an element's null pre-init (it would reset the
+        // element the declaration minted).
         Value::Set(elm_var, mint)
             if plan.elm.contains_key(elm_var)
                 && (matches!(mint.unspan(), Value::Null)
                     || matches!(mint.unspan(), Value::Call(md, _) if *md == ops.new_record)) =>
         {
+            let first = pairs[plan.elm[elm_var]].elm;
+            if first != *elm_var && !matches!(mint.unspan(), Value::Null) {
+                out.push(Value::Set(*elm_var, Box::new(Value::Var(first))));
+            }
             1
         }
         // The paired zeros on the element.
@@ -253,6 +323,72 @@ fn statement(
             1
         }
     }
+}
+
+/// The append's reservation and mint at the first temp's declaration, and a zero for every
+/// paired field's vector handle (a fresh C slot is not zeroed, so the zero is the IR's).
+fn mint(p: &ElemFirst, ops: &Ops, out: &mut Vec<Value>) {
+    if p.out_fld == 65535 {
+        out.push(Value::Call(
+            ops.pre_alloc,
+            vec![
+                Value::Var(p.out),
+                Value::Int(1),
+                Value::Int(p.prealloc_size),
+            ],
+        ));
+    }
+    out.push(Value::Set(
+        p.elm,
+        Box::new(Value::Call(
+            ops.new_record,
+            vec![
+                Value::Var(p.out),
+                Value::Int(p.out_tp),
+                Value::Int(p.out_fld),
+            ],
+        )),
+    ));
+    for pb in &p.binds {
+        out.push(Value::Call(
+            ops.set_int4,
+            vec![Value::Var(p.elm), Value::Int(pb.field_off), Value::Int(0)],
+        ));
+    }
+}
+
+/// The field type a call-filled temp's paired copy names — `OpAppendVector(OpGetField(e, off,
+/// ftp), tmp, …)` with `e` the pair's element or an alias — which the call's field place uses.
+fn copy_field_type(
+    code: &Value,
+    ops: &Ops,
+    plan: &Plan,
+    pi: usize,
+    b: &crate::opt::hoist::ElemBind,
+) -> Option<Value> {
+    let mut ftp = None;
+    code.walk(&mut |n| {
+        if let Value::Call(op, args) = n
+            && *op == ops.append_vector
+            && var_of(args.get(1)) == Some(b.tmp)
+            && let Some(Value::Call(gf, ga)) = args.first().map(Value::unspan)
+            && *gf == ops.get_field
+            && var_of(ga.first()).and_then(|e| plan.elm.get(&e)) == Some(&pi)
+            && int_of(ga.get(1)) == Some(b.field_off)
+        {
+            ftp = ga.get(2).cloned();
+        }
+    });
+    ftp
+}
+
+/// `v` with every `Var(buf)` replaced by `place`.
+fn replace_var(v: &mut Value, buf: u16, place: &Value) {
+    if matches!(v.unspan(), Value::Var(x) if *x == buf) {
+        *v = place.clone();
+        return;
+    }
+    v.for_each_child_mut(&mut |c| replace_var(c, buf, place));
 }
 
 /// A temp's declaration, `OpDatabase(vdb, …) · t = OpGetField(vdb, 0, ftp) · OpSetInt4(vdb, 0,
@@ -291,33 +427,7 @@ fn declaration(
     }
     let ftp = gargs.get(2).cloned().unwrap_or(Value::Int(0));
     if b.first {
-        if p.out_fld == 65535 {
-            out.push(Value::Call(
-                ops.pre_alloc,
-                vec![
-                    Value::Var(p.out),
-                    Value::Int(1),
-                    Value::Int(p.prealloc_size),
-                ],
-            ));
-        }
-        out.push(Value::Set(
-            p.elm,
-            Box::new(Value::Call(
-                ops.new_record,
-                vec![
-                    Value::Var(p.out),
-                    Value::Int(p.out_tp),
-                    Value::Int(p.out_fld),
-                ],
-            )),
-        ));
-        for pb in &p.binds {
-            out.push(Value::Call(
-                ops.set_int4,
-                vec![Value::Var(p.elm), Value::Int(pb.field_off), Value::Int(0)],
-            ));
-        }
+        mint(p, ops, out);
         minted[pi] = true;
     }
     out.push(Value::Set(
