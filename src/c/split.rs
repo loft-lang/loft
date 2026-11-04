@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 
 //! `(R-CSplit)` (@PLN212): a function body over the size budget is written as a chain of
 //! `LOFT_NOINLINE` part functions, so no function the C compiler optimises is large enough
