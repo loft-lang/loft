@@ -127,10 +127,10 @@ A diagnostic says what is **wrong**. `--explain` (or `LOFT_EXPLAIN=1`) adds what
 
 ```
 advice[avoidable-copy]: copy of vector<integer> — `src` is used again at line 8, so it could not be moved
-  --> prog.loft:7:0
+  --> prog.loft:7
   |
 7 |   h = Holder { v: src };
-  | ^
+  |   ^
   fix  move line 8 above line 7   needs: line 8 does not need line 7 to run first   [move · @F106]
 ```
 

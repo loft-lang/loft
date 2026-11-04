@@ -230,8 +230,9 @@ fn render_source_line(line: &str) -> String {
 ///    |     <padding>^
 /// ```
 ///
-/// `(file, line, col)` are taken from the entry; if any is empty/0,
-/// the location block is omitted.  If the source loader returns None,
+/// `(file, line, col)` are taken from the entry; with no file or line 0
+/// the location block is omitted, and with column 0 the location is the
+/// line alone and the caret marks where its statement starts.  If the source loader returns None,
 /// the source-line block is omitted but the `-->` line still renders
 /// so the error stays clickable.
 #[must_use]
@@ -263,8 +264,13 @@ pub fn render_entry_pretty(
     if entry.file.is_empty() || entry.line == 0 {
         return out;
     }
-    // Location: `  --> file:line:col`
-    let _ = writeln!(out, "  --> {}:{}:{}", entry.file, entry.line, entry.col);
+    // Location: `  --> file:line:col`, or `file:line` for a diagnostic that knows only its line
+    // (column 0 — the scope pass's statement sites), whose caret goes under the statement.
+    if entry.col == 0 {
+        let _ = writeln!(out, "  --> {}:{}", entry.file, entry.line);
+    } else {
+        let _ = writeln!(out, "  --> {}:{}:{}", entry.file, entry.line, entry.col);
+    }
     // Source line + caret, only if loader returns a line.
     let Some(line_text) = loader.line(&entry.file, entry.line) else {
         return out;
@@ -274,7 +280,11 @@ pub fn render_entry_pretty(
     let pad = " ".repeat(gutter);
     let _ = writeln!(out, "{pad} |");
     let _ = writeln!(out, "{line_num_str} | {}", render_source_line(&line_text));
-    let col_byte_0based = entry.col.saturating_sub(1) as usize;
+    let col_byte_0based = if entry.col == 0 {
+        line_text.len() - line_text.trim_start().len()
+    } else {
+        entry.col.saturating_sub(1) as usize
+    };
     let display_col = display_column(&line_text, col_byte_0based);
     let caret_pad = " ".repeat(display_col);
     let _ = writeln!(out, "{pad} | {caret_pad}{color_open}^{reset}");
@@ -467,6 +477,22 @@ error: Expect token )
   |
 2 |   let x = (1 + 2;
   |              ^
+";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn pretty_line_only_diagnostic_marks_the_statement() {
+        let mut loader = InMemoryLoader::new();
+        loader.add("v.loft", "fn f() {\n    b = g();\n}\n");
+        let e = entry(Level::Advice, "msg", "v.loft", 2, 0);
+        let out = render_entry_pretty(&e, &loader, ColorMode::Off);
+        let expected = "\
+advice: msg
+  --> v.loft:2
+  |
+2 |     b = g();
+  |     ^
 ";
         assert_eq!(out, expected);
     }

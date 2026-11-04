@@ -140,7 +140,7 @@ copy instead — taken at the bind, so it holds the value you bound — and says
 advice[view-copied]: in `f`, `c` was copied out of `bx` because `bx` is reassigned
   while `c` is in use — a view names a place inside `bx`, and giving `bx` a new
   value leaves nothing for it to point at. Writes through `c` no longer reach `bx`.
-  --> prog.loft:6:0
+  --> prog.loft:6
 ```
 
 The location is the statement that ended the place.
