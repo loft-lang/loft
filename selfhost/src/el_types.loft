@@ -234,6 +234,19 @@ pub fn deps(t: ir::TypeT) -> vector<integer> {
 }
 
 
+// A template's type variable: its field-less placeholder struct, which answers itself — the
+// definition number, or -1 for any other type.
+pub fn type_var(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n } => {
+      d = el::def(e, n);
+      own = match d.returned[0] ?? ir::TyVoid { TyReference { n: r } => r == n, _ => false };
+      if d.def_type == el::DT_STRUCT && len(d.attributes) == 0 && own { n } else { -1 }
+    },
+    _ => -1
+  }
+}
+
 // `is_collection`: a vector or a keyed collection, through a `&`.
 pub fn is_collection(t: ir::TypeT) -> boolean {
   match t {
@@ -253,7 +266,7 @@ pub fn is_collection(t: ir::TypeT) -> boolean {
 pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
   match e.p.nodes[n] {
     STy { name, member, args, elem_null, keys, deps, limit, not_null, assoc, nullable } => {
-      if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+      if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
         // `sub_type_inner`'s vector arm: the element read as a type, no deps yet.
         inner = parse_type(e, args[0]);
         if inner == null {
@@ -271,9 +284,11 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
           },
           _ => {}
         }
-        return ir::TyVector { inner: inner!, dep: [] };
+        // `parse_type`'s postfix `?`: the optional former over the collection.
+        v = ir::TyVector { inner: inner!, dep: [] };
+        return if nullable { ir::TyOptional { inner: v } } else { v };
       }
-      if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+      if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
         // `sub_type_inner`'s keyed arms: a record element and its key fields (`-k` descending,
         // which only `sorted` and `index` take).
         inner = parse_type(e, args[0]);
@@ -296,13 +311,15 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
             }
             names += [ir::NameRef { name: k }];
           }
-          return ir::TyHash { n: sub, names: names, dep: [] };
+          h = ir::TyHash { n: sub, names: names, dep: [] };
+          return if nullable { ir::TyOptional { inner: h } } else { h };
         }
         sk: vector<ir::SortKey> = [];
         for k in keys {
           sk += [if starts_with(k, "-") { ir::SortKey { name: k[1..], asc: false } } else { ir::SortKey { name: k, asc: true } }];
         }
-        return if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
+        c = if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
+        return if nullable { ir::TyOptional { inner: c } } else { c };
       }
       // `sub_type`'s iterator arm: a generator's `iterator<T>`, carried for a plain scalar, a text
       // or a record `T`.
