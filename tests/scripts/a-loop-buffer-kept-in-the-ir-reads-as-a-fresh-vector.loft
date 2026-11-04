@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+//
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-LoopBuffer` in the IR phase — a vector local declared `[]` inside a loop keeps its store
+// across the passes: the first pass mints, every later pass clears the vector (`OpClearVector`)
+// and keeps its record and capacity.  What can go wrong is a pass reading what an earlier pass
+// left: a length not reset, a copy taken last pass emptied by this pass's clear, a pass left by
+// `break` before its build, an inner buffer kept across the passes of an outer loop, and a
+// generator still holding the vector it was handed when the next pass clears it (the IR declines
+// a function that calls one).  Values hand-computed in each cell's comment.
+//
+// The IR applies it (`opt::loop_buffer`), so every backend runs the rewritten IR and none is the
+// other's oracle: the oracle is these values, and `LOFT_NO_LOOP_BUFFER_REUSE=1` is the second.
+//
+// @falsified-at: none — by hand on the IR clause, the reset arm left empty (no clear): b1 fails
+//   on the interpreter and on the C (the second pass reads 6 elements for 3).
+//   CHANNEL: an assertion.
+// HOLDS: the hand-computed values, on both backends, the clause on and off.
+
+fn squares(v: vector<integer>) -> iterator<integer> {
+  for x in v { yield x * x; }
+}
+
+fn total(v: vector<integer>) -> integer {
+  s = 0;
+  for x in v { s += x; }
+  s
+}
+
+fn b1() {
+  // b1: a fresh vector each pass — lengths 3 and sums 0+1+2, 1+2+3, 2+3+4, 3+4+5: 3, 6, 9, 12
+  s1 = 0;
+  for i in 0..4 {
+    b: vector<integer> = [];
+    for j in 0..3 { b += [i + j]; }
+    assert(len(b) == 3, "b1 pass {i}: {len(b)} elements");
+    s1 += total(b);
+  }
+  assert(s1 == 30, "b1 {s1}");
+}
+
+fn b2() {
+  // b2: a copy taken each pass keeps its values after the next pass clears the buffer
+  keep: vector<vector<integer>> = [];
+  for i in 0..3 {
+    c: vector<integer> = [];
+    for j in 0..2 { c += [i * 10 + j]; }
+    keep += [c];
+  }
+  assert(len(keep) == 3 && total(keep[0]) == 1 && total(keep[2]) == 41, "b2 {total(keep[0])} {total(keep[2])}");
+}
+
+fn b3() {
+  // b3: a pass left by `break` before its build — the build after it never runs that pass
+  s3 = 0;
+  for i in 0..5 {
+    d: vector<integer> = [];
+    if i == 3 { break; }
+    for j in 0..i { d += [j]; }
+    s3 += len(d) * 100 + total(d);
+  }
+  // passes 0..2: lengths 0, 1, 2 and sums 0, 0, 1 → 300 + 1
+  assert(s3 == 301, "b3 {s3}");
+}
+
+fn b4() {
+  // b4: an inner buffer kept across the outer loop's passes — 2 outer x 3 inner, each 1..k
+  s4 = 0;
+  for o in 0..2 {
+    for k in 1..4 {
+      e: vector<integer> = [];
+      for j in 0..k { e += [o + j]; }
+      s4 += total(e);
+    }
+  }
+  // o=0: 0 + 1 + 3 = 4; o=1: 1 + 3 + 6 = 10 → 14
+  assert(s4 == 14, "b4 {s4}");
+}
+
+fn b5() {
+  // b5: a generator handed the vector — declined; each pass squares its own two elements
+  s5 = 0;
+  for i in 1..4 {
+    g: vector<integer> = [];
+    g += [i, i + 1];
+    for q in squares(g) { s5 += q; }
+  }
+  // 1+4, 4+9, 9+16 → 43
+  assert(s5 == 43, "b5 {s5}");
+}
+
+fn main() {
+  b1();
+  b2();
+  b3();
+  b4();
+  b5();
+  println("ok");
+}

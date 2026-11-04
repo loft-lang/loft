@@ -112,6 +112,11 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // the appended element, on both backends.
     crate::opt::elem_first::rewrite_program(data, database);
     laps.lap("elem_first");
+    // `@FR-R-LoopBuffer` — a vector local declared `[]` inside a loop keeps its store and its
+    // vector across the passes, on both backends (after the element-first pairs, which own
+    // their buffers).
+    crate::opt::loop_buffer::rewrite_program(data, database);
+    laps.lap("loop_buffer");
     // `@FR-R-TextLen` — a loop counts a text's length once, until the text is written: the
     // last IR pass, so the self-tail calls are loops and no later pass reads a memo where it
     // knew `len`.
