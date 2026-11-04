@@ -2340,6 +2340,13 @@ impl Output<'_> {
         // The fresh-field arms are kept whatever the switch says: they are what a copy owes
         // a destination just created, not the elision the switch turns off.
         self.complete_writes = hoist::complete_writes(self.data, self.stores, def_nr);
+        // `@FR-R-CompleteWrite` decided in the IR (`opt::complete_write`): the mints are the
+        // stored fact's, which no later pass can stale.
+        if crate::opt::complete_write::enabled() {
+            let fact = &self.data.def(def_nr).no_prefill;
+            self.complete_writes.db_vars = fact.locals.iter().copied().collect();
+            self.complete_writes.mint_tps = fact.mints.iter().copied().collect();
+        }
         if self.switches.complete_write_disabled {
             self.complete_writes.db_vars.clear();
             self.complete_writes.mint_tps.clear();

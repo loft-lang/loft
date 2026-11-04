@@ -4057,6 +4057,51 @@ pub struct Argument {
 /// `pub` is ABSTRACT outside its file (`parser::abstract_alias`), so the checker follows these
 /// positions through a program while the `Type` stays the alias's underlying type.  A
 /// position no alias names is `Plain`; a compound whose positions are all plain is `Plain`.
+/// `@FR-R-CompleteWrite` — the mints of a function whose literal group writes every field, so
+/// the default prefill writes nothing that survives.  Decided ONCE, in `close_program`
+/// (`opt::complete_write`), and read by every backend: the interpreter's code generator emits
+/// the no-prefill twin opcode (`OpDatabaseNP`, `OpNewRecordNP`), rustc and the C write their
+/// no-prefill mint.  Keyed so later passes cannot stale it: `locals` by the variable an
+/// `OpDatabase(v, …)` mints (every such site covers), `mints` by an `OpNewRecord`'s parent type
+/// (every mint of it in the function covers).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct NoPrefill {
+    pub locals: BTreeSet<u16>,
+    pub mints: BTreeSet<u16>,
+}
+
+impl NoPrefill {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.locals.is_empty() && self.mints.is_empty()
+    }
+
+    /// The program image's spelling: `l<v>,<v>;m<tp>,<tp>`, `""` for none.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        if self.is_empty() {
+            return String::new();
+        }
+        let join = |s: &BTreeSet<u16>| s.iter().map(u16::to_string).collect::<Vec<_>>().join(",");
+        format!("l{};m{}", join(&self.locals), join(&self.mints))
+    }
+
+    /// The inverse of [`Self::encode`]; anything it did not write reads as none.
+    #[must_use]
+    pub fn decode(s: &str) -> Self {
+        let mut out = Self::default();
+        for part in s.split(';') {
+            let (set, rest) = match part.split_at_checked(1) {
+                Some(("l", r)) => (&mut out.locals, r),
+                Some(("m", r)) => (&mut out.mints, r),
+                _ => continue,
+            };
+            set.extend(rest.split(',').filter_map(|x| x.parse::<u16>().ok()));
+        }
+        out
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum AliasFact {
     #[default]
@@ -4478,6 +4523,8 @@ pub struct Definition {
     /// `returned` holds the underlying type; this keeps what a caller in another file sees,
     /// so a non-`pub` alias can stay abstract there (C140).
     pub returned_fact: AliasFact,
+    /// `@FR-R-CompleteWrite`: this function's mints that skip the default prefill.
+    pub no_prefill: NoPrefill,
     pub returned_not_null: bool,
     /// Rust code
     pub rust: String,
@@ -7281,6 +7328,7 @@ impl Data {
             returned: Type::Unknown(rec),
             returned_not_null: false,
             returned_fact: AliasFact::Plain,
+            no_prefill: NoPrefill::default(),
             rust: String::new(),
             native: String::new(),
             native_answer_tp: u16::MAX,

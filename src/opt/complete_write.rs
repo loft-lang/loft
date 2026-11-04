@@ -3,30 +3,33 @@
 // @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! `@FR-R-CompleteWrite` in the IR phase: a mint whose literal group writes every field skips
-//! the default prefill, on every backend.  The covered mints are `opt::ret_adopt::
-//! complete_writes`' (`db_vars` by local, `mint_tps` by the element mint's parent type); each
-//! becomes its no-prefill twin:
+//! the default prefill, on every backend.  The decision is made ONCE, here, and stored on the
+//! function as [`crate::data::NoPrefill`]: the locals whose every `OpDatabase(v, …)` heads a
+//! covering group, and the parent types whose every `OpNewRecord` does
+//! (`opt::ret_adopt::complete_writes`).  The IR keeps `OpDatabase` and `OpNewRecord`, so the
+//! analyses that read a mint by its name are unchanged; each backend reads the fact where it
+//! writes the mint — the interpreter's code generator emits the no-prefill twin opcode
+//! (`OpDatabaseNP`, `OpNewRecordNP`), rustc and the C their no-prefill mint.  Keyed by local and
+//! by type, the fact stays true when a later pass moves a mint (`opt::loop_record` puts a kept
+//! record's mint in a guard's arm, away from the group the proof reads).
 //!
-//! ```text
-//! OpDatabase(v, tp)              →  OpDatabaseNP(v, tp)
-//! OpNewRecord(data, ptp, fld)    →  OpNewRecordNP(data, ptp, fld)
-//! ```
-//!
-//! The twins take the same operands and do the same work, minus `set_default_value`.  Each record
-//! copy into a FIELD of an element such a group builds (`CompleteWrites::fresh_fields`) is
-//! flagged `COPY_FRESH_DEST`: its destination was just created, so it releases nothing there and
-//! a null source writes the field type's defaults (`Stores::copy_null_into`, `@C137`) — what the
-//! prefill would have left, which a no-prefill element does not hold.  Runs in
-//! `close_program` ahead of `opt::loop_record`, which moves a kept record's mint into a guard's
-//! arm, away from the literal group the coverage proof reads.
+//! What the IR does spell: each record copy into a FIELD of an element such a group builds
+//! (`CompleteWrites::fresh_fields`) is flagged `COPY_FRESH_DEST`.  Its destination was just
+//! created, so it releases nothing there and a null source writes the field type's defaults
+//! (`Stores::copy_null_into`, `@C137`) — what the prefill would have left, which a no-prefill
+//! element does not hold.
 //!
 //! `LOFT_IR_COMPLETE_WRITE=1` turns it on while it is compared with the writers' clauses;
 //! `LOFT_NO_COMPLETE_WRITE=1` turns the rule off.
 
-use crate::data::{Data, DefType, Value};
+use crate::data::{Data, DefType, NoPrefill, Value};
 use crate::database::Stores;
+use std::collections::HashMap;
 
-fn enabled() -> bool {
+/// Is the IR pass on?  While it is compared with the writers' clauses, a consumer reads the
+/// stored fact only when this says so.
+#[must_use]
+pub fn enabled() -> bool {
     crate::env_once!(std::env::var("LOFT_IR_COMPLETE_WRITE").is_ok_and(|v| v != "0"))
         && !crate::env_once!(std::env::var("LOFT_NO_COMPLETE_WRITE").is_ok_and(|v| v != "0"))
 }
@@ -35,30 +38,13 @@ fn trace() -> bool {
     crate::env_once!(std::env::var("LOFT_TRACE_IR_COMPLETE_WRITE").is_ok_and(|v| v != "0"))
 }
 
-/// The four operators, by definition number.
-struct Ops {
-    database: u32,
-    database_np: u32,
-    new_record: u32,
-    new_record_np: u32,
-    copy_record: u32,
-}
-
-/// Rewrite every covered mint of the program to its no-prefill twin; answers how many.
+/// Decide every function's no-prefill mints and flag its fresh-field copies; answers how many
+/// mint keys were stored.
 pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     if !enabled() {
         return 0;
     }
-    let ops = Ops {
-        database: data.def_nr("OpDatabase"),
-        database_np: data.def_nr("OpDatabaseNP"),
-        new_record: data.def_nr("OpNewRecord"),
-        new_record_np: data.def_nr("OpNewRecordNP"),
-        copy_record: data.def_nr("OpCopyRecord"),
-    };
-    if ops.database_np == u32::MAX || ops.new_record_np == u32::MAX {
-        return 0;
-    }
+    let copy_record = data.def_nr("OpCopyRecord");
     let mut total = 0usize;
     for d in 0..data.definitions() {
         let def = data.def(d);
@@ -70,46 +56,38 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             continue;
         }
         let c = crate::opt::ret_adopt::complete_writes(data, stores, d);
-        if c.db_vars.is_empty() && c.mint_tps.is_empty() && c.fresh_fields.is_empty() {
+        let fact = NoPrefill {
+            locals: c.db_vars.iter().copied().collect(),
+            mints: c.mint_tps.iter().copied().collect(),
+        };
+        if fact.is_empty() && c.fresh_fields.is_empty() {
             continue;
         }
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
-        let mut n = 0usize;
-        twin(&mut code, &c, &ops, &mut n);
-        data.definitions[d as usize].code = code;
-        if n > 0 && trace() {
+        flag_fresh(&mut code, &c.fresh_fields, copy_record);
+        let def = &mut data.definitions[d as usize];
+        def.code = code;
+        if trace() && !fact.is_empty() {
             eprintln!(
-                "[ir-complete-write] fn={} {n} mint(s) without the prefill",
-                data.def(d).name()
+                "[ir-complete-write] fn={} locals {:?} mints {:?} without the prefill",
+                def.name, fact.locals, fact.mints
             );
         }
-        total += n;
+        total += fact.locals.len() + fact.mints.len();
+        def.no_prefill = fact;
     }
     total
 }
 
-/// Rewrite the covered mints under `v` to their twins, counting them in `n`.
-fn twin(v: &mut Value, c: &crate::opt::ret_adopt::CompleteWrites, ops: &Ops, n: &mut usize) {
-    if let Value::Call(op, args) = v {
-        if *op == ops.database
-            && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if c.db_vars.contains(x))
-        {
-            *op = ops.database_np;
-            *n += 1;
-        } else if *op == ops.copy_record
-            && c.fresh_fields.contains_key(&(args.as_ptr() as usize))
-            && let Some(Value::Int(raw)) = args.get_mut(2)
-        {
-            // The field's copy writes into a destination just created (`@C137`).
-            *raw |= i32::from(crate::keys::COPY_FRESH_DEST);
-        } else if *op == ops.new_record
-            && args.len() == 3
-            && matches!(args.get(1).map(Value::unspan), Some(Value::Int(t))
-                if u16::try_from(*t).is_ok_and(|t| c.mint_tps.contains(&t)))
-        {
-            *op = ops.new_record_np;
-            *n += 1;
-        }
+/// Flag each record copy under `v` that `fresh` names (by argument-slice address, on this very
+/// IR) as a copy into a fresh destination.
+fn flag_fresh(v: &mut Value, fresh: &HashMap<usize, u16>, copy_record: u32) {
+    if let Value::Call(op, args) = v
+        && *op == copy_record
+        && fresh.contains_key(&(args.as_ptr() as usize))
+        && let Some(Value::Int(raw)) = args.get_mut(2)
+    {
+        *raw |= i32::from(crate::keys::COPY_FRESH_DEST);
     }
-    v.for_each_child_mut(&mut |ch| twin(ch, c, ops, n));
+    v.for_each_child_mut(&mut |ch| flag_fresh(ch, fresh, copy_record));
 }

@@ -5119,6 +5119,9 @@ impl State {
                 None
             };
             let actual_op = stack_variant.map_or(op, |n| stack.data.def_nr(n));
+            // `@FR-R-CompleteWrite` — the mint the front decided needs no prefill
+            // (`Definition::no_prefill`, `opt::complete_write`) runs as its no-prefill twin.
+            let actual_op = no_prefill_twin(stack, actual_op, parameters).unwrap_or(actual_op);
             let before_stack = stack.position;
             self.remember_stack(stack.position);
             let code = self.code_pos;
@@ -7571,4 +7574,29 @@ fn bind_trace_write(line: &str) {
     {
         let _ = writeln!(f, "{line}");
     }
+}
+
+/// `@FR-R-CompleteWrite` — the no-prefill twin of a mint the front decided writes every field
+/// (`Definition::no_prefill`): `OpDatabase(v, …)` of a listed local, `OpNewRecord(…, ptp, …)` of
+/// a listed parent type.  `None` for any other call.
+fn no_prefill_twin(stack: &Stack, op: u32, parameters: &[Value]) -> Option<u32> {
+    let fact = &stack.data.def(stack.def_nr).no_prefill;
+    if fact.is_empty() {
+        return None;
+    }
+    let twin = match stack.data.def(op).name() {
+        "OpDatabase" => match parameters.first().map(Value::unspan) {
+            Some(Value::Var(v)) if fact.locals.contains(v) => "OpDatabaseNP",
+            _ => return None,
+        },
+        "OpNewRecord" => match parameters.get(1).map(Value::unspan) {
+            Some(Value::Int(t)) if u16::try_from(*t).is_ok_and(|t| fact.mints.contains(&t)) => {
+                "OpNewRecordNP"
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let nr = stack.data.def_nr(twin);
+    (nr != u32::MAX).then_some(nr)
 }

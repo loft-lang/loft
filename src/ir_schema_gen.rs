@@ -737,6 +737,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t80, "native_answer_tp", 0);
     db.field(t80, "op_hot", t4);
     db.field(t80, "op_cold", t4);
+    db.field(t80, "no_prefill", t5);
     let t121 = db.vector(t76);
     let _ = t121; // may be unused
     let t122 = db.vector(t79);

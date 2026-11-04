@@ -2300,7 +2300,15 @@ impl<'a> FnWriter<'a> {
 
     fn complete_writes_once(&mut self) {
         if self.complete_mints.is_none() {
-            let c = crate::opt::ret_adopt::complete_writes(self.cx.data, self.cx.stores, self.d);
+            let mut c =
+                crate::opt::ret_adopt::complete_writes(self.cx.data, self.cx.stores, self.d);
+            // `@FR-R-CompleteWrite` decided in the IR (`opt::complete_write`): the mints are
+            // the stored fact's, which no later pass can stale.
+            if crate::opt::complete_write::enabled() {
+                let fact = &self.cx.data.def(self.d).no_prefill;
+                c.db_vars = fact.locals.iter().copied().collect();
+                c.mint_tps = fact.mints.iter().copied().collect();
+            }
             crate::rewrite_census::fired("R-CompleteWrite", c.db_vars.len() + c.mint_tps.len());
             self.fresh_fields = c.fresh_fields;
             self.complete_mints = Some(c.mint_tps);
