@@ -235,6 +235,13 @@ fn fill_database(e: el::El, d: integer) {
       },
       _ => {}
     }
+    // A struct-enum field one of whose variants holds this record is an out-of-line child
+    // (`@FR-L-OutOfLine`, `field_is_out_of_line`): not carried.
+    se = el_types::struct_enum_def(a.typedef[0]);
+    if se >= 0 && holds_record(e, se, d, []) {
+      el::refuse(e, "a struct-enum field that would contain its host (an out-of-line child)");
+      return;
+    }
     // `τ?` is stored at `τ`'s own layout (`@FR-L-Null`).
     ft = el_types::base(a.typedef[0]);
     c = match ft {
@@ -256,14 +263,45 @@ fn fill_database(e: el::El, d: integer) {
   }
 }
 
-// An enum field's store type: a variant's ordinal (`enumerate`) a plain byte, a plain enum its
-// own type; -1 for a struct enum's, which is not carried.
-fn enum_content(e: el::El, n: integer, is_ref: boolean) -> integer {
+// An enum field's store type: a variant's ordinal (`enumerate`) a plain byte, any other enum its
+// own type — a struct enum's record held inline, as large as its largest variant.
+fn enum_content(e: el::El, n: integer) -> integer {
   if el::def(e, n).name == "enumerate" {
     return narrow_part(e, "byte", ir::PtByte { start: 0, nullable: false }, 1);
   }
   k = el::def(e, n).known_type;
-  if is_ref || k == NO_TYPE { -1 } else { k }
+  if k == NO_TYPE { -1 } else { k }
+}
+
+// Does a value of definition `d` (a struct, or a struct enum through its variants) hold a record
+// of `host` inline, through its fields?
+fn holds_record(e: el::El, d: integer, host: integer, seen: vector<integer>) -> boolean {
+  if d == host {
+    return true;
+  }
+  if seen.contains(d) {
+    return false;
+  }
+  seen += [d];
+  for x in e.b.data.definitions {
+    if x#index == d || x.parent == d && x.def_type == el::DT_ENUM_VALUE {
+      if x#index == host {
+        return true;
+      }
+      for a in x.attributes {
+        t = a.typedef[0] ?? ir::TyVoid;
+        inner = match el_types::base(t) {
+          TyReference { n, dep } => if dep.contains(el_types::MARKER) { -1 } else { n },
+          TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+          _ => -1
+        };
+        if inner >= 0 && holds_record(e, inner, host, seen) {
+          return true;
+        }
+      }
+    }
+  }
+  false
 }
 
 // The schema type a field of type `t` stores, or -1: a plain `integer` stores `integer`'s
@@ -296,7 +334,7 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       td = el_types::tuple_def_of(e, elems);
       if td < 0 || el::def(e, td).known_type == NO_TYPE { -1 } else { el::def(e, td).known_type }
     },
-    TyEnum { n, is_ref } => enum_content(e, n, is_ref),
+    TyEnum { n } => enum_content(e, n),
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),
@@ -720,31 +758,9 @@ fn is_record(t: ir::DbType) -> boolean {
 
 // `Stores::finish`, for the struct types: every one not sized yet is laid out.
 fn finish(e: el::El) {
-  // `finish_type`'s enum arm: as large and as aligned as its largest variant record, one byte
-  // where no variant has one.
   for t in e.b.types {
     if t.size == NO_TYPE && (t.parts[0]) is PtEnum {
-      size = 1;
-      align = 1;
-      match t.parts[0] {
-        PtEnum { values } => {
-          for v in values {
-            if v.nr != NO_TYPE {
-              finish_type(e, v.nr);
-              vt = e.b.types[v.nr]!;
-              if vt.size > size {
-                size = vt.size;
-              }
-              if vt.align > align {
-                align = vt.align;
-              }
-            }
-          }
-        },
-        _ => {}
-      }
-      e.b.types[t#index].size = size;
-      e.b.types[t#index].align = align;
+      finish_enum(e, t#index);
     }
   }
   for t in e.b.types {
@@ -760,10 +776,41 @@ fn finish(e: el::El) {
   }
 }
 
+// `finish_type`'s enum arm: as large and as aligned as its largest variant record, one byte
+// where no variant has one.
+fn finish_enum(e: el::El, t: integer) {
+  size = 1;
+  align = 1;
+  match e.b.types[t].parts[0] {
+    PtEnum { values } => {
+      for v in values {
+        if v.nr != NO_TYPE {
+          finish_type(e, v.nr);
+          vt = e.b.types[v.nr]!;
+          if vt.size > size {
+            size = vt.size;
+          }
+          if vt.align > align {
+            align = vt.align;
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  e.b.types[t].size = size;
+  e.b.types[t].align = align;
+}
+
 // `Stores::finish_type` for a struct without linked groups: its fields' contents first, then
-// the fields placed by `calculate_positions` from each content's size and alignment.
+// the fields placed by `calculate_positions` from each content's size and alignment.  An enum is
+// sized by its variants.
 fn finish_type(e: el::El, t: integer) {
   if e.b.types[t].size != NO_TYPE {
+    return;
+  }
+  if e.b.types[t].parts[0] is PtEnum {
+    finish_enum(e, t);
     return;
   }
   fields = struct_fields(e, t);
