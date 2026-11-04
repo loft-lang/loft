@@ -91,7 +91,48 @@ pub fn fill_all(e: el::El) {
       }
     }
   }
+  record_reference_targets(e);
   finish(e);
+}
+
+// `Stores::dbref_shapes`: the owned `dbref` and the borrowed `dbref_borrow` rows, registered
+// together (the numbering must not depend on which one a program meets first); the owned one.
+fn dbref(e: el::El) -> integer {
+  owned = schema_type(e, "dbref");
+  if owned >= 0 {
+    return owned;
+  }
+  owned = len(e.b.types);
+  for nm in ["dbref", "dbref_borrow"] {
+    e.b.types += [ir::DbType { name: nm, parts: [ir::PtDbRef], keys: [], complex: false, linked: false, size: 12, align: 4, field_groups: [] }];
+  }
+  owned
+}
+
+// `record_reference_targets` (`@FR-E-Eq`, @C91): each pointer field names the store type of
+// the records it points at.
+fn record_reference_targets(e: el::El) {
+  for d in e.b.data.definitions {
+    if d.known_type == NO_TYPE || !(d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE) {
+      continue;
+    }
+    for a in d.attributes {
+      match el_types::base(a.typedef[0] ?? ir::TyVoid) {
+        TyReference { n, dep } => {
+          if len(dep) > 0 && el::def(e, n).known_type != NO_TYPE {
+            fs = struct_fields(e, d.known_type);
+            for f in fs {
+              if f.name == a.name && (e.b.types[f.content]!.parts[0] ?? ir::PtBase) is PtDbRef {
+                fs[f#index].target = el::def(e, n).known_type;
+              }
+            }
+            set_fields(e, d.known_type, fs);
+          }
+        },
+        _ => {}
+      }
+    }
+  }
 }
 
 // The pre-registration's guard: the element struct already has its store type.
@@ -341,7 +382,11 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     TyCharacter => known(e, "character"),
     // A struct with no row yet is filled here, as Rust's `fill_database` fills a field's type
     // when it meets one — which numbers it after the struct whose field it is.
-    TyReference { n } => {
+    // A pointer field (`reference<T>`, a non-empty dep) is the 12-byte `DbRef` row.
+    TyReference { n, dep } => {
+      if len(dep) > 0 {
+        return dbref(e);
+      }
       if el::def(e, n).def_type != el::DT_STRUCT {
         return -1;
       }
@@ -748,6 +793,21 @@ fn set_fields(e: el::El, s: integer, fields: vector<ir::DbField>) {
   }];
 }
 
+// A type a pointer names records of: a struct, a variant, or a struct enum (loft#2163).
+fn record_target(t: ir::DbType) -> boolean {
+  match t.parts[0] {
+    PtEnum { values } => {
+      for v in values {
+        if v.nr != NO_TYPE {
+          return true;
+        }
+      }
+      false
+    },
+    _ => is_record(t)
+  }
+}
+
 fn is_record(t: ir::DbType) -> boolean {
   match t.parts[0] {
     PtStruct { fields: _ } => true,
@@ -758,6 +818,29 @@ fn is_record(t: ir::DbType) -> boolean {
 
 // `Stores::finish`, for the struct types: every one not sized yet is laid out.
 fn finish(e: el::El) {
+  // `@C145`, `@FR-H-LongRef`: a record a pointer field names is linked, and every `vector` of
+  // it is laid out by id (`array<T>`, its records pushed out) — not carried: refused by name.
+  linked: vector<integer> = [];
+  for t in e.b.types {
+    if !is_record(t) || starts_with(t.name, "__closure_") {
+      continue;
+    }
+    for f in struct_fields(e, t#index) {
+      if f.target != NO_TYPE && (e.b.types[f.content]!.parts[0] ?? ir::PtBase) is PtDbRef && record_target(e.b.types[f.target]!) && !starts_with(e.b.types[f.target]!.name, "__") {
+        linked += [f.target];
+      }
+    }
+  }
+  for t in e.b.types {
+    match t.parts[0] ?? ir::PtBase {
+      PtVector { content } => {
+        if linked.contains(content) {
+          el::refuse(e, "a vector of a record a pointer field links (laid out by id)");
+        }
+      },
+      _ => {}
+    }
+  }
   for t in e.b.types {
     if t.size == NO_TYPE && (t.parts[0]) is PtEnum {
       finish_enum(e, t#index);

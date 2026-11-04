@@ -78,6 +78,8 @@ pub struct Vars {
   pub loop_binds: hash<LoopCount[name]>,
   // `Parser::divisor_nonzero`: the locals a condition proves non-zero where they are read
   pub nonzero: vector<integer>,
+  // `(N-Guard)`: the record locals a test proves present where they are read
+  pub present: vector<integer>,
   // `Function::work_ctext`: the `__work_cN` text buffers a call hands a text-returning callee
   pub work_ctext: integer,
   // `Function::work_text_p2`: the `__work_p2_N` destinations a text-dest call is given
@@ -105,7 +107,7 @@ pub struct Vars {
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, concat_dest: -1, read_into: -1 }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, concat_dest: -1, read_into: -1 }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -327,6 +329,8 @@ pub fn is_compiler_generated(v: Vars, nr: integer) -> boolean {
 // value's type, and one already of that type keeps it.  False for any other change, which the
 // caller refuses by name.
 pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean {
+  // A local bound again is no longer what a guard proved of it.
+  v.present = [for x in v.present if x != nr { x }];
   cur = tp(v, nr);
   if el_types::is_unknown(t) || el_types::is_equal(e, cur, t) {
     // `depend_all`: the local borrows what the value borrows.
@@ -392,6 +396,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.len_locals = [];
   v.loop_binds = [];
   v.nonzero = [];
+  v.present = [];
   v.work_ctext = 0;
   v.work_tp2 = 0;
 }

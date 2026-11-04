@@ -1844,6 +1844,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   t = ir::TyVoid;
   l: vector<ir::Node> = [];
   dz = len(vars.nonzero);
+  dp = len(vars.present);
   for s in stmts {
     match e.p.nodes[s] {
       SStmt { at, e: se, semi, orelse } => {
@@ -1908,6 +1909,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   }
   close_line(e, n);
   truncate_nonzero(vars, dz);
+  vars.present = vars.present[0..dp];
   if len(l) > 0 && el_ir::is_line(l[-1]) {
     l = l[..-1];
   }
@@ -2970,6 +2972,18 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   if op == "=" && el_types::base(pt) is TyVector {
     return vector_field_bind(e, vars, el_ir::unspan(p.code), pt, x);
   }
+  // A pointer field (`reference<T>`, read through `OpGetDbRef`) is set to the record named, or
+  // to null.
+  if op == "=" && calls(e, el_ir::unspan(p.code), "OpGetDbRef") {
+    pv = if x.tp is TyNull { el_ir::cl(e, "OpNullRefSentinel", []) } else { x.code };
+    same = match el_types::base(x.tp) { TyReference { n } => n == struct_ref(e, el_types::base(pt)), _ => x.tp is TyNull };
+    w1 = if same { place_write(e, el_ir::unspan(p.code), pv) } else { null };
+    if w1 == null {
+      refuse_known(e, x.tp, "a pointer field set to this value: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(w1!, ir::TyVoid);
+  }
   if op == "=" && struct_ref(e, el_types::base(pt)) >= 0 {
     return record_place_write(e, vars, el_ir::unspan(p.code), el_types::base(pt), x);
   }
@@ -3714,7 +3728,7 @@ fn place_write(e: el::El, read: ir::Node, val: ir::Node) -> ir::Node? {
       if rest == "Text" {
         return el_ir::cl(e, "OpSetTextReplace", [args[0], args[1] ?? ir::NdNull, val]);
       }
-      if rest == "Vector" || rest == "VectorNullable" || rest == "Field" || rest == "DbRef" || rest == "Enum" {
+      if rest == "Vector" || rest == "VectorNullable" || rest == "Field" || rest == "Enum" {
         return null;
       }
       set = if rest == "ShortFull" { "OpSetShortRaw" } else if rest == "Int4Full" { "OpSetInt4Raw" } else { "OpSet{rest}" };
@@ -4173,7 +4187,17 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
           continue;
         }
         x = expression(e, vars, fe!);
-        fc = stored(e, vars, x, at);
+        fc: ir::Node? = null;
+        if el_types::is_pointer(at) {
+          // A pointer field names the record given, or nothing.
+          if x.tp is TyNull {
+            fc = el_ir::cl(e, "OpNullRefSentinel", []);
+          } else if struct_ref(e, el_types::base(x.tp)) == struct_ref(e, el_types::base(at)) && !(x.tp is TyOptional) {
+            fc = x.code;
+          }
+        } else {
+          fc = stored(e, vars, x, at);
+        }
         if fc == null {
           refuse_known(e, x.tp, "a field value its type converts: {type_kind(x.tp)} to {type_kind(at)}");
           return null;
@@ -4212,6 +4236,15 @@ fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) 
   if el_types::is_collection(ft) {
     z = el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]);
     return [z, z];
+  }
+  match ft {
+    // An omitted pointer field (`reference<T>`) names nothing.
+    TyReference { n: _, dep } => {
+      if len(dep) > 0 {
+        return [el_ir::cl(e, "OpSetDbRef", [r, ir::NdInt { n: pos }, el_ir::cl(e, "OpNullRefSentinel", [])])];
+      }
+    },
+    _ => {}
   }
   match ft {
     TyReference { n: fd } => {
@@ -4492,9 +4525,13 @@ fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> i
   def = el::def(e, d);
   at = def.attributes[a]!;
   pos = ir::NdInt { n: field_position(e, d, at.name) };
-  // `set_field_check`'s record arm: a struct field takes a copy of the value.
+  // `set_field_check`'s record arm: a struct field takes a copy of the value; a pointer field
+  // (`reference<T>`) the reference itself.
   match el_types::base(at.typedef[0]) {
-    TyReference { n: fd } => {
+    TyReference { n: fd, dep } => {
+      if len(dep) > 0 {
+        return el_ir::cl(e, "OpSetDbRef", [r, pos, val]);
+      }
       if el::def(e, fd).def_type == el::DT_STRUCT {
         k = ir::NdInt { n: el::def(e, fd).known_type };
         return el_ir::cl(e, "OpCopyRecord", [val, el_ir::cl(e, "OpGetField", [r, pos, k]), k]);
@@ -4675,6 +4712,12 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
   if !e.first_pass {
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
   }
+  // A field of a record that may be null (`x: S?`) may be null too — unless a guard proved
+  // the record present here (`(N-Guard)`).
+  proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => false };
+  if rt is TyOptional && !(t is TyOptional) && !proven {
+    t = ir::TyOptional { inner: t };
+  }
   ex(code, t)
 }
 
@@ -4699,7 +4742,11 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
     TyHash { n: _ } => el_ir::cl(e, "OpGetField", [r, pos, keyed]),
     TySorted { n: _ } => el_ir::cl(e, "OpGetField", [r, pos, keyed]),
     TyIndex { n: _ } => el_ir::cl(e, "OpGetField", [r, pos, keyed]),
-    TyReference { n: fd } => {
+    TyReference { n: fd, dep } => {
+      // A pointer field (`reference<T>`) reads the record it names.
+      if len(dep) > 0 {
+        return el_ir::cl(e, "OpGetDbRef", [r, pos]);
+      }
       if el::def(e, fd).def_type != el::DT_STRUCT {
         el::refuse(e, "a field read of this type");
         return null;
@@ -7480,6 +7527,39 @@ fn is_zero(n: ir::Node) -> boolean {
   }
 }
 
+// `(N-Guard)` for a record local: `v == null` (`OpRefIsNull`) proves it present where the
+// test fails, a truthy `v` (`OpConvBoolFromRef`) where it holds, `!` swapping the sides.  The
+// local, and which side; -1 for none.
+fn presence_proof(e: el::El, test: ir::Node) -> DivProof {
+  none = DivProof { v: -1, then: false };
+  match el_ir::unspan(test) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if len(args) != 1 {
+        return none;
+      }
+      if nm == "OpNot" {
+        inner = presence_proof(e, args[0]!);
+        return DivProof { v: inner.v, then: !inner.then };
+      }
+      if nm != "OpRefIsNull" && nm != "OpConvBoolFromRef" {
+        return none;
+      }
+      match el_ir::unspan(args[0]!) {
+        NdVar { n } => DivProof { v: n, then: nm == "OpConvBoolFromRef" },
+        _ => none
+      }
+    },
+    _ => none
+  }
+}
+
+fn push_present(vars: el_vars::Vars, v: integer) {
+  if v >= 0 && !vars.present.contains(v) {
+    vars.present += [v];
+  }
+}
+
 fn push_nonzero(vars: el_vars::Vars, v: integer) {
   if v >= 0 && !vars.nonzero.contains(v) {
     vars.nonzero += [v];
@@ -8060,10 +8140,20 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   if proof.then {
     push_nonzero(vars, proof.v);
   }
+  pp = presence_proof(e, c.code);
+  dp = len(vars.present);
+  if pp.then {
+    push_present(vars, pp.v);
+  }
   t = parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
   truncate_nonzero(vars, dz);
+  vars.present = vars.present[0..dp];
   if other == null && t.tp is TyNever {
-    // A then arm that only jumps, with nothing after it: a statement.
+    // A then arm that only jumps, with nothing after it: a statement — after which the test
+    // failed, for the rest of the block (`(N-Guard)`).
+    if !pp.then {
+      push_present(vars, pp.v);
+    }
     return ex(el_ir::v_if(c.code, t.code, ir::NdNull), ir::TyVoid);
   }
   if t.tp is TyNever || t.tp is TyNull {
@@ -8079,12 +8169,16 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   if !proof.then {
     push_nonzero(vars, proof.v);
   }
+  if !pp.then {
+    push_present(vars, pp.v);
+  }
   f = if e.p.nodes[other!] is SIf {
     expression(e, vars, other!)
   } else {
     parse_block(e, vars, other!, "else", arm_expectation(t.tp))
   };
   truncate_nonzero(vars, dz);
+  vars.present = vars.present[0..dp];
   // `@FR-N-Join`: a null else arm beside a scalar then arm is that scalar's null, read against
   // the then arm's type (`convert_admitting` at the block's tail), and the `if` is the scalar `?`.
   if f.tp is TyNull && el_convert::sentinel_value(t.tp) {
@@ -9889,6 +9983,16 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         } else if b.tp is TyOptional && !(result is TyOptional) {
           result = ir::TyOptional { inner: result };
         }
+        // `merge_dependencies`: a record result borrows what any arm's record does.
+        if el_types::base(result) is TyReference && el_types::base(b.tp) is TyReference {
+          joined = el_types::deps(result);
+          for x2 in outside_deps(b.code, el_types::deps(b.tp)) {
+            if !joined.contains(x2) {
+              joined += [x2];
+            }
+          }
+          result = el_types::with_deps(result, joined);
+        }
         out += [MArm { cond: cond, code: b.code, tp: b.tp }];
         if wild {
           break;
@@ -10074,7 +10178,9 @@ fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::TypeT)
     refuse_known(e, x.tp, "a match arm of another type: {type_kind(x.tp)} for {type_kind(expected)}");
     return x;
   }
-  ex(c!, if x.tp is TyOptional { ir::TyOptional { inner: expected } } else { expected })
+  // A record arm keeps its own borrows, which the match merges (`merge_dependencies`).
+  at = if el_types::base(expected) is TyReference && el_types::base(x.tp) is TyReference { el_types::with_deps(expected, el_types::deps(x.tp)) } else { expected };
+  ex(c!, if x.tp is TyOptional { ir::TyOptional { inner: at } } else { at })
 }
 
 // One pattern's condition on the subject `v`, or null for a wildcard (and a refused pattern,

@@ -234,6 +234,14 @@ pub fn deps(t: ir::TypeT) -> vector<integer> {
   [for d in r if d != MARKER { d }]
 }
 
+// A pointer field's type (`reference<T>` in a struct, the marker dep), through a `?`.
+pub fn is_pointer(t: ir::TypeT) -> boolean {
+  match base(t) {
+    TyReference { n: _, dep } => dep.contains(MARKER),
+    _ => false
+  }
+}
+
 
 // A template's type variable: its field-less placeholder struct, which answers itself — the
 // definition number, or -1 for any other type.
@@ -342,6 +350,23 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
           return null;
         }
         return ir::TyIterator { step: step!, inner: ir::TyNull };
+      }
+      // `sub_type`'s `reference` arm: a record `T` — in a struct field the POINTER (#328), the
+      // marker dep selecting its 12-byte `DbRef` layout; anywhere else the record itself.
+      if name == "reference" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
+        inner = parse_type(e, args[0]);
+        if inner == null {
+          return null;
+        }
+        rd = match inner! { TyReference { n } => n, _ => -1 };
+        if rd < 0 {
+          el::refuse(e, "a `reference<…>` of something other than a record");
+          return null;
+        }
+        ctx = if e.context >= 0 { el::def(e, e.context).def_type } else { el::DT_UNKNOWN };
+        field = ctx == el::DT_STRUCT || ctx == el::DT_ENUM_VALUE || ctx == el::DT_TYPE_TEMPLATE;
+        r = ir::TyReference { n: rd, dep: if field { [MARKER] } else { [] } };
+        return if nullable { ir::TyOptional { inner: r } } else { r };
       }
       if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");

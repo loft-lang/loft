@@ -127,7 +127,8 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
           continue;
         }
         tp = t!;
-        nullable = tp is TyOptional;
+        // A pointer field (`reference<T>`, the marker dep) holds null whatever it is spelled.
+        nullable = tp is TyOptional || el_types::is_pointer(tp);
         match tp {
           TyInteger { spec } => {
             spec.not_null = !nullable;
