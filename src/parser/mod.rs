@@ -564,6 +564,8 @@ pub struct Parser {
     /// arm no longer says null (it is its sibling's typed null by then), and on the first pass
     /// a comprehension arm is a placeholder of the same shape, so only the source can tell.
     pub(crate) block_tail_null_literal: bool,
+    /// loft#2407 — the block just parsed ends in an untyped `[]` (see `block_tail_null_literal`).
+    pub(crate) block_tail_empty_literal: bool,
     /// `@FR-F-Target` — the template accumulator (`(function, variable)`) whose wrong-shape
     /// `lit` was already refused: one refusal per template, not one per literal run.
     pub(crate) lit_shape_refused: Option<(u32, u16)>,
@@ -1989,6 +1991,7 @@ impl Parser {
             arm_convert_reported: false,
             null_literal_arms: 0,
             block_tail_null_literal: false,
+            block_tail_empty_literal: false,
             lit_shape_refused: None,
             arms_of_statement_construct: false,
             match_void_arm: false,

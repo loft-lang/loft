@@ -262,6 +262,17 @@ impl Parser {
         ops
     }
 
+    /// loft#2407 — `[]` answered where only another arm names its element: an empty vector of
+    /// `tp` in a store of its own, as a typed empty literal is built.
+    pub(crate) fn empty_vector_value(&mut self, tp: &Type) -> Value {
+        let tp = tp.without_deps();
+        let vec = self.create_unique("vec", &tp);
+        let mut ls = self.vector_db(&tp.content(), vec);
+        let res = self.vars.tp(vec).clone();
+        ls.push(Value::Var(vec));
+        v_block(ls, res, "Vector")
+    }
+
     pub(crate) fn parse_append_vector(
         &mut self,
         code: &mut Value,

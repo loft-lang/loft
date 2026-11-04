@@ -1065,6 +1065,7 @@ impl Parser {
         // T1.7: track the start-position of the last expression for not-null diagnostics.
         let mut last_expr_peek = self.lexer.peek().clone();
         self.block_tail_null_literal = false;
+        self.block_tail_empty_literal = false;
         // @PLN152 step 5 — the narrow store this block pushed LAST, and where it sits in `l`.
         // The fit-failure of a store lives across exactly one statement boundary: offered to
         // the statement that follows, and gone after it.  Held here rather than on the
@@ -1326,6 +1327,13 @@ impl Parser {
             }
             self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if *tok == "null")
                 && matches!(n.unspan(), Value::Null);
+            // loft#2407 — a tail `[]` read with no element type (`parse_vector`'s `Insert([Null])`).
+            self.block_tail_empty_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if *tok == "[")
+                && match n.unspan() {
+                    Value::Null => true,
+                    Value::Insert(items) => matches!(items.as_slice(), [Value::Null]),
+                    _ => false,
+                };
             self.stmt_if_pending = saved_stmt_if;
             // @PLN152 step 5 — a `!place` in that `if`'s condition took the fit temp, so
             // split the store that is already in `l`: the checked cast binds the temp, and
@@ -6025,6 +6033,10 @@ impl Parser {
         let write_state = self.vars.save_and_clear_write_state();
         self.vars.clear_write_state();
         let mut true_type = self.parse_block("if", &mut true_code, expected);
+        // loft#2407, `@FR-Col-Cons` — an untyped `[]` (`Insert([Null])`, typed by an expectation
+        // there is none of) takes its element from the other arm: read as unknown, as a `null`
+        // arm is, so the `else` is read for its own type and the `[]` built as that vector.
+        let true_is_empty_literal = self.block_tail_empty_literal;
         let true_fact = std::mem::take(&mut self.operand_fact); // @PLN187
         let mut false_fact = crate::data::AliasFact::Empty;
         let true_is_null_literal = self.block_tail_null_literal;
@@ -6107,7 +6119,10 @@ impl Parser {
             if matches!(true_type.base(), Type::Void) && ends_in_halt(&self.data, &true_code) {
                 true_type = Type::Never;
             }
-            if matches!(true_type, Type::Null | Type::Never) || then_tuple_nulls.is_some() {
+            if matches!(true_type, Type::Null | Type::Never)
+                || then_tuple_nulls.is_some()
+                || true_is_empty_literal
+            {
                 true_type = Type::Unknown(0);
             }
             if self.lexer.has_token("if") {
@@ -6299,6 +6314,10 @@ impl Parser {
                     {
                         // `@FR-C-Never` — the halt stays, the sibling's null goes behind it.
                         bl.operators.push(self.null_value(&false_type));
+                    } else if true_is_empty_literal
+                        && matches!(false_type.base(), Type::Vector(_, _))
+                    {
+                        bl.operators[p] = self.empty_vector_value(&false_type);
                     } else if !is_block_divergent(&bl.operators)
                         && (true_is_null || !self.first_pass)
                     {
