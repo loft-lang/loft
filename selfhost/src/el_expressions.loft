@@ -7868,7 +7868,12 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   d = expression(e, vars, r);
-  // `?? []` builds the subject's empty vector — a vector `??` is not carried: refused by name.
+  // `build_null_coalesce_default` reads the default against the subject's type: an untyped
+  // `[]` is the subject's empty vector, built there.
+  if is_empty_literal(d.code) && el_types::base(x.tp) is TyVector {
+    vt = el_types::without_deps(el_types::base(x.tp));
+    d = ex(if e.first_pass { ir::NdNull } else { empty_literal_to(e, vars, vt) }, vt);
+  }
   if is_empty_literal(d.code) {
     el::refuse(e, "a `??` with an empty vector literal as its default");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -7971,6 +7976,13 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   }
   if lhs is TyReference {
     return record_coalesce(e, vars, x, d);
+  }
+  // `coalesce_not_null`'s collection arm (`OpVectorIsNull`): a bind of it distributes into the
+  // `if` it is (a copy of a local subject in one arm, the default in the other, the default's
+  // temporary pre-initialised), a call subject is held in `__ncc_N` — not carried: refused.
+  if lhs is TyVector {
+    el::refuse(e, "a vector `??` (its subject held or its bind distributed)");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if !el_convert::plain_scalar(lhs) {
     el::refuse(e, "a `??` on this type: {type_kind(lhs)}");
