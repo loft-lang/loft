@@ -148,8 +148,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
     e.b.data.definitions[e.context].returned = [el_types::with_deps(r0, ds)];
   }
-  // A `τ?` record answered by an `if` of parameters and nulls borrows those parameters.
-  if rb >= 0 && e.first_pass && result is TyOptional && el_types::base(result) is TyReference {
+  // A record (or `τ?`) answered by an `if` of parameters, literals and nulls borrows those
+  // parameters.
+  if rb >= 0 && e.first_pass && el_types::base(result) is TyReference {
     ps = if_tail_params(e, vars, code);
     if ps != null {
       r0 = el::def(e, e.context).returned[0];
@@ -226,6 +227,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // A tail local the first pass did not rename (two records made through it there) is renamed
   // now — the signature takes its name; the body keeps its own build.
   renamed_now = false;
+  arms_answer = false;
   ba = attr_nr(el::def(e, e.context), "__retbuf");
   if rb >= 0 && !e.first_pass && ba >= 0 && !el_types::deps(el::def(e, e.context).returned[0]).contains(ba) {
     rename_ret_buffer(e, vars, code, rb);
@@ -251,10 +253,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       if built == null && ends_in_return(code) {
         built = code;
       }
-      // A `τ?` result answered by an `if` whose every arm hands back a parameter or the null
-      // sentinel delivers nothing: the arms are the answer.
-      if built == null && result is TyOptional && if_tail_params(e, vars, code) != null {
+      // A result answered by an `if` whose every arm hands back a parameter, a literal built in
+      // a work ref of its own, or the null sentinel delivers nothing: the arms are the answer.
+      if built == null && if_tail_params(e, vars, code) != null {
         built = code;
+        arms_answer = true;
       }
       kind = tail_kind(e, vars, code);
       // A tail already refused is no second refusal.
@@ -311,7 +314,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     match code {
       NdBlock { block } => {
         bl = block[0];
-        bl.result = [result];
+        // Where the arms are the answer the body is typed as the `if`, whose borrows are its
+        // first arm's (a literal arm borrows nothing).
+        bl.result = [if arms_answer { el_types::with_deps(result, el_types::deps(first_arm_type(code) ?? result)) } else { result }];
         code = ir::NdBlock { block: [bl] };
       },
       _ => {}
@@ -1439,10 +1444,44 @@ fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<inte
       if len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel" {
         return [];
       }
+      // A record field of a parameter borrows that parameter.
+      fr = field_root(e, tail);
+      if fr >= 0 && vars.vars[fr]!.argument {
+        return [fr];
+      }
       null
     },
     // The first pass's `null` arm, before it answers the sentinel.
     NdNull => [],
+    // A record literal arm builds in a work ref of its own and borrows nothing.
+    NdBlock { block } => if block[0].name == "Object" { [] } else { null },
+    _ => null
+  }
+}
+
+// The local an `OpGetField` chain reads from, or -1.
+fn field_root(e: el::El, n: ir::Node) -> integer {
+  at = el_ir::unspan(n);
+  for _ in 0..1000 {
+    match at {
+      NdVar { n: v } => { return v; },
+      NdCall { def_nr, args } => {
+        if el::def(e, def_nr).name != "OpGetField" || len(args) == 0 {
+          return -1;
+        }
+        at = el_ir::unspan(args[0]);
+      },
+      _ => { return -1; }
+    }
+  }
+  -1
+}
+
+// The type of the first arm of the `if` at a body's tail, where that arm is a block.
+fn first_arm_type(code: ir::Node) -> ir::TypeT? {
+  tail = match code { NdBlock { block } => el_ir::unspan(el_ir::last(block[0].operators)), _ => code };
+  match tail {
+    NdIf { cond: _, t, f: _ } => match el_ir::unspan(t) { NdBlock { block } => block[0].result[0], _ => null },
     _ => null
   }
 }
@@ -2807,6 +2846,25 @@ fn sink_arm(e: el::El, vars: el_vars::Vars, v: integer, n: ir::Node, t: ir::Type
   }
 }
 
+// `rebuild_call_deps`: on the second pass a local bound from a call with a body, its type the
+// call's but borrowing otherwise, has the first pass's borrows cleared — once per local — so
+// the bind gives it the call's as this pass resolves them.
+fn rebuild_call_deps(e: el::El, vars: el_vars::Vars, v: integer, op: text, x: Ex) {
+  if e.first_pass || op != "=" || vars.vars[v].argument || vars.rebuilt.contains(v) {
+    return;
+  }
+  has_body = match el_ir::unspan(x.code) {
+    NdCall { def_nr } => !el_ir::is_null(el::def(e, def_nr).code[0] ?? ir::NdNull),
+    _ => false
+  };
+  cur = el_vars::tp(vars, v);
+  if !has_body || el_types::is_unknown(cur) || el_types::is_unknown(x.tp) || !el_types::is_equal(e, cur, x.tp) || el_types::deps(cur) == el_types::deps(x.tp) {
+    return;
+  }
+  vars.rebuilt += [v];
+  el_vars::set_var_type(vars, v, el_types::with_deps(cur, []));
+}
+
 fn copies_whole_vector(e: el::El, vars: el_vars::Vars, code: ir::Node) -> boolean {
   match el_ir::unspan(code) {
     NdVar { n: _ } => true,
@@ -3177,7 +3235,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   // `Parser::change_var`: a record local never borrows itself — `d = step(d, k)` answers a
   // borrow of `d`, and that dep is left out of `d`'s own type.
   bound_tp = x.tp;
-  if (el_types::base(bound_tp) is TyReference || heap_def(bound_tp) >= 0) && el_types::deps(bound_tp).contains(v) {
+  if !(bound_tp is TyOptional) && (el_types::base(bound_tp) is TyReference || heap_def(bound_tp) >= 0) && el_types::deps(bound_tp).contains(v) {
     kept: vector<integer> = [];
     for x2 in el_types::deps(bound_tp) {
       if x2 != v {
@@ -3186,6 +3244,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     }
     bound_tp = el_types::with_deps(bound_tp, kept);
   }
+  rebuild_call_deps(e, vars, v, op, x);
   if !promoted_text && !el_vars::change_var_type(e, vars, v, bound_tp) {
     el::refuse(e, "a local that changes type");
   }
@@ -8778,6 +8837,16 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
       joined = own_join_arm(e, vars, joined, jt);
     }
     return ex(joined, jt);
+  }
+  // A `τ?` record join borrows what either arm does; each arm keeps its own type.
+  if el_types::base(t.tp) is TyReference && t.tp is TyOptional && f.tp is TyOptional {
+    ds = el_types::deps(t.tp);
+    for x in el_types::deps(f.tp) {
+      if !ds.contains(x) {
+        ds += [x];
+      }
+    }
+    return ex(el_ir::v_if(c.code, t.code, f.code), el_types::with_deps(t.tp, ds));
   }
   // `merge_dependencies` for a vector join: the `if` borrows what either arm's vector does —
   // each arm's own `__vdb_N` included.

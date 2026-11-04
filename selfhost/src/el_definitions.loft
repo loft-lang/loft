@@ -750,7 +750,9 @@ pub fn reserve_late_return_buffers(e: el::El) {
     if d.def_type != el::DT_FUNCTION || d.source != e.source || !starts_with(d.name, "n___lambda_") || el_ir::is_null(d.code[0] ?? ir::NdNull) {
       continue;
     }
-    rt = d.returned[0] ?? ir::TyVoid;
+    // A `τ?` result's buffer is `τ`'s, the borrows the first pass merged kept.
+    r0 = d.returned[0] ?? ir::TyVoid;
+    rt = match r0 { TyOptional { inner } => inner, _ => r0 };
     if !takes_ret_buffer(e, rt) {
       continue;
     }
