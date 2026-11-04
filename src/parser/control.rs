@@ -22479,8 +22479,23 @@ impl Parser {
         }
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_call(
+        &mut self,
+        val: &mut Value,
+        source: u16,
+        name: &str,
+        name_pos: &Position,
+    ) -> Type {
+        // loft#2409 — the arguments are read with expectations of their own; the caller's
+        // (an `if` arm's, a return's) is what it was once the call is read.
+        let ambient = self.expected.clone();
+        let t = self.parse_call_inner(val, source, name, name_pos);
+        self.expected = ambient;
+        t
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_call_inner(
         &mut self,
         val: &mut Value,
         source: u16,
@@ -24554,7 +24569,11 @@ impl Parser {
         let name = std::mem::take(&mut self.postfix_member);
         let receiver = std::mem::take(&mut self.method_receiver);
         let outer = std::mem::replace(&mut self.method_facts, (vec![receiver], Vec::new()));
+        // loft#2409 — the arguments are read with expectations of their own; the caller's
+        // (an `if` arm's, a return's) is what it was once the call is read.
+        let ambient = self.expected.clone();
         let tp = self.parse_method_selecting_inner(val, hint_nr, on, select, &name);
+        self.expected = ambient;
         let (positional, named) = std::mem::replace(&mut self.method_facts, outer);
         if self.abstract_on() {
             self.recall_vector_builtin(&name, positional.first());
