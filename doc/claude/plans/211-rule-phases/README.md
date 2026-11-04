@@ -230,11 +230,13 @@ the rule's cells on the interpreter, the C and rustc, the pins it touches, the c
 minutes.  The two CORPUS checks — `switch_ab.sh` and `c_sweep.py`, ~20 and ~25 minutes — run
 once per CHUNK (a C′ item, a PR-sized group of moves), in the background, against a COPY of the
 binary (`LOFT=` / `LOFT_BIN=` name it), so the next step builds and tests on the real one
-meanwhile.  A copy of the binary is not full isolation: a library rebuild
-(`cargo build --lib`, which the test binaries need) rewrites `target/release` beneath it, and
-C′1's sweep run beside one reported four differs its own saved binaries did not reproduce — so
-while a corpus check runs, the next step builds the `loft` binary only and runs its cells, and
-the test binaries wait.  One heavy job at a time on the laptop (both at once ran it out of memory).  A
+meanwhile.  The copy lives IN `target/release/` (`target/release/loft-check`), beside the
+`libloft.rlib` a library's native part is built against ([C_BACKEND.md](../../C_BACKEND.md),
+the C sweep): a copy elsewhere fails the interpreter side of every program that uses a native
+library, and the sweep reports those as `differ` — C′1's and C′3's sweeps from
+`target-exp/` showed four, each a `match` from `target/release/loft`.  While a check runs, a
+library rebuild (`cargo build --lib`) would rewrite that rlib beneath it, so the next step builds
+the `loft` binary and runs its cells, and the test binaries wait.  One heavy job at a time on the laptop (both at once ran it out of memory).  A
 chunk's cut goes to a PR only once its corpus checks are in.
 
 Each phase can go red alone: an emission that changes where the census did not, a guard
