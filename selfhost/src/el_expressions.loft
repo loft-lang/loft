@@ -8382,7 +8382,10 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   vars.present = vars.present[0..dp];
   // `@FR-N-Join`: a null else arm beside a scalar then arm is that scalar's null, read against
   // the then arm's type (`convert_admitting` at the block's tail), and the `if` is the scalar `?`.
-  if f.tp is TyNull && el_convert::sentinel_value(t.tp) {
+  // A record arm beside a `null` one: the null arm answers the record's null sentinel, typed as
+  // the record, and the join is the record `?` (`if_join`'s `null_value`).
+  record_null = f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0;
+  if f.tp is TyNull && (el_convert::sentinel_value(t.tp) || record_null) {
     if e.first_pass {
       return ex(ir::NdNull, ir::TyOptional { inner: t.tp });
     }

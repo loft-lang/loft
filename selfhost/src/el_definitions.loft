@@ -564,6 +564,15 @@ pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars:
     // A template whose result depends on its variable takes no buffer: its instances decide
     // their own delivery (`generic_return_promotable`).
     // A lambda's is reserved between the passes (`reserve_late_return_buffers`).
+    // A `τ?` result is delivered as `τ`'s is (`ret_promo_base`) — not carried: refused by name.
+    match rt {
+      TyOptional { inner } => {
+        if takes_ret_buffer(e, inner) {
+          el::refuse(e, "a function returning a nullable record or vector (its return buffer)");
+        }
+      },
+      _ => {}
+    }
     if e.first_pass && takes_ret_buffer(e, rt) && !mentions_type_var(e, rt) && !starts_with(name, "__lambda_") {
       d = e.context;
       a = el::attribute("__retbuf", el_types::without_deps(rt));
