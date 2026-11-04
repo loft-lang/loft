@@ -374,15 +374,59 @@ fn declaration(s: &Stmt) -> Option<Vec<Decl>> {
     Some(out)
 }
 
-/// `true` when `s` must stay in the function itself: it returns, or it holds the frame's
-/// texts (`LOFT_HOLD` keeps its slot array's address on the hold list).
+/// `true` when `s` must stay in the function itself: it holds the frame's texts (`LOFT_HOLD`
+/// keeps its slot array's address on the hold list), or it leaves the frame another way.
 fn pinned(bare: &str) -> bool {
     idents(bare).into_iter().any(|(a, e)| {
         matches!(
             &bare[a..e],
-            "return" | "LOFT_HOLD" | "loft_hd" | "longjmp" | "va_start" | "alloca"
+            "LOFT_HOLD" | "loft_hd" | "longjmp" | "va_start" | "alloca"
         )
     })
+}
+
+/// `s` with each `return` made a part's: the value goes to the frame's `loft_split_ret` and
+/// the part answers 1, which its caller turns into the function's own return.  `None` when a
+/// `return` does not end on its own line, which this pass does not rewrite (the statement
+/// then stays in the function).  The second value says whether `s` returns at all.
+fn lift_returns(s: &Stmt, void: bool) -> Option<(Stmt, bool)> {
+    let mut out = Stmt {
+        orig: Vec::new(),
+        bare: Vec::new(),
+    };
+    let mut any = false;
+    for (o, b) in s.orig.iter().zip(&s.bare) {
+        let mut o = o.clone();
+        let rets: Vec<(usize, usize)> = idents(b)
+            .into_iter()
+            .filter(|&(a, e)| &b[a..e] == "return")
+            .collect();
+        // Right to left, so each position still names the original text.
+        for &(a, e) in rets.iter().rev() {
+            any = true;
+            let mut depth = 0i64;
+            let semi = b[e..].bytes().enumerate().find_map(|(k, c)| {
+                match c {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' if depth == 0 => return Some(e + k),
+                    _ => {}
+                }
+                None
+            })?;
+            let expr = o[e..semi].trim().to_string();
+            let with = match (expr.is_empty(), void) {
+                (true, _) => "return 1;".to_string(),
+                (false, true) => format!("{{ (void) ({expr}); return 1; }}"),
+                (false, false) => format!("{{ loft_split_ret = ({expr}); return 1; }}"),
+            };
+            o.replace_range(a..=semi, &with);
+        }
+        let bare = strip(&o)?;
+        out.orig.push(o);
+        out.bare.push(bare);
+    }
+    Some((out, any))
 }
 
 fn label_of(bare_line: &str) -> Option<&str> {
@@ -530,8 +574,16 @@ fn split_at(
     for (from, to) in slot_renames {
         names.insert(from, to);
     }
+    names.insert(
+        "loft_split_ret".to_string(),
+        "loft_fr->loft_split_ret".to_string(),
+    );
     let stmts = moved;
     let cost = moved_cost;
+    // A statement that returns moves with its `return` rewritten; one this pass cannot
+    // rewrite stays in the function.
+    let void = ret.trim() == "void";
+    let lifted: Vec<Option<(Stmt, bool)>> = stmts.iter().map(|s| lift_returns(s, void)).collect();
     // Labels and gotos: a goto and its label land in one unit.
     let mut label_at: HashMap<String, usize> = HashMap::new();
     for (k, s) in stmts.iter().enumerate() {
@@ -569,7 +621,7 @@ fn split_at(
             j += 1;
         }
         let c = cost[k..=end].iter().sum();
-        let movable = stmts[k..=end].iter().all(|s| !pinned(&s.bare_text()));
+        let movable = (k..=end).all(|j| !pinned(&stmts[j].bare_text()) && lifted[j].is_some());
         units.push((k, end, c, movable));
         k = end + 1;
     }
@@ -629,8 +681,23 @@ fn split_at(
             }
         }
     }
+    // A local whose address is taken stays in the frame too: a link holding it may be read by
+    // a later part, after its own part's frame is gone.
+    let mut addr_taken: HashSet<&str> = HashSet::new();
+    for s in &stmts {
+        let bare = s.bare_text();
+        for (a, e) in idents(&bare) {
+            let before = bare[..a].trim_end();
+            if before.ends_with('&')
+                && !before.ends_with("&&")
+                && let Some(&m) = member_names.get(&bare[a..e])
+            {
+                addr_taken.insert(m);
+            }
+        }
+    }
     let own_part = |m: &str| -> Option<usize> {
-        if param_names.contains(m) {
+        if param_names.contains(m) || addr_taken.contains(m) {
             return None;
         }
         let u = used.get(m)?;
@@ -673,19 +740,35 @@ fn split_at(
     for m in &frame_members {
         let _ = writeln!(out, "    {m};");
     }
+    let returns: Vec<bool> = parts
+        .iter()
+        .map(|p| {
+            p.iter().any(|&u| {
+                (units[u].0..=units[u].1).any(|j| lifted[j].as_ref().is_some_and(|l| l.1))
+            })
+        })
+        .collect();
+    if !void && returns.iter().any(|r| *r) {
+        let _ = writeln!(out, "    {ret} loft_split_ret;");
+    }
     let _ = writeln!(out, "    char loft_unused;\n}};");
     for (pi, p) in parts.iter().enumerate() {
+        let kind = if returns[pi] { "int" } else { "void" };
         let _ = writeln!(
             out,
-            "static LOFT_NOINLINE void {name}__part{pi}(void *loft_frv) {{\n    struct {frame} *const loft_fr = (struct {frame} *) loft_frv;"
+            "static LOFT_NOINLINE {kind} {name}__part{pi}(void *loft_frv) {{\n    struct {frame} *const loft_fr = (struct {frame} *) loft_frv;"
         );
         for d in &part_locals[pi] {
             let _ = writeln!(out, "    {d};");
         }
         for &u in p {
-            for s in &stmts[units[u].0..=units[u].1] {
+            for j in units[u].0..=units[u].1 {
+                let s = lifted[j].as_ref().map_or(&stmts[j], |l| &l.0);
                 emit(&mut out, s, &part_names[pi]);
             }
+        }
+        if returns[pi] {
+            let _ = writeln!(out, "    return 0;");
         }
         let _ = writeln!(out, "}}");
     }
@@ -708,7 +791,19 @@ fn split_at(
         match in_part[k] {
             Some(pi) => {
                 if called.insert(pi) {
-                    let _ = writeln!(out, "    LOFT_PART_CALL({name}__part{pi}, loft_fr);");
+                    let _ = match (returns[pi], void) {
+                        (false, _) => {
+                            writeln!(out, "    LOFT_PART_CALL({name}__part{pi}, loft_fr);")
+                        }
+                        (true, true) => writeln!(
+                            out,
+                            "    if (LOFT_PART_RET({name}__part{pi}, loft_fr)) return;"
+                        ),
+                        (true, false) => writeln!(
+                            out,
+                            "    if (LOFT_PART_RET({name}__part{pi}, loft_fr)) return loft_fr->loft_split_ret;"
+                        ),
+                    };
                 }
             }
             None => emit(&mut out, s, &names),
@@ -794,11 +889,40 @@ mod tests {
         assert!(!out[..f].contains("LOFT_HOLD"), "{out}");
     }
 
+    /// A part that returns answers 1 and leaves its value in the frame; the function returns
+    /// it at once.
     #[test]
-    fn a_return_stays_in_the_function() {
-        let out = split(&body("", "    return;\n")).expect("split");
-        let f = out.find("static void n_f__fr(").expect("the function");
-        assert!(out[f..].contains("    return;"), "{out}");
+    fn a_return_moves_with_its_part() {
+        let ret = "    if (loft_c(v0_a)) return loft_d(v0_a, v9_p);\n";
+        let out = split_at(
+            3,
+            "static",
+            "int64_t",
+            "n_f__fr",
+            "int64_t v9_p",
+            &body(ret, "    return v0_a;\n"),
+        )
+        .expect("split");
+        assert!(out.contains("    int64_t loft_split_ret;\n"), "{out}");
+        let lifted = "if (loft_c(loft_fr->v0_a)) { loft_fr->loft_split_ret = \
+                      (loft_d(loft_fr->v0_a, loft_fr->v9_p)); return 1; }";
+        assert!(out.contains(lifted), "{out}");
+        assert!(
+            out.contains(
+                "if (LOFT_PART_RET(n_f__fr__part0, loft_fr)) return loft_fr->loft_split_ret;"
+            ),
+            "{out}"
+        );
+        assert!(out.contains("    return 0;\n}"), "{out}");
+    }
+
+    /// A local whose address is taken stays in the frame even when one part alone names it:
+    /// a link holding the address may be read after that part has returned.
+    #[test]
+    fn an_address_taken_local_stays_in_the_frame() {
+        let link = "    loft_text v3_t = { 0, 0, 0 };\n    loft_text *v4_l = &v3_t;\n";
+        let out = split(&body(link, &read("v4_l->len"))).expect("split");
+        assert!(out.contains("struct n_f__fr__frame {\n    int64_t v9_p;\n    int64_t v0_a;\n    loft_text v3_t;\n"), "{out}");
     }
 
     #[test]
