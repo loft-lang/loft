@@ -148,6 +148,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
     e.b.data.definitions[e.context].returned = [el_types::with_deps(r0, ds)];
   }
+  // A `τ?` record answered by an `if` of parameters and nulls borrows those parameters.
+  if rb >= 0 && e.first_pass && result is TyOptional && el_types::base(result) is TyReference {
+    ps = if_tail_params(e, vars, code);
+    if ps != null {
+      r0 = el::def(e, e.context).returned[0];
+      ds = el_types::deps(r0);
+      for pv in ps! {
+        pa = attr_nr(el::def(e, e.context), el_vars::name_of(vars, pv));
+        if pa >= 0 && !ds.contains(pa) {
+          ds += [pa];
+        }
+      }
+      e.b.data.definitions[e.context].returned = [el_types::with_deps(r0, ds)];
+    }
+  }
   // A lambda's record body is typed by the result as this pass met it (`block_result`).
   if !e.first_pass && lambda && el_types::base(result) is TyReference {
     match code {
@@ -236,6 +251,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       if built == null && ends_in_return(code) {
         built = code;
       }
+      // A `τ?` result answered by an `if` whose every arm hands back a parameter or the null
+      // sentinel delivers nothing: the arms are the answer.
+      if built == null && result is TyOptional && if_tail_params(e, vars, code) != null {
+        built = code;
+      }
       kind = tail_kind(e, vars, code);
       // A tail already refused is no second refusal.
       if built != null {
@@ -287,7 +307,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // it — the deps the first pass gave it, in attribute numbering.  So is a template's answering
   // its variable, which takes none of the record delivery (`generic_promote_ok`).
   templated = el::def(e, e.context).def_type == el::DT_GENERIC && el_types::type_var(e, el_types::base(result)) >= 0;
-  if (rb >= 0 && !e.first_pass && result is TyReference) || templated {
+  if (rb >= 0 && !e.first_pass && el_types::base(result) is TyReference) || templated {
     match code {
       NdBlock { block } => {
         bl = block[0];
@@ -1390,6 +1410,43 @@ fn alloc_temps(e: el::El, n: ir::Node, v: integer, temps: vector<integer>) {
 }
 
 // A body whose tail is the null sentinel (`OpNullRefSentinel()`, a `null` tail converted).
+// The parameters an `if` tail's arms hand back, every other arm answering the null sentinel;
+// null when an arm answers anything else.
+fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<integer>? {
+  tail = match code { NdBlock { block } => el_ir::unspan(el_ir::last(block[0].operators)), _ => code };
+  match tail {
+    NdIf { cond: _, t, f } => {
+      a = if_tail_params(e, vars, t);
+      b = if_tail_params(e, vars, f);
+      if a == null || b == null {
+        return null;
+      }
+      r = a!;
+      for x in b! {
+        if !r.contains(x) {
+          r += [x];
+        }
+      }
+      r
+    },
+    NdVar { n } => {
+      if vars.vars[n]!.argument {
+        return [n];
+      }
+      null
+    },
+    NdCall { def_nr, args } => {
+      if len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel" {
+        return [];
+      }
+      null
+    },
+    // The first pass's `null` arm, before it answers the sentinel.
+    NdNull => [],
+    _ => null
+  }
+}
+
 fn null_sentinel_tail(e: el::El, code: ir::Node) -> boolean {
   match code {
     NdBlock { block } => {
@@ -7083,14 +7140,16 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     if last_t is TyVector {
       return vector_buffer_call(e, vars, d, list, last_t, len(given));
     }
-    if !(ret is TyReference) && !(ret is TyEnum && el_types::struct_enum_def(ret) >= 0) {
+    // A `τ?` result takes `τ`'s buffer (`ret_promo_base`) and is answered as `τ?`.
+    rp = match ret { TyOptional { inner } => inner, _ => ret };
+    if !(rp is TyReference) && !(rp is TyEnum && el_types::struct_enum_def(rp) >= 0) {
       el::refuse(e, "a call returning a heap value other than a record");
       return null;
     }
-    buf = el_vars::work_ref(vars, el_types::without_deps(ret));
+    buf = el_vars::work_ref(vars, el_types::without_deps(rp));
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
-    for i in el_types::deps(ret) {
+    for i in el_types::deps(rp) {
       if i < len(list) {
         match list[i] {
           NdVar { n: av } => { ds += [av]; },
@@ -7098,7 +7157,8 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
         }
       }
     }
-    return ex(ir::NdCall { def_nr: d, args: args }, el_types::with_deps(ret, ds));
+    rt = el_types::with_deps(rp, ds);
+    return ex(ir::NdCall { def_nr: d, args: args }, if ret is TyOptional { ir::TyOptional { inner: rt } } else { rt });
   }
   // `call_dependencies` for a text result: it borrows what the arguments its declared deps name
   // borrow (`resolve_deps`); a hidden text buffer (`text_return`) is not carried yet.
@@ -8387,7 +8447,8 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   record_null = f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0;
   if f.tp is TyNull && (el_convert::sentinel_value(t.tp) || record_null) {
     if e.first_pass {
-      return ex(ir::NdNull, ir::TyOptional { inner: t.tp });
+      // A record join keeps its arms: the first pass reads the parameters they hand back.
+      return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: t.tp });
     }
     nl = el_convert::null_of(e, t.tp);
     fb = retail(f.code, nl, t.tp);
@@ -8743,6 +8804,10 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
   rb = el_vars::var(vars, "__retbuf");
   if rb < 0 {
     return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+  }
+  // `return null` from a `τ?` record result answers the null sentinel and delivers nothing.
+  if v.tp is TyNull && result is TyOptional {
+    return ex(ir::NdReturn { inner: el_ir::cl(e, "OpNullRefSentinel", []) }, ir::TyNever);
   }
   d = e.context;
   unrenamed = attr_nr(el::def(e, d), "__retbuf") >= 0;
