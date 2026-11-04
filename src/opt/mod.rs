@@ -16,6 +16,7 @@ pub mod attrs;
 pub mod body_writes;
 pub mod char_walk;
 pub mod elem_first;
+pub mod empty_slot;
 pub mod facts;
 pub mod fill_loop;
 pub mod frame_calls;

@@ -136,6 +136,17 @@ this is where it is written down.
    self-reading push once the parser stops copying, a bulk fill for a constant
    comprehension.
 
+## Deviations carried by rewrites.md, @PLN211 arc C′
+
+### D-phase-1 — CLOSED 2026-11-04 (@PLN211 arc C′1) — the C recognises the loop buffer's IR form
+- **Violates:** `R-Phase` (one place: no writer compensation)
+- **Where:** `c::body::emptied_either_way`, called by `known_empty` for `(R-PushFill)`'s run clause
+- **Effect:** none on values; the C keeps its push-run reservation after `(R-LoopBuffer)`'s
+  `if OpRefIsNull … else OpClearVector` declaration.
+- **Removal:** a front fact in `opt` — a vector slot is empty after a statement that empties it
+  on every path — read by every writer (arc C′1).
+- **Closed by:** `opt::empty_slot` — `known_empty` moved to the front, a slot emptied by a statement that empties it on every path (its zero, a clear of it, an `if` whose arms both do); the C's function is gone, the C's `R-PushFill/run` census unchanged.
+
 ## Deviations carried by rewrites.md until 2026-09-29
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.

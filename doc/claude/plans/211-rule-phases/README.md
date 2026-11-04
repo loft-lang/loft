@@ -237,7 +237,7 @@ census, every move attributed; rustc's pins).
 
 | # | what is left | the clean form | done when |
 |---|---|---|---|
-| C′1 | `c::body::emptied_either_way`: the C's `known_empty` taught `(R-LoopBuffer)`'s `if … else OpClearVector` shape, so its push-run reservation applies | a front fact, `opt`: a vector slot is EMPTY after a statement that empties it on every path — its zero, an `OpClearVector` of it, an `if` whose arms both do — read by the C's run clause and by any writer that asks; no knowledge of the loop-buffer shape | the C function is gone; the C's `R-PushFill/run` census unchanged |
+| C′1 **DONE** (`opt::empty_slot`) | `c::body::emptied_either_way`: the C's `known_empty` taught `(R-LoopBuffer)`'s `if … else OpClearVector` shape, so its push-run reservation applies | a front fact, `opt`: a vector slot is EMPTY after a statement that empties it on every path — its zero, an `OpClearVector` of it, an `if` whose arms both do — read by the C's run clause and by any writer that asks; no knowledge of the loop-buffer shape | the C function is gone; the C's `R-PushFill/run` census unchanged |
 | C′2 | buffer ownership derived per consumer: `opt::loop_buffer` recomputes five rules' analyses (invariant literal, element-first pair, move host, adopted witness, inline-buffer companion) and each writer its own | one `opt::hoist::buffer_owner(data, stores, d)` answering, per `__vdb` witness, the ONE rule that owns it, in a stated priority; the IR passes and the writers read it | no consumer computes another rule's analysis to decide ownership; the census unchanged |
 | C′3 | `(R-KeyedEntry)`'s subscript clause (`coll[k₁, …] = T{…}`) still in both writers (`output_keyed_entry_subscript`, the C's `keyed_place` arm) | the IR form: the literal's values staged, the entry answered by the stdlib probe, the fields written — `opt::keyed_entry`'s own staging, one more host shape | both writer clauses deleted; `R-KeyedEntry/subscript` applied by `ir` |
 | C′4 | `(R-ElemFirst)`'s comprehension row and view-plan exits still the writers' (rustc's and the C's clauses kept whole for them; the C's applies nowhere on the benches) | the comprehension row as an IR form; the view plan (`opt::value_records`) read by the pass AFTER it is final — decided once, at the front, so the pass and the writers cannot disagree | both writers' element-first clauses deleted; `R-ElemFirst` applied by `ir` alone |
@@ -245,7 +245,7 @@ census, every move attributed; rustc's pins).
 This is [STABILITY_METHOD.md § The rule-led walk](../../STABILITY_METHOD.md#the-rule-led-walk--the-standing-practice)
 on a rewrite rule: the question its sites share is WHERE it is decided, and each row is a
 second home.  The four rows are registered as `formal/rewrites.md`'s D-phase-1 … 4, deviations
-of `(R-Phase)`'s ONE PLACE.  The measurable "done" for a rule: `python3 scripts/rule_tags.py
+of `(R-Phase)`'s ONE PLACE (D-phase-1 closed by C′1).  The measurable "done" for a rule: `python3 scripts/rule_tags.py
 sites @FR-R-<rule>` names no writer site beyond the ones that spell the IR's decision, each
 saying so in its comment.  The position when arc C′ opens, citing sites per layer (front /
 rustc writer / C writer): `R-ElemFirst` 4 / 4 / 4, `R-KeyedEntry` 5 / 6 / 2, `R-LoopBuffer`
@@ -434,7 +434,7 @@ host, the adopted witness, and the companions of a vector `R-Apart` keeps inline
 (`opt::apart_vector`, moved from `lower` for this; the inline buffer is no store at all).  A
 function that yields or calls a generator is declined: a live frame may hold the store, which
 rustc tested at run time (`is_frame_held`).  The C's push-run reservation reads the form as an
-empty vector (`known_empty` → `emptied_either_way`).  Found on the way, in every IR pass of
+empty vector (`known_empty`, now `opt::empty_slot` — C′1).  Found on the way, in every IR pass of
 this plan: a definition with a native NAME (a library export once its artifact is built) was
 skipped, though a native build emits its loft body — hex_shape with a warm library lost
 `form_read`'s 16 buffers; the filter is gone.  Census: rustc counted once per emitted copy (the

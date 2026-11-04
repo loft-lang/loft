@@ -8179,15 +8179,7 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 4** — each `(R-Phase)`'s ONE PLACE, left by @PLN211's moves (arc C′ removes them).
-
-### D-phase-1 (OPEN, @PLN211) — the C recognises the loop buffer's IR form
-- **Violates:** `R-Phase` (one place: no writer compensation)
-- **Where:** `c::body::emptied_either_way`, called by `known_empty` for `(R-PushFill)`'s run clause
-- **Effect:** none on values; the C keeps its push-run reservation after `(R-LoopBuffer)`'s
-  `if OpRefIsNull … else OpClearVector` declaration.
-- **Removal:** a front fact in `opt` — a vector slot is empty after a statement that empties it
-  on every path — read by every writer (arc C′1).
+**OPEN: 3** — each `(R-Phase)`'s ONE PLACE, left by @PLN211's moves (arc C′ removes them).
 
 ### D-phase-2 (OPEN, @PLN211) — buffer ownership is derived per consumer
 - **Violates:** `R-Phase` (one place: no decision recomputed per consumer)

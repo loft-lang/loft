@@ -2503,10 +2503,6 @@ impl Output<'_> {
         } else {
             hoist::ret_adopt(self.data, def_nr)
         };
-        // @PLN157 § V-al (`@FR-R-LoopBuffer`) — the loop buffers, after every rewrite
-        // that owns a buffer's mint has claimed its own: an invariant literal (§ V-x), an
-        // element-first pair (§ V-z), a move host (§ V-j) and the adopted result's witness
-        // (§ V-u) are left to those.
         self.loop_records.clear();
         if !self.switches.loop_record_disabled {
             let lr = hoist::loop_records(self.data, self.stores, def_nr);
