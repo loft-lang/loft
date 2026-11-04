@@ -1821,6 +1821,18 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         ref_out(io, ints, sp_int);
         sp_int += 3;
       }
+      // `@FR-R-KeyedEntry`: the entry under the key parts in the hash, found or filed with its
+      // key written (`crt::keyed_entry`); the collection in, the entry out.
+      HashEntry => {
+        if !table_loaded {
+          load_table(b);
+          table_loaded = true;
+        }
+        sp_int -= 3;
+        crt::keyed_entry(io, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, types::content_of(b, op.a) ?? 0, op.a, op.b);
+        ref_out(io, ints, sp_int);
+        sp_int += 3;
+      }
       HashLen => {
         sp_int -= 3;
         put_int(ints, sp_int, crt::hash_len(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0));

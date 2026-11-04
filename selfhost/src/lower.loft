@@ -129,6 +129,7 @@ enum Code {
   HashInsert,
   KeyPart,
   HashFind,
+  HashEntry,
   HashLen,
   HashSorted,
   ScratchIterate,
@@ -891,7 +892,8 @@ fn effect(code: Code, b: integer) -> integer {
     VecFinish => -2,
     VecClear => -1,
     // A hash: a new entry from its collection, an insert of an entry into it, one key part
-    // pushed onto the shim's key stack, a find (the collection in, the record out), a length.
+    // pushed onto the shim's key stack, a find or a find-or-file (the collection in, the record
+    // out), a length.
     HashNew => 0,
     HashInsert => -2,
     KeyPart => -1,
@@ -906,6 +908,7 @@ fn effect(code: Code, b: integer) -> integer {
     WalkRemove => -1,
     RadixSnap => if b == 1 { -8 } else if b == 2 { -2 } else { 0 },
     HashFind => 0,
+    HashEntry => 0,
     HashLen => 0,
     // A hash walk: the snapshot from its hash, a walk's state from the snapshot, the next
     // element from the snapshot (the state is read and written in its slot), the snapshot freed.
@@ -1488,6 +1491,30 @@ fn keyed_element(b: ir::Bundle, tp: integer) -> integer? {
   }
 }
 
+// The collection a record is added to (`record_collection`): the parent itself (field 65535), or
+// the parent struct's field `fld`, read at its position (`at`, `loft_field`) when it has no
+// linked siblings — `at` null where it has, which no caller carries.
+struct RecordColl {
+  tp: integer,
+  fld: integer,
+  at: integer?
+}
+
+fn record_collection(b: ir::Bundle, ptp: integer, fld: integer) -> RecordColl {
+  if fld != 65535 {
+    match b.types[ptp]!.parts[0]! {
+      PtStruct { fields } => {
+        f = fields[fld]!;
+        if len(f.other_indexes) == 0 {
+          return RecordColl { tp: f.content, fld: fld, at: f.position };
+        }
+      }
+      _ => {}
+    }
+  }
+  RecordColl { tp: ptp, fld: fld, at: null }
+}
+
 // The key parts `args[from..]` of a lookup or a keyed write, each pushed onto the key stack as
 // its key's type converts it (`key_value`, `src/c/body/keyed.rs`).
 fn key_parts(l: Lowering, b: ir::Bundle, keys: vector<ir::Key>, args: vector<ir::Node>, from: integer) {
@@ -1907,26 +1934,11 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
   } else if name == "OpNewRecord" || name == "OpFinishRecord" {
     // A record added to a plain vector: appended (and filled with its type's defaults), then
     // counted.  A keyed collection's record is the hash slice's.
-    // `record_collection`: the collection is the parent itself (field 65535), or the parent
-    // struct's field `fld`, read at its position (`loft_field`) when it is a plain vector with
-    // no linked siblings.
     last = len(args) - 1;
-    ptp = literal(l, args[last - 1]!);
-    fld = literal(l, args[last]!);
-    vtp = ptp;
-    at: integer? = null;
-    if fld != 65535 {
-      match b.types[ptp]!.parts[0]! {
-        PtStruct { fields } => {
-          f = fields[fld]!;
-          if len(f.other_indexes) == 0 {
-            vtp = f.content;
-            at = f.position;
-          }
-        }
-        _ => {}
-      }
-    }
+    rc = record_collection(b, literal(l, args[last - 1]!), literal(l, args[last]!));
+    vtp = rc.tp;
+    at = rc.at;
+    fld = rc.fld;
     elem = vector_element(b, vtp);
     helem = hash_element(b, vtp);
     aelem = array_element(b, vtp);
@@ -2004,6 +2016,23 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     } else {
       emit(l, HashFind, KRef, tp, n);
     }
+  } else if name == "n_keyed_entry_ints" || name == "n_keyed_entry_text" {
+    // `@FR-R-KeyedEntry` (`opt::keyed_entry`): `keyed_entry_*(data, parent_tp, fld, key…)`, the
+    // entry under the key in the hash `record_collection` names, found or filed with its key
+    // written — the collection, the key parts the hash's key reads, then the op.
+    rc = record_collection(b, literal(l, args[1]!), literal(l, args[2]!));
+    if (rc.fld != 65535 && rc.at == null) || hash_element(b, rc.tp) == null {
+      refuse(l, "a keyed entry in a collection that is not a hash: {b.types[rc.tp]!.name}");
+      return true;
+    }
+    keys = b.types[rc.tp]!.keys;
+    n = if len(keys) < 1 { 1 } else if len(keys) > len(args) - 3 { len(args) - 3 } else { len(keys) };
+    value(l, b, args[0]!, KRef);
+    if rc.at != null {
+      emit(l, FieldRef, KRef, rc.at!, 0);
+    }
+    key_parts_n(l, b, keys, args, 3, n);
+    emit(l, HashEntry, KRef, rc.tp, n);
   } else if name == "OpHashRemove" {
     // `OpHashRemove(data, rec, tp)`: the entry unlinked and released; the type's top bit
     // (`CLEAR_KEYED_VIEW`) marks a linked group's view member, which only unlinks.
@@ -3543,8 +3572,9 @@ fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
     }
     return;
   }
-  // A hash snapshot is a native that reads the store, so it is lowered beside the operators.
-  if (is_operator(d.name) || d.name == "n_hash_sorted" || d.name == "n_hash_unsorted" || d.name == "n_radix_sorted" || d.name == "n_spatial_range" || d.name == "n_trie_prefix") && store_call(l, b, d.name, args) {
+  // A hash snapshot and a keyed entry are natives that read the store, so they are lowered beside
+  // the operators.
+  if (is_operator(d.name) || d.name == "n_hash_sorted" || d.name == "n_hash_unsorted" || d.name == "n_radix_sorted" || d.name == "n_spatial_range" || d.name == "n_trie_prefix" || d.name == "n_keyed_entry_ints" || d.name == "n_keyed_entry_text") && store_call(l, b, d.name, args) {
     return;
   }
   for i in 0..len(args) {

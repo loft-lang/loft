@@ -737,6 +737,30 @@ int64_t loft_crt_hash_find(int64_t *out, int64_t no, int64_t store, int64_t rec,
     return 0;
 }
 
+/* `@FR-R-KeyedEntry` (`n_keyed_entry_ints` / `n_keyed_entry_text`): the entry under the top `n`
+ * key parts in hash `tp` of element type `elem` — the one already there, or a fresh one with the
+ * key written and filed — into `out`; the null reference where the hash cannot take it.  The
+ * parts are popped either way. */
+int64_t loft_crt_keyed_entry(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
+                             int64_t elem, int64_t tp, int64_t n) {
+    loft_ref r = loft_ref_null();
+    if (loft_crt_keyed(tp) && loft_crt_keyed(elem) && n >= 1 && n <= 4 && n <= loft_crt_nkv) {
+        const loft_kv *kv = &loft_crt_kv[loft_crt_nkv - n];
+        loft_ref c = loft_crt_ref(store, rec, pos);
+        const loft_tdesc *T = &loft_crt_types[tp];
+        if (kv[0].kind == LOFT_KV_TEXT)
+            r = loft_keyed_entry_text(loft_crt_types, (uint16_t) elem, c, T->keys, T->nk, kv[0].s);
+        else {
+            int64_t ks[4];
+            for (int i = 0; i < n; i++) ks[i] = kv[i].i;
+            r = loft_keyed_entry_ints(loft_crt_types, (uint16_t) elem, c, T->keys, T->nk, ks);
+        }
+    }
+    loft_crt_key_pop(n);
+    loft_crt_put_ref(out, no, r);
+    return 0;
+}
+
 /* OpNewRecord in a hash: an entry of `size` bytes of its table, into `out`. */
 int64_t loft_crt_hash_entry(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                             int64_t size, int64_t linked) {
