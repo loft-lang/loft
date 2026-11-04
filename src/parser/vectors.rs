@@ -220,6 +220,48 @@ impl Parser {
         !self.vars.is_inline_ref(orig_var) && !appending && self.value_is_fresh(code, tp)
     }
 
+    /// The chain of [`Self::parse_append_vector`] continued in the FIELD its first operand was
+    /// built into (`elms`): each later operand appended there, read before the build.
+    fn append_into_field(
+        &mut self,
+        tp: &Type,
+        parts: &[(Value, Type)],
+        dest: &Value,
+        elms: &mut Vec<Value>,
+        rec_tp: i32,
+    ) -> Vec<Value> {
+        // `@FR-E-Asgn-Compound`, `@FR-I-Comp` — the first operand is built straight into the
+        // field, so a later operand that reads the field reads what it held before the
+        // statement: a snapshot taken ahead of the build, the reads renamed onto it, as a
+        // literal reading its own destination does (loft#2402).
+        let mut vals: Vec<Value> = parts.iter().map(|(v, _)| v.clone()).collect();
+        let snapshot = {
+            let mut refs: Vec<&mut Value> = vals.iter_mut().collect();
+            self.snapshot_read_destination(
+                u16::MAX,
+                dest,
+                false,
+                true,
+                &tp.content(),
+                &mut refs,
+                false,
+            )
+        };
+        let mut ops = snapshot.unwrap_or_default();
+        // The field's clear goes after the snapshot (`build_snapshot_len`): it leads the
+        // first operand's own snapshot, if that literal took one.
+        self.build_snapshot_len += ops.len();
+        ops.append(elms);
+        for ((_, part_tp), val) in parts.iter().zip(&vals) {
+            self.refuse_mixed_element_encoding(tp, part_tp);
+            ops.push(self.cl(
+                "OpAppendVector",
+                &[dest.clone(), val.clone(), Value::Int(rec_tp)],
+            ));
+        }
+        ops
+    }
+
     pub(crate) fn parse_append_vector(
         &mut self,
         code: &mut Value,
@@ -251,36 +293,7 @@ impl Parser {
             && let Some(dest) = dest
             && let Value::Insert(elms) = code
         {
-            // `@FR-E-Asgn-Compound`, `@FR-I-Comp` — the first operand is built straight into the
-            // field, so a later operand that reads the field reads what it held before the
-            // statement: a snapshot taken ahead of the build, the reads renamed onto it, as a
-            // literal reading its own destination does (loft#2402).
-            let mut vals: Vec<Value> = parts.iter().map(|(v, _)| v.clone()).collect();
-            let snapshot = {
-                let mut refs: Vec<&mut Value> = vals.iter_mut().collect();
-                self.snapshot_read_destination(
-                    u16::MAX,
-                    dest,
-                    false,
-                    true,
-                    &tp.content(),
-                    &mut refs,
-                    false,
-                )
-            };
-            let mut ops = snapshot.unwrap_or_default();
-            // The field's clear goes after the snapshot (`build_snapshot_len`): it leads the
-            // first operand's own snapshot, if that literal took one.
-            self.build_snapshot_len += ops.len();
-            ops.append(elms);
-            for ((_, part_tp), val) in parts.iter().zip(&vals) {
-                self.refuse_mixed_element_encoding(tp, part_tp);
-                ops.push(self.cl(
-                    "OpAppendVector",
-                    &[dest.clone(), val.clone(), Value::Int(rec_tp)],
-                ));
-            }
-            *code = Value::Insert(ops);
+            *code = Value::Insert(self.append_into_field(tp, parts, dest, elms, rec_tp));
             return tp.clone();
         }
         let var_nr = if orig_var == u16::MAX {
