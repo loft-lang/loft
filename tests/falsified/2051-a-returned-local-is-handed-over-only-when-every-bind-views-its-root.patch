@@ -123,7 +123,7 @@ index c13a3f61e..f14457ee8 100644
              decline(av, "no top-level null-init");
              continue;
 diff --git a/src/scopes/scan_set.rs b/src/scopes/scan_set.rs
-index 8f04c4b0b..7d23f6f8b 100644
+index e55b409a4..f630ac401 100644
 --- a/src/scopes/scan_set.rs
 +++ b/src/scopes/scan_set.rs
 @@ -205,34 +205,6 @@ impl Scopes<'_> {
@@ -161,7 +161,7 @@ index 8f04c4b0b..7d23f6f8b 100644
      /// `@FR-B-Copy` / `@FR-O-Witness` — an OWNING record local bound more than once, handed a
      /// block whose value is another VARIABLE, takes a COPY of it, as the bare whole-value bind
      /// does: a literal built in a compiler work-ref (`t = TVoid` is `{OpDatabase(__ref_N); …;
-@@ -2155,7 +2127,6 @@ impl Scopes<'_> {
+@@ -2183,7 +2155,6 @@ impl Scopes<'_> {
                  // a mint that reads the local does.  Every copy into a witnessed local lands in
                  // a fresh store (`(O-Witness)`), so the identity guard declines nothing here.
                  WitnessSet::Mint | WitnessSet::MintReading => {
@@ -232,30 +232,15 @@ index c15338500..cdb161816 100644
  /// unit, because `OpFreeRef` of a variable does not reset its slot on the interpreter, and a
  /// witness left naming a freed store would release whatever the allocator hands that slot
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 1b1a8ac6b..d85b95b19 100644
+index 4d7f942f8..c4aab9df0 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -4750,23 +4750,6 @@ impl State {
-             self.code_add(var_pos);
-             return Type::Void;
-         }
--        // The same for the free GUARDED by a buffer: a lifted call's temp is released at its
--        // block's exit by `OpFreeRefIfDistinct(tmp, __ref_N)`, and its next bind's pre-build free
--        // released the stale slot again whenever the callee had answered a store other than
--        // the buffer — a store the allocator had by then handed to a live value.  Reset either
--        // way: when the guard declined, the store is the buffer's, which still names it.
--        if stack.data.def(op).name() == "OpFreeRefIfDistinct"
--            && let [Value::Var(v), witness] = parameters
--            && stack.owned_reassigned.contains(v)
--        {
--            let var_pos = stack.var_pos(*v);
--            self.generate(&parameters[0], stack, false);
--            self.generate(witness, stack, false);
--            stack.add_op("OpFreeRefIfDistinct", self);
--            stack.add_op("OpInitRefSentinel", self);
--            self.code_add(var_pos);
--            return Type::Void;
--        }
-         // try destination-passing optimisation for text-producing natives.
-         if self.try_text_dest_pass(stack, op, parameters) {
-             return Type::Void;
+@@ -4769,7 +4769,7 @@ impl State {
+         // way: when the guard declined, the store is the buffer's, which still names it.
+         if stack.data.def(op).name() == "OpFreeRefIfDistinct"
+             && let [Value::Var(v), witness] = parameters
+-            && (stack.owned_reassigned.contains(v) || stack.function.is_lift_temp(*v))
++            && stack.function.is_lift_temp(*v)
+         {
+             let var_pos = stack.var_pos(*v);
+             self.generate(&parameters[0], stack, false);

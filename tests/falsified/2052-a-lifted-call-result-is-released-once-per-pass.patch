@@ -1,8 +1,8 @@
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 1dfef7df4..9367495ef 100644
+index 4d7f942f8..e702454cc 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -4568,7 +4568,8 @@ impl State {
+@@ -4767,7 +4767,8 @@ impl State {
          // released the stale slot again whenever the callee had answered a store other than
          // the buffer — a store the allocator had by then handed to a live value.  Reset either
          // way: when the guard declined, the store is the buffer's, which still names it.
@@ -10,5 +10,5 @@ index 1dfef7df4..9367495ef 100644
 +        if false
 +            && stack.data.def(op).name() == "OpFreeRefIfDistinct"
              && let [Value::Var(v), witness] = parameters
-             && stack.owned_reassigned.contains(v)
+             && (stack.owned_reassigned.contains(v) || stack.function.is_lift_temp(*v))
          {
