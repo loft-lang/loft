@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2414, `@C137` — a null record copied into a place just created leaves it ABSENT: a
+// nullable field reads `null`.  A field of a new element answered that; a vector-literal slot,
+// an appended element and a struct's appended vector field are `COPY_FRESH_DEST` copies, whose
+// null arm zero-filled the slot, and zero is not the null of an `integer?` (`i64::MIN`) or a
+// `float?` (NaN): they read `0`.
+//
+// The source is a read past a vector's end, null at run time.  The cells vary the place (a
+// field of a new element, a vector-literal slot, a one-element append, a struct's vector field,
+// a struct holding a struct-enum), the field kinds (`integer`, `integer?`, `float?`, `float`,
+// `text`, `boolean`, an enum, a nested struct with a nullable field) and, as the control, a
+// field of an EXISTING local, which keeps what it held.  Hand-computed: absent is the type's
+// default walk — a non-null `integer` or `float` 0, a nullable field null (-1 below), a `text`
+// field reads `null`, a `boolean` false, an enum field null; a declared default (`h = 4`) is the
+// literal's, not the type's, so it reads 0.  A struct-enum slot stays all-zero, its null.
+//
+// @falsified-at: none — by hand: `Stores::copy_null_into` without its default walk fails B, C,
+//   D and G on the interpreter and rustc; the C writer without `fresh_default_tp`'s FRESH arm
+//   fails them on the C.  CHANNEL: an assertion.
+// HOLDS: the hand-computed values on the interpreter, the C and rustc.
+
+enum Col { Red, Green }
+
+struct In { z: integer? }
+
+struct Hx { h: integer = 4, m: integer?, f: float?, g: float, t: text, b: boolean, c: Col, i: In }
+
+struct E { q: integer, prev: Hx }
+
+struct S { es: vector<E>, hs: vector<Hx> }
+
+enum Sh { Ci { r: integer }, Re { w: integer, h: integer? } }
+
+struct Bx { k: integer?, s: Sh }
+
+struct Wr { q: integer, b: Bx }
+
+fn one_hx() -> vector<Hx> {
+  [Hx { h: 1, m: 2, f: 3.0, g: 4.0, t: "x", b: true, c: Green, i: In { z: 5 } }]
+}
+
+fn boxes() -> vector<Bx> { [Bx { k: 1, s: Re { w: 2, h: 3 } }] }
+
+fn shapes() -> vector<Sh> { [Ci { r: 3 }] }
+
+fn show(x: Hx) -> text {
+  "{x.h}/{x.m ?? -1}/{x.f ?? -1.0}/{x.g}/'{x.t}'/{x.b}/{x.c}/{x.i.z ?? -1}"
+}
+
+fn sh(x: Sh) -> text {
+  match x { Ci { r } => "Ci{r}", Re { w, h } => "Re{w},{h ?? -1}" }
+}
+
+fn main() {
+  one = one_hx();
+  absent = "0/-1/-1/0/'null'/false/null/-1";
+  s = S { es: [], hs: [] };
+  s.es += [E { q: 1, prev: one[5] }];
+  assert(show(s.es[0].prev) == absent, "A a field of a new element: {show(s.es[0].prev)}");
+  w: vector<Hx> = [one[0], one[5]];
+  assert(show(w[0]) == "1/2/3/4/'x'/true/Green/5", "B the present slot: {show(w[0])}");
+  assert(show(w[1]) == absent, "B a vector-literal slot: {show(w[1])}");
+  x: vector<Hx> = [];
+  x += [one[7]];
+  assert(show(x[0]) == absent, "C an appended element: {show(x[0])}");
+  s.hs += [one[6]];
+  assert(show(s.hs[0]) == absent, "D a struct's vector field: {show(s.hs[0])}");
+  e = E { q: 2, prev: one[0] };
+  e.prev = one[9];
+  assert(show(e.prev) == "1/2/3/4/'x'/true/Green/5", "E an existing field keeps it: {show(e.prev)}");
+  ss = shapes();
+  v: vector<Sh> = [ss[0], ss[4]];
+  assert(len(v) == 2 && sh(v[0]) == "Ci3" && "{sh(v[1])}" == "null", "F a struct-enum slot: {sh(v[1])}");
+  bs = boxes();
+  wb: vector<Bx> = [bs[0], bs[4]];
+  assert((wb[1].k ?? -1) == -1 && "{sh(wb[1].s)}" == "null", "G a struct holding an enum: {wb[1].k ?? -1}");
+  ws: vector<Wr> = [];
+  ws += [Wr { q: 1, b: bs[8] }];
+  assert((ws[0].b.k ?? -1) == -1 && "{sh(ws[0].b.s)}" == "null", "H its field arm: {ws[0].b.k ?? -1}");
+}

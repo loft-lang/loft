@@ -1989,19 +1989,26 @@ impl Stores {
         });
     }
 
-    /// `@FR-H-Claim` (`@C137`) — a NULL source copied into a destination `OpNewRecord` just created
-    /// (`keys::COPY_FRESH_DEST` in `raw_tp`) leaves the destination ABSENT: its bytes WRITTEN
-    /// all-zero — a nullable struct-enum's discriminant 0, the only null encoding a fresh slot
-    /// has — because a claimed slot holds no value until one is written.  An existing
-    /// destination keeps what it held (`vec[i] = <runtime-null>` into a non-nullable element,
-    /// which has no null to write).  Both backends' copy calls this from their null-source
-    /// branch.
+    /// `@FR-H-Claim` (`@C137`) — a NULL source copied into a destination just created
+    /// (`keys::COPY_FRESH_DEST` in `raw_tp`) leaves the destination ABSENT, because a claimed
+    /// slot holds no value until one is written.  Absent is what the default walk writes: a
+    /// struct's fields their type's defaults (a nullable field its null, which zero bytes are
+    /// not for an `integer?` or a `float?`, loft#2414), after a zero fill of the rest; a
+    /// struct-enum all-zero, its discriminant 0 the only null encoding a fresh slot has.  The
+    /// field arm of `(R-CompleteWrite)` writes the same.  An existing destination keeps what it
+    /// held (`vec[i] = <runtime-null>` into a non-nullable element, which has no null to write).
+    /// Both backends' copy calls this from their null-source branch; the C writer emits the
+    /// same default image (`FnWriter::fresh_default_arm`).
     pub fn copy_null_into(&mut self, to: &DbRef, raw_tp: u16) {
         if raw_tp & crate::keys::COPY_FRESH_DEST == 0 || to.store_nr == u16::MAX {
             return;
         }
-        let size = u32::from(self.size(raw_tp & crate::keys::COPY_TP_MASK));
+        let tp = raw_tp & crate::keys::COPY_TP_MASK;
+        let size = u32::from(self.size(tp));
         keys::mut_store(to, &mut self.allocations).zero_range(to.rec, to.pos, size);
+        if matches!(self.types[tp as usize].parts, Parts::Struct(_)) {
+            self.set_default_value(tp, to);
+        }
     }
 
     /// The fill behind `[x; n]` (and the comprehension of a constant, which lowers to it):

@@ -2294,12 +2294,6 @@ impl<'a> FnWriter<'a> {
             .is_some_and(|m| m.contains(&tp))
     }
 
-    /// Is the copy with these arguments one into a field of an element being built?
-    fn is_fresh_field_copy(&mut self, args: &[Value]) -> bool {
-        self.complete_writes_once();
-        self.fresh_fields.contains_key(&(args.as_ptr() as usize))
-    }
-
     fn complete_writes_once(&mut self) {
         if self.complete_mints.is_none() {
             let c = crate::opt::ret_adopt::complete_writes(self.cx.data, self.cx.stores, self.d);
@@ -2316,10 +2310,34 @@ impl<'a> FnWriter<'a> {
     /// element needs no prefill.  The C statement for a null `src` into `dst`, or `None` for a
     /// copy that is no such field's.
     fn fresh_null_arm(&mut self, args: &[Value], dst: &str) -> Option<String> {
-        self.complete_writes_once();
-        let sub = *self.fresh_fields.get(&(args.as_ptr() as usize))?;
+        let sub = self.fresh_default_tp(args)?;
         let (image, n) = self.cx.default_image(sub);
         Some(format!("loft_fill({dst}, {image}, {n});"))
+    }
+
+    /// The type whose default image a null source writes into this copy's destination, or
+    /// `None` where the runtime's own null arm is right.  A field of an element being built
+    /// (`@C137`'s fresh-field arm); and a copy flagged `COPY_FRESH_DEST` into a STRUCT whose
+    /// default is not all zero bytes — `Stores::copy_null_into` writes the default walk there
+    /// (a nullable field's null, loft#2414), where the C runtime's null arm only zeroes.
+    fn fresh_default_tp(&mut self, args: &[Value]) -> Option<u16> {
+        self.complete_writes_once();
+        if let Some(sub) = self.fresh_fields.get(&(args.as_ptr() as usize)) {
+            return Some(*sub);
+        }
+        let Value::Int(raw) = args.get(2)?.unspan() else {
+            return None;
+        };
+        let raw = u16::try_from(*raw).ok()?;
+        if raw & crate::keys::COPY_FRESH_DEST == 0 {
+            return None;
+        }
+        let tp = raw & crate::keys::COPY_TP_MASK;
+        (matches!(
+            self.cx.stores.types[tp as usize].parts,
+            crate::database::Parts::Struct(_)
+        ) && !self.cx.default_is_zero(tp))
+        .then_some(tp)
     }
 
     /// A push, or its pre-allocation, onto a path an enclosing loop holds a window on: the
@@ -8971,8 +8989,9 @@ impl<'a> FnWriter<'a> {
                     ),
                     None => format!("loft_copy_record(loft_types, {tp}, {s}, {d}, {free})"),
                 };
-                // A copy into a field of an element being built: its null arm is the default.
-                if self.is_fresh_field_copy(args) {
+                // A copy into a field of an element being built, or into a fresh struct whose
+                // default is not zero bytes: its null arm is the default.
+                if self.fresh_default_tp(args).is_some() {
                     let (s, d) = (self.temp(CType::Ref), self.temp(CType::Ref));
                     let null_arm = self
                         .fresh_null_arm(args, &d)

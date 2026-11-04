@@ -876,6 +876,15 @@ impl<'a> Cx<'a> {
         (format!("loft_dflt{tp}"), size)
     }
 
+    /// Is record type `tp`'s default image all zero bytes, so a zero fill already writes it?
+    pub(crate) fn default_is_zero(&self, tp: u16) -> bool {
+        self.default_image(tp);
+        self.defaults
+            .borrow()
+            .get(&tp)
+            .is_some_and(|b| b.iter().all(|x| *x == 0))
+    }
+
     /// @PLN204 — the shape a LOCAL of type `tp` is held in, in a function whose body is
     /// `body32` (written under the 32-bit regime, `Data::body_width32`): `int32_t` for an
     /// integer whose type fits 32 bits, because there every value is narrowed before it is
