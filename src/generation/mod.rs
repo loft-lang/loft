@@ -11718,9 +11718,17 @@ extern crate loft;"
             Self::collect_nested_null_inits(def.code(), &mut nested_null_inits);
             // A record `@FR-R-LoopRecord` keeps across a loop's passes is declared by that
             // rewrite, before its loop.
+            // A nested null-init's local is bound up front, but its `Set(v, Null)` in the body is
+            // still its FIRST bind: marked `predeclared` too, so that bind emits the fresh
+            // `null_named` + `OpDatabase` at its own position (#260's `__vdb` route).  Left
+            // only `declared`, the bind took the reassignment arm, `OpDatabase(cell, var_v, …)`,
+            // which re-used whatever store the local still named — in a loop, the one its
+            // block freed on the pass before (a `f#read` buffer read after free).
+            let mut fresh_first_binds: Vec<u16> = Vec::new();
             for v in nested_null_inits {
                 if !self.loop_records.contains_key(&v) && !if_test_sets.contains(&v) {
                     if_test_sets.push(v);
+                    fresh_first_binds.push(v);
                 }
             }
             for &v in &if_test_sets {
@@ -11737,6 +11745,9 @@ extern crate loft;"
                         sanitize(vars.name(v))
                     );
                     self.declared.insert(v);
+                    if fresh_first_binds.contains(&v) {
+                        self.predeclared.insert(v);
+                    }
                 }
             }
             for v in 0..vars.count() {
