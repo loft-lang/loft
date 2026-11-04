@@ -233,7 +233,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Inputs)` | `R-Inputs` c, native |
 | `(R-Invariant)` | `R-Invariant` c, native |
 | `(R-KeyList)` | not counted — executor: key descriptors derived once per type |
-| `(R-KeyedEntry)` | `R-KeyedEntry` ir · `/subscript` c, native |
+| `(R-KeyedEntry)` | `R-KeyedEntry` ir · `/subscript` ir |
 | `(R-LazySplit)` | `R-LazySplit` c, native |
 | `(R-Leaf)` | `R-Leaf` native |
 | `(R-LeafChain)` | `R-LeafChain` native |
@@ -3884,7 +3884,10 @@ value rebinds.  Cells
                   in source order into temps (that clause's staging), then ONE probe for
                   (e₁, …, eₘ) that answers the entry already under that key or a fresh one
                   filed with every part written, then the temps of the fields that are not
-                  key parts written into it.
+                  key parts written into it.  Decided and applied in the IR, for every
+                  backend (`opt::keyed_entry`'s subscript form over
+                  `opt::keyed_place::site`): the entry is a fresh variable, so the
+                  literal's buffer is never minted and its frees see null.
 ```
 
 **In words.** The keyed clause it replaces removes the entry under the key, claims a fresh
@@ -8179,14 +8182,7 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 2** — each `(R-Phase)`'s ONE PLACE, left by @PLN211's moves (arc C′ removes them).
-
-### D-phase-3 (OPEN, @PLN211) — `(R-KeyedEntry)`'s subscript clause stays in both writers
-- **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)
-- **Where:** `generation::emit` (`output_keyed_place`'s subscript clause), the C's keyed-place arm
-- **Effect:** the interpreter claims, writes and files on `coll[k] = T{…}` where the writers
-  overwrite the entry in place.
-- **Removal:** the IR form, `opt::keyed_entry`'s staging for one more host (arc C′3).
+**OPEN: 1** — each `(R-Phase)`'s ONE PLACE, left by @PLN211's moves (arc C′ removes them).
 
 ### D-phase-4 (OPEN, @PLN211) — `(R-ElemFirst)`'s comprehension row and view-plan exits stay in both writers
 - **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)

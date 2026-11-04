@@ -1076,7 +1076,7 @@
 17_consumer_moros_dryopea	-	c	R-Base/counter	2
 17_consumer_moros_dryopea	-	c	R-BoundedNest/kernel	1
 17_consumer_moros_dryopea	-	c	R-Compact	2
-17_consumer_moros_dryopea	-	c	R-CompleteWrite	61
+17_consumer_moros_dryopea	-	c	R-CompleteWrite	58
 17_consumer_moros_dryopea	-	c	R-Counter	134
 17_consumer_moros_dryopea	-	c	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	c	R-DischargeInto	1
@@ -1098,7 +1098,7 @@
 17_consumer_moros_dryopea	-	c	R-Header/apart-param	5
 17_consumer_moros_dryopea	-	c	R-Header/rebind	7
 17_consumer_moros_dryopea	-	c	R-InPlaceLiteral	2
-17_consumer_moros_dryopea	-	c	R-Inline	30
+17_consumer_moros_dryopea	-	c	R-Inline	31
 17_consumer_moros_dryopea	-	c	R-Inline/helper	1
 17_consumer_moros_dryopea	-	c	R-InlineLeaf	35
 17_consumer_moros_dryopea	-	c	R-Inputs	1
@@ -1137,7 +1137,7 @@
 17_consumer_moros_dryopea	-	rust	R-BoundedNest/kernel	1
 17_consumer_moros_dryopea	-	rust	R-CharWalk	10
 17_consumer_moros_dryopea	-	rust	R-Compact	2
-17_consumer_moros_dryopea	-	rust	R-CompleteWrite	79
+17_consumer_moros_dryopea	-	rust	R-CompleteWrite	76
 17_consumer_moros_dryopea	-	rust	R-Counter	109
 17_consumer_moros_dryopea	-	rust	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	rust	R-DischargeInto	1

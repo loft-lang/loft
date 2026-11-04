@@ -403,6 +403,8 @@ struct Calls {
 struct Temps {
     next: u16,
     types: Vec<(crate::data::Type, u16)>,
+    /// How many keyed literal assignments (`coll[k] = T{…}`) the subscript clause rewrote.
+    subscripts: usize,
 }
 
 impl Temps {
@@ -429,6 +431,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         text: data.def_nr("n_keyed_entry_text"),
     };
     let new_record = data.def_nr("OpNewRecord");
+    let set_keyed = data.def_nr("OpSetKeyed");
     if [calls.ints, calls.text, new_record].contains(&u32::MAX) {
         if trace() {
             eprintln!("[keyed-entry] off: a function the IR form is written with is not defined");
@@ -454,7 +457,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         }
         let mut mints = false;
         def.code().walk(&mut |n| {
-            if matches!(n, Value::Call(c, _) if *c == new_record) {
+            if matches!(n, Value::Call(c, _) if *c == new_record || *c == set_keyed) {
                 mints = true;
             }
         });
@@ -466,9 +469,11 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         let mut temps = Temps {
             next: def.variables().count(),
             types: Vec::new(),
+            subscripts: 0,
         };
         let n = rewrite(&mut code, data, stores, d, &calls, &mut temps);
-        if n == 0 {
+        let subscripts = temps.subscripts;
+        if n + subscripts == 0 {
             continue;
         }
         let vars = &mut data.definitions[d as usize].variables;
@@ -481,12 +486,13 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         crate::scopes::assign_function_slots(data, d);
         if trace() {
             eprintln!(
-                "[keyed-entry] fn={} {n} insert(s) written into their entry",
+                "[keyed-entry] fn={} {n} insert(s), {subscripts} subscript assignment(s) written into their entry",
                 data.def(d).name()
             );
         }
         crate::rewrite_census::fired("R-KeyedEntry", n);
-        total += n;
+        crate::rewrite_census::fired("R-KeyedEntry/subscript", subscripts);
+        total += n + subscripts;
     }
     total
 }
@@ -511,6 +517,13 @@ fn rewrite(
                 let len = stmts.len();
                 bl.operators.splice(i..=last, stmts);
                 n += 1;
+                i += len;
+            } else if let Some(stmts) =
+                subscript_replacement(&bl.operators[i], data, stores, d, calls, scope, temps)
+            {
+                let len = stmts.len();
+                bl.operators.splice(i..=i, stmts);
+                temps.subscripts += 1;
                 i += len;
             } else {
                 i += 1;
@@ -613,4 +626,66 @@ fn replacement(
     stmts.push(Value::Set(buf, Box::new(Value::Call(call, args))));
     stmts.extend(writes);
     Some((ke.last, stmts))
+}
+
+/// `@FR-R-KeyedEntry`'s SUBSCRIPT clause in the IR — `coll[k₁, …] = T{…}` (`OpSetKeyed` over a
+/// literal, `keyed_place::site`) on a hash whose integer key parts `subscript_keys` admits: the
+/// literal's statements in program order with every non-constant field value staged, then `E =
+/// keyed_entry_ints(coll, tp, 65535, k…)` — the entry under the subscript's key, found or
+/// filed with every part written — then the non-key fields written into `E`.  A key field's
+/// write is dropped: the entry carries the subscript's key either way, as the plain form's
+/// `set_key` leaves it (its value still runs where it stood, when it is no constant).  `E` is a
+/// fresh variable: the literal's buffer is never minted, so its frees see the null they skip.
+fn subscript_replacement(
+    stmt: &Value,
+    data: &Data,
+    stores: &Stores,
+    d: u32,
+    calls: &Calls,
+    scope: u16,
+    temps: &mut Temps,
+) -> Option<Vec<Value>> {
+    let ks = crate::opt::keyed_place::site(stmt, data, d)?;
+    let key_pos = subscript_keys(stores, ks.tp, &ks.setters(data))?;
+    if key_pos.len() != ks.keys.len() || ks.keys.len() > 4 {
+        return None;
+    }
+    let entry = temps.add(data.def(d).variables().tp(ks.buf).without_deps(), scope);
+    let mut stmts: Vec<Value> = Vec::new();
+    let mut writes: Vec<Value> = Vec::new();
+    for op in &ks.body {
+        match op.unspan() {
+            Value::Call(setter, args) if args.first().is_some_and(|a| is_var(a, ks.buf)) => {
+                let off = u16::try_from(int_of(args.get(1)?)?).ok()?;
+                let val_tp = data.def(*setter).attributes().last()?.typedef.clone();
+                let key_field = key_pos.contains(&off);
+                let mut staged = vec![Value::Var(entry)];
+                for a in &args[1..] {
+                    if constant(a) {
+                        staged.push(a.clone());
+                    } else {
+                        let t = temps.add(val_tp.clone(), scope);
+                        stmts.push(Value::Set(t, Box::new(a.clone())));
+                        staged.push(Value::Var(t));
+                    }
+                }
+                if !key_field {
+                    writes.push(Value::Call(*setter, staged));
+                }
+            }
+            _ => stmts.push((*op).clone()),
+        }
+    }
+    let mut args = vec![
+        ks.coll.clone(),
+        Value::Int(i32::from(ks.tp)),
+        Value::Int(i32::from(u16::MAX)),
+    ];
+    args.extend(ks.keys.iter().cloned());
+    while args.len() < 7 {
+        args.push(Value::Int(0));
+    }
+    stmts.push(Value::Set(entry, Box::new(Value::Call(calls.ints, args))));
+    stmts.extend(writes);
+    Some(stmts)
 }

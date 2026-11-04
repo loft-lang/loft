@@ -23,7 +23,7 @@ R-Callee	c,native	20	0	0	0	62	163
 R-CharWalk	c,native	58	0	0	0	30	619
 R-Compact	ir	1	0	2	0	0	0
 R-Compact/prepend	ir	1	0	1	0	0	0
-R-CompleteWrite	c,native	58	0	0	0	1066	2323
+R-CompleteWrite	c,native	58	0	0	0	1063	2320
 R-Const	ir	2	0	3	0	0	0
 R-Const/fn	parse	2	3	0	0	0	0
 R-CopyView	ir	4	0	8	0	0	0
@@ -74,13 +74,13 @@ R-Header/rebind	c	5	0	0	0	14	0
 R-Header/text	c,native	1	0	0	0	3	5
 R-InPlaceLiteral	parse	11	57	0	0	0	0
 R-InRange	parse	10	63	0	0	0	0
-R-Inline	c	58	0	0	0	594	0
+R-Inline	c	58	0	0	0	595	0
 R-Inline/helper	c	37	0	0	0	218	0
 R-InlineLeaf	parse	58	2373	0	0	0	0
 R-Inputs	c,native	37	0	0	0	852	7874
 R-Invariant	c,native	36	0	0	0	246	3624
 R-KeyedEntry	ir	9	0	13	0	0	0
-R-KeyedEntry/subscript	c,native	1	0	0	0	3	3
+R-KeyedEntry/subscript	ir	1	0	3	0	0	0
 R-LazySplit	c,native	3	0	0	0	8	6
 R-Leaf	native	58	0	0	0	0	9598
 R-LeafChain	native	58	0	0	0	0	5323

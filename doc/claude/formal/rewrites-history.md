@@ -138,6 +138,14 @@ this is where it is written down.
 
 ## Deviations carried by rewrites.md, @PLN211 arc C′
 
+### D-phase-3 — CLOSED 2026-11-04 (@PLN211 arc C′3) — `(R-KeyedEntry)`'s subscript clause stays in both writers
+- **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)
+- **Where:** `generation::emit` (`output_keyed_place`'s subscript clause), the C's keyed-place arm
+- **Effect:** the interpreter claims, writes and files on `coll[k] = T{…}` where the writers
+  overwrite the entry in place.
+- **Removal:** the IR form, `opt::keyed_entry`'s staging for one more host (arc C′3).
+- **Closed by:** `opt::keyed_entry::subscript_replacement` — the subscript clause in the IR (the literal staged, `keyed_entry_ints(coll, tp, 65535, k…)` into a fresh entry variable, the non-key fields written), the analysis `keyed_place` moved from `lower` to `opt`; both writers' subscript branches deleted, `R-KeyedEntry/subscript` applied by `ir`.  `(R-InPlaceLiteral)`'s keyed clause (the non-heap-free cases) stays the writers'.
+
 ### D-phase-2 — CLOSED 2026-11-04 (@PLN211 arc C′2) — buffer ownership is derived per consumer
 - **Violates:** `R-Phase` (one place: no decision recomputed per consumer)
 - **Where:** `opt::loop_buffer::rewrite_program` (five rules' analyses to leave their buffers),

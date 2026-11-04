@@ -25,6 +25,7 @@ pub mod header;
 pub mod hoist;
 pub mod iteration;
 pub mod keyed_entry;
+pub mod keyed_place;
 pub mod laps;
 pub mod lazy_split;
 pub mod ledger_sites;
