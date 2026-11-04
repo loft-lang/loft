@@ -29,86 +29,137 @@ fn binding_source(val: &Value, gf_nr: u32, holds: &HashMap<u16, u16>) -> Option<
 /// its data via a holding local or a direct build op, EXCLUDING the scope-exit
 /// `OpFreeRef`), and `dead` (the point a holding local is rebound away, the
 /// reassignment case).  This is the real liveness `compute_intervals` cannot give
-/// (its `last_use` is pinned to the teardown `OpFreeRef`).  Sequential approximation
-/// across branches — fine for the straight-line / sequential shapes this targets.
-#[allow(clippy::too_many_arguments)]
-fn store_liveness_walk(
-    node: &Value,
-    seq: &mut u32,
+/// (its `last_use` is pinned to the teardown `OpFreeRef`).  Sequential across
+/// straight-line code; a rebind under an `if` or a loop runs on SOME paths only.
+///
+/// `@FR-O-Complete` — per binding, PER PATH: a local rebound away under a branch or a
+/// loop still holds its old store on the paths that skip the rebind, and the reads after
+/// it are attributed to the new store alone.  Such a store is `pinned` — it has no
+/// data-death point and keeps its scope-exit free (loft#2408: `if c { l = f(l) }` freed
+/// `l`'s store at the next allocation, and the path that skipped the rebind read the
+/// store that allocation reused).
+struct StoreLiveness {
     db_nr: u32,
     gf_nr: u32,
     fr_nr: u32,
-    holds: &mut HashMap<u16, u16>,
-    alloc: &mut HashMap<u16, u32>,
-    dead: &mut HashMap<u16, u32>,
-    last_read: &mut HashMap<u16, u32>,
-) {
-    *seq += 1;
-    let s = *seq;
-    match node {
-        Value::Var(v) => {
-            if let Some(&store) = holds.get(v) {
-                last_read.insert(store, s);
-            }
+    seq: u32,
+    /// The `If` / `Loop` bodies the walk is inside.
+    conditional: u32,
+    holds: HashMap<u16, u16>,
+    alloc: HashMap<u16, u32>,
+    dead: HashMap<u16, u32>,
+    last_read: HashMap<u16, u32>,
+    pinned: HashSet<u16>,
+}
+
+impl StoreLiveness {
+    fn of(code: &Value, db_nr: u32, gf_nr: u32, fr_nr: u32) -> Self {
+        let mut l = StoreLiveness {
+            db_nr,
+            gf_nr,
+            fr_nr,
+            seq: 0,
+            conditional: 0,
+            holds: HashMap::default(),
+            alloc: HashMap::default(),
+            dead: HashMap::default(),
+            last_read: HashMap::default(),
+            pinned: HashSet::default(),
+        };
+        l.walk(code);
+        l
+    }
+
+    /// The point `st`'s data dies: its rebind-away if any, else its last read — none for a
+    /// pinned store.
+    fn dead_at(&self, st: u16) -> Option<u32> {
+        if self.pinned.contains(&st) {
+            return None;
         }
-        Value::Set(local, val) => {
-            if matches!(val.unspan(), Value::Null) {
-                return; // null-init — not a real def/rebind
-            }
-            store_liveness_walk(val, seq, db_nr, gf_nr, fr_nr, holds, alloc, dead, last_read);
-            let new_store = binding_source(val, gf_nr, holds);
-            if let Some(&old) = holds.get(local)
-                && Some(old) != new_store
-            {
-                dead.entry(old).or_insert(s); // local rebound away → old store dead here
-            }
-            match new_store {
-                Some(st) => {
-                    holds.insert(*local, st);
+        self.dead
+            .get(&st)
+            .copied()
+            .or_else(|| self.last_read.get(&st).copied())
+    }
+
+    fn conditional_walk(&mut self, node: &Value) {
+        self.conditional += 1;
+        self.walk(node);
+        self.conditional -= 1;
+    }
+
+    fn walk(&mut self, node: &Value) {
+        self.seq += 1;
+        let s = self.seq;
+        match node {
+            Value::Var(v) => {
+                if let Some(&store) = self.holds.get(v) {
+                    self.last_read.insert(store, s);
                 }
-                None => {
-                    holds.remove(local);
+            }
+            Value::Set(local, val) => {
+                if matches!(val.unspan(), Value::Null) {
+                    return; // null-init — not a real def/rebind
+                }
+                self.walk(val);
+                let new_store = binding_source(val, self.gf_nr, &self.holds);
+                if let Some(&old) = self.holds.get(local)
+                    && Some(old) != new_store
+                {
+                    if self.conditional > 0 {
+                        self.pinned.insert(old);
+                    } else {
+                        self.dead.entry(old).or_insert(s); // rebound away → old store dead here
+                    }
+                }
+                match new_store {
+                    Some(st) => {
+                        self.holds.insert(*local, st);
+                    }
+                    None => {
+                        self.holds.remove(local);
+                    }
                 }
             }
-        }
-        Value::Call(op, args) => {
-            if *op == fr_nr && args.len() == 1 && matches!(args[0].unspan(), Value::Var(_)) {
-                return; // OpFreeRef — not a data read
-            }
-            if *op == db_nr {
-                if let Some(Value::Var(st)) = args.first().map(Value::unspan) {
-                    alloc.insert(*st, s);
+            Value::Call(op, args) => {
+                if *op == self.fr_nr && args.len() == 1 && matches!(args[0].unspan(), Value::Var(_))
+                {
+                    return; // OpFreeRef — not a data read
                 }
-                return; // OpDatabase(store, size) — alloc point, args are not data reads
+                if *op == self.db_nr {
+                    if let Some(Value::Var(st)) = args.first().map(Value::unspan) {
+                        self.alloc.insert(*st, s);
+                    }
+                    return; // OpDatabase(store, size) — alloc point, args are not data reads
+                }
+                for a in args {
+                    self.walk(a);
+                }
             }
-            for a in args {
-                store_liveness_walk(a, seq, db_nr, gf_nr, fr_nr, holds, alloc, dead, last_read);
+            Value::Block(bl) => {
+                for op in &bl.operators {
+                    self.walk(op);
+                }
             }
-        }
-        Value::Block(bl) | Value::Loop(bl) => {
-            for op in &bl.operators {
-                store_liveness_walk(op, seq, db_nr, gf_nr, fr_nr, holds, alloc, dead, last_read);
+            Value::Loop(bl) => {
+                for op in &bl.operators {
+                    self.conditional_walk(op);
+                }
             }
-        }
-        Value::If(c, t, e) => {
-            store_liveness_walk(c, seq, db_nr, gf_nr, fr_nr, holds, alloc, dead, last_read);
-            store_liveness_walk(t, seq, db_nr, gf_nr, fr_nr, holds, alloc, dead, last_read);
-            store_liveness_walk(e, seq, db_nr, gf_nr, fr_nr, holds, alloc, dead, last_read);
-        }
-        Value::Insert(ops) | Value::Tuple(ops) | Value::Parallel(ops) => {
-            for op in ops {
-                store_liveness_walk(op, seq, db_nr, gf_nr, fr_nr, holds, alloc, dead, last_read);
+            Value::If(c, t, e) => {
+                self.walk(c);
+                self.conditional_walk(t);
+                self.conditional_walk(e);
             }
+            Value::Insert(ops) | Value::Tuple(ops) | Value::Parallel(ops) => {
+                for op in ops {
+                    self.walk(op);
+                }
+            }
+            Value::Return(v) | Value::Drop(v) | Value::Yield(v) => self.walk(v),
+            Value::Span(b) => self.walk(&b.1),
+            _ => {}
         }
-        Value::Return(v) | Value::Drop(v) | Value::Yield(v) => {
-            store_liveness_walk(v, seq, db_nr, gf_nr, fr_nr, holds, alloc, dead, last_read);
-        }
-        Value::Span(b) => {
-            store_liveness_walk(
-                &b.1, seq, db_nr, gf_nr, fr_nr, holds, alloc, dead, last_read,
-            );
-        }
-        _ => {}
     }
 }
 
@@ -341,27 +392,8 @@ pub(super) fn reclaim_free_intent(
         Value::Block(bl) => bl.scope,
         _ => return (Vec::new(), Vec::new()),
     };
-    let mut holds: HashMap<u16, u16> = HashMap::default();
-    let mut alloc: HashMap<u16, u32> = HashMap::default();
-    let mut dead: HashMap<u16, u32> = HashMap::default();
-    let mut last_read: HashMap<u16, u32> = HashMap::default();
-    let mut seq = 0u32;
-    store_liveness_walk(
-        code,
-        &mut seq,
-        db_nr,
-        gf_nr,
-        fr_nr,
-        &mut holds,
-        &mut alloc,
-        &mut dead,
-        &mut last_read,
-    );
-    let dead_at = |st: u16| {
-        dead.get(&st)
-            .copied()
-            .or_else(|| last_read.get(&st).copied())
-    };
+    let live = StoreLiveness::of(code, db_nr, gf_nr, fr_nr);
+    let alloc = &live.alloc;
     let mut owning: Vec<u16> = alloc
         .keys()
         .copied()
@@ -375,7 +407,7 @@ pub(super) fn reclaim_free_intent(
     owning.sort_unstable();
     let mut intent: Vec<(u16, u16)> = Vec::new();
     for &st in &owning {
-        let Some(d) = dead_at(st) else { continue };
+        let Some(d) = live.dead_at(st) else { continue };
         if let Some(&later) = owning
             .iter()
             .filter(|&&w| w != st && alloc.get(&w).is_some_and(|&a| a > d))
@@ -741,28 +773,8 @@ pub(super) fn last_use_guard(
         Value::Block(bl) => bl.scope,
         _ => return 0,
     };
-    let mut holds: HashMap<u16, u16> = HashMap::default();
-    let mut alloc: HashMap<u16, u32> = HashMap::default();
-    let mut dead: HashMap<u16, u32> = HashMap::default();
-    let mut last_read: HashMap<u16, u32> = HashMap::default();
-    let mut seq = 0u32;
-    store_liveness_walk(
-        code,
-        &mut seq,
-        db_nr,
-        gf_nr,
-        fr_nr,
-        &mut holds,
-        &mut alloc,
-        &mut dead,
-        &mut last_read,
-    );
-    // data-death point: rebind-away if any, else last read of the data.
-    let dead_at = |st: u16| {
-        dead.get(&st)
-            .copied()
-            .or_else(|| last_read.get(&st).copied())
-    };
+    let live = StoreLiveness::of(code, db_nr, gf_nr, fr_nr);
+    let alloc = &live.alloc;
     let mut count = 0;
     let mut stores: Vec<u16> = alloc.keys().copied().collect();
     stores.sort_unstable();
@@ -770,7 +782,7 @@ pub(super) fn last_use_guard(
         if vars.scope(st) != body_scope {
             continue; // block-confined — freed at block exit by I-a
         }
-        let Some(d) = dead_at(st) else { continue };
+        let Some(d) = live.dead_at(st) else { continue };
         if let Some(&later) = stores
             .iter()
             .filter(|&&w| w != st && alloc.get(&w).is_some_and(|&a| a > d))
