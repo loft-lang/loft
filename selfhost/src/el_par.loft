@@ -9,6 +9,17 @@ use el_vars;
 use el_types;
 use el_expressions;
 
+// The vector walk `for_expr` set up: the loop's spelling (`src_id`) and binding (`id`), the
+// source `x` hoisted into `vec`, its element and the loop variable's type borrowing `vec`.
+pub struct Walk {
+  pub src_id: text,
+  pub id: text,
+  pub x: el_expressions::Ex,
+  pub vec: integer,
+  pub elem: ir::TypeT,
+  pub var_tp: ir::TypeT
+}
+
 // A `par` loop over a hoisted vector `vec` (`for_expr` made it, `x` its source): each element
 // handed to a worker function named at the call, its first argument the element, the results
 // queued by the runtime (`n_parallel_queue…`) and read back in the source's order.  The body
@@ -18,16 +29,19 @@ use el_expressions;
 // text.  A method worker, a generic worker, a worker of a nullable or struct-enum element, a
 // narrow, record, function, tuple or optional result, and an element that is no plain scalar,
 // text or record are refused by name.
-pub fn par_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: el_expressions::Ex, vec: integer, elem: ir::TypeT, var_tp: ir::TypeT, par: integer, body: integer) -> el_expressions::Ex {
+pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: integer) -> el_expressions::Ex {
   void = el_expressions::Ex { code: ir::NdNull, tp: ir::TyVoid };
+  x = w.x;
+  vec = w.vec;
+  elem = w.elem;
   result = "";
   worker = -1;
   threads = -1;
   match e.p.nodes[par] {
-    SPar { at: _, var, worker: w, threads: n } => {
+    SPar { at: _, var, worker: wn, threads: tn } => {
       result = var;
-      worker = w ?? -1;
-      threads = n ?? -1;
+      worker = wn ?? -1;
+      threads = tn ?? -1;
     },
     _ => {}
   }
@@ -35,7 +49,7 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: el_exp
     el::refuse(e, "a `par` clause with no worker or no thread count");
     return void;
   }
-  lv = el_expressions::loop_var(vars, src_id, id, var_tp);
+  lv = el_expressions::loop_var(vars, w.src_id, w.id, w.var_tp);
   d = worker_def(e, worker);
   if d < 0 {
     el::refuse(e, "a `par` worker that is no function called by name");

@@ -114,42 +114,19 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   text_return(e, vars, tt);
   code = b.code;
-  // A text answered through a hidden `&text` the body's own work text became: the body is typed
-  // as the declared result, its dep in attribute numbering — as a record body is (below).  A
-  // local at the tail keeps the borrow of that local (`av_renumber_retbuf`, just below).
-  if !e.first_pass && el_types::base(result) is TyText && len(el_types::deps(el::def(e, e.context).returned[0])) > 0 {
-    match code {
-      NdBlock { block } => {
-        if len(block[0].operators) > 0 && !(el_ir::unspan(block[0].operators[-1]) is NdVar) {
-          bl = block[0];
-          bl.result = [el::def(e, e.context).returned[0]];
-          code = ir::NdBlock { block: [bl] };
-        }
-      },
-      _ => {}
-    }
-  }
-  // The body of a promoted text local answers a text borrowing it (`av_renumber_retbuf`).  A
-  // local bound to a record local's text field (`s = r.name; s`) keeps the record's borrow
-  // there instead — not carried: refused by name.
+  // A tail local bound to a record local's text field (`s = r.name; s`) answers the record's
+  // borrow — not carried: refused by name.
   if !e.first_pass && tt != b.tp && len(el_types::deps(tt)) == 1 && field_view_bind(e, vars, code, el_types::deps(tt)[0]) {
     el::refuse(e, "a text function answering a local bound to a record's text field");
   }
-  if !e.first_pass && tt != b.tp {
-    // A promoted local is read as the hidden parameter it became: the borrow names it by its
-    // ATTRIBUTE number, as the declared result does (`n_a2`'s `text[1]` with `x` at frame 6).
-    shown = tt;
-    tv = el_types::deps(tt)[0] ?? -1;
-    if tv >= 0 && vars.vars[tv].argument {
-      a = attr_nr(el::def(e, e.context), el_vars::name_of(vars, tv));
-      if a >= 0 {
-        shown = ir::TyText { dep: [a] };
-      }
-    }
+  // `block_result` converts the tail to `result`, the declared return as this pass met it —
+  // on the second pass the borrows the first gathered, by number (a promoted local's by its
+  // attribute), so a text body is typed by every return pass 1 saw, not by its tail alone.
+  if !e.first_pass && el_types::base(result) is TyText && len(el_types::deps(result)) > 0 {
     match code {
       NdBlock { block } => {
         bl = block[0];
-        bl.result = [shown];
+        bl.result = [result];
         code = ir::NdBlock { block: [bl] };
       },
       _ => {}
@@ -2121,7 +2098,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SUnary { op, e: ue } => unary(e, vars, op, ue),
     SIf { cond, then, other } => if_expr(e, vars, cond, then, other),
     SStructLit { name, member, fields, base } => object_expr(e, vars, name, member, fields, base),
-    SFor { at, binds, source, par, filter, body } => for_expr(e, vars, binds, source, in_token(e, at), par, filter, body),
+    SFor { at: _ } => for_expr(e, vars, n),
     SWhile { cond, body } => while_expr(e, vars, cond, body),
     SMatch { subject, arms } => match_expr(e, vars, subject, arms),
     SBlock { at: _ } => parse_block(e, vars, n, "block", ir::TyUnknown { n: 0 }),
@@ -2400,6 +2377,24 @@ fn record_copy_type(e: el::El, vars: el_vars::Vars, v: integer, rhs: integer, tp
     _ => {}
   }
   tp
+}
+
+// `Parser::change_var_type`'s mint: a local bound for the first time to a vector registers
+// `vector<T>` where the bind's statement ends (a no-op where a literal made it already).
+fn first_vector_bind(e: el::El, vars: el_vars::Vars, v: integer, t: ir::TypeT, at: integer) {
+  if el_vars::was_defined(vars, v) {
+    return;
+  }
+  match t {
+    TyVector { inner } => {
+      nm = el_types::elem_name(e, inner);
+      if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
+        el_schema::vector_store_type(e, inner, nm);
+        el_schema::make_vector_def(e, inner, nm, el::pos_at(e, statement_end(e, at)), true);
+      }
+    },
+    _ => {}
+  }
 }
 
 fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
@@ -2744,6 +2739,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   // owned record, bound to a local is COPIED into a store of the local's own
   // (`lower_vec_copy_bind`).  A `&` asks for the view.
   if el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !is_link(e, rhs!) {
+    first_vector_bind(e, vars, v, el_types::base(x.tp), at);
     return vec_copy_bind(e, vars, v, x);
   }
   // `length_locals`: a local given a vector's length, remembered with that vector.
@@ -2824,20 +2820,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if !promoted_text && !el_vars::change_var_type(e, vars, v, bound_tp) {
     el::refuse(e, "a local that changes type");
   }
-  // `Parser::change_var_type`'s mint: a local bound for the first time to a vector registers
-  // `vector<T>` where the bind's right side ends (a no-op where a literal made it already).
-  if !el_vars::was_defined(vars, v) {
-    match bound_tp {
-      TyVector { inner } => {
-        nm = el_types::elem_name(e, inner);
-        if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
-          el_schema::vector_store_type(e, inner, nm);
-          el_schema::make_vector_def(e, inner, nm, el::pos_at(e, statement_end(e, at)), true);
-        }
-      },
-      _ => {}
-    }
-  }
+  first_vector_bind(e, vars, v, bound_tp, at);
   // `parse_assign`: a local bound from a read a length local made trusted is what this pass
   // typed it, not the `τ?` the first pass gave it — when nothing else assigns it.
   if !e.first_pass && read_through_length && element_read(e, x.code) && !vars.vars[v].argument {
@@ -8925,7 +8908,24 @@ fn in_token(e: el::El, at: integer) -> integer {
 }
 
 // `in_tok`: the `for`'s `in`, whose start names a destructuring loop's variable.
-fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer, in_tok: integer, par: integer?, filter: integer?, body: integer?) -> Ex {
+fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  binds: vector<text> = [];
+  source = -1;
+  in_tok = -1;
+  par: integer? = null;
+  filter: integer? = null;
+  body: integer? = null;
+  match e.p.nodes[n] {
+    SFor { at, binds: bs, source: sr, par: pc, filter: f, body: b } => {
+      binds = bs;
+      source = sr;
+      in_tok = in_token(e, at);
+      par = pc;
+      filter = f;
+      body = b;
+    },
+    _ => {}
+  }
   if len(binds) == 0 || body == null {
     el::refuse(e, "a `for` with no body");
     return ex(ir::NdNull, ir::TyVoid);
@@ -9017,7 +9017,7 @@ fn for_expr(e: el::El, vars: el_vars::Vars, binds: vector<text>, source: integer
     var_tp = ir::TyReference { n: td, dep: [vec] };
   }
   if par != null {
-    return el_par::par_for(e, vars, src_id, id, x, vec, elem, var_tp, par!, body!);
+    return el_par::par_for(e, vars, el_par::Walk { src_id: src_id, id: id, x: x, vec: vec, elem: elem, var_tp: var_tp }, par!, body!);
   }
   idx = loop_index(vars, id);
   lv = loop_var(vars, src_id, id, var_tp);
@@ -10479,8 +10479,6 @@ fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -
 // by `fill_all`.
 fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer, declared: boolean) {
   at = closing_bracket(e, lit);
-  // An empty `[]` makes them before the literal is read: the lexer stands after the token
-  // before its `[`.
   // A declared element type, or an empty `[]`, makes them before the literal is read: the lexer
   // stands after the token before its `[`.
   if at == lit + 1 || declared {
@@ -10489,7 +10487,6 @@ fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer, declared: boolean
   el_schema::make_vector_def(e, t, nm, el::pos_at(e, at), true);
 }
 
-// The token closing the `[` at token `lit`.
 // The `;` or `}` that ends the statement holding token `from`: the parser's peek once the
 // statement's expression is read.
 fn statement_end(e: el::El, from: integer) -> integer {
@@ -10509,6 +10506,7 @@ fn statement_end(e: el::El, from: integer) -> integer {
   at
 }
 
+// The token closing the `[` at token `lit`.
 fn closing_bracket(e: el::El, lit: integer) -> integer {
   at = lit;
   depth = 0;
