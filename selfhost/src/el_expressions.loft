@@ -1618,9 +1618,11 @@ fn build_into_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
 fn object_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
   w = -1;
   ops: vector<ir::Node> = [];
+  lit_t = result;
   match x {
     NdBlock { block: ob } => {
       if ob[0].name == "Object" {
+        lit_t = ob[0].result[0] ?? result;
         for op in ob[0].operators {
           match op {
             NdSet { var, inner } => {
@@ -1658,7 +1660,8 @@ fn object_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integer, 
   if el_types::base(result) is TyReference {
     built = rebind_safe_literal(e, vars, built, rb);
   }
-  el_ir::v_block(built, el_types::with_deps(el_types::without_deps(result), [rb]), "Object")
+  // Typed as the literal — a variant's own record where the result is its enum.
+  el_ir::v_block(built, el_types::with_deps(el_types::without_deps(lit_t), [rb]), "Object")
 }
 
 // Every `Var(from)` in `n` as `Var(to)` (`substitute_work_ref`).
@@ -4141,6 +4144,37 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
           },
           _ => {}
         }
+        // A struct-enum field (`enum-big`): its four-byte header zeroed where the literal names
+        // it, and a variant literal built straight into the field's place.  Any other value
+        // (a local, a call, a unit variant) is refused by name.
+        sed = el_types::struct_enum_def(at);
+        if sed >= 0 {
+          vd = -1;
+          sub: vector<integer> = [];
+          match e.p.nodes[fe!] {
+            SStructLit { name: vn, member: vm, fields: vf, base: vb } => {
+              if vm == "" && vb == null {
+                vd = el::def_nr(e, vn);
+                sub = vf;
+              }
+            },
+            _ => {}
+          }
+          if vd < 0 || el::def(e, vd).def_type != el::DT_ENUM_VALUE || el::def(e, vd).parent != sed {
+            el::refuse(e, "a struct-enum field given something other than a variant literal");
+            return null;
+          }
+          pos = ir::NdInt { n: field_position(e, d, fname) };
+          list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }])];
+          place = el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: el::def(e, sed).known_type }]);
+          built = fields_at(e, vars, v, place, vd, sub);
+          if built == null {
+            return null;
+          }
+          list += built!;
+          found += [fname];
+          continue;
+        }
         fd = nested_literal(e, vars, v, at, fe!);
         if fd >= 0 {
           place = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: el::def(e, fd).known_type }]);
@@ -4412,7 +4446,10 @@ fn object_expr(e: el::El, vars: el_vars::Vars, name: text, member: text, fields:
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  object_fresh(e, vars, d, fields, ir::TyReference { n: d, dep: [] })
+  // A variant's literal is built in a buffer of its enum, the type every position it stands in
+  // expects of it (`parse_object`'s expected type).
+  wt = if el::def(e, d).def_type == el::DT_ENUM_VALUE { ir::TyEnum { n: el::def(e, d).parent, is_ref: true, dep: [] } } else { ir::TyReference { n: d, dep: [] } };
+  object_fresh(e, vars, d, fields, wt)
 }
 
 // The fresh-record build of a literal of `d`: on the first pass its fields read, answering the
@@ -4707,6 +4744,10 @@ fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
         TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpGetEnum" },
         _ => ""
       };
+      // A struct-enum field is the place itself, at the enum's store type.
+      if el_types::struct_enum_def(ft) >= 0 {
+        return el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: el::def(e, el_types::struct_enum_def(ft)).known_type }]);
+      }
       if op == "" {
         el::refuse(e, "a field read of this type");
         return null;
@@ -6702,7 +6743,7 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
   // A hidden vector buffer (`add_defaults`' vector arm): a fresh `__ref_N` the result is
   // delivered into.  A pooled work buffer (`work_buffer`) is not carried.
   last_t = if n > 0 { def.attributes[-1].typedef[0] ?? ir::TyVoid } else { ir::TyVoid };
-  retbuf = n == len(given) + 1 && (def.attributes[-1].hidden) && (last_t is TyReference || (last_t is TyVector && !(def.attributes[-1].work_buffer)));
+  retbuf = n == len(given) + 1 && (def.attributes[-1].hidden) && (last_t is TyReference || el_types::struct_enum_def(last_t) >= 0 || (last_t is TyVector && !(def.attributes[-1].work_buffer)));
   // `add_defaults`' `&text` arm: each trailing hidden text buffer is a fresh `__work_cN` of
   // the caller's, set empty and handed as a stack reference ("default ref").
   bufs = !retbuf && n > len(given);
@@ -6815,14 +6856,11 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     if last_t is TyVector {
       return vector_buffer_call(e, vars, d, list, last_t, len(given));
     }
-    rec = match ret {
-      TyReference { n } => n,
-      _ => {
-        el::refuse(e, "a call returning a heap value other than a record");
-        return null;
-      }
-    };
-    buf = el_vars::work_ref(vars, ir::TyReference { n: rec, dep: [] });
+    if !(ret is TyReference) && !(ret is TyEnum && el_types::struct_enum_def(ret) >= 0) {
+      el::refuse(e, "a call returning a heap value other than a record");
+      return null;
+    }
+    buf = el_vars::work_ref(vars, el_types::without_deps(ret));
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
     for i in el_types::deps(ret) {
