@@ -106,6 +106,13 @@ def apply_labels(verdict):
     """
     failed = 0
     for n, v in sorted(verdict.items()):
+        # The red-steps dashboard (`ci-advisory`) is no defect a fix settles: never labelled.
+        names = subprocess.run(["gh", "issue", "view", str(n), "--json", "labels",
+                                "-q", "[.labels[].name] | join(\",\")"],
+                               capture_output=True, text=True, check=False).stdout
+        if "ci-advisory" in names.strip().split(","):
+            print(f"  skipped #{n}: the ci-advisory dashboard")
+            continue
         other = "strained" if v == "settled" else "settled"
         out = subprocess.run(["gh", "issue", "edit", str(n),
                               "--add-label", f"contract:{v}",

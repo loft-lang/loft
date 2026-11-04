@@ -77,6 +77,10 @@ def run(pr_number: int, dry: bool) -> int:
         issue = api(f"repos/{repo}/issues/{n}")
         if issue is None or "pull_request" in issue or issue.get("state") != "open":
             continue
+        # The auto-maintained red-steps dashboard (`ci-advisory`, ci_failure_digest.py) is not a
+        # defect a commit fixes: a `Fixes #N` naming it must not close the one page it rewrites.
+        if any(lb.get("name") == "ci-advisory" for lb in issue.get("labels") or []):
+            continue
         if dry:
             print(f"would close #{n}: {issue['title'][:70]}")
         else:
