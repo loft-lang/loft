@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+//
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-ElemFirst` in the IR phase, the two forms beyond the literal-built temp: a temp a CALL
+// fills (the call is handed the element's field for its buffer) and an append in EACH arm of an
+// `if` (the other arm's element is the one minted at the declaration).  What can go wrong is an
+// element minted once and finished twice or never, an arm reading the other arm's element, or
+// the call writing a buffer the element never sees.  So the cells take each form into a local
+// vector — where no function's exit copies the temp, so the IR applies them — and both together,
+// and read every element's fields and its vector back.  Values hand-computed in each comment.
+//
+// @falsified-at: none — by hand on the IR clause, the other arm's mint kept (no alias): e1
+//   and e3 fail on the interpreter and on the C (an element finished that was never written).
+//   CHANNEL: an assertion.
+// HOLDS: the hand-computed values, on both backends, the clause on and off.
+
+struct Row { id: integer, f: vector<integer> }
+
+fn mk(n: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for k in 0..n { r += [k * 2]; }
+  r
+}
+
+fn sum_f(out: vector<Row>) -> integer {
+  s = 0;
+  for r in out {
+    for x in r.f { s += x; }
+  }
+  s
+}
+
+fn sum_id(out: vector<Row>) -> integer {
+  s = 0;
+  for r in out { s += r.id; }
+  s
+}
+
+// e1: an append in either arm — ids 0, -1, 2, -3 (sum -2), f [0,1,2] [1,2,3] [2,3,4] [3,4,5]
+// (sum 30): 4 * 1000 - 200 + 30 = 3830
+fn e1(n: integer) -> integer {
+  out: vector<Row> = [];
+  for i in 0..n {
+    t: vector<integer> = [];
+    for j in 0..3 { t += [i + j]; }
+    if i % 2 == 0 { out += [Row { id: i, f: t }]; } else { out += [Row { id: 0 - i, f: t }]; }
+  }
+  len(out) * 1000 + sum_id(out) * 100 + sum_f(out)
+}
+
+// e2: a call fills the temp — f [0], [0,2], [0,2,4]: per row id*100 + len*10 + last
+// = 10 + 122 + 234 = 366
+fn e2(n: integer) -> integer {
+  out: vector<Row> = [];
+  for i in 0..n {
+    p = mk(i + 1);
+    out += [Row { id: i, f: p }];
+  }
+  s = 0;
+  for r in out {
+    k = len(r.f);
+    s += r.id * 100 + k * 10 + r.f[k - 1];
+  }
+  s
+}
+
+// e3: both — a call-filled temp appended in either arm: ids 2, 2, 1, 1 (sum 6), each f [0, 2]
+// (sum 8): 4 * 100 + 60 + 8 = 468
+fn e3(n: integer) -> integer {
+  out: vector<Row> = [];
+  for i in 0..n {
+    p = mk(2);
+    if i > 1 { out += [Row { id: 1, f: p }]; } else { out += [Row { id: 2, f: p }]; }
+  }
+  len(out) * 100 + sum_id(out) * 10 + sum_f(out)
+}
+
+fn main() {
+  assert(e1(4) == 3830, "e1 {e1(4)}");
+  assert(e2(3) == 366, "e2 {e2(3)}");
+  assert(e3(4) == 468, "e3 {e3(4)}");
+  println("ok");
+}
