@@ -301,7 +301,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/text` c, native |
 | `(R-TypedRead)` | `R-TypedRead` c, native |
 | `(R-ValueLocal)` | `R-ValueLocal` parse, c, native |
-| `(R-ValueRecord)` | `R-ValueRecord` parse, c, native |
+| `(R-ValueRecord)` | `R-ValueRecord` parse, c, native · `/view` c, native |
 | `(R-VecCopy)` | `R-VecCopy` ir |
 | `(R-Version)` | `R-Version` c |
 | `(R-View)` | `R-View` c, native |

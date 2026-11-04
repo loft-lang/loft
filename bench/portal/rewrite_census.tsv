@@ -1128,6 +1128,7 @@
 17_consumer_moros_dryopea	-	c	R-TypedKeyed/compound	5
 17_consumer_moros_dryopea	-	c	R-ValueLocal	31
 17_consumer_moros_dryopea	-	c	R-ValueRecord	20
+17_consumer_moros_dryopea	-	c	R-ValueRecord/view	2
 17_consumer_moros_dryopea	-	c	R-View	14
 17_consumer_moros_dryopea	-	c	R-WorkPark	20
 17_consumer_moros_dryopea	-	c	R-Wrapper	34
@@ -1191,6 +1192,7 @@
 17_consumer_moros_dryopea	-	rust	R-TypedKeyed/compound	5
 17_consumer_moros_dryopea	-	rust	R-ValueLocal	47
 17_consumer_moros_dryopea	-	rust	R-ValueRecord	20
+17_consumer_moros_dryopea	-	rust	R-ValueRecord/view	2
 17_consumer_moros_dryopea	-	rust	R-View	35
 17_consumer_moros_dryopea	-	rust	R-Wrapper	34
 17_consumer_moros_dryopea	-	rust	R-ZeroCount	8
@@ -1988,6 +1990,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-TextB
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Transient	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueLocal	112
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueRecord	33
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueRecord/view	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Version	9
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-View	15
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-WorkBuffer	25
@@ -2080,6 +2083,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Te
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-TypedKeyed	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ValueLocal	288
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ValueRecord	33
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ValueRecord/view	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-View	67
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-WorkBuffer	25
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-WorkBuffer/onward	89

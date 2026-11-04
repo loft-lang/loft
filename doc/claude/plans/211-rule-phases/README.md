@@ -266,6 +266,9 @@ saying so in its comment.  The position when arc C′ opens, citing sites per la
 rustc writer / C writer): `R-ElemFirst` 4 / 4 / 4, `R-KeyedEntry` 5 / 6 / 2, `R-LoopBuffer`
 4 / 1 / 1.
 
+C′4's design: [c4-view-plan.md](c4-view-plan.md) — the view leaf is `(R-ValueRecord)`'s own
+writer clause, so the front fact is that clause moved into the IR (a tuple element that is a
+reference), after which the element-first form needs no plan.  The comprehension row is done.
 C′4 carries the design question: the view plan is computed by the writers today
 (`lower::plan`), after every IR pass; read before the pass it could differ from the plan the
 writers compute on the rewritten IR.  The design step is to make the value-record decision a

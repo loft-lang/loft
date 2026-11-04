@@ -493,6 +493,8 @@ impl<'a> Cx<'a> {
                 use crate::opt::value_records::layout as vl;
                 let vr = crate::opt::value_records::value_records(self.data, self.stores, false);
                 crate::rewrite_census::fired("R-ValueRecord", vr.fns.len());
+                // `(O-ViewField)` — the functions with a view leaf (@PLN211 C′4's measure).
+                crate::rewrite_census::fired("R-ValueRecord/view", vr.views.len());
                 let views = vr
                     .types
                     .values()

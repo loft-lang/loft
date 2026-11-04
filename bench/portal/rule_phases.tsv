@@ -159,6 +159,7 @@ R-TypedKeyed/text	c,native	5	0	0	0	12	21
 R-TypedRead	c,native	12	0	0	0	16	204
 R-ValueLocal	parse,c,native	58	30	0	0	306	1701
 R-ValueRecord	parse,c,native	25	19	0	0	170	170
+R-ValueRecord/view	c,native	2	0	0	0	3	3
 R-VecCopy	ir	6	0	14	0	0	0
 R-Version	c	5	0	0	0	26	0
 R-View	c,native	58	0	0	0	190	625
