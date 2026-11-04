@@ -340,7 +340,10 @@ fn the_store_census_drops() {
         // (`@FR-H-SwapRebind`) and a complete-literal callee refills the store it released
         // (`@FR-R-RefillBuffer`): 159/261 → 104/210 on native, the interpreter unchanged;
         // `LOFT_NO_REFILL_BUFFER=1` gives back the old pair.
-        (237, 349, 104, 210),
+        // 2026-11-05: `(R-LoopRecord)` moved into the IR keeps a loop's record store on the
+        // interpreter too: 237/349 → 232/344 there, native unchanged.  `LOFT_NO_LOOP_RECORD=1`
+        // gives back 237/349 (and, the rule then off on native as well, 109/215 there).
+        (232, 344, 104, 210),
         "mints (interpret on, off, native on, off)"
     );
 }

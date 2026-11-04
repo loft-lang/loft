@@ -29,7 +29,7 @@
 use crate::data::{Data, DefType, Value};
 use crate::database::Stores;
 use crate::opt::hoist::{ElemFirst, element_first};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 fn enabled() -> bool {
     !crate::env_once!(std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"))
@@ -483,4 +483,64 @@ fn declaration(
             && var_of(ra.first()) == Some(vdb))
     });
     if reset { 3 } else { 2 }
+}
+
+/// The element fields this pass built a temp in, read back from `code`: `(elm, field offset)`
+/// for every `elm = OpNewRecord(…)` whose zeroed vector handle (`OpSetInt4(elm, off, 0)`, the
+/// statements right after the mint) a later statement of the same block binds a temp to
+/// (`tmp = OpGetField(elm, off, …)`).  That temp's vector IS the element's field, so a push into
+/// it grows the element's own vector and moves no record another header describes — what the
+/// hoist reads them as (`opt::hoist::HoistOwned::elem_fields`).  The pass's own output, read
+/// back here so a consumer does not re-derive it.
+#[must_use]
+pub fn kept_fields(data: &Data, code: &Value) -> HashSet<(u16, i64)> {
+    let (new_record, set_int4, get_field) = (
+        data.def_nr("OpNewRecord"),
+        data.def_nr("OpSetInt4"),
+        data.def_nr("OpGetField"),
+    );
+    let int = |v: Option<&Value>| match v.map(Value::unspan) {
+        Some(Value::Int(n)) => Some(*n),
+        _ => None,
+    };
+    let mut out = HashSet::new();
+    code.walk(&mut |n| {
+        let Value::Block(b) = n else {
+            return;
+        };
+        let ops = &b.operators;
+        for (i, op) in ops.iter().enumerate() {
+            let Value::Set(elm, mint) = op.unspan() else {
+                continue;
+            };
+            if !matches!(mint.unspan(), Value::Call(d, _) if *d == new_record) {
+                continue;
+            }
+            let zeroed: Vec<i32> = ops[i + 1..]
+                .iter()
+                .map_while(|z| match z.unspan() {
+                    Value::Call(d, a)
+                        if *d == set_int4
+                            && matches!(a.first().map(Value::unspan), Some(Value::Var(e)) if e == elm)
+                            && int(a.get(2)) == Some(0) =>
+                    {
+                        int(a.get(1))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for later in &ops[i + 1..] {
+                if let Value::Set(_, bind) = later.unspan()
+                    && let Value::Call(d, a) = bind.unspan()
+                    && *d == get_field
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(e)) if e == elm)
+                    && let Some(off) = int(a.get(1))
+                    && zeroed.contains(&off)
+                {
+                    out.insert((*elm, i64::from(off)));
+                }
+            }
+        }
+    });
+    out
 }

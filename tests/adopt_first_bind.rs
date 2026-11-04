@@ -214,6 +214,9 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
     // 2026-10-16: 90/140 → 104/154 on the interpreter on the tree that joins the x86-64 perf
     // cut with loft#2016, #2017 and #2021, native unchanged; the same count with the
     // return-branch sink narrowed and wide, so the three fixes are not the movers.
+    // 2026-11-05: `(R-LoopRecord)` moved into the IR keeps a loop's record store on the
+    // interpreter too: 104/154 → 94/144, ten in each arm; `LOFT_NO_LOOP_RECORD=1` gives back
+    // 104/154.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -222,7 +225,7 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         i_on < i_off,
         "interpret: {i_on} mints with adoption, {i_off} without"
     );
-    assert_eq!((i_on, i_off), (104, 154), "interpret mints (on, off)");
+    assert_eq!((i_on, i_off), (94, 144), "interpret mints (on, off)");
     let (n_on, n_off) = (
         store_mints("--native-rust", &[]),
         store_mints("--native-rust", OFF),

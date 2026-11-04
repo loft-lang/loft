@@ -2505,12 +2505,25 @@ impl Output<'_> {
         // `(R-Mint)`'s rebound clause — the buffer vars whose mint the hoist admission lets
         // through: what the emitter itself owns the mint of.
         self.hoist_owned = hoist::HoistOwned {
-            buffers: self.elem_first.by_vdb.keys().copied().collect(),
+            buffers: self
+                .elem_first
+                .by_vdb
+                .keys()
+                .copied()
+                .chain(crate::opt::loop_buffer::kept(
+                    self.data,
+                    self.data.def(def_nr).code(),
+                ))
+                .collect(),
             elem_fields: self
                 .elem_first
                 .pairs
                 .iter()
                 .flat_map(|p| p.binds.iter().map(move |b| (p.elm, i64::from(b.field_off))))
+                .chain(crate::opt::elem_first::kept_fields(
+                    self.data,
+                    self.data.def(def_nr).code(),
+                ))
                 .collect(),
             records: HashSet::new(),
             value_locals: self.value_record_locals.keys().copied().collect(),

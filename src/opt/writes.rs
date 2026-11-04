@@ -966,7 +966,17 @@ pub(crate) fn blocks_header_hoist(
                     || (tiers.rebound_movers
                         && matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
                         && matches!(args.first().map(Value::unspan), Some(Value::Var(b))
-                            if owned.is_some_and(|o| o.buffers.contains(b) || o.records.contains(b)))));
+                            if owned.is_some_and(|o| o.buffers.contains(b) || o.records.contains(b))))
+                    // …and the reset half of an owned loop buffer (`opt::loop_buffer`'s
+                    // `loop buffer reset`): its kept pass empties the vector, the length reset
+                    // its mint was before the rule moved into the IR.
+                    || (tiers.rebound_movers
+                        && data.def(*d).name() == "OpClearVector"
+                        && matches!(args.first().map(Value::unspan), Some(Value::Call(gd, gargs))
+                            if (*gd as usize) < data.definitions.len()
+                                && data.def(*gd).name() == "OpGetField"
+                                && matches!(gargs.first().map(Value::unspan), Some(Value::Var(b))
+                                    if owned.is_some_and(|o| o.buffers.contains(b))))));
             // …and the § V-z paired copy into the element's field slot, which is emitted as
             // nothing: the temp was built in that slot.
             let elided_copy = known

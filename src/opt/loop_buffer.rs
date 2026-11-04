@@ -257,3 +257,25 @@ fn declaration(
     done.insert(vdb);
     if reset { 3 } else { 2 }
 }
+
+/// The buffers this pass kept in `code`: the `__vdb` local each `loop buffer mint` block mints.
+/// A kept buffer's mint and reset hold a fresh store or an emptied vector, which no record a
+/// hoisted scalar names can live in — what `(R-Mint)`'s rebound clause reads them as
+/// (`opt::hoist::HoistOwned::buffers`).  The pass's own output, read back here so a consumer
+/// does not re-derive it.
+#[must_use]
+pub fn kept(data: &Data, code: &Value) -> HashSet<u16> {
+    let database = data.def_nr("OpDatabase");
+    let mut out = HashSet::new();
+    code.walk(&mut |n| {
+        if let Value::Block(b) = n
+            && b.name == "loop buffer mint"
+            && let Some(Value::Call(op, args)) = b.operators.first().map(Value::unspan)
+            && *op == database
+            && let Some(Value::Var(v)) = args.first().map(Value::unspan)
+        {
+            out.insert(*v);
+        }
+    });
+    out
+}

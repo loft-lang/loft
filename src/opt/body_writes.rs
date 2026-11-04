@@ -596,6 +596,17 @@ pub(crate) fn body_writes(
                 // a record minted in the body, which no hoisted scalar can name) — or the § V-z
                 // paired copy the emitter elides outright, the temp having been built in the
                 // slot.  Neither writes a record a getter the prelude ran could read.
+            } else if name == "OpClearVector"
+                && let Some(Value::Call(g, gargs)) = args.first().map(Value::unspan)
+                && (*g as usize) < data.definitions.len()
+                && data.def(*g).name() == "OpGetField"
+                && let Some(Value::Var(b)) = gargs.first().map(Value::unspan)
+                && owned.is_some_and(|o| o.buffers.contains(b))
+            {
+                // `(R-Mint)`'s rebound clause, the reset half: an owned loop buffer's kept pass
+                // empties its vector (`opt::loop_buffer`'s `loop buffer reset`), the length
+                // reset its mint was before the rule moved into the IR — no record a hoisted
+                // scalar can name.
             } else if matches!(name, "OpDatabase" | "OpDatabaseNP")
                 && let Some(Value::Var(b)) = args.first().map(Value::unspan)
                 && owned.is_some_and(|o| o.buffers.contains(b) || o.records.contains(b))
