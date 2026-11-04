@@ -2952,7 +2952,10 @@ impl Function {
         // into a field whose type pass 1 does not know yet (its holder comes from a function
         // declared below) is built as a VALUE there, minting a `_vec_N`, and as the field on
         // pass 2, minting none, so a literal nested inside it takes the outer one's number at
-        // another element shape.
+        // another element shape.  Or at the SAME shape with pass 1's borrows: a chain temp
+        // typed as viewing its left operand met by a literal pass 2 minted one site later took
+        // that view, so the literal minted no store and its records went nowhere (loft#2406) —
+        // an accumulator's borrows are this pass's too.
         // An accumulator is minted before its literal's items say its element, so its type
         // here may still be unknown — and that is still this pass's, not pass 1's other site's.
         // A match CAPTURE pass 1 bound BLIND is the same: at `Unknown`, because the subject's
@@ -2971,7 +2974,11 @@ impl Function {
                     .is_some_and(|v| self.variables[*v as usize].blind_capture)))
             && let Some(&v) = self.names.get(&full)
             && (name == "vec" || !type_def.is_unknown())
-            && self.variables[v as usize].type_def.without_deps() != type_def.without_deps()
+            && (if name == "vec" {
+                self.variables[v as usize].type_def != *type_def
+            } else {
+                self.variables[v as usize].type_def.without_deps() != type_def.without_deps()
+            })
         {
             self.trace_type_change(v, type_def, "unique(elm)");
             self.variables[v as usize].type_def = type_def.clone();
