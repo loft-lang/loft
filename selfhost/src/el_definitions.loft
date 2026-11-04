@@ -424,7 +424,7 @@ fn sole_vector_literal(e: el::El, body: integer) -> boolean {
 // The plain path: no type variables, no operator form, no capability, no annotation, no `both`.
 // A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
 // the definition's key, or "" where the declaration was refused before one was known.
-fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) -> text {
+pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) -> text {
   if is_op || cap != null || len(annots) > 0 || ret_const {
     kind = if is_op { "an operator form" } else if cap != null { "a capability" } else if len(annots) > 0 { "annotations" } else { "`-> const`" };
     el::refuse(e, "a function with an operator form, a capability, annotations or `-> const`: {kind}");
@@ -563,7 +563,8 @@ fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vec
     // is delivered through a last, hidden `__retbuf` parameter of the result's base type.
     // A template whose result depends on its variable takes no buffer: its instances decide
     // their own delivery (`generic_return_promotable`).
-    if e.first_pass && takes_ret_buffer(e, rt) && !mentions_type_var(e, rt) {
+    // A lambda's is reserved between the passes (`reserve_late_return_buffers`).
+    if e.first_pass && takes_ret_buffer(e, rt) && !mentions_type_var(e, rt) && !starts_with(name, "__lambda_") {
       d = e.context;
       a = el::attribute("__retbuf", el_types::without_deps(rt));
       a.hidden = true;
@@ -738,6 +739,38 @@ fn interface_method_name(name: text) -> text {
 }
 
 // `Type::takes_ret_buffer`: a struct record, a struct-enum or a vector.
+// `reserve_late_return_buffers` (between the passes): a lambda answering a record, a struct
+// enum or a vector takes its hidden `__retbuf` now, typed as its result came out of the first
+// pass — borrows included — its variable after the first pass's.
+pub fn reserve_late_return_buffers(e: el::El) {
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_FUNCTION || d.source != e.source || !starts_with(d.name, "n___lambda_") || el_ir::is_null(d.code[0] ?? ir::NdNull) {
+      continue;
+    }
+    rt = d.returned[0] ?? ir::TyVoid;
+    if !takes_ret_buffer(e, rt) {
+      continue;
+    }
+    held = false;
+    for a in d.attributes {
+      if a.hidden && (a.typedef[0] is TyReference || a.typedef[0] is TyVector || a.typedef[0] is TyEnum) {
+        held = true;
+      }
+    }
+    if held {
+      continue;
+    }
+    a = el::attribute("__retbuf", rt);
+    a.hidden = true;
+    e.b.data.definitions[d#index].attributes += [a];
+    vars = el_vars::load(d.variables);
+    v = el_vars::add_variable(vars, "__retbuf", rt);
+    el_vars::become_argument(vars, v);
+    el_vars::in_use(vars, v, true);
+    e.b.data.definitions[d#index].variables = el_vars::stored(vars);
+  }
+}
+
 fn takes_ret_buffer(e: el::El, t: ir::TypeT) -> boolean {
   match t {
     TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT,

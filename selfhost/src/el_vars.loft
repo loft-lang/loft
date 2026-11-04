@@ -99,6 +99,8 @@ pub struct Vars {
   pub rebind_origs: vector<integer>,
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
   pub dn4_coalesce: boolean,
+  // `Parser::lambda_counter`: the lambdas this body made, naming the next `__lambda_<fn>_<N>`
+  pub lambdas: integer,
   // the local a `+` chain of vectors is bound to (`a = v + w` builds into it), or -1
   pub concat_dest: integer,
   // `parse_var`'s `into` arm: the syntax node of a local bind's right-hand side read first,
@@ -107,7 +109,7 @@ pub struct Vars {
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, concat_dest: -1, read_into: -1 }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, concat_dest: -1, read_into: -1 }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -399,6 +401,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.present = [];
   v.work_ctext = 0;
   v.work_tp2 = 0;
+  v.lambdas = 0;
 }
 
 // `Function::loop_binding`: the name a loop's variable takes — the spelling itself for the

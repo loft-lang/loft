@@ -18,6 +18,7 @@ use el_convert;
 use frame;
 use el_length;
 use el_par;
+use el_definitions;
 
 // An expression's IR and type.
 pub struct Ex {
@@ -133,6 +134,36 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
   }
   rb = el_vars::var(vars, "__retbuf");
+  // A lambda answering a record has no buffer on the first pass (it is reserved between the
+  // passes): a parameter at its tail is what the result borrows, by attribute number.
+  lambda = starts_with(el::def(e, e.context).name, "n___lambda_");
+  if rb < 0 && e.first_pass && el_types::base(result) is TyReference && lambda {
+    r0 = el::def(e, e.context).returned[0];
+    ds = el_types::deps(r0);
+    for tv in el_types::deps(b.tp) {
+      pa = if vars.vars[tv]!.argument { attr_nr(el::def(e, e.context), el_vars::name_of(vars, tv)) } else { -1 };
+      if pa >= 0 && !ds.contains(pa) {
+        ds += [pa];
+      }
+    }
+    e.b.data.definitions[e.context].returned = [el_types::with_deps(r0, ds)];
+  }
+  // A lambda's record body is typed by the result as this pass met it (`block_result`).
+  if !e.first_pass && lambda && el_types::base(result) is TyReference {
+    match code {
+      NdBlock { block } => {
+        bl = block[0];
+        bl.result = [result];
+        code = ir::NdBlock { block: [bl] };
+      },
+      _ => {}
+    }
+  }
+  // A lambda's late buffer is delivered nothing: its body builds the record it answers as a
+  // value (`ref_return` renamed nothing on the first pass, when the lambda had no buffer).
+  if lambda {
+    rb = -1;
+  }
   // A call at a record tail goes through `ref_return`'s `Bind`, which recomputes the result's
   // borrows: the one parameter a mid-body `return` merged is dropped again.  A parameter or a
   // literal at the tail leaves them as they are (`pick`, R-Rebind against #1888's cell).  A
@@ -2123,11 +2154,79 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     STupleLit { elems } => tuple_lit(e, vars, elems),
     STupleGet { e: te, index } => tuple_get(e, vars, te, index),
     SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, len(caps) > 0 || has_caps),
+    SLambda { at: _ } => lambda_expr(e, vars, n),
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })
     }
   }
+}
+
+// `Parser::parse_lambda` for `fn(params) -> R { body }`: a function of its own,
+// `__lambda_<fn>_<N>` (the enclosing function's name, the lambdas it made before), made where it
+// is met and read on each pass as `parse_function` reads a definition; the expression is its
+// definition number, read as a function value.  A name of the enclosing body is no name of the
+// lambda's (a capture is refused where it is read); the `|x|` spelling is refused by name.
+fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  match e.p.nodes[n] {
+    SLambda { at, params, ret, body, short } => {
+      if short {
+        el::refuse(e, "a short lambda (`|…|`), its parameter types inferred");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      if e.context < 0 || body == null {
+        el::refuse(e, "a lambda outside a function or with no body");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      own: vector<text> = [];
+      for pn in params {
+        match e.p.nodes[pn] {
+          SParam { name: pname } => { own += [pname]; },
+          _ => {}
+        }
+      }
+      cap = captured_name(e, vars, body!, own);
+      if cap != "" {
+        el::refuse(e, "a lambda that captures a local of its function");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      outer = el::def(e, e.context).name;
+      nm = "__lambda_{if starts_with(outer, "n_") { outer[2..] } else { outer }}_{vars.lambdas}";
+      vars.lambdas += 1;
+      ctx = e.context;
+      tvs = e.type_vars;
+      e.type_vars = [];
+      key = el_definitions::parse_function(e, at, false, nm, [], params, ret, false, null, body, []);
+      e.context = ctx;
+      e.type_vars = tvs;
+      d = if key == "" { -1 } else { el::def_nr(e, key) };
+      if d < 0 {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      ex(ir::NdInt { n: d }, el_types::function_value_type(e, d))
+    },
+    _ => ex(ir::NdNull, ir::TyUnknown { n: 0 })
+  }
+}
+
+// A bare name in the syntax at `n` that names a local of the enclosing body (`vars`) and no
+// parameter of the lambda (`own`): the first such, or "".
+fn captured_name(e: el::El, vars: el_vars::Vars, n: integer, own: vector<text>) -> text {
+  match e.p.nodes[n] {
+    SName { name, member } => {
+      if member == "" && !own.contains(name) && el_vars::var(vars, name) >= 0 {
+        return name;
+      }
+    },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    r = captured_name(e, vars, c, own);
+    if r != "" {
+      return r;
+    }
+  }
+  ""
 }
 
 // A tuple literal whose members are scalars or texts (`(T-Cons)`): a stack tuple, typed by its
@@ -4833,8 +4932,7 @@ fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       pts = fa;
-      // The function type's result, borrowing nothing (its definition's deps name parameters).
-      rt = el_types::without_deps(result);
+      rt = result;
       // A text answered through a function value takes a work text of its own — not carried.
       if el_types::base(rt) is TyText {
         el::refuse(e, "a text answered through a function value");
@@ -4845,6 +4943,7 @@ fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -
   }
   el_vars::in_use(vars, v, true);
   list: vector<ir::Node> = [];
+  given: vector<Ex> = [];
   for a in args {
     an = "";
     ae: integer? = null;
@@ -4857,6 +4956,7 @@ fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     x = expression(e, vars, ae!);
+    given += [x];
     if e.first_pass {
       continue;
     }
@@ -4871,6 +4971,34 @@ fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     list += [c!];
+  }
+  // `fnref_result_type`: the result's borrows, named by parameter, become what those arguments
+  // borrow; a record answered through a parameter that names none borrows its record arguments'
+  // roots (`view_root_slots`).
+  {
+    ds: vector<integer> = [];
+    for a in el_types::deps(rt) {
+      for x2 in el_types::deps((given[a] ?? ex(ir::NdNull, ir::TyVoid)).tp) {
+        if !ds.contains(x2) {
+          ds += [x2];
+        }
+      }
+    }
+    if len(ds) == 0 && vars.vars[v].argument && dbref_type(el_types::base(rt)) {
+      for g in given {
+        if dbref_type(el_types::base(g.tp)) {
+          match el_ir::unspan(g.code) {
+            NdVar { n: gv } => {
+              if !ds.contains(gv) {
+                ds += [gv];
+              }
+            },
+            _ => {}
+          }
+        }
+      }
+    }
+    rt = el_types::with_deps(rt, ds);
   }
   if !e.first_pass && len(list) != len(pts) {
     el::refuse(e, "a call through a function value with too few arguments");
