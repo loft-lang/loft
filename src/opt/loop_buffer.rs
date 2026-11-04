@@ -80,8 +80,13 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             || def.is_operator()
             || !def.rust().is_empty()
             || !def.native().is_empty()
-            || calls_a_generator(data, def.code())
         {
+            continue;
+        }
+        if calls_a_generator(data, def.code()) {
+            if trace() && !hoist::loop_buffers(data, stores, d).is_empty() {
+                eprintln!("[ir-loop-buffer] fn={} declined: it calls a generator", def.name());
+            }
             continue;
         }
         let mut buffers = hoist::loop_buffers(data, stores, d);
@@ -97,11 +102,27 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         // the plain declaration, so its companions keep it.
         let apart = crate::opt::apart_vector::roles(data, d).unwrap_or_default();
         buffers.retain(|v| {
-            !apart.holds(*v)
-                && !lits.flat.contains_key(v)
-                && !pairs.by_vdb.contains_key(v)
-                && !moves.values().any(|p| p.host_vdb == *v)
-                && adopt.as_ref().is_none_or(|a| a.vdb != *v)
+            let why = if apart.holds(*v) {
+                "an inline buffer's companion"
+            } else if lits.flat.contains_key(v) {
+                "an invariant literal's"
+            } else if pairs.by_vdb.contains_key(v) {
+                "an element-first pair's"
+            } else if moves.values().any(|p| p.host_vdb == *v) {
+                "a move host"
+            } else if adopt.as_ref().is_some_and(|a| a.vdb == *v) {
+                "the adopted result's witness"
+            } else {
+                return true;
+            };
+            if trace() {
+                eprintln!(
+                    "[ir-loop-buffer] fn={} {} left: {why}",
+                    data.def(d).name(),
+                    data.def(d).variables().name(*v)
+                );
+            }
+            false
         });
         if buffers.is_empty() {
             continue;
