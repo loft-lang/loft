@@ -415,6 +415,16 @@ pub fn set_name(v: Vars, name: text, nr: integer) {
   }
 }
 
+// `Function::set_name` / `remove_name` undoing a binding's alias: the spelling names `nr`
+// again, or nothing where it named nothing (-1).
+pub fn restore_name(v: Vars, name: text, nr: integer) {
+  if nr < 0 {
+    v.names[name] = null;
+  } else {
+    set_name(v, name, nr);
+  }
+}
+
 // `Function::loop_variable`: the loop's variable, made on the first pass and met again on the
 // second by its `name#bind` key — the spelling itself may name a later loop's variable by then —
 // adopting the second pass's borrows where the first had none, the spelling pointed at it.

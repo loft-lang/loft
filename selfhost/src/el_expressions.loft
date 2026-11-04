@@ -2056,16 +2056,17 @@ fn sizeof_expr(e: el::El, vars: el_vars::Vars, kind: text, st: integer?) -> Ex {
   ex(ir::NdInt { n: e.b.types[el::def(e, d).known_type]!.size }, int_t)
 }
 
-// `Parser::parse_is_variant` for a plain enum: `x is V` compares the subject's ordinal with the
-// variant's (`OpEqInt(OpConvIntFromEnum(x), ord)`).  A struct-enum subject, captures and a
-// nullable subject are refused by name.
+// `Parser::parse_is_variant`: `x is V` compares the subject's ordinal with the variant's
+// (`OpEqInt(OpConvIntFromEnum(x), ord)`); a struct enum's, or a variant record's, is its `enum`
+// field (`OpGetEnum` at 0).  Captures and a nullable subject are refused by name.
 fn is_expr(e: el::El, vars: el_vars::Vars, ie: integer?, variant: text, captures: boolean) -> Ex {
   if ie == null {
     el::refuse(e, "an `is` with no subject");
     return ex(ir::NdNull, ir::TyBoolean);
   }
   x = expression(e, vars, ie!);
-  en = match x.tp { TyEnum { n, is_ref } => if is_ref { -1 } else { n }, _ => -1 };
+  sd = struct_enum_of(e, x.tp);
+  en = if sd >= 0 { sd } else if el_convert::plain_enum(x.tp) { match x.tp { TyEnum { n } => n, _ => -1 } } else { -1 };
   if en < 0 || captures {
     refuse_known(e, x.tp, "an `is` on this subject, or with captures: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyBoolean);
@@ -2076,7 +2077,8 @@ fn is_expr(e: el::El, vars: el_vars::Vars, ie: integer?, variant: text, captures
     return ex(ir::NdNull, ir::TyBoolean);
   }
   ord = match el::def(e, en).attributes[a].value[0] { NdEnum { ord: o } => o, _ => 0 };
-  ex(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [x.code]), ir::NdInt { n: ord }]), ir::TyBoolean)
+  subj = if sd >= 0 { el_ir::cl(e, "OpGetEnum", [x.code, ir::NdInt { n: 0 }]) } else { x.code };
+  ex(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [subj]), ir::NdInt { n: ord }]), ir::TyBoolean)
 }
 
 // A type's variant name, for a refusal that says which operands it met.
@@ -3525,7 +3527,7 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
     _ => {}
   }
   d = el::def_nr(e, name);
-  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+  if !literal_def(e, d) {
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -3773,7 +3775,9 @@ fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) 
     },
     _ => {}
   }
-  val = to_default(e, ft);
+  // A field declaring its default takes it: a variant's `enum` field its ordinal.  Any other
+  // declared default is refused where the struct is read.
+  val = if (at.value[0] ?? ir::NdNull) is NdEnum { at.value[0]! } else { to_default(e, ft) };
   if base == 0 {
     return [set_field(e, d, a, r, val)];
   }
@@ -3937,6 +3941,12 @@ fn hands_to_call(e: el::El, n: ir::Node, v: integer) -> boolean {
   }
 }
 
+// What a struct literal builds: a struct, or an enum's struct variant (a record whose `enum`
+// field, left out of every literal, is written its ordinal as an omitted field's default).
+fn literal_def(e: el::El, d: integer) -> boolean {
+  d >= 0 && (el::def(e, d).def_type == el::DT_STRUCT || el::def(e, d).def_type == el::DT_ENUM_VALUE && len(el::def(e, d).attributes) > 0)
+}
+
 // `Parser::parse_object`'s fresh-record arm, a literal that is a value rather than a bind: on the
 // second pass built in its own `__ref_p2_N` ("Object", answering the buffer and typed as a
 // record borrowing it); on the first its fields are read and it answers the record's type.
@@ -3946,7 +3956,7 @@ fn object_expr(e: el::El, vars: el_vars::Vars, name: text, member: text, fields:
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   d = el::def_nr(e, name);
-  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+  if !literal_def(e, d) {
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -4114,6 +4124,7 @@ fn write_op(at: ir::Attribute) -> text {
     TyFloat => "OpSetFloat",
     TySingle => "OpSetSingle",
     TyCharacter => "OpSetCharacter",
+    TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpSetEnum" },
     _ => ""
   }
 }
@@ -4159,7 +4170,7 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
     },
     _ => {}
   }
-  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+  if !literal_def(e, d) {
     kind = if d >= 0 { "definition type {el::def(e, d).def_type}" } else { type_kind(x.tp) };
     refuse_known(e, x.tp, "a field of something other than a plain struct: {kind}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -4178,38 +4189,53 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
     NdVar { n } => { t = el_types::with_deps(t, [n]); },
     _ => {}
   }
-  pos = ir::NdInt { n: field_position(e, d, name) };
+  got = field_get(e, d, a, x.code);
+  if got == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  code = got!;
+  // `wrap_chain`: on the second pass each `.` step is wrapped in the `.`'s position.
+  if !e.first_pass {
+    code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
+  }
+  ex(code, t)
+}
+
+// `Parser::get_val` of field `a` of record `d` at `r`: a collection or record field is the place
+// itself (`OpGetField` with the field's store type), a plain field its read.  Null where the
+// field's type is refused.
+fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
+  def = el::def(e, d);
+  pos = ir::NdInt { n: field_position(e, d, def.attributes[a]!.name) };
   ft = el_types::base(def.attributes[a]!.typedef[0]);
-  // `get_val`: a collection or record field is the place itself (`OpGetField` with the field's
-  // store type), a plain field its read.
   keyed = ir::NdInt { n: if e.first_pass || !keyed_kind(ft) { 0 } else { el_schema::keyed_type(e, ft) } };
-  code = match ft {
+  match ft {
     TyVector { inner } => {
       // The schema is laid out after the first pass, whose code is not kept.
       vk = if e.first_pass { 0 } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
       if vk < 0 {
         el::refuse(e, "a field read of a vector the library has no rows for");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        return null;
       }
-      el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: vk }])
+      el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: vk }])
     },
-    TyHash { n: _ } => el_ir::cl(e, "OpGetField", [x.code, pos, keyed]),
-    TySorted { n: _ } => el_ir::cl(e, "OpGetField", [x.code, pos, keyed]),
-    TyIndex { n: _ } => el_ir::cl(e, "OpGetField", [x.code, pos, keyed]),
+    TyHash { n: _ } => el_ir::cl(e, "OpGetField", [r, pos, keyed]),
+    TySorted { n: _ } => el_ir::cl(e, "OpGetField", [r, pos, keyed]),
+    TyIndex { n: _ } => el_ir::cl(e, "OpGetField", [r, pos, keyed]),
     TyReference { n: fd } => {
       if el::def(e, fd).def_type != el::DT_STRUCT {
         el::refuse(e, "a field read of this type");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        return null;
       }
-      el_ir::cl(e, "OpGetField", [x.code, pos, ir::NdInt { n: el::def(e, fd).known_type }])
+      el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: el::def(e, fd).known_type }])
     },
     TyInteger { spec } => {
       fa = def.attributes[a]!;
       sl = int_slot(e, spec, fa.alias_d_nr, fa.nullable);
       if slot_takes_min(sl.kind) {
-        el_ir::cl(e, "OpGet{sl.kind}", [x.code, pos, ir::NdInt { n: sl.min }])
+        el_ir::cl(e, "OpGet{sl.kind}", [r, pos, ir::NdInt { n: sl.min }])
       } else {
-        el_ir::cl(e, "OpGet{sl.kind}", [x.code, pos])
+        el_ir::cl(e, "OpGet{sl.kind}", [r, pos])
       }
     },
     _ => {
@@ -4219,20 +4245,16 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
         TyFloat => "OpGetFloat",
         TySingle => "OpGetSingle",
         TyCharacter => "OpGetCharacter",
+        TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpGetEnum" },
         _ => ""
       };
       if op == "" {
         el::refuse(e, "a field read of this type");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        return null;
       }
-      el_ir::cl(e, op, [x.code, pos])
+      el_ir::cl(e, op, [r, pos])
     }
-  };
-  // `wrap_chain`: on the second pass each `.` step is wrapped in the `.`'s position.
-  if !e.first_pass {
-    code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
   }
-  ex(code, t)
 }
 
 // `Parser::parse_var` for the name a binding writes: on the first pass a name that is not a
@@ -4802,9 +4824,9 @@ pub fn after_paren(e: el::El, from: integer) -> integer {
 
 // `Data::candidates`, the rungs a plain receiver reaches: none for an untyped first argument,
 // else the method on the receiver's type under its own nullability spelling and then the
-// other, then the free `n_<name>`.  A receiver that is a variant or a generic instance is
-// refused by name, as is the operator fallback; a bound holder is never one yet, since the
-// elaboration does not read generic bounds.
+// other, then the free `n_<name>`.  A variant's type is its enum's; a bound holder answers its
+// one stub.  A generic instance, a variant's own method and the operator fallback are refused
+// by name.
 fn find_fn(e: el::El, name: text, receiver: ir::TypeT) -> integer {
   free = el::def_nr(e, "n_{name}");
   // A method dispatches on the REFERENT of a `&τ`, not on the link (`Data::candidates`, loft#824).
@@ -4825,8 +4847,21 @@ fn find_fn(e: el::El, name: text, receiver: ir::TypeT) -> integer {
     return free;
   }
   td = el::def(e, tn);
-  if td.def_type == el::DT_ENUM_VALUE || td.instance_of >= 0 {
-    el::refuse(e, "a method receiver that is a variant or a generic instance");
+  // A variant dispatches on its enum, unless it declares the method under its own name.
+  if td.def_type == el::DT_ENUM_VALUE {
+    for sp in [td.name, "{td.name}?"] {
+      if el::def_nr(e, "t_{len(sp)}{sp}_{name}") >= 0 {
+        el::refuse(e, "a method a variant declares itself");
+        return -1;
+      }
+    }
+    if td.parent >= 0 && el::def(e, td.parent).def_type == el::DT_ENUM {
+      tn = td.parent;
+      td = el::def(e, tn);
+    }
+  }
+  if td.instance_of >= 0 {
+    el::refuse(e, "a method receiver that is a generic instance");
     return -1;
   }
   // A bound HOLDER's stubs are keyed per signature, and a method call offers no arity: every
@@ -6442,6 +6477,11 @@ fn takes(e: el::El, param: ir::TypeT, arg: ir::TypeT) -> boolean {
   // a nullable one as its base (`@FR-N-Store` reports it).
   match param {
     TyVector { inner } => el_types::is_unknown(inner) && el_types::base(arg) is TyVector,
+    // `@FR-C-Var`: a variant satisfies the enum it belongs to.
+    TyEnum { n } => match arg {
+      TyReference { n: v } => el::def(e, v).def_type == el::DT_ENUM_VALUE && el::def(e, v).parent == n,
+      _ => false
+    },
     TyReference { n } => {
       a = el_types::base(arg);
       nm = el::def(e, n).name;
@@ -9246,7 +9286,14 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   }
   scalar_subject = el_convert::plain_scalar(st) || st is TyText;
   enum_subject = el_convert::plain_enum(st);
-  if !scalar_subject && !enum_subject {
+  // A struct enum, or one of its variants, is matched on its record: the ordinal its `enum`
+  // field holds, read in place where the subject is a local.
+  sd = struct_enum_of(e, st);
+  if sd >= 0 && !(el_ir::unspan(x.code) is NdVar) {
+    el::refuse(e, "a match on a struct enum that is not a local");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if !scalar_subject && !enum_subject && sd < 0 {
     if !el_types::is_unknown(st) {
       el::refuse(e, "a match on this type: {type_kind(st)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -9279,17 +9326,30 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         }
         cond: ir::Node? = null;
         wild = false;
-        for pn in pats {
-          c = pattern_cond(e, vars, pn, v, st, enum_subject);
-          if c == null {
-            if !(e.p.nodes[pn] is PWild) {
-              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        binds: vector<ir::Node> = [];
+        aliases: vector<el_vars::VarName> = [];
+        if sd >= 0 {
+          va = variant_arm(e, vars, pats, sd, x.code);
+          if va == null {
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          cond = va!.cond;
+          wild = cond == null;
+          binds = va!.binds;
+          aliases = va!.aliases;
+        } else {
+          for pn in pats {
+            c = pattern_cond(e, vars, pn, v, st, enum_subject);
+            if c == null {
+              if !(e.p.nodes[pn] is PWild) {
+                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+              }
+              wild = true;
+            } else if cond == null {
+              cond = c;
+            } else {
+              cond = el_ir::v_if(cond!, ir::NdBoolean { b: true }, c!);
             }
-            wild = true;
-          } else if cond == null {
-            cond = c;
-          } else {
-            cond = el_ir::v_if(cond!, ir::NdBoolean { b: true }, c!);
           }
         }
         if wild {
@@ -9297,6 +9357,13 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { arm_expectation(result) };
         b = arm_body(e, vars, body, expected);
+        // The bindings' spellings name what they named before the arm.
+        for al in rev(aliases) {
+          el_vars::restore_name(vars, al.name, al.nr);
+        }
+        if len(binds) > 0 {
+          b.code = el_ir::v_block(binds + [b.code], b.tp, "match_arm");
+        }
         if b.tp is TyNull || el_ir::is_null(b.code) {
           null_arm = true;
         }
@@ -9313,7 +9380,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
       _ => {}
     }
   }
-  if e.first_pass || (!scalar_subject && !enum_subject) {
+  if e.first_pass || (!scalar_subject && !enum_subject && sd < 0) {
     return ex(ir::NdNull, result);
   }
   if el_types::base(result) is TyText {
@@ -9358,7 +9425,100 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   if null_arm && el_convert::sentinel_value(result) {
     result = ir::TyOptional { inner: result };
   }
+  // A struct enum read in place needs no `match` block.
+  if sd >= 0 {
+    return ex(chain, result);
+  }
   ex(el_ir::v_block([el_ir::v_set(v, x.code), chain], result, "match"), result)
+}
+
+// The struct enum a match subject of type `t` reads its variant from — the enum, or the enum a
+// variant record belongs to — or -1.
+fn struct_enum_of(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    TyReference { n } => if el::def(e, n).def_type == el::DT_ENUM_VALUE { el::def(e, n).parent } else { -1 },
+    _ => -1
+  }
+}
+
+struct VArm { cond: ir::Node?, binds: vector<ir::Node>, aliases: vector<el_vars::VarName> }
+
+// `parse_match_inner`'s arm over struct enum `sd`, its subject the local `subj`: each pattern a
+// variant of the enum, the test its ordinal against the record's (`OpGetEnum` at 0); a struct
+// pattern (`Circle { r }`) binds each named field to a fresh `_mv_<field>_N`, a view of the
+// record that frees nothing, its spelling naming it for the arm (`bind_match_field_capture`).
+// `_` is no test.  A field pattern with a sub-pattern, a binding in an alternation, a qualified
+// pattern and a binding of a heap field are refused by name.
+fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: integer, subj: ir::Node) -> VArm? {
+  r = VArm { cond: null, binds: [], aliases: [] };
+  for pn in pats {
+    match e.p.nodes[pn] {
+      PWild => {
+        r.cond = null;
+        return r;
+      },
+      PName { name, member, fields, braces } => {
+        if member != "" {
+          el::refuse(e, "a qualified variant pattern");
+          return null;
+        }
+        a = attr_nr(el::def(e, sd), name);
+        if a < 0 {
+          el::refuse(e, "a pattern that is not a variant of the enum: {name}");
+          return null;
+        }
+        ord = match el::def(e, sd).attributes[a].value[0] {
+          NdEnum { ord: o } => o,
+          _ => 0
+        };
+        disc = el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [subj, ir::NdInt { n: 0 }])]);
+        c = el_ir::cl(e, "OpEqInt", [disc, ir::NdInt { n: ord }]);
+        r.cond = if r.cond == null { c } else { el_ir::v_if(r.cond!, ir::NdBoolean { b: true }, c) };
+        if len(fields) > 0 && len(pats) > 1 {
+          el::refuse(e, "a binding in an alternation of variants");
+          return null;
+        }
+        vd = el::variant_of(e, sd, name);
+        for f in fields {
+          match e.p.nodes[f] {
+            PFieldPat { name: fname, pat } => {
+              if pat != null {
+                el::refuse(e, "a field pattern with a sub-pattern");
+                return null;
+              }
+              fa = if vd < 0 { -1 } else { attr_nr(el::def(e, vd), fname) };
+              if fa < 0 {
+                el::refuse(e, "a field the variant does not declare");
+                return null;
+              }
+              ft = el::def(e, vd).attributes[fa]!.typedef[0];
+              if !el_convert::plain_scalar(el_types::base(ft)) {
+                el::refuse(e, "a variant field binding of this type: {type_kind(ft)}");
+                return null;
+              }
+              read = field_get(e, vd, fa, subj);
+              if read == null {
+                return null;
+              }
+              mv = el_vars::create_unique(vars, "mv_{fname}", ft);
+              el_vars::set_defined(vars, mv);
+              vars.vars[mv].skip_free = true;
+              r.binds += [el_ir::v_set(mv, read!)];
+              r.aliases += [el_vars::VarName { name: fname, nr: el_vars::var(vars, fname) }];
+              el_vars::set_name(vars, fname, mv);
+            },
+            _ => {}
+          }
+        }
+      },
+      _ => {
+        el::refuse(e, "a pattern of this form: {syn_kind(e, pn)}");
+        return null;
+      }
+    }
+  }
+  r
 }
 
 fn unsettled(t: ir::TypeT) -> boolean {

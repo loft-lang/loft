@@ -40,11 +40,25 @@ pub fn fill_all(e: el::El) {
       register_enum(e, d#index);
     }
   }
+  // A unit variant of a struct enum is a record too: its one field, `enum`, holds its ordinal.
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_ENUM_VALUE && len(d.attributes) == 0 && d.parent >= 0 && el::def(e, d.parent).returned[0] == ir::TyEnum { n: d.parent, is_ref: true, dep: [] } {
+      ord = 0;
+      for a in el::def(e, d.parent).attributes {
+        if a.name == d.name {
+          ord = a#index + 1;
+        }
+      }
+      disc = el::attribute("enum", ir::TyEnum { n: el::def_nr(e, "enumerate"), is_ref: false, dep: [] });
+      disc.value = [ir::NdEnum { ord: ord, tp: 65535 }];
+      e.b.data.definitions[d#index].attributes += [disc];
+    }
+  }
   // Each `vector<T>` field's `main_vector<T>` wrapper (and `vector<T>`) where no construct made
   // it, at the position the lexer has reached: the end of the file.
   eof = el::pos_at(e, len(e.p.src) - 1);
   for d in e.b.data.definitions {
-    if d.def_type != el::DT_STRUCT || d.source != e.source {
+    if !(d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE) || d.source != e.source {
       continue;
     }
     for a in d.attributes {
@@ -60,7 +74,7 @@ pub fn fill_all(e: el::El) {
     }
   }
   for d in e.b.data.definitions {
-    if d.def_type == el::DT_STRUCT && d.known_type == NO_TYPE {
+    if (d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE && len(d.attributes) > 0) && d.known_type == NO_TYPE {
       fill_database(e, d#index);
     }
   }
@@ -172,9 +186,34 @@ fn fill_database(e: el::El, d: integer) {
     el::refuse(e, "a struct named like a type the schema already has");
     return;
   }
-  // The structure first, then each field's content — a narrow Part is made after it.
-  s = structure(e, reg);
+  // The structure first, then each field's content — a narrow Part is made after it.  A
+  // variant's record carries its ordinal and is linked into its enum's values.
+  ord = 0;
+  if def.def_type == el::DT_ENUM_VALUE {
+    for a in el::def(e, def.parent).attributes {
+      if a.name == def.name {
+        ord = a#index + 1;
+      }
+    }
+  }
+  s = structure(e, reg, ord);
   e.b.data.definitions[d].known_type = s;
+  if def.def_type == el::DT_ENUM_VALUE {
+    et = el::def(e, def.parent).known_type;
+    if et != NO_TYPE {
+      // `values` views the enum's own part, so the write lands in the schema.
+      match e.b.types[et].parts[0] {
+        PtEnum { values } => {
+          for v in values {
+            if v.name == def.name {
+              values[v#index].nr = s;
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+  }
   for a in def.attributes {
     if a.constant {
       continue;
@@ -199,6 +238,7 @@ fn fill_database(e: el::El, d: integer) {
     ft = el_types::base(a.typedef[0]);
     c = match ft {
       TyInteger { spec } => int_part(e, spec, a.alias_d_nr, a.nullable),
+      TyEnum { n, is_ref } => enum_content(e, n, is_ref),
       _ => content_type(e, ft)
     };
     if c < 0 {
@@ -214,6 +254,16 @@ fn fill_database(e: el::El, d: integer) {
       set_field_nullable(e, s, f);
     }
   }
+}
+
+// An enum field's store type: a variant's ordinal (`enumerate`) a plain byte, a plain enum its
+// own type; -1 for a struct enum's, which is not carried.
+fn enum_content(e: el::El, n: integer, is_ref: boolean) -> integer {
+  if el::def(e, n).name == "enumerate" {
+    return narrow_part(e, "byte", ir::PtByte { start: 0, nullable: false }, 1);
+  }
+  k = el::def(e, n).known_type;
+  if is_ref || k == NO_TYPE { -1 } else { k }
 }
 
 // The schema type a field of type `t` stores, or -1: a plain `integer` stores `integer`'s
@@ -553,11 +603,13 @@ pub fn schema_type(e: el::El, name: text) -> integer {
 }
 
 // `Stores::structure`: a new struct type, not yet sized (`u16::MAX`), its number its position.
-fn structure(e: el::El, name: text) -> integer {
+// `Stores::structure`: a record type of that name, an enum variant's (`ord` > 0) carrying its
+// ordinal.
+fn structure(e: el::El, name: text, ord: integer) -> integer {
   num = len(e.b.types);
   e.b.types += [ir::DbType {
     name: name,
-    parts: [ir::PtStruct { fields: [] }],
+    parts: [if ord > 0 { ir::PtEnumValue { value: ord, fields: [] } } else { ir::PtStruct { fields: [] } }],
     keys: [],
     complex: false,
     linked: false,
@@ -624,7 +676,7 @@ fn field(e: el::El, s: integer, name: text, content: integer) -> integer {
     nullable: false,
     target: NO_TYPE
   }];
-  e.b.types[s].parts = [ir::PtStruct { fields: fields }];
+  set_fields(e, s, fields);
   ct = e.b.types[content]!;
   if num > 8 || ct.complex || is_record(ct) {
     e.b.types[s].complex = true;
@@ -635,16 +687,26 @@ fn field(e: el::El, s: integer, name: text, content: integer) -> integer {
 fn set_field_nullable(e: el::El, s: integer, f: integer) {
   fields = struct_fields(e, s);
   fields[f].nullable = true;
-  e.b.types[s].parts = [ir::PtStruct { fields: fields }];
+  set_fields(e, s, fields);
 }
 
+// A record type's fields: a struct's or an enum variant's.
 pub fn struct_fields(e: el::El, s: integer) -> vector<ir::DbField> {
   r: vector<ir::DbField> = [];
   match e.b.types[s].parts[0] {
     PtStruct { fields } => { r = fields; },
+    PtEnumValue { fields } => { r = fields; },
     _ => {}
   }
   r
+}
+
+// A record type's fields replaced, a variant keeping its ordinal.
+fn set_fields(e: el::El, s: integer, fields: vector<ir::DbField>) {
+  e.b.types[s].parts = [match e.b.types[s].parts[0] {
+    PtEnumValue { value } => ir::PtEnumValue { value: value, fields: fields },
+    _ => ir::PtStruct { fields: fields }
+  }];
 }
 
 fn is_record(t: ir::DbType) -> boolean {
@@ -657,11 +719,31 @@ fn is_record(t: ir::DbType) -> boolean {
 
 // `Stores::finish`, for the struct types: every one not sized yet is laid out.
 fn finish(e: el::El) {
-  // `finish_type`'s enum arm: one byte, where no variant has a record of its own.
+  // `finish_type`'s enum arm: as large and as aligned as its largest variant record, one byte
+  // where no variant has one.
   for t in e.b.types {
     if t.size == NO_TYPE && (t.parts[0]) is PtEnum {
-      e.b.types[t#index].size = 1;
-      e.b.types[t#index].align = 1;
+      size = 1;
+      align = 1;
+      match t.parts[0] {
+        PtEnum { values } => {
+          for v in values {
+            if v.nr != NO_TYPE {
+              finish_type(e, v.nr);
+              vt = e.b.types[v.nr]!;
+              if vt.size > size {
+                size = vt.size;
+              }
+              if vt.align > align {
+                align = vt.align;
+              }
+            }
+          }
+        },
+        _ => {}
+      }
+      e.b.types[t#index].size = size;
+      e.b.types[t#index].align = align;
     }
   }
   for t in e.b.types {
@@ -702,7 +784,7 @@ fn finish_type(e: el::El, t: integer) {
     size = l.size;
     align = l.align;
   }
-  e.b.types[t].parts = [ir::PtStruct { fields: fields }];
+  set_fields(e, t, fields);
   e.b.types[t].size = size;
   e.b.types[t].align = align;
 }
