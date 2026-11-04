@@ -25,6 +25,7 @@ mod fnval;
 mod parse;
 mod reflect;
 mod show;
+mod split;
 mod tidy;
 pub(crate) mod tls;
 mod unicode;
@@ -4289,11 +4290,11 @@ fn framed(
         "{storage} {} {name}__fr({params});",
         held(ret)
     );
-    let _ = write!(
-        cx.gen_bodies.borrow_mut(),
-        "\n{storage} {} {name}__fr({params}) {{\n{body}}}\n",
-        held(ret)
-    );
+    // `(R-CSplit)`: a body over the size budget goes out as a chain of parts.
+    let fr = format!("{name}__fr");
+    let text = split::split(storage, &held(ret).clone(), &fr, params, body)
+        .unwrap_or_else(|| format!("{storage} {} {fr}({params}) {{\n{body}}}\n", held(ret)));
+    let _ = write!(cx.gen_bodies.borrow_mut(), "\n{text}");
     let args: Vec<String> = if params == "void" {
         Vec::new()
     } else {

@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `(R-CSplit)`: a local written in two parts, one read only in a later part, and a view taken
+// in one part and written through in another while its container is written between.
+struct P { x: integer, tag: text }
+
+fn main() {
+  v = [P { x: 1, tag: "a" }, P { x: 2, tag: "b" }];
+  e = v[1];
+  later = "late";
+  acc = 100;
+  v[0].x = 10;
+  acc += v[0].x;
+  e.x += 30;
+  e.tag += "!";
+  acc += e.x;
+  assert(v[1].x == 32 and e.x == 32, "the view writes its slot: {v[1].x} {e.x}");
+  assert(v[1].tag == "b!" and v[0].tag == "a", "text through the view: {v[1].tag}");
+  assert(v[0].x == 10 and len(v) == 2, "the container: {v[0].x} {len(v)}");
+  assert(acc == 142, "written in two parts: {acc}");
+  assert(later == "late" and len(later) == 4, "read only at the end: {later}");
+  println("liveness ok");
+}
