@@ -397,16 +397,15 @@ synthetic `__nullable<S>` stays out of all of it.
 
 ## Loop-local buffers and records
 
-**`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
-generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
+**`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON, IR
+phase, every backend) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
 buffer every iteration again — with it off, the buffer's store and its vector survive the
-iteration, the mint after the first is a length reset that keeps the capacity, and the
-literal's zero of the vector field is not emitted (the resample's two per-pixel vectors:
-−10 % on the row) — and is the first bisect step for a stale or wrong element read out of
-a vector declared inside a loop on native.  Only for elements that own no heap (a `text`
+iteration and every pass after the first clears the vector, keeping its capacity — and is
+the first bisect step for a stale or wrong element read out of a vector declared inside a
+loop.  Only for elements that own no heap (a `text`
 vector keeps the re-mint: a length reset would strand what its elements own), a buffer no
 other call reaches, and a declaration outside the loop.  `LOFT_TRACE_LOOP_BUFFER=1` names
-each buffer kept and each declined.
+each buffer declined, `LOFT_TRACE_IR_LOOP_BUFFER=1` each kept.
 **`LOFT_NO_LOOP_RECORD=1`** (`@FR-R-LoopRecord`, default-ON, generation time, `--native`
 only) makes a plain no-heap record local declared and minted by a literal INSIDE a loop
 (`sub = Spec {…}` per pass) free its store at the iteration's end and take a fresh one next

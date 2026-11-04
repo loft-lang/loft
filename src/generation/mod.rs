@@ -676,7 +676,7 @@ pub struct Output<'a> {
     /// `(R-Mint)`'s rebound clause — the current function's emitter-owned buffer vars: the
     /// § V-al loop buffers and the § V-z element-first witnesses, whose `OpDatabase` the
     /// loop-hoist admission lets through and whose projection a rebound mover may be bound
-    /// from.  Rebuilt per function beside [`Self::loop_buffers`].
+    /// from.  Rebuilt per function.
     pub hoist_owned: hoist::HoistOwned,
     /// `@FR-R-GroupPush` — the open mint GROUPS: `(block serial, index of the group's last
     /// statement)`, innermost last; the header frame each pushed on
@@ -808,10 +808,6 @@ pub struct Output<'a> {
     /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
     /// appended element instead of its own store.
     pub elem_first: hoist::ElemFirstMap,
-    /// @PLN157 § V-al — the current function's LOOP BUFFERS (`hoist::loop_buffers`): a
-    /// per-site vector buffer minted inside a loop whose mint after the first is a length
-    /// reset, and whose literal field zero is not emitted.
-    pub loop_buffers: HashSet<u16>,
     /// `@FR-R-LoopRecord` — the current function's LOOP RECORDS (`hoist::loop_records`): a
     /// plain no-heap record local declared and minted inside a loop, keyed by variable, with
     /// the loop that owns its reuse and the block that declares it.
@@ -1928,7 +1924,6 @@ impl<'a> Output<'a> {
             dead_buffers: HashSet::new(),
             forward_sites: HashMap::new(),
             elem_first: hoist::ElemFirstMap::default(),
-            loop_buffers: HashSet::new(),
             loop_records: HashMap::new(),
             refill_in_place: crate::keys::refill_in_place_enabled(),
             rebind_buffer: None,
@@ -2523,26 +2518,10 @@ impl Output<'_> {
             // The refill clause's vector-field zeros are `@FR-R-RefillBuffer`'s empties.
             self.refill.field_zeros.extend(lr.field_zeros);
         }
-        self.loop_buffers.clear();
-        if !self.switches.loop_buffer_disabled {
-            let mut lb = hoist::loop_buffers(self.data, self.stores, def_nr);
-            lb.retain(|v| {
-                !self.invariant_lits.flat.contains_key(v)
-                    && !self.elem_first.by_vdb.contains_key(v)
-                    && !self.move_pairs.values().any(|p| p.host_vdb == *v)
-                    && self.ret_adopt.is_none_or(|a| a.vdb != *v)
-            });
-            self.loop_buffers = lb;
-        }
         // `(R-Mint)`'s rebound clause — the buffer vars whose mint the hoist admission lets
         // through: what the emitter itself owns the mint of.
         self.hoist_owned = hoist::HoistOwned {
-            buffers: self
-                .loop_buffers
-                .iter()
-                .copied()
-                .chain(self.elem_first.by_vdb.keys().copied())
-                .collect(),
+            buffers: self.elem_first.by_vdb.keys().copied().collect(),
             elem_fields: self
                 .elem_first
                 .pairs
@@ -2606,7 +2585,6 @@ impl Output<'_> {
         let refill = self.loop_records.values().filter(|r| r.refill).count();
         fired("R-LoopRecord", self.loop_records.len() - refill);
         fired("R-LoopRecord/refill", refill);
-        fired("R-LoopBuffer", self.loop_buffers.len());
     }
 
     /// loft#885 — open a loop with the headers of the vectors it only reads, and

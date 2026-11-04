@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator
+// @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 //! `@FR-R-Apart`, instance 3 — a `vector<float>` local that never leaves its function is held
 //! as an INLINE buffer with a spill (`codegen_runtime::ApVec`): its pushes, element reads and
 //! writes and its length touch no store.  Nothing crosses a boundary, so there is no
@@ -61,7 +61,8 @@ impl VecRoles {
 pub fn disabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *F.get_or_init(|| {
-        super::apart_value::apart_disabled()
+        // `LOFT_NO_APART=1` turns every instance off (`lower::apart_value::apart_disabled`).
+        std::env::var("LOFT_NO_APART").is_ok_and(|v| v != "0")
             || std::env::var("LOFT_NO_APART_VECTOR").is_ok_and(|v| v != "0")
     })
 }

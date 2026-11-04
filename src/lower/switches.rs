@@ -175,9 +175,6 @@ pub struct Switches {
     /// `LOFT_NO_LOOP_RECORD` (generation time): every such local frees its store at the
     /// iteration's end and takes a fresh one next pass again.
     pub loop_record_disabled: bool,
-    /// `LOFT_NO_LOOP_BUFFER_REUSE` (generation time): every such buffer re-mints per
-    /// iteration again.
-    pub loop_buffer_disabled: bool,
     /// `LOFT_NO_PUSH_FILL` (generation time): a counted push loop reserves nothing and
     /// fills nothing — the per-push ladder and the per-element loop again (§ V-am).
     pub push_fill_disabled: bool,
@@ -320,7 +317,6 @@ impl Switches {
             complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
                 .is_ok_and(|v| v != "0"),
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
-            loop_buffer_disabled: !crate::keys::loop_buffer_reuse_enabled(),
             loop_record_disabled: std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
                 || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),

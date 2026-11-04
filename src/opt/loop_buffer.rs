@@ -4,7 +4,8 @@
 //! `@FR-R-LoopBuffer` in the IR phase: a vector local declared `[]` inside a loop keeps its
 //! store and its vector across the passes.  The buffers are `opt::hoist::loop_buffers`', the
 //! analysis rustc's writer read, less the ones another rewrite owns (an invariant literal, an
-//! element-first pair, a move host, the adopted result's witness), as the writer left them.
+//! element-first pair, a move host, the adopted result's witness), as the writer left them,
+//! and the companions of a vector `@FR-R-Apart` keeps in an inline buffer.
 //! Each declaration
 //!
 //! ```text
@@ -25,9 +26,8 @@
 //! the reset would empty the value the frame was handed (rustc tested that at run time,
 //! `is_frame_held`; the IR has no such test).
 //!
-//! `LOFT_IR_LOOP_BUFFER=1` turns it on while it is compared with rustc's clause;
-//! `LOFT_NO_LOOP_BUFFER_REUSE=1` turns the rule off; `LOFT_TRACE_IR_LOOP_BUFFER=1` names each
-//! buffer.
+//! `LOFT_NO_LOOP_BUFFER_REUSE=1` turns the rule off on every backend;
+//! `LOFT_TRACE_IR_LOOP_BUFFER=1` names each buffer kept.
 use crate::data::{Data, DefType, Type, Value, v_block, v_if};
 use crate::database::Stores;
 use crate::opt::hoist;
@@ -35,7 +35,6 @@ use std::collections::HashSet;
 
 fn enabled() -> bool {
     crate::keys::loop_buffer_reuse_enabled()
-        && crate::env_once!(std::env::var("LOFT_IR_LOOP_BUFFER").is_ok_and(|v| v != "0"))
 }
 
 fn trace() -> bool {
@@ -93,8 +92,13 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         let pairs = hoist::element_first(data, stores, d, None);
         let moves = hoist::move_appends(data, d);
         let adopt = hoist::ret_adopt(data, d);
+        // `@FR-R-Apart`'s instance 3 keeps a vector the function reads at constant indices in
+        // an inline buffer — no store at all, which a kept store cannot beat — and it reads
+        // the plain declaration, so its companions keep it.
+        let apart = crate::opt::apart_vector::roles(data, d).unwrap_or_default();
         buffers.retain(|v| {
-            !lits.flat.contains_key(v)
+            !apart.holds(*v)
+                && !lits.flat.contains_key(v)
                 && !pairs.by_vdb.contains_key(v)
                 && !moves.values().any(|p| p.host_vdb == *v)
                 && adopt.as_ref().is_none_or(|a| a.vdb != *v)

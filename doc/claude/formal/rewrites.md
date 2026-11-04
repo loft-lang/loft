@@ -567,6 +567,11 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  re-declaration would orphan the kept store).  A buffer another
                  rewrite owns — an invariant literal, an element-first pair, a move
                  host, the adopted result's witness — is left to that rewrite.
+                 Decided and applied in the IR, for every backend
+                 (`opt::loop_buffer`): `if OpRefIsNull(vdb) { the mint; the zero }
+                 else { OpClearVector(the vector) }` in place of the mint; a
+                 function that yields or calls a generator is declined, as a live
+                 frame may hold the store the reset would empty.
 
   (R-PushFill)   a counted loop (`for … in lo..hi`, `lo..=hi`) whose body pushes k
                  scalars to ONE pure path at its top level every iteration — or to

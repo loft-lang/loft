@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! @PLN157 § V-al (`@FR-R-LoopBuffer`) — the EMISSION pins.  A vector local declared `[]`
-//! inside a loop is backed by a per-site buffer whose every mint after the first is a
-//! length reset (`vector::vector_buffer_reset`) and whose literal field zero is not
-//! emitted; a `text` vector keeps the re-mint; `LOFT_NO_LOOP_BUFFER_REUSE=1` restores the
-//! re-mint everywhere.  The cell corpus (`bytecode-comparisons/V-al-loop-buffer-cells.loft`)
+//! inside a loop is backed by a per-site buffer the IR keeps (`opt::loop_buffer`): `if
+//! OpRefIsNull(vdb) { mint; zero } else { OpClearVector(…) }`, so the first pass mints and
+//! zeroes and every later pass clears the vector, keeping its store; a `text` vector keeps the
+//! re-mint; `LOFT_NO_LOOP_BUFFER_REUSE=1` restores the re-mint everywhere.  The cell corpus (`bytecode-comparisons/V-al-loop-buffer-cells.loft`)
 //! says the VALUES hold on both backends; this pins what is emitted.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
@@ -56,20 +56,19 @@ fn a_loop_local_vector_keeps_its_store_and_resets_its_length() {
     for name in ["n_l1", "n_l4", "n_l5", "n_l6", "n_l7"] {
         let b = body(&rust, name);
         assert!(
-            b.contains("vector::vector_buffer_reset(&var___vdb_"),
-            "{name}: the in-loop mint is a length reset after the first pass"
+            b.contains("//loop buffer reset") && b.contains("vector::clear_vector(&_cv"),
+            "{name}: the in-loop mint is a clear after the first pass"
         );
         assert!(
-            b.contains("if var___vdb_1.store_nr == u16::MAX || var___vdb_1.rec == 0 || stores.is_frame_held(var___vdb_1.store_nr) { var___vdb_1 = OpDatabase")
-                || b.contains("if var___vdb_2.store_nr == u16::MAX || var___vdb_2.rec == 0 || stores.is_frame_held(var___vdb_2.store_nr) { var___vdb_2 = OpDatabase"),
+            b.contains("//loop buffer mint"),
             "{name}: the first pass still mints"
         );
     }
     // The nested cell keeps BOTH buffers: the outer loop's and the inner loop's.
     let l3 = body(&rust, "n_l3");
-    assert!(
-        l3.contains("vector::vector_buffer_reset(&var___vdb_1")
-            && l3.contains("vector::vector_buffer_reset(&var___vdb_2"),
+    assert_eq!(
+        l3.matches("//loop buffer reset").count(),
+        2,
         "l3: the outer and the inner loop's vectors both keep their stores"
     );
 }
@@ -78,11 +77,16 @@ fn a_loop_local_vector_keeps_its_store_and_resets_its_length() {
 fn the_literal_field_zero_is_not_emitted_for_a_loop_buffer() {
     let rust = emit("zero", &[]);
     let l1 = body(&rust, "n_l1");
-    // The kept buffer's vector field is never written back to null: the zero the `[]`
-    // literal lowers to would drop the vector the reuse keeps.
+    // The kept buffer's vector field is written back to null only on the first pass, inside
+    // the mint: the zero the `[]` literal lowers to would drop the vector the reuse keeps.
+    let zero = "let db = (var___vdb_1); let v = if _v_val == i64::MIN";
+    let mint = l1.find("//loop buffer mint").expect("l1 mints");
+    let reset = l1.find("//loop buffer reset").expect("l1 resets");
+    assert_eq!(l1.matches(zero).count(), 1, "l1: one field zero");
+    let at = l1.find(zero).expect("l1's zero");
     assert!(
-        !l1.contains("let db = (var___vdb_1); let v = if _v_val == i64::MIN"),
-        "l1: the `[]` literal's field zero is dropped for a loop buffer"
+        mint < at && at < reset,
+        "l1: the `[]` literal's field zero stands in the first pass's mint alone"
     );
 }
 
@@ -91,7 +95,7 @@ fn a_text_vector_keeps_the_re_mint() {
     let rust = emit("text", &[]);
     let l2 = body(&rust, "n_l2");
     assert!(
-        !l2.contains("vector_buffer_reset"),
+        !l2.contains("//loop buffer reset"),
         "l2: elements that own heap are cleared by the mint, never length-reset"
     );
     assert!(
@@ -104,7 +108,7 @@ fn a_text_vector_keeps_the_re_mint() {
 fn the_switch_restores_the_re_mint_everywhere() {
     let rust = emit("switch", &[("LOFT_NO_LOOP_BUFFER_REUSE", "1")]);
     assert!(
-        !rust.contains("vector_buffer_reset"),
+        !rust.contains("//loop buffer reset"),
         "LOFT_NO_LOOP_BUFFER_REUSE=1 must emit no length reset"
     );
     let l1 = body(&rust, "n_l1");
