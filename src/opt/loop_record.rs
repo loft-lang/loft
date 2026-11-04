@@ -147,7 +147,7 @@ fn admit(
     let vars = def.variables();
     let mut recs: HashMap<u16, Rec> = HashMap::new();
     for (v, rec) in found.recs {
-        let Type::Reference(_, _) = vars.tp(v) else {
+        let Type::Reference(_, _) = vars.tp(v).base() else {
             continue;
         };
         if let Some(owner) = owned.get(&v) {
