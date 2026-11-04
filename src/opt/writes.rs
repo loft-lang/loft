@@ -408,7 +408,7 @@ pub fn mint_target(
     vars: &crate::variables::Function,
 ) -> Option<MintTarget> {
     let arity = match op {
-        "OpNewRecord" => 3,
+        "OpNewRecord" | "OpNewRecordNP" => 3,
         "OpFinishRecord" => 4,
         _ => return None,
     };

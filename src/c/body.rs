@@ -1763,7 +1763,7 @@ impl<'a> FnWriter<'a> {
                 K::Void,
             )));
         }
-        if !matches!(name, "OpNewRecord" | "OpFinishRecord") {
+        if !matches!(name, "OpNewRecord" | "OpNewRecordNP" | "OpFinishRecord") {
             return Ok(None);
         }
         let Some(t) = crate::opt::writes::mint_target(data, self.cx.stores, name, args, self.vars)
@@ -1788,7 +1788,7 @@ impl<'a> FnWriter<'a> {
                 c_string(&proof_at)
             ),
         );
-        if !self.mint_complete(ptp) {
+        if !(name == "OpNewRecordNP" || self.mint_complete(ptp)) {
             let (image, n) = self.cx.default_image(elem);
             self.line(ind, &format!("loft_fill({e}, {image}, {n});"));
         }
@@ -2365,7 +2365,7 @@ impl<'a> FnWriter<'a> {
                 .and_then(|v| window_of(self, v))
                 .map(|_| E::new("((void) 0)", K::Void)));
         }
-        if matches!(name, "OpNewRecord" | "OpFinishRecord")
+        if matches!(name, "OpNewRecord" | "OpNewRecordNP" | "OpFinishRecord")
             && let Some(t) =
                 crate::opt::writes::mint_target(data, self.cx.stores, name, args, self.vars)
             && let Some((w, pv, size)) = by_path(self, &t.path)
@@ -2388,7 +2388,7 @@ impl<'a> FnWriter<'a> {
                     c_string(&site)
                 ),
             );
-            if !self.mint_complete(ptp) {
+            if !(name == "OpNewRecordNP" || self.mint_complete(ptp)) {
                 let (image, n) = self.cx.default_image(elem);
                 self.line(ind, &format!("loft_fill({e}, {image}, {n});"));
             }
@@ -8934,7 +8934,8 @@ impl<'a> FnWriter<'a> {
             {
                 Ok(E::new("((void) 0)", K::Void))
             }
-            ("OpDatabase", [Value::Var(v), tp]) => self.database_operator(*v, tp),
+            // The C's local mint writes no defaults, so the no-prefill twin is the same mint.
+            ("OpDatabase" | "OpDatabaseNP", [Value::Var(v), tp]) => self.database_operator(*v, tp),
             ("OpRefIsNull", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
@@ -9590,7 +9591,7 @@ impl<'a> FnWriter<'a> {
     /// The operators over vectors.
     fn vector_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
-            ("OpNewRecord", [data, ptp, fld]) => {
+            ("OpNewRecord" | "OpNewRecordNP", [data, ptp, fld]) => {
                 let (v, elem, coll) = self.record_collection(data, ptp, fld, ind)?;
                 match coll {
                     Coll::Keyed(tp) => return self.keyed_new(&v, tp, ind),
@@ -9614,7 +9615,7 @@ impl<'a> FnWriter<'a> {
                 );
                 let ptp = u16::try_from(Self::literal(ptp, "type")?)
                     .map_err(|_| "a type number out of range")?;
-                if !self.mint_complete(ptp) {
+                if !(name == "OpNewRecordNP" || self.mint_complete(ptp)) {
                     let (image, n) = self.cx.default_image(elem);
                     self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
                 }

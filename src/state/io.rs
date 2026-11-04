@@ -883,10 +883,24 @@ impl State {
         self.alloc_record_at(var, db_tp, code_pos);
     }
 
+    /// `OpDatabaseNP` (`@FR-R-CompleteWrite`): [`State::database`] without the default
+    /// prefill — the literal group that follows writes every field.
+    pub fn database_n_p(&mut self) {
+        let var = self.code::<u16>();
+        let db_tp = self.code::<u16>();
+        let code_pos = self.code_pos;
+        self.alloc_record_prefill(var, db_tp, code_pos, false);
+    }
+
     /// Allocate a fresh `db_tp` record into variable slot `var`, reusing the slot's
     /// current store in place (`clear` + `claim`) or a fresh store when the slot is
     /// null/sentinel. The core of `OpDatabase`; also used by `bind_or_copy` (@PLN85).
     fn alloc_record_at(&mut self, var: u16, db_tp: u16, code_pos: u32) {
+        self.alloc_record_prefill(var, db_tp, code_pos, true);
+    }
+
+    /// [`State::alloc_record_at`], the default prefill only when `prefill`.
+    fn alloc_record_prefill(&mut self, var: u16, db_tp: u16, code_pos: u32, prefill: bool) {
         // B2-runtime: for EnumValue types, the record must be large enough
         // for the parent enum's largest variant.  The parent's size covers
         // all variants; the variant's own size may be smaller (unit variants).
@@ -917,7 +931,7 @@ impl State {
             db = self.database.null();
             *self.mut_var::<DbRef>(var) = db;
         }
-        let r = self.alloc_record_into(&db, db_tp, size, code_pos, fresh);
+        let r = self.alloc_record_into(&db, db_tp, size, code_pos, fresh, prefill);
         if crate::keys::trace_db() {
             eprintln!("[db]   -> var={var} now #{}", r.store_nr);
         }
@@ -932,7 +946,8 @@ impl State {
     /// so a caller that has no variable slot to write back to (the entry frame's
     /// hidden return buffer, #618) allocates by exactly the same rules.
     /// The returned `DbRef` addresses the record's payload.  `fresh` says `db` is a store
-    /// [`Stores::null`] has just initialised, which needs no second `clear`.
+    /// [`Stores::null`] has just initialised, which needs no second `clear`; `prefill` writes
+    /// the type's defaults (`OpDatabaseNP` leaves them to the literal that follows).
     fn alloc_record_into(
         &mut self,
         db: &DbRef,
@@ -940,6 +955,7 @@ impl State {
         size: u16,
         code_pos: u32,
         fresh: bool,
+        prefill: bool,
     ) -> DbRef {
         let kept = if fresh {
             Vec::new()
@@ -974,7 +990,9 @@ impl State {
         self.database
             .store_mut(&r)
             .set_u32_raw(r.rec, 4, u32::from(db_tp));
-        self.database.set_default_value(db_tp, &r);
+        if prefill {
+            self.database.set_default_value(db_tp, &r);
+        }
         DbRef {
             store_nr: r.store_nr,
             rec: 1,
@@ -1003,7 +1021,17 @@ impl State {
         // B2-runtime: EnumValue records must fit the parent enum's largest variant.
         let size = self.database.enum_parent_size(db_tp);
         let fresh = self.database.null();
-        Some(self.alloc_record_into(&fresh, db_tp, size, self.code_pos, true))
+        Some(self.alloc_record_into(&fresh, db_tp, size, self.code_pos, true, true))
+    }
+
+    /// `OpNewRecordNP` (`@FR-R-CompleteWrite`): [`State::new_record`] without the default
+    /// prefill — the literal group that follows writes every field of the element.
+    pub fn new_record_n_p(&mut self) {
+        let parent_tp = self.code::<u16>();
+        let fld = self.code::<u16>();
+        let data = self.get_stack::<DbRef>();
+        let new_value = self.database.record_new(&data, parent_tp, fld);
+        self.put_stack(new_value);
     }
 
     pub fn new_record(&mut self) {

@@ -1210,6 +1210,16 @@ fn OpSetChildRec(field: reference, data: reference, tp: const u16);
 #cold
 #rust"s.database.set_child_rec(&@field, &@data, @tp);"
 #impure(parent_write)
+// `@FR-R-CompleteWrite` — `OpDatabase` without the default prefill: the same store, clear,
+// claim, zeroed root and type tag, and no `set_default_value`.  Only for a mint whose literal
+// group writes every field before anything reads the record (`opt::ret_adopt::complete_writes`).
+// Declared last, so it renumbers no earlier operator.
+fn OpDatabaseNP(pos: const u16, db_tp: const u16);
+#cold
+// `@FR-R-CompleteWrite` — `OpNewRecord` without the default prefill: the same claimed slot,
+// invisible until its `OpFinishRecord`, and no `set_default_value`; the same condition.
+fn OpNewRecordNP(data: reference, parent_tp: const u16, fld: const u16) -> reference[data];
+#impure(parent_write)
 
 // --- Path helpers ---
 

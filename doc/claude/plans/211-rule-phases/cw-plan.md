@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # `(R-CompleteWrite)` in the IR phase
 
-**Status: S1 built; S2 onward not built.**  Arc C's next move ([README.md § Arc C](README.md#arc-c--moving-them)).
+**Status: S2 built; the pass's first form is built opt-in (S3, `LOFT_IR_COMPLETE_WRITE=1`).**  Arc C's next move ([README.md § Arc C](README.md#arc-c--moving-them)).
 
 ## The rule
 
@@ -84,12 +84,23 @@ and marks each fresh-field copy as a copy into a fresh destination.
 
 ## What is built
 
-- **One null arm (S1, loft#2414).**  `Stores::copy_null_into` — the interpreter's and rustc's
-  null arm of a `COPY_FRESH_DEST` copy — writes a struct's default walk after the zero fill; a
-  struct-enum keeps the zero fill (discriminant 0 is its null).  The C writer emits the same
-  default image as the null arm of such a copy where the image is not all zero
-  (`FnWriter::fresh_default_tp`, which the fresh-field arm now goes through too).  Cell
-  `2414-a-null-record-copied-into-a-fresh-slot-is-absent.loft`, each half falsified alone.
+- **The twins (S2).**  `OpDatabaseNP` and `OpNewRecordNP` are declared last in
+  `default/02_files.loft` (`make fill` regenerated the three operator tables and
+  `op_layout`); the interpreter runs them as `State::database_n_p` / `new_record_n_p`, the mint
+  minus `set_default_value`.  rustc registers both with its mint emitters (`np: true`); the C
+  takes `OpDatabaseNP` as its own local mint (which writes no defaults) and `OpNewRecordNP` as a
+  covered element mint, at its three element-mint sites; `opt::writes::mint_target` takes the
+  twin.  rustc's `(R-RefillText)` twin keeps its buffer's prefill whatever the IR says: that
+  exception is the twin's rule, a writer rule.
+- **The pass, first form (S3).**  `opt::complete_write`, ahead of `opt::loop_record`, rewrites
+  the covered mints of `complete_writes` to their twins.  It does not flag the fresh-field
+  copies yet: until S1, the interpreter under the pass leaves a null source's field as the
+  slot held it.  Probes: a push loop of complete literals and a program of local mints (a
+  returned record, both variants of a struct-enum) answer the hand-computed values on the
+  interpreter, the C and rustc, the pass on and off; the push loop 3 954 → 3 747 instructions
+  a pass on the interpreter (−5.2 %).
+- **Owed:** `index/target_surface.json` (two new operators; `make surface-gen` on a prebuilt
+  wasm rlib, or on the runner).
 
 ## Risks
 

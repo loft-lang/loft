@@ -804,8 +804,11 @@ impl OpEmitter for HoistedPushEmitter {
 /// every field explicitly (the IR's literal lowering emits omitted fields' defaults and
 /// sentinels itself, and a declined delivery lands as a whole-record `OpCopyRecord`).
 /// Everywhere else — no header, a keyed container, a heap-owning element (the hoist
-/// declined those paths a header) — the `#rust` template stands.
-pub struct NewRecordEmitter;
+/// declined those paths a header) — the `#rust` template stands.  `np`: the IR's
+/// `OpNewRecordNP` (`@FR-R-CompleteWrite`), always the no-prefill mint.
+pub struct NewRecordEmitter {
+    pub np: bool,
+}
 
 impl OpEmitter for NewRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
@@ -821,9 +824,10 @@ impl OpEmitter for NewRecordEmitter {
                 Some((t, header))
             })
         else {
-            let no_prefill = matches!(args.get(1).map(Value::unspan), Some(Value::Int(ptp))
-                if u16::try_from(*ptp)
-                    .is_ok_and(|t| ctx.output.complete_writes.mint_tps.contains(&t)));
+            let no_prefill = self.np
+                || matches!(args.get(1).map(Value::unspan), Some(Value::Int(ptp))
+                    if u16::try_from(*ptp)
+                        .is_ok_and(|t| ctx.output.complete_writes.mint_tps.contains(&t)));
             // `@FR-R-FieldAppend` — a straight-line append to a struct's plain vector field:
             // the slot `record_new`'s plain-field path would claim, with the field's offset
             // and the element's size resolved here instead of on every call.
@@ -862,11 +866,7 @@ impl OpEmitter for NewRecordEmitter {
             // @PLN157 § V-y (`@FR-R-CompleteWrite`) — an UNFUSED mint whose every group
             // in this function covers the element type calls the no-prefill twin; the
             // call shape mirrors the `#rust` template exactly.
-            if let Some(Value::Int(ptp)) = args.get(1).map(Value::unspan)
-                && u16::try_from(*ptp)
-                    .is_ok_and(|t| ctx.output.complete_writes.mint_tps.contains(&t))
-                && args.len() == 3
-            {
+            if no_prefill && args.len() == 3 {
                 write!(ctx.w, "OpNewRecordNP(cell,")?;
                 ctx.emit(&args[0])?;
                 write!(ctx.w, ", ")?;
