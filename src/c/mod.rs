@@ -1534,13 +1534,15 @@ impl Cx<'_> {
             }
         }
         // The IR's tuples (`src/value_record.rs`, a tuple the source writes): a parameter of
-        // three or more members the body only reads goes by pointer the same way.
+        // three or more SCALAR members the body only reads goes by pointer the same way — a
+        // member the callee owns (a text) is freed by it, which the caller's struct still holds.
         if !off && !apv {
             let def = self.data.def(d);
             let vars = def.variables();
             for (i, &a) in vars.arguments().iter().enumerate() {
                 if !out.contains(&i)
-                    && matches!(vars.tp(a), Type::Tuple(es) if es.len() >= 3)
+                    && matches!(vars.tp(a), Type::Tuple(es)
+                        if es.len() >= 3 && es.iter().all(crate::data::is_scalar))
                     && vr_param_read_only(self.data, def.code(), a)
                 {
                     out.push(i);

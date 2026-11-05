@@ -157,6 +157,28 @@ against the pre-S2 tip is neutral (median 1.009), zttext 5–8 % faster from the
 drawing routine ~5 % slower including ones that call nothing changed (a whole-program shift,
 noted, not chased).
 
+**Moved since (2026-11-05, later).**  One translation of an exit value into the tuple
+(`value_record::Exits`) at every result position: a literal (own or local buffer), `null`, a
+record VIEW (read field-wise with whether it is there; an owned one freed after the read), a
+materialised view's return, a call whose answer is the exit (widened from a dense callee), and a
+branch or block of those; a local set only from such values is a DELIVERY local.  Layout keys
+carry the nullable bit; a nullable carrier's presence test reads its word, a write through it is
+the setter's own null arm, a copy out of it the record copy's null arm, a copy's destination and
+a view's source are bound without copying (`OpPutRef`).  Also: a promoted local rebound from a
+call into a local buffer (`at_width`), `(R-TailSelf)` over a tuple result, `(R-SameRead)` over
+`TupleGet`, and the C passing a 3+-member IR tuple parameter by `const` pointer.
+
+Re-measured: **14 called writer-only functions** remain (from 25) — moros is the IR's entirely,
+glb's branching tails too.  Left, by cost:
+
+| shape | functions | next step |
+|---|---|---|
+| fn-ref arms `(R-FnRefValue)` | zttext `default_resolver` | the fn-ref value names the `pub` API; the function TYPE in signatures, `fnref::dispatch_arms` and the `CallRef` sites move together — zttext is already 7–11 % faster than the start from the `pub` split |
+| later-pass variants (`__d`, `__kh`, `__inv`, `__vr`) | cbor/pluginabi `read_value__d`, `terrain_surface_at_in__kh`, `pa_get__vr`, drawing `half_chord__inv` | why their source is the record form at the variant's making |
+| `(N-Store)`'s presence-carrying parameters, the one-field form | `tests/value_record.rs` w5, g (pinned to the record form until then) | the parameter side of the nullable clause |
+| drawing parser forwards | `read_rgb_at`, `find_tol`, `half_chord` | "a free it only witnesses" on a forward's local |
+| no flat layout | server `try_listen*` | a field kind the layout lacks |
+
 **S3's IR half is already met.**  Closed, the IR pairs every view-exit case of
 `164-element-place.loft` (g1, g2, g4, g10, g16, g20) and neither writer applies its own
 element-first clause anywhere; what S3 still owes is deleting those clauses.
