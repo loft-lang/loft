@@ -119,10 +119,13 @@ struct Ops {
     get_vector: u32,
     not: u32,
     put_ref: u32,
+    /// The default walk's records (`Stores::set_default_value`) on a scratch copy of the
+    /// stores, one per record type: what a copy from a null source leaves in a fresh record.
+    defaults: std::cell::RefCell<(Stores, HashMap<u16, crate::keys::DbRef>)>,
 }
 
 impl Ops {
-    fn new(data: &Data) -> Ops {
+    fn new(data: &Data, stores: &Stores) -> Ops {
         let k = [Kind::Int, Kind::Float, Kind::Single, Kind::Bool];
         let names = ["Int", "Float", "Single", "Boolean"];
         let get = std::array::from_fn(|i| (data.def_nr(&format!("OpGet{}", names[i])), k[i]));
@@ -146,6 +149,11 @@ impl Ops {
             get_vector: data.def_nr("OpGetVector"),
             not: data.def_nr("OpNot"),
             put_ref: data.def_nr("OpPutRef"),
+            defaults: std::cell::RefCell::new({
+                let mut scratch = stores.clone();
+                scratch.max = 0;
+                (scratch, HashMap::default())
+            }),
         }
     }
 
@@ -169,6 +177,29 @@ impl Ops {
 
     fn set_kind(&self, op: u32) -> Option<Kind> {
         self.set.iter().find(|(d, _)| *d == op).map(|(_, k)| *k)
+    }
+
+    /// The value field `off` of a new record of type `tp` holds: the default the record copy
+    /// writes into a fresh destination when its source is null — read off the interpreter's
+    /// own default walk, so the two cannot disagree.
+    fn default_value(&self, tp: u16, off: i32, kind: Kind) -> Value {
+        let mut cell = self.defaults.borrow_mut();
+        let (scratch, made) = &mut *cell;
+        let r = *made.entry(tp).or_insert_with(|| {
+            let size = u32::from(scratch.size(tp));
+            let r = scratch.database(size.div_ceil(8) + 1);
+            scratch.set_default_value(tp, &r);
+            r
+        });
+        let store = scratch.store(&r);
+        let at = r.pos + off as u32;
+        match kind {
+            Kind::Int => Value::Long(store.get_int(r.rec, at)),
+            Kind::Float => Value::Float(store.get_float(r.rec, at)),
+            Kind::Single => Value::Single(store.get_single(r.rec, at)),
+            Kind::Bool => Value::Boolean(store.get_byte(r.rec, at, 0) == 1),
+            Kind::View => Value::Call(self.null_ref, Vec::new()),
+        }
     }
 }
 
@@ -333,7 +364,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         return 0;
     }
     let mut w = World {
-        ops: Ops::new(data),
+        ops: Ops::new(data, stores),
         layouts: HashMap::default(),
         cands: HashMap::default(),
         params: HashMap::default(),
@@ -1249,9 +1280,6 @@ struct Literal<'a> {
     parts: Vec<Part<'a>>,
     returns: bool,
     scope: u16,
-    /// The variables a sub-record COPY reads (`OpCopyRecord(x, buf.f, tp)`): its fields become
-    /// reads of `x`, which a null `x` answers with nulls where the copy writes its default.
-    copies: Vec<u16>,
 }
 
 impl Literal<'_> {
@@ -1305,7 +1333,6 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
         _ => return None,
     };
     let mut parts: Vec<Part> = staging.iter().map(|o| Part::Other(o)).collect();
-    let mut copies: Vec<u16> = Vec::new();
     parts.push(Part::Header);
     for o in middle {
         let part = match o {
@@ -1348,12 +1375,12 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
                     && v == buf =>
             {
                 let (lo, hi) = layout.extent(base, *tp as u16)?;
-                if let Some(x) = copy_root(src, ops) {
-                    copies.push(x);
-                }
                 if !pure_place(src, ops) || mentions(src, buf) {
                     return None;
                 }
+                // `@C137` — a copy into a fresh record: a NULL source leaves the record's
+                // default, which a field read of the null record (its null) is not.
+                let sub = (*tp as u16) & crate::keys::COPY_TP_MASK;
                 Part::Fill(
                     layout
                         .fields
@@ -1361,7 +1388,12 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
                         .filter(|(o, _)| *o >= lo && *o < hi)
                         .map(|(o, k)| {
                             let read = vec![src.clone(), Value::Int(o - base)];
-                            (*o, Value::Call(ops.get_op(*k), read))
+                            let value = Value::If(
+                                Box::new(Value::Call(ops.bool_from_ref, vec![src.clone()])),
+                                Box::new(Value::Call(ops.get_op(*k), read)),
+                                Box::new(ops.default_value(sub, o - base, *k)),
+                            );
+                            (*o, value)
                         })
                         .collect(),
                 )
@@ -1383,7 +1415,6 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
         parts,
         returns,
         scope: b.scope,
-        copies,
     };
     let mut filled = lit.fill_order();
     filled.sort_unstable();
@@ -1396,14 +1427,6 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
 /// `buf` and calling nothing but the operators it is built from.  A pooled buffer's guard
 /// clears the record it still holds in the other arm (`@FR-H-ClearRelease`); with the buffer
 /// gone there is nothing to clear either.
-/// The variable a copy source is rooted at: `x`, or a field path into it.
-fn copy_root(src: &Value, ops: &Ops) -> Option<u16> {
-    match src.unspan() {
-        Value::Var(x) => Some(*x),
-        _ => place_of(src, ops).map(|(x, _)| x),
-    }
-}
-
 /// A bare `OpDatabase(buf, tp)` — a local literal's mint, which no earlier value can have.
 fn is_mint(n: &Value, buf: u16, ops: &Ops) -> bool {
     matches!(n, Value::Call(op, a) if *op == ops.database
@@ -1499,8 +1522,6 @@ struct Scan {
     /// Admitted parameters handed something that is not a variable.
     unserved: HashSet<(u32, usize)>,
     called: HashSet<u32>,
-    /// The variables the function's own literals COPY a sub-record from (`Literal::copies`).
-    lit_copies: Vec<u16>,
     /// Presence tests `OpConvBoolFromRef(x)` / `OpRefIsNull(x)`, by variable: a nullable
     /// carrier reads its presence word for them.
     tests: Vec<u16>,
@@ -1560,11 +1581,20 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
     };
     let mut plan = Plan::default();
     // The handed uses of `x` all go to parameters of `record`.
+    // A parameter of the same layout, or the NULLABLE layout of a dense carrier's record,
+    // which the call widens with `true` (`Rewrite::args`).
     let handed_fits = |x: u16, record: u32| {
         s.handed
             .iter()
             .filter(|(h, _, _)| *h == x)
-            .all(|(_, d, i)| w.params.get(&(*d, *i)) == Some(&record))
+            .all(|(_, d, i)| {
+                w.params.get(&(*d, *i)).is_some_and(|&k| {
+                    k == record
+                        || (rec_of(k) == rec_of(record)
+                            && w.layouts[&k].presence
+                            && !w.layouts[&record].presence)
+                })
+            })
     };
     let reads_fit = |x: u16, record: u32| {
         let layout = &w.layouts[&record];
@@ -1594,11 +1624,8 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             continue;
         }
         let p = vars.var(&def.attributes[idx].name);
-        let absent_copy = w.layouts[&record].presence && s.lit_copies.contains(&p);
         let why = if s.other.contains(&p) {
             Some("a mention that is no read or hand-on")
-        } else if absent_copy {
-            Some("a nullable tuple copied inside a tuple literal (an absent one copies defaults)")
         } else if !w.layouts[&record].presence && s.tests.contains(&p) {
             Some("a presence test of a dense tuple")
         } else if s.written.contains(&p) || s.null_inits.contains(&p) {
@@ -1685,8 +1712,6 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             Some(why)
         } else if s.returns.contains(&l) && own.is_none() {
             Some("returned by a function that keeps its record")
-        } else if w.layouts[&record].presence && s.lit_copies.contains(&l) {
-            Some("a nullable tuple copied inside a tuple literal (an absent one copies defaults)")
         } else if s.other.contains(&l) || (s.tests.contains(&l) && !w.layouts[&record].presence) {
             Some("a mention that is no read, hand-on, bind or free")
         } else if (vars.is_argument(l) && own != Some(l)) || vars.is_captured(l) {
@@ -1873,7 +1898,6 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
     if let Some((buf, record)) = s.own
         && let Some(lit) = literal(n, buf, &w.layouts[&record], ops)
     {
-        s.lit_copies.extend(lit.copies.iter().copied());
         for part in &lit.parts {
             match part {
                 Part::Header | Part::ViewCopy => {}
@@ -2268,6 +2292,22 @@ impl Rewrite<'_> {
                 && !self.plan.carriers.contains_key(x)
             {
                 *a = read_into_tuple(*x, &w.layouts[record], &w.ops);
+                continue;
+            }
+            // A dense carrier handed to its record's nullable parameter: widened with `true` —
+            // a dense tuple is present.
+            if let Some(k) = w.params.get(&(d, i))
+                && let Value::Var(x) = a.unspan()
+                && let Some(c) = self.plan.carriers.get(x)
+                && *c != *k
+                && w.layouts[k].presence
+            {
+                let x = *x;
+                let mut elems: Vec<Value> = (0..w.layouts[c].fields.len())
+                    .map(|j| Value::TupleGet(x, j as u16))
+                    .collect();
+                elems.push(Value::Boolean(true));
+                *a = Value::Tuple(elems);
                 continue;
             }
             self.uses(a);
