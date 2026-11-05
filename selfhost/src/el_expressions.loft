@@ -3679,6 +3679,25 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   }
   x = expression(e, vars, rhs);
   pt = p.tp;
+  // `o.v += w` of two vectors appends `w`'s elements into the place (`OpAppendVector`, the
+  // element's row), as a local's `v += w` does.
+  if op == "+=" && el_types::base(pt) is TyVector && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) {
+    elem = match el_types::base(pt) { TyVector { inner } => inner, _ => ir::TyVoid };
+    xelem = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
+    if !el_types::is_equal(e, elem, xelem) {
+      refuse_known(e, x.tp, "a vector appended a vector of another element type: {type_kind(xelem)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    row = append_row(e, elem);
+    if row < 0 {
+      el::refuse(e, "a vector append of this element type: {type_kind(elem)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(el_ir::cl(e, "OpAppendVector", [el_ir::unspan(p.code), x.code, ir::NdInt { n: row }]), ir::TyVoid);
+  }
   if op != "=" {
     if el_types::base(pt) is TyText {
       el::refuse(e, "a compound assignment to a text place");
