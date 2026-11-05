@@ -1396,6 +1396,18 @@ impl Lexer {
     /// [`peek_pos`](Self::peek_pos).
     ///
     /// A deliberate [`to`](Self::to) seek outranks both: that position was chosen.
+    /// [`Self::report_pos`] as a [`Position`]: where a diagnostic raised now would point, kept
+    /// for one raised later (`Parser::settle_loop_write`).
+    #[must_use]
+    pub fn report_position(&self) -> Position {
+        let (line, pos) = self.report_pos();
+        Position {
+            file: self.position.file,
+            line,
+            pos,
+        }
+    }
+
     fn report_pos(&self) -> (u32, u32) {
         if self.seek_return.is_none()
             && self.prev_end.line > 0

@@ -1088,6 +1088,9 @@ impl Parser {
             if self.lexer.has_token(";") {
                 continue;
             }
+            // The statement before this one may hold a `loop-source-written` notice until
+            // what follows it is known.
+            self.settle_loop_write();
             if self.lexer.peek_token("}") {
                 break;
             }

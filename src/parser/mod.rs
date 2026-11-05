@@ -974,6 +974,10 @@ pub struct Parser {
     /// at loop start (`@FR-I-For`: the source is evaluated once).  Keyed by the root's NAME,
     /// which both passes agree on; two loops over one root both copy, which is conservative.
     loop_sources_replaced: std::collections::HashSet<(u32, String)>,
+    /// A `loop-source-written` notice held to the end of its statement
+    /// (`Parser::settle_loop_write`): `(where, what the loop read, the place belongs to the
+    /// innermost loop)`.
+    pub(crate) pending_loop_write: Option<(crate::lexer::Position, String, bool)>,
     /// `@FR-B-Scope` — the names a pattern has pointed at its own bindings since the last
     /// `=>`, each with the variable it named before (`Parser::pattern_binding`).  The arrow
     /// seals them into a frame of `pattern_bind_frames`; the end of the arm's body restores
@@ -2037,6 +2041,7 @@ impl Parser {
             pending_tuple_args: Vec::new(),
             tuple_place_wanted: false,
             loop_sources_replaced: std::collections::HashSet::new(),
+            pending_loop_write: None,
             pattern_binds_pending: Vec::new(),
             pattern_bind_frames: Vec::new(),
             text_link_kinds: std::collections::HashMap::new(),
