@@ -12701,6 +12701,20 @@ fn if_not_names(e: el::El, st: integer, name: text) -> boolean {
   }
 }
 
+// `Parser::ensure_io_type`: the narrow rows a file write of `t` needs registered.
+fn io_rows(e: el::El, t: ir::TypeT) {
+  match t {
+    TyInteger { spec } => {
+      w = if spec.forced_size > 0 { spec.forced_size } else { el_types::narrow_width(spec) };
+      if w == 1 || w == 2 {
+        el_schema::io_int_part(e, spec, w);
+      }
+    },
+    TyVector { inner } => io_rows(e, inner),
+    _ => {}
+  }
+}
+
 // Whether `t` is the standard library's `File` record.
 fn is_file(e: el::El, t: ir::TypeT) -> boolean {
   match t {
@@ -12711,23 +12725,36 @@ fn is_file(e: el::El, t: ir::TypeT) -> boolean {
 
 // `Parser::write_to_file` (`f += value`): the value bound to a fresh `_wf_N` that borrows what it
 // borrows, then `OpWriteFile(f, OpCreateStack(_wf_N), row)` with the value's store row
-// (`get_type`; a `character` or `boolean` its fixed-width base, `io_scalar_db_tp`).  A record
-// value, a value with no byte layout and an `as` cast's narrowed width are refused by name.
+// (`get_type`; a `character` or `boolean` its fixed-width base, `io_scalar_db_tp`; an `as`
+// cast's alias width).  A record value and a value with no byte layout are refused by name.
 fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: Ex) -> Ex {
-  if e.p.nodes[rhs] is SAs {
-    el::refuse(e, "a file write of a cast value (its alias's width)");
-    return ex(ir::NdNull, ir::TyVoid);
-  }
   vt = el_types::base(x.tp);
+  // `… as <alias>` writes at the alias's width (`forced_size`): its byte, short or 4-byte
+  // integer row (`database.byte` / `short`, `narrow_io_part`) — `int_part` of the cast's spec.
+  cast_row = -1;
+  if e.p.nodes[rhs] is SAs {
+    match vt {
+      TyInteger { spec } => {
+        if spec.forced_size == 1 || spec.forced_size == 2 || spec.forced_size == 4 {
+          cast_row = el_schema::io_int_part(e, spec, spec.forced_size);
+        }
+      },
+      _ => {}
+    }
+  }
   if vt is TyReference || vt is TyEnum || vt is TyTuple || vt is TyOptional {
     refuse_known(e, x.tp, "a file write of this value: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // `ensure_io_type`, on both passes: a 1- or 2-byte integer — or a vector of one — registers its
+  // `byte` / `short` row before the write takes its own (`get_type`, `short_raw` for a 2-byte
+  // local).
+  io_rows(e, vt);
   tmp = el_vars::create_unique(vars, "wf", x.tp);
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  row = el_schema::content_type(e, vt);
+  row = if cast_row >= 0 { cast_row } else { match vt { TyInteger { spec } => el_schema::int_part(e, spec, el::NONE, false), _ => el_schema::content_type(e, vt) } };
   if row < 0 {
     el::refuse(e, "a file write of a value with no byte layout: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
