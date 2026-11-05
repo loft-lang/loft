@@ -14159,7 +14159,9 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       el::refuse(e, "an empty vector literal of no declared type");
       return refused_build();
     }
-    in_t = el_types::without_deps(xs[0].tp);
+    // A vector local as the first item gives the element its type with the borrow its read
+    // carries (`vector<integer>["a"]`); any other item its type alone.
+    in_t = if el_types::base(xs[0].tp) is TyVector && el_ir::unspan(xs[0].code) is NdVar { xs[0].tp } else { el_types::without_deps(xs[0].tp) };
     // `parse_item`'s variant join (`@FR-C-Var`): items that are variants of one struct enum
     // make the element that enum.
     pe = variant_parent(e, in_t);
@@ -14395,11 +14397,26 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   if value && elm >= 0 && (push == "" || len(recs) > 0) {
     el_vars::depend(vars, elm, v);
   }
-  // A vector item that is no literal (a local, a slice) is copied into its element
-  // (`OpCopyRecord` with the copy flag) — not carried: refused by name.
+  // A vector item that is no literal (a local, a field) is copied into its element: the element
+  // made through the outer vector, its header zeroed, the item copied in (`OpCopyRecord` with the
+  // copy flag over the inner vector's store type), the element finished.
   if in_t is TyVector && len(xs) > 0 && !e.first_pass {
-    el::refuse(e, "a vector element that is not a vector literal");
-    return refused_build();
+    inner_t = match in_t { TyVector { inner } => inner, _ => ir::TyVoid };
+    ivt = el_schema::content_type(e, in_t);
+    // An append (`all += [w]`) numbers its stores otherwise — not carried.
+    if elm < 0 || ivt < 0 || append {
+      el::refuse(e, "a vector element that is not a vector literal, appended or of this element type");
+      return refused_build();
+    }
+    el_vars::set_var_type(vars, elm, ir::TyVector { inner: inner_t, dep: [v] });
+    at = ir::NdVar { n: elm };
+    for x in xs {
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      ls += [el_ir::cl(e, "OpSetInt4", [at, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
+      ls += [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: ivt + 16384 }])];
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+    xs = [];
   }
   for x in xs {
     if push != "" {
