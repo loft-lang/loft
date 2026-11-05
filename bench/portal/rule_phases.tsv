@@ -12,7 +12,7 @@ R-Apart/vector	c,native	8	0	0	0	22	48
 R-AppendTwin	c,native	2	0	0	0	31	33
 R-AppendTwin/loop-window	c	2	0	0	0	2	0
 R-AppendTwin/mint	c	2	0	0	0	4	0
-R-Base	c,native	58	0	0	0	863	5491
+R-Base	c,native	58	0	0	0	863	5492
 R-Base/counter	c	44	0	0	0	216	0
 R-Base/grid	c	2	0	0	0	69	0
 R-BoundAppend	parse	2	2	0	0	0	0
@@ -55,13 +55,13 @@ R-Fuse/field	interp	42	0	0	748	0	0
 R-Fuse/jump	interp	58	0	0	9264	0	0
 R-Fuse/tag	interp	9	0	0	122	0	0
 R-Fuse/text	interp	58	0	0	1913	0	0
-R-GroupPush	native	8	0	0	0	0	63
+R-GroupPush	native	7	0	0	0	0	59
 R-GuardFree	native	58	0	0	0	0	640
 R-GuardedChain	c,native	40	0	0	0	205	1052
 R-GuardedChain/operators	c,native	40	0	0	0	720	3170
 R-HandOver/rotate	c,native	1	0	0	0	2	2
-R-Header	c,native	58	0	0	0	879	6297
-R-Header/apart	c,native	20	0	0	0	130	235
+R-Header	c,native	58	0	0	0	879	6302
+R-Header/apart	c,native	20	0	0	0	130	227
 R-Header/apart-param	c,native	13	0	0	0	36	56
 R-Header/function	native	23	0	0	0	0	101
 R-Header/grown	c	2	0	0	0	20	0
@@ -93,7 +93,7 @@ R-LoopRecord	ir	1	0	2	0	0	0
 R-LoopRecord/refill	ir	2	0	6	0	0	0
 R-LoopSlot	interp	58	0	0	3185	0	0
 R-MaskRange	parse	7	41	0	0	0	0
-R-Mint	c,native	58	0	0	0	158	858
+R-Mint	c,native	58	0	0	0	158	874
 R-MoveAppend	native	1	0	0	0	0	1
 R-MoveLast	ir	3	0	9	0	0	0
 R-MoveLast/host	ir	1	0	1	0	0	0
@@ -112,7 +112,7 @@ R-PushFill/hash	c,native	1	0	0	0	3	3
 R-PushFill/record	native	11	0	0	0	0	50
 R-PushFill/run	c,native	24	0	0	0	59	24
 R-PushFill/run-header	c	18	0	0	0	39	0
-R-PushRec	c,native	21	0	0	0	59	161
+R-PushRec	c,native	22	0	0	0	59	165
 R-PushRec/apart	c,native	5	0	0	0	28	76
 R-Range	c,native	58	0	0	0	3062	10769
 R-RangedCall	native	47	0	0	0	0	1058
@@ -135,7 +135,7 @@ R-ReturnField	ir	1	0	1	0	0	0
 R-Reuse	ir	23	0	175	0	0	0
 R-Rotate	interp	58	0	0	3817	0	0
 R-SameRead	parse	16	21	0	0	0	0
-R-Scalar	c,native	24	0	0	0	717	7571
+R-Scalar	c,native	24	0	0	0	717	7578
 R-ScaleFold	parse	1	2	0	0	0	0
 R-SelfReplace	parse	3	19	0	0	0	0
 R-SingleUse	parse	58	415	0	0	0	0

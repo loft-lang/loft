@@ -46,7 +46,10 @@ const EXPECTED: &[(&str, usize, usize, usize, usize, usize, usize)] = &[
     ("n_g7", 0, 2, 0, 4, 0, 0),
     // g8: the outer loop hoists past a loop buffer (`sides`) declared per pass; the `base`
     // literal and the point group are groups; the Frond mint is the loop header's, zeroed.
-    ("n_g8_build", 1, 2, 1, 12, 0, 1),
+    // Two hoist blocks: the inner loop's, and the outer loop's hold of `base` — read in the
+    // nest, never grown — under `(R-Header)`'s apart clause, now the loop buffer's reset is the
+    // IR's (`opt::loop_buffer`) and reads as the owned buffer's mint did.
+    ("n_g8_build", 1, 2, 1, 12, 0, 2),
     // g9: the fractal move — the callee's fronds move into `out` through the loop header
     // (the heap element zeroed), no group.
     ("n_g9", 1, 0, 1, 2, 0, 2),
@@ -216,7 +219,7 @@ fn an_owned_mint_leaves_the_scalar_write_set_typed() {
     );
     let g12 = body(&rust, "n_g12_run");
     assert!(
-        g12.contains("vector::vec_header(&(var_v)") && g12.contains("@FR-R-LoopRecord kept record"),
+        g12.contains("vector::vec_header(&(var_v)") && g12.contains("//loop record mint"),
         "g12: the vector's header holds beside the kept loop record:\n{g12}"
     );
     assert_eq!(
@@ -323,7 +326,13 @@ fn each_switch_restores_its_clause_alone() {
             "{name}: LOFT_NO_REBOUND_MOVER=1 declines the loop"
         );
         assert!(row.1 > 0, "{name}: its groups still bind their own headers");
-        assert!(row.4 > 0, "{name}: the Frond mint is a template again");
+        // The Frond element is minted early by the IR's element-first build (`opt::elem_first`):
+        // from that mint to its finish it is one group, which takes `(R-GroupPush)`'s own
+        // header whatever the rebound clause says — no template mint is left.
+        assert!(
+            row.4 == 0 && row.1 >= 2,
+            "{name}: the Frond element's group takes its own header"
+        );
     }
     assert_eq!(
         got["n_g9"],
