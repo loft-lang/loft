@@ -37,3 +37,35 @@ fn a_literal_of_record_locals_registers_an_element_borrowing_nothing() {
     );
     assert!(deps.is_empty(), "vector<Ar>'s element borrows {deps:?}");
 }
+
+/// A vector of vectors is ONE definition, named after its element type, and it takes the
+/// store type.  `check_vector` named the definition after the element's DEFINITION, which for a
+/// vector is the library's generic `vector`, so formatting `{g}` registered a second
+/// `vector<vector>` (holding the store type) beside the real `vector<vector<integer>>`.
+#[test]
+fn a_nested_vector_has_one_definition_and_it_holds_the_store_type() {
+    let mut p = Parser::new();
+    p.parse_dir("default", true, false).expect("stdlib");
+    p.parse_str(
+        "fn main() { g = [[1, 2], [3]]; println(\"{g}\"); }",
+        "<probe>",
+        false,
+    );
+    assert!(
+        p.diagnostics.level() < loft::diagnostics::Level::Error,
+        "probe must parse clean: {:?}",
+        p.diagnostics.lines()
+    );
+    assert_eq!(
+        p.data.def_nr("vector<vector>"),
+        u32::MAX,
+        "no `vector<vector>` definition"
+    );
+    let d = p.data.def_nr("vector<vector<integer>>");
+    assert_ne!(d, u32::MAX, "vector<vector<integer>> must be defined");
+    assert_ne!(
+        p.data.def(d).known_type,
+        u16::MAX,
+        "vector<vector<integer>> holds its store type"
+    );
+}

@@ -1439,7 +1439,7 @@ impl Parser {
             // type — matching what fill_database registers for struct
             // fields.
             let tp = self.vector_of(c_tp);
-            should_nr = self.data.check_vector(c_nr, tp, self.lexer.pos());
+            should_nr = self.data.check_vector(c_nr, c_tp, tp, self.lexer.pos());
         }
         let should_kt = if should_nr == u32::MAX {
             u16::MAX

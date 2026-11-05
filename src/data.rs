@@ -11408,8 +11408,15 @@ impl Data {
         d
     }
 
-    pub fn check_vector(&mut self, d_nr: u32, vec_tp: u16, pos: &Position) -> u32 {
-        let vec_name = format!("vector<{}>", self.def(d_nr).name);
+    pub fn check_vector(&mut self, d_nr: u32, elem: &Type, vec_tp: u16, pos: &Position) -> u32 {
+        // A vector element's definition is the library's generic `vector` (`type_def_nr`), whose
+        // name says nothing of the element: named after it, a `vector<vector<integer>>` was
+        // registered a second time as `vector<vector>`, and the real one never took its type.
+        let vec_name = if matches!(elem.base(), Type::Vector(..)) {
+            Type::Vector(Box::new(elem.base().clone()), Deps::none()).name(self)
+        } else {
+            format!("vector<{}>", self.def(d_nr).name)
+        };
         let mut v_nr = self.def_nr(&vec_name);
         if v_nr == u32::MAX {
             v_nr = self.add_def(&vec_name, pos, DefType::Vector);

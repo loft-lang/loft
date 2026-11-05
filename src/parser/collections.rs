@@ -3056,7 +3056,7 @@ use #count instead"
         }
         let v = self.database.vector(db_tp);
         self.data
-            .check_vector(self.data.type_def_nr(cont), v, self.lexer.pos());
+            .check_vector(self.data.type_def_nr(cont), cont, v, self.lexer.pos());
         v
     }
 
