@@ -9423,11 +9423,17 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   // the record, and the join is the record `?` (`if_join`'s `null_value`).
   // A vector arm beside a `null` one alike: its null is the collection sentinel.
   vector_null = f.tp is TyNull && !(t.tp is TyOptional) && t.tp is TyVector;
-  record_null = vector_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
-  if f.tp is TyNull && (el_convert::sentinel_value(t.tp) || record_null) {
+  // A struct enum's variant beside a `null` arm joins to the enum `?` (`variant_parent_enum`),
+  // its arms typed as the variant.
+  variant_null = f.tp is TyNull && !(t.tp is TyOptional) && variant_parent(e, t.tp) >= 0;
+  record_null = vector_null || variant_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
+  // A plain enum's null is `OpConvEnumFromNull` of its store type (`null_of`).
+  enum_null = match t.tp { TyEnum { is_ref } => !is_ref, _ => false };
+  if f.tp is TyNull && (el_convert::sentinel_value(t.tp) || record_null || enum_null) {
     if e.first_pass {
       // A record join keeps its arms: the first pass reads the parameters they hand back.
-      return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: t.tp });
+      ft = if variant_null { ir::TyEnum { n: variant_parent(e, t.tp), is_ref: true, dep: el_types::deps(t.tp) } } else { t.tp };
+      return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: ft });
     }
     nl = if vector_null { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, t.tp) };
     // A record arm's dep on a store it mints (a literal's `__ref_p2_N`) is its ownership
@@ -9441,7 +9447,8 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     fb = retail(f.code, nl, tt);
     if nl != null && fb != null {
-      return ex(el_ir::v_if(c.code, tc, fb!), ir::TyOptional { inner: tt });
+      jt = if variant_null { ir::TyEnum { n: variant_parent(e, tt), is_ref: true, dep: el_types::deps(tt) } } else { tt };
+      return ex(el_ir::v_if(c.code, tc, fb!), ir::TyOptional { inner: jt });
     }
   }
   // `@FR-C-Var` (`joins_to_enum`): two different variants of one struct enum — or a variant and
