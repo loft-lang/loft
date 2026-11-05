@@ -103,13 +103,14 @@ run_one() {
 }
 export -f run_one
 
-# The output with what (R-Escape) leaves to the compiler removed — see the header.
+# The output with what (R-Escape) leaves to the compiler removed — see the header — and a
+# panic's thread id, which changes from run to run: a crash on every run is a crash, not noise.
 semantic() {
   awk '/^advice\[avoidable-copy\]/ { skip = 1; next }
        skip && /^$/ { skip = 0; next }
        skip { next }
        /^note: [0-9]+ diagnostics? above suggests? / { next }
-       { gsub(/ bc:[0-9]+/, " bc:_"); print }' "$1"
+       { gsub(/ bc:[0-9]+/, " bc:_"); gsub(/thread .[^ ]*. \([0-9]+\)/, "thread _"); print }' "$1"
 }
 
 # A fresh copy of consumer DIR for one mode; prints the copy's path.  Its siblings are

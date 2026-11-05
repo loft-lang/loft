@@ -2383,16 +2383,16 @@ impl Rewrite<'_> {
         let old = std::mem::take(list);
         for mut o in old {
             if dropped(&o, &w.ops, plan) {
-                // A lent carrier's scope ends: the record it was lent as goes with it, by the
-                // same release (a plain free, or "unless it is that store").
+                // A lent carrier's scope ends — by a plain free or a "free unless it is that
+                // store" — and the record it was lent as goes with it.  That record is a store
+                // of its own, never the witness's (which may be a buffer the rewrite dropped),
+                // so its release is the plain free.
                 if let Value::Call(op, a) = o.unspan()
                     && (*op == w.ops.free_ref || *op == w.ops.free_if_distinct)
                     && let Some(Value::Var(x)) = a.first().map(Value::unspan)
                     && let Some(&t) = self.lends.get(x)
                 {
-                    let mut args = a.clone();
-                    args[0] = Value::Var(t);
-                    list.push(Value::Call(*op, args));
+                    list.push(Value::Call(w.ops.free_ref, vec![Value::Var(t)]));
                 }
                 continue;
             }
