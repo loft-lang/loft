@@ -301,6 +301,31 @@ pub fn struct_enum_def(t: ir::TypeT) -> integer {
   }
 }
 
+// A keyed collection's element definition (`hash`, `sorted`, `index`, `spatial`, `trie`), or -1
+// for any other type.
+pub fn keyed_elem(t: ir::TypeT) -> integer {
+  match t {
+    TyHash { n } => n,
+    TySorted { n } => n,
+    TyIndex { n } => n,
+    TyRadix { n } => n,
+    TyTrie { n } => n,
+    _ => -1
+  }
+}
+
+// A keyed collection's key field names, in declared order (a direction dropped).
+pub fn key_names(t: ir::TypeT) -> vector<text> {
+  match t {
+    TyHash { names } => [for k in names { k.name }],
+    TyRadix { names } => [for k in names { k.name }],
+    TySorted { keys } => [for k in keys { k.name }],
+    TyIndex { keys } => [for k in keys { k.name }],
+    TyTrie { key } => [key],
+    _ => []
+  }
+}
+
 // `is_collection`: a vector or a keyed collection, through a `&`.
 pub fn is_collection(t: ir::TypeT) -> boolean {
   match t {
@@ -373,6 +398,35 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
           sk += [if starts_with(k, "-") { ir::SortKey { name: k[1..], asc: false } } else { ir::SortKey { name: k, asc: true } }];
         }
         c = if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
+        return if nullable { ir::TyOptional { inner: c } } else { c };
+      }
+      // `sub_type_inner`'s `trie` and `spatial` arms: a record element and its key fields, one
+      // text key for a trie, the coordinate axes for a spatial index; neither takes a direction.
+      if (name == "trie" || name == "spatial") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
+        inner = parse_type(e, args[0]);
+        if inner == null {
+          return null;
+        }
+        sub = match inner! {
+          TyReference { n } => n,
+          _ => {
+            el::refuse(e, "a keyed collection of this element: {name}");
+            return null;
+          }
+        };
+        names: vector<ir::NameRef> = [];
+        for k in keys {
+          if starts_with(k, "-") {
+            el::refuse(e, "a descending {name} key");
+            return null;
+          }
+          names += [ir::NameRef { name: k }];
+        }
+        if name == "trie" && len(keys) != 1 {
+          el::refuse(e, "a trie over more than one key");
+          return null;
+        }
+        c = if name == "trie" { ir::TyTrie { n: sub, key: keys[0], dep: [] } } else { ir::TyRadix { n: sub, names: names, dep: [] } };
         return if nullable { ir::TyOptional { inner: c } } else { c };
       }
       // `sub_type`'s iterator arm: a generator's `iterator<T>`, carried for a plain scalar, a text

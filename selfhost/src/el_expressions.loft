@@ -3597,14 +3597,9 @@ fn note_key_write(e: el::El, vars: el_vars::Vars, place: ir::Node) {
         if dep == w || dep < 0 || dep >= len(vars.vars) {
           continue;
         }
-        content = -1;
-        names: vector<text> = [];
-        match el_types::base(el_vars::tp(vars, dep)) {
-          TySorted { n, keys } => { content = n; names = [for k in keys { k.name }]; },
-          TyIndex { n, keys } => { content = n; names = [for k in keys { k.name }]; },
-          TyHash { n, names: ns } => { content = n; names = [for k in ns { k.name }]; },
-          _ => {}
-        }
+        dt = el_types::base(el_vars::tp(vars, dep));
+        content = el_types::keyed_elem(dt);
+        names = el_types::key_names(dt);
         if content < 0 {
           continue;
         }
@@ -4428,12 +4423,10 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       }
     }
   }
+  pk = el_types::keyed_elem(el_types::base(p.tp));
   inner = match el_types::base(p.tp) {
     TyVector { inner: i } => i,
-    TyHash { n: hn } => ir::TyReference { n: hn, dep: [] },
-    TySorted { n: sn } => ir::TyReference { n: sn, dep: [] },
-    TyIndex { n: xn } => ir::TyReference { n: xn, dep: [] },
-    _ => ir::TyUnknown { n: 0 }
+    _ => if pk >= 0 { ir::TyReference { n: pk, dep: [] } } else { ir::TyUnknown { n: 0 } }
   };
   if (fnr < 0 && !e.first_pass) || el_types::is_unknown(inner) {
     el::refuse(e, "an append to a collection of this type: {type_kind(p.tp)}");
@@ -4752,7 +4745,7 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   }
   if e.p.nodes[rhs!] is SVecLit {
     match el_types::base(declared!) {
-      TyVector { inner } => return vector_into(e, vars, v, rhs!, inner),
+      TyVector { inner } => return vector_into(e, vars, v, rhs!, inner, at_close: declared! is TyOptional),
       _ => {}
     }
     if keyed_kind(declared!) && !(declared! is TyOptional) {
@@ -5094,7 +5087,7 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
         }
         // A keyed field (`hash`, `sorted`, `index`) given a literal is built in place as a vector field
         // is: its header zeroed above, each record made through the outer record and added.
-        kd = match at { TyHash { n } => n, TySorted { n } => n, TyIndex { n } => n, _ => -1 };
+        kd = el_types::keyed_elem(at);
         if kd >= 0 && e.p.nodes[fe!] is SVecLit {
           built = field_vector(e, vars, v, r, d, fname, fe!);
           if built == null {
@@ -5315,7 +5308,7 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
   def = el::def(e, d);
   ft = def.attributes[attr_nr(def, fname)]!.typedef[0];
   keyed = !(ft is TyVector);
-  inner = match ft { TyVector { inner: vi } => vi, TyHash { n: kn } => ir::TyReference { n: kn, dep: [] }, TySorted { n: kn } => ir::TyReference { n: kn, dep: [] }, TyIndex { n: kn } => ir::TyReference { n: kn, dep: [] }, _ => ir::TyUnknown { n: 0 } };
+  inner = match ft { TyVector { inner: vi } => vi, _ => ir::TyReference { n: el_types::keyed_elem(ft), dep: [] } };
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
@@ -5821,7 +5814,9 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
   def = el::def(e, d);
   pos = ir::NdInt { n: field_position(e, d, def.attributes[a]!.name) };
   ft = el_types::base(def.attributes[a]!.typedef[0]);
-  keyed = ir::NdInt { n: if e.first_pass || !keyed_kind(ft) { 0 } else { el_schema::keyed_type(e, ft) } };
+  if keyed_kind(ft) {
+    return el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: if e.first_pass { 0 } else { el_schema::keyed_type(e, ft) } }]);
+  }
   match ft {
     TyVector { inner } => {
       // The schema is laid out after the first pass, whose code is not kept.
@@ -5832,9 +5827,6 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
       }
       el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: vk }])
     },
-    TyHash { n: _ } => el_ir::cl(e, "OpGetField", [r, pos, keyed]),
-    TySorted { n: _ } => el_ir::cl(e, "OpGetField", [r, pos, keyed]),
-    TyIndex { n: _ } => el_ir::cl(e, "OpGetField", [r, pos, keyed]),
     TyReference { n: fd, dep } => {
       // A pointer field (`reference<T>`) reads the record it names.
       if len(dep) > 0 {
@@ -11535,21 +11527,17 @@ fn text_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
 // borrowing what the collection does, or the null sentinel past the last.
 fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   ct = el_types::base(x.tp);
-  el_d = match ct {
-    TyHash { n: hn } => hn,
-    TySorted { n: sn } => sn,
-    TyIndex { n: xn } => xn,
-    _ => -1
-  };
+  el_d = el_types::keyed_elem(ct);
   elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct));
   match x.code {
     NdVar { n } => { elem = el_types::with_deps(elem, [n]); },
     _ => {}
   }
-  // `keyed_snapshot`: a hash is walked in key order through a sorted scratch copy
-  // (`n_hash_sorted`), released after the loop.
+  // `keyed_snapshot`: a hash, spatial or trie is walked in key order through a scratch copy of
+  // its records (`n_hash_sorted`; a radix tree's walk is ordered already, `n_radix_sorted`),
+  // released after the loop.
   scratch = -1;
-  if ct is TyHash {
+  if ct is TyHash || ct is TyRadix || ct is TyTrie {
     scratch = el_vars::create_unique(vars, "hash_scratch", el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct)));
   }
   idx = loop_index(vars, h.id);
@@ -11578,7 +11566,7 @@ fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   pre: vector<ir::Node> = [];
   if scratch >= 0 {
     el_vars::set_var_type(vars, scratch, el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct)));
-    pre += [el_ir::v_set(scratch, el_ir::cl(e, "n_hash_sorted", [x.code, ir::NdInt { n: known }]))];
+    pre += [el_ir::v_set(scratch, el_ir::cl(e, if ct is TyHash { "n_hash_sorted" } else { "n_radix_sorted" }, [x.code, ir::NdInt { n: known }]))];
     src = ir::NdVar { n: scratch };
   }
   start = el_ir::cl(e, "OpIterate", [src, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
@@ -13195,8 +13183,10 @@ fn read_op(t: ir::TypeT) -> text {
 // `OpFinishRecord`).  The element type is the declared one or the first item's; an item of
 // another type, a repetition, a local that already has a store and an empty literal with no type
 // are refused by name.
-fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT) -> Ex {
-  vector_build(e, vars, v, n, declared).x
+// `at_close`: the definitions are made at the literal's `]` although the element is declared —
+// a `vector<T>?` local, whose declared type is no vector hint to the literal.
+fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, at_close: boolean = false) -> Ex {
+  vector_build(e, vars, v, n, declared, at_close: at_close).x
 }
 
 // A literal in value position (`parse_vector_inner` with no destination, `block`): built the
@@ -13386,7 +13376,7 @@ fn refused_build() -> Built {
 
 // The one build behind the three literal forms: into a local (`vector_into`), in value position
 // (`value`, `vector_value`) and appended to a local that has its store (`append`, `vector_append`).
-fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true) -> Built {
+fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false) -> Built {
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
@@ -13534,7 +13524,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   if len(xs) > 0 {
     vector_of(e, in_t);
   }
-  rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared));
+  rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close);
   if rows == null {
     return refused_build();
   }
@@ -14401,12 +14391,7 @@ fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> vector
     SStructLit { at: _ } => { items = [n]; },
     _ => {}
   }
-  el_d = match ct {
-    TyHash { n: hn } => hn,
-    TySorted { n: sn } => sn,
-    TyIndex { n: xn } => xn,
-    _ => -1
-  };
+  el_d = el_types::keyed_elem(ct);
   elm = -1;
   if len(items) > 0 {
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
@@ -14451,6 +14436,8 @@ fn keyed_kind(t: ir::TypeT) -> boolean {
     TyHash { n: _ } => true,
     TySorted { n: _ } => true,
     TyIndex { n: _ } => true,
+    TyRadix { n: _ } => true,
+    TyTrie { n: _ } => true,
     _ => false
   }
 }
@@ -14461,29 +14448,8 @@ fn keyed_kind(t: ir::TypeT) -> boolean {
 // (an iterator) and a tuple key are refused by name.
 fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vector<integer>) -> Ex {
   ct = el_types::base(x.tp);
-  el_d = -1;
-  names: vector<text> = [];
-  match ct {
-    TyHash { n, names: ns } => {
-      el_d = n;
-      for k in ns {
-        names += [k.name];
-      }
-    },
-    TySorted { n, keys: ks } => {
-      el_d = n;
-      for k in ks {
-        names += [k.name];
-      }
-    },
-    TyIndex { n, keys: ks } => {
-      el_d = n;
-      for k in ks {
-        names += [k.name];
-      }
-    },
-    _ => {}
-  }
+  el_d = el_types::keyed_elem(ct);
+  names = el_types::key_names(ct);
   if len(keys) != len(names) {
     el::refuse(e, "a keyed lookup with a partial key");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
