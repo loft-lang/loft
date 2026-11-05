@@ -9251,6 +9251,73 @@ fn arithmetic_span(e: el::El, at: integer, op: text, x: Ex) -> Ex {
   ex(ir::NdSpan { pos: el::pos_at(e, at), inner: x.code }, x.tp)
 }
 
+// `null_test`'s enum arms — `x == null` of an enum `x` (base type `vb`), or null when `vb` is
+// no enum.  A plain enum is a discriminant byte with two absent spellings (0 and the written
+// null), which `OpConvBoolFromEnum` reads both of; the shape comes from the enum's own
+// definition (`is_value_enum`), since a field read of one arrives as a reference.  A struct
+// enum's null is spelled by where it lives: discriminant 0 in an inline `__nullable<S>`, the
+// slot's record pointer 0 in a field, and in a handle the store sentinel or, for a slot it
+// may view, a zero first word.
+fn enum_null_test(e: el::El, vars: el_vars::Vars, x: ir::Node, vb: ir::TypeT) -> ir::Node? {
+  en = match vb { TyEnum { n } => n, _ => -1 };
+  if en < 0 {
+    return null;
+  }
+  d = el::def(e, en);
+  if starts_with(d.name, "__nullable<") {
+    disc = el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [x, ir::NdInt { n: 0 }])]);
+    return el_ir::cl(e, "OpEqInt", [disc, ir::NdInt { n: 0 }]);
+  }
+  value = match d.returned[0] ?? ir::TyVoid { TyEnum { is_ref } => !is_ref, _ => false };
+  if value {
+    return el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromEnum", [x])]);
+  }
+  ux = el_ir::unspan(x);
+  if !(ux is NdVar && views_nullable_element_slot(vars, vb)) {
+    match ux {
+      NdCall { def_nr, args } => {
+        if el::def(e, def_nr).name == "OpGetField" && len(args) >= 2 {
+          return el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [args[0], args[1]]), ir::NdInt { n: 0 }]);
+        }
+      },
+      _ => {}
+    }
+    if !(ux is NdTupleGet) && place_root(e, ux) < 0 {
+      // A call result is a handle its callee built: read once.
+      return el_ir::cl(e, "OpRefIsNull", [x]);
+    }
+  }
+  empty = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [x, ir::NdInt { n: 0 }]), ir::NdInt { n: 0 }]);
+  el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [x]), ir::NdBoolean { b: true }, empty)
+}
+
+// `views_a_nullable_element_slot`: does a value of type `t` view the slot of a `vector<τ?>`?
+// The walk follows deps three levels and stops at the first collection it reaches.
+fn views_nullable_element_slot(vars: el_vars::Vars, t: ir::TypeT) -> boolean {
+  deps = el_types::deps(t);
+  seen: vector<integer> = [];
+  for _ in 0..3 {
+    next: vector<integer> = [];
+    for d in deps {
+      if d >= el_vars::count(vars) || seen.contains(d) {
+        continue;
+      }
+      seen += [d];
+      dt = el_vars::tp(vars, d);
+      db = el_types::base(dt);
+      if el_types::is_collection(db) {
+        return match db { TyVector { inner } => inner is TyOptional, _ => false };
+      }
+      next += el_types::deps(dt);
+    }
+    if len(next) == 0 {
+      return false;
+    }
+    deps = next;
+  }
+  false
+}
+
 fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
   // A float compared with `null` is its null test (`null_test`): its truth, `!` of it for `==`.
   if (op == "==" || op == "!=") && (a.tp is TyNull || b.tp is TyNull) {
@@ -9278,6 +9345,10 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
       }
       is_null = el_ir::cl(e, "OpVectorIsNull", [v.code]);
       return ex(if op == "==" { is_null } else { el_ir::cl(e, "OpNot", [is_null]) }, ir::TyBoolean);
+    }
+    enum_test = enum_null_test(e, vars, v.code, vb);
+    if enum_test != null {
+      return ex(if op == "==" { enum_test! } else { el_ir::cl(e, "OpNot", [enum_test!]) }, ir::TyBoolean);
     }
     // `null_test`'s struct arm: a nullable struct reference holds the store sentinel, which
     // `OpRefIsNull` reads (`OpEqRef`'s `rec` test stays for a bare reference); `!=` is its
@@ -9423,11 +9494,17 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   // the record, and the join is the record `?` (`if_join`'s `null_value`).
   // A vector arm beside a `null` one alike: its null is the collection sentinel.
   vector_null = f.tp is TyNull && !(t.tp is TyOptional) && t.tp is TyVector;
-  record_null = vector_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
-  if f.tp is TyNull && (el_convert::sentinel_value(t.tp) || record_null) {
+  // A struct enum's variant beside a `null` arm joins to the enum `?` (`variant_parent_enum`),
+  // its arms typed as the variant.
+  variant_null = f.tp is TyNull && !(t.tp is TyOptional) && variant_parent(e, t.tp) >= 0;
+  record_null = vector_null || variant_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
+  // A plain enum's null is `OpConvEnumFromNull` of its store type (`null_of`).
+  enum_null = match t.tp { TyEnum { is_ref } => !is_ref, _ => false };
+  if f.tp is TyNull && (el_convert::sentinel_value(t.tp) || record_null || enum_null) {
     if e.first_pass {
       // A record join keeps its arms: the first pass reads the parameters they hand back.
-      return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: t.tp });
+      ft = if variant_null { ir::TyEnum { n: variant_parent(e, t.tp), is_ref: true, dep: el_types::deps(t.tp) } } else { t.tp };
+      return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: ft });
     }
     nl = if vector_null { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, t.tp) };
     // A record arm's dep on a store it mints (a literal's `__ref_p2_N`) is its ownership
@@ -9441,7 +9518,8 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     fb = retail(f.code, nl, tt);
     if nl != null && fb != null {
-      return ex(el_ir::v_if(c.code, tc, fb!), ir::TyOptional { inner: tt });
+      jt = if variant_null { ir::TyEnum { n: variant_parent(e, tt), is_ref: true, dep: el_types::deps(tt) } } else { tt };
+      return ex(el_ir::v_if(c.code, tc, fb!), ir::TyOptional { inner: jt });
     }
   }
   // `@FR-C-Var` (`joins_to_enum`): two different variants of one struct enum — or a variant and
