@@ -4396,6 +4396,30 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     // Already refused where its type was lost.
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // `v += w` of two vectors resolves to `OpAppendVector` (`+=` is `Append`), its element row
+  // the narrow-aware one every append takes (`append_elem_tp`): `w`'s elements copied in.
+  if bin == "+" && vt is TyVector && el_types::base(x.tp) is TyVector {
+    elem = match vt { TyVector { inner } => inner, _ => ir::TyVoid };
+    xelem = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
+    if !el_types::is_equal(e, elem, xelem) {
+      refuse_known(e, x.tp, "a vector appended a vector of another element type: {type_kind(xelem)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if el_ir::reads_var(x.code, v) {
+      el::refuse(e, "a vector appended a value that reads it");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    rec = append_row(e, elem);
+    if rec < 0 {
+      el::refuse(e, "a vector append of this element type: {type_kind(elem)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    return ex(el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, x.code, ir::NdInt { n: rec }]), ir::TyVoid);
+  }
   // A link to a scalar (`n: &integer`) is read and written as the scalar it names.
   sv = match vt {
     TyRefVar { inner } => if el_convert::plain_scalar(inner) { inner } else { vt },
@@ -12547,6 +12571,15 @@ fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows) -> vect
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
   ]
+}
+
+// `Parser::append_elem_tp`: the row an append of `elem` elements copies by — a record's own,
+// any other element's content type (a narrow integer at its width); -1 where it has none.
+fn append_row(e: el::El, elem: ir::TypeT) -> integer {
+  match el_types::base(elem) {
+    TyReference { n } => el::def(e, n).known_type,
+    _ => if el_types::elem_name(e, elem) == "" { -1 } else { el_schema::content_type(e, elem) }
+  }
 }
 
 // `Parser::parse_text_index`'s range: `s[lo..hi]` is `OpGetTextSub(s, lo, hi)` — an open start
