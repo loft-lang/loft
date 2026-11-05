@@ -8820,7 +8820,7 @@ fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: integer?
     idx = if lv >= 0 { el_vars::var(vars, "{el_vars::name_of(vars, lv)}#index") } else { -1 };
     elem = if lv >= 0 { el_vars::tp(vars, lv) } else { ir::TyVoid };
     row = append_row(e, elem);
-    if el_ir::unspan(coll) is NdVar && el_types::base(el_vars::tp(vars, match el_ir::unspan(coll) { NdVar { n } => n, _ => 0 })) is TyVector && idx >= 0 && row >= 0 && !(el_types::base(elem) is TyIterator) {
+    if el_ir::unspan(coll) is NdVar && !vars.reversed.contains(lv) && el_types::base(el_vars::tp(vars, match el_ir::unspan(coll) { NdVar { n } => n, _ => 0 })) is TyVector && idx >= 0 && row >= 0 && !(el_types::base(elem) is TyIterator) {
       el_vars::in_use(vars, idx, true);
       return ex(el_ir::cl(e, "OpRemove", [ir::NdVar { n: idx }, el_ir::unspan(coll), ir::NdInt { n: 0 }, ir::NdInt { n: row }]), ir::TyVoid);
     }
@@ -10065,13 +10065,27 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   destructure = len(binds) > 1;
   src_id = if destructure { "__destructure_t_{e.p.line[in_tok] ?? 0}_{e.p.col[in_tok] ?? 0}" } else { binds[0] };
   id = if src_id == "_" { "_" } else { el_vars::loop_binding(vars, src_id) };
+  // `rev(src)` walks a vector from its end, a range from its top (`reverse_iterator`); an
+  // `unordered(…)` walk is refused by name.
+  rev = false;
+  match e.p.nodes[source] {
+    SIterWrap { kind, e: inner } => {
+      if kind != "rev" || inner == null || par != null || destructure {
+        el::refuse(e, "an `unordered(…)` walk, or a reversed one that destructures or runs `par`");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      rev = true;
+      source = inner!;
+    },
+    _ => {}
+  }
   if e.p.nodes[source] is SRange {
-    return range_for(e, vars, src_id, id, source, body!, filter);
+    return range_for(e, vars, src_id, id, source, body!, filter, rev: rev);
   }
   x = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   if e.p.nodes[source] is SVecLit {
     lit = vector_value(e, vars, source, hinted: false);
-    if par == null && len(lit.items) >= 1 && len(lit.items) <= 16 && walkable_scalar(lit.elem) {
+    if !rev && par == null && len(lit.items) >= 1 && len(lit.items) <= 16 && walkable_scalar(lit.elem) {
       return literal_walk(e, vars, src_id, id, lit, body!, filter);
     }
     x = lit.x;
@@ -10081,8 +10095,16 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     x = expression(e, vars, source);
     vars.slice_node = outer_slice;
     if x.code is NdIter {
+      if rev {
+        el::refuse(e, "a reversed walk of a slice");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
       return slice_for(e, vars, src_id, id, x, body!, filter);
     }
+  }
+  if rev && (x.code is NdIter || keyed_kind(x.tp) || x.tp is TyIterator || x.tp is TyText) {
+    el::refuse(e, "a reversed walk of this source: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
   }
   if par != null && (x.code is NdIter || keyed_kind(x.tp) || x.tp is TyIterator || x.tp is TyText) {
     el::refuse(e, "a `par` loop over this source: {type_kind(x.tp)}");
@@ -10146,6 +10168,9 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   lv = loop_var(vars, src_id, id, var_tp);
   vars.active_loops += [lv];
   vars.active_values += [x.code];
+  if rev {
+    vars.reversed += [lv];
+  }
   bound = destructure_members(e, vars, binds, members);
   if len(bound) < len(members) {
     return ex(ir::NdNull, ir::TyVoid);
@@ -10162,7 +10187,7 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   if e.first_pass || el_types::is_unknown(elem) {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  nx = vector_step(e, vec, idx, elem);
+  nx = vector_step(e, vec, idx, elem, rev: rev);
   if nx == null {
     el::refuse(e, "a `for` over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
@@ -10179,7 +10204,8 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   }
   steps += [b.code];
   lp = el_ir::v_loop(steps, "For loop");
-  counted(e, cnt, ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid))
+  start = if rev { el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]) } else { ir::NdInt { n: -1 } };
+  counted(e, cnt, ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, start), lp], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // `coroutine_layout::next_operands` for an element this port carries: the packed size — the
@@ -10337,7 +10363,7 @@ fn destructure_head(e: el::El, lv: integer, members: vector<ir::TypeT>, bound: v
 
 // `iterator`'s vector arm, one step: `{ i = i + 1; <element i of the hoisted vector> }` — a plain
 // element read at 0, a record element as its reference.  Null for an element with no size.
-fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT) -> ir::Node? {
+fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT, rev: boolean = false) -> ir::Node? {
   size = elem_size(elem);
   op = read_op(elem);
   record = false;
@@ -10364,7 +10390,13 @@ fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT) -> ir::No
   }
   // A tuple element is read as its record.
   st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, _ => el_types::without_deps(elem) };
-  el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])), get], st, "iter next")
+  // A reversed walk steps down, past the first element to the `i32` null (the "rev step").
+  step = if rev {
+    el_ir::v_block([el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: 1 }, i]), el_ir::cl(e, "OpMinInt", [i, ir::NdInt { n: 1 }]), ir::NdInt { n: -2147483648 })], ir::TyInteger { spec: i32_spec() }, "rev step")
+  } else {
+    el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])
+  };
+  el_ir::v_block([el_ir::v_set(idx, step), get], st, "iter next")
 }
 
 // `vector_loop_break`'s forward test: the walk ends past the hoisted vector's last element.
@@ -11987,7 +12019,10 @@ fn range_init(rw: RangeWalk) -> vector<ir::Node> {
   rw.prelude + rw.next_init + [el_ir::v_set(rw.idx, rw.counter)]
 }
 
-fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: integer, body: integer, filter: integer?) -> Ex {
+fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: integer, body: integer, filter: integer?, rev: boolean = false) -> Ex {
+  if rev {
+    return rev_range_for(e, vars, src_id, id, source, body, filter);
+  }
   rwo = range_walk(e, vars, id, source);
   if rwo == null {
     return ex(ir::NdNull, ir::TyVoid);
@@ -12012,6 +12047,56 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
   }
   steps += [b.code];
   counted(e, cnt, ex(el_ir::v_block([init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
+}
+
+// `rev(lo..hi)` with constant bounds, `lo` zero or more and `hi` exclusive (`parse_in_range_body`
+// with `reverse_iterator`): the index started at `hi`, each step one below, the walk ending under
+// `lo`.  Any other reversed range is refused by name.
+fn rev_range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: integer, body: integer, filter: integer?) -> Ex {
+  lo = -1;
+  hi = -1;
+  match e.p.nodes[source] {
+    SRange { lo: l, hi: h, inclusive } => {
+      if !inclusive && l != null && h != null {
+        lc = el_convert::const_int(e, expression(e, vars, l!).code);
+        hc = el_convert::const_int(e, expression(e, vars, h!).code);
+        if lc != null && hc != null && lc! >= 0 {
+          lo = lc!;
+          hi = hc!;
+        }
+      }
+    },
+    _ => {}
+  }
+  if lo < 0 {
+    el::refuse(e, "a reversed range that is inclusive, open or not constant");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  idx = loop_index(vars, id);
+  lv = loop_var(vars, src_id, id, int_t);
+  vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
+  vars.reversed += [lv];
+  fc = loop_filter(e, vars, filter);
+  b = parse_block(e, vars, body, "for", ir::TyVoid);
+  cnt = el_vars::pop_loop(vars);
+  vars.active_values = vars.active_values[..-1];
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  i = ir::NdVar { n: idx };
+  walk = el_ir::v_block([
+    el_ir::v_set(idx, el_ir::cl(e, "OpMinInt", [i, ir::NdInt { n: 1 }])),
+    el_ir::v_if(el_ir::cl(e, "OpLtInt", [i, ir::NdInt { n: lo }]), ir::NdBreak { n: 0 }, ir::NdNull),
+    i
+  ], int_t, "Iter range");
+  steps: vector<ir::Node> = [el_ir::v_set(lv, walk)];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  counted(e, cnt, ex(el_ir::v_block([el_ir::v_set(idx, ir::NdInt { n: hi }), el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // A loop's index: `id#index`, or a fresh `_index_N` for a `_` binding.
