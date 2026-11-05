@@ -20,7 +20,7 @@ root.  One `[thirdparty.<name>]` table per dependency, in one of four kinds:
 | `vendored` | source copied into the package and compiled into what it ships | `path`, `upstream`, `commit`, `digest`, `advisories` |
 | `sdk` | fetched by a build step and compiled into what it builds (ESP-IDF, the Tanmatsu BSP) | `source`, `version`, `pinned`, `advisories` |
 | `system` | linked or opened at run time from the machine, never shipped | `names`, `provider` |
-| `cargo` | the Rust crates a shipped `Cargo.lock` pins | `lockfile` (a path or a list) |
+| `cargo` | the Rust crates a shipped `Cargo.lock` pins | `lockfile` (a path or a list); `compiles-c` lists the crates whose build compiles C |
 
 ```toml
 [thirdparty.stb_vorbis]
@@ -84,15 +84,27 @@ RUSTSEC-2020-0077 = "applies: memmap 0.7 is unmaintained — replace with memmap
 
 ## What the audit checks
 
-- **Undeclared code.**  A C or C++ file under a `vendor/` directory, or with a copyright
-  notice that is not ours, must lie under a declared `vendored` path.
+- **Undeclared code.**  A C, C++, JS, CSS or shader file under a `vendor/` directory, or with
+  a copyright notice that is not ours, must lie under a declared `vendored` path.
+- **Unattributed code** (loft only).  Every file loft's binary embeds (each `include_str!` /
+  `include_bytes!` target, wherever it lives) and every file under `src/c/` must carry our
+  licence header, match a glob in `[own] paths`, or lie under a `vendored` path.  A notice is
+  a heuristic; this list is exact, so third-party code without a notice cannot pass.
 - **Undeclared libraries.**  Every library the package links or opens must be named by a
   `system` entry: `[c] libs`, `optional-libs`, `[native] runtime-libs`, a soname, framework or
-  DLL literal in its C (vendored code included), `#pragma comment(lib, …)`, and loft's own
-  `-l` flags.
+  DLL literal in its C (vendored code included), `#pragma comment(lib, …)`, loft's own `-l`
+  flags, and what the built `target/release/loft` is linked against (`readelf -d`).
+- **Rust crates that are native.**  Over the dependency graph each shipped platform resolves
+  (normal dependencies only — a build tool does not ship), a crate whose build script compiles
+  C must be listed in the `cargo` entry's `compiles-c`, and every library a crate links
+  (`#[link(name = …)]`, also inside `cfg_attr`) must be named by a `system` entry.  `libc` is
+  the platform C library and is not listed.  A lockfile that does not match its
+  `Cargo.toml` needs action: what builds is then not what was audited.
 - **Undeclared build inputs** (loft only).  An ESP component dependency or a `git clone` URL
   in loft's Rust source must be declared as `sdk`, and its `pinned` constant must hold the
-  declared `version`.
+  declared `version`.  An `esp-registry:` source is resolved through the component registry
+  for its `target` (default `esp32p4`): every component it brings in is listed, and the
+  security advisories of each one's GitHub repository count as the entry's own.
 - **Provenance.**  A vendored path must hash to its `digest`, and every file must be
   byte-identical to the upstream file of that name at `commit` (`renames`, `modified`).
   `scripts/thirdparty.py identify <dir> <url>` finds the commit a copy came from.
