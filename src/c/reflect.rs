@@ -53,7 +53,11 @@ fn read_row(s: &mut Stores, kt: u16) -> Row {
                 (
                     text(v, e + at(s, "FieldInfo", "name")),
                     text(v, e + at(s, "FieldInfo", "type_name")),
-                    st.get_int(v, e + at(s, "FieldInfo", "position")),
+                    st.get_int_sized(
+                        v,
+                        e + at(s, "FieldInfo", "position"),
+                        s.field_bytes(s.name("FieldInfo"), "position"),
+                    ),
                     st.get_byte(v, e + at(s, "FieldInfo", "kind"), 0),
                     st.get_byte(v, e + at(s, "FieldInfo", "nullable"), 0),
                 )
@@ -71,7 +75,11 @@ fn read_row(s: &mut Stores, kt: u16) -> Row {
                 let e = 8 + i * ki;
                 (
                     text(v, e + at(s, "KeyInfo", "name")),
-                    st.get_int(v, e + at(s, "KeyInfo", "position")),
+                    st.get_int_sized(
+                        v,
+                        e + at(s, "KeyInfo", "position"),
+                        s.field_bytes(s.name("KeyInfo"), "position"),
+                    ),
                     st.get_byte(v, e + at(s, "KeyInfo", "ascending"), 0),
                 )
             })
@@ -80,7 +88,11 @@ fn read_row(s: &mut Stores, kt: u16) -> Row {
     Row {
         name: text(r.rec, base + at(s, "TypeInfo", "name")),
         kind: st.get_byte(r.rec, base + at(s, "TypeInfo", "kind"), 0),
-        size: st.get_int(r.rec, base + at(s, "TypeInfo", "size")),
+        size: st.get_int_sized(
+            r.rec,
+            base + at(s, "TypeInfo", "size"),
+            s.field_bytes(s.name("TypeInfo"), "size"),
+        ),
         element: text(r.rec, base + at(s, "TypeInfo", "element")),
         collection: st.get_byte(r.rec, base + at(s, "TypeInfo", "collection"), 0),
         fields,

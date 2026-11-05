@@ -1783,6 +1783,7 @@ fn n_stack_trace(stores: &mut Stores, stack: &mut DbRef) {
     let function_pos = lookup("function");
     let file_pos = lookup("file");
     let line_pos = lookup("line");
+    let line_bytes = stores.field_bytes(sf_elm, "line");
     let arguments_pos = lookup("arguments");
     let vars_field_pos = lookup("variables");
     let vec = stores.database(sf_size);
@@ -1798,9 +1799,12 @@ fn n_stack_trace(stores: &mut Stores, stack: &mut DbRef) {
         stores
             .store_mut(&vec)
             .set_u32_raw(elm.rec, elm.pos + file_pos, file_str);
-        stores
-            .store_mut(&vec)
-            .set_int(elm.rec, elm.pos + line_pos, i64::from(*line));
+        stores.store_mut(&vec).set_int_sized(
+            elm.rec,
+            elm.pos + line_pos,
+            line_bytes,
+            i64::from(*line),
+        );
         // Explicitly zero arguments and variables so that reused (non-zeroed) store
         // blocks don't leave garbage data that looks like a valid first_block_rec.
         stores
@@ -2028,6 +2032,8 @@ fn reflect_field_at(
     let fv_i = lookup(stores, "i");
     let fv_f = lookup(stores, "f");
     let fv_t = lookup(stores, "t");
+    let i_bytes = stores.field_bytes(fv_tp, "i");
+    let f_bytes = stores.field_bytes(fv_tp, "f");
 
     // Resolve the field BEFORE allocating, so a refusal costs nothing and the
     // descriptor borrow ends before the answer record is claimed.
@@ -2068,10 +2074,12 @@ fn reflect_field_at(
         .set_byte(out.rec, out.pos + fv_kind, 0, kind);
     // Every payload starts neutral, so a kind that carries none leaves no bytes
     // from a reused block looking like an answer.
-    stores.store_mut(&out).set_int(out.rec, out.pos + fv_i, 0);
-    *stores
+    stores
         .store_mut(&out)
-        .addr_mut::<f64>(out.rec, out.pos + fv_f) = 0.0;
+        .set_int_sized(out.rec, out.pos + fv_i, i_bytes, 0);
+    stores
+        .store_mut(&out)
+        .set_float_sized(out.rec, out.pos + fv_f, f_bytes, 0.0);
     stores
         .store_mut(&out)
         .set_u32_raw(out.rec, out.pos + fv_t, 0);
@@ -2166,10 +2174,10 @@ fn reflect_field_at(
         if !is_null {
             stores
                 .store_mut(&out)
-                .set_int(out.rec, out.pos + fv_i, i_val);
-            *stores
+                .set_int_sized(out.rec, out.pos + fv_i, i_bytes, i_val);
+            stores
                 .store_mut(&out)
-                .addr_mut::<f64>(out.rec, out.pos + fv_f) = f_val;
+                .set_float_sized(out.rec, out.pos + fv_f, f_bytes, f_val);
             if t_ref != 0 {
                 // Copied into the ANSWER's store rather than pointed at: the
                 // caller owns the `FieldValue` and may outlive the record it
@@ -2318,6 +2326,10 @@ pub fn reflect_type_into(stores: &mut Stores, kt: u16) -> DbRef {
     let ki_name = lookup(stores, ki_tp, "KeyInfo", "name");
     let ki_pos = lookup(stores, ki_tp, "KeyInfo", "position");
     let ki_asc = lookup(stores, ki_tp, "KeyInfo", "ascending");
+    let ti_size_w = stores.field_bytes(ti_tp, "size");
+    let fi_pos_w = stores.field_bytes(fi_tp, "position");
+    let vi_tag_w = stores.field_bytes(vi_tp, "tag");
+    let ki_pos_w = stores.field_bytes(ki_tp, "position");
 
     let ti_bytes = u32::from(stores.size(ti_tp));
     let out = stores.database(ti_bytes.div_ceil(8) + 1);
@@ -2336,7 +2348,7 @@ pub fn reflect_type_into(stores: &mut Stores, kt: u16) -> DbRef {
         .set_byte(out.rec, out.pos + ti_kind, 0, reflect_kind(node.as_ref()));
     stores
         .store_mut(&out)
-        .set_int(out.rec, out.pos + ti_size, i64::from(size));
+        .set_int_sized(out.rec, out.pos + ti_size, ti_size_w, i64::from(size));
     // Zero the two vector headers: a reused store block would otherwise leave
     // bytes that read as a valid first record.
     stores
@@ -2400,9 +2412,12 @@ pub fn reflect_type_into(stores: &mut Stores, kt: u16) -> DbRef {
             stores
                 .store_mut(&out)
                 .set_u32_raw(vec_rec, at + fi_type, f_ty_str);
-            stores
-                .store_mut(&out)
-                .set_int(vec_rec, at + fi_pos, i64::from(f.position));
+            stores.store_mut(&out).set_int_sized(
+                vec_rec,
+                at + fi_pos,
+                fi_pos_w,
+                i64::from(f.position),
+            );
             let k = reflect_kind(desc.nodes.get(&f.content));
             stores.store_mut(&out).set_byte(vec_rec, at + fi_kind, 0, k);
             stores
@@ -2430,7 +2445,7 @@ pub fn reflect_type_into(stores: &mut Stores, kt: u16) -> DbRef {
             // never 0 and a caller can test for it.
             stores
                 .store_mut(&out)
-                .set_int(vec_rec, at + vi_tag, i as i64 + 1);
+                .set_int_sized(vec_rec, at + vi_tag, vi_tag_w, i as i64 + 1);
         }
     }
 
@@ -2472,9 +2487,12 @@ pub fn reflect_type_into(stores: &mut Stores, kt: u16) -> DbRef {
                 let at = 8 + (i as u32) * ki_bytes;
                 let n = stores.store_mut(&out).set_str(name);
                 stores.store_mut(&out).set_u32_raw(vec_rec, at + ki_name, n);
-                stores
-                    .store_mut(&out)
-                    .set_int(vec_rec, at + ki_pos, i64::from(*position));
+                stores.store_mut(&out).set_int_sized(
+                    vec_rec,
+                    at + ki_pos,
+                    ki_pos_w,
+                    i64::from(*position),
+                );
                 stores
                     .store_mut(&out)
                     .set_byte(vec_rec, at + ki_asc, 0, i32::from(*asc));
@@ -2549,6 +2567,7 @@ fn populate_frame_variables(
 
     let bool_b_pos = lookup(bool_tp, "BoolVal", "b");
     let int_n_pos = lookup(int_tp, "IntVal", "n");
+    let int_n_w = stores.field_bytes(int_tp, "n");
     let long_n_pos = lookup(long_tp, "LongVal", "n");
     let float_f_pos = lookup(float_tp, "FloatVal", "f");
     let single_f_pos = lookup(single_tp, "SingleVal", "f");
@@ -2585,7 +2604,12 @@ fn populate_frame_variables(
             }
             crate::database::VarValueSnapshot::Int(n) => {
                 store_mut.set_byte(inner_rec, av_abs, 0, 3);
-                store_mut.set_int(inner_rec, av_abs + u32::from(int_n_pos), i64::from(*n));
+                store_mut.set_int_sized(
+                    inner_rec,
+                    av_abs + u32::from(int_n_pos),
+                    int_n_w,
+                    i64::from(*n),
+                );
             }
             crate::database::VarValueSnapshot::Long(n) => {
                 store_mut.set_byte(inner_rec, av_abs, 0, 4);

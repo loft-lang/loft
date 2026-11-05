@@ -2610,6 +2610,15 @@ fn unit_defines(
             at("variables")
         );
     }
+    // @PLN217 — under the 32-bit regime a width-neutral field of the standard library's
+    // stack-frame and reflection records is 4 bytes, and the runtime writes it at that width.
+    // Nothing is written in a 64-bit build.
+    if stores.field_bytes(stores.name("StackFrame"), "line") == 4 {
+        out.push_str("#define LOFT_STD_INT4 1\n");
+    }
+    if stores.field_bytes(stores.name("ValueInfo"), "f") == 4 {
+        out.push_str("#define LOFT_STD_SINGLE 1\n");
+    }
     // The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`), stated here so
     // the runtime cannot hold a copy of the number that drifts from it.
     let _ = writeln!(
