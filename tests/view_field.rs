@@ -37,6 +37,18 @@ fn emitted(env: &[(&str, &str)]) -> String {
 
 /// [`emitted`] for another guard.
 fn emitted_from(file: &str, env: &[(&str, &str)]) -> String {
+    emitted_with(file, &[], env)
+}
+
+/// The CLOSED program's emission (`--lean`): the only tier the IR's value-record pass runs
+/// on — a plain native build ships the live tier, an open program (NATIVE.md § Optimisation
+/// tiers).
+fn emitted_closed(file: &str) -> String {
+    emitted_with(file, &["--lean"], ON)
+}
+
+/// [`emitted_from`] with extra driver flags.
+fn emitted_with(file: &str, flags: &[&str], env: &[(&str, &str)]) -> String {
     // One path per CALL, not per env: the tests run in parallel in one process, so two of
     // them sharing a name means one reads a file the other has already removed.
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -46,7 +58,8 @@ fn emitted_from(file: &str, env: &[(&str, &str)]) -> String {
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let mut cmd = loft();
-    cmd.arg("--native-rust")
+    cmd.args(flags)
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(file));
@@ -93,6 +106,49 @@ fn an_admitted_function_returns_its_heap_field_as_a_reference() {
         assert!(
             !params.contains("__retbuf"),
             "{func} must drop the caller's return buffer:\n{sig}"
+        );
+    }
+}
+
+/// The CLOSED program: the IR's value-record pass spells the view leaf as a tuple element
+/// (@PLN211 c4-view S1), so every writer emits the IR's tuple — in SCHEMA order, the view
+/// first — and finds no view-leaf function of its own.  The forwards (`p2`, `p8`, `p11`,
+/// `p16`: an early-return literal beside a `return g()`) are taken too, and every decline
+/// still keeps its record.
+#[test]
+fn the_closed_build_spells_the_view_in_the_irs_tuple() {
+    let src = emitted_closed(GUARD);
+    for func in [
+        "a1", "a2", "a3", "a4", "a5", "c1f", "c2f", "p1", "p2", "p8", "p11", "p12", "p13", "p14",
+        "p16",
+    ] {
+        let sig = signature(&src, func);
+        assert!(
+            sig.contains("-> (DbRef, u8, u8)"),
+            "{func} must answer the IR's tuple with its view leaf:\n{sig}"
+        );
+        let params = &sig[..sig.find(") ->").unwrap_or(sig.len())];
+        assert!(
+            !params.contains("__retbuf"),
+            "{func} must drop the caller's return buffer:\n{sig}"
+        );
+    }
+    assert!(
+        src.contains("let mut var_m1: (DbRef, u8, u8) = n_a1(cell, var_s1, 3_i64);"),
+        "the site binds the IR's tuple and passes no buffer"
+    );
+    assert!(
+        src.contains("vector::length_vector(&(var_m1.0), &stores.allocations)"),
+        "a length reads the view straight off the tuple"
+    );
+    for func in [
+        "d1", "d2", "d3", "d4", "d5", "d6", "b1f", "b2f", "b3f", "b4f", "b5f", "b6f", "b7f", "b8f",
+        "p3", "p4", "p5", "p6", "p7", "p7b", "p7c", "p7d", "p9", "p10", "p15", "p17",
+    ] {
+        let sig = signature(&src, func);
+        assert!(
+            sig.contains("var___retbuf: DbRef) -> DbRef"),
+            "{func} must keep the record form in the closed build too:\n{sig}"
         );
     }
 }
@@ -317,9 +373,16 @@ fn the_cells_hold_on_both_backends_under_every_falsifier() {
         (GUARD, "164-view-field: every cell holds"),
         (FORWARD, "164-forward-tuple: every cell holds"),
     ] {
-        for backend in ["--interpret", "--native"] {
+        // The interpreter and the two `--lean` runs are CLOSED programs, where the IR's tuple
+        // carries the view; a plain `--native` is open and runs the writers' own form.
+        for backend in [
+            &["--interpret"][..],
+            &["--native"],
+            &["--native", "--lean"],
+            &["--native-c", "--lean"],
+        ] {
             let mut cmd = loft();
-            cmd.arg(backend)
+            cmd.args(backend)
                 .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(file));
             for (k, v) in strict {
                 cmd.env(k, v);
@@ -332,11 +395,11 @@ fn the_cells_hold_on_both_backends_under_every_falsifier() {
             );
             assert!(
                 out.status.success() && text.contains(done),
-                "{file} on {backend} did not hold under the falsifiers:\n{text}"
+                "{file} on {backend:?} did not hold under the falsifiers:\n{text}"
             );
             assert!(
                 !text.contains("stores not freed"),
-                "{file} on {backend} leaked:\n{text}"
+                "{file} on {backend:?} leaked:\n{text}"
             );
         }
     }
