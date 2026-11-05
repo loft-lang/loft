@@ -383,7 +383,18 @@ pub fn guard_compound(e: el::El, code: ir::Node, target: ir::TypeT, nullable: bo
   if !r.some || calls_op(e, code, "OpRangeDefault") {
     return code;
   }
-  el_ir::cl(e, "OpRangeDefault", [code, ir::NdLong { n: r.lo }, ir::NdLong { n: r.hi }, ir::NdLong { n: r.dflt }])
+  // `uncomputable_default`: the `i32` template keeps its in-band null, as the plain `integer`
+  // does — its reserved code lies outside the range it reports.
+  dflt = r.dflt;
+  match el_types::base(target) {
+    TyInteger { spec } => {
+      if spec.min == -2147483647 && spec.max == 2147483647 {
+        dflt = null;
+      }
+    },
+    _ => {}
+  }
+  el_ir::cl(e, "OpRangeDefault", [code, ir::NdLong { n: r.lo }, ir::NdLong { n: r.hi }, ir::NdLong { n: dflt }])
 }
 
 fn calls_op(e: el::El, n: ir::Node, name: text) -> boolean {

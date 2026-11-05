@@ -2800,6 +2800,11 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, int
     if fd >= 0 && el::def(e, fd).def_type == el::DT_FUNCTION {
       return ex(ir::NdInt { n: fd }, el_types::function_value_type(e, fd));
     }
+    // A name declared below its use (a constant) is unknown on the first pass alone: untyped
+    // there, resolved — or refused — on the second.
+    if e.first_pass && d2 < 0 {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
     el::refuse(e, "a name that is not a variable: {kind}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }

@@ -51,7 +51,7 @@ fn top_item(e: el::El, it: integer) {
       }
     },
     SStruct { at, value, name, tvars, fields } => { parse_struct(e, at, value, name, tvars, fields); },
-    SConst { at } => { el::refuse(e, "constant"); },
+    SConst { at, name, tp, value } => { parse_constant(e, at, name, tp, value); },
     _ => { el::refuse(e, "item"); }
   }
 }
@@ -172,6 +172,55 @@ fn field_type_node(e: el::El, mods: vector<integer>) -> integer? {
     SFieldType { tp, init, caps } => if init == null && len(caps) == 0 { tp } else { null },
     _ => null
   }
+}
+
+// `Parser::parse_constant`, `const NAME = value;`: a definition of its own (`DefType::Constant`),
+// positioned where the parser stands on the `;`, typed by its value and holding the value's code,
+// which every use inlines.  The value is read with no frame of its own.  A declared type, and a
+// value other than a plain scalar or a literal text — a vector, a record, a text assembled in a
+// buffer, anything that names a slot — are refused by name.
+fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integer?) {
+  if tp != null || value == null {
+    el::refuse(e, "a constant with a declared type or no value");
+    return;
+  }
+  was = e.context;
+  e.context = -1;
+  vars = el_vars::new_vars("__const_{name}", e.file);
+  x = el_expressions::expression(e, vars, value!);
+  e.context = was;
+  if el_types::is_unknown(x.tp) {
+    return;
+  }
+  plain = el_convert::plain_scalar(x.tp) || (x.tp is TyText && el_ir::unspan(x.code) is NdText);
+  // A value that names a slot of the scratch frame needs a temporary the use site does not have.
+  slot = false;
+  for v in 0..len(vars.vars) {
+    if el_ir::reads_var(x.code, v) {
+      slot = true;
+    }
+  }
+  if !plain || slot {
+    el::refuse(e, "a constant of this kind: {el_expressions::type_kind(x.tp)}");
+    return;
+  }
+  semi = at;
+  while semi < len(e.p.src) && !(e.p.src[semi] is Semi) {
+    semi += 1;
+  }
+  d = el::def_nr(e, name);
+  if e.first_pass {
+    if d >= 0 {
+      el::refuse(e, "a constant over an existing name");
+      return;
+    }
+    d = el::add_def(e, name, el::pos_at(e, semi), el::DT_CONSTANT);
+  }
+  if d < 0 || el::def(e, d).def_type != el::DT_CONSTANT {
+    return;
+  }
+  el::set_returned(e, d, el_types::without_deps(x.tp));
+  e.b.data.definitions[d].code = [x.code];
 }
 
 // `type Name (= Type)? (size(n))? ;`                               Parser::parse_typedef
