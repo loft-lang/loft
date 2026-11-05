@@ -303,7 +303,7 @@ else
 fi
 
 set +e
-NOTES="$NOTES" DOWNLOAD="$DOWNLOAD" EXPECT="$EXPECT" EXPECT_YANK="$EXPECT_YANK" EXPECT_META="$EXPECT_META" python3 - "$PREV" "$INDEX" <<'PY'
+THIRDPARTY="$here/scripts/thirdparty.py" NOTES="$NOTES" DOWNLOAD="$DOWNLOAD" EXPECT="$EXPECT" EXPECT_YANK="$EXPECT_YANK" EXPECT_META="$EXPECT_META" python3 - "$PREV" "$INDEX" <<'PY'
 import json, sys, os, re, hashlib, shutil, tempfile, time, urllib.request, urllib.error, subprocess
 def load(p):
     try:
@@ -396,6 +396,26 @@ prev, cur = load(sys.argv[1]), load(sys.argv[2])
 show_notes = os.environ.get("NOTES") == "1"
 download   = os.environ.get("DOWNLOAD", "1") == "1"
 pp = (prev.get("packages") or {}) if isinstance(prev, dict) else {}
+
+
+def thirdparty_gate(data):
+    """THIRDPARTY.md, on the bytes about to be signed: None when every third-party file, link
+    and load the package ships is declared, else what is not.  Whatever route the version
+    came by — our publish run or a submitter's PR — it is refused here before it is signed."""
+    import io, tarfile, tempfile
+    gate = os.environ.get("THIRDPARTY")
+    if not gate or not os.path.exists(gate):
+        return "the third-party gate (scripts/thirdparty.py) is not beside this script"
+    with tempfile.TemporaryDirectory() as tmp:
+        with tarfile.open(fileobj=io.BytesIO(data)) as t:
+            t.extractall(tmp, filter="data")
+        tops = [os.path.join(tmp, e) for e in os.listdir(tmp)]
+        pkg = tops[0] if len(tops) == 1 and os.path.isdir(tops[0]) else tmp
+        r = subprocess.run([sys.executable, gate, "--gate", "--repo", pkg], capture_output=True, text=True)
+    if r.returncode == 0:
+        return None
+    return "ships third-party code or links it does not declare (THIRDPARTY.md):\n" + "\n".join(
+        "             " + ln.strip() for ln in r.stdout.strip().splitlines()[:12])
 cp = cur.get("packages") or {}
 rel_re = re.compile(r"github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/")
 
@@ -647,6 +667,10 @@ for name, ver, meta, is_new in changes:
             got = hashlib.sha256(data).hexdigest()
             if got == sha:
                 print(f"        VERIFY   : sha256 MATCH ({len(data)} bytes downloaded)")
+                why_not = thirdparty_gate(data)
+                print(f"        VERIFY   : third-party {'declared' if why_not is None else 'UNDECLARED !!'}")
+                if why_not:
+                    failures.append((name, ver, why_not))
                 if size is not None and len(data) != size:
                     print(f"        VERIFY   : size MISMATCH !!  downloaded {len(data)} != declared {size}")
                     failures.append((name, ver,
