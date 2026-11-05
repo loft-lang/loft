@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # `(R-CompleteWrite)` in the IR phase
 
-**Status: S2 built; the pass's first form is built opt-in (S3, `LOFT_IR_COMPLETE_WRITE=1`).**  Arc C's next move ([README.md § Arc C](README.md#arc-c--moving-them)).
+**Status: built — S1–S4; the move is recorded in [README.md § Arc C's moves](README.md#arc-cs-moves).**  Arc C's next move ([README.md § Arc C](README.md#arc-c--moving-them)).
 
 ## The rule
 
@@ -51,6 +51,10 @@ One analysis, computed per writer on the IR it emits, plus a null arm keyed by n
 
 ## The design
 
+**As built, step 1 changed** (§ What is built, S3): the twins in the IR made the later readers
+of `OpDatabase` / `OpNewRecord` decline, so the decision is a STORED fact the backends read, and
+the twins are bytecode opcodes.  What follows is the design as first written.
+
 **One decision, spelled in the IR, read by every backend:** a pass `opt::complete_write` in
 `close_program`, ahead of `opt::loop_record`, rewrites each covered mint to its no-prefill twin
 and marks each fresh-field copy as a copy into a fresh destination.
@@ -84,6 +88,12 @@ and marks each fresh-field copy as a copy into a fresh destination.
 
 ## What is built
 
+- **One null arm (S1, loft#2414).**  `Stores::copy_null_into` — the interpreter's and rustc's
+  null arm of a `COPY_FRESH_DEST` copy — writes a struct's default walk after the zero fill; a
+  struct-enum keeps the zero fill (discriminant 0 is its null).  The C writer emits the same
+  default image as the null arm of such a copy where the image is not all zero
+  (`FnWriter::fresh_default_tp`, which the fresh-field arm now goes through too).  Cell
+  `2414-a-null-record-copied-into-a-fresh-slot-is-absent.loft`, each half falsified alone.
 - **The twins (S2).**  `OpDatabaseNP` and `OpNewRecordNP` are declared last in
   `default/02_files.loft` (`make fill` regenerated the three operator tables and
   `op_layout`); the interpreter runs them as `State::database_n_p` / `new_record_n_p`, the mint
@@ -92,21 +102,34 @@ and marks each fresh-field copy as a copy into a fresh destination.
   covered element mint, at its three element-mint sites; `opt::writes::mint_target` takes the
   twin.  rustc's `(R-RefillText)` twin keeps its buffer's prefill whatever the IR says: that
   exception is the twin's rule, a writer rule.
-- **The pass, first form (S3).**  `opt::complete_write`, ahead of `opt::loop_record`, rewrites
-  the covered mints of `complete_writes` to their twins.  It does not flag the fresh-field
-  copies yet: until S1, the interpreter under the pass leaves a null source's field as the
-  slot held it.  Probes: a push loop of complete literals and a program of local mints (a
-  returned record, both variants of a struct-enum) answer the hand-computed values on the
-  interpreter, the C and rustc, the pass on and off; the push loop 3 954 → 3 747 instructions
-  a pass on the interpreter (−5.2 %).
+- **The pass (S3), a stored fact.**  The twins in the IR made ~126 later readers that name
+  `OpDatabase` / `OpNewRecord` decline: the census under it lost sites in 40+ rules
+  (`R-RetAdopt` −76, `R-Mint` −74, `R-RefillBuffer` −38, …).  So `opt::complete_write` stores
+  the decision as `Definition::no_prefill` (`locals`, `mints`; keyed by local and parent type,
+  so a later pass moving a mint cannot stale it) and the IR keeps the plain mints; the
+  interpreter's code generator emits the twin opcode (`state/codegen.rs::no_prefill_twin`),
+  rustc and the C read the fact.  The fact crosses the program image: `selfhost/src/ir.loft`
+  (`make ir-schema-regen`), `data_store`'s layout (`no_prefill` at 196, the booleans + 4),
+  `ir_store` / `ir_read`, `ir_schema`.  The pass flags each fresh-field copy
+  `COPY_FRESH_DEST`, and `opt::writes::in_place_copy` admits such a copy of a type that owns no
+  heap (`R-RecPtr` in moros' `undo_push` was lost to the flag without it).
+- **The move (S4).**  Default on; both writers' own `complete_writes` calls, rustc's
+  `OpCopyRecordEmitter::fresh_field` and the C's fresh-field lookup deleted; the switch reaches
+  the pass alone.  The fresh-field flags are written whatever the switch says: rustc's record
+  push (`@FR-R-PushRec`) mints its element without the prefill either way, and without the flag
+  the 2414 and 2044 cells failed on rustc under `LOFT_NO_COMPLETE_WRITE=1`.  A no-prefill
+  element is zeroed, not left as claimed (`Stores::record_new_np`, the interpreter's and
+  rustc's one mint): a claim keeps recycled bytes, and a type's padding, which no field
+  writes, carried freed text into a persisted image (`c_emit`'s
+  `a_store_image_crosses_every_backend`; rustc's writer-clause mint did the same, so its image
+  is now asserted too).
 - **Owed:** `index/target_surface.json` (two new operators; `make surface-gen` on a prebuilt
   wasm rlib, or on the runner).
 
 ## Risks
 
-- **A reader of the twin that should not decline.**  A reader that decides SAFETY rather than
-  an optimisation (a free, an owner test) and names only `OpDatabase` would treat the twin's
-  local as unminted.  S4 lists every such reader before the default flips.
+- **A reader of the twin that should not decline** — removed by the stored fact: the IR keeps
+  the plain mints, so no reader sees a twin.
 - **A first-pass prefill that someone reads.**  `(R-ElemFirst)` says "every field is written
   before the finish — by the prelude mint's prefill, a paired build, or the kept sets".  A
   pair whose mint the pass makes no-prefill must have no field left to the prefill; the pass

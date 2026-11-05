@@ -377,6 +377,25 @@ impl Stores {
         }
     }
 
+    /// [`Self::record_new`] for a mint without the default prefill (`@FR-R-CompleteWrite`):
+    /// the group that follows writes every FIELD, and the bytes no field holds (a type's
+    /// padding) are zeroed here, as the C's mint leaves them, so a persisted image is the same
+    /// on every backend and carries no recycled bytes.  A memset of the element, not the
+    /// default walk.  The interpreter's `OpNewRecordNP` and rustc's both mint through it.
+    pub fn record_new_np(&mut self, data: &DbRef, parent_tp: u16, field: u16) -> DbRef {
+        let rec = self.record_new(data, parent_tp, field);
+        let tp = if field == u16::MAX {
+            self.content(parent_tp)
+        } else {
+            self.content(self.field_type(parent_tp, field))
+        };
+        let size = u32::from(self.size(tp));
+        if !rec.is_null() && rec.rec != 0 && size != u32::from(u16::MAX) {
+            keys::mut_store(&rec, &mut self.allocations).zero_range(rec.rec, rec.pos, size);
+        }
+        rec
+    }
+
     /// Create a fresh record for a collection element / nullable field and return its `DbRef`.
     ///
     /// # Panics

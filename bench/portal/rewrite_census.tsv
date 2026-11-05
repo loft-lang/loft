@@ -3,6 +3,7 @@
 # program <TAB> commit (a library checkout's, then `+name@version` per dependency its lane resolved; `-` for an in-repo lane) <TAB> writer (`rust`, `c`) <TAB> rule <TAB> count
 01_fibonacci	-	c	R-Base	1
 01_fibonacci	-	c	R-BoundedNest/kernel	1
+01_fibonacci	-	c	R-CompleteWrite	4
 01_fibonacci	-	c	R-Counter	3
 01_fibonacci	-	c	R-DischargeInto	1
 01_fibonacci	-	c	R-FormatAppend	1
@@ -55,6 +56,7 @@
 01_fibonacci	-	rust	R-ZeroCount	8
 02_sum_loop	-	c	R-Base	1
 02_sum_loop	-	c	R-BoundedNest/kernel	1
+02_sum_loop	-	c	R-CompleteWrite	4
 02_sum_loop	-	c	R-Counter	6
 02_sum_loop	-	c	R-DischargeInto	1
 02_sum_loop	-	c	R-FormatAppend	1
@@ -105,6 +107,7 @@
 02_sum_loop	-	rust	R-ZeroCount	8
 03_sieve	-	c	R-Base	1
 03_sieve	-	c	R-BoundedNest/kernel	1
+03_sieve	-	c	R-CompleteWrite	4
 03_sieve	-	c	R-Counter	9
 03_sieve	-	c	R-DischargeInto	1
 03_sieve	-	c	R-FormatAppend	1
@@ -159,6 +162,7 @@
 03_sieve	-	rust	R-ZeroCount	8
 04_collatz	-	c	R-Base	1
 04_collatz	-	c	R-BoundedNest/kernel	1
+04_collatz	-	c	R-CompleteWrite	4
 04_collatz	-	c	R-Counter	13
 04_collatz	-	c	R-DischargeInto	1
 04_collatz	-	c	R-FormatAppend	1
@@ -214,6 +218,7 @@
 04_collatz	-	rust	R-ZeroCount	8
 05_mandelbrot	-	c	R-Base	1
 05_mandelbrot	-	c	R-BoundedNest/kernel	1
+05_mandelbrot	-	c	R-CompleteWrite	4
 05_mandelbrot	-	c	R-Counter	12
 05_mandelbrot	-	c	R-DischargeInto	1
 05_mandelbrot	-	c	R-FormatAppend	1
@@ -268,6 +273,7 @@
 05_mandelbrot	-	rust	R-ZeroCount	8
 06_newton_sqrt	-	c	R-Base	1
 06_newton_sqrt	-	c	R-BoundedNest/kernel	1
+06_newton_sqrt	-	c	R-CompleteWrite	4
 06_newton_sqrt	-	c	R-Counter	8
 06_newton_sqrt	-	c	R-DischargeInto	1
 06_newton_sqrt	-	c	R-FormatAppend	1
@@ -325,6 +331,7 @@
 06_newton_sqrt	-	rust	R-ZeroCount	8
 07_string_build	-	c	R-Base	1
 07_string_build	-	c	R-BoundedNest/kernel	1
+07_string_build	-	c	R-CompleteWrite	4
 07_string_build	-	c	R-Counter	6
 07_string_build	-	c	R-DischargeInto	1
 07_string_build	-	c	R-FormatAppend	2
@@ -375,7 +382,7 @@
 07_string_build	-	rust	R-ZeroCount	8
 08_word_count	-	c	R-Base	2
 08_word_count	-	c	R-BoundedNest/kernel	1
-08_word_count	-	c	R-CompleteWrite	2
+08_word_count	-	c	R-CompleteWrite	6
 08_word_count	-	c	R-Counter	6
 08_word_count	-	c	R-DischargeInto	2
 08_word_count	-	c	R-FieldAppend/bare	18
@@ -404,7 +411,7 @@
 08_word_count	-	rust	R-Base	4
 08_word_count	-	rust	R-BoundedNest/kernel	1
 08_word_count	-	rust	R-CharWalk	10
-08_word_count	-	rust	R-CompleteWrite	7
+08_word_count	-	rust	R-CompleteWrite	6
 08_word_count	-	rust	R-Counter	5
 08_word_count	-	rust	R-DischargeInto	2
 08_word_count	-	rust	R-FieldAppend/bare	26
@@ -439,7 +446,7 @@
 08_word_count	-	rust	R-ZeroCount	8
 09_matrix_mul	-	c	R-Base	5
 09_matrix_mul	-	c	R-BoundedNest/kernel	1
-09_matrix_mul	-	c	R-CompleteWrite	2
+09_matrix_mul	-	c	R-CompleteWrite	6
 09_matrix_mul	-	c	R-Counter	13
 09_matrix_mul	-	c	R-DischargeInto	1
 09_matrix_mul	-	c	R-FormatAppend	1
@@ -499,6 +506,7 @@
 09_matrix_mul	-	rust	R-ZeroCount	8
 10_sort	-	c	R-Base	3
 10_sort	-	c	R-BoundedNest/kernel	1
+10_sort	-	c	R-CompleteWrite	4
 10_sort	-	c	R-Counter	11
 10_sort	-	c	R-DischargeInto	1
 10_sort	-	c	R-FormatAppend	1
@@ -563,7 +571,7 @@
 10_sort	-	rust	R-ZeroCount	8
 11_par	-	c	R-Base	1
 11_par	-	c	R-BoundedNest/kernel	1
-11_par	-	c	R-CompleteWrite	2
+11_par	-	c	R-CompleteWrite	6
 11_par	-	c	R-Counter	7
 11_par	-	c	R-DischargeInto	1
 11_par	-	c	R-FormatAppend	1
@@ -621,12 +629,12 @@
 11_par	-	rust	R-Wrapper	10
 11_par	-	rust	R-ZeroCount	8
 12_drawing	-	c	R-Apart/vector	1
-12_drawing	-	c	R-Base	36
+12_drawing	-	c	R-Base	42
 12_drawing	-	c	R-Base/counter	4
 12_drawing	-	c	R-BoundedNest/kernel	1
 12_drawing	-	c	R-Callee	1
-12_drawing	-	c	R-CompleteWrite	9
-12_drawing	-	c	R-Counter	120
+12_drawing	-	c	R-CompleteWrite	13
+12_drawing	-	c	R-Counter	121
 12_drawing	-	c	R-DischargeInto	1
 12_drawing	-	c	R-ElemFirst	2
 12_drawing	-	c	R-FieldAppend/bare	2
@@ -638,26 +646,27 @@
 12_drawing	-	c	R-Fuse/text	31
 12_drawing	-	c	R-GuardedChain	4
 12_drawing	-	c	R-GuardedChain/operators	16
-12_drawing	-	c	R-Header	36
+12_drawing	-	c	R-Header	42
 12_drawing	-	c	R-Header/apart	3
 12_drawing	-	c	R-Inline	2
+12_drawing	-	c	R-Inline/helper	1
 12_drawing	-	c	R-InlineLeaf	72
-12_drawing	-	c	R-Inputs	2
+12_drawing	-	c	R-Inputs	4
 12_drawing	-	c	R-Invariant	10
 12_drawing	-	c	R-LoopSlot	20
 12_drawing	-	c	R-MaskRange	4
 12_drawing	-	c	R-NoLocks	1
 12_drawing	-	c	R-NonSentinelParam	25
-12_drawing	-	c	R-Push	3
-12_drawing	-	c	R-Range	27
-12_drawing	-	c	R-RecPtr	4
+12_drawing	-	c	R-Push	13
+12_drawing	-	c	R-Range	34
+12_drawing	-	c	R-RecPtr	5
 12_drawing	-	c	R-RecPtr/held	1
 12_drawing	-	c	R-RecPtr/param	3
-12_drawing	-	c	R-RefParam	76
+12_drawing	-	c	R-RefParam	82
 12_drawing	-	c	R-RetAdopt	1
 12_drawing	-	c	R-Reuse	4
 12_drawing	-	c	R-Rotate	28
-12_drawing	-	c	R-Scalar	14
+12_drawing	-	c	R-Scalar	16
 12_drawing	-	c	R-ScaleFold	2
 12_drawing	-	c	R-SingleUse	7
 12_drawing	-	c	R-StartStep	2
@@ -670,11 +679,11 @@
 12_drawing	-	c	R-Wrapper	29
 12_drawing	-	c	R-ZeroCount	8
 12_drawing	-	rust	R-Apart/vector	1
-12_drawing	-	rust	R-Base	95
+12_drawing	-	rust	R-Base	98
 12_drawing	-	rust	R-BoundedNest/kernel	1
 12_drawing	-	rust	R-Callee	1
 12_drawing	-	rust	R-CharWalk	10
-12_drawing	-	rust	R-CompleteWrite	17
+12_drawing	-	rust	R-CompleteWrite	13
 12_drawing	-	rust	R-Counter	108
 12_drawing	-	rust	R-DischargeInto	1
 12_drawing	-	rust	R-ElemFirst	2
@@ -689,11 +698,11 @@
 12_drawing	-	rust	R-GuardFree	9
 12_drawing	-	rust	R-GuardedChain	7
 12_drawing	-	rust	R-GuardedChain/operators	28
-12_drawing	-	rust	R-Header	90
+12_drawing	-	rust	R-Header	103
 12_drawing	-	rust	R-Header/function	6
 12_drawing	-	rust	R-Header/kept	7
 12_drawing	-	rust	R-InlineLeaf	72
-12_drawing	-	rust	R-Inputs	7
+12_drawing	-	rust	R-Inputs	8
 12_drawing	-	rust	R-Invariant	40
 12_drawing	-	rust	R-Leaf	133
 12_drawing	-	rust	R-LeafChain	34
@@ -701,7 +710,8 @@
 12_drawing	-	rust	R-LoopSlot	20
 12_drawing	-	rust	R-MaskRange	4
 12_drawing	-	rust	R-Mint	11
-12_drawing	-	rust	R-Push	3
+12_drawing	-	rust	R-Push	13
+12_drawing	-	rust	R-PushFill	12
 12_drawing	-	rust	R-PushRec	1
 12_drawing	-	rust	R-Range	70
 12_drawing	-	rust	R-RangedCall	5
@@ -711,7 +721,7 @@
 12_drawing	-	rust	R-RetAdopt	4
 12_drawing	-	rust	R-Reuse	4
 12_drawing	-	rust	R-Rotate	28
-12_drawing	-	rust	R-Scalar	44
+12_drawing	-	rust	R-Scalar	46
 12_drawing	-	rust	R-ScaleFold	2
 12_drawing	-	rust	R-SingleUse	7
 12_drawing	-	rust	R-SplitTable	1
@@ -728,7 +738,7 @@
 13_stdlib_text	-	c	R-Base	5
 13_stdlib_text	-	c	R-BoundedNest/kernel	1
 13_stdlib_text	-	c	R-CharWalk	2
-13_stdlib_text	-	c	R-CompleteWrite	1
+13_stdlib_text	-	c	R-CompleteWrite	4
 13_stdlib_text	-	c	R-Counter	52
 13_stdlib_text	-	c	R-DischargeInto	1
 13_stdlib_text	-	c	R-FieldAppend/bare	4
@@ -794,7 +804,7 @@
 14_stdlib_vector	-	c	R-Base	15
 14_stdlib_vector	-	c	R-Base/counter	6
 14_stdlib_vector	-	c	R-BoundedNest/kernel	1
-14_stdlib_vector	-	c	R-CompleteWrite	13
+14_stdlib_vector	-	c	R-CompleteWrite	15
 14_stdlib_vector	-	c	R-Counter	77
 14_stdlib_vector	-	c	R-DischargeInto	1
 14_stdlib_vector	-	c	R-ElemFirst	1
@@ -817,8 +827,6 @@
 14_stdlib_vector	-	c	R-Mint	2
 14_stdlib_vector	-	c	R-NoLocks	1
 14_stdlib_vector	-	c	R-NonSentinelParam	20
-14_stdlib_vector	-	c	R-Push	1
-14_stdlib_vector	-	c	R-Push/sole	1
 14_stdlib_vector	-	c	R-Range	27
 14_stdlib_vector	-	c	R-RecPtr	4
 14_stdlib_vector	-	c	R-RecPtr/held	2
@@ -835,7 +843,7 @@
 14_stdlib_vector	-	rust	R-Base	20
 14_stdlib_vector	-	rust	R-BoundedNest/kernel	1
 14_stdlib_vector	-	rust	R-CharWalk	10
-14_stdlib_vector	-	rust	R-CompleteWrite	28
+14_stdlib_vector	-	rust	R-CompleteWrite	15
 14_stdlib_vector	-	rust	R-Counter	77
 14_stdlib_vector	-	rust	R-DischargeInto	1
 14_stdlib_vector	-	rust	R-ElemFirst	1
@@ -860,7 +868,7 @@
 14_stdlib_vector	-	rust	R-LoopSlot	28
 14_stdlib_vector	-	rust	R-Mint	15
 14_stdlib_vector	-	rust	R-Push	10
-14_stdlib_vector	-	rust	R-PushFill	8
+14_stdlib_vector	-	rust	R-PushFill	10
 14_stdlib_vector	-	rust	R-PushFill/record	3
 14_stdlib_vector	-	rust	R-PushRec	3
 14_stdlib_vector	-	rust	R-Range	76
@@ -882,7 +890,7 @@
 15_stdlib_keyed	-	c	R-Base	3
 15_stdlib_keyed	-	c	R-Base/counter	2
 15_stdlib_keyed	-	c	R-BoundedNest/kernel	1
-15_stdlib_keyed	-	c	R-CompleteWrite	15
+15_stdlib_keyed	-	c	R-CompleteWrite	19
 15_stdlib_keyed	-	c	R-Counter	58
 15_stdlib_keyed	-	c	R-DischargeInto	2
 15_stdlib_keyed	-	c	R-FieldAppend/bare	1
@@ -917,7 +925,7 @@
 15_stdlib_keyed	-	rust	R-Base	6
 15_stdlib_keyed	-	rust	R-BoundedNest/kernel	1
 15_stdlib_keyed	-	rust	R-CharWalk	10
-15_stdlib_keyed	-	rust	R-CompleteWrite	33
+15_stdlib_keyed	-	rust	R-CompleteWrite	19
 15_stdlib_keyed	-	rust	R-Counter	70
 15_stdlib_keyed	-	rust	R-DischargeInto	2
 15_stdlib_keyed	-	rust	R-FieldAppend/bare	9
@@ -960,7 +968,7 @@
 16_consumer_shapes	-	c	R-Base/counter	15
 16_consumer_shapes	-	c	R-BoundedNest/kernel	1
 16_consumer_shapes	-	c	R-Callee	1
-16_consumer_shapes	-	c	R-CompleteWrite	26
+16_consumer_shapes	-	c	R-CompleteWrite	27
 16_consumer_shapes	-	c	R-Counter	114
 16_consumer_shapes	-	c	R-DischargeInto	1
 16_consumer_shapes	-	c	R-FieldAppend	1
@@ -1015,7 +1023,7 @@
 16_consumer_shapes	-	rust	R-BoundedNest/kernel	1
 16_consumer_shapes	-	rust	R-Callee	1
 16_consumer_shapes	-	rust	R-CharWalk	10
-16_consumer_shapes	-	rust	R-CompleteWrite	43
+16_consumer_shapes	-	rust	R-CompleteWrite	27
 16_consumer_shapes	-	rust	R-Counter	161
 16_consumer_shapes	-	rust	R-DischargeInto	1
 16_consumer_shapes	-	rust	R-FieldAppend	1
@@ -1077,7 +1085,7 @@
 17_consumer_moros_dryopea	-	c	R-Base/counter	2
 17_consumer_moros_dryopea	-	c	R-BoundedNest/kernel	1
 17_consumer_moros_dryopea	-	c	R-Compact	2
-17_consumer_moros_dryopea	-	c	R-CompleteWrite	56
+17_consumer_moros_dryopea	-	c	R-CompleteWrite	50
 17_consumer_moros_dryopea	-	c	R-Counter	134
 17_consumer_moros_dryopea	-	c	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	c	R-DischargeInto	1
@@ -1139,7 +1147,7 @@
 17_consumer_moros_dryopea	-	rust	R-BoundedNest/kernel	1
 17_consumer_moros_dryopea	-	rust	R-CharWalk	10
 17_consumer_moros_dryopea	-	rust	R-Compact	2
-17_consumer_moros_dryopea	-	rust	R-CompleteWrite	72
+17_consumer_moros_dryopea	-	rust	R-CompleteWrite	50
 17_consumer_moros_dryopea	-	rust	R-Counter	109
 17_consumer_moros_dryopea	-	rust	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	rust	R-DischargeInto	1
@@ -1203,7 +1211,7 @@
 18_consumer_crawler	-	c	R-BoundedNest/kernel	1
 18_consumer_crawler	-	c	R-Callee	1
 18_consumer_crawler	-	c	R-CharWalk	3
-18_consumer_crawler	-	c	R-CompleteWrite	19
+18_consumer_crawler	-	c	R-CompleteWrite	21
 18_consumer_crawler	-	c	R-Counter	260
 18_consumer_crawler	-	c	R-DischargeInto	7
 18_consumer_crawler	-	c	R-ExitVector	1
@@ -1263,7 +1271,7 @@
 18_consumer_crawler	-	rust	R-BoundedNest/kernel	1
 18_consumer_crawler	-	rust	R-Callee	2
 18_consumer_crawler	-	rust	R-CharWalk	15
-18_consumer_crawler	-	rust	R-CompleteWrite	28
+18_consumer_crawler	-	rust	R-CompleteWrite	21
 18_consumer_crawler	-	rust	R-Counter	215
 18_consumer_crawler	-	rust	R-DischargeInto	7
 18_consumer_crawler	-	rust	R-ExitVector	1
@@ -1321,7 +1329,7 @@
 19_stdlib_par	-	c	R-Base	1
 19_stdlib_par	-	c	R-Base/counter	2
 19_stdlib_par	-	c	R-BoundedNest/kernel	1
-19_stdlib_par	-	c	R-CompleteWrite	7
+19_stdlib_par	-	c	R-CompleteWrite	11
 19_stdlib_par	-	c	R-Counter	34
 19_stdlib_par	-	c	R-DischargeInto	1
 19_stdlib_par	-	c	R-FieldAppend/bare	1
@@ -1357,7 +1365,7 @@
 19_stdlib_par	-	rust	R-Base	6
 19_stdlib_par	-	rust	R-BoundedNest/kernel	1
 19_stdlib_par	-	rust	R-CharWalk	10
-19_stdlib_par	-	rust	R-CompleteWrite	14
+19_stdlib_par	-	rust	R-CompleteWrite	11
 19_stdlib_par	-	rust	R-Counter	29
 19_stdlib_par	-	rust	R-DischargeInto	1
 19_stdlib_par	-	rust	R-FaultFlag	1
@@ -1399,7 +1407,7 @@
 20_interpreter	-	c	R-Base	8
 20_interpreter	-	c	R-Base/counter	1
 20_interpreter	-	c	R-BoundedNest/kernel	1
-20_interpreter	-	c	R-CompleteWrite	17
+20_interpreter	-	c	R-CompleteWrite	14
 20_interpreter	-	c	R-Counter	30
 20_interpreter	-	c	R-DischargeInto	1
 20_interpreter	-	c	R-FieldAppend/bare	120
@@ -1482,7 +1490,7 @@ arguments	1add14001	c	R-Base	6
 arguments	1add14001	c	R-Base/counter	1
 arguments	1add14001	c	R-BoundedNest/kernel	1
 arguments	1add14001	c	R-CharWalk	2
-arguments	1add14001	c	R-CompleteWrite	11
+arguments	1add14001	c	R-CompleteWrite	10
 arguments	1add14001	c	R-Counter	20
 arguments	1add14001	c	R-DischargeInto	2
 arguments	1add14001	c	R-FieldAppend	3
@@ -1529,7 +1537,7 @@ arguments	1add14001	rust	R-Alias/versioned	1
 arguments	1add14001	rust	R-Base	31
 arguments	1add14001	rust	R-BoundedNest/kernel	1
 arguments	1add14001	rust	R-CharWalk	11
-arguments	1add14001	rust	R-CompleteWrite	11
+arguments	1add14001	rust	R-CompleteWrite	10
 arguments	1add14001	rust	R-Counter	15
 arguments	1add14001	rust	R-DischargeInto	2
 arguments	1add14001	rust	R-FieldAppend	3
@@ -1574,7 +1582,7 @@ arguments	1add14001	rust	R-ZeroCount	28
 assets	856d1c055+shapes@0.5.4	c	R-Base	14
 assets	856d1c055+shapes@0.5.4	c	R-Base/counter	3
 assets	856d1c055+shapes@0.5.4	c	R-BoundedNest/kernel	1
-assets	856d1c055+shapes@0.5.4	c	R-CompleteWrite	18
+assets	856d1c055+shapes@0.5.4	c	R-CompleteWrite	26
 assets	856d1c055+shapes@0.5.4	c	R-Const	1
 assets	856d1c055+shapes@0.5.4	c	R-Const/fn	1
 assets	856d1c055+shapes@0.5.4	c	R-Counter	140
@@ -1631,7 +1639,7 @@ assets	856d1c055+shapes@0.5.4	rust	R-Alias/versioned	2
 assets	856d1c055+shapes@0.5.4	rust	R-Base	58
 assets	856d1c055+shapes@0.5.4	rust	R-BoundedNest/kernel	1
 assets	856d1c055+shapes@0.5.4	rust	R-CharWalk	11
-assets	856d1c055+shapes@0.5.4	rust	R-CompleteWrite	34
+assets	856d1c055+shapes@0.5.4	rust	R-CompleteWrite	26
 assets	856d1c055+shapes@0.5.4	rust	R-Const	1
 assets	856d1c055+shapes@0.5.4	rust	R-Const/fn	1
 assets	856d1c055+shapes@0.5.4	rust	R-Counter	137
@@ -1692,7 +1700,7 @@ cbor	1add14001	c	R-Base/counter	2
 cbor	1add14001	c	R-BoundAppend	1
 cbor	1add14001	c	R-BoundedNest/kernel	1
 cbor	1add14001	c	R-ByteCopy	2
-cbor	1add14001	c	R-CompleteWrite	58
+cbor	1add14001	c	R-CompleteWrite	33
 cbor	1add14001	c	R-Counter	165
 cbor	1add14001	c	R-Destination	6
 cbor	1add14001	c	R-DischargeInto	1
@@ -1757,7 +1765,7 @@ cbor	1add14001	rust	R-BoundAppend	1
 cbor	1add14001	rust	R-BoundedNest/kernel	1
 cbor	1add14001	rust	R-ByteCopy	2
 cbor	1add14001	rust	R-CharWalk	10
-cbor	1add14001	rust	R-CompleteWrite	67
+cbor	1add14001	rust	R-CompleteWrite	33
 cbor	1add14001	rust	R-Counter	165
 cbor	1add14001	rust	R-Destination	15
 cbor	1add14001	rust	R-DischargeInto	1
@@ -1820,7 +1828,7 @@ cbor	1add14001	rust	R-ZeroCount	8
 crypto	1add14001	c	R-Base	4
 crypto	1add14001	c	R-Base/counter	3
 crypto	1add14001	c	R-BoundedNest/kernel	1
-crypto	1add14001	c	R-CompleteWrite	8
+crypto	1add14001	c	R-CompleteWrite	23
 crypto	1add14001	c	R-Counter	57
 crypto	1add14001	c	R-DischargeInto	1
 crypto	1add14001	c	R-ExitVector	1
@@ -1922,7 +1930,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Base/
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-BoundedNest/kernel	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Callee	5
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CharWalk	1
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CompleteWrite	154
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CompleteWrite	189
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CopyView	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Counter	625
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-DischargeInto	1
@@ -2008,7 +2016,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Bo
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-BoundedNest/kernel	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Callee	10
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CharWalk	10
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CompleteWrite	255
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CompleteWrite	189
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CopyView	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Counter	580
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-DischargeInto	1
@@ -2095,7 +2103,7 @@ fixstep	bd5a7404d	c	R-Base	3
 fixstep	bd5a7404d	c	R-Base/counter	6
 fixstep	bd5a7404d	c	R-BoundedNest/kernel	1
 fixstep	bd5a7404d	c	R-Callee	3
-fixstep	bd5a7404d	c	R-CompleteWrite	14
+fixstep	bd5a7404d	c	R-CompleteWrite	15
 fixstep	bd5a7404d	c	R-Counter	124
 fixstep	bd5a7404d	c	R-DischargeInto	1
 fixstep	bd5a7404d	c	R-FieldAppend/bare	4
@@ -2140,7 +2148,7 @@ fixstep	bd5a7404d	rust	R-Base	12
 fixstep	bd5a7404d	rust	R-BoundedNest/kernel	1
 fixstep	bd5a7404d	rust	R-Callee	5
 fixstep	bd5a7404d	rust	R-CharWalk	10
-fixstep	bd5a7404d	rust	R-CompleteWrite	20
+fixstep	bd5a7404d	rust	R-CompleteWrite	15
 fixstep	bd5a7404d	rust	R-Counter	94
 fixstep	bd5a7404d	rust	R-DischargeInto	1
 fixstep	bd5a7404d	rust	R-FieldAppend/bare	12
@@ -2186,7 +2194,7 @@ fixstep	bd5a7404d	rust	R-ZeroCount	8
 game_protocol	b4075f3fc	c	R-Base	1
 game_protocol	b4075f3fc	c	R-Base/counter	2
 game_protocol	b4075f3fc	c	R-BoundedNest/kernel	1
-game_protocol	b4075f3fc	c	R-CompleteWrite	7
+game_protocol	b4075f3fc	c	R-CompleteWrite	13
 game_protocol	b4075f3fc	c	R-Counter	18
 game_protocol	b4075f3fc	c	R-DischargeInto	1
 game_protocol	b4075f3fc	c	R-FieldAppend/bare	1
@@ -2223,7 +2231,7 @@ game_protocol	b4075f3fc	c	R-ZeroCount	8
 game_protocol	b4075f3fc	rust	R-Base	4
 game_protocol	b4075f3fc	rust	R-BoundedNest/kernel	1
 game_protocol	b4075f3fc	rust	R-CharWalk	10
-game_protocol	b4075f3fc	rust	R-CompleteWrite	14
+game_protocol	b4075f3fc	rust	R-CompleteWrite	13
 game_protocol	b4075f3fc	rust	R-Counter	16
 game_protocol	b4075f3fc	rust	R-DischargeInto	1
 game_protocol	b4075f3fc	rust	R-FieldAppend/bare	9
@@ -2265,7 +2273,7 @@ glb	856d1c055	c	R-Alias/versioned	4
 glb	856d1c055	c	R-Base	10
 glb	856d1c055	c	R-Base/counter	8
 glb	856d1c055	c	R-BoundedNest/kernel	1
-glb	856d1c055	c	R-CompleteWrite	29
+glb	856d1c055	c	R-CompleteWrite	44
 glb	856d1c055	c	R-Counter	138
 glb	856d1c055	c	R-DischargeInto	1
 glb	856d1c055	c	R-FieldAppend	6
@@ -2321,7 +2329,7 @@ glb	856d1c055	rust	R-Alias/versioned	8
 glb	856d1c055	rust	R-Base	45
 glb	856d1c055	rust	R-BoundedNest/kernel	1
 glb	856d1c055	rust	R-CharWalk	10
-glb	856d1c055	rust	R-CompleteWrite	59
+glb	856d1c055	rust	R-CompleteWrite	44
 glb	856d1c055	rust	R-Counter	78
 glb	856d1c055	rust	R-DischargeInto	1
 glb	856d1c055	rust	R-FieldAppend	9
@@ -2377,7 +2385,7 @@ graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-Base	21
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-Base/counter	3
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-BoundedNest/kernel	1
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-Callee	11
-graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-CompleteWrite	34
+graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-CompleteWrite	77
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-CopyView	2
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-Counter	280
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-DischargeInto	1
@@ -2448,7 +2456,7 @@ graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-BoundedNest	4
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-BoundedNest/kernel	1
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Callee	12
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-CharWalk	10
-graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-CompleteWrite	98
+graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-CompleteWrite	77
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-CopyView	2
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Counter	252
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-DischargeInto	1
@@ -2521,7 +2529,7 @@ gridmesh	aa86b6b47	c	R-Alias/versioned	1
 gridmesh	aa86b6b47	c	R-Base	14
 gridmesh	aa86b6b47	c	R-Base/counter	6
 gridmesh	aa86b6b47	c	R-BoundedNest/kernel	1
-gridmesh	aa86b6b47	c	R-CompleteWrite	17
+gridmesh	aa86b6b47	c	R-CompleteWrite	22
 gridmesh	aa86b6b47	c	R-Counter	113
 gridmesh	aa86b6b47	c	R-DischargeInto	1
 gridmesh	aa86b6b47	c	R-ExitVector	3
@@ -2576,7 +2584,7 @@ gridmesh	aa86b6b47	rust	R-Alias/versioned	1
 gridmesh	aa86b6b47	rust	R-Base	28
 gridmesh	aa86b6b47	rust	R-BoundedNest/kernel	1
 gridmesh	aa86b6b47	rust	R-CharWalk	10
-gridmesh	aa86b6b47	rust	R-CompleteWrite	24
+gridmesh	aa86b6b47	rust	R-CompleteWrite	22
 gridmesh	aa86b6b47	rust	R-Counter	100
 gridmesh	aa86b6b47	rust	R-DischargeInto	1
 gridmesh	aa86b6b47	rust	R-ExitVector	3
@@ -2638,7 +2646,7 @@ hex_body	7db0174ab	c	R-Base	35
 hex_body	7db0174ab	c	R-Base/counter	2
 hex_body	7db0174ab	c	R-BoundedNest/kernel	1
 hex_body	7db0174ab	c	R-CharWalk	1
-hex_body	7db0174ab	c	R-CompleteWrite	10
+hex_body	7db0174ab	c	R-CompleteWrite	13
 hex_body	7db0174ab	c	R-Counter	134
 hex_body	7db0174ab	c	R-DischargeInto	4
 hex_body	7db0174ab	c	R-ExitVector	1
@@ -2693,7 +2701,7 @@ hex_body	7db0174ab	rust	R-Apart/vector	30
 hex_body	7db0174ab	rust	R-Base	131
 hex_body	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_body	7db0174ab	rust	R-CharWalk	10
-hex_body	7db0174ab	rust	R-CompleteWrite	16
+hex_body	7db0174ab	rust	R-CompleteWrite	13
 hex_body	7db0174ab	rust	R-Counter	107
 hex_body	7db0174ab	rust	R-DischargeInto	4
 hex_body	7db0174ab	rust	R-ExitVector	1
@@ -2746,7 +2754,7 @@ hex_draw	7db0174ab	c	R-Base	11
 hex_draw	7db0174ab	c	R-Base/counter	2
 hex_draw	7db0174ab	c	R-BoundedNest/kernel	1
 hex_draw	7db0174ab	c	R-Callee	2
-hex_draw	7db0174ab	c	R-CompleteWrite	9
+hex_draw	7db0174ab	c	R-CompleteWrite	51
 hex_draw	7db0174ab	c	R-Counter	857
 hex_draw	7db0174ab	c	R-DischargeInto	5
 hex_draw	7db0174ab	c	R-ExitVector	39
@@ -2798,7 +2806,7 @@ hex_draw	7db0174ab	rust	R-Base	582
 hex_draw	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_draw	7db0174ab	rust	R-Callee	12
 hex_draw	7db0174ab	rust	R-CharWalk	10
-hex_draw	7db0174ab	rust	R-CompleteWrite	64
+hex_draw	7db0174ab	rust	R-CompleteWrite	51
 hex_draw	7db0174ab	rust	R-Counter	682
 hex_draw	7db0174ab	rust	R-DischargeInto	5
 hex_draw	7db0174ab	rust	R-ExitVector	39
@@ -2856,7 +2864,7 @@ hex_edge	7db0174ab	c	R-Base	11
 hex_edge	7db0174ab	c	R-Base/counter	2
 hex_edge	7db0174ab	c	R-BoundedNest/kernel	1
 hex_edge	7db0174ab	c	R-Callee	5
-hex_edge	7db0174ab	c	R-CompleteWrite	5
+hex_edge	7db0174ab	c	R-CompleteWrite	10
 hex_edge	7db0174ab	c	R-Counter	368
 hex_edge	7db0174ab	c	R-DischargeInto	2
 hex_edge	7db0174ab	c	R-ExitVector	32
@@ -2904,7 +2912,7 @@ hex_edge	7db0174ab	rust	R-Base	223
 hex_edge	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_edge	7db0174ab	rust	R-Callee	12
 hex_edge	7db0174ab	rust	R-CharWalk	10
-hex_edge	7db0174ab	rust	R-CompleteWrite	16
+hex_edge	7db0174ab	rust	R-CompleteWrite	10
 hex_edge	7db0174ab	rust	R-Counter	336
 hex_edge	7db0174ab	rust	R-DischargeInto	2
 hex_edge	7db0174ab	rust	R-ExitVector	32
@@ -2960,7 +2968,7 @@ hex_field	7db0174ab	c	R-Base	54
 hex_field	7db0174ab	c	R-Base/counter	3
 hex_field	7db0174ab	c	R-BoundedNest/kernel	1
 hex_field	7db0174ab	c	R-Callee	7
-hex_field	7db0174ab	c	R-CompleteWrite	15
+hex_field	7db0174ab	c	R-CompleteWrite	13
 hex_field	7db0174ab	c	R-Counter	728
 hex_field	7db0174ab	c	R-DischargeInto	2
 hex_field	7db0174ab	c	R-ExitVector	10
@@ -3019,7 +3027,7 @@ hex_field	7db0174ab	rust	R-Base	201
 hex_field	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_field	7db0174ab	rust	R-Callee	8
 hex_field	7db0174ab	rust	R-CharWalk	10
-hex_field	7db0174ab	rust	R-CompleteWrite	16
+hex_field	7db0174ab	rust	R-CompleteWrite	13
 hex_field	7db0174ab	rust	R-Counter	496
 hex_field	7db0174ab	rust	R-DischargeInto	2
 hex_field	7db0174ab	rust	R-ExitVector	10
@@ -3079,7 +3087,7 @@ hex_fit	7db0174ab	c	R-Base	5
 hex_fit	7db0174ab	c	R-Base/counter	2
 hex_fit	7db0174ab	c	R-BoundedNest/kernel	1
 hex_fit	7db0174ab	c	R-Callee	2
-hex_fit	7db0174ab	c	R-CompleteWrite	8
+hex_fit	7db0174ab	c	R-CompleteWrite	116
 hex_fit	7db0174ab	c	R-Counter	1222
 hex_fit	7db0174ab	c	R-CtorLiteral	4
 hex_fit	7db0174ab	c	R-DischargeInto	7
@@ -3136,7 +3144,7 @@ hex_fit	7db0174ab	rust	R-Base	776
 hex_fit	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_fit	7db0174ab	rust	R-Callee	12
 hex_fit	7db0174ab	rust	R-CharWalk	10
-hex_fit	7db0174ab	rust	R-CompleteWrite	152
+hex_fit	7db0174ab	rust	R-CompleteWrite	116
 hex_fit	7db0174ab	rust	R-Counter	1187
 hex_fit	7db0174ab	rust	R-CtorLiteral	4
 hex_fit	7db0174ab	rust	R-DischargeInto	7
@@ -3207,7 +3215,7 @@ hex_form	7db0174ab	c	R-Base/counter	6
 hex_form	7db0174ab	c	R-BoundedNest/kernel	1
 hex_form	7db0174ab	c	R-Callee	1
 hex_form	7db0174ab	c	R-CharWalk	1
-hex_form	7db0174ab	c	R-CompleteWrite	80
+hex_form	7db0174ab	c	R-CompleteWrite	49
 hex_form	7db0174ab	c	R-Counter	548
 hex_form	7db0174ab	c	R-DischargeInto	5
 hex_form	7db0174ab	c	R-ExitVector	15
@@ -3264,7 +3272,7 @@ hex_form	7db0174ab	rust	R-Base	255
 hex_form	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_form	7db0174ab	rust	R-Callee	8
 hex_form	7db0174ab	rust	R-CharWalk	10
-hex_form	7db0174ab	rust	R-CompleteWrite	51
+hex_form	7db0174ab	rust	R-CompleteWrite	49
 hex_form	7db0174ab	rust	R-Counter	473
 hex_form	7db0174ab	rust	R-DischargeInto	5
 hex_form	7db0174ab	rust	R-ExitVector	15
@@ -3323,7 +3331,7 @@ hex_form	7db0174ab	rust	R-ZeroCount	8
 hex_grid	7db0174ab	c	R-Base	1
 hex_grid	7db0174ab	c	R-Base/counter	2
 hex_grid	7db0174ab	c	R-BoundedNest/kernel	1
-hex_grid	7db0174ab	c	R-CompleteWrite	4
+hex_grid	7db0174ab	c	R-CompleteWrite	7
 hex_grid	7db0174ab	c	R-Counter	28
 hex_grid	7db0174ab	c	R-DischargeInto	1
 hex_grid	7db0174ab	c	R-FieldAppend/bare	2
@@ -3400,7 +3408,7 @@ hex_place	7db0174ab	c	R-Base	13
 hex_place	7db0174ab	c	R-Base/counter	2
 hex_place	7db0174ab	c	R-BoundedNest/kernel	1
 hex_place	7db0174ab	c	R-Callee	2
-hex_place	7db0174ab	c	R-CompleteWrite	7
+hex_place	7db0174ab	c	R-CompleteWrite	45
 hex_place	7db0174ab	c	R-Counter	504
 hex_place	7db0174ab	c	R-DischargeInto	5
 hex_place	7db0174ab	c	R-ExitVector	15
@@ -3453,7 +3461,7 @@ hex_place	7db0174ab	rust	R-Base	285
 hex_place	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_place	7db0174ab	rust	R-Callee	8
 hex_place	7db0174ab	rust	R-CharWalk	10
-hex_place	7db0174ab	rust	R-CompleteWrite	48
+hex_place	7db0174ab	rust	R-CompleteWrite	45
 hex_place	7db0174ab	rust	R-Counter	434
 hex_place	7db0174ab	rust	R-DischargeInto	5
 hex_place	7db0174ab	rust	R-ExitVector	15
@@ -3514,7 +3522,7 @@ hex_recover	7db0174ab	c	R-Base	42
 hex_recover	7db0174ab	c	R-Base/counter	13
 hex_recover	7db0174ab	c	R-BoundedNest/kernel	1
 hex_recover	7db0174ab	c	R-Callee	1
-hex_recover	7db0174ab	c	R-CompleteWrite	29
+hex_recover	7db0174ab	c	R-CompleteWrite	77
 hex_recover	7db0174ab	c	R-Counter	720
 hex_recover	7db0174ab	c	R-CtorLiteral	3
 hex_recover	7db0174ab	c	R-DischargeInto	5
@@ -3582,7 +3590,7 @@ hex_recover	7db0174ab	rust	R-Base	297
 hex_recover	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_recover	7db0174ab	rust	R-Callee	8
 hex_recover	7db0174ab	rust	R-CharWalk	10
-hex_recover	7db0174ab	rust	R-CompleteWrite	90
+hex_recover	7db0174ab	rust	R-CompleteWrite	77
 hex_recover	7db0174ab	rust	R-Counter	668
 hex_recover	7db0174ab	rust	R-CtorLiteral	3
 hex_recover	7db0174ab	rust	R-DischargeInto	5
@@ -3650,7 +3658,7 @@ hex_roof	7db0174ab	c	R-Base	57
 hex_roof	7db0174ab	c	R-Base/counter	2
 hex_roof	7db0174ab	c	R-BoundedNest/kernel	1
 hex_roof	7db0174ab	c	R-Callee	4
-hex_roof	7db0174ab	c	R-CompleteWrite	14
+hex_roof	7db0174ab	c	R-CompleteWrite	15
 hex_roof	7db0174ab	c	R-Counter	879
 hex_roof	7db0174ab	c	R-DischargeInto	2
 hex_roof	7db0174ab	c	R-ExitVector	34
@@ -3703,7 +3711,7 @@ hex_roof	7db0174ab	rust	R-Base	432
 hex_roof	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_roof	7db0174ab	rust	R-Callee	14
 hex_roof	7db0174ab	rust	R-CharWalk	10
-hex_roof	7db0174ab	rust	R-CompleteWrite	27
+hex_roof	7db0174ab	rust	R-CompleteWrite	15
 hex_roof	7db0174ab	rust	R-Counter	574
 hex_roof	7db0174ab	rust	R-DischargeInto	2
 hex_roof	7db0174ab	rust	R-ExitVector	34
@@ -3761,7 +3769,7 @@ hex_shape	7db0174ab	c	R-Base	27
 hex_shape	7db0174ab	c	R-Base/counter	17
 hex_shape	7db0174ab	c	R-BoundedNest/kernel	1
 hex_shape	7db0174ab	c	R-Callee	1
-hex_shape	7db0174ab	c	R-CompleteWrite	26
+hex_shape	7db0174ab	c	R-CompleteWrite	76
 hex_shape	7db0174ab	c	R-Counter	682
 hex_shape	7db0174ab	c	R-DischargeInto	5
 hex_shape	7db0174ab	c	R-ExitVector	22
@@ -3818,7 +3826,7 @@ hex_shape	7db0174ab	rust	R-Base	360
 hex_shape	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_shape	7db0174ab	rust	R-Callee	8
 hex_shape	7db0174ab	rust	R-CharWalk	10
-hex_shape	7db0174ab	rust	R-CompleteWrite	109
+hex_shape	7db0174ab	rust	R-CompleteWrite	76
 hex_shape	7db0174ab	rust	R-Counter	579
 hex_shape	7db0174ab	rust	R-DischargeInto	5
 hex_shape	7db0174ab	rust	R-ExitVector	22
@@ -3879,7 +3887,7 @@ hex_terrain	7db0174ab	c	R-Base/counter	2
 hex_terrain	7db0174ab	c	R-Base/grid	55
 hex_terrain	7db0174ab	c	R-BoundedNest/kernel	1
 hex_terrain	7db0174ab	c	R-Callee	1
-hex_terrain	7db0174ab	c	R-CompleteWrite	13
+hex_terrain	7db0174ab	c	R-CompleteWrite	34
 hex_terrain	7db0174ab	c	R-Counter	305
 hex_terrain	7db0174ab	c	R-DischargeInto	1
 hex_terrain	7db0174ab	c	R-ExitVector	10
@@ -3935,7 +3943,7 @@ hex_terrain	7db0174ab	rust	R-Base	118
 hex_terrain	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_terrain	7db0174ab	rust	R-Callee	1
 hex_terrain	7db0174ab	rust	R-CharWalk	10
-hex_terrain	7db0174ab	rust	R-CompleteWrite	38
+hex_terrain	7db0174ab	rust	R-CompleteWrite	34
 hex_terrain	7db0174ab	rust	R-Counter	226
 hex_terrain	7db0174ab	rust	R-DischargeInto	1
 hex_terrain	7db0174ab	rust	R-ExitVector	10
@@ -3991,7 +3999,7 @@ hex_way	7db0174ab	c	R-Base	22
 hex_way	7db0174ab	c	R-Base/counter	2
 hex_way	7db0174ab	c	R-BoundedNest/kernel	1
 hex_way	7db0174ab	c	R-Callee	6
-hex_way	7db0174ab	c	R-CompleteWrite	4
+hex_way	7db0174ab	c	R-CompleteWrite	9
 hex_way	7db0174ab	c	R-Counter	494
 hex_way	7db0174ab	c	R-DischargeInto	2
 hex_way	7db0174ab	c	R-ExitVector	34
@@ -4043,7 +4051,7 @@ hex_way	7db0174ab	rust	R-Base	292
 hex_way	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_way	7db0174ab	rust	R-Callee	13
 hex_way	7db0174ab	rust	R-CharWalk	10
-hex_way	7db0174ab	rust	R-CompleteWrite	13
+hex_way	7db0174ab	rust	R-CompleteWrite	9
 hex_way	7db0174ab	rust	R-Counter	368
 hex_way	7db0174ab	rust	R-DischargeInto	2
 hex_way	7db0174ab	rust	R-ExitVector	34
@@ -4098,7 +4106,7 @@ hex_way	7db0174ab	rust	R-ZeroCount	8
 hex_world	7db0174ab+regex@0.3.2	c	R-Base	3
 hex_world	7db0174ab+regex@0.3.2	c	R-Base/counter	2
 hex_world	7db0174ab+regex@0.3.2	c	R-BoundedNest/kernel	1
-hex_world	7db0174ab+regex@0.3.2	c	R-CompleteWrite	11
+hex_world	7db0174ab+regex@0.3.2	c	R-CompleteWrite	12
 hex_world	7db0174ab+regex@0.3.2	c	R-Counter	40
 hex_world	7db0174ab+regex@0.3.2	c	R-DischargeInto	1
 hex_world	7db0174ab+regex@0.3.2	c	R-ExitVector	1
@@ -4143,7 +4151,7 @@ hex_world	7db0174ab+regex@0.3.2	c	R-ZeroCount	8
 hex_world	7db0174ab+regex@0.3.2	rust	R-Base	36
 hex_world	7db0174ab+regex@0.3.2	rust	R-BoundedNest/kernel	1
 hex_world	7db0174ab+regex@0.3.2	rust	R-CharWalk	10
-hex_world	7db0174ab+regex@0.3.2	rust	R-CompleteWrite	18
+hex_world	7db0174ab+regex@0.3.2	rust	R-CompleteWrite	12
 hex_world	7db0174ab+regex@0.3.2	rust	R-Counter	36
 hex_world	7db0174ab+regex@0.3.2	rust	R-DischargeInto	1
 hex_world	7db0174ab+regex@0.3.2	rust	R-ExitVector	1
@@ -4195,7 +4203,7 @@ hex_world	7db0174ab+regex@0.3.2	rust	R-ZeroCount	8
 html	dd260f04c	c	R-Base	1
 html	dd260f04c	c	R-BoundedNest/kernel	1
 html	dd260f04c	c	R-CharWalk	1
-html	dd260f04c	c	R-CompleteWrite	2
+html	dd260f04c	c	R-CompleteWrite	6
 html	dd260f04c	c	R-Counter	23
 html	dd260f04c	c	R-DischargeInto	1
 html	dd260f04c	c	R-FieldAppend/bare	8
@@ -4254,7 +4262,7 @@ markdown	dd260f04c	c	R-Base	4
 markdown	dd260f04c	c	R-Base/counter	2
 markdown	dd260f04c	c	R-BoundedNest/kernel	1
 markdown	dd260f04c	c	R-CharWalk	4
-markdown	dd260f04c	c	R-CompleteWrite	6
+markdown	dd260f04c	c	R-CompleteWrite	7
 markdown	dd260f04c	c	R-Counter	94
 markdown	dd260f04c	c	R-DischargeInto	1
 markdown	dd260f04c	c	R-ExitVector	5
@@ -4330,7 +4338,7 @@ mesh3d	856d1c055	c	R-Apart	5
 mesh3d	856d1c055	c	R-Base	11
 mesh3d	856d1c055	c	R-Base/counter	4
 mesh3d	856d1c055	c	R-BoundedNest/kernel	1
-mesh3d	856d1c055	c	R-CompleteWrite	28
+mesh3d	856d1c055	c	R-CompleteWrite	42
 mesh3d	856d1c055	c	R-Counter	138
 mesh3d	856d1c055	c	R-DischargeInto	1
 mesh3d	856d1c055	c	R-FieldAppend	2
@@ -4386,7 +4394,7 @@ mesh3d	856d1c055	rust	R-Apart	10
 mesh3d	856d1c055	rust	R-Base	23
 mesh3d	856d1c055	rust	R-BoundedNest/kernel	1
 mesh3d	856d1c055	rust	R-CharWalk	10
-mesh3d	856d1c055	rust	R-CompleteWrite	56
+mesh3d	856d1c055	rust	R-CompleteWrite	42
 mesh3d	856d1c055	rust	R-Counter	95
 mesh3d	856d1c055	rust	R-DischargeInto	1
 mesh3d	856d1c055	rust	R-FieldAppend	9
@@ -4443,7 +4451,7 @@ pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Base/counter	2
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-BoundAppend	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-BoundedNest/kernel	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-ByteCopy	2
-pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-CompleteWrite	57
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-CompleteWrite	51
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Counter	173
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Destination	6
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-DischargeInto	1
@@ -4512,7 +4520,7 @@ pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-BoundAppend	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-BoundedNest/kernel	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-ByteCopy	2
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-CharWalk	11
-pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-CompleteWrite	74
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-CompleteWrite	51
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Counter	129
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Destination	15
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-DischargeInto	1
@@ -4576,7 +4584,7 @@ pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-ZeroCount	8
 random	1add14001	c	R-Base	2
 random	1add14001	c	R-Base/counter	1
 random	1add14001	c	R-BoundedNest/kernel	1
-random	1add14001	c	R-CompleteWrite	13
+random	1add14001	c	R-CompleteWrite	12
 random	1add14001	c	R-Counter	64
 random	1add14001	c	R-DischargeInto	1
 random	1add14001	c	R-FormatAppend	1
@@ -4607,7 +4615,7 @@ random	1add14001	c	R-ZeroCount	8
 random	1add14001	rust	R-Base	7
 random	1add14001	rust	R-BoundedNest/kernel	1
 random	1add14001	rust	R-CharWalk	10
-random	1add14001	rust	R-CompleteWrite	14
+random	1add14001	rust	R-CompleteWrite	12
 random	1add14001	rust	R-Counter	55
 random	1add14001	rust	R-DischargeInto	1
 random	1add14001	rust	R-FieldAppend/bare	8
@@ -4646,7 +4654,7 @@ random	1add14001	rust	R-ZeroCount	8
 server	b4075f3fc	c	R-Base	1
 server	b4075f3fc	c	R-Base/counter	1
 server	b4075f3fc	c	R-BoundedNest/kernel	1
-server	b4075f3fc	c	R-CompleteWrite	8
+server	b4075f3fc	c	R-CompleteWrite	24
 server	b4075f3fc	c	R-Counter	22
 server	b4075f3fc	c	R-DischargeInto	2
 server	b4075f3fc	c	R-FieldAppend	14
@@ -4719,7 +4727,7 @@ server	b4075f3fc	rust	R-ZeroCount	13
 shapes	aa86b6b47	c	R-Base	4
 shapes	aa86b6b47	c	R-Base/counter	2
 shapes	aa86b6b47	c	R-BoundedNest/kernel	1
-shapes	aa86b6b47	c	R-CompleteWrite	7
+shapes	aa86b6b47	c	R-CompleteWrite	13
 shapes	aa86b6b47	c	R-Counter	28
 shapes	aa86b6b47	c	R-DischargeInto	1
 shapes	aa86b6b47	c	R-ElemFirst	1
@@ -4763,7 +4771,7 @@ shapes	aa86b6b47	c	R-ZeroCount	8
 shapes	aa86b6b47	rust	R-Base	16
 shapes	aa86b6b47	rust	R-BoundedNest/kernel	1
 shapes	aa86b6b47	rust	R-CharWalk	10
-shapes	aa86b6b47	rust	R-CompleteWrite	17
+shapes	aa86b6b47	rust	R-CompleteWrite	13
 shapes	aa86b6b47	rust	R-Counter	24
 shapes	aa86b6b47	rust	R-DischargeInto	1
 shapes	aa86b6b47	rust	R-ElemFirst	1
@@ -4808,7 +4816,7 @@ shapes	aa86b6b47	rust	R-Wrapper	10
 shapes	aa86b6b47	rust	R-ZeroCount	8
 ssh	b4075f3fc	c	R-Base/counter	1
 ssh	b4075f3fc	c	R-BoundedNest/kernel	1
-ssh	b4075f3fc	c	R-CompleteWrite	3
+ssh	b4075f3fc	c	R-CompleteWrite	7
 ssh	b4075f3fc	c	R-Counter	14
 ssh	b4075f3fc	c	R-DischargeInto	1
 ssh	b4075f3fc	c	R-FormatAppend	1
@@ -4877,7 +4885,7 @@ stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Base	35
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Base/counter	15
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-BoundedNest/kernel	1
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Callee	5
-stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-CompleteWrite	52
+stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-CompleteWrite	108
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-CopyView	2
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Counter	383
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-DischargeInto	1
@@ -4946,7 +4954,7 @@ stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Bounde
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-BoundedNest/kernel	1
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Callee	19
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-CharWalk	12
-stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-CompleteWrite	164
+stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-CompleteWrite	108
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-CopyView	2
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Counter	294
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-DischargeInto	1
@@ -5019,7 +5027,7 @@ text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-Base/counter	5
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-BoundedNest/kernel	1
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-Callee	2
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-CharWalk	9
-text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-CompleteWrite	17
+text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-CompleteWrite	73
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-Const	2
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-Const/fn	2
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-CopyView	2
@@ -5081,7 +5089,7 @@ text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-BoundedNest	4
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-BoundedNest/kernel	1
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Callee	6
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-CharWalk	20
-text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-CompleteWrite	94
+text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-CompleteWrite	73
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Const	2
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Const/fn	2
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-CopyView	2
@@ -5152,7 +5160,7 @@ text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-ZeroCount	8
 time	bd5a7404d	c	R-Base	9
 time	bd5a7404d	c	R-BoundedNest/kernel	1
 time	bd5a7404d	c	R-CharWalk	1
-time	bd5a7404d	c	R-CompleteWrite	4
+time	bd5a7404d	c	R-CompleteWrite	25
 time	bd5a7404d	c	R-Counter	85
 time	bd5a7404d	c	R-DischargeInto	1
 time	bd5a7404d	c	R-ExitVector	1
@@ -5236,7 +5244,7 @@ tween	aa86b6b47	c	R-Base	8
 tween	aa86b6b47	c	R-Base/counter	10
 tween	aa86b6b47	c	R-BoundedNest/kernel	1
 tween	aa86b6b47	c	R-Callee	1
-tween	aa86b6b47	c	R-CompleteWrite	12
+tween	aa86b6b47	c	R-CompleteWrite	13
 tween	aa86b6b47	c	R-Counter	89
 tween	aa86b6b47	c	R-DischargeInto	1
 tween	aa86b6b47	c	R-FieldAppend/bare	2
@@ -5334,7 +5342,7 @@ tween	aa86b6b47	rust	R-ZeroCount	8
 web	b4075f3fc	c	R-Base	1
 web	b4075f3fc	c	R-Base/counter	1
 web	b4075f3fc	c	R-BoundedNest/kernel	1
-web	b4075f3fc	c	R-CompleteWrite	3
+web	b4075f3fc	c	R-CompleteWrite	10
 web	b4075f3fc	c	R-Counter	25
 web	b4075f3fc	c	R-DischargeInto	1
 web	b4075f3fc	c	R-ExitVector	1
@@ -5413,7 +5421,7 @@ zttext	1add14001	c	R-Base/counter	21
 zttext	1add14001	c	R-BoundedNest/kernel	1
 zttext	1add14001	c	R-CharWalk	5
 zttext	1add14001	c	R-Compact/prepend	1
-zttext	1add14001	c	R-CompleteWrite	88
+zttext	1add14001	c	R-CompleteWrite	157
 zttext	1add14001	c	R-Counter	375
 zttext	1add14001	c	R-DischargeInto	1
 zttext	1add14001	c	R-ExitVector	24
@@ -5489,7 +5497,7 @@ zttext	1add14001	rust	R-Base	117
 zttext	1add14001	rust	R-BoundedNest/kernel	1
 zttext	1add14001	rust	R-CharWalk	21
 zttext	1add14001	rust	R-Compact/prepend	1
-zttext	1add14001	rust	R-CompleteWrite	215
+zttext	1add14001	rust	R-CompleteWrite	157
 zttext	1add14001	rust	R-Counter	319
 zttext	1add14001	rust	R-DischargeInto	1
 zttext	1add14001	rust	R-ExitVector	24

@@ -1030,7 +1030,7 @@ impl State {
         let parent_tp = self.code::<u16>();
         let fld = self.code::<u16>();
         let data = self.get_stack::<DbRef>();
-        let new_value = self.database.record_new(&data, parent_tp, fld);
+        let new_value = self.database.record_new_np(&data, parent_tp, fld);
         self.put_stack(new_value);
     }
 

@@ -730,8 +730,11 @@ fn op_new_record_inner(
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     let parent_tp = parent_tp as u16;
     let fld = fld as u16;
+    if !prefill {
+        return stores.record_new_np(&data, parent_tp, fld);
+    }
     let new_value = stores.record_new(&data, parent_tp, fld);
-    if prefill {
+    {
         stores.set_default_value(
             if fld == u16::MAX {
                 stores.content(parent_tp)
