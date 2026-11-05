@@ -1600,7 +1600,8 @@ fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<inte
 
 // The local an `OpGetField` chain reads from, or -1.
 fn field_root(e: el::El, n: ir::Node) -> integer {
-  match el_ir::unspan(n) {
+  match n {
+    NdSpan { inner } => field_root(e, inner),
     NdVar { n: v } => v,
     NdCall { def_nr, args } => if el::def(e, def_nr).name == "OpGetField" && len(args) > 0 { field_root(e, args[0]) } else { -1 },
     _ => -1
@@ -1810,6 +1811,7 @@ fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, res
 // sentinel?  A block is read down to its tail.
 fn literal_arms(e: el::El, n: ir::Node) -> boolean {
   match n {
+    NdSpan { inner } => literal_arms(e, inner),
     NdIf { cond: _, t, f } => literal_arms(e, t) && literal_arms(e, f),
     NdBlock { block } => {
       ops = block[0].operators;
@@ -1818,7 +1820,7 @@ fn literal_arms(e: el::El, n: ir::Node) -> boolean {
       } else if block[0].name == "Vector" {
         len(el_types::deps(block[0].result[0] ?? ir::TyVoid)) == 1
       } else {
-        literal_arms(e, el_ir::unspan(ops[-1]!))
+        literal_arms(e, ops[-1]!)
       }
     },
     NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
