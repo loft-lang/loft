@@ -2476,27 +2476,14 @@ fn stored(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> ir::Node? {
 // line on there (the marker it writes is the one the close removes), so a statement after the
 // `}` on that same line — an `else` block's — gets none.
 fn close_line(e: el::El, n: integer) {
-  at = 0;
   match e.p.nodes[n] {
-    SBlock { at: a } => { at = a; },
-    _ => { return; }
-  }
-  depth = 0;
-  i = at;
-  while i < len(e.p.src) {
-    if e.p.src[i] is LBrace {
-      depth += 1;
-    } else if e.p.src[i] is RBrace {
-      depth -= 1;
-      if depth == 0 {
-        line = e.p.eline[i] ?? 0;
-        if line > e.line {
-          e.line = line;
-        }
-        return;
+    SBlock { end } => {
+      line = e.p.eline[end] ?? 0;
+      if line > e.line {
+        e.line = line;
       }
-    }
-    i += 1;
+    },
+    _ => {}
   }
 }
 
@@ -4368,7 +4355,7 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     el_vars::drop_use(vars, v);
     return vector_append(e, vars, v, rhs);
   }
-  if keyed_kind(vt) && !(vt is TyOptional) && bin == "+" && e.p.nodes[rhs] is SVecLit {
+  if keyed_kind(vt) && !(vt is TyOptional) && bin == "+" && (e.p.nodes[rhs] is SVecLit || e.p.nodes[rhs] is SStructLit) {
     ops = keyed_items(e, vars, v, rhs);
     if ops == null {
       return ex(ir::NdNull, ir::TyVoid);
@@ -13088,7 +13075,8 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   ex(code, t)
 }
 
-// The items of a literal appended to a keyed local (`parse_vector_inner` with `is_var`): each a
+// The items of a literal appended to a keyed local (`parse_vector_inner` with `is_var`), or the
+// one record of a bare struct literal: each a
 // struct literal built as a record of the collection (`OpNewRecord(v, type, u16::MAX)`, its
 // fields, `OpFinishRecord`, which indexes it).  Any other item is refused by name.
 fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> vector<ir::Node>? {
@@ -13096,6 +13084,8 @@ fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> vector
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
+    // `h += K { … }`: one record, lowered as `h += [K { … }]` is.
+    SStructLit { at: _ } => { items = [n]; },
     _ => {}
   }
   el_d = match ct {
