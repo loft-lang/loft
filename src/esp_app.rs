@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 const BSP: &str = "badgeteam/badge-bsp: \"=1.6.4\"";
 
 /// The ESP-IDF release the template builds with.
-const IDF_VERSION: &str = "v6.0.2";
+const IDF_VERSION: &str = "v6.0.3";
 
 /// The partition table the build checks the app against.  It is never installed: badgelink
 /// uploads `application.bin` alone, into the launcher's `appfs` (8 MB on a Tanmatsu, shared by
