@@ -2184,26 +2184,33 @@ impl ShimArchiver {
         cc: &str,
         src: &std::path::Path,
         obj: &std::path::Path,
+        include: &std::path::Path,
     ) -> process::Spawn {
+        // @PLN217 — `include` holds `loft_width.h`; a 32-bit build defines `LOFT_WIDTH32` for it.
+        let w32 = crate::keys::width32_all();
         match self {
-            ShimArchiver::Unix => process::Spawn::new(process::Program::os(cc))
-                .arg("-O2")
-                .arg("-fPIC")
-                .arg("-c")
-                .arg(src)
-                .arg("-o")
-                .arg(obj),
+            ShimArchiver::Unix => {
+                let s = process::Spawn::new(process::Program::os(cc))
+                    .arg("-O2")
+                    .arg("-fPIC")
+                    .arg("-I")
+                    .arg(include);
+                let s = if w32 { s.arg("-DLOFT_WIDTH32") } else { s };
+                s.arg("-c").arg(src).arg("-o").arg(obj)
+            }
             // `/MD` is the C runtime rustc's MSVC target links (the DLL CRT), `/MT` the one a
             // `cl`-built C unit links; objects built for the other would ask the link for a
             // second CRT.
-            ShimArchiver::Msvc { cl, static_crt, .. } => cl
-                .spawn()
-                .arg("/nologo")
-                .arg("/O2")
-                .arg(if *static_crt { "/MT" } else { "/MD" })
-                .arg("/c")
-                .arg(src)
-                .arg(format!("/Fo{}", obj.display())),
+            ShimArchiver::Msvc { cl, static_crt, .. } => {
+                let s = cl
+                    .spawn()
+                    .arg("/nologo")
+                    .arg("/O2")
+                    .arg(if *static_crt { "/MT" } else { "/MD" })
+                    .arg(format!("/I{}", include.display()));
+                let s = if w32 { s.arg("/DLOFT_WIDTH32") } else { s };
+                s.arg("/c").arg(src).arg(format!("/Fo{}", obj.display()))
+            }
         }
     }
 
