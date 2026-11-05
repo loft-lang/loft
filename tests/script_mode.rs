@@ -165,8 +165,11 @@ fn mistyped_file_path_suggests_the_neighbour() {
     fa::create_dir_all(&dir).expect("mkdir");
     fa::write(dir.join("hello.loft"), "println(\"hi\")\n").expect("write");
 
+    // Uncached, so the standard library is really parsed: a cached bundle hid the follow-on
+    // errors below.
     let out = loft::platform::process::harness_command(loft_bin())
         .arg(dir.join("helo.loft"))
+        .env("LOFT_NO_CACHE", "1")
         .current_dir(workspace_root())
         .output()
         .expect("invoke loft");
@@ -174,6 +177,12 @@ fn mistyped_file_path_suggests_the_neighbour() {
     assert!(
         err.contains("no such file:"),
         "expected the plain no-such-file wording; got {err:?}"
+    );
+    // The fatal is the whole report: the halted parse left the standard library's forward
+    // references unadopted, and each was reported as an `Undefined type` of its own.
+    assert!(
+        !err.contains("Undefined type"),
+        "a missing file must not draw follow-on errors; got {err:?}"
     );
     assert!(
         err.contains("did you mean 'hello.loft'?"),

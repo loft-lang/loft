@@ -1268,6 +1268,13 @@ impl Parser {
             if self.speculative_type_refs.contains(&stub_nr) {
                 continue;
             }
+            // A parse a FATAL halted (`loft missing.loft`: no such file) never reached the
+            // declarations its stubs wait for, so every one of them reads as undefined — seven
+            // errors about the standard library's own reflection types after the one about the
+            // file.  The fatal is the whole story.
+            if self.lexer.diagnostics().level() == Level::Fatal {
+                continue;
+            }
             // Case (c): emit the deferred error.  `string` used to be special-cased
             // here (and in `typedef.rs`); it is now one row of the cross-language
             // alias table `suggest_type_name` consults, so both deferred and direct
