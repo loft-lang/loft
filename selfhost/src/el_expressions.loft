@@ -1700,6 +1700,30 @@ fn mid_deliver(e: el::El, vars: el_vars::Vars, n: ir::Node, buf: integer, row: i
   }
 }
 
+// The vector parameters an early exit copies into the buffer `buf` (`OpAppendVector(buf, p, …)`).
+fn returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, buf: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdCall { def_nr, args } => {
+        if len(args) == 3 && el::def(e, def_nr).name == "OpAppendVector" && el_ir::unspan(args[0]) == ir::NdVar { n: buf } {
+          match el_ir::unspan(args[1]) {
+            NdVar { n } => { if vars.vars[n].argument && !r.contains(n) && (el_types::base(el_vars::tp(vars, n)) is TyVector) { r += [n]; } },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    }
+    for x in returned_params(e, vars, el_ir::children(op), buf) {
+      if !r.contains(x) {
+        r += [x];
+      }
+    }
+  }
+  r
+}
+
 // The `return`s among `ops` that answer anything but the buffer, at any depth.
 fn stray_returns(ops: vector<ir::Node>, buf: integer) -> integer {
   r = 0;
@@ -1763,6 +1787,26 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
           bl.operators[op#index] = mid_deliver(e, vars, op, tail_buf, row);
         }
         code = ir::NdBlock { block: [bl] };
+      }
+      // The buffer still `__retbuf` and the tail a literal: every exit delivers into it, the
+      // literal copied in at the end (`one_buffer_vec_copy`); the body answers the buffer, typed
+      // as borrowing a parameter an early exit hands back.
+      lit_tail = match tail { NdBlock { block: tb } => tb[0].name == "Vector", _ => false };
+      if tail_buf < 0 && lit_tail && row >= 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 {
+        for op in bl.operators {
+          bl.operators[op#index] = mid_deliver(e, vars, op, rb, row);
+        }
+        if stray_returns(bl.operators[0..len(bl.operators) - 1], rb) > 0 {
+          el::refuse(e, "a vector `return` before the body's end");
+          return code;
+        }
+        b = ir::NdVar { n: rb };
+        own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+        bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, bl.operators[-1], ir::NdInt { n: row }]), b], own, "one_buffer_vec_copy");
+        ps = returned_params(e, vars, bl.operators[0..len(bl.operators) - 1], rb);
+        bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), if len(ps) > 0 { ps } else { [rb] })];
+        bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), bl.operators[0]] };
+        return ir::NdBlock { block: [bl] };
       }
       if tail_buf < 0 || row < 0 || stray_returns(bl.operators[0..len(bl.operators) - 1], tail_buf) > 0 {
         el::refuse(e, "a vector `return` before the body's end");
