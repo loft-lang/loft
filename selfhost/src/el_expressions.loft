@@ -9778,6 +9778,32 @@ fn file_read(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, tp: int
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   rt = rt0!;
+  // `f#read(n) as vector<T>` of a plain scalar `T`: `n` bytes into a fresh vector local, by the
+  // vector's store type, its definitions already made (`vector_def`).
+  match rt {
+    TyVector { inner } => {
+      nm = el_types::elem_name(e, inner);
+      if arg == null || !el_convert::plain_scalar(inner) || el_convert::plain_enum(inner) || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 {
+        el::refuse(e, "a file read of a vector with no size, or of this element type: {type_kind(inner)}");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      n_code = expression(e, vars, arg!).code;
+      el_vars::in_use(vars, fv, true);
+      io_rows(e, rt);
+      tmp = el_vars::create_unique(vars, "read", rt);
+      if e.first_pass {
+        return ex(ir::NdNull, rt);
+      }
+      row = el_schema::content_type(e, rt);
+      if row < 0 {
+        el::refuse(e, "a file read of a vector with no store type");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      read = el_ir::cl(e, "OpReadFile", [ir::NdVar { n: fv }, el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: tmp }]), n_code, ir::NdInt { n: row }]);
+      return ex(el_ir::v_block([el_ir::v_set(tmp, ir::NdNull), read, ir::NdVar { n: tmp }], rt, "reading file"), rt);
+    },
+    _ => {}
+  }
   if !el_convert::plain_scalar(rt) && !(rt is TyText) || el_convert::plain_enum(rt) {
     el::refuse(e, "a file read of this type: {type_kind(rt)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -14602,6 +14628,8 @@ fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: Ex) 
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // It borrows what the value borrows as this pass reads it (a literal's own backing).
+  el_vars::set_var_type(vars, tmp, x.tp);
   // Made on the second pass only, as Rust's `db_tp` is.
   cast_row = -1;
   alias = last_width_cast(e, rhs);
