@@ -9332,8 +9332,9 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
 // `build_null_coalesce_default` for a record subject: the result is the subject's type (its
 // borrows kept), the default converted to it.  A local is tested where it stands; anything else
 // is held in a `__ncc_N` — a never-freed work reference the head sets to null — in an "ncc"
-// block.  A record a loft function answers (`owned_record_subject`, a view of the holder) and a
-// default that is a call or of another record type are refused by name.
+// block — the result a view of the holder where a loft function answered the record
+// (`owned_record_subject`).  A default that is a call or of another record type is refused by
+// name.
 fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   lhs = el_types::base(x.tp);
   rd = match lhs { TyReference { n } => n, _ => -1 };
@@ -9342,15 +9343,9 @@ fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     refuse_known(e, d.tp, "a `??` on a record with a default of another type: {type_kind(d.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  match el_ir::unspan(x.code) {
-    NdCall { def_nr } => {
-      if !starts_with(el::def(e, def_nr).name, "Op") {
-        el::refuse(e, "a `??` on a record a function answers");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-      }
-    },
-    _ => {}
-  }
+  // A record a loft function answers is a fresh one the holder owns: the result views the
+  // holder (`owned_record_subject`).
+  owned = match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), _ => false };
   if el_ir::unspan(d.code) is NdCall {
     el::refuse(e, "a `??` on a record with a call as its default");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -9369,15 +9364,16 @@ fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   vars.vars[held].skip_free = true;
   el_vars::register_work_ref(vars, held);
   if e.first_pass {
-    return ex(ir::NdNull, lhs);
+    return ex(ir::NdNull, if owned { el_types::with_deps(el_types::without_deps(lhs), [held]) } else { lhs });
   }
   // It borrows what the subject borrows — on this pass, which mints an inline container the
   // first did not.
-  el_vars::set_var_type(vars, held, lhs);
+  el_vars::set_var_type(vars, held, if owned { el_types::without_deps(lhs) } else { lhs });
   x.code = nullable_arith(e, x.code, true);
   subject = ir::NdVar { n: held };
   test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [subject]), subject, d.code);
-  ex(el_ir::v_block([el_ir::v_set(held, x.code), test], lhs, "ncc"), lhs)
+  rt = if owned { el_types::with_deps(el_types::without_deps(lhs), [held]) } else { lhs };
+  ex(el_ir::v_block([el_ir::v_set(held, x.code), test], rt, "ncc"), rt)
 }
 
 // `build_null_coalesce_default_inner`'s vector-literal default: its `_vec_N` a work ref that
