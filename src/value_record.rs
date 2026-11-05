@@ -336,9 +336,14 @@ fn lendable_params(data: &Data) -> HashMap<(u32, usize), u32> {
             continue;
         }
         for (i, a) in def.attributes.iter().enumerate() {
-            let Type::Reference(rec, _) = &a.typedef else {
+            let Type::Reference(rec, _) = a.typedef.base() else {
                 continue;
             };
+            // @FR-N-Shape — the shape is asked of the base; whether the parameter may be
+            // null is asked apart, and a nullable one is not lent (as before the peel).
+            if matches!(a.typedef, Type::Optional(_)) {
+                continue;
+            }
             let p = def.variables.var(&a.name);
             if !a.hidden
                 && p != u16::MAX

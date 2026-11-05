@@ -75,7 +75,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
         if def
             .attributes()
             .iter()
-            .any(|a| !a.hidden && matches!(a.typedef, Type::Tuple(_)))
+            .any(|a| !a.hidden && matches!(a.typedef.base(), Type::Tuple(_)))
         {
             continue;
         }
