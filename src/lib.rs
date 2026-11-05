@@ -411,6 +411,8 @@ pub mod native_bind;
 // @PLN205 — the prebuilt parts loft ships beside its binary (`[native] component`).
 pub mod components;
 pub mod fixpoint;
+#[cfg(feature = "mmap")]
+pub mod mmap_file;
 pub mod native_build;
 pub mod op_layout;
 pub mod op_sets;
@@ -427,8 +429,6 @@ mod radix_tree;
 pub mod runtime_abi;
 pub mod rust_spelling;
 mod spatial;
-#[cfg(feature = "mmap")]
-pub mod mmap_file;
 pub mod store;
 pub mod store_budget;
 pub mod text_calls;
