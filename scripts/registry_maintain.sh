@@ -474,6 +474,13 @@ while IFS=$'\t' read -r name ver repo libdir _why; do
         echo "      Measure what it should say:  (cd $libdir && $LOFT compat floor --with-tests)"
         SKIPPED_LIBS+=("$name-$ver"); continue
     fi
+    # THIRDPARTY.md: nothing reaches the registry with code, a link or a load it does not
+    # declare.  Before the tag, for the same reason as the gates around it.
+    if ! python3 "$here/scripts/thirdparty.py" --gate --repo "$libdir" > "$tmp/thirdparty_$name.log" 2>&1; then
+        echo "  ⚠ $name $ver — ships third-party code or links it does not declare (THIRDPARTY.md)."
+        sed -n '1,20p' "$tmp/thirdparty_$name.log" | sed 's/^/      /'
+        SKIPPED_LIBS+=("$name-$ver"); continue
+    fi
     # Step 7 — the RELEASE gate proves the WHOLE claim, not the O(1) sample a PR pays
     # for.  A PR asks "did this change break something"; publishing asks "is everything
     # this package promises actually true", and only the second is a promise to people

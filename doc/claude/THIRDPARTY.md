@@ -121,6 +121,7 @@ make thirdparty ARGS=--check                    # silent unless something needs 
 make thirdparty ARGS="--repo ../loft-libs-game" # one library checkout (its testbed)
 make thirdparty ARGS="--source main"            # each library repository's main, not its release
 make thirdparty ARGS=--offline                  # the tree checks only
+make thirdparty ARGS="--gate --repo <pkg-dir>"  # the gate below, on one package
 ```
 
 The libraries are the latest release each one lists in the registry index, which is what
@@ -128,3 +129,23 @@ The libraries are the latest release each one lists in the registry index, which
 (`--refresh` asks again).  The release checklist runs it as `A-thirdparty`
 ([RELEASE.md](RELEASE.md)); a library adds a dependency by adding its table in the same change
 ([LIBRARY_AUTHORING.md](LIBRARY_AUTHORING.md) contract rule 29).
+
+## Where it gates
+
+New code cannot reach a user undeclared: `--gate` (no network, no registers — it fails on what
+is undeclared, never on what an advisory says) runs at every way in.
+
+| Way in | Gate | What it reads |
+|---|---|---|
+| a loft PR or push | `daily-build.yml`, every platform leg | the tree, and that leg's built binary (`readelf`, `otool -L`, the PE import table) |
+| a library PR or push | `library-ci-reusable.yml`, per package | the package, and its `[c] shim` built and read |
+| our library to the registry | `registry_maintain.sh`, before the tag | the package as it will be tagged |
+| a submitted library | `vet-lib.sh` step V7 | the package at the submitted ref |
+
+What the registers know is asked nightly (`miri.yml`, the `audit` job): a new advisory against
+anything loft or a published library ships fails that job the next morning.
+
+A package's own code is recognised by our licence header; a package by another author names
+its own notice with `[own] notice = "<text>"`, and lists files that carry none in
+`[own] paths`.
+
