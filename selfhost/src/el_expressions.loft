@@ -8626,7 +8626,19 @@ fn binary(e: el::El, vars: el_vars::Vars, at: integer, op: text, l: integer, r: 
     return identity_compare(e, vars, op, amp_operand(e, l), amp_operand(e, r));
   }
   a = expression(e, vars, l);
+  // The right operand is read in the left's context (`parse_operators`' `parent_tp`): a vector
+  // literal there knows its element.
+  match el_types::base(a.tp) {
+    TyVector { inner } => {
+      if e.p.nodes[r] is SVecLit {
+        vars.lit_hint_node = r;
+        vars.lit_hint = inner;
+      }
+    },
+    _ => {}
+  }
   b = expression(e, vars, r);
+  vars.lit_hint_node = -1;
   x = builtin_op(e, vars, op, a, b);
   // `@FR-N-Div` / `@FR-N-Domain`: a quotient or remainder whose divisor is not provably
   // non-zero is `τ?`; `@FR-N-Prop`: arithmetic over a nullable operand is too.
@@ -13041,6 +13053,8 @@ fn vector_of(e: el::El, t: ir::TypeT) {
     TyCharacter => el::def(e, el::source_nr(e, 0, "character")).known_type,
     TyText { dep: _ } => el::def(e, el::source_nr(e, 0, "text")).known_type,
     TyReference { n } => el::def(e, n).known_type,
+    // A vector element's content is the inner vector's own store type.
+    TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
     _ => -1
   };
   if kt >= 0 && kt != el_schema::NO_TYPE {
@@ -13220,6 +13234,60 @@ fn struct_literal_def(e: el::El, n: integer) -> integer {
   }
 }
 
+// The type of a nested vector literal item: on the second pass the element the destination
+// declares (`want`); on the first, read off its own items as the first pass reads them — a
+// nested literal through this, a struct literal by its definition, anything else evaluated.
+fn nested_item_type(e: el::El, vars: el_vars::Vars, n: integer, want: ir::TypeT) -> ir::TypeT {
+  if !e.first_pass && want is TyVector {
+    return want;
+  }
+  items: vector<integer> = [];
+  match e.p.nodes[n] {
+    SVecLit { items: its } => { items = its; },
+    _ => {}
+  }
+  inner_want = match want { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } };
+  first: ir::TypeT = ir::TyUnknown { n: 0 };
+  for it in items {
+    sd = struct_literal_def(e, it);
+    t = if vec_lit_len(e, it) > 0 {
+      nested_item_type(e, vars, it, inner_want)
+    } else if sd >= 0 {
+      literal_field_exprs(e, vars, it);
+      ir::TyReference { n: sd, dep: [] }
+    } else {
+      expression(e, vars, it).tp
+    };
+    if el_types::is_unknown(first) {
+      first = el_types::without_deps(t);
+    }
+  }
+  if el_types::is_unknown(first) { want } else { ir::TyVector { inner: first, dep: [] } }
+}
+
+// `Data::type_def_nr`: the definition a type is of — a scalar's library definition, a record's
+// or an enum's own; 0 for anything else.
+fn type_def_of(e: el::El, t: ir::TypeT) -> integer {
+  nm = match t {
+    TyText { dep: _ } => "text",
+    TyInteger { spec: _ } => "integer",
+    TyFloat => "float",
+    TySingle => "single",
+    TyBoolean => "boolean",
+    TyCharacter => "character",
+    TyVector { inner: _ } => "vector",
+    _ => ""
+  };
+  if nm != "" {
+    return el::source_nr(e, 0, nm);
+  }
+  match t {
+    TyReference { n } => n,
+    TyEnum { n } => n,
+    _ => 0
+  }
+}
+
 // A literal of a struct enum's variant with fields (`Circle { r: 2 }`), plainly named: the
 // variant's definition, or -1.
 fn variant_literal_def(e: el::El, n: integer) -> integer {
@@ -13315,6 +13383,16 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   // A struct literal item is built into the element itself (`parse_item` with `elm`): typed here,
   // its fields written where the element is made, below.
   recs: vector<integer> = [];
+  nested: vector<integer> = [];
+  // The element a nested literal is: what the destination declares, else what the first pass
+  // left the local holding.
+  held = if v >= 0 { el_types::base(el_vars::tp(vars, v)) } else { ir::TyUnknown { n: 0 } };
+  held_elem = match held {
+    TyVector { inner } => inner,
+    TyRefVar { inner: li } => match li { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } },
+    _ => ir::TyUnknown { n: 0 }
+  };
+  nested_want = match declared { TyVector { inner: _ } => declared, _ => held_elem };
   for it in items {
     if e.p.nodes[it] is SRepeat {
       el::refuse(e, "a repeated vector item");
@@ -13330,6 +13408,10 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
         literal_field_exprs(e, vars, it);
       }
       xs += [ex(ir::NdNull, ir::TyReference { n: sd, dep: [] })];
+    } else if vec_lit_len(e, it) > 0 {
+      // A nested vector literal is built into its element (`parse_item` with `elm`).
+      nested += [it];
+      xs += [ex(ir::NdNull, nested_item_type(e, vars, it, nested_want))];
     } else {
       xs += [expression(e, vars, it)];
     }
@@ -13471,6 +13553,10 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     if size == -2 && (len(recs) > 0 || struct_ref(e, in_t) >= 0 || in_t is TyTuple) {
       size = record_size(e, in_t);
     }
+    // A vector element is the four-byte handle of its own vector.
+    if in_t is TyVector {
+      size = 4;
+    }
     if size < 0 {
       el::refuse(e, "a vector literal of record items");
       return refused_build();
@@ -13526,6 +13612,25 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     }
     xs = [];
   }
+  // A nested vector literal (`build_vector_list` with `elm` a vector): the element made through
+  // the outer vector, its header zeroed, the inner literal appended into it, the element finished.
+  if len(nested) > 0 {
+    inner_t = match in_t { TyVector { inner } => inner, _ => ir::TyVoid };
+    el_vars::set_var_type(vars, elm, ir::TyVector { inner: inner_t, dep: [v] });
+    at = ir::NdVar { n: elm };
+    for it in nested {
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      ls += [el_ir::cl(e, "OpSetInt4", [at, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
+      b = vector_build(e, vars, elm, it, inner_t, append: true);
+      match b.x.code {
+        NdInsert { items: bi } => { ls += bi; },
+        NdNull => { return refused_build(); },
+        _ => { ls += [b.x.code]; }
+      }
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+    xs = [];
+  }
   // A tuple item (`build_vector_list`'s tuple arm): the element made through the vector and each
   // member set at its offset in the `__tuple<…>` record.
   if in_t is TyTuple && len(xs) > 0 {
@@ -13566,6 +13671,11 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
     xs = [];
+  }
+  // `unique_elm_var`: the element temp is a reference to the definition of the element the
+  // context gives the literal (`type_def_nr(parent_tp.content())`), definition 0 without one.
+  if value && elm >= 0 && len(recs) == 0 && n == vars.lit_hint_node {
+    el_vars::set_var_type(vars, elm, ir::TyReference { n: type_def_of(e, vars.lit_hint), dep: [] });
   }
   // An element made through the vector (`elm = OpNewRecord(v, …)`) borrows it — the bind's
   // `depend_all`; a bind's element was typed so when it was made.

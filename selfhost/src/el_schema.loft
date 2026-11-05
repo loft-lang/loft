@@ -158,6 +158,8 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
       TyReference { n } => n,
       TyEnum { n } => n,
       TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
+      // `type_def_nr` of any vector is the library's `vector`.
+      TyVector { inner: _ } => el::source_nr(e, 0, "vector"),
       _ => el::source_nr(e, 0, nm)
     };
   }
@@ -415,8 +417,10 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       vt = vector_type(e, c);
       // `check_vector` finds the store type by the definition's name, which a narrow element's
       // (`vector<integer(0, 255)>` over `vector<byte>`) does not carry.
+      // A vector element has no definition of its own to name the vector after (`check_vector`
+      // takes the element's), so its `vector<vector<…>>` definition keeps no store type.
       vd = el::def_nr(e, "vector<{nm}>");
-      if vd >= 0 && e.b.types[vt].name == "vector<{nm}>" {
+      if vd >= 0 && e.b.types[vt].name == "vector<{nm}>" && !(inner is TyVector) {
         e.b.data.definitions[vd].known_type = vt;
       }
       vt
