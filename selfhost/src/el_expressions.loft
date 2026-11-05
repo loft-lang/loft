@@ -8894,6 +8894,34 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
     if ad >= 0 && ad == struct_ref(e, el_types::base(b.tp)) && !starts_with(el::def(e, ad).name, "__tuple<") && !has_operator_method(e, ad) {
       return ex(el_ir::cl(e, if op == "==" { "OpEqContent" } else { "OpNeContent" }, [a.code, b.code, ir::NdInt { n: el::def(e, ad).known_type }]), ir::TyBoolean);
     }
+    // Two vectors of one element type compare by content too, with the vector's own row
+    // (`vector_of`); two element types are compared pair by pair (`mixed_vector_eq`) — refused.
+    av = match a.tp { TyRefVar { inner } => inner, _ => a.tp };
+    bv = match b.tp { TyRefVar { inner } => inner, _ => b.tp };
+    match av {
+      TyVector { inner: ea } => match bv {
+        TyVector { inner: eb } => {
+          if el_types::is_unknown(ea) || el_types::is_unknown(eb) {
+            return ex(ir::NdNull, ir::TyBoolean);
+          }
+          if !el_types::is_equal(e, ea, eb) || el_types::elem_name(e, ea) != el_types::elem_name(e, eb) {
+            el::refuse(e, "a comparison of vectors of two element types");
+            return ex(ir::NdNull, ir::TyBoolean);
+          }
+          if e.first_pass {
+            return ex(ir::NdNull, ir::TyBoolean);
+          }
+          row = el_schema::content_type(e, ir::TyVector { inner: ea, dep: [] });
+          if row < 0 {
+            el::refuse(e, "a comparison of vectors of this element type: {type_kind(ea)}");
+            return ex(ir::NdNull, ir::TyBoolean);
+          }
+          return ex(el_ir::cl(e, if op == "==" { "OpEqContent" } else { "OpNeContent" }, [a.code, b.code, ir::NdInt { n: row }]), ir::TyBoolean);
+        },
+        _ => {}
+      },
+      _ => {}
+    }
   }
   if op == ">" {
     return call_op(e, vars, "<", [b.code, a.code], [b.tp, a.tp]);
@@ -8995,9 +9023,18 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
       return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: t.tp });
     }
     nl = if vector_null { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, t.tp) };
-    fb = retail(f.code, nl, t.tp);
+    // A record arm's dep on a store it mints (a literal's `__ref_p2_N`) is its ownership
+    // marker, not a borrow (`arm_join_type`, loft#978): the arms are typed without it.
+    tt = t.tp;
+    tc = t.code;
+    if record_null && !vector_null {
+      td = outside_deps(t.code, el_types::deps(t.tp));
+      tt = el_types::with_deps(t.tp, td);
+      tc = arm_typed(t.code, td);
+    }
+    fb = retail(f.code, nl, tt);
     if nl != null && fb != null {
-      return ex(el_ir::v_if(c.code, t.code, fb!), ir::TyOptional { inner: t.tp });
+      return ex(el_ir::v_if(c.code, tc, fb!), ir::TyOptional { inner: tt });
     }
   }
   if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) {
