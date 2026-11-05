@@ -6548,8 +6548,10 @@ of materials this way: 54.0M → 45.9M instructions per op alone (gcc).  Site:
 ### A self-call in tail position is a jump
 
 ```
-  (R-TailSelf)   In a function whose result is a scalar, nothing, a text or a store-held
-                 value, the body is wrapped in a loop and every SELF-call
+  (R-TailSelf)   In a function whose result is a scalar, nothing, a text, a store-held
+                 value or a tuple of scalars and store-held values (each delivered by
+                 value, as the IR's value records answer a small record), the body is
+                 wrapped in a loop and every SELF-call
                  in TAIL position — the value a `return` answers, the value an `if` arm or
                  a block answers in that position, the last statement of a void body, the
                  value of the temporary the scope pass hands to a `return` — binds its

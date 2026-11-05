@@ -37,8 +37,8 @@ pub(crate) fn declared_params(def: &Definition) -> Vec<u16> {
 
 /// Can this frame be reused by a jump?  The one predicate for the parser's refusal (@C155,
 /// `definitions.rs`, on the source shape) and for this pass (on the lowered one): a result
-/// that is a scalar, nothing, a text or a store-held value (the kinds the scope pass delivers
-/// through a temporary or a buffer); no `&` local; every argument a tail self-call hands to a
+/// that is a scalar, nothing, a text, a store-held value or a tuple of scalars and store-held
+/// values (the kinds the scope pass delivers through a temporary or a buffer); no `&` local; every argument a tail self-call hands to a
 /// parameter held in a store is a pointer the frame does not own (a parameter or a projection
 /// of one), a text or `&` parameter only itself; no parameter rebound in the body; no
 /// generator, `parallel` block or closure in the body.  A local may be held in a store — the
@@ -68,9 +68,12 @@ pub(crate) fn admit_frame_at(
     params: &[u16],
     d: u32,
 ) -> Result<(), (Option<Position>, String)> {
-    let delivered = is_scalar(result)
+    // A tuple of such values is delivered by value as each of them is: the IR's value
+    // records (`src/value_record.rs`) answer one from a function whose source returns a record.
+    let by_value = |t: &Type| is_scalar(t) || crate::data::is_dbref(t.base());
+    let delivered = by_value(result)
         || matches!(result.base(), Type::Void | Type::Null | Type::Text(_))
-        || crate::data::is_dbref(result.base());
+        || matches!(result.base(), Type::Tuple(es) if es.iter().all(by_value));
     if !delivered {
         return Err((
             None,

@@ -1630,10 +1630,14 @@ impl State {
             stack.add_op("OpCoroutineReturn", self);
             self.code_add(yield_size);
         } else {
+            // The returned value's type for the debug dumps — a tuple the IR's value records
+            // made (`src/value_record.rs`) has no registered `__tuple<…>` definition to name it.
             if return_type != &Type::Void {
                 let ret_nr = stack.data.type_def_nr(return_type);
-                let known = stack.data.def(ret_nr).known_type();
-                self.types.insert(self.code_pos, known);
+                if ret_nr != u32::MAX {
+                    let known = stack.data.def(ret_nr).known_type();
+                    self.types.insert(self.code_pos, known);
+                }
             }
             stack.add_op("OpReturn", self);
             self.code_add(self.arguments);
