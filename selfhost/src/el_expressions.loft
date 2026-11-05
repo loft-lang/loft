@@ -37,12 +37,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   result = el::def(e, e.context).returned[0];
   b = parse_block(e, vars, body, "return from block", result);
   // `block_result`'s conversion of a `null` tail to the declared result: the type's own null
-  // (`Parser::null_value`) — the sentinel of a record or a vector, a scalar's `OpConv…FromNull`.
-  // A text result answers it through a hidden `___tret_N` buffer, not carried yet.
+  // (`Parser::null_value`) — the sentinel of a record or a vector, a scalar's or a text's
+  // `OpConv…FromNull` (a text then delivered through its hidden buffer, `el_tret`).
   if !e.first_pass && b.tp is TyNull && !(result is TyVoid) && !el_types::is_unknown(result) {
     rbase = el_types::base(result);
     nl = if rbase is TyVector { el_convert::null_of(e, ir::TyReference { n: 0, dep: [] }) } else { el_convert::null_of(e, rbase) };
-    if rbase is TyText || nl == null {
+    if nl == null {
       el::refuse(e, "a `null` answered at the tail of a function of this type: {type_kind(rbase)}");
     } else {
       // A scalar's null is a value of the declared `τ?` (the block is typed so); a record's or
@@ -9948,7 +9948,9 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   // A plain enum's null is `OpConvEnumFromNull` of its store type (`null_of`).
   enum_null = match t.tp { TyEnum { is_ref } => !is_ref, _ => false };
   if f.tp is TyNull && (el_convert::sentinel_value(t.tp) || record_null || enum_null) {
-    if e.first_pass {
+    // A text join keeps its converted arms on the first pass too: a text tail's accumulator
+    // (`do_if_acc`) is decided there.
+    if e.first_pass && !(el_types::base(t.tp) is TyText) {
       // A record join keeps its arms: the first pass reads the parameters they hand back.
       ft = if variant_null { ir::TyEnum { n: variant_parent(e, t.tp), is_ref: true, dep: el_types::deps(t.tp) } } else { t.tp };
       return ex(if record_null { el_ir::v_if(c.code, t.code, f.code) } else { ir::NdNull }, ir::TyOptional { inner: ft });
