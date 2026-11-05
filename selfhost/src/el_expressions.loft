@@ -2223,13 +2223,23 @@ fn inline_container(e: el::El, vars: el_vars::Vars, x: Ex) -> integer {
   }
   w = -1;
   match el_ir::unspan(root!) {
-    NdCall { def_nr } => {
+    NdCall { def_nr, args } => {
       d = el::def(e, def_nr);
       if !((starts_with(d.name, "n_") || starts_with(d.name, "t_")) && !((d.code[0]) is NdNull)) {
         return -1;
       }
-      // The result's deps are the callee's attribute numbers, which name nothing here.
-      w = el_vars::work_ref_p2(vars, el_types::without_deps(d.returned[0]));
+      // The result's deps are the callee's attribute numbers: of those, a hidden buffer the
+      // result borrows names the caller's argument there (`Deps::frame(buffers)`).
+      buffers: vector<integer> = [];
+      for ra in el_types::deps(d.returned[0]) {
+        if d.attributes[ra] != null && d.attributes[ra]!.hidden {
+          match el_ir::unspan(args[ra] ?? ir::NdNull) {
+            NdVar { n } => { buffers += [n]; },
+            _ => {}
+          }
+        }
+      }
+      w = el_vars::work_ref_p2(vars, el_types::with_deps(el_types::without_deps(d.returned[0]), buffers));
       el_vars::mark_inline(vars, w);
     },
     _ => {}
@@ -9826,8 +9836,10 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
   w = -1;
   chain = false;
   match x {
+    // `declared_in_loop`: a local made inside an open loop (numbered after its variable) is no
+    // candidate; one from before the loop is, wherever the `return` stands.
     NdVar { n } => {
-      if len(vars.active_loops) == 0 {
+      if len(vars.active_loops) == 0 || n < vars.active_loops[0] {
         w = n;
       }
     },
@@ -9890,6 +9902,25 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
   }
   if e.first_pass {
     return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+  }
+  // A literal returned once the buffer is renamed onto a local of the body (`bound_already`)
+  // keeps the store it was built in: it is handed back as it is.  A buffer renamed onto a call's
+  // hidden `__ref_N` (a chain, `chain_return_buffer_var`) takes the literal: not carried here.
+  onto_local = false;
+  for ha in el::def(e, d).attributes {
+    if ha.hidden && el_types::base(ha.typedef[0]) is TyReference && !starts_with(ha.name, "__") {
+      onto_local = true;
+    }
+  }
+  if !unrenamed && onto_local {
+    match x {
+      NdBlock { block } => {
+        if block[0].name == "Object" {
+          return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+        }
+      },
+      _ => {}
+    }
   }
   refuse_known(e, v.tp, "a `return` of a record that is not a literal: {tail_kind(e, vars, el_ir::v_block([v.code], v.tp, ""))}");
   ex(ir::NdNull, ir::TyNever)
