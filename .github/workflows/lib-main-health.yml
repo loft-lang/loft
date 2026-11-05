@@ -116,10 +116,14 @@ jobs:
           key: lib-main-health-${{ hashFiles('loft-src/Cargo.lock') }}
           restore-keys: lib-main-health-
 
+      # The components too (`make components`): a package with `[native] component = "net"`
+      # finds its natives only in `target/components/` beside `target/release/loft`
+      # (src/components.rs), as library-ci-reusable.yml builds them.
       - name: Build loft
         working-directory: loft-src
         run: |
-          cargo build --release --lib --bin loft
+          cargo build --release --lib --bin loft --bin loft-components
+          target/release/loft-components
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
       - name: Clone ${{ matrix.repo }} main
