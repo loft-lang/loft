@@ -558,7 +558,17 @@ fn sorted_type(e: el::El, kind: text, n: integer, keys: vector<ir::SortKey>, fie
 // range gives; the kind that width and the field's nullability pick (`NarrowIntKind::of`, never a
 // narrow-vector element here); the Part that kind stores, under its `min` (`part_min`) — the
 // wide kind keeps `integer`'s 8 bytes.
-fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean) -> integer {
+// `Parser::write_to_file`'s row for a value cast to a narrow alias: `database.byte` /
+// `database.short` (a `short`, not the `short_raw` a field stores) or the 4-byte encoding
+// `narrow_io_part` picks — at the alias's width `w`.
+pub fn io_int_part(e: el::El, spec: ir::IntegerSpec, w: integer) -> integer {
+  if w == 2 {
+    return narrow_part(e, "short<{spec.min},false>", ir::PtShort { start: spec.min, nullable: false }, 2);
+  }
+  int_part(e, spec, el::NONE, false)
+}
+
+pub fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean) -> integer {
   s = 0;
   if alias != el::NONE && el::def(e, alias).forced_size > 0 {
     s = el::def(e, alias).forced_size;
