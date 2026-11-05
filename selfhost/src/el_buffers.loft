@@ -70,8 +70,9 @@ pub fn promote_work_buffers(e: el::El) {
   }
 }
 
-// A call in `n` handed a local `__ref_N` vector of scalars for a hidden result parameter.
-fn hands_result_buffer(e: el::El, n: ir::Node, vars: el_vars::Vars) -> boolean {
+// A call in `n` handed a local `__ref_N` vector of scalars for a hidden result parameter — or of
+// records, where the result is held for a subscript (`inline_container`).
+fn hands_result_buffer(e: el::El, n: ir::Node, vars: el_vars::Vars, in_container: boolean = false) -> boolean {
   match n {
     NdCall { def_nr, args } => {
       for a in args {
@@ -82,7 +83,7 @@ fn hands_result_buffer(e: el::El, n: ir::Node, vars: el_vars::Vars) -> boolean {
             if at != null && at!.hidden && !at!.work_buffer && x != null && !x!.argument && starts_with(x!.name, "__ref_") {
               match x!.type_def[0] ?? ir::TyVoid {
                 TyVector { inner } => {
-                  if el_expressions::scalar(inner) {
+                  if el_expressions::scalar(inner) || in_container && inner is TyReference {
                     return true;
                   }
                 },
@@ -96,8 +97,9 @@ fn hands_result_buffer(e: el::El, n: ir::Node, vars: el_vars::Vars) -> boolean {
     },
     _ => {}
   }
+  held = in_container || match n { NdBlock { block } => block[0].name == "inline_container", _ => false };
   for c in el_ir::children(n) {
-    if hands_result_buffer(e, c, vars) {
+    if hands_result_buffer(e, c, vars, held) {
       return true;
     }
   }

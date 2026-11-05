@@ -1805,14 +1805,6 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
   }
   lit = tail_syntax(e, vars.body);
   literal = lit >= 0 && e.p.nodes[lit] is SVecLit;
-  // A body that is one vector literal of constants is hoisted into a `__const_<fn>` definition
-  // (`sole_vector_literal`, `const_vector_blocker`) — not carried yet.
-  if literal && constant_literal(e, lit) {
-    if !e.first_pass {
-      el::refuse(e, "a function answering a constant vector literal");
-    }
-    return code;
-  }
   bl = match code { NdBlock { block } => block[0], _ => return code };
   tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
   // A local built in two or more steps, counted on the first pass (`child_allocs` reads that
@@ -2038,7 +2030,7 @@ fn element_content(e: el::El, elem: ir::TypeT) -> integer {
 
 // A vector literal whose items are made of literals and operators only — no variable, call or
 // nested literal: what `const_vector_blocker` admits, read conservatively.
-fn constant_literal(e: el::El, n: integer) -> boolean {
+pub fn constant_literal(e: el::El, n: integer) -> boolean {
   match e.p.nodes[n] {
     SVecLit { items } => {
       for it in items {
@@ -2065,6 +2057,23 @@ fn constant_expr(e: el::El, n: integer) -> boolean {
     SText { at: _ } => true,
     SUnary { e: ue } => ue != null && constant_expr(e, ue!),
     SParen { e: pe } => pe != null && constant_expr(e, pe!),
+    // What `const_eval` folds: a cast and arithmetic over constants, a named constant, and a
+    // record literal whose every field is one.
+    SAs { e: ae } => ae != null && constant_expr(e, ae!),
+    SBin { op, l, r } => op != "??" && constant_expr(e, l) && constant_expr(e, r),
+    SName { name, member } => member == "" && el::def_nr(e, name) >= 0 && el::def(e, el::def_nr(e, name)).def_type == el::DT_CONSTANT,
+    SStructLit { fields, base } => {
+      if base != null {
+        return false;
+      }
+      for f in fields {
+        ok = match e.p.nodes[f] { SFieldInit { e: fe } => fe != null && constant_expr(e, fe!), _ => false };
+        if !ok {
+          return false;
+        }
+      }
+      true
+    },
     _ => false
   }
 }
@@ -2392,6 +2401,17 @@ fn projection_root(e: el::El, n: ir::Node) -> ir::Node? {
       null
     },
     _ => null
+  }
+}
+
+// A call of a loft-defined function that is no projection: its result is a store it mints.
+fn minting_call(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr } => {
+      d = el::def(e, def_nr);
+      !projection_op(d.name) && (starts_with(d.name, "n_") || starts_with(d.name, "t_")) && !((d.code[0] ?? ir::NdNull) is NdNull)
+    },
+    _ => false
   }
 }
 
@@ -14756,6 +14776,12 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   cw = inline_container(e, vars, x);
   if cw >= 0 {
     x = ex(bind_root(e, x.code, cw, el_vars::tp(vars, cw)), x.tp);
+  } else if minting_call(e, x.code) {
+    // `container_dep`'s own case: the subscript is on a loft function's fresh result, bound to
+    // a `__ref_p2_N` the element then borrows (`bind_inline_container`, on both passes).
+    cw = el_vars::work_ref_p2(vars, x.tp);
+    el_vars::mark_inline(vars, cw);
+    x = ex(el_ir::v_block([el_ir::v_set(cw, x.code), ir::NdVar { n: cw }], el_types::with_deps(x.tp, [cw]), "inline_container"), x.tp);
   }
   i = expression(e, vars, keys[0]);
   if !el_types::is_unknown(i.tp) && !(i.tp is TyInteger) {
