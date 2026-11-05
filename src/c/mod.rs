@@ -1533,6 +1533,20 @@ impl Cx<'_> {
                 }
             }
         }
+        // The IR's tuples (`src/value_record.rs`, a tuple the source writes): a parameter of
+        // three or more members the body only reads goes by pointer the same way.
+        if !off && !apv {
+            let def = self.data.def(d);
+            let vars = def.variables();
+            for (i, &a) in vars.arguments().iter().enumerate() {
+                if !out.contains(&i)
+                    && matches!(vars.tp(a), Type::Tuple(es) if es.len() >= 3)
+                    && vr_param_read_only(self.data, def.code(), a)
+                {
+                    out.push(i);
+                }
+            }
+        }
         out.sort_unstable();
         let out = std::rc::Rc::new(out);
         self.vr_ptr.borrow_mut().insert(d, out.clone());

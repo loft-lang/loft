@@ -7100,6 +7100,12 @@ impl<'a> FnWriter<'a> {
         let r = self.value_args(args, &shapes, &values, &mut xs, reads, ind);
         self.slice_carriers.truncate(carriers);
         r?;
+        // An IR tuple the callee takes by pointer (`Cx::vr_ptr_params`): its address.
+        for &i in ptr.iter() {
+            if !tuple_params.iter().any(|(t, _, _)| *t == i) && dropped != Some(i) {
+                xs[i] = self.tuple_arg_address(args, i, &xs[i], shapes[i], ind);
+            }
+        }
         if let Some(i) = dropped {
             xs.remove(i);
         }

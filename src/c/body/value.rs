@@ -956,6 +956,30 @@ impl FnWriter<'_> {
         Ok(format!("&{t}"))
     }
 
+    /// [`Self::vr_arg_address`] for an IR tuple: the caller's own variable where no other
+    /// argument names it, else a temporary of shape `c` holding `x`.
+    pub(super) fn tuple_arg_address(
+        &mut self,
+        args: &[Value],
+        i: usize,
+        x: &str,
+        c: CType,
+        ind: usize,
+    ) -> String {
+        if let Value::Var(v) = args[i].unspan()
+            && x == self.var(*v)
+            && !args
+                .iter()
+                .enumerate()
+                .any(|(j, o)| j != i && o.any_node(&mut |n| matches!(n, Value::Var(w) if w == v)))
+        {
+            return format!("&{x}");
+        }
+        let t = self.temp(c);
+        self.line(ind, &format!("{t} = {x};"));
+        format!("&{t}")
+    }
+
     /// The buffer of a FORWARD call: the site `forward_sites` names — by its node, or, where
     /// the C rewrote the node (a join's arm), by the forward's buffer handed as this call's
     /// return buffer.  Either is the record form's own effect: the callee writes the buffer it
