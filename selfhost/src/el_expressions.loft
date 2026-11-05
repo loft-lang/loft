@@ -1167,13 +1167,13 @@ fn buffer_bound(e: el::El) -> boolean {
 }
 
 // The variable a returned value `x` hands the return buffer to, or -1: a plain local struct
-// record bound by a literal or from a buffered call (`SkipReassigned` counts the records made
+// record bound by a literal, from a buffered call, or declared (`y: S = b` owns its record) (`SkipReassigned` counts the records made
 // through it in `code`; one built by a literal and rebound from a call is no candidate), or —
 // on the first pass — a call's hidden `__ref_N` buffer.
 fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::Node) -> integer {
   match x {
     NdVar { n } => {
-      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && (el_vars::was_built(vars, n) || el_vars::was_adopted(vars, n)) && child_allocs(e, vars, code, n) < 2 && !(el_vars::was_built(vars, n) && bound_from_call(code, n)) {
+      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && (el_vars::was_built(vars, n) || el_vars::was_adopted(vars, n) || vars.annotated.contains(n)) && child_allocs(e, vars, code, n) < 2 && !(el_vars::was_built(vars, n) && bound_from_call(code, n)) {
         return n;
       }
     },
@@ -1202,7 +1202,7 @@ fn hidden_ref_arg(vars: el_vars::Vars, args: vector<ir::Node>) -> integer {
 }
 
 // `RetPromotion::Rename` itself: the `__retbuf` attribute takes `v`'s name, the placeholder
-// stops being an argument, `v` becomes one, and the result's deps name the attribute.
+// stops being an argument, `v` becomes one, and the result's deps add the attribute.
 fn rename_onto(e: el::El, vars: el_vars::Vars, rb: integer, v: integer) {
   d = e.context;
   a = attr_nr(el::def(e, d), "__retbuf");
@@ -1210,8 +1210,13 @@ fn rename_onto(e: el::El, vars: el_vars::Vars, rb: integer, v: integer) {
   vars.vars[rb].argument = false;
   vars.vars[rb].skip_free = true;
   el_vars::become_argument(vars, v);
+  // The buffer joins what the result borrows already (a parameter a mid-body `return` merged).
   rt = el::def(e, d).returned[0];
-  e.b.data.definitions[d].returned = [el_types::with_deps(rt, [a])];
+  rd = el_types::deps(rt);
+  if !rd.contains(a) {
+    rd += [a];
+  }
+  e.b.data.definitions[d].returned = [el_types::with_deps(rt, rd)];
 }
 
 // `ref_return` for a body whose tail is a record VARIABLE, the return buffer not renamed onto
