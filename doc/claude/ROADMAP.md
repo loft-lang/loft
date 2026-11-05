@@ -53,6 +53,8 @@ first:
 - the whole device from loft, multiplayer over Wi-Fi included ([@PLN213](https://github.com/loft-lang/plans/issues/213));
 - its practice game, a 2.5D dogfighter ([@PLN214](https://github.com/loft-lang/plans/issues/214));
 - glb import ([@PLN215](https://github.com/loft-lang/plans/issues/215));
+- 60 fps: the landscape drawn when it changes, the actors every frame, in a C engine under
+  `stage` ([@PLN218](https://github.com/loft-lang/plans/issues/218));
 - the libraries' shared C rewritten in loft ([@PLN216](https://github.com/loft-lang/plans/issues/216)).
 
 The 3D art grows out of it: the dogfighter's sprites are rendered from a 3D model, so every model
@@ -117,6 +119,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN56](https://github.com/loft-lang/plans/issues/56) | future | Rigged characters |
 | [@PLN49](https://github.com/loft-lang/plans/issues/49) | future | dryopea — sci-fi free-build / tower-defence game |
 | [@PLN209](https://github.com/loft-lang/plans/issues/209) | next | Platform-agnostic game libraries — one game source on the Tanmatsu, the web and the desktop; every game with a small-format version ([plan](plans/209-platform-agnostic-games/README.md)) |
+| [@PLN218](https://github.com/loft-lang/plans/issues/218) | next | A Tanmatsu engine for `stage` — the landscape drawn when it changes, the actors every frame, one scene model for 2D and 3D; the engine in C, the game in loft; 60 fps |
 | [@PLN213](https://github.com/loft-lang/plans/issues/213) | future | The whole Tanmatsu from loft — the board, the radios, add-ons, and multiplayer games over Wi-Fi through an outside server |
 | [@PLN214](https://github.com/loft-lang/plans/issues/214) | future | A 2.5D arcade dogfighter with PvP over the network — Tanmatsu, desktop and browser; @PLN213's practice game, cheap fixed drawing so it measures the network and the game |
 | [@PLN215](https://github.com/loft-lang/plans/issues/215) | future | glb import — read glTF 2.0 binary files into `mesh3d` scenes, tested on known CC0 models; FBX is converted offline, not read |
