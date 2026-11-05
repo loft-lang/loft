@@ -76,6 +76,8 @@ pub struct Vars {
   // The `while` loops open: loops of their own in `#break`'s count, which `active_loops` (the
   // `for` loops) does not hold.
   pub whiles: integer,
+  // The loop variables of the open `rev(…)` walks (`on`'s reverse bit, which `#remove` reads).
+  pub reversed: vector<integer>,
   // `Iterator::value` of each open loop, beside `active_loops`: the vector a `for` walks, or
   // null for any other loop
   pub active_values: vector<ir::Node>,
@@ -126,7 +128,7 @@ pub struct Vars {
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, rebuilt: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, reversed: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, rebuilt: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -416,6 +418,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.active_loops = [];
   v.loop_counts = [];
   v.whiles = 0;
+  v.reversed = [];
   v.active_values = [];
   v.len_locals = [];
   v.loop_binds = [];
@@ -705,6 +708,9 @@ pub fn is_unknown(t: ir::TypeT) -> boolean {
 pub fn pop_loop(v: Vars) -> integer {
   lv = v.active_loops[-1] ?? -1;
   v.active_loops = v.active_loops[..-1];
+  if v.reversed.contains(lv) {
+    v.reversed = [for r in v.reversed if r != lv { r }];
+  }
   for c in v.loop_counts {
     if c.lv == lv {
       v.loop_counts = [for k in v.loop_counts if k.lv != lv { k }];
