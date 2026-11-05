@@ -3040,6 +3040,10 @@ fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
         el_vars::make_independent(vars, v, d);
       }
       el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+    } else if len(el_types::deps(x.tp)) > 0 {
+      // The first pass keeps the borrow the bind's read gives (`depend_all`): only the second
+      // strips it, so a literal bound before reads the local as backed and mints late.
+      el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), el_types::deps(x.tp)));
     }
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -8014,7 +8018,7 @@ fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vector<i
   buf = el_vars::work_ref(vars, ir::TyVector { inner: inner, dep: [] });
   // The declared result names the buffer when the callee delivers into it; one answering
   // something else (a `null`) declares no borrow, and the call borrows nothing.
-  rt = if len(el_types::deps(el_types::base(ret))) > 0 { el_types::with_deps(ret, [buf]) } else { ret };
+  rt = if e.first_pass { el_types::with_deps(ret, []) } else if len(el_types::deps(el_types::base(ret))) > 0 { el_types::with_deps(ret, [buf]) } else { ret };
   ex(ir::NdCall { def_nr: d, args: list + [ir::NdVar { n: buf }] }, rt)
 }
 
