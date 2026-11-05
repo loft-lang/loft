@@ -1675,6 +1675,44 @@ fn null_sentinel_tail(e: el::El, code: ir::Node) -> boolean {
   }
 }
 
+// `deliver_mid_vector_walk`: each `return v` of a vector local other than the buffer becomes
+// `{ OpReplaceVector(buf, v, row); return buf }`, through blocks, loops, `if` arms and inserts.
+fn mid_deliver(e: el::El, vars: el_vars::Vars, n: ir::Node, buf: integer, row: integer) -> ir::Node {
+  match n {
+    NdReturn { inner } => match el_ir::unspan(inner) {
+      NdVar { n: v } => if v != buf && !vars.vars[v].argument && (el_types::base(el_vars::tp(vars, v)) is TyVector) { ir::NdInsert { items: [el_ir::cl(e, "OpReplaceVector", [ir::NdVar { n: buf }, ir::NdVar { n: v }, ir::NdInt { n: row }]), ir::NdReturn { inner: ir::NdVar { n: buf } }] } } else { n },
+      _ => n
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: mid_deliver(e, vars, inner, buf, row) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: mid_deliver(e, vars, t, buf, row), f: mid_deliver(e, vars, f, buf, row) },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { mid_deliver(e, vars, x, buf, row) }] },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { mid_deliver(e, vars, x, buf, row) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { mid_deliver(e, vars, x, buf, row) }];
+      ir::NdLoop { block: [b] }
+    },
+    _ => n
+  }
+}
+
+// The `return`s among `ops` that answer anything but the buffer, at any depth.
+fn stray_returns(ops: vector<ir::Node>, buf: integer) -> integer {
+  r = 0;
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdReturn { inner } => { if el_ir::unspan(inner) != ir::NdVar { n: buf } { r += 1; } },
+      _ => {}
+    }
+    r += stray_returns(el_ir::children(op), buf);
+  }
+  r
+}
+
 // The `return`s among `ops`, at any depth.
 fn returns_in(ops: vector<ir::Node>) -> integer {
   r = 0;
@@ -1714,10 +1752,22 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
     bl = match code { NdBlock { block } => block[0], _ => return code };
     tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
     // A `return` before the body's end delivers into the buffer itself
-    // (`deliver_mid_vector_returns`): not carried.
+    // (`deliver_mid_vector_returns`): a local is copied in (`OpReplaceVector`), and every exit
+    // answers the buffer.  Carried where the first pass renamed the buffer onto the tail local;
+    // refused by name elsewhere.
+    tail_buf = match tail { NdVar { n } => if hidden_param(e, vars, n) { n } else { -1 }, _ => -1 };
     if len(bl.operators) > 0 && returns_in(bl.operators[0..len(bl.operators) - 1]) > 0 {
-      el::refuse(e, "a vector `return` before the body's end");
-      return code;
+      row = append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+      if tail_buf >= 0 && row >= 0 {
+        for op in bl.operators {
+          bl.operators[op#index] = mid_deliver(e, vars, op, tail_buf, row);
+        }
+        code = ir::NdBlock { block: [bl] };
+      }
+      if tail_buf < 0 || row < 0 || stray_returns(bl.operators[0..len(bl.operators) - 1], tail_buf) > 0 {
+        el::refuse(e, "a vector `return` before the body's end");
+        return code;
+      }
     }
     // The buffer renamed onto the tail local on the first pass: the body answers the vector the
     // caller handed in, and opens by clearing it.  A local bound from a call (which Rust hands
@@ -10486,11 +10536,19 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // A vector local is returned as it is from a function with a return buffer; the tail's
     // delivery (`vector_return`) copies it into the buffer, and refuses a `return` anywhere
     // else in the body.
-    if el_types::base(result) is TyVector && !(result is TyOptional) && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
+    if el_types::base(result) is TyVector && !(result is TyOptional) && (e.first_pass || vector_buffer(e, vars) >= 0) {
       match el_ir::unspan(v.code) {
         NdVar { n } => {
-          if !vars.vars[n].argument && el_types::base(el_vars::tp(vars, n)) is TyVector {
+          if (!vars.vars[n].argument || e.first_pass) && el_types::base(el_vars::tp(vars, n)) is TyVector {
             return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+          }
+          // A vector parameter is copied into the buffer where it is returned (`parse_return`'s
+          // `clear + append + Return(buf)`).
+          buf = vector_buffer(e, vars);
+          row = append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+          if vars.vars[n].argument && !hidden_param(e, vars, n) && el_types::base(el_vars::tp(vars, n)) is TyVector && buf >= 0 && row >= 0 {
+            b = ir::NdVar { n: buf };
+            return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, v.code, ir::NdInt { n: row }]), ir::NdReturn { inner: b }] }, ir::TyNever);
           }
         },
         _ => {}
@@ -10770,6 +10828,17 @@ fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node? 
 fn return_buffer(e: el::El, vars: el_vars::Vars) -> integer {
   for a in el::def(e, e.context).attributes {
     if a.hidden && !a.work_buffer && heap_def(a.typedef[0]) >= 0 {
+      return el_vars::var(vars, a.name);
+    }
+  }
+  -1
+}
+
+// The hidden vector buffer a function returns through — `__retbuf`, or the local the first pass
+// renamed it onto — or -1.
+fn vector_buffer(e: el::El, vars: el_vars::Vars) -> integer {
+  for a in el::def(e, e.context).attributes {
+    if a.hidden && !a.work_buffer && el_types::base(a.typedef[0]) is TyVector {
       return el_vars::var(vars, a.name);
     }
   }
