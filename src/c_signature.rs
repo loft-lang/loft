@@ -665,6 +665,18 @@ fn parse_type(src: &str, target: CTarget) -> Result<CType, String> {
         },
         "float" => CType::Float { bits: 32 },
         "double" => CType::Float { bits: 64 },
+        // @PLN217 — `loft_width.h`'s names: the build's width, 32 bits under `--width 32`.
+        "loft_int" => CType::Int {
+            bits: if crate::keys::width32_all() { 32 } else { 64 },
+            signed: true,
+        },
+        "loft_uint" => CType::Int {
+            bits: if crate::keys::width32_all() { 32 } else { 64 },
+            signed: false,
+        },
+        "loft_float" => CType::Float {
+            bits: if crate::keys::width32_all() { 32 } else { 64 },
+        },
         other => {
             return Err(format!(
                 "`{other}` is not a C type this binding understands. Allowed: the C integer types \
