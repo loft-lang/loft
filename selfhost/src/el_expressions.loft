@@ -5588,7 +5588,7 @@ fn write_op(at: ir::Attribute) -> text {
 
 // `Parser::field` / `get_field` for a plain struct's field: the read op its type loads
 // through, typed as the field — borrowing what the record borrows, and the record's local.
-fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text, args: vector<integer>, call: boolean) -> Ex {
+fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text, args: vector<integer>, call: boolean, more: boolean = false) -> Ex {
   if re == null {
     el::refuse(e, "a method call: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -5611,7 +5611,11 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
     },
     _ => {}
   }
-  x = expression(e, vars, re!);
+  // A field step's receiver that is a field step itself is read knowing the chain goes on.
+  x = match e.p.nodes[re!] {
+    SMember { at: ra, e: rre, name: rn, args: rargs, call: rc } => if is_field_step(e, re!) { member(e, vars, ra, rre, rn, rargs, rc, true) } else { expression(e, vars, re!) },
+    _ => expression(e, vars, re!)
+  };
   d = -1;
   // A link to a record (`p: &P`) reaches its fields as the record does (`@FR-C-Ref`).
   rt = match x.tp {
@@ -5661,7 +5665,113 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
   if rt is TyOptional && !(t is TyOptional) && !proven {
     t = ir::TyOptional { inner: t };
   }
-  ex(code, t)
+  if e.first_pass {
+    return ex(code, t);
+  }
+  chain_hold(e, vars, ex(code, t), more)
+}
+
+// A plain `.field` step (no call): the receiver of a further step is one when the chain goes on
+// past a field (`parse_field`'s `peek_token(".")`).
+fn is_field_step(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SMember { e: re, call, args } => re != null && !call && len(args) == 0,
+    _ => false
+  }
+}
+
+// `parse_field`'s chain hold: a record a field step reads out of something that is no variable,
+// borrowing nothing (a call's fresh result), is held in a work ref when the chain goes on
+// (`more`), so its store is freed at scope end.  A member that owns a droppable, read straight
+// off a user call's record, is then a view of that record (`call_member_view`, `(H-Elide)`);
+// any other is copied into the work ref (`inline ref copy`), borrowing it.  A step that ends
+// the chain is held only where its member owns a droppable (D-heap-3): copied, borrowing
+// nothing, so the site that consumes it owns the copy.
+fn chain_hold(e: el::El, vars: el_vars::Vars, x: Ex, more: boolean) -> Ex {
+  d = match x.tp { TyReference { n, dep } => if len(dep) == 0 { n } else { -1 }, _ => -1 };
+  if d < 0 || x.code is NdVar {
+    return x;
+  }
+  projection = match el_ir::unspan(x.code) {
+    NdCall { def_nr } => projection_op(el::def(e, def_nr).name) || el::def(e, def_nr).name == "OpGetDbRef",
+    _ => false
+  };
+  if !more && !(projection && el_types::owns_droppable(e, d, [])) {
+    return x;
+  }
+  if more {
+    v = call_member_view(e, vars, x.code, d);
+    if v != null {
+      return v!;
+    }
+  }
+  w = el_vars::work_ref(vars, x.tp);
+  el_vars::mark_inline(vars, w);
+  kt = el::def(e, d).known_type;
+  if projection && kt != el::NO_TYPE {
+    tp = ir::TyReference { n: d, dep: if more { [w] } else { [] } };
+    ops = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [x.code, ir::NdVar { n: w }, ir::NdInt { n: kt }]), ir::NdVar { n: w }];
+    return ex(el_ir::v_block(ops, tp, "inline ref copy"), tp);
+  }
+  tp = ir::TyReference { n: d, dep: [w] };
+  ex(el_ir::v_block([el_ir::v_set(w, x.code), ir::NdVar { n: w }], tp, "inline ref"), tp)
+}
+
+// A member of a call result handed on as an argument is read where it lives: the argument
+// binds without copying (`(F-ParamHeap)`), so the copy a terminal step made (`chain_hold`) is
+// replaced by the view (`call_member_view`).
+fn argument_view(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
+  if e.first_pass {
+    return x;
+  }
+  match el_ir::unspan(x.code) {
+    NdBlock { block } => {
+      if block[0].name != "inline ref copy" {
+        return x;
+      }
+      d = struct_ref(e, el_types::base(x.tp));
+      src = match el_ir::unspan(block[0].operators[2] ?? ir::NdNull) { NdCall { args } => args[0] ?? ir::NdNull, _ => ir::NdNull };
+      if d < 0 || el_ir::is_null(src) {
+        return x;
+      }
+      v = call_member_view(e, vars, src, d);
+      v ?? x
+    },
+    _ => x
+  }
+}
+
+// `call_member_view`: a member `d` that owns a droppable, projected straight out of a user
+// function's fresh record (not `-> S?`), read where it lives — the record bound to a work ref
+// that adopts it and is released whole at its scope end.  Null for any other shape.
+fn call_member_view(e: el::El, vars: el_vars::Vars, proj: ir::Node, d: integer) -> Ex? {
+  if !el_types::owns_droppable(e, d, []) {
+    return null;
+  }
+  match el_ir::unspan(proj) {
+    NdCall { def_nr: pd, args: pargs } => {
+      pn = el::def(e, pd).name;
+      if !(pn == "OpGetField" || pn == "OpGetVector" || pn == "OpVectorRef") || len(pargs) == 0 {
+        return null;
+      }
+      match el_ir::unspan(pargs[0]) {
+        NdCall { def_nr: fd } => {
+          call_tp = el::def(e, fd).returned[0] ?? ir::TyVoid;
+          plain = match call_tp { TyReference { dep } => len(dep) == 0, _ => false };
+          if starts_with(el::def(e, fd).name, "Op") || !plain {
+            return null;
+          }
+          holder = el_vars::work_ref(vars, call_tp);
+          el_vars::mark_inline(vars, holder);
+          tp = ir::TyReference { n: d, dep: [holder] };
+          na = [ir::NdVar { n: holder }] + pargs[1..];
+          return ex(el_ir::v_block([el_ir::v_set(holder, pargs[0]), ir::NdCall { def_nr: pd, args: na }], tp, "inline ref view"), tp);
+        },
+        _ => { return null; }
+      }
+    },
+    _ => { return null; }
+  }
 }
 
 // `Parser::get_val` of field `a` of record `d` at `r`: a collection or record field is the place
@@ -5922,7 +6032,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
           el::refuse(e, "a named argument");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
-        x = expression(e, vars, ae!);
+        x = argument_view(e, vars, expression(e, vars, ae!));
         list += [x.code];
         types += [x.tp];
       },
