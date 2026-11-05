@@ -1814,9 +1814,11 @@ fn main() {
     // `counted` keeps the deep window off, so the inner loop of `reopened` reopens its counted
     // window on every outer pass; by default the outer loop holds one deep window instead, and
     // `narrow`'s enum loop — native's repeat fill, which the C does not have — takes one too.
+    // `records`' first arm opens none: (R-ElemFirst) builds its `"p{i}"` in the new element,
+    // in `v`'s own store, and a text grown there can move what a window points into.
     for (mode, off, deep_off, windows, slots) in [
-        ("windowed", "0", "0", 11, 1),
-        ("counted", "0", "1", 10, 1),
+        ("windowed", "0", "0", 10, 1),
+        ("counted", "0", "1", 9, 1),
         ("unwindowed", "1", "0", 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));
