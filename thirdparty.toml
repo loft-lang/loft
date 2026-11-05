@@ -33,8 +33,11 @@ CVE-2026-113783 = "fixed: in v6.0.3, our pin (lwIP dns_lookup() bounds the cache
 [thirdparty.badge-bsp]
 kind       = "sdk"
 source     = "esp-registry:badgeteam/badge-bsp"
-version    = "1.6.4"
+version    = "2.0.0"
 pinned     = "src/esp_app.rs:BSP"
+# 2.0 for the features: mipi_dsi_abstraction 2.0 drives the boards' second display panel
+# (SW39480800PN03-01-1); the BSP's own code is unchanged from 1.6.4.  Measured against 1.6.4 on
+# ESP-IDF v6.0.3: the same display start, 30 us more per 192x176 frame (11.31 vs 11.28 ms), 1.2 KB.
 advisories = ["github:badgeteam/esp32-component-badge-bsp"]
 
 [thirdparty.libc]
@@ -44,9 +47,9 @@ provider = "the platform's C library and compiler runtime (glibc or musl and lib
 
 [thirdparty.windows]
 kind     = "system"
-names    = ["ws2_32", "crypt32", "advapi32", "bcrypt", "kernel32", "user32", "gdi32", "shell32",
-            "ole32", "oleaut32", "windows"]
-provider = "Windows: Winsock, the certificate store, the random source, the console and clipboard (rustyline), the API import library (windows-targets)"
+names    = ["ws2_32", "crypt32", "advapi32", "bcrypt", "bcryptprimitives", "kernel32", "user32", "gdi32",
+            "shell32", "ole32", "oleaut32", "windows"]
+provider = "Windows: Winsock, the certificate store, the random source (bcrypt, bcryptprimitives for getrandom 0.4), the console and clipboard (rustyline), the API import library (windows-targets)"
 
 [thirdparty.macos]
 kind     = "system"

@@ -16,9 +16,9 @@ use loft::platform::process::{Program, Spawn};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-/// The BSP the libraries' Tanmatsu sections are written against, as the Tanmatsu app template
-/// pins it.
-const BSP: &str = "badgeteam/badge-bsp: \"=1.6.4\"";
+/// The BSP the libraries' Tanmatsu sections are written against: 2.0, the one the launcher
+/// runs, which knows every display panel the boards ship with (THIRDPARTY.md, `badge-bsp`).
+const BSP: &str = "badgeteam/badge-bsp: \"=2.0.0\"";
 
 /// The ESP-IDF release the template builds with.
 const IDF_VERSION: &str = "v6.0.3";
