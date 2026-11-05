@@ -8790,6 +8790,23 @@ fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: integer?
       }
     }
   }
+  // `x#break` / `x#continue` leave or restart the loop over `x`, counted out from the innermost
+  // (`Function::loops_out`); a `while` between them is not counted here — refused by name.
+  if (attr == "break" || attr == "continue") && arg == null && tp == null {
+    lv = el_vars::var(vars, var);
+    k = len(vars.active_loops) - 1;
+    while k >= 0 && vars.active_loops[k] != lv {
+      k -= 1;
+    }
+    if lv >= 0 && k >= 0 && vars.whiles == 0 {
+      out = len(vars.active_loops) - 1 - k;
+      return ex(if attr == "break" { ir::NdBreak { n: out } } else { ir::NdContinue { n: out } }, ir::TyNever);
+    }
+    if vars.whiles > 0 {
+      el::refuse(e, "a `#break` or `#continue` with a `while` open");
+      return ex(ir::NdNull, ir::TyNever);
+    }
+  }
   if (attr == "count" || attr == "first") && arg == null && tp == null {
     lv = el_vars::var(vars, var);
     c = if lv >= 0 { el_vars::loop_count(vars, lv) } else { -1 };
@@ -11782,7 +11799,9 @@ fn while_expr(e: el::El, vars: el_vars::Vars, cond: integer, body: integer?) -> 
     el::refuse(e, "a `while` without a body");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  vars.whiles += 1;
   b = parse_block(e, vars, body!, "while", ir::TyVoid);
+  vars.whiles -= 1;
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
