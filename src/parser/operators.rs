@@ -4512,7 +4512,11 @@ impl Parser {
                     (Type::Integer(a), Type::Integer(b)) if a.is_width32() && b.is_width32());
             // The value's own `i32` (its forced 4-byte width), not the `signed32` template,
             // which a declared `i32` destination would still read as a narrowing.
-            if both32 { lhs_type.clone() } else { crate::data::I64.clone() }
+            if both32 {
+                lhs_type.clone()
+            } else {
+                crate::data::I64.clone()
+            }
         } else if self.unboxes_stored_tuple(lhs_type, &rhs_type) {
             // A tuple is one loft type written two ways, and the coalesce is a place the two
             // MEET: the value arrives boxed (`Reference(__tuple<…>)` — what a generic `-> T?`

@@ -1409,7 +1409,7 @@ impl<'a> FnWriter<'a> {
                 let name = format!("s{}", self.decls.len() + 1);
                 self.decls
                     .push(format!("{} {name} = {};", held(c), self.cx.initial(c)));
-                self.line(ind, &format!("{name} = {};", as_shape(e, c)?));
+                self.line(ind, &format!("{name} = {};", as_shape(self.cx, e, c)?));
                 held_scalars.push((*key, name, c));
             }
             let bases = self.kept_bases(&verdict);
@@ -2495,6 +2495,8 @@ impl<'a> FnWriter<'a> {
             "OpGetFloat" => ("loft_pa_f64", K::Float),
             "OpGetSingle" => ("loft_pa_f32", K::Single),
             "OpGetEnum" => ("loft_pa_enum", K::Enum),
+            // @PLN217 — a 32-bit build reads a 4-byte field as the `int32_t` it is.
+            "OpGetInt4" if super::width32_c() => ("loft_pa_int4_32", K::Int32),
             "OpGetInt4" => ("loft_pa_int4", K::Int),
             "OpGetInt4Raw" => ("loft_pa_int4_raw", K::Int),
             "OpGetInt4Full" => ("loft_pa_int4_full", K::Int),
@@ -6208,7 +6210,7 @@ impl<'a> FnWriter<'a> {
                     c => {
                         // An arm that keeps the value (`lo = if lo < 0 { lo + n } else { lo }`)
                         // assigns the target to itself: nothing to write.
-                        let value = as_shape(e, c)?;
+                        let value = as_shape(self.cx, e, c)?;
                         if value == target {
                             return Ok(());
                         }
@@ -6232,7 +6234,7 @@ impl<'a> FnWriter<'a> {
         for t in &old {
             let _ = write!(frees, " loft_text_free(&{t});");
         }
-        let value = as_shape(e, c)?;
+        let value = as_shape(self.cx, e, c)?;
         self.line(
             ind,
             &format!("{{ {} mv = {value};{frees} {target} = mv; }}", held(c)),
@@ -6481,6 +6483,10 @@ impl<'a> FnWriter<'a> {
                 Ok(CType::Void) | Err(_) => self.shape_of(e),
                 ok => ok,
             },
+            // @PLN217 — in a 32-bit build a literal that fits `i32` is an `int32_t`, as the
+            // parameter, result and tuple member it lands in are (`Ctx::ctype`); a 64-bit
+            // literal (`123l`, `Value::Long`) stays 64-bit.
+            Value::Int(n) if super::width32_c() && *n != i32::MIN => Ok(CType::Int32),
             Value::Int(_) | Value::Long(_) => Ok(CType::Int),
             Value::Enum(..) => Ok(CType::Enum),
             Value::Float(_) => Ok(CType::Float),
@@ -7497,7 +7503,7 @@ impl<'a> FnWriter<'a> {
             } else {
                 self.arg_with(&args[i], later_writes, ind)?
             };
-            xs[i] = as_shape(e, shapes[i])?;
+            xs[i] = as_shape(self.cx, e, shapes[i])?;
         }
         Ok(())
     }
@@ -9468,12 +9474,13 @@ impl<'a> FnWriter<'a> {
             ("OpGetInt4" | "OpGetInt4Raw" | "OpGetInt4Full", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
-                let f = match name {
-                    "OpGetInt4" => "loft_get_int4",
-                    "OpGetInt4Raw" => "loft_get_int4_raw",
-                    _ => "loft_get_int4_full",
+                let (f, k) = match name {
+                    "OpGetInt4" if super::width32_c() => ("loft_get_int4_32", K::Int32),
+                    "OpGetInt4" => ("loft_get_int4", K::Int),
+                    "OpGetInt4Raw" => ("loft_get_int4_raw", K::Int),
+                    _ => ("loft_get_int4_full", K::Int),
                 };
-                Ok(E::new(format!("{f}({}, {fld})", as_ref(r)?), K::Int))
+                Ok(E::new(format!("{f}({}, {fld})", as_ref(r)?), k))
             }
             ("OpSetInt4Raw", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -10175,9 +10182,10 @@ fn as_ref(e: E) -> Result<String, String> {
     }
 }
 
-fn as_tuple(e: E, id: u32) -> Result<String, String> {
+fn as_tuple(cx: &Cx, e: E, id: u32) -> Result<String, String> {
     match e.kind {
         K::Tup(i) if i == id => Ok(e.code),
+        K::Tup(i) if let Some(cast) = cx.tuple_cast(i, id) => Ok(format!("{cast}({})", e.code)),
         k => Err(format!("a tuple expected, a {k:?} found")),
     }
 }
@@ -10239,14 +10247,14 @@ fn as_int32(e: E) -> Result<String, String> {
     }
 }
 
-fn as_shape(e: E, c: CType) -> Result<String, String> {
+fn as_shape(cx: &Cx, e: E, c: CType) -> Result<String, String> {
     match c {
         CType::Int => as_int(e),
         CType::Int32 => as_int32(e),
         CType::Bool => as_bool(e),
         CType::Text => as_view(e),
         CType::Ref => as_ref(e),
-        CType::Tuple(id) => as_tuple(e, id),
+        CType::Tuple(id) => as_tuple(cx, e, id),
         CType::Enum => as_enum(e),
         CType::Float => as_float(e),
         CType::Single => as_single(e),

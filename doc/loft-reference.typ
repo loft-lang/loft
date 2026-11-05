@@ -8222,97 +8222,97 @@ pub fn pow(self: single, v2: single) -> single?
 Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer is not a real number (`pow(-8.0, 0.5)`). Use for exponential growth curves and scaling.
 
 ```rust
-pub fn abs(self: float) -> float
+pub fn abs(self: f64) -> f64
 ```
 
 Absolute value for double-precision floats.
 
 ```rust
-pub PI = OpMathPiFloat()
+pub PI = OpMathPiFloat() as float
 ```
 
 The ratio of a circle's circumference to its diameter (3.14159...).
 
 ```rust
-pub E = OpMathEFloat()
+pub E = OpMathEFloat() as float
 ```
 
 Euler's number, the base of natural logarithms (2.71828...).
 
 ```rust
-pub fn cos(self: float) -> float
+pub fn cos(self: f64) -> f64
 ```
 
 Cosine. Use for circular motion: x = r \* cos(angle).
 
 ```rust
-pub fn sin(self: float) -> float
+pub fn sin(self: f64) -> f64
 ```
 
 Sine. Use for circular motion: y = r \* sin(angle).
 
 ```rust
-pub fn tan(self: float) -> float
+pub fn tan(self: f64) -> f64
 ```
 
 Tangent. Use for slopes and perspective projection.
 
 ```rust
-pub fn acos(self: float) -> float?
+pub fn acos(self: f64) -> f64?
 ```
 
 Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside \[-1, 1\].
 
 ```rust
-pub fn asin(self: float) -> float?
+pub fn asin(self: f64) -> f64?
 ```
 
 Arc sine. Returns the angle whose sine is the value; null outside \[-1, 1\].
 
 ```rust
-pub fn atan(self: float) -> float
+pub fn atan(self: f64) -> f64
 ```
 
 Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
 
 ```rust
-pub fn ceil(self: float) -> float
+pub fn ceil(self: f64) -> f64
 ```
 
 Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.
 
 ```rust
-pub fn floor(self: float) -> float
+pub fn floor(self: f64) -> f64
 ```
 
 Round down to the nearest integer value. Use to convert a float position to a tile index.
 
 ```rust
-pub fn round(self: float) -> float
+pub fn round(self: f64) -> f64
 ```
 
 Round to the nearest integer value (half rounds away from zero).
 
 ```rust
-pub fn sqrt(self: float) -> float?
+pub fn sqrt(self: f64) -> f64?
 ```
 
 Square root. Use for distances and normalization. Null for a negative value.
 
 ```rust
-pub fn atan2(self: float, v2: float) -> float
+pub fn atan2(self: f64, v2: f64) -> f64
 ```
 
 Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2. Use instead of atan when you have separate x/y components.
 
 ```rust
-pub fn log(self: float, v2: float) -> float?
+pub fn log(self: f64, v2: f64) -> f64?
 ```
 
 Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0. Use for converting between scales (e.g., decibels).
 
 ```rust
-pub fn pow(self: float, v2: float) -> float?
+pub fn pow(self: f64, v2: f64) -> f64?
 ```
 
 Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer is not a real number (`pow(-8.0, 0.5)`). Use for exponential growth curves and scaling.
@@ -8326,7 +8326,7 @@ pub fn exp(self: single) -> single
 Raises E (2.71828…) to the power v. Use for exponential growth models.
 
 ```rust
-pub fn exp(self: float) -> float
+pub fn exp(self: f64) -> f64
 ```
 
 Double-precision exp (e^v).
@@ -8338,7 +8338,7 @@ pub fn ln(self: single) -> single?
 Natural logarithm (base E). Use for growth rates and information entropy.
 
 ```rust
-pub fn ln(self: float) -> float?
+pub fn ln(self: f64) -> f64?
 ```
 
 Double-precision natural logarithm.
@@ -8350,7 +8350,7 @@ pub fn log2(self: single) -> single?
 Base-2 logarithm. Use for bit-count calculations and information theory.
 
 ```rust
-pub fn log2(self: float) -> float?
+pub fn log2(self: f64) -> f64?
 ```
 
 Double-precision base-2 logarithm.
@@ -8362,7 +8362,7 @@ pub fn log10(self: single) -> single?
 Base-10 logarithm. Use for decibels, orders of magnitude, and display scales.
 
 ```rust
-pub fn log10(self: float) -> float?
+pub fn log10(self: f64) -> f64?
 ```
 
 Double-precision base-10 logarithm.
@@ -8406,19 +8406,19 @@ pub fn clamp(self: single, lo: single, hi: single) -> single
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
-pub fn min(self: float, b: float) -> float
+pub fn min(self: f64, b: f64) -> f64
 ```
 
 Smallest of two double-precision float values.
 
 ```rust
-pub fn max(self: float, b: float) -> float
+pub fn max(self: f64, b: f64) -> f64
 ```
 
 Largest of two double-precision float values.
 
 ```rust
-pub fn clamp(self: float, lo: float, hi: float) -> float
+pub fn clamp(self: f64, lo: f64, hi: f64) -> f64
 ```
 
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
@@ -8442,7 +8442,7 @@ pub operator compare(self: single, other: single) -> Ordering
 Where `self` stands against `other`, in the order `\<` uses.
 
 ```rust
-pub operator compare(self: float, other: float) -> Ordering
+pub operator compare(self: f64, other: f64) -> Ordering
 ```
 
 Where `self` stands against `other`, in the order `\<` uses.
@@ -8520,43 +8520,43 @@ pub operator remainder(self: single, other: single) -> single?
 `%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
 
 ```rust
-pub operator plus(self: float, other: float) -> float
+pub operator plus(self: f64, other: f64) -> f64
 ```
 
 `+` as the method `Addable` names: `a.plus(b)` is `a + b`.
 
 ```rust
-pub operator minus(self: float, other: float) -> float
+pub operator minus(self: f64, other: f64) -> f64
 ```
 
 `-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
 
 ```rust
-pub operator times(self: float, other: float) -> float
+pub operator times(self: f64, other: f64) -> f64
 ```
 
 `\*` as the method `Numeric` names: `a.times(b)` is `a \* b`.
 
 ```rust
-pub operator negate(self: float) -> float
+pub operator negate(self: f64) -> f64
 ```
 
 The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
 
 ```rust
-pub operator divided_by(self: float, other: float) -> float?
+pub operator divided_by(self: f64, other: f64) -> f64?
 ```
 
 `/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
 
 ```rust
-pub operator remainder(self: float, other: float) -> float?
+pub operator remainder(self: f64, other: f64) -> f64?
 ```
 
 `%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
 
 ```rust
-pub fn approx(self: float, b: float, eps: float) -> boolean
+pub fn approx(self: f64, b: f64, eps: f64) -> boolean
 ```
 
 Approximate equality: true when a and b differ by at most eps (inclusive). `==` on float/single is EXACT IEEE equality — use `approx` when you want a tolerance, e.g. comparing computed transcendentals: `approx(sqrt(2.0) \* sqrt(2.0), 2.0, 1e-9)`. A null (NaN) operand is not approximately equal to anything, so the result is false.
@@ -8976,7 +8976,7 @@ pub operator to_text(self: integer) -> text
 Converts an integer to its decimal text. Built-in types define `to\_text` so they satisfy the `Printable` interface (used by `print`, format strings, …).
 
 ```rust
-pub operator to_text(self: float) -> text
+pub operator to_text(self: f64) -> text
 ```
 
 Converts a float to its text representation.

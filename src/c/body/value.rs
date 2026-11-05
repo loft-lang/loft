@@ -211,7 +211,7 @@ impl FnWriter<'_> {
                     return Ok(None);
                 };
                 let val = self.expr(val, ind)?;
-                let val = as_shape(val, c)?;
+                let val = as_shape(self.cx, val, c)?;
                 // A write through an absent `τ?` struct lands nowhere, and is reported, as the
                 // setter's null record arm does.
                 let dropped = format!("loft_write_dropped(loft_ref_null(), {})", self.site());
@@ -527,7 +527,7 @@ impl FnWriter<'_> {
                     "bool" => CType::Bool,
                     _ => CType::Int,
                 };
-                parts.push(as_shape(e, shape)?);
+                parts.push(as_shape(self.cx, e, shape)?);
             }
             if layout.nullable {
                 // Present exactly when the value local it is part of is.
@@ -622,7 +622,7 @@ impl FnWriter<'_> {
                 .ok_or("a value record field left unwritten")?;
             let e = self.expr(&val, ind)?;
             let t = self.temp(shapes[i]);
-            self.line(ind, &format!("{t} = {};", as_shape(e, shapes[i])?));
+            self.line(ind, &format!("{t} = {};", as_shape(self.cx, e, shapes[i])?));
             parts[i] = t;
         }
         // A view leaf's part is the place this exit's gate proved (`ViewPlan::leaves`).
