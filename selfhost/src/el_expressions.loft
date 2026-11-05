@@ -9868,9 +9868,13 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   c = expression(e, vars, cond);
   // A template's first pass types an operator over its variable as the variable (`call_op`);
   // the second resolves it to the bound's stub.
-  if !el_types::is_unknown(c.tp) && !(c.tp is TyBoolean) && !(e.first_pass && generic_holder(e, c.tp) >= 0) {
-    el::refuse(e, "an `if` condition that is not a boolean: {type_kind(c.tp)}");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  if !(e.first_pass && generic_holder(e, c.tp) >= 0) {
+    cc = condition(e, c);
+    if cc == null {
+      el::refuse(e, "an `if` condition that is not a boolean: {type_kind(c.tp)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    c = cc!;
   }
   proof = divisor_proof(e, c.code);
   dz = len(vars.nonzero);
@@ -12708,14 +12712,43 @@ fn pattern_literal(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   expression(e, vars, n)
 }
 
+// `Parser::convert_condition`: a boolean condition is read as it is — a `boolean?` too, its null
+// as false — and any other scalar as its truth (`OpConvBoolFrom…`, through a `?`: present).  A
+// heap handle's presence test (`coalesce_not_null`) is not carried; null for it and for a value
+// with no truth.
+fn condition(e: el::El, c: Ex) -> Ex? {
+  b = el_types::base(c.tp);
+  if el_types::is_unknown(c.tp) || b is TyBoolean {
+    return c;
+  }
+  if b is TyReference || b is TyVector || keyed_kind(b) || el_types::struct_enum_def(b) >= 0 || b is TyVoid || b is TyTuple {
+    return null;
+  }
+  op = match b {
+    TyInteger { spec: _ } => "Int",
+    TyFloat => "Float",
+    TySingle => "Single",
+    TyCharacter => "Character",
+    TyText { dep: _ } => "Text",
+    TyEnum { n: _, is_ref } => if is_ref { "" } else { "Enum" },
+    _ => ""
+  };
+  if op == "" {
+    return null;
+  }
+  ex(el_ir::cl(e, "OpConvBoolFrom{op}", [c.code]), ir::TyBoolean)
+}
+
 // `Parser::parse_while`: the condition (a boolean), then a loop that leaves where the condition
 // does not hold — `if !cond { break }` — and runs the body, a block expecting nothing.
 fn while_expr(e: el::El, vars: el_vars::Vars, cond: integer, body: integer?) -> Ex {
-  c = expression(e, vars, cond);
-  if !el_types::is_unknown(c.tp) && !(c.tp is TyBoolean) {
-    el::refuse(e, "a `while` condition that is not a boolean: {type_kind(c.tp)}");
+  c0 = expression(e, vars, cond);
+  cc = condition(e, c0);
+  if cc == null {
+    el::refuse(e, "a `while` condition that is not a boolean: {type_kind(c0.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  c = cc!;
   if body == null {
     el::refuse(e, "a `while` without a body");
     return ex(ir::NdNull, ir::TyVoid);
