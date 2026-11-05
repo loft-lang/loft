@@ -868,7 +868,7 @@ def check_vendored(tree, d, n, x, where, a, offline):
             head = run(["git", "-C", clone, "rev-parse", "HEAD"], check=True).stdout.strip()
             behind = int(run(["git", "-C", clone, "rev-list", "--count", f"{commit}..{head}"]).stdout.strip() or 0)
             newest = next((t for t in run(["git", "-C", clone, "tag", "--sort=-v:refname"]).stdout.split()
-                           if re.search(r"\d", t)), "")
+                           if re.search(r"\d", t) and not re.search(r"(?i)rc|beta|alpha|dev|pre", t)), "")
             pin = run(["git", "-C", clone, "describe", "--tags", commit]).stdout.strip()
             since = x.get("upstream-reviewed") or commit
             changed = sorted({os.path.basename(p) for p in run(
