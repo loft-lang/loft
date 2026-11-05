@@ -3632,7 +3632,9 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     }
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if op == "+=" && e.p.nodes[rhs] is SVecLit && el_types::is_collection(p.tp) {
+  // A field of a record that may be absent (`b = h[k]; b.v += [x]`) is typed `τ?`; its append
+  // goes through the place as Rust's does (`OpPush…` into the field), the `?` read past.
+  if op == "+=" && e.p.nodes[rhs] is SVecLit && el_types::is_collection(el_types::base(p.tp)) {
     return field_append(e, vars, p, rhs);
   }
   // An empty literal into a vector place empties it where it lies (`OpClearVector`): the place's
