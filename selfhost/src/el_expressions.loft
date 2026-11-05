@@ -4797,7 +4797,7 @@ fn place_write(e: el::El, read: ir::Node, val: ir::Node) -> ir::Node? {
       if rest == "Text" {
         return el_ir::cl(e, "OpSetTextReplace", [args[0], args[1] ?? ir::NdNull, val]);
       }
-      if rest == "Vector" || rest == "VectorNullable" || rest == "Field" || rest == "Enum" {
+      if rest == "Vector" || rest == "VectorNullable" || rest == "Field" {
         return null;
       }
       set = if rest == "ShortFull" { "OpSetShortRaw" } else if rest == "Int4Full" { "OpSetInt4Raw" } else { "OpSet{rest}" };
