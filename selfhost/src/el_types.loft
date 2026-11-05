@@ -121,7 +121,8 @@ pub fn is_equal(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
       TyFunction { args: fb, result: rb } => len(fa) == len(fb) && all_equal(e, fa, fb) && is_equal(e, ra, rb),
       _ => false
     },
-    _ => a == b
+    // A keyed collection: its content and keys, whatever stores it borrows.
+    _ => without_deps(a) == without_deps(b)
   }
 }
 
