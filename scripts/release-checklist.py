@@ -1302,6 +1302,18 @@ def check_cargo_audit():
     return FAIL, f"{len(vulns)} vulnerable crate(s): " + ", ".join(vulns) + " — `cargo update -p <crate>`, or record why it cannot move"
 
 
+def check_thirdparty():
+    """THIRDPARTY.md: loft and every published library declare what they ship that they did not
+    write, and nothing a register reports against it is unread or applies."""
+    code, out = sh("python3", "scripts/thirdparty.py", "--check", timeout=1800)
+    if code == 0:
+        return OK, "every third-party dependency declared, current with its pin, advisories reviewed"
+    head = out.strip().splitlines()[0] if out.strip() else f"exit {code}"
+    if not re.match(r"\d+ need action", head):
+        return UNKNOWN, "thirdparty.py could not answer: " + head
+    return FAIL, head.rstrip(":") + " — `make thirdparty` lists them"
+
+
 def changed_since_last_tag(version: str, paths: list[str]) -> bool:
     """Did any of `paths` change since the previous release?
 
@@ -1446,6 +1458,13 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "No RUSTSEC advisory against a crate in Cargo.lock",
             "cargo audit   # then `cargo update -p <crate>`",
             check=check_cargo_audit,
+            cadence="mid pre",
+        ),
+        Item(
+            "A-thirdparty",
+            "Every third-party dependency declared, matching upstream, its advisories reviewed",
+            "make thirdparty   # THIRDPARTY.md",
+            check=check_thirdparty,
             cadence="mid pre",
         ),
         Item(
