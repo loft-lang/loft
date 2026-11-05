@@ -4407,6 +4407,9 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     // Already refused where its type was lost.
     return ex(ir::NdNull, ir::TyVoid);
   }
+  if bin == "+" && is_file(e, vt) {
+    return file_append(e, vars, v, rhs, x);
+  }
   // `v += w` of two vectors resolves to `OpAppendVector` (`+=` is `Append`), its element row
   // the narrow-aware one every append takes (`append_elem_tp`): `w`'s elements copied in.
   if bin == "+" && vt is TyVector && el_types::base(x.tp) is TyVector {
@@ -12625,6 +12628,44 @@ fn if_not_names(e: el::El, st: integer, name: text) -> boolean {
     },
     _ => false
   }
+}
+
+// Whether `t` is the standard library's `File` record.
+fn is_file(e: el::El, t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n } => el::def(e, n).name == "File" && el::def(e, n).source == el::STD_SOURCE,
+    _ => false
+  }
+}
+
+// `Parser::write_to_file` (`f += value`): the value bound to a fresh `_wf_N` that borrows what it
+// borrows, then `OpWriteFile(f, OpCreateStack(_wf_N), row)` with the value's store row
+// (`get_type`; a `character` or `boolean` its fixed-width base, `io_scalar_db_tp`).  A record
+// value, a value with no byte layout and an `as` cast's narrowed width are refused by name.
+fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: Ex) -> Ex {
+  if e.p.nodes[rhs] is SAs {
+    el::refuse(e, "a file write of a cast value (its alias's width)");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  vt = el_types::base(x.tp);
+  if vt is TyReference || vt is TyEnum || vt is TyTuple || vt is TyOptional {
+    refuse_known(e, x.tp, "a file write of this value: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  tmp = el_vars::create_unique(vars, "wf", x.tp);
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  row = el_schema::content_type(e, vt);
+  if row < 0 {
+    el::refuse(e, "a file write of a value with no byte layout: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  el_vars::drop_use(vars, f);
+  ex(ir::NdInsert { items: [
+    el_ir::v_set(tmp, x.code),
+    el_ir::cl(e, "OpWriteFile", [ir::NdVar { n: f }, el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: tmp }]), ir::NdInt { n: row }])
+  ] }, ir::TyVoid)
 }
 
 // `Parser::append_elem_tp`: the row an append of `elem` elements copies by — a record's own,
