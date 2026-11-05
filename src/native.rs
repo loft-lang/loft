@@ -369,6 +369,8 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_spatial_range", n_spatial_range),
     ("n_trie_prefix", n_trie_prefix),
     ("n_hash_unsorted", n_hash_unsorted),
+    ("n_keyed_entry_ints", n_keyed_entry_ints),
+    ("n_keyed_entry_text", n_keyed_entry_text),
     // Plan-12 phase 1a (2026-05-23) — crypto `n_*` symbols
     // (`n_sha256`, `n_hmac_sha256`, `n_hmac_sha256_raw`,
     // `n_base64_encode`, `n_base64_decode`, `n_base64url_encode`)
@@ -2678,6 +2680,30 @@ fn n_hash_unsorted(stores: &mut Stores, stack: &mut DbRef) {
     let v_h = stores.get::<DbRef>(stack);
     let result = stores.build_hash_unsorted_vec(&v_h, v_tp);
     stores.put(stack, result);
+}
+
+/// `@FR-R-KeyedEntry` — `keyed_entry_ints(data, parent_tp, fld, k1, k2, k3, k4)`: the entry
+/// under the key, found or filed (`Stores::keyed_entry`).  Args pop in reverse order.
+fn n_keyed_entry_ints(stores: &mut Stores, stack: &mut DbRef) {
+    let k4 = stores.get::<i64>(stack);
+    let k3 = stores.get::<i64>(stack);
+    let k2 = stores.get::<i64>(stack);
+    let k1 = stores.get::<i64>(stack);
+    let fld = stores.get::<i64>(stack) as u16;
+    let tp = stores.get::<i64>(stack) as u16;
+    let data = stores.get::<DbRef>(stack);
+    let rec = stores.keyed_entry(&data, tp, fld, &[k1, k2, k3, k4]);
+    stores.put(stack, rec);
+}
+
+/// `@FR-R-KeyedEntry`'s text clause — `keyed_entry_text(data, parent_tp, fld, key)`.
+fn n_keyed_entry_text(stores: &mut Stores, stack: &mut DbRef) {
+    let key = stores.get::<Str>(stack);
+    let fld = stores.get::<i64>(stack) as u16;
+    let tp = stores.get::<i64>(stack) as u16;
+    let data = stores.get::<DbRef>(stack);
+    let rec = stores.keyed_entry_text(&data, tp, fld, key.str());
+    stores.put(stack, rec);
 }
 
 /// @PLN48 — iterate a `spatial`/`radix` collection in natural key order.  Wraps

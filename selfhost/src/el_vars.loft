@@ -78,6 +78,8 @@ pub struct Vars {
   pub loop_binds: hash<LoopCount[name]>,
   // `Parser::divisor_nonzero`: the locals a condition proves non-zero where they are read
   pub nonzero: vector<integer>,
+  // `(N-Guard)`: the record locals a test proves present where they are read
+  pub present: vector<integer>,
   // `Function::work_ctext`: the `__work_cN` text buffers a call hands a text-returning callee
   pub work_ctext: integer,
   // `Function::work_text_p2`: the `__work_p2_N` destinations a text-dest call is given
@@ -97,12 +99,23 @@ pub struct Vars {
   pub rebind_origs: vector<integer>,
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
   pub dn4_coalesce: boolean,
+  // `Parser::lambda_counter`: the lambdas this body made, naming the next `__lambda_<fn>_<N>`
+  pub lambdas: integer,
+  // `Parser::expected` for the one node a bind is about to read (`expect_node`): the type its
+  // target holds, which an `if` there hands its arms (an untyped `[]` built in its place)
+  pub expect_node: integer,
+  pub expect: ir::TypeT,
   // the local a `+` chain of vectors is bound to (`a = v + w` builds into it), or -1
-  pub concat_dest: integer
+  pub concat_dest: integer,
+  // `parse_var`'s `into` arm: the syntax node of a local bind's right-hand side read first,
+  // into the destination — a text read there keeps its own type (-1: none)
+  pub read_into: integer,
+  // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.
+  pub rebuilt: vector<integer>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, concat_dest: -1 }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, rebuilt: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -168,7 +181,9 @@ pub fn add_variable(v: Vars, name: text, t: ir::TypeT) -> integer {
   e = v.names[name];
   if e != null {
     nr = e.nr;
-    if is_unknown(tp(v, nr)) {
+    // A work ref's counter can name another site on each pass: there the second pass's type
+    // wins (`add_variable(reuse)`; Rust's other `__` families come through paths of their own).
+    if is_unknown(tp(v, nr)) || (starts_with(name, "__ref_") && !is_unknown(t) && tp(v, nr) != t) {
       v.vars[nr].type_def = [t];
     }
     return nr;
@@ -324,6 +339,8 @@ pub fn is_compiler_generated(v: Vars, nr: integer) -> boolean {
 // value's type, and one already of that type keeps it.  False for any other change, which the
 // caller refuses by name.
 pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean {
+  // A local bound again is no longer what a guard proved of it.
+  v.present = [for x in v.present if x != nr { x }];
   cur = tp(v, nr);
   if el_types::is_unknown(t) || el_types::is_equal(e, cur, t) {
     // `depend_all`: the local borrows what the value borrows.
@@ -377,6 +394,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   // `append` keeps the inline marks: a work-ref the first pass marked stays marked.
   v.inline_refs = kept.inline_refs;
   v.annotated = [];
+  v.rebuilt = [];
   v.rebind_params = [];
   v.rebind_origs = [];
   v.unique = [];
@@ -389,8 +407,10 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.len_locals = [];
   v.loop_binds = [];
   v.nonzero = [];
+  v.present = [];
   v.work_ctext = 0;
   v.work_tp2 = 0;
+  v.lambdas = 0;
 }
 
 // `Function::loop_binding`: the name a loop's variable takes — the spelling itself for the
@@ -412,6 +432,16 @@ pub fn set_name(v: Vars, name: text, nr: integer) {
     v.names += [VarName { name: name, nr: nr }];
   } else {
     v.names[name].nr = nr;
+  }
+}
+
+// `Function::set_name` / `remove_name` undoing a binding's alias: the spelling names `nr`
+// again, or nothing where it named nothing (-1).
+pub fn restore_name(v: Vars, name: text, nr: integer) {
+  if nr < 0 {
+    v.names[name] = null;
+  } else {
+    set_name(v, name, nr);
   }
 }
 
@@ -617,6 +647,13 @@ pub fn load(f: ir::Function) -> Vars {
       k = (n.name[6..] as integer?) ?? -1;
       if k > v.work_ref {
         v.work_ref = k;
+      }
+    }
+    // `sync_work_counters`: a caller's text buffer minted after the passes numbers on.
+    if starts_with(n.name, "__work_c") {
+      k = (n.name[8..] as integer?) ?? -1;
+      if k > v.work_ctext {
+        v.work_ctext = k;
       }
     }
   }

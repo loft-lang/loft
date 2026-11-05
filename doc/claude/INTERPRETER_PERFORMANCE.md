@@ -39,6 +39,13 @@ interpreter fixes every loop of that shape, a program's own included.  Loft comp
 rustc, so unlike CPython it has no lasting need for hand-written routines.  Each kernel that
 exists, why, and when it goes: [KERNELS.md](KERNELS.md) (`make kernel-ratio`).
 
+Against Python the measure is the NUMBER of operations, not their cost.  A loft operation costs
+less than a CPython one; CPython's do more work each (a C body behind `str.split`, `[c] * n`, a
+dict update), so the same script runs more loft operations.  The lever is an IR rewrite that
+leaves fewer of them — a counted push loop as one fill, a keyed insert as one probe, a one-op
+wrapper as its op (@PLN211) — counted with the instructions or ops a pass runs
+(`make interp-gap` reports ops by family), never a new combined operator.
+
 ## What to optimise: the data that leaves the cache
 
 The interpreter's own bookkeeping — dispatch, stack slots, operand decoding — runs on a hot

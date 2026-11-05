@@ -15,10 +15,10 @@
 // `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` (the kept store
 // is freed exactly once).
 //
-// @falsified-by: tests/falsified/a-loop-record-is-kept-across-its-whole-nest.free-dropped.patch — native leaked kt=99 P×36, kt=100 V×6 -> clean; interpret INERT (expected for a backend-divergence guard — only one side can move)
-//   CHANNEL: the LEAK channel on native — the patch drops the free after the loop that keeps
-//     the record.
-//   WITNESS: 36 `P` and 6 `V` records left claimed: one per kept local per call.
+// @falsified-by: tests/falsified/a-loop-record-is-kept-across-its-whole-nest.free-dropped.patch — interpret leaked kt=100 P×18, kt=101 V×3 -> clean, native leaked kt=100 P×18, kt=101 V×3 -> clean
+//   CHANNEL: the LEAK channel on both backends — the patch drops the free `opt::loop_record`
+//     puts after the loop that keeps the record (the rule moved into the IR, @PLN211).
+//   WITNESS: 18 `P` and 3 `V` records left claimed: one per kept local per call.
 //   HOLDS: values, panic and free-refusal equal and clean.
 
 struct P { a: integer, b: integer }

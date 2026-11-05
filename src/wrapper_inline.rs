@@ -22,8 +22,7 @@
 //! this replaces had the same switch); `LOFT_TRACE_WRAPPER=1` names each call taken, and each
 //! kept with why.
 use crate::data::{Data, DefType, Type, Value};
-use crate::ir_shape::{WrapperOperand, one_op_wrapper};
-use std::collections::HashMap;
+use crate::ir_shape::one_op_wrapper_call;
 
 const RULE: &str = "R-Wrapper";
 
@@ -42,7 +41,6 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     }
     let get_field = data.def_nr("OpGetField");
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
-    let mut cache: HashMap<u32, Option<(u32, Vec<WrapperOperand>)>> = HashMap::new();
     let mut fired = 0usize;
     {
         let data: &Data = data;
@@ -52,11 +50,9 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
             if (d as usize) >= data.definitions.len() {
                 return;
             }
-            let Some((op, operands)) = cache
-                .entry(d)
-                .or_insert_with(|| one_op_wrapper(data, d))
-                .clone()
-            else {
+            // Asked at every call: the test reads a few fields and allocates nothing, where a
+            // per-function cache allocated in every function.
+            let Some((op, operands)) = one_op_wrapper_call(data, d) else {
                 return;
             };
             let why = if !args.iter().all(|a| leaf(a, get_field)) {
@@ -77,14 +73,36 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
                 }
                 return;
             }
+            // The op over the wrapper's parameters in their own order (`len(v)` is
+            // `OpLengthVector(v)`): the call's argument list is the op's, renamed in place.
+            let in_order = operands.len() == args.len()
+                && operands
+                    .iter()
+                    .enumerate()
+                    .all(|(i, o)| matches!(o.unspan(), Value::Var(v) if *v as usize == i));
+            if in_order {
+                if let Value::Call(callee, _) = n {
+                    *callee = op;
+                }
+                if trace() {
+                    eprintln!(
+                        "[wrapper] fn={} {} is {}",
+                        data.def(d_nr).name(),
+                        data.def(d).name(),
+                        data.def(op).name()
+                    );
+                }
+                fired += 1;
+                return;
+            }
             let mut operand_values = Vec::with_capacity(operands.len());
-            for o in &operands {
-                match o {
-                    WrapperOperand::Param(i) => match args.get(*i as usize) {
+            for o in operands {
+                match o.unspan() {
+                    Value::Var(i) => match args.get(*i as usize) {
                         Some(a) => operand_values.push(a.clone()),
                         None => return,
                     },
-                    WrapperOperand::Const(c) => operand_values.push(c.clone()),
+                    c => operand_values.push(c.clone()),
                 }
             }
             if trace() {

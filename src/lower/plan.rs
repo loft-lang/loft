@@ -54,6 +54,9 @@ pub fn plan_program(
         ..ProgramPlan::default()
     };
     crate::rewrite_census::fired("R-ValueRecord", plan.value_records.fns.len());
+    // `(O-ViewField)` — the admitted functions with a VIEW LEAF, the writers' own clause of the
+    // rule (the IR's value-record pass has no spelling for a view): @PLN211 C′4's measure.
+    crate::rewrite_census::fired("R-ValueRecord/view", plan.value_records.views.len());
     // Every function's DEAD buffers, once: a loop judging a call reads the callee's
     // body with its own dead buffers exempt (`HoistOwned::for_callee`).
     plan.dead_by_fn = Rc::new(

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator
+// @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! `@FR-R-InPlaceLiteral`'s KEYED clause — `h[k] = R { … }` written into the record the
 //! collection claims for it.

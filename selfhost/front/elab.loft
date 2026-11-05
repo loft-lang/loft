@@ -14,6 +14,8 @@ use el_expressions;
 use report;
 use load;
 use el_buffers;
+use el_tret;
+use el_drop;
 
 fn main() {
   files = arguments();
@@ -68,13 +70,18 @@ fn program(image: text, f: text, std_image: text) {
   e.first_pass = true;
   e.line = 0;
   el_definitions::elab_file(e, tree ?? 0);
+  el_definitions::reserve_late_return_buffers(e);
   e.first_pass = false;
   e.line = 0;
   el_definitions::elab_file(e, tree ?? 0);
   // `resolve_deferred_unknowns`: the instances made above their template are filled now.
   el_expressions::rebuild_stale(e);
-  // After the second pass, on the settled IR (`Parser::promote_work_buffers`).
+  // After the second pass, on the settled IR (`Parser::after_pass2`): the text-return
+  // promotion, then the work buffers.
+  el_tret::promote_text_returns(e);
   el_buffers::promote_work_buffers(e);
+  // Then `synth_drop_cascades`.
+  el_drop::synth_drop_cascades(e);
   print(report::defs_report(e.b, upto, templates: env_variable("LOFT_DEFS_TEMPLATES") == "1"));
   if len(std_image) > 0 {
     print(report::schema_from(e.b, types_upto));

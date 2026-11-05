@@ -2282,6 +2282,21 @@ fn an_unbounded_type_variable_reaches_no_bound_s_method() {
         .error("generic type T: field access requires a concrete type at an_unbounded_type_variable_reaches_no_bound_s_method:1:37");
 }
 
+/// The swapped spellings name their operands in the order the author wrote them too: `v >= 0`
+/// on a vector reported *"on 'integer' and 'vector<integer>'"*, the order `handle_operator`
+/// resolved it in (`0 <= v`).  `<` and `<=` are not swapped; `>` and `>=` are.
+#[test]
+fn a_swapped_comparison_names_its_operands_in_source_order() {
+    code!("fn test() { v = [1]; assert(v >= 0, \"x\"); }")
+        .error("No matching operator '>=' on 'vector<integer>' and 'integer' at a_swapped_comparison_names_its_operands_in_source_order:1:35");
+    code!("fn test() { v = [1]; assert(v > 0, \"x\"); }")
+        .error("No matching operator '>' on 'vector<integer>' and 'integer' at a_swapped_comparison_names_its_operands_in_source_order:1:34");
+    code!("fn test() { v = [1]; assert(0 > v, \"x\"); }")
+        .error("No matching operator '>' on 'integer' and 'vector<integer>' at a_swapped_comparison_names_its_operands_in_source_order:1:34");
+    code!("fn test() { v = [1]; assert(v <= 0, \"x\"); }")
+        .error("No matching operator '<=' on 'vector<integer>' and 'integer' at a_swapped_comparison_names_its_operands_in_source_order:1:35");
+}
+
 /// loft#1147 — and the leak does not need the stdlib at all: a user's OWN bounded generic
 /// mints the stub, and the unbounded one BESIDE IT in the same file used to borrow it.
 /// Measured on the pre-fix build, this program compiled and printed `1 2`; `bad` reached
@@ -2872,6 +2887,26 @@ fn p315_float_literal_into_single_vector() {
              element with 'as single' at \
              p315_float_literal_into_single_vector:1:43",
         );
+}
+
+/// A non-numeric element in a declared numeric vector is another type, not a precision loss:
+/// the refusal said "would lose precision" and offered `as integer` for a text or a vector.
+/// Numeric narrowing keeps that advice, in a literal and in a comprehension body alike.
+#[test]
+fn a_non_numeric_element_refusal_names_no_precision_loss() {
+    code!("fn test() { v: vector<integer> = [\"a\"]; }").error(
+        "cannot store text elements in a vector<integer> at \
+         a_non_numeric_element_refusal_names_no_precision_loss:1:39",
+    );
+    code!("fn test() { v: vector<integer> = [for x in 0..2 { \"{x}\" }]; assert(len(v) == 2, \"n\"); }").error(
+        "cannot store text elements in a vector<integer> at \
+         a_non_numeric_element_refusal_names_no_precision_loss:1:59",
+    );
+    code!("fn test() { v: vector<integer> = [1.5]; }").error(
+        "cannot store float elements in a vector<integer> (would lose precision); cast each \
+         element explicitly with 'as integer' at \
+         a_non_numeric_element_refusal_names_no_precision_loss:1:39",
+    );
 }
 
 /// loft#1146 — every refusal a `single` earns names the `f` literal suffix, which

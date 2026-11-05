@@ -116,6 +116,11 @@ pub fn is_equal(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
       TyTuple { elems: eb } => len(ea) == len(eb) && all_equal(e, ea, eb),
       _ => false
     },
+    // Argument by argument and the result, whatever the value carries or holds `const`.
+    TyFunction { args: fa, result: ra } => match b {
+      TyFunction { args: fb, result: rb } => len(fa) == len(fb) && all_equal(e, fa, fb) && is_equal(e, ra, rb),
+      _ => false
+    },
     _ => a == b
   }
 }
@@ -169,6 +174,35 @@ pub fn with_deps(t: ir::TypeT, deps: vector<integer>) -> ir::TypeT {
   }
 }
 
+// `parse_type_limit`: the bounds of `limit(lo, hi)`.  The lower bound is an `i32` above the
+// null sentinel, the upper one reaches `u32::MAX`; a bound outside those or an empty range is
+// an error in Rust, so the program never reaches here — refused all the same.
+fn type_limit(e: el::El, n: integer) -> ir::IntegerSpec? {
+  match e.p.nodes[n] {
+    SLimit { lo, hi } => {
+      l = bound(e, lo);
+      h = bound(e, hi);
+      if l == null || h == null || l! < -2147483647 || l! > 2147483647 || h! < -2147483647 || h! > 4294967295 || l! > h! {
+        el::refuse(e, "a limit bound outside the range a limit carries");
+        return null;
+      }
+      ir::IntegerSpec { min: l!, max: h!, not_null: false, forced_size: 0 }
+    },
+    _ => null
+  }
+}
+
+fn bound(e: el::El, n: integer?) -> integer? {
+  if n == null {
+    return null;
+  }
+  match e.p.nodes[n!] {
+    SInt { v } => v,
+    SLong { v } => v,
+    _ => null
+  }
+}
+
 // The name a vector of `t` is registered under (`vector<integer>`, `main_vector<P>`), or "".
 // The width a narrow integer is stored in as an element (`int_part`'s rule, not nullable):
 // 1 or 2 bytes, or 0 for any other integer.
@@ -189,6 +223,7 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     TySingle => "single",
     TyCharacter => "character",
     TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
+    TyEnum { n, is_ref } => if is_ref { "" } else { el::def(e, n).name },
     _ => ""
   }
 }
@@ -233,6 +268,35 @@ pub fn deps(t: ir::TypeT) -> vector<integer> {
   [for d in r if d != MARKER { d }]
 }
 
+// A pointer field's type (`reference<T>` in a struct, the marker dep), through a `?`.
+pub fn is_pointer(t: ir::TypeT) -> boolean {
+  match base(t) {
+    TyReference { n: _, dep } => dep.contains(MARKER),
+    _ => false
+  }
+}
+
+
+// A template's type variable: its field-less placeholder struct, which answers itself — the
+// definition number, or -1 for any other type.
+pub fn type_var(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n } => {
+      d = el::def(e, n);
+      own = match d.returned[0] ?? ir::TyVoid { TyReference { n: r } => r == n, _ => false };
+      if d.def_type == el::DT_STRUCT && len(d.attributes) == 0 && own { n } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+// The struct enum `t` is a value of (through a `?`), or -1.
+pub fn struct_enum_def(t: ir::TypeT) -> integer {
+  match base(t) {
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    _ => -1
+  }
+}
 
 // `is_collection`: a vector or a keyed collection, through a `&`.
 pub fn is_collection(t: ir::TypeT) -> boolean {
@@ -253,15 +317,29 @@ pub fn is_collection(t: ir::TypeT) -> boolean {
 pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
   match e.p.nodes[n] {
     STy { name, member, args, elem_null, keys, deps, limit, not_null, assoc, nullable } => {
-      if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+      if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
         // `sub_type_inner`'s vector arm: the element read as a type, no deps yet.
         inner = parse_type(e, args[0]);
         if inner == null {
           return null;
         }
-        return ir::TyVector { inner: inner!, dep: [] };
+        // A vector over a type variable the program mints (`T#n` not in the standard library)
+        // has rows and wrapper definitions registered for it (`vector<__typevar_T#n>`), which
+        // the standard library's placeholders already carry: not carried.
+        match inner! {
+          TyReference { n } => {
+            if el::def(e, n).source != el::STD_SOURCE && el::def(e, n).def_type == el::DT_STRUCT && len(el::def(e, n).attributes) == 0 && el::def(e, n).name.contains("#") {
+              el::refuse(e, "a vector over a type variable the program declares");
+              return null;
+            }
+          },
+          _ => {}
+        }
+        // `parse_type`'s postfix `?`: the optional former over the collection.
+        v = ir::TyVector { inner: inner!, dep: [] };
+        return if nullable { ir::TyOptional { inner: v } } else { v };
       }
-      if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" && !nullable {
+      if (name == "hash" || name == "sorted" || name == "index") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
         // `sub_type_inner`'s keyed arms: a record element and its key fields (`-k` descending,
         // which only `sorted` and `index` take).
         inner = parse_type(e, args[0]);
@@ -284,13 +362,15 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
             }
             names += [ir::NameRef { name: k }];
           }
-          return ir::TyHash { n: sub, names: names, dep: [] };
+          h = ir::TyHash { n: sub, names: names, dep: [] };
+          return if nullable { ir::TyOptional { inner: h } } else { h };
         }
         sk: vector<ir::SortKey> = [];
         for k in keys {
           sk += [if starts_with(k, "-") { ir::SortKey { name: k[1..], asc: false } } else { ir::SortKey { name: k, asc: true } }];
         }
-        return if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
+        c = if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
+        return if nullable { ir::TyOptional { inner: c } } else { c };
       }
       // `sub_type`'s iterator arm: a generator's `iterator<T>`, carried for a plain scalar, a text
       // or a record `T`.
@@ -304,6 +384,37 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
           return null;
         }
         return ir::TyIterator { step: step!, inner: ir::TyNull };
+      }
+      // `sub_type`'s `reference` arm: a record `T` — in a struct field the POINTER (#328), the
+      // marker dep selecting its 12-byte `DbRef` layout; anywhere else the record itself.
+      if name == "reference" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
+        inner = parse_type(e, args[0]);
+        if inner == null {
+          return null;
+        }
+        rd = match inner! { TyReference { n } => n, _ => -1 };
+        if rd < 0 {
+          el::refuse(e, "a `reference<…>` of something other than a record");
+          return null;
+        }
+        ctx = if e.context >= 0 { el::def(e, e.context).def_type } else { el::DT_UNKNOWN };
+        field = ctx == el::DT_STRUCT || ctx == el::DT_ENUM_VALUE || ctx == el::DT_TYPE_TEMPLATE;
+        r = ir::TyReference { n: rd, dep: if field { [MARKER] } else { [] } };
+        return if nullable { ir::TyOptional { inner: r } } else { r };
+      }
+      // `parse_type_inner`'s `integer` arm: `limit(lo, hi)` names the range, and `not null`
+      // (deprecated, no effect on the range) is carried on the spec.
+      if name == "integer" && member == "" && len(args) == 0 && !elem_null && len(keys) == 0 && len(deps) == 0 && assoc == "" && (limit != null || not_null) {
+        spec = ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: not_null, forced_size: 0 };
+        if limit != null {
+          lim = type_limit(e, limit!);
+          if lim == null {
+            return null;
+          }
+          spec = ir::IntegerSpec { min: lim!.min, max: lim!.max, not_null: not_null, forced_size: 0 };
+        }
+        t = ir::TyInteger { spec: spec };
+        return if nullable { ir::TyOptional { inner: t } } else { t };
       }
       if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
@@ -354,11 +465,65 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
       }
       ir::TyTuple { elems: ts }
     },
+    // `fn(T, …) -> R`: the argument types, a `const` one's bit in `consts` (`ConstParams`), and
+    // the result (`void` when none is written).  A `&` argument is refused by name.
+    STyFn { at: _, args, ret } => {
+      ts: vector<ir::TypeT> = [];
+      bits = 0;
+      for a in args {
+        match e.p.nodes[a] {
+          STyArg { amp, fixed, tp } => {
+            if amp {
+              el::refuse(e, "a function type with a `&` argument");
+              return null;
+            }
+            at = if tp == null { null } else { parse_type(e, tp!) };
+            if at == null {
+              return null;
+            }
+            if fixed && len(ts) < 32 {
+              bits += 1 << len(ts);
+            }
+            ts += [at!];
+          },
+          _ => {
+            el::refuse(e, "a function type argument of this form");
+            return null;
+          }
+        }
+      }
+      rt = ir::TyVoid;
+      if ret != null {
+        r = parse_type(e, ret!);
+        if r == null {
+          return null;
+        }
+        rt = r!;
+      }
+      ir::TyFunction { args: ts, result: rt, dep: [], consts: bits }
+    },
     _ => {
-      el::refuse(e, "a function type");
+      el::refuse(e, "a type of this form");
       null
     }
   }
+}
+
+// `fn_ref_arg_types` / `fn_ref_consts`: the type of function `d` read as a value — its
+// visible parameters (no hidden or `__` one), each `const` one's bit, and its result.
+pub fn function_value_type(e: el::El, d: integer) -> ir::TypeT {
+  ts: vector<ir::TypeT> = [];
+  bits = 0;
+  for a in el::def(e, d).attributes {
+    if a.hidden || starts_with(a.name, "__") {
+      continue;
+    }
+    if a.value_const && len(ts) < 32 {
+      bits += 1 << len(ts);
+    }
+    ts += [a.typedef[0] ?? ir::TyVoid];
+  }
+  ir::TyFunction { args: ts, result: el::def(e, d).returned[0] ?? ir::TyVoid, dep: [], consts: bits }
 }
 
 // A tuple member's stored spelling and width, for the members this port carries: a plain

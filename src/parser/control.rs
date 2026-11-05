@@ -1065,6 +1065,7 @@ impl Parser {
         // T1.7: track the start-position of the last expression for not-null diagnostics.
         let mut last_expr_peek = self.lexer.peek().clone();
         self.block_tail_null_literal = false;
+        self.block_tail_empty_literal = false;
         // @PLN152 step 5 — the narrow store this block pushed LAST, and where it sits in `l`.
         // The fit-failure of a store lives across exactly one statement boundary: offered to
         // the statement that follows, and gone after it.  Held here rather than on the
@@ -1326,6 +1327,13 @@ impl Parser {
             }
             self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if *tok == "null")
                 && matches!(n.unspan(), Value::Null);
+            // loft#2407 — a tail `[]` read with no element type (`parse_vector`'s `Insert([Null])`).
+            self.block_tail_empty_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if *tok == "[")
+                && match n.unspan() {
+                    Value::Null => true,
+                    Value::Insert(items) => matches!(items.as_slice(), [Value::Null]),
+                    _ => false,
+                };
             self.stmt_if_pending = saved_stmt_if;
             // @PLN152 step 5 — a `!place` in that `if`'s condition took the fit temp, so
             // split the store that is already in `l`: the checked cast binds the temp, and
@@ -6025,6 +6033,10 @@ impl Parser {
         let write_state = self.vars.save_and_clear_write_state();
         self.vars.clear_write_state();
         let mut true_type = self.parse_block("if", &mut true_code, expected);
+        // loft#2407, `@FR-Col-Cons` — an untyped `[]` (`Insert([Null])`, typed by an expectation
+        // there is none of) takes its element from the other arm: read as unknown, as a `null`
+        // arm is, so the `else` is read for its own type and the `[]` built as that vector.
+        let true_is_empty_literal = self.block_tail_empty_literal;
         let true_fact = std::mem::take(&mut self.operand_fact); // @PLN187
         let mut false_fact = crate::data::AliasFact::Empty;
         let true_is_null_literal = self.block_tail_null_literal;
@@ -6107,7 +6119,10 @@ impl Parser {
             if matches!(true_type.base(), Type::Void) && ends_in_halt(&self.data, &true_code) {
                 true_type = Type::Never;
             }
-            if matches!(true_type, Type::Null | Type::Never) || then_tuple_nulls.is_some() {
+            if matches!(true_type, Type::Null | Type::Never)
+                || then_tuple_nulls.is_some()
+                || true_is_empty_literal
+            {
                 true_type = Type::Unknown(0);
             }
             if self.lexer.has_token("if") {
@@ -6299,6 +6314,10 @@ impl Parser {
                     {
                         // `@FR-C-Never` — the halt stays, the sibling's null goes behind it.
                         bl.operators.push(self.null_value(&false_type));
+                    } else if true_is_empty_literal
+                        && matches!(false_type.base(), Type::Vector(_, _))
+                    {
+                        bl.operators[p] = self.empty_vector_value(&false_type);
                     } else if !is_block_divergent(&bl.operators)
                         && (true_is_null || !self.first_pass)
                     {
@@ -8572,11 +8591,23 @@ impl Parser {
         }
         let v = self.vars.loop_variable(&id, tp, &mut self.lexer);
         if v != u16::MAX {
-            self.vars.set_name(name, v);
+            self.name_capture(name, v);
             self.pattern_binds_pending
                 .push((name.to_string(), (before != u16::MAX).then_some(before)));
         }
         v
+    }
+
+    /// `@FR-B-Scope` — `spelling` names the capture `v` a PATTERN binds.  The binding is the
+    /// pattern's, into the arm (or the `is` body) it guards, as a `for` header binds its
+    /// variable into the loop's body, so it is recorded where the pattern stands: a write to
+    /// the capture inside a block nested in the arm is a write, not that block's binding.
+    /// Unrecorded, the first such write was recorded as the binding there and the read after
+    /// the block was refused as out of scope (loft#2401).  Answers what the spelling named.
+    fn name_capture(&mut self, spelling: &str, v: u16) -> Option<u16> {
+        let before = self.vars.set_name(spelling, v);
+        self.record_binding(v);
+        before
     }
 
     /// The end of a match arm: the names its pattern bound stop naming its bindings, and name
@@ -8848,7 +8879,7 @@ impl Parser {
                 continue;
             }
             self.vars.defined(v);
-            let old = self.vars.set_name(&name, v);
+            let old = self.name_capture(&name, v);
             aliases.push((name, old));
         }
         Some(aliases)
@@ -10826,7 +10857,7 @@ impl Parser {
                 }
             }
             bindings.push(v_set(v_nr, acc));
-            self.vars.set_name(fname, v_nr);
+            self.name_capture(fname, v_nr);
             // Heap capture = a borrowed view of the subject element (mirror the field-sub-pattern
             // path): skip its free, record the borrow dep — through an `option<T>` wrapper too.
             if !matches!(ftype.base(), Type::Text(_)) {
@@ -11107,7 +11138,7 @@ impl Parser {
                 }
             }
             bindings.push(v_set(v_nr, acc));
-            let before = self.vars.set_name(fname, v_nr); // stays in scope for the arm body (as sub-patterns do)
+            let before = self.name_capture(fname, v_nr); // stays in scope for the arm body (as sub-patterns do)
             if !parens {
                 self.pattern_binds_pending.push((fname.clone(), before));
             }
@@ -11160,7 +11191,7 @@ impl Parser {
                 ),
             );
             arm_stmts.push(v_set(v_nr, bound));
-            let old = self.vars.set_name(field_name, v_nr);
+            let old = self.name_capture(field_name, v_nr);
             name_aliases.push((field_name.to_string(), old));
             // B5 remaining half (2026-04-14): a HEAP match-arm
             // binding is a field extraction from the subject —
@@ -11295,7 +11326,7 @@ impl Parser {
             if let Some((slot, slot_ty)) = shared.get(name).cloned() {
                 self.shared_slot_accepts(name, &tp, &slot_ty);
                 stmts.push(v_set(slot, Value::Var(v_nr)));
-                self.vars.set_name(name, slot);
+                self.name_capture(name, slot);
                 copied.insert(name.clone());
             } else {
                 shared.insert(name.clone(), (v_nr, tp));
@@ -14312,7 +14343,7 @@ impl Parser {
                     // The copy reads this pattern's variable: it is not a never-read binding.
                     self.var_usages(own, true);
                     binds_i.push(v_set(slot, Value::Var(own)));
-                    self.vars.set_name(&name, slot);
+                    self.name_capture(&name, slot);
                 } else {
                     // A name no earlier pattern bound: its own variable is the shared slot,
                     // and the arm's end restores what the name meant before the arm.
@@ -15027,12 +15058,12 @@ impl Parser {
                                 stable_subject.clone(),
                             );
                             self.is_capture_bindings.push(v_set(v_nr, bound));
-                            let old = self.vars.set_name(&field_name, v_nr);
+                            let old = self.name_capture(&field_name, v_nr);
                             self.is_capture_aliases.push((field_name.clone(), old));
                             // The refused rename's name reads the same capture, so the body's
                             // use of it adds no second error.
                             if let Some(alias) = rename.as_ref().filter(|a| !a.is_empty()) {
-                                let old = self.vars.set_name(alias, v_nr);
+                                let old = self.name_capture(alias, v_nr);
                                 self.is_capture_aliases.push((alias.clone(), old));
                             }
                         }
@@ -22448,8 +22479,23 @@ impl Parser {
         }
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_call(
+        &mut self,
+        val: &mut Value,
+        source: u16,
+        name: &str,
+        name_pos: &Position,
+    ) -> Type {
+        // loft#2409 — the arguments are read with expectations of their own; the caller's
+        // (an `if` arm's, a return's) is what it was once the call is read.
+        let ambient = self.expected.clone();
+        let t = self.parse_call_inner(val, source, name, name_pos);
+        self.expected = ambient;
+        t
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_call_inner(
         &mut self,
         val: &mut Value,
         source: u16,
@@ -24523,7 +24569,11 @@ impl Parser {
         let name = std::mem::take(&mut self.postfix_member);
         let receiver = std::mem::take(&mut self.method_receiver);
         let outer = std::mem::replace(&mut self.method_facts, (vec![receiver], Vec::new()));
+        // loft#2409 — the arguments are read with expectations of their own; the caller's
+        // (an `if` arm's, a return's) is what it was once the call is read.
+        let ambient = self.expected.clone();
         let tp = self.parse_method_selecting_inner(val, hint_nr, on, select, &name);
+        self.expected = ambient;
         let (positional, named) = std::mem::replace(&mut self.method_facts, outer);
         if self.abstract_on() {
             self.recall_vector_builtin(&name, positional.first());

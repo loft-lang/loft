@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-ElemFirst` with `@FR-R-RecPtr` — a vector temp paired with its append is built IN the
+// element, so it lives in the element's store, and a push into it can grow that store.  The
+// element's scalar field written after the pushes must land in the element: the address of a
+// record taken before a growth of its own store is stale.
+//
+// The cells: two vector fields filled by an inner loop and a float field written after it, with
+// a first push before the loop (drawing's ground strokes, the shape that went wrong); the same
+// over more rounds, so the store grows more than once; and an integer field.  Hand-computed:
+// row i of the loop holds `slo = i`, `rx = [100 i, 100 i + 1, …]` with `i + 2` values, and
+// `ry = [7, 8, …]`; the row before the loop holds `-1`, `[0.5, 1.5, 2.5]`, `[0, 10, 20]`.
+//
+// @falsified-at: none — by hand: `opt::elem_first` without the paired temps' dependency on
+//   their element fails A on the C (`--native-c`): the last row reads `slo` 0.  CHANNEL: an
+//   assertion.
+// HOLDS: the hand-computed values on the interpreter, the C and rustc.
+
+struct Rb { rx: vector<float>, ry: vector<float>, slo: float }
+
+struct Ri { ix: vector<integer>, iy: vector<integer>, tag: integer }
+
+fn build(n: integer) -> vector<Rb> {
+  out: vector<Rb> = [];
+  bx: vector<float> = [];
+  by: vector<float> = [];
+  for j in 0..3 { bx += [j as float + 0.5]; by += [j as float * 10.0]; }
+  out += [Rb { rx: bx, ry: by, slo: -1.0 }];
+  for i in 0..n {
+    sx: vector<float> = [];
+    sy: vector<float> = [];
+    for j in 0..(i + 2) { sx += [100.0 * (i as float) + (j as float)]; sy += [7.0 + (j as float)]; }
+    out += [Rb { rx: sx, ry: sy, slo: i as float }];
+  }
+  out
+}
+
+fn build_int(n: integer) -> vector<Ri> {
+  out: vector<Ri> = [];
+  out += [Ri { ix: [1], iy: [2], tag: -1 }];
+  for i in 0..n {
+    sx: vector<integer> = [];
+    sy: vector<integer> = [];
+    for j in 0..(i + 2) { sx += [100 * i + j]; sy += [7 + j]; }
+    out += [Ri { ix: sx, iy: sy, tag: i * 3 }];
+  }
+  out
+}
+
+fn rows(o: vector<Rb>) -> text {
+  t = "";
+  for r in o {
+    t += "{r.slo}:{len(r.rx)}/{len(r.ry)}:";
+    for x in r.rx { t += "{x},"; }
+    for y in r.ry { t += "{y},"; }
+    t += ";";
+  }
+  t
+}
+
+fn main() {
+  a = rows(build(3));
+  assert(a == "-1:3/3:0.5,1.5,2.5,0,10,20,;0:2/2:0,1,7,8,;1:3/3:100,101,102,7,8,9,;2:4/4:200,201,202,203,7,8,9,10,;", "A three rows: {a}");
+  b = build(9);
+  ok_b = len(b) == 10;
+  for i in 0..9 {
+    r = b[i + 1];
+    ok_b = ok_b && r.slo == i as float && len(r.rx) == i + 2 && len(r.ry) == i + 2
+      && r.rx[i + 1] == 100.0 * (i as float) + ((i + 1) as float) && r.ry[0] == 7.0;
+  }
+  assert(ok_b && b[0].slo == -1.0, "B nine rows, the store grown again");
+  c = build_int(6);
+  t = "";
+  for r in c { t += "{r.tag}:{len(r.ix)}:{r.ix[-1]},{r.iy[-1]};"; }
+  assert(t == "-1:1:1,2;0:2:1,8;3:3:102,9;6:4:203,10;9:5:304,11;12:6:405,12;15:7:506,13;", "C an integer field: {t}");
+}

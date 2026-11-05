@@ -1,31 +1,25 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I68 — Native Rust generator: a second compiled target, C
-//! `@FR-R-LoopRecord`'s refill clause on the C: a record literal bound inside a loop, whose
-//! heap is vectors of no-heap elements, keeps its store and those vectors' blocks across the
-//! passes.
+//! `@FR-R-FnRefBuffer` on the C: a record local bound only by calls through a function value,
+//! inside one outermost loop, keeps its store across the passes — declared before the loop,
+//! its per-pass declaration and free not written, one free after the loop — so the target fills
+//! one store per thread rather than one per call.
 //!
-//! The admission is the shared analysis (`opt::loop_records`), the one native reads.  The C
-//! spells its three moves: the per-pass declaration and end-of-pass free are not written (one
-//! free follows the loop), the mint is taken only where the local holds no store, and each of
-//! the literal's vector-field zeros empties the kept vector in place on a kept pass — length 0,
-//! block kept — where a fresh pass zeroes it as before.  The literal writes every field, so a
-//! kept record answers what a fresh one would.  A plain no-heap record is left to the plain
-//! mint: on the C a store reset costs what a fresh store does, and only the vectors' claims
-//! were worth keeping.  `LOFT_NO_LOOP_RECORD_REFILL=1` keeps the plain form.
+//! `@FR-R-LoopRecord`, which this port carried the refill clause of, is decided and applied in
+//! the IR (`opt::loop_record`); the C writes what the IR says.  `LOFT_NO_FNREF_BUFFER=1` keeps
+//! the plain form.
 
-use crate::data::{Block, Value};
+use crate::data::Value;
 use std::collections::{HashMap, HashSet};
 
 /// One function's admitted refill records, and the statements the port rewrites.
 #[derive(Default)]
 pub(crate) struct LoopRecordPort {
-    /// The admitted locals and the loop scope each is freed after.
+    /// The kept locals (`@FR-R-FnRefBuffer`) and the loop scope each is freed after.
     pub recs: HashMap<u16, u16>,
     /// The per-pass `Set(v, null)` and end-of-pass frees, by node address: not written.
     pub dropped: HashSet<usize>,
-    /// The literal's vector-field zeros (`OpSetInt4(v, off, 0)`), by node address.
-    pub zeros: HashSet<usize>,
     /// `@FR-R-FnRefBuffer`: the kept locals a function-value call fills in place.
     pub fnref_bufs: HashSet<u16>,
 }
@@ -33,28 +27,10 @@ pub(crate) struct LoopRecordPort {
 impl LoopRecordPort {
     pub(crate) fn of(cx: &super::super::Cx, d: u32) -> Self {
         let mut recs: HashMap<u16, u16> = HashMap::new();
-        let mut decl: HashMap<u16, u16> = HashMap::new();
-        let mut zeros = HashSet::new();
-        if !(std::env::var("LOFT_NO_LOOP_RECORD_REFILL").is_ok_and(|v| v != "0")
-            || std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0"))
-        {
-            let lr = crate::opt::loop_records::loop_records(cx.data, cx.stores, d);
-            for (v, r) in &lr.recs {
-                if r.refill {
-                    recs.insert(*v, r.loop_scope);
-                    decl.insert(*v, r.decl_block);
-                }
-            }
-            // The analysis answers only the refill records' zeros, and every refill record is ours.
-            zeros = lr.field_zeros;
-        }
         let mut fnref_bufs = HashSet::new();
         let mut dropped = HashSet::new();
         if !std::env::var("LOFT_NO_FNREF_BUFFER").is_ok_and(|v| v != "0") {
             for (v, (loop_scope, drops)) in fnref_kept(cx, d) {
-                if recs.contains_key(&v) {
-                    continue;
-                }
                 recs.insert(v, loop_scope);
                 dropped.extend(drops);
                 fnref_bufs.insert(v);
@@ -63,15 +39,9 @@ impl LoopRecordPort {
         if recs.is_empty() {
             return Self::default();
         }
-        cx.data.def(d).code().walk(&mut |n| {
-            if let Value::Block(b) = n {
-                collect_dropped(cx, b, &decl, &mut dropped);
-            }
-        });
         Self {
             recs,
             dropped,
-            zeros,
             fnref_bufs,
         }
     }
@@ -260,51 +230,16 @@ fn scan_loops(
     }
 }
 
-/// The declaring block's own `Set(v, null)` and end-of-pass free of each admitted local.  A free
-/// on a `return`/`continue` path sits in an `Insert`, not directly in the block, and stays.
-fn collect_dropped(
-    cx: &super::super::Cx,
-    b: &Block,
-    decl: &HashMap<u16, u16>,
-    out: &mut HashSet<usize>,
-) {
-    for op in &b.operators {
-        let v = op.unspan();
-        let local = match v {
-            Value::Set(lv, rhs) if matches!(rhs.unspan(), Value::Null) => Some(*lv),
-            Value::Call(f, args)
-                if (*f as usize) < cx.data.definitions.len()
-                    && matches!(
-                        cx.data.def(*f).name(),
-                        "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag"
-                    ) =>
-            {
-                match args.first().map(Value::unspan) {
-                    Some(Value::Var(lv)) => Some(*lv),
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
-        if let Some(lv) = local
-            && decl.get(&lv) == Some(&b.scope)
-        {
-            out.insert(std::ptr::from_ref(v) as usize);
-        }
-    }
-}
-
 impl super::FnWriter<'_> {
-    /// A statement the port rewrites: a dropped declaration or free writes nothing, and a
-    /// vector-field zero of a kept record empties the vector on a kept pass.  Answers whether
-    /// `v` was handled.
     /// Is `v` kept by the port in this body?  A record held apart (`@FR-R-Apart`) is no store
-    /// record to keep — its mint is the apart construction's — as native's `loop_records` says.
+    /// record to keep — its mint is the apart construction's.
     pub(super) fn lr_kept(&self, v: u16) -> bool {
         self.lr.recs.contains_key(&v) && !self.apr_holds(v)
     }
 
-    pub(super) fn loop_record_stmt(&mut self, v: &Value, ind: usize) -> bool {
+    /// A statement the port drops: a kept record's per-pass declaration or free writes nothing.
+    /// Answers whether `v` was handled.
+    pub(super) fn loop_record_stmt(&mut self, v: &Value) -> bool {
         let at = std::ptr::from_ref(v.unspan()) as usize;
         if self.lr.dropped.contains(&at) {
             let local = match v.unspan() {
@@ -317,29 +252,6 @@ impl super::FnWriter<'_> {
             };
             return local.is_some_and(|lv| self.lr_kept(lv));
         }
-        if !self.lr.zeros.contains(&at) {
-            return false;
-        }
-        let Value::Call(_, args) = v.unspan() else {
-            return false;
-        };
-        let (Some(Value::Var(r)), Some(Value::Int(off))) = (
-            args.first().map(Value::unspan),
-            args.get(1).map(Value::unspan),
-        ) else {
-            return false;
-        };
-        if !self.lr_kept(*r) {
-            return false;
-        }
-        let var = self.var(*r);
-        self.flush(ind);
-        self.line(
-            ind,
-            &format!(
-                "if (lrf{r}) loft_set_int4({var}, {off}, INT64_C(0)); else loft_vec_clear(loft_field({var}, {off}));"
-            ),
-        );
-        true
+        false
     }
 }

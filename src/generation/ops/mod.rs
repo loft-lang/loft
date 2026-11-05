@@ -207,6 +207,15 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     // identically; n_parallel_for_light is a thread-count hint that
     // doesn't change emission shape).
     r.insert("n_parallel_for", Box::new(parallel::ParallelForEmitter));
+    // `@FR-R-KeyedEntry` — the IR's find-or-insert, its fastest spelling per key shape.
+    r.insert(
+        "n_keyed_entry_ints",
+        Box::new(key_ops::KeyedEntryEmitter { text: false }),
+    );
+    r.insert(
+        "n_keyed_entry_text",
+        Box::new(key_ops::KeyedEntryEmitter { text: true }),
+    );
     // A file read the site types statically: `OpReadFileInt` with constant width and sign.
     r.insert("OpReadFile", Box::new(file_ops::ReadFileEmitter));
     // `@FR-R-FoldCompare` — a text predicate over a case fold, answered without the fold.
@@ -630,8 +639,10 @@ mod tests {
         // clause adds two, `PresenceEmitter` for `OpConvBoolFromRef` and `OpRefIsNull`: the
         // presence test of a `τ?` value local reads its tuple's presence word; every other
         // operand falls through to the template.
+        // `@FR-R-KeyedEntry` adds two, `KeyedEntryEmitter` for the IR's `n_keyed_entry_ints`
+        // and `n_keyed_entry_text`: each key shape's fastest store call.
         assert!(
-            count <= 140,
+            count <= 142,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

@@ -1,0 +1,333 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The drop cascades (src/parser/definitions.rs `synth_drop_cascades`), made after the second pass
+// once every type and every `OpDrop` hook is known: each type that holds a droppable — a type
+// declaring `OpDrop`, or one holding such a type in a field or a vector's element — takes a
+// function `t_<LEN><Type>_OpDropAll(self)` the scope pass calls where a value of it dies.  Its
+// body runs the type's own hook, then each vector field's elements (last field first) and each
+// droppable field (last first), every one through its own type's cascade or hook.  A vector type
+// of droppables walks its elements.  What the port does not carry — an enum's per-variant
+// cascade, a keyed collection or a shared vector of droppables, an iterator, a linked vector, an
+// owner slot — is refused by name.
+use ir;
+use el;
+use el_ir;
+use el_vars;
+use el_types;
+use el_schema;
+use el_expressions;
+
+pub fn synth_drop_cascades(e: el::El) {
+  if !any_drop_hook(e) {
+    return;
+  }
+  targets: vector<integer> = [];
+  for d in e.b.data.definitions {
+    t = d#index;
+    if el::def_nr(e, cascade_name(e, t)) >= 0 {
+      continue;
+    }
+    wanted = false;
+    if d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE {
+      if d.known_type != el::NO_TYPE {
+        if !refused_shapes(e, t) {
+          return;
+        }
+        wanted = len(cascade_fields(e, t)) > 0 || len(cascade_vectors(e, t)) > 0;
+      }
+    } else if d.def_type == el::DT_ENUM {
+      if owns_droppable(e, t, []) && d.returned[0] == ir::TyEnum { n: t, is_ref: true, dep: [] } {
+        el::refuse(e, "a drop cascade over an enum's variants");
+        return;
+      }
+    } else if d.def_type == el::DT_VECTOR {
+      wanted = collection_element(e, t) >= 0;
+    }
+    if wanted {
+      targets += [t];
+    }
+  }
+  made: vector<integer> = [];
+  for t in targets {
+    c = el::add_def(e, cascade_name(e, t), el::def(e, t).position, el::DT_FUNCTION);
+    el::set_returned(e, c, ir::TyVoid);
+    e.b.data.definitions[c].attributes += [el::attribute("self", self_type(e, t))];
+    made += [c];
+  }
+  for t in targets {
+    fill(e, t, made[t#index] ?? -1);
+  }
+  // The cascades are made as Rust makes them, but a program whose types hold a droppable also
+  // meets the lowerings Rust keys on a droppable (a literal built apart, a call result's member
+  // read as a view, a rebinding literal's store minted after its items, …), which are not
+  // carried: refused by name until they are.
+  if len(targets) > 0 {
+    el::refuse(e, "a type holding a droppable (the lowerings a droppable takes)");
+  }
+}
+
+// `any_drop_hook`: some function is a type's `OpDrop`.
+fn any_drop_hook(e: el::El) -> boolean {
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_FUNCTION && ends_with(d.name, "_OpDrop") {
+      return true;
+    }
+  }
+  false
+}
+
+// `drop_cascade_name` / `drop_cascade_key`: `t_<LEN><Type>_OpDropAll`, a variant named through
+// its enum.
+fn cascade_name(e: el::El, t: integer) -> text {
+  d = el::def(e, t);
+  nm = if d.def_type == el::DT_ENUM_VALUE && d.parent >= 0 { "{el::def(e, d.parent).name}::{d.name}" } else { d.name };
+  "t_{len(nm)}{nm}_OpDropAll"
+}
+
+// `drop_hook_nr`: the type's own `OpDrop`, or -1.
+fn hook(e: el::El, t: integer) -> integer {
+  nm = el::def(e, t).name;
+  el::def_nr(e, "t_{len(nm)}{nm}_OpDrop")
+}
+
+// `drop_cascade_nr`: what dropping a value of `t` calls — its cascade, or its hook.
+fn target(e: el::El, t: integer) -> integer {
+  c = el::def_nr(e, cascade_name(e, t));
+  if c >= 0 { c } else { hook(e, t) }
+}
+
+// `cascade_self_type`: the parameter a cascade takes.
+fn self_type(e: el::El, t: integer) -> ir::TypeT {
+  d = el::def(e, t);
+  if d.def_type == el::DT_VECTOR {
+    return el_types::without_deps(d.returned[0] ?? ir::TyVoid);
+  }
+  ir::TyReference { n: t, dep: [] }
+}
+
+// `owns_droppable_walk`: a value of definition `t` holds a droppable — its own hook, a field's,
+// a variant's — each definition visited once on a path.
+fn owns_droppable(e: el::El, t: integer, path: vector<integer>) -> boolean {
+  if t < 0 || path.contains(t) {
+    return false;
+  }
+  path += [t];
+  if hook(e, t) >= 0 {
+    return true;
+  }
+  for a in el::def(e, t).attributes {
+    if type_owns(e, a.typedef[0] ?? ir::TyVoid, path) {
+      return true;
+    }
+  }
+  for x in e.b.data.definitions {
+    if x.def_type == el::DT_ENUM_VALUE && x.parent == t && owns_droppable(e, x#index, path) {
+      return true;
+    }
+  }
+  false
+}
+
+// `type_owns_droppable`.
+fn type_owns(e: el::El, t: ir::TypeT, path: vector<integer>) -> boolean {
+  match t {
+    TyReference { n } => owns_droppable(e, n, path),
+    TyEnum { n, is_ref } => is_ref && owns_droppable(e, n, path),
+    TySorted { n } => owns_droppable(e, n, path),
+    TyIndex { n } => owns_droppable(e, n, path),
+    TyRadix { n } => owns_droppable(e, n, path),
+    TyTrie { n } => owns_droppable(e, n, path),
+    TyHash { n } => owns_droppable(e, n, path),
+    TyVector { inner } => type_owns(e, inner, path),
+    TyOptional { inner } => type_owns(e, inner, path),
+    TyRefVar { inner } => type_owns(e, inner, path),
+    TyRewritten { inner } => type_owns(e, inner, path),
+    TyTuple { elems } => {
+      for m in elems {
+        if type_owns(e, m, path) {
+          return true;
+        }
+      }
+      false
+    },
+    TyIterator { step: _ } => true,
+    _ => false
+  }
+}
+
+// The cascade shapes a record of `t` would need that the port does not carry, refused by name:
+// a keyed collection, an owner slot, an iterator or a tuple field holding a droppable.
+fn refused_shapes(e: el::El, t: integer) -> boolean {
+  for a in el::def(e, t).attributes {
+    if a.constant {
+      continue;
+    }
+    at = el_types::base(a.typedef[0] ?? ir::TyVoid);
+    keyed = at is TyHash || at is TySorted || at is TyIndex || at is TyRadix || at is TyTrie;
+    if (keyed || at is TyIterator || at is TyTuple || ends_with(a.name, "__own")) && type_owns(e, at, []) {
+      el::refuse(e, "a drop cascade through a keyed collection, an iterator, a tuple or an owner slot");
+      return false;
+    }
+  }
+  true
+}
+
+// `cascade_fields`: each laid-out field holding a record of a droppable type — attribute index
+// and the type's definition.
+fn cascade_fields(e: el::El, t: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for a in el::def(e, t).attributes {
+    if a.hidden || a.constant {
+      continue;
+    }
+    fd = field_record(a.typedef[0] ?? ir::TyVoid);
+    if fd < 0 || fd == t || !owns_droppable(e, fd, []) {
+      continue;
+    }
+    if el_schema::field_position(e, el::def(e, t).known_type, a.name) == el::NO_TYPE {
+      continue;
+    }
+    r += [a#index];
+  }
+  r
+}
+
+// `cascade_field_target`: the record definition a field of type `t` holds, through a `?`.
+fn field_record(t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => field_record(inner),
+    TyReference { n } => n,
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    _ => -1
+  }
+}
+
+// `cascade_vectors`: each laid-out vector field whose element holds a droppable.
+fn cascade_vectors(e: el::El, t: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for a in el::def(e, t).attributes {
+    if a.hidden {
+      continue;
+    }
+    match el_types::base(a.typedef[0] ?? ir::TyVoid) {
+      TyVector { inner } => {
+        if element_def(e, inner) >= 0 && type_owns(e, inner, []) && el_schema::field_position(e, el::def(e, t).known_type, a.name) != el::NO_TYPE {
+          r += [a#index];
+        }
+      },
+      _ => {}
+    }
+  }
+  r
+}
+
+// `cascade_element`: the definition a vector element of type `t` drops through — a record's, or
+// a nested vector's `vector<…>` definition; -1 for any other element.
+fn element_def(e: el::El, t: ir::TypeT) -> integer {
+  match el_types::base(t) {
+    TyReference { n } => n,
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    TyVector { inner } => {
+      nm = el_types::elem_name(e, inner);
+      if nm == "" { -1 } else { el::def_nr(e, "vector<{nm}>") }
+    },
+    _ => -1
+  }
+}
+
+// `collection_elem_cascade`: the element definition a vector type walks, or -1.
+fn collection_element(e: el::El, t: integer) -> integer {
+  match el::def(e, t).returned[0] ?? ir::TyVoid {
+    TyVector { inner } => if type_owns(e, inner, []) { element_def(e, inner) } else { -1 },
+    _ => -1
+  }
+}
+
+// `fill_drop_cascade`: cascade `c` of type `t`.
+fn fill(e: el::El, t: integer, c: integer) {
+  vars = el_vars::new_vars(cascade_name(e, t), el::def(e, t).position.file);
+  sv = el_vars::add_variable(vars, "self", self_type(e, t));
+  el_vars::become_argument(vars, sv);
+  el_vars::set_defined(vars, sv);
+  me = ir::NdVar { n: sv };
+  ops: vector<ir::Node> = [];
+  if el::def(e, t).def_type == el::DT_VECTOR {
+    ed = collection_element(e, t);
+    tg = target(e, ed);
+    if tg >= 0 {
+      inner = match self_type(e, t) { TyVector { inner: i } => i, _ => ir::TyVoid };
+      ops += [elements_loop(e, vars, me, 0, inner, tg)];
+    }
+    finish(e, c, vars, ops);
+    return;
+  }
+  own = hook(e, t);
+  if own >= 0 {
+    ops += [ir::NdCall { def_nr: own, args: [me] }];
+  }
+  vs = cascade_vectors(e, t);
+  n = len(vs);
+  for a in rev(vs) {
+    n -= 1;
+    inner = vector_element(el::def(e, t).attributes[a]!.typedef[0] ?? ir::TyVoid);
+    tg = target(e, element_def(e, inner));
+    if tg < 0 {
+      continue;
+    }
+    field = el_expressions::field_get(e, t, a, me);
+    if field == null {
+      return;
+    }
+    ops += [elements_loop(e, vars, field!, n, inner, tg)];
+  }
+  for a in rev(cascade_fields(e, t)) {
+    at = el::def(e, t).attributes[a]!;
+    tg = target(e, field_record(at.typedef[0] ?? ir::TyVoid));
+    if tg < 0 {
+      continue;
+    }
+    field = el_expressions::field_get(e, t, a, me);
+    if field == null {
+      return;
+    }
+    live = el_ir::cl(e, "OpConvBoolFromRef", [field!]);
+    ops += [el_ir::v_if(live, ir::NdCall { def_nr: tg, args: [field!] }, ir::NdNull)];
+  }
+  finish(e, c, vars, ops);
+}
+
+// A vector type's element, answered as a value of its own.  The match binding taken in place
+// (`inner = match base(at.typedef[0]) { TyVector { inner: i } => i, … }`) left the variable
+// typed with it reading null once stored (2026-11-04, not reduced yet: the handoff has it).
+fn vector_element(t: ir::TypeT) -> ir::TypeT {
+  match el_types::base(t) {
+    TyVector { inner } => inner,
+    _ => ir::TyVoid
+  }
+}
+
+// `elements_loop_from`: each element of the vector at `field` from 0 handed to `tg` where it is
+// present (`__dc_i<idx>`, `__dc_e<idx>`, the element a view that frees nothing).
+fn elements_loop(e: el::El, vars: el_vars::Vars, field: ir::Node, idx: integer, elem: ir::TypeT, tg: integer) -> ir::Node {
+  iv = el_vars::add_variable(vars, "__dc_i{idx}", el::def(e, el::def_nr(e, "integer")).returned[0] ?? ir::TyVoid);
+  ev = el_vars::add_variable(vars, "__dc_e{idx}", elem);
+  vars.vars[ev].skip_free = true;
+  i = ir::NdVar { n: iv };
+  past_end = el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpLengthVector", [field]), i]);
+  read = el_ir::cl(e, "OpGetVectorNullable", [field, ir::NdInt { n: el_expressions::element_stride(e, elem) }, i]);
+  body = [
+    el_ir::v_if(past_end, el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull),
+    el_ir::v_set(ev, read),
+    el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [ir::NdVar { n: ev }]), ir::NdCall { def_nr: tg, args: [ir::NdVar { n: ev }] }, ir::NdNull),
+    el_ir::v_set(iv, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }]))
+  ];
+  el_ir::v_block([el_ir::v_set(iv, ir::NdInt { n: 0 }), el_ir::v_loop(body, "drop_elements")], ir::TyVoid, "drop_elements_block")
+}
+
+// `finish_drop_cascade`: the body, and the variables it made.
+fn finish(e: el::El, c: integer, vars: el_vars::Vars, ops: vector<ir::Node>) {
+  e.b.data.definitions[c].code = [el_ir::v_block(ops, ir::TyVoid, "drop_cascade")];
+  e.b.data.definitions[c].variables = el_vars::stored(vars);
+}
+

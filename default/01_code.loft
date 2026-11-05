@@ -1612,6 +1612,17 @@ fn hash_sorted(h: reference, tp: integer) -> reference;
 // scratch, but in slot order — skips the key sort, because neither walk has a use
 // for key order.  The parser desugars both forms of `for e in h` into this call.
 fn hash_unsorted(h: reference, tp: integer) -> reference;
+#impure(parent_write)
+// `@FR-R-KeyedEntry` — the entry `data += [T{k: key, …}]` writes its other fields into: the
+// one already under the key in the hash at field `fld` of `data` (of type `parent_tp`; `fld`
+// 65535 when `data` is the hash itself), or a fresh one with the key written and filed.  The
+// IR calls it in place of the literal's claim, writes and file (`opt::keyed_entry`), so loft
+// code never names it.  `k1` … `k4` are the key's integer parts in order; the hash's key says
+// how many are read.
+fn keyed_entry_ints(data: reference, parent_tp: integer, fld: integer, k1: integer, k2: integer, k3: integer, k4: integer) -> reference;
+#impure(parent_write)
+// `keyed_entry_ints` for a hash whose one key is a `text`.
+fn keyed_entry_text(data: reference, parent_tp: integer, fld: integer, key: text) -> reference;
 #pure
 // @PLN48 — iterate a spatial/radix collection in its NATURAL key order (the tree's
 // in-order walk = Morton/Z-order for a spatial index).  Returns a fresh

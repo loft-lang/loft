@@ -8,7 +8,9 @@
 //! (`bytecode-comparisons/V-z-element-first-cells.loft`) says the VALUES hold; this
 //! pins the EMISSION — which appends earn the early mint, and that every declining
 //! shape (a read after the append, an `out` read in between, an append under an `if`
-//! arm) keeps the temp-store build — and the switch (`LOFT_NO_ELEMENT_FIRST=1`).
+//! arm) keeps the temp-store build — and the switch (`LOFT_NO_ELEMENT_FIRST=1`).  A pair
+//! the IR applies (`opt::elem_first`, a literal-built temp) is counted from its trace
+//! (`LOFT_TRACE_IR_ELEM_FIRST`), one the writer applies from its mint comment.
 use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -33,14 +35,18 @@ const EXPECTED: &[(&str, usize)] = &[
 
 const MARK: &str = "V-z element minted";
 
-fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
+/// The emitted Rust, and per function the pairs the IR applied — `(local, field)` by
+/// destination, read from the pass's trace.
+fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> (String, HashMap<String, (usize, usize)>) {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-rust")
         .arg("--native-emit")
         .arg(out)
         .arg(src)
-        .env("LOFT_TIMEOUT", "120");
+        .env("LOFT_TIMEOUT", "120")
+        .env("LOFT_TRACE_IR_ELEM_FIRST", "1")
+        .env("LOFT_NO_CACHE", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -51,10 +57,23 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    fa::read_to_string(out).expect("read the emitted Rust")
+    let mut ir: HashMap<String, (usize, usize)> = HashMap::new();
+    for line in String::from_utf8_lossy(&status.stderr).lines() {
+        if let Some(rest) = line.strip_prefix("[ir-elem-first] fn=")
+            && let Some((name, dest)) = rest.split_once(" pair ")
+        {
+            let e = ir.entry(name.to_string()).or_default();
+            if dest == "field" {
+                e.1 += 1;
+            } else {
+                e.0 += 1;
+            }
+        }
+    }
+    (fa::read_to_string(out).expect("read the emitted Rust"), ir)
 }
 
-fn counts(rust: &str) -> HashMap<String, usize> {
+fn counts((rust, ir): &(String, HashMap<String, (usize, usize)>)) -> HashMap<String, usize> {
     let mut map: HashMap<String, usize> = HashMap::new();
     let mut current = String::new();
     for line in rust.lines() {
@@ -65,6 +84,9 @@ fn counts(rust: &str) -> HashMap<String, usize> {
             map.entry(current.clone()).or_default();
         }
         *map.entry(current.clone()).or_default() += line.matches(MARK).count();
+    }
+    for (name, (local, _)) in ir {
+        *map.entry(name.clone()).or_default() += local;
     }
     map
 }
@@ -93,7 +115,7 @@ fn the_switch_restores_the_temp_store_build() {
     let out = std::env::temp_dir().join("loft_element_first_off.rs");
     let rust = emit(&cells(), &out, &[("LOFT_NO_ELEMENT_FIRST", "1")]);
     assert_eq!(
-        rust.matches(MARK).count(),
+        rust.0.matches(MARK).count() + rust.1.len(),
         0,
         "under LOFT_NO_ELEMENT_FIRST=1 every literal field keeps its temp-store build"
     );
@@ -132,7 +154,7 @@ const PLACE_EXPECTED: &[(&str, usize)] = &[
     ("n_g27", 0), // an element parameter that may alias the destination read in between
 ];
 
-fn place_counts(rust: &str) -> HashMap<String, usize> {
+fn place_counts((rust, ir): &(String, HashMap<String, (usize, usize)>)) -> HashMap<String, usize> {
     let mut map: HashMap<String, usize> = HashMap::new();
     let mut current = String::new();
     for line in rust.lines() {
@@ -143,6 +165,9 @@ fn place_counts(rust: &str) -> HashMap<String, usize> {
             map.entry(current.clone()).or_default();
         }
         *map.entry(current.clone()).or_default() += line.matches(PLACE_MARK).count();
+    }
+    for (name, (_, field)) in ir {
+        *map.entry(name.clone()).or_default() += field;
     }
     map
 }
@@ -162,12 +187,12 @@ fn a_parameter_collection_and_a_call_take_the_element_first_build() {
     }
     // The joined arms: the else-arm's element is the one minted at the declaration.
     assert!(
-        rust.contains("var__elm_2 = var__elm_1; //@PLN164 E-2b"),
+        rust.0.contains("var__elm_2 = var__elm_1; //@PLN164 E-2b"),
         "g16's second arm aliases the early element"
     );
     // The call is handed the element's field as its buffer.
     assert!(
-        rust.contains("= n_mkpts(cell, var_n, DbRef { store_nr: var__elm_1.store_nr, rec: var__elm_1.rec, pos: var__elm_1.pos + 24 });"),
+        rust.0.contains("= n_mkpts(cell, var_n, DbRef { store_nr: var__elm_1.store_nr, rec: var__elm_1.rec, pos: var__elm_1.pos + 24 });"),
         "g1's call builds into the element"
     );
     let _ = fa::remove_file(&out);
@@ -177,7 +202,7 @@ fn a_parameter_collection_and_a_call_take_the_element_first_build() {
         &[("LOFT_NO_ELEMENT_PLACE", "1")],
     );
     assert_eq!(
-        off.matches(PLACE_MARK).count(),
+        off.0.matches(PLACE_MARK).count() + off.1.values().map(|(_, f)| f).sum::<usize>(),
         0,
         "under LOFT_NO_ELEMENT_PLACE=1 no parameter collection or call takes the build"
     );

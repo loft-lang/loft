@@ -3977,7 +3977,15 @@ pub fn hash_fill_loop<'a>(
         let Value::Call(d, args) = n.unspan() else {
             return None;
         };
-        if (*d as usize) >= data.definitions.len() || data.def(*d).name() != "OpNewRecord" {
+        // The claim of a record the insert files, or `@FR-R-KeyedEntry`'s probe for the entry
+        // (`keyed_entry_ints` / `_text`, the IR's form of the same insert): either names the
+        // hash and its type first.
+        if (*d as usize) >= data.definitions.len()
+            || !matches!(
+                data.def(*d).name(),
+                "OpNewRecord" | "n_keyed_entry_ints" | "n_keyed_entry_text"
+            )
+        {
             return None;
         }
         let (Some(Value::Var(h)), Some(Value::Int(tp))) = (
@@ -4088,11 +4096,21 @@ fn rebinds_alias_free(body: &Block, root: u16, data: &Data, owned: Option<&Hoist
         op.any_node(&mut |n| match n {
             Value::Set(v, rhs) if *v == root => !match rhs.unspan() {
                 Value::Null => true,
+                // The projection of an owned buffer, or of a fresh element's field the
+                // element-first build made the temp's vector (`opt::elem_first::kept_fields`).
                 Value::Call(d, args) => {
                     (*d as usize) < data.definitions.len()
                         && data.def(*d).name() == "OpGetField"
-                        && matches!(args.first().map(Value::unspan), Some(Value::Var(b))
-                            if buffers.contains(b))
+                        && match (
+                            args.first().map(Value::unspan),
+                            args.get(1).map(Value::unspan),
+                        ) {
+                            (Some(Value::Var(b)), _) if buffers.contains(b) => true,
+                            (Some(Value::Var(e)), Some(Value::Int(off))) => {
+                                owned.elem_fields.contains(&(*e, i64::from(*off)))
+                            }
+                            _ => false,
+                        }
                 }
                 _ => false,
             },

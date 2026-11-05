@@ -1,0 +1,342 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The text-return promotion (@PLN104, src/parser/control.rs `targeted_tret_promotion`): a text
+// function with no buffer of its own whose answer this frame owns — a literal, a call's buffer,
+// a local's text — would hand back text that dies with the frame.  After the second pass each
+// function of the program the ownership oracle finds so (`report_tret_promotions`,
+// `own::text_return_orphan_risk`) is given a hidden `&text` buffer, `___tret_N`, that every
+// answer is written into (Phase A), and every call of it hands one in (Phase B,
+// `patch_tret_callers`).  A function whose address is taken is refused
+// by name: Rust leaves it unpromoted, which this port does not reproduce yet.
+use ir;
+use el;
+use el_ir;
+use el_vars;
+use el_expressions;
+use el_buffers;
+use own;
+
+pub fn promote_text_returns(e: el::El) {
+  flagged: vector<integer> = [];
+  for d in e.b.data.definitions {
+    if d.source == el::MAIN_SOURCE && d.def_type == el::DT_FUNCTION && own::text_return_orphan_risk(e.b, d#index) != "" {
+      flagged += [d#index];
+    }
+  }
+  if len(flagged) == 0 {
+    return;
+  }
+  taken = el_buffers::address_taken(e);
+  promote: vector<integer> = [];
+  for d in flagged {
+    if taken.contains(d) {
+      el::refuse(e, "a text answered by value from a function whose address is taken");
+      continue;
+    }
+    promote += [d];
+  }
+  for d in promote {
+    promote_def(e, d);
+  }
+  patch_callers(e, promote);
+}
+
+// `promote_text_return_def` (Phase A): the answer of `d` written into a fresh `___tret_N` —
+// each `return x` through `___tret_N = x; return ___tret_N`, the tail as `___tret_N = tail;
+// ___tret_N` (a tail that always returns keeps its returns and answers the buffer after them) —
+// which `text_return` makes the hidden `&text` parameter, renumbered onto its argument slot.
+fn promote_def(e: el::El, d: integer) {
+  code = el::def(e, d).code[0] ?? ir::NdNull;
+  bl = match el_ir::unspan(code) {
+    NdBlock { block } => block[0],
+    _ => {
+      el::refuse(e, "a text-return promotion of a body that is not a block");
+      return;
+    }
+  };
+  if len(bl.operators) == 0 {
+    return;
+  }
+  vars = el_vars::load(el::def(e, d).variables);
+  tv = el_vars::create_unique(vars, "__tret", ir::TyText { dep: [] });
+  ops: vector<ir::Node> = [];
+  last = len(bl.operators) - 1;
+  for op in bl.operators {
+    if op#index < last {
+      ops += [into_buffer(op, tv)];
+    }
+  }
+  tail = bl.operators[last]!;
+  if el_ir::unspan(tail) is NdReturn {
+    ops += [el_ir::v_set(tv, el_expressions::peel_return(tail)), ir::NdReturn { inner: ir::NdVar { n: tv } }];
+  } else if diverges(tail) {
+    ops += [into_buffer(tail, tv), ir::NdVar { n: tv }];
+  } else {
+    ops += [el_ir::v_set(tv, tail), ir::NdVar { n: tv }];
+  }
+  ctx = e.context;
+  e.context = d;
+  el_expressions::text_return(e, vars, ir::TyText { dep: [tv] });
+  e.context = ctx;
+  f = el_vars::stored(vars);
+  bl.operators = ops;
+  a = argument_slot(f, tv);
+  if a >= 0 && a != tv {
+    tmp = len(f.variables);
+    bl.operators = renumber_list(renumber_list(renumber_list(bl.operators, a, tmp), tv, a), tmp, tv);
+    f = swap_variables(f, a, tv);
+  }
+  bl.result = [ir::TyText { dep: [if a >= 0 { a } else { tv }] }];
+  e.b.data.definitions[d].code = [el_ir::respan(code, ir::NdBlock { block: [bl] })];
+  e.b.data.definitions[d].variables = f;
+}
+
+// `rewrite_text_returns_into`: every `return x` inside `n` written into the buffer first.
+fn into_buffer(n: ir::Node, tv: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: into_buffer(inner, tv) },
+    NdReturn { inner: _ } => ir::NdInsert { items: [el_ir::v_set(tv, el_expressions::peel_return(n)), ir::NdReturn { inner: ir::NdVar { n: tv } }] },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: into_buffer(t, tv), f: into_buffer(f, tv) },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for o in b.operators { into_buffer(o, tv) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = [for o in b.operators { into_buffer(o, tv) }];
+      ir::NdLoop { block: [b] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { into_buffer(o, tv) }] },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: into_buffer(create, tv), next: into_buffer(next, tv), init: into_buffer(init, tv) },
+    NdDrop { inner } => ir::NdDrop { inner: into_buffer(inner, tv) },
+    _ => n
+  }
+}
+
+// `ir_diverges`: every path through `n` returns.
+fn diverges(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => diverges(inner),
+    NdReturn { inner: _ } => true,
+    NdIf { cond: _, t, f } => diverges(t) && diverges(f),
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if diverges(o) {
+          return true;
+        }
+      }
+      false
+    },
+    NdInsert { items } => {
+      for o in items {
+        if diverges(o) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// `Function::arguments().position(tv)`: the attribute slot of argument variable `tv`, or -1.
+fn argument_slot(f: ir::Function, tv: integer) -> integer {
+  a = 0;
+  for x in f.variables {
+    if x.argument {
+      if x#index == tv {
+        return a;
+      }
+      a += 1;
+    }
+  }
+  -1
+}
+
+// `Function::swap_variables` on the stored table: the two entries, the names resolving to them,
+// the inline marks and every reference a variable or a type keeps to either number.
+fn swap_variables(f: ir::Function, a: integer, b: integer) -> ir::Function {
+  // Built entry by entry from the source table, each one's types renumbered before it is
+  // written into its copy.
+  vs: vector<ir::Variable> = [];
+  for x in f.variables {
+    src = f.variables[swapped(x#index, a, b)]!;
+    ts = [for t in src.type_def { swap_type(t, a, b) }];
+    i = len(vs);
+    vs += [src];
+    vs[i].type_def = ts;
+    vs[i].rebind_orig = swapped(src.rebind_orig, a, b);
+    vs[i].owner_witness = swapped(src.owner_witness, a, b);
+  }
+  r = f;
+  r.variables = vs;
+  for n in r.names {
+    r.names[n#index].nr = swapped(n.nr, a, b);
+  }
+  r.inline_refs = [for x in f.inline_refs { swapped(x, a, b) }];
+  r
+}
+
+fn swapped(x: integer, a: integer, b: integer) -> integer {
+  if x == a { b } else if x == b { a } else { x }
+}
+
+fn swap_type(t: ir::TypeT, a: integer, b: integer) -> ir::TypeT {
+  renumber_type(renumber_type(renumber_type(t, a, -2), b, a), -2, b)
+}
+
+// `Type::renumber_frame_deps`: each frame dep `from` becomes `to`, through a vector's element,
+// a `&`, a `?`, a rewrite, an iterator and a tuple's members; a function type's own dep only.
+fn renumber_type(t: ir::TypeT, from: integer, to: integer) -> ir::TypeT {
+  match t {
+    TyText { dep } => ir::TyText { dep: moved(dep, from, to) },
+    TyReference { n, dep } => ir::TyReference { n: n, dep: moved(dep, from, to) },
+    TyEnum { n, is_ref, dep } => ir::TyEnum { n: n, is_ref: is_ref, dep: moved(dep, from, to) },
+    TySorted { n, keys, dep } => ir::TySorted { n: n, keys: keys, dep: moved(dep, from, to) },
+    TyIndex { n, keys, dep } => ir::TyIndex { n: n, keys: keys, dep: moved(dep, from, to) },
+    TyRadix { n, names, dep } => ir::TyRadix { n: n, names: names, dep: moved(dep, from, to) },
+    TyTrie { n, key, dep } => ir::TyTrie { n: n, key: key, dep: moved(dep, from, to) },
+    TyHash { n, names, dep } => ir::TyHash { n: n, names: names, dep: moved(dep, from, to) },
+    TyVector { inner, dep } => ir::TyVector { inner: renumber_type(inner, from, to), dep: moved(dep, from, to) },
+    TyFunction { args, result, dep, consts } => ir::TyFunction { args: args, result: result, dep: moved(dep, from, to), consts: consts },
+    TyRefVar { inner } => ir::TyRefVar { inner: renumber_type(inner, from, to) },
+    TyRewritten { inner } => ir::TyRewritten { inner: renumber_type(inner, from, to) },
+    TyOptional { inner } => ir::TyOptional { inner: renumber_type(inner, from, to) },
+    TyIterator { step, inner } => ir::TyIterator { step: renumber_type(step, from, to), inner: renumber_type(inner, from, to) },
+    TyTuple { elems } => ir::TyTuple { elems: [for x in elems { renumber_type(x, from, to) }] },
+    _ => t
+  }
+}
+
+fn moved(dep: vector<integer>, from: integer, to: integer) -> vector<integer> {
+  [for d in dep { if d == from { to } else { d } }]
+}
+
+// `Value::renumber_frame_var`: every frame variable `from` in `n` becomes `to`, its blocks'
+// result types too.
+fn renumber(n: ir::Node, from: integer, to: integer) -> ir::Node {
+  match n {
+    NdVar { n: v } => ir::NdVar { n: if v == from { to } else { v } },
+    NdSet { var, inner } => ir::NdSet { var: if var == from { to } else { var }, inner: renumber(inner, from, to) },
+    NdCallRef { var, args } => ir::NdCallRef { var: if var == from { to } else { var }, args: renumber_list(args, from, to) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: renumber_list(args, from, to) },
+    NdInsert { items } => ir::NdInsert { items: renumber_list(items, from, to) },
+    NdTuple { items } => ir::NdTuple { items: renumber_list(items, from, to) },
+    NdParallel { arms } => ir::NdParallel { arms: renumber_list(arms, from, to) },
+    NdBlock { block } => {
+      b = block[0];
+      b.result = [for t in b.result { renumber_type(t, from, to) }];
+      b.operators = renumber_list(b.operators, from, to);
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.result = [for t in b.result { renumber_type(t, from, to) }];
+      b.operators = renumber_list(b.operators, from, to);
+      ir::NdLoop { block: [b] }
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: renumber(cond, from, to), t: renumber(t, from, to), f: renumber(f, from, to) },
+    NdReturn { inner } => ir::NdReturn { inner: renumber(inner, from, to) },
+    NdDrop { inner } => ir::NdDrop { inner: renumber(inner, from, to) },
+    NdYield { inner } => ir::NdYield { inner: renumber(inner, from, to) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: renumber(inner, from, to) },
+    NdIter { var, create, next, init } => ir::NdIter { var: if var == from { to } else { var }, create: renumber(create, from, to), next: renumber(next, from, to), init: renumber(init, from, to) },
+    NdTupleGet { var, idx } => ir::NdTupleGet { var: if var == from { to } else { var }, idx: idx },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: if var == from { to } else { var }, idx: idx, inner: renumber(inner, from, to) },
+    NdFnRef { def_nr, var, t } => ir::NdFnRef { def_nr: def_nr, var: if var == from { to } else { var }, t: [for x in t { renumber_type(x, from, to) }] },
+    _ => n
+  }
+}
+
+fn renumber_list(l: vector<ir::Node>, from: integer, to: integer) -> vector<ir::Node> {
+  [for x in l { renumber(x, from, to) }]
+}
+
+// `patch_tret_callers` (Phase B): every call of a promoted function that hands fewer arguments
+// than it now takes is given a fresh `__work_cN` buffer (`add_defaults`' `&text` arm), each new
+// buffer set empty at the head of the caller's body.
+fn patch_callers(e: el::El, promoted: vector<integer>) {
+  for c in e.b.data.definitions {
+    cd = c#index;
+    body = c.code[0] ?? ir::NdNull;
+    if el_ir::is_null(body) || !calls_short(e, body, promoted) {
+      continue;
+    }
+    vars = el_vars::load(c.variables);
+    before = len(vars.vars);
+    code = patch(e, vars, body, promoted);
+    match el_ir::unspan(code) {
+      NdBlock { block } => {
+        bl = block[0];
+        for x in vars.vars {
+          if x#index >= before && starts_with(x.name, "__work_c") {
+            bl.operators = [el_ir::v_set(x#index, ir::NdText { s: "" })] + bl.operators;
+          }
+        }
+        code = el_ir::respan(code, ir::NdBlock { block: [bl] });
+      },
+      _ => {}
+    }
+    e.b.data.definitions[cd].code = [code];
+    e.b.data.definitions[cd].variables = el_vars::stored(vars);
+  }
+}
+
+fn calls_short(e: el::El, n: ir::Node, promoted: vector<integer>) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      if promoted.contains(def_nr) && len(args) < len(el::def(e, def_nr).attributes) {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for ch in el_ir::children(n) {
+    if calls_short(e, ch, promoted) {
+      return true;
+    }
+  }
+  false
+}
+
+// `patch_tret_call`: the arguments first, then the call's missing text buffers.
+fn patch(e: el::El, vars: el_vars::Vars, n: ir::Node, promoted: vector<integer>) -> ir::Node {
+  match n {
+    NdCall { def_nr, args } => {
+      na = [for a in args { patch(e, vars, a, promoted) }];
+      if promoted.contains(def_nr) {
+        for at in el::def(e, def_nr).attributes {
+          if at#index >= len(na) {
+            na += [el_expressions::default_text_ref(e, vars)];
+          }
+        }
+      }
+      ir::NdCall { def_nr: def_nr, args: na }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: patch(e, vars, inner, promoted) },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { patch(e, vars, a, promoted) }] },
+    NdBlock { block } => {
+      bl = block[0];
+      bl.operators = [for o in bl.operators { patch(e, vars, o, promoted) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      bl.operators = [for o in bl.operators { patch(e, vars, o, promoted) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { patch(e, vars, o, promoted) }] },
+    NdTuple { items } => ir::NdTuple { items: [for o in items { patch(e, vars, o, promoted) }] },
+    NdParallel { arms } => ir::NdParallel { arms: [for o in arms { patch(e, vars, o, promoted) }] },
+    NdIf { cond, t, f } => ir::NdIf { cond: patch(e, vars, cond, promoted), t: patch(e, vars, t, promoted), f: patch(e, vars, f, promoted) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: patch(e, vars, inner, promoted) },
+    NdReturn { inner } => ir::NdReturn { inner: patch(e, vars, inner, promoted) },
+    NdDrop { inner } => ir::NdDrop { inner: patch(e, vars, inner, promoted) },
+    NdYield { inner } => ir::NdYield { inner: patch(e, vars, inner, promoted) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: patch(e, vars, inner, promoted) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: patch(e, vars, create, promoted), next: patch(e, vars, next, promoted), init: patch(e, vars, init, promoted) },
+    _ => n
+  }
+}

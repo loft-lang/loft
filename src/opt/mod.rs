@@ -9,20 +9,29 @@
 //! from `generation/` keeps a re-export at its old path.
 
 pub mod apart;
+pub mod apart_records;
+pub mod apart_vector;
 pub mod append_twin;
 pub mod arg_copy;
 pub mod attrs;
 pub mod body_writes;
+pub mod buffer_owner;
 pub mod char_walk;
+pub mod elem_first;
+pub mod empty_slot;
 pub mod facts;
 pub mod fill_loop;
 pub mod frame_calls;
 pub mod header;
 pub mod hoist;
 pub mod iteration;
+pub mod keyed_entry;
+pub mod keyed_place;
 pub mod laps;
 pub mod lazy_split;
 pub mod ledger_sites;
+pub mod loop_buffer;
+pub mod loop_record;
 pub mod loop_records;
 pub mod names;
 pub mod native_key;

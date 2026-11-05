@@ -1007,30 +1007,6 @@ impl Output<'_> {
                 self.in_distinct_copy = false;
                 let file_held = self.begin_file_hold(w, lp)?;
                 let hoisted = self.begin_vector_hoist(w, lp)?;
-                // `@FR-R-LoopRecord` — a record local declared inside this loop is declared
-                // here instead, so its store survives the iteration: the per-pass mint takes
-                // `OpDatabase`'s clear arm, and the one free follows the loop.  Declared
-                // BEFORE any guarded arm (`@FR-R-BoundedNest`, `@FR-R-GuardedChain`) so both
-                // copies of the loop see it, and freed after both arms close.
-                let mut loop_recs: Vec<u16> = self
-                    .loop_records
-                    .iter()
-                    .filter(|(_, r)| r.loop_scope == lp.scope)
-                    .map(|(v, _)| *v)
-                    .collect();
-                loop_recs.sort_unstable();
-                let variables = self.data.def(self.def_nr).variables();
-                for &v in &loop_recs {
-                    if !self.declared.contains(&v) {
-                        let name = sanitize(variables.name(v));
-                        self.indent(w)?;
-                        writeln!(
-                            w,
-                            "let mut var_{name}: DbRef = DbRef::NULL; //@FR-R-LoopRecord kept across iterations"
-                        )?;
-                        self.declared.insert(v);
-                    }
-                }
                 // `@FR-R-CharWalk` — a character walk over a text nothing in the loop
                 // writes asks its null test ONCE, here, and the loop skips the statement;
                 // the checking form keeps the statement as an assertion.  Opened before
@@ -1150,15 +1126,6 @@ impl Output<'_> {
                 // written once, whichever arm ran.
                 for window in window.iter().rev() {
                     self.push_window_close(w, window)?;
-                }
-                for &v in &loop_recs {
-                    let name = sanitize(self.data.def(self.def_nr).variables().name(v));
-                    writeln!(w, ";")?;
-                    self.indent(w)?;
-                    write!(
-                        w,
-                        "OpFreeRef(cell,var_{name}, \"var_{name}\"); var_{name}.store_nr = u16::MAX /*@FR-R-LoopRecord freed after the loop*/"
-                    )?;
                 }
                 if char_walk.is_some() {
                     writeln!(w)?;
@@ -3643,17 +3610,8 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         self.dest_counter += 1;
         let site = self.dest_counter;
-        // `@FR-R-KeyedEntry`'s subscript clause: the entry under the key overwritten in place of
-        // removed and claimed again, and the literal's key-field writes dropped.
-        let entry_keys =
-            super::keyed_entry::subscript_keys(self.stores, ks.tp, &ks.setters(self.data))
-                .filter(|k| k.len() == ks.keys.len());
         self.indent(w)?;
-        if entry_keys.is_some() {
-            writeln!(w, "{{ //@FR-R-KeyedEntry subscript clause")?;
-        } else {
-            writeln!(w, "{{ //@FR-R-InPlaceLiteral keyed clause")?;
-        }
+        writeln!(w, "{{ //@FR-R-InPlaceLiteral keyed clause")?;
         let mut writes: Vec<Value> = Vec::new();
         let mut nth = 0usize;
         for op in &ks.body {
@@ -3687,16 +3645,7 @@ impl Output<'_> {
                     nth += 1;
                 }
             }
-            let key_write = entry_keys.as_ref().is_some_and(|k| {
-                matches!(args.get(1).map(Value::unspan), Some(Value::Int(o))
-                    if u16::try_from(*o).is_ok_and(|o| k.contains(&o)))
-            });
-            if !key_write {
-                writes.push(Value::Call(*d, staged));
-            }
-        }
-        if entry_keys.is_some() {
-            return self.output_keyed_entry_subscript(w, ks, site, &writes);
+            writes.push(Value::Call(*d, staged));
         }
         let key_types: Vec<i8> = self
             .stores
@@ -3735,142 +3684,6 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(w, "}}")?;
         crate::rewrite_census::fired("R-InPlaceLiteral/keyed", 1);
-        Ok(())
-    }
-
-    /// `@FR-R-KeyedEntry`'s subscript clause, the tail of [`Self::output_keyed_place`]: the
-    /// entry under the subscript's integer parts answered (found, or filed with the parts
-    /// written), then the literal's other field writes into it.
-    fn output_keyed_entry_subscript(
-        &mut self,
-        w: &mut dyn Write,
-        ks: &super::keyed_place::Site<'_>,
-        site: usize,
-        writes: &[Value],
-    ) -> std::io::Result<()> {
-        let mut parts = String::from("&[");
-        for (i, key) in ks.keys.iter().enumerate() {
-            if i > 0 {
-                parts.push_str(", ");
-            }
-            parts.push('(');
-            parts.push_str(&self.expr_string(key)?);
-            parts.push_str(") as i64");
-        }
-        parts.push(']');
-        let coll = self.expr_string(ks.coll)?;
-        self.indent(w)?;
-        writeln!(
-            w,
-            "let __kp{site} = stores.keyed_entry_ints(&({coll}), {}, {parts});",
-            self.type_lit_u16(ks.tp)
-        )?;
-        for wr in writes {
-            self.indent(w)?;
-            self.output_code_inner(w, wr)?;
-            writeln!(w, ";")?;
-        }
-        self.indent(w)?;
-        writeln!(w, "}}")?;
-        crate::rewrite_census::fired("R-KeyedEntry/subscript", 1);
-        Ok(())
-    }
-
-    /// `@FR-R-KeyedEntry`: the literal's values staged in program order, the entry under the
-    /// key answered (filed already, its key written), then the other fields written into it.
-    fn output_keyed_entry(
-        &mut self,
-        w: &mut dyn Write,
-        ke: &super::keyed_entry::Site<'_>,
-    ) -> std::io::Result<()> {
-        self.dest_counter += 1;
-        let site = self.dest_counter;
-        self.indent(w)?;
-        writeln!(w, "{{ //@FR-R-KeyedEntry")?;
-        let mut writes: Vec<Value> = Vec::new();
-        let mut parts: Vec<Option<String>> = vec![None; ke.keys.len()];
-        let mut nth = 0usize;
-        for op in &ke.writes {
-            let Value::Call(d, args) = op.unspan() else {
-                continue;
-            };
-            let part = args
-                .get(2)
-                .and_then(|a| ke.keys.iter().position(|k| std::ptr::eq(a, *k)));
-            let mut staged: Vec<Value> = Vec::with_capacity(args.len());
-            for (i, a) in args.iter().enumerate() {
-                if i == 0 {
-                    staged.push(Value::RawExpr(format!("__ke{site}")));
-                } else if super::keyed_place::constant(a) {
-                    staged.push(a.clone());
-                } else {
-                    let name = format!("__kv{site}_{nth}");
-                    nth += 1;
-                    self.indent(w)?;
-                    write!(w, "let {name} = ")?;
-                    self.output_code_inner(w, a)?;
-                    writeln!(w, ";")?;
-                    staged.push(Value::RawExpr(name));
-                }
-            }
-            if let Some(part) = part {
-                parts[part] = Some(match staged.get(2) {
-                    Some(Value::RawExpr(n)) => n.clone(),
-                    _ => self.expr_string(ke.keys[part])?,
-                });
-            } else {
-                writes.push(Value::Call(*d, staged));
-            }
-        }
-        let key = parts.first().cloned().flatten();
-        let coll = self.expr_string(ke.coll)?;
-        self.indent(w)?;
-        if ke.keys.len() > 1 {
-            let list: Vec<String> = parts
-                .into_iter()
-                .map(|p| format!("({}) as i64", p.unwrap_or_else(|| "i64::MIN".to_string())))
-                .collect();
-            writeln!(
-                w,
-                "let __ke{site}: DbRef = stores.keyed_entry_ints_at(&({coll}), {}, {}_u16, &[{}]);",
-                self.type_lit_u16(ke.parent_tp),
-                ke.field,
-                list.join(", ")
-            )?;
-        } else if ke.text_key {
-            let key = key.unwrap_or_else(|| "\"\"".to_string());
-            writeln!(
-                w,
-                "let __ke{site}: DbRef = stores.keyed_entry_text(&({coll}), {}, {}_u16, &*({key}));",
-                self.type_lit_u16(ke.parent_tp),
-                ke.field
-            )?;
-        } else {
-            let key = key.unwrap_or_else(|| "i64::MIN".to_string());
-            // The field's offset and element type resolved here, where they are constants.
-            let (off, etp) = self.stores.keyed_field_consts(ke.parent_tp, ke.field);
-            // An 8-byte integer key's position, for the inline walk; a narrow key takes none.
-            let kp = self.stores.types[etp as usize]
-                .keys
-                .first()
-                .filter(|k| matches!(k.type_nr.unsigned_abs(), 1 | 2))
-                .map_or(u32::MAX, |k| u32::from(k.position));
-            writeln!(
-                w,
-                "let __ke{site}: DbRef = stores.keyed_entry_long_at(&({coll}), {}, {}_u16, {off}_u32, {}, {kp}_u32, ({key}) as i64);",
-                self.type_lit_u16(ke.parent_tp),
-                ke.field,
-                self.type_lit_u16(etp)
-            )?;
-        }
-        for wr in &writes {
-            self.indent(w)?;
-            self.output_code_inner(w, wr)?;
-            writeln!(w, ";")?;
-        }
-        self.indent(w)?;
-        writeln!(w, "}}")?;
-        crate::rewrite_census::fired("R-KeyedEntry", 1);
         Ok(())
     }
 
@@ -4650,18 +4463,6 @@ impl Output<'_> {
                 repeat_skip = Some(run.last);
                 continue;
             }
-            // `@FR-R-KeyedEntry` — a keyed insert of a heap-free literal written into the entry
-            // its key names: a repeated key overwrites in place instead of claiming a slot,
-            // replacing the entry and releasing it.
-            if super::keyed_entry::enabled()
-                && !self.in_coroutine_body
-                && let Some(ke) =
-                    super::keyed_entry::site(operators, vnr, self.data, self.stores, self.def_nr)
-            {
-                self.output_keyed_entry(w, &ke)?;
-                repeat_skip = Some(ke.last);
-                continue;
-            }
             // loft#1753 — a statement that calls into a frame first records the line it calls
             // from in THIS frame, which is what `stack_trace()` reports as the callee frame's
             // `line`: the call site that entered it, as the interpreter's `CallFrame.line` is.
@@ -4713,47 +4514,6 @@ impl Output<'_> {
             // until the append).
             if !self.elem_first.pairs.is_empty()
                 && self.elem_first_override(w, operators, vnr, v)?
-            {
-                continue;
-            }
-            // `@FR-R-LoopRecord` — a loop record's per-pass declaration (`Set(v, null)`) and
-            // its end-of-body free are not emitted from the block that declares it: the local
-            // was declared at the loop's prelude and is freed once after the loop.  A free on
-            // a `return`/`continue` path sits in an `Insert`, not here, and stays.
-            if !self.loop_records.is_empty() {
-                let dropped = match v.unspan() {
-                    Value::Set(lv, rhs) if matches!(rhs.unspan(), Value::Null) => self
-                        .loop_records
-                        .get(lv)
-                        .is_some_and(|r| r.decl_block == bl.scope),
-                    Value::Call(d, args)
-                        if (*d as usize) < self.data.definitions.len()
-                            && matches!(
-                                self.data.def(*d).name(),
-                                "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag"
-                            ) =>
-                    {
-                        matches!(args.first().map(Value::unspan), Some(Value::Var(lv))
-                            if self.loop_records.get(lv).is_some_and(|r| r.decl_block == bl.scope))
-                    }
-                    _ => false,
-                };
-                if dropped {
-                    continue;
-                }
-            }
-            // @PLN157 § V-al (`@FR-R-LoopBuffer`) — a loop buffer's literal zero of its
-            // vector field is not emitted: the first mint zero-fills the record, and every
-            // later pass keeps the vector the zero would drop.
-            if !self.loop_buffers.is_empty()
-                && let Value::Call(d, args) = v.unspan()
-                && (*d as usize) < self.data.definitions.len()
-                && self.data.def(*d).name() == "OpSetInt4"
-                && let [a0, a1, a2] = &args[..]
-                && let Value::Var(vdb) = a0.unspan()
-                && self.loop_buffers.contains(vdb)
-                && matches!(a1.unspan(), Value::Int(0))
-                && matches!(a2.unspan(), Value::Int(0))
             {
                 continue;
             }

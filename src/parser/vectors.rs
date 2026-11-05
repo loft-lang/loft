@@ -220,6 +220,59 @@ impl Parser {
         !self.vars.is_inline_ref(orig_var) && !appending && self.value_is_fresh(code, tp)
     }
 
+    /// The chain of [`Self::parse_append_vector`] continued in the FIELD its first operand was
+    /// built into (`elms`): each later operand appended there, read before the build.
+    fn append_into_field(
+        &mut self,
+        tp: &Type,
+        parts: &[(Value, Type)],
+        dest: &Value,
+        elms: &mut Vec<Value>,
+        rec_tp: i32,
+    ) -> Vec<Value> {
+        // `@FR-E-Asgn-Compound`, `@FR-I-Comp` — the first operand is built straight into the
+        // field, so a later operand that reads the field reads what it held before the
+        // statement: a snapshot taken ahead of the build, the reads renamed onto it, as a
+        // literal reading its own destination does (loft#2402).
+        let mut vals: Vec<Value> = parts.iter().map(|(v, _)| v.clone()).collect();
+        let snapshot = {
+            let mut refs: Vec<&mut Value> = vals.iter_mut().collect();
+            self.snapshot_read_destination(
+                u16::MAX,
+                dest,
+                false,
+                true,
+                &tp.content(),
+                &mut refs,
+                false,
+            )
+        };
+        let mut ops = snapshot.unwrap_or_default();
+        // The field's clear goes after the snapshot (`build_snapshot_len`): it leads the
+        // first operand's own snapshot, if that literal took one.
+        self.build_snapshot_len += ops.len();
+        ops.append(elms);
+        for ((_, part_tp), val) in parts.iter().zip(&vals) {
+            self.refuse_mixed_element_encoding(tp, part_tp);
+            ops.push(self.cl(
+                "OpAppendVector",
+                &[dest.clone(), val.clone(), Value::Int(rec_tp)],
+            ));
+        }
+        ops
+    }
+
+    /// loft#2407 — `[]` answered where only another arm names its element: an empty vector of
+    /// `tp` in a store of its own, as a typed empty literal is built.
+    pub(crate) fn empty_vector_value(&mut self, tp: &Type) -> Value {
+        let tp = tp.without_deps();
+        let vec = self.create_unique("vec", &tp);
+        let mut ls = self.vector_db(&tp.content(), vec);
+        let res = self.vars.tp(vec).clone();
+        ls.push(Value::Var(vec));
+        v_block(ls, res, "Vector")
+    }
+
     pub(crate) fn parse_append_vector(
         &mut self,
         code: &mut Value,
@@ -251,15 +304,7 @@ impl Parser {
             && let Some(dest) = dest
             && let Value::Insert(elms) = code
         {
-            let mut ops = std::mem::take(elms);
-            for (val, part_tp) in parts {
-                self.refuse_mixed_element_encoding(tp, part_tp);
-                ops.push(self.cl(
-                    "OpAppendVector",
-                    &[dest.clone(), val.clone(), Value::Int(rec_tp)],
-                ));
-            }
-            *code = Value::Insert(ops);
+            *code = Value::Insert(self.append_into_field(tp, parts, dest, elms, rec_tp));
             return tp.clone();
         }
         let var_nr = if orig_var == u16::MAX {
@@ -4064,15 +4109,25 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 "the comprehension element",
                 Some(&body_pos),
             ) {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "cannot store {} elements in a vector<{}> (would lose precision); \
-                     cast the body explicitly with 'as {}'",
-                    elem_type.source_name(&self.data),
-                    want.source_name(&self.data),
-                    want.source_name(&self.data)
-                );
+                if numeric_narrowing(&elem_type, &want) {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "cannot store {} elements in a vector<{}> (would lose precision); \
+                         cast the body explicitly with 'as {}'",
+                        elem_type.source_name(&self.data),
+                        want.source_name(&self.data),
+                        want.source_name(&self.data)
+                    );
+                } else {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "cannot store {} elements in a vector<{}>",
+                        elem_type.source_name(&self.data),
+                        want.source_name(&self.data)
+                    );
+                }
             }
         }
         self.in_loop = in_loop;
@@ -4472,9 +4527,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 lp.push(step);
             }
         } else if !matches!(in_type.base(), Type::Iterator(_, _)) {
-            let mut test_for = Value::Var(for_var);
-            self.convert(&mut test_for, var_tp, &Type::Boolean);
-            test_for = self.cl("OpNot", &[test_for]);
+            // `item_absent`, the loop's end test the statement `for` asks too: a truthiness
+            // test ended a custom iterator's `boolean` walk at its first `false` and a vector
+            // walk before its first item (loft#2415, the loft#1310 shape).
+            let test_for = self.item_absent(for_var, var_tp);
             lp.push(v_if(
                 test_for,
                 v_block(vec![Value::Break(0)], Type::Void, "break"),
@@ -6800,7 +6856,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                          write `single` literals with the `f` suffix (`[1.0f, 2.0f]`), or cast each \
                          element with 'as single'"
                     );
-                } else {
+                } else if numeric_narrowing(&t, in_t) {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -6808,6 +6864,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                      cast each element explicitly with 'as {}'",
                         t.source_name(&self.data),
                         self.data.written_type_name(in_t),
+                        self.data.written_type_name(in_t)
+                    );
+                } else {
+                    // Not a precision question, and no cast makes one of these the other.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "cannot store {} elements in a vector<{}>",
+                        t.source_name(&self.data),
                         self.data.written_type_name(in_t)
                     );
                 }
@@ -9818,6 +9883,14 @@ fn walk_for_mutations(
         }
         _ => {}
     }
+}
+
+/// Whether storing a `have` where a `want` is declared is a NUMERIC narrowing — the one case the
+/// element refusal's "would lose precision … cast with `as`" describes.  Any other pair (a text,
+/// a vector or a record where a number is declared) is a different type, not a lossy one.
+fn numeric_narrowing(have: &Type, want: &Type) -> bool {
+    let numeric = |t: &Type| matches!(t.base(), Type::Integer(_) | Type::Float | Type::Single);
+    numeric(have) && numeric(want)
 }
 
 #[cfg(test)]

@@ -159,7 +159,7 @@ pub(crate) struct FnWriter<'a> {
     /// The locals whose copy is deferred to the first statement that may write its source
     /// (`@FR-R-DeferredCopy`, `deferred::deferred_plan`).
     dc: deferred::DeferredCopies,
-    /// `@FR-R-LoopRecord`'s refill clause: the loop records this function keeps.
+    /// `@FR-R-FnRefBuffer`: the records a function value fills that this function keeps.
     lr: loop_record::LoopRecordPort,
     /// `@FR-R-ElemFirst`: the element-first pairs and the statements they rewrite.
     ef: elem_first::ElemFirstPort,
@@ -2294,12 +2294,6 @@ impl<'a> FnWriter<'a> {
             .is_some_and(|m| m.contains(&tp))
     }
 
-    /// Is the copy with these arguments one into a field of an element being built?
-    fn is_fresh_field_copy(&mut self, args: &[Value]) -> bool {
-        self.complete_writes_once();
-        self.fresh_fields.contains_key(&(args.as_ptr() as usize))
-    }
-
     fn complete_writes_once(&mut self) {
         if self.complete_mints.is_none() {
             let c = crate::opt::ret_adopt::complete_writes(self.cx.data, self.cx.stores, self.d);
@@ -2316,10 +2310,34 @@ impl<'a> FnWriter<'a> {
     /// element needs no prefill.  The C statement for a null `src` into `dst`, or `None` for a
     /// copy that is no such field's.
     fn fresh_null_arm(&mut self, args: &[Value], dst: &str) -> Option<String> {
-        self.complete_writes_once();
-        let sub = *self.fresh_fields.get(&(args.as_ptr() as usize))?;
+        let sub = self.fresh_default_tp(args)?;
         let (image, n) = self.cx.default_image(sub);
         Some(format!("loft_fill({dst}, {image}, {n});"))
+    }
+
+    /// The type whose default image a null source writes into this copy's destination, or
+    /// `None` where the runtime's own null arm is right.  A field of an element being built
+    /// (`@C137`'s fresh-field arm); and a copy flagged `COPY_FRESH_DEST` into a STRUCT whose
+    /// default is not all zero bytes — `Stores::copy_null_into` writes the default walk there
+    /// (a nullable field's null, loft#2414), where the C runtime's null arm only zeroes.
+    fn fresh_default_tp(&mut self, args: &[Value]) -> Option<u16> {
+        self.complete_writes_once();
+        if let Some(sub) = self.fresh_fields.get(&(args.as_ptr() as usize)) {
+            return Some(*sub);
+        }
+        let Value::Int(raw) = args.get(2)?.unspan() else {
+            return None;
+        };
+        let raw = u16::try_from(*raw).ok()?;
+        if raw & crate::keys::COPY_FRESH_DEST == 0 {
+            return None;
+        }
+        let tp = raw & crate::keys::COPY_TP_MASK;
+        (matches!(
+            self.cx.stores.types[tp as usize].parts,
+            crate::database::Parts::Struct(_)
+        ) && !self.cx.default_is_zero(tp))
+        .then_some(tp)
     }
 
     /// A push, or its pre-allocation, onto a path an enclosing loop holds a window on: the
@@ -2815,7 +2833,7 @@ impl<'a> FnWriter<'a> {
         Ok(())
     }
 
-    /// A block's statements in order; a run of them a rewrite emits whole (`keyed_entry_site`)
+    /// A block's statements in order; a run of them a rewrite emits whole (`destination_site`)
     /// is taken together.
     fn stmts(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let held = self.rec_ptrs.len();
@@ -2866,13 +2884,6 @@ impl<'a> FnWriter<'a> {
                 continue;
             }
             if let Some(last) = self.destination_site(ops, i, ind)? {
-                i = last + 1;
-                continue;
-            }
-            if let Some(last) = self.keyed_entry_site(ops, i, ind)? {
-                ops[i..=last]
-                    .iter()
-                    .for_each(|o| self.refresh_grown_header(o, ind));
                 i = last + 1;
                 continue;
             }
@@ -2930,86 +2941,10 @@ impl<'a> FnWriter<'a> {
         crate::opt::writes::fused_push(data, name, args).map(|fp| (fp, next))
     }
 
-    /// Whether `vector` is EMPTY where statement list `ops` ends: its slot was zeroed —
-    /// `OpSetInt4(r, off, 0)` for the field `OpGetField(r, off, …)`, or for the wrapper field a
-    /// local is bound to — and no statement after that names the vector's root.  A run onto a
-    /// vector that may already hold elements (an append twin's buffer, an accumulating local)
-    /// usually has the room, and a reservation there is a call for nothing.
+    /// Whether `vector` is EMPTY where statement list `ops` ends (`opt::empty_slot::known_empty`,
+    /// the front's one answer).
     fn known_empty(&self, ops: &[Value], vector: &Value) -> bool {
-        let data = self.cx.data;
-        let field_of = |v: &Value| -> Option<(u16, i32)> {
-            match v.unspan() {
-                Value::Call(d, a)
-                    if (*d as usize) < data.definitions.len()
-                        && data.def(*d).name() == "OpGetField" =>
-                {
-                    match (a.first().map(Value::unspan), a.get(1).map(Value::unspan)) {
-                        (Some(Value::Var(r)), Some(Value::Int(off))) => Some((*r, *off)),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            }
-        };
-        // The slot: the field itself, or the wrapper field a local vector is bound to.
-        let (root, slot) = match vector.unspan() {
-            Value::Var(local) => {
-                let Some(bound) = ops.iter().find_map(|o| match o.unspan() {
-                    Value::Set(var, x) if var == local => field_of(x),
-                    _ => None,
-                }) else {
-                    return false;
-                };
-                (Some(*local), bound)
-            }
-            other => match field_of(other) {
-                Some(f) => (None, f),
-                None => return false,
-            },
-        };
-        let names =
-            |o: &Value, var: u16| o.any_node(&mut |n| matches!(n, Value::Var(x) if *x == var));
-        // A mention of the root that only reaches ANOTHER field — `OpGetField(r, off2, …)` or a
-        // write `OpSet…(r, off2, …)`, `off2` not the slot — leaves the slot as it was.
-        let elsewhere = |o: &Value| -> bool {
-            let (mut all, mut other) = (0usize, 0usize);
-            o.any_node(&mut |n| {
-                if matches!(n, Value::Var(x) if *x == slot.0) {
-                    all += 1;
-                }
-                if let Value::Call(d, a) = n
-                    && (*d as usize) < data.definitions.len()
-                    && (data.def(*d).name() == "OpGetField" || data.def(*d).name().starts_with("OpSet"))
-                    && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == slot.0)
-                    && matches!(a.get(1).map(Value::unspan), Some(Value::Int(off)) if *off != slot.1)
-                {
-                    other += 1;
-                }
-                false
-            });
-            all == other
-        };
-        for op in ops.iter().rev() {
-            if let Value::Call(d, a) = op.unspan()
-                && (*d as usize) < data.definitions.len()
-                && data.def(*d).name() == "OpSetInt4"
-                && matches!(
-                    (a.first().map(Value::unspan), a.get(1).map(Value::unspan), a.get(2).map(Value::unspan)),
-                    (Some(Value::Var(r)), Some(Value::Int(off)), Some(Value::Int(0))) if (*r, *off) == slot
-                )
-            {
-                return true;
-            }
-            if let Value::Set(var, _) = op.unspan()
-                && Some(*var) == root
-            {
-                continue;
-            }
-            if (names(op, slot.0) && !elsewhere(op)) || root.is_some_and(|l| names(op, l)) {
-                return false;
-            }
-        }
-        false
+        crate::opt::empty_slot::known_empty(self.cx.data, ops, vector)
     }
 
     /// `@FR-H-KeepRoom`'s prologue clause: statement `i` clears a vector buffer `x`
@@ -4426,7 +4361,7 @@ impl<'a> FnWriter<'a> {
         if let Some(r) = self.elem_first_stmt(v, ind) {
             return r;
         }
-        if !self.lr.is_empty() && self.loop_record_stmt(v, ind) {
+        if !self.lr.is_empty() && self.loop_record_stmt(v) {
             return Ok(());
         }
         if !self.room_minted.is_empty() && !self.room_keeps(v) {
@@ -4591,7 +4526,7 @@ impl<'a> FnWriter<'a> {
             crate::rewrite_census::fired("R-FnRefBuffer/frame", parked.len());
         }
         self.loop_stmt_inner(b, ind)?;
-        // `@FR-R-LoopRecord`: the records this loop keeps are freed once, after every copy of it.
+        // `@FR-R-FnRefBuffer`: the records this loop keeps are freed once, after every copy of it.
         for v in kept {
             let var = self.var(v);
             if parked.contains(&v) {
@@ -8881,24 +8816,6 @@ impl<'a> FnWriter<'a> {
         let size = self.cx.stores.enum_parent_size(tp);
         self.cx.describe_type(tp);
         let var = self.var(v);
-        // `@FR-R-LoopRecord`'s refill clause: a kept record mints only where it holds no store.
-        if self.lr_kept(v) && !self.lr.fnref_bufs.contains(&v) {
-            let fresh = format!("lrf{v}");
-            if !self
-                .decls
-                .iter()
-                .any(|d| d.starts_with(&format!("int {fresh} ")))
-            {
-                self.decls.push(format!("int {fresh} = 0;"));
-            }
-            crate::rewrite_census::fired("R-LoopRecord/refill", 1);
-            return Ok(E::new(
-                format!(
-                    "(({var}.store_nr == 0xFFFF) ? (loft_database_typed(&{var}, {size}, {tp}), {fresh} = 1) : ({fresh} = 0))"
-                ),
-                K::Void,
-            ));
-        }
         if self.cx.stores.is_vector_wrapper(tp) {
             // A place's old collection is released through the wrapper's descriptor; a
             // reused buffer keeps the room its vector reached (`@FR-H-KeepRoom`).
@@ -9072,8 +8989,9 @@ impl<'a> FnWriter<'a> {
                     ),
                     None => format!("loft_copy_record(loft_types, {tp}, {s}, {d}, {free})"),
                 };
-                // A copy into a field of an element being built: its null arm is the default.
-                if self.is_fresh_field_copy(args) {
+                // A copy into a field of an element being built, or into a fresh struct whose
+                // default is not zero bytes: its null arm is the default.
+                if self.fresh_default_tp(args).is_some() {
                     let (s, d) = (self.temp(CType::Ref), self.temp(CType::Ref));
                     let null_arm = self
                         .fresh_null_arm(args, &d)

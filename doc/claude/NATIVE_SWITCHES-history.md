@@ -70,3 +70,19 @@ resolution it removes costs more than the arithmetic it saves.
   ~15.6×), `join` −19 %, `replace` −18 %, `dot_product` −14 %; the largest loss, `char_roundtrip`
   +5 %, was function layout — both arms read the same once `-align-all-functions=6
   -align-loops=64` pins it.
+
+## `LOFT_NO_BASE_RECPTR` — the address it does not derive (moved 2026-11-03)
+
+An address derived from the element's `DbRef` instead of the index measured +46 % SLOWER, so
+the clause derives it from the index; the `DbRef` form is not what ships.
+
+## `LOFT_NO_VALUE_RECORD` — the first measurement (moved 2026-11-04)
+
+Returning a no-heap record's fields in registers measured 1.65× on the call, `smooth` −25 %
+standalone and `lock_curved` −3 %.
+
+## `LOFT_NO_LOOP_RECORD` — a native generation-time switch until 2026-11-04
+
+`(R-LoopRecord)` and its refill and nest clauses were rustc's (and the refill clause the C's
+port) until @PLN211 moved them into the IR; the three switches now turn the IR pass's rule off
+on every backend.  The nest clause measured `forms_upto` 761 → 638 µs on native.

@@ -750,6 +750,9 @@ fn c_hash_find(out: vector<integer>, store: integer, rec: integer, pos: integer,
 fn c_hash_entry(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, linked: boolean) -> integer;
 #c "loft_crt_hash_entry" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
+fn c_keyed_entry(out: vector<integer>, store: integer, rec: integer, pos: integer, elem: integer, tp: integer, n: integer) -> integer;
+#c "loft_crt_keyed_entry" "int64_t(int64_t*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
 fn c_hash_insert(store: integer, rec: integer, pos: integer, r_store: integer, r_rec: integer, r_pos: integer, elem: integer, tp: integer);
 #c "loft_crt_hash_insert" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 
@@ -788,6 +791,13 @@ pub fn hash_find(out: vector<integer>, store: integer, rec: integer, pos: intege
 // `OpNewRecord` in a hash: a new entry of `size` bytes, into `out[0..3]`.
 pub fn hash_entry(out: vector<integer>, store: integer, rec: integer, pos: integer, size: integer, linked: boolean) {
   c_hash_entry(out, store, rec, pos, size, linked);
+}
+
+// `@FR-R-KeyedEntry` in a hash of type `tp` whose elements are type `elem`: the entry under the
+// top `n` key parts, found or filed with its key written, into `out[0..3]`.  The type table must
+// be loaded.
+pub fn keyed_entry(out: vector<integer>, store: integer, rec: integer, pos: integer, elem: integer, tp: integer, n: integer) {
+  c_keyed_entry(out, store, rec, pos, elem, tp, n);
 }
 
 // `OpFinishRecord` in a hash of type `tp` whose elements are type `elem`.

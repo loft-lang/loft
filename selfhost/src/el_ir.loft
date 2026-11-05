@@ -143,3 +143,39 @@ pub fn unspan(n: ir::Node) -> ir::Node {
     _ => n
   }
 }
+
+// `replace_var_in_ir`: every read of variable `v` in `n` becomes `by`; an assignment's target
+// stays.
+pub fn replace_var(n: ir::Node, v: integer, by: ir::Node) -> ir::Node {
+  match n {
+    NdVar { n: x } => if x == v { by } else { n },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: replace_var(inner, v, by) },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: replace_list(args, v, by) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: replace_list(args, v, by) },
+    NdInsert { items } => ir::NdInsert { items: replace_list(items, v, by) },
+    NdTuple { items } => ir::NdTuple { items: replace_list(items, v, by) },
+    NdParallel { arms } => ir::NdParallel { arms: replace_list(arms, v, by) },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = replace_list(b.operators, v, by);
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = replace_list(b.operators, v, by);
+      ir::NdLoop { block: [b] }
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: replace_var(cond, v, by), t: replace_var(t, v, by), f: replace_var(f, v, by) },
+    NdReturn { inner } => ir::NdReturn { inner: replace_var(inner, v, by) },
+    NdDrop { inner } => ir::NdDrop { inner: replace_var(inner, v, by) },
+    NdYield { inner } => ir::NdYield { inner: replace_var(inner, v, by) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_var(inner, v, by) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: replace_var(inner, v, by) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: replace_var(create, v, by), next: replace_var(next, v, by), init: replace_var(init, v, by) },
+    _ => n
+  }
+}
+
+fn replace_list(l: vector<ir::Node>, v: integer, by: ir::Node) -> vector<ir::Node> {
+  [for x in l { replace_var(x, v, by) }]
+}

@@ -17,6 +17,40 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### `(R-LoopRecord)` runs in the IR (@PLN211 arc C)
+
+- A record local built by a literal inside a loop keeps its store across the passes on every
+  backend (`src/opt/loop_record.rs`): declared before the outermost loop, minted on the first
+  pass only (a record with vector fields empties them in place on a later pass), freed once
+  after the loop.  The interpreter runs 47.3 % fewer instructions on such a loop, and the C now
+  keeps a plain record too.  `LOFT_NO_LOOP_RECORD` still turns it off, now on every backend.
+
+### `(R-LoopBuffer)` runs in the IR (@PLN211 arc C)
+
+- A vector local declared `[]` inside a loop keeps its store across the passes on every backend
+  (`src/opt/loop_buffer.rs`): the first pass mints, every later pass clears the vector.  The
+  interpreter runs 16.5 % fewer instructions on such a loop and the C gains the rule (drawing's
+  C ship median 1.61× → 1.55× of Rust).  `LOFT_NO_LOOP_BUFFER_REUSE` still turns it off.
+- The IR passes of @PLN211 now reach a library function whose compiled artifact is built (one
+  with a native name): a native build still emits its loft body.
+
+### `(R-ElemFirst)`'s literal-built temp runs in the IR (@PLN211 arc C)
+
+- `t = []; …t += …; out += [R { f: t, … }]` builds `t` inside the appended element on every
+  backend (`src/opt/elem_first.rs`); the interpreter runs 28.7 % fewer instructions on such a
+  loop.  A temp a call fills and an append in each arm of an `if` take the same build; the
+  comprehension row and a function returning the temp in a record are still applied by the
+  writers.  `LOFT_NO_IR_ELEM_FIRST` switches the IR clause off alone.
+
+### `(R-KeyedEntry)` runs in the IR (@PLN211 arc C)
+
+- `h += [T{k: key, …}]` over a hash the rule admits is its values staged, ONE probe for the
+  entry under the key (`keyed_entry_ints` / `keyed_entry_text`, new private stdlib
+  declarations), and the other fields written into it — on every backend; the interpreter runs
+  86.7 % fewer instructions on an overwriting insert.  The writers' insert clauses are gone;
+  `LOFT_NO_KEYED_ENTRY` still turns the rule off, `LOFT_TRACE_KEYED_ENTRY=1` names each
+  function rewritten.
+
 ### `(R-PushFill)`'s fill form runs in the IR (@PLN211 arc C)
 
 - `for _ in a..b { v += [c] }` with `c` a simple invariant and `v` a vector variable is one

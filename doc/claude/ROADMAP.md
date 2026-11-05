@@ -30,6 +30,22 @@ looked like before, and the narratives of past cycles, are in
 for desktop enthusiasts; server/multiplayer comes after the single-player browser experience
 works.
 
+## The order of the large arcs
+
+The project's stages are taken in an order, each standing on ground the one before settled (the
+owner's sequence): **the rustc backend in good shape before the C backend; the language stable
+before loft-in-loft** ([@PLN91](https://github.com/loft-lang/plans/issues/91)).  Each stage
+hands the next a settled thing rather than one to finish: the speed corpus @PLN157 and @PLN210
+built on the writers is harmonised into the front by [@PLN211](https://github.com/loft-lang/plans/issues/211)
+— every optimisation decided once, in the IR phase — so the C backend inherits it instead of
+re-implementing it, and the loft-written compiler ports it once instead of once per writer.  A
+plan that would carry unsettled work across a stage boundary — a rule built in one writer
+only, a language shape still in flux under the self-hosted parser — is reordered or finished
+first.  The self-hosted compiler is also the deepest check on what crosses: a second
+implementation compared byte for byte with the Rust one at every level (@PLN91 § The path), so
+whatever is decided at the front is verified twice, and the intrinsic problems a single
+implementation hides surface as disagreements.
+
 ## Re-measuring this page
 
 The plan list below is a copy of the tracker's open plans, so it is only as current as its
@@ -121,6 +137,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 |---|---|---|
 | [@PLN210](https://github.com/loft-lang/plans/issues/210) | active | The worst C ship routines to 2× their Rust twin — each hand-priced form kept as the target, then the mechanisms in yield order ([plan](plans/210-c-worst-to-2x/README.md)) |
 | [@PLN211](https://github.com/loft-lang/plans/issues/211) | next | Every rewrite rule at its proper phase — the applied-by register derived from the census and gated, then each rule that removes work moved from a writer into the IR phase so the interpreter stops doing it too ([plan](plans/211-rule-phases/README.md)) |
+| [@PLN212](https://github.com/loft-lang/plans/issues/212) | active | The C backend caps the functions it emits in semantics builds, so `cl`'s optimiser time stays bounded and the MSVC sweep stops losing one program a night; `--ship` emits exactly what it does today |
 | [@PLN185](https://github.com/loft-lang/plans/issues/185) | next | A slow routine is an ordinary bug — the measurement, the 3× bar and the classes before issue-driven performance work |
 | [@PLN158](https://github.com/loft-lang/plans/issues/158) | future | Release performance pass — every routine against an industry reference twin ([PERF_PORTAL.md](PERF_PORTAL.md)) |
 | [@PLN179](https://github.com/loft-lang/plans/issues/179) | future | Scripts in loft — the repo's Python/bash tooling ported, each port proven against its original |

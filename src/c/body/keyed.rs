@@ -264,6 +264,37 @@ impl FnWriter<'_> {
                     K::Ref,
                 )))
             }
+            // `@FR-R-KeyedEntry` — the IR's find-or-insert (`opt::keyed_entry`): the entry under
+            // the key in the hash `data`'s field names, found or filed.
+            ("n_keyed_entry_ints" | "n_keyed_entry_text", [data, ptp, fld, keys @ ..]) => {
+                let (v, elem, kind) = self.record_collection(data, ptp, fld, ind)?;
+                let Coll::Keyed(tp) = kind else {
+                    return Err("a keyed entry outside a hash".into());
+                };
+                self.cx.copy_type(elem)?;
+                let ct = self.temp(CType::Ref);
+                self.line(ind, &format!("{ct} = {v};"));
+                let (kd, nk) = self.cx.keys_of(tp);
+                let text = name == "n_keyed_entry_text";
+                let parts = nk.clamp(1, keys.len());
+                let mut codes = Vec::with_capacity(parts);
+                for k in &keys[..parts] {
+                    let e = self.expr(k, ind)?;
+                    codes.push(if text { as_view(e)? } else { as_int(e)? });
+                }
+                let code = if text {
+                    format!(
+                        "loft_keyed_entry_text(loft_types, {elem}, {ct}, {kd}, {nk}, {})",
+                        codes[0]
+                    )
+                } else {
+                    format!(
+                        "loft_keyed_entry_ints(loft_types, {elem}, {ct}, {kd}, {nk}, (int64_t[]){{ {} }})",
+                        codes.join(", ")
+                    )
+                };
+                Ok(Some(E::new(code, K::Ref)))
+            }
             ("n_hash_unsorted", [h, _]) => {
                 let h = self.expr(h, ind)?;
                 Ok(Some(E::new(
@@ -1293,44 +1324,12 @@ impl FnWriter<'_> {
             return Ok(None);
         }
         self.cx.copy_type(elem)?;
-        // `@FR-R-KeyedEntry`'s subscript clause (native's `output_keyed_entry_subscript`): the
-        // entry under the key overwritten in place of removed and claimed again, its key parts
-        // the subscript's, so the literal's key-field writes are staged and dropped.
-        let entry_keys = if kind == Keyed::Hash {
-            crate::lower::keyed_entry::subscript_keys(self.cx.stores, site.tp, &site.setters(data))
-                .filter(|k| k.len() == site.keys.len())
-        } else {
-            None
-        };
-        let writes = self.stage_literal_writes(&site, entry_keys.as_deref(), ind)?;
+        let writes = self.stage_literal_writes(&site, ind)?;
         self.flush(ind);
         let container = self.expr(site.coll, ind)?;
         let ct = self.temp(CType::Ref);
         self.line(ind, &format!("{ct} = {};", as_ref(container)?));
         let (keys, nk) = self.cx.keys_of(site.tp);
-        if entry_keys.is_some() {
-            let mut parts = Vec::new();
-            for k in site.keys {
-                let e = self.expr(k, ind)?;
-                parts.push(as_int(e)?);
-            }
-            let e = self.temp(CType::Ref);
-            self.line(
-                ind,
-                &format!(
-                    "{e} = loft_keyed_entry_ints(loft_types, {elem}, {ct}, {keys}, {nk}, (int64_t[]){{ {} }});",
-                    parts.join(", ")
-                ),
-            );
-            self.raw.insert(e.clone(), K::Ref);
-            for (name, mut staged) in writes {
-                staged[0] = Value::RawExpr(e.clone());
-                let w = self.operator(&name, &staged, ind)?;
-                self.line(ind, &format!("{};", w.code));
-            }
-            crate::rewrite_census::fired("R-KeyedEntry/subscript", 1);
-            return Ok(Some(E::new("((void) 0)", K::Void)));
-        }
         let mut values = Vec::new();
         for (k, t) in site.keys.iter().zip(&types) {
             let e = self.expr(k, ind)?;
@@ -1370,11 +1369,10 @@ impl FnWriter<'_> {
 
     /// The staged part of a keyed literal written in place (`keyed_in_place`): each field
     /// write's operands, in program order, into temporaries — a statement computing one runs
-    /// where it stood — and the writes of the subscript's own key fields dropped.
+    /// where it stood.
     fn stage_literal_writes(
         &mut self,
         site: &crate::lower::keyed_place::Site<'_>,
-        entry_keys: Option<&[u16]>,
         ind: usize,
     ) -> Result<Vec<(String, Vec<Value>)>, String> {
         let data = self.cx.data;
@@ -1405,136 +1403,12 @@ impl FnWriter<'_> {
                         self.raw.insert(temp.clone(), super::kind_of(shape));
                         staged.push(Value::RawExpr(temp));
                     }
-                    let key_write = entry_keys.is_some_and(|keys| {
-                        matches!(operands.get(1).map(Value::unspan), Some(Value::Int(o))
-                            if u16::try_from(*o).is_ok_and(|o| keys.contains(&o)))
-                    });
-                    if !key_write {
-                        writes.push((data.def(*op_nr).name().to_string(), staged));
-                    }
+                    writes.push((data.def(*op_nr).name().to_string(), staged));
                 }
                 _ => self.stmt(op, ind)?,
             }
         }
         Ok(writes)
-    }
-
-    /// `@FR-R-KeyedEntry` (native's `Output::output_keyed_entry`): `c += [T{…}]` over a hash the
-    /// rule admits (`lower::keyed_entry::site`) — the literal's values staged in program order,
-    /// then ONE probe for its key that answers the entry already under it or a fresh one with
-    /// the key written and filed (`loft_keyed_entry_ints` / `_text`), then the other fields
-    /// written into it.  The index of the site's last statement, or `None` where `ops[at]`
-    /// opens no admitted site.  `LOFT_NO_KEYED_ENTRY=1` keeps the claim, writes and file.
-    #[expect(clippy::too_many_lines)]
-    pub(super) fn keyed_entry_site(
-        &mut self,
-        ops: &[Value],
-        at: usize,
-        ind: usize,
-    ) -> Result<Option<usize>, String> {
-        if !crate::lower::keyed_entry::enabled() || self.gen_elem.is_some() {
-            return Ok(None);
-        }
-        let data = self.cx.data;
-        let Some(ke) = crate::lower::keyed_entry::site(ops, at, data, self.cx.stores, self.d)
-        else {
-            return Ok(None);
-        };
-        let Value::Set(_, mint) = ops[at].unspan() else {
-            return Ok(None);
-        };
-        let Value::Call(_, margs) = mint.unspan() else {
-            return Ok(None);
-        };
-        let [coll, ptp, fld] = &margs[..] else {
-            return Ok(None);
-        };
-        let mut parts: Vec<Option<Value>> = vec![None; ke.keys.len()];
-        let mut writes: Vec<(String, Vec<Value>)> = Vec::new();
-        for (wi, op) in ke.writes.iter().enumerate() {
-            let Value::Call(d, args) = op.unspan() else {
-                continue;
-            };
-            let part = args
-                .get(2)
-                .and_then(|a| ke.keys.iter().position(|k| std::ptr::eq(a, *k)));
-            let later = ke.writes[wi + 1..].iter().any(|w| self.may_write(w));
-            let mut staged = vec![Value::Null];
-            for x in &args[1..] {
-                if crate::lower::keyed_place::constant(x) {
-                    staged.push(x.clone());
-                    continue;
-                }
-                // A text variable nothing staged after it can change is read where it is.
-                if ke.text_key && part.is_some() && matches!(x.unspan(), Value::Var(_)) && !later {
-                    staged.push(x.clone());
-                    continue;
-                }
-                let e = self.expr(x, ind)?;
-                if e.kind == K::View {
-                    // Held for the function: its buffer is reused by the next run.
-                    let t = self.temp(CType::Text);
-                    self.line(ind, &format!("loft_text_set(&{t}, {});", e.code));
-                    let view = format!("loft_view(&{t})");
-                    self.raw.insert(view.clone(), K::View);
-                    staged.push(Value::RawExpr(view));
-                    continue;
-                }
-                let Some(c) = super::shape_of_kind(e.kind) else {
-                    return Err("a keyed literal's field value of no stageable shape".into());
-                };
-                let t = self.temp(c);
-                self.line(ind, &format!("{t} = {};", super::as_shape(e, c)?));
-                self.raw.insert(t.clone(), super::kind_of(c));
-                staged.push(Value::RawExpr(t));
-            }
-            match part {
-                Some(p) => parts[p] = staged.get(2).cloned(),
-                None => writes.push((data.def(*d).name().to_string(), staged)),
-            }
-        }
-        self.flush(ind);
-        let (v, elem, kind) = self.record_collection(coll, ptp, fld, ind)?;
-        let Coll::Keyed(tp) = kind else {
-            return Err("a keyed entry outside a hash".into());
-        };
-        self.cx.copy_type(elem)?;
-        let ct = self.temp(CType::Ref);
-        self.line(ind, &format!("{ct} = {v};"));
-        let (keys, nk) = self.cx.keys_of(tp);
-        let mut codes = Vec::with_capacity(parts.len());
-        for p in &parts {
-            let p = p.as_ref().ok_or("a keyed entry without its key")?;
-            let e = self.expr(p, ind)?;
-            codes.push(if ke.text_key { as_view(e)? } else { as_int(e)? });
-        }
-        let e = self.temp(CType::Ref);
-        if ke.text_key {
-            self.line(
-                ind,
-                &format!(
-                    "{e} = loft_keyed_entry_text(loft_types, {elem}, {ct}, {keys}, {nk}, {});",
-                    codes[0]
-                ),
-            );
-        } else {
-            self.line(
-                ind,
-                &format!(
-                    "{e} = loft_keyed_entry_ints(loft_types, {elem}, {ct}, {keys}, {nk}, (int64_t[]){{ {} }});",
-                    codes.join(", ")
-                ),
-            );
-        }
-        self.raw.insert(e.clone(), K::Ref);
-        for (name, mut staged) in writes {
-            staged[0] = Value::RawExpr(e.clone());
-            let w = self.operator(&name, &staged, ind)?;
-            self.line(ind, &format!("{};", w.code));
-        }
-        self.flush(ind);
-        crate::rewrite_census::fired("R-KeyedEntry", 1);
-        Ok(Some(ke.last))
     }
 
     /// `OpGetRecord(data, tp, n, keys…)`: the element under the key, or null.

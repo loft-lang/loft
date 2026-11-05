@@ -518,12 +518,19 @@ impl Scopes<'_> {
                 let resolved = *self.var_mapping.get(v).unwrap_or(v);
                 // For borrowed types (non-empty dep), only pre-init if every dep is already
                 // in var_scope — otherwise the OpCreateStack emitted at pre-init time would
-                // reference an uninitialised slot.
+                // reference an uninitialised slot.  A dep collected EARLIER in this walk is
+                // ready too: `scan_if` writes the null-inits in collection order, so the dep's
+                // sentinel precedes this one.  Refused here, the local was pre-inited by the
+                // next `if` down — inside this one's arm when that arm opens no block of its
+                // own (a `match`'s `else if` chain), so registered at THIS scope, whose end
+                // frees it on the paths through the other arms that never reached its init —
+                // a free of whatever the slot held (often another local's record, the slots
+                // being shared), where `@FR-H-FreeNull` frees nothing (loft#2417).
                 let deps_ready = function
                     .tp(resolved)
                     .depend()
                     .iter()
-                    .all(|d| self.var_scope.contains_key(d));
+                    .all(|d| self.var_scope.contains_key(d) || result.contains(d));
                 if !self.var_scope.contains_key(&resolved)
                     && needs_pre_init(function.tp(resolved))
                     && deps_ready

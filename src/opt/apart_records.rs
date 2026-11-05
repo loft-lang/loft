@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator
+// @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 //! `@FR-R-Apart`, instance 4 — a record of RECORD VECTORS built in a frame and handed to the
 //! functions that copy it into a collection, held as one byte buffer per field
 //! (`codegen_runtime::AprVec`) in the element's own layout.  The store meets it once, at the
@@ -70,6 +70,22 @@ impl RecLayout {
     }
 }
 
+/// `LOFT_NO_APART=1` — every `@FR-R-Apart` instance off, the record and vector ones with it:
+/// the one switch both this plan and `lower::apart_value`'s read.
+#[must_use]
+pub fn apart_disabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("LOFT_NO_APART").is_ok_and(|v| v != "0"))
+}
+
+/// A name part for an apart type's Rust or C identifier: every non-alphanumeric a `_`.
+#[must_use]
+pub fn ident_part(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
 /// The program's plan.
 #[derive(Clone, Debug, Default)]
 pub struct RecPlan {
@@ -112,8 +128,7 @@ impl RecRoles {
 pub fn disabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *F.get_or_init(|| {
-        super::apart_value::apart_disabled()
-            || std::env::var("LOFT_NO_APART_RECORDS").is_ok_and(|v| v != "0")
+        apart_disabled() || std::env::var("LOFT_NO_APART_RECORDS").is_ok_and(|v| v != "0")
     })
 }
 
@@ -203,10 +218,8 @@ fn candidate_types(data: &Data, stores: &Stores) -> HashMap<u32, RecLayout> {
                     // program around a library does not change, where its number does.
                     rust: format!(
                         "Apr_{}_{}",
-                        super::apart_value::ident_part(
-                            &data.source_label(data.def(d as u32).source)
-                        ),
-                        super::apart_value::ident_part(data.def(d as u32).name())
+                        ident_part(&data.source_label(data.def(d as u32).source)),
+                        ident_part(data.def(d as u32).name())
                     ),
                     rec_tp: kt,
                     fields: rec_fields,

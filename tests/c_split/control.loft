@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `(R-CSplit)`: shapes a split never cuts — a loop body, an `if`, a `match`, a block value,
+// a `return`, a generator — answer as they do whole.
+enum Op { Add { a: integer }, Mul { m: integer }, Skip }
+
+fn looped(n: integer) -> integer {
+  s = 0;
+  for i in 0..n {
+    t = "{i}{i}";
+    s += len(t) + i;
+    if i % 2 == 0 {
+      s += 1;
+    }
+  }
+  s
+}
+
+fn chosen(ops: vector<Op>) -> integer {
+  r = 1;
+  for o in ops {
+    r = match o {
+      Add { a } => r + a,
+      Mul { m } => r * m,
+      Skip => r,
+    };
+  }
+  w = {
+    x = r * 2;
+    x + 1
+  };
+  if w > 1000 {
+    return -1;
+  }
+  w
+}
+
+fn evens(n: integer) -> iterator<integer> {
+  for i in 0..n {
+    if i % 2 == 0 {
+      yield i * 10;
+    }
+  }
+}
+
+fn main() {
+  assert(looped(4) == 16, "looped {looped(4)}");
+  assert(chosen([Add { a: 2 }, Mul { m: 5 }, Skip]) == 31, "chosen");
+  assert(chosen([Mul { m: 600 }]) == -1, "early return");
+  g = 0;
+  for e in evens(7) {
+    g += e;
+  }
+  assert(g == 120, "generator {g}");
+  println("control ok");
+}

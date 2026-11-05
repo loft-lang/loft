@@ -4508,11 +4508,22 @@ impl Parser {
                 // Pass 1 converts nothing, so it asks the same TYPE question `convert` will.
                 let checked_narrow_in_pass_2 =
                     self.first_pass && Self::takes_checked_narrow(&dtype, &typedef);
+                // A struct enum's unit variant (`t: N = Void`) is a plain `Enum` constant on
+                // pass 1 and a record built into this frame's work-ref on pass 2
+                // (`EnumUnitLit`), which a call site cannot replay.  Pass 2 then hoisted a
+                // function pass 1 never minted: the lookup missed after the source was
+                // rewound, and the default's own tokens were left unread (loft#2410).
+                let unit_record_in_pass_2 = self.first_pass
+                    && matches!(t.unspan(), Value::Enum(..))
+                    && [&dtype, &typedef]
+                        .iter()
+                        .any(|tp| matches!(tp.base(), Type::Enum(_, true, _)));
                 if !matches!(typedef, Type::RefVar(_))
                     && (named_a_forward_reference
                         || typed_against_a_forward_declaration
                         || hoisted_in_pass_1
                         || checked_narrow_in_pass_2
+                        || unit_record_in_pass_2
                         || !default_replayable_in_place(&t, site))
                 {
                     // Pass 1's signature is the one the function HAS, so pass 2 re-parses

@@ -106,11 +106,26 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // variable is one fill of its tail, on both backends.
     crate::opt::fill_loop::rewrite_program(data, database);
     laps.lap("fill_loop");
+    crate::opt::keyed_entry::rewrite_program(data, database);
+    laps.lap("keyed_entry");
+    // `@FR-R-ElemFirst` — a literal-built vector appended once as a record field is built in
+    // the appended element, on both backends.
+    crate::opt::elem_first::rewrite_program(data, database);
+    laps.lap("elem_first");
     // `@FR-R-TextLen` — a loop counts a text's length once, until the text is written: the
     // last IR pass, so the self-tail calls are loops and no later pass reads a memo where it
     // knew `len`.
     crate::text_len::rewrite_program(data);
     laps.lap("text_len");
+    // `@FR-R-LoopBuffer` — a vector local declared `[]` inside a loop keeps its store and its
+    // vector across the passes, on both backends.  LAST: it leaves every buffer another rewrite
+    // owns, asking those rewrites of the IR the writers will see.
+    crate::opt::loop_buffer::rewrite_program(data, database);
+    laps.lap("loop_buffer");
+    // `@FR-R-LoopRecord` — a record local minted by a literal inside a loop keeps its store
+    // across the passes, on both backends (after the loop buffers: a different variable kind).
+    crate::opt::loop_record::rewrite_program(data, database);
+    laps.lap("loop_record");
     laps.report("close_program", data.definitions());
 }
 

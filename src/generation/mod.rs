@@ -34,8 +34,8 @@ pub use crate::lower::hand_over;
 pub mod fault_flag;
 pub use crate::opt::hoist;
 pub mod kept;
-pub use crate::lower::keyed_entry;
 pub use crate::lower::keyed_place;
+pub use crate::opt::keyed_entry;
 pub use crate::opt::non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;
@@ -676,7 +676,7 @@ pub struct Output<'a> {
     /// `(R-Mint)`'s rebound clause — the current function's emitter-owned buffer vars: the
     /// § V-al loop buffers and the § V-z element-first witnesses, whose `OpDatabase` the
     /// loop-hoist admission lets through and whose projection a rebound mover may be bound
-    /// from.  Rebuilt per function beside [`Self::loop_buffers`].
+    /// from.  Rebuilt per function.
     pub hoist_owned: hoist::HoistOwned,
     /// `@FR-R-GroupPush` — the open mint GROUPS: `(block serial, index of the group's last
     /// statement)`, innermost last; the header frame each pushed on
@@ -808,14 +808,6 @@ pub struct Output<'a> {
     /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
     /// appended element instead of its own store.
     pub elem_first: hoist::ElemFirstMap,
-    /// @PLN157 § V-al — the current function's LOOP BUFFERS (`hoist::loop_buffers`): a
-    /// per-site vector buffer minted inside a loop whose mint after the first is a length
-    /// reset, and whose literal field zero is not emitted.
-    pub loop_buffers: HashSet<u16>,
-    /// `@FR-R-LoopRecord` — the current function's LOOP RECORDS (`hoist::loop_records`): a
-    /// plain no-heap record local declared and minted inside a loop, keyed by variable, with
-    /// the loop that owns its reuse and the block that declares it.
-    pub loop_records: HashMap<u16, hoist::LoopRecord>,
     /// `@FR-R-RefillBuffer`'s in-place clause (`LOFT_NO_REFILL_IN_PLACE` turns it off).
     pub refill_in_place: bool,
     /// `LOFT_NO_INLINE_HINT` (generation time): loft functions carry no `#[inline]`
@@ -1928,8 +1920,6 @@ impl<'a> Output<'a> {
             dead_buffers: HashSet::new(),
             forward_sites: HashMap::new(),
             elem_first: hoist::ElemFirstMap::default(),
-            loop_buffers: HashSet::new(),
-            loop_records: HashMap::new(),
             refill_in_place: crate::keys::refill_in_place_enabled(),
             rebind_buffer: None,
             rebind_buffer_used: false,
@@ -2329,6 +2319,10 @@ impl Output<'_> {
                     .filter(|v| *v != u16::MAX);
             }
         }
+        // `@FR-R-ElemFirst` is decided and applied in the IR (`opt::elem_first`); what this map
+        // still finds is the ONE form the IR declines — a temp its function also returns inside
+        // its record, paired only through the view plan (`formal/rewrites.md` D-phase-4, which
+        // waits on `(R-ValueRecord)`'s view clause moving into the IR, D-phase-5).
         self.elem_first = if self.switches.element_first_disabled {
             hoist::ElemFirstMap::default()
         } else {
@@ -2508,48 +2502,30 @@ impl Output<'_> {
         } else {
             hoist::ret_adopt(self.data, def_nr)
         };
-        // @PLN157 § V-al (`@FR-R-LoopBuffer`) — the loop buffers, after every rewrite
-        // that owns a buffer's mint has claimed its own: an invariant literal (§ V-x), an
-        // element-first pair (§ V-z), a move host (§ V-j) and the adopted result's witness
-        // (§ V-u) are left to those.
-        self.loop_records.clear();
-        if !self.switches.loop_record_disabled {
-            let lr = hoist::loop_records(self.data, self.stores, def_nr);
-            self.loop_records = lr.recs;
-            // `@FR-R-Apart` instance 4 — an apart record is no store record to keep.
-            if let Some(ctx) = &self.apart_ctx {
-                self.loop_records.retain(|v, _| !ctx.recs.holds(*v));
-            }
-            // The refill clause's vector-field zeros are `@FR-R-RefillBuffer`'s empties.
-            self.refill.field_zeros.extend(lr.field_zeros);
-        }
-        self.loop_buffers.clear();
-        if !self.switches.loop_buffer_disabled {
-            let mut lb = hoist::loop_buffers(self.data, self.stores, def_nr);
-            lb.retain(|v| {
-                !self.invariant_lits.flat.contains_key(v)
-                    && !self.elem_first.by_vdb.contains_key(v)
-                    && !self.move_pairs.values().any(|p| p.host_vdb == *v)
-                    && self.ret_adopt.is_none_or(|a| a.vdb != *v)
-            });
-            self.loop_buffers = lb;
-        }
         // `(R-Mint)`'s rebound clause — the buffer vars whose mint the hoist admission lets
         // through: what the emitter itself owns the mint of.
         self.hoist_owned = hoist::HoistOwned {
             buffers: self
-                .loop_buffers
-                .iter()
+                .elem_first
+                .by_vdb
+                .keys()
                 .copied()
-                .chain(self.elem_first.by_vdb.keys().copied())
+                .chain(crate::opt::loop_buffer::kept(
+                    self.data,
+                    self.data.def(def_nr).code(),
+                ))
                 .collect(),
             elem_fields: self
                 .elem_first
                 .pairs
                 .iter()
                 .flat_map(|p| p.binds.iter().map(move |b| (p.elm, i64::from(b.field_off))))
+                .chain(crate::opt::elem_first::kept_fields(
+                    self.data,
+                    self.data.def(def_nr).code(),
+                ))
                 .collect(),
-            records: self.loop_records.keys().copied().collect(),
+            records: HashSet::new(),
             value_locals: self.value_record_locals.keys().copied().collect(),
             dead_buffers: self.dead_buffers.clone(),
             dead_by_fn: std::rc::Rc::clone(&self.plan.dead_by_fn),
@@ -2603,10 +2579,6 @@ impl Output<'_> {
         fired("R-SliceBorrow", self.slice_borrow_count);
         fired("R-CharWalk", self.char_walks.len());
         fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
-        let refill = self.loop_records.values().filter(|r| r.refill).count();
-        fired("R-LoopRecord", self.loop_records.len() - refill);
-        fired("R-LoopRecord/refill", refill);
-        fired("R-LoopBuffer", self.loop_buffers.len());
     }
 
     /// loft#885 — open a loop with the headers of the vectors it only reads, and
@@ -3990,8 +3962,8 @@ impl Output<'_> {
     /// buffer's (`StoreFacts::distinct` cannot prove that statically: a caller may hand a
     /// field of the record it passes), answer the pairs to test at run time.  The loop is
     /// then emitted twice: under the test with those pairs assumed, and as before.  `None`
-    /// for a loop that gains nothing, cannot be copied (a `yield`, a `par`, a fn-ref call),
-    /// declares a loop record the copies would have to share, or sits in a generator.
+    /// for a loop that gains nothing, cannot be copied (a `yield`, a `par`, a fn-ref call), or
+    /// sits in a generator.
     /// Answers the pairs the run-time test compares and the pairs the copy may assume apart:
     /// the same, except that an adopted result local's `__vdb` witness is assumed and never
     /// tested (the adoption leaves it unallocated).
@@ -4005,7 +3977,6 @@ impl Output<'_> {
             || self.switches.distinct_growth_disabled
             || self.in_coroutine_body
             || !self.assumed_distinct.is_empty()
-            || self.loop_records.values().any(|r| r.loop_scope == lp.scope)
             || lp.operators.iter().any(|op| {
                 op.any_node(&mut |n| {
                     matches!(
@@ -6942,7 +6913,7 @@ impl Output<'_> {
                 let name = callee.name();
                 let loft_bodied = matches!(callee.code(), Value::Block(_));
                 let free = name.starts_with("n_") || callee.is_free_overload();
-                if is_store_bracket(name) {
+                if is_store_bracket(name) || crate::opt::frame_calls::is_store_entry(name) {
                     return false;
                 }
                 if free && !loft_bodied {
@@ -11716,11 +11687,19 @@ extern crate loft;"
             Self::collect_if_test_sets(def.code(), &mut if_test_sets);
             let mut nested_null_inits: Vec<u16> = Vec::new();
             Self::collect_nested_null_inits(def.code(), &mut nested_null_inits);
-            // A record `@FR-R-LoopRecord` keeps across a loop's passes is declared by that
-            // rewrite, before its loop.
+            // A record `@FR-R-LoopRecord` keeps across a loop's passes is declared null before
+            // its loop by `opt::loop_record`, in the IR: an ordinary null-init here.
+            // A nested null-init's local is bound up front, but its `Set(v, Null)` in the body is
+            // still its FIRST bind: marked `predeclared` too, so that bind emits the fresh
+            // `null_named` + `OpDatabase` at its own position (#260's `__vdb` route).  Left
+            // only `declared`, the bind took the reassignment arm, `OpDatabase(cell, var_v, …)`,
+            // which re-used whatever store the local still named — in a loop, the one its
+            // block freed on the pass before (a `f#read` buffer read after free).
+            let mut fresh_first_binds: Vec<u16> = Vec::new();
             for v in nested_null_inits {
-                if !self.loop_records.contains_key(&v) && !if_test_sets.contains(&v) {
+                if !if_test_sets.contains(&v) {
                     if_test_sets.push(v);
+                    fresh_first_binds.push(v);
                 }
             }
             for &v in &if_test_sets {
@@ -11737,6 +11716,9 @@ extern crate loft;"
                         sanitize(vars.name(v))
                     );
                     self.declared.insert(v);
+                    if fresh_first_binds.contains(&v) {
+                        self.predeclared.insert(v);
+                    }
                 }
             }
             for v in 0..vars.count() {

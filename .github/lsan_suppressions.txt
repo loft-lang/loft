@@ -144,3 +144,11 @@ leak:_dispatch_mach_msg_async_reply_wrap
 # `dispatch_async`s one 64-byte block from Apple's own `atExitHandler`, after which nothing
 # runs to free it.  Allocated during exit by the OS, not by loft (the 15th allocation above).
 leak:sendExitBarrierWithTimeoutSync
+# macOS Security.framework keychain teardown: a CSSM module detached at exit
+# (`CSSM_ModuleDetach`, reached from `CssmClient::AttachmentImpl` destructors) allocates its
+# analytics autorelease page, an `NSThread` and session state, and a keychain released on a
+# libdispatch worker (`KeychainImpl::aboutToDestruct`) canonicalises its path through a CF
+# string.  Seven objects, no loft or Rust frame on any stack; Apple's process-lifetime state.
+# First seen on G-Mono's 2270 cell (nightly run 41823604401); a macOS-only no-op on Linux.
+leak:CSSM_ModuleDetach
+leak:KeychainImpl::aboutToDestruct

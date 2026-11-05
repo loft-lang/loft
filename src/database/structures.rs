@@ -491,7 +491,7 @@ impl Stores {
     /// `@FR-R-KeyedEntry` — the record `c += [T{k: key, …}]` writes its other fields into, with
     /// the key already written and the record already filed: the entry under `key` when there
     /// is one, else a fresh one.  The emitter calls it in place of `record_new` … `record_finish`
-    /// for an element type that owns no heap (`generation::keyed_entry`), so on a repeated key
+    /// for an element type that owns no heap (`opt::keyed_entry`), so on a repeated key
     /// the overwrite IS the replace (`@FR-Col-Insert`: latest insert wins) and nothing is
     /// claimed or released.
     ///
@@ -503,7 +503,7 @@ impl Stores {
     ///
     /// # Panics
     /// When `parent_tp` / `field` name no keyed collection with a key — the admission
-    /// (`generation::keyed_entry`) only emits this for an integer-keyed hash.
+    /// (`opt::keyed_entry`) only emits this for an integer-keyed hash.
     pub fn keyed_entry_long(
         &mut self,
         data: &DbRef,
@@ -641,6 +641,27 @@ impl Stores {
         self.keyed_entry_long(data, parent_tp, field, key)
     }
 
+    /// The entry `keyed_entry_ints(data, parent_tp, field, k1, k2, k3, k4)` answers
+    /// (`@FR-R-KeyedEntry`, the interpreter's call): [`Self::keyed_entry_long`] for a one-part
+    /// key, [`Self::keyed_entry_ints_at`] on the parts the hash's key has for a compound one.
+    pub fn keyed_entry(
+        &mut self,
+        data: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        key: &[i64; 4],
+    ) -> DbRef {
+        let n = self.types[self.sub_record_type(parent_tp, field) as usize]
+            .keys
+            .len()
+            .clamp(1, 4);
+        if n == 1 {
+            self.keyed_entry_long(data, parent_tp, field, key[0])
+        } else {
+            self.keyed_entry_ints_at(data, parent_tp, field, &key[..n])
+        }
+    }
+
     /// [`Self::keyed_entry_long`] for a hash keyed by one to four integer parts
     /// (`@FR-R-KeyedEntry`'s compound clause): [`Self::keyed_entry_ints`] on the hash the field
     /// holds.
@@ -662,7 +683,7 @@ impl Stores {
     ///
     /// # Panics
     /// When `parent_tp` / `field` name no keyed collection with a key — the admission
-    /// (`generation::keyed_entry`) only emits this for a hash keyed by one text — and under
+    /// (`opt::keyed_entry`) only emits this for a hash keyed by one text — and under
     /// `LOFT_KEYED_VERIFY=1` when the entry differs from the general lookup's.
     pub fn keyed_entry_text(
         &mut self,
@@ -1968,19 +1989,26 @@ impl Stores {
         });
     }
 
-    /// `@FR-H-Claim` (`@C137`) — a NULL source copied into a destination `OpNewRecord` just created
-    /// (`keys::COPY_FRESH_DEST` in `raw_tp`) leaves the destination ABSENT: its bytes WRITTEN
-    /// all-zero — a nullable struct-enum's discriminant 0, the only null encoding a fresh slot
-    /// has — because a claimed slot holds no value until one is written.  An existing
-    /// destination keeps what it held (`vec[i] = <runtime-null>` into a non-nullable element,
-    /// which has no null to write).  Both backends' copy calls this from their null-source
-    /// branch.
+    /// `@FR-H-Claim` (`@C137`) — a NULL source copied into a destination just created
+    /// (`keys::COPY_FRESH_DEST` in `raw_tp`) leaves the destination ABSENT, because a claimed
+    /// slot holds no value until one is written.  Absent is what the default walk writes: a
+    /// struct's fields their type's defaults (a nullable field its null, which zero bytes are
+    /// not for an `integer?` or a `float?`, loft#2414), after a zero fill of the rest; a
+    /// struct-enum all-zero, its discriminant 0 the only null encoding a fresh slot has.  The
+    /// field arm of `(R-CompleteWrite)` writes the same.  An existing destination keeps what it
+    /// held (`vec[i] = <runtime-null>` into a non-nullable element, which has no null to write).
+    /// Both backends' copy calls this from their null-source branch; the C writer emits the
+    /// same default image (`FnWriter::fresh_default_arm`).
     pub fn copy_null_into(&mut self, to: &DbRef, raw_tp: u16) {
         if raw_tp & crate::keys::COPY_FRESH_DEST == 0 || to.store_nr == u16::MAX {
             return;
         }
-        let size = u32::from(self.size(raw_tp & crate::keys::COPY_TP_MASK));
+        let tp = raw_tp & crate::keys::COPY_TP_MASK;
+        let size = u32::from(self.size(tp));
         keys::mut_store(to, &mut self.allocations).zero_range(to.rec, to.pos, size);
+        if matches!(self.types[tp as usize].parts, Parts::Struct(_)) {
+            self.set_default_value(tp, to);
+        }
     }
 
     /// The fill behind `[x; n]` (and the comprehension of a constant, which lowers to it):

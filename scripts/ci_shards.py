@@ -37,9 +37,10 @@ composes one filterset for every leg; the shard argument it takes no longer sele
   times, since nothing runs beside it.  A binary the table does not know packs at the
   table's median; the greedy pack (heaviest first, into the lightest leg) is deterministic,
   so every leg of one run agrees.  The binaries that need a wasm runtime rlib (`--html`
-  pages, wasi builds) are packed together into `rest-a`, so the runtime rlib builds happen
-  on that one leg and on no other; `html` and `wasi` say which runtime a leg's binaries
-  need, so it builds no other.
+  pages, wasi builds) are packed together into `rest-a`, so among the rest legs the runtime
+  rlib builds happen on that one; `html` and `wasi` say which runtime a leg's binaries need,
+  so it builds no other.  The other binaries pack over the rest legs AND `heavy`, whose own
+  browser binaries are few and short: it had no other way to fill the time after its build.
 
 The partition is checked, not trusted: `proof` lists every test binary and fails when one is
 in no leg or in two.  A binary added to the repo lands in a rest leg by construction (the
@@ -173,20 +174,28 @@ def heavy_binaries() -> list[str]:
 
 
 def packs() -> list[list[str]]:
-    """The rest legs' binaries, `REST_LEGS` lists in leg order."""
+    """The binaries packed onto the `heavy` leg beside its serial ones, then the rest legs'
+    binaries, `REST_LEGS` lists — `1 + REST_LEGS` lists in leg order (`heavy` first).
+
+    The binaries that need a wasm runtime rlib stay together on `rest-a`, the leg whose `target`
+    is saved as the cache on `main` (ci.yml), so the cache keeps the runtime build; `rest-a`
+    and `heavy` each start one runtime overhead heavier.  Every other binary then packs
+    greedily, heaviest first, into whichever of the four legs is lightest — `heavy` included,
+    which otherwise sat nearly idle after its build (150 of 3216 test-seconds, PR #2400).
+    """
     taken = set(heavy_binaries()) | {CORPUS_BINARY} | excluded_binaries()
     rest = [b for b in all_binaries() if b not in taken]
     w = weights()
     median = statistics.median(w.values()) if w else 1.0
     weight = {b: w.get(b, median) for b in rest}
-    legs: list[list] = [[0.0, []] for _ in range(REST_LEGS)]
-    legs[0][0] = RUNTIME_LEG_OVERHEAD
-    # The binaries that need a wasm runtime rlib first, all into leg 0, heaviest first —
-    # the one rest leg that builds a runtime; then the others greedily.
+    serial = sum(w.get(b, median) for b in heavy_binaries())
+    legs: list[list] = [[0.0, []] for _ in range(1 + REST_LEGS)]
+    legs[0][0] = serial + RUNTIME_LEG_OVERHEAD
+    legs[1][0] = RUNTIME_LEG_OVERHEAD
     pinned = sorted((b for b in rest if runtimes(b)), key=lambda b: (-weight[b], b))
     for b in pinned:
-        legs[0][0] += weight[b]
-        legs[0][1].append(b)
+        legs[1][0] += weight[b]
+        legs[1][1].append(b)
     for b in sorted((b for b in rest if b not in pinned), key=lambda b: (-weight[b], b)):
         leg = min(legs, key=lambda l: l[0])
         leg[0] += weight[b]
@@ -196,11 +205,11 @@ def packs() -> list[list[str]]:
 
 def leg_binaries(shard: str) -> list[str]:
     if shard == "heavy":
-        return heavy_binaries()
+        return sorted(heavy_binaries() + packs()[0])
     if shard == "corpus":
         return [CORPUS_BINARY]
     if shard in REST_NAMES:
-        return packs()[REST_NAMES.index(shard)]
+        return packs()[1 + REST_NAMES.index(shard)]
     raise SystemExit(f"unknown shard '{shard}' (heavy, corpus, {', '.join(REST_NAMES)})")
 
 
@@ -280,8 +289,8 @@ def main() -> int:
     elif cmd == "pack":
         w = weights()
         median = statistics.median(w.values()) if w else 1.0
-        for name, bins in zip(["heavy", "corpus", *REST_NAMES],
-                              [heavy_binaries(), [CORPUS_BINARY], *packs()]):
+        for name in ["heavy", "corpus", *REST_NAMES]:
+            bins = leg_binaries(name)
             total = sum(w.get(b, median) for b in bins)
             print(f"{name}: {len(bins)} binaries, {total:.0f} s, runtime "
                   f"{','.join(sorted(leg_runtimes(name))) or 'none'}; heaviest "

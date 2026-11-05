@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `(R-CSplit)`: a split just before a function's tail value, and a function whose early
+// `return` sits between parts.
+fn tail(a: integer) -> text {
+  x = "{a}";
+  x += "-";
+  y = "{x}{x}";
+  x += y;
+  "{x}!"
+}
+
+fn early(a: integer) -> integer {
+  r = a * 2;
+  t = "{r}";
+  if a > 100 {
+    return -len(t);
+  }
+  r += len(t);
+  u = "{r}{t}";
+  r += len(u);
+  r
+}
+
+fn main() {
+  assert(tail(7) == "7-7-7-!", "tail {tail(7)}");
+  assert(early(5) == 16, "early {early(5)}");
+  assert(early(500) == -4, "early return {early(500)}");
+  println("boundary ok");
+}

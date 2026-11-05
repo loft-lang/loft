@@ -18,7 +18,7 @@ documentation and tooling above code.  Everything needed to work on loft is in t
 ## Contents
 - [Branches](#branches) — [Stay close to `main`](#stay-close-to-main--rebase-rigorously) ·
   [Opening a PR is the owner's call](#opening-a-pr-is-the-owners-call)
-  · [The PR cycle](#the-pr-cycle)
+  · [The PR cycle](#the-pr-cycle) · [Probing a red step](#probing-a-red-step-during-pr-validation)
 - [Working on a change](#working-on-a-change) —
   [Inserting Discovered Enhancements](#inserting-discovered-enhancements-into-the-active-plan) ·
   [Where a rule's letter and the code disagree](#where-a-rules-letter-and-the-code-disagree) ·
@@ -139,6 +139,30 @@ on their own branches at the same time: no step waits on them, and none touches 
 A language change can retro-break a shipped library while every branch gate stays green,
 because the library gate runs only on PRs and on `main`: run
 [REVALIDATE_LIBS.md](REVALIDATE_LIBS.md)'s script from the branch.
+
+### Probing a red step during PR validation
+
+A fix for a red step is checked by running the tests that were red, on the platform that
+failed, before it goes onto the PR.  The PR's own next run is the full verdict, so a probe
+never repeats it: no whole `ci.yml`, `miri.yml` or `revalidate-libs.yml` dispatch while the PR
+is in validation.  They share the account's job slots (about twenty at once), and a duplicate
+keeps the PR's own jobs queued.  The failing names come from the red job's log.
+
+| Red step | The probe |
+|---|---|
+| A Linux test shard (`Test (ubuntu-latest) [*]`) | the tests locally (`cargo nextest run -E 'test(=a) \| test(=b)'`), or `linux-probe.yml -f filter='test(=a) \| test(=b)'` |
+| `Test (macos-latest)` | `macos-probe.yml -f filter='test(=a) \| test(=b)'` |
+| A Windows leg | `windows-probe.yml -f tests='--test <binary> <name>'`, one dispatch per binary |
+| A sanitizer or assertion gate (ASan, `LOFT_POISON*`, `LOFT_VERIFY_STACK`, debug assertions, `stack_align_guard`) | first the failing test in an ordinary build, since a guard or census failure fails there too; under its instrument only if the failure needs it.  `gate-probe.yml -f legs=da` re-runs the debug-assertions sweep alone |
+| A library leg (`revalidate-libs`, `<pkg> <version>`) | locally: `loft test --native-c` (or the failing backend) in a COPY of `~/.loft/registry/<pkg>-<version>/`, on the branch's build and on the released one |
+| `Language suite` | locally: `python3 ../loft-suite/loft-suite check`, or `make suite ARGS="@FR-<Rule>"` |
+| `Refresh and score stale patch receipts` | `receipts.yml -f only='<patch> …'` for the receipts re-derived by hand |
+| Format, clippy, doc hygiene, feature catalogue, the censuses | locally; no runner needed |
+| A nightly red (the daily build, the miri nightly) | the platform probe above for exactly the failing tests, on the PR's next branch |
+
+A probe dispatches on the PR's next branch (`<host>-pr<N>-next`).  `ci.yml` has a per-ref
+concurrency group that cancels the older run, so a second `ci.yml` dispatch on one ref cancels
+the first; the probe workflows have none and run side by side.
 
 ---
 

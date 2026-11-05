@@ -25,6 +25,7 @@ mod fnval;
 mod parse;
 mod reflect;
 mod show;
+mod split;
 mod tidy;
 pub(crate) mod tls;
 mod unicode;
@@ -492,6 +493,8 @@ impl<'a> Cx<'a> {
                 use crate::opt::value_records::layout as vl;
                 let vr = crate::opt::value_records::value_records(self.data, self.stores, false);
                 crate::rewrite_census::fired("R-ValueRecord", vr.fns.len());
+                // `(O-ViewField)` — the functions with a view leaf (@PLN211 C′4's measure).
+                crate::rewrite_census::fired("R-ValueRecord/view", vr.views.len());
                 let views = vr
                     .types
                     .values()
@@ -871,6 +874,15 @@ impl<'a> Cx<'a> {
             self.defaults.borrow_mut().insert(tp, bytes);
         }
         (format!("loft_dflt{tp}"), size)
+    }
+
+    /// Is record type `tp`'s default image all zero bytes, so a zero fill already writes it?
+    pub(crate) fn default_is_zero(&self, tp: u16) -> bool {
+        self.default_image(tp);
+        self.defaults
+            .borrow()
+            .get(&tp)
+            .is_some_and(|b| b.iter().all(|x| *x == 0))
     }
 
     /// @PLN204 — the shape a LOCAL of type `tp` is held in, in a function whose body is
@@ -1617,6 +1629,10 @@ pub(crate) fn runtime_name(data: &Data, d: u32) -> &str {
 
 /// The C runtime function that implements native `name` (a stored `n_…` name), if any.  Asked of
 /// a definition, the name is its [`runtime_name`].
+#[expect(
+    clippy::too_many_lines,
+    reason = "a routing table, one row per native the C runtime carries"
+)]
 pub(crate) fn native_c(name: &str) -> Option<&'static str> {
     match name {
         "n_assert" => Some("loft_assert"),
@@ -1651,6 +1667,8 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "t_4text_byte_at" => Some("loft_byte_at"),
         "n_hash_sorted" => Some("loft_hash_sorted"),
         "n_hash_unsorted" => Some("loft_hash_unsorted"),
+        "n_keyed_entry_ints" => Some("loft_keyed_entry_ints"),
+        "n_keyed_entry_text" => Some("loft_keyed_entry_text"),
         "n_radix_sorted" => Some("loft_radix_sorted"),
         "n_spatial_range" => Some("loft_spatial_range"),
         "n_trie_prefix" => Some("loft_trie_prefix"),
@@ -1727,6 +1745,8 @@ pub(crate) fn plain_native(name: &str) -> Option<&'static str> {
     const OWN: &[&str] = &[
         "n_hash_sorted",
         "n_hash_unsorted",
+        "n_keyed_entry_ints",
+        "n_keyed_entry_text",
         "n_radix_sorted",
         "n_spatial_range",
         "n_trie_prefix",
@@ -4289,11 +4309,11 @@ fn framed(
         "{storage} {} {name}__fr({params});",
         held(ret)
     );
-    let _ = write!(
-        cx.gen_bodies.borrow_mut(),
-        "\n{storage} {} {name}__fr({params}) {{\n{body}}}\n",
-        held(ret)
-    );
+    // `(R-CSplit)`: a body over the size budget goes out as a chain of parts.
+    let fr = format!("{name}__fr");
+    let text = split::split(storage, &held(ret).clone(), &fr, params, body)
+        .unwrap_or_else(|| format!("{storage} {} {fr}({params}) {{\n{body}}}\n", held(ret)));
+    let _ = write!(cx.gen_bodies.borrow_mut(), "\n{text}");
     let args: Vec<String> = if params == "void" {
         Vec::new()
     } else {

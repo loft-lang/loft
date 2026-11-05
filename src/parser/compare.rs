@@ -939,14 +939,21 @@ impl Parser {
                 "generic type {tv_name}: operator '{spelled}' requires a concrete type",
             );
         } else if types.len() > 1 {
-            let cure = self.operator_cure(spelled, types);
+            // `a > b` and `a >= b` are resolved as `b < a` and `b <= a` (`handle_operator`'s
+            // swap): the refusal names the operands in the order the author wrote them.
+            let written: Vec<Type> = if matches!(spelled, ">" | ">=") && op != spelled {
+                vec![types[1].clone(), types[0].clone()]
+            } else {
+                types.to_vec()
+            };
+            let cure = self.operator_cure(spelled, &written);
             specific!(
                 self.lexer,
                 &self.lexer.peek().clone(),
                 Level::Error,
                 "No matching operator '{spelled}' on '{}' and '{}'{cure}",
-                types[0].source_name(&self.data),
-                types[1].source_name(&self.data)
+                written[0].source_name(&self.data),
+                written[1].source_name(&self.data)
             );
         } else {
             let cure = self.operator_cure(spelled, types);

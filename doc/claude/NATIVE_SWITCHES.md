@@ -345,8 +345,7 @@ sentinel, `@FR-R-Counter`'s iteration clause, `LOFT_NO_NN_FAST`) steps through t
 add (`record_walk` −49 %, 2.98× → 1.50× of Rust; `tuple_kernel` −20 %; `entity_tick`
 −30 %) — and is the first bisect step for a wrong field read through a `for e in v` loop
 variable on native; `LOFT_HOIST_VERIFY=1` compares the address with a fresh `rec_ptr` at
-every use.  An address derived from the element's `DbRef` instead of the index measured
-+46 % SLOWER and is not what ships.
+every use.
 **`LOFT_NO_INDEX_RECPTR=1`** (`@FR-R-RecPtr`'s index clause, default-ON, generation time,
 `--native` only) makes `r = v[IDX]?` over a vector whose header and base the frame holds read
 its element through `get_vector_hoisted` and resolve the store for its address again — with it
@@ -398,36 +397,32 @@ synthetic `__nullable<S>` stays out of all of it.
 
 ## Loop-local buffers and records
 
-**`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
-generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
+**`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON, IR
+phase, every backend) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
 buffer every iteration again — with it off, the buffer's store and its vector survive the
-iteration, the mint after the first is a length reset that keeps the capacity, and the
-literal's zero of the vector field is not emitted (the resample's two per-pixel vectors:
-−10 % on the row) — and is the first bisect step for a stale or wrong element read out of
-a vector declared inside a loop on native.  Only for elements that own no heap (a `text`
+iteration and every pass after the first clears the vector, keeping its capacity — and is
+the first bisect step for a stale or wrong element read out of a vector declared inside a
+loop.  Only for elements that own no heap (a `text`
 vector keeps the re-mint: a length reset would strand what its elements own), a buffer no
 other call reaches, and a declaration outside the loop.  `LOFT_TRACE_LOOP_BUFFER=1` names
-each buffer kept and each declined.
-**`LOFT_NO_LOOP_RECORD=1`** (`@FR-R-LoopRecord`, default-ON, generation time, `--native`
-only) makes a plain no-heap record local declared and minted by a literal INSIDE a loop
+each buffer declined, `LOFT_TRACE_IR_LOOP_BUFFER=1` each kept.
+**`LOFT_NO_LOOP_RECORD=1`** (`@FR-R-LoopRecord`, default-ON, the IR phase, every backend)
+makes a plain no-heap record local declared and minted by a literal INSIDE a loop
 (`sub = Spec {…}` per pass) free its store at the iteration's end and take a fresh one next
-pass again — with it off, the local is declared at the loop's prelude, keeps its store and
-its record across passes (a complete literal re-mints nothing, a partial one re-establishes
-its declared defaults) and is freed once after the loop — and is the first bisect step for a
-stale field, a leak or a double free out of a record literal in a loop on native.  Declined
-where the local is copied, returned, captured, appended, handed to a callee whose return
-borrows it, or owns heap other than refillable vectors.  `LOFT_TRACE_LOOP_RECORD=1` names each kept local and each decline.
-**`LOFT_NO_LOOP_RECORD_REFILL=1`** (`@FR-R-LoopRecord`'s refill clause, default-ON, generation
-time, `--native` only) declines again a loop record whose type holds vectors of no-heap
-elements — with it off, such a record keeps its vectors across passes and each literal zero of
-a vector field empties the kept vector in place.  First bisect step for a stale element or a
-store that grows pass by pass out of a record literal with vector fields in a loop.
-
-**`LOFT_NO_LOOP_RECORD_NEST=1`** (`@FR-R-LoopRecord`'s nest clause, default-ON, generation time,
-`--native` only) keeps a loop record across its INNERMOST loop again — with it off, a record
-declared inside a nest is kept across the outermost loop around it and freed once after that
-loop (`forms_upto` 761 → 638 µs).  First bisect step for a leak or a stale field out of a
-record literal inside nested loops.
+pass again — with it off, the local is declared before the outermost loop, keeps its store
+across passes (a complete literal mints nothing on a kept pass, a partial one takes the
+store's clear) and is freed once after the loop — and is the first bisect step for a stale
+field, a leak or a double free out of a record literal in a loop.  Declined where the local is
+copied, returned, captured, appended, handed to a callee whose return borrows it, or owns heap
+other than refillable vectors.  `LOFT_TRACE_LOOP_RECORD=1` names each admission and decline,
+`LOFT_TRACE_IR_LOOP_RECORD=1` each record the IR keeps.
+**`LOFT_NO_LOOP_RECORD_REFILL=1`** (its refill clause) declines again a record whose type holds
+vectors of no-heap elements — with it off, such a record keeps its vectors and a kept pass
+empties each in place.  First bisect step for a stale element or a store that grows pass by
+pass out of a record literal with vector fields in a loop.
+**`LOFT_NO_LOOP_RECORD_NEST=1`** (its nest clause) keeps a record across its INNERMOST loop
+again, rather than the outermost loop around it.  First bisect step for a leak or a stale field
+out of a record literal inside nested loops.
 
 ## Generators
 
@@ -709,8 +704,7 @@ templates (null semantics, not fault protection), and every rewrite still runs u
 function whose result is a plain no-heap record of ≤6 scalar fields return it through
 the buffer again — with it off, such a function whose every call site reads fields off
 it and whose body builds it with `Object` blocks returns those fields in REGISTERS with
-the call site reading tuple elements (measured: 1.65× on the call, `smooth` −25 %
-standalone, `lock_curved` −3 %) — and is the bisect step for a wrong field out of a
+the call site reading tuple elements — and is the bisect step for a wrong field out of a
 record-returning call on native.  Every arm of the `match` a `CallRef` emits shares one
 return type, so the call-site gate declines every fn-ref DISPATCH arm, reading the arm set
 from `fnref::dispatch_arms`, the emitter's own home for that question; a mixed-arm branch
@@ -843,8 +837,9 @@ callee starts as `[c; n]`.  Read where the literal is emitted.
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's
 declaration, invisible until the finish's length bump) — and is the bisect step for a
-wrong vector field of an appended record on native, or for a wrong value read through an
-element view between such a local's declaration and its append.  The declaration must be the local's only
+wrong vector field of an appended record (every backend for a literal-built local: the IR
+applies it, `LOFT_NO_IR_ELEM_FIRST=1` hands it back to the writers), or for a wrong value
+read through an element view between such a local's declaration and its append.  The declaration must be the local's only
 binding (a local declared `[]` and rebound under an `if` would leave the element empty).
 **`LOFT_NO_ELEMENT_PLACE=1`** (@PLN164 E-2, `@FR-R-ElemFirst`, default-ON, generation time,
 `--native` only) keeps that build to local vectors and literal-built locals again — with it
@@ -896,7 +891,8 @@ claim, write and file a fresh entry again, replacing the one under a
 repeated key, and makes `h[a, b] = T{…}` on a hash keyed by integer parts take
 `LOFT_NO_KEYED_IN_PLACE`'s removal and claim again — with it on, one probe answers the entry the
 key names and the literal's staged values are written into it — and is the first bisect step
-for a wrong value or count after a keyed insert or keyed literal assignment on native;
+for a wrong value or count after a keyed insert (every backend: the IR applies it, and
+`LOFT_TRACE_KEYED_ENTRY=1` names each function) or a keyed literal assignment (native);
 `LOFT_KEYED_VERIFY=1` checks every answered entry against the general lookup.
 **`LOFT_NO_VIEW_RETURN=1`** (`@FR-R-ViewReturn`) makes a lookup that returns a view of its
 parameter's entry materialise it again — a buffer minted per call, the entry deep-copied — and

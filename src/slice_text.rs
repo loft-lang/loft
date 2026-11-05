@@ -82,7 +82,6 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     }
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
     let mut sites: Vec<Site> = Vec::new();
-    let mut declares = first_assignments(&code, &ops);
     {
         let vars = data.def(d_nr).variables();
         let mut assigned = 0usize;
@@ -125,6 +124,9 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     }
     let mut fired = 0usize;
     if !sites.is_empty() {
+        // Read on the code as it was, before any site is rebuilt — and only here: most
+        // functions take no site, and the sets cost allocations in every one of them.
+        let mut declares = first_assignments(&code, &ops);
         let vars = data.def(d_nr).variables();
         code.map_nodes(&mut |n| {
             // The bare statement, not a span around it: `map_nodes` reaches the node inside a
@@ -155,8 +157,8 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
             fired += 1;
             trace_site(data, d_nr, vars.name(site.tmp));
         });
+        declare_before(&mut code, &mut declares, &ops);
     }
-    declare_before(&mut code, &mut declares, &ops);
     data.definitions[d_nr as usize].code = code;
     crate::rewrite_census::fired("R-SliceArg/range", fired);
 }

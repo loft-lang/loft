@@ -121,7 +121,8 @@ jobs:
             // #626 — a non-bug template's marker label.  These issues are not
             // defects, so the sev/wa/area contract does not apply to them.
             // Matched exactly or as a `prefix:` namespace (`showcase:pending`).
-            const NON_BUG = ["showcase", "enhancement", "proposal"];
+            // `ci-advisory`: the auto-maintained red-steps dashboard (ci_failure_digest.py).
+            const NON_BUG = ["showcase", "enhancement", "proposal", "ci-advisory"];
             const isNonBug = [...labels].some(l =>
               NON_BUG.some(p => l === p || l.startsWith(p + ":")),
             );

@@ -630,6 +630,11 @@ pub(super) struct Disturbance {
     /// because that is what decides which bindings survive; this only picks the SENTENCE —
     /// "cannot grow `v`" named an act the line does not perform.
     pub(super) replaced: bool,
+    /// A `Reassigned` that is a REBUILD of a place below the root, `e.b.parts = [..]`: the
+    /// field is given a new value, not the variable.  The cause stays `Reassigned`, which is
+    /// what decides which views end; this only picks the SENTENCE — "`e` is reassigned" named
+    /// an act the line does not perform, and the overwrite's names the part that is.
+    pub(super) rebuilt_part: bool,
     /// Non-zero when recorded by a LOOP's whole-body shake: the nesting level of that loop
     /// (1 = outermost).  The shake runs at the loop's head, before the body is walked, so it
     /// stands for a disturbance somewhere INSIDE the body and carries the loop's line.  The
@@ -641,10 +646,13 @@ pub(super) struct Disturbance {
 
 impl Disturbance {
     /// The cause as the AUTHOR reads it: a refill after a whole-value assignment is a
-    /// replacement, whatever mechanism carried it (`Disturbance::replaced`).
+    /// replacement, whatever mechanism carried it (`Disturbance::replaced`), and a part given
+    /// a new value is an overwrite of that part (`Disturbance::rebuilt_part`).
     pub(super) fn reported_cause(&self) -> ViewCause {
         if self.replaced {
             ViewCause::Reassigned
+        } else if self.rebuilt_part {
+            ViewCause::Overwritten
         } else {
             self.cause
         }

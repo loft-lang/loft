@@ -538,6 +538,12 @@ pub struct Function {
     /// Lives on the `Function` rather than on the parser because a var number is unique per
     /// FUNCTION, and the parser swaps this whole table for a lambda's.
     pass2_rebuilt: std::collections::HashSet<u16>,
+    /// The undeclared locals whose latest PASS-1 bind had no type yet (a call to a function
+    /// defined further down): pass 1 cannot say what they hold there, so a read of one answers
+    /// `Unknown` as a fresh local's would (`Parser::parse_var`) — its type from an earlier bind
+    /// is stale, and checking against it reports errors pass 2 would never make, before pass 2
+    /// can report the bind's own retype.  Cleared by the local's next typed bind.
+    pass1_untyped_bind: std::collections::HashSet<u16>,
     /// loft#1616 — the `text?` locals `text_return` promoted to a hidden `&text` work buffer.
     /// Set on pass 1 and read on pass 2, where such a local's own declaration
     /// (`a: text? = null`) stores into the buffer.
@@ -908,6 +914,7 @@ impl Function {
         Function {
             capture_builds: None,
             pass2_rebuilt: std::collections::HashSet::new(),
+            pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
             join_owners: HashMap::new(),
             ref_evacuations: Vec::new(),
@@ -1231,6 +1238,7 @@ impl Function {
             // The build facts belong to one finished scope pass, and a copy starts another.
             capture_builds: None,
             pass2_rebuilt: std::collections::HashSet::new(),
+            pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
             join_owners: other.join_owners.clone(),
             ref_evacuations: other.ref_evacuations.clone(),
@@ -1800,6 +1808,14 @@ impl Function {
     #[must_use]
     pub fn written_name(&self, var_nr: u16) -> &str {
         without_binding_number(self.name(var_nr))
+    }
+
+    /// Move `var_nr`, which has a scope already, to `scope` — for a pass that hoists the
+    /// variable's declaration out of a loop (`opt::loop_record`), whose intervals and slots it
+    /// then lays out again.
+    pub fn move_scope(&mut self, var_nr: u16, scope: u16) {
+        assert!((var_nr as usize) < self.variables.len(), "Unknown variable");
+        self.variables[var_nr as usize].scope = scope;
     }
 
     pub fn set_scope(&mut self, var_nr: u16, scope: u16) {
@@ -2952,7 +2968,10 @@ impl Function {
         // into a field whose type pass 1 does not know yet (its holder comes from a function
         // declared below) is built as a VALUE there, minting a `_vec_N`, and as the field on
         // pass 2, minting none, so a literal nested inside it takes the outer one's number at
-        // another element shape.
+        // another element shape.  Or at the SAME shape with pass 1's borrows: a chain temp
+        // typed as viewing its left operand met by a literal pass 2 minted one site later took
+        // that view, so the literal minted no store and its records went nowhere (loft#2406) —
+        // an accumulator's borrows are this pass's too.
         // An accumulator is minted before its literal's items say its element, so its type
         // here may still be unknown — and that is still this pass's, not pass 1's other site's.
         // A match CAPTURE pass 1 bound BLIND is the same: at `Unknown`, because the subject's
@@ -2971,7 +2990,11 @@ impl Function {
                     .is_some_and(|v| self.variables[*v as usize].blind_capture)))
             && let Some(&v) = self.names.get(&full)
             && (name == "vec" || !type_def.is_unknown())
-            && self.variables[v as usize].type_def.without_deps() != type_def.without_deps()
+            && (if name == "vec" {
+                self.variables[v as usize].type_def != *type_def
+            } else {
+                self.variables[v as usize].type_def.without_deps() != type_def.without_deps()
+            })
         {
             self.trace_type_change(v, type_def, "unique(elm)");
             self.variables[v as usize].type_def = type_def.clone();
@@ -3037,8 +3060,13 @@ impl Function {
             // `ref(Img)` type, mis-emitting native (`E0605 as DbRef`) AND mis-reading
             // interp (a silent wrong value). A user variable keeps the old behaviour
             // (its name IS its cross-pass identity; type evolution has its own checks).
+            // A discharge hoist is a generated temp under either spelling
+            // (`is_discharge_hoist_name`): `_ncr_N` lacks the `__`, and keeping its pass-1
+            // type dropped the subject's deps, so the view freed its container's store.
             if existing.is_unknown()
-                || (name.starts_with("__") && !type_def.is_unknown() && existing != type_def)
+                || ((name.starts_with("__") || is_discharge_hoist_name(name))
+                    && !type_def.is_unknown()
+                    && existing != type_def)
             {
                 self.trace_type_change(nr, type_def, "add_variable(reuse)");
                 self.variables[nr as usize].type_def = type_def.clone();
@@ -6161,6 +6189,22 @@ impl Function {
         self.pass2_rebuilt.insert(var_nr)
     }
 
+    /// Record a pass-1 bind of `var_nr`: `untyped` when its value had no type yet while the
+    /// local had one ([`Self::pass1_untyped_bind`]).
+    pub(crate) fn note_pass1_bind(&mut self, var_nr: u16, untyped: bool) {
+        if untyped {
+            self.pass1_untyped_bind.insert(var_nr);
+        } else {
+            self.pass1_untyped_bind.remove(&var_nr);
+        }
+    }
+
+    /// Whether `var_nr`'s latest pass-1 bind had no type yet.
+    #[must_use]
+    pub(crate) fn is_pass1_untyped_bind(&self, var_nr: u16) -> bool {
+        self.pass1_untyped_bind.contains(&var_nr)
+    }
+
     #[track_caller]
     /// The line of the first assignment that gave `var_nr` a nullable value, or 0.
     #[must_use]
@@ -6460,6 +6504,22 @@ mod loop_binding_dep_tests {
 #[must_use]
 pub fn owns_literal_backing_store(name: &str) -> bool {
     name.starts_with("__vdb") || name.starts_with("__kvb")
+}
+
+/// Is `name` the temp a null DISCHARGE hoists its subject into — `__ncc_N` for `e ?? d` and
+/// `e?`, `_ncr_N` for `e!`, `e ?? panic(…)` and `e ?? return|break|continue`?
+///
+/// The temp is the subject's value wearing a compiler name, so its type is the subject's as
+/// pass 2 types it, deps included (`@FR-B-View`: a struct element read through a discharge
+/// is a view of the container).  The two families are one notion with two spellings, and
+/// only `__ncc_` carries the `__` prefix [`Function::add_variable`] reads as "generated":
+/// asked by spelling alone, a `_ncr_` temp kept pass 1's type — `Unknown(S)` where `S` was
+/// declared below its holder, resolved to a dep-less `ref(S)` between the passes — and so
+/// was read as an OWNER, and its scope-exit free released the store of the struct whose
+/// vector it views.
+#[must_use]
+pub fn is_discharge_hoist_name(name: &str) -> bool {
+    name.starts_with("__ncc_") || name.starts_with("_ncr_")
 }
 
 /// `LOFT_LINK_ALL_NARROW=1`: treat every narrow integer local as linked, so the linked

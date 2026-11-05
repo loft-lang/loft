@@ -49,6 +49,22 @@ pub(crate) fn as_int(v: Option<&Value>) -> Option<i32> {
 #[must_use]
 /// Enforces `@FR-R-Wrapper`, the STDLIB qualifier included.
 pub fn one_op_wrapper(data: &Data, d_nr: u32) -> Option<(u32, Vec<WrapperOperand>)> {
+    let (op, args) = one_op_wrapper_call(data, d_nr)?;
+    let operands = args
+        .iter()
+        .map(|a| match a.unspan() {
+            Value::Var(v) => WrapperOperand::Param(*v),
+            other => WrapperOperand::Const(other.clone()),
+        })
+        .collect();
+    Some((op, operands))
+}
+
+/// [`one_op_wrapper`] without the operand list: the op and the wrapper body's own argument
+/// nodes, each a parameter `Var` or an `Int` constant — borrowed, so a caller asking once per
+/// call site allocates nothing.
+#[must_use]
+pub fn one_op_wrapper_call(data: &Data, d_nr: u32) -> Option<(u32, &[Value])> {
     if (d_nr as usize) >= data.definitions.len() {
         return None;
     }
@@ -113,15 +129,12 @@ pub fn one_op_wrapper(data: &Data, d_nr: u32) -> Option<(u32, Vec<WrapperOperand
     if !matches!(callee.code(), Value::Null) || callee.rust().is_empty() {
         return None;
     }
-    let mut operands = Vec::with_capacity(args.len());
-    for a in args {
-        match a.unspan() {
-            Value::Var(v) if (*v as usize) < params => operands.push(WrapperOperand::Param(*v)),
-            Value::Int(n) => operands.push(WrapperOperand::Const(Value::Int(*n))),
-            _ => return None,
-        }
-    }
-    Some((*op, operands))
+    let operand = |a: &Value| match a.unspan() {
+        Value::Var(v) => (*v as usize) < params,
+        Value::Int(_) => true,
+        _ => false,
+    };
+    args.iter().all(operand).then_some((*op, args.as_slice()))
 }
 
 /// One operand of a [`one_op_wrapper`]'s op: the caller's argument at that parameter

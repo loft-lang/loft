@@ -142,6 +142,19 @@
 #define LOFT_UNLIKELY(x) (x)
 #define LOFT_COLD_PATH() ((void) 0)
 #endif
+/* `(R-CSplit)`: a function body over the size budget calls its parts with `LOFT_PART_CALL`, which
+ * no compiler may inline, so each part is optimised as the size it was cut to.  With no
+ * out-of-line mark (pure C99 under `LOFT_STRICT`, or an unknown compiler), the call goes
+ * through a `volatile` function pointer: a compiler cannot know its target, so it cannot put
+ * the part back into its caller.  `LOFT_PART_RET` calls a part that may return: it answers 1 when
+ * the function returns, its value left in the frame. */
+#if defined(LOFT_GNU) || defined(LOFT_MSVC)
+#define LOFT_PART_CALL(f, fr) f(fr)
+#define LOFT_PART_RET(f, fr) f(fr)
+#else
+#define LOFT_PART_CALL(f, fr) ((void (*volatile)(void *)){ (f) })(fr)
+#define LOFT_PART_RET(f, fr) ((int (*volatile)(void *)){ (f) })(fr)
+#endif
 
 /* Is `x` a compile-time constant?  0 where the compiler cannot say, which only costs speed. */
 #if defined(LOFT_GNU)

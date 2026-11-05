@@ -46,7 +46,6 @@ impl OpEmitter for OpGetTextSubEmitter {
 pub struct OpDatabaseEmitter;
 
 impl OpEmitter for OpDatabaseEmitter {
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [var_val, tp_val] = args {
             // @PLN157 § V-u (`@FR-R-RetAdopt`) — the adopted result local's witness store
@@ -63,74 +62,9 @@ impl OpEmitter for OpDatabaseEmitter {
             {
                 return write!(ctx.w, "()");
             }
-            // `@FR-R-LoopRecord` — a LOOP RECORD: a plain no-heap record local minted by a
-            // literal inside a loop keeps its store and its record across iterations.  The
-            // first pass mints; every later pass finds the record where the previous pass
-            // left it, so a complete-write literal (`OpDatabaseNP`: every field written by the
-            // statements that follow) needs nothing, and a partial literal (`OpDatabase`) needs
-            // only the prefill that re-establishes the omitted fields' defaults — never the
-            // clear, claim, zero and tag the mint would repeat on the same record.
-            // The refill clause (a record with vector fields) is kept only under a complete
-            // literal: the prefill would zero a kept vector's slot and strand its record, so a
-            // partial one takes the plain mint, whose clear arm reclaims the store.
-            if let Value::Var(w) = var_val.unspan()
-                && let Some(lr) = ctx.output.loop_records.get(w)
-                && (!lr.refill || ctx.output.complete_writes.db_vars.contains(w))
-            {
-                let name = super::super::sanitize(
-                    ctx.output.data.def(ctx.output.def_nr).variables().name(*w),
-                );
-                let complete = ctx.output.complete_writes.db_vars.contains(w);
-                let mint = if complete {
-                    "OpDatabaseNP"
-                } else {
-                    "OpDatabase"
-                };
-                write!(
-                    ctx.w,
-                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 || stores.is_frame_held(var_{name}.store_nr) {{ var_{name} = {mint}(cell,var_{name}, "
-                )?;
-                ctx.emit_type_slot(tp_val)?;
-                if complete {
-                    return write!(ctx.w, ") }} /* @FR-R-LoopRecord kept record */");
-                }
-                write!(ctx.w, ") }} else {{ stores.set_default_value(")?;
-                ctx.emit_type_slot(tp_val)?;
-                return write!(
-                    ctx.w,
-                    " as u16, &var_{name}) }} /* @FR-R-LoopRecord kept record, defaults re-established */"
-                );
-            }
             // Both kept-store forms take the mint for a store a live generator frame names
             // (`@FR-G-Arg-Rebind`): the mint gives the rebind a fresh store, keeping the
             // frame's value.
-            // @PLN157 § V-al (`@FR-R-LoopBuffer`) — a LOOP BUFFER: a per-site vector buffer
-            // minted inside a loop keeps its store and its vector across iterations.  The
-            // first pass mints; every later pass resets the vector's length and keeps its
-            // capacity (`vector::vector_buffer_reset`), which is all the clear-and-claim of
-            // a re-mint bought: the elements own no heap, and the literal's field zero is
-            // dropped with it (`emit.rs`, the block loop).
-            if let Value::Var(w) = var_val.unspan()
-                && ctx.output.loop_buffers.contains(w)
-            {
-                let name = super::super::sanitize(
-                    ctx.output.data.def(ctx.output.def_nr).variables().name(*w),
-                );
-                let mint = if ctx.output.complete_writes.db_vars.contains(w) {
-                    "OpDatabaseNP"
-                } else {
-                    "OpDatabase"
-                };
-                write!(
-                    ctx.w,
-                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 || stores.is_frame_held(var_{name}.store_nr) {{ var_{name} = {mint}(cell,var_{name}, "
-                )?;
-                ctx.emit_type_slot(tp_val)?;
-                return write!(
-                    ctx.w,
-                    ") }} else {{ vector::vector_buffer_reset(&var_{name}, &mut stores.allocations) }} /* @PLN157 § V-al loop buffer */"
-                );
-            }
             // @PLN157 § V-j (`@FR-R-MoveAppend`) — this var can be the `__vdb` a pair
             // PLACED a buffer record into, and OpDatabase's reuse arm clears the whole
             // store: the placement vanishes with the clear (no leak — the clear reclaims

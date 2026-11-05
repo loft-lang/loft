@@ -1,10 +1,11 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `@FR-R-LoopRecord` — the EMISSION pins.  A plain no-heap record local declared and minted
-//! by a literal INSIDE a loop keeps its store and its record across iterations: the local is
-//! declared at the loop's prelude, the per-pass mint is a null-guarded first mint (a complete
-//! literal needs nothing after it, a partial one only the prefill), the body's `Set(v, null)`
-//! and end-of-body free are not emitted, and one free follows the loop.
+//! by a literal INSIDE a loop keeps its store and its record across iterations, decided and
+//! applied in the IR (`opt::loop_record`): the local is declared before the outermost loop,
+//! the per-pass mint is a null-guarded first mint (`if OpRefIsNull(v) { mint }`, the block
+//! named `loop record mint`), the body's `Set(v, null)` and end-of-body free go, and one free
+//! follows the loop.  The pins count the IR pass's trace and read the IR it leaves.
 //! `LOFT_NO_LOOP_RECORD=1` restores the per-pass free and fresh store.  The cell corpus
 //! (`tests/scripts/157-loop-record.loft`) says the VALUES hold on both backends, in both
 //! switch states and under the falsifiers; this pins what is emitted and runs it.
@@ -25,6 +26,30 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
         cmd.env(k, v);
     }
     cmd.output().expect("spawn loft")
+}
+
+/// The records the IR pass kept in function `name` of `src` (its `LOFT_TRACE_IR_LOOP_RECORD`
+/// lines), and the IR it left (`LOFT_LOG=static`).
+fn ir_of(src: &Path, name: &str, env: &[(&str, &str)]) -> (Vec<String>, String) {
+    let mut env: Vec<(&str, &str)> = env.to_vec();
+    env.extend([
+        ("LOFT_TRACE_IR_LOOP_RECORD", "1"),
+        ("LOFT_NO_CACHE", "1"),
+        ("LOFT_LOG", "static"),
+    ]);
+    let out = loft(&["--interpret", src.to_str().unwrap()], &env);
+    let err =
+        String::from_utf8_lossy(&out.stderr).into_owned() + &String::from_utf8_lossy(&out.stdout);
+    let kept: Vec<String> = err
+        .lines()
+        .filter_map(|l| l.strip_prefix(&format!("[ir-loop-record] fn={name} ")))
+        .filter(|l| l.contains("kept across the passes"))
+        .map(|l| l.split(' ').next().unwrap_or("").to_string())
+        .collect();
+    let start = err.find(&format!("fn {name}(")).unwrap_or(0);
+    let rest = &err[start..];
+    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
+    (kept, rest[..end].to_string())
 }
 
 fn emit(tag: &str, env: &[(&str, &str)]) -> String {
@@ -96,39 +121,27 @@ fn the_cells_hold_on_both_backends_in_both_switch_states_under_the_falsifiers() 
 
 #[test]
 fn an_admitted_record_is_declared_at_the_prelude_kept_across_passes_and_freed_once_after() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
+    // l1–l7, l9 (two), l14, l15, l17 keep their store: twelve records; l8's `r` is returned,
+    // l10's owns text, l11's is copied, l12's `o` carries a record field, l13's is appended,
+    // l16's is handed to a callee whose return borrows that parameter.
+    let (kept, _) = ir_of(&src, "n_main", &[]);
+    assert_eq!(kept.len(), 12, "kept records: {kept:?}");
+    // The per-pass mint is null-guarded: every literal here is a complete write (the parser
+    // spells an omitted field's declared default as an explicit write — l15's `Ld { a: i }`
+    // writes `k = 5` itself), so each kept record's mint is one `loop record mint` block.
     let rust = emit("on", &[]);
     let main = body(&rust, "n_main");
-    // l1–l7, l9 (two), l14, l15, l17 keep their store: twelve prelude declarations and twelve
-    // frees after their loops; l8's `r` is returned, l10's owns text, l11's is copied,
-    // l12's `o` carries a record field, l13's is appended, l16's is handed to a callee
-    // whose return borrows that parameter.
-    let kept = main
-        .matches("//@FR-R-LoopRecord kept across iterations")
-        .count();
-    let freed = main
-        .matches("/*@FR-R-LoopRecord freed after the loop*/")
-        .count();
-    assert_eq!(kept, 12, "prelude declarations:\n{main}");
-    assert_eq!(freed, 12, "frees after the loop:\n{main}");
-    // The per-pass mint is null-guarded and re-mints nothing after the first pass: every
-    // literal here is a complete write (the parser spells an omitted field's declared default
-    // as an explicit write — l15's `Ld { a: i }` writes `k = 5` itself), so the partial-literal
-    // form that re-establishes defaults through `set_default_value` is the emitter's fallback
-    // and no cell reaches it.
     assert_eq!(
-        main.matches("/* @FR-R-LoopRecord kept record */").count(),
+        main.matches("//loop record mint").count(),
         12,
         "kept-record mints:\n{main}"
     );
+    // A record returned from inside the loop is not kept.
+    let (ret, _) = ir_of(&src, "n_lr_ret_in_loop", &[]);
     assert!(
-        !main.contains("defaults re-established"),
-        "every literal here is a complete write; the prefill form should not appear:\n{main}"
-    );
-    // A kept local's free never sits inside its loop body.
-    let ret = body(&rust, "n_lr_ret_in_loop");
-    assert!(
-        !ret.contains("@FR-R-LoopRecord"),
-        "a record returned from inside the loop must not be kept:\n{ret}"
+        ret.is_empty(),
+        "a record returned from inside the loop must not be kept: {ret:?}"
     );
 }
 
@@ -137,29 +150,19 @@ fn the_switch_restores_the_per_pass_free_and_fresh_store() {
     // The emission embeds the loft SOURCE (`LOFT_SRC`), whose header names the rule, so the
     // pin looks for the emitter's own markers.
     let rust = emit("off", &[("LOFT_NO_LOOP_RECORD", "1")]);
-    for marker in [
-        "kept across iterations",
-        "freed after the loop",
-        "@FR-R-LoopRecord kept record",
-    ] {
-        assert!(
-            !rust.contains(marker),
-            "a kept record survived the switch ({marker})"
-        );
-    }
+    assert!(
+        !rust.contains("//loop record mint"),
+        "a kept record survived the switch"
+    );
 }
 
 #[test]
 fn the_declines_are_the_designed_ones() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
+    // The IR pass asks the analysis for every backend; the interpreter's run is the cheapest.
     let out = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            loft::platform::null_sink(),
-            src.to_str().unwrap(),
-        ],
-        &[("LOFT_TRACE_LOOP_RECORD", "1")],
+        &["--interpret", src.to_str().unwrap()],
+        &[("LOFT_TRACE_LOOP_RECORD", "1"), ("LOFT_NO_CACHE", "1")],
     );
     let trace = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -178,49 +181,22 @@ fn the_declines_are_the_designed_ones() {
 
 const NEST: &str = "tests/scripts/a-loop-record-is-kept-across-its-whole-nest.loft";
 
-/// `n_n1` of the nest guard, emitted with `env`.
-fn nest_n1(tag: &str, env: &[(&str, &str)]) -> String {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(NEST);
-    let out =
-        std::env::temp_dir().join(format!("loft_loop_record_{}_{tag}.rs", std::process::id()));
-    let mut env: Vec<(&str, &str)> = env.to_vec();
-    env.push(("LOFT_NATIVE_NO_CACHE", "1"));
-    let status = loft(
-        &[
-            "--native-rust",
-            "--native-emit",
-            out.to_str().unwrap(),
-            src.to_str().unwrap(),
-        ],
-        &env,
-    );
-    assert!(
-        fa::exists(&out),
-        "no Rust emitted: {}",
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
-    let _ = fa::remove_file(&out);
-    body(&rust, "n_n1").to_owned()
-}
-
 #[test]
 fn a_record_in_a_nest_is_kept_across_the_outermost_loop() {
-    // The kept declaration precedes the FIRST loop label of `n1` (the outer `i` loop); under
-    // `LOFT_NO_LOOP_RECORD_NEST=1` it stands between the two loops.
-    let kept = "//@FR-R-LoopRecord kept across iterations";
-    let on = nest_n1("nest_on", &[]);
-    let (decl, first_loop) = (on.find(kept).expect("kept"), on.find("'l").expect("a loop"));
-    assert!(decl < first_loop, "declared before the outer loop:\n{on}");
-    assert_eq!(
-        on.matches("@FR-R-LoopRecord freed after the loop").count(),
-        1,
-        "{on}"
-    );
-    let off = nest_n1("nest_off", &[("LOFT_NO_LOOP_RECORD_NEST", "1")]);
-    let (decl, first_loop) = (
-        off.find(kept).expect("kept"),
-        off.find("'l").expect("a loop"),
-    );
-    assert!(decl > first_loop, "declared inside the outer loop:\n{off}");
+    // The kept record's `= null` declaration precedes the FIRST `loop` of `n1` (the outer `i`
+    // loop); under `LOFT_NO_LOOP_RECORD_NEST=1` it stands between the two loops.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(NEST);
+    let decl_vs_loop = |env: &[(&str, &str)]| -> (usize, usize) {
+        let (kept, ir) = ir_of(&src, "n_n1", env);
+        let v = kept.first().expect("n1 keeps a record").clone();
+        let decl = ir
+            .find(&format!("{v}("))
+            .and_then(|i| ir[i..].find("= null;").map(|j| i + j))
+            .expect("the kept record's declaration");
+        (decl, ir.find("loop {").expect("a loop"))
+    };
+    let (decl, first_loop) = decl_vs_loop(&[]);
+    assert!(decl < first_loop, "declared before the outer loop");
+    let (decl, first_loop) = decl_vs_loop(&[("LOFT_NO_LOOP_RECORD_NEST", "1")]);
+    assert!(decl > first_loop, "declared inside the outer loop");
 }

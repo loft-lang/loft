@@ -198,6 +198,14 @@ pub fn plain_enum(t: ir::TypeT) -> boolean {
   }
 }
 
+// An enum whose variants carry fields: a reference to its record.
+pub fn struct_enum(t: ir::TypeT) -> boolean {
+  match t {
+    TyEnum { n: _, is_ref } => is_ref,
+    _ => false
+  }
+}
+
 // A scalar the elaboration converts: no record, text, collection or nullable spelling.
 pub fn plain_scalar(t: ir::TypeT) -> boolean {
   match t {
@@ -521,7 +529,17 @@ pub fn convert_store(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::Ty
   match should {
     TyOptional { inner } => {
       if src is TyNull {
-        return if sentinel_value(inner) { null_of(e, inner) } else { null };
+        if sentinel_value(inner) {
+          return null_of(e, inner);
+        }
+        // `convert`'s collection, struct-enum and record arms: the slot is a twelve-byte
+        // `DbRef`, so its null is the reference sentinel (`@FR-L-Null`).  A type variable's
+        // null waits for its binding (Rust's `TV_NULL_BLOCK`): not carried.
+        if el_types::is_collection(inner) || inner is TyReference && el_types::type_var(e, inner) < 0 || struct_enum(inner) {
+          d = el::def_nr(e, "OpNullRefSentinel");
+          return if d < 0 { null } else { ir::NdCall { def_nr: d, args: [] } };
+        }
+        return null;
       }
       if el_types::is_equal(e, src, should) {
         return code;
@@ -537,12 +555,24 @@ pub fn convert_store(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::Ty
   if src is TyNull {
     return null;
   }
-  // `@FR-N-Store`: a nullable scalar into a non-null slot is reported (a warning, beside the
+  // `@FR-C-Var`: a variant's record is a value of the enum it belongs to, stored as it is.
+  match should {
+    TyEnum { n: en, is_ref } => {
+      match src {
+        TyReference { n: vd } => {
+          if is_ref && el::def(e, vd).def_type == el::DT_ENUM_VALUE && el::def(e, vd).parent == en {
+            return code;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  // `@FR-N-Store`: a nullable value into a non-null slot is reported (a warning, beside the
   // program) and stored as its base.
   match src {
-    TyOptional { inner } => {
-      return if plain_scalar(inner) && plain_scalar(should) { convert(e, vars, code, inner, should, false) } else { null };
-    },
+    TyOptional { inner } => return convert_store(e, vars, code, inner, should),
     _ => {}
   }
   if plain_enum(src) {

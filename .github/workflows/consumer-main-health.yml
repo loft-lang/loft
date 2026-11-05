@@ -177,8 +177,11 @@ jobs:
       - name: Build loft
         if: steps.tok.outputs.run == 'true'
         working-directory: loft-src
+        # The components too (`make components`): a dependency with `[native] component =
+        # "net"` finds its natives only in `target/components/` beside the binary.
         run: |
-          cargo build --release --lib --bin loft
+          cargo build --release --lib --bin loft --bin loft-components
+          target/release/loft-components
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
       # A dependency with a native crate names the system packages that crate needs in its

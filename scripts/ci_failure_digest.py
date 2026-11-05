@@ -42,6 +42,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -218,8 +219,31 @@ def signature(workflow: str, job: str, headline: str) -> str:
 
 # ── the GitHub side ─────────────────────────────────────────────────────────────
 
+# A failure GitHub's side answers and a second try usually does not: a 5xx, a reset or
+# timed-out connection.  One such answer failed the digest of a whole nightly (run
+# 41650138705, a 502 re-reading the previous run's jobs), and the issue kept that night's
+# stale rows until the next nightly's digest.
+TRANSIENT = re.compile(r"HTTP 5\d\d|Server Error|connection reset|timed out|EOF", re.I)
+RETRY_DELAYS = (5, 15, 45)
+
+
+def is_read(args: tuple[str, ...]) -> bool:
+    """A call that changes nothing on GitHub, so repeating it is harmless: `gh api` with no
+    method, field or input flag, or a `view` / `list` subcommand.  A write is never retried —
+    a comment the 502 hid may already have been posted."""
+    if args and args[0] == "api":
+        return not any(a in ("-X", "--method", "-f", "-F", "--field", "--raw-field", "--input")
+                       for a in args)
+    return len(args) > 1 and args[1] in ("view", "list")
+
+
 def gh(*args: str, input_text: str | None = None, check: bool = True) -> str:
-    r = subprocess.run(["gh", *args], capture_output=True, text=True, input=input_text)
+    delays = RETRY_DELAYS if is_read(args) else ()
+    for attempt in range(len(delays) + 1):
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, input=input_text)
+        if r.returncode == 0 or attempt == len(delays) or not TRANSIENT.search(r.stderr):
+            break
+        time.sleep(delays[attempt])
     if check and r.returncode != 0:
         raise RuntimeError(f"gh {' '.join(args[:3])}…: {r.stderr.strip()[:300]}")
     return r.stdout

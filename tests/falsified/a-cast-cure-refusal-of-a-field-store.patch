@@ -1,8 +1,8 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index e2acebffe..4f2cc950d 100644
+index 5065486f7..2280c8ca9 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -2829,39 +2829,22 @@ use a separate collection or add after the loop"
+@@ -2836,39 +2836,22 @@ use a separate collection or add after the loop"
      /// so its cure is to give the value the field's type where the value is built.  One home
      /// for the assignment and the struct literal, which accept the same values (loft#1072)
      /// and so refuse the same ones in the same words.
@@ -47,7 +47,7 @@ index e2acebffe..4f2cc950d 100644
              );
          }
      }
-@@ -6414,7 +6397,7 @@ use a separate collection or add after the loop"
+@@ -6421,7 +6404,7 @@ use a separate collection or add after the loop"
                      f_type.source_name(&self.data),
                  );
              } else {
@@ -56,7 +56,7 @@ index e2acebffe..4f2cc950d 100644
              }
          }
          // loft#1034 — a TUPLE target reaches `convert` too.
-@@ -8131,11 +8114,15 @@ use a separate collection or add after the loop"
+@@ -8138,11 +8121,15 @@ use a separate collection or add after the loop"
              && !matches!(s_type, Type::Null)
              && !f_type.is_equal(&s_type)
              && !self.convert_store(code, &s_type, f_type, "the assignment target", rhs_at.as_ref())
@@ -77,10 +77,10 @@ index e2acebffe..4f2cc950d 100644
          // A write THROUGH a link stores into the linked slot, so the narrowing refusal and the
          // range guard below are asked of that slot's type (`linked_store_target`, loft#1604).
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index 060035ce6..51816bf7f 100644
+index 9a5de162d..dc495a040 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
-@@ -8118,7 +8118,7 @@ impl Parser {
+@@ -8264,7 +8264,7 @@ impl Parser {
                      // `vector<float>` field — was copied at the wrong width and read back as
                      // garbage here, where `g.c = v` refuses it.
                      if self.field_store_mismatch("=", u16::MAX, &td, exp_tp) {
@@ -89,7 +89,7 @@ index 060035ce6..51816bf7f 100644
                      }
                      let pos = self
                          .database
-@@ -8324,8 +8324,22 @@ impl Parser {
+@@ -8470,8 +8470,22 @@ impl Parser {
                      // as "field declared as <value_type>" — backwards.
                      // A function type is rendered as the author spells it (`fn(const T)`), since
                      // the `const` of a parameter can be the whole difference (loft#1540).
@@ -115,10 +115,10 @@ index 060035ce6..51816bf7f 100644
              }
              list.push(self.set_field_no_check(td_nr, nr, 0, code.clone(), value.clone()));
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 48320da8a..ccb0638ad 100644
+index 6c061bda1..ccfcb1bf7 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -6570,8 +6570,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -6863,8 +6863,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                          "cannot store {} elements in a vector<{}> (would lose precision); \
                       cast each element explicitly with 'as {}'",
                          t.source_name(&self.data),
@@ -127,13 +127,13 @@ index 48320da8a..ccb0638ad 100644
 +                        in_t.source_name(&self.data),
 +                        in_t.source_name(&self.data)
                      );
-                 }
-             } else if self.widen_literal_items(elm, in_t, &t, res) {
+                 } else {
+                     // Not a precision question, and no cast makes one of these the other.
 diff --git a/src/variables/mod.rs b/src/variables/mod.rs
-index 758083d91..839a98dec 100644
+index 9fb6e6f8e..10ba2a5e9 100644
 --- a/src/variables/mod.rs
 +++ b/src/variables/mod.rs
-@@ -4031,32 +4031,13 @@ impl Function {
+@@ -4059,32 +4059,13 @@ impl Function {
              );
              return;
          }

@@ -136,6 +136,34 @@ this is where it is written down.
    self-reading push once the parser stops copying, a bulk fill for a constant
    comprehension.
 
+## Deviations carried by rewrites.md, @PLN211 arc C′
+
+### D-phase-3 — CLOSED 2026-11-04 (@PLN211 arc C′3) — `(R-KeyedEntry)`'s subscript clause stays in both writers
+- **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)
+- **Where:** `generation::emit` (`output_keyed_place`'s subscript clause), the C's keyed-place arm
+- **Effect:** the interpreter claims, writes and files on `coll[k] = T{…}` where the writers
+  overwrite the entry in place.
+- **Removal:** the IR form, `opt::keyed_entry`'s staging for one more host (arc C′3).
+- **Closed by:** `opt::keyed_entry::subscript_replacement` — the subscript clause in the IR (the literal staged, `keyed_entry_ints(coll, tp, 65535, k…)` into a fresh entry variable, the non-key fields written), the analysis `keyed_place` moved from `lower` to `opt`; both writers' subscript branches deleted, `R-KeyedEntry/subscript` applied by `ir`.  `(R-InPlaceLiteral)`'s keyed clause (the non-heap-free cases) stays the writers'.
+
+### D-phase-2 — CLOSED 2026-11-04 (@PLN211 arc C′2) — buffer ownership is derived per consumer
+- **Violates:** `R-Phase` (one place: no decision recomputed per consumer)
+- **Where:** `opt::loop_buffer::rewrite_program` (five rules' analyses to leave their buffers),
+  `generation::Output` (the loop-buffer exclusions, `hoist_owned`), the C's own reads
+- **Effect:** none while the derivations agree; a rule added to one list and not another would
+  hand one buffer to two rewrites.
+- **Removal:** one `opt::hoist::buffer_owner` answering the owning rule per witness (arc C′2).
+- **Closed by:** `opt::buffer_owner::owners` — the one answer, per witness, of the rule that owns a buffer, in a stated priority (inline buffer, hoisted literal, element-first pair, move host, adopted witness); `opt::loop_buffer` reads it, and rustc's own loop-buffer exclusions went with its clause.  rustc's `kept.rs` keeps a coarser function-level check (a kept twin is not built where an inline buffer or an element-first pair applies) for `(R-Kept)`, a rule that stays in rustc for a stated reason.  The census unchanged.
+
+### D-phase-1 — CLOSED 2026-11-04 (@PLN211 arc C′1) — the C recognises the loop buffer's IR form
+- **Violates:** `R-Phase` (one place: no writer compensation)
+- **Where:** `c::body::emptied_either_way`, called by `known_empty` for `(R-PushFill)`'s run clause
+- **Effect:** none on values; the C keeps its push-run reservation after `(R-LoopBuffer)`'s
+  `if OpRefIsNull … else OpClearVector` declaration.
+- **Removal:** a front fact in `opt` — a vector slot is empty after a statement that empties it
+  on every path — read by every writer (arc C′1).
+- **Closed by:** `opt::empty_slot` — `known_empty` moved to the front, a slot emptied by a statement that empties it on every path (its zero, a clear of it, an `if` whose arms both do); the C's function is gone, the C's `R-PushFill/run` census unchanged.
+
 ## Deviations carried by rewrites.md until 2026-09-29
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
@@ -649,3 +677,40 @@ inserted between the attribute and the item: a +24 % slowdown on `truncate_to` f
 out-of-line raw read, found by a flat profile of the two runtimes (8.6 % of samples in a
 symbol the fast build does not have).
 
+## (R-LoopRecord) in the writers
+
+Until 2026-11-04 `(R-LoopRecord)` was two writer clauses; @PLN211 moved it into the IR
+(`opt::loop_record`) and deleted both.  What they were, as `rewrites.md` stated them:
+
+Sites: `hoist::loop_records`, the `Value::Loop`
+emission in `emit.rs` (prelude and postlude), `output_block` (the two dropped statements),
+`ops::misc_ops` (the kept-record mint).  Cells `tests/scripts/157-loop-record.loft` l1–l15,
+pins `tests/loop_record.rs`.  The refill clause: a kept record's vectors keep their records
+and capacity, so a literal of vectors refills them where the plain form claimed new ones
+every pass.  Sites `hoist::loop_record_zeros` (the groups and their zeros) and the
+`(R-RefillBuffer)` empty in `emit.rs`; cells `tests/scripts/157-a-loop-record-keeps-its-vectors.loft`,
+pins `tests/ctor_literal.rs`.
+
+**On the C (a port).**  The C writer does not ask
+`crate::opt::loop_records::loop_records`, so a record literal in a loop mints a store, claims
+its vectors and frees it every pass.  The port is the same three moves in the C's spelling: the
+mint is taken only where the local holds no store (`if (r.store_nr == 0xFFFF)`), a refill
+record's literal zero of a vector field (`loft_set_int4(r, off, 0)`, in `field_zeros`) becomes
+`loft_vec_clear` of that field on a kept pass — length 0, block kept — and the end-of-body
+free moves after the loop.  Priced on hex_recover's `forms_upto` (gcc), on top of the run's
+header clause: 0.17 s → 0.11 s, **−35 %**; together 0.30 → 0.11 s (0.37×, ≈ 6.3× → ≈ 2.3×
+the Rust twin).  Resetting the store (`loft_reset_pool_root`) instead measured NOTHING — the
+cost is the two vectors' claims, not the store — and so did skipping the run's reservation on
+a kept pass and hinting `head_step` inline.  Built to the hand form (0.12 s against 0.11:
+the fresh flag below): `src/c/body/loop_record.rs` reads the shared analysis once per
+function; the mint is `((v.store_nr == 0xFFFF) ? (mint, lrf = 1) : (lrf = 0))`, each vector-field
+zero `if (lrf) zero; else loft_vec_clear(field)` — a fresh mint keeps its zero, because the C's
+claim is not promised to be zeroed — and the declaring block's `Set(v, null)` and end-of-pass
+free are skipped by node address, with one free after every copy of the keeping loop
+(`loop_stmt`).  The refill records only: a plain no-heap record keeps the plain mint on the C,
+where a reset measured nothing.  Bench (A/B, both clauses off against on): hex_recover
+`forms_upto` **0.302×** gcc (1045 → 315 µs, ≈ 2.5× the twin), **0.234×** clang (799 → 187 µs,
+≈ 1.5×).  Switch `LOFT_NO_LOOP_RECORD_REFILL=1` (and `LOFT_NO_LOOP_RECORD`); census
+`R-LoopRecord/refill`.  Guard: `157-a-loop-record-keeps-its-vectors.loft` and
+`157-loop-record.loft` now run on the C too (both pass, and under `LOFT_NATIVE_LEAK_CHECK`) —
+a kept pass that does not empty its vectors fails r1 with 102280.

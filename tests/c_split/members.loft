@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `(R-CSplit)`: a value of every member shape, written in one part and read in a later one.
+struct Rec { n: integer, s: text }
+struct Item { key: text, val: integer }
+enum Kind { Alpha, Beta }
+
+fn bump(n: &integer) {
+  n += 5;
+}
+
+fn main() {
+  i = 41;
+  f = 2.5;
+  b = true;
+  c = 'z';
+  t = "tx";
+  r = Rec { n: 7, s: "rs" };
+  v: vector<integer> = [3, 4];
+  h: hash<Item[key]> = [];
+  h += [Item { key: "k1", val: 11 }];
+  tp = (5, "tt");
+  ni: integer? = null;
+  k = Kind.Beta;
+  i += 1;
+  t += "y";
+  r.n += 1;
+  v += [5];
+  bump(i);
+  assert(i == 47, "integer {i}");
+  assert(f * 2.0 == 5.0, "float {f}");
+  assert(b, "boolean");
+  assert(c == 'z', "character {c}");
+  assert(t == "txy" and len(t) == 3, "text {t}");
+  assert(r.n == 8 and r.s == "rs", "record {r.n} {r.s}");
+  assert(len(v) == 3 and v[2] == 5 and v[0] + v[1] == 7, "vector {v}");
+  assert((h["k1"].val ?? -1) == 11, "hash");
+  assert(tp.0 == 5 and tp.1 == "tt", "tuple");
+  assert(ni == null, "nullable");
+  assert(k == Kind.Beta, "enum");
+  println("members ok");
+}

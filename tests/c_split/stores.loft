@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `(R-CSplit)`: stores made in one part and freed at the function's end or in another part,
+// a function with a `&` parameter and a returned record, and recursion (static slots).
+struct Box { items: vector<text>, total: integer }
+
+fn grow(b: Box, w: text) {
+  b.items += [w];
+  b.total += len(w);
+  b.items += ["{w}{w}"];
+  b.total += 2 * len(w);
+}
+
+fn build(n: integer) -> Box {
+  b = Box { items: [], total: 0 };
+  grow(b, "ab");
+  s = "n={n}";
+  b.items += [s];
+  b.total += len(s);
+  if n > 0 {
+    inner = build(n - 1);
+    b.total += inner.total;
+  }
+  b
+}
+
+fn main() {
+  b = build(2);
+  assert(len(b.items) == 3, "items {len(b.items)}");
+  assert(b.items[0] == "ab" and b.items[1] == "abab" and b.items[2] == "n=2", "values {b.items}");
+  assert(b.total == 27, "total {b.total}");
+  tmp = Box { items: ["x", "y"], total: 2 };
+  grow(tmp, "q");
+  assert(len(tmp.items) == 4 and tmp.total == 5, "a store freed at the end: {tmp.total}");
+  println("stores ok");
+}

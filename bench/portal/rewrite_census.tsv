@@ -375,7 +375,7 @@
 07_string_build	-	rust	R-ZeroCount	8
 08_word_count	-	c	R-Base	2
 08_word_count	-	c	R-BoundedNest/kernel	1
-08_word_count	-	c	R-CompleteWrite	3
+08_word_count	-	c	R-CompleteWrite	2
 08_word_count	-	c	R-Counter	6
 08_word_count	-	c	R-DischargeInto	2
 08_word_count	-	c	R-FieldAppend/bare	18
@@ -392,6 +392,7 @@
 08_word_count	-	c	R-LoopSlot	2
 08_word_count	-	c	R-NoLocks	1
 08_word_count	-	c	R-NonSentinelParam	7
+08_word_count	-	c	R-RecPtr	1
 08_word_count	-	c	R-RefParam	2
 08_word_count	-	c	R-Rotate	9
 08_word_count	-	c	R-SingleUse	2
@@ -403,7 +404,7 @@
 08_word_count	-	rust	R-Base	4
 08_word_count	-	rust	R-BoundedNest/kernel	1
 08_word_count	-	rust	R-CharWalk	10
-08_word_count	-	rust	R-CompleteWrite	9
+08_word_count	-	rust	R-CompleteWrite	7
 08_word_count	-	rust	R-Counter	5
 08_word_count	-	rust	R-DischargeInto	2
 08_word_count	-	rust	R-FieldAppend/bare	26
@@ -416,7 +417,7 @@
 08_word_count	-	rust	R-Header/apart	4
 08_word_count	-	rust	R-Header/apart-param	4
 08_word_count	-	rust	R-InlineLeaf	8
-08_word_count	-	rust	R-KeyedEntry	2
+08_word_count	-	rust	R-KeyedEntry	1
 08_word_count	-	rust	R-Leaf	112
 08_word_count	-	rust	R-LeafChain	27
 08_word_count	-	rust	R-LitDiv	2
@@ -424,6 +425,7 @@
 08_word_count	-	rust	R-Mint	7
 08_word_count	-	rust	R-Range	4
 08_word_count	-	rust	R-RangedCall	2
+08_word_count	-	rust	R-RecPtr	2
 08_word_count	-	rust	R-RetAdopt	3
 08_word_count	-	rust	R-Rotate	9
 08_word_count	-	rust	R-SingleUse	2
@@ -619,12 +621,12 @@
 11_par	-	rust	R-Wrapper	10
 11_par	-	rust	R-ZeroCount	8
 12_drawing	-	c	R-Apart/vector	1
-12_drawing	-	c	R-Base	42
+12_drawing	-	c	R-Base	36
 12_drawing	-	c	R-Base/counter	4
 12_drawing	-	c	R-BoundedNest/kernel	1
 12_drawing	-	c	R-Callee	1
-12_drawing	-	c	R-CompleteWrite	19
-12_drawing	-	c	R-Counter	121
+12_drawing	-	c	R-CompleteWrite	9
+12_drawing	-	c	R-Counter	120
 12_drawing	-	c	R-DischargeInto	1
 12_drawing	-	c	R-ElemFirst	2
 12_drawing	-	c	R-FieldAppend/bare	2
@@ -636,27 +638,26 @@
 12_drawing	-	c	R-Fuse/text	31
 12_drawing	-	c	R-GuardedChain	4
 12_drawing	-	c	R-GuardedChain/operators	16
-12_drawing	-	c	R-Header	42
+12_drawing	-	c	R-Header	36
 12_drawing	-	c	R-Header/apart	3
 12_drawing	-	c	R-Inline	2
-12_drawing	-	c	R-Inline/helper	1
 12_drawing	-	c	R-InlineLeaf	72
-12_drawing	-	c	R-Inputs	4
+12_drawing	-	c	R-Inputs	2
 12_drawing	-	c	R-Invariant	10
 12_drawing	-	c	R-LoopSlot	20
 12_drawing	-	c	R-MaskRange	4
 12_drawing	-	c	R-NoLocks	1
 12_drawing	-	c	R-NonSentinelParam	25
-12_drawing	-	c	R-Push	13
-12_drawing	-	c	R-Range	34
+12_drawing	-	c	R-Push	3
+12_drawing	-	c	R-Range	27
 12_drawing	-	c	R-RecPtr	4
 12_drawing	-	c	R-RecPtr/held	1
 12_drawing	-	c	R-RecPtr/param	3
-12_drawing	-	c	R-RefParam	82
+12_drawing	-	c	R-RefParam	76
 12_drawing	-	c	R-RetAdopt	1
 12_drawing	-	c	R-Reuse	4
 12_drawing	-	c	R-Rotate	28
-12_drawing	-	c	R-Scalar	16
+12_drawing	-	c	R-Scalar	14
 12_drawing	-	c	R-ScaleFold	2
 12_drawing	-	c	R-SingleUse	7
 12_drawing	-	c	R-StartStep	2
@@ -669,11 +670,11 @@
 12_drawing	-	c	R-Wrapper	29
 12_drawing	-	c	R-ZeroCount	8
 12_drawing	-	rust	R-Apart/vector	1
-12_drawing	-	rust	R-Base	98
+12_drawing	-	rust	R-Base	95
 12_drawing	-	rust	R-BoundedNest/kernel	1
 12_drawing	-	rust	R-Callee	1
 12_drawing	-	rust	R-CharWalk	10
-12_drawing	-	rust	R-CompleteWrite	27
+12_drawing	-	rust	R-CompleteWrite	17
 12_drawing	-	rust	R-Counter	108
 12_drawing	-	rust	R-DischargeInto	1
 12_drawing	-	rust	R-ElemFirst	2
@@ -684,14 +685,15 @@
 12_drawing	-	rust	R-Fuse/field	1
 12_drawing	-	rust	R-Fuse/jump	64
 12_drawing	-	rust	R-Fuse/text	31
+12_drawing	-	rust	R-GroupPush	1
 12_drawing	-	rust	R-GuardFree	9
 12_drawing	-	rust	R-GuardedChain	7
 12_drawing	-	rust	R-GuardedChain/operators	28
-12_drawing	-	rust	R-Header	103
+12_drawing	-	rust	R-Header	90
 12_drawing	-	rust	R-Header/function	6
 12_drawing	-	rust	R-Header/kept	7
 12_drawing	-	rust	R-InlineLeaf	72
-12_drawing	-	rust	R-Inputs	8
+12_drawing	-	rust	R-Inputs	7
 12_drawing	-	rust	R-Invariant	40
 12_drawing	-	rust	R-Leaf	133
 12_drawing	-	rust	R-LeafChain	34
@@ -699,8 +701,7 @@
 12_drawing	-	rust	R-LoopSlot	20
 12_drawing	-	rust	R-MaskRange	4
 12_drawing	-	rust	R-Mint	11
-12_drawing	-	rust	R-Push	13
-12_drawing	-	rust	R-PushFill	12
+12_drawing	-	rust	R-Push	3
 12_drawing	-	rust	R-PushRec	1
 12_drawing	-	rust	R-Range	70
 12_drawing	-	rust	R-RangedCall	5
@@ -710,7 +711,7 @@
 12_drawing	-	rust	R-RetAdopt	4
 12_drawing	-	rust	R-Reuse	4
 12_drawing	-	rust	R-Rotate	28
-12_drawing	-	rust	R-Scalar	46
+12_drawing	-	rust	R-Scalar	44
 12_drawing	-	rust	R-ScaleFold	2
 12_drawing	-	rust	R-SingleUse	7
 12_drawing	-	rust	R-SplitTable	1
@@ -793,9 +794,10 @@
 14_stdlib_vector	-	c	R-Base	15
 14_stdlib_vector	-	c	R-Base/counter	6
 14_stdlib_vector	-	c	R-BoundedNest/kernel	1
-14_stdlib_vector	-	c	R-CompleteWrite	14
+14_stdlib_vector	-	c	R-CompleteWrite	13
 14_stdlib_vector	-	c	R-Counter	77
 14_stdlib_vector	-	c	R-DischargeInto	1
+14_stdlib_vector	-	c	R-ElemFirst	1
 14_stdlib_vector	-	c	R-FieldAppend/bare	1
 14_stdlib_vector	-	c	R-FormatAppend	1
 14_stdlib_vector	-	c	R-ForwardWalk	1
@@ -815,6 +817,8 @@
 14_stdlib_vector	-	c	R-Mint	2
 14_stdlib_vector	-	c	R-NoLocks	1
 14_stdlib_vector	-	c	R-NonSentinelParam	20
+14_stdlib_vector	-	c	R-Push	1
+14_stdlib_vector	-	c	R-Push/sole	1
 14_stdlib_vector	-	c	R-Range	27
 14_stdlib_vector	-	c	R-RecPtr	4
 14_stdlib_vector	-	c	R-RecPtr/held	2
@@ -831,11 +835,11 @@
 14_stdlib_vector	-	rust	R-Base	20
 14_stdlib_vector	-	rust	R-BoundedNest/kernel	1
 14_stdlib_vector	-	rust	R-CharWalk	10
-14_stdlib_vector	-	rust	R-CompleteWrite	30
+14_stdlib_vector	-	rust	R-CompleteWrite	28
 14_stdlib_vector	-	rust	R-Counter	77
 14_stdlib_vector	-	rust	R-DischargeInto	1
-14_stdlib_vector	-	rust	R-ElemFirst	2
-14_stdlib_vector	-	rust	R-FieldAppend/bare	8
+14_stdlib_vector	-	rust	R-ElemFirst	1
+14_stdlib_vector	-	rust	R-FieldAppend/bare	10
 14_stdlib_vector	-	rust	R-FormatAppend	1
 14_stdlib_vector	-	rust	R-ForwardWalk	1
 14_stdlib_vector	-	rust	R-Fuse	86
@@ -856,7 +860,7 @@
 14_stdlib_vector	-	rust	R-LoopSlot	28
 14_stdlib_vector	-	rust	R-Mint	15
 14_stdlib_vector	-	rust	R-Push	10
-14_stdlib_vector	-	rust	R-PushFill	10
+14_stdlib_vector	-	rust	R-PushFill	8
 14_stdlib_vector	-	rust	R-PushFill/record	3
 14_stdlib_vector	-	rust	R-PushRec	3
 14_stdlib_vector	-	rust	R-Range	76
@@ -878,7 +882,7 @@
 15_stdlib_keyed	-	c	R-Base	3
 15_stdlib_keyed	-	c	R-Base/counter	2
 15_stdlib_keyed	-	c	R-BoundedNest/kernel	1
-15_stdlib_keyed	-	c	R-CompleteWrite	17
+15_stdlib_keyed	-	c	R-CompleteWrite	15
 15_stdlib_keyed	-	c	R-Counter	58
 15_stdlib_keyed	-	c	R-DischargeInto	2
 15_stdlib_keyed	-	c	R-FieldAppend/bare	1
@@ -894,13 +898,13 @@
 15_stdlib_keyed	-	c	R-Inline	1
 15_stdlib_keyed	-	c	R-InlineLeaf	23
 15_stdlib_keyed	-	c	R-Invariant	1
-15_stdlib_keyed	-	c	R-KeyedEntry	3
+15_stdlib_keyed	-	c	R-KeyedEntry	2
 15_stdlib_keyed	-	c	R-LoopSlot	22
 15_stdlib_keyed	-	c	R-Mint	1
 15_stdlib_keyed	-	c	R-NoLocks	1
 15_stdlib_keyed	-	c	R-NonSentinelParam	23
 15_stdlib_keyed	-	c	R-Range	11
-15_stdlib_keyed	-	c	R-RecPtr	15
+15_stdlib_keyed	-	c	R-RecPtr	18
 15_stdlib_keyed	-	c	R-RefParam	12
 15_stdlib_keyed	-	c	R-Rotate	29
 15_stdlib_keyed	-	c	R-SingleUse	3
@@ -913,7 +917,7 @@
 15_stdlib_keyed	-	rust	R-Base	6
 15_stdlib_keyed	-	rust	R-BoundedNest/kernel	1
 15_stdlib_keyed	-	rust	R-CharWalk	10
-15_stdlib_keyed	-	rust	R-CompleteWrite	37
+15_stdlib_keyed	-	rust	R-CompleteWrite	33
 15_stdlib_keyed	-	rust	R-Counter	70
 15_stdlib_keyed	-	rust	R-DischargeInto	2
 15_stdlib_keyed	-	rust	R-FieldAppend/bare	9
@@ -930,7 +934,7 @@
 15_stdlib_keyed	-	rust	R-Header/function	2
 15_stdlib_keyed	-	rust	R-InlineLeaf	23
 15_stdlib_keyed	-	rust	R-Invariant	4
-15_stdlib_keyed	-	rust	R-KeyedEntry	6
+15_stdlib_keyed	-	rust	R-KeyedEntry	2
 15_stdlib_keyed	-	rust	R-Leaf	126
 15_stdlib_keyed	-	rust	R-LeafChain	31
 15_stdlib_keyed	-	rust	R-LitDiv	28
@@ -938,7 +942,7 @@
 15_stdlib_keyed	-	rust	R-Mint	9
 15_stdlib_keyed	-	rust	R-Range	101
 15_stdlib_keyed	-	rust	R-RangedCall	19
-15_stdlib_keyed	-	rust	R-RecPtr	26
+15_stdlib_keyed	-	rust	R-RecPtr	32
 15_stdlib_keyed	-	rust	R-RetAdopt	3
 15_stdlib_keyed	-	rust	R-Rotate	29
 15_stdlib_keyed	-	rust	R-SingleUse	3
@@ -956,7 +960,7 @@
 16_consumer_shapes	-	c	R-Base/counter	15
 16_consumer_shapes	-	c	R-BoundedNest/kernel	1
 16_consumer_shapes	-	c	R-Callee	1
-16_consumer_shapes	-	c	R-CompleteWrite	28
+16_consumer_shapes	-	c	R-CompleteWrite	26
 16_consumer_shapes	-	c	R-Counter	114
 16_consumer_shapes	-	c	R-DischargeInto	1
 16_consumer_shapes	-	c	R-FieldAppend	1
@@ -978,7 +982,7 @@
 16_consumer_shapes	-	c	R-InlineLeaf	16
 16_consumer_shapes	-	c	R-Inputs	10
 16_consumer_shapes	-	c	R-Invariant	27
-16_consumer_shapes	-	c	R-KeyedEntry	2
+16_consumer_shapes	-	c	R-KeyedEntry	1
 16_consumer_shapes	-	c	R-LoopSlot	45
 16_consumer_shapes	-	c	R-Mint	13
 16_consumer_shapes	-	c	R-NoLocks	1
@@ -989,7 +993,7 @@
 16_consumer_shapes	-	c	R-PushFill	2
 16_consumer_shapes	-	c	R-PushRec	4
 16_consumer_shapes	-	c	R-Range	222
-16_consumer_shapes	-	c	R-RecPtr	38
+16_consumer_shapes	-	c	R-RecPtr	40
 16_consumer_shapes	-	c	R-RecPtr/held	9
 16_consumer_shapes	-	c	R-RefParam	60
 16_consumer_shapes	-	c	R-Rotate	53
@@ -1011,7 +1015,7 @@
 16_consumer_shapes	-	rust	R-BoundedNest/kernel	1
 16_consumer_shapes	-	rust	R-Callee	1
 16_consumer_shapes	-	rust	R-CharWalk	10
-16_consumer_shapes	-	rust	R-CompleteWrite	47
+16_consumer_shapes	-	rust	R-CompleteWrite	43
 16_consumer_shapes	-	rust	R-Counter	161
 16_consumer_shapes	-	rust	R-DischargeInto	1
 16_consumer_shapes	-	rust	R-FieldAppend	1
@@ -1034,7 +1038,7 @@
 16_consumer_shapes	-	rust	R-InlineLeaf	16
 16_consumer_shapes	-	rust	R-Inputs	16
 16_consumer_shapes	-	rust	R-Invariant	120
-16_consumer_shapes	-	rust	R-KeyedEntry	4
+16_consumer_shapes	-	rust	R-KeyedEntry	1
 16_consumer_shapes	-	rust	R-Leaf	141
 16_consumer_shapes	-	rust	R-LeafChain	38
 16_consumer_shapes	-	rust	R-LitDiv	63
@@ -1046,7 +1050,7 @@
 16_consumer_shapes	-	rust	R-PushRec	12
 16_consumer_shapes	-	rust	R-Range	342
 16_consumer_shapes	-	rust	R-RangedCall	22
-16_consumer_shapes	-	rust	R-RecPtr	49
+16_consumer_shapes	-	rust	R-RecPtr	53
 16_consumer_shapes	-	rust	R-RecPtr/index	2
 16_consumer_shapes	-	rust	R-RecPtr/nested	3
 16_consumer_shapes	-	rust	R-RefillBuffer	2
@@ -1073,7 +1077,7 @@
 17_consumer_moros_dryopea	-	c	R-Base/counter	2
 17_consumer_moros_dryopea	-	c	R-BoundedNest/kernel	1
 17_consumer_moros_dryopea	-	c	R-Compact	2
-17_consumer_moros_dryopea	-	c	R-CompleteWrite	61
+17_consumer_moros_dryopea	-	c	R-CompleteWrite	56
 17_consumer_moros_dryopea	-	c	R-Counter	134
 17_consumer_moros_dryopea	-	c	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	c	R-DischargeInto	1
@@ -1095,7 +1099,7 @@
 17_consumer_moros_dryopea	-	c	R-Header/apart-param	5
 17_consumer_moros_dryopea	-	c	R-Header/rebind	7
 17_consumer_moros_dryopea	-	c	R-InPlaceLiteral	2
-17_consumer_moros_dryopea	-	c	R-Inline	30
+17_consumer_moros_dryopea	-	c	R-Inline	31
 17_consumer_moros_dryopea	-	c	R-Inline/helper	1
 17_consumer_moros_dryopea	-	c	R-InlineLeaf	35
 17_consumer_moros_dryopea	-	c	R-Inputs	1
@@ -1124,6 +1128,7 @@
 17_consumer_moros_dryopea	-	c	R-TypedKeyed/compound	5
 17_consumer_moros_dryopea	-	c	R-ValueLocal	31
 17_consumer_moros_dryopea	-	c	R-ValueRecord	20
+17_consumer_moros_dryopea	-	c	R-ValueRecord/view	2
 17_consumer_moros_dryopea	-	c	R-View	14
 17_consumer_moros_dryopea	-	c	R-WorkPark	20
 17_consumer_moros_dryopea	-	c	R-Wrapper	34
@@ -1134,7 +1139,7 @@
 17_consumer_moros_dryopea	-	rust	R-BoundedNest/kernel	1
 17_consumer_moros_dryopea	-	rust	R-CharWalk	10
 17_consumer_moros_dryopea	-	rust	R-Compact	2
-17_consumer_moros_dryopea	-	rust	R-CompleteWrite	79
+17_consumer_moros_dryopea	-	rust	R-CompleteWrite	72
 17_consumer_moros_dryopea	-	rust	R-Counter	109
 17_consumer_moros_dryopea	-	rust	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	rust	R-DischargeInto	1
@@ -1187,6 +1192,7 @@
 17_consumer_moros_dryopea	-	rust	R-TypedKeyed/compound	5
 17_consumer_moros_dryopea	-	rust	R-ValueLocal	47
 17_consumer_moros_dryopea	-	rust	R-ValueRecord	20
+17_consumer_moros_dryopea	-	rust	R-ValueRecord/view	2
 17_consumer_moros_dryopea	-	rust	R-View	35
 17_consumer_moros_dryopea	-	rust	R-Wrapper	34
 17_consumer_moros_dryopea	-	rust	R-ZeroCount	8
@@ -1221,6 +1227,7 @@
 18_consumer_crawler	-	c	R-InlineLeaf	20
 18_consumer_crawler	-	c	R-Inputs	19
 18_consumer_crawler	-	c	R-Invariant	17
+18_consumer_crawler	-	c	R-KeyedEntry	1
 18_consumer_crawler	-	c	R-LoopSlot	55
 18_consumer_crawler	-	c	R-MaskRange	1
 18_consumer_crawler	-	c	R-Mint	4
@@ -1291,7 +1298,7 @@
 18_consumer_crawler	-	rust	R-PushFill/fill	1
 18_consumer_crawler	-	rust	R-Range	341
 18_consumer_crawler	-	rust	R-RangedCall	19
-18_consumer_crawler	-	rust	R-RecPtr	12
+18_consumer_crawler	-	rust	R-RecPtr	13
 18_consumer_crawler	-	rust	R-RecPtr/nested	6
 18_consumer_crawler	-	rust	R-RefillBuffer	5
 18_consumer_crawler	-	rust	R-RetAdopt	4
@@ -1590,6 +1597,7 @@ assets	856d1c055+shapes@0.5.4	c	R-Inline/helper	2
 assets	856d1c055+shapes@0.5.4	c	R-InlineLeaf	13
 assets	856d1c055+shapes@0.5.4	c	R-Inputs	4
 assets	856d1c055+shapes@0.5.4	c	R-Invariant	3
+assets	856d1c055+shapes@0.5.4	c	R-LoopBuffer	1
 assets	856d1c055+shapes@0.5.4	c	R-LoopSlot	35
 assets	856d1c055+shapes@0.5.4	c	R-Mint	7
 assets	856d1c055+shapes@0.5.4	c	R-NonSentinelParam	16
@@ -1710,6 +1718,7 @@ cbor	1add14001	c	R-Inline/helper	2
 cbor	1add14001	c	R-InlineLeaf	21
 cbor	1add14001	c	R-Inputs	5
 cbor	1add14001	c	R-Invariant	7
+cbor	1add14001	c	R-LoopBuffer	1
 cbor	1add14001	c	R-LoopSlot	29
 cbor	1add14001	c	R-MaskRange	5
 cbor	1add14001	c	R-Mint	1
@@ -1775,7 +1784,7 @@ cbor	1add14001	rust	R-Invariant	26
 cbor	1add14001	rust	R-Leaf	123
 cbor	1add14001	rust	R-LeafChain	30
 cbor	1add14001	rust	R-LitDiv	101
-cbor	1add14001	rust	R-LoopBuffer	2
+cbor	1add14001	rust	R-LoopBuffer	1
 cbor	1add14001	rust	R-LoopSlot	29
 cbor	1add14001	rust	R-MaskRange	5
 cbor	1add14001	rust	R-Mint	11
@@ -1833,6 +1842,7 @@ crypto	1add14001	c	R-Inline/helper	1
 crypto	1add14001	c	R-InlineLeaf	8
 crypto	1add14001	c	R-Inputs	1
 crypto	1add14001	c	R-Invariant	3
+crypto	1add14001	c	R-LoopBuffer	1
 crypto	1add14001	c	R-LoopSlot	17
 crypto	1add14001	c	R-Mint	1
 crypto	1add14001	c	R-NoLocks	1
@@ -1912,7 +1922,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Base/
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-BoundedNest/kernel	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Callee	5
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CharWalk	1
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CompleteWrite	168
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CompleteWrite	154
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CopyView	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Counter	625
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-DischargeInto	1
@@ -1944,8 +1954,11 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Inlin
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-InlineLeaf	162
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Inputs	30
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Invariant	22
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-KeyedEntry	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LazySplit	3
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LiteralWalk	2
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LoopBuffer	8
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LoopRecord	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LoopSlot	140
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-MaskRange	5
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Mint	33
@@ -1962,7 +1975,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushF
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run-header	3
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushRec	14
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	237
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr	29
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr	30
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr/held	16
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr/param	16
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RefParam	553
@@ -1978,6 +1991,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-TextB
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Transient	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueLocal	112
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueRecord	33
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueRecord/view	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Version	9
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-View	15
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-WorkBuffer	25
@@ -1989,12 +2003,12 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ZeroC
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	H-SwapRebind	5
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Alias/versioned	18
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Apart/vector	2
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Base	296
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Base	297
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-BoundedNest	8
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-BoundedNest/kernel	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Callee	10
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CharWalk	10
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CompleteWrite	270
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CompleteWrite	255
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CopyView	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Counter	580
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-DischargeInto	1
@@ -2012,12 +2026,12 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Fu
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Fuse/jump	467
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Fuse/tag	4
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Fuse/text	31
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-GroupPush	14
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-GroupPush	13
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-GuardFree	17
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-GuardedChain	45
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-GuardedChain/operators	178
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Header	355
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Header/apart	2
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Header/apart	4
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Header/function	14
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Header/kept	79
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Header/kept-twin	34
@@ -2028,16 +2042,16 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-In
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Invariant	163
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-KeyedEntry	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-LazySplit	1
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Leaf	285
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-LeafChain	174
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Leaf	284
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-LeafChain	173
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-LitDiv	52
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-LitHoist	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-LiteralWalk	2
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-LoopBuffer	15
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-LoopBuffer	8
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-LoopRecord	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-LoopSlot	140
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-MaskRange	5
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Mint	111
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Mint	102
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-MoveAppend	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-MoveLast	3
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Place	1
@@ -2045,11 +2059,11 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Pu
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-PushFill	65
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-PushFill/fill	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-PushFill/record	9
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-PushRec	38
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-PushRec	37
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-PushRec/apart	10
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Range	639
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RangedCall	32
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RecPtr	185
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Range	635
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RangedCall	27
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RecPtr	181
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RecPtr/index	23
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RecPtr/nested	19
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RefillBuffer	38
@@ -2060,7 +2074,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Re
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Reuse	55
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Rotate	177
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-SameRead	1
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Scalar	193
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Scalar	170
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-SingleUse	26
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-SliceBorrow	5
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-SplitTable	1
@@ -2070,6 +2084,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Te
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-TypedKeyed	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ValueLocal	288
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ValueRecord	33
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ValueRecord/view	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-View	67
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-WorkBuffer	25
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-WorkBuffer/onward	89
@@ -2385,7 +2400,9 @@ graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-Inline/helper	13
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-InlineLeaf	34
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-Inputs	25
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-Invariant	17
+graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-KeyedEntry	1
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-LiteralWalk	2
+graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-LoopBuffer	2
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-LoopSlot	78
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-MaskRange	6
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-Mint	2
@@ -2431,7 +2448,7 @@ graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-BoundedNest	4
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-BoundedNest/kernel	1
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Callee	12
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-CharWalk	10
-graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-CompleteWrite	99
+graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-CompleteWrite	98
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-CopyView	2
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Counter	252
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-DischargeInto	1
@@ -2451,6 +2468,7 @@ graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-GuardFree	15
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-GuardedChain	50
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-GuardedChain/operators	226
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Header	121
+graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Header/apart	2
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Header/function	7
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Header/kept	35
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Header/kept-twin	13
@@ -2463,7 +2481,7 @@ graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Leaf	217
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-LeafChain	110
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-LitDiv	46
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-LiteralWalk	2
-graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-LoopBuffer	3
+graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-LoopBuffer	2
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-LoopSlot	78
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-MaskRange	6
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Mint	11
@@ -2473,7 +2491,7 @@ graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-PushFill/fill	1
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-PushRec	2
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-Range	611
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-RangedCall	41
-graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-RecPtr	63
+graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-RecPtr	64
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-RecPtr/index	1
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-RecPtr/nested	14
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-RefillBuffer	17
@@ -2503,7 +2521,7 @@ gridmesh	aa86b6b47	c	R-Alias/versioned	1
 gridmesh	aa86b6b47	c	R-Base	14
 gridmesh	aa86b6b47	c	R-Base/counter	6
 gridmesh	aa86b6b47	c	R-BoundedNest/kernel	1
-gridmesh	aa86b6b47	c	R-CompleteWrite	21
+gridmesh	aa86b6b47	c	R-CompleteWrite	17
 gridmesh	aa86b6b47	c	R-Counter	113
 gridmesh	aa86b6b47	c	R-DischargeInto	1
 gridmesh	aa86b6b47	c	R-ExitVector	3
@@ -2523,7 +2541,8 @@ gridmesh	aa86b6b47	c	R-InPlaceLiteral	3
 gridmesh	aa86b6b47	c	R-Inline	6
 gridmesh	aa86b6b47	c	R-InlineLeaf	64
 gridmesh	aa86b6b47	c	R-Invariant	5
-gridmesh	aa86b6b47	c	R-KeyedEntry	6
+gridmesh	aa86b6b47	c	R-KeyedEntry	4
+gridmesh	aa86b6b47	c	R-LoopBuffer	1
 gridmesh	aa86b6b47	c	R-LoopSlot	24
 gridmesh	aa86b6b47	c	R-MaskRange	18
 gridmesh	aa86b6b47	c	R-NoLocks	1
@@ -2534,7 +2553,7 @@ gridmesh	aa86b6b47	c	R-PushFill/hash	3
 gridmesh	aa86b6b47	c	R-PushRec	1
 gridmesh	aa86b6b47	c	R-PushRec/apart	3
 gridmesh	aa86b6b47	c	R-Range	51
-gridmesh	aa86b6b47	c	R-RecPtr	7
+gridmesh	aa86b6b47	c	R-RecPtr	11
 gridmesh	aa86b6b47	c	R-RecPtr/held	1
 gridmesh	aa86b6b47	c	R-RecPtr/param	1
 gridmesh	aa86b6b47	c	R-RefParam	74
@@ -2557,7 +2576,7 @@ gridmesh	aa86b6b47	rust	R-Alias/versioned	1
 gridmesh	aa86b6b47	rust	R-Base	28
 gridmesh	aa86b6b47	rust	R-BoundedNest/kernel	1
 gridmesh	aa86b6b47	rust	R-CharWalk	10
-gridmesh	aa86b6b47	rust	R-CompleteWrite	28
+gridmesh	aa86b6b47	rust	R-CompleteWrite	24
 gridmesh	aa86b6b47	rust	R-Counter	100
 gridmesh	aa86b6b47	rust	R-DischargeInto	1
 gridmesh	aa86b6b47	rust	R-ExitVector	3
@@ -2579,7 +2598,7 @@ gridmesh	aa86b6b47	rust	R-Header/kept	12
 gridmesh	aa86b6b47	rust	R-InPlaceLiteral	3
 gridmesh	aa86b6b47	rust	R-InlineLeaf	64
 gridmesh	aa86b6b47	rust	R-Invariant	14
-gridmesh	aa86b6b47	rust	R-KeyedEntry	6
+gridmesh	aa86b6b47	rust	R-KeyedEntry	4
 gridmesh	aa86b6b47	rust	R-Leaf	134
 gridmesh	aa86b6b47	rust	R-LeafChain	45
 gridmesh	aa86b6b47	rust	R-LitDiv	12
@@ -2594,7 +2613,7 @@ gridmesh	aa86b6b47	rust	R-PushRec	4
 gridmesh	aa86b6b47	rust	R-PushRec/apart	16
 gridmesh	aa86b6b47	rust	R-Range	63
 gridmesh	aa86b6b47	rust	R-RangedCall	4
-gridmesh	aa86b6b47	rust	R-RecPtr	13
+gridmesh	aa86b6b47	rust	R-RecPtr	16
 gridmesh	aa86b6b47	rust	R-RecPtr/nested	5
 gridmesh	aa86b6b47	rust	R-RefillBuffer	1
 gridmesh	aa86b6b47	rust	R-RetAdopt	3
@@ -2747,6 +2766,7 @@ hex_draw	7db0174ab	c	R-Inline/helper	7
 hex_draw	7db0174ab	c	R-InlineLeaf	153
 hex_draw	7db0174ab	c	R-Inputs	26
 hex_draw	7db0174ab	c	R-Invariant	2
+hex_draw	7db0174ab	c	R-LoopBuffer	20
 hex_draw	7db0174ab	c	R-LoopSlot	262
 hex_draw	7db0174ab	c	R-NoLocks	1
 hex_draw	7db0174ab	c	R-NonSentinelParam	69
@@ -2805,7 +2825,7 @@ hex_draw	7db0174ab	rust	R-Invariant	270
 hex_draw	7db0174ab	rust	R-Leaf	328
 hex_draw	7db0174ab	rust	R-LeafChain	390
 hex_draw	7db0174ab	rust	R-LitDiv	143
-hex_draw	7db0174ab	rust	R-LoopBuffer	22
+hex_draw	7db0174ab	rust	R-LoopBuffer	20
 hex_draw	7db0174ab	rust	R-LoopSlot	262
 hex_draw	7db0174ab	rust	R-Mint	7
 hex_draw	7db0174ab	rust	R-Push	80
@@ -2853,6 +2873,7 @@ hex_edge	7db0174ab	c	R-Inline	28
 hex_edge	7db0174ab	c	R-Inline/helper	9
 hex_edge	7db0174ab	c	R-InlineLeaf	89
 hex_edge	7db0174ab	c	R-Inputs	51
+hex_edge	7db0174ab	c	R-LoopBuffer	2
 hex_edge	7db0174ab	c	R-LoopSlot	124
 hex_edge	7db0174ab	c	R-NoLocks	1
 hex_edge	7db0174ab	c	R-NonSentinelParam	29
@@ -2908,7 +2929,7 @@ hex_edge	7db0174ab	rust	R-Invariant	173
 hex_edge	7db0174ab	rust	R-Leaf	236
 hex_edge	7db0174ab	rust	R-LeafChain	199
 hex_edge	7db0174ab	rust	R-LitDiv	120
-hex_edge	7db0174ab	rust	R-LoopBuffer	4
+hex_edge	7db0174ab	rust	R-LoopBuffer	2
 hex_edge	7db0174ab	rust	R-LoopSlot	124
 hex_edge	7db0174ab	rust	R-Mint	7
 hex_edge	7db0174ab	rust	R-Push	41
@@ -2962,6 +2983,7 @@ hex_field	7db0174ab	c	R-Inline/helper	17
 hex_field	7db0174ab	c	R-InlineLeaf	76
 hex_field	7db0174ab	c	R-Inputs	70
 hex_field	7db0174ab	c	R-Invariant	24
+hex_field	7db0174ab	c	R-LoopBuffer	3
 hex_field	7db0174ab	c	R-LoopSlot	126
 hex_field	7db0174ab	c	R-NoLocks	1
 hex_field	7db0174ab	c	R-NonSentinelParam	26
@@ -3023,7 +3045,7 @@ hex_field	7db0174ab	rust	R-Invariant	182
 hex_field	7db0174ab	rust	R-Leaf	199
 hex_field	7db0174ab	rust	R-LeafChain	146
 hex_field	7db0174ab	rust	R-LitDiv	118
-hex_field	7db0174ab	rust	R-LoopBuffer	5
+hex_field	7db0174ab	rust	R-LoopBuffer	3
 hex_field	7db0174ab	rust	R-LoopSlot	126
 hex_field	7db0174ab	rust	R-Mint	7
 hex_field	7db0174ab	rust	R-Push	41
@@ -3078,6 +3100,8 @@ hex_fit	7db0174ab	c	R-InlineLeaf	253
 hex_fit	7db0174ab	c	R-Inputs	35
 hex_fit	7db0174ab	c	R-Invariant	4
 hex_fit	7db0174ab	c	R-LiteralWalk	1
+hex_fit	7db0174ab	c	R-LoopBuffer	33
+hex_fit	7db0174ab	c	R-LoopRecord/refill	3
 hex_fit	7db0174ab	c	R-LoopSlot	416
 hex_fit	7db0174ab	c	R-NoLocks	1
 hex_fit	7db0174ab	c	R-NonSentinelParam	98
@@ -3112,7 +3136,7 @@ hex_fit	7db0174ab	rust	R-Base	776
 hex_fit	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_fit	7db0174ab	rust	R-Callee	12
 hex_fit	7db0174ab	rust	R-CharWalk	10
-hex_fit	7db0174ab	rust	R-CompleteWrite	157
+hex_fit	7db0174ab	rust	R-CompleteWrite	152
 hex_fit	7db0174ab	rust	R-Counter	1187
 hex_fit	7db0174ab	rust	R-CtorLiteral	4
 hex_fit	7db0174ab	rust	R-DischargeInto	7
@@ -3144,8 +3168,8 @@ hex_fit	7db0174ab	rust	R-Leaf	413
 hex_fit	7db0174ab	rust	R-LeafChain	569
 hex_fit	7db0174ab	rust	R-LitDiv	218
 hex_fit	7db0174ab	rust	R-LiteralWalk	1
-hex_fit	7db0174ab	rust	R-LoopBuffer	37
-hex_fit	7db0174ab	rust	R-LoopRecord/refill	5
+hex_fit	7db0174ab	rust	R-LoopBuffer	33
+hex_fit	7db0174ab	rust	R-LoopRecord/refill	3
 hex_fit	7db0174ab	rust	R-LoopSlot	416
 hex_fit	7db0174ab	rust	R-Mint	19
 hex_fit	7db0174ab	rust	R-Push	137
@@ -3200,6 +3224,7 @@ hex_form	7db0174ab	c	R-Inline	26
 hex_form	7db0174ab	c	R-Inline/helper	13
 hex_form	7db0174ab	c	R-InlineLeaf	115
 hex_form	7db0174ab	c	R-Inputs	38
+hex_form	7db0174ab	c	R-LoopBuffer	22
 hex_form	7db0174ab	c	R-LoopSlot	163
 hex_form	7db0174ab	c	R-Mint	5
 hex_form	7db0174ab	c	R-NoLocks	1
@@ -3265,7 +3290,7 @@ hex_form	7db0174ab	rust	R-Invariant	182
 hex_form	7db0174ab	rust	R-Leaf	277
 hex_form	7db0174ab	rust	R-LeafChain	198
 hex_form	7db0174ab	rust	R-LitDiv	147
-hex_form	7db0174ab	rust	R-LoopBuffer	24
+hex_form	7db0174ab	rust	R-LoopBuffer	22
 hex_form	7db0174ab	rust	R-LoopSlot	163
 hex_form	7db0174ab	rust	R-Mint	12
 hex_form	7db0174ab	rust	R-Push	74
@@ -3393,6 +3418,7 @@ hex_place	7db0174ab	c	R-Inline	16
 hex_place	7db0174ab	c	R-Inline/helper	9
 hex_place	7db0174ab	c	R-InlineLeaf	115
 hex_place	7db0174ab	c	R-Inputs	40
+hex_place	7db0174ab	c	R-LoopBuffer	20
 hex_place	7db0174ab	c	R-LoopSlot	169
 hex_place	7db0174ab	c	R-NoLocks	1
 hex_place	7db0174ab	c	R-NonSentinelParam	45
@@ -3454,7 +3480,7 @@ hex_place	7db0174ab	rust	R-Invariant	182
 hex_place	7db0174ab	rust	R-Leaf	282
 hex_place	7db0174ab	rust	R-LeafChain	212
 hex_place	7db0174ab	rust	R-LitDiv	141
-hex_place	7db0174ab	rust	R-LoopBuffer	22
+hex_place	7db0174ab	rust	R-LoopBuffer	20
 hex_place	7db0174ab	rust	R-LoopSlot	169
 hex_place	7db0174ab	rust	R-Mint	7
 hex_place	7db0174ab	rust	R-Push	71
@@ -3488,7 +3514,7 @@ hex_recover	7db0174ab	c	R-Base	42
 hex_recover	7db0174ab	c	R-Base/counter	13
 hex_recover	7db0174ab	c	R-BoundedNest/kernel	1
 hex_recover	7db0174ab	c	R-Callee	1
-hex_recover	7db0174ab	c	R-CompleteWrite	32
+hex_recover	7db0174ab	c	R-CompleteWrite	29
 hex_recover	7db0174ab	c	R-Counter	720
 hex_recover	7db0174ab	c	R-CtorLiteral	3
 hex_recover	7db0174ab	c	R-DischargeInto	5
@@ -3511,6 +3537,7 @@ hex_recover	7db0174ab	c	R-Inline/helper	5
 hex_recover	7db0174ab	c	R-InlineLeaf	147
 hex_recover	7db0174ab	c	R-Inputs	12
 hex_recover	7db0174ab	c	R-Invariant	11
+hex_recover	7db0174ab	c	R-LoopBuffer	23
 hex_recover	7db0174ab	c	R-LoopRecord/refill	3
 hex_recover	7db0174ab	c	R-LoopSlot	208
 hex_recover	7db0174ab	c	R-Mint	4
@@ -3555,7 +3582,7 @@ hex_recover	7db0174ab	rust	R-Base	297
 hex_recover	7db0174ab	rust	R-BoundedNest/kernel	1
 hex_recover	7db0174ab	rust	R-Callee	8
 hex_recover	7db0174ab	rust	R-CharWalk	10
-hex_recover	7db0174ab	rust	R-CompleteWrite	95
+hex_recover	7db0174ab	rust	R-CompleteWrite	90
 hex_recover	7db0174ab	rust	R-Counter	668
 hex_recover	7db0174ab	rust	R-CtorLiteral	3
 hex_recover	7db0174ab	rust	R-DischargeInto	5
@@ -3585,8 +3612,8 @@ hex_recover	7db0174ab	rust	R-Invariant	224
 hex_recover	7db0174ab	rust	R-Leaf	307
 hex_recover	7db0174ab	rust	R-LeafChain	224
 hex_recover	7db0174ab	rust	R-LitDiv	169
-hex_recover	7db0174ab	rust	R-LoopBuffer	27
-hex_recover	7db0174ab	rust	R-LoopRecord/refill	5
+hex_recover	7db0174ab	rust	R-LoopBuffer	23
+hex_recover	7db0174ab	rust	R-LoopRecord/refill	3
 hex_recover	7db0174ab	rust	R-LoopSlot	208
 hex_recover	7db0174ab	rust	R-Mint	24
 hex_recover	7db0174ab	rust	R-Push	94
@@ -3645,6 +3672,7 @@ hex_roof	7db0174ab	c	R-Inline/helper	13
 hex_roof	7db0174ab	c	R-InlineLeaf	106
 hex_roof	7db0174ab	c	R-Inputs	219
 hex_roof	7db0174ab	c	R-Invariant	1
+hex_roof	7db0174ab	c	R-LoopBuffer	2
 hex_roof	7db0174ab	c	R-LoopSlot	202
 hex_roof	7db0174ab	c	R-NoLocks	1
 hex_roof	7db0174ab	c	R-NonSentinelParam	56
@@ -3702,7 +3730,7 @@ hex_roof	7db0174ab	rust	R-Invariant	216
 hex_roof	7db0174ab	rust	R-Leaf	246
 hex_roof	7db0174ab	rust	R-LeafChain	304
 hex_roof	7db0174ab	rust	R-LitDiv	109
-hex_roof	7db0174ab	rust	R-LoopBuffer	4
+hex_roof	7db0174ab	rust	R-LoopBuffer	2
 hex_roof	7db0174ab	rust	R-LoopSlot	202
 hex_roof	7db0174ab	rust	R-Mint	7
 hex_roof	7db0174ab	rust	R-Push	48
@@ -3753,6 +3781,7 @@ hex_shape	7db0174ab	c	R-Inline/helper	11
 hex_shape	7db0174ab	c	R-InlineLeaf	176
 hex_shape	7db0174ab	c	R-Inputs	28
 hex_shape	7db0174ab	c	R-Invariant	2
+hex_shape	7db0174ab	c	R-LoopBuffer	30
 hex_shape	7db0174ab	c	R-LoopSlot	227
 hex_shape	7db0174ab	c	R-NoLocks	1
 hex_shape	7db0174ab	c	R-NonSentinelParam	67
@@ -3815,7 +3844,7 @@ hex_shape	7db0174ab	rust	R-Invariant	361
 hex_shape	7db0174ab	rust	R-Leaf	321
 hex_shape	7db0174ab	rust	R-LeafChain	283
 hex_shape	7db0174ab	rust	R-LitDiv	188
-hex_shape	7db0174ab	rust	R-LoopBuffer	42
+hex_shape	7db0174ab	rust	R-LoopBuffer	30
 hex_shape	7db0174ab	rust	R-LoopSlot	227
 hex_shape	7db0174ab	rust	R-Mint	7
 hex_shape	7db0174ab	rust	R-Push	117
@@ -3870,6 +3899,7 @@ hex_terrain	7db0174ab	c	R-Inline/helper	2
 hex_terrain	7db0174ab	c	R-InlineLeaf	69
 hex_terrain	7db0174ab	c	R-Inputs	2
 hex_terrain	7db0174ab	c	R-Invariant	15
+hex_terrain	7db0174ab	c	R-LoopBuffer	11
 hex_terrain	7db0174ab	c	R-LoopSlot	52
 hex_terrain	7db0174ab	c	R-NoLocks	1
 hex_terrain	7db0174ab	c	R-NonSentinelParam	33
@@ -3920,7 +3950,7 @@ hex_terrain	7db0174ab	rust	R-GuardFree	13
 hex_terrain	7db0174ab	rust	R-GuardedChain	30
 hex_terrain	7db0174ab	rust	R-GuardedChain/operators	80
 hex_terrain	7db0174ab	rust	R-Header	132
-hex_terrain	7db0174ab	rust	R-Header/apart	16
+hex_terrain	7db0174ab	rust	R-Header/apart	37
 hex_terrain	7db0174ab	rust	R-Header/function	4
 hex_terrain	7db0174ab	rust	R-Header/kept	50
 hex_terrain	7db0174ab	rust	R-Header/kept-twin	18
@@ -3930,7 +3960,7 @@ hex_terrain	7db0174ab	rust	R-Invariant	48
 hex_terrain	7db0174ab	rust	R-Leaf	144
 hex_terrain	7db0174ab	rust	R-LeafChain	74
 hex_terrain	7db0174ab	rust	R-LitDiv	9
-hex_terrain	7db0174ab	rust	R-LoopBuffer	17
+hex_terrain	7db0174ab	rust	R-LoopBuffer	11
 hex_terrain	7db0174ab	rust	R-LoopSlot	52
 hex_terrain	7db0174ab	rust	R-Mint	7
 hex_terrain	7db0174ab	rust	R-Push	25
@@ -3982,6 +4012,7 @@ hex_way	7db0174ab	c	R-Inline/helper	14
 hex_way	7db0174ab	c	R-InlineLeaf	94
 hex_way	7db0174ab	c	R-Inputs	112
 hex_way	7db0174ab	c	R-Invariant	4
+hex_way	7db0174ab	c	R-LoopBuffer	2
 hex_way	7db0174ab	c	R-LoopSlot	144
 hex_way	7db0174ab	c	R-NoLocks	1
 hex_way	7db0174ab	c	R-NonSentinelParam	44
@@ -4038,7 +4069,7 @@ hex_way	7db0174ab	rust	R-Invariant	200
 hex_way	7db0174ab	rust	R-Leaf	243
 hex_way	7db0174ab	rust	R-LeafChain	245
 hex_way	7db0174ab	rust	R-LitDiv	109
-hex_way	7db0174ab	rust	R-LoopBuffer	4
+hex_way	7db0174ab	rust	R-LoopBuffer	2
 hex_way	7db0174ab	rust	R-LoopSlot	144
 hex_way	7db0174ab	rust	R-Mint	7
 hex_way	7db0174ab	rust	R-Push	41
@@ -4239,6 +4270,7 @@ markdown	dd260f04c	c	R-Header/apart	1
 markdown	dd260f04c	c	R-Header/apart-param	1
 markdown	dd260f04c	c	R-Inline	4
 markdown	dd260f04c	c	R-InlineLeaf	8
+markdown	dd260f04c	c	R-LoopBuffer	1
 markdown	dd260f04c	c	R-LoopSlot	19
 markdown	dd260f04c	c	R-Mint	7
 markdown	dd260f04c	c	R-NoLocks	1
@@ -4411,10 +4443,11 @@ pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Base/counter	2
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-BoundAppend	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-BoundedNest/kernel	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-ByteCopy	2
-pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-CompleteWrite	58
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-CompleteWrite	57
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Counter	173
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Destination	6
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-DischargeInto	1
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-ElemFirst	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-ExitVector	4
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-FieldAppend/bare	8
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-FormatAppend	2
@@ -4474,12 +4507,12 @@ pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-WorkPark	27
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-Wrapper	29
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	c	R-ZeroCount	8
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-AppendTwin	18
-pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Base	25
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Base	26
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-BoundAppend	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-BoundedNest/kernel	1
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-ByteCopy	2
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-CharWalk	11
-pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-CompleteWrite	75
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-CompleteWrite	74
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Counter	129
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Destination	15
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-DischargeInto	1
@@ -4497,7 +4530,7 @@ pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Fuse/text	34
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-GuardFree	39
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-GuardedChain	7
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-GuardedChain/operators	16
-pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Header	37
+pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Header	38
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Header/apart	56
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-Header/function	4
 pluginabi	14fb3feb5+cbor@0.1.13+crypto@0.4.0	rust	R-InPlaceLiteral	9
@@ -4686,7 +4719,7 @@ server	b4075f3fc	rust	R-ZeroCount	13
 shapes	aa86b6b47	c	R-Base	4
 shapes	aa86b6b47	c	R-Base/counter	2
 shapes	aa86b6b47	c	R-BoundedNest/kernel	1
-shapes	aa86b6b47	c	R-CompleteWrite	8
+shapes	aa86b6b47	c	R-CompleteWrite	7
 shapes	aa86b6b47	c	R-Counter	28
 shapes	aa86b6b47	c	R-DischargeInto	1
 shapes	aa86b6b47	c	R-ElemFirst	1
@@ -4730,7 +4763,7 @@ shapes	aa86b6b47	c	R-ZeroCount	8
 shapes	aa86b6b47	rust	R-Base	16
 shapes	aa86b6b47	rust	R-BoundedNest/kernel	1
 shapes	aa86b6b47	rust	R-CharWalk	10
-shapes	aa86b6b47	rust	R-CompleteWrite	18
+shapes	aa86b6b47	rust	R-CompleteWrite	17
 shapes	aa86b6b47	rust	R-Counter	24
 shapes	aa86b6b47	rust	R-DischargeInto	1
 shapes	aa86b6b47	rust	R-ElemFirst	1
@@ -4869,7 +4902,9 @@ stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Inline/he
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-InlineLeaf	80
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Inputs	52
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Invariant	23
+stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-KeyedEntry	1
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-LiteralWalk	2
+stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-LoopBuffer	4
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-LoopSlot	94
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Mint	4
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-NoLocks	1
@@ -4911,7 +4946,7 @@ stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Bounde
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-BoundedNest/kernel	1
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Callee	19
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-CharWalk	12
-stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-CompleteWrite	165
+stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-CompleteWrite	164
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-CopyView	2
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Counter	294
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-DischargeInto	1
@@ -4932,6 +4967,7 @@ stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-GuardF
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-GuardedChain	41
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-GuardedChain/operators	160
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Header	205
+stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Header/apart	2
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Header/function	4
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Header/kept	309
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Header/kept-twin	29
@@ -4945,7 +4981,7 @@ stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Leaf	3
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-LeafChain	299
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-LitDiv	100
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-LiteralWalk	2
-stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-LoopBuffer	5
+stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-LoopBuffer	4
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-LoopSlot	94
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Mint	32
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Push	38
@@ -4954,7 +4990,7 @@ stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-PushFi
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-PushRec	11
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-Range	458
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-RangedCall	13
-stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-RecPtr	210
+stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-RecPtr	211
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-RecPtr/index	8
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-RecPtr/nested	21
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-RefillBuffer	17
@@ -5006,7 +5042,9 @@ text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-Inline/helper	3
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-InlineLeaf	36
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-Inputs	8
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-Invariant	7
+text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-KeyedEntry	1
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-LiteralWalk	2
+text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-LoopBuffer	2
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-LoopSlot	82
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-Mint	1
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-NonSentinelParam	38
@@ -5043,7 +5081,7 @@ text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-BoundedNest	4
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-BoundedNest/kernel	1
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Callee	6
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-CharWalk	20
-text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-CompleteWrite	95
+text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-CompleteWrite	94
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Const	2
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Const/fn	2
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-CopyView	2
@@ -5066,6 +5104,7 @@ text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-GuardFree	12
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-GuardedChain	37
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-GuardedChain/operators	149
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Header	116
+text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Header/apart	2
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Header/function	4
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Header/kept	34
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Header/kept-twin	13
@@ -5078,7 +5117,7 @@ text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Leaf	229
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-LeafChain	122
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-LitDiv	59
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-LiteralWalk	2
-text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-LoopBuffer	3
+text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-LoopBuffer	2
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-LoopSlot	82
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Mint	8
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Push	33
@@ -5086,7 +5125,7 @@ text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-PushFill	45
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-PushFill/fill	1
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-Range	330
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-RangedCall	19
-text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-RecPtr	68
+text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-RecPtr	69
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-RecPtr/index	1
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-RecPtr/nested	14
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-RefillBuffer	19
@@ -5402,6 +5441,7 @@ zttext	1add14001	c	R-Inline/helper	3
 zttext	1add14001	c	R-InlineLeaf	33
 zttext	1add14001	c	R-Inputs	5
 zttext	1add14001	c	R-Invariant	5
+zttext	1add14001	c	R-LoopBuffer	3
 zttext	1add14001	c	R-LoopSlot	89
 zttext	1add14001	c	R-Mint	36
 zttext	1add14001	c	R-MoveLast/local	2
@@ -5481,7 +5521,7 @@ zttext	1add14001	rust	R-Invariant	26
 zttext	1add14001	rust	R-Leaf	173
 zttext	1add14001	rust	R-LeafChain	91
 zttext	1add14001	rust	R-LitDiv	17
-zttext	1add14001	rust	R-LoopBuffer	6
+zttext	1add14001	rust	R-LoopBuffer	3
 zttext	1add14001	rust	R-LoopSlot	89
 zttext	1add14001	rust	R-Mint	125
 zttext	1add14001	rust	R-MoveLast/local	2

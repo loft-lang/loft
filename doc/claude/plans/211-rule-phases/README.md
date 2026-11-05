@@ -16,12 +16,18 @@ writers and the interpreter's generator; every rule reports to it or says why no
 table `bench/portal/rule_phases.tsv` is measured and gated, and `rewrites.md` § Applied by is
 rendered from it); B1 and B2 are done: weights in [b1-weights.md](b1-weights.md),
 a verdict per rule in § Verdicts.  Arc C has moved `(R-SliceArg)`'s
-range clause, `(R-Wrapper)` and `(R-PushFill)`'s fill form (§ Arc C's moves).  It was to start once
+range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-KeyedEntry)`, `(R-ElemFirst)`'s literal-built temp, call-filled temp and joined arms, and
+`(R-LoopBuffer)` (§ Arc C's moves); **arc C′ is next** — those moves brought to ONE place each,
+no writer clause or writer compensation left (§ Arc C′), before any further rule moves; **arc C′
+is closed** (C′1–C′4), with `(R-ElemFirst)`'s view-exit form deferred to the `(R-ValueRecord)`
+view-clause move (§ What arc C′ skips); then `(R-LoopRecord)` moved (§ Arc C's moves),
+`(R-CompleteWrite)` is next.  It
+was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
 three deviations (D-fact-1 … 3) became part of it rather than a precondition.  Four arcs: **A** keeps the register honest about where
 each rule runs, **B** decides per rule whether it can run earlier, **C** moves the ones that
-can, **D** widens the rules we already have to the shapes they refuse today — the general
+can (and **C′** leaves each moved rule in one place), **D** widens the rules we already have to the shapes they refuse today — the general
 performance fixes, by class, behind the per-routine issues of the 3× bug line.
 
 `formal/rewrites.md` `(R-Phase)` says every rule is APPLIED BY one phase and that the phase
@@ -30,14 +36,56 @@ interpreter is the oracle) or the interpreter's generator and runtime (a compile
 the oracle).  The arcs of @PLN157 and @PLN210 optimised for compiled code: most of their
 rules were built in a writer, so the interpreter runs the IR they rewrite away.  A rule that
 removes WORK — an allocation, a copy, a store round trip — belongs in the IR phase wherever
-its conditions can be decided there, because then both backends stop doing that work.
+its conditions can be decided there: then it is decided once, for every backend, and both
+backends stop doing that work.
 
 ## Goal
 
-Every rule's phase stated in the register and checked against what the compiler does,
-every rule that removes work applied in the IR phase (or an interpreter-runtime clause)
-unless a stated reason keeps it in a writer, and each rule's most frequent refusals on the
-benches either admitted by a generalised clause or recorded as the rule's boundary.
+**Harmonisation** (the owner's goal for this plan): every optimisation implemented ONCE, at
+the front, and every backend reading that one decision — no rule built separately in each
+writer, no writer patched to recognise what another phase produced, no decision recomputed per
+consumer — [GOALS.md § Don't tolerate re-derivation patterns](../../GOALS.md#dont-tolerate-re-derivation-patterns--engineer-the-class-away),
+applied to the optimisations.  In detail: every rule's phase stated in the register and checked against what the
+compiler does; every rule that removes work applied in the IR phase (or an
+interpreter-runtime clause) unless a stated reason keeps it in a writer, and then in that one
+writer alone; each moved rule left in one place (§ Arc C's finishing condition, arc C′); and
+each rule's most frequent refusals on the benches either admitted by a generalised clause or
+recorded as the rule's boundary.
+
+A faster interpreter follows from it — work a rule removes in the IR, every backend stops doing
+— and is measured per move, but it is the CONSEQUENCE, not the aim: a move that speeds the
+interpreter while leaving the rule in two places is not finished, and a cleanup that only
+removes a writer's duplicate is in scope even when it speeds nothing.
+
+**Why now** (the owner's timing): the arcs of @PLN157 and @PLN210 built the CORPUS of speed
+optimisations that brought every bench routine within 3× of its hand-written Rust twin — the
+bug line, [`formal/performance.md`](../../formal/performance.md) § The bug line.  Measured, that is a
+position; ingrained, it is a guarantee.  A rule decided once at the front, its phase stated and
+gated (`rule_phases.tsv`), its admissions counted per writer (the rewrite census), its sites
+cited (`@FR-R-…`) and its cells falsified, cannot be lost by one backend drifting from the others
+or by a writer refactor that forgets a copy — so harmonising the corpus is how the 3× bar
+becomes something the compiler holds rather than something a bench run finds.  It is also the
+project's own order ([ROADMAP.md § The order of the large arcs](../../ROADMAP.md#the-order-of-the-large-arcs)):
+the rustc backend in good shape before the C, the language stable before loft-in-loft — the
+corpus harmonised at the front is what the C backend inherits and what the self-hosted
+compiler ports ONCE rather than once per writer.
+
+**What a move also buys.**  A rule moved to the front meets the whole IR and all three backends
+at once, so each move re-verifies the optimisation, retests the language features its cells
+touch, and carries what rustc learned over to the C.  Found by the moves of arc C: the lost-write
+lint and three analyses that matched call names only (`(R-Wrapper)`); the REPL's source 0 and a
+dropped tuple the C emitter had no arm for (#2400); a moved first assignment rustc declared
+inside a block (`(R-SliceArg)`); every IR pass skipping a library function with a native name;
+a `Set` between record variables binding a copy (`(R-ElemFirst)`'s joined arms); a generator
+holding the vector the next pass would clear (`(R-LoopBuffer)`).  And the C gains rules it never
+had — `(R-Wrapper)`, the fill form, `(R-LoopBuffer)`, `(R-ElemFirst)`'s joined arms and call-filled
+temps.  Each finding is fixed in its move, never filed, and its cell stays.  The deepest check
+is still to come: [@PLN91](../91-self-host/README.md) § The path's first stage judges the
+loft-written front end by a byte-identical image against the Rust one, before and after the
+`close_program` passes — so every rule this plan moves into the IR gets a second, independent
+implementation compared with it at the IR, where a duplicate verified on every level exposes
+what one implementation alone hides.  A rule left in a writer waits for stage 3 (the C
+generator in loft); a rustc-only one is never compared.
 
 ## Effort + design
 
@@ -149,14 +197,128 @@ One phase per rule, in B1's weight order.  Each is a parallel run:
    the IR clause admitted MORE (each such site read by hand).  The interpreter: the
    rule's guard cells on both backends, the switch A/B against hand-computed values, the
    C sweep and the language suite on both backends, and the instruction count of the
-   probe routine.
+   probe routine.  An IR clause changes what EVERY writer receives, rustc's included, so the
+   cells also run on `--native` with `LOFT_NATIVE_BACKEND` unset, and `find_problems.sh
+   --subject codegen` runs once with it unset: rustc's own pins (`apart_value`,
+   `decode_view`, `mint_window`, …) and its declaration-at-first-assignment are what the C
+   checks cannot see (a moved assignment declared inside a block was an E0425 there).  Two
+   more reaches an IR clause has that a writer clause did not, both met on #2400: the REPL
+   (its input keeps source 0, so "is this the stdlib?" reads `is_stdlib()`, never the source
+   number — a breakpoint stopped pausing), and every caller of a function the move makes a
+   LEAF (the leaf inliner then exposes a value kind the C only ever saw behind a call — a
+   dropped tuple).  Run the REPL tests and the library gate's `--native-c` leg for such a move.
 3. **Then deleted.**  The writer clause is removed, its switch becomes the IR clause's, the
    rule's applied-by changes in the table (A1's bless), and the rewrite census shows no
    drop on the C side.
 
+**A move is finished when the rule lives in ONE place** (the owner's goal for this plan: the
+optimisations harmonised, implemented cleanly at the front, not patched at the writers'
+fringes).  Three things the comparison can leave behind, each a reason the move is NOT done:
+
+- **a writer clause for a form the IR does not take yet** — the rule then runs in two or three
+  places, and the writers' copies drift (`(R-ElemFirst)`'s comprehension row);
+- **a writer compensation for the IR form** — code in a writer that recognises one pass's output
+  shape so another writer rule keeps applying.  The fact it needs is stated once in `opt`, in
+  general terms, for every writer to read;
+- **a decision recomputed per consumer** — an IR pass and each writer deriving the same answer
+  (who owns a buffer) on their own.  It is computed once, in `opt`, and read by all.
+
+A shared `opt` analysis taught the IR form (`hoist::hash_fill_loop`, `frame_calls::is_store_entry`
+for `(R-KeyedEntry)`'s call) is the front doing its job, not a compensation: the question it
+answers belongs to every consumer.
+
+**How the checks run, so a step never waits on the corpus.**  Per STEP, the targeted checks:
+the rule's cells on the interpreter, the C and rustc, the pins it touches, the census, and
+`c_emit` (with the `push_*` / `locked_writes` / `foreign_*` binaries) when the C writer changed —
+minutes.  The two CORPUS checks — `switch_ab.sh` and `c_sweep.py`, ~20 and ~25 minutes — run
+once per CHUNK (a C′ item, a PR-sized group of moves), in the background, against a COPY of the
+binary (`LOFT=` / `LOFT_BIN=` name it), so the next step builds and tests on the real one
+meanwhile.  The copy lives IN `target/release/` (`target/release/loft-check`), beside the
+`libloft.rlib` a library's native part is built against ([C_BACKEND.md](../../C_BACKEND.md),
+the C sweep): a copy elsewhere fails the interpreter side of every program that uses a native
+library, and the sweep reports those as `differ` — C′1's and C′3's sweeps from
+`target-exp/` showed four, each a `match` from `target/release/loft`.  While a check runs, a
+library rebuild (`cargo build --lib`) would rewrite that rlib beneath it, so the next step builds
+the `loft` binary and runs its cells, and the test binaries wait.  One heavy job at a time on the laptop (both at once ran it out of memory).  A
+chunk's cut goes to a PR only once its corpus checks are in.
+
 Each phase can go red alone: an emission that changes where the census did not, a guard
 cell, a falsified plant.  A rule whose comparison shows the IR clause admitting FEWER sites
 than the writer did is not moved until the gap is closed or recorded as a decline.
+
+## Arc C′ — harmonising the moves made
+
+Before any further rule moves (`(R-LoopRecord)`, `(R-CompleteWrite)`, the ports), the six made
+are brought to "one place", in this order.  Each is a phase that can go red alone, with the
+move protocol's checks (cells on the interpreter, the C and rustc; switch_ab; c_sweep; the
+census, every move attributed; rustc's pins).
+
+| # | what is left | the clean form | done when |
+|---|---|---|---|
+| C′1 **DONE** (`opt::empty_slot`) | `c::body::emptied_either_way`: the C's `known_empty` taught `(R-LoopBuffer)`'s `if … else OpClearVector` shape, so its push-run reservation applies | a front fact, `opt`: a vector slot is EMPTY after a statement that empties it on every path — its zero, an `OpClearVector` of it, an `if` whose arms both do — read by the C's run clause and by any writer that asks; no knowledge of the loop-buffer shape | the C function is gone; the C's `R-PushFill/run` census unchanged |
+| C′2 **DONE** (`opt::buffer_owner`) | buffer ownership derived per consumer: `opt::loop_buffer` recomputes five rules' analyses (invariant literal, element-first pair, move host, adopted witness, inline-buffer companion) and each writer its own | one `opt::hoist::buffer_owner(data, stores, d)` answering, per `__vdb` witness, the ONE rule that owns it, in a stated priority; the IR passes and the writers read it | no consumer computes another rule's analysis to decide ownership; the census unchanged |
+| C′3 **DONE** (`opt::keyed_entry`) | `(R-KeyedEntry)`'s subscript clause (`coll[k₁, …] = T{…}`) still in both writers (`output_keyed_entry_subscript`, the C's `keyed_place` arm) | the IR form: the literal's values staged, the entry answered by the stdlib probe, the fields written — `opt::keyed_entry`'s own staging, one more host shape | both writer clauses deleted; `R-KeyedEntry/subscript` applied by `ir` |
+| C′4 **DONE, one form deferred** (`opt::elem_first`) | `(R-ElemFirst)`'s comprehension row and view-plan exits still the writers' | the comprehension row as an IR form — done; the view-exit form deferred with `(R-ValueRecord)`'s view clause (§ What arc C′ skips) | the comprehension row applied by `ir`; the view-exit form registered as D-phase-4, waiting on D-phase-5 |
+
+This is [STABILITY_METHOD.md § The rule-led walk](../../STABILITY_METHOD.md#the-rule-led-walk--the-standing-practice)
+on a rewrite rule: the question its sites share is WHERE it is decided, and each row is a
+second home.  The four rows are registered as `formal/rewrites.md`'s D-phase-1 … 4, deviations
+of `(R-Phase)`'s ONE PLACE (D-phase-1 closed by C′1, D-phase-2 by C′2, D-phase-3 by C′3).  The measurable "done" for a rule: `python3 scripts/rule_tags.py
+sites @FR-R-<rule>` names no writer site beyond the ones that spell the IR's decision, each
+saying so in its comment.  The position when arc C′ opens, citing sites per layer (front /
+rustc writer / C writer): `R-ElemFirst` 4 / 4 / 4, `R-KeyedEntry` 5 / 6 / 2, `R-LoopBuffer`
+4 / 1 / 1.
+
+C′4's design: [c4-view-plan.md](c4-view-plan.md) — the view leaf is `(R-ValueRecord)`'s own
+writer clause, so the front fact is that clause moved into the IR (a tuple element that is a
+reference), after which the element-first form needs no plan.  The comprehension row is done.
+
+**Arc C′ is closed (owner, 2026-11-04)**, with one form deferred by decision: every rule arc C
+moved now takes in the IR every form its conditions can be decided on there, and the one form
+left in the writers depends on a rule arc C has not moved yet.
+
+### What arc C′ skips
+
+The owner chose, between doing c4-view-plan.md's S1–S3 now (several days) and closing the arc
+with the remainder reclassified, the second — on the ground that the remainder is no duplicate
+of a moved rule but a rule not yet moved, which belongs in arc C's queue ranked by its weight
+like every other move rather than inside a harmonisation arc.  What that leaves, all of it
+registered (`formal/rewrites.md` D-phase-4, D-phase-5):
+
+- **`(R-ElemFirst)`'s view-exit form stays a writer clause.**  A temp its function also returns
+  inside its record (`164-element-place.loft` g1, g2, g4, g10, g16 — the `parse_circle` shape —
+  and g20) is built in the appended element only by rustc and the C, which pair it through
+  `element_first`'s view plan; the interpreter keeps the temp's own store and its copy there.
+  Both writers' element-first clauses (`generation::emit`'s statement handling, `generation::calls`'
+  buffer place, `c::body::elem_first`) therefore stay, with this ONE job: the IR takes every
+  other pair first, so they find nothing else.  On the benches they apply nowhere.
+- **`(R-ValueRecord)`'s view-leaf clause stays the writers' alone.**  The IR's value-record pass
+  carries FLAT records only (two or more fields, each an 8-byte integer, a float, a single or a
+  boolean) and declines a view in a result position (`value_record::body_shape`); rustc
+  (`lower::plan`) and the C (`FnWriter::value_records`) each compute `opt::value_records` with
+  its view leaves and deliver the reference themselves.  The interpreter returns those records
+  through a buffer.  Weight, measured (`R-ValueRecord/view`): 3 bench functions — drawing's
+  `parse_lock` and `parse_poly` (the parser behind drawing's `parse` routine, over 2× its twin
+  on both lanes) and two in the moros/dryopea consumer.
+- **The plan is still computed three times** (the IR pass, rustc, the C), keyed by node address
+  for the view leaves; D-phase-5's removal makes the IR the one place.
+
+**Why it is not done here.**  The view leaf is a vector field delivered as a REFERENCE to a
+place, so the IR's tuple needs an element kind it lacks: the interpreter's tuple layout must
+carry a `DbRef` part that a frame never frees and that a copy out of it copies as the place it
+views (`formal/binding.md` `(B-View)`); the value-record call-site gates must admit it; and the
+C and rustc must spell it.  Several days, on all three backends — an arc C move, not a cleanup.
+
+**What the deferral risks, and what holds it.**  The writers' element-first code, kept for one
+form, could drift from the IR pass that took the rest; the cells pin both (`164-element-place.loft`
+for the writers' form, `tests/element_first.rs` counting the IR trace and the writers' marks
+together).  The register states both deviations, so neither reads as finished.
+
+**When and how it resumes.**  `(R-ValueRecord)`'s view clause is a wave-1 move below (§
+Verdicts), taken in arc C's order by its weight; its steps are c4-view-plan.md S1 (a reference
+element in the IR tuple), S2 (the writers read the IR's tuple instead of recomputing view
+leaves, emission byte-identical elsewhere) and S3 (`(R-ElemFirst)` takes the view-exit form;
+both writers' element-first clauses deleted; D-phase-4 and D-phase-5 closed).
 
 ## Arc D — the class remainders: widening the rules we have
 
@@ -255,6 +417,134 @@ over the fill there, and teaching their analyses `OpAppendCopy` waits for a case
 The fill declines a `single` value (`simple_invariant` lists no single literal, as before):
 arc D.  On the interpreter: 9 847 → 2 776 instructions a pass of the probe, −71.8 %.
 
+**`(R-KeyedEntry)` — moved.**  The analysis (`site`) moved from `lower` to `src/opt/keyed_entry.rs`
+(the interpreter's `close_program` may not name `lower`), its buffer test counting the
+buffer's bindings instead of comparing nodes, so it answers the same on the copy the pass
+rewrites.  The pass stages every value that is not a constant into a fresh temporary, typed by
+its setter's value parameter, in program order; then `B = keyed_entry_ints(c, tp, fld, k₁…k₄)`
+or `keyed_entry_text(c, tp, fld, key)`; then the other fields written into `B`.  A text key is
+read at the probe, so it is admitted as a literal or a variable no later value rebinds;
+generators are skipped.  The two functions are stdlib declarations (`default/01_code.loft`):
+one `OpStaticCall` on the interpreter (`native::n_keyed_entry_*` → `Stores::keyed_entry` /
+`keyed_entry_text`), `KeyedEntryEmitter` on rustc (`keyed_entry_long_at`'s inline walk for one
+part, the offsets resolved at generation), the C's `keyed_native` case
+(`loft_keyed_entry_ints` / `_text`).  Both writers' insert clauses are deleted; the subscript
+clause stays theirs.  Three things the move had to carry, found by the census: the hash
+reservation (`hoist::hash_fill_loop`) and the leaf rules (`frame_calls::is_store_entry`) read
+the entry call as they read the claim; `R-CompleteWrite` falls at every keyed site because the
+claim it trimmed is gone (a miss claims inside the store call), and the writers' own count fell
+from emitted copies (a guarded loop's two, the C's `__fr` twin) to the IR's source sites.  The
+protocol's evidence: switch_ab.sh over 2913 programs, 0 defects; c_sweep 2949 programs, 2580
+match, the one differ main's own; the cells — the suite's three, the four in `tests/scripts`
+and `a-keyed-insert-stages-its-values-before-the-entry-is-found.loft` (s1–s7, falsified by the
+values unstaged: s2's effect order fails on the interpreter and the C) — on the interpreter, the
+C and rustc, rule on and off; c_emit 71/71; `tests/mint_window.rs` re-pinned (m7's entry
+reference takes the view clause's address); gridmesh's bench rows agree interpreter / C.
+On the interpreter: 15 550 → 2 073 instructions a pass of the probe, −86.7 %.
+
+**`(R-ElemFirst)`'s literal-built temp — moved.**  `src/opt/elem_first.rs`, last in
+`compile::close_program`: `opt::hoist::element_first`'s pairs (asked without a view plan, which
+only the writers build) whose every temp is literal-built and whose append stands once.  At the
+first temp's declaration: the reservation, `elm = OpNewRecord(out, tp, fld)` and a zero per
+paired vector handle (a fresh C slot is not zeroed, so the zero is the IR's on every backend);
+each declaration becomes `t = OpGetField(elm, off, ftp)`; the append keeps its scalar sets and
+finish.  Still the writers': the call-filled temp (@PLN164 E-2), the joined arms (E-2b), the
+comprehension row and a function whose exits copy a temp — each asks the same analysis of the IR
+it receives, which no longer shows a pair the pass took.  The writers' clauses stay for them,
+so this move deletes no writer code; the C's clause now admits nothing on the benches.
+Switches: the rule's `LOFT_NO_ELEMENT_FIRST` (every backend), the clause's
+`LOFT_NO_IR_ELEM_FIRST`; trace `LOFT_TRACE_IR_ELEM_FIRST` (one line per pair and its
+destination, which `tests/element_first.rs` now counts beside rustc's mint comments).  The
+protocol's evidence: switch_ab.sh over 2913 programs, 0 defects; c_sweep 2949 programs, 2580
+match, the one differ main's own; the suite's four cells, `164-element-place.loft` and the V-z
+cell file on the interpreter, the C and rustc, the clause on and off (the pass takes the five
+V-z pairs the pin predicts, and none of 164's, which are call-filled or need the view plan);
+`tests/element_first.rs` 3/3; falsified by the append's paired copy kept (the suite's
+`157-element-first.loft` fails on the interpreter and the C).  The census's declines sit in drawing's `fronds` and
+`lock_ribbons` (rustc `R-Scalar` −27, `R-Mint` −17, `R-CompleteWrite` −12, `R-PushRec` −4,
+`R-RangedCall` −5; C `R-CompleteWrite` −12): the IR now shows the temp's pushes growing the
+destination's store, where the writer applied the rule after its analyses had read a temp with
+a store of its own.  Timed on drawing's 14 routines, the clause off and on: the C ship lane
+level or better (`fronds` 64 650 → 62 280 ns); rustc native `fronds` 50 626 → 64 134 ns
+(1.35× → 1.71×), every other routine level.  rustc native is outside the perf targets; the
+follow-up is `R-Scalar`'s decline in `fronds`' build loops.  On the interpreter: 8 252 → 5 886
+instructions a pass of the probe, −28.7 %.
+
+**`(R-ElemFirst)`'s call-filled temp and joined arms — moved.**  The call-filled temp's lazy-buffer
+guard becomes the mint, and the call is handed `OpGetField(elm, off, ftp)` for its buffer (`ftp`
+read from the append's paired copy).  The joined arms are NOT aliased: a `Set` of one record
+variable from another binds a COPY (`(B-Copy)`; the C wrote `loft_bind_copy`, and the arm wrote and
+filed the copy — two leaked records, the arm's values lost), so every use of the other arm's
+element is renamed to the minted one, and that element's mint and pre-init go.  Most pairs of
+these forms also need the view plan (a function returning the temp in a record), which only the
+writers build, so the benches show no census move; `164-element-place.loft` takes 4 pairs (its
+record-collection cells).  Cells:
+`an-element-is-built-in-place-by-its-call-and-in-either-arm.loft` (e1 joined arms, e2 a call, e3
+both), falsified by the rename left out (the interpreter stops naming the element, the C exits
+101); the rule's other cells and the four pins pass on the interpreter, the C and rustc, the clause
+on and off.  Taking the view-plan forms needs that plan in `opt` read AFTER this pass — the writers
+recompute it on the rewritten IR, and a plan read before could disagree.
+
+**`(R-LoopBuffer)` — moved.**  `src/opt/loop_buffer.rs`, the LAST `close_program` pass: a
+declaration `OpDatabase(vdb) · t = OpGetField(vdb, 0, ftp) · OpSetInt4(vdb, 0, 0)` of a
+`hoist::loop_buffers` buffer becomes `if OpRefIsNull(vdb) { mint; zero } else {
+OpClearVector(OpGetField(vdb, 0, ftp)) }` then the bind, so the first pass mints and every
+later one clears the vector, keeping its store and capacity; rustc's clause (its mint emitter
+and its dropped field zero) is deleted and the C gains the rule.  It leaves the buffers another
+rewrite owns, asked of the IR the writers see (the reason it runs last): an invariant literal's
+flat group AND the buffers a one-`Set` literal is built from (`R-LitHoist` builds it once,
+reading those declarations as invariant — drawing's `fd_sides`), an element-first pair, a move
+host, the adopted witness, and the companions of a vector `R-Apart` keeps inline
+(`opt::apart_vector`, moved from `lower` for this; the inline buffer is no store at all).  A
+function that yields or calls a generator is declined: a live frame may hold the store, which
+rustc tested at run time (`is_frame_held`).  The C's push-run reservation reads the form as an
+empty vector (`known_empty`, now `opt::empty_slot` — C′1).  Found on the way, in every IR pass of
+this plan: a definition with a native NAME (a library export once its artifact is built) was
+skipped, though a native build emits its loft body — hex_shape with a warm library lost
+`form_read`'s 16 buffers; the filter is gone.  Census: rustc counted once per emitted copy (the
+`__kh` / `__rg` twins), the IR once per site — hex_shape 42 → 30 is exactly the two twins; the
+rustc declines left in drawing (`R-Scalar` −4 / `R-Header` −3 / `R-Callee` −1 in `draw_sky`)
+measured level.  Timed on drawing's 14 routines, the old binary against the new: rustc native
+level on every routine; the C ship lane median 1.61× → 1.55× (`render_lock` 1.67 → 1.56,
+`render_marks` 2.03 → 1.83, `resize` 1.73 → 1.56).  Evidence: switch_ab.sh and c_sweep (in
+the commit), the rule's cells and `a-loop-buffer-kept-in-the-ir-reads-as-a-fresh-vector.loft`
+(b1–b5, falsified by the reset arm left empty: b1 fails on both backends) on the interpreter, the
+C and rustc, the rule on and off; c_emit 71/71; `tests/loop_buffer.rs` re-pinned on the IR form;
+apart_value, element_first, mint_window.  On the interpreter: 7 311 → 6 106 instructions a pass
+of the probe, −16.5 %.
+
+**`(R-LoopRecord)` — moved.**  `src/opt/loop_record.rs`, after `opt::loop_buffer` in
+`close_program`: an admitted record (`opt::loop_records`, the nest and refill clauses with it)
+is declared `= null` before the outermost loop (`Function::move_scope`, new for this), its
+per-pass null and end-of-body free go, a complete literal's mint becomes `if OpRefIsNull(v) {
+mint; vector zeros } else { OpClearVector of each vector field }`, an early exit's free nulls
+the local, and one free follows the loop.  rustc's clause (its prelude declaration, postlude
+free, dropped statements and kept-record mint) and the C's refill port are deleted; the C keeps
+only `(R-FnRefBuffer)`'s records in `c/body/loop_record.rs`, and now keeps plain records too
+(drawing, 2 — the IR's kept pass mints nothing, where the C's port had measured a store reset as
+no gain).  Ownership goes through `opt::buffer_owner`, which gained the apart RECORD owners
+(`opt::apart_records`, moved from `lower` for this, with `ident_part` and `apart_disabled`
+given their one home there): an apart record holds no store to keep.  `opt::empty_slot`'s
+block scan learned that a write to ANOTHER field of the record leaves a vector slot empty —
+without it the C's push-run reservation lost hex_recover's `forms_upto` (8 → 6), whose kept
+record's other fields are written between the clear and the push.  Census: the rustc rows
+count sites rather than emitted copies (hex_fit and hex_recover refill 5 → 3); the
+`(R-CompleteWrite)` drops (drawing −2, hex_fit −5 and hex_recover −5 on rustc, −2 / −3 on the C)
+are exactly the kept complete records, whose mint now sits in the guard's arm away from its
+literal group, so the writers prefill that one store on the first pass — the order to fix when
+`(R-CompleteWrite)` moves (its IR pass runs ahead of this one; the IR has no no-prefill mint
+operator yet, `OpDatabaseNP` is a writer spelling).  Evidence: the switch A/B
+(`LOFT_NO_LOOP_RECORD`, 2 916 programs): 0 defects; the C sweep (2 952 programs) 2 583 match and under `--strict-stores` 2 582, the one differ in both an attic cell that expects a parse error and parses (the same with the rule off); the rule's cells
+(`157-loop-record.loft`, `157-a-loop-record-keeps-its-vectors.loft`, the nest cells,
+`a-function-value-fills-its-callers-record.loft`) and the new
+`a-loop-record-kept-in-the-ir-reads-as-a-fresh-record.loft` (r1–r6: `continue`, `break`,
+`return`, a partial literal, the nest) on the interpreter, the C and rustc, the rule on and off;
+the new cell falsified by the early exit's null left out (caught under `LOFT_STRICT_STORES=1`
+only — the plain answer stays right by accident); `tests/loop_record.rs` re-pinned on the IR
+(it counts the pass's trace), c_emit 71/71, push_window, push_fill, work_buffer, heap_sound,
+locked_writes, loop_buffer.  On the interpreter: 3 058 → 1 613 instructions a pass of the
+probe, −47.3 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -300,18 +590,19 @@ function before and not after.
 |---|---|---|--:|---|---|
 | `(R-Wrapper)` | yes — `ir_shape::one_op_wrapper` | `Call(op, operands)` | 40.9 | `wrapper`: 920 → 308, **−66.5 %** (upper bound: the operator itself is left out); moved: 921 → 479, **−48.0 %** | **MOVED** (`wrapper_inline::rewrite`, arc C's second) |
 | `(R-PushFill)` fill form | yes — IR facts | `OpPush` + `OpAppendCopy`, as `[c; n]` lowers | 17.2 | `push_fill`: 10 580 → 3 017, **−71.5 %**; moved: 9 847 → 2 776, **−71.8 %** | **MOVED** (`opt::fill_loop`, arc C's third).  The C's admission on the probe was its window clause, and rustc's fill had no census name |
-| `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %** | MOVE |
+| `(R-ElemFirst)` | yes — `opt::hoist::element_first` | existing operators | 1.0 | `elem_first`: 9 666 → 7 299, **−24.5 %**; moved: 8 252 → 5 886, **−28.7 %** | **MOVED: the literal-built temp, the call-filled temp, the joined arms** (`opt::elem_first`, arc C's fifth); the comprehension row and the view-plan exits are still the writers' |
 | `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** (the hand form skips the slice's bound normalisation); moved: 7 779 → 5 385, **−30.8 %** | **MOVED** (`slice_text::rewrite`, arc C's first) |
-| `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %** | MOVE |
-| `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %** | MOVE (light) |
+| `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %**; moved: 7 311 → 6 106, **−16.5 %** | **MOVED** (`opt::loop_buffer`, arc C's sixth) |
+| `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %**; moved: 3 058 → 1 613, **−47.3 %** | **MOVED** (`opt::loop_record`, arc C's seventh) |
 | `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector` | MOVE, as that parser path widened to field places; measured on arc C's beside build |
+| `(R-ValueRecord)` view clause | yes — `opt::value_records`' view leaves, decided on the IR already (by each writer) | a value-record tuple element that is a REFERENCE to a place — new to the IR's tuple | — (not in B1) | no probe yet; S0's count: `R-ValueRecord/view` 3 bench functions, drawing's `parse_lock` / `parse_poly` among them | MOVE — c4-view-plan.md S1–S3; carries `(R-ElemFirst)`'s view-exit form with it (D-phase-4, D-phase-5) |
 | `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)) | owed: measured on arc C's beside build |
 
 **Wave 2 — the rules that need one new piece.**
 
 | rule | the new piece | weight | evidence | verdict |
 |---|---|--:|---|---|
-| `(R-KeyedEntry)` | find-or-insert answering a reference, a stdlib function through one `OpStaticCall` | 4.2 | `keyed_entry`: an overwriting append of a present key 16 068–16 835 → 1 790 instructions, **−89 %** over two runs (the before form moves with the hash seed; the hand form looks up, then writes or inserts) | MOVE |
+| `(R-KeyedEntry)` | find-or-insert answering a reference, a stdlib function through one `OpStaticCall` | 4.2 | `keyed_entry`: an overwriting append of a present key 16 068–16 835 → 1 790 instructions, **−89 %** over two runs (the before form moves with the hash seed; the hand form looks up, then writes or inserts); moved: 15 550 → 2 073, **−86.7 %** | **MOVED** (`opt::keyed_entry`, arc C's fourth) |
 | `(R-RefillText)` | the refill twin | 0.6 | not a DROP: with `LOFT_NO_REFILL_TEXT=1` the rustc build of game_protocol runs **+148.6 %** instructions (`msg_ping`, same hash), so `(R-Reuse)`'s pool reset does not take its cost.  The C takes that cost another way: `ping_op` calls `n_msg_ping__tr0r`, an `(R-Transient)` twin.  No hand form for the interpreter | MOVE (twin), after wave 1; measured on arc C's beside build |
 | `(R-RefillBuffer)` | a REFILL bit on `OpDatabase` | 4.4 | its switch A/B on the rustc build: bench 17 **+0.0 %**, game_protocol **−0.2 %** instructions — it saves nothing measurable where it fires most | STAYS — no flag for a rule with no measured effect; whether to drop it is the owner's call |
 | `(R-FoldCompare)` | `fold_compare`, a stdlib function | 0.0 | admitted in no function a bench routine runs | DEFER until a consumer reaches it |

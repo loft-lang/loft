@@ -101,7 +101,14 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  that set changes, and the doc-drift check when the section and the
                  table disagree.  A rule
                  moved from a generator into the IR phase keeps its name; the move is
-                 the table's change, blessed in its own commit.
+                 the table's change, blessed in its own commit.  ONE PLACE: a rule the
+                 IR phase applies has no writer clause and no writer compensation —
+                 a writer's site of it only SPELLS what the IR decided (the call it
+                 emits, the form it renders) and its comment says so; a writer clause
+                 for a form the IR does not take, a writer recognising another phase's
+                 output so that a further rule still applies, or a decision each
+                 consumer recomputes is the rule in two places (`rule_tags.py sites
+                 @FR-R-<rule>` shows where it lives).
   (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
                  never a representation: how many stores or copies a value takes, or
                  where it lives, is the compiler's to change wherever the rule's
@@ -193,7 +200,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
 | `(R-DispatchStop)` | not counted — executor: the lean loop tests one flag per op |
-| `(R-ElemFirst)` | `R-ElemFirst` c, native |
+| `(R-ElemFirst)` | `R-ElemFirst` ir |
 | `(R-ElementPath)` | not counted — executor: the interpreter's element read operator |
 | `(R-Escape)` | not counted — meta: the contract every rewrite keeps |
 | `(R-ExitVector)` | `R-ExitVector` ir · `/record` ir |
@@ -226,7 +233,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Inputs)` | `R-Inputs` c, native |
 | `(R-Invariant)` | `R-Invariant` c, native |
 | `(R-KeyList)` | not counted — executor: key descriptors derived once per type |
-| `(R-KeyedEntry)` | `R-KeyedEntry` c, native · `/subscript` c, native |
+| `(R-KeyedEntry)` | `R-KeyedEntry` ir · `/subscript` ir |
 | `(R-LazySplit)` | `R-LazySplit` c, native |
 | `(R-Leaf)` | `R-Leaf` native |
 | `(R-LeafChain)` | `R-LeafChain` native |
@@ -234,8 +241,8 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-LitHoist)` | `R-LitHoist` native |
 | `(R-LiteralAppend)` | `R-LiteralAppend` ir |
 | `(R-LiteralWalk)` | `R-LiteralWalk` parse |
-| `(R-LoopBuffer)` | `R-LoopBuffer` native |
-| `(R-LoopRecord)` | `R-LoopRecord` native · `/refill` c, native |
+| `(R-LoopBuffer)` | `R-LoopBuffer` ir |
+| `(R-LoopRecord)` | `R-LoopRecord` ir · `/refill` ir |
 | `(R-LoopSlot)` | `R-LoopSlot` interp |
 | `(R-MaskRange)` | `R-MaskRange` parse |
 | `(R-Mint)` | `R-Mint` c, native |
@@ -294,7 +301,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/text` c, native |
 | `(R-TypedRead)` | `R-TypedRead` c, native |
 | `(R-ValueLocal)` | `R-ValueLocal` parse, c, native |
-| `(R-ValueRecord)` | `R-ValueRecord` parse, c, native |
+| `(R-ValueRecord)` | `R-ValueRecord` parse, c, native · `/view` c, native |
 | `(R-VecCopy)` | `R-VecCopy` ir |
 | `(R-Version)` | `R-Version` c |
 | `(R-View)` | `R-View` c, native |
@@ -567,6 +574,11 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  re-declaration would orphan the kept store).  A buffer another
                  rewrite owns — an invariant literal, an element-first pair, a move
                  host, the adopted result's witness — is left to that rewrite.
+                 Decided and applied in the IR, for every backend
+                 (`opt::loop_buffer`): `if OpRefIsNull(vdb) { the mint; the zero }
+                 else { OpClearVector(the vector) }` in place of the mint; a
+                 function that yields or calls a generator is declined, as a live
+                 frame may hold the store the reset would empty.
 
   (R-PushFill)   a counted loop (`for … in lo..hi`, `lo..=hi`) whose body pushes k
                  scalars to ONE pure path at its top level every iteration — or to
@@ -1202,38 +1214,29 @@ the loop already kept its store through `OpDatabase`'s clear arm.  Switch `LOFT_
 (and `LOFT_NO_LOOP_BUFFER_REUSE`, one family; `LOFT_NO_LOOP_RECORD_REFILL` for the refill
 clause alone); trace `LOFT_TRACE_LOOP_RECORD=1`; falsifiers
 `LOFT_STRICT_STORES` / `LOFT_POISON` / `LOFT_POISON_CLAIM` / `LOFT_NATIVE_LEAK_CHECK` (a kept
-store must still be freed exactly once).  Sites: `hoist::loop_records`, the `Value::Loop`
-emission in `emit.rs` (prelude and postlude), `output_block` (the two dropped statements),
-`ops::misc_ops` (the kept-record mint).  Cells `tests/scripts/157-loop-record.loft` l1–l15,
-pins `tests/loop_record.rs`.  The refill clause: a kept record's vectors keep their records
-and capacity, so a literal of vectors refills them where the plain form claimed new ones
-every pass.  Sites `hoist::loop_record_zeros` (the groups and their zeros) and the
-`(R-RefillBuffer)` empty in `emit.rs`; cells `tests/scripts/157-a-loop-record-keeps-its-vectors.loft`,
-pins `tests/ctor_literal.rs`.
+store must still be freed exactly once).
 
-**On the C (a port).**  The C writer does not ask
-`crate::opt::loop_records::loop_records`, so a record literal in a loop mints a store, claims
-its vectors and frees it every pass.  The port is the same three moves in the C's spelling: the
-mint is taken only where the local holds no store (`if (r.store_nr == 0xFFFF)`), a refill
-record's literal zero of a vector field (`loft_set_int4(r, off, 0)`, in `field_zeros`) becomes
-`loft_vec_clear` of that field on a kept pass — length 0, block kept — and the end-of-body
-free moves after the loop.  Priced on hex_recover's `forms_upto` (gcc), on top of the run's
-header clause: 0.17 s → 0.11 s, **−35 %**; together 0.30 → 0.11 s (0.37×, ≈ 6.3× → ≈ 2.3×
-the Rust twin).  Resetting the store (`loft_reset_pool_root`) instead measured NOTHING — the
-cost is the two vectors' claims, not the store — and so did skipping the run's reservation on
-a kept pass and hinting `head_step` inline.  Built to the hand form (0.12 s against 0.11:
-the fresh flag below): `src/c/body/loop_record.rs` reads the shared analysis once per
-function; the mint is `((v.store_nr == 0xFFFF) ? (mint, lrf = 1) : (lrf = 0))`, each vector-field
-zero `if (lrf) zero; else loft_vec_clear(field)` — a fresh mint keeps its zero, because the C's
-claim is not promised to be zeroed — and the declaring block's `Set(v, null)` and end-of-pass
-free are skipped by node address, with one free after every copy of the keeping loop
-(`loop_stmt`).  The refill records only: a plain no-heap record keeps the plain mint on the C,
-where a reset measured nothing.  Bench (A/B, both clauses off against on): hex_recover
-`forms_upto` **0.302×** gcc (1045 → 315 µs, ≈ 2.5× the twin), **0.234×** clang (799 → 187 µs,
-≈ 1.5×).  Switch `LOFT_NO_LOOP_RECORD_REFILL=1` (and `LOFT_NO_LOOP_RECORD`); census
-`R-LoopRecord/refill`.  Guard: `157-a-loop-record-keeps-its-vectors.loft` and
-`157-loop-record.loft` now run on the C too (both pass, and under `LOFT_NATIVE_LEAK_CHECK`) —
-a kept pass that does not empty its vectors fails r1 with 102280.
+**Where it is applied: the IR, once for every backend** (`@FR-R-Phase`).  The analysis is
+`opt::loop_records::loop_records` (the admission above, the nest and refill clauses); the pass is
+`opt::loop_record`, after `opt::loop_buffer` in `close_program`.  It declares the local `= null`
+before the outermost loop (`Function::move_scope` to that loop's parent scope), drops the
+declaring block's `Set(v, null)` and end-of-body free, and frees it once after the loop.  A
+complete literal's mint becomes `if OpRefIsNull(v) { mint; its vector-field zeros } else
+{ OpClearVector of each vector field }` (the block named `loop record mint`): a kept pass mints
+nothing and empties the refill record's vectors in place, length 0, block kept.  A partial
+literal keeps its mint, which takes `OpDatabase`'s clear arm.  A free on an early exit
+(`continue`, `return`, `break`) stays and nulls the local, so the next pass mints afresh.  A
+record another rule owns (`opt::buffer_owner`: an apart record, `@FR-R-Apart` instance 4) is
+left to it, and a function that calls a generator is skipped.  The writers spell the IR; neither
+carries a clause.  The first pass's mint sits in the guard's arm, away from the literal group
+that follows it, so the writers' `(R-CompleteWrite)` does not see it and prefills that one
+store, once per loop; `(R-CompleteWrite)` applied in the IR ahead of this pass removes it.  Trace
+`LOFT_TRACE_IR_LOOP_RECORD=1` (the pass), `LOFT_TRACE_LOOP_RECORD=1` (the admission).  Cells
+`tests/scripts/157-loop-record.loft` l1–l17, `157-a-loop-record-keeps-its-vectors.loft`,
+`a-loop-record-is-kept-across-its-whole-nest.loft`,
+`a-loop-record-kept-in-the-ir-reads-as-a-fresh-record.loft`; pins `tests/loop_record.rs`
+(counts the pass's trace and reads its IR), `tests/ctor_literal.rs`.  How the writers' clauses
+were priced and ported: [rewrites-history.md § (R-LoopRecord) in the writers](rewrites-history.md#r-looprecord-in-the-writers).
 
 ### A return buffer refills the store a rebind released
 
@@ -3850,10 +3853,17 @@ index the claim answers (no `arena::index_of` scan to recover it), so new keys g
 gridmesh `field_add_cell` 22.97 → 15.06 ms, `build_index` 10.16 → 7.49 ms (hand price of
 the repeated-key half alone −26 %).  Switch `LOFT_NO_KEYED_ENTRY`.  Falsifier
 `LOFT_KEYED_VERIFY=1`, which looks every answered entry up again through the general
-entry and panics where the two differ.  Cells
-`loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-entry-its-key-names.loft`.  Sites:
-`generation::keyed_entry` (the admission), `Output::output_keyed_entry`,
-`Stores::keyed_entry_long`, `hash::entry_long`.
+entry and panics where the two differ.  Decided and applied in the IR, for every backend
+(`opt::keyed_entry::rewrite_program`): the values staged into temporaries, then `B =
+keyed_entry_ints(c, tp, fld, k₁, …)` or `keyed_entry_text(…)` — stdlib declarations, one
+`OpStaticCall` on the interpreter, `Stores::keyed_entry_long_at`'s inline walk on rustc,
+`loft_keyed_entry_ints` on the C — then the other fields written into `B`.  A text key is
+read at the probe, so the IR admits one only when it is a literal or a variable no later
+value rebinds.  Cells
+`loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-entry-its-key-names.loft`,
+`tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft`.  Sites:
+`opt::keyed_entry::site` (the admission), `opt::keyed_entry::rewrite_program`,
+`Stores::keyed_entry`, `Stores::keyed_entry_long`, `hash::entry_long`.
 
 ```
   (R-KeyedEntry)'s subscript clause
@@ -3865,7 +3875,10 @@ entry and panics where the two differ.  Cells
                   in source order into temps (that clause's staging), then ONE probe for
                   (e₁, …, eₘ) that answers the entry already under that key or a fresh one
                   filed with every part written, then the temps of the fields that are not
-                  key parts written into it.
+                  key parts written into it.  Decided and applied in the IR, for every
+                  backend (`opt::keyed_entry`'s subscript form over
+                  `opt::keyed_place::site`): the entry is a fresh variable, so the
+                  literal's buffer is never minted and its frees see null.
 ```
 
 **In words.** The keyed clause it replaces removes the entry under the key, claims a fresh
@@ -4611,6 +4624,9 @@ line in `Output::output_function`'s prelude.
                  null sentinel of a nullable, `false`, the variant TAG — so where
                  the emitter proves coverage of every schema field position by the
                  group's contiguous `OpSet*`s (the tag through `OpSetEnum` at 0),
+                 each write AS WIDE as its field (a struct-enum field primed by a
+                 four-byte `OpSetInt4` keeps its out-of-line child slot to the
+                 prefill: the `OpSetChildRec` that fills it reads the old slot),
                  `set_default_value`'s walk (or its all-zero `zero_range`) writes
                  nothing that survives, and
                  the site calls the no-prefill twin (`OpDatabaseNP` /
@@ -4713,8 +4729,16 @@ line in `Output::output_function`'s prelude.
                  early mint, and it needs `(R-Place)`'s callee condition — a
                  callee that FILLS its buffer and never mints into it — and its
                  argument condition — no other argument names `out`.  A value the
-                 list does not declare keeps its copy into the early element.  The interpreter keeps the
-                 temp-store build and is the oracle.
+                 list does not declare keeps its copy into the early element.  The
+                 literal-built temp, the call-filled temp and the joined arms are
+                 applied in the IR, for every backend (`opt::elem_first`): the mint
+                 and the vector-handle zeros at the first declaration, `t =
+                 OpGetField(elm, off, ftp)` (or the call handed that field), the other
+                 arms' element renamed to the minted one — an ALIAS would be a `Set`
+                 between record variables, which binds a copy (`(B-Copy)`).  The
+                 comprehension row and a function whose exits copy a temp (the view
+                 plan) are still the writers' (`LOFT_NO_IR_ELEM_FIRST=1` hands them
+                 every form).
                  THE COMPREHENSION CLAUSE: a row built by a comprehension and appended
                  as a WHOLE element of a local vector of vectors (`[for y { [for x {
                  … }] }]`) is the same build with a third declaration shape and a
@@ -8149,4 +8173,28 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 0**.
+**OPEN: 2** — each `(R-Phase)`'s ONE PLACE, left by @PLN211's moves (arc C′ removes them).
+
+### D-phase-4 (OPEN, @PLN211) — `(R-ElemFirst)`'s view-exit form stays in both writers
+- **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)
+- **Where:** `generation::emit` (the element-first statement handling), `c::body::elem_first` —
+  both now find only the pairs the IR declines: a temp whose function also returns it inside
+  its record, which `element_first` pairs only with the view plan (`ValueRecords::views`).
+- **Effect:** the interpreter keeps the temp-store build and the copy for that form; on the
+  benches neither writer applies it (no bench pair needs the plan), in the cells it is
+  `164-element-place.loft` g1, g2, g4, g10, g16 (the `parse_circle` shape), g20.
+- **Removal:** waits for D-phase-5: once the IR spells a view leaf, the exit is a tuple element
+  naming the temp and the pass takes the form with no plan (`plans/211-rule-phases/c4-view-plan.md`
+  S3), and both writers' clauses go.
+
+### D-phase-5 (OPEN, @PLN211) — `(R-ValueRecord)`'s view-leaf clause is the writers' alone
+- **Violates:** `R-Phase` (one place: a work-removing rule applied in the IR unless a stated
+  reason keeps it in a writer — the IR pass carries flat records only)
+- **Where:** `value_record::body_shape` declines a view in a result position; `lower::plan`
+  (rustc) and `c::FnWriter::value_records` (the C) each compute `opt::value_records` with its
+  view leaves (`ViewPlan`, keyed by node address) and deliver the reference themselves
+- **Effect:** the interpreter returns the record through its buffer for those functions; the
+  plan is computed by each writer.  On the benches 3 functions (`R-ValueRecord/view`), drawing's
+  `parse_lock` and `parse_poly` among them.
+- **Removal:** a reference element in the IR's value-record tuple on all three backends
+  (`c4-view-plan.md` S1, S2), moved in arc C's order by its weight.
