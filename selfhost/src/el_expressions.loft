@@ -5527,6 +5527,12 @@ fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer>, r
     if v < 0 {
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // A declared local takes the member as its `=` does — converted, a narrow one checked
+    // (`implicit_checked_narrow`): not carried unless the types are the same.
+    if vars.annotated.contains(v) && !(el_vars::tp(vars, v) == et) {
+      el::refuse(e, "a destructure into a declared local of another type");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
     if !el_vars::change_var_type(e, vars, v, et) {
       el::refuse(e, "a destructure that changes a local's type");
       return ex(ir::NdNull, ir::TyVoid);
@@ -7795,7 +7801,10 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
   // A generator answers its coroutine's handle, typed as its iterator; a function value that
   // carries no closure is a value as a scalar is.
   plain_fn = el_types::base(ret) is TyFunction && len(el_types::deps(ret)) == 0;
-  if !scalar(el_types::base(ret)) && !(ret is TyIterator) && !plain_fn {
+  // A tuple of plain scalars travels as a value; one holding a text or a heap member is boxed
+  // (`boxed_tuple_return`) — not carried.
+  plain_tuple = match ret { TyTuple { elems } => len([for t in elems if !el_convert::plain_scalar(t) { t }]) == 0, _ => false };
+  if !scalar(el_types::base(ret)) && !(ret is TyIterator) && !plain_fn && !plain_tuple {
     el::refuse(e, "a call returning a heap value: {type_kind(el_types::base(ret))}");
     return null;
   }
