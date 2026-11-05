@@ -244,6 +244,10 @@ fn cmake_path(p: &Path) -> String {
 ///
 /// # Errors
 /// A file that cannot be read or written.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one ESP-IDF project written top to bottom; each block is one of its files"
+)]
 pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, String> {
     let main = out.join("main");
     fa::create_dir_all(&main).map_err(|e| format!("cannot create {}: {e}", main.display()))?;
@@ -332,7 +336,11 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
     let tier = format!(
         "{}{}",
         if app.ship { "" } else { " -DLOFT_CALL_CHAIN" },
-        if loft::keys::width32_all() { " -DLOFT_WIDTH32" } else { "" }
+        if loft::keys::width32_all() {
+            " -DLOFT_WIDTH32"
+        } else {
+            ""
+        }
     );
     // loft's C (the program and the runtime) is built for size: most of it runs once (loading,
     // set-up, the editor), and with the hot helpers forced inline it was the larger part of the

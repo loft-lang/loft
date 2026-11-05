@@ -1272,6 +1272,10 @@ impl Literal<'_> {
 /// fill every field of `layout` exactly once.  A field is written by a setter on the buffer
 /// or on a field path into its inline sub-records, or by a COPY of a record or sub-record
 /// read from a place that may be named once per field.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one recogniser over the literal's statement forms; each arm is one form"
+)]
 fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Literal<'a>> {
     let Value::Block(b) = n else {
         return None;
@@ -2418,7 +2422,7 @@ impl Exits<'_> {
         let ops = &self.w.ops;
         let buf = self.c.buf;
         let old = std::mem::take(list);
-        let last = old
+        let final_at = old
             .iter()
             .rposition(|o| !matches!(o.unspan(), Value::Line(_)));
         for (i, mut o) in old.into_iter().enumerate() {
@@ -2429,7 +2433,7 @@ impl Exits<'_> {
             if alias || guard {
                 continue;
             }
-            if tail && Some(i) == last && !matches!(o.unspan(), Value::Return(_)) {
+            if tail && Some(i) == final_at && !matches!(o.unspan(), Value::Return(_)) {
                 self.value(&mut o, vars);
             } else {
                 self.walk(&mut o, vars);
@@ -2499,10 +2503,13 @@ impl Exits<'_> {
                 if v != buf && !self.c.delivered.contains(&v) && !self.c.forwards.contains(&v) {
                     // A VIEW: its fields, read where it is returned.  A local that OWNS its
                     // record (no dependency: a lifted copy the record form handed to the
-                    // caller) is freed once they are read — the caller no longer takes it.
+                    // caller) is freed once they are read — the caller does not take it.
+                    // @FR-O-Proxy asks free — so @FR-O-Override is asked beside it: a local
+                    // marked skip-free is a borrow nobody gave a dep, and its store is not ours.
                     let tp = vars.tp(v);
                     if !vars.is_argument(v)
                         && tp.depend().is_empty()
+                        && !vars.is_skip_free(v)
                         && matches!(tp.base(), Type::Reference(..))
                     {
                         let tv = vars.add_unique("vr_t", &self.tuple, self.scope);

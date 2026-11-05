@@ -29,19 +29,6 @@ use crate::platform::process::{Program, Spawn};
 /// one "delete this to force a rebuild" answer covers both.
 const OUT_DIR: &str = "native-auto";
 
-/// Build (or reuse) the shim for `pkg_dir` from `sources`, returning the shared
-/// library's path.
-///
-/// The artifact is **content-addressed**: its name carries a hash of the shim
-/// sources, so editing a shim produces a different file rather than racing to
-/// overwrite the one another process may be reading — the same reasoning that
-/// made the Rust cdylibs content-addressed (loft#715), and it costs nothing to
-/// apply here. An existing artifact with the right name IS the freshness check.
-///
-/// # Errors
-/// Returns a message naming the cure when a source is unreadable, when `cc` is
-/// absent, or when the compile fails (carrying `cc`'s own diagnostics — the
-/// author needs the C error, not our summary of it).
 /// @PLN217 — `loft_width.h`: the build's width for C that meets loft (`loft_int`,
 /// `loft_float`), put beside every shim loft compiles.
 pub const LOFT_WIDTH_H: &str = include_str!("c/loft_width.h");
@@ -56,6 +43,19 @@ pub(crate) fn put_width_header(dir: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("cannot write loft_width.h: {e}"))
 }
 
+/// Build (or reuse) the shim for `pkg_dir` from `sources`, returning the shared
+/// library's path.
+///
+/// The artifact is **content-addressed**: its name carries a hash of the shim
+/// sources, so editing a shim produces a different file rather than racing to
+/// overwrite the one another process may be reading — the same reasoning that
+/// made the Rust cdylibs content-addressed (loft#715), and it costs nothing to
+/// apply here. An existing artifact with the right name IS the freshness check.
+///
+/// # Errors
+/// Returns a message naming the cure when a source is unreadable, when `cc` is
+/// absent, or when the compile fails (carrying `cc`'s own diagnostics — the
+/// author needs the C error, not our summary of it).
 pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, String> {
     let (stem, paths, out_dir) = identity(pkg_dir, sources)?;
     let so = out_dir.join(crate::platform::cdylib_file_name(&stem));

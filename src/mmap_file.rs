@@ -7,7 +7,7 @@
 //!
 //! It is the four calls the store makes on `mmap-storage` 0.10's `file::Storage`, with the same
 //! behaviour, over `memmap2`: `memmap`, which that crate is built on, is unmaintained
-//! (RUSTSEC-2020-0077, THIRDPARTY.md).  Two of those behaviours the store relies on:
+//! (its advisory is in THIRDPARTY.md).  Two of those behaviours the store relies on:
 //!
 //! - `as_slice` covers the bytes WRITTEN so far (the file's length at `open`, then the last
 //!   `resize`), so a new, empty file gives an empty slice until it is resized.
