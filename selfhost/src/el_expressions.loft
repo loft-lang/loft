@@ -1220,7 +1220,7 @@ fn arms_build_into_refs(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean 
   match n {
     NdSpan { pos: _, inner } => arms_build_into_refs(e, vars, inner),
     NdIf { cond: _, t, f } => arms_build_into_refs(e, vars, t) && arms_build_into_refs(e, vars, f),
-    NdBlock { block } => len(block[0].operators) > 0 && arms_build_into_refs(e, vars, el_ir::last(block[0].operators)),
+    NdBlock { block } => len(block[0].operators) > 0 && arms_build_into_refs(e, vars, block[0].operators[-1]),
     NdCall { def_nr, args } => if len(args) == 0 { el::def(e, def_nr).name == "OpNullRefSentinel" } else { hidden_ref_arg(vars, args) >= 0 },
     _ => false
   }
@@ -8847,7 +8847,8 @@ fn is_zero(n: ir::Node) -> boolean {
 // null literal, `!` swapping the sides; -1 for any other shape, which proves nothing.
 fn presence_proof(e: el::El, test: ir::Node) -> DivProof {
   none = DivProof { v: -1, then: false };
-  match el_ir::unspan(test) {
+  match test {
+    NdSpan { pos: _, inner } => presence_proof(e, inner),
     NdVar { n } => DivProof { v: n, then: true },
     NdIf { cond, t, f: _ } => if el_ir::unspan(t) == ir::NdBoolean { b: true } { presence_proof(e, cond) } else { none },
     NdCall { def_nr, args } => {
