@@ -828,27 +828,63 @@ fn is_record(t: ir::DbType) -> boolean {
 
 // `Stores::finish`, for the struct types: every one not sized yet is laid out.
 fn finish(e: el::El) {
-  // `@C145`, `@FR-H-LongRef`: a record a pointer field names is linked, and every `vector` of
-  // it is laid out by id (`array<T>`, its records pushed out) — not carried: refused by name.
+  // `@C145`, `@FR-H-LongRef`: a linked record — one a pointer field names, the element of a
+  // keyed field (`hash`, `index`, `radix`, `trie`), or of a field in a linked group — has every
+  // `vector` and `sorted` of it laid out by id (`array<T>`, `ordered<T[…]>`, its records pushed
+  // out) — not carried: refused by name.
   linked: vector<integer> = [];
   for t in e.b.types {
-    if !is_record(t) || starts_with(t.name, "__closure_") {
+    if !is_record(t) {
       continue;
     }
     for f in struct_fields(e, t#index) {
-      if f.target != NO_TYPE && (e.b.types[f.content]!.parts[0] ?? ir::PtBase) is PtDbRef && record_target(e.b.types[f.target]!) && !starts_with(e.b.types[f.target]!.name, "__") {
+      keyed = match e.b.types[f.content]!.parts[0] ?? ir::PtBase {
+        PtHash { content } => content,
+        PtIndex { content } => content,
+        PtRadix { content } => content,
+        PtTrie { content } => content,
+        _ => NO_TYPE
+      };
+      if keyed != NO_TYPE {
+        linked += [keyed];
+      }
+      if len(f.other_indexes) > 0 {
+        grouped = match e.b.types[f.content]!.parts[0] ?? ir::PtBase {
+          PtVector { content } => content,
+          PtSorted { content } => content,
+          PtHash { content } => content,
+          PtIndex { content } => content,
+          _ => NO_TYPE
+        };
+        if grouped != NO_TYPE {
+          linked += [grouped];
+        }
+      }
+      if !starts_with(t.name, "__closure_") && f.target != NO_TYPE && (e.b.types[f.content]!.parts[0] ?? ir::PtBase) is PtDbRef && record_target(e.b.types[f.target]!) && !starts_with(e.b.types[f.target]!.name, "__") {
         linked += [f.target];
       }
     }
   }
+  // Only a FIELD's collection is laid out again (`finish_type` walks the struct's fields): a
+  // `vector<T>` a local holds keeps its own type.
   for t in e.b.types {
-    match t.parts[0] ?? ir::PtBase {
-      PtVector { content } => {
-        if linked.contains(content) {
-          el::refuse(e, "a vector of a record a pointer field links (laid out by id)");
-        }
-      },
-      _ => {}
+    if !is_record(t) {
+      continue;
+    }
+    for f in struct_fields(e, t#index) {
+      match e.b.types[f.content]!.parts[0] ?? ir::PtBase {
+        PtVector { content } => {
+          if linked.contains(content) {
+            el::refuse(e, "a vector field of a linked record (laid out by id)");
+          }
+        },
+        PtSorted { content } => {
+          if linked.contains(content) {
+            el::refuse(e, "a sorted field of a linked record (laid out by id)");
+          }
+        },
+        _ => {}
+      }
     }
   }
   for t in e.b.types {

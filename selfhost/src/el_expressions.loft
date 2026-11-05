@@ -5067,6 +5067,18 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
           },
           _ => {}
         }
+        // A keyed field (`hash`, `sorted`) given a literal is built in place as a vector field
+        // is: its header zeroed above, each record made through the outer record and added.
+        kd = match at { TyHash { n } => n, TySorted { n } => n, _ => -1 };
+        if kd >= 0 && e.p.nodes[fe!] is SVecLit {
+          built = field_vector(e, vars, v, r, d, fname, ir::TyReference { n: kd, dep: [] }, fe!, true);
+          if built == null {
+            return null;
+          }
+          list += [ir::NdInsert { items: built! }];
+          found += [fname];
+          continue;
+        }
         // A struct-enum field (`enum-big`): its four-byte header zeroed where the literal names
         // it, and a variant literal built straight into the field's place.  Any other value
         // (a local, a call, a unit variant) is refused by name.
@@ -5271,7 +5283,7 @@ fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fn
   [el_ir::cl(e, "OpAppendVector", [place, x.code, ir::NdInt { n: rec }])]
 }
 
-fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fname: text, inner: ir::TypeT, n: integer) -> vector<ir::Node>? {
+fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fname: text, inner: ir::TypeT, n: integer, keyed: boolean = false) -> vector<ir::Node>? {
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
@@ -5292,7 +5304,8 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
   def = el::def(e, d);
   kt = def.known_type;
   pos = field_position(e, d, fname);
-  vk = vector_store(e, inner, el_types::elem_name(e, inner));
+  // A keyed field's records are added through the record itself; it has no vector store.
+  vk = if keyed { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
   fnr = el_schema::field_nr(e, kt, fname);
   push = push_op(inner);
   if e.first_pass && elm >= 0 {
@@ -5353,6 +5366,11 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
       el::refuse(e, "a vector field of records written from a literal: an item that is no literal");
       return null;
     }
+  }
+  // A keyed field's items are made with the element's vector type as their known type
+  // (`build_vector_list`'s `vector_of`), which registers it once the layout exists.
+  if keyed && !e.first_pass && len(items) > 0 {
+    vector_of(e, inner);
   }
   out
 }
@@ -5490,7 +5508,7 @@ fn write_at(e: el::El, at: ir::Attribute, r: ir::Node, pos: ir::Node, val: ir::N
   }
   op = write_op(at);
   if op == "" {
-    el::refuse(e, "a field write of this type");
+    el::refuse(e, "a field write of this type: {type_kind(at.typedef[0] ?? ir::TyVoid)}");
     return ir::NdNull;
   }
   el_ir::cl(e, op, [r, pos, val])
