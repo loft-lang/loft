@@ -644,6 +644,9 @@ fn callee_shape(
     if !body_shape(def.code(), buf, &layout, ops, true, &mut sh) {
         return Err("a body shape the tuple cannot spell");
     }
+    if sh.buf_reads && !sh.bound.contains(&buf) {
+        return Err("a field of the caller's buffer read");
+    }
     // A returned local that no call handed `buf` binds: a delivery local when every set of it
     // is an exit value, else a VIEW of a record, read field-wise where it is returned.
     let mut delivered: HashSet<u16> = HashSet::default();
@@ -671,14 +674,16 @@ fn callee_shape(
             for (_, _, calls, _, answers) in sets {
                 tail_calls.extend(calls.iter().copied());
                 for &a in answers {
-                    if !sh.bound.contains(&a) && returned.insert(a) {
+                    // A forward's local answered here is returned as well: it must carry.
+                    if returned.insert(a) && !sh.bound.contains(&a) {
                         todo.push(a);
                     }
                 }
             }
-        } else {
+        } else if !matches!(def.variables.tp(l).base(), Type::Reference(r, _) if r == record) {
             return Err("a returned local set from a value the tuple cannot spell");
         }
+        // Otherwise a VIEW, set from any record: its fields are read where it is returned.
     }
     if sh
         .sets
@@ -953,6 +958,9 @@ struct BodyShape {
     returned: HashSet<u16>,
     /// The callees called bare at a result position: the call's answer IS the exit.
     tail_calls: Vec<u32>,
+    /// A field of the buffer is read: allowed only once a call rebinds the buffer (a
+    /// promoted local, `n = g(…); n.ok`), when it is a carrier like any forward's local.
+    buf_reads: bool,
     /// Per `l = E` that binds no call handed `buf`: `(l, E is an exit value, its tail calls,
     /// E names buf, the locals E answers)`.  A returned `l` whose every set is an exit value
     /// is a delivery local, and what its sets answer is returned in turn.
@@ -1147,7 +1155,10 @@ fn body_shape(
         _ if tail => exit_value(n, buf, layout, ops, sh),
         Value::Set(l, inner)
             if let Value::Call(_, args) = inner.unspan()
-                && matches!(args.last().map(Value::unspan), Some(Value::Var(b)) if *b == buf) =>
+                && (matches!(args.last().map(Value::unspan), Some(Value::Var(b)) if *b == buf)
+                    // A PROMOTED local: the buffer rebound from a call built in a local buffer.
+                    || (*l == buf
+                        && matches!(args.last().map(Value::unspan), Some(Value::Var(_))))) =>
         {
             sh.bound.insert(*l);
             args[..args.len() - 1]
@@ -1176,6 +1187,22 @@ fn body_shape(
             ok || (!names_buf && body_shape(inner, buf, layout, ops, false, sh))
         }
         Value::If(cond, ..) if is_buffer_guard(n, cond, buf, ops) => true,
+        // "Free this unless it is the result", the result being the buffer: a tuple is no
+        // store's record, so `Exits` makes it a plain free.
+        Value::Call(op, args)
+            if *op == ops.free_if_distinct
+                && matches!(args.as_slice(), [p, w] if !mentions(p, buf)
+                    && matches!(w.unspan(), Value::Var(b) if *b == buf)) =>
+        {
+            true
+        }
+        Value::Call(op, args)
+            if ops.get_kind(*op).is_some()
+                && matches!(args.as_slice(), [t, Value::Int(_)] if matches!(t.unspan(), Value::Var(b) if *b == buf)) =>
+        {
+            sh.buf_reads = true;
+            true
+        }
         _ => {
             let mut ok = true;
             n.for_each_child(&mut |c| {
@@ -1923,7 +1950,13 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                 && let [a, b] = args.as_slice()
                 && let (Value::Var(a), Value::Var(b)) = (a.unspan(), b.unspan())
             {
-                s.fids.push((*a, *b));
+                // Witnessed by this function's own buffer, which the tuple drops: a plain
+                // free (`Exits`).
+                if s.own.is_some_and(|(buf, _)| buf == *b) {
+                    s.frees.insert(*a);
+                } else {
+                    s.fids.push((*a, *b));
+                }
                 return;
             }
             if stmt
@@ -2452,8 +2485,27 @@ impl Exits<'_> {
             Value::Var(v) => {
                 let v = *v;
                 if v != buf && !self.c.delivered.contains(&v) && !self.c.forwards.contains(&v) {
-                    // A VIEW: its fields, read where it is returned.
-                    *n = read_into_tuple(v, layout, ops);
+                    // A VIEW: its fields, read where it is returned.  A local that OWNS its
+                    // record (no dependency: a lifted copy the record form handed to the
+                    // caller) is freed once they are read — the caller no longer takes it.
+                    let tp = vars.tp(v);
+                    if !vars.is_argument(v)
+                        && tp.depend().is_empty()
+                        && matches!(tp.base(), Type::Reference(..))
+                    {
+                        let tv = vars.add_unique("vr_t", &self.tuple, self.scope);
+                        *n = crate::data::v_block(
+                            vec![
+                                Value::Set(tv, Box::new(read_into_tuple(v, layout, ops))),
+                                Value::Call(ops.free_ref, vec![Value::Var(v)]),
+                                Value::Var(tv),
+                            ],
+                            self.tuple.clone(),
+                            "vr_owned_view",
+                        );
+                    } else {
+                        *n = read_into_tuple(v, layout, ops);
+                    }
                 }
             }
             Value::Block(b) => {

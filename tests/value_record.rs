@@ -342,9 +342,9 @@ fn each_chain_cell_returns_by_value_exactly_where_predicted() {
     // The promoted local IS the phantom: read field-wise off the tuple, returned whole.
     let body = body_of("n_at_width");
     assert!(
-        body.contains("let mut var_n: (bool, i64, f64) = Default::default();")
+        body.contains("let mut var_n: (i64, f64, u8) = (-9223372036854775808_i64, f64::NAN,")
             && body.contains("var_n = n_read_num8(cell, ")
-            && body.contains("var_n.0"),
+            && body.contains("var_n.2"),
         "n_at_width's promoted local is its tuple"
     );
     // An `Object` that returns what it builds: the tuple first, then the return.
