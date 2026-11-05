@@ -1317,22 +1317,37 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             .get(&f)
             .filter(|c| tuple && c.forwards.contains(&l))
             .map(|c| c.buf);
-        let buffer_ok = binds.iter().all(|(d, r)| {
-            w.cands[d].record == record
-                && r.is_some_and(|r| {
-                    let forward = own == Some(r);
-                    (buffer_uses[&r] == 1 || r == l)
-                        && !s.other.contains(&r)
-                        && !s.written.contains(&r)
-                        && !s.reads.iter().any(|(v, _, k)| *v == r && *k == Kind::View)
-                        && (forward || !vars.is_argument(r))
-                        && (forward
-                            || (!s.guards.contains(&r) && !s.aliases.iter().any(|(_, b)| *b == r)))
-                        && s.fids.iter().all(|&(a, b)| b != r || a == l)
-                })
+        // The first condition a bind's buffer fails, if any.
+        let buffer_why = binds.iter().find_map(|(d, r)| {
+            if w.cands[d].record != record {
+                return Some("a bind's buffer: binds of different records");
+            }
+            let Some(r) = *r else {
+                return Some("a bind's buffer: no buffer variable");
+            };
+            let forward = own == Some(r);
+            if buffer_uses[&r] != 1 && r != l {
+                Some("a bind's buffer: shared by several binds")
+            } else if s.other.contains(&r) {
+                Some("a bind's buffer: another mention")
+            } else if s.written.contains(&r) {
+                Some("a bind's buffer: written field-wise")
+            } else if s.reads.iter().any(|(v, _, k)| *v == r && *k == Kind::View) {
+                Some("a bind's buffer: a heap field read")
+            } else if !forward && vars.is_argument(r) {
+                Some("a bind's buffer: a parameter, and no forward of a tuple")
+            } else if !forward
+                && (s.guards.contains(&r) || s.aliases.iter().any(|(_, b)| *b == r))
+            {
+                Some("a bind's buffer: guarded or aliased, and no forward")
+            } else if s.fids.iter().any(|&(a, b)| b == r && a != l) {
+                Some("a bind's buffer: witnesses another free")
+            } else {
+                None
+            }
         });
-        let why = if !buffer_ok {
-            Some("a bind's buffer")
+        let why = if let Some(why) = buffer_why {
+            Some(why)
         } else if s.returns.contains(&l) && own.is_none() {
             Some("returned by a function that keeps its record")
         } else if s.other.contains(&l) {
@@ -1452,6 +1467,14 @@ fn scan_args(d: u32, args: &[Value], w: &World, s: &mut Scan) {
 /// A value in a RESULT position: a variable there is returned, and a block's last value is
 /// still the result.
 fn scan_result(n: &Value, w: &World, s: &mut Scan) {
+    // The function's own literal in a result position (`return S { … }`) is scanned whole,
+    // as what the rewrite keeps of it ([`scan`]).
+    if let Some((buf, record)) = s.own
+        && literal(n.unspan(), buf, &w.layouts[&record], &w.ops).is_some()
+    {
+        scan(n, false, w, s);
+        return;
+    }
     match n.unspan() {
         Value::Var(x) => {
             s.returns.insert(*x);
