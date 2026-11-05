@@ -146,6 +146,15 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
              declaration the IR form did not find; LOFT_NO_ELEMENT_FIRST=1 keeps the copy",
             data.def(d).name()
         );
+        // Each paired temp now IS its element's field: it depends on the element, the store it
+        // lives in.  Left naming its old `__vdb` backing, a store-distinctness verdict reads a
+        // push into the temp as the growth of ANOTHER store and keeps the element's address
+        // across it (the C's `(R-RecPtr)` wrote a later scalar field through a moved address).
+        for p in &pairs {
+            for b in &p.binds {
+                data.definitions[d as usize].variables.depend(b.tmp, p.elm);
+            }
+        }
         data.definitions[d as usize].variables.reset_intervals();
         crate::scopes::compute_function_intervals(data, d);
         crate::scopes::assign_function_slots(data, d);
