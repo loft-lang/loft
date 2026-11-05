@@ -1376,14 +1376,15 @@ jobs:
         uses: taiki-e/install-action@cargo-audit
       - name: cargo audit
         run: cargo audit
-      # THIRDPARTY.md, with the registers: loft and every published library — NVD, OSV,
-      # the GitHub advisories of each upstream and component, RustSec, upstream changes to
-      # vendored files, newer SDK releases.  A new advisory against something we ship fails
-      # this the morning after it is published, before anyone thinks to look.
-      - name: Third-party code — provenance and advisories
+      # THIRDPARTY.md, with the registers, for loft itself — NVD, OSV, the GitHub advisories
+      # of each upstream and component, RustSec, upstream changes to vendored files, newer
+      # SDK releases.  A new advisory against something loft ships fails this the morning
+      # after it is published.  Each published library gets the same check in its own
+      # `revalidate-libs` leg, in the pass that already goes over them.
+      - name: Third-party code — provenance and advisories (loft)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/thirdparty.py --check
+        run: python3 scripts/thirdparty.py --check --no-libs
 
   toolchain-matrix:
     # @windows-exempt: varies the Rust toolchain, not the platform

@@ -216,6 +216,17 @@ jobs:
           ref: ${{ matrix.tag }}
           path: lib
 
+      # THIRDPARTY.md, in the same pass over the published libraries: what this release
+      # ships, compiles in or opens that its author did not write is declared, matches its
+      # upstream, and every advisory a register reports against it has a verdict.  Not on a
+      # loft PR: a published tag cannot change and a loft PR cannot fix it, so failing one
+      # there would block the wrong change; the nightly run and the release gate fail on it.
+      - name: Third-party code — ${{ matrix.name }} ${{ matrix.version }}
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 loft-src/scripts/thirdparty.py --check --repo "lib/${{ matrix.sub }}"
+
       # System libraries the lib's native crate links against, declared as `build-deps`
       # in its loft.toml (graphics → libgl-dev, libasound2-dev) and in the manifests of
       # the packages it resolves — the step library-ci-reusable.yml runs, for the same
