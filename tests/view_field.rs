@@ -35,16 +35,11 @@ fn emitted(env: &[(&str, &str)]) -> String {
     emitted_from(GUARD, env)
 }
 
-/// [`emitted`] for another guard.
+/// [`emitted`] for another guard — the CLOSED program (`--lean`): `(R-ValueRecord)` is a
+/// whole-program rewrite, made in the IR (`src/value_record.rs`), and an open build (one that
+/// ships the live tier) takes none (NATIVE.md § Optimisation tiers).
 fn emitted_from(file: &str, env: &[(&str, &str)]) -> String {
-    emitted_with(file, &[], env)
-}
-
-/// The CLOSED program's emission (`--lean`): the only tier the IR's value-record pass runs
-/// on — a plain native build ships the live tier, an open program (NATIVE.md § Optimisation
-/// tiers).
-fn emitted_closed(file: &str) -> String {
-    emitted_with(file, &["--lean"], ON)
+    emitted_with(file, &["--lean"], env)
 }
 
 /// [`emitted_from`] with extra driver flags.
@@ -99,7 +94,7 @@ fn an_admitted_function_returns_its_heap_field_as_a_reference() {
     ] {
         let sig = signature(&src, func);
         assert!(
-            sig.contains("-> (bool, bool, DbRef)"),
+            sig.contains("-> (DbRef, u8, u8)"),
             "{func} must answer the value tuple with a view leaf:\n{sig}"
         );
         let params = &sig[..sig.find(") ->").unwrap_or(sig.len())];
@@ -110,61 +105,18 @@ fn an_admitted_function_returns_its_heap_field_as_a_reference() {
     }
 }
 
-/// The CLOSED program: the IR's value-record pass spells the view leaf as a tuple element
-/// (@PLN211 c4-view S1), so every writer emits the IR's tuple — in SCHEMA order, the view
-/// first — and finds no view-leaf function of its own.  The forwards (`p2`, `p8`, `p11`,
-/// `p16`: an early-return literal beside a `return g()`) are taken too, and every decline
-/// still keeps its record.
-#[test]
-fn the_closed_build_spells_the_view_in_the_irs_tuple() {
-    let src = emitted_closed(GUARD);
-    for func in [
-        "a1", "a2", "a3", "a4", "a5", "c1f", "c2f", "p1", "p2", "p8", "p11", "p12", "p13", "p14",
-        "p16",
-    ] {
-        let sig = signature(&src, func);
-        assert!(
-            sig.contains("-> (DbRef, u8, u8)"),
-            "{func} must answer the IR's tuple with its view leaf:\n{sig}"
-        );
-        let params = &sig[..sig.find(") ->").unwrap_or(sig.len())];
-        assert!(
-            !params.contains("__retbuf"),
-            "{func} must drop the caller's return buffer:\n{sig}"
-        );
-    }
-    assert!(
-        src.contains("let mut var_m1: (DbRef, u8, u8) = n_a1(cell, var_s1, 3_i64);"),
-        "the site binds the IR's tuple and passes no buffer"
-    );
-    assert!(
-        src.contains("vector::length_vector(&(var_m1.0), &stores.allocations)"),
-        "a length reads the view straight off the tuple"
-    );
-    for func in [
-        "d1", "d2", "d3", "d4", "d5", "d6", "b1f", "b2f", "b3f", "b4f", "b5f", "b6f", "b7f", "b8f",
-        "p3", "p4", "p5", "p6", "p7", "p7b", "p7c", "p7d", "p9", "p10", "p15", "p17",
-    ] {
-        let sig = signature(&src, func);
-        assert!(
-            sig.contains("var___retbuf: DbRef) -> DbRef"),
-            "{func} must keep the record form in the closed build too:\n{sig}"
-        );
-    }
-}
-
 /// And the SITE reads the tuple's own reference where it read a field of a record.
 #[test]
 fn a_site_reads_the_leaf_off_the_tuple() {
     let src = emitted(ON);
     assert!(
-        src.contains("let mut var_m1: (bool, bool, DbRef) = n_a1(cell, var_s1, 3_i64);"),
+        src.contains("let mut var_m1: (DbRef, u8, u8) = n_a1(cell, var_s1, 3_i64);"),
         "the site binds the tuple and passes no buffer"
     );
     // `len(m1.pts)` is its op over the path (`(R-Wrapper)` over a pure vector path, since
     // @PLN158 round 3), and the path over a value-record local reads the tuple's leaf.
     assert!(
-        src.contains("vector::length_vector(&(var_m1.2), &stores.allocations)"),
+        src.contains("vector::length_vector(&(var_m1.0), &stores.allocations)"),
         "a length reads the leaf's reference straight off the tuple"
     );
 }
@@ -185,14 +137,14 @@ fn a_joined_append_views_the_last_element() {
     for func in ["p1", "p11", "p12", "p14"] {
         let b = body(func);
         assert!(
-            b.contains("let _ve = vector::get_vector(&_vc, 16u32, -1, &stores.allocations)"),
+            b.contains("vec_get") && b.contains("-1_i64"),
             "{func} appends in more than one arm, so it views the last element:\n{b}"
         );
     }
     for func in ["a1", "p2", "p8", "p13", "p16"] {
         let b = body(func);
         assert!(
-            b.contains("let _vl = var__elm_") && !b.contains("get_vector(&_vc"),
+            b.contains("let _v_v1 = (var__elm_") && !b.contains("-1_i64"),
             "{func} appends through one temp on every path, so it views that element:\n{b}"
         );
     }
@@ -269,7 +221,7 @@ fn a_pooled_caller_mints_nothing_for_a_tuple() {
     let main = &src[start..];
     let main = &main[..main.find("  } /*block_1").unwrap_or(main.len())];
     assert!(
-        main.contains("let mut var_me1: (bool, bool, DbRef) = n_a1(cell, var_se1,"),
+        main.contains("let mut var_me1: (DbRef, u8, u8) = n_a1(cell, var_se1,"),
         "e1 binds the tuple:\n{main}"
     );
     assert!(
@@ -292,7 +244,7 @@ fn the_switch_restores_the_record() {
     );
     let on = emitted(ON);
     assert!(
-        signature(&on, "a1").contains("-> (bool, bool, DbRef)"),
+        signature(&on, "a1").contains("-> (DbRef, u8, u8)"),
         "by default a1 answers the tuple"
     );
 }

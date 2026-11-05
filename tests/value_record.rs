@@ -110,7 +110,10 @@ const CHAIN_EXPECTED: &[(&str, bool)] = &[
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--native-rust")
+    // `--lean`: the CLOSED program — `(R-ValueRecord)` is a whole-program rewrite, and an open
+    // build (one that ships the live tier) takes none (NATIVE.md § Optimisation tiers).
+    cmd.arg("--lean")
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -304,12 +307,15 @@ fn each_chain_cell_returns_by_value_exactly_where_predicted() {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    // The chain's assignment lands in the phantom, declared at its tuple's zero and bound
-    // from the callee's tuple call — no buffer argument, no mint, no copy.
+    // The chain's assignment lands in the phantom, declared at the null tuple (the IR's
+    // value-record pass, in SCHEMA order) and bound from the callee's tuple call — no buffer
+    // argument, no mint, no copy.
     for name in ["n_read_uint", "n_pick"] {
         let body = body_of(name);
         assert!(
-            body.contains("let mut var___ref_1: (bool, i64, f64) = Default::default();"),
+            body.contains(
+                "let mut var___ref_1: (i64, f64, u8) = (-9223372036854775808_i64, f64::NAN,"
+            ),
             "{name} declares its phantom as the tuple"
         );
         assert!(
@@ -344,7 +350,7 @@ fn each_chain_cell_returns_by_value_exactly_where_predicted() {
     // An `Object` that returns what it builds: the tuple first, then the return.
     let body = body_of("n_read_colour_pair");
     assert!(
-        body.contains("let __obj = (") && body.contains("return __obj"),
+        body.contains("return (var__vf_"),
         "n_read_colour_pair's early returns are tuples returned from their own block"
     );
     assert!(

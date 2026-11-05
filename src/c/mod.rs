@@ -491,7 +491,13 @@ impl<'a> Cx<'a> {
         self.vr
             .get_or_init(|| {
                 use crate::opt::value_records::layout as vl;
-                let vr = crate::opt::value_records::value_records(self.data, self.stores, false);
+                // An OPEN program takes no whole-program rewrite (NATIVE.md § Optimisation
+                // tiers): no value records.
+                let vr = if self.data.open_world {
+                    vl::ValueRecords::default()
+                } else {
+                    crate::opt::value_records::value_records(self.data, self.stores, false)
+                };
                 crate::rewrite_census::fired("R-ValueRecord", vr.fns.len());
                 // `(O-ViewField)` — the functions with a view leaf (@PLN211 C′4's measure).
                 crate::rewrite_census::fired("R-ValueRecord/view", vr.views.len());

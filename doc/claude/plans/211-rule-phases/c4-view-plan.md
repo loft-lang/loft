@@ -90,11 +90,22 @@ caller        m = n_g2(sc, x, __ref_1);  … OpLengthVector(OpGetField(m, 0, Vec
 **Built so far** (`value_record.rs`): `Kind::View`; the `Elem`, `Null` and `Last` leaves
 spelled in the IR; a view carrier admitted only as one of the analysis's value locals; an
 exit literal that ends in its own `return` admitted anywhere (an early `if … { return S {…} }`,
-which also widens the flat form).  Of `164-view-field.loft`'s sixteen view functions the IR takes
-twelve; the four FORWARDS (`p2`, `p8`, `p11`, `p16`) still decline at their local ("a forwarded
-local cannot carry the tuple").  The cells hold on all three backends under `LOFT_POISON`,
-`LOFT_STRICT_STORES` and `LOFT_POISON_CLAIM`; the plant (the viewed place cleared at the exit) fails
-`a1` on all three.  Owed: the forwards, the census, the test pins, then S2.
+which also widens the flat form).
+
+**S1 done (2026-11-05).**  The four FORWARDS (`p2`, `p8`, `p11`, `p16`: an early-return literal
+beside a `return g()`) declined because the scan read the function's own exit literal as raw
+buffer writes, and a one-buffer chain's carrier rewrite turned that literal's writes into tuple
+puts before `literals_to_tuples` could see it.  Fixed: the scan reads an own literal as what the
+rewrite keeps of it (`Scan::own`), and the literals become tuples before the carrier rewrite.
+All sixteen view functions of `164-view-field.loft` now answer the IR's `(DbRef, u8, u8)`
+closed, pinned by `tests/view_field.rs::the_closed_build_spells_the_view_in_the_irs_tuple`;
+the cells run on `--interpret`, `--native-c --lean` and `--native --lean` under the store
+falsifiers.  The plant (the view freed right after each carrier's bind) stops `a1` on all three;
+removing the IR's own carrier gate moved no cell (the analysis declines the disturbing sites
+first) — both recorded in the cell's `@falsified-at`.  Switch A/B (`LOFT_NO_IR_VALUE_RECORD`,
+the closed interpreter): 0 defects over 2 918; the C sweep (`--emit-c` is closed, identical to
+`--lean`): 2 585 match, plain and `--poison`, the one differ an `attic` program that differs on
+installed main too.
 
 **The open world.**  The IR value-record pass runs only on a CLOSED program: a semantics-tier
 `--native` / `--native-c` run ships the live tier (`ships_live_tier`), which opens the world, and
@@ -122,7 +133,7 @@ needs no plan at all: the exit is `Tuple(…, g2_p, …)`, and the element-first
 | # | step | done when |
 |---|---|---|
 | S0 | **Probe the premise** (design-protocol: the cheapest check that could falsify it).  Count, on the benches and the corpus, the functions the writers admit ONLY through a view leaf, and for each pair of `164-element-place.loft` whether its function is one.  If no bench function needs a view leaf, the clause's weight is the cells and the libraries (`make libcatalogue`'s consumers), and that decides S1's priority | **done** — § S0 below the measurements |
-| S1 | **A tuple element that is a reference.**  The IR's value-record tuple gains a reference part for a view leaf: the interpreter carries it as a `DbRef` slot, the writers as their reference (`loft_ref` / `DbRef`), never freed by the tuple (a view is never freed).  `body_shape` admits a result position that is a view of a place `(O-ViewField)` admits | the tuple form spells a view on all three backends; the value-record cells pass; a plant (the view freed with the tuple) caught |
+| S1 | **A tuple element that is a reference.**  The IR's value-record tuple gains a reference part for a view leaf: the interpreter carries it as a `DbRef` slot, the writers as their reference (`loft_ref` / `DbRef`), never freed by the tuple (a view is never freed).  `body_shape` admits a result position that is a view of a place `(O-ViewField)` admits | the tuple form spells a view on all three backends; the value-record cells pass; a plant (the view freed with the tuple) caught **done** |
 | S2 | **The writers' copy deleted.**  An open build has no value records (the ruling above), and a closed one runs the IR's: each writer's own view-leaf delivery (`lower::plan`, the C's `value_records`) goes, and with it whatever of `ViewPlan` only they read.  Which other writer forms of `(R-ValueRecord)` (the nullable clause, `(R-FnRefValue)`, the parameters) the IR does not take yet is S2's first measure: each is moved or dropped, never kept for the open world | the census: `R-ValueRecord` applied by the IR alone; the cells and the corpus checks pass closed (`--lean`) on the C and rustc, and open with no value records |
 | S3 | **`(R-ElemFirst)` takes the form.**  The pass pairs a temp whose exit is a tuple element naming it; the rename makes it the element's field.  Both writers' element-first clauses are deleted | the 164 cells' pairs taken by the IR (`tests/element_first.rs` counts the trace); `rule_tags.py sites @FR-R-ElemFirst` shows no writer clause; D-phase-4 closed |
 
