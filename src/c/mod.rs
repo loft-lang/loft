@@ -1541,7 +1541,7 @@ impl Cx<'_> {
             let vars = def.variables();
             for (i, &a) in vars.arguments().iter().enumerate() {
                 if !out.contains(&i)
-                    && matches!(vars.tp(a), Type::Tuple(es)
+                    && matches!(vars.tp(a).base(), Type::Tuple(es)
                         if es.len() >= 3 && es.iter().all(crate::data::is_scalar))
                     && vr_param_read_only(self.data, def.code(), a)
                 {

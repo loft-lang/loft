@@ -8480,7 +8480,7 @@ pub(crate) fn written_through_locals(body: &Value, data: &Data) -> HashSet<u16> 
                         && (params.contains(&(i as u16))
                             || *def.code() == Value::Null
                             || matches!(
-                                def.attributes.get(i).map(|a| &a.typedef),
+                                def.attributes.get(i).map(|a| a.typedef.base()),
                                 Some(Type::RefVar(_))
                             ))
                     {

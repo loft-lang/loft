@@ -6687,7 +6687,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // A record element is a slot of the vector's own store, whatever the first item
             // borrowed: its type names no frame variable (one would leak into the shared
             // `vector<T>` definition).  A pointer element keeps its marker.
-            *in_t = match &t {
+            *in_t = match t.base() {
                 Type::Reference(_, d) | Type::Enum(_, true, d) if !d.is_pointer_marker() => {
                     t.without_deps()
                 }
