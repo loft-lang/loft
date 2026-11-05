@@ -326,10 +326,10 @@ pub struct DeclaredRange {
   pub dflt: integer?
 }
 
-pub fn declared_range(t: ir::TypeT, nullable: boolean) -> DeclaredRange {
+pub fn declared_range(t: ir::TypeT, nullable: boolean, aliases: boolean = false) -> DeclaredRange {
   match el_types::base(t) {
     TyInteger { spec } => {
-      if full_integer(spec) || (spec.forced_size > 0 && !nullable) {
+      if full_integer(spec) || (spec.forced_size > 0 && !nullable && !aliases) {
         return DeclaredRange { some: false, lo: 0, hi: 0, dflt: 0 };
       }
       width = spec.max - spec.min + 1;
@@ -372,6 +372,18 @@ pub fn guard_range(e: el::El, code: ir::Node, target: ir::TypeT, source: ir::Typ
     _ => {}
   }
   el_ir::cl(e, "OpRangeDefault", [code, ir::NdLong { n: lo }, ir::NdLong { n: hi }, ir::NdLong { n: dflt }])
+}
+
+// `Parser::guard_compound_range` (loft#1009): a compound step into a slot that declares a range —
+// the `limit(lo, hi)` spelling or a narrow alias (`compound_range`, which `declared_range` leaves
+// out because a plain store into an alias is checked at compile time) — guards the COMPOSED
+// value.  No constant is folded and no source range consulted: the step is computed at run time.
+pub fn guard_compound(e: el::El, code: ir::Node, target: ir::TypeT, nullable: boolean) -> ir::Node {
+  r = declared_range(target, nullable, aliases: true);
+  if !r.some || calls_op(e, code, "OpRangeDefault") {
+    return code;
+  }
+  el_ir::cl(e, "OpRangeDefault", [code, ir::NdLong { n: r.lo }, ir::NdLong { n: r.hi }, ir::NdLong { n: r.dflt }])
 }
 
 fn calls_op(e: el::El, n: ir::Node, name: text) -> boolean {
