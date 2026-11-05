@@ -58,13 +58,6 @@ pub fn synth_drop_cascades(e: el::El) {
   for t in targets {
     fill(e, t, made[t#index] ?? -1);
   }
-  // The cascades are made as Rust makes them, but a program whose types hold a droppable also
-  // meets the lowerings Rust keys on a droppable (a literal built apart, a call result's member
-  // read as a view, a rebinding literal's store minted after its items, …), which are not
-  // carried: refused by name until they are.
-  if len(targets) > 0 {
-    el::refuse(e, "a type holding a droppable (the lowerings a droppable takes)");
-  }
 }
 
 // `any_drop_hook`: some function is a type's `OpDrop`.
