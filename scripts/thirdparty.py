@@ -75,6 +75,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.environ.get("LOFT_THIRDPARTY_CACHE") or os.path.join(
     os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "loft", "thirdparty")
 REGISTRY_INDEX = "https://raw.githubusercontent.com/loft-lang/registry/main/index.json"
+REGISTRY_REPO = "https://github.com/loft-lang/registry"
 DAY = 24 * 3600
 CODE_EXT = (".c", ".h", ".cc", ".cpp", ".hpp", ".inl")
 # Path segments whose code is not part of what a package ships.
@@ -200,8 +201,17 @@ def fetch_tarball(url, dest, sha256=None):
     return dest
 
 
+def registry_index():
+    """The index at the registry's current commit: the branch address is CDN-cached apart from
+    the commit, and can serve the previous index for minutes after a publish."""
+    head = run(["git", "ls-remote", REGISTRY_REPO, "refs/heads/main"]).stdout.split()
+    if head:
+        return json.loads(http(REGISTRY_INDEX.replace("/main/", f"/{head[0]}/"), ttl=365 * DAY))
+    return json.loads(http(REGISTRY_INDEX))
+
+
 def registry_trees(source):
-    index = json.loads(http(REGISTRY_INDEX))
+    index = registry_index()
     trees, repos = [], {}
     for name, p in sorted(index["packages"].items()):
         repo = re.search(r"github\.com/([\w.-]+/[\w.-]+)", p.get("homepage", "") + json.dumps(p))
