@@ -265,7 +265,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-RangedCall)` | `R-RangedCall` native |
 | `(R-Rebind)` | `R-Rebind` ir |
 | `(R-RebindBuffer)` | `R-RebindBuffer` native |
-| `(R-RecPtr)` | `R-RecPtr` c, native · `/element` native · `/held` c · `/index` native · `/nested` native · `/param` c · `/text` c |
+| `(R-RecPtr)` | `R-RecPtr` c, native · `/held` c · `/index` native · `/nested` native · `/param` c · `/text` c |
 | `(R-RefParam)` | `R-RefParam` c |
 | `(R-RefillBuffer)` | `R-RefillBuffer` native |
 | `(R-RefillText)` | `R-RefillText` native |
