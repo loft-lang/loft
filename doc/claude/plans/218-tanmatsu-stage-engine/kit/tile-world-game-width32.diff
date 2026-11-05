@@ -1,0 +1,490 @@
+diff --git a/editor.loft b/editor.loft
+index 4916538..2bddf3a 100644
+--- a/editor.loft
++++ b/editor.loft
+@@ -91,7 +91,7 @@ pub struct Editor {
+   /// drops the ones undone.
+   done: integer,
+   /// Cells whose adjustment was taken away (`unadjust`), until a hand edit touches them again.
+-  released: vector<integer> = [],
++  released: vector<i64> = [],
+   /// A corner marked with R: a rectangle, a copy, runs from it to the cursor.
+   pub marked: boolean,
+   pub mark_x: integer,
+@@ -236,7 +236,7 @@ fn keep(ed: Editor, e: const Edit) {
+     for c in e.cells {
+       k = intent::key_of(c.x, c.y, c.z);
+       if ed.released.contains(k) {
+-        kept: vector<integer> = [];
++        kept: vector<i64> = [];
+         for r in ed.released { if r != k { kept += [r]; } }
+         ed.released = kept;
+       }
+@@ -252,8 +252,8 @@ fn sets_cell(c: const Change) -> boolean {
+ 
+ /// The cells set by hand: the level file's, and every cell an applied hand edit set since —
+ /// undoing the edit undoes the adjustment — but for those `unadjust` released.
+-pub fn adjusted(ed: const Editor, lf: const levels::LevelFile) -> vector<integer> {
+-  out: vector<integer> = [];
++pub fn adjusted(ed: const Editor, lf: const levels::LevelFile) -> vector<i64> {
++  out: vector<i64> = [];
+   for k in lf.adjusted { if !ed.released.contains(k) { out += [k]; } }
+   for i in 0..ed.done {
+     e = ed.log[i] ?? continue;
+@@ -271,7 +271,7 @@ pub fn adjusted(ed: const Editor, lf: const levels::LevelFile) -> vector<integer
+ /// derives.
+ pub fn unadjust(ed: Editor, lf: levels::LevelFile, x: integer, y: integer, z: integer) {
+   k = intent::key_of(x, y, z);
+-  kept: vector<integer> = [];
++  kept: vector<i64> = [];
+   for a in lf.adjusted { if a != k { kept += [a]; } }
+   lf.adjusted = kept;
+   if !ed.released.contains(k) { ed.released += [k]; }
+@@ -314,7 +314,7 @@ pub fn refill(ed: Editor, lf: levels::LevelFile, words: const vector<intent::Wor
+   if len(todo) == 0 { return false; }
+   // Every cell the fill can change — its cells and, for a material, the ring round each — as it
+   // was, so undo takes the whole fill back.
+-  spots: vector<integer> = [];
++  spots: vector<i64> = [];
+   for f in todo {
+     for dy in -1..=1 {
+       for dx in -1..=1 {
+diff --git a/game.loft b/game.loft
+index 89160e6..f01a2d2 100644
+--- a/game.loft
++++ b/game.loft
+@@ -129,6 +129,33 @@ pub struct MovedTalk {
+   pub talk: talk::Talk
+ }
+ 
++// Cell (x, y, z) of `w`, at its place in the view.
++/// The ground around the view: for each cell one beyond it on every side, its height in steps
++/// over this layer's floor — its rise, or over the void a cell of the layer above (a layer's
++/// steps up) or below (down) — whether it has one, its light (a shade, 0 .. 7), whether it is set
++/// (not the void) and whether it is this layer's ground (set, not standing up): what a cell's
++/// corners are made of, so ground meets ground across a layer's edge too.
++struct Ground {
++  x0: integer,
++  y0: integer,
++  w: integer,
++  h: integer,
++  rise: vector<integer>,
++  has: vector<boolean>,
++  shade: vector<integer>,
++  set: vector<boolean>,
++  ground: vector<boolean>
++}
++
++/// The kind numbers the frame asks about, looked up by name once when the game loads rather than
++/// in the loops over cells (a lookup by name loops over the kinds).
++struct Ids {
++  wall: integer,
++  wall_edge: integer,
++  open_door: integer,
++  door: integer
++}
++
+ pub struct Game {
+   pub world: rules::Level,
+   /// The level being played, as its file holds it (name, start, goal).
+@@ -216,6 +243,10 @@ pub struct Game {
+   /// the height of a wall in the pictures (a raised block is a row of wall tops over one row of
+   /// wall face).  Fixed per layer, so the world stays still when the hero changes layer.
+   lift: integer,
++  /// Made once and refilled each frame: the ground grid `ground_of` fills and the view's shades.
++  ids: Ids,
++  ground: Ground,
++  shades: vector<integer>,
+   /// When the swing key went down (-1: it is up): let go after HEAVY_HOLD_MS it is a heavy swing,
+   /// sooner a light one (@GM-Combat).
+   swing_down_at: integer = -1,
+@@ -340,7 +371,11 @@ pub fn new_game(dir: text) -> Game? {
+     drag_to: (0, 0), room_pick: -1, words: intent::words_from(theme_text), lit: false, checking: false, note: "",
+     cam_x: 0, cam_y: 0, area: (0, 0, 0, 0),
+     dir: dir, saved: empty, has_save: false, asking_back: false, previous: empty, has_previous: false,
+-    just_back: false, motion: motion::still(), was_moving: false, movers: [], lift: 0
++    just_back: false, motion: motion::still(), was_moving: false, movers: [], lift: 0,
++    ids: Ids { wall: rules::terrain_id(k, "wall"), wall_edge: rules::edge_id(k, "wall"),
++               open_door: rules::terrain_id(k, "open_door"), door: rules::terrain_id(k, "door") },
++    ground: Ground { x0: 0, y0: 0, w: 0, h: 0, rise: [], has: [], shade: [], set: [], ground: [] },
++    shades: []
+   };
+   g.people = load_people(dir);
+   for e in sound_events() {
+@@ -1880,31 +1915,26 @@ pub fn hero_point(g: const Game) -> (float, float) {
+ 
+ // --- The picture ---
+ 
+-// Cell (x, y, z) of `w`, at its place in the view.
+-/// The ground around the view: for each cell one beyond it on every side, its height in steps
+-/// over this layer's floor — its rise, or over the void a cell of the layer above (a layer's
+-/// steps up) or below (down) — whether it has one, its light (a shade, 0 .. 7), whether it is set
+-/// (not the void) and whether it is this layer's ground (set, not standing up): what a cell's
+-/// corners are made of, so ground meets ground across a layer's edge too.
+-struct Ground {
+-  x0: integer,
+-  y0: integer,
+-  w: integer,
+-  h: integer,
+-  rise: vector<integer>,
+-  has: vector<boolean>,
+-  shade: vector<integer>,
+-  set: vector<boolean>,
+-  ground: vector<boolean>
+-}
+ 
+-fn ground_of(g: const Game, w: const rules::Level, z: integer, rows: integer, lit: boolean) -> Ground {
+-  out = Ground { x0: g.cam_x - 1, y0: g.cam_y + z - 1, w: COLS + 2, h: rows + 2, rise: [], has: [], shade: [], set: [], ground: [] };
+-  steps = w.k.layer_height;
+-  if lit {
+-    out.shade = tile_world::shades(w.w, out.x0, out.y0, out.x0 + out.w - 1, out.y0 + out.h - 1, z,
+-                                   rules::lights(w, z), rules::light_starts(w, z), !w.night);
++fn ground_of(g: Game, w: const rules::Level, z: integer, rows: integer, lit: boolean) {
++  out = g.ground;
++  out.x0 = g.cam_x - 1;
++  out.y0 = g.cam_y + z - 1;
++  out.w = COLS + 2;
++  out.h = rows + 2;
++  n = out.w * out.h;
++  if len(out.rise) != n {
++    out.rise = [0; n];
++    out.has = [false; n];
++    out.set = [false; n];
++    out.ground = [false; n];
+   }
++  steps = w.k.layer_height;
++  out.shade = if lit {
++    tile_world::shades(w.w, out.x0, out.y0, out.x0 + out.w - 1, out.y0 + out.h - 1, z,
++                       rules::lights(w, z), rules::light_starts(w, z), !w.night)
++  } else { [] };
++  at = 0;
+   for j in 0..out.h {
+     for i in 0..out.w {
+       x = out.x0 + i;
+@@ -1924,13 +1954,13 @@ fn ground_of(g: const Game, w: const rules::Level, z: integer, rows: integer, li
+         h = tile_world::rise(w.w, x, y, z - 1) - steps;
+         has = true;
+       }
+-      out.rise += [h];
+-      out.has += [has];
+-      out.set += [k != tile_world::VOID];
+-      out.ground += [own];
++      out.rise[at] = h;
++      out.has[at] = has;
++      out.set[at] = k != tile_world::VOID;
++      out.ground[at] = own;
++      at += 1;
+     }
+   }
+-  out
+ }
+ 
+ // Cell (x, y)'s corner (cx, cy) — 0 or 1 each, (0, 0) top-left — lifted and darkened: the
+@@ -1960,8 +1990,9 @@ fn corner_of(gr: const Ground, x: integer, y: integer, cx: integer, cy: integer,
+   rn = 0;
+   ss = 0;
+   sn = 0;
+-  for d in [(cx - 1, cy - 1), (cx, cy - 1), (cx - 1, cy), (cx, cy)] {
+-    i = me + d.1 * gr.w + d.0;
++  // The four cells sharing the corner: (cx - 1, cy - 1), (cx, cy - 1), (cx - 1, cy), (cx, cy).
++  for d in 0..4 {
++    i = me + (cy - 1 + d / 2) * gr.w + cx - 1 + d % 2;
+     if !(gr.has[i] ?? false) { continue; }
+     r = gr.rise[i] ?? 0;
+     if r - r0 <= 1 && r0 - r <= 1 {
+@@ -2030,8 +2061,8 @@ fn standing_light(gr: const Ground, x: integer, y: integer, cx: integer, cy: int
+   me = (y - gr.y0) * gr.w + (x - gr.x0);
+   ss = 0;
+   sn = 0;
+-  for d in [(cx - 1, cy - 1), (cx, cy - 1), (cx - 1, cy), (cx, cy)] {
+-    i = me + d.1 * gr.w + d.0;
++  for d in 0..4 {
++    i = me + (cy - 1 + d / 2) * gr.w + cx - 1 + d % 2;
+     if !(gr.set[i] ?? false) { continue; }
+     sh = gr.shade[i] ?? 0;
+     ss += if sh < dim { dim } else { sh };
+@@ -2068,10 +2099,10 @@ pub fn kind_sprite(g: const Game, w: const rules::Level, x: integer, y: integer,
+     return theme::line_sprite(g.look, k, across);
+   }
+   // A door to a place that is shut until something holds (C9, the barn) is drawn closed.
+-  if k == rules::tr(w, "open_door") {
++  if k == g.ids.open_door {
+     for d in g.file.doors {
+       if d.x == x && d.y == y && d.z == z && d.needs != "" && !rules::holds(w, d.needs) {
+-        return theme::terrain_sprite(g.look, rules::tr(w, "door"), x, y, upper);
++        return theme::terrain_sprite(g.look, g.ids.door, x, y, upper);
+       }
+     }
+   }
+@@ -2241,12 +2272,16 @@ fn draw_layer(g: Game, w: const rules::Level, z: integer, upper: boolean, only_s
+   // is the layer's row cy + y.
+   cy = g.cam_y + z;
+   g.lift = z * g.look.tile_size;
+-  gr = ground_of(g, w, z, rows, lit);
++  ground_of(g, w, z, rows, lit);
++  gr = g.ground;
+   // A view cell's shade, from the ground grid (one cell wider each side).
+-  sh: vector<integer> = [];
++  if len(g.shades) != rows * COLS { g.shades = [0; rows * COLS]; }
++  sh = g.shades;
+   for y in 0..rows {
+-    for x in 0..COLS { sh += [gr.shade[(y + 1) * gr.w + x + 1] ?? 0]; }
++    for x in 0..COLS { sh[y * COLS + x] = gr.shade[(y + 1) * gr.w + x + 1] ?? 0; }
+   }
++  wall = g.ids.wall;
++  wall_edge = g.ids.wall_edge;
+   // The ground first, all of it; then, row by row from the back, what stands — the upright
+   // terrain, the stacks, and the figures whose feet stand at that row — so what is in front
+   // hides what is behind it.
+@@ -2266,7 +2301,7 @@ fn draw_layer(g: Game, w: const rules::Level, z: integer, upper: boolean, only_s
+         if (!only_set || tile_world::terrain(w.w, cx + x, cy + y, z) != tile_world::VOID)
+             && (cx + x != cut.0 || cy + y != cut.1) {
+           shade = sh[y * COLS + x] ?? 0;
+-          seen = !sight || rules::in_view(w, cx + x, cy + y);
++          seen = !sight || rules::in_view_of(w, cx + x, cy + y, wall, wall_edge);
+           draw_standing(g, w, gr, cx + x, cy + y, z, upper, dim, if shade < dim { dim } else { shade }, seen);
+         }
+       }
+@@ -2281,7 +2316,7 @@ fn draw_layer(g: Game, w: const rules::Level, z: integer, upper: boolean, only_s
+     }
+     for f in figs {
+       d = depth_row(g, f) - z;
+-      if (d == y || (y == -1 && d < -1) || (y == rows - 1 && d >= rows)) && (!sight || rules::in_view(w, f.x, f.y)) {
++      if (d == y || (y == -1 && d < -1) || (y == rows - 1 && d >= rows)) && (!sight || rules::in_view_of(w, f.x, f.y, wall, wall_edge)) {
+         fx = f.x - cx;
+         fy = f.y - cy;
+         shade = sh[fy * COLS + fx] ?? 0;
+@@ -2301,7 +2336,7 @@ fn draw_labels(g: Game, w: const rules::Level, z: integer, sh: const vector<inte
+     vx = b.x - g.cam_x;
+     vy = b.y - g.cam_y - z;
+     if vx < -COLS || vx >= 2 * COLS || vy < 0 || vy >= view_rows(g) { continue; }
+-    if sight && !rules::in_view(w, b.x, b.y) { continue; }
++    if sight && !rules::in_view_of(w, b.x, b.y, g.ids.wall, g.ids.wall_edge) { continue; }
+     shade = if vx >= 0 && vx < COLS { sh[vy * COLS + vx] ?? 0 } else { 0 };
+     half = ts / 2;
+     x = vx * ts + half - len(b.says) * half / 2;
+diff --git a/intent.loft b/intent.loft
+index e465df0..77dcc62 100644
+--- a/intent.loft
++++ b/intent.loft
+@@ -170,7 +170,7 @@ pub struct Word {
+ /// A cell the intent implies: its terrain (a kind's or a material's name), the thing on it ("" for
+ /// none), and its rise (-1: left as it is).
+ pub struct Fill {
+-  pub key: integer,
++  pub key: i64,
+   pub x: integer,
+   pub y: integer,
+   pub z: integer,
+@@ -418,24 +418,24 @@ pub fn intent_json(it: const Intent) -> text {
+ }
+ 
+ /// A cell's key: one integer for (x, y, z), ordered by layer, then row, then column.
+-pub fn key_of(x: integer, y: integer, z: integer) -> integer {
+-  ((z + 64) * 1048576 + (y + 524288)) * 1048576 + (x + 524288)
++pub fn key_of(x: integer, y: integer, z: integer) -> i64 {
++  ((z + 64) as i64 * 1048576 + (y + 524288)) * 1048576 + (x + 524288)
+ }
+ 
+ /// The cell a key names.
+-pub fn x_of(key: integer) -> integer { (key % 1048576)! - 524288 }
+-pub fn y_of(key: integer) -> integer { ((key / 1048576)! % 1048576)! - 524288 }
+-pub fn z_of(key: integer) -> integer { (key / 1099511627776)! - 64 }
++pub fn x_of(key: i64) -> integer { (key % 1048576)! - 524288 }
++pub fn y_of(key: i64) -> integer { ((key / 1048576)! % 1048576)! - 524288 }
++pub fn z_of(key: i64) -> integer { (key / 1099511627776l)! - 64 }
+ 
+ // A number from the seed and a cell and a salt, the same everywhere: a polynomial hash modulo a
+ // prime, every step far inside 64 bits.
+ fn mix(seed: integer, x: integer, y: integer, z: integer, salt: integer) -> integer {
+-  p = 2147483629;
++  p = 2147483629l;
+   h = ((seed % p + p) % p)!;
+   for v in [x, y, z, salt] {
+     h = ((h * 1103515245 + (v % p + p) % p + 12345) % p)!;
+   }
+-  h
++  (h & 0x7FFFFFFFl) as integer
+ }
+ 
+ /// The words theme.json's "words" object declares: { name: { "things": [...], "per_100": n,
+@@ -463,14 +463,14 @@ fn word_named(words: const vector<Word>, name: text) -> Word? {
+ // A cell to scatter on, with its place in the hash's order.
+ struct Candidate {
+   rank: integer,
+-  key: integer
++  key: i64
+ }
+ 
+ // The cells, as they are worked out.
+ struct Grid {
+   cells: hash<Fill[key]>,
+-  doors: vector<integer>,
+-  held: vector<integer>,
++  doors: vector<i64>,
++  held: vector<i64>,
+   /// The cells a blob scattered a terrain on, with the blob's own terrain: what a house's door
+   /// front is cleared back to.
+   bases: hash<Fill[key]> = []
+@@ -526,8 +526,8 @@ fn open_ground(t: text) -> boolean {
+ 
+ // Is the room's free floor — its inside with no thing on it — one piece, reaching every doorway's
+ // inner cell?
+-fn connected(g: const Grid, r: const Room, need: const vector<integer>) -> boolean {
+-  free: vector<integer> = [];
++fn connected(g: const Grid, r: const Room, need: const vector<i64>) -> boolean {
++  free: vector<i64> = [];
+   for y in r.y + 1..r.y + r.h - 1 {
+     for x in r.x + 1..r.x + r.w - 1 {
+       c = g.cells[key_of(x, y, r.z)];
+@@ -565,8 +565,8 @@ fn connected(g: const Grid, r: const Room, need: const vector<integer>) -> boole
+ // Scatter room r's words over its floor.
+ fn scatter(g: Grid, r: const Room, words: const vector<Word>, seed: integer) {
+   // The doorways in this room's outline, and the inside cell each opens onto: kept free.
+-  keep: vector<integer> = [];
+-  doorways: vector<integer> = [];
++  keep: vector<i64> = [];
++  doorways: vector<i64> = [];
+   for dk in g.doors { doorways += [dk]; }
+   for y in r.y..r.y + r.h {
+     for x in r.x..r.x + r.w {
+diff --git a/levels.loft b/levels.loft
+index 0c0f53b..8efc509 100644
+--- a/levels.loft
++++ b/levels.loft
+@@ -95,7 +95,7 @@ pub struct LevelFile {
+   /// cells set by hand that filling it in again keeps (intent::key_of each).  The cells above are
+   /// the place as it is; these are what `editor::refill` works from.
+   pub intent: intent::Intent = intent::no_intent(),
+-  pub adjusted: vector<integer> = [],
++  pub adjusted: vector<i64> = [],
+   /// The doors to other places, and the text written on the map.
+   pub doors: vector<Door> = [],
+   pub labels: vector<Label> = [],
+@@ -237,7 +237,7 @@ pub fn load_with(raw: text, k: const rules::Kinds, mats: const materials::Materi
+     x: num(ga.item(0), 0), y: num(ga.item(1), 0),
+     z: if g.has_field("z") { num(g.field("z"), 0) } else { num(ga.item(2), 0) }
+   };
+-  adjusted: vector<integer> = [];
++  adjusted: vector<i64> = [];
+   av = v.field("adjusted");
+   for i in 0..av.len() {
+     a = av.item(i);
+diff --git a/main.loft b/main.loft
+index 6c4cb9f..90d474b 100644
+--- a/main.loft
++++ b/main.loft
+@@ -85,8 +85,9 @@ fn picture(game: game::Game, shot: text) {
+ // shows the game's W x H view at the largest whole zoom that fits, centred.  Answers the size it
+ // was made for, so the loop can tell when the window changed.
+ fn fit_display(game: game::Game) -> (integer, integer) {
+-  w = screen::width();
+-  h = screen::height();
++  // Composed at 1x: the game's own W x H, which `screen::show` scales to the display.
++  w = game::W;
++  h = game::H;
+   s = tiles::display_surface(w, h) ?? return (0, 0);
+   tiles::free_surface(game.surface);
+   game.surface = s;
+@@ -108,7 +109,7 @@ fn fit_of(size: (integer, integer)) -> float {
+ 
+ // Where a frame's time goes, in microseconds, reported on the console every ten seconds: the
+ // device has no other channel back (TANMATSU.md § Reading an app's log).
+-struct Timing { frames: integer, draw: integer, copy: integer, show: integer, since: integer }
++struct Timing { frames: integer, draw: integer, copy: integer, show: integer, since: i64 }
+ 
+ fn report(t: Timing, size: (integer, integer)) {
+   if t.frames == 0 || ticks() - t.since < 10000000 { return; }
+@@ -215,6 +216,7 @@ fn main() {
+   // Kenney's pictures and sounds, credited first: until a key is pressed, or five seconds.
+   println(game::CREDITS);
+   size = fit_display(game);
++  screen_size = (screen::width(), screen::height());
+   timing = Timing { frames: 0, draw: 0, copy: 0, show: 0, since: ticks() };
+   game::draw_credits(game);
+   mask(game);
+@@ -256,8 +258,9 @@ fn main() {
+     }
+     if !game.typing && game::quit(game) { break; }
+     now = ticks() / 1000;
+-    resized = screen::width() != size.0 || screen::height() != size.1;
++    resized = screen::width() != screen_size.0 || screen::height() != screen_size.1;
+     if resized {
++      screen_size = (screen::width(), screen::height());
+       size = fit_display(game);
+       view.fit = fit_of(size);
+     }
+diff --git a/rules.loft b/rules.loft
+index 05c99df..e17dbd1 100644
+--- a/rules.loft
++++ b/rules.loft
+@@ -1743,7 +1743,7 @@ fn faded(l: const Level, until: integer) -> integer {
+ /// end and its place), so two flames lit together do not flicker together.
+ pub fn flicker(l: const Level, until: integer, x: integer, y: integer, z: integer) -> integer {
+   if l.k.flicker_ms <= 0 || l.k.flicker_odds <= 0 { return 0; }
+-  h = mix((l.now / l.k.flicker_ms ?? 0) * 40503 + until * 7919 + place_key(x, y, z));
++  h = mix((l.now / l.k.flicker_ms ?? 0) as i64 * 40503 + until as i64 * 7919 + place_key(x, y, z));
+   if (h >> 4) % l.k.flicker_odds == 0 { 1 } else { 0 }
+ }
+ 
+@@ -1755,16 +1755,16 @@ pub fn flicker(l: const Level, until: integer, x: integer, y: integer, z: intege
+ 
+ // An integer mixed into 31 well-spread bits (two rounds of a known 32-bit integer hash), every
+ // product kept inside the integer range.
+-fn mix(v: integer) -> integer {
+-  h = v & 0x7FFFFFFF;
+-  h = (((h >> 16) ^ h) * 0x45d9f3b) & 0x7FFFFFFF;
+-  h = (((h >> 16) ^ h) * 0x45d9f3b) & 0x7FFFFFFF;
+-  (h >> 16) ^ h
++fn mix(v: i64) -> integer {
++  h = v & 0x7FFFFFFFl;
++  h = (((h >> 16) ^ h) * 0x45d9f3bl) & 0x7FFFFFFFl;
++  h = (((h >> 16) ^ h) * 0x45d9f3bl) & 0x7FFFFFFFl;
++  (((h >> 16) ^ h) & 0x7FFFFFFFl) as integer
+ }
+ 
+ // A cell as one integer to mix (large primes, so near cells land far apart).
+-fn place_key(x: integer, y: integer, z: integer) -> integer {
+-  (x * 73856093) ^ (y * 19349663) ^ (z * 83492791)
++fn place_key(x: integer, y: integer, z: integer) -> i64 {
++  (x as i64 * 73856093) ^ (y as i64 * 19349663) ^ (z as i64 * 83492791)
+ }
+ 
+ /// Does an item pushed aside on (x, y, z) try the right of its way first (else the left)?  Each
+@@ -5467,8 +5467,12 @@ fn beside_hero(l: const Level, e: const Enemy) -> boolean {
+ /// move).  A diagonal step sees past a corner when either way round it is open: no wall cell and
+ /// no wall edge — two walls touching at their corners hide what is past them.
+ pub fn in_view(l: const Level, x1: integer, y1: integer) -> boolean {
+-  wall = tr(l, "wall");
+-  wall_edge = ed(l, "wall");
++  in_view_of(l, x1, y1, tr(l, "wall"), ed(l, "wall"))
++}
++
++/// `in_view` with the wall's terrain and edge numbers resolved by the caller, once, before a
++/// loop over cells: a lookup by name loops over the kinds.
++pub fn in_view_of(l: const Level, x1: integer, y1: integer, wall: integer, wall_edge: integer) -> boolean {
+   z = l.hero_z;
+   x0 = l.hero_x;
+   y0 = l.hero_y;
+@@ -6026,7 +6030,7 @@ fn enemy_act(l: Level, i: integer) {
+     l.enemies[i].due = e.due + p.move_ms;
+     return;
+   }
+-  pick = options[mix(e.id * 7919 + e.steps * 104729) % n ?? 0] ?? (0, 0);
++  pick = options[mix(e.id as i64 * 7919 + e.steps as i64 * 104729) % n ?? 0] ?? (0, 0);
+   enemy_step(l, i, pick.0, pick.1, p.move_ms);
+ }
+ 
+diff --git a/tests/refill.loft b/tests/refill.loft
+index f93fcf3..2aee32d 100644
+--- a/tests/refill.loft
++++ b/tests/refill.loft
+@@ -38,7 +38,7 @@ fn things_at(lf: const levels::LevelFile, x: integer, y: integer) -> integer {
+ }
+ 
+ // Does the level hold what `fills` says, but for the cells in `skip`?
+-fn holds(lf: const levels::LevelFile, fills: const vector<intent::Fill>, skip: const vector<integer>) -> boolean {
++fn holds(lf: const levels::LevelFile, fills: const vector<intent::Fill>, skip: const vector<i64>) -> boolean {
+   for f in fills {
+     if skip.contains(f.key) { continue; }
+     if kind_at(lf, f.x, f.y) != f.terrain { return false; }

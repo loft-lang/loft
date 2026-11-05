@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// One frame of the demo world at 1x, its pixels summed: the same picture gives the same sum.
+use tiles;
+use tile_world;
+use rules;
+use game;
+
+fn main() {
+  g = game::new_game(".") ?? return;
+  if !game::start_world(g, "demo") { game::start_level(g, 0); }
+  s = tiles::surface(game::W, game::H) ?? return;
+  tiles::free_surface(g.surface);
+  g.surface = s;
+  tiles::camera(s, 1.0, 0.0, 0.0);
+  for f in 0..3 {
+    game::draw(g);
+    px = tiles::pixels(s, game::W, game::H);
+    sum = 0l;
+    for i in 0..len(px) { sum = (sum * 31l + (px[i] ?? 0)) % 1000000007l; }
+    println("@s frame {f}: {len(px)} pixels, sum {sum}");
+    _ = game::update(g, 16, 1000 + f * 16);
+  }
+}

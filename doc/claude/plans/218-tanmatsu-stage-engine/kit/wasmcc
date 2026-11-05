@@ -1,0 +1,7 @@
+#!/bin/bash
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# clang for wasm32-wasip1 with Homebrew's sysroot and compiler-rt; c_sweep.py's old triple rewritten.
+args=()
+for a in "$@"; do [ "$a" = "--target=wasm32-wasi" ] && a="--target=wasm32-wasip1"; args+=("$a"); done
+exec /opt/homebrew/opt/llvm/bin/clang --sysroot=/opt/homebrew/opt/wasi-libc/share/wasi-sysroot -resource-dir=/opt/homebrew/opt/wasi-runtimes/share/wasi-runtimes "${args[@]}"
