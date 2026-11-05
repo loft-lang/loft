@@ -9482,12 +9482,19 @@ fn arith_form(op: text) -> text {
   ""
 }
 
-// `Parser::operator_member` (`@FR-Op-Back`, `@FR-Op-Left`): the `operator <form>` of the LEFT
-// operand's own record or enum type taking both operands, or -1.  A plain method of the name
-// backs nothing (`@FR-Op-Mark`), which Rust refuses; a template member and an overload set
-// are not carried.
+// `Parser::operator_member` / `operator_unary` (`@FR-Op-Back`, `@FR-Op-Left`): the `operator
+// <form>` of the LEFT (or only) operand's own record or enum type taking `arity` operands, or
+// -1.  A plain method of the name backs nothing (`@FR-Op-Mark`), which Rust refuses; a template
+// member and an overload set are not carried.
 fn operator_member(e: el::El, form: text, lt: ir::TypeT, rt: ir::TypeT) -> integer {
-  if form == "" || el_types::is_unknown(lt) || el_types::is_unknown(rt) {
+  if el_types::is_unknown(rt) {
+    return -1;
+  }
+  operator_of(e, form, lt, 2)
+}
+
+fn operator_of(e: el::El, form: text, lt: ir::TypeT, arity: integer) -> integer {
+  if form == "" || el_types::is_unknown(lt) {
     return -1;
   }
   left = match el_types::base(el_types::unrewritten(lt)) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
@@ -9500,7 +9507,7 @@ fn operator_member(e: el::El, form: text, lt: ir::TypeT, rt: ir::TypeT) -> integ
   }
   def = el::def(e, d);
   visible = [for a in def.attributes if !a.hidden { a }];
-  own = len(visible) == 2 && match el_types::base(visible[0].typedef[0] ?? ir::TyVoid) { TyReference { n } => n == left, TyEnum { n } => n == left, _ => false };
+  own = len(visible) == arity && match el_types::base(visible[0].typedef[0] ?? ir::TyVoid) { TyReference { n } => n == left, TyEnum { n } => n == left, _ => false };
   if !own {
     return -1;
   }
@@ -9605,6 +9612,14 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
       _ => {}
     }
   }
+  // `@FR-Op-Order`, before the swap below: `a > b` is `a.compare(b) == Greater` — the LEFT
+  // operand's `operator compare` with both operands in source order (`@FR-Op-Left`).
+  if op == "<" || op == "<=" || op == ">" || op == ">=" {
+    cmp = operator_member(e, "compare", a.tp, b.tp);
+    if cmp >= 0 {
+      return order_through_compare(e, vars, op, cmp, a, b);
+    }
+  }
   if op == ">" {
     return call_op(e, vars, "<", [b.code, a.code], [b.tp, a.tp]);
   }
@@ -9612,6 +9627,34 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
     return call_op(e, vars, "<=", [b.code, a.code], [b.tp, a.tp]);
   }
   call_op(e, vars, op, [a.code, b.code], [a.tp, b.tp])
+}
+
+// `Parser::order_through_compare`: an order form through `operator compare` — the call, its
+// `Ordering` read as an integer and tested against one variant's discriminant (`<` and `>`
+// equal to `Less` / `Greater`, `<=` and `>=` unequal to `Greater` / `Less`).
+fn order_through_compare(e: el::El, vars: el_vars::Vars, op: text, cmp: integer, a: Ex, b: Ex) -> Ex {
+  r = call_args(e, vars, cmp, [a.code, b.code], [a.tp, b.tp]);
+  if r == null {
+    return ex(ir::NdNull, ir::TyBoolean);
+  }
+  equal = op == "<" || op == ">";
+  variant = if op == "<" || op == ">=" { "Less" } else { "Greater" };
+  read = el_ir::cl(e, "OpConvIntFromEnum", [r!.code]);
+  ex(el_ir::cl(e, if equal { "OpEqInt" } else { "OpNeInt" }, [read, ir::NdInt { n: ordering_discriminant(e, variant) }]), ir::TyBoolean)
+}
+
+// `Data::ordering_discriminant`: the stored discriminant of one `Ordering` variant, read from
+// the enum's own definition.
+fn ordering_discriminant(e: el::El, variant: text) -> integer {
+  od = el::def_nr(e, "Ordering");
+  if od < 0 {
+    return 0;
+  }
+  a = attr_nr(el::def(e, od), variant);
+  if a < 0 {
+    return 0;
+  }
+  match el::def(e, od).attributes[a]!.value[0] ?? ir::NdNull { NdEnum { ord } => ord, _ => 0 }
 }
 
 // Does struct `d` declare an `==` / `!=` of its own (`user_op_method`'s `t_<len><Type>_OpEq`)?
@@ -14373,6 +14416,15 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     c = el_convert::convert_admitting(e, vars, x.code, x.tp, ir::TyBoolean);
     if c != null {
       return ex(el_ir::cl(e, "OpNot", [c!]), ir::TyBoolean);
+    }
+  }
+  // `@FR-Op-Back` for a unary form: `-x` on a program's own type is `x.negate()`
+  // (`unary_through_operator`), its type the method's.
+  if op == "-" {
+    m = operator_of(e, "negate", x.tp, 1);
+    if m >= 0 {
+      r = call_args(e, vars, m, [x.code], [x.tp]);
+      return r ?? ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
   }
   call_op(e, vars, op, [x.code], [x.tp])
