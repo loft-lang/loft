@@ -1313,6 +1313,10 @@ impl<'a> Cx<'a> {
     }
 
     /// The tuple structs, each after the ones it holds, and the default images.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one writer per typedef form, in the order C needs them declared"
+    )]
     fn typedefs(&self) -> String {
         let mut out = String::new();
         // The table names the key parts of the hashes in it, so it is written first.
@@ -2500,6 +2504,10 @@ fn package_identity(pkg_dir: &str) -> (String, String) {
 /// The macros a unit's runtime is compiled under, from what it reaches: a foreign store, the
 /// JSON reader and tree, the typed parse, reflection, frames — and whether it parses and
 /// reflects, which add tables after the runtime.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one define per runtime feature a unit can reach, in the runtime's order"
+)]
 fn unit_defines(
     data: &Data,
     stores: &Stores,

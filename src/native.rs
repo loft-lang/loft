@@ -2033,7 +2033,7 @@ fn reflect_field_at(
     let fv_f = lookup(stores, "f");
     let fv_t = lookup(stores, "t");
     let i_bytes = stores.field_bytes(fv_tp, "i");
-    let f_bytes = stores.field_bytes(fv_tp, "f");
+    let float_bytes = stores.field_bytes(fv_tp, "f");
 
     // Resolve the field BEFORE allocating, so a refusal costs nothing and the
     // descriptor borrow ends before the answer record is claimed.
@@ -2079,7 +2079,7 @@ fn reflect_field_at(
         .set_int_sized(out.rec, out.pos + fv_i, i_bytes, 0);
     stores
         .store_mut(&out)
-        .set_float_sized(out.rec, out.pos + fv_f, f_bytes, 0.0);
+        .set_float_sized(out.rec, out.pos + fv_f, float_bytes, 0.0);
     stores
         .store_mut(&out)
         .set_u32_raw(out.rec, out.pos + fv_t, 0);
@@ -2177,7 +2177,7 @@ fn reflect_field_at(
                 .set_int_sized(out.rec, out.pos + fv_i, i_bytes, i_val);
             stores
                 .store_mut(&out)
-                .set_float_sized(out.rec, out.pos + fv_f, f_bytes, f_val);
+                .set_float_sized(out.rec, out.pos + fv_f, float_bytes, f_val);
             if t_ref != 0 {
                 // Copied into the ANSWER's store rather than pointed at: the
                 // caller owns the `FieldValue` and may outlive the record it

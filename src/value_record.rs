@@ -1291,25 +1291,31 @@ fn body_shape(
 /// `if OpDistinctStore(x, p) OpCopyRecord(x, p, tp) else null` — a call built into PLACE `p`
 /// (a pushed element) whose answer `x` is copied there unless it already is `p`: `(x, p)`.
 fn place_copy(n: &Value, ops: &Ops) -> Option<(u16, u16)> {
-    let Value::If(c, t, e) = n else {
+    let Value::If(cond, then, other) = n else {
         return None;
     };
     let var = |v: &Value| match v.unspan() {
         Value::Var(x) => Some(*x),
         _ => None,
     };
-    let Value::Call(op, a) = c.unspan() else {
+    let Value::Call(op, args) = cond.unspan() else {
         return None;
     };
-    let Value::Call(cp, ca) = t.unspan() else {
+    let Value::Call(cp, copy_args) = then.unspan() else {
         return None;
     };
-    if *op != ops.distinct_store || *cp != ops.copy_record || a.len() != 2 || ca.len() != 3 {
+    if *op != ops.distinct_store
+        || *cp != ops.copy_record
+        || args.len() != 2
+        || copy_args.len() != 3
+    {
         return None;
     }
-    let (x, p) = (var(&a[0])?, var(&a[1])?);
-    (matches!(e.unspan(), Value::Null) && var(&ca[0]) == Some(x) && var(&ca[1]) == Some(p))
-        .then_some((x, p))
+    let (x, p) = (var(&args[0])?, var(&args[1])?);
+    (matches!(other.unspan(), Value::Null)
+        && var(&copy_args[0]) == Some(x)
+        && var(&copy_args[1]) == Some(p))
+    .then_some((x, p))
 }
 
 /// `if OpDistinctStore(buf, w) OpFreeRefIfDistinct(buf, …) else null` — the free a forward

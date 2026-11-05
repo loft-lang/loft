@@ -17,7 +17,7 @@
 /// active variant; variant data lives in the variant's fields.
 /// Matches the RFC 8259 kinds, plus `JInteger` for an
 /// integer-shaped number preserved to an exact `integer` (i64).
-/// Both numbers keep the wire format's width in every build (@PLN217):
+/// Both numbers keep the wire format's width in every build:
 /// RFC 8259 numbers are doubles, and the parser writes them at 8 bytes.
 ///
 /// `JInteger` MUST stay the LAST variant: the store discriminant it

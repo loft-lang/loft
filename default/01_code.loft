@@ -59,8 +59,8 @@ pub type i64 = integer size(8);
 pub type f64 = float;
 /// The operand of a 64-bit machine operation: what the `Op…` declarations below bind an
 /// operator to, one per machine width.  `integer` as the standard library has always meant it,
-/// named so that it keeps that meaning when the library is built under the 32-bit regime
-/// (@PLN217), where a plain `integer` is an `i32`.
+/// named so that it keeps that meaning when the library is built under the 32-bit regime,
+/// where a plain `integer` is an `i32`.
 type __word = integer;
 /// The 64-bit `float` an `Op…` declaration computes in, named as `__word` is.
 type __fword = float;
