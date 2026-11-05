@@ -10711,6 +10711,11 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   result = ir::TyVoid;
   out: vector<MArm> = [];
   null_arm = false;
+  // `(M-Exhaust)` for a `boolean` (loft#1343): arms naming `true` and `false`, none of them `_`,
+  // leave nothing to fall through to — the last arm is the fallback, as a trailing `_` would be.
+  named_true = false;
+  named_false = false;
+  any_wild = false;
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
@@ -10748,6 +10753,20 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         }
         if wild {
           cond = null;
+          any_wild = true;
+        }
+        if len(pats) == 1 {
+          match e.p.nodes[pats[0] ?? 0] {
+            PLit { e: le } => {
+              match e.p.nodes[le ?? 0] {
+                SBool { b: bv } => {
+                  if bv { named_true = true; } else { named_false = true; }
+                },
+                _ => {}
+              }
+            },
+            _ => {}
+          }
         }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { arm_expectation(result) };
         b = arm_body(e, vars, body, expected);
@@ -10786,6 +10805,9 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   }
   if e.first_pass || (!scalar_subject && !enum_subject && sd < 0) {
     return ex(ir::NdNull, result);
+  }
+  if st is TyBoolean && named_true && named_false && !any_wild && len(out) > 0 {
+    out[len(out) - 1].cond = null;
   }
   if el_types::base(result) is TyText {
     el::refuse(e, "a match answering a text");
