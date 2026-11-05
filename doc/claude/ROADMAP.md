@@ -46,6 +46,24 @@ implementation compared byte for byte with the Rust one at every level (@PLN91 Â
 whatever is decided at the front is verified twice, and the intrinsic problems a single
 implementation hides surface as disagreements.
 
+**Games and the Tanmatsu: 2D first, 3D grown from it.**  The 3D stack exists, but using it to the
+fullest needs a large body of consistent art: world models (buildings, trees, hills, roads,
+bridges), characters and props.  The 2D work on the Tanmatsu gives results sooner, so it comes
+first:
+- the whole device from loft, multiplayer over Wi-Fi included ([@PLN213](https://github.com/loft-lang/plans/issues/213));
+- its practice game, a 2.5D dogfighter ([@PLN214](https://github.com/loft-lang/plans/issues/214));
+- glb import ([@PLN215](https://github.com/loft-lang/plans/issues/215));
+- the libraries' shared C rewritten in loft ([@PLN216](https://github.com/loft-lang/plans/issues/216)).
+
+The 3D art grows out of it: the dogfighter's sprites are rendered from a 3D model, so every model
+made for a 2D game is also 3D content.  The order to start in:
+1. @PLN213 T0.4: an app's start-up never erases the launcher's settings.  This is a defect in the
+   released loft.
+2. @PLN214 G0: the drawing budget on the device, measured before anything is built on it.
+3. @PLN213 T0â€“T2: the BSP update, the build-time refusal, and the components a library names.
+
+The language features @PLN216 finds come after loft-in-loft; its rewrites do not wait for them.
+
 ## Re-measuring this page
 
 The plan list below is a copy of the tracker's open plans, so it is only as current as its
