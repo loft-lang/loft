@@ -69,8 +69,9 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
         };
         // A function that already takes a TUPLE parameter keeps its record result: the IR's
         // value records (`src/value_record.rs`) left it so — the record original of a twin
-        // whose body they rewrote — and a writer's own tuple for it would drop the buffer that
-        // body still writes.  Until no writer keeps a copy of the rule (@PLN211 c4-view S2).
+        // whose body they rewrote.  Every pass that asks this analysis after that rewrite
+        // would otherwise read the original as a fresh candidate — and a writer's own tuple
+        // for it would drop the buffer that body still writes.
         if def
             .attributes()
             .iter()
