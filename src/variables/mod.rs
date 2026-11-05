@@ -1472,8 +1472,9 @@ impl Function {
 
     /// `@FR-I-For` — the place an ACTIVE loop's source reads that a write to `target` changes:
     /// `target` is that place, or a place it lies inside (`st` holds `st.n`).  A write INTO a
-    /// place (`w[0] = …` under a `len(w)` bound) changes no value the source read.
-    pub(crate) fn loop_source_written(&self, target: &Value) -> Option<Value> {
+    /// place (`w[0] = …` under a `len(w)` bound) changes no value the source read.  The flag
+    /// says whether that loop is the innermost one open.
+    pub(crate) fn loop_source_written(&self, target: &Value) -> Option<(Value, bool)> {
         let target = target.unspan();
         let mut c = self.current_loop;
         while c != u16::MAX {
@@ -1481,7 +1482,7 @@ impl Function {
                 let mut p = place;
                 loop {
                     if p.unspan() == target {
-                        return Some(place.clone());
+                        return Some((place.clone(), c == self.current_loop));
                     }
                     match p.unspan() {
                         Value::Call(_, args) if !args.is_empty() => p = &args[0],
