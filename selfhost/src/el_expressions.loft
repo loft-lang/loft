@@ -10515,6 +10515,17 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   record_null = vector_null || variant_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
   // A plain enum's null is `OpConvEnumFromNull` of its store type (`null_of`).
   enum_null = match t.tp { TyEnum { is_ref } => !is_ref, _ => false };
+  // An arm already `τ?` of a plain scalar beside a `null` arm: the null is `τ`'s, the join `τ?`.
+  if f.tp is TyNull && t.tp is TyOptional && el_convert::plain_scalar(el_types::base(t.tp)) && !el_convert::plain_enum(el_types::base(t.tp)) {
+    if e.first_pass {
+      return ex(ir::NdNull, t.tp);
+    }
+    nl = el_convert::null_of(e, el_types::base(t.tp));
+    fb = if nl == null { null } else { retail(f.code, nl, t.tp) };
+    if fb != null {
+      return ex(el_ir::v_if(c.code, t.code, fb!), t.tp);
+    }
+  }
   if f.tp is TyNull && (el_convert::sentinel_value(t.tp) || record_null || enum_null) {
     // A text join keeps its converted arms on the first pass too: a text tail's accumulator
     // (`do_if_acc`) is decided there.
