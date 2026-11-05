@@ -98,11 +98,11 @@ local cannot carry the tuple").  The cells hold on all three backends under `LOF
 
 **The open world.**  The IR value-record pass runs only on a CLOSED program: a semantics-tier
 `--native` / `--native-c` run ships the live tier (`ships_live_tier`), which opens the world, and
-the pass then does not run — the writers' own `(R-ValueRecord)`, view clause included, serves
-those builds.  `--emit-c`, `--lean`, `--ship` and the census are closed.  So a falsifier for this
-move runs closed (`--lean`), and S2 cannot delete the writers' view clause while open-world builds
-still need it: whether the IR form should also serve the live tier, or the writers' clause stays
-as the open world's, is the owner's call before S2.
+the pass does not run there.  The owner's ruling (NATIVE.md § Optimisation tiers): the dynamic
+build need not be fully optimised, so no writer keeps a copy of the rule for it — an open build
+simply has no value records, and the closed builds (`--lean`, `--ship`, the performance lanes,
+the census) have the IR's.  So a check of this move runs closed (`--lean`); a semantics run never
+reaches it.
 
 Probed: a loft tuple carries an OWNED vector member on all three backends; a null reference
 reads as length 0 (`vector::length_vector`).  A BORROWED member has no user spelling (a whole
@@ -123,7 +123,7 @@ needs no plan at all: the exit is `Tuple(…, g2_p, …)`, and the element-first
 |---|---|---|
 | S0 | **Probe the premise** (design-protocol: the cheapest check that could falsify it).  Count, on the benches and the corpus, the functions the writers admit ONLY through a view leaf, and for each pair of `164-element-place.loft` whether its function is one.  If no bench function needs a view leaf, the clause's weight is the cells and the libraries (`make libcatalogue`'s consumers), and that decides S1's priority | **done** — § S0 below the measurements |
 | S1 | **A tuple element that is a reference.**  The IR's value-record tuple gains a reference part for a view leaf: the interpreter carries it as a `DbRef` slot, the writers as their reference (`loft_ref` / `DbRef`), never freed by the tuple (a view is never freed).  `body_shape` admits a result position that is a view of a place `(O-ViewField)` admits | the tuple form spells a view on all three backends; the value-record cells pass; a plant (the view freed with the tuple) caught |
-| S2 | **The writers read it.**  The view-leaf delivery is the IR's tuple; `lower::plan` and the C's `value_records` drop their view leaves for a function the IR already rewrote; `ViewPlan` then serves only what remains a writer clause, if anything | rustc's and the C's emission byte-identical before and after for every function the IR did not rewrite (`loft-codegen`: a refactor proves emission unchanged) |
+| S2 | **The writers' copy deleted.**  An open build has no value records (the ruling above), and a closed one runs the IR's: each writer's own view-leaf delivery (`lower::plan`, the C's `value_records`) goes, and with it whatever of `ViewPlan` only they read.  Which other writer forms of `(R-ValueRecord)` (the nullable clause, `(R-FnRefValue)`, the parameters) the IR does not take yet is S2's first measure: each is moved or dropped, never kept for the open world | the census: `R-ValueRecord` applied by the IR alone; the cells and the corpus checks pass closed (`--lean`) on the C and rustc, and open with no value records |
 | S3 | **`(R-ElemFirst)` takes the form.**  The pass pairs a temp whose exit is a tuple element naming it; the rename makes it the element's field.  Both writers' element-first clauses are deleted | the 164 cells' pairs taken by the IR (`tests/element_first.rs` counts the trace); `rule_tags.py sites @FR-R-ElemFirst` shows no writer clause; D-phase-4 closed |
 
 Each step goes red alone; the checks per step and per chunk are the move protocol's

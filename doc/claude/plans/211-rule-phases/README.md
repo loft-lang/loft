@@ -242,6 +242,12 @@ library rebuild (`cargo build --lib`) would rewrite that rlib beneath it, so the
 the `loft` binary and runs its cells, and the test binaries wait.  One heavy job at a time on the laptop (both at once ran it out of memory).  A
 chunk's cut goes to a PR only once its corpus checks are in.
 
+**A rule that needs the closed program is checked closed.**  A whole-program rewrite that
+changes a signature (`(R-ValueRecord)`'s IR pass) does not run in a semantics build, which is
+an open program (NATIVE.md § Optimisation tiers), and no writer keeps a copy of it there.  Its
+cells, falsifiers and corpus checks therefore run `--lean` on the C and rustc; a plain
+`--native` / `--native-c` run passes without reaching it.
+
 Each phase can go red alone: an emission that changes where the census did not, a guard
 cell, a falsified plant.  A rule whose comparison shows the IR clause admitting FEWER sites
 than the writer did is not moved until the gap is closed or recorded as a decline.
