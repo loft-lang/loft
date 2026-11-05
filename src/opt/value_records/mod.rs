@@ -67,6 +67,17 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
         let Type::Reference(rd, _) = def.returned().peel_link() else {
             continue;
         };
+        // A function that already takes a TUPLE parameter keeps its record result: the IR's
+        // value records (`src/value_record.rs`) left it so — the record original of a twin
+        // whose body they rewrote — and a writer's own tuple for it would drop the buffer that
+        // body still writes.  Until no writer keeps a copy of the rule (@PLN211 c4-view S2).
+        if def
+            .attributes()
+            .iter()
+            .any(|a| !a.hidden && matches!(a.typedef, Type::Tuple(_)))
+        {
+            continue;
+        }
         if trace {
             eprintln!("[valuerec] candidate {} returns ref({rd})", def.name());
         }
