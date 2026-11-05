@@ -115,6 +115,7 @@ struct Ops {
     set_int4: u32,
     append_vector: u32,
     null_ref: u32,
+    get_vector: u32,
 }
 
 impl Ops {
@@ -139,6 +140,7 @@ impl Ops {
             set_int4: data.def_nr("OpSetInt4"),
             append_vector: data.def_nr("OpAppendVector"),
             null_ref: data.def_nr("OpNullRefSentinel"),
+            get_vector: data.def_nr("OpGetVector"),
         }
     }
 
@@ -515,11 +517,10 @@ fn callee_shape(
         return None;
     }
     let leaves = if layout.has_views() {
-        let why = if !sh.returned.is_empty() {
-            // A forward hands on another function's view, whose place this body cannot name.
-            Err("a forward")
-        } else if let Some(plan) = vr.views.get(&d) {
-            view_leaves(def.code(), buf, &layout, ops, plan).ok_or("an exit without a leaf")
+        // A forward's exit returns its local's tuple whole — the view the callee proved —
+        // so only the literals need leaves here.
+        let why = if let Some(plan) = vr.views.get(&d) {
+            view_leaves(def.code(), buf, &layout, ops, stores, plan).ok_or("an exit without a leaf")
         } else {
             Err("no view plan")
         };
@@ -546,13 +547,15 @@ fn callee_shape(
 
 /// Each literal's view values, in the order [`literals_to_tuples`] meets the literals: the
 /// leaf the view plan proved for that exit (keyed by the exit block's address, on this very
-/// IR), spelled in the IR — `Elem` the element's field, `Null` the null reference.  `None`
-/// when an exit has no leaf this pass can spell.
+/// IR), spelled in the IR — `Elem` the element's field, `Last` the field of the container's
+/// last element (`v[-1]`, as the writers spell it), `Null` the null reference.  `None` when
+/// an exit has no leaf this pass can spell.
 fn view_leaves(
     code: &Value,
     buf: u16,
     layout: &Layout,
     ops: &Ops,
+    stores: &Stores,
     plan: &crate::opt::value_records::layout::ViewPlan,
 ) -> Option<Vec<HashMap<i32, Value>>> {
     use crate::opt::value_records::layout::LeafSource;
@@ -582,7 +585,53 @@ fn view_leaves(
                         Value::Int(*tp),
                     ],
                 ),
-                LeafSource::Last { .. } => return None,
+                LeafSource::Last {
+                    root,
+                    parent_tp,
+                    fld,
+                    off,
+                } => {
+                    // The container is a field of a parameter; a parameter that IS the vector
+                    // has no `OpGetField` to spell it with here.
+                    if root.1 == crate::use_analysis::ANY_FIELD || *fld < 0 {
+                        return None;
+                    }
+                    let (ptp, f) = (u16::try_from(*parent_tp).ok()?, u16::try_from(*fld).ok()?);
+                    let vec_tp = stores.field_type(ptp, f);
+                    let elem_tp = stores.content(vec_tp);
+                    let Parts::Struct(fields) = &stores.types.get(elem_tp as usize)?.parts else {
+                        return None;
+                    };
+                    let field_tp = fields
+                        .iter()
+                        .find(|x| i64::from(x.position) == *off)?
+                        .content;
+                    let stride = crate::opt::hoist::element_stride(stores, *parent_tp, *fld);
+                    let container = Value::Call(
+                        ops.get_field,
+                        vec![
+                            Value::Var(root.0),
+                            Value::Int(i32::try_from(root.1).ok()?),
+                            Value::Int(i32::from(vec_tp)),
+                        ],
+                    );
+                    let last = Value::Call(
+                        ops.get_vector,
+                        vec![
+                            container,
+                            Value::Int(i32::try_from(stride).ok()?),
+                            Value::Int(-1),
+                        ],
+                    );
+                    Value::Call(
+                        ops.get_field,
+                        vec![
+                            last,
+                            Value::Int(i32::try_from(*off).ok()?),
+                            Value::Int(i32::from(field_tp)),
+                        ],
+                    )
+                }
             };
             values.insert(*off, value);
         }
