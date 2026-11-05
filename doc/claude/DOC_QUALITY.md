@@ -597,7 +597,9 @@ gate here.  What is:
    outranks prose and the decision register when they disagree about what the language does.
 9. **Name the tree.**  A fact about "the tree" or "the build" is ambiguous when several
    checkouts and branches exist; say which one ("on `main`", "on this branch", "in the
-   installed loft").
+   installed loft").  A sha in a message to a peer is copied from output already read, never
+   written in the same step as the command that prints it — a guessed sha sends the peer's
+   rebase to a commit that does not exist.
 10. **A cure ships with its signpost.**  When a fix or an opt-in exists, the place the reader
     meets the problem — the diagnostic, the error, the section they will search — names it.
 11. **A cure written beside its cause is read back against it.**  Two paragraphs that are each
