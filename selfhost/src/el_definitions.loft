@@ -736,6 +736,23 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       rb = el_vars::add_variable(vars, "__retbuf", el_types::without_deps(rp));
       el_vars::become_argument(vars, rb);
     }
+    // `parse_lambda_body` (pass 2): a lambda with a closure record reads its captures through a
+    // last `__closure` parameter of the record's type.
+    if !e.first_pass && e.closure_rec >= 0 {
+      ct = ir::TyReference { n: e.closure_rec, dep: [] };
+      has = false;
+      for a in el::def(e, e.context).attributes {
+        if a.name == "__closure" {
+          has = true;
+        }
+      }
+      if !has {
+        e.b.data.definitions[e.context].attributes += [el::attribute("__closure", ct)];
+      }
+      cv = el_vars::add_variable(vars, "__closure", ct);
+      el_vars::become_argument(vars, cv);
+      e.closure_var = cv;
+    }
     code = el_expressions::parse_code(e, vars, body ?? 0);
     e.b.data.definitions[e.context].code = [code];
     // `@FR-R-Const` (`literal_body_constant`, pass 1): a plain function of no parameters whose

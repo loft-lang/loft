@@ -2824,28 +2824,176 @@ fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
           _ => {}
         }
       }
-      cap = captured_name(e, vars, body!, own);
-      if cap != "" {
-        el::refuse(e, "a lambda that captures a local of its function");
+      // `Parser::captured_names`: the enclosing body's locals the lambda reads, in the order it
+      // first meets them.  Carried for a plain scalar the lambda only reads, in a lambda with
+      // none nested in it; any other capture is refused by name.
+      caps: vector<el::Capture> = [];
+      for c in captured_names(e, vars, body!, own) {
+        cv = el_vars::var(vars, c);
+        ct = el_vars::tp(vars, cv);
+        if !el_convert::plain_scalar(ct) || ct is TyOptional || el_convert::plain_enum(ct) {
+          el::refuse(e, "a lambda that captures a local of its function: of this type {type_kind(ct)}");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        caps += [el::Capture { name: c, tp: el_types::without_deps(ct) }];
+      }
+      if len(caps) > 0 && (writes_a_name(e, body!, caps) || holds_lambda(e, body!)) {
+        el::refuse(e, "a lambda that captures a local of its function: written by it, or around another lambda");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       outer = el::def(e, e.context).name;
-      nm = "__lambda_{if starts_with(outer, "n_") { outer[2..] } else { outer }}_{vars.lambdas}";
+      bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
+      nm = "__lambda_{bare}_{vars.lambdas}";
+      rec_nm = "__closure_{bare}_{vars.lambdas}";
       vars.lambdas += 1;
       ctx = e.context;
       tvs = e.type_vars;
       e.type_vars = [];
+      saved_caps = e.captures;
+      saved_rec = e.closure_rec;
+      saved_var = e.closure_var;
+      e.captures = caps;
+      e.closure_rec = if len(caps) > 0 && !e.first_pass { el::def_nr(e, rec_nm) } else { -1 };
+      e.closure_var = -1;
       key = el_definitions::parse_function(e, at, nm, params, ret, body);
+      e.captures = saved_caps;
+      e.closure_rec = saved_rec;
+      e.closure_var = saved_var;
       e.context = ctx;
       e.type_vars = tvs;
       d = if key == "" { -1 } else { el::def_nr(e, key) };
       if d < 0 {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
-      ex(ir::NdInt { n: d }, el_types::function_value_type(e, d))
+      if len(caps) == 0 {
+        return ex(ir::NdInt { n: d }, el_types::function_value_type(e, d));
+      }
+      return closure_value(e, vars, d, rec_nm, caps, body!);
     },
     _ => ex(ir::NdNull, ir::TyUnknown { n: 0 })
   }
+}
+
+// `synthesize_closure_record` (pass 1) and `emit_lambda_code_in` (pass 2): the closure record
+// `__closure_<fn>_<N>` — one field per capture, made where the lambda's body ends — and, as the
+// expression, a fresh `___clos_N` record of it filled from the captured locals
+// (`fn_ref_with_closure`), answering `FnRef(lambda, ___clos_N)` typed as the function borrowing
+// that record.
+fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer) -> Ex {
+  if e.first_pass {
+    end = match e.p.nodes[body] { SBlock { end: be } => be, _ => 0 };
+    rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
+    e.b.data.definitions[rd].returned = [ir::TyReference { n: rd, dep: [] }];
+    for c in caps {
+      e.b.data.definitions[rd].attributes += [el::attribute(c.name, c.tp)];
+    }
+    e.b.data.definitions[d].closure_record = rd;
+    return ex(ir::NdNull, el_types::function_value_type(e, d));
+  }
+  rd = el::def_nr(e, rec_nm);
+  kt = if rd < 0 { el_schema::NO_TYPE } else { el::def(e, rd).known_type };
+  if kt == el_schema::NO_TYPE {
+    el::refuse(e, "a lambda's closure record with no layout");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  rt = ir::TyReference { n: rd, dep: [] };
+  w = el_vars::create_unique(vars, "__clos", rt);
+  el_vars::set_defined(vars, w);
+  el_vars::register_work_ref(vars, w);
+  ops: vector<ir::Node> = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: kt }])];
+  for c in caps {
+    a = attr_nr(el::def(e, rd), c.name);
+    cv = el_vars::var(vars, c.name);
+    rd_node = field_get(e, rd, a, ir::NdVar { n: w });
+    wr = if rd_node == null { null } else { place_write(e, rd_node!, ir::NdVar { n: cv }) };
+    if wr == null || cv < 0 {
+      el::refuse(e, "a lambda capture written into its closure record");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    el_vars::in_use(vars, cv, true);
+    ops += [wr!];
+  }
+  ops += [ir::NdFnRef { def_nr: d, var: w, t: [] }];
+  ft = el_types::with_deps(closure_fn_type(e, d), [w]);
+  ex(el_ir::v_block(ops, ft, "fn_ref_with_closure"), ft)
+}
+
+// The function type a lambda with a closure is read as: its parameters without the trailing
+// `__closure`.
+fn closure_fn_type(e: el::El, d: integer) -> ir::TypeT {
+  t = el_types::function_value_type(e, d);
+  match t {
+    TyFunction { args, result, dep, consts } => {
+      na = args;
+      def = el::def(e, d);
+      if len(def.attributes) > 0 && def.attributes[-1]!.name == "__closure" && len(na) == len(def.attributes) {
+        na = na[0..len(na) - 1];
+      }
+      ir::TyFunction { args: na, result: result, dep: dep, consts: consts }
+    },
+    _ => t
+  }
+}
+
+// Every bare name in the syntax at `n` that names a local of the enclosing body (`vars`) and no
+// parameter of the lambda (`own`), in first-use order.
+fn captured_names(e: el::El, vars: el_vars::Vars, n: integer, own: vector<text>) -> vector<text> {
+  r: vector<text> = [];
+  match e.p.nodes[n] {
+    SName { name, member } => {
+      if member == "" && !own.contains(name) && el_vars::var(vars, name) >= 0 {
+        r += [name];
+      }
+    },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    for x in captured_names(e, vars, c, own) {
+      if !r.contains(x) {
+        r += [x];
+      }
+    }
+  }
+  r
+}
+
+// Does the syntax at `n` assign, step or link one of `caps` by name?
+fn writes_a_name(e: el::El, n: integer, caps: vector<el::Capture>) -> boolean {
+  target = match e.p.nodes[n] {
+    SAssign { target: t } => t,
+    SUnary { op, e: ue } => if op == "&" { ue ?? -1 } else { -1 },
+    _ => -1
+  };
+  if target >= 0 {
+    match e.p.nodes[target] {
+      SName { name } => {
+        for c in caps {
+          if c.name == name {
+            return true;
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  for c in el_length::children(e, n) {
+    if writes_a_name(e, c, caps) {
+      return true;
+    }
+  }
+  false
+}
+
+fn holds_lambda(e: el::El, n: integer) -> boolean {
+  if e.p.nodes[n] is SLambda {
+    return true;
+  }
+  for c in el_length::children(e, n) {
+    if holds_lambda(e, c) {
+      return true;
+    }
+  }
+  false
 }
 
 // A bare name in the syntax at `n` that names a local of the enclosing body (`vars`) and no
@@ -3068,6 +3216,25 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, int
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   v = el_vars::var(vars, name);
+  // A local the lambda being read captures: on the second pass its field of the closure record,
+  // read through the `__closure` parameter (`capture_context`).
+  if v < 0 {
+    for c in e.captures {
+      if c.name == name {
+        if e.closure_var < 0 || e.closure_rec < 0 {
+          return ex(ir::NdNull, c.tp);
+        }
+        el_vars::in_use(vars, e.closure_var, true);
+        a = attr_nr(el::def(e, e.closure_rec), name);
+        got = if a < 0 { null } else { field_get(e, e.closure_rec, a, ir::NdVar { n: e.closure_var }) };
+        if got == null {
+          el::refuse(e, "a captured local with no field in its closure record");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        return ex(got!, el::def(e, e.closure_rec).attributes[a]!.typedef[0]);
+      }
+    }
+  }
   if v < 0 {
     // A plain enum's value: its ordinal under the enum's store type (the attribute's value).
     d = el::def_nr(e, name);
@@ -6181,17 +6348,14 @@ fn binding_var(e: el::El, vars: el_vars::Vars, name: text) -> integer {
 
 // A call through a local or parameter holding a function (`fn_ref[v](…)`, `Value::CallRef`):
 // each argument converted to the function type's parameter; typed by its result.  A named
-// argument, a wrong count and a closure-carrying value are refused by name.
+// argument and a wrong count are refused by name.
 fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -> Ex {
   ft = el_types::base(el_vars::tp(vars, v));
   pts: vector<ir::TypeT> = [];
   rt = ir::TyVoid;
   match ft {
-    TyFunction { args: fa, result, dep } => {
-      if len(dep) > 0 {
-        el::refuse(e, "a call through a function value that carries a closure");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-      }
+    TyFunction { args: fa, result } => {
+      // A closure-carrying value is called as any other: the record rides in the value.
       pts = fa;
       rt = result;
       // A text answered through a function value takes a work text of its own — not carried.
