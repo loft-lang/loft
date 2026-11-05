@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I69 — Word-addressed store: the file a file-backed store maps
 
 //! A file mapped read-write into memory: what a file-backed store (`Store::open`) grows and
 //! reads through.
@@ -41,7 +42,12 @@ impl MmapFile {
             file.set_len(1)?;
             size = 1;
         }
-        let mut mapped = Self { inner: None, file, end: len, size };
+        let mut mapped = Self {
+            inner: None,
+            file,
+            end: len,
+            size,
+        };
         mapped.map()?;
         Ok(mapped)
     }
@@ -59,7 +65,10 @@ impl MmapFile {
     /// After a `resize` whose remap failed: there is no mapping left to read.
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
-        let map = self.inner.as_ref().expect("the store's file mapping is gone: a resize could not remap it");
+        let map = self
+            .inner
+            .as_ref()
+            .expect("the store's file mapping is gone: a resize could not remap it");
         &map[..self.end]
     }
 
