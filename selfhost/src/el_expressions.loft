@@ -1675,6 +1675,32 @@ fn null_sentinel_tail(e: el::El, code: ir::Node) -> boolean {
   }
 }
 
+// The `return`s among `ops`, at any depth.
+fn returns_in(ops: vector<ir::Node>) -> integer {
+  r = 0;
+  for op in ops {
+    if el_ir::unspan(op) is NdReturn {
+      r += 1;
+    }
+    r += returns_in(el_ir::children(op));
+  }
+  r
+}
+
+// The vector local a trailing `return v` answers, or -1.
+fn returned_local(vars: el_vars::Vars, tail: ir::Node) -> integer {
+  match tail {
+    NdReturn { inner } => match el_ir::unspan(inner) { NdVar { n } => if !vars.vars[n].argument && (el_types::base(el_vars::tp(vars, n)) is TyVector) { n } else { -1 }, _ => -1 },
+    _ => -1
+  }
+}
+
+// The literal backing (`__vdb_N`) a vector local lives in — its one dep — or -1.
+fn literal_backing(vars: el_vars::Vars, v: integer) -> integer {
+  ds = el_types::deps(el_vars::tp(vars, v));
+  if len(ds) == 1 && starts_with(el_vars::name_of(vars, ds[0]), "__vdb_") { ds[0] } else { -1 }
+}
+
 // `ref_return` at the body tail of a function returning a plain vector through its hidden
 // buffer.  A vector literal tail takes the buffer (`Rename` onto the literal's own `__vdb_N`, a
 // literal backing); a local built in two or more steps keeps its store and is copied into the
@@ -1687,6 +1713,12 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
   if !e.first_pass {
     bl = match code { NdBlock { block } => block[0], _ => return code };
     tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
+    // A `return` before the body's end delivers into the buffer itself
+    // (`deliver_mid_vector_returns`): not carried.
+    if len(bl.operators) > 0 && returns_in(bl.operators[0..len(bl.operators) - 1]) > 0 {
+      el::refuse(e, "a vector `return` before the body's end");
+      return code;
+    }
     // The buffer renamed onto the tail local on the first pass: the body answers the vector the
     // caller handed in, and opens by clearing it.  A local bound from a call (which Rust hands
     // the buffer itself) is refused by name.
@@ -1740,6 +1772,12 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
   if e.first_pass {
     if (literal || local >= 0) && !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+    } else if !literal && local < 0 && returned_local(vars, tail) >= 0 {
+      // A trailing `return v` is delivered in the buffer, renamed onto `v`'s literal backing on
+      // the second pass, once it exists.
+      if !el_types::deps(ret).contains(ba) {
+        e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+      }
     } else if !literal && local < 0 {
       // A vector local built in fewer than two steps takes the buffer (`Rename`): it becomes the
       // hidden parameter, its binds then refill the caller's vector.
@@ -1764,7 +1802,23 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
   }
   elem = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
   buf = rb;
-  if literal {
+  rv = returned_local(vars, tail);
+  if rv >= 0 {
+    // A trailing `return v`: the buffer takes `v`'s literal backing (`__vdb_N`, the store the
+    // vector lives in, which `classify_ret_promotion` lets it rename onto), and the body ends
+    // copying `v` into it (`OpReplaceVector`, a no-op where the two are one vector), answering
+    // the buffer.
+    bk = literal_backing(vars, rv);
+    row = append_row(e, elem);
+    if bk < 0 || row < 0 {
+      el::refuse(e, "a vector `return` of a local with no literal backing, or of an element with no row");
+      return code;
+    }
+    rename_onto(e, vars, rb, bk);
+    buf = bk;
+    bl.operators[-1] = ir::NdInsert { items: [el_ir::cl(e, "OpReplaceVector", [ir::NdVar { n: bk }, ir::NdVar { n: rv }, ir::NdInt { n: row }]), ir::NdVar { n: bk }] };
+    bl.result = [el_types::without_deps(el_types::base(result))];
+  } else if literal {
     db = match tail {
       NdBlock { block: tb } => if tb[0].name == "Vector" { el_types::deps(tb[0].result[0] ?? ir::TyVoid) } else { [] },
       _ => []
@@ -10428,6 +10482,19 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       text_return(e, vars, v.tp);
       rt = stored(e, vars, v, result);
       return ex(ir::NdReturn { inner: rt ?? v.code }, ir::TyNever);
+    }
+    // A vector local is returned as it is from a function with a return buffer; the tail's
+    // delivery (`vector_return`) copies it into the buffer, and refuses a `return` anywhere
+    // else in the body.
+    if el_types::base(result) is TyVector && !(result is TyOptional) && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
+      match el_ir::unspan(v.code) {
+        NdVar { n } => {
+          if !vars.vars[n].argument && el_types::base(el_vars::tp(vars, n)) is TyVector {
+            return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+          }
+        },
+        _ => {}
+      }
     }
     // A scalar result, nullable or not, takes the value converted to it.
     if !scalar(el_types::base(result)) || result is TyVoid {
