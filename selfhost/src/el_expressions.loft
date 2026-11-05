@@ -13179,9 +13179,12 @@ fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: intege
                 return null;
               }
               ft = el::def(e, vd).attributes[fa]!.typedef[0];
-              // A vector field binds as a view of the subject (`vector<T>["s"]`).
-              if ft is TyVector {
+              // A vector or record field binds as a view of the subject (`vector<T>["s"]`), a text
+              // field as the text it reads.
+              if ft is TyVector || (ft is TyReference && struct_ref(e, ft) >= 0) {
                 ft = el_types::with_deps(ft, match el_ir::unspan(subj) { NdVar { n: sv } => [sv], _ => [] });
+              } else if ft is TyText {
+                ft = el_types::without_deps(ft);
               } else if !el_convert::plain_scalar(el_types::base(ft)) {
                 el::refuse(e, "a variant field binding of this type: {type_kind(ft)}");
                 return null;
