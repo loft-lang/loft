@@ -5067,9 +5067,9 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
           },
           _ => {}
         }
-        // A keyed field (`hash`, `sorted`) given a literal is built in place as a vector field
+        // A keyed field (`hash`, `sorted`, `index`) given a literal is built in place as a vector field
         // is: its header zeroed above, each record made through the outer record and added.
-        kd = match at { TyHash { n } => n, TySorted { n } => n, _ => -1 };
+        kd = match at { TyHash { n } => n, TySorted { n } => n, TyIndex { n } => n, _ => -1 };
         if kd >= 0 && e.p.nodes[fe!] is SVecLit {
           built = field_vector(e, vars, v, r, d, fname, ir::TyReference { n: kd, dep: [] }, fe!, true);
           if built == null {
