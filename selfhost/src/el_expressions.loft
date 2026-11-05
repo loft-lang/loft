@@ -12183,6 +12183,16 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       vars.allocs += [v];
     }
   }
+  // The first pass records whether this bind leaves the local without a backing (`unbacked`).
+  if e.first_pass && !append && !value && v >= 0 && !vars.vars[v].argument {
+    key = e.context * 65536 + v;
+    was = e.unbacked.contains(key);
+    if len(items) == 0 && !was {
+      e.unbacked += [key];
+    } else if len(items) > 0 && was {
+      e.unbacked = [for k in e.unbacked if k != key { k }];
+    }
+  }
   xs: vector<Ex> = [];
   // A struct literal item is built into the element itself (`parse_item` with `elm`): typed here,
   // its fields written where the element is made, below.
@@ -12305,16 +12315,24 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   r = rows!;
   w = ir::NdVar { n: v };
   ls: vector<ir::Node> = staged;
+  // A local with no store takes one where its literal is built (`build_vector_list`'s
+  // `vector_db`); a literal rebinding a local that has one mints its fresh store after the items
+  // are read (`create_vector`), so the items' buffers are numbered first — its ops still lead.
+  // On the second pass a local whose first-pass deps name nothing but itself (`v = []` leaves
+  // that, `unbacked`) holds no backing yet (`vector_needs_db`): `insert_new` mints it after the
+  // items too, and its element borrows that store rather than the local.
+  self_only = true;
+  for dv in el_types::deps(el_vars::tp(vars, v)) {
+    if dv != v {
+      self_only = false;
+    }
+  }
+  fresh_entry = !e.first_pass && !append && !value && !vars.vars[v].argument && self_only && e.unbacked.contains(e.context * 65536 + v);
+  late_store = !append && !vars.vars[v].argument && !value && (has_store || fresh_entry);
   if !append && vars.vars[v].argument {
     ls += [el_ir::cl(e, "OpClearVector", [w])];
-  } else if !append {
-    db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
-    el_vars::depend(vars, v, db);
-    ls += [
-      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
-      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
-    ];
+  } else if !append && !late_store {
+    ls += literal_store(e, vars, v, r);
   }
   if len(xs) > 0 {
     size = elem_size(in_t);
@@ -12413,6 +12431,12 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
   }
+  if late_store {
+    ls = staged + literal_store(e, vars, v, r) + ls[len(staged)..];
+    if fresh_entry && elm >= 0 {
+      el_vars::depend(vars, elm, el_types::deps(el_vars::tp(vars, v))[0] ?? v);
+    }
+  }
   codes: vector<ir::Node> = [];
   for x in xs {
     codes += [x.code];
@@ -12490,6 +12514,17 @@ fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> ir::Node {
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     ir::NdVar { n: v }
   ], vt, "Vector")
+}
+
+// `vector_db`: a fresh `__vdb_N` store for vector local `v`, the local borrowing it.
+fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows) -> vector<ir::Node> {
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  el_vars::depend(vars, v, db);
+  [
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+  ]
 }
 
 // `Parser::parse_text_index`'s range: `s[lo..hi]` is `OpGetTextSub(s, lo, hi)` — an open start
