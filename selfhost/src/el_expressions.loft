@@ -2549,6 +2549,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     STupleGet { e: te, index } => tuple_get(e, vars, te, index),
     SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, len(caps) > 0 || has_caps),
     SLambda { at: _ } => lambda_expr(e, vars, n),
+    SDestructure { places, e: de } => destructure_assign(e, vars, places, de),
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })
@@ -5493,6 +5494,47 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
       el_ir::cl(e, op, [r, pos])
     }
   }
+}
+
+// `Parser::parse_place_destructure`, `(a, b) = value`: the tuple held in a fresh `__ref_N`
+// (`work_refs`), then each place assigned its member (`tmp.i`) as a plain `=` assigns it — a
+// name bound or rebound, `_` a fresh `_discard_N`.  A nullable or record-laid tuple, a place that
+// is not a bare name, and a member that is not a plain scalar are refused by name.
+fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer>, rhs: integer?) -> Ex {
+  if rhs == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  x = expression(e, vars, rhs!);
+  if el_types::is_unknown(x.tp) {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  elems: vector<ir::TypeT> = match x.tp { TyTuple { elems: es } => es, _ => [] };
+  if len(elems) == 0 || len(elems) != len(places) {
+    refuse_known(e, x.tp, "a destructure of this value: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  tmp = el_vars::work_ref(vars, x.tp);
+  steps: vector<ir::Node> = [el_ir::v_set(tmp, x.code)];
+  for pl in places {
+    i = pl#index;
+    et = elems[i] ?? ir::TyVoid;
+    nm = match e.p.nodes[pl] { SName { name, member } => if member == "" { name } else { "" }, _ => "" };
+    if nm == "" || !el_convert::plain_scalar(el_types::base(et)) {
+      el::refuse(e, "a destructure into a place that is not a name, or of a member that is not a plain scalar");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    v = binding_var(e, vars, nm);
+    if v < 0 {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if !el_vars::change_var_type(e, vars, v, et) {
+      el::refuse(e, "a destructure that changes a local's type");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    steps += [el_ir::v_set(v, ir::NdTupleGet { var: tmp, idx: i })];
+  }
+  ex(ir::NdInsert { items: steps }, ir::TyVoid)
 }
 
 // `Parser::parse_var` for the name a binding writes: on the first pass a name that is not a
