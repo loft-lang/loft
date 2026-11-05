@@ -120,6 +120,47 @@ reads as length 0 (`vector::length_vector`).  A BORROWED member has no user spel
 collection bind copies, `(B-Copy)`), so S1's plant (the view freed with the tuple) is its
 falsifier.
 
+## S2 — what the IR does not take yet, measured (2026-11-05)
+
+**Built.**  An OPEN program takes no value records from the writers either (`lower::plan`,
+the C's `FnWriter::value_records` read `data.open_world`), so the open world has none at all and
+the pins read the closed build (`--lean`).  The IR pass grew: a `pub` function the analysis
+admits is SPLIT (`split_public`) — the API keeps its record for callers outside `(R-Escape)`,
+every loft call reaches an internal copy `<f>_in` the pass treats as any function; a literal
+whose values are staged before its mint is a literal; a literal under `return { … }` is the
+function's own; a cdylib-carried function (`Definition::native`) is no candidate; every decline
+names itself under `LOFT_TRACE_IR_VALUEREC`.  And `(R-TailSelf)` delivers a tuple result, so a
+self-recursive forward the pass now admits stays a loop
+(`a-tail-recursive-small-record-function-is-a-loop.loft`).
+
+**The measure** (`scratchpad` script over the census programs, closed Rust emission: a function
+the writer returns as a tuple while the IR still returns a record, and whether anything in the
+program calls it).  Of 305 writer-only admissions: 77 are `pub` APIs whose `_in` copy the IR
+takes, 148 have no caller in their program, 59 of the 70 later-pass variants (`__kh`, `__inv`,
+`__d`) are dead.  **25 are called**, about a dozen shapes:
+
+| shape | functions | what dropping the writers' copy costs (C ship) |
+|---|---|---|
+| NULLABLE result `-> S?` (the presence word) | moros `map_get_hex` + its `__kh`/`__rg` variants | `emit_to_material` 4.4×, `slope_path_with_undo` 3.2×, `resolve_move` 2.3× |
+| a fn-ref arm `(R-FnRefValue)` | zttext `default_resolver` | 7 zttext routines +6–8 % |
+| a branch in the result position (`if … { g(…) } else { h(…) }`, different buffers) | glb `glb_pos_min`/`max` (4 programs), drawing `ctrl`, `read_at_width`, … | drawing `smooth` 1.36× |
+| a later variant of a declined function | `terrain_surface_at_in__kh`, `read_value__d`, `try_listen_*_in`, `pa_get__vr` | hex_terrain +4–6 % |
+
+So nothing here is dropped: the nullable clause, the fn-ref arms and the branching tail move
+into the IR, in that order (cost).  The ONE-FIELD record (a bare scalar, since a loft tuple has
+two or more elements) was built and reverted: the IR taking a one-field `-> S` twins it for the
+sites that consume its record, and the writers' nullable clause then stops reading `g(…)` as a
+value leaf (`tests/value_record.rs` j5, j6) — it moves WITH the nullable clause.
+
+Timing (C ship, `bench/stats.py --lanes cship`, the affected programs): the S2 work so far
+against the pre-S2 tip is neutral (median 1.009), zttext 5–8 % faster from the split; every
+drawing routine ~5 % slower including ones that call nothing changed (a whole-program shift,
+noted, not chased).
+
+**S3's IR half is already met.**  Closed, the IR pairs every view-exit case of
+`164-element-place.loft` (g1, g2, g4, g10, g16, g20) and neither writer applies its own
+element-first clause anywhere; what S3 still owes is deleting those clauses.
+
 ## The invariant
 
 **One value-record decision per function, made in the IR phase and spelled in the IR**, so that

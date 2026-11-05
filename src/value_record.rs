@@ -118,6 +118,7 @@ struct Ops {
     null_ref: u32,
     get_vector: u32,
     not: u32,
+    put_ref: u32,
 }
 
 impl Ops {
@@ -144,6 +145,7 @@ impl Ops {
             null_ref: data.def_nr("OpNullRefSentinel"),
             get_vector: data.def_nr("OpGetVector"),
             not: data.def_nr("OpNot"),
+            put_ref: data.def_nr("OpPutRef"),
         }
     }
 
@@ -2182,7 +2184,7 @@ impl Rewrite<'_> {
                 if !pure_place(&place, &w.ops) {
                     let rec = Type::Reference(rec_of(*record), crate::data::Deps::default());
                     let t = self.vars.add_unique("vr_dst", &rec, self.scope);
-                    list.push(Value::Set(t, Box::new(place)));
+                    list.extend(bind_ref(t, place, &w.ops));
                     place = Value::Var(t);
                 }
                 let writes = write_fields(layout, &place, v, &w.ops);
@@ -2225,6 +2227,16 @@ impl Rewrite<'_> {
             self.uses(a);
         }
     }
+}
+
+/// `t` names the record `place` answers, without copying it: a record `Set` COPIES
+/// (`(B-Copy)`), so the reference is declared null and bound by the raw slot store, as the
+/// tail jump binds a pointer (`opt::tail_self`).
+fn bind_ref(t: u16, place: Value, ops: &Ops) -> Vec<Value> {
+    vec![
+        Value::Set(t, Box::new(Value::Null)),
+        Value::Call(ops.put_ref, vec![Value::Var(t), place]),
+    ]
 }
 
 /// `OpSetX(place, off, t.i)` for every field: tuple `t` written into the record at `place`.
@@ -2497,10 +2509,11 @@ impl Exits<'_> {
         let rec = Type::Reference(rec_of(self.c.record), crate::data::Deps::default());
         let rv = vars.add_unique("vr_src", &rec, self.scope);
         let tv = vars.add_unique("vr_t", &self.tuple, self.scope);
-        let mut out = vec![
-            Value::Set(rv, Box::new(src)),
-            Value::Set(tv, Box::new(read_into_tuple(rv, self.layout, ops))),
-        ];
+        let mut out = bind_ref(rv, src, ops);
+        out.push(Value::Set(
+            tv,
+            Box::new(read_into_tuple(rv, self.layout, ops)),
+        ));
         for o in &body[2..body.len() - 1] {
             match o.unspan() {
                 Value::Call(op, a)
