@@ -473,6 +473,14 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             bad_fns.insert(*d);
         }
         bad_params.extend(w.params.keys().filter(|(d, _)| !called.contains(d)));
+        if trace() {
+            for (d, i) in &bad_params {
+                eprintln!(
+                    "[ir-valuerec] {}: parameter {i} declines (at a site, or by its own body)",
+                    data.def(*d).name()
+                );
+            }
+        }
         if bad_fns.is_empty() && bad_params.is_empty() {
             break;
         }
@@ -1580,6 +1588,8 @@ struct Scan {
     /// Admitted parameters handed something that is not a variable.
     unserved: HashSet<(u32, usize)>,
     called: HashSet<u32>,
+    /// A field path is handed to an admitted parameter: the call reads it into the tuple.
+    reads_place: bool,
     /// `(x, p)` per place copy (`place_copy`): `x` bound from a call built into place `p`.
     place_binds: Vec<(u16, u16)>,
     /// A variable handed to a RECORD parameter no tuple serves: `(variable, callee, index)`.
@@ -1641,7 +1651,10 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         called: s.called.clone(),
         owed: HashSet::default(),
     };
-    let mut plan = Plan::default();
+    let mut plan = Plan {
+        reads_at_call: s.reads_place,
+        ..Plan::default()
+    };
     // The handed uses of `x` all go to parameters of `record`.
     // A parameter of the same layout, or the NULLABLE layout of a dense carrier's record,
     // which the call widens with `true` (`Rewrite::args`).
@@ -1930,7 +1943,12 @@ fn scan_args(d: u32, args: &[Value], w: &World, s: &mut Scan) {
                 s.handed.push((*x, d, i));
                 continue;
             }
-            s.unserved.insert((d, i));
+            // A field path into a plain record (`ue.prev`): its fields are read at the call.
+            if !pure_place(a, &w.ops) || place_of(a, &w.ops).is_none() {
+                s.unserved.insert((d, i));
+            } else {
+                s.reads_place = true;
+            }
         } else if let Value::Var(x) = a.unspan()
             && w.lendable.contains_key(&(d, i))
         {
@@ -2483,6 +2501,16 @@ impl Rewrite<'_> {
                 *a = read_into_tuple(*x, &w.layouts[record], &w.ops);
                 continue;
             }
+            // A field path into a plain record: read field-wise at the call.
+            if let Some(record) = w.params.get(&(d, i))
+                && !matches!(a.unspan(), Value::Var(_))
+                && let Some((root, _)) = place_of(a, &w.ops)
+                && !self.plan.carriers.contains_key(&root)
+            {
+                let place = a.clone();
+                *a = read_place_into_tuple(&place, &w.layouts[record], &w.ops);
+                continue;
+            }
             // A carrier LENT to a record parameter: its record, written whole.
             if !w.params.contains_key(&(d, i))
                 && w.lendable.contains_key(&(d, i))
@@ -2568,15 +2596,20 @@ fn null_tuple(layout: &Layout, ops: &Ops) -> Value {
 /// inside the callee because nothing the callee reaches writes a record of this type (the
 /// parameter gate `value_records` admits by).
 fn read_into_tuple(x: u16, layout: &Layout, ops: &Ops) -> Value {
+    read_place_into_tuple(&Value::Var(x), layout, ops)
+}
+
+/// [`read_into_tuple`] of a pure PLACE — a variable or a field path, evaluated once per field.
+fn read_place_into_tuple(place: &Value, layout: &Layout, ops: &Ops) -> Value {
     let mut elems: Vec<Value> = layout
         .fields
         .iter()
-        .map(|(off, k)| Value::Call(ops.get_op(*k), vec![Value::Var(x), Value::Int(*off)]))
+        .map(|(off, k)| Value::Call(ops.get_op(*k), vec![place.clone(), Value::Int(*off)]))
         .collect();
     // Whether a record is there — what the record form's null test reads; a getter of the
     // null record answers the field's null, which is the absent tuple's field.
     if layout.presence {
-        elems.push(Value::Call(ops.bool_from_ref, vec![Value::Var(x)]));
+        elems.push(Value::Call(ops.bool_from_ref, vec![place.clone()]));
     }
     Value::Tuple(elems)
 }
