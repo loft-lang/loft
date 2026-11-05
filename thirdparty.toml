@@ -19,7 +19,7 @@ advisories = ["nvd:bearssl", "osv:commit"]
 [thirdparty.esp-idf]
 kind       = "sdk"
 source     = "https://github.com/espressif/esp-idf"
-version    = "v6.0.2"
+version    = "v6.0.3"
 pinned     = "src/esp_app.rs:IDF_VERSION"
 advisories = ["github:espressif/esp-idf"]
 
@@ -27,7 +27,8 @@ advisories = ["github:espressif/esp-idf"]
 CVE-2025-55297  = "not-reached: the BluFi example program; no app is built from it"
 CVE-2026-113781 = "not-reached: BLE Mesh, and the app's sdkconfig sets CONFIG_BT_ENABLED=n"
 CVE-2026-113782 = "not-reached: the OpenThread Border Router, which no app enables"
-CVE-2026-113783 = "applies: lwIP's dns_lookup() overflows on a cache entry with several addresses, and the socket layer resolves names through lwIP; fixed in v6.0.3"
+CVE-2026-113780 = "not-reached: ESP-TEE is not part of a loft app — the build has no esp_tee object and its link map no esp_tee_vectors trap entry"
+CVE-2026-113783 = "fixed: in v6.0.3, our pin (lwIP dns_lookup() bounds the cached addresses it copies)"
 
 [thirdparty.badge-bsp]
 kind       = "sdk"
