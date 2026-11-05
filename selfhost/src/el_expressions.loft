@@ -2879,6 +2879,17 @@ fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     if el_types::is_unknown(x.tp) {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
+    // `tuple_member_copy` of a record or vector local: the tuple holds a copy in a store of its
+    // own, so it borrows nothing of the local.
+    if !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) && el_ir::unspan(x.code) is NdVar {
+      c = tuple_member_copy(e, vars, x);
+      if c == null {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      items += [c!.code];
+      tps += [c!.tp];
+      continue;
+    }
     if !(is_scalar(x.tp) || x.tp is TyText) {
       el::refuse(e, "a tuple with a member of this type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -2906,6 +2917,50 @@ fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     tps += [x.tp];
   }
   ex(ir::NdTuple { items: items }, ir::TyTuple { elems: tps })
+}
+
+// `tuple_member_copy` for a record or vector local `x`: a record copied into a fresh
+// `__ref_p2_N` (`OpDatabase`, `OpCopyRecord` in a "tuple_member_copy_fill" block), a vector into
+// a `_tupcopy_N` given a store of its own and filled with the local's elements; the member
+// borrows that copy.  A struct enum, and an element type with no rows, are refused by name.
+fn tuple_member_copy(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
+  match x.tp {
+    TyVector { inner } => {
+      vt = ir::TyVector { inner: inner, dep: [] };
+      tc = el_vars::create_unique(vars, "tupcopy", vt);
+      if e.first_pass {
+        return ex(ir::NdNull, el_types::with_deps(vt, [tc]));
+      }
+      row = append_row(e, inner);
+      rows = vector_rows(e, inner, 0, true);
+      if rows == null || row < 0 {
+        el::refuse(e, "a tuple member copy of a vector of this element type: {type_kind(inner)}");
+        return null;
+      }
+      ops = literal_store(e, vars, tc, rows!);
+      ops += [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: tc }]), el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: tc }, x.code, ir::NdInt { n: row }]), ir::NdVar { n: tc }];
+      t = el_types::with_deps(vt, [tc]);
+      return ex(el_ir::v_block(ops, t, "tuple_member_copy"), t);
+    },
+    TyReference { n } => {
+      rt = ir::TyReference { n: n, dep: [] };
+      if e.first_pass {
+        return ex(ir::NdNull, rt);
+      }
+      kt = el::def(e, n).known_type;
+      if el::def(e, n).def_type != el::DT_STRUCT || kt == el_schema::NO_TYPE {
+        el::refuse(e, "a tuple member copy of a record of this kind");
+        return null;
+      }
+      w = el_vars::work_ref_p2(vars, rt);
+      fill = el_ir::v_block([el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [x.code, ir::NdVar { n: w }, ir::NdInt { n: kt }])], ir::TyVoid, "tuple_member_copy_fill");
+      t = el_types::with_deps(rt, [w]);
+      return ex(el_ir::v_block([el_ir::v_set(w, ir::NdNull), fill, ir::NdVar { n: w }], t, "tuple_member_copy"), t);
+    },
+    _ => {}
+  }
+  el::refuse(e, "a tuple with a member of this type: {type_kind(x.tp)}");
+  null
 }
 
 // `t.N` of a stack-tuple local: the member (`TupleGet`), typed as it is, a text member
