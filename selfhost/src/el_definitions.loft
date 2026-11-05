@@ -43,8 +43,8 @@ fn top_item(e: el::El, it: integer) {
     SAlias { at, name, tp, size } => { parse_typedef(e, at, name, tp, size); },
     SEnum { at, name, tvars, variants } => { parse_enum(e, at, name, tvars, variants); },
     SInterface { at, name, members, end } => { parse_interface(e, at, name, members, end); },
-    SFn { at, is_op, name, tvars, params, ret, ret_const, cap, body, annots } => {
-      key = parse_function(e, at, is_op, name, tvars, params, ret, ret_const, cap, body, annots);
+    SFn { at, is_op, name, tvars, params, ret, ret_const, body, annots } => {
+      key = parse_function(e, at, is_op, name, tvars, params, ret, ret_const, body, annots);
       e.type_vars = [];
       if e.first_pass && (key == "" || el::def_nr(e, key) < 0) {
         e.declined += [name];
@@ -537,7 +537,7 @@ fn sole_vector_literal(e: el::El, body: integer) -> boolean {
 // The plain path: no type variables, no operator form, no annotation, no `both`.
 // A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
 // the definition's key, or "" where the declaration was refused before one was known.
-pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) -> text {
+pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, body: integer?, annots: vector<integer>) -> text {
   // A capability (`fs#read`) and a `-> const` result are checks at the call and the return; the
   // definition's image is the plain one, so both are read past.
   if is_op || len(annots) > 0 {
