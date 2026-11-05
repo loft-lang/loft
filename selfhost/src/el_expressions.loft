@@ -14490,6 +14490,16 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
   x = expression(e, vars, n!);
   // `!` of a nullable operand is the negation of its truth: a `boolean?` as it is, anything
   // else first converted to a boolean (`OpConvBoolFromRef`, `OpConvBoolFromInt`, …).
+  // `!` of a text is the negation of its truth, present and non-empty (`OpConvBoolFromText`);
+  // of a collection, of its being there (`OpVectorIsNull`, negated — the one test of both its
+  // absences).  Nullable or not, the test is the same.
+  if op == "!" && el_types::base(x.tp) is TyText {
+    return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromText", [x.code])]), ir::TyBoolean);
+  }
+  if op == "!" && el_types::is_collection(el_types::base(x.tp)) {
+    present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
+    return ex(el_ir::cl(e, "OpNot", [present]), ir::TyBoolean);
+  }
   if op == "!" && x.tp is TyOptional {
     if el_types::base(x.tp) is TyBoolean {
       return call_op(e, vars, op, [x.code], [ir::TyBoolean]);
@@ -14498,15 +14508,7 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     if struct_ref(e, el_types::base(x.tp)) >= 0 {
       return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [x.code])]), ir::TyBoolean);
     }
-    // A text is true when present (`OpConvBoolFromText`); a collection when it is not absent
-    // (`OpVectorIsNull`, negated — the one test of both its absences).
-    if el_types::base(x.tp) is TyText {
-      return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromText", [x.code])]), ir::TyBoolean);
-    }
-    if el_types::is_collection(el_types::base(x.tp)) {
-      present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
-      return ex(el_ir::cl(e, "OpNot", [present]), ir::TyBoolean);
-    }
+
     c = el_convert::convert_admitting(e, vars, x.code, x.tp, ir::TyBoolean);
     if c != null {
       return ex(el_ir::cl(e, "OpNot", [c!]), ir::TyBoolean);
