@@ -1,0 +1,8 @@
+// A library with a PRIVATE `W` of its own: the name the other library's forward reference
+// must not resolve to (`fwdpriv_b`).
+struct W { a: integer }
+
+pub fn fwdpriv_a_val() -> integer {
+  w = W { a: 7 };
+  w.a
+}

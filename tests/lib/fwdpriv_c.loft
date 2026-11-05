@@ -1,0 +1,5 @@
+// Constructs `W` and declares none: the name is `fwdpriv_a`'s, which is private.
+pub fn fwdpriv_c_val() -> integer {
+  w = W { a: 1 };
+  w.a
+}

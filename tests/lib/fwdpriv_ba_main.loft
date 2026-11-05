@@ -1,0 +1,6 @@
+use fwdpriv_b;
+use fwdpriv_a;
+
+fn main() {
+  println("{fwdpriv_a::fwdpriv_a_val()} {fwdpriv_b::fwdpriv_b_val()}");
+}
