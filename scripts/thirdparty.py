@@ -97,6 +97,15 @@ BUILD_C = re.compile(r"\bcc::|\bcmake::|Build::new\(\)")
 NOT_SHIPPED = {"tests", "test", "doc", "docs", "examples", "bench", "target", ".loft",
                "node_modules", "fixtures", "native-auto", ".git", "tools"}
 VERDICTS = ("fixed", "not-reached", "applies")
+# What an upstream commit to one of our files is, read from its subject — the update policy's
+# input (THIRDPARTY.md § When to update).  A heuristic over words, so the report shows the
+# subjects it counted and a person reads them before acting.
+SECURITY_MSG = re.compile(r"(?i)(\bcve\b|security|overflow|out[- ]of[- ]bounds|\boob\b|use[- ]after|"
+                          r"double[- ]free|\bcrash|segfault|\bleak|sanitiz|undefined behaviou?r|\brace\b|deadlock)")
+FIX_MSG = re.compile(r"(?i)(\bfix|\bbug|\berror\b|wrong|incorrect|regression|\bassert|\bnull\b|\bhang)")
+TRIVIAL_MSG = re.compile(r"(?i)^(typo|spelling|comment|doc|readme|whitespace|formatting|style|version \d)")
+PERF_MSG = re.compile(r"(?i)(\bperf|faster|speed|optimi[sz]|fast[- ]path|\bsimd\b|\bsse|\bavx|\bneon\b|vectori[sz])")
+TIERS = {}   # name → (tier, why), for the closing summary
 # The platform C library and compiler runtime are in every process: binding to them needs no
 # entry (PACKAGES_C_BINDING.md § `libs`), so a library is never asked to declare them.
 PLATFORM_C = {"c", "m", "dl", "pthread", "rt", "gcc_s", "ld-linux-x86-64", "ld-linux-aarch64", "system"}
@@ -850,7 +859,7 @@ def check_vendored(tree, d, n, x, where, a, offline):
                    + (f" ({tree_digest(path)})" if key == "digest" else ""))
     if x.get("digest") and x["digest"] != tree_digest(path):
         a.need(where, f"{n}: {rel} no longer matches its `digest` — something changed it since it was declared")
-    status, fresh = [], ""
+    status, fresh, tier = [], "", (0, "")
     commit = x.get("commit", "")
     if not offline and x.get("upstream") and commit:
         try:
@@ -865,7 +874,10 @@ def check_vendored(tree, d, n, x, where, a, offline):
                 theirs_names.add(t)
                 if git_blob_id(os.path.join(path, f)) not in by.get(t, {}) and b not in allowed:
                     a.need(where, f"{n}: {f} is not upstream's {t} at {commit[:9]} (list it in `modified` if that is meant)")
-            head = run(["git", "-C", clone, "rev-parse", "HEAD"], check=True).stdout.strip()
+            # A fork is followed on its own branch (`branch = "stb_vorbis-sezero"`), not the
+            # repository's default one.
+            ref = f"refs/heads/{x['branch']}" if x.get("branch") else "HEAD"
+            head = run(["git", "-C", clone, "rev-parse", ref], check=True).stdout.strip()
             behind = int(run(["git", "-C", clone, "rev-list", "--count", f"{commit}..{head}"]).stdout.strip() or 0)
             newest = next((t for t in run(["git", "-C", clone, "tag", "--sort=-v:refname"]).stdout.split()
                            if re.search(r"\d", t) and not re.search(r"(?i)rc|beta|alpha|dev|pre", t)), "")
@@ -875,17 +887,105 @@ def check_vendored(tree, d, n, x, where, a, offline):
                 ["git", "-C", clone, "diff", "--name-only", since, head]).stdout.split()} & theirs_names)
             fresh = "upstream current" if behind == 0 else f"{behind} upstream commits since" + (
                 f", newest tag {newest}" if newest and newest not in pin else "")
+            if x.get("fork-of"):
+                fresh = f"fork {x.get('branch') or 'HEAD'}: " + fresh
+            ours_paths = sorted({p for t in theirs_names for p in by.get(t, {}).values()})
+            subjects = run(["git", "-C", clone, "log", "--format=%s", f"{since}..{head}", "--", *ours_paths]
+                           ).stdout.splitlines() if ours_paths else []
+            kinds = classify(subjects)
+            fork_note = check_fork(clone, head, ours_paths, n, x, where, a)
+            counts = ", ".join(f"{len(v)} {k}" for k, v in kinds.items() if v)
             if changed:
                 a.need(where, f"{n}: upstream changed {len(changed)} of our files since "
-                       f"{since[:9]} ({', '.join(changed[:6])}{' …' if len(changed) > 6 else ''}) — "
-                       f"read the commits, then update or set `upstream-reviewed = \"{head}\"`")
+                       f"{since[:9]} ({', '.join(changed[:6])}{' …' if len(changed) > 6 else ''}; "
+                       f"{counts or 'no commit subjects'}) — read the commits, then update or set "
+                       f"`upstream-reviewed = \"{head}\"`")
+            if kinds["security"]:
+                tier = (1,
+                        f"{len(kinds['security'])} security-class fix(es) to our files: " + "; ".join(kinds["security"][:3]))
+            elif kinds["fix"]:
+                tier = (2, f"{len(kinds['fix'])} fix(es) to our files: " + "; ".join(kinds["fix"][:3]))
+            elif kinds["perf"] or kinds["other"]:
+                tier = (3, f"{counts} to our files, no fix among them")
+            elif behind:
+                tier = (4, "upstream moved, none of it in our files")
+            else:
+                tier = (0, "")
             status.append(pin or commit[:9])
+            if fork_note:
+                fresh += " · " + fork_note
         except RuntimeError as e:
             a.need(where, f"{n}: the upstream {x['upstream']} could not be read ({e})")
     else:
         status.append(x.get("version") or commit[:9] or "?")
-    adv = triage(n, x, where, advisories_for(x, where, n, a, offline), a)
+    found = advisories_for(x, where, n, a, offline)
+    adv = triage(n, x, where, found, a)
+    if applies_declared(x, found):
+        tier = (1, "an advisory applies")
+    if not offline:
+        fresh = (fresh + " · " + set_tier(where, n, *tier)).strip(" ·")
     a.say(f"  {n:<16} vendored  {' '.join(status):<22} {fresh:<40} {adv}")
+
+
+def check_fork(clone, head, ours_paths, n, x, where, a):
+    """A fork we follow instead of its original (`fork-of`) is watched both ways: why we follow
+    it is on record (`fork-reason`), and work the ORIGINAL does to our files that the fork does
+    not carry needs action — the original may have woken up, or fixed something the fork lacks.
+    The fork's own new commits are reviewed like any upstream change (the tiers above)."""
+    orig = x.get("fork-of")
+    if not orig:
+        if x.get("branch"):
+            a.need(where, f"{n}: follows branch `{x['branch']}`; say which project it forks (`fork-of`) "
+                   "and why we follow it (`fork-reason`)")
+        return ""
+    if not x.get("fork-reason"):
+        a.need(where, f"{n}: follows a fork of {orig}; say why in `fork-reason`")
+    if OFFLINE or not ours_paths:
+        return ""
+    r = run(["git", "-C", clone, "fetch", "-q", orig, "+HEAD:refs/fork-of/head"])
+    if r.returncode != 0:
+        a.need(where, f"{n}: the original {orig} could not be read ({r.stderr.strip()[-120:]})")
+        return ""
+    since = x.get("fork-of-reviewed")
+    rng = f"{since}..refs/fork-of/head" if since else f"{head}..refs/fork-of/head"
+    missing = run(["git", "-C", clone, "log", "--format=%h %s", rng, "--", *ours_paths]).stdout.splitlines()
+    if since:   # what was read up to `since` and is still not in the fork
+        missing = [m for m in missing if run(["git", "-C", clone, "merge-base", "--is-ancestor",
+                                              m.split()[0], head]).returncode != 0]
+    own = run(["git", "-C", clone, "rev-list", "--count", f"refs/fork-of/head..{head}", "--", *ours_paths]).stdout.strip()
+    if missing:
+        tip = run(["git", "-C", clone, "rev-parse", "refs/fork-of/head"]).stdout.strip()
+        a.need(where, f"{n}: the original {orig} has {len(missing)} commit(s) to our files the fork does not "
+               f"carry ({'; '.join(m.split(' ', 1)[1] for m in missing[:3])}) — take them, ask the fork, or set "
+               f"`fork-of-reviewed = \"{tip}\"`")
+    return f"{own} fork commits of its own to our files"
+
+
+def classify(subjects):
+    c = {"security": [], "fix": [], "perf": [], "other": []}
+    for sub in subjects:
+        if TRIVIAL_MSG.search(sub.strip()):
+            continue
+        k = ("security" if SECURITY_MSG.search(sub) else "fix" if FIX_MSG.search(sub)
+             else "perf" if PERF_MSG.search(sub) else "other")
+        c[k].append(sub)
+    return c
+
+
+def applies_declared(x, found=None):
+    """Does an advisory that `applies` still hold?  Counted over what the registers reported
+    this run when they were asked, so a verdict about one lockfile's crate, or an advisory an
+    update made go away, does not mark something else."""
+    rv = x.get("reviewed") or {}
+    ids = rv.keys() if found is None else [i for i in found if i in rv]
+    return any(str(rv[i]).split(":", 1)[0].strip() == "applies" for i in ids)
+
+
+def set_tier(where, n, tier, why):
+    """The update policy's tier for one dependency: 1 now, 2 this release cycle, 3 only with a
+    measured reason, 4 nothing of ours changed (THIRDPARTY.md § When to update)."""
+    TIERS[f"{where}: {n}"] = (tier, why)
+    return f"tier {tier}" if tier else "current"
 
 
 def check_system(n, x, where, a, offline):
@@ -945,6 +1045,13 @@ def check_sdk(tree, n, x, where, a, offline):
         except (urllib.error.URLError, RuntimeError, OSError, ValueError) as e:
             a.need(where, f"{n}: the source {src} could not be asked for versions ({e})")
     found = advisories_for(x, where, n, a, offline)
+    tier = (1, "an advisory applies") if applies_declared(x, found) else (0, "")
+    if not tier[0] and "in our series" in fresh:
+        tier = (2, f"a bugfix release in our series ({fresh})")
+    elif not tier[0] and "newest" in fresh:
+        tier = (3, f"a new series only ({fresh})")
+    if fresh:
+        fresh = fresh + " · " + set_tier(where, n, *tier)
     comps = []
     if not offline and src.startswith("esp-registry:"):
         try:
@@ -1111,7 +1218,14 @@ def cargo_audit(root, rel, n, x, where, a, offline, named=frozenset()):
             pending = f", {k} patch updates pending" if k else ", up to date"
     native = cargo_native_check(toml, x, n, where, a, named)
     count = d.get("lockfile", {}).get("dependency-count", "?")
-    a.say(f"  {n:<16} cargo     {f'{count} crates in {rel}':<63} {adv}{pending}{native}")
+    rv = x.get("reviewed") or {}
+    bad = applies_declared(x, found) or any(k.startswith("yanked:") for k in found) or any(
+        v["advisory"]["id"] not in rv for v in d.get("vulnerabilities", {}).get("list", []))
+    k_pending = int(re.search(r"(\d+) patch", pending).group(1)) if re.search(r"(\d+) patch", pending) else 0
+    t = (1, "a vulnerable, yanked or unmaintained-and-reached crate") if bad else \
+        (2, f"{k_pending} patch updates in our series") if k_pending else (0, "")
+    a.say(f"  {n:<16} cargo     {f'{count} crates in {rel}':<63} {adv}{pending}{native} · "
+          + set_tier(where, f"{n} ({rel})", *t))
 
 
 def main():
@@ -1133,6 +1247,8 @@ def main():
                     help="the CI and publish gate: --offline, --check, and no advisory database — "
                          "fails on anything undeclared, never on what the registers say")
     ap.add_argument("--refresh", action="store_true", help="ignore the day-long cache")
+    ap.add_argument("--release", action="store_true",
+                    help="the release question: a tier 1 or 2 update not yet taken needs action too")
     ap.add_argument("--binary", help="the built loft to read what it links (default target/release/loft)")
     args = ap.parse_args()
     if args.gate:   # a gate reads a tree it was handed: loft's, or a library's via --repo
@@ -1161,8 +1277,19 @@ def main():
             continue
         t = Tree(label, r, is_loft=os.path.abspath(r) == ROOT)
         audit_tree(t, a, args.offline)
+    if args.release:
+        for k, (t, why) in sorted(TIERS.items()):
+            if t in (1, 2):
+                a.need(k.split(": ", 1)[0], f"{k.split(': ', 1)[1]}: a tier {t} update is not taken — {why[:140]}")
     if not args.check:
         print("\n".join(a.lines))
+        if any(t for t, _ in TIERS.values()):
+            print("\nUpdates by tier (THIRDPARTY.md § When to update):")
+            for tier, label in ((1, "now"), (2, "this release cycle"), (3, "only with a measured reason"),
+                                (4, "nothing of ours changed")):
+                for k, (t, why) in sorted(TIERS.items()):
+                    if t == tier:
+                        print(f"  {tier} {label:<28} {k} — {why[:150]}")
     if a.action:
         print(f"\n{len(a.action)} need action:" if not args.check else f"{len(a.action)} need action:")
         for where, what in a.action:

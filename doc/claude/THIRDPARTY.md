@@ -34,6 +34,10 @@ advisories = ["nvd:stb_vorbis", "osv:commit"]
 renames    = { "lodepng.c" = "lodepng.cpp" }      # ours = upstream's name, when renamed
 modified   = ["x.c"]                              # files allowed to differ from upstream
 upstream-reviewed = "<upstream sha>"              # upstream changes read up to here
+branch     = "stb_vorbis-sezero"                  # follow a fork's branch, not its default
+fork-of    = "https://github.com/nothings/stb"    # the project the fork is of
+fork-reason = "…"                                 # why we follow the fork and not the original
+fork-of-reviewed = "<original sha>"               # the original's work read up to here
 
 [thirdparty.stb_vorbis.reviewed]                  # one line per advisory a register reports
 CVE-2019-13217 = "fixed: in v1.17, before our pin"
@@ -112,6 +116,36 @@ RUSTSEC-2020-0077 = "applies: memmap 0.7 is unmaintained — replace with memmap
   of our files, until `upstream-reviewed` names the commit they were read up to.  An `sdk`
   dependency reports a newer release in its own `major.minor` series as needing action, and a
   newer series as information only.
+
+## When to update
+
+An update is decided by what it changes in the files we ship, never by how far behind we are.
+The report ends with every dependency placed in one of four tiers:
+
+| Tier | The signal | The decision |
+|---|---|---|
+| **1 — now** | an advisory whose verdict `applies`; a yanked or vulnerable crate; an upstream fix of a security class (overflow, out-of-bounds, use-after-free, crash, leak, race) to a file we ship | update out of cycle; a release does not ship with one |
+| **2 — this release cycle** | a bugfix release in our own series (a Rust patch update, `v6.0.2` → `v6.0.3`); upstream fixes to our files | take it by default |
+| **3 — with a measured reason** | a new series or major (`badge-bsp` 1.6 → 2.0, ESP-IDF 6.0 → 6.1); upstream commits to our files that fix nothing | take it for a benchmark gain on the shipping build (`--ship`, the library's `bench/`, frame time on the device), an upstream fix for a bug we hit, a capability we need, or our series reaching its end of life — weighed against API changes, binary size and behaviour change |
+| **4 — nothing of ours** | upstream moved, none of it in files we ship (stb's other headers); typo, comment and doc commits | record `upstream-reviewed` and move on |
+
+`make thirdparty ARGS="--check --release"` (the release checklist's `A-thirdparty`) fails
+while a tier 1 or 2 update is not taken.  Speed is never read from a changelog: a tier-3 update for speed carries the before-and-after
+measurement in its commit.  The tiers come from commit subjects and advisory verdicts, so they
+point at what to read, not what to merge: an update is taken through the package's own gate —
+its testbed on both backends with the leak check, and its size for the Tanmatsu.
+
+**A dormant upstream is replaced, not patched in place.**  When upstream stops taking fixes
+(stb_vorbis: none since v1.22 while eight CVEs stayed open), prefer a maintained fork that is
+a strict superset of it and that other projects ship, declared with its own `upstream` and
+`branch` (`sezero/stb`, branch `stb_vorbis-sezero`, which SDL_mixer, SDL_sound and libxmp
+follow).  Following a fork is a decision on record and watched both ways: `fork-of` names
+the original and `fork-reason` says why we follow the fork; the fork's own new commits to our
+files are reviewed like any upstream change (so work it takes on beyond the fixes we came for
+is read, and taken or skipped, before it ships), and commits the ORIGINAL makes to our files
+that the fork does not carry need action until they are taken, asked of the fork, or read
+(`fork-of-reviewed`).  A fix of our own to vendored code is the last resort: it is listed in `modified`,
+sent upstream, and dropped once a release carries it.
 
 ## Running it
 
