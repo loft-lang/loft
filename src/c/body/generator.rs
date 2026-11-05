@@ -38,7 +38,11 @@ impl FnWriter<'_> {
             let e = self.expr(x, ind)?;
             let put = match c {
                 CType::Text => format!("loft_text_set((loft_text *) out, {});", as_view(e)?),
-                other => format!("*({} *) out = {};", held(other), as_shape(e, other)?),
+                other => format!(
+                    "*({} *) out = {};",
+                    held(other),
+                    as_shape(self.cx, e, other)?
+                ),
             };
             self.line(ind, &put);
         }

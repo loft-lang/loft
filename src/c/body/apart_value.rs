@@ -241,7 +241,7 @@ impl FnWriter<'_> {
                 .ctype(gdef.attributes()[i].typedef.peel_link())
                 .ok_or("a twin's argument of no C shape")?;
             let e = self.arg_with(arg, false, ind)?;
-            xs.push(as_shape(e, shape)?);
+            xs.push(as_shape(self.cx, e, shape)?);
         }
         xs.push(dest.to_string());
         self.cx.request_twin(g, super::super::APV_BIT);

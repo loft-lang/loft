@@ -144,6 +144,13 @@ pub(crate) enum CType {
     Void,
 }
 
+/// @PLN217 — a 32-bit build (`--width 32`) whose C holds 32-bit integers in `int32_t`: every
+/// body is under the regime, so a parameter, a result, a tuple member and a field read are
+/// 32-bit too, not only a local.
+pub(crate) fn width32_c() -> bool {
+    crate::keys::width32_all() && !no_c_int32()
+}
+
 /// @PLN204 — `LOFT_NO_C_INT32=1` holds every integer in `int64_t`, as before `CType::Int32`:
 /// the first bisect step for a C-only wrong answer on a program with 32-bit integers.
 pub(crate) fn no_c_int32() -> bool {
@@ -191,6 +198,8 @@ pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
     pub(crate) stores: &'a Stores,
     tuples: std::cell::RefCell<Vec<Vec<CType>>>,
+    /// @PLN217 — the tuple conversions `tuple_cast` handed out, as (from, to): one C function each.
+    tuple_casts: std::cell::RefCell<std::collections::BTreeSet<(u32, u32)>>,
     /// `@FR-R-Destination`'s callee shapes, by `(callee, moved field offset)`.
     pub(crate) dest_memo: std::cell::RefCell<
         std::collections::HashMap<(u32, i64), Option<crate::lower::destination::Shape>>,
@@ -391,6 +400,7 @@ impl<'a> Cx<'a> {
             wasm: browser || WASM_UNIT.with(std::cell::Cell::get),
             source_lines: SOURCE_LINES.with(std::cell::Cell::get),
             tuples: std::cell::RefCell::new(Vec::new()),
+            tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             described: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             names_types: std::cell::Cell::new(false),
@@ -911,6 +921,11 @@ impl<'a> Cx<'a> {
     /// The C shape of `tp`, nullable or not — a null is held in the same shape — or `None`.
     pub(crate) fn ctype(&self, tp: &Type) -> Option<CType> {
         match tp.base() {
+            // @PLN217 — a 32-bit build (`--width 32`) holds an integer that is 32-bit by
+            // declaration in `int32_t` everywhere — a parameter, a result, a tuple member, a
+            // function type — as `local_ctype` holds a local: every body is under the regime
+            // there, so no boundary is left for two widths to meet at.  `i64` stays 64-bit.
+            Type::Integer(spec) if width32_c() && spec.is_width32() => Some(CType::Int32),
             // A narrow integer is held as a plain one: its range is enforced where a value
             // enters it (`OpRangeDefault`) and where a field stores it.
             Type::Integer(_) => Some(CType::Int),
@@ -960,6 +975,32 @@ impl<'a> Cx<'a> {
         }
         t.push(shapes);
         (t.len() - 1) as u32
+    }
+
+    /// @PLN217 — the C function that converts a tuple of struct `from` to struct `to`, or
+    /// `None` when a member cannot be converted.  Two structs of one loft tuple type meet in a
+    /// 32-bit build: a literal is shaped by its members (an operator's result is `int64_t`, a
+    /// 32-bit local `int32_t`) while the place it goes to is shaped by its declared type.  A
+    /// member converts as a scalar store does: `loft_n32` narrows (null when it does not fit),
+    /// `loft_w64` widens, keeping null as null.
+    pub(crate) fn tuple_cast(&self, from: u32, to: u32) -> Option<String> {
+        let (a, b) = (self.tuple_shapes(from), self.tuple_shapes(to));
+        if a.len() != b.len() {
+            return None;
+        }
+        for (x, y) in a.iter().zip(&b) {
+            let ok = x == y
+                || matches!(
+                    (x, y),
+                    (CType::Int, CType::Int32) | (CType::Int32, CType::Int)
+                )
+                || matches!((x, y), (CType::Tuple(p), CType::Tuple(q)) if self.tuple_cast(*p, *q).is_some());
+            if !ok {
+                return None;
+            }
+        }
+        self.tuple_casts.borrow_mut().insert((from, to));
+        Some(format!("loft_tup{from}_as{to}"))
     }
 
     /// The element shapes of tuple struct `id`.
@@ -1353,6 +1394,35 @@ impl<'a> Cx<'a> {
                 fields.join(" ")
             );
         }
+        let casts = self.tuple_casts.borrow();
+        for &(from, to) in casts.iter() {
+            let _ = writeln!(
+                out,
+                "static loft_tup{to} loft_tup{from}_as{to}(loft_tup{from} t);"
+            );
+        }
+        for &(from, to) in casts.iter() {
+            let members: Vec<String> = self
+                .tuple_shapes(from)
+                .iter()
+                .zip(self.tuple_shapes(to))
+                .enumerate()
+                .map(|(i, (x, y))| match (x, y) {
+                    (CType::Int, CType::Int32) => format!("loft_n32(t.f{i})"),
+                    (CType::Int32, CType::Int) => format!("loft_w64(t.f{i})"),
+                    (CType::Tuple(p), CType::Tuple(q)) if *p != q => {
+                        format!("loft_tup{p}_as{q}(t.f{i})")
+                    }
+                    _ => format!("t.f{i}"),
+                })
+                .collect();
+            let _ = writeln!(
+                out,
+                "static loft_tup{to} loft_tup{from}_as{to}(loft_tup{from} t) {{ loft_tup{to} r = {{ {} }}; return r; }}",
+                members.join(", ")
+            );
+        }
+        drop(casts);
         out.push_str(&self.show_code());
         for &tp in self.swap_worlds.borrow().iter() {
             let call = self.show_top_call(tp, "s", "r", "2");
@@ -2082,8 +2152,30 @@ pub fn emit_unit_for(
         let written = tidy::tidy_unit(&out[at..]);
         out.truncate(at);
         out.push_str(&written);
+        // @PLN217 — a `#c` binding is declared in the C its library's shim is written in, which
+        // spells a loft `integer` / `float` as the build's width (`loft_width.h`).  The header
+        // goes in with the runtime, before the bindings, and only where a binding names it, so
+        // a program that binds none is written as it was.
+        if names_a_width(&out[at..]) {
+            let mut width = String::new();
+            if crate::keys::width32_all() {
+                width.push_str("#ifndef LOFT_WIDTH32\n#define LOFT_WIDTH32\n#endif\n");
+            }
+            width.push_str(include_str!("loft_width.h"));
+            out.insert_str(at - RUNTIME_END.len(), &width);
+        }
     }
     Ok(out)
+}
+
+/// Whether `code` names one of `loft_width.h`'s types as a whole identifier.
+fn names_a_width(code: &str) -> bool {
+    ["loft_int", "loft_uint", "loft_float"].iter().any(|name| {
+        code.match_indices(name).any(|(i, _)| {
+            let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+            !code[..i].ends_with(ident) && !code[i + name.len()..].starts_with(ident)
+        })
+    })
 }
 
 /// The program's lazy drivers as the runtime calls them (`loft_lazy_miss`): an adapter per

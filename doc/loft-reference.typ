@@ -8240,13 +8240,13 @@ pub fn abs(self: f64) -> f64
 Absolute value for double-precision floats.
 
 ```rust
-pub PI = OpMathPiFloat()
+pub PI = OpMathPiFloat() as float
 ```
 
 The ratio of a circle's circumference to its diameter (3.14159...).
 
 ```rust
-pub E = OpMathEFloat()
+pub E = OpMathEFloat() as float
 ```
 
 Euler's number, the base of natural logarithms (2.71828...).

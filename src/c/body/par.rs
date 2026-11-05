@@ -133,7 +133,11 @@ impl FnWriter<'_> {
         let mut extra = Vec::new();
         for (i, x) in extras.iter().enumerate() {
             let e = self.expr(x, ind)?;
-            extra.push(as_shape(e, shapes.get(i).copied().unwrap_or(CType::Int))?);
+            extra.push(as_shape(
+                self.cx,
+                e,
+                shapes.get(i).copied().unwrap_or(CType::Int),
+            )?);
         }
         let WorkerCall {
             args: call_args,
