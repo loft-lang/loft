@@ -4520,6 +4520,11 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       return ex(ir::NdNull, ir::TyVoid);
     }
   }
+  // A keyed field's items are made with the element's vector type as their known type
+  // (`build_vector_list`'s `vector_of`, there being no field-known one), which registers it.
+  if !e.first_pass && len(items) > 0 && keyed_kind(el_types::base(p.tp)) {
+    vector_of(e, inner);
+  }
   ex(ir::NdInsert { items: ls }, ir::TyVoid)
 }
 
