@@ -1110,9 +1110,17 @@ def cargo_native(toml, offline):
     """(crates whose build script compiles C, {library: crate} the crates link with #[link]) over the
     dependency graph resolved for every shipped platform.  `libc` is the platform C library."""
     ids, pk = set(), {}
+    fetched = False
     for triple in SHIPPED_TARGETS:
-        r = run(["cargo", "metadata", "--format-version", "1", "--locked", "--manifest-path", toml,
-                 "--filter-platform", triple] + (["--offline"] if offline else []))
+        cmd = ["cargo", "metadata", "--format-version", "1", "--locked", "--manifest-path", toml,
+               "--filter-platform", triple] + (["--offline"] if offline else [])
+        r = run(cmd)
+        if r.returncode != 0 and offline and not fetched and "--offline" in r.stderr:
+            # The other platforms' crates were never downloaded here (a CI leg fetches its own).
+            # Offline means no advisory registers, not no crate sources: fetch them, once.
+            fetched = True
+            if run(["cargo", "fetch", "--locked", "--manifest-path", toml]).returncode == 0:
+                r = run(cmd)
         if r.returncode != 0:
             err = r.stderr.strip()
             raise RuntimeError("its Cargo.lock does not match its Cargo.toml (`cargo metadata --locked` "

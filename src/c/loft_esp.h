@@ -27,7 +27,7 @@
 #include "bsp/display.h"
 
 /* The BSP's own start-up steps, in the order `bsp_device_initialize` runs them (badge-bsp
- * 1.6.4, the version the project pins): run here one by one, so each step's time is on the
+ * 2.0.0, the version the project pins; its own code is 1.6.4's, the panels are new): run here one by one, so each step's time is on the
  * console and the screen is black as soon as the display can show it.  A part starts when its
  * `LOFT_ESP_<PART>` is defined: the project writer defines the ones the app's C calls, and
  * the ones with users no call names (src/esp_app.rs `PARTS`; the motion sensor alone took

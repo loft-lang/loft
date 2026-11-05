@@ -22,8 +22,11 @@ device.  How to add another device is in [HARDWARE_BACKENDS.md](HARDWARE_BACKEND
 | Random numbers | A hardware random source (`esp_fill_random`) | `random::seed_hw()` |
 
 The board support package is `badgeteam/badge-bsp`, from the ESP component registry
-(`bsp/audio.h`, `bsp/input.h`, `bsp/display.h`).  The Tanmatsu app template
-(`Nicolai-Electronics/tanmatsu-template`) names the version an app uses.
+(`bsp/audio.h`, `bsp/input.h`, `bsp/display.h`).  loft pins 2.0.0, the version the launcher
+runs (`src/esp_app.rs`): it drives the boards' second display panel (SW39480800PN03-01-1,
+through `mipi_dsi_abstraction` 2.0), and its own code is 1.6.4's, so the start-up steps
+`loft_esp.h` runs one by one are the same.  Against 1.6.4 on ESP-IDF v6.0.3 the display starts
+as fast and a 192x176 frame at scale 2 takes 30 us more (11.31 ms); the app is 1.2 KB larger.
 
 **The BSP owns the differences between hardware batches.**  Boards from different batches can
 carry a different part that needs its own start-up code, a display panel for example.  Nicolai
@@ -412,7 +415,6 @@ not yet published), where the pixel-by-pixel path took 63 ms.
   ([@PLN213](https://github.com/loft-lang/plans/issues/213) T0.4).
 - The network libraries on the device, and the build-time refusal a native without C on the target
   owes ([@PLN213](https://github.com/loft-lang/plans/issues/213) T0.3, T3–T5).
-- loft pins badge-bsp 1.6.4; the launcher is on 2.0.
 - The screen's physical size, for a game that draws to scale: a loft call with a defined
   "unknown" answer, filled on the Tanmatsu from the panel's specification until the BSP
   reports it.
