@@ -2864,6 +2864,15 @@ fn unit_variant(e: el::El, vars: el_vars::Vars, en: integer, vd: integer) -> Ex 
 // destination owns, so it borrows nothing from the source — the value's type without its deps,
 // or `tp` as it is for any other value.
 fn record_copy_type(e: el::El, vars: el_vars::Vars, v: integer, rhs: integer, tp: ir::TypeT) -> ir::TypeT {
+  // `w!` reads `w` as the bind's whole value too (the discharge answers the local it tests).
+  match e.p.nodes[rhs] {
+    SPostfix { op, e: pe } => {
+      if op == "!" && pe != null && e.p.nodes[pe!] is SName {
+        return record_copy_type(e, vars, v, pe!, tp);
+      }
+    },
+    _ => {}
+  }
   match e.p.nodes[rhs] {
     SName { name: sn, member: sm } => {
       w = if sm == "" { el_vars::var(vars, sn) } else { -1 };
@@ -2878,6 +2887,20 @@ fn record_copy_type(e: el::El, vars: el_vars::Vars, v: integer, rhs: integer, tp
     _ => {}
   }
   tp
+}
+
+// A `w!` bound whole is typed as the copy it is (`record_copy_type`): its "ncr" block answers
+// the copied type, borrowing nothing.
+fn discharge_copy_typed(e: el::El, rhs: integer, x: Ex) -> ir::Node {
+  match e.p.nodes[rhs] {
+    SPostfix { op } => {
+      if op == "!" && el_ir::unspan(x.code) is NdBlock {
+        return arm_typed(x.code, el_types::deps(x.tp));
+      }
+    },
+    _ => {}
+  }
+  x.code
 }
 
 // `Parser::change_var_type`'s mint: a local bound for the first time to a vector registers
@@ -3295,6 +3318,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   }
   vars.len_read = outer_read || read_through_length;
   x.tp = record_copy_type(e, vars, v, rhs!, x.tp);
+  x.code = discharge_copy_typed(e, rhs!, x);
   // `@FR-B-Copy` (`collection_bind_source`): a whole vector local, or a vector field read off an
   // owned record, bound to a local is COPIED into a store of the local's own
   // (`lower_vec_copy_bind`).  A `&` asks for the view.
@@ -4558,6 +4582,7 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   }
   // A declared local copies a whole record or vector local as an inferred one does.
   x.tp = record_copy_type(e, vars, v, rhs!, x.tp);
+  x.code = discharge_copy_typed(e, rhs!, x);
   if el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !is_link(e, rhs!) {
     return vec_copy_bind(e, vars, v, x);
   }
@@ -8749,14 +8774,23 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   b = el_types::base(x.tp);
-  if !el_convert::plain_scalar(b) {
+  // A plain struct local: the block answers the local as its read does — borrowing it, unless
+  // the read is a bind's first (`parse_var`'s rule) — with `OpConvBoolFromRef` its test
+  // (`handle_present`'s record arm).  Any other record subject is refused by name.
+  record = struct_ref(e, b) >= 0 && !starts_with(el::def(e, struct_ref(e, b)).name, "__tuple<");
+  if record {
+    if !(el_ir::unspan(x.code) is NdVar) {
+      el::refuse(e, "a `!` on a record that is not a local");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+  } else if !el_convert::plain_scalar(b) {
     el::refuse(e, "a `!` on this type: {type_kind(b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if e.first_pass {
     return ex(ir::NdNull, b);
   }
-  code = nullable_arith(e, x.code, true);
+  code = if record { x.code } else { nullable_arith(e, x.code, true) };
   held = -1;
   subject = code;
   match code {
@@ -8766,7 +8800,7 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
       subject = ir::NdVar { n: held };
     }
   }
-  check = el_convert::convert_admitting(e, vars, subject, b, ir::TyBoolean);
+  check = if record { el_ir::cl(e, "OpConvBoolFromRef", [subject]) } else { el_convert::convert_admitting(e, vars, subject, b, ir::TyBoolean) };
   if b is TyBoolean {
     check = el_ir::cl(e, "OpNeBool", [subject, el_ir::cl(e, "OpConvBoolFromNull", [])]);
   }
