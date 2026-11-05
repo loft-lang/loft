@@ -976,8 +976,8 @@ pub struct Parser {
     loop_sources_replaced: std::collections::HashSet<(u32, String)>,
     /// A `loop-source-written` notice held to the end of its statement
     /// (`Parser::settle_loop_write`): `(where, what the loop read, the place belongs to the
-    /// innermost loop)`.
-    pub(crate) pending_loop_write: Option<(crate::lexer::Position, String, bool)>,
+    /// innermost loop, the depth of the block whose statement wrote it)`.
+    pub(crate) pending_loop_write: Option<(crate::lexer::Position, String, bool, usize)>,
     /// `@FR-B-Scope` — the names a pattern has pointed at its own bindings since the last
     /// `=>`, each with the variable it named before (`Parser::pattern_binding`).  The arrow
     /// seals them into a frame of `pattern_bind_frames`; the end of the arm's body restores
