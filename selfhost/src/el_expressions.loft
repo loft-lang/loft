@@ -6447,6 +6447,9 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
   if el_types::is_unknown(x.tp) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  if name == "remove" && len(list) == 2 && el_types::base(x.tp) is TyVector {
+    return vector_remove(e, at, x, ex(list[1], types[1]));
+  }
   d = find_fn(e, name, x.tp);
   if d < 0 {
     if !e.first_pass {
@@ -6466,6 +6469,30 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
     return c;
   }
   ex(ir::NdSpan { pos: el::pos_at(e, at), inner: c.code }, c.tp)
+}
+
+// `vector_operations`' `remove`: `v.remove(i)` is `OpRemoveVector(v, elem, i)`, answering whether
+// `i` named an element — `elem` the store type the vector's elements are laid out as.  An element
+// holding a generator's frame (released first, `frame_remove`) is refused by name.
+fn vector_remove(e: el::El, at: integer, x: Ex, i: Ex) -> Ex {
+  inner = match el_types::base(x.tp) { TyVector { inner: vi } => vi, _ => ir::TyUnknown { n: 0 } };
+  if el_types::holds_generator(e, inner, []) {
+    el::refuse(e, "a `remove` of an element holding a generator");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if !el_types::is_unknown(i.tp) && !(el_types::base(i.tp) is TyInteger) {
+    el::refuse(e, "a `remove` whose index is not an integer: {type_kind(i.tp)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyBoolean);
+  }
+  et = el_schema::content_type(e, inner);
+  if et < 0 {
+    el::refuse(e, "a `remove` from a vector of this element type: {type_kind(inner)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ex(ir::NdSpan { pos: el::pos_at(e, at), inner: el_ir::cl(e, "OpRemoveVector", [x.code, ir::NdInt { n: et }, i.code]) }, ir::TyBoolean)
 }
 
 // `Parser::parse_intrinsic_call` and `parse_call_diagnostic`, for `assert` and `panic`: the

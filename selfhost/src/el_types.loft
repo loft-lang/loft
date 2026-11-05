@@ -733,6 +733,49 @@ pub fn owns_droppable(e: el::El, t: integer, path: vector<integer>) -> boolean {
   false
 }
 
+// `Data::type_holds_generator`: a value of this type holds a generator's frame — an
+// `iterator<…>` itself, or one in a field, a variant's field, an element or a tuple member —
+// each definition visited once on a path.
+pub fn holds_generator(e: el::El, t: ir::TypeT, path: vector<integer>) -> boolean {
+  match t {
+    TyIterator { step: _ } => true,
+    TyVector { inner } => holds_generator(e, inner, path),
+    TyOptional { inner } => holds_generator(e, inner, path),
+    TyRefVar { inner } => holds_generator(e, inner, path),
+    TyRewritten { inner } => holds_generator(e, inner, path),
+    TyTuple { elems } => {
+      for m in elems {
+        if holds_generator(e, m, path) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => {
+      d = match t { TyReference { n } => n, TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => keyed_elem(t) };
+      if d < 0 || path.contains(d) {
+        return false;
+      }
+      path += [d];
+      for a in el::def(e, d).attributes {
+        if holds_generator(e, a.typedef[0] ?? ir::TyVoid, path) {
+          return true;
+        }
+      }
+      for x in e.b.data.definitions {
+        if x.def_type == el::DT_ENUM_VALUE && x.parent == d {
+          for a in x.attributes {
+            if holds_generator(e, a.typedef[0] ?? ir::TyVoid, path) {
+              return true;
+            }
+          }
+        }
+      }
+      false
+    }
+  }
+}
+
 // `type_owns_droppable`.
 pub fn type_owns(e: el::El, t: ir::TypeT, path: vector<integer>) -> boolean {
   match t {
