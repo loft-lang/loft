@@ -23993,10 +23993,11 @@ impl Parser {
                     *val = self.sizeof_value(&tp, u32::MAX);
                 }
             }
+            // Under the 32-bit regime `integer` names the `i32` def, whose `size(4)` applies.
             let d_nr = if found {
                 u32::MAX
             } else {
-                self.data.def_nr(&id)
+                self.data.def_nr(self.width32_name(&id))
             };
             if d_nr != u32::MAX
                 && self.data.def_type(d_nr) != DefType::EnumValue
