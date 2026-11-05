@@ -3693,6 +3693,12 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     if e.first_pass {
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // A loft call's fresh record, or a record literal built as a value (its own `__ref_p2_N`,
+    // an "Object" block), is bound to the link as it is (`b = make(…)`, `b = S { … }`).
+    literal = match el_ir::unspan(x.code) { NdBlock { block } => block[0].name == "Object", _ => false };
+    if (minting_call(e, x.code) || literal) && struct_ref(e, el_types::base(x.tp)) == link_rd {
+      return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+    }
     if !(x.code is NdVar) || struct_ref(e, el_types::base(x.tp)) != link_rd {
       el::refuse(e, "a whole value written through a `&` link");
       return ex(ir::NdNull, ir::TyVoid);
