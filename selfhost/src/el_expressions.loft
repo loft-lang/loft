@@ -2614,7 +2614,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       if range && limit == null && !spatial && len(keys) <= 1 && len(hi) <= 1 {
         slice(e, vars, n)
       } else {
-        index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial)
+        index(e, vars, at, ie, keys, range || len(hi) > 0 || limit != null || spatial, hi: hi, limit: limit)
       }
     },
     // An empty `[]` with no element type yet answers `parse_vector`'s untyped marker
@@ -5036,12 +5036,13 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
   def = el::def(e, d);
   list: vector<ir::Node> = [];
   // `parse_object_field`'s header prime: each WRITTEN vector field's handle zeroed right after
-  // the record is made, in literal order.
+  // the record is made, in literal order (#437).  A keyed field's is zeroed where its records
+  // are added, below: those inserts are ordered against a sibling's prime.
   for fi in fields {
     match e.p.nodes[fi] {
       SFieldInit { name: fname } => {
         a = attr_nr(def, fname);
-        if a >= 0 && el_types::is_collection(def.attributes[a]!.typedef[0]) {
+        if a >= 0 && def.attributes[a]!.typedef[0] is TyVector {
           list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: 0 }])];
         }
       },
@@ -5085,15 +5086,15 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
           },
           _ => {}
         }
-        // A keyed field (`hash`, `sorted`, `index`) given a literal is built in place as a vector field
-        // is: its header zeroed above, each record made through the outer record and added.
+        // A keyed field given a literal is built in place as a vector field is: its header zeroed
+        // here, each record made through the outer record and added.
         kd = el_types::keyed_elem(at);
         if kd >= 0 && e.p.nodes[fe!] is SVecLit {
           built = field_vector(e, vars, v, r, d, fname, fe!);
           if built == null {
             return null;
           }
-          list += [ir::NdInsert { items: built! }];
+          list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: 0 }]), ir::NdInsert { items: built! }];
           found += [fname];
           continue;
         }
@@ -6731,6 +6732,8 @@ pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
     TySorted { n: _ } => el::source_nr(e, 0, "sorted"),
     TyIndex { n: _ } => el::source_nr(e, 0, "index"),
     TyHash { n: _ } => el::source_nr(e, 0, "hash"),
+    TyRadix { n: _ } => el::source_nr(e, 0, "spatial"),
+    TyTrie { n: _ } => el::source_nr(e, 0, "trie"),
     TyEnum { n } => n,
     TyReference { n } => n,
     TyUnknown { n } => n,
@@ -8243,7 +8246,8 @@ fn takes(e: el::El, param: ir::TypeT, arg: ir::TypeT) -> boolean {
   if el_types::is_equal(e, param, arg) {
     return true;
   }
-  // A bare collection parameter (`sorted`, `hash`, `index`) takes any instance of its kind, and
+  // A bare collection parameter (`sorted`, `hash`, `index`, `spatial`, `trie`) takes any instance
+  // of its kind, and
   // a bare `reference` any keyed collection, whose handle is a `DbRef` (the store builtins);
   // a nullable one as its base (`@FR-N-Store` reports it).
   match param {
@@ -8256,7 +8260,7 @@ fn takes(e: el::El, param: ir::TypeT, arg: ir::TypeT) -> boolean {
     TyReference { n } => {
       a = el_types::base(arg);
       nm = el::def(e, n).name;
-      (nm == "reference" && keyed_kind(a)) || (nm == "sorted" && a is TySorted) || (nm == "hash" && a is TyHash) || (nm == "index" && a is TyIndex)
+      (nm == "reference" && keyed_kind(a)) || (nm == "sorted" && a is TySorted) || (nm == "hash" && a is TyHash) || (nm == "index" && a is TyIndex) || (nm == "spatial" && a is TyRadix) || (nm == "trie" && a is TyTrie)
     },
     _ => false
   }
@@ -11566,7 +11570,10 @@ fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   pre: vector<ir::Node> = [];
   if scratch >= 0 {
     el_vars::set_var_type(vars, scratch, el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct)));
-    pre += [el_ir::v_set(scratch, el_ir::cl(e, if ct is TyHash { "n_hash_sorted" } else { "n_radix_sorted" }, [x.code, ir::NdInt { n: known }]))];
+    // A range slice's call builds the scratch itself (`keyed_slice`); a whole collection is
+    // copied into one.
+    built = match el_ir::unspan(x.code) { NdCall { def_nr } => el::def(e, def_nr).name == "n_trie_prefix" || el::def(e, def_nr).name == "n_spatial_range", _ => false };
+    pre += [el_ir::v_set(scratch, if built { x.code } else { el_ir::cl(e, if ct is TyHash { "n_hash_sorted" } else { "n_radix_sorted" }, [x.code, ir::NdInt { n: known }]) })];
     src = ir::NdVar { n: scratch };
   }
   start = el_ir::cl(e, "OpIterate", [src, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
@@ -13948,6 +13955,9 @@ fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   x = expression(e, vars, c!);
+  if x.tp is TyTrie || x.tp is TyRadix {
+    return keyed_slice(e, vars, x, lo, hi, null);
+  }
   if bound && el_types::base(x.tp) is TyVector {
     return vector_slice(e, vars, x, lo, hi, inclusive);
   }
@@ -14266,12 +14276,19 @@ fn slice_block_value(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
 // position.  An index that does not provably fit (`index_provably_fit`: a constant, an active
 // loop variable, arithmetic over those) types the element `τ?`, which is refused by name here, as
 // are a range, a key list and a container that is not a vector.
-fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<integer>, ranged: boolean) -> Ex {
-  if c == null || ranged || len(keys) == 0 {
+fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<integer>, ranged: boolean, hi: vector<integer> = [], limit: integer? = null) -> Ex {
+  if c == null || len(keys) == 0 {
     el::refuse(e, "an index that is a range, a key list or a limit");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   x = expression(e, vars, c!);
+  if ranged && (x.tp is TyTrie || x.tp is TyRadix) {
+    return keyed_slice(e, vars, x, keys, hi, limit);
+  }
+  if ranged {
+    el::refuse(e, "an index that is a range, a key list or a limit");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   if keyed_kind(x.tp) {
     return keyed_index(e, vars, at, x, keys);
   }
@@ -14440,6 +14457,66 @@ fn keyed_kind(t: ir::TypeT) -> boolean {
     TyTrie { n: _ } => true,
     _ => false
   }
+}
+
+// `parse_trie_slice`'s prefix and `parse_spatial_slice`: a range over a trie or a spatial index
+// answers the collection's type, its code the call building the scratch the enclosing `for`
+// walks — `n_trie_prefix(c, tp, pre, limit)`, `n_spatial_range(c, tp, from…, has_till, till…,
+// limit)` with each coordinate tuple padded to three axes, an absent limit uncapped.  A trie
+// range with an upper bound (an interval, not a prefix) is refused by name.
+fn keyed_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, hi: vector<integer>, limit: integer?) -> Ex {
+  ct = x.tp;
+  el_d = el_types::keyed_elem(ct);
+  names = el_types::key_names(ct);
+  trie = ct is TyTrie;
+  // An open spatial range (`xs[(x, y)..]`) reads its coordinates as one tuple key.
+  if !trie && len(lo) == 1 {
+    match e.p.nodes[lo[0]] {
+      STupleLit { elems } => { lo = elems; },
+      _ => {}
+    }
+  }
+  if trie && (len(lo) != 1 || len(hi) > 0) || !trie && (len(lo) != len(names) || len(hi) > 0 && len(hi) != len(names)) {
+    el::refuse(e, "a keyed range of this shape");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  fname = if trie { "n_trie_prefix" } else { "n_spatial_range" };
+  f = el::def_nr(e, fname);
+  args: vector<ir::Node> = [x.code, ir::NdInt { n: if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) } }];
+  for side in [lo, hi] {
+    if !trie && side#index == 1 {
+      args += [ir::NdInt { n: if len(hi) > 0 { 1 } else { 0 } }];
+    }
+    for k in side {
+      a = attr_nr(el::def(e, el_d), names[k#index] ?? "");
+      kt = if a < 0 { ir::TyUnknown { n: 0 } } else { el::def(e, el_d).attributes[a]!.typedef[0] };
+      kx = expression(e, vars, k);
+      v = stored(e, vars, kx, kt);
+      if v == null {
+        refuse_known(e, kx.tp, "a key its field's type converts: {type_kind(kx.tp)} to {type_kind(kt)}");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      args += [v!];
+    }
+    if !trie {
+      for _ in len(side)..3 {
+        args += [ir::NdInt { n: 0 }];
+      }
+    }
+  }
+  if limit == null {
+    args += [ir::NdLong { n: 9223372036854775807 }];
+  } else {
+    lx = expression(e, vars, limit!);
+    lt = el::def(e, f).attributes[len(args)]!.typedef[0];
+    lv = stored(e, vars, lx, lt);
+    if lv == null {
+      refuse_known(e, lx.tp, "a keyed range limit of this type: {type_kind(lx.tp)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    args += [lv!];
+  }
+  ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, fname, args) }, ct)
 }
 
 // `parse_index`'s keyed arms, a point lookup (`parse_key`'s last leg): each key converted to its
