@@ -3550,13 +3550,24 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   // field declared `τ?` — is a slot of `τ`: a value is written at `τ` (the `@PLN25` index flip
   // peels the read's `?`), a `null` into a field as `τ`'s null.  A nullable value
   // (`@FR-N-Store`'s question) and any other nullable place stay refused.
-  if pt is TyOptional {
+  if pt is TyOptional && !calls(e, el_ir::unspan(p.code), "OpGetDbRef") {
     pb = el_types::base(pt);
     rd_place = el_ir::unspan(p.code);
     field_place = match rd_place {
       NdCall { args } => len(args) > 0 && !(el_ir::unspan(args[0]) is NdCall && calls(e, el_ir::unspan(args[0]), "OpGetVector")) && !calls(e, rd_place, "OpGetVector"),
       _ => false
     };
+    // A nullable scalar value into a `τ?` field is written as it is: its null is the slot's
+    // sentinel (`@FR-N-Store` holds — the slot can hold null), guarded by the slot's range.
+    if op == "=" && el_convert::plain_scalar(pb) && x.tp is TyOptional && field_place && el_convert::plain_scalar(el_types::base(x.tp)) {
+      nv0 = stored(e, vars, ex(x.code, el_types::base(x.tp)), pb);
+      if nv0 != null {
+        w0n = place_write(e, rd_place, el_convert::guard_range(e, nv0!, pt, x.tp, true));
+        if w0n != null {
+          return ex(w0n!, ir::TyVoid);
+        }
+      }
+    }
     if op == "=" && el_convert::plain_scalar(pb) && !(x.tp is TyOptional) {
       nv: ir::Node? = null;
       if x.tp is TyNull {
@@ -3573,7 +3584,7 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
         }
       }
     }
-    el::refuse(e, "an assignment to a nullable place");
+    el::refuse(e, "an assignment to a nullable place: {if field_place { "a field" } else { "an element" }} of {type_kind(pb)} given {type_kind(x.tp)}{if op == "=" { "" } else { " by {op}" }}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   if op == "=" && el_types::base(pt) is TyVector {
@@ -4892,10 +4903,16 @@ fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) 
     return [z, z];
   }
   match ft {
-    // An omitted pointer field (`reference<T>`) names nothing.
+    // An omitted pointer field (`reference<T>`) names nothing; a `reference<T>?` defaults to the
+    // `null` literal (`object_init`'s nullable arm).
     TyReference { n: _, dep } => {
       if len(dep) > 0 {
         return [el_ir::cl(e, "OpSetDbRef", [r, ir::NdInt { n: pos }, el_ir::cl(e, "OpNullRefSentinel", [])])];
+      }
+    },
+    TyOptional { inner } => {
+      if el_types::is_pointer(inner) {
+        return [el_ir::cl(e, "OpSetDbRef", [r, ir::NdInt { n: pos }, ir::NdNull])];
       }
     },
     _ => {}
