@@ -3550,6 +3550,22 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   // field declared `τ?` — is a slot of `τ`: a value is written at `τ` (the `@PLN25` index flip
   // peels the read's `?`), a `null` into a field as `τ`'s null.  A nullable value
   // (`@FR-N-Store`'s question) and any other nullable place stay refused.
+  // `towards_set_hash_remove`: `c[key] = null` on a keyed local removes the record under the key —
+  // `OpHashRemove(c, <the place's read>, tp)`.  A keyed FIELD may share its records with linked
+  // siblings (`keyed_group_remove`, every sibling unlinked first): refused by name.
+  if op == "=" && x.tp is TyNull && calls(e, el_ir::unspan(p.code), "OpGetRecord") {
+    gr = el_ir::unspan(p.code);
+    match gr {
+      NdCall { args } => {
+        if len(args) >= 2 && el_ir::unspan(args[0] ?? ir::NdNull) is NdVar {
+          return ex(el_ir::cl(e, "OpHashRemove", [el_ir::unspan(args[0] ?? ir::NdNull), gr, args[1] ?? ir::NdNull]), ir::TyVoid);
+        }
+      },
+      _ => {}
+    }
+    el::refuse(e, "a removal from a keyed field (its linked group)");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   if pt is TyOptional && !calls(e, el_ir::unspan(p.code), "OpGetDbRef") {
     pb = el_types::base(pt);
     rd_place = el_ir::unspan(p.code);
