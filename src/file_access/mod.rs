@@ -340,6 +340,23 @@ pub fn open_read_write(path: impl HostPath) -> io::Result<std::fs::File> {
     })
 }
 
+/// Open the file for reading AND writing, creating it when absent and never truncating it: the
+/// file a file-backed store maps (`crate::mmap_file`).
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn open_or_create_read_write(path: impl HostPath) -> io::Result<std::fs::File> {
+    let path = &*path.to_path_text();
+    run(path, |p| {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(p)
+    })
+}
+
 /// Open the file for writing, creating it if absent and never truncating it: the handle a
 /// process takes an exclusive `lock()` on to serialise a read-modify-write of a sibling file
 /// (the test ledger's merge, `crate::ledger`).

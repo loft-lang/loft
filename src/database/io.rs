@@ -914,7 +914,7 @@ impl Stores {
             // SAFETY: the mapping is read-only and lives in the store's owner for as long as
             // any reference into the store does; a writer changing the file underneath is the
             // hazard every mapped file has (`Store::open` accepts the same one).
-            let Ok(map) = (unsafe { memmap::Mmap::map(&file) }) else {
+            let Ok(map) = (unsafe { memmap2::Mmap::map(&file) }) else {
                 return DbRef::NULL;
             };
             let base = map.as_ptr();

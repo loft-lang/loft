@@ -42,7 +42,7 @@
 //! be backed by a memory-mapped file (`mmap` feature).
 
 #[cfg(feature = "mmap")]
-use mmap_storage::file::Storage as MmapStorage;
+use crate::mmap_file::MmapFile as MmapStorage;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
@@ -684,7 +684,7 @@ pub enum ForeignOwner {
     Bytes(Vec<u8>),
     /// A read-only mapping of a file (`file_map`).
     #[cfg(feature = "mmap")]
-    Map(memmap::Mmap),
+    Map(memmap2::Mmap),
     /// @PLN174 F5 — a block a cdylib handed over across the C ABI
     /// (`loft_ffi::LoftStore::foreign_vector_from_owned`): the parts of its `Vec<u8>`
     /// and the cdylib's own release, which frees the block in the allocator that made
