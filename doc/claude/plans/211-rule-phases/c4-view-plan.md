@@ -57,6 +57,41 @@ function has an element-first pair that needs the plan: rustc's element-first cl
 nowhere on the benches.  So the clause carries weight on its own — the value form of a parser's
 result — and the element-first form rides on it; S1 comes next, before `(R-LoopRecord)`.
 
+## S1's design
+
+What the IR holds at the two ends (`LOFT_LOG=static`, a `parse_poly`-shaped probe):
+
+```text
+callee exit   OpSetInt4(buf, 0, 0); OpAppendVector(OpGetField(buf, 0, Vec), g2_p, …)
+              — after  _elm_2 = OpNewRecord(sc, Op, ops) … OpAppendVector(OpGetField(_elm_2, 8, Vec), g2_p, …)
+caller        m = n_g2(sc, x, __ref_1);  … OpLengthVector(OpGetField(m, 0, Vec)) …
+              OpGetVector(OpGetField(m, 0, Vec), 16, 1) …  OpFreeRefIfDistinct(m, __ref_1)
+```
+
+- **One analysis.**  `value_record::rewrite_program` already calls
+  `opt::value_records::value_records` on the IR it rewrites; its `views` (the per-exit
+  `LeafSource`), `view_offs` and its call-site verdict are read there, on the same IR, as the
+  address idiom requires.  The IR pass computes no plan of its own.
+- **The layout** gains a view kind: a heap field whose offset `view_offs` lists for the record,
+  carried as the field's own vector type with a dependency (a borrowed member:
+  `tuple_members.rs` frees only a member whose type has no dependency).  Only a RESULT layout
+  takes it; a tuple parameter stays flat.
+- **The callee**: each exit's view field becomes its leaf, by `views[f].leaves[(exit, off)]`:
+  `Elem` → `OpGetField(Var(elem), off, tp)`, `Null` → the null vector.  `Last` declines the
+  function in S1 (no bench function has it).  The exit's copy into the buffer field goes with the
+  buffer.
+- **The caller**: a carrier's `OpGetField(m, off, Vec)` at a view offset becomes
+  `TupleGet(m, i)`; a site the analysis's verdict does not hold for owes the record form (the
+  twin road), so a site that may disturb the place reads a copy, as now.
+- **The writers** emit the IR's tuple: a vector member is their reference part
+  (`CType::Ref`, `DbRef`).  They then find no view-leaf function of their own where the IR took
+  it; S2 deletes what remains.
+
+Probed: a loft tuple carries an OWNED vector member on all three backends; a null reference
+reads as length 0 (`vector::length_vector`).  A BORROWED member has no user spelling (a whole
+collection bind copies, `(B-Copy)`), so S1's plant (the view freed with the tuple) is its
+falsifier.
+
 ## The invariant
 
 **One value-record decision per function, made in the IR phase and spelled in the IR**, so that
