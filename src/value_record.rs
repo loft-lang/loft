@@ -23,11 +23,11 @@
 //! parameter.  The shapes, all required, anything else declining the function or parameter
 //! everywhere, to a fixpoint:
 //!
-//! - an admitted function is one loft calls somewhere (one nothing in loft calls is called
-//!   from outside loft by name, so its signature is its API); a `pub` one keeps its record
-//!   for the callers outside — a library's API keeps its record, `(R-Escape)` — and its
-//!   TWIN serves loft's own carriers; an admitted parameter belongs to a function that is
-//!   not `pub`;
+//! - an admitted function or parameter belongs to a function that is not `pub` and that
+//!   loft calls somewhere (one nothing in loft calls is called from outside loft by name, so
+//!   its signature is its API).  A `pub` function the analysis admits is first SPLIT
+//!   ([`split_public`]): the API keeps its record for the callers outside, `(R-Escape)`, and
+//!   every loft call reaches an internal copy, which is an ordinary function here;
 //! - its record is FLAT: at least two fields (a loft tuple has two or more elements), each
 //!   an 8-byte integer, a float, a single or a boolean;
 //! - an admitted function's buffer appears only in object literals filling each field
@@ -295,7 +295,10 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         return 0;
     }
     let mut laps = crate::opt::laps::PassLaps::new(std::env::var_os("LOFT_TIMING").is_some());
-    let vr = crate::opt::value_records::value_records(data, stores, false);
+    let mut vr = crate::opt::value_records::value_records(data, stores, false);
+    if split_public(data, &vr) {
+        vr = crate::opt::value_records::value_records(data, stores, false);
+    }
     laps.lap("vr_analysis");
     if vr.fns.is_empty() && vr.params.is_empty() {
         return 0;
@@ -371,7 +374,15 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             called.extend(v.called);
         }
         // Nothing in loft calls it: it is called from outside, by name.
-        bad_fns.extend(w.cands.keys().filter(|d| !called.contains(d)));
+        for d in w.cands.keys().filter(|d| !called.contains(d)) {
+            if trace() {
+                eprintln!(
+                    "[ir-valuerec] {}: nothing in loft calls it",
+                    data.def(*d).name()
+                );
+            }
+            bad_fns.insert(*d);
+        }
         bad_params.extend(w.params.keys().filter(|(d, _)| !called.contains(d)));
         if bad_fns.is_empty() && bad_params.is_empty() {
             break;
@@ -389,14 +400,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     // TWIN returning the tuple serves the carriers.  A site that owes a record therefore
     // runs the code it ran before, on both backends.  A twinned forward keeps its record,
     // so the function it forwards is owed there in turn.
-    // A `pub` function is owed its record from the start: a caller outside the program — a
-    // library's cdylib bridge — sees its API, `(R-Escape)`.
-    let mut twinned: HashSet<u32> = w
-        .cands
-        .keys()
-        .copied()
-        .filter(|&d| data.def(d).pub_visible)
-        .collect();
+    let mut twinned: HashSet<u32> = HashSet::default();
     let mut plans: Vec<(u32, Plan)>;
     let mut twin_plans: Vec<(u32, Plan)>;
     loop {
@@ -487,12 +491,23 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
 /// A copy of function `d` under a fresh name, for the tuple form while `d` keeps its record
 /// form for the sites that owe one.
 fn add_twin(data: &mut Data, d: u32) -> u32 {
+    add_copy(
+        data,
+        d,
+        "tuple",
+        "the tuple twin of a small-record return (@PLN180)",
+    )
+}
+
+/// A copy of function `d` named `<d>_<suffix>`: no `pub` API, no native symbol — a new
+/// loft function the program alone calls.
+fn add_copy(data: &mut Data, d: u32, suffix: &str, why: &'static str) -> u32 {
     let base = data.def(d).name().to_string();
-    let mut name = format!("{base}_tuple");
+    let mut name = format!("{base}_{suffix}");
     let mut n = 1;
     while data.def_nr(&name) != u32::MAX {
         n += 1;
-        name = format!("{base}_tuple{n}");
+        name = format!("{base}_{suffix}{n}");
     }
     let position = data.def(d).position;
     let t = data.add_def(&name, &position, DefType::Function);
@@ -502,9 +517,69 @@ fn add_twin(data: &mut Data, d: u32) -> u32 {
     def.first_child = u32::MAX;
     def.next_sibling = u32::MAX;
     def.pub_visible = false;
-    def.synthetic = Some("the tuple twin of a small-record return (@PLN180)");
+    def.native = String::new();
+    def.synthetic = Some(why);
     data.definitions[t as usize] = def;
     t
+}
+
+/// `(R-Escape)` — a `pub` function's signature is its library API: a caller outside the
+/// program (a library's cdylib bridge) holds it to its records.  So every `pub` function the
+/// analysis admits — a result or a parameter — is split: the API stays as written and calls
+/// nobody's tuple, and every call loft makes reaches an internal copy, which this pass then
+/// treats as any other function.  A function a cdylib carries (`Definition::native`) is not
+/// split: its calls go through the bridge, record ABI and all.  Answers whether anything was
+/// split, so the analysis is asked again over the copies.
+fn split_public(data: &mut Data, vr: &crate::opt::value_records::layout::ValueRecords) -> bool {
+    let mut public: Vec<u32> = vr
+        .fns
+        .keys()
+        .chain(vr.params.keys())
+        .copied()
+        .filter(|&d| {
+            let def = data.def(d);
+            def.pub_visible && def.native.is_empty() && def.def_type == DefType::Function
+        })
+        .collect();
+    public.sort_unstable();
+    public.dedup();
+    if public.is_empty() {
+        return false;
+    }
+    let to: HashMap<u32, u32> = public
+        .iter()
+        .map(|&d| {
+            (
+                d,
+                add_copy(
+                    data,
+                    d,
+                    "in",
+                    "the internal copy of a pub function (R-Escape)",
+                ),
+            )
+        })
+        .collect();
+    for f in 0..data.definitions() {
+        let def = &mut data.definitions[f as usize];
+        if def.def_type != DefType::Function {
+            continue;
+        }
+        redirect_calls(&mut def.code, &to);
+    }
+    true
+}
+
+/// Every `Call(d, …)` below `n` with `d` in `to` calls `to[d]` instead.  A function is
+/// reached only through such a call or a fn-ref; a fn-ref keeps the API, whose record
+/// signature the dispatch compares against.
+fn redirect_calls(n: &mut Value, to: &HashMap<u32, u32>) {
+    if let Value::Call(d, _) = n
+        && let Some(t) = to.get(d)
+    {
+        *d = *t;
+    }
+    n.for_each_child_mut(&mut |c| redirect_calls(c, to));
 }
 
 /// The callee half of the shape, or `None` when `d` cannot return a tuple here.
@@ -520,6 +595,11 @@ fn callee_shape(
     let def = data.def(d);
     if def.def_type != DefType::Function {
         return Err("no function");
+    }
+    // A function a library's cdylib carries is called through its bridge, record ABI and
+    // all; a twin cloned from it would inherit the symbol (`Definition::native`).
+    if !def.native.is_empty() {
+        return Err("a native function");
     }
     // The return buffer is the LAST attribute, so dropping it moves no other parameter.
     let idx = def.hidden_return_buffer_attr().ok_or("no return buffer")?;
@@ -920,18 +1000,24 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
         .map(Value::unspan)
         .filter(|o| !matches!(o, Value::Line(_)))
         .collect();
-    let (head, rest) = body.split_first()?;
-    let (last, middle) = rest.split_last()?;
-    if !is_header(head, buf, ops) {
+    // A literal whose field values are staged before the record is minted
+    // (`__stg_… = …; if … OpDatabase(buf, tp); OpSetX(buf, off, __stg_…)`) opens with the
+    // staging statements: they do not name the buffer and run where they ran.
+    let at = body.iter().position(|o| is_header(o, buf, ops))?;
+    let (staging, body) = body.split_at(at);
+    if staging.iter().any(|o| mentions(o, buf)) {
         return None;
     }
+    let (_, rest) = body.split_first()?;
+    let (last, middle) = rest.split_last()?;
     let is_buf = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == buf);
     let returns = match last {
         Value::Var(v) if *v == buf => false,
         Value::Return(x) if is_buf(x) => true,
         _ => return None,
     };
-    let mut parts = vec![Part::Header];
+    let mut parts: Vec<Part> = staging.iter().map(|o| Part::Other(o)).collect();
+    parts.push(Part::Header);
     for o in middle {
         let part = match o {
             // A view field's handle zeroed: its value is the exit's leaf (`Callee::leaves`).
