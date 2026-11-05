@@ -2383,14 +2383,16 @@ impl Rewrite<'_> {
         let old = std::mem::take(list);
         for mut o in old {
             if dropped(&o, &w.ops, plan) {
-                // A lent carrier's scope ends: the record it was lent as goes with it.
+                // A lent carrier's scope ends: the record it was lent as goes with it, by the
+                // same release (a plain free, or "unless it is that store").
                 if let Value::Call(op, a) = o.unspan()
-                    && *op == w.ops.free_ref
-                    && let [x] = a.as_slice()
-                    && let Value::Var(x) = x.unspan()
+                    && (*op == w.ops.free_ref || *op == w.ops.free_if_distinct)
+                    && let Some(Value::Var(x)) = a.first().map(Value::unspan)
                     && let Some(&t) = self.lends.get(x)
                 {
-                    list.push(Value::Call(w.ops.free_ref, vec![Value::Var(t)]));
+                    let mut args = a.clone();
+                    args[0] = Value::Var(t);
+                    list.push(Value::Call(*op, args));
                 }
                 continue;
             }
