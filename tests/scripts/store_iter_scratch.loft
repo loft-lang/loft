@@ -16,6 +16,7 @@
 //   MODE   "memory" (default) | "exits"
 //   N      records (default 2000)
 //   PASSES iterations in memory mode (default 40)
+// @observes: LOFT_NO_FREE_FOOTER — it prints the store census, whose free-block count the free footer's merging decides.
 
 struct Rec { const id: integer, const n: integer, const label: text }
 struct Cell { const cx: integer, const cy: integer, const w: integer }
