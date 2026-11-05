@@ -1715,9 +1715,11 @@ impl Parser {
         let scalar_or_text =
             |tp: &Type| -> bool { !self.type_owns_heap(tp) && !matches!(tp.base(), Type::Void) };
         // Per callee, which parameters its body WRITES (`callee_param_writes`, field writes and
-        // forwarded writes included): a call that writes one of its other arguments is no
-        // reader of the intermediate — `work_ref(v, tp(v, p))` adds a variable to `v` on every
-        // call, so answering `tp(v, p)` once would not turn three calls into one.
+        // forwarded writes included): a call that writes any of its arguments is no reader of
+        // the intermediate.  `work_ref(v, tp(v, p))` adds a variable to `v` on every call, so
+        // answering `tp(v, p)` once would not turn three calls into one; and a call writing
+        // the intermediate itself (`classify(fresh(ops), d)`, a memo it fills) is given a
+        // workspace, whose fields are no value a caller would keep between reads.
         let mut writes_cache = crate::fxhash::FxHashMap::default();
         let mut found: Option<(u32, u16)> = None;
         let mut visit = |n: &Value| {
@@ -1733,23 +1735,19 @@ impl Parser {
             let scalar_call = (name.starts_with("n_") || name.starts_with("t_"))
                 && data.def(*op).is_loft_defined()
                 && scalar_or_text(data.def(*op).returned());
-            let writes = if scalar_call {
-                super::closures::callee_param_writes(*op, data, &mut writes_cache)
-            } else {
-                Vec::new()
-            };
+            // A hidden parameter is the compiler's (a text result's buffer), not the author's.
+            if scalar_call {
+                let attrs = data.def(*op).attributes();
+                if super::closures::callee_param_writes(*op, data, &mut writes_cache)
+                    .iter()
+                    .enumerate()
+                    .any(|(j, w)| *w && attrs.get(j).is_some_and(|at| !at.hidden))
+                {
+                    return;
+                }
+            }
             for (i, a) in args.iter().enumerate() {
                 if !((projection && i == 0) || scalar_call) {
-                    continue;
-                }
-                // A hidden parameter is the compiler's (a text result's buffer), not the author's.
-                let attrs = data.def(*op).attributes();
-                if scalar_call
-                    && writes
-                        .iter()
-                        .enumerate()
-                        .any(|(j, w)| *w && j != i && attrs.get(j).is_some_and(|at| !at.hidden))
-                {
                     continue;
                 }
                 if let Value::Call(g, g_args) = a.unspan()
