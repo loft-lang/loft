@@ -2825,13 +2825,13 @@ fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         }
       }
       // `Parser::captured_names`: the enclosing body's locals the lambda reads, in the order it
-      // first meets them.  Carried for a plain scalar the lambda only reads, in a lambda with
-      // none nested in it; any other capture is refused by name.
+      // first meets them.  Carried for a plain scalar or a text the lambda only reads, in a
+      // lambda with none nested in it; any other capture is refused by name.
       caps: vector<el::Capture> = [];
       for c in captured_names(e, vars, body!, own) {
         cv = el_vars::var(vars, c);
         ct = el_vars::tp(vars, cv);
-        if !el_convert::plain_scalar(ct) || ct is TyOptional || el_convert::plain_enum(ct) {
+        if !(el_convert::plain_scalar(ct) || el_types::base(ct) is TyText) || ct is TyOptional || el_convert::plain_enum(ct) {
           el::refuse(e, "a lambda that captures a local of its function: of this type {type_kind(ct)}");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
@@ -2905,7 +2905,8 @@ fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps:
     a = attr_nr(el::def(e, rd), c.name);
     cv = el_vars::var(vars, c.name);
     rd_node = field_get(e, rd, a, ir::NdVar { n: w });
-    wr = if rd_node == null { null } else { place_write(e, rd_node!, ir::NdVar { n: cv }) };
+    // A text field of the fresh record is set, not replaced (`OpSetText`).
+    wr = if rd_node == null { null } else if c.tp is TyText { el_ir::cl(e, "OpSetText", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, c.name) }, ir::NdVar { n: cv }]) } else { place_write(e, rd_node!, ir::NdVar { n: cv }) };
     if wr == null || cv < 0 {
       el::refuse(e, "a lambda capture written into its closure record");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
