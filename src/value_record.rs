@@ -1275,6 +1275,30 @@ fn body_shape(
     }
 }
 
+/// `if OpDistinctStore(x, p) OpCopyRecord(x, p, tp) else null` — a call built into PLACE `p`
+/// (a pushed element) whose answer `x` is copied there unless it already is `p`: `(x, p)`.
+fn place_copy(n: &Value, ops: &Ops) -> Option<(u16, u16)> {
+    let Value::If(c, t, e) = n else {
+        return None;
+    };
+    let var = |v: &Value| match v.unspan() {
+        Value::Var(x) => Some(*x),
+        _ => None,
+    };
+    let Value::Call(op, a) = c.unspan() else {
+        return None;
+    };
+    let Value::Call(cp, ca) = t.unspan() else {
+        return None;
+    };
+    if *op != ops.distinct_store || *cp != ops.copy_record || a.len() != 2 || ca.len() != 3 {
+        return None;
+    }
+    let (x, p) = (var(&a[0])?, var(&a[1])?);
+    (matches!(e.unspan(), Value::Null) && var(&ca[0]) == Some(x) && var(&ca[1]) == Some(p))
+        .then_some((x, p))
+}
+
 /// `if OpDistinctStore(buf, w) OpFreeRefIfDistinct(buf, …) else null` — the free a forward
 /// guards by the witness it keeps of its buffer.
 fn is_buffer_guard(n: &Value, cond: &Value, buf: u16, ops: &Ops) -> bool {
@@ -1556,6 +1580,8 @@ struct Scan {
     /// Admitted parameters handed something that is not a variable.
     unserved: HashSet<(u32, usize)>,
     called: HashSet<u32>,
+    /// `(x, p)` per place copy (`place_copy`): `x` bound from a call built into place `p`.
+    place_binds: Vec<(u16, u16)>,
     /// A variable handed to a RECORD parameter no tuple serves: `(variable, callee, index)`.
     lent: Vec<(u16, u32, usize)>,
     /// Presence tests `OpConvBoolFromRef(x)` / `OpRefIsNull(x)`, by variable: a nullable
@@ -1724,6 +1750,10 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             let Some(r) = *r else {
                 return Some("a bind's buffer: no buffer variable");
             };
+            // Built into a PLACE and copied there: the place lives on, written from the tuple.
+            if s.place_binds.contains(&(l, r)) {
+                return None;
+            }
             let forward = own == Some(r);
             if buffer_uses[&r] != 1 && r != l {
                 Some("a bind's buffer: shared by several binds")
@@ -1796,7 +1826,12 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         // tuple into the buffer they pass, and the callee still returns a tuple everywhere.
         if ok {
             plan.carriers.insert(l, record);
-            plan.buffers.extend(binds.iter().filter_map(|(_, r)| *r));
+            plan.buffers.extend(
+                binds
+                    .iter()
+                    .filter_map(|(_, r)| *r)
+                    .filter(|r| !s.place_binds.contains(&(l, *r))),
+            );
             if s.lent.iter().any(|(x, ..)| *x == l) {
                 plan.lent.insert(l);
             }
@@ -2094,6 +2129,9 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                 scan(op, true, w, s);
             }
         }
+        Value::If(..) if stmt && let Some((x, p)) = place_copy(n, ops) => {
+            s.place_binds.push((x, p));
+        }
         Value::If(cond, ..)
             if stmt
                 && let Value::Call(_, args) = cond.unspan()
@@ -2335,6 +2373,30 @@ impl Rewrite<'_> {
                     && let Some(&t) = self.lends.get(x)
                 {
                     list.push(Value::Call(w.ops.free_ref, vec![Value::Var(t)]));
+                }
+                continue;
+            }
+            if let Some((x, p)) = place_copy(o.unspan(), &w.ops)
+                && let Some(record) = plan.carriers.get(&x)
+            {
+                // The call built into place `p`; the tuple is written there — never the same
+                // store, so unconditionally.
+                let layout = &w.layouts[record];
+                let writes = write_fields(layout, &Value::Var(p), x, &w.ops);
+                match layout.presence() {
+                    Some(pi) => list.push(Value::If(
+                        Box::new(Value::TupleGet(x, pi)),
+                        Box::new(crate::data::v_block(writes, Type::Void, "vr_copy")),
+                        Box::new(Value::Call(
+                            w.ops.copy_record,
+                            vec![
+                                Value::Call(w.ops.null_ref, Vec::new()),
+                                Value::Var(p),
+                                Value::Int(i32::from(layout.tp)),
+                            ],
+                        )),
+                    )),
+                    None => list.extend(writes),
                 }
                 continue;
             }
