@@ -280,6 +280,9 @@ struct Scopes<'s> {
     /// @PLN157 § V-g — the record locals this function only ever READS, off the raw body
     /// (`use_analysis::read_only_record_locals`); one input of `view_elision_bind`.
     read_only_locals: Vec<bool>,
+    /// The locals something writes through (`use_analysis::written_through_locals`), off the
+    /// raw body: a view copied out of its container is reported only if it is one.
+    written_through: crate::fxhash::FxHashSet<u16>,
     /// Variables assigned ANYWHERE in this function ([`assigned_in`]).  A parameter in this
     /// set is rebound after entry, so it cannot stand witness for a store it named at a
     /// bind: `view_elision_bind` declines it, and the collection join takes its snapshot.

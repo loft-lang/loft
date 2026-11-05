@@ -276,7 +276,7 @@ place as one naming an element inside it, and only the first re-read after a gro
 field slot, so the walk asks whether the chain crossed an element read
 (`use_analysis::view_source_place_indexed`). `LOFT_NO_CALLEE_DISTURB=1` restores the frame-only
 walk and `LOFT_TRACE_DISTURB=1` names each disturbed place; the receipts are
-`tests/scripts/164-callee-disturb.loft` (15 pairs, each callee cell beside the inline twin that
+`tests/scripts/164-callee-disturb.loft` (16 pairs, each callee cell beside the inline twin that
 is its conformant oracle) and `tests/callee_disturb.rs`.
 
 Pinned by `loft-suite/attic/scripts/774-view-outlives-reassigned-container.loft` (the reassignment

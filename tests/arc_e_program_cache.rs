@@ -517,10 +517,11 @@ fn a_warm_run_says_which_views_were_copied_out() {
     let cache = tmp.join(format!("loft_mview_cache_{pid}"));
     let _ = fa::remove_dir_all(&cache);
     fa::create_dir_all(&cache).expect("create cache dir");
-    // `w` views a field of `h`; reassigning `h` copies `w` out, and the author is told.
+    // `w` views a field of `h`; reassigning `h` copies `w` out, and a write through `w` no
+    // longer reaches `h`, so the author is told.
     fa::write(
         &script,
-        "struct MvBox { n: integer }\nstruct MvHolder { b: MvBox, tag: integer }\nfn main() {\n  h = MvHolder { b: MvBox { n: 30 }, tag: 1 };\n  w = h.b;\n  h = MvHolder { b: MvBox { n: 40 }, tag: 2 };\n  print(\"{w.n} {h.b.n}\\n\");\n}\n",
+        "struct MvBox { n: integer }\nstruct MvHolder { b: MvBox, tag: integer }\nfn main() {\n  h = MvHolder { b: MvBox { n: 30 }, tag: 1 };\n  w = h.b;\n  h = MvHolder { b: MvBox { n: 40 }, tag: 2 };\n  w.n = 31;\n  print(\"{w.n} {h.b.n}\\n\");\n}\n",
     )
     .expect("write script");
     let run = || -> (String, String) {
@@ -540,7 +541,7 @@ fn a_warm_run_says_which_views_were_copied_out() {
         )
     };
     let (out_cold, err_cold) = run();
-    assert_eq!(out_cold.trim(), "30 40", "the cold run: {err_cold}");
+    assert_eq!(out_cold.trim(), "31 40", "the cold run: {err_cold}");
     assert!(
         err_cold.contains("`w` was copied out of `h`"),
         "the cold run must print the advice this compares; got: {err_cold}"

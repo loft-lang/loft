@@ -68,7 +68,7 @@ fn the_pairs_agree_on_both_backends_under_every_falsifier() {
     let (ok, out, err) = run("--interpret", STRICT);
     assert!(ok, "the guard failed on --interpret:\n{err}");
     assert!(
-        out.contains("15 pairs, inline and callee agree"),
+        out.contains("16 pairs, inline and callee agree"),
         "the guard did not reach its last pair:\n{out}"
     );
     let (native_ok, native, native_err) = run("--native-rust", STRICT_NATIVE);
@@ -110,14 +110,14 @@ fn the_advice_names_the_callee_the_disturbance_came_through() {
     let (_, _, err) = run("--interpret", &[]);
     assert!(
         err.contains(
-            "in `c_grow_callee`, `e` was copied out of `sc` because `sc` grows inside the call \
+            "in `c_write_callee`, `e` was copied out of `sc` because `sc` grows inside the call \
              to `grow_field` while `e` is in use"
         ),
         "a growth one frame down must name its callee:\n{err}"
     );
     assert!(
         err.contains(
-            "in `c_rm_moves_callee`, `e` was copied out of `sc` because `sc` is modified inside \
+            "in `c_rm_write_callee`, `e` was copied out of `sc` because `sc` is modified inside \
              the call to `remove_first` while `e` is in use"
         ),
         "a removal one frame down must name its callee:\n{err}"
@@ -125,10 +125,18 @@ fn the_advice_names_the_callee_the_disturbance_came_through() {
     // The INLINE twin keeps the sentence it always had: no call, no clause.
     assert!(
         err.contains(
-            "in `c_grow_inline`, `e` was copied out of `sc` because `sc` grows while `e` is in use"
+            "in `c_write_inline`, `e` was copied out of `sc` because `sc` grows while `e` is in use"
         ),
         "an inline growth must not gain a callee clause:\n{err}"
     );
+    // A view only READ after its copy reads the same bytes as the place would have: the copy
+    // changes nothing the program computes, so it draws no advice.
+    for read_only in ["c_grow_callee", "c_rm_moves_callee", "c_grow_inline"] {
+        assert!(
+            !err.contains(&format!("in `{read_only}`")),
+            "`{read_only}` only reads its copied view, so it must draw no copy notice:\n{err}"
+        );
+    }
     // Every control must be silent: an advice line there would be asserting that writes stop
     // reaching the container, over a binding the cells prove still aliases.
     for quiet in [
@@ -158,9 +166,9 @@ fn the_advice_names_a_payload_binding_as_written() {
          struct S { nodes: vector<N> }\n\
          fn add(s: S, n: N) -> integer { s.nodes += [n]; len(s.nodes) - 1 }\n\
          fn live_after(s: S) -> integer {\n\
-           match s.nodes[0] { N { xs } => { k = add(s, N { xs: [] }); k + len(xs) } }\n\
+           match s.nodes[0] { N { xs } => { k = add(s, N { xs: [] }); xs += [7]; k + len(xs) } }\n\
          }\n\
-         fn main() { s = S { nodes: [N { xs: [1, 2] }] }; assert(live_after(s) == 3, \"k + len\"); }\n",
+         fn main() { s = S { nodes: [N { xs: [1, 2] }] }; assert(live_after(s) == 4, \"k + len\"); }\n",
     )
     .expect("write probe");
     let out = loft()
@@ -286,7 +294,9 @@ fn assert_argument_reads(mode: &str, env: &[(&str, &str)]) {
     let path = dir.join("argument_reads.loft");
     loft::file_access::write(&path, ARGUMENT_READS).expect("write program");
     let mut cmd = loft();
-    cmd.arg(mode).arg(&path);
+    // The trace names every view copied out of its container; the advice names only one
+    // something writes through, and these views are only read.
+    cmd.arg(mode).arg(&path).env("LOFT_TRACE_DISTURB", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -305,9 +315,9 @@ fn assert_argument_reads(mode: &str, env: &[(&str, &str)]) {
     );
     for dead in ["g_lit", "g_elem", "g_len", "g_plain", "r_lit", "a_lit"] {
         assert!(
-            !err.contains(&format!("in `{dead}`,")),
+            !err.contains(&format!("[materialise] {dead} ")),
             "[{mode}] `{dead}` reads its view only into an argument the callee cannot keep — \
-             no copy, no notice\n{err}"
+             no copy\n{err}"
         );
     }
     for live in [
@@ -320,9 +330,14 @@ fn assert_argument_reads(mode: &str, env: &[(&str, &str)]) {
         "k_rm_next",
     ] {
         assert!(
-            err.contains(&format!("in `{live}`,")),
-            "[{mode}] `{live}` holds its view across the callee's disturbance — the copy and \
-             its notice stay\n{err}"
+            err.contains(&format!("[materialise] {live} `xs`")),
+            "[{mode}] `{live}` holds its view across the callee's disturbance — the copy \
+             stays\n{err}"
+        );
+        // Only read after the copy: the author is not told.
+        assert!(
+            !err.contains(&format!("in `{live}`,")),
+            "[{mode}] `{live}` only reads its copied view — no copy notice\n{err}"
         );
     }
 }
@@ -353,9 +368,10 @@ fn p_callee(s: &S) -> integer { xs = s.nodes[0].xs; r = reset(s); r + xs[0] * 10
 fn p_inline(s: &S) -> integer { xs = s.nodes[0].xs; s = fresh(); len(s.nodes) * 100 + xs[0] * 10 + xs[1] }
 fn p_loop(s: &S) -> integer { xs = s.nodes[0].xs; t = 0; for _ in 0..2 { t += reset(s) + xs[0]; } t }
 fn c_dead(s: &S) -> integer { xs = s.nodes[0].xs; a = xs[0] * 10 + xs[1]; r = reset(s); r + a }
+fn p_write(s: &S) -> integer { xs = s.nodes[0].xs; r = reset(s); xs += [5]; r + len(xs) }
 fn main() {
-  s1 = mk(); s2 = mk(); s3 = mk(); s4 = mk();
-  print("{p_callee(s1)} {p_inline(s2)} {p_loop(s3)} {c_dead(s4)} {s1.nodes[0].xs}\n");
+  s1 = mk(); s2 = mk(); s3 = mk(); s4 = mk(); s5 = mk();
+  print("{p_callee(s1)} {p_inline(s2)} {p_loop(s3)} {c_dead(s4)} {s1.nodes[0].xs} {p_write(s5)}\n");
 }
 "#;
 
@@ -379,19 +395,26 @@ fn assert_ref_param_reassign(mode: &str, env: &[(&str, &str)]) {
         out.status.success(),
         "[{mode}] the program must run clean\n{stdout}\n---\n{err}"
     );
-    // reset leaves one node (100); each view holds the record as it was at its bind.
+    // reset leaves one node (100); each view holds the record as it was at its bind, and
+    // `p_write`'s append lands in its copy: [1, 2, 5].
     assert!(
-        stdout.contains("112 112 202 112 [9]"),
+        stdout.contains("112 112 202 112 [9] 103"),
         "[{mode}] the program must answer its hand-computed values\n{stdout}"
     );
-    for live in ["p_callee", "p_inline", "p_loop"] {
+    assert!(
+        err.contains(
+            "in `p_write`, `xs` was copied out of `s` because `s` is reassigned while `xs` is in \
+             use"
+        ),
+        "[{mode}] `p_write` writes through its view after `s` is reassigned — the copy is owed \
+         and the author is told\n{err}"
+    );
+    // The copy is owed in these too (the values above prove it), but nothing writes through
+    // the view, so the copy changes nothing the program computes and draws no advice.
+    for read_only in ["p_callee", "p_inline", "p_loop"] {
         assert!(
-            err.contains(&format!(
-                "in `{live}`, `xs` was copied out of `s` because `s` is reassigned while `xs` \
-                 is in use"
-            )),
-            "[{mode}] `{live}` reads its view after `s` is reassigned — the copy is owed and \
-             the author is told\n{err}"
+            !err.contains(&format!("in `{read_only}`,")),
+            "[{mode}] `{read_only}` only reads its copied view — no copy notice\n{err}"
         );
     }
     assert!(

@@ -22,7 +22,7 @@
 // back.
 //
 // `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and
-// `LOFT_NATIVE_LEAK_CHECK=1`: all fifteen pairs are clean under every one of them, on both
+// `LOFT_NATIVE_LEAK_CHECK=1`: all sixteen pairs are clean under every one of them, on both
 // backends.
 //
 // @falsified-at: hand-measured (2026-09-16) — with `LOFT_NO_CALLEE_DISTURB=1`, which restores
@@ -268,6 +268,22 @@ fn c_write_callee(n: integer) -> integer {
   (sc.els[0]?.a) * 100 + e.a
 }
 
+// c16 — a write through the view after a REMOVAL one frame down: the view is the copy taken at
+// the bind (element 2, a=30), so the write stays in it and the container's element 1 — the old
+// element 2, shifted down — keeps 30: 30 * 100 + 70.
+fn c_rm_write_inline() -> integer {
+  sc = mk(); e = sc.els[2]?;
+  sc.els.remove(0);
+  e.a = 70;
+  (sc.els[1]?.a) * 100 + e.a
+}
+fn c_rm_write_callee() -> integer {
+  sc = mk(); e = sc.els[2]?;
+  remove_first(sc);
+  e.a = 70;
+  (sc.els[1]?.a) * 100 + e.a
+}
+
 fn main() {
   // The disturbance cells: the view reads what it held AT THE BIND.
   pair("c1 grow, no realloc", c_grow_inline(2), c_grow_callee(2), 3);
@@ -280,6 +296,7 @@ fn main() {
   pair("c11 base is a parameter", c_param_inline(mk(), 200), c_param_callee(mk(), 200), 3);
   pair("c12 plain nullable bind", c_plain_inline(200), c_plain_callee(200), 3);
   pair("c15 write stays in copy", c_write_inline(200), c_write_callee(200), 150);
+  pair("c16 write after a removal", c_rm_write_inline(), c_rm_write_callee(), 3070);
 
   // The controls: nothing of this frame's is disturbed, so the view still ALIASES and every
   // write through it reaches the container.
@@ -289,5 +306,5 @@ fn main() {
   pair("c13 sibling field grown", c_sibling_inline(200), c_sibling_callee(200), 62);
   pair("c14 container nobody views", c_unrelated_inline(200), c_unrelated_callee(200), 63);
 
-  println("164-callee-disturb: 15 pairs, inline and callee agree");
+  println("164-callee-disturb: 16 pairs, inline and callee agree");
 }

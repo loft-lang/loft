@@ -231,6 +231,8 @@ that moved (it answered 4294967401 for 3), the reach closed over the call graph
 wrong field read through a view across a call that appends to or removes from a container.
 `LOFT_TRACE_DISTURB=1` names each disturbed place; a hidden `__retbuf` is an argument slot and
 is excluded, or every record-returning function that fills a vector field would report one.
+It also names every view copied out of its container (`[materialise] fn \`view\` out of
+\`container\``) — the `view-copied` advice names only one something writes through.
 
 ## Lowering: branches, locals and counted loops
 
