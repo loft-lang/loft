@@ -143,8 +143,12 @@ is undeclared, never on what an advisory says) runs at every way in.
 | a submitted library | `vet-lib.sh` step V7 | the package at the submitted ref |
 | any version signed into the index | `registry-sign.sh`, every route | the downloaded tarball, the bytes being signed |
 
-What the registers know is asked nightly (`miri.yml`, the `audit` job): a new advisory against
-anything loft or a published library ships fails that job the next morning.
+What the registers know is asked nightly, in the passes that already run: loft's own in
+`miri.yml` (the `audit` job), each published library's in its `revalidate-libs` leg (also run
+by `scripts/revalidate_libs_local.sh`, offline, beside its compile verdict).  A new advisory
+against anything loft or a published library ships fails that job the next morning.  The
+library step does not run on a loft PR: a published release cannot change, and a loft PR
+cannot fix it.
 
 A package's own code is recognised by our licence header; a package by another author names
 its own notice with `[own] notice = "<text>"`, and lists files that carry none in
