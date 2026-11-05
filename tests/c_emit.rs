@@ -1814,8 +1814,9 @@ fn main() {
     // `counted` keeps the deep window off, so the inner loop of `reopened` reopens its counted
     // window on every outer pass; by default the outer loop holds one deep window instead, and
     // `narrow`'s enum loop — native's repeat fill, which the C does not have — takes one too.
-    // `records`' first arm opens none: (R-ElemFirst) builds its `"p{i}"` in the new element,
-    // in `v`'s own store, and a text grown there can move what a window points into.
+    // `grid` opens none: (R-ElemFirst) builds each inner row in the outer element, so the row
+    // shares the outer vector's store and its loop takes a held push header instead.  That
+    // window was sound, so this is a speed follow-up, not a correction.
     for (mode, off, deep_off, windows, slots) in [
         ("windowed", "0", "0", 10, 1),
         ("counted", "0", "1", 9, 1),
