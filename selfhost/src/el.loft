@@ -53,6 +53,10 @@ pub struct El {
   pub line: integer,
   // what elaboration does not carry yet, by name: the gate counts a program that reaches one
   pub refused: vector<text>,
+  // The vector locals whose last first-pass literal bind was `[]` (`function * 65536 + local`):
+  // Rust's first pass builds that literal in the local, which then names only itself, so the
+  // second pass finds it holding no backing (`vector_needs_db`).
+  pub unbacked: vector<integer>,
   // the functions the program declares whose definition elaboration refused: a call of one is
   // not refused again, as a call of an unknown function
   pub declined: vector<text>,
@@ -99,6 +103,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     context: -1,
     line: 0,
     refused: [],
+    unbacked: [],
     declined: [],
     lines: [],
     type_vars: [],
