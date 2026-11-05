@@ -1255,7 +1255,12 @@ impl Parser {
         self.limit_refused = false;
         if self.lexer.has_token("=") {
             self.type_fact = AliasFact::Plain;
-            if let Some(tp) = self.parse_type_full(d_nr, false) {
+            // @PLN217 — a standard-library type definition names a machine width (`i32`,
+            // `f64`, `word`), so the 32-bit regime does not read its right-hand side.
+            self.machine_types = self.default;
+            let parsed = self.parse_type_full(d_nr, false);
+            self.machine_types = false;
+            if let Some(tp) = parsed {
                 if self.first_pass && !conflict && d_nr != u32::MAX {
                     self.data.set_returned(d_nr, tp);
                 }
@@ -4824,7 +4829,7 @@ impl Parser {
         // @PLN204 — under the 32-bit regime a plain `integer` is an `i32` and a plain
         // `float` a `single`; `i64` / `f64` name the 64-bit forms there and everywhere.
         // `integer limit(…)` names its own range, and `limit` follows `integer` only.
-        let type_name = if self.data.width32() {
+        let type_name = if self.data.width32() && !self.machine_types {
             match type_name {
                 "integer"
                     if !matches!(&self.lexer.peek().has,
