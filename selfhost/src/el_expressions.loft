@@ -45,9 +45,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     if rbase is TyText || nl == null {
       el::refuse(e, "a `null` answered at the tail of a function of this type: {type_kind(rbase)}");
     } else {
-      fixed = retail(b.code, nl, el_types::without_deps(rbase));
+      // A scalar's null is a value of the declared `τ?` (the block is typed so); a record's or
+      // a vector's is its base type's sentinel.
+      tt = if el_convert::sentinel_value(rbase) || el_convert::plain_enum(rbase) { el_types::without_deps(result) } else { el_types::without_deps(rbase) };
+      fixed = retail(b.code, nl, tt);
       if fixed != null {
-        b = ex(fixed!, el_types::without_deps(rbase));
+        b = ex(fixed!, tt);
       }
     }
   }
