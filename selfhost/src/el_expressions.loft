@@ -8790,8 +8790,46 @@ fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: integer?
       }
     }
   }
+  if (attr == "count" || attr == "first") && arg == null && tp == null {
+    lv = el_vars::var(vars, var);
+    c = if lv >= 0 { el_vars::loop_count(vars, lv) } else { -1 };
+    if c >= 0 {
+      el_vars::in_use(vars, c, true);
+      if attr == "first" {
+        return ex(el_ir::cl(e, "OpEqInt", [ir::NdVar { n: c }, ir::NdInt { n: 0 }]), ir::TyBoolean);
+      }
+      return ex(ir::NdVar { n: c }, ir::TyInteger { spec: i32_spec() });
+    }
+  }
   el::refuse(e, "a variable attribute: #{attr}");
   ex(ir::NdNull, ir::TyUnknown { n: 0 })
+}
+
+// A loop whose body asked for its `x#count`: the counter set to 0 at the head of its "For block"
+// and stepped after the body, at the end of its "For loop" (`parse_for`).
+fn counted(e: el::El, cnt: integer, x: Ex) -> Ex {
+  if cnt < 0 {
+    return x;
+  }
+  match x.code {
+    NdBlock { block } => {
+      bl = block[0];
+      ops: vector<ir::Node> = [];
+      for op in bl.operators {
+        match op {
+          NdLoop { block: lb } => {
+            l = lb[0];
+            l.operators += [el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }]))];
+            ops += [ir::NdLoop { block: [l] }];
+          },
+          _ => { ops += [op]; }
+        }
+      }
+      bl.operators = [el_ir::v_set(cnt, ir::NdInt { n: 0 })] + ops;
+      ex(ir::NdBlock { block: [bl] }, x.tp)
+    },
+    _ => x
+  }
 }
 
 // The postfix discharges of a nullable scalar (`handle_default_fallback`, `handle_present`):
@@ -10082,7 +10120,7 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   if fc == null {
     heads = [];
   }
-  vars.active_loops = vars.active_loops[..-1];
+  cnt = el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
   if e.first_pass || el_types::is_unknown(elem) {
     return ex(ir::NdNull, ir::TyVoid);
@@ -10104,7 +10142,7 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   }
   steps += [b.code];
   lp = el_ir::v_loop(steps, "For loop");
-  ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid)
+  counted(e, cnt, ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), lp], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // `coroutine_layout::next_operands` for an element this port carries: the packed size — the
@@ -10167,7 +10205,7 @@ fn generator_for(e: el::El, vars: el_vars::Vars, binds: vector<text>, src_id: te
   }
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = vars.active_loops[..-1];
+  cnt = el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
@@ -10197,7 +10235,7 @@ fn generator_for(e: el::El, vars: el_vars::Vars, binds: vector<text>, src_id: te
   }
   steps += [b.code];
   setup = if held >= 0 { ir::NdNull } else { el_ir::v_set(g, x.code) };
-  ex(el_ir::v_block([setup, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
+  counted(e, cnt, ex(el_ir::v_block([setup, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // A destructuring `for`'s named members, made before the body is read so it resolves them —
@@ -10510,7 +10548,11 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, de
   vars.active_values += [if sliced { ir::NdNull } else { x.code }];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body!, "for", ir::TyUnknown { n: 0 });
-  vars.active_loops = vars.active_loops[..-1];
+  cnt = el_vars::pop_loop(vars);
+  if cnt >= 0 {
+    el::refuse(e, "a comprehension whose body asks its loop's `#count` or `#first`");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   vars.active_values = vars.active_values[..-1];
   in_t = el_types::without_deps(b.tp);
   if !el_types::is_unknown(declared) && el_types::base(declared) is TyInteger && el_types::base(in_t) is TyInteger {
@@ -10628,7 +10670,7 @@ fn text_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body:
   tv = el_vars::create_unique(vars, "for_text", src_tp);
   res = el_vars::create_unique(vars, "for_result", ir::TyCharacter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = vars.active_loops[..-1];
+  cnt = el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
@@ -10655,7 +10697,7 @@ fn text_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body:
   }
   steps += [b.code];
   init: vector<ir::Node> = [el_ir::v_set(idx, ir::NdInt { n: 0 }), el_ir::v_set(tv, x.code), el_ir::v_set(pos, ir::NdInt { n: 0 })];
-  ex(el_ir::v_block(init + [el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
+  counted(e, cnt, ex(el_ir::v_block(init + [el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // `iterator`'s keyed arm: a walk over a hash, sorted or index from its first record
@@ -10689,7 +10731,7 @@ fn keyed_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body
   vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = vars.active_loops[..-1];
+  cnt = el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
@@ -10724,7 +10766,7 @@ fn keyed_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body
   if scratch >= 0 {
     pre += [el_ir::cl(e, "OpFreeScratch", [ir::NdVar { n: scratch }]), el_ir::v_set(scratch, el_ir::cl(e, "OpNullRefSentinel", []))];
   }
-  ex(el_ir::v_block(pre, ir::TyVoid, "For block"), ir::TyVoid)
+  counted(e, cnt, ex(el_ir::v_block(pre, ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // `handle_operator`'s `as`: the target read as a type, the value converted the way an implicit
@@ -11768,7 +11810,7 @@ fn literal_walk(e: el::El, vars: el_vars::Vars, src_id: text, id: text, lit: Bui
   vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = vars.active_loops[..-1];
+  cnt = el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
@@ -11789,7 +11831,7 @@ fn literal_walk(e: el::El, vars: el_vars::Vars, src_id: text, id: text, lit: Bui
   }
   steps += [b.code];
   lp = el_ir::v_loop(steps, "For loop");
-  ex(el_ir::v_block([ir::NdInsert { items: prelude }, lp], ir::TyVoid, "For block"), ir::TyVoid)
+  counted(e, cnt, ex(el_ir::v_block([ir::NdInsert { items: prelude }, lp], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // `is_walkable_scalar`: a plain scalar element, not nullable.
@@ -11918,7 +11960,7 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
   vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = vars.active_loops[..-1];
+  cnt = el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
@@ -11930,7 +11972,7 @@ fn range_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, source: int
     steps += [fc!];
   }
   steps += [b.code];
-  ex(el_ir::v_block([init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
+  counted(e, cnt, ex(el_ir::v_block([init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // A loop's index: `id#index`, or a fresh `_index_N` for a `_` binding.
@@ -13046,7 +13088,7 @@ fn slice_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body
   vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, filter);
   b = parse_block(e, vars, body, "for", ir::TyVoid);
-  vars.active_loops = vars.active_loops[..-1];
+  cnt = el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
@@ -13061,7 +13103,7 @@ fn slice_for(e: el::El, vars: el_vars::Vars, src_id: text, id: text, x: Ex, body
     steps += [fc!];
   }
   steps += [b.code];
-  ex(el_ir::v_block([st.init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
+  counted(e, cnt, ex(el_ir::v_block([st.init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // `Parser::materialize_iterator` + `slice_copy_form` for `v = <vector slice>` into a fresh local of

@@ -92,7 +92,9 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
   vars.active_loops += [lv];
   vars.active_values += [x.code];
   b = el_expressions::parse_block(e, vars, body, "parallel for", ir::TyVoid);
-  vars.active_loops = vars.active_loops[..-1];
+  if el_vars::pop_loop(vars) >= 0 {
+    el::refuse(e, "a `par` body that asks its loop's `#count` or `#first`");
+  }
   vars.active_values = vars.active_values[..-1];
   el_vars::restore_name(vars, result, prior);
   if e.first_pass {
