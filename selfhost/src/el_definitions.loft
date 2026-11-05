@@ -539,10 +539,10 @@ fn sole_vector_literal(e: el::El, body: integer) -> boolean {
 // the definition's key, or "" where the declaration was refused before one was known.
 pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, body: integer?, annots: vector<integer>) -> text {
   // A capability (`fs#read`) and a `-> const` result are checks at the call and the return; the
-  // definition's image is the plain one, so both are read past.
-  if is_op || len(annots) > 0 {
-    kind = if is_op { "an operator form" } else { "annotations" };
-    el::refuse(e, "a function with an operator form or annotations: {kind}");
+  // definition's image is the plain one, so both are read past.  An `operator` form is the
+  // method of its name, marked (`operator_form`) so the form it backs reaches it.
+  if len(annots) > 0 {
+    el::refuse(e, "a function with annotations");
     return "";
   }
   // `parse_type_var_header` (@F25): each header variable bound to its placeholder before the
@@ -632,6 +632,9 @@ pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars:
     e.context = add_fn(e, key, name, arguments, el::pos_at(e, after));
     if len(e.type_vars) > 0 && e.context >= 0 {
       e.b.data.definitions[e.context].def_type = el::DT_GENERIC;
+    }
+    if is_op && e.context >= 0 {
+      e.b.data.definitions[e.context].operator_form = true;
     }
   } else {
     e.context = el::def_nr(e, key);

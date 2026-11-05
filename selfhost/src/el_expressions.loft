@@ -9472,7 +9472,57 @@ fn views_nullable_element_slot(vars: el_vars::Vars, t: ir::TypeT) -> boolean {
   false
 }
 
+// `Parser::arith_form`: the `operator` form an arithmetic symbol is backed by, or "".
+fn arith_form(op: text) -> text {
+  if op == "+" { return "plus"; }
+  if op == "-" { return "minus"; }
+  if op == "*" { return "times"; }
+  if op == "/" { return "divided_by"; }
+  if op == "%" { return "remainder"; }
+  ""
+}
+
+// `Parser::operator_member` (`@FR-Op-Back`, `@FR-Op-Left`): the `operator <form>` of the LEFT
+// operand's own record or enum type taking both operands, or -1.  A plain method of the name
+// backs nothing (`@FR-Op-Mark`), which Rust refuses; a template member and an overload set
+// are not carried.
+fn operator_member(e: el::El, form: text, lt: ir::TypeT, rt: ir::TypeT) -> integer {
+  if form == "" || el_types::is_unknown(lt) || el_types::is_unknown(rt) {
+    return -1;
+  }
+  left = match el_types::base(el_types::unrewritten(lt)) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
+  if left < 0 {
+    return -1;
+  }
+  d = find_fn(e, form, el_types::unrewritten(lt));
+  if d < 0 {
+    return -1;
+  }
+  def = el::def(e, d);
+  visible = [for a in def.attributes if !a.hidden { a }];
+  own = len(visible) == 2 && match el_types::base(visible[0].typedef[0] ?? ir::TyVoid) { TyReference { n } => n == left, TyEnum { n } => n == left, _ => false };
+  if !own {
+    return -1;
+  }
+  if !def.operator_form {
+    el::refuse(e, "a method named as an operator form but not written `operator`: {form}");
+    return -1;
+  }
+  if def.def_type == el::DT_GENERIC {
+    el::refuse(e, "a template `operator` member");
+    return -1;
+  }
+  d
+}
+
 fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
+  // `@FR-Op-Back`: on a program's own type `a ⊕ b` is one call of the left operand's
+  // `operator` method, its type the method's (`arith_through_operator`).
+  m = operator_member(e, arith_form(op), a.tp, b.tp);
+  if m >= 0 {
+    r = call_args(e, vars, m, [a.code, b.code], [a.tp, b.tp]);
+    return r ?? ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   // A float compared with `null` is its null test (`null_test`): its truth, `!` of it for `==`.
   if (op == "==" || op == "!=") && (a.tp is TyNull || b.tp is TyNull) {
     v = if a.tp is TyNull { b } else { a };
