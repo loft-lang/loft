@@ -3221,6 +3221,16 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if e.p.nodes[target] is SMember || e.p.nodes[target] is SIndex {
     return place_assignment(e, vars, op, target, rhs!);
   }
+  // `f#format = <Format>`: the file's `format` field set (`OpSetEnum`).
+  match e.p.nodes[target] {
+    SVarAttr { var, attr, arg, tp } => {
+      fv = el_vars::var(vars, var);
+      if op == "=" && attr == "format" && arg == null && tp == null && fv >= 0 && is_file(e, el_vars::tp(vars, fv)) {
+        return file_format_set(e, vars, fv, rhs!);
+      }
+    },
+    _ => {}
+  }
   if op != "=" {
     return compound(e, vars, op, target, rhs!);
   }
@@ -9325,9 +9335,110 @@ fn nullable_arith(e: el::El, code: ir::Node, outer: boolean) -> ir::Node {
   }
 }
 
+// `Parser::file_op`'s plain reads of a file local: `#format` (its `Format`), `#exists` (that
+// format is not `NotExists`), `#size` (`OpSizeFile`), `#index` / `#next` (the `current` / `next`
+// fields).  `#read` and the other attributes are refused by name.
+fn file_attr(e: el::El, vars: el_vars::Vars, fv: integer, attr: text) -> Ex {
+  el_vars::in_use(vars, fv, true);
+  f = ir::NdVar { n: fv };
+  ft = el_vars::tp(vars, fv);
+  fd = match match ft { TyRefVar { inner } => inner, _ => ft } { TyReference { n } => n, _ => -1 };
+  if attr == "size" {
+    return ex(el_ir::cl(e, "OpSizeFile", [f]), el::def(e, el::def_nr(e, "OpSizeFile")).returned[0]);
+  }
+  if attr == "index" || attr == "next" {
+    return ex(el_ir::cl(e, "OpGetInt", [f, ir::NdInt { n: field_position(e, fd, if attr == "index" { "current" } else { "next" }) }]), el::def(e, el::def_nr(e, "OpSizeFile")).returned[0]);
+  }
+  if attr == "format" || attr == "exists" {
+    fmt_d = el::def_nr(e, "Format");
+    et = ir::TyEnum { n: fmt_d, is_ref: false, dep: [] };
+    fmt = el_ir::cl(e, "OpGetEnum", [f, ir::NdInt { n: field_position(e, fd, "format") }]);
+    if attr == "format" {
+      return ex(fmt, et);
+    }
+    a = attr_nr(el::def(e, fmt_d), "NotExists");
+    if a < 0 {
+      el::refuse(e, "a file's `#exists` with no `NotExists` format");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return call_op(e, vars, "!=", [fmt, el::def(e, fmt_d).attributes[a]!.value[0]], [et, et]);
+  }
+  el::refuse(e, "a variable attribute: #{attr}");
+  ex(ir::NdNull, ir::TyUnknown { n: 0 })
+}
+
+fn file_format_set(e: el::El, vars: el_vars::Vars, fv: integer, rhs: integer) -> Ex {
+  et = ir::TyEnum { n: el::def_nr(e, "Format"), is_ref: false, dep: [] };
+  x = expression(e, vars, rhs);
+  v = stored(e, vars, x, et);
+  if v == null {
+    refuse_known(e, x.tp, "a file format of this type: {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  el_vars::in_use(vars, fv, true);
+  fd = match match el_vars::tp(vars, fv) { TyRefVar { inner } => inner, _ => el_vars::tp(vars, fv) } { TyReference { n } => n, _ => -1 };
+  ex(el_ir::cl(e, "OpSetEnum", [ir::NdVar { n: fv }, ir::NdInt { n: field_position(e, fd, "format") }, v!]), ir::TyVoid)
+}
+
+// `Parser::file_op`'s `#read`: `f#read(n) as T` reads `n` bytes, `f#read as T` the cast's fixed
+// width (an alias's `size(n)`, else the type's packed size) — into a fresh `_read_N` set to the
+// type's null, by the row a write of the type takes (`OpReadFile(f, OpCreateStack(_read_N), n,
+// row)`, a "reading file" block answering the local).  A text needs the explicit size; a read
+// with no cast, a record and a vector are refused by name.
+fn file_read(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, tp: integer) -> Ex {
+  rt0 = el_types::parse_type(e, tp);
+  if rt0 == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  rt = rt0!;
+  if !el_convert::plain_scalar(rt) && !(rt is TyText) || el_convert::plain_enum(rt) {
+    el::refuse(e, "a file read of this type: {type_kind(rt)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  spec = match rt { TyInteger { spec: sp } => sp, _ => ir::IntegerSpec { min: 0, max: 0, not_null: false, forced_size: 0 } };
+  forced = if rt is TyInteger { spec.forced_size } else { 0 };
+  n_code = ir::NdNull;
+  if arg != null {
+    n_code = expression(e, vars, arg!).code;
+  } else if rt is TyText {
+    if !e.first_pass {
+      el::refuse(e, "a file read of a text without its size");
+    }
+    return ex(ir::NdNull, rt);
+  } else {
+    n_code = ir::NdInt { n: if forced > 0 { forced } else { elem_size(rt) } };
+  }
+  el_vars::in_use(vars, fv, true);
+  // `ensure_io_type`, on both passes: a narrow integer's row registered before the read's own.
+  io_rows(e, rt);
+  // A text is read into a work text, any other value into a fresh `_read_N`.
+  tmp = if rt is TyText { el_vars::work_text(vars) } else { el_vars::create_unique(vars, "read", rt) };
+  if e.first_pass {
+    return ex(ir::NdNull, rt);
+  }
+  row = if forced == 1 || forced == 2 || forced == 4 { el_schema::io_int_part(e, spec, forced) } else { match rt { TyInteger { spec: sp } => el_schema::int_part(e, sp, el::NONE, false), _ => el_schema::content_type(e, rt) } };
+  nl = el_convert::null_of(e, rt);
+  if row < 0 || nl == null {
+    el::refuse(e, "a file read of a value with no byte layout: {type_kind(rt)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  read = el_ir::cl(e, "OpReadFile", [ir::NdVar { n: fv }, el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: tmp }]), n_code, ir::NdInt { n: row }]);
+  ops: vector<ir::Node> = if rt is TyText { [] } else { [el_ir::v_set(tmp, nl!)] };
+  ex(el_ir::v_block(ops + [read, ir::NdVar { n: tmp }], rt, "reading file"), rt)
+}
+
 // `x#index` of a loop variable: the loop's own counter (the `x#index` local its `for` made).
 // The other attributes (`#first`, `#remove`, `#break`, a file's `#read`…) are refused by name.
 fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: integer?, tp: integer?) -> Ex {
+  fv = el_vars::var(vars, var);
+  if fv >= 0 && is_file(e, el_vars::tp(vars, fv)) {
+    if attr == "read" && tp != null {
+      return file_read(e, vars, fv, arg, tp!);
+    }
+    if arg == null && tp == null {
+      return file_attr(e, vars, fv, attr);
+    }
+  }
   if attr == "index" && arg == null && tp == null {
     lv = el_vars::var(vars, var);
     if lv >= 0 {
@@ -14023,9 +14134,10 @@ fn io_rows(e: el::El, t: ir::TypeT) {
   }
 }
 
-// Whether `t` is the standard library's `File` record.
+// Whether `t` is the standard library's `File` record, through a `&` (`is_file_var_type`).
 fn is_file(e: el::El, t: ir::TypeT) -> boolean {
   match t {
+    TyRefVar { inner } => is_file(e, inner),
     TyReference { n } => el::def(e, n).name == "File" && el::def(e, n).source == el::STD_SOURCE,
     _ => false
   }
@@ -14037,19 +14149,9 @@ fn is_file(e: el::El, t: ir::TypeT) -> boolean {
 // cast's alias width).  A record value and a value with no byte layout are refused by name.
 fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: Ex) -> Ex {
   vt = el_types::base(x.tp);
-  // `… as <alias>` writes at the alias's width (`forced_size`): its byte, short or 4-byte
-  // integer row (`database.byte` / `short`, `narrow_io_part`) — `int_part` of the cast's spec.
-  cast_row = -1;
-  if e.p.nodes[rhs] is SAs {
-    match vt {
-      TyInteger { spec } => {
-        if spec.forced_size == 1 || spec.forced_size == 2 || spec.forced_size == 4 {
-          cast_row = el_schema::io_int_part(e, spec, spec.forced_size);
-        }
-      },
-      _ => {}
-    }
-  }
+  // A cast to a sized alias in the value (`last_cast_alias`, the last to complete) writes at the
+  // alias's width: its byte, short or 4-byte integer row (`database.byte` / `short`,
+  // `narrow_io_part`).
   if vt is TyReference || vt is TyEnum || vt is TyTuple || vt is TyOptional {
     refuse_known(e, x.tp, "a file write of this value: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -14062,6 +14164,18 @@ fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: Ex) 
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // Made on the second pass only, as Rust's `db_tp` is.
+  cast_row = -1;
+  alias = last_width_cast(e, rhs);
+  match vt {
+    TyInteger { spec } => {
+      w = if alias >= 0 { el::def(e, alias).forced_size } else { 0 };
+      if w == 1 || w == 2 || w == 4 {
+        cast_row = el_schema::io_int_part(e, spec, w);
+      }
+    },
+    _ => {}
+  }
   row = if cast_row >= 0 { cast_row } else { match vt { TyInteger { spec } => el_schema::int_part(e, spec, el::NONE, false), _ => el_schema::content_type(e, vt) } };
   if row < 0 {
     el::refuse(e, "a file write of a value with no byte layout: {type_kind(x.tp)}");
@@ -14072,6 +14186,35 @@ fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: Ex) 
     el_ir::v_set(tmp, x.code),
     el_ir::cl(e, "OpWriteFile", [ir::NdVar { n: f }, el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: tmp }]), ir::NdInt { n: row }])
   ] }, ir::TyVoid)
+}
+
+// `last_cast_alias`: the alias of the last cast to complete inside `n` whose alias declares a
+// width (`as i16`, `as u8`), or -1.
+fn last_width_cast(e: el::El, n: integer) -> integer {
+  r = -1;
+  for c in el_length::children(e, n) {
+    x = last_width_cast(e, c);
+    if x >= 0 {
+      r = x;
+    }
+  }
+  match e.p.nodes[n] {
+    SAs { tp } => {
+      if tp != null {
+        match e.p.nodes[tp!] {
+          STy { name } => {
+            d = el::def_nr(e, name);
+            if d >= 0 && el::def(e, d).forced_size > 0 {
+              r = d;
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  r
 }
 
 // `Parser::append_elem_tp`: the row an append of `elem` elements copies by — a record's own,
