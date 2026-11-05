@@ -12713,15 +12713,28 @@ fn pattern_literal(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 }
 
 // `Parser::convert_condition`: a boolean condition is read as it is — a `boolean?` too, its null
-// as false — and any other scalar as its truth (`OpConvBoolFrom…`, through a `?`: present).  A
-// heap handle's presence test (`coalesce_not_null`) is not carried; null for it and for a value
-// with no truth.
+// as false — any other scalar as its truth (`OpConvBoolFrom…`, through a `?`: present), and a
+// heap handle as its presence.  Null for a value with no truth.
 fn condition(e: el::El, c: Ex) -> Ex? {
   b = el_types::base(c.tp);
   if el_types::is_unknown(c.tp) || b is TyBoolean {
     return c;
   }
-  if b is TyReference || b is TyVector || keyed_kind(b) || el_types::struct_enum_def(b) >= 0 || b is TyVoid || b is TyTuple {
+  // `coalesce_not_null`: a collection is present where it is not null, a record where its
+  // reference is; a record tuple (present by its members) and a struct enum are not carried.
+  if b is TyVector || keyed_kind(b) {
+    return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [c.code])]), ir::TyBoolean);
+  }
+  match b {
+    TyReference { n } => {
+      if starts_with(el::def(e, n).name, "__tuple<") {
+        return null;
+      }
+      return ex(el_ir::cl(e, "OpConvBoolFromRef", [c.code]), ir::TyBoolean);
+    },
+    _ => {}
+  }
+  if el_types::struct_enum_def(b) >= 0 || b is TyVoid || b is TyTuple {
     return null;
   }
   op = match b {
