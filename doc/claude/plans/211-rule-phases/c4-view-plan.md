@@ -87,6 +87,23 @@ caller        m = n_g2(sc, x, __ref_1);  … OpLengthVector(OpGetField(m, 0, Vec
   (`CType::Ref`, `DbRef`).  They then find no view-leaf function of their own where the IR took
   it; S2 deletes what remains.
 
+**Built so far** (`value_record.rs`): `Kind::View`; the `Elem`, `Null` and `Last` leaves
+spelled in the IR; a view carrier admitted only as one of the analysis's value locals; an
+exit literal that ends in its own `return` admitted anywhere (an early `if … { return S {…} }`,
+which also widens the flat form).  Of `164-view-field.loft`'s sixteen view functions the IR takes
+twelve; the four FORWARDS (`p2`, `p8`, `p11`, `p16`) still decline at their local ("a forwarded
+local cannot carry the tuple").  The cells hold on all three backends under `LOFT_POISON`,
+`LOFT_STRICT_STORES` and `LOFT_POISON_CLAIM`; the plant (the viewed place cleared at the exit) fails
+`a1` on all three.  Owed: the forwards, the census, the test pins, then S2.
+
+**The open world.**  The IR value-record pass runs only on a CLOSED program: a semantics-tier
+`--native` / `--native-c` run ships the live tier (`ships_live_tier`), which opens the world, and
+the pass then does not run — the writers' own `(R-ValueRecord)`, view clause included, serves
+those builds.  `--emit-c`, `--lean`, `--ship` and the census are closed.  So a falsifier for this
+move runs closed (`--lean`), and S2 cannot delete the writers' view clause while open-world builds
+still need it: whether the IR form should also serve the live tier, or the writers' clause stays
+as the open world's, is the owner's call before S2.
+
 Probed: a loft tuple carries an OWNED vector member on all three backends; a null reference
 reads as length 0 (`vector::length_vector`).  A BORROWED member has no user spelling (a whole
 collection bind copies, `(B-Copy)`), so S1's plant (the view freed with the tuple) is its
