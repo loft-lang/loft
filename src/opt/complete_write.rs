@@ -19,19 +19,21 @@
 //! (`Stores::copy_null_into`, `@C137`) — what the prefill would have left, which a no-prefill
 //! element does not hold.
 //!
-//! `LOFT_IR_COMPLETE_WRITE=1` turns it on while it is compared with the writers' clauses;
-//! `LOFT_NO_COMPLETE_WRITE=1` turns the rule off.
+//! `LOFT_NO_COMPLETE_WRITE=1` turns the rule off on every backend: every mint prefills.  The
+//! fresh-field flags are written whatever the switch says — they are what a copy owes a
+//! destination just created, not the elision the switch turns off, and rustc's record push
+//! (`@FR-R-PushRec`) mints its element without the prefill either way.
+//! `LOFT_TRACE_IR_COMPLETE_WRITE=1` names each function's mints.
 
 use crate::data::{Data, DefType, NoPrefill, Value};
 use crate::database::Stores;
 use std::collections::HashMap;
 
-/// Is the IR pass on?  While it is compared with the writers' clauses, a consumer reads the
-/// stored fact only when this says so.
+/// Is the rule on?  Off, no function's fact is stored and every backend prefills (the fresh
+/// copies are flagged all the same).
 #[must_use]
 pub fn enabled() -> bool {
-    crate::env_once!(std::env::var("LOFT_IR_COMPLETE_WRITE").is_ok_and(|v| v != "0"))
-        && !crate::env_once!(std::env::var("LOFT_NO_COMPLETE_WRITE").is_ok_and(|v| v != "0"))
+    !crate::env_once!(std::env::var("LOFT_NO_COMPLETE_WRITE").is_ok_and(|v| v != "0"))
 }
 
 fn trace() -> bool {
@@ -41,9 +43,7 @@ fn trace() -> bool {
 /// Decide every function's no-prefill mints and flag its fresh-field copies; answers how many
 /// mint keys were stored.
 pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
-    if !enabled() {
-        return 0;
-    }
+    let on = enabled();
     let copy_record = data.def_nr("OpCopyRecord");
     let mut total = 0usize;
     for d in 0..data.definitions() {
@@ -56,9 +56,13 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             continue;
         }
         let c = crate::opt::ret_adopt::complete_writes(data, stores, d);
-        let fact = NoPrefill {
-            locals: c.db_vars.iter().copied().collect(),
-            mints: c.mint_tps.iter().copied().collect(),
+        let fact = if on {
+            NoPrefill {
+                locals: c.db_vars.iter().copied().collect(),
+                mints: c.mint_tps.iter().copied().collect(),
+            }
+        } else {
+            NoPrefill::default()
         };
         if fact.is_empty() && c.fresh_fields.is_empty() {
             continue;
@@ -74,6 +78,10 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             );
         }
         total += fact.locals.len() + fact.mints.len();
+        {
+            let _census = crate::rewrite_census::InBody::enter("ir", &def.name);
+            crate::rewrite_census::fired("R-CompleteWrite", fact.locals.len() + fact.mints.len());
+        }
         def.no_prefill = fact;
     }
     total

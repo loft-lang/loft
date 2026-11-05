@@ -375,14 +375,6 @@ pub(crate) struct FnWriter<'a> {
     /// `st<var>` declared up front; the walks' hidden vectors map to their table.
     split_tabs: std::collections::BTreeMap<u16, crate::opt::text_borrow::SplitTable>,
     tab_alias: std::collections::BTreeMap<u16, u16>,
-    /// `@FR-R-CompleteWrite` (`hoist::complete_writes`): the element types every mint of this
-    /// function writes completely, so the default image copied into a fresh element writes
-    /// nothing that survives; computed on first use.
-    complete_mints: Option<std::collections::HashSet<u16>>,
-    /// The record copies into a field of an element a literal group builds, by argument slice,
-    /// with the field's type (`CompleteWrites::fresh_fields`): their null arm writes the
-    /// field's default (`fresh_null_arm`); computed with `complete_mints`.
-    fresh_fields: std::collections::HashMap<usize, u16>,
     /// `@FR-R-Apart` instance 4: this body's apart records of record vectors and their push
     /// groups' elements, or its `__apr` twin's parameter (`apart.rs`), and the program's plan.
     apr: crate::lower::apart_records::RecRoles,
@@ -813,8 +805,6 @@ impl<'a> FnWriter<'a> {
             } else {
                 crate::opt::char_walk::char_walks(cx.data, d)
             },
-            complete_mints: None,
-            fresh_fields: std::collections::HashMap::new(),
             apr: crate::lower::apart_records::RecRoles::default(),
             apr_plan: None,
             apv: crate::lower::apart_vector::VecRoles::default(),
@@ -1050,7 +1040,6 @@ impl<'a> FnWriter<'a> {
             fired("R-CharWalk", self.char_walks.len());
             fired("R-RetAdopt", usize::from(self.adopt.is_some()));
         }
-        self.complete_writes_once();
         let code = self.code;
         self.dc = self.deferred_plan();
         let mut flags: Vec<u16> = self.dc.vars.keys().copied().collect();
@@ -2285,42 +2274,16 @@ impl<'a> FnWriter<'a> {
 
     /// `@FR-R-CompleteWrite` — does every mint of element type `tp` in this function write it
     /// completely?  Then the default image a fresh element is filled with writes nothing that
-    /// survives, and the copy is left out, as native calls `OpNewRecordNP`.  A record copy into
-    /// a field of such an element writes that field's default for a null source
-    /// (`fresh_null_arm`, loft#2044), so the group covers the field either way.
-    fn mint_complete(&mut self, tp: u16) -> bool {
-        if std::env::var("LOFT_NO_COMPLETE_WRITE").is_ok_and(|v| v != "0") {
-            return false;
-        }
-        self.complete_writes_once();
-        self.complete_mints
-            .as_ref()
-            .is_some_and(|m| m.contains(&tp))
+    /// survives, and the copy is left out.  Decided in the IR and stored on the function
+    /// (`Definition::no_prefill`, `opt::complete_write`); a record copy into a field of such an
+    /// element is flagged a fresh copy there, whose null arm writes the field's defaults.
+    fn mint_complete(&self, tp: u16) -> bool {
+        self.cx.data.def(self.d).no_prefill.mints.contains(&tp)
     }
 
-    fn complete_writes_once(&mut self) {
-        if self.complete_mints.is_none() {
-            let mut c =
-                crate::opt::ret_adopt::complete_writes(self.cx.data, self.cx.stores, self.d);
-            // `@FR-R-CompleteWrite` decided in the IR (`opt::complete_write`): the mints are
-            // the stored fact's, which no later pass can stale.
-            if crate::opt::complete_write::enabled() {
-                let fact = &self.cx.data.def(self.d).no_prefill;
-                c.db_vars = fact.locals.iter().copied().collect();
-                c.mint_tps = fact.mints.iter().copied().collect();
-            }
-            crate::rewrite_census::fired("R-CompleteWrite", c.db_vars.len() + c.mint_tps.len());
-            self.fresh_fields = c.fresh_fields;
-            self.complete_mints = Some(c.mint_tps);
-        }
-    }
-
-    /// `@FR-R-CompleteWrite`'s null arm — `@C137`'s fresh-field arm (loft#2044), as native's
-    /// `OpCopyRecordEmitter::fresh_field`: a
-    /// record copy into a field of an element a literal group is building writes, for a null
-    /// source, the field type's default — what the prefill would have left there — so the
-    /// element needs no prefill.  The C statement for a null `src` into `dst`, or `None` for a
-    /// copy that is no such field's.
+    /// The null arm of a copy into a fresh destination (`@C137`, loft#2044, loft#2414): for a
+    /// null `src`, the type's default image into `dst`, as `Stores::copy_null_into` writes it
+    /// on the other backends.  `None` where the C runtime's own null arm (a zero fill) is that.
     fn fresh_null_arm(&mut self, args: &[Value], dst: &str) -> Option<String> {
         let sub = self.fresh_default_tp(args)?;
         let (image, n) = self.cx.default_image(sub);
@@ -2328,15 +2291,12 @@ impl<'a> FnWriter<'a> {
     }
 
     /// The type whose default image a null source writes into this copy's destination, or
-    /// `None` where the runtime's own null arm is right.  A field of an element being built
-    /// (`@C137`'s fresh-field arm); and a copy flagged `COPY_FRESH_DEST` into a STRUCT whose
-    /// default is not all zero bytes — `Stores::copy_null_into` writes the default walk there
-    /// (a nullable field's null, loft#2414), where the C runtime's null arm only zeroes.
+    /// `None` where the runtime's own null arm is right: a copy flagged `COPY_FRESH_DEST` into a
+    /// STRUCT whose default is not all zero bytes — `Stores::copy_null_into` writes the default
+    /// walk there (a nullable field's null, loft#2414), where the C runtime's null arm only
+    /// zeroes.  The IR flags each copy into a field of an element it mints without the prefill
+    /// (`opt::complete_write`), so that element's fields take this arm too.
     fn fresh_default_tp(&mut self, args: &[Value]) -> Option<u16> {
-        self.complete_writes_once();
-        if let Some(sub) = self.fresh_fields.get(&(args.as_ptr() as usize)) {
-            return Some(*sub);
-        }
         let Value::Int(raw) = args.get(2)?.unspan() else {
             return None;
         };

@@ -2337,20 +2337,14 @@ impl Output<'_> {
                 self.plan.value_records.views.get(&def_nr),
             )
         };
-        // The fresh-field arms are kept whatever the switch says: they are what a copy owes
-        // a destination just created, not the elision the switch turns off.
-        self.complete_writes = hoist::complete_writes(self.data, self.stores, def_nr);
-        // `@FR-R-CompleteWrite` decided in the IR (`opt::complete_write`): the mints are the
-        // stored fact's, which no later pass can stale.
-        if crate::opt::complete_write::enabled() {
-            let fact = &self.data.def(def_nr).no_prefill;
-            self.complete_writes.db_vars = fact.locals.iter().copied().collect();
-            self.complete_writes.mint_tps = fact.mints.iter().copied().collect();
-        }
-        if self.switches.complete_write_disabled {
-            self.complete_writes.db_vars.clear();
-            self.complete_writes.mint_tps.clear();
-        }
+        // `@FR-R-CompleteWrite` is decided in the IR (`opt::complete_write`) and stored on the
+        // function: the mints written without the prefill are that fact's.
+        let fact = &self.data.def(def_nr).no_prefill;
+        self.complete_writes = hoist::CompleteWrites {
+            db_vars: fact.locals.iter().copied().collect(),
+            mint_tps: fact.mints.iter().copied().collect(),
+            ..hoist::CompleteWrites::default()
+        };
         // `@FR-R-RefillText` — a refill twin reads every text slot of its buffer, so a buffer
         // it mints itself keeps the zero-filling mint (a slot holds 0 or a block it owns).
         if let Some(b) = self.refill_twin_buf {
@@ -2592,10 +2586,6 @@ impl Output<'_> {
         );
         fired("R-ValueLocal", self.value_record_locals.len());
         fired("R-ElemFirst", self.elem_first.pairs.len());
-        fired(
-            "R-CompleteWrite",
-            self.complete_writes.db_vars.len() + self.complete_writes.mint_tps.len(),
-        );
         fired("R-MoveAppend", self.move_pairs.len());
         fired("R-LazySplit", self.lazy_splits.len());
         fired("R-SplitTable", self.split_tables.len());

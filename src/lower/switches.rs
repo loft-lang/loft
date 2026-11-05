@@ -164,10 +164,6 @@ pub struct Switches {
     /// `LOFT_NO_LITERAL_HOIST=1` — every loop-body literal rebuilds per iteration, as
     /// before @PLN157 § V-x; the bisect step for a wrong constant vector inside a loop.
     pub literal_hoist_disabled: bool,
-    /// `LOFT_NO_COMPLETE_WRITE=1` — every record keeps its default prefill, as before
-    /// @PLN157 § V-y; the bisect step for a wrong default/sentinel in a literal-built
-    /// record on native.
-    pub complete_write_disabled: bool,
     /// `LOFT_NO_ELEMENT_FIRST=1` — every record-literal field keeps its temp-store
     /// build and deep copy, as before @PLN157 § V-z; the bisect step for a wrong
     /// vector field of an appended record on native.
@@ -311,8 +307,6 @@ impl Switches {
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             char_walk_disabled: std::env::var("LOFT_NO_CHAR_WALK").is_ok_and(|v| v != "0"),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
-            complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
-                .is_ok_and(|v| v != "0"),
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
             push_window_disabled: !crate::keys::push_window_enabled(),
