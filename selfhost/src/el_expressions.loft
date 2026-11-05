@@ -19,6 +19,7 @@ use frame;
 use el_length;
 use el_par;
 use el_definitions;
+use own;
 
 // An expression's IR and type.
 pub struct Ex {
@@ -1171,6 +1172,10 @@ fn buffer_bound(e: el::El) -> boolean {
 // through it in `code`; one built by a literal and rebound from a call is no candidate), or —
 // on the first pass — a call's hidden `__ref_N` buffer.
 fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::Node) -> integer {
+  // A template answering its variable takes no record delivery (`generic_promote_ok`).
+  if el::def(e, e.context).def_type == el::DT_GENERIC {
+    return -1;
+  }
   match x {
     NdVar { n } => {
       if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && (el_vars::was_built(vars, n) || el_vars::was_adopted(vars, n) || vars.annotated.contains(n)) && child_allocs(e, vars, code, n) < 2 && !(el_vars::was_built(vars, n) && bound_from_call(code, n)) {
@@ -7166,7 +7171,7 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
   if record && rt is TyReference {
     ops = match code { NdBlock { block } => block[0].operators, _ => [] };
     tp = match el_ir::unspan(el_ir::last(ops)) { NdVar { n } => n, _ => -1 };
-    if tp >= 0 && sets_var(code, tp) {
+    if tp >= 0 && f.variables[tp]!.argument && !f.variables[tp]!.name.starts_with("__") && sets_var(code, tp) {
       k = 1;
       for v in f.variables {
         if v.name.starts_with("___ret_param_") {
@@ -7193,6 +7198,14 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
     tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
     root = view_root(e, f, tail);
     roots: vector<integer> = if root >= 0 { [root] } else if record { answer_borrows(e, f, code, [d, g]) } else { [] };
+    // One parameter is borrowed only where the oracle finds the answer `Borrowed` (or a `Join`)
+    // of it: a declared local bound from it (`y: T = b; y`) owns a copy.
+    if root < 0 && record && len(roots) == 1 {
+      base = match own::return_ownership_now(e.b, d) { Borrowed { base: x } => x, Join { base: x } => x, _ => -1 };
+      if base != attr_nr(el::def(e, d), f.variables[roots[0]]!.name) {
+        roots = [];
+      }
+    }
     attrs: vector<integer> = [];
     for r in roots {
       a = attr_nr(el::def(e, d), f.variables[r]!.name);
