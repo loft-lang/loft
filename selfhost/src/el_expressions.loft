@@ -3358,6 +3358,28 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   vars.len_read = outer_read || read_through_length;
   x.tp = record_copy_type(e, vars, v, rhs!, x.tp);
   x.code = discharge_copy_typed(e, rhs!, x);
+  // `assign_keyed_rebind`: a keyed local bound a keyed value copies it into a store of its own —
+  // `v = null; OpReplaceKeyed(value, v, type)` — and borrows nothing; `v = v` is no statement.
+  // A value other than a local (a call, a join, a field) is refused by name.
+  kcur = el_vars::tp(vars, v);
+  if keyed_kind(kcur) && !(kcur is TyRefVar) && el_ir::unspan(x.code) == ir::NdVar { n: v } {
+    el_vars::drop_use(vars, v);
+    return ex(ir::NdInsert { items: [] }, ir::TyVoid);
+  }
+  if !e.first_pass && keyed_kind(kcur) && !(kcur is TyRefVar) && keyed_kind(x.tp) && !(x.code is NdInsert) && !(x.code is NdNull) {
+    match el_ir::unspan(x.code) {
+      NdVar { n: src } => {
+        el_vars::drop_use(vars, v);
+        el_vars::make_independent(vars, v, src);
+        kt = el_schema::keyed_type(e, el_types::base(kcur));
+        return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+      },
+      _ => {
+        el::refuse(e, "a keyed local bound from something other than a local");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+    }
+  }
   // `@FR-B-Copy` (`collection_bind_source`): a whole vector local, or a vector field read off an
   // owned record, bound to a local is COPIED into a store of the local's own
   // (`lower_vec_copy_bind`).  A `&` asks for the view.
@@ -4654,6 +4676,10 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
         return ex(ir::NdNull, ir::TyVoid);
       }
       el_vars::drop_use(vars, v);
+      // An empty literal is the bind alone, a statement of its own (no spliced insert).
+      if len(ops!) == 0 {
+        return ex(el_ir::v_set(v, ir::NdNull), ir::TyVoid);
+      }
       list: vector<ir::Node> = [el_ir::v_set(v, ir::NdNull)];
       list += ops!;
       return ex(ir::NdInsert { items: list }, ir::TyVoid);
