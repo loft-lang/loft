@@ -1336,8 +1336,7 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
                 Some("a bind's buffer: a heap field read")
             } else if !forward && vars.is_argument(r) {
                 Some("a bind's buffer: a parameter, and no forward of a tuple")
-            } else if !forward
-                && (s.guards.contains(&r) || s.aliases.iter().any(|(_, b)| *b == r))
+            } else if !forward && (s.guards.contains(&r) || s.aliases.iter().any(|(_, b)| *b == r))
             {
                 Some("a bind's buffer: guarded or aliased, and no forward")
             } else if s.fids.iter().any(|&(a, b)| b == r && a != l) {
