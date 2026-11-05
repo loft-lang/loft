@@ -2833,7 +2833,7 @@ pub(crate) fn variable_shapes(
 /// function.  An allow-list: a mention of any other kind — a rebind, a field write, a copy
 /// into it, a `&` argument, an operator not listed — answers false, and the parameter stays
 /// by value (`Cx::vr_ptr_params`, `@FR-R-ValueRecord`).
-fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
+pub(crate) fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
     let is_a = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == a);
     let mentions = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == a));
     let mut ok = true;

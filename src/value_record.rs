@@ -320,6 +320,36 @@ struct World {
     vr: crate::opt::value_records::layout::ValueRecords,
     /// Per function, its value locals (`value_locals_in`), computed on first ask.
     value_locals: std::cell::RefCell<HashMap<u32, HashSet<u16>>>,
+    /// The plain record PARAMETERS a carrier can be LENT to as a record (`Rewrite::lend`):
+    /// no `&`, no tuple, only read by the callee, and its result does not depend on them —
+    /// so a record that lives as long as the carrier serves the call.  `(callee, index)` →
+    /// the record definition.
+    lendable: HashMap<(u32, usize), u32>,
+}
+
+/// [`World::lendable`] over every function of the program.
+fn lendable_params(data: &Data) -> HashMap<(u32, usize), u32> {
+    let mut out = HashMap::default();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if def.def_type != DefType::Function || matches!(def.code(), Value::Null) {
+            continue;
+        }
+        for (i, a) in def.attributes.iter().enumerate() {
+            let Type::Reference(rec, _) = &a.typedef else {
+                continue;
+            };
+            let p = def.variables.var(&a.name);
+            if !a.hidden
+                && p != u16::MAX
+                && !def.returned().depend().contains(&p)
+                && crate::c::vr_param_read_only(data, def.code(), p)
+            {
+                out.insert((d, i), *rec);
+            }
+        }
+    }
+    out
 }
 
 impl World {
@@ -370,6 +400,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         params: HashMap::default(),
         vr: crate::opt::value_records::layout::ValueRecords::default(),
         value_locals: std::cell::RefCell::default(),
+        lendable: lendable_params(data),
     };
     // `@FR-R-FnRefValue` admits a dispatch's arms on `--native` alone, where the dispatch
     // answers and passes the tuple: the interpreter calls them through the fn-ref with
@@ -1472,6 +1503,9 @@ struct Plan {
     /// Some admitted parameter is handed a plain record local, whose fields the rewrite
     /// reads into a tuple at the call.
     reads_at_call: bool,
+    /// Carriers LENT to a record parameter (`Rewrite::lend`): materialised into one record per
+    /// carrier, released where the carrier's own scope ends.
+    lent: HashSet<u16>,
 }
 
 /// What one walk of a function decided against the admitted sets.
@@ -1522,6 +1556,8 @@ struct Scan {
     /// Admitted parameters handed something that is not a variable.
     unserved: HashSet<(u32, usize)>,
     called: HashSet<u32>,
+    /// A variable handed to a RECORD parameter no tuple serves: `(variable, callee, index)`.
+    lent: Vec<(u16, u32, usize)>,
     /// Presence tests `OpConvBoolFromRef(x)` / `OpRefIsNull(x)`, by variable: a nullable
     /// carrier reads its presence word for them.
     tests: Vec<u16>,
@@ -1624,7 +1660,7 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             continue;
         }
         let p = vars.var(&def.attributes[idx].name);
-        let why = if s.other.contains(&p) {
+        let why = if s.other.contains(&p) || s.lent.iter().any(|(x, ..)| *x == p) {
             Some("a mention that is no read or hand-on")
         } else if !w.layouts[&record].presence && s.tests.contains(&p) {
             Some("a presence test of a dense tuple")
@@ -1691,7 +1727,10 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             let forward = own == Some(r);
             if buffer_uses[&r] != 1 && r != l {
                 Some("a bind's buffer: shared by several binds")
-            } else if s.other.contains(&r) || s.tests.contains(&r) {
+            } else if s.other.contains(&r)
+                || s.tests.contains(&r)
+                || s.lent.iter().any(|(x, ..)| *x == r)
+            {
                 Some("a bind's buffer: another mention")
             } else if s.written.contains(&r) {
                 Some("a bind's buffer: written field-wise")
@@ -1712,6 +1751,13 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             Some(why)
         } else if s.returns.contains(&l) && own.is_none() {
             Some("returned by a function that keeps its record")
+        } else if s.lent.iter().any(|&(x, d, i)| {
+            x == l
+                && (w.lendable.get(&(d, i)) != Some(&rec_of(record))
+                    || s.returns.contains(&l)
+                    || w.layouts[&record].has_views())
+        }) {
+            Some("lent to a record parameter it cannot serve")
         } else if s.other.contains(&l) || (s.tests.contains(&l) && !w.layouts[&record].presence) {
             Some("a mention that is no read, hand-on, bind or free")
         } else if (vars.is_argument(l) && own != Some(l)) || vars.is_captured(l) {
@@ -1751,6 +1797,9 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         if ok {
             plan.carriers.insert(l, record);
             plan.buffers.extend(binds.iter().filter_map(|(_, r)| *r));
+            if s.lent.iter().any(|(x, ..)| *x == l) {
+                plan.lent.insert(l);
+            }
         }
     }
     // Every call of an admitted function that is no carrier's bind still wants its record.
@@ -1847,6 +1896,11 @@ fn scan_args(d: u32, args: &[Value], w: &World, s: &mut Scan) {
                 continue;
             }
             s.unserved.insert((d, i));
+        } else if let Value::Var(x) = a.unspan()
+            && w.lendable.contains_key(&(d, i))
+        {
+            s.lent.push((*x, d, i));
+            continue;
         }
         scan(a, false, w, s);
     }
@@ -1903,7 +1957,18 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                 Part::Header | Part::ViewCopy => {}
                 Part::Fill(f) => {
                     for (_, v) in f {
-                        scan(v, false, w, s);
+                        // A copy's own null arm (`literal`): its test belongs to the copy —
+                        // the presence word of a nullable source, `true` for a dense one.
+                        match v {
+                            Value::If(c, a, b)
+                                if matches!(c.unspan(), Value::Call(op, x) if *op == ops.bool_from_ref
+                                    && matches!(x.as_slice(), [y] if matches!(y.unspan(), Value::Var(_)))) =>
+                            {
+                                scan(a, false, w, s);
+                                scan(b, false, w, s);
+                            }
+                            _ => scan(v, false, w, s),
+                        }
                     }
                 }
                 Part::Free(p) => match p.unspan() {
@@ -2071,14 +2136,37 @@ fn rewrite_function(data: &mut Data, w: &World, twins: &HashMap<u32, u32>, f: u3
         Value::Block(b) => b.scope,
         _ => 0,
     };
+    // A record per LENT carrier, declared null at the body's top: minted at its first lend,
+    // overwritten whole at each, released where the carrier's own scope ends.
+    let mut lends: HashMap<u16, u16> = HashMap::default();
+    let mut lent: Vec<u16> = plan.lent.iter().copied().collect();
+    lent.sort_unstable();
+    for x in lent {
+        let rec = Type::Reference(rec_of(plan.carriers[&x]), crate::data::Deps::default());
+        lends.insert(x, def.variables.add_unique("vr_lend", &rec, scope));
+    }
+    let mut decls: Vec<Value> = lends
+        .values()
+        .map(|t| Value::Set(*t, Box::new(Value::Null)))
+        .collect();
+    decls.sort_by_key(|v| match v {
+        Value::Set(t, _) => *t,
+        _ => 0,
+    });
     Rewrite {
         w,
         plan,
         twins,
         vars: &mut def.variables,
         scope,
+        lends,
     }
     .uses(&mut code);
+    if !decls.is_empty()
+        && let Value::Block(b) = code.unspan_mut()
+    {
+        b.operators.splice(0..0, decls);
+    }
     def.code = code;
     for (v, record) in &plan.carriers {
         def.variables.set_type(*v, w.layouts[record].tuple_type());
@@ -2130,6 +2218,8 @@ struct Rewrite<'a> {
     vars: &'a mut crate::variables::Function,
     /// The body's scope, for the temporaries the rewrite declares.
     scope: u16,
+    /// Per LENT carrier, the record it is materialised into (`Rewrite::lend`).
+    lends: HashMap<u16, u16>,
 }
 
 impl Rewrite<'_> {
@@ -2237,6 +2327,15 @@ impl Rewrite<'_> {
         let old = std::mem::take(list);
         for mut o in old {
             if dropped(&o, &w.ops, plan) {
+                // A lent carrier's scope ends: the record it was lent as goes with it.
+                if let Value::Call(op, a) = o.unspan()
+                    && *op == w.ops.free_ref
+                    && let [x] = a.as_slice()
+                    && let Value::Var(x) = x.unspan()
+                    && let Some(&t) = self.lends.get(x)
+                {
+                    list.push(Value::Call(w.ops.free_ref, vec![Value::Var(t)]));
+                }
                 continue;
             }
             if let Value::Call(op, args) = o.unspan()
@@ -2282,6 +2381,34 @@ impl Rewrite<'_> {
         }
     }
 
+    /// `x` as the record `t`: minted at the first lend, every field written — so a later pass
+    /// of a loop reads no stale field — and handed on; an ABSENT nullable tuple lends the null
+    /// record, as the record form handed its null.
+    fn lend(&self, x: u16, t: u16) -> Value {
+        let ops = &self.w.ops;
+        let layout = &self.w.layouts[&self.plan.carriers[&x]];
+        let rec = Type::Reference(rec_of(self.plan.carriers[&x]), crate::data::Deps::default());
+        let mut stmts = vec![Value::If(
+            Box::new(Value::Call(ops.ref_is_null, vec![Value::Var(t)])),
+            Box::new(Value::Call(
+                ops.database,
+                vec![Value::Var(t), Value::Int(i32::from(layout.tp))],
+            )),
+            Box::new(Value::Null),
+        )];
+        stmts.extend(write_fields(layout, &Value::Var(t), x, ops));
+        stmts.push(Value::Var(t));
+        let made = crate::data::v_block(stmts, rec, "vr_lend");
+        match layout.presence() {
+            Some(p) => Value::If(
+                Box::new(Value::TupleGet(x, p)),
+                Box::new(made),
+                Box::new(Value::Call(ops.null_ref, Vec::new())),
+            ),
+            None => made,
+        }
+    }
+
     /// The arguments of a call of `d`: a plain record local handed to an admitted parameter
     /// is read into a tuple at the call; every other argument is rewritten as a value.
     fn args(&mut self, d: u32, args: &mut [Value]) {
@@ -2292,6 +2419,15 @@ impl Rewrite<'_> {
                 && !self.plan.carriers.contains_key(x)
             {
                 *a = read_into_tuple(*x, &w.layouts[record], &w.ops);
+                continue;
+            }
+            // A carrier LENT to a record parameter: its record, written whole.
+            if !w.params.contains_key(&(d, i))
+                && w.lendable.contains_key(&(d, i))
+                && let Value::Var(x) = a.unspan()
+                && let Some(&t) = self.lends.get(x)
+            {
+                *a = self.lend(*x, t);
                 continue;
             }
             // A dense carrier handed to its record's nullable parameter: widened with `true` —
