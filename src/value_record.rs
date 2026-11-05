@@ -419,6 +419,14 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         }
     }
     let mut touched: HashSet<u32> = HashSet::default();
+    // The literals first: a one-buffer chain makes the buffer a carrier too, and the carrier
+    // rewrite below would otherwise turn the literal's buffer writes into tuple puts before
+    // the literal is recognised.
+    for (&d, c) in &w.cands {
+        let target = twins.get(&d).copied().unwrap_or(d);
+        rewrite_callee(data, &w, target, c);
+        touched.insert(target);
+    }
     for (f, plan) in plans {
         if plan.carriers.is_empty() && !plan.reads_at_call {
             continue;
@@ -429,11 +437,6 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     for (d, plan) in twin_plans {
         rewrite_function(data, &w, &twins, twins[&d], &plan);
         touched.insert(twins[&d]);
-    }
-    for (&d, c) in &w.cands {
-        let target = twins.get(&d).copied().unwrap_or(d);
-        rewrite_callee(data, &w, target, c);
-        touched.insert(target);
     }
     laps.lap("vr_rewrite");
     crate::rewrite_census::fired("R-ValueRecord", w.cands.len());
@@ -1091,6 +1094,10 @@ struct Scan {
     /// Admitted parameters handed something that is not a variable.
     unserved: HashSet<(u32, usize)>,
     called: HashSet<u32>,
+    /// `(buffer, record)` when the scanned function returns the tuple: its own object
+    /// literals become tuples, so only what the rewrite keeps of them is scanned — the
+    /// buffer writes, the mint and the placeholder test go with the buffer.
+    own: Option<(u16, u32)>,
 }
 
 /// The plan for function `f`'s body, and what it decides against the admitted sets.
@@ -1107,7 +1114,10 @@ struct Scan {
 fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict) {
     let def = data.def(f);
     let vars = &def.variables;
-    let mut s = Scan::default();
+    let mut s = Scan {
+        own: w.cands.get(&f).filter(|_| tuple).map(|c| (c.buf, c.record)),
+        ..Scan::default()
+    };
     match def.code().unspan() {
         Value::Block(b) => {
             let last = b.operators.len().saturating_sub(1);
@@ -1373,6 +1383,31 @@ fn scan_result(n: &Value, w: &World, s: &mut Scan) {
 fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
     let ops = &w.ops;
     let n = n.unspan();
+    // The function's own exit literal: the rewrite keeps its fill values, its other
+    // statements and the placeholder free it makes unconditional (`literals_to_tuples`),
+    // so those are what is scanned — the buffer it drops is no mention.
+    if let Some((buf, record)) = s.own
+        && let Some(lit) = literal(n, buf, &w.layouts[&record], ops)
+    {
+        for part in &lit.parts {
+            match part {
+                Part::Header | Part::ViewCopy => {}
+                Part::Fill(f) => {
+                    for (_, v) in f {
+                        scan(v, false, w, s);
+                    }
+                }
+                Part::Free(p) => match p.unspan() {
+                    Value::Var(x) => {
+                        s.frees.insert(*x);
+                    }
+                    other => scan(other, false, w, s),
+                },
+                Part::Other(o) => scan(o, true, w, s),
+            }
+        }
+        return;
+    }
     match n {
         Value::Set(v, inner) => {
             if let Value::Call(d, args) = inner.unspan()
