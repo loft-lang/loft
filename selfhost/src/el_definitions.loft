@@ -123,7 +123,26 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
           continue;
         }
         t = el_types::parse_type(e, tn!);
-        if t == null || !e.first_pass {
+        if t == null {
+          continue;
+        }
+        fi = field_init_node(e, mods);
+        dv: ir::Node? = null;
+        if fi != null {
+          dv = field_default_value(e, fi!, t!);
+          if dv == null {
+            continue;
+          }
+        }
+        if !e.first_pass {
+          // The second pass converts the default to the field (`set_attr_value`).
+          if dv != null {
+            for a in el::def(e, d).attributes {
+              if a.name == fname {
+                e.b.data.definitions[d].attributes[a#index].value = [dv!];
+              }
+            }
+          }
           continue;
         }
         tp = t!;
@@ -142,6 +161,9 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
           }
         }
         a = el::attribute(fname, tp);
+        if dv != null {
+          a.value = [dv!];
+        }
         a.nullable = nullable;
         a.pub_field = public;
         // The alias an integer field is named by (`u8`, `i32`), whose `size(n)` routes its slot.
@@ -163,15 +185,50 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
   e.context = ctx;
 }
 
-// A field declaration's one type, when it is nothing but a type.
+// A field declaration's one type, when it is nothing but a type and maybe a `= default`.
 fn field_type_node(e: el::El, mods: vector<integer>) -> integer? {
   if len(mods) != 1 {
     return null;
   }
   match e.p.nodes[mods[0]] {
-    SFieldType { tp, init, caps } => if init == null && len(caps) == 0 { tp } else { null },
+    SFieldType { tp, caps } => if len(caps) == 0 { tp } else { null },
     _ => null
   }
+}
+
+// The `= default` of a field declaration, or null.
+fn field_init_node(e: el::El, mods: vector<integer>) -> integer? {
+  match e.p.nodes[mods[0] ?? 0] {
+    SFieldType { init } => init,
+    _ => null
+  }
+}
+
+// `parse_stored_default`: a field's `= value` read in the struct's context, with no frame of its
+// own, and on the second pass converted to the field's type (`convert`).  A plain scalar or a
+// literal text that names no slot is carried; anything else is refused by name.
+fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
+  vars = el_vars::new_vars("__default", e.file);
+  x = el_expressions::expression(e, vars, init);
+  if el_types::is_unknown(x.tp) {
+    return if e.first_pass { ir::NdNull } else { null };
+  }
+  plain_enum = match el_types::base(x.tp) { TyEnum { is_ref } => !is_ref, _ => false };
+  plain = el_convert::plain_scalar(el_types::base(x.tp)) || plain_enum || (el_types::base(x.tp) is TyText && el_ir::unspan(x.code) is NdText);
+  slot = false;
+  for v in 0..len(vars.vars) {
+    if el_ir::reads_var(x.code, v) {
+      slot = true;
+    }
+  }
+  if !plain || slot {
+    el::refuse(e, "a field default of this kind: {el_expressions::type_kind(x.tp)}");
+    return null;
+  }
+  if e.first_pass {
+    return x.code;
+  }
+  el_convert::convert(e, vars, x.code, x.tp, el_types::base(ft), false)
 }
 
 // `Parser::parse_constant`, `const NAME = value;`: a definition of its own (`DefType::Constant`),
