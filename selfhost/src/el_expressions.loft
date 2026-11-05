@@ -287,6 +287,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       if built == null && ends_in_return(code) {
         built = code;
       }
+      if built == null && body_tail(code) is NdIf && arms_build_into_refs(e, vars, body_tail(code)) {
+        built = code;
+      }
       // A result answered by an `if` whose every arm hands back a parameter, a literal built in
       // a work ref of its own, or the null sentinel delivers nothing: the arms are the answer.
       if built == null && if_tail_params(e, vars, code) != null {
@@ -324,11 +327,18 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         }
         // A tail answering another record local than the one an earlier exit renamed the buffer
         // onto (`return to; … mid`) is copied into it (`materialize_view_return`): not carried.
+        // A tail viewing a local is copied into the work ref the first pass renamed the buffer
+        // onto (`var_return`).
         if buf >= 0 && bound == null {
           match el_ir::unspan(el_ir::last(bl.operators)) {
             NdVar { n: tv } => {
               if tv != buf && heap_def(el_vars::tp(vars, tv)) >= 0 {
-                el::refuse(e, "a record tail other than the local the return buffer was renamed onto");
+                copy = if views_local(vars, tv) { copy_into_buffer(e, vars, el_ir::last(bl.operators), tv, buf, result) } else { null };
+                if copy == null {
+                  el::refuse(e, "a record tail other than the local the return buffer was renamed onto");
+                } else {
+                  bl.operators[-1] = copy!;
+                }
               }
             },
             _ => {}
@@ -1129,16 +1139,7 @@ fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   if attr_nr(el::def(e, e.context), "__retbuf") < 0 || buffer_bound(e) {
     return;
   }
-  tail = ir::NdNull;
-  match code {
-    NdBlock { block } => {
-      n = len(block[0].operators);
-      if n > 0 {
-        tail = el_ir::unspan(el_ir::last(block[0].operators));
-      }
-    },
-    _ => {}
-  }
+  tail = body_tail(code);
   v = if tail is NdIf { arms_rename_candidate(e, vars, code, tail) } else { rename_candidate(e, vars, code, tail) };
   if v >= 0 {
     rename_onto(e, vars, rb, v);
@@ -1147,14 +1148,16 @@ fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
 
 // An `if` tail's candidate: the one its arms hand back where every other arm answers null
 // (the arm's result borrows that buffer alone, `ref_return`'s `ls`); -1 for none or several,
-// -2 for an arm that answers null.
+// -2 for an arm that answers null.  Where the arms hand back the hidden buffers of different
+// calls, the first is renamed (`Rename`) and the others stay work refs of their own: the buffer
+// is bound by then, and the tail reads it (`SkipJoinArm`).
 fn arms_rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, n: ir::Node) -> integer {
   match n {
     NdSpan { pos: _, inner } => arms_rename_candidate(e, vars, code, inner),
     NdIf { cond: _, t, f } => {
       a = arms_rename_candidate(e, vars, code, t);
       b = arms_rename_candidate(e, vars, code, f);
-      if a == -2 { b } else if b == -2 || a == b { a } else { -1 }
+      if a == -2 { b } else if b == -2 || a == b || a >= 0 && b >= 0 && work_ref(vars, a) && work_ref(vars, b) { a } else { -1 }
     },
     NdBlock { block } => if len(block[0].operators) == 0 { -1 } else { arms_rename_candidate(e, vars, code, block[0].operators[-1]) },
     NdNull => -2,
@@ -1196,6 +1199,31 @@ fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::Node)
     _ => {}
   }
   -1
+}
+
+// The last statement of a body block, unspanned; null for an empty body or no block.
+fn body_tail(code: ir::Node) -> ir::Node {
+  match code {
+    NdBlock { block } => if len(block[0].operators) == 0 { ir::NdNull } else { el_ir::unspan(el_ir::last(block[0].operators)) },
+    _ => ir::NdNull
+  }
+}
+
+fn work_ref(vars: el_vars::Vars, v: integer) -> boolean {
+  starts_with(el_vars::name_of(vars, v), "__ref_")
+}
+
+// An `if` tail whose every arm builds its record into a call's hidden `__ref_N` buffer — the
+// one the first pass renamed onto the return buffer, or a work ref of the arm's own — or answers
+// the null sentinel: the arms are the answer, and nothing more is delivered.
+fn arms_build_into_refs(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => arms_build_into_refs(e, vars, inner),
+    NdIf { cond: _, t, f } => arms_build_into_refs(e, vars, t) && arms_build_into_refs(e, vars, f),
+    NdBlock { block } => len(block[0].operators) > 0 && arms_build_into_refs(e, vars, el_ir::last(block[0].operators)),
+    NdCall { def_nr, args } => if len(args) == 0 { el::def(e, def_nr).name == "OpNullRefSentinel" } else { hidden_ref_arg(vars, args) >= 0 },
+    _ => false
+  }
 }
 
 // The call's hidden `__ref_N` return buffer — its last argument — or -1.
@@ -1252,6 +1280,15 @@ fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir
   if child_allocs(e, vars, code, v) >= 2 {
     return code;
   }
+  // `MaterializeView` (#306): a local viewing another local's store is copied before it
+  // escapes, into a work ref the first pass renames onto the return buffer
+  // (`materialize_view_return`); the second pass copies into that buffer.
+  if views_local(vars, v) {
+    if e.first_pass {
+      rename_onto(e, vars, rb, el_vars::work_ref(vars, el_types::without_deps(el_types::base(ret))));
+    }
+    return code;
+  }
   ba = attr_nr(el::def(e, d), "__retbuf");
   views_argument = false;
   for x in el_types::deps(el_vars::tp(vars, v)) {
@@ -1278,6 +1315,18 @@ fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir
   bl.operators[-1] = copy!;
   bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(ret)), [rb])];
   ir::NdBlock { block: [bl] }
+}
+
+// `return_views_local`: the local's record borrows the store of a local of this frame, not only
+// parameters.  A self-dep is the mark a self-read rebind leaves (`cur = cur.next`): a view of
+// whatever store the chain reached — except on a compiler mint, whose self-dep marks ownership.
+fn views_local(vars: el_vars::Vars, v: integer) -> boolean {
+  for x in el_types::deps(el_vars::tp(vars, v)) {
+    if x == v && !el_vars::is_compiler_generated(vars, v) || x != v && !vars.vars[x].argument {
+      return true;
+    }
+  }
+  false
 }
 
 // `rebind_safe_literal` (`@FR-R-Rebind`): a caller may hand a by-value parameter of the
@@ -1465,16 +1514,7 @@ fn heap_deps(t: ir::TypeT) -> boolean {
 
 // The shape of a body's tail, naming a refusal.
 fn tail_kind(e: el::El, vars: el_vars::Vars, code: ir::Node) -> text {
-  t = ir::NdNull;
-  match code {
-    NdBlock { block } => {
-      n = len(block[0].operators);
-      if n > 0 {
-        t = el_ir::unspan(el_ir::last(block[0].operators));
-      }
-    },
-    _ => {}
-  }
+  t = body_tail(code);
   match t {
     NdVar { n } => if vars.vars[n].argument { "parameter" } else if len(el_types::deps(el_vars::tp(vars, n))) > 0 { "a borrowing local" } else { "an owned local" },
     NdCall { def_nr } => "call {el::def(e, def_nr).name}",
@@ -2899,6 +2939,10 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, int
       }
     },
     _ => {}
+  }
+  // A local a guard proved present reads as its base (`narrowed_non_null`).
+  if vars.present.contains(v) {
+    t = el_types::base(t);
   }
   // A text read first into a local bind's destination keeps its own type (`parse_var`'s `into`
   // arm); any other read borrows the variable (`depending`).
@@ -8643,17 +8687,24 @@ fn binary(e: el::El, vars: el_vars::Vars, at: integer, op: text, l: integer, r: 
   vars.lit_hint_node = -1;
   x = builtin_op(e, vars, op, a, b);
   // `@FR-N-Div` / `@FR-N-Domain`: a quotient or remainder whose divisor is not provably
-  // non-zero is `τ?`; `@FR-N-Prop`: arithmetic over a nullable operand is too.
+  // non-zero is `τ?`.
   arith = op == "+" || op == "-" || op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>";
   ab = el_types::base(a.tp);
-  rb = el_types::base(x.tp);
-  numeric = rb is TyInteger || rb is TyFloat || rb is TySingle;
   if (op == "/" || op == "%") && (ab is TyInteger || ab is TyFloat || ab is TySingle) && !divisor_nonzero(e, vars, b.code) && !el_types::is_unknown(x.tp) {
     x.tp = ir::TyOptional { inner: x.tp };
-  } else if arith && numeric && !(x.tp is TyOptional) && (a.tp is TyOptional || b.tp is TyOptional) {
-    x.tp = ir::TyOptional { inner: x.tp };
+  } else if arith {
+    x.tp = propagated(a, b, x.tp);
   }
   arithmetic_span(e, at, op, x)
+}
+
+// `@FR-N-Prop`: arithmetic over a nullable operand is `τ?`.
+fn propagated(a: Ex, b: Ex, t: ir::TypeT) -> ir::TypeT {
+  rb = el_types::base(t);
+  if (rb is TyInteger || rb is TyFloat || rb is TySingle) && !(t is TyOptional) && (a.tp is TyOptional || b.tp is TyOptional) {
+    return ir::TyOptional { inner: t };
+  }
+  t
 }
 
 // The operand of a whole `&<operand>` side, or -1.
@@ -8790,14 +8841,26 @@ fn is_zero(n: ir::Node) -> boolean {
   }
 }
 
-// `(N-Guard)` for a record local: `v == null` (`OpRefIsNull`) proves it present where the
-// test fails, a truthy `v` (`OpConvBoolFromRef`) where it holds, `!` swapping the sides.  The
-// local, and which side; -1 for none.
+// `narrowing_from_condition` (`@FR-N-Guard`): the local a condition proves present, and on which
+// side — a bare local or a truthy conversion (`OpConvBoolFrom…`) where it holds, a heap null
+// test (`OpRefIsNull`, `OpVectorIsNull`) where it fails, `v == null` / `v != null` against the
+// null literal, `!` swapping the sides; -1 for any other shape, which proves nothing.
 fn presence_proof(e: el::El, test: ir::Node) -> DivProof {
   none = DivProof { v: -1, then: false };
   match el_ir::unspan(test) {
+    NdVar { n } => DivProof { v: n, then: true },
+    NdIf { cond, t, f: _ } => if el_ir::unspan(t) == ir::NdBoolean { b: true } { presence_proof(e, cond) } else { none },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
+      if len(args) == 2 && (starts_with(nm, "OpEq") || starts_with(nm, "OpNe")) {
+        for side in [0, 1] {
+          match el_ir::unspan(args[side]!) {
+            NdVar { n } => { if from_null(e, args[1 - side]!) { return DivProof { v: n, then: starts_with(nm, "OpNe") }; } },
+            _ => {}
+          }
+        }
+        return none;
+      }
       if len(args) != 1 {
         return none;
       }
@@ -8805,15 +8868,23 @@ fn presence_proof(e: el::El, test: ir::Node) -> DivProof {
         inner = presence_proof(e, args[0]!);
         return DivProof { v: inner.v, then: !inner.then };
       }
-      if nm != "OpRefIsNull" && nm != "OpConvBoolFromRef" {
+      if nm != "OpRefIsNull" && nm != "OpVectorIsNull" && !starts_with(nm, "OpConvBoolFrom") {
         return none;
       }
       match el_ir::unspan(args[0]!) {
-        NdVar { n } => DivProof { v: n, then: nm == "OpConvBoolFromRef" },
+        NdVar { n } => DivProof { v: n, then: starts_with(nm, "OpConvBoolFrom") },
         _ => none
       }
     },
     _ => none
+  }
+}
+
+// The null literal converted to a type (`OpConv…FromNull()`).
+fn from_null(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name.ends_with("FromNull"),
+    _ => false
   }
 }
 
@@ -14834,7 +14905,10 @@ fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: integer)
   }
   acc = a;
   for n in rights {
-    acc = arithmetic_span(e, ats[n#index] ?? at, "+", builtin_op(e, vars, "+", acc, expression(e, vars, n)));
+    b = expression(e, vars, n);
+    x = builtin_op(e, vars, "+", acc, b);
+    x.tp = propagated(acc, b, x.tp);
+    acc = arithmetic_span(e, ats[n#index] ?? at, "+", x);
   }
   acc
 }
