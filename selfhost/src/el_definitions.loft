@@ -428,13 +428,15 @@ fn sole_vector_literal(e: el::El, body: integer) -> boolean {
 }
 
 // `fn name(params) (-> type)? (; / block)`                    Parser::parse_function
-// The plain path: no type variables, no operator form, no capability, no annotation, no `both`.
+// The plain path: no type variables, no operator form, no annotation, no `both`.
 // A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
 // the definition's key, or "" where the declaration was refused before one was known.
 pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) -> text {
-  if is_op || cap != null || len(annots) > 0 || ret_const {
-    kind = if is_op { "an operator form" } else if cap != null { "a capability" } else if len(annots) > 0 { "annotations" } else { "`-> const`" };
-    el::refuse(e, "a function with an operator form, a capability, annotations or `-> const`: {kind}");
+  // A capability (`fs#read`) and a `-> const` result are checks at the call and the return; the
+  // definition's image is the plain one, so both are read past.
+  if is_op || len(annots) > 0 {
+    kind = if is_op { "an operator form" } else { "annotations" };
+    el::refuse(e, "a function with an operator form or annotations: {kind}");
     return "";
   }
   // `parse_type_var_header` (@F25): each header variable bound to its placeholder before the
@@ -501,11 +503,13 @@ pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars:
   after = at;
   rt: ir::TypeT = ir::TyVoid;
   if ret != null {
-    // `-> T` (or `-> const T`, a function or a tuple type): the lexer stood on the `->`.
+    // `-> T` (or `-> const T`, a function or a tuple type): the lexer stood on the `->`, which a
+    // `const` stands between.
+    back = if ret_const { 2 } else { 1 };
     match e.p.nodes[ret ?? 0] {
-      STy { at: tat } => { after = tat - 1; },
-      STyFn { at: tat } => { after = tat - 1; },
-      STyTuple { at: tat } => { after = tat - 1; },
+      STy { at: tat } => { after = tat - back; },
+      STyFn { at: tat } => { after = tat - back; },
+      STyTuple { at: tat } => { after = tat - back; },
       _ => {}
     }
   } else if body != null {
