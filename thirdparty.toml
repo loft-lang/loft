@@ -71,5 +71,4 @@ lockfile = ["Cargo.lock", "loft-ffi/Cargo.lock", "loft-ffi-build/Cargo.lock",
 compiles-c = ["ring"]
 
 [thirdparty.rust.reviewed]
-RUSTSEC-2020-0077 = "applies: memmap 0.7 is unmaintained, so a flaw found in it gets no fix; loft maps store files through it directly (src/store.rs, src/database/io.rs) and through mmap-storage 0.10 — replace with memmap2"
 RUSTSEC-2026-0192 = "applies: ttf-parser 0.21 is unmaintained; fontdue 0.9 (the `fontdue` feature) parses font files through it — a font from outside reaches it"
