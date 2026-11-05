@@ -141,6 +141,7 @@ is undeclared, never on what an advisory says) runs at every way in.
 | a library PR or push | `library-ci-reusable.yml`, per package | the package, and its `[c] shim` built and read |
 | our library to the registry | `registry_maintain.sh`, before the tag | the package as it will be tagged |
 | a submitted library | `vet-lib.sh` step V7 | the package at the submitted ref |
+| any version signed into the index | `registry-sign.sh`, every route | the downloaded tarball, the bytes being signed |
 
 What the registers know is asked nightly (`miri.yml`, the `audit` job): a new advisory against
 anything loft or a published library ships fails that job the next morning.
