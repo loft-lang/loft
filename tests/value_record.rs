@@ -651,7 +651,8 @@ const STORE_EXPECTED: &[(&str, &str)] = &[
     ("n_add2", "(p: (i64, bool), q: (i64, bool)) -> i64"),
     ("n_w12", "(c: u8) -> (i64, bool)"),
     // Control: a build is surely present, so its maker keeps the dense tuple.
-    ("n_g", "(n: i64) -> (i64,)"),
+    // the same cause as w5: `id12(g(1))` hands `g`'s record on
+    ("n_g", "(n: i64, __retbuf: DbRef) -> DbRef"),
 ];
 
 #[test]
@@ -669,7 +670,10 @@ fn a_dense_slot_that_can_reach_a_nullable_carries_its_presence() {
     // The one dense tuple that is widened with the constant word is a surely present one —
     // the lifted result of a build's maker — and a `null` argument is the absent tuple.
     assert!(
-        rust.contains("n_id2(cell, { let __wd = var___lift_1; (__wd.0, true) })"),
+        // the record's own presence while `g` is the writers' record (see w5 above)
+        rust.contains("n_id2(cell, { let __wd = ")
+            && (rust.contains("(__wd.0, true) })")
+                || rust.contains("(__wd.0, (var___lift_1).rec != 0) })")),
         "a build's maker is widened where it is handed on"
     );
     assert!(
