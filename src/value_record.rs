@@ -1500,6 +1500,9 @@ struct Scan {
     /// Presence tests `OpConvBoolFromRef(x)` / `OpRefIsNull(x)`, by variable: a nullable
     /// carrier reads its presence word for them.
     tests: Vec<u16>,
+    /// When the scanned function returns the tuple: the locals it answers through — its
+    /// forwards' and delivery locals — which, like its buffer, are no store's record.
+    own_results: HashSet<u16>,
     /// `(buffer, record)` when the scanned function returns the tuple: its own object
     /// literals become tuples, so only what the rewrite keeps of them is scanned — the
     /// buffer writes, the mint and the placeholder test go with the buffer.
@@ -1522,6 +1525,12 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
     let vars = &def.variables;
     let mut s = Scan {
         own: w.cands.get(&f).filter(|_| tuple).map(|c| (c.buf, c.record)),
+        own_results: w
+            .cands
+            .get(&f)
+            .filter(|_| tuple)
+            .map(|c| c.forwards.union(&c.delivered).copied().collect())
+            .unwrap_or_default(),
         ..Scan::default()
     };
     match def.code().unspan() {
@@ -1952,7 +1961,7 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
             {
                 // Witnessed by this function's own buffer, which the tuple drops: a plain
                 // free (`Exits`).
-                if s.own.is_some_and(|(buf, _)| buf == *b) {
+                if s.own.is_some_and(|(buf, _)| buf == *b) || s.own_results.contains(b) {
                     s.frees.insert(*a);
                 } else {
                     s.fids.push((*a, *b));
@@ -2432,7 +2441,10 @@ impl Exits<'_> {
     /// A statement: its `return`s, the sets of delivery locals and the frees they witness.
     fn walk(&self, n: &mut Value, vars: &mut crate::variables::Function) {
         let ops = &self.w.ops;
-        let witness = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == self.c.buf || self.c.delivered.contains(x));
+        let witness = |v: &Value| {
+            matches!(v.unspan(), Value::Var(x) if *x == self.c.buf
+                || self.c.delivered.contains(x) || self.c.forwards.contains(x))
+        };
         // A materialised view's return that ends in its own `return` is an exit where it stands.
         if mv_returns(n.unspan())
             && let Some((r, _)) = mv_parts(n.unspan(), ops)
