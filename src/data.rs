@@ -6701,7 +6701,8 @@ impl Data {
         )
     }
 
-    /// @PLN204 — instance `d` was minted from a template in a 64-bit source.
+    /// @PLN204 — instance `d` was minted from a template in a 64-bit source; @PLN217 — or
+    /// `d` is a standard-library binding to the 64-bit runtime.  Either way its body is 64-bit.
     pub fn mark_wide_instance(&mut self, d: u32) {
         self.wide_instances.insert(d);
     }

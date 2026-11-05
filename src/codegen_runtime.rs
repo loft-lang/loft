@@ -7132,6 +7132,7 @@ pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
     let fn_pos = u32::from(stores.position(sf_elm, "function"));
     let file_pos = u32::from(stores.position(sf_elm, "file"));
     let line_pos = u32::from(stores.position(sf_elm, "line"));
+    let line_bytes = stores.field_bytes(sf_elm, "line");
     let args_pos = u32::from(stores.position(sf_elm, "arguments"));
     let vars_pos = u32::from(stores.position(sf_elm, "variables"));
     let vec = stores.database(sf_size);
@@ -7150,9 +7151,12 @@ pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
         stores
             .store_mut(&vec)
             .set_u32_raw(elm.rec, elm.pos + file_pos, file_str);
-        stores
-            .store_mut(&vec)
-            .set_int(elm.rec, elm.pos + line_pos, i64::from(line));
+        stores.store_mut(&vec).set_int_sized(
+            elm.rec,
+            elm.pos + line_pos,
+            line_bytes,
+            i64::from(line),
+        );
         // Zero the arguments and variables vector fields.
         stores
             .store_mut(&vec)

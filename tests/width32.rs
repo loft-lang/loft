@@ -19,13 +19,18 @@ fn write(path: &Path, body: &str) {
 
 /// Run `main` with `lib` as `wlib.loft` on the lib path, `width` as `LOFT_WIDTH` (or unset).
 fn run(name: &str, lib: &str, main: &str, width: Option<&str>) -> String {
+    run_on("--interpret", name, lib, main, width)
+}
+
+/// [`run`] on `backend` (`--interpret` or `--native-c`).
+fn run_on(backend: &str, name: &str, lib: &str, main: &str, width: Option<&str>) -> String {
     let dir = std::env::temp_dir().join(format!("loft-width32-{}-{name}", std::process::id()));
     let _ = fa::remove_dir_all(&dir);
     write(&dir.join("lib").join("wlib.loft"), lib);
     write(&dir.join("main.loft"), main);
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--interpret")
+    cmd.arg(backend)
         .arg("--lib")
         .arg(dir.join("lib"))
         .arg(dir.join("main.loft"))
@@ -133,4 +138,43 @@ fn main() {
         run("boundary", lib, main, None),
         "42 null 1.5 22 42 5000000000 4278190080\n"
     );
+}
+
+/// @PLN217 — the standard library under the regime, where the runtime fills its records: a
+/// body-less binding answers 64 bits narrowed at the call (`as_number`, a double, reads 2.5
+/// rather than its bytes as a single), `File` keeps its 64-bit offsets (the path is found and
+/// the size is this file's), a JSON integer keeps 64 bits (`as_long`), and a stack frame's
+/// line, a type's size, a field's position and a variant's tag are written at the 4 bytes
+/// their width-neutral fields take.  Two `i64` fields: 16 bytes at 0 and 8; tags count from 1;
+/// `depth()` is called on line 12.  The same answers on both backends and both widths.
+#[test]
+fn the_standard_library_s_runtime_records_keep_their_layout() {
+    let main = "struct P { a: i64, b: i64 }
+enum E { One, Two }
+fn depth() -> i64 {
+  s = stack_trace();
+  s[len(s) - 1].line
+}
+fn main() {
+  f = file(\"main.loft\");
+  v = json_parse(\"[400, 2.5, 5000000000]\");
+  t = type_named(\"P\")!;
+  e = type_named(\"E\")!;
+  println(\"{f.size} {f.path} {v.item(0).as_long()} {v.item(1).as_number()} {v.item(2).as_long()} {depth()} {t.size} {t.fields[0].position} {t.fields[1].position} {e.variants[0].tag} {e.variants[1].tag}\");
+}
+";
+    let want = format!(
+        "{} main.loft 400 2.5 5000000000 12 16 0 8 1 2\n",
+        main.len()
+    );
+    for backend in ["--interpret", "--native-c"] {
+        for width in [None, Some("32")] {
+            let name = format!("records{}{}", &backend[2..5], width.unwrap_or("64"));
+            assert_eq!(
+                run_on(backend, &name, "", main, width),
+                want,
+                "{backend} width {width:?}"
+            );
+        }
+    }
 }

@@ -3064,6 +3064,12 @@ impl Parser {
                 header[0].name
             );
         }
+        // @PLN217 — a standard-library function without a loft body binds the runtime, which
+        // computes in 64 bits: under the regime its signature keeps the 64-bit `integer` /
+        // `float`, as an `Op…` declaration's `word` does, and a 32-bit caller's answer is
+        // narrowed where the call returns (`width32_call_result`).
+        let wide_binding = self.default && self.data.width32() && self.body_less_ahead();
+        self.machine_types = wide_binding;
         let mut arguments = Vec::new();
         if self.lexer.token("(") {
             // register the type variable as a struct so parse_type
@@ -3084,6 +3090,7 @@ impl Parser {
                 }
             }
             if !self.parse_arguments(&fn_name, &mut arguments) {
+                self.machine_types = false;
                 return true;
             }
             self.lexer.token(")");
@@ -3190,6 +3197,7 @@ impl Parser {
             self.data.get_fn(&fn_name, &arguments)
         };
         if self.context == u32::MAX {
+            self.machine_types = false;
             return false;
         }
         if is_operator {
@@ -3321,6 +3329,10 @@ impl Parser {
         } else {
             Type::Void
         };
+        self.machine_types = false;
+        if wide_binding && self.context != u32::MAX {
+            self.data.mark_wide_instance(self.context);
+        }
         if is_operator && !self.first_pass {
             let written = written_name.as_deref().unwrap_or(&fn_name);
             self.check_operator_definition(written, &arguments, &result);

@@ -181,6 +181,25 @@ impl Parser {
         })
     }
 
+    /// @PLN217 — does the function whose signature begins here end in `;`, a binding to the
+    /// runtime with no loft body?  Looks ahead to the first `;` or `{` and comes back.
+    pub(crate) fn body_less_ahead(&mut self) -> bool {
+        let back = self.lexer.link();
+        let found = loop {
+            if self.lexer.peek_token(";") {
+                break true;
+            }
+            if self.lexer.peek_token("{")
+                || matches!(self.lexer.peek().has, crate::lexer::LexItem::None)
+            {
+                break false;
+            }
+            self.lexer.cont();
+        };
+        self.lexer.revert(back);
+        found
+    }
+
     /// A function answering how many elements, characters or bytes something holds.
     fn is_count_fn(name: &str) -> bool {
         matches!(name, "n_len" | "n_size")

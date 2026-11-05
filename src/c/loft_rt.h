@@ -3520,7 +3520,11 @@ static loft_ref loft_stack_trace(void) {
         loft_ref e = loft_vec_append(vec, LOFT_SF_SIZE);
         loft_set_text(e, LOFT_SF_FUNCTION, loft_lit(loft_frames[i].fn, strlen(loft_frames[i].fn)));
         loft_set_text(e, LOFT_SF_FILE, loft_lit(loft_frames[i].file, strlen(loft_frames[i].file)));
+#ifdef LOFT_STD_INT4
+        loft_set_int4(e, LOFT_SF_LINE, i == 0 ? 0 : (int64_t) loft_frames[i - 1].site);
+#else
         loft_set_int(e, LOFT_SF_LINE, i == 0 ? 0 : (int64_t) loft_frames[i - 1].site);
+#endif
         loft_set_u32(loft_store_of(e), e.rec, e.pos + LOFT_SF_ARGS, 0);
         loft_set_u32(loft_store_of(e), e.rec, e.pos + LOFT_SF_VARS, 0);
         loft_vec_finish(vec);

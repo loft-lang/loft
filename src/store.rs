@@ -5812,6 +5812,40 @@ impl Store {
             false
         }
     }
+
+    /// An integer from a field of `bytes` — [`Self::set_int_sized`]'s reading.
+    #[must_use]
+    pub fn get_int_sized(&self, rec: u32, fld: u32, bytes: u16) -> i64 {
+        if bytes == 4 {
+            let v = self.get_i32_raw(rec, fld);
+            if v == i32::MIN {
+                i64::MIN
+            } else {
+                i64::from(v)
+            }
+        } else {
+            self.get_int(rec, fld)
+        }
+    }
+
+    /// An integer into a field of `bytes` (`Stores::field_bytes`): 4 is an `i32`, null as
+    /// `i32::MIN` (`OpSetInt4`'s encoding), anything else the 8-byte `integer`.
+    pub fn set_int_sized(&mut self, rec: u32, fld: u32, bytes: u16, val: i64) -> bool {
+        if bytes == 4 {
+            self.set_i32_raw(rec, fld, i32::try_from(val).unwrap_or(i32::MIN))
+        } else {
+            self.set_int(rec, fld, val)
+        }
+    }
+
+    /// A float into a field of `bytes`: 4 is a `single`, anything else the 8-byte `float`.
+    pub fn set_float_sized(&mut self, rec: u32, fld: u32, bytes: u16, val: f64) -> bool {
+        if bytes == 4 {
+            self.set_single(rec, fld, val as f32)
+        } else {
+            self.set_float(rec, fld, val)
+        }
+    }
 }
 
 // Safety: worker threads only call `addr()` (read-only) on locked stores.
