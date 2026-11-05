@@ -123,12 +123,14 @@ pub struct Vars {
   // `parse_var`'s `into` arm: the syntax node of a local bind's right-hand side read first,
   // into the destination — a text read there keeps its own type (-1: none)
   pub read_into: integer,
+  // Parsing the value of a plain local's `=` (`Parser::in_bind_rhs`).
+  pub bind_rhs: boolean,
   // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.
   pub rebuilt: vector<integer>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, reversed: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, rebuilt: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, reversed: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, bind_rhs: false, rebuilt: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
