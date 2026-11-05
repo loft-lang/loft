@@ -23,10 +23,11 @@
 //! parameter.  The shapes, all required, anything else declining the function or parameter
 //! everywhere, to a fixpoint:
 //!
-//! - an admitted function or parameter belongs to a function that is not `pub` (a
-//!   library's API keeps its record, `(R-Escape)`) and that loft calls somewhere (one
-//!   nothing in loft calls is called from outside loft by name, so its signature is its
-//!   API);
+//! - an admitted function is one loft calls somewhere (one nothing in loft calls is called
+//!   from outside loft by name, so its signature is its API); a `pub` one keeps its record
+//!   for the callers outside — a library's API keeps its record, `(R-Escape)` — and its
+//!   TWIN serves loft's own carriers; an admitted parameter belongs to a function that is
+//!   not `pub`;
 //! - its record is FLAT: at least two fields (a loft tuple has two or more elements), each
 //!   an 8-byte integer, a float, a single or a boolean;
 //! - an admitted function's buffer appears only in object literals filling each field
@@ -315,11 +316,24 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     for (&d, &tp) in &vr.fns {
         // `@FR-R-ValueRecord`'s nullable clause is `--native`'s alone: a `τ?` tuple carries a
         // presence word this pass has no spelling for, so the IR keeps the record form there.
-        if arms.contains(&d) || crate::opt::value_records::layout::is_nullable_layout(tp) {
-            continue;
-        }
-        if let Some(c) = callee_shape(data, stores, &w.ops, &mut w.layouts, &vr, d, tp) {
-            w.cands.insert(d, c);
+        let shape = if arms.contains(&d) {
+            Err("a fn-ref arm")
+        } else if crate::opt::value_records::layout::is_nullable_layout(tp) {
+            Err("a nullable record")
+        } else {
+            callee_shape(data, stores, &w.ops, &mut w.layouts, &vr, d, tp)
+        };
+        match shape {
+            Ok(c) => {
+                w.cands.insert(d, c);
+            }
+            Err(why) if trace() => {
+                eprintln!(
+                    "[ir-valuerec] {}: not a candidate: {why}",
+                    data.def(d).name()
+                );
+            }
+            Err(_) => {}
         }
     }
     for (&d, ps) in &vr.params {
@@ -375,7 +389,14 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     // TWIN returning the tuple serves the carriers.  A site that owes a record therefore
     // runs the code it ran before, on both backends.  A twinned forward keeps its record,
     // so the function it forwards is owed there in turn.
-    let mut twinned: HashSet<u32> = HashSet::default();
+    // A `pub` function is owed its record from the start: a caller outside the program — a
+    // library's cdylib bridge — sees its API, `(R-Escape)`.
+    let mut twinned: HashSet<u32> = w
+        .cands
+        .keys()
+        .copied()
+        .filter(|&d| data.def(d).pub_visible)
+        .collect();
     let mut plans: Vec<(u32, Plan)>;
     let mut twin_plans: Vec<(u32, Plan)>;
     loop {
@@ -495,29 +516,28 @@ fn callee_shape(
     vr: &crate::opt::value_records::layout::ValueRecords,
     d: u32,
     tp: u16,
-) -> Option<Callee> {
+) -> Result<Callee, &'static str> {
     let def = data.def(d);
-    if def.pub_visible || def.def_type != DefType::Function {
-        return None;
+    if def.def_type != DefType::Function {
+        return Err("no function");
     }
     // The return buffer is the LAST attribute, so dropping it moves no other parameter.
-    let idx = def.hidden_return_buffer_attr()?;
-    if idx + 1 != def.attributes.len() {
-        return None;
-    }
+    let idx = def.hidden_return_buffer_attr().ok_or("no return buffer")?;
     let buf = def.variables.var(&def.attributes[idx].name);
-    if buf == u16::MAX || !def.variables.is_argument(buf) {
-        return None;
+    if idx + 1 != def.attributes.len() || buf == u16::MAX || !def.variables.is_argument(buf) {
+        return Err("the return buffer is not the last parameter");
     }
     let Type::Reference(record, _) = def.returned().peel_link() else {
-        return None;
+        return Err("no record result");
     };
-    let layout = flat_layout(data, stores, *record, tp, vr.view_offs.get(&tp))?;
+    let layout =
+        flat_layout(data, stores, *record, tp, vr.view_offs.get(&tp)).ok_or("no flat layout")?;
     let mut sh = BodyShape::default();
-    if !body_shape(def.code(), buf, &layout, ops, true, &mut sh)
-        || !sh.returned.is_subset(&sh.bound)
-    {
-        return None;
+    if !body_shape(def.code(), buf, &layout, ops, true, &mut sh) {
+        return Err("a body shape the tuple cannot spell");
+    }
+    if !sh.returned.is_subset(&sh.bound) {
+        return Err("a returned local that is no forward");
     }
     let leaves = if layout.has_views() {
         // A forward's exit returns its local's tuple whole — the view the callee proved —
@@ -527,20 +547,12 @@ fn callee_shape(
         } else {
             Err("no view plan")
         };
-        match why {
-            Ok(l) => l,
-            Err(why) => {
-                if trace() {
-                    eprintln!("[ir-valuerec] {}: its view declines: {why}", def.name());
-                }
-                return None;
-            }
-        }
+        why?
     } else {
         Vec::new()
     };
     layouts.insert(*record, layout);
-    Some(Callee {
+    Ok(Callee {
         record: *record,
         buf,
         forwards: sh.returned,
