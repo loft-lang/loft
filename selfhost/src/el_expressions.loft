@@ -10316,7 +10316,8 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       rt = stored(e, vars, v, result);
       return ex(ir::NdReturn { inner: rt ?? v.code }, ir::TyNever);
     }
-    if !scalar(result) || result is TyVoid {
+    // A scalar result, nullable or not, takes the value converted to it.
+    if !scalar(el_types::base(result)) || result is TyVoid {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
       return ex(ir::NdNull, ir::TyNever);
     }
