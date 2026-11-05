@@ -1,6 +1,11 @@
 # What loft ships, links or builds in that it did not write — one table per dependency.
 # `scripts/thirdparty.py` checks this against the tree and asks each named advisory register;
-# the format is LIBRARY_AUTHORING.md § Third-party code, the same a library writes in its loft.toml.
+# the format is THIRDPARTY.md, the same a library writes in its loft.toml.
+
+# Files loft embeds or compiles that are ours but carry no licence header.
+[own]
+paths = ["src/c/loft_*.h", "src/c/tls/loft_*.c", "doc/loft-*.js", "index/*.json",
+         "src/native_release_args.txt"]
 
 [thirdparty.bearssl]
 kind       = "vendored"
@@ -33,13 +38,19 @@ advisories = ["github:badgeteam/esp32-component-badge-bsp"]
 
 [thirdparty.libc]
 kind     = "system"
-names    = ["c", "m", "dl", "pthread"]
-provider = "the platform's C library (glibc or musl on Linux, libSystem on macOS)"
+names    = ["c", "m", "dl", "pthread", "gcc_s", "ld-linux-x86-64"]
+provider = "the platform's C library and compiler runtime (glibc or musl and libgcc on Linux, libSystem on macOS)"
 
 [thirdparty.windows]
 kind     = "system"
-names    = ["ws2_32", "crypt32", "advapi32"]
-provider = "Windows: Winsock, the certificate store, the OS random source"
+names    = ["ws2_32", "crypt32", "advapi32", "bcrypt", "kernel32", "user32", "gdi32", "shell32",
+            "ole32", "oleaut32", "windows"]
+provider = "Windows: Winsock, the certificate store, the random source, the console and clipboard (rustyline), the API import library (windows-targets)"
+
+[thirdparty.macos]
+kind     = "system"
+names    = ["Security", "ServiceManagement", "CoreFoundation", "bsm"]
+provider = "macOS: the keychain trust store (rustls-native-certs), CoreFoundation, the audit library (nix through zip)"
 
 [thirdparty.wasi-libc]
 kind     = "system"
@@ -55,6 +66,8 @@ provider = "the OS's SQLite (libsqlite3; winsqlite3 ships with Windows), opened 
 kind     = "cargo"
 lockfile = ["Cargo.lock", "loft-ffi/Cargo.lock", "loft-ffi-build/Cargo.lock",
             "loft-ffi-macros/Cargo.lock", "wasm-sync/Cargo.lock"]
+# ring compiles BoringSSL-derived C and assembly (rustls' crypto); its advisories are RustSec's.
+compiles-c = ["ring"]
 
 [thirdparty.rust.reviewed]
 RUSTSEC-2020-0077 = "applies: memmap 0.7 is unmaintained, so a flaw found in it gets no fix; loft maps store files through it directly (src/store.rs, src/database/io.rs) and through mmap-storage 0.10 — replace with memmap2"

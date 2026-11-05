@@ -57,6 +57,7 @@ Usage:
     scripts/thirdparty.py identify DIR URL  # the upstream commit(s) whose files DIR matches
 """
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -78,6 +79,18 @@ REGISTRY_INDEX = "https://raw.githubusercontent.com/loft-lang/registry/main/inde
 REGISTRY_REPO = "https://github.com/loft-lang/registry"
 DAY = 24 * 3600
 CODE_EXT = (".c", ".h", ".cc", ".cpp", ".hpp", ".inl")
+# Code a browser, GL or wasm target ships beside the C: scanned for notices too.
+SCAN_EXT = CODE_EXT + (".js", ".mjs", ".css", ".wgsl", ".glsl", ".wat")
+# The platforms a Rust dependency is resolved for, and the target_os values they are.
+SHIPPED_TARGETS = ("x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc")
+SHIPPED_OS = {"linux", "macos", "windows"}
+INCLUDE_LIT = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
+RUST_LINK = re.compile(r'\blink\(\s*name\s*=\s*"([^"]+)"')   # #[link(..)] and cfg_attr(.., link(..))
+# A source file named for a platform loft does not ship (getrandom's fuchsia.rs) is that platform's.
+OTHER_OS_FILE = re.compile(r"(fuchsia|redox|hermit|solaris|illumos|haiku|vxworks|horizon|espidf|"
+                           r"android|ios|tvos|watchos|freebsd|netbsd|openbsd|dragonfly|aix|nto|zkvm|"
+                           r"emscripten|cygwin)", re.I)
+BUILD_C = re.compile(r"\bcc::|\bcmake::|Build::new\(\)")
 # Path segments whose code is not part of what a package ships.
 NOT_SHIPPED = {"tests", "test", "doc", "docs", "examples", "bench", "target", ".loft",
                "node_modules", "fixtures", "native-auto", ".git", "tools"}
@@ -481,6 +494,26 @@ def loft_sdk_pins(tree):
     return found
 
 
+def loft_embedded(tree):
+    """{file: includer} — every file loft's Rust source embeds with include_str!/include_bytes!:
+    it ships inside the binary wherever it lives in the tree (doc/, index/, src/c/)."""
+    found = {}
+    for f, text in loft_rust_source(tree):
+        for m in INCLUDE_LIT.finditer(text):
+            rel = os.path.normpath(os.path.join(os.path.dirname(f), m.group(1)))
+            if os.path.isfile(os.path.join(tree.root, rel)):
+                found.setdefault(rel, f)
+    return found
+
+
+def binary_needed(path):
+    """The libraries a built ELF binary is linked against (`readelf -d`), when it can be read."""
+    if not os.path.exists(path) or not shutil.which("readelf"):
+        return []
+    out = run(["readelf", "-d", path]).stdout
+    return re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", out)
+
+
 def norm_source(s):
     return re.sub(r"\.git$", "", str(s or "").strip().rstrip("/"))
 
@@ -504,10 +537,14 @@ def audit_tree(tree, a, offline):
     def scope(d):
         return {**root_decls, **decls.get(d, {})}
 
-    # What the tree holds: third-party code, and the libraries it links or opens.
-    foreign, links = {}, {}
+    # What the tree holds: third-party code, and the libraries it links or opens.  For loft the
+    # shipped set is exact as well as heuristic: every file its binary embeds counts, wherever
+    # it lives, and must be ours by its notice, ours by `[own] paths`, or a declared vendored file.
+    embedded = loft_embedded(tree) if tree.is_loft else {}
+    own_globs = split_list((manifests.get("", {}).get("own") or {}).get("paths")) if tree.is_loft else []
+    foreign, links, unattributed = {}, {}, {}
     for f in tree.files:
-        if not f.endswith(CODE_EXT) or not shipped(f):
+        if not (f in embedded or (f.endswith(SCAN_EXT) and shipped(f))):
             continue
         d = owner_pkg(f, pkgdirs)
         if d is None:
@@ -517,6 +554,11 @@ def audit_tree(tree, a, offline):
         head = "\n".join(text.splitlines()[:40])
         if "/vendor/" in "/" + f or (FOREIGN_NOTICE.search(head) and not OWN_NOTICE.search(head)):
             foreign.setdefault(d, []).append(f)
+        elif not OWN_NOTICE.search(head) and (f in embedded or f.startswith("src/c/")) \
+                and not any(fnmatch.fnmatch(f, g) for g in own_globs):
+            unattributed.setdefault(d, []).append(f)
+        if not f.endswith(CODE_EXT):
+            continue
         for rx in (SONAME_LIT, FRAMEWORK_LIT, DLL_LIT, PRAGMA_LIB):
             for m in rx.finditer(text):
                 links.setdefault(d, {}).setdefault(lib_base(m.group(1)), (m.group(1), f))
@@ -528,6 +570,9 @@ def audit_tree(tree, a, offline):
     if tree.is_loft:
         for flag, src in loft_link_flags(tree).items():
             links.setdefault("", {}).setdefault(lib_base(flag), (flag, src))
+        # What the built binary is really linked against, when one is here to read.
+        for lib in binary_needed(os.path.join(tree.root, "target", "release", "loft")):
+            links.setdefault("", {}).setdefault(lib_base(lib), (lib, "target/release/loft (linked)"))
 
     cargo_decls, wheres = {}, {}
     for d, m in manifests.items():
@@ -555,6 +600,12 @@ def audit_tree(tree, a, offline):
         for g in sorted({os.path.dirname(f) for f in loose}):
             nf = sum(1 for f in loose if os.path.dirname(f) == g)
             a.need(where, f"{g}/ holds third-party code ({nf} files) no `vendored` entry declares")
+        bare = [f for f in unattributed.get(d, []) if not any(f.startswith(p + "/") for p in paths)]
+        for g in sorted({os.path.dirname(f) for f in bare}):
+            fs = [os.path.basename(f) for f in bare if os.path.dirname(f) == g]
+            a.need(where, f"{g}/ ships {len(fs)} file(s) with no notice saying whose they are "
+                   f"({', '.join(fs[:4])}{' …' if len(fs) > 4 else ''}): give each our licence header, "
+                   "list it in `[own] paths`, or declare it vendored")
 
         # Libraries linked or opened that no `system` entry names.
         named = {lib_base(x) for s in system.values() for x in split_list(s.get("names"))}
@@ -586,10 +637,13 @@ def audit_tree(tree, a, offline):
         if rel not in locks:
             a.need(where, f"{n}: the lockfile {rel} is not in the tree")
     for f in locks:
-        n, x, where = cargo_decls.get(f) or (None, {}, wheres.get(owner_pkg(f, pkgdirs), tree.label))
+        od = owner_pkg(f, pkgdirs)
+        n, x, where = cargo_decls.get(f) or (None, {}, wheres.get(od, tree.label))
         if n is None:
             a.need(where, f"{f}: Rust crates ship from this lockfile and no `cargo` entry declares it")
-        cargo_audit(tree.root, f, n or os.path.dirname(f) or "Cargo.lock", x, where, a, offline)
+        named = {lib_base(y) for s_ in scope(od if od is not None else "").values() if s_.get("kind") == "system"
+                 for y in split_list(s_.get("names"))}
+        cargo_audit(tree.root, f, n or os.path.dirname(f) or "Cargo.lock", x, where, a, offline, named)
 
 
 def advisories_for(x, where, n, a, offline):
@@ -760,11 +814,115 @@ def check_sdk(tree, n, x, where, a, offline):
                            f"series); we pin {ver}")
         except (urllib.error.URLError, RuntimeError, OSError, ValueError) as e:
             a.need(where, f"{n}: the source {src} could not be asked for versions ({e})")
-    adv = triage(n, x, where, advisories_for(x, where, n, a, offline), a)
+    found = advisories_for(x, where, n, a, offline)
+    comps = []
+    if not offline and src.startswith("esp-registry:"):
+        try:
+            comps = esp_components(src.split(":", 1)[1], ver.lstrip("="), x.get("target", "esp32p4"))
+        except (urllib.error.URLError, RuntimeError, OSError, ValueError, KeyError) as e:
+            a.need(where, f"{n}: its component dependencies could not be resolved ({e})")
+        for cname, cver, repo, newest in comps:
+            if repo and found is not None:
+                try:
+                    found.update({k: v for k, v in reg_github(repo).items()})
+                except RuntimeError as e:
+                    a.need(where, f"{n}: the advisories of {cname} ({repo}) could not be asked ({e})")
+    adv = triage(n, x, where, found, a)
     a.say(f"  {n:<16} sdk       {ver:<22} {fresh:<40} {adv}")
+    if comps:
+        a.say(f"  {'':<16}   brings in {len(comps)} components: " + ", ".join(
+            f"{c} {v}" + (f" (newest {nw})" if nw and vkey(nw) > vkey(v) else "") for c, v, _, nw in comps))
 
 
-def cargo_audit(root, rel, n, x, where, a, offline):
+def esp_components(name, version, target):
+    """[(component, version, github owner/repo or None, newest)] — what an ESP component pulls in,
+    resolved through the component registry for `target`, the IDF itself left out."""
+    def info(nm):
+        return json.loads(http("https://components.espressif.com/api/components/" + nm))
+
+    out, seen, todo = [], {name}, [(name, version)]
+    while todo:
+        nm, v = todo.pop(0)
+        vs = info(nm)["versions"]
+        entry = next((e for e in vs if e["version"] == v), None) or vs[0]
+        for dep in entry.get("dependencies") or []:
+            if dep.get("source") == "idf" or not dep.get("name"):
+                continue
+            rules = [r.get("if", "") for r in dep.get("rules") or []]
+            if any(re.fullmatch(r"target\s*==\s*(\w+)", r) and re.fullmatch(r"target\s*==\s*(\w+)", r).group(1) != target
+                   for r in rules):
+                continue
+            dn = f"{dep.get('namespace') or 'espressif'}/{dep['name']}"
+            if dn in seen:
+                continue
+            seen.add(dn)
+            dvs = [e for e in info(dn)["versions"] if not e.get("yanked_at")]
+            spec = dep.get("spec", "")
+            pick = next((e for e in dvs if spec.startswith("=") and e["version"] == spec[1:]), None) or next(
+                (e for e in dvs if vkey(e["version"])[:1] == vkey(spec)[:1]), dvs[0] if dvs else None)
+            if not pick:
+                continue
+            repo = re.search(r"github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?(?:/|$)",
+                             str(pick.get("repository") or "") + " " + str(pick.get("url") or ""))
+            out.append((dn, pick["version"], repo.group(1) if repo else None, dvs[0]["version"] if dvs else ""))
+            todo.append((dn, pick["version"]))
+    return out
+
+
+def cargo_native(toml, offline):
+    """(crates whose build script compiles C, {library: crate} the crates link with #[link]) over the
+    dependency graph resolved for every shipped platform.  `libc` is the platform C library."""
+    ids, pk = set(), {}
+    for triple in SHIPPED_TARGETS:
+        r = run(["cargo", "metadata", "--format-version", "1", "--locked", "--manifest-path", toml,
+                 "--filter-platform", triple] + (["--offline"] if offline else []))
+        if r.returncode != 0:
+            err = r.stderr.strip()
+            raise RuntimeError("its Cargo.lock does not match its Cargo.toml (`cargo metadata --locked` "
+                               "refuses), so what builds is not what was audited" if "lock file" in err
+                               else (err.splitlines() or ["cargo metadata failed"])[-1])
+        m = json.loads(r.stdout)
+        pk.update({p["id"]: p for p in m["packages"]})
+        # What ships is what the members reach through NORMAL dependencies; a build-dependency
+        # (cc, find-msvc-tools) runs on the build machine and is not part of the artefact.
+        nodes = {nd["id"]: nd for nd in m["resolve"]["nodes"]}
+        todo, seen = list(m.get("workspace_members") or []), set()
+        while todo:
+            i = todo.pop()
+            if i in seen:
+                continue
+            seen.add(i)
+            ids.add(i)
+            for dep in nodes.get(i, {}).get("deps", []):
+                if any(k.get("kind") is None for k in dep.get("dep_kinds", [])):
+                    todo.append(dep["pkg"])
+    compiles, linked = [], {}
+    for i in sorted(ids):
+        p = pk[i]
+        if p.get("source") is None or p["name"] == "libc":
+            continue
+        top = os.path.dirname(p["manifest_path"])
+        b = os.path.join(top, "build.rs")
+        if os.path.exists(b):
+            with open(b, encoding="utf-8", errors="replace") as fh:
+                if BUILD_C.search(fh.read()):
+                    compiles.append(f"{p['name']} {p['version']}")
+        for d, _, fs in os.walk(top):
+            for fn in fs:
+                if not fn.endswith(".rs") or OTHER_OS_FILE.search(os.path.relpath(os.path.join(d, fn), top)):
+                    continue
+                with open(os.path.join(d, fn), encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+                for mm in RUST_LINK.finditer(text):
+                    before = text[max(0, mm.start() - 400):mm.start()].splitlines()[-4:]
+                    oses = set(re.findall(r'target_os\s*=\s*"([a-z]+)"', "\n".join(before)))
+                    if oses and not oses & SHIPPED_OS and "apple" not in "\n".join(before):
+                        continue
+                    linked.setdefault(lib_base(mm.group(1)), f"{p['name']} {p['version']}")
+    return compiles, linked
+
+
+def cargo_audit(root, rel, n, x, where, a, offline, named=frozenset()):
     """RustSec over one lockfile: a vulnerability, and an unmaintained, unsound or yanked crate,
     each needs a verdict in the `cargo` entry's `reviewed` table, exactly as an advisory does."""
     lock = os.path.join(root, rel)
@@ -795,8 +953,24 @@ def cargo_audit(root, rel, n, x, where, a, offline):
         if u.returncode == 0:
             k = sum(1 for line in u.stderr.splitlines() if line.strip().startswith("Updating ") and " -> " in line)
             pending = f", {k} patch updates pending" if k else ", up to date"
+    native = ""
+    if os.path.exists(toml):
+        try:
+            compiles, linked = cargo_native(toml, offline)
+            listed = set(split_list(x.get("compiles-c")))
+            for c in compiles:
+                if c.split()[0] not in listed:
+                    a.need(where, f"{n}: Rust crate {c} compiles C into what ships (its build.rs); "
+                           "review that C, then list the crate in `compiles-c`")
+            for lib, crate in sorted(linked.items()):
+                if lib not in named:
+                    a.need(where, f"{n}: Rust crate {crate} links `{lib}`; no `system` entry names it")
+            if compiles:
+                native = f", C from {', '.join(c.split()[0] for c in compiles)}"
+        except (RuntimeError, ValueError, KeyError) as e:
+            a.need(where, f"{n}: the crate graph could not be read ({e}) — what its crates link is unknown")
     count = d.get("lockfile", {}).get("dependency-count", "?")
-    a.say(f"  {n:<16} cargo     {f'{count} crates in {rel}':<63} {adv}{pending}")
+    a.say(f"  {n:<16} cargo     {f'{count} crates in {rel}':<63} {adv}{pending}{native}")
 
 
 def main():
