@@ -142,7 +142,8 @@ the detail, and that place wins if the two ever differ — fix this line, not th
     [§ 5](LIBRARY_PUBLISH.md#5-maintain)
 29. **Declare every third-party dependency in `loft.toml`**: vendored source, a system library
     it links or opens, with where it came from and the advisory registers that report on it.
-    `make thirdparty ARGS="--repo <checkout>"` finds what is undeclared.  [THIRDPARTY.md](THIRDPARTY.md)
+    Library CI and the publish step refuse what is undeclared
+    (`make thirdparty ARGS="--gate --repo <pkg-dir>"`).  [THIRDPARTY.md](THIRDPARTY.md)
 
 The review side of the same rules — what a registry PR checks — is
 [LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md).

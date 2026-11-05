@@ -1376,6 +1376,14 @@ jobs:
         uses: taiki-e/install-action@cargo-audit
       - name: cargo audit
         run: cargo audit
+      # THIRDPARTY.md, with the registers: loft and every published library — NVD, OSV,
+      # the GitHub advisories of each upstream and component, RustSec, upstream changes to
+      # vendored files, newer SDK releases.  A new advisory against something we ship fails
+      # this the morning after it is published, before anyone thinks to look.
+      - name: Third-party code — provenance and advisories
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/thirdparty.py --check
 
   toolchain-matrix:
     # @windows-exempt: varies the Rust toolchain, not the platform

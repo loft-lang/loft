@@ -132,6 +132,16 @@ jobs:
         shell: bash
         run: scripts/make-release.sh ${{ matrix.target }}
 
+      # THIRDPARTY.md: everything this bundle links, compiles in or embeds is declared.  Each
+      # leg reads its OWN binary (readelf / otool -L / the PE import table), so a library a
+      # platform links is checked on that platform, not inferred from the source.
+      - name: Third-party code declared (the gate)
+        if: steps.want.outputs.run == 'yes'
+        shell: bash
+        run: |
+          py=$(ls /opt/python/cp31[2-9]-*/bin/python 2>/dev/null | head -1)
+          "${py:-python3}" scripts/thirdparty.py --gate --binary "target/install-lib/${{ matrix.target }}/release/loft"
+
       # Which COMMIT a bundle came from is the question a daily build gets asked most, and
       # the zip's own BUILD-INFO records version + target + rustc but not the sha.  Stamped
       # beside it rather than into it, so the bundle stays byte-identical to a release one.

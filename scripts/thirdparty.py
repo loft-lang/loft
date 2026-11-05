@@ -53,6 +53,8 @@ Usage:
     scripts/thirdparty.py --no-libs       # loft only
     scripts/thirdparty.py --repo DIR      # one local tree instead (a library checkout)
     scripts/thirdparty.py --offline       # the TREE checks only: no upstream, no registers
+    scripts/thirdparty.py --gate [--repo DIR] [--binary PATH]
+                                          # the CI / publish gate: undeclared anything fails it
     scripts/thirdparty.py digest DIR      # the digest line a declaration records
     scripts/thirdparty.py identify DIR URL  # the upstream commit(s) whose files DIR matches
 """
@@ -95,6 +97,9 @@ BUILD_C = re.compile(r"\bcc::|\bcmake::|Build::new\(\)")
 NOT_SHIPPED = {"tests", "test", "doc", "docs", "examples", "bench", "target", ".loft",
                "node_modules", "fixtures", "native-auto", ".git", "tools"}
 VERDICTS = ("fixed", "not-reached", "applies")
+# The platform C library and compiler runtime are in every process: binding to them needs no
+# entry (PACKAGES_C_BINDING.md § `libs`), so a library is never asked to declare them.
+PLATFORM_C = {"c", "m", "dl", "pthread", "rt", "gcc_s", "ld-linux-x86-64", "ld-linux-aarch64", "system"}
 OWN_NOTICE = re.compile(r"Jurjen Stellingwerff|LGPL-3\.0-or-later")
 FOREIGN_NOTICE = re.compile(r"copyright|public domain|permission is hereby granted|"
                             r"spdx-license-identifier", re.I)
@@ -111,6 +116,8 @@ COMPONENT_LIT = re.compile(r'([a-z0-9_-]+/[a-z0-9_-]+): \\"[=^~<>]*\d[\w.]*\\"')
 CLONE_LIT = re.compile(r'git clone[^"]*?(https://[^\s"]+?)(?:\.git)?[\s"]')
 REFRESH = False
 OFFLINE = False
+GATE = False
+BINARY = None
 
 
 # ── small helpers ────────────────────────────────────────────────────────────────────────────
@@ -506,12 +513,102 @@ def loft_embedded(tree):
     return found
 
 
-def binary_needed(path):
-    """The libraries a built ELF binary is linked against (`readelf -d`), when it can be read."""
-    if not os.path.exists(path) or not shutil.which("readelf"):
+def pe_imports(path):
+    """The DLLs a Windows PE binary imports, read from its import directory."""
+    import struct
+    with open(path, "rb") as f:
+        b = f.read()
+    if b[:2] != b"MZ":
         return []
-    out = run(["readelf", "-d", path]).stdout
-    return re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", out)
+    pe = struct.unpack_from("<I", b, 0x3C)[0]
+    nsec, optsz = struct.unpack_from("<H", b, pe + 6)[0], struct.unpack_from("<H", b, pe + 20)[0]
+    opt = pe + 24
+    dd = opt + (112 if struct.unpack_from("<H", b, opt)[0] == 0x20B else 96)
+    imp_rva = struct.unpack_from("<I", b, dd + 8)[0]
+    secs = [struct.unpack_from("<8sIIII", b, opt + optsz + 40 * i) for i in range(nsec)]
+
+    def off(rva):
+        for _, vsize, va, rsize, raw in secs:
+            if va <= rva < va + max(vsize, rsize):
+                return rva - va + raw
+        return None
+
+    out, o = [], off(imp_rva) if imp_rva else None
+    while o is not None and o + 20 <= len(b):
+        name_rva = struct.unpack_from("<I", b, o + 12)[0]
+        if not name_rva:
+            break
+        no = off(name_rva)
+        if no is None:
+            break
+        out.append(b[no:b.index(b"\0", no)].decode("ascii", "replace"))
+        o += 20
+    return out
+
+
+def binary_needed(path):
+    """The libraries a built binary is linked against — ELF (`readelf -d`), Mach-O (`otool -L`)
+    or PE (its import directory) — so the source scan is checked against the artefact."""
+    for cand in (path, path + ".exe"):
+        if os.path.exists(cand):
+            path = cand
+            break
+    else:
+        return []
+    with open(path, "rb") as f:
+        magic = f.read(4)
+    if magic == b"\x7fELF" and shutil.which("readelf"):
+        return re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", run(["readelf", "-d", path]).stdout)
+    if magic[:2] == b"MZ":
+        return pe_imports(path)
+    if shutil.which("otool"):
+        lines = run(["otool", "-L", path]).stdout.splitlines()[1:]
+        return [ln.strip().split(" (")[0] for ln in lines if ln.strip()]
+    return []
+
+
+INCLUDE_C = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
+
+
+def shim_closure(root, d, shim):
+    """The [c] shim sources and every file they `#include "…"`, resolved as the compiler would:
+    beside the including file, then the package's `c/` and the package itself."""
+    done, todo = set(), list(shim)
+    while todo:
+        f = todo.pop()
+        if f in done or not os.path.isfile(os.path.join(root, f)):
+            continue
+        done.add(f)
+        with open(os.path.join(root, f), encoding="utf-8", errors="replace") as fh:
+            for inc in INCLUDE_C.findall(fh.read()):
+                for base in (os.path.dirname(f), os.path.join(d, "c"), d):
+                    cand = os.path.normpath(os.path.join(base, inc))
+                    if os.path.isfile(os.path.join(root, cand)):
+                        todo.append(cand)
+                        break
+    return done
+
+
+def shim_artifact(root, d, shim):
+    """[(library, how)] — build the shim as a shared object and read what it links (`NEEDED`)
+    and the library names its strings hold.  Empty when no C compiler is here."""
+    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    if not cc or os.name == "nt":
+        return []
+    out_dir = os.path.join(CACHE, "shim-build")
+    os.makedirs(out_dir, exist_ok=True)
+    so = os.path.join(out_dir, re.sub(r"[^A-Za-z0-9]+", "_", os.path.join(root, d)) + ".so")
+    srcs = [os.path.join(root, f) for f in shim if f.endswith((".c", ".cc", ".cpp"))]
+    r = run([cc, "-shared", "-fPIC", "-O0", "-w", "-o", so, *srcs, "-I" + os.path.join(root, d, "c"),
+             "-I" + os.path.join(root, d), "-lm"])
+    if r.returncode != 0:
+        return [("?", f"could not be built to read what it links ({(r.stderr.strip().splitlines() or ['?'])[0][:120]}); it")]
+    found = [(lib, "is linked against") for lib in binary_needed(so)]
+    strings = run(["strings", "-n", "5", so]).stdout if shutil.which("strings") else ""
+    for rx in (r"lib[A-Za-z0-9_+-]+\.so(?:\.\d+)*", r"[A-Za-z0-9_]+\.dll", r"lib[A-Za-z0-9_+-]+(?:\.[A-Z])?\.dylib",
+               r"/System/Library/Frameworks/[A-Za-z0-9]+\.framework/[A-Za-z0-9]+"):
+        found += [(x, "names") for x in sorted(set(re.findall(rx, strings)))]
+    return found
 
 
 def norm_source(s):
@@ -543,6 +640,12 @@ def audit_tree(tree, a, offline):
     embedded = loft_embedded(tree) if tree.is_loft else {}
     own_globs = split_list((manifests.get("", {}).get("own") or {}).get("paths")) if tree.is_loft else []
     foreign, links, unattributed = {}, {}, {}
+
+    def ours(d, head):
+        """Our notice, or the one the package names as its author's (`[own] notice`)."""
+        mine = str((manifests.get(d, {}).get("own") or {}).get("notice") or "")
+        return bool(OWN_NOTICE.search(head)) or (bool(mine) and mine in head)
+
     for f in tree.files:
         if not (f in embedded or (f.endswith(SCAN_EXT) and shipped(f))):
             continue
@@ -552,9 +655,9 @@ def audit_tree(tree, a, offline):
         with open(os.path.join(tree.root, f), encoding="utf-8", errors="replace") as fh:
             text = fh.read()
         head = "\n".join(text.splitlines()[:40])
-        if "/vendor/" in "/" + f or (FOREIGN_NOTICE.search(head) and not OWN_NOTICE.search(head)):
+        if "/vendor/" in "/" + f or (FOREIGN_NOTICE.search(head) and not ours(d, head)):
             foreign.setdefault(d, []).append(f)
-        elif not OWN_NOTICE.search(head) and (f in embedded or f.startswith("src/c/")) \
+        elif not ours(d, head) and (f in embedded or f.startswith("src/c/")) \
                 and not any(fnmatch.fnmatch(f, g) for g in own_globs):
             unattributed.setdefault(d, []).append(f)
         if not f.endswith(CODE_EXT):
@@ -571,8 +674,9 @@ def audit_tree(tree, a, offline):
         for flag, src in loft_link_flags(tree).items():
             links.setdefault("", {}).setdefault(lib_base(flag), (flag, src))
         # What the built binary is really linked against, when one is here to read.
-        for lib in binary_needed(os.path.join(tree.root, "target", "release", "loft")):
-            links.setdefault("", {}).setdefault(lib_base(lib), (lib, "target/release/loft (linked)"))
+        built = BINARY or os.path.join(tree.root, "target", "release", "loft")
+        for lib in binary_needed(built):
+            links.setdefault("", {}).setdefault(lib_base(lib), (lib, f"{os.path.relpath(built, tree.root)} (linked)"))
 
     cargo_decls, wheres = {}, {}
     for d, m in manifests.items():
@@ -608,7 +712,7 @@ def audit_tree(tree, a, offline):
                    "list it in `[own] paths`, or declare it vendored")
 
         # Libraries linked or opened that no `system` entry names.
-        named = {lib_base(x) for s in system.values() for x in split_list(s.get("names"))}
+        named = {lib_base(x) for s in system.values() for x in split_list(s.get("names"))} | PLATFORM_C
         unnamed = {}
         for base, (lit, src) in sorted(links.get(d, {}).items()):
             if base not in named:
@@ -617,6 +721,32 @@ def audit_tree(tree, a, offline):
             a.need(where, f"{src} links or opens {', '.join(bases)}; no `system` entry names "
                    + ("it" if len(bases) == 1 else "them"))
 
+        # A library's [c] shim is exact: every source it lists and every file those include is
+        # compiled into the package, so each must be ours by notice, by `[own] paths`, or vendored.
+        shim = [os.path.normpath(os.path.join(d, x)) for x in split_list((m.get("c") or {}).get("shim"))]
+        if shim and not tree.is_loft:
+            pkg_own = [os.path.normpath(os.path.join(d, g)) for g in split_list((m.get("own") or {}).get("paths"))]
+            for f in sorted(shim_closure(tree.root, d, shim)):
+                if any(f.startswith(p + "/") for p in paths) or any(fnmatch.fnmatch(f, g) for g in pkg_own) \
+                        or f in loose:
+                    continue
+                with open(os.path.join(tree.root, f), encoding="utf-8", errors="replace") as fh:
+                    head = "\n".join(fh.read().splitlines()[:40])
+                if not ours(d, head):
+                    a.need(where, f"{f} is compiled into the package ([c] shim) with no notice saying whose "
+                           "it is: give it our licence header, list it in `[own] paths`, or declare it vendored")
+            # What the built shim really links and names: string concatenation and macros hide a
+            # library name from the source scan, never from the object.
+            seen_src = set(links.get(d, {}))
+            missed = {}
+            for lib, why in shim_artifact(tree.root, d, shim):
+                if lib == "?":
+                    a.need(where, f"its [c] shim {why}")
+                elif lib_base(lib) not in named and lib_base(lib) not in seen_src:
+                    missed.setdefault(lib_base(lib), why)
+            if missed:
+                a.need(where, f"its built [c] shim links or names {', '.join(sorted(missed))}, which the "
+                       "source scan did not see; no `system` entry names them")
         if not decls[d] and not loose and not links.get(d) and not (m.get("native") or {}).get("crate"):
             continue
         a.say(f"{where}")
@@ -922,10 +1052,36 @@ def cargo_native(toml, offline):
     return compiles, linked
 
 
+def cargo_native_check(toml, x, n, where, a, named):
+    if not os.path.exists(toml):
+        return ""
+    try:
+        compiles, linked = cargo_native(toml, OFFLINE)
+    except (RuntimeError, ValueError, KeyError) as e:
+        a.need(where, f"{n}: the crate graph could not be read ({e}) — what its crates link is unknown")
+        return ""
+    listed = set(split_list(x.get("compiles-c")))
+    for c in compiles:
+        if c.split()[0] not in listed:
+            a.need(where, f"{n}: Rust crate {c} compiles C into what ships (its build.rs); "
+                   "review that C, then list the crate in `compiles-c`")
+    for lib, crate in sorted(linked.items()):
+        if lib not in named:
+            a.need(where, f"{n}: Rust crate {crate} links `{lib}`; no `system` entry names it")
+    return f", C from {', '.join(c.split()[0] for c in compiles)}" if compiles else ""
+
+
 def cargo_audit(root, rel, n, x, where, a, offline, named=frozenset()):
     """RustSec over one lockfile: a vulnerability, and an unmaintained, unsound or yanked crate,
     each needs a verdict in the `cargo` entry's `reviewed` table, exactly as an advisory does."""
     lock = os.path.join(root, rel)
+    if GATE:   # the gate asks what is linked, not what the advisory database says
+        d = {}
+        adv, pending = "advisories not asked (gate)", ""
+        toml = os.path.join(os.path.dirname(lock), "Cargo.toml")
+        native = cargo_native_check(toml, x, n, where, a, named)
+        a.say(f"  {n:<16} cargo     {rel:<63} {adv}{native}")
+        return
     if not shutil.which("cargo-audit"):
         a.need(where, "cargo-audit is not installed (`cargo install cargo-audit --locked`)")
         return
@@ -953,22 +1109,7 @@ def cargo_audit(root, rel, n, x, where, a, offline, named=frozenset()):
         if u.returncode == 0:
             k = sum(1 for line in u.stderr.splitlines() if line.strip().startswith("Updating ") and " -> " in line)
             pending = f", {k} patch updates pending" if k else ", up to date"
-    native = ""
-    if os.path.exists(toml):
-        try:
-            compiles, linked = cargo_native(toml, offline)
-            listed = set(split_list(x.get("compiles-c")))
-            for c in compiles:
-                if c.split()[0] not in listed:
-                    a.need(where, f"{n}: Rust crate {c} compiles C into what ships (its build.rs); "
-                           "review that C, then list the crate in `compiles-c`")
-            for lib, crate in sorted(linked.items()):
-                if lib not in named:
-                    a.need(where, f"{n}: Rust crate {crate} links `{lib}`; no `system` entry names it")
-            if compiles:
-                native = f", C from {', '.join(c.split()[0] for c in compiles)}"
-        except (RuntimeError, ValueError, KeyError) as e:
-            a.need(where, f"{n}: the crate graph could not be read ({e}) — what its crates link is unknown")
+    native = cargo_native_check(toml, x, n, where, a, named)
     count = d.get("lockfile", {}).get("dependency-count", "?")
     a.say(f"  {n:<16} cargo     {f'{count} crates in {rel}':<63} {adv}{pending}{native}")
 
@@ -988,9 +1129,18 @@ def main():
     ap.add_argument("--source", choices=("release", "main"), default="release",
                     help="libraries as released (default) or each repository's main")
     ap.add_argument("--offline", action="store_true", help="tree checks only")
+    ap.add_argument("--gate", action="store_true",
+                    help="the CI and publish gate: --offline, --check, and no advisory database — "
+                         "fails on anything undeclared, never on what the registers say")
     ap.add_argument("--refresh", action="store_true", help="ignore the day-long cache")
+    ap.add_argument("--binary", help="the built loft to read what it links (default target/release/loft)")
     args = ap.parse_args()
+    if args.gate:   # a gate reads a tree it was handed: loft's, or a library's via --repo
+        args.offline = args.check = True
+        args.no_libs = args.no_libs or not args.repo
     REFRESH, OFFLINE = args.refresh, args.offline
+    global GATE, BINARY
+    GATE, BINARY = args.gate, (os.path.abspath(args.binary) if args.binary else None)
     a = Audit()
     if args.repo:
         trees = [(os.path.basename(os.path.abspath(r)), lambda r=r: os.path.abspath(r)) for r in args.repo]
