@@ -198,6 +198,24 @@ Until step 1, the shared analysis keeps a record function that already takes tup
 out of its candidates (`value_records`): the IR's twin original, whose body a writer's own tuple
 broke (`vertex`).
 
+**Step 1, re-measured after the lend, the place bind and field-path hand-ons (2026-11-05,
+night).**  With the writers' plan empty the C and the Rust emission of ALL 58 census programs is
+byte-identical to the writers-on build — the writers' clause no longer changes a bench.  It still
+changes the pinned CELLS, so step 1 waits for these forms to be moved or deliberately dropped,
+each a decision recorded in its pin:
+
+| cell (tests/value_record.rs) | form |
+|---|---|
+| V-aa `mk_smp_kept` | a maker's result appended to a vector — the copy FROM the tuple materialised into the element |
+| V-ah `pt` | a maker's result delivered into a push slot |
+| V-an `scan_fail` | a chain's failure maker whose record a site consumes |
+| nullable `n12`, join `j5` | a nullable `if … { null } else { S { … } }`, a one-field `-> S` beside a build |
+| 1993/1994 `q1`, `w1` | `(N-Store)`'s presence-carrying tuple parameters |
+
+The remaining bench gaps against the session's start — moros `slope_path_with_undo` 1.23×,
+drawing `smooth` 1.12× — are the IR's spelling against the old writer forms (the lend mints per
+call where the writers passed a tuple pointer), not step 1.
+
 **S3's IR half is already met.**  Closed, the IR pairs every view-exit case of
 `164-element-place.loft` (g1, g2, g4, g10, g16, g20) and neither writer applies its own
 element-first clause anywhere; what S3 still owes is deleting those clauses.
