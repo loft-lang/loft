@@ -22,7 +22,7 @@ impl Parser {
     /// `use` keeps it.  The `#width` line is consumed; any other `#` line is left in place.
     pub(crate) fn width_header(&mut self) {
         let src = self.data.source;
-        if src != crate::data::STD_SOURCE && !self.width_decided.contains(&src) {
+        if !self.width_decided.contains(&src) {
             self.width_decided.insert(src);
             self.data.set_width32(src, crate::keys::width32_all());
         }

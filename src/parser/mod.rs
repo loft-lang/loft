@@ -1125,6 +1125,9 @@ pub struct Parser {
     /// @PLN204 — the sources whose regime (`Data::width32`) is settled, so a file resumed
     /// after a `use` keeps the `#width` it began with.
     pub(crate) width_decided: std::collections::BTreeSet<u16>,
+    /// @PLN217 — reading the right-hand side of a standard-library type definition, which the
+    /// 32-bit regime leaves as written (`Parser::parse_typedef`).
+    pub(crate) machine_types: bool,
     /// `DefType::Unknown` stubs collected by `actual_types_deferred`
     /// during each `parse_file` run.  Resolved (or finally reported) by
     /// `resolve_deferred_unknowns` after all files in the recursion have
@@ -2104,6 +2107,7 @@ impl Parser {
             pub_taken: false,
             applied_imports: Vec::new(),
             width_decided: std::collections::BTreeSet::new(),
+            machine_types: false,
             deferred_unknown: Vec::new(),
             record_resolutions: false,
             resolutions: Vec::new(),
