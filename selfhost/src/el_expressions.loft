@@ -9333,8 +9333,8 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
 // borrows kept), the default converted to it.  A local is tested where it stands; anything else
 // is held in a `__ncc_N` — a never-freed work reference the head sets to null — in an "ncc"
 // block — the result a view of the holder where a loft function answered the record
-// (`owned_record_subject`).  A default that is a call or of another record type is refused by
-// name.
+// (`owned_record_subject`).  A default of another record type, or a call answering no buffer of
+// its own, is refused by name.
 fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   lhs = el_types::base(x.tp);
   rd = match lhs { TyReference { n } => n, _ => -1 };
@@ -9346,8 +9346,17 @@ fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // A record a loft function answers is a fresh one the holder owns: the result views the
   // holder (`owned_record_subject`).
   owned = match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), _ => false };
-  if el_ir::unspan(d.code) is NdCall {
-    el::refuse(e, "a `??` on a record with a call as its default");
+  // A call default answers a record in its own buffer; beside a held subject that arm owns it
+  // (`join-arm-owner`: the buffer bound to the call, then answered).
+  dbuf = match el_ir::unspan(d.code) { NdCall { args } => hidden_ref_arg(vars, args), _ => -2 };
+  // A default that is itself a `??` chain ending in a call (`a ?? b ?? make()`) owns that arm
+  // as a view of the chain (`own_joined_call_arms`) — not carried.
+  if !e.first_pass && chain_ends_in_call(vars, d.code) {
+    el::refuse(e, "a `??` chain whose last default is a call");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if dbuf == -1 {
+    el::refuse(e, "a `??` on a record with a call as its default that answers no buffer of its own");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   // A local tested where it stands answers a plain `if`, which a bind types by its arms: the
@@ -9371,9 +9380,21 @@ fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   el_vars::set_var_type(vars, held, if owned { el_types::without_deps(lhs) } else { lhs });
   x.code = nullable_arith(e, x.code, true);
   subject = ir::NdVar { n: held };
-  test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [subject]), subject, d.code);
+  dflt = if dbuf >= 0 { el_ir::v_block([el_ir::v_set(dbuf, d.code), ir::NdVar { n: dbuf }], el_types::without_deps(lhs), "join-arm-owner") } else { d.code };
+  test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [subject]), subject, dflt);
   rt = if owned { el_types::with_deps(el_types::without_deps(lhs), [held]) } else { lhs };
   ex(el_ir::v_block([el_ir::v_set(held, x.code), test], rt, "ncc"), rt)
+}
+
+// An `if` whose last else arm is a call answering a record in a hidden buffer.
+fn chain_ends_in_call(vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t: _, f } => match el_ir::unspan(f) {
+      NdCall { args } => hidden_ref_arg(vars, args) >= 0,
+      _ => chain_ends_in_call(vars, f)
+    },
+    _ => false
+  }
 }
 
 // `build_null_coalesce_default_inner`'s vector-literal default: its `_vec_N` a work ref that
