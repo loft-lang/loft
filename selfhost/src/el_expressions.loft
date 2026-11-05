@@ -3400,12 +3400,12 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if e.p.nodes[target] is SMember || e.p.nodes[target] is SIndex {
     return place_assignment(e, vars, op, target, rhs!);
   }
-  // `f#format = <Format>`: the file's `format` field set (`OpSetEnum`).
+  // `f#format = F`, `f#next = n`, `f#index = n`, `f#size = n` (`call_to_set_op`'s file arms).
   match e.p.nodes[target] {
     SVarAttr { var, attr, arg, tp } => {
       fv = el_vars::var(vars, var);
-      if op == "=" && attr == "format" && arg == null && tp == null && fv >= 0 && is_file(e, el_vars::tp(vars, fv)) {
-        return file_format_set(e, vars, fv, rhs!);
+      if op == "=" && (attr == "format" || attr == "next" || attr == "index" || attr == "size") && arg == null && tp == null && fv >= 0 && is_file(e, el_vars::tp(vars, fv)) {
+        return file_attr_set(e, vars, fv, attr, rhs!);
       }
     },
     _ => {}
@@ -9546,17 +9546,37 @@ fn file_attr(e: el::El, vars: el_vars::Vars, fv: integer, attr: text) -> Ex {
   ex(ir::NdNull, ir::TyUnknown { n: 0 })
 }
 
-fn file_format_set(e: el::El, vars: el_vars::Vars, fv: integer, rhs: integer) -> Ex {
-  et = ir::TyEnum { n: el::def_nr(e, "Format"), is_ref: false, dep: [] };
+// `call_to_set_op`'s file arms: `#format` sets the field (`OpSetEnum`), `#next` seeks and
+// stores the position (`OpSeekFile`, `OpSetInt`), `#index` stores the `current` field, `#size`
+// is `set_file_size`.
+fn file_attr_set(e: el::El, vars: el_vars::Vars, fv: integer, attr: text, rhs: integer) -> Ex {
+  it = el::def(e, el::def_nr(e, "OpSizeFile")).returned[0];
+  et = if attr == "format" { ir::TyEnum { n: el::def_nr(e, "Format"), is_ref: false, dep: [] } } else { it };
   x = expression(e, vars, rhs);
-  v = stored(e, vars, x, et);
-  if v == null {
-    refuse_known(e, x.tp, "a file format of this type: {type_kind(x.tp)}");
+  v0 = stored(e, vars, x, et);
+  if v0 == null {
+    refuse_known(e, x.tp, "a file attribute set to a value of this type: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  v = v0!;
   el_vars::in_use(vars, fv, true);
+  f = ir::NdVar { n: fv };
   fd = match match el_vars::tp(vars, fv) { TyRefVar { inner } => inner, _ => el_vars::tp(vars, fv) } { TyReference { n } => n, _ => -1 };
-  ex(el_ir::cl(e, "OpSetEnum", [ir::NdVar { n: fv }, ir::NdInt { n: field_position(e, fd, "format") }, v!]), ir::TyVoid)
+  if attr == "format" {
+    return ex(el_ir::cl(e, "OpSetEnum", [f, ir::NdInt { n: field_position(e, fd, "format") }, v]), ir::TyVoid);
+  }
+  if attr == "next" {
+    return ex(ir::NdInsert { items: [el_ir::cl(e, "OpSeekFile", [f, v]), el_ir::cl(e, "OpSetInt", [f, ir::NdInt { n: field_position(e, fd, "next") }, v])] }, ir::TyVoid);
+  }
+  if attr == "index" {
+    return ex(el_ir::cl(e, "OpSetInt", [f, ir::NdInt { n: field_position(e, fd, "current") }, v]), ir::TyVoid);
+  }
+  sz = el::def_nr(e, "t_4File_set_file_size");
+  if sz < 0 {
+    el::refuse(e, "a file's `#size` set with no `set_file_size`");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(ir::NdCall { def_nr: sz, args: [f, v] }, ir::TyVoid)
 }
 
 // `Parser::file_op`'s `#read`: `f#read(n) as T` reads `n` bytes, `f#read as T` the cast's fixed
@@ -11338,7 +11358,8 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   if par != null {
     return el_par::par_for(e, vars, el_par::Walk { src_id: src_id, id: id, x: x, vec: vec, elem: elem, var_tp: var_tp }, par!, body!);
   }
-  idx = loop_index(vars, id);
+  // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
+  idx = loop_index(vars, id, named: true);
   lv = loop_var(vars, src_id, id, var_tp);
   vars.active_loops += [lv];
   vars.active_values += [x.code];
@@ -11796,7 +11817,8 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, de
     }
     elem = match in_type { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } };
   }
-  idx = if ranged { rw!.idx } else if sliced { ss!.idx } else { loop_index(vars, id) };
+  // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
+  idx = if ranged { rw!.idx } else if sliced { ss!.idx } else { loop_index(vars, id, named: true) };
   lv = loop_var(vars, src_id, id, if ranged || sliced { elem } else { el_types::with_deps(elem, [vec]) });
   vars.active_loops += [lv];
   vars.active_values += [if sliced { ir::NdNull } else { x.code }];
@@ -13339,10 +13361,10 @@ fn rev_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer) ->
   counted(e, cnt, ex(el_ir::v_block([el_ir::v_set(idx, ir::NdInt { n: hi }), el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
-// A loop's index: `id#index`, or a fresh `_index_N` for a `_` binding.
-fn loop_index(vars: el_vars::Vars, id: text) -> integer {
+// A loop's index: `id#index`, or a fresh `_index_N` for a `_` binding unless `named`.
+fn loop_index(vars: el_vars::Vars, id: text, named: boolean = false) -> integer {
   int_t = ir::TyInteger { spec: i32_spec() };
-  idx = if id == "_" { el_vars::create_unique(vars, "index", int_t) } else { el_vars::add_variable(vars, "{id}#index", int_t) };
+  idx = if id == "_" && !named { el_vars::create_unique(vars, "index", int_t) } else { el_vars::add_variable(vars, "{id}#index", int_t) };
   el_vars::set_defined(vars, idx);
   idx
 }
