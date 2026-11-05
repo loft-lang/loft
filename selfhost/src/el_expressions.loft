@@ -3321,8 +3321,12 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, int
   }
   el_vars::in_use(vars, v, true);
   // A read of a heap local borrows the local (`depending`); a text keeps its own deps.  A link
-  // to a scalar (`link = &a`) reads as the scalar it names (`@FR-B-Ref-Uniform`).
+  // to a scalar (`link = &a`) reads as the scalar it names (`@FR-B-Ref-Uniform`); a text link
+  // into a store as the text there (`OpGetText(OpVarRef(t), 0)`).
   t = el_vars::tp(vars, v);
+  if store_text_link(vars, v) {
+    return ex(el_ir::cl(e, "OpGetText", [el_ir::cl(e, "OpVarRef", [ir::NdVar { n: v }]), ir::NdInt { n: 0 }]), ir::TyText { dep: [] });
+  }
   match t {
     TyRefVar { inner } => {
       if el_convert::plain_scalar(inner) {
@@ -3707,6 +3711,22 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   }
   // A parameter of a heap type rebound whole takes the rebound-parameter road (an entry witness,
   // the detach before the bind) or, for a text, a shadow local — not carried yet.
+  // A text link local (`t = &s`, `t = &o.a`) is written through, not re-pointed: a link to a
+  // text variable is set as that variable is, a link into a store replaces the text it names
+  // (`OpSetTextReplace(OpVarRef(t), 0, …)`, `formal/binding.md`'s text link kinds).  A `&text`
+  // parameter, and a text local promoted to the return buffer, keep the text road below.
+  text_link = vars.text_links.contains(v);
+  if text_link && !(match e.p.nodes[rhs!] { SUnary { op } => op == "&", _ => false }) {
+    x = expression(e, vars, rhs!);
+    if !el_types::is_unknown(x.tp) && !(el_types::base(x.tp) is TyText) {
+      refuse_known(e, x.tp, "a text link given a value of this type: {type_kind(x.tp)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if store_text_link(vars, v) {
+      return ex(el_ir::cl(e, "OpSetTextReplace", [el_ir::cl(e, "OpVarRef", [ir::NdVar { n: v }]), ir::NdInt { n: 0 }, x.code]), ir::TyVoid);
+    }
+    return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+  }
   // A `&` parameter is written through below: a scalar link writes the place it names.
   link = match el_vars::tp(vars, v) {
     TyRefVar { inner } => !(inner is TyText),
@@ -4012,6 +4032,15 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   // `assign_text`'s self-reference arm: a text value that reads the local it is bound to
   // (`t = "{t}!"`, `t = f(t)`) is built in a work text first, so the bind's clear cannot destroy
   // what the value still reads.
+  // A promoted `&text` result buffer stages it in a second-pass work text.
+  if promoted_text && !e.first_pass && el_ir::reads_var(x.code, v) {
+    w = el_vars::work_text_p2(vars);
+    return ex(ir::NdInsert { items: [
+      el_ir::cl(e, "OpClearText", [ir::NdVar { n: w }]),
+      el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, x.code]),
+      el_ir::v_set(v, ir::NdVar { n: w })
+    ] }, ir::TyVoid);
+  }
   if el_types::base(el_vars::tp(vars, v)) is TyText && el_ir::reads_var(x.code, v) {
     w = el_vars::work_text(vars);
     return ex(ir::NdInsert { items: [
@@ -4019,6 +4048,17 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
       el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, x.code]),
       el_ir::v_set(v, ir::NdVar { n: w })
     ] }, ir::TyVoid);
+  }
+  // `bind_text_link_kind`: a local bound to a text link records its kind — the store kind for
+  // a text field or element, the variable kind for a text local's slot.
+  if x.tp is TyRefVar && !vars.vars[v].argument && match x.tp { TyRefVar { inner } => inner is TyText, _ => false } {
+    store = match el_ir::unspan(x.code) { NdCall { def_nr, args } => (el::def(e, def_nr).name == "OpGetField" && len(args) == 2) || el::def(e, def_nr).name == "OpGetVector", _ => false };
+    if !vars.text_links.contains(v) {
+      vars.text_links += [v];
+    }
+    if store && !vars.store_links.contains(v) {
+      vars.store_links += [v];
+    }
   }
   // `narrow_store_checks`: a `??` stored into a narrow local is guarded inside; any other value
   // takes the slot's declared range (`guard_declared_range`).
@@ -5078,6 +5118,16 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
   stack = false;
   if vt is TyRefVar { inner } {
     stack = inner is TyText;
+  }
+  // A link into a store appends through a `_field_N` local that takes the text it names and is
+  // written back whole (`assign_var_nr`'s text arm).
+  if stack && bin == "+" && store_text_link(vars, v) && (el_types::base(x.tp) is TyText || el_types::is_unknown(x.tp)) {
+    f = el_vars::create_unique(vars, "field", ir::TyText { dep: [] });
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    at = el_ir::cl(e, "OpVarRef", [ir::NdVar { n: v }]);
+    return ex(ir::NdInsert { items: [el_ir::v_set(f, el_ir::cl(e, "OpGetText", [at, ir::NdInt { n: 0 }])), el_ir::cl(e, "OpAppendText", [ir::NdVar { n: f }, x.code]), el_ir::cl(e, "OpSetTextReplace", [at, ir::NdInt { n: 0 }, ir::NdVar { n: f }])] }, ir::TyVoid);
   }
   if stack || (el_types::base(vt) is TyText && !(vt is TyOptional)) {
     if bin != "+" {
@@ -9008,6 +9058,14 @@ fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, t
     TyText { dep: _ } => {
       list += [format_text_as(e, start, w, val, f)];
     },
+    // A link to a text variable is read as the text it names.
+    TyRefVar { inner } => {
+      if !(inner is TyText) {
+        el::refuse(e, "a formatted value of this type: {type_kind(tp)}");
+        return;
+      }
+      list += [format_text_as(e, start, w, val, f)];
+    },
     TyBoolean => {
       list += [format_text_as(e, start, w, el_ir::cl(e, "OpCastTextFromBool", [val]), f)];
     },
@@ -9432,10 +9490,13 @@ fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
 
 // An `if` whose last else arm is a call answering a record in a hidden buffer.
 fn chain_ends_in_call(vars: el_vars::Vars, n: ir::Node) -> boolean {
-  match el_ir::unspan(n) {
-    NdIf { cond: _, t: _, f } => match el_ir::unspan(f) {
-      NdCall { args } => hidden_ref_arg(vars, args) >= 0,
-      _ => chain_ends_in_call(vars, f)
+  match n {
+    NdSpan { pos: _, inner } => chain_ends_in_call(vars, inner),
+    NdIf { cond: _, t: _, f } => {
+      if match el_ir::unspan(f) { NdCall { args } => hidden_ref_arg(vars, args) >= 0, _ => false } {
+        return true;
+      }
+      chain_ends_in_call(vars, f)
     },
     _ => false
   }
@@ -15530,6 +15591,35 @@ fn logical(e: el::El, vars: el_vars::Vars, is_or: boolean, l: integer, r: intege
   ex(code, ir::TyBoolean)
 }
 
+// The place a text read in a store reads: `OpGetText(r, pos)` of a record is its field
+// (`OpGetField(r, pos)`), `OpGetText(OpGetVector(v, 4, i), 0)` its element; null otherwise.
+fn text_place(e: el::El, n: ir::Node) -> ir::Node? {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetText" || len(args) != 2 {
+        return null;
+      }
+      inner = el_ir::unspan(args[0]);
+      match inner {
+        NdCall { def_nr: id } => {
+          if el::def(e, id).name == "OpGetVector" && args[1] == ir::NdInt { n: 0 } {
+            return inner;
+          }
+        },
+        NdVar { n: _ } => {},
+        _ => { return null; }
+      }
+      el_ir::cl(e, "OpGetField", [args[0], args[1]])
+    },
+    _ => null
+  }
+}
+
+// A text link local bound into a store — a text field or element (`bind_text_link_kind`).
+fn store_text_link(vars: el_vars::Vars, v: integer) -> boolean {
+  vars.store_links.contains(v)
+}
+
 // `Parser::parse_single`'s prefix operators: `-x`, `!x` and `~x` call the one-operand builtin
 // candidates (`OpMinSingle…`, `OpNot`, `OpBitNotSingle…`) on the operand.  `&a` of a scalar local
 // is a link to it (`OpCreateStack`, typed `&τ`), of a link a copy of it (`OpVarRef`); any other
@@ -15557,6 +15647,16 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     if a.code is NdVar && !(a.tp is TyOptional) && !(a.tp is TyRefVar) && (struct_ref(e, el_types::base(a.tp)) >= 0 || a.tp is TyText) {
       lv = match a.code { NdVar { n: x } => x, _ => -1 };
       return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: el_types::with_deps(el_types::without_deps(el_types::base(a.tp)), [lv]) });
+    }
+    // A link to a text in a store — a record's field, a vector's element — is that place
+    // (`OpGetField(r, pos)`, `OpGetVector(v, 4, i)`), typed as a text link borrowing the place's
+    // root (the store kind of text link).
+    if el_types::base(a.tp) is TyText && !(a.tp is TyOptional) {
+      place = text_place(e, a.code);
+      if place != null {
+        root = place_root(e, place!);
+        return ex(place!, ir::TyRefVar { inner: ir::TyText { dep: if root >= 0 { [root] } else { [] } } });
+      }
     }
     // A link to a vector is the vector's view itself — a local or a field of one, typed as
     // borrowing it — where a bare bind would copy (`@FR-B-Copy`).
