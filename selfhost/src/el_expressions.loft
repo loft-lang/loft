@@ -2280,6 +2280,12 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
         x = expression(e, vars, se ?? 0);
         t = x.tp;
         statement_proofs(e, vars, x.code);
+        // `@FR-E-Uncomp-Seen`: a compound step into a dense narrow local (its guard's default a
+        // value, not the null) followed by `if !local` fuses with that test (`fuse_fit_test`, a
+        // `__fit_N` checked cast) — not carried: refused by name.
+        if !e.first_pass && s#index < len(stmts) - 1 && fit_armed(e, se ?? 0, x.code) != "" && if_not_names(e, stmts[s#index + 1] ?? 0, fit_armed(e, se ?? 0, x.code)) {
+          el::refuse(e, "a narrow compound step the next `if !` tests (the fit fusion)");
+        }
         match x.code {
           NdInsert { items } => {
             // Spliced flat, its end marked by a line marker the next statement's replaces.
@@ -3511,6 +3517,24 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // A compound step into an integer slot is written as the slot's type, its composed value
+  // guarded by the slot's range (`guard_compound_range`) rather than refused as a narrowing: a
+  // field declared `τ?` keeps its null, an element is a slot of `τ` (the index flip, below).
+  if op != "=" && el_types::base(pt) is TyInteger && el_types::base(x.tp) is TyInteger {
+    cplace = el_ir::unspan(p.code);
+    cfield = match cplace {
+      NdCall { args } => len(args) > 0 && !(el_ir::unspan(args[0]) is NdCall && calls(e, el_ir::unspan(args[0]), "OpGetVector")) && !calls(e, cplace, "OpGetVector"),
+      _ => false
+    };
+    held = pt is TyOptional && cfield;
+    g = el_convert::guard_compound(e, x.code, if held { pt } else { el_types::base(pt) }, held);
+    cw = place_write(e, cplace, g);
+    if cw == null {
+      el::refuse(e, "an assignment to a place that is not a plain local: {place_read(e, cplace)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(cw!, ir::TyVoid);
+  }
   // A plain scalar place whose read is `τ?` — an element whose index is not proven in range, or a
   // field declared `τ?` — is a slot of `τ`: a value is written at `τ` (the `@PLN25` index flip
   // peels the read's `?`), a `null` into a field as `τ`'s null.  A nullable value
@@ -4420,9 +4444,11 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
     el_vars::drop_use(vars, v);
     return ex(el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, x.code, ir::NdInt { n: rec }]), ir::TyVoid);
   }
-  // A link to a scalar (`n: &integer`) is read and written as the scalar it names.
+  // A link to a scalar (`n: &integer`) is read and written as the scalar it names, and a `τ?`
+  // local steps as its `τ` does (`x += 1` is `OpAddInt`, the local keeping its `?`).
   sv = match vt {
     TyRefVar { inner } => if el_convert::plain_scalar(inner) { inner } else { vt },
+    TyOptional { inner } => if el_convert::plain_scalar(inner) { inner } else { vt },
     _ => vt
   };
   if !scalar(sv) || sv is TyVoid {
@@ -4431,7 +4457,14 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
   }
   r = call_op(e, vars, bin, [ir::NdVar { n: v }, x.code], [sv, x.tp]);
   el_vars::drop_use(vars, v);
-  ex(el_ir::v_set(v, r.code), ir::TyVoid)
+  // The composed value takes the slot's range (`guard_compound_range`): a link steps the slot
+  // it names (`linked_store_target`).
+  code = r.code;
+  if !e.first_pass {
+    slot = match vt { TyRefVar { inner } => inner, _ => vt };
+    code = el_convert::guard_compound(e, code, slot, slot is TyOptional);
+  }
+  ex(el_ir::v_set(v, code), ir::TyVoid)
 }
 
 // `Parser::parse_assign`'s annotation branch, `name: T = value`: the local is made as an
@@ -12571,6 +12604,40 @@ fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows) -> vect
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
   ]
+}
+
+// The local a statement steps with a compound assignment whose range guard defaults to a value
+// (`Parser::towards_set`'s `fit_candidate`, armed at `dflt != i64::MIN`), or "".
+fn fit_armed(e: el::El, se: integer, code: ir::Node) -> text {
+  nm = match e.p.nodes[se] {
+    SAssign { op, target } => if op != "=" { match e.p.nodes[target] { SName { name, member } => if member == "" { name } else { "" }, _ => "" } } else { "" },
+    _ => ""
+  };
+  if nm == "" {
+    return "";
+  }
+  match el_ir::unspan(code) {
+    NdSet { inner } => match el_ir::unspan(inner) {
+      NdCall { def_nr, args } => if el::def(e, def_nr).name == "OpRangeDefault" && len(args) == 4 && !(args[3] == ir::NdLong { n: -9223372036854775807 - 1 }) { nm } else { "" },
+      _ => ""
+    },
+    _ => ""
+  }
+}
+
+// Whether statement `st` is an `if` whose condition is `!name`.
+fn if_not_names(e: el::El, st: integer, name: text) -> boolean {
+  se = match e.p.nodes[st] { SStmt { e: x } => x ?? -1, _ => -1 };
+  if se < 0 {
+    return false;
+  }
+  match e.p.nodes[se] {
+    SIf { cond } => match e.p.nodes[cond] {
+      SUnary { op, e: u } => op == "!" && u != null && match e.p.nodes[u!] { SName { name: n, member } => n == name && member == "", _ => false },
+      _ => false
+    },
+    _ => false
+  }
 }
 
 // `Parser::append_elem_tp`: the row an append of `elem` elements copies by — a record's own,
