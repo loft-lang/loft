@@ -4589,7 +4589,10 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
   el_vars::in_use(vars, v, true);
   vt = el_vars::tp(vars, v);
   bin = op[..-1];
-  if vt is TyVector && bin == "+" && e.p.nodes[rhs] is SVecLit {
+  // A link to a vector (`v: &vector<T>`) appends through the link as the vector would
+  // (`@FR-B-Ref-Uniform`).
+  linked_vec = match vt { TyRefVar { inner } => inner is TyVector, _ => false };
+  if (vt is TyVector || linked_vec) && bin == "+" && e.p.nodes[rhs] is SVecLit {
     el_vars::drop_use(vars, v);
     return vector_append(e, vars, v, rhs);
   }
@@ -13115,6 +13118,7 @@ fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   inner = ir::TyUnknown { n: 0 };
   match el_vars::tp(vars, v) {
     TyVector { inner: i } => { inner = i; },
+    TyRefVar { inner: lv } => match lv { TyVector { inner: i } => { inner = i; }, _ => {} },
     _ => {}
   }
   // `parse_append_vector` makes the definitions where a value literal does, at its `]` — not
@@ -13316,7 +13320,8 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     }
     xs = carried;
   }
-  if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
+  // A link (`v: &vector<T>`) names the vector it appends to: its own type stays.
+  if !(el_vars::tp(vars, v) is TyRefVar) && !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
     el::refuse(e, "a local that changes type");
     return refused_build();
   }
