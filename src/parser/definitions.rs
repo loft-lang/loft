@@ -3065,7 +3065,7 @@ impl Parser {
         }
         // @PLN217 — a standard-library function without a loft body binds the runtime, which
         // computes in 64 bits: under the regime its signature keeps the 64-bit `integer` /
-        // `float`, as an `Op…` declaration's `word` does, and a 32-bit caller's answer is
+        // `float`, as an `Op…` declaration's `__word` does, and a 32-bit caller's answer is
         // narrowed where the call returns (`width32_call_result`).
         let wide_binding = self.default && self.data.width32() && self.body_less_ahead();
         self.machine_types = wide_binding;
