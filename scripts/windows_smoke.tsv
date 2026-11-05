@@ -92,6 +92,7 @@ scripts/sweep_ignored.sh	--help
 scripts/sweep_scratch.sh	--help
 scripts/tanmatsu_log.py	--help
 scripts/test_speed.py	--help
+scripts/thirdparty.py	--help
 scripts/timing_compare.py	--help
 scripts/unreleased-work.py	--help
 scripts/validator-dryrun.py	--help

@@ -1087,7 +1087,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: after-join after-fix perf-portal perf-portal-render perf-check perf-trend perf-local c-profile perf-libs plan-move doc-fix docs-lint docs-lint-baseline docs-lint-gate work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
+.PHONY: after-join after-fix perf-portal perf-portal-render perf-check perf-trend perf-local c-profile perf-libs plan-move doc-fix docs-lint docs-lint-baseline docs-lint-gate work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences thirdparty nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -1166,6 +1166,13 @@ licence-census:  ## @PLN155: how many emitted frees rest on the deps PROXY alone
 #   make free-licences ARGS=--sites     # + every construction site with its facts
 free-licences:  ## @PLN155: how many pieces of code decide *is a free needed here*?
 	@python3 scripts/free_licence_audit.py $(ARGS)
+
+# The third-party code loft and every published library ship, link or build in: where each
+# came from and what the advisory registers know against it (THIRDPARTY.md).
+#   make thirdparty                     # inventory + what needs action
+#   make thirdparty ARGS=--check        # silent unless something needs action
+thirdparty:  ## Third-party code we ship: provenance, upstream changes, advisories
+	@python3 scripts/thirdparty.py $(ARGS)
 
 # @PLN160 — do `τ` and `τ?` reach the store machinery by the same road?  Emits both spellings
 # of one program and diffs the IR with the `?` normalised away; a surviving difference is a

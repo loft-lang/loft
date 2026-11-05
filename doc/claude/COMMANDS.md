@@ -180,6 +180,9 @@ make profile ARGS="--interpret p.loft"   # which loft FN/LINE/PATH burns the tim
                                          #   paths that reached each allocation, "--engine" perf
                                          #   over loft's own Rust.  `make profile-corpus` checks
                                          #   the instruments against known answers — PERFORMANCE.md
+make thirdparty                          # third-party code loft + every published library ship,
+                                         #   link or build in: undeclared code, upstream drift,
+                                         #   unreviewed advisories (NVD, OSV, GitHub) — THIRDPARTY.md
 make index ; ./scripts/idx tag:@P259     # rebuild + query the tracker index (prefer over grep -rn)
 make work                                # the open issues that are PICK-UP work: minus
                                          #   `fixed-pending-merge` (fix landed, awaiting merge)
