@@ -179,6 +179,25 @@ glb's branching tails too.  Left, by cost:
 | drawing parser forwards | `read_rgb_at`, `find_tol`, `half_chord` | "a free it only witnesses" on a forward's local |
 | no flat layout | server `try_listen*` | a field kind the layout lacks |
 
+**Step 1 of the deletion, measured (2026-11-05, late).**  The writers' plan made empty in every
+build is three edits — `lower::plan::plan_program` (`ProgramPlan::default()`), the C's
+`FnWriter::value_records` (`ValueRecords::default()`), and the cdylib bridge in `native_lib.rs`
+(the `pub` API keeps its record, so no tuple crosses it).  Timed against the session's start
+(interleaved C ship, best of two, 65 routines): median 1.003, every hash equal, but moros
+`slope_path_with_undo` 2.16×, `emit_to_material` 1.40×, `resolve_move` 1.21× and drawing
+`smooth` 1.31×.  So step 1 waits for one more IR form:
+
+- **a carrier handed to a RECORD parameter** — `cur = map_get_hex(…); cur.h = …;
+  map_set_hex(…, cur)`: the analysis keeps `map_set_hex`'s `h` a record (its body writes a
+  record of that type), so the IR declines `cur`; the writers materialised the tuple into a
+  record at the call.  The IR spelling is a mint per hand-on, the field writes, the call, the
+  release — design it first (where the release goes when the hand-on is in a loop).
+- then re-measure `smooth` and `resolve_move` (`resolve_move`'s `__lift_1`).
+
+Until step 1, the shared analysis keeps a record function that already takes tuple parameters
+out of its candidates (`value_records`): the IR's twin original, whose body a writer's own tuple
+broke (`vertex`).
+
 **S3's IR half is already met.**  Closed, the IR pairs every view-exit case of
 `164-element-place.loft` (g1, g2, g4, g10, g16, g20) and neither writer applies its own
 element-first clause anywhere; what S3 still owes is deleting those clauses.
