@@ -117,6 +117,7 @@ struct Ops {
     append_vector: u32,
     null_ref: u32,
     get_vector: u32,
+    not: u32,
 }
 
 impl Ops {
@@ -142,6 +143,7 @@ impl Ops {
             append_vector: data.def_nr("OpAppendVector"),
             null_ref: data.def_nr("OpNullRefSentinel"),
             get_vector: data.def_nr("OpGetVector"),
+            not: data.def_nr("OpNot"),
         }
     }
 
@@ -179,6 +181,19 @@ struct Layout {
     subs: Vec<(i32, u16, i32)>,
     /// Each [`Kind::View`] field: `(offset, the field's type)`.
     views: Vec<(i32, Type)>,
+    /// `@FR-R-ValueRecord`'s nullable clause (`(N-Road)`): the tuple ends in a PRESENCE word,
+    /// `(f₁, …, fₙ, bool)` — absent, every field its null and `false`.
+    presence: bool,
+}
+
+/// A layout's KEY: the record's definition number, with [`NULLABLE_KEY`] set for the
+/// nullable layout — the dense and the nullable tuple of one record are two layouts, and a
+/// site, a local and a parameter agree on one or decline.
+const NULLABLE_KEY: u32 = 1 << 31;
+
+/// The record definition a layout key carries.
+fn rec_of(key: u32) -> u32 {
+    key & !NULLABLE_KEY
 }
 
 impl Layout {
@@ -212,12 +227,20 @@ impl Layout {
     }
 
     fn tuple_type(&self) -> Type {
-        Type::Tuple(
-            self.fields
-                .iter()
-                .map(|(o, _)| self.elem_type(*o))
-                .collect(),
-        )
+        let mut elems: Vec<Type> = self
+            .fields
+            .iter()
+            .map(|(o, _)| self.elem_type(*o))
+            .collect();
+        if self.presence {
+            elems.push(Type::Boolean);
+        }
+        Type::Tuple(elems)
+    }
+
+    /// The presence word's tuple index, for a nullable layout.
+    fn presence(&self) -> Option<u16> {
+        self.presence.then_some(self.fields.len() as u16)
     }
 
     /// The fields a copy of runtime type `tp` into offset `base` fills: the whole record,
@@ -244,6 +267,10 @@ struct Callee {
     /// Per literal, in the order [`literals_to_tuples`] meets them, the value each
     /// [`Kind::View`] field carries: the leaf `opt::value_records` proved for that exit.
     leaves: Vec<HashMap<i32, Value>>,
+    /// DELIVERY locals: returned, and set only from exit values — each becomes a tuple local.
+    delivered: HashSet<u16>,
+    /// The callees called bare at a result position, one entry per site.
+    tail_calls: Vec<u32>,
 }
 
 /// What the pass works from: the admitted functions and parameters and the layouts of the
@@ -321,8 +348,6 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         // presence word this pass has no spelling for, so the IR keeps the record form there.
         let shape = if arms.contains(&d) {
             Err("a fn-ref arm")
-        } else if crate::opt::value_records::layout::is_nullable_layout(tp) {
-            Err("a nullable record")
         } else {
             callee_shape(data, stores, &w.ops, &mut w.layouts, &vr, d, tp)
         };
@@ -449,7 +474,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     // the literal is recognised.
     for (&d, c) in &w.cands {
         let target = twins.get(&d).copied().unwrap_or(d);
-        rewrite_callee(data, &w, target, c);
+        rewrite_callee(data, &w, &twins, target, c);
         touched.insert(target);
     }
     for (f, plan) in plans {
@@ -607,17 +632,65 @@ fn callee_shape(
     if idx + 1 != def.attributes.len() || buf == u16::MAX || !def.variables.is_argument(buf) {
         return Err("the return buffer is not the last parameter");
     }
-    let Type::Reference(record, _) = def.returned().peel_link() else {
+    let Type::Reference(record, _) = def.returned().peel_link().base() else {
         return Err("no record result");
     };
     let layout =
         flat_layout(data, stores, *record, tp, vr.view_offs.get(&tp)).ok_or("no flat layout")?;
+    let key = key_of(*record, tp);
     let mut sh = BodyShape::default();
     if !body_shape(def.code(), buf, &layout, ops, true, &mut sh) {
         return Err("a body shape the tuple cannot spell");
     }
-    if !sh.returned.is_subset(&sh.bound) {
-        return Err("a returned local that is no forward");
+    // A returned local that no call handed `buf` binds: a delivery local when every set of it
+    // is an exit value, else a VIEW of a record, read field-wise where it is returned.
+    let mut delivered: HashSet<u16> = HashSet::default();
+    let mut tail_calls = sh.tail_calls.clone();
+    let mut returned = sh.returned.clone();
+    let mut todo: Vec<u16> = returned.difference(&sh.bound).copied().collect();
+    while let Some(l) = todo.pop() {
+        let sets: Vec<&(u16, bool, Vec<u32>, bool, HashSet<u16>)> =
+            sh.sets.iter().filter(|(x, ..)| *x == l).collect();
+        if sets.is_empty() {
+            if l == buf
+                || !matches!(def.variables.tp(l).base(), Type::Reference(r, _) if r == record)
+            {
+                if trace() {
+                    eprintln!(
+                        "[ir-valuerec] {}: returned `{}` is no forward, delivery or view",
+                        def.name(),
+                        def.variables.name(l)
+                    );
+                }
+                return Err("a returned local that is no forward, delivery or view");
+            }
+        } else if sets.iter().all(|(_, ok, ..)| *ok) {
+            delivered.insert(l);
+            for (_, _, calls, _, answers) in sets {
+                tail_calls.extend(calls.iter().copied());
+                for &a in answers {
+                    if !sh.bound.contains(&a) && returned.insert(a) {
+                        todo.push(a);
+                    }
+                }
+            }
+        } else {
+            return Err("a returned local set from a value the tuple cannot spell");
+        }
+    }
+    if sh
+        .sets
+        .iter()
+        .any(|(l, _, _, names_buf, _)| *names_buf && !delivered.contains(l))
+    {
+        return Err("the buffer in a set that delivers nothing");
+    }
+    if layout.has_views()
+        && (!delivered.is_empty()
+            || !tail_calls.is_empty()
+            || returned.difference(&sh.bound).next().is_some())
+    {
+        return Err("a view layout's exit of another kind");
     }
     let leaves = if layout.has_views() {
         // A forward's exit returns its local's tuple whole — the view the callee proved —
@@ -631,12 +704,15 @@ fn callee_shape(
     } else {
         Vec::new()
     };
-    layouts.insert(*record, layout);
+    layouts.insert(key, layout);
+    let forwards = returned.intersection(&sh.bound).copied().collect();
     Ok(Callee {
-        record: *record,
+        record: key,
         buf,
-        forwards: sh.returned,
+        forwards,
         leaves,
+        delivered,
+        tail_calls,
     })
 }
 
@@ -758,8 +834,9 @@ fn param_shape(
         return None;
     }
     let layout = flat_layout(data, stores, *record, tp, None)?;
-    layouts.insert(*record, layout);
-    Some(*record)
+    let key = key_of(*record, tp);
+    layouts.insert(key, layout);
+    Some(key)
 }
 
 /// The record's tuple, when it has two or more scalars and every field is a scalar a tuple
@@ -771,20 +848,32 @@ fn flat_layout(
     data: &Data,
     stores: &Stores,
     record: u32,
-    tp: u16,
+    key: u16,
     views: Option<&std::collections::HashSet<i64>>,
 ) -> Option<Layout> {
+    use crate::opt::value_records::layout::{is_nullable_layout, layout_record};
+    let tp = layout_record(key);
     let mut layout = Layout {
         tp,
         fields: Vec::new(),
         subs: Vec::new(),
         views: Vec::new(),
+        presence: is_nullable_layout(key),
     };
     flatten(data, stores, record, tp, 0, views, &mut layout)?;
     layout.fields.sort_unstable_by_key(|(o, _)| *o);
     // A loft tuple has two or more elements: a one-element `Type::Tuple` has no spelling,
     // and `--native` renders it as the bare scalar its `.0` reads cannot index.
-    (layout.fields.len() >= 2).then_some(layout)
+    (layout.fields.len() + usize::from(layout.presence) >= 2).then_some(layout)
+}
+
+/// The key of `record`'s layout under analysis key `tp`.
+fn key_of(record: u32, tp: u16) -> u32 {
+    if crate::opt::value_records::layout::is_nullable_layout(tp) {
+        record | NULLABLE_KEY
+    } else {
+        record
+    }
 }
 
 /// One level of [`flat_layout`]: the fields of `tp` (declared by `record`), `base` bytes into
@@ -857,8 +946,146 @@ fn place_of(n: &Value, ops: &Ops) -> Option<(u16, i32)> {
 struct BodyShape {
     /// Locals bound from a call handed the buffer — a FORWARD's bind.
     bound: HashSet<u16>,
-    /// Locals in a result position: each must be one of `bound`.
+    /// Locals in a result position: a forward's (`bound`), a DELIVERY local (set from exit
+    /// values, `sets`), or a VIEW of a record, read field-wise at the exit.
     returned: HashSet<u16>,
+    /// The callees called bare at a result position: the call's answer IS the exit.
+    tail_calls: Vec<u32>,
+    /// Per `l = E` that binds no call handed `buf`: `(l, E is an exit value, its tail calls,
+    /// E names buf, the locals E answers)`.  A returned `l` whose every set is an exit value
+    /// is a delivery local, and what its sets answer is returned in turn.
+    sets: Vec<(u16, bool, Vec<u32>, bool, HashSet<u16>)>,
+}
+
+/// Is `n` a value an exit can deliver as the tuple ([`to_tuple`] spells each): the function's
+/// own literal or one built into a local buffer, the absent record (a nullable layout), a
+/// record a variable names (a forward's local, a delivery local, or a VIEW read field-wise),
+/// a materialised view's source, a call whose answer is the exit (`tail_calls`), or a
+/// branch or block whose result is one of those.  Anything else is no exit value: the
+/// caller declines.
+fn exit_value(n: &Value, buf: u16, layout: &Layout, ops: &Ops, sh: &mut BodyShape) -> bool {
+    let n = n.unspan();
+    if literal(n, buf, layout, ops).is_some() {
+        return body_shape(n, buf, layout, ops, true, sh);
+    }
+    match n {
+        Value::Null => layout.presence,
+        Value::Call(op, a) if *op == ops.null_ref && a.is_empty() => layout.presence,
+        Value::Var(l) => {
+            sh.returned.insert(*l);
+            true
+        }
+        Value::Return(x) => exit_value(x, buf, layout, ops, sh),
+        Value::If(c, a, b) => {
+            !mentions(c, buf)
+                && body_shape(c, buf, layout, ops, false, sh)
+                && exit_value(a, buf, layout, ops, sh)
+                && exit_value(b, buf, layout, ops, sh)
+        }
+        Value::Block(_) if is_mv_return(n, buf, ops) || is_local_literal(n, buf, layout, ops) => {
+            !layout.has_views()
+        }
+        Value::Block(b) => {
+            let Some((last, rest)) = b.operators.split_last() else {
+                return false;
+            };
+            rest.iter()
+                .all(|op| body_shape(op, buf, layout, ops, false, sh))
+                && exit_value(last, buf, layout, ops, sh)
+        }
+        Value::Call(d, args)
+            if matches!(args.last().map(Value::unspan), Some(Value::Var(_)))
+                && args[..args.len() - 1].iter().all(|a| !mentions(a, buf)) =>
+        {
+            sh.tail_calls.push(*d);
+            args[..args.len() - 1]
+                .iter()
+                .all(|a| body_shape(a, buf, layout, ops, false, sh))
+        }
+        _ => false,
+    }
+}
+
+/// `{ OpDatabase(b, tp); OpCopyRecord(src, b, tp); …frees…; b }` — or ending in `return b` —
+/// the lowering of `return v` for a view `v`, `b` the result buffer: the exit is `src`'s
+/// value, read field-wise.  `src` does not name `b`; the rest only frees what `b` witnesses.
+fn mv_parts(n: &Value, ops: &Ops) -> Option<(u16, usize)> {
+    let Value::Block(b) = n else {
+        return None;
+    };
+    if b.name != "materialized_view_return" {
+        return None;
+    }
+    let body: Vec<&Value> = b
+        .operators
+        .iter()
+        .map(Value::unspan)
+        .filter(|o| !matches!(o, Value::Line(_)))
+        .collect();
+    let [Value::Call(db, da), Value::Call(cp, ca), ..] = body.as_slice() else {
+        return None;
+    };
+    let Some(Value::Var(r)) = da.first().map(Value::unspan) else {
+        return None;
+    };
+    let is_r = |v: &Value| matches!(v.unspan(), Value::Var(x) if x == r);
+    if *db != ops.database
+        || *cp != ops.copy_record
+        || ca.len() != 3
+        || !is_r(&ca[1])
+        || mentions(&ca[0], *r)
+    {
+        return None;
+    }
+    let last = body.last()?;
+    let ends = is_r(last) || matches!(last, Value::Return(x) if is_r(x));
+    let middle_ok = body[2..body.len() - 1].iter().all(|o| {
+        !mentions(o, *r)
+            || matches!(o, Value::Call(op, a) if *op == ops.free_if_distinct
+                && a.len() == 2 && is_r(&a[1]) && !mentions(&a[0], *r))
+    });
+    (ends && middle_ok).then_some((*r, b.operators.len()))
+}
+
+/// Does block `n` end in its own `return`?
+fn mv_returns(n: &Value) -> bool {
+    matches!(n, Value::Block(b) if matches!(b.operators.iter().rev()
+        .find(|o| !matches!(o.unspan(), Value::Line(_))).map(Value::unspan), Some(Value::Return(_))))
+}
+
+/// A materialised view's return, into `buf` or a local buffer: [`mv_parts`].
+fn is_mv_return(n: &Value, _buf: u16, ops: &Ops) -> bool {
+    mv_parts(n.unspan(), ops).is_some()
+}
+
+/// The buffer a literal block mints into (`OpDatabase(b, tp)`, bare or under its header).
+fn literal_buffer(n: &Value, ops: &Ops) -> Option<u16> {
+    let Value::Block(b) = n else {
+        return None;
+    };
+    let mut found = None;
+    for o in &b.operators {
+        o.any_node(&mut |c| {
+            if found.is_none()
+                && let Value::Call(op, a) = c
+                && *op == ops.database
+                && let Some(Value::Var(v)) = a.first().map(Value::unspan)
+            {
+                found = Some(*v);
+            }
+            found.is_some()
+        });
+        if found.is_some() {
+            break;
+        }
+    }
+    found
+}
+
+/// A literal built into a LOCAL buffer (`{ OpDatabase(b, tp); OpSetX(b, …); …; b }`): the
+/// exit is the tuple of its fields, and `b` is never minted.
+fn is_local_literal(n: &Value, buf: u16, layout: &Layout, ops: &Ops) -> bool {
+    literal_buffer(n, ops).is_some_and(|b| b != buf && literal(n, b, layout, ops).is_some())
 }
 
 /// Does `n` use the return buffer `buf` only the ways the tuple form can drop?  A RESULT
@@ -894,6 +1121,14 @@ fn body_shape(
     }
     match n {
         Value::Return(v) => body_shape(v, buf, layout, ops, true, sh),
+        // A materialised view's return ending in its own `return` is an exit wherever it
+        // stands, as a literal that does; a local literal answers its value at the tail.
+        Value::Block(_)
+            if (is_mv_return(n, buf, ops) && (tail || mv_returns(n)))
+                || (tail && is_local_literal(n, buf, layout, ops)) =>
+        {
+            !layout.has_views()
+        }
         Value::Block(b) => {
             let last = b.operators.len().saturating_sub(1);
             b.operators
@@ -907,7 +1142,7 @@ fn body_shape(
             sh.returned.insert(*l);
             true
         }
-        _ if tail => false,
+        _ if tail => exit_value(n, buf, layout, ops, sh),
         Value::Set(l, inner)
             if let Value::Call(_, args) = inner.unspan()
                 && matches!(args.last().map(Value::unspan), Some(Value::Var(b)) if *b == buf) =>
@@ -922,6 +1157,21 @@ fn body_shape(
                 && matches!(args.as_slice(), [a] if matches!(a.unspan(), Value::Var(b) if *b == buf))) =>
         {
             true
+        }
+        // A set that may be a DELIVERY local's (`__ret_N = if … { … } else { … }`): judged as
+        // an exit value, and kept for `callee_shape` to settle once it knows which locals
+        // are returned.
+        Value::Set(l, inner) if *l != buf => {
+            let mut s2 = BodyShape::default();
+            let ok = !layout.has_views() && exit_value(inner, buf, layout, ops, &mut s2);
+            let names_buf = mentions(inner, buf);
+            sh.sets
+                .push((*l, ok, s2.tail_calls, names_buf, s2.returned));
+            // What the value holds of its own — a nested delivery local's sets, a forward's
+            // bind — is the function's as well.
+            sh.sets.extend(s2.sets);
+            sh.bound.extend(s2.bound);
+            ok || (!names_buf && body_shape(inner, buf, layout, ops, false, sh))
         }
         Value::If(cond, ..) if is_buffer_guard(n, cond, buf, ops) => true,
         _ => {
@@ -970,6 +1220,9 @@ struct Literal<'a> {
     parts: Vec<Part<'a>>,
     returns: bool,
     scope: u16,
+    /// The variables a sub-record COPY reads (`OpCopyRecord(x, buf.f, tp)`): its fields become
+    /// reads of `x`, which a null `x` answers with nulls where the copy writes its default.
+    copies: Vec<u16>,
 }
 
 impl Literal<'_> {
@@ -1003,7 +1256,9 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
     // A literal whose field values are staged before the record is minted
     // (`__stg_… = …; if … OpDatabase(buf, tp); OpSetX(buf, off, __stg_…)`) opens with the
     // staging statements: they do not name the buffer and run where they ran.
-    let at = body.iter().position(|o| is_header(o, buf, ops))?;
+    let at = body
+        .iter()
+        .position(|o| is_header(o, buf, ops) || is_mint(o, buf, ops))?;
     let (staging, body) = body.split_at(at);
     if staging.iter().any(|o| mentions(o, buf)) {
         return None;
@@ -1017,6 +1272,7 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
         _ => return None,
     };
     let mut parts: Vec<Part> = staging.iter().map(|o| Part::Other(o)).collect();
+    let mut copies: Vec<u16> = Vec::new();
     parts.push(Part::Header);
     for o in middle {
         let part = match o {
@@ -1059,6 +1315,9 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
                     && v == buf =>
             {
                 let (lo, hi) = layout.extent(base, *tp as u16)?;
+                if let Some(x) = copy_root(src, ops) {
+                    copies.push(x);
+                }
                 if !pure_place(src, ops) || mentions(src, buf) {
                     return None;
                 }
@@ -1091,6 +1350,7 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
         parts,
         returns,
         scope: b.scope,
+        copies,
     };
     let mut filled = lit.fill_order();
     filled.sort_unstable();
@@ -1103,6 +1363,20 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
 /// `buf` and calling nothing but the operators it is built from.  A pooled buffer's guard
 /// clears the record it still holds in the other arm (`@FR-H-ClearRelease`); with the buffer
 /// gone there is nothing to clear either.
+/// The variable a copy source is rooted at: `x`, or a field path into it.
+fn copy_root(src: &Value, ops: &Ops) -> Option<u16> {
+    match src.unspan() {
+        Value::Var(x) => Some(*x),
+        _ => place_of(src, ops).map(|(x, _)| x),
+    }
+}
+
+/// A bare `OpDatabase(buf, tp)` — a local literal's mint, which no earlier value can have.
+fn is_mint(n: &Value, buf: u16, ops: &Ops) -> bool {
+    matches!(n, Value::Call(op, a) if *op == ops.database
+        && matches!(a.first().map(Value::unspan), Some(Value::Var(b)) if *b == buf))
+}
+
 fn is_header(n: &Value, buf: u16, ops: &Ops) -> bool {
     if !matches!(n, Value::If(..)) {
         return false;
@@ -1192,6 +1466,11 @@ struct Scan {
     /// Admitted parameters handed something that is not a variable.
     unserved: HashSet<(u32, usize)>,
     called: HashSet<u32>,
+    /// The variables the function's own literals COPY a sub-record from (`Literal::copies`).
+    lit_copies: Vec<u16>,
+    /// Presence tests `OpConvBoolFromRef(x)` / `OpRefIsNull(x)`, by variable: a nullable
+    /// carrier reads its presence word for them.
+    tests: Vec<u16>,
     /// `(buffer, record)` when the scanned function returns the tuple: its own object
     /// literals become tuples, so only what the rewrite keeps of them is scanned — the
     /// buffer writes, the mint and the placeholder test go with the buffer.
@@ -1265,7 +1544,7 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         s.copies
             .iter()
             .filter(|(c, _, _)| *c == x)
-            .all(|(_, t, pure)| *t == tp && *pure)
+            .all(|(_, t, _)| *t == tp)
     };
     // The admitted parameters of `f` itself.
     for (&(d, idx), &record) in &w.params {
@@ -1273,23 +1552,38 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             continue;
         }
         let p = vars.var(&def.attributes[idx].name);
-        let ok = !s.other.contains(&p)
-            && !s.written.contains(&p)
-            && !s.returns.contains(&p)
-            && !s.null_inits.contains(&p)
-            && !s.frees.contains(&p)
-            && !s.binds.iter().any(|(l, _, _)| *l == p)
-            && !s.fids.iter().any(|&(a, b)| a == p || b == p)
-            && copies_fit(p, record)
-            && reads_fit(p, record)
-            && handed_fits(p, record)
-            && !depended(p);
-        if ok {
+        let absent_copy = w.layouts[&record].presence && s.lit_copies.contains(&p);
+        let why = if s.other.contains(&p) {
+            Some("a mention that is no read or hand-on")
+        } else if absent_copy {
+            Some("a nullable tuple copied inside a tuple literal (an absent one copies defaults)")
+        } else if !w.layouts[&record].presence && s.tests.contains(&p) {
+            Some("a presence test of a dense tuple")
+        } else if s.written.contains(&p) || s.null_inits.contains(&p) {
+            Some("written")
+        } else if s.returns.contains(&p) {
+            Some("returned")
+        } else if s.frees.contains(&p) || s.fids.iter().any(|&(a, b)| a == p || b == p) {
+            Some("freed")
+        } else if s.binds.iter().any(|(l, _, _)| *l == p) {
+            Some("bound from a call")
+        } else if !copies_fit(p, record) {
+            Some("a copy into a place it cannot name per field")
+        } else if !reads_fit(p, record) || !handed_fits(p, record) {
+            Some("a read or hand-on of another shape")
+        } else if depended(p) {
+            Some("another variable depends on it")
+        } else {
+            None
+        };
+        if why.is_none() {
             plan.carriers.insert(p, record);
         } else {
-            if trace() {
+            if let Some(why) = why
+                && trace()
+            {
                 eprintln!(
-                    "[ir-valuerec] {}: parameter `{}` declines",
+                    "[ir-valuerec] {}: parameter `{}` declines: {why}",
                     def.name(),
                     vars.name(p)
                 );
@@ -1328,7 +1622,7 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             let forward = own == Some(r);
             if buffer_uses[&r] != 1 && r != l {
                 Some("a bind's buffer: shared by several binds")
-            } else if s.other.contains(&r) {
+            } else if s.other.contains(&r) || s.tests.contains(&r) {
                 Some("a bind's buffer: another mention")
             } else if s.written.contains(&r) {
                 Some("a bind's buffer: written field-wise")
@@ -1349,11 +1643,14 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             Some(why)
         } else if s.returns.contains(&l) && own.is_none() {
             Some("returned by a function that keeps its record")
-        } else if s.other.contains(&l) {
+        } else if w.layouts[&record].presence && s.lit_copies.contains(&l) {
+            Some("a nullable tuple copied inside a tuple literal (an absent one copies defaults)")
+        } else if s.other.contains(&l) || (s.tests.contains(&l) && !w.layouts[&record].presence) {
             Some("a mention that is no read, hand-on, bind or free")
         } else if (vars.is_argument(l) && own != Some(l)) || vars.is_captured(l) {
             Some("a parameter or a capture")
-        } else if !matches!(vars.tp(l).peel_link(), Type::Reference(rd, _) if *rd == record) {
+        } else if !matches!(vars.tp(l).peel_link().base(), Type::Reference(rd, _) if *rd == rec_of(record))
+        {
             Some("its type")
         } else if !reads_fit(l, record) || !handed_fits(l, record) {
             Some("a read or hand-on of another shape")
@@ -1398,9 +1695,34 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             }
         }
     }
+    // The calls at this function's own exits take the tuple when it returns one.
+    if tuple && let Some(c) = w.cands.get(&f) {
+        for d in &c.tail_calls {
+            *carried_calls.entry(*d).or_default() += 1;
+        }
+    }
     for (d, n) in &s.cand_calls {
         if carried_calls.get(d).copied().unwrap_or(0) < *n {
             v.owed.insert(*d);
+        }
+    }
+    // A call whose answer is the exit hands its tuple on: its callee must answer one of this
+    // layout — or the dense tuple of its record, widened with `true` (`to_tuple`).
+    if tuple && let Some(c) = w.cands.get(&f) {
+        let fits = |d: &u32| {
+            w.cands.get(d).is_some_and(|k| {
+                k.record == c.record
+                    || (rec_of(k.record) == rec_of(c.record) && !w.layouts[&k.record].presence)
+            })
+        };
+        if !c.tail_calls.iter().all(fits) {
+            if trace() {
+                eprintln!(
+                    "[ir-valuerec] {}: a call at an exit answers no tuple of this layout",
+                    def.name()
+                );
+            }
+            v.bad_fns.insert(f);
         }
     }
     // A forward returns its local: a local that cannot carry the tuple leaves nothing to
@@ -1428,8 +1750,8 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         // `@FR-N-Shape` — a nullable record local is declined on purpose (a null record has no
         // fields to read into the tuple); the test says so instead of missing the wrapper.
         let tp = vars.tp(x);
-        if !matches!(tp, Type::Optional(_))
-            && matches!(tp.base(), Type::Reference(rd, _) if *rd == record)
+        if (w.layouts[&record].presence || !matches!(tp, Type::Optional(_)))
+            && matches!(tp.base(), Type::Reference(rd, _) if *rd == rec_of(record))
         {
             plan.reads_at_call = true;
         } else {
@@ -1509,6 +1831,7 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
     if let Some((buf, record)) = s.own
         && let Some(lit) = literal(n, buf, &w.layouts[&record], ops)
     {
+        s.lit_copies.extend(lit.copies.iter().copied());
         for part in &lit.parts {
             match part {
                 Part::Header | Part::ViewCopy => {}
@@ -1610,6 +1933,13 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                 scan(dst, false, w, s);
                 return;
             }
+            if (*op == ops.bool_from_ref || *op == ops.ref_is_null)
+                && let [a] = args.as_slice()
+                && let Value::Var(x) = a.unspan()
+            {
+                s.tests.push(*x);
+                return;
+            }
             s.called.insert(*op);
             if w.cands.contains_key(op) {
                 *s.cand_calls.entry(*op).or_default() += 1;
@@ -1665,7 +1995,18 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
 fn rewrite_function(data: &mut Data, w: &World, twins: &HashMap<u32, u32>, f: u32, plan: &Plan) {
     let def = &mut data.definitions[f as usize];
     let mut code = std::mem::replace(&mut def.code, Value::Null);
-    Rewrite { w, plan, twins }.uses(&mut code);
+    let scope = match code.unspan() {
+        Value::Block(b) => b.scope,
+        _ => 0,
+    };
+    Rewrite {
+        w,
+        plan,
+        twins,
+        vars: &mut def.variables,
+        scope,
+    }
+    .uses(&mut code);
     def.code = code;
     for (v, record) in &plan.carriers {
         def.variables.set_type(*v, w.layouts[record].tuple_type());
@@ -1714,6 +2055,9 @@ struct Rewrite<'a> {
     w: &'a World,
     plan: &'a Plan,
     twins: &'a HashMap<u32, u32>,
+    vars: &'a mut crate::variables::Function,
+    /// The body's scope, for the temporaries the rewrite declares.
+    scope: u16,
 }
 
 impl Rewrite<'_> {
@@ -1737,6 +2081,23 @@ impl Rewrite<'_> {
                     let d = *d;
                     self.args(d, args);
                 }
+            }
+            Value::Call(op, args)
+                if (*op == ops.bool_from_ref || *op == ops.ref_is_null)
+                    && let [a] = args.as_slice()
+                    && let Value::Var(v) = a.unspan()
+                    && let Some(record) = plan.carriers.get(v) =>
+            {
+                // `if x`, `x == null`: the presence word; a dense tuple is present.
+                let present = match w.layouts[record].presence() {
+                    Some(i) => Value::TupleGet(*v, i),
+                    None => Value::Boolean(true),
+                };
+                *n = if *op == ops.ref_is_null {
+                    Value::Call(ops.not, vec![present])
+                } else {
+                    present
+                };
             }
             Value::Call(op, _) => {
                 // A carrier's view field read whole: the tuple's reference IS the field.
@@ -1768,9 +2129,23 @@ impl Rewrite<'_> {
                     && let Some(record) = plan.carriers.get(&v)
                     && let Some(i) = w.layouts[record].index_of(base + off)
                 {
+                    let at = base + *off;
+                    let set = *op;
                     let mut value = args.pop().unwrap_or(Value::Null);
                     self.uses(&mut value);
-                    *n = Value::TuplePut(v, i, Box::new(value));
+                    *n = match w.layouts[record].presence() {
+                        // `@FR-E-Report` — a write through an ABSENT tuple lands nowhere and is
+                        // reported, as the setter's null-record arm does: it IS that arm.
+                        Some(p) => Value::If(
+                            Box::new(Value::TupleGet(v, p)),
+                            Box::new(Value::TuplePut(v, i, Box::new(value.clone()))),
+                            Box::new(Value::Call(
+                                set,
+                                vec![Value::Call(ops.null_ref, Vec::new()), Value::Int(at), value],
+                            )),
+                        ),
+                        None => Value::TuplePut(v, i, Box::new(value)),
+                    };
                     return;
                 }
                 let d = *op;
@@ -1801,7 +2176,33 @@ impl Rewrite<'_> {
                 let v = *v;
                 let mut place = dst.clone();
                 self.uses(&mut place);
-                list.extend(write_fields(&w.layouts[record], &place, v, &w.ops));
+                let layout = &w.layouts[record];
+                // The place is evaluated ONCE, as the copy evaluated it: bound to a reference
+                // when it is more than a variable, a constant or a field path.
+                if !pure_place(&place, &w.ops) {
+                    let rec = Type::Reference(rec_of(*record), crate::data::Deps::default());
+                    let t = self.vars.add_unique("vr_dst", &rec, self.scope);
+                    list.push(Value::Set(t, Box::new(place)));
+                    place = Value::Var(t);
+                }
+                let writes = write_fields(layout, &place, v, &w.ops);
+                match layout.presence() {
+                    // An ABSENT tuple copies as the record form copies a null source: that
+                    // copy's own null arm (`@C137`), under the same type and flags.
+                    Some(p) => list.push(Value::If(
+                        Box::new(Value::TupleGet(v, p)),
+                        Box::new(crate::data::v_block(writes, Type::Void, "vr_copy")),
+                        Box::new(Value::Call(
+                            w.ops.copy_record,
+                            vec![
+                                Value::Call(w.ops.null_ref, Vec::new()),
+                                place,
+                                args[2].clone(),
+                            ],
+                        )),
+                    )),
+                    None => list.extend(writes),
+                }
                 continue;
             }
             self.uses(&mut o);
@@ -1848,19 +2249,22 @@ fn write_fields(layout: &Layout, place: &Value, t: u16, ops: &Ops) -> Vec<Value>
 /// The tuple a null record reads as: each field's null — `i64::MIN`, NaN, `false`, and a
 /// view's null reference, which reads as the empty vector.
 fn null_tuple(layout: &Layout, ops: &Ops) -> Value {
-    Value::Tuple(
-        layout
-            .fields
-            .iter()
-            .map(|(_, k)| match k {
-                Kind::Int => Value::Long(i64::MIN),
-                Kind::Float => Value::Float(f64::NAN),
-                Kind::Single => Value::Single(f32::NAN),
-                Kind::Bool => Value::Boolean(false),
-                Kind::View => Value::Call(ops.null_ref, Vec::new()),
-            })
-            .collect(),
-    )
+    let mut elems: Vec<Value> = layout
+        .fields
+        .iter()
+        .map(|(_, k)| match k {
+            Kind::Int => Value::Long(i64::MIN),
+            Kind::Float => Value::Float(f64::NAN),
+            Kind::Single => Value::Single(f32::NAN),
+            Kind::Bool => Value::Boolean(false),
+            Kind::View => Value::Call(ops.null_ref, Vec::new()),
+        })
+        .collect();
+    // Absent: the presence word is `false`.
+    if layout.presence {
+        elems.push(Value::Boolean(false));
+    }
+    Value::Tuple(elems)
 }
 
 /// The tuple of plain record local `x`'s fields, read at the call — what an admitted
@@ -1868,16 +2272,20 @@ fn null_tuple(layout: &Layout, ops: &Ops) -> Value {
 /// inside the callee because nothing the callee reaches writes a record of this type (the
 /// parameter gate `value_records` admits by).
 fn read_into_tuple(x: u16, layout: &Layout, ops: &Ops) -> Value {
-    Value::Tuple(
-        layout
-            .fields
-            .iter()
-            .map(|(off, k)| Value::Call(ops.get_op(*k), vec![Value::Var(x), Value::Int(*off)]))
-            .collect(),
-    )
+    let mut elems: Vec<Value> = layout
+        .fields
+        .iter()
+        .map(|(off, k)| Value::Call(ops.get_op(*k), vec![Value::Var(x), Value::Int(*off)]))
+        .collect();
+    // Whether a record is there — what the record form's null test reads; a getter of the
+    // null record answers the field's null, which is the absent tuple's field.
+    if layout.presence {
+        elems.push(Value::Call(ops.bool_from_ref, vec![Value::Var(x)]));
+    }
+    Value::Tuple(elems)
 }
 
-fn rewrite_callee(data: &mut Data, w: &World, d: u32, c: &Callee) {
+fn rewrite_callee(data: &mut Data, w: &World, twins: &HashMap<u32, u32>, d: u32, c: &Callee) {
     let layout = &w.layouts[&c.record];
     let tuple = layout.tuple_type();
     let old = data.def(d).returned().clone();
@@ -1896,6 +2304,22 @@ fn rewrite_callee(data: &mut Data, w: &World, d: u32, c: &Callee) {
         c.leaves.is_empty() || at == c.leaves.len(),
         "every literal met its view leaves"
     );
+    let scope = match code.unspan() {
+        Value::Block(b) => b.scope,
+        _ => 0,
+    };
+    Exits {
+        w,
+        c,
+        layout,
+        tuple: tuple.clone(),
+        twins,
+        scope,
+    }
+    .body(&mut code, &mut def.variables);
+    for &l in &c.delivered {
+        def.variables.set_type(l, tuple.clone());
+    }
     def.code = code;
     retype_results(&mut def.code, c.record, &old, &tuple);
     // A one-buffer chain made the buffer itself the forward's local.  As a parameter it was
@@ -1912,6 +2336,193 @@ fn rewrite_callee(data: &mut Data, w: &World, d: u32, c: &Callee) {
     def.variables.drop_argument(c.buf);
 }
 
+/// The exits of an admitted function, each delivered as its tuple ([`exit_value`] judged
+/// them): every `return`'s value, the body's tail and each set of a delivery local.  The
+/// buffer's witness, its guarded free and every "free unless it is the result" whose result
+/// is a delivery local or the buffer go — a tuple is never a store's record.
+struct Exits<'a> {
+    w: &'a World,
+    c: &'a Callee,
+    layout: &'a Layout,
+    tuple: Type,
+    twins: &'a HashMap<u32, u32>,
+    scope: u16,
+}
+
+impl Exits<'_> {
+    fn body(&self, code: &mut Value, vars: &mut crate::variables::Function) {
+        match code.unspan_mut() {
+            Value::Block(b) => {
+                self.stmts(&mut b.operators, vars, true);
+            }
+            other => self.value(other, vars),
+        }
+    }
+
+    /// A statement list; `tail` says its last value is an exit.
+    fn stmts(&self, list: &mut Vec<Value>, vars: &mut crate::variables::Function, tail: bool) {
+        let ops = &self.w.ops;
+        let buf = self.c.buf;
+        let old = std::mem::take(list);
+        let last = old
+            .iter()
+            .rposition(|o| !matches!(o.unspan(), Value::Line(_)));
+        for (i, mut o) in old.into_iter().enumerate() {
+            let alias = matches!(o.unspan(), Value::Set(_, inner) if matches!(inner.unspan(),
+                Value::Call(op, a) if *op == ops.ref_alias
+                    && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(b) if *b == buf))));
+            let guard = matches!(o.unspan(), Value::If(cond, ..) if is_buffer_guard(o.unspan(), cond, buf, ops));
+            if alias || guard {
+                continue;
+            }
+            if tail && Some(i) == last && !matches!(o.unspan(), Value::Return(_)) {
+                self.value(&mut o, vars);
+            } else {
+                self.walk(&mut o, vars);
+            }
+            list.push(o);
+        }
+    }
+
+    /// A statement: its `return`s, the sets of delivery locals and the frees they witness.
+    fn walk(&self, n: &mut Value, vars: &mut crate::variables::Function) {
+        let ops = &self.w.ops;
+        let witness = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == self.c.buf || self.c.delivered.contains(x));
+        // A materialised view's return that ends in its own `return` is an exit where it stands.
+        if mv_returns(n.unspan())
+            && let Some((r, _)) = mv_parts(n.unspan(), ops)
+        {
+            self.mv(n.unspan_mut(), r, vars);
+            return;
+        }
+        match n.unspan_mut() {
+            Value::Return(x) => self.value(x, vars),
+            Value::Set(l, e) if self.c.delivered.contains(l) => self.value(e, vars),
+            Value::Call(op, a) if *op == ops.free_if_distinct && a.len() == 2 && witness(&a[1]) => {
+                let p = a[0].clone();
+                *n = Value::Call(ops.free_ref, vec![p]);
+            }
+            Value::Block(b) | Value::Loop(b) => self.stmts(&mut b.operators, vars, false),
+            Value::Insert(l) => self.stmts(l, vars, false),
+            other => other.for_each_child_mut(&mut |c| self.walk(c, vars)),
+        }
+    }
+
+    /// `T`: exit value `n` as the tuple.
+    fn value(&self, n: &mut Value, vars: &mut crate::variables::Function) {
+        let ops = &self.w.ops;
+        let layout = self.layout;
+        let buf = self.c.buf;
+        let n = n.unspan_mut();
+        if let Some((r, _)) = mv_parts(n, ops) {
+            self.mv(n, r, vars);
+            return;
+        }
+        if let Some(lb) = literal_buffer(n, ops)
+            && lb != buf
+            && literal(n, lb, layout, ops).is_some()
+        {
+            literals_to_tuples(n, lb, layout, ops, vars, (&[], &mut 0));
+            return;
+        }
+        match n {
+            Value::Tuple(_) => {}
+            Value::Block(b) if b.name == "Tuple" => {}
+            Value::Null => *n = null_tuple(layout, ops),
+            Value::Call(op, a) if *op == ops.null_ref && a.is_empty() => {
+                *n = null_tuple(layout, ops);
+            }
+            Value::Return(x) => self.value(x, vars),
+            Value::If(_, a, e) => {
+                self.value(a, vars);
+                self.value(e, vars);
+            }
+            Value::Var(v) => {
+                let v = *v;
+                if v != buf && !self.c.delivered.contains(&v) && !self.c.forwards.contains(&v) {
+                    // A VIEW: its fields, read where it is returned.
+                    *n = read_into_tuple(v, layout, ops);
+                }
+            }
+            Value::Block(b) => {
+                b.result = self.tuple.clone();
+                self.stmts(&mut b.operators, vars, true);
+            }
+            Value::Call(d, args)
+                if matches!(args.last().map(Value::unspan), Some(Value::Var(_))) =>
+            {
+                args.pop();
+                let callee = self.w.cands.get(d).map(|k| k.record);
+                if let Some(t) = self.twins.get(d) {
+                    *d = *t;
+                }
+                // A dense callee's tuple where this nullable one is expected: widened with its
+                // presence word — a dense tuple is present.
+                if let Some(k) = callee
+                    && layout.presence
+                    && !self.w.layouts[&k].presence
+                {
+                    let dense = self.w.layouts[&k].tuple_type();
+                    let t = vars.add_unique("vr_w", &dense, self.scope);
+                    let call = std::mem::replace(n, Value::Null);
+                    let mut elems: Vec<Value> = (0..self.w.layouts[&k].fields.len())
+                        .map(|i| Value::TupleGet(t, i as u16))
+                        .collect();
+                    elems.push(Value::Boolean(true));
+                    *n = crate::data::v_block(
+                        vec![Value::Set(t, Box::new(call)), Value::Tuple(elems)],
+                        self.tuple.clone(),
+                        "vr_widen",
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// A materialised view's return: its source read field-wise — the copy into the buffer,
+    /// the buffer's mint and the buffer go; the frees it witnessed run after the read.
+    fn mv(&self, n: &mut Value, r: u16, vars: &mut crate::variables::Function) {
+        let ops = &self.w.ops;
+        let Value::Block(b) = n else { return };
+        let body: Vec<Value> = std::mem::take(&mut b.operators)
+            .into_iter()
+            .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+            .collect();
+        let returns = matches!(body.last().map(Value::unspan), Some(Value::Return(_)));
+        let Some(Value::Call(_, ca)) = body.get(1).map(Value::unspan) else {
+            return;
+        };
+        let src = ca[0].clone();
+        let rec = Type::Reference(rec_of(self.c.record), crate::data::Deps::default());
+        let rv = vars.add_unique("vr_src", &rec, self.scope);
+        let tv = vars.add_unique("vr_t", &self.tuple, self.scope);
+        let mut out = vec![
+            Value::Set(rv, Box::new(src)),
+            Value::Set(tv, Box::new(read_into_tuple(rv, self.layout, ops))),
+        ];
+        for o in &body[2..body.len() - 1] {
+            match o.unspan() {
+                Value::Call(op, a)
+                    if *op == ops.free_if_distinct
+                        && a.len() == 2
+                        && matches!(a[1].unspan(), Value::Var(x) if *x == r) =>
+                {
+                    out.push(Value::Call(ops.free_ref, vec![a[0].clone()]));
+                }
+                _ => out.push(o.clone()),
+            }
+        }
+        out.push(if returns {
+            Value::Return(Box::new(Value::Var(tv)))
+        } else {
+            Value::Var(tv)
+        });
+        b.operators = out;
+        b.result = self.tuple.clone();
+    }
+}
+
 /// The blocks in RESULT positions — the body, a returned block and their tails — are typed
 /// by the record the function returned (possibly with the buffer as its dep); they now
 /// answer the tuple.  A block elsewhere keeps its type: a local record of the same type is
@@ -1920,7 +2531,7 @@ fn retype_results(n: &mut Value, record: u32, old: &Type, tuple: &Type) {
     match n.unspan_mut() {
         Value::Block(b) => {
             if b.result == *old
-                || matches!(b.result.peel_link(), Type::Reference(r, _) if *r == record)
+                || matches!(b.result.peel_link().base(), Type::Reference(r, _) if *r == rec_of(record))
             {
                 b.result = tuple.clone();
             }
@@ -2005,12 +2616,15 @@ fn literals_to_tuples(
             Part::ViewCopy => {}
         }
     }
-    let tuple = Value::Tuple(
-        schema
-            .iter()
-            .map(|o| values.remove(o).expect("filled"))
-            .collect(),
-    );
+    let mut elems: Vec<Value> = schema
+        .iter()
+        .map(|o| values.remove(o).expect("filled"))
+        .collect();
+    // A build is present.
+    if layout.presence {
+        elems.push(Value::Boolean(true));
+    }
+    let tuple = Value::Tuple(elems);
     let result = if lit.returns {
         Value::Return(Box::new(tuple))
     } else {

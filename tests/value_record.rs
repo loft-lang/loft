@@ -414,7 +414,14 @@ fn tuple_type(rust: &str, name: &str) -> Option<String> {
         .unwrap_or_else(|| panic!("{name} was not emitted"));
     let ret = line.split("->").nth(1)?.trim_start();
     ret.starts_with('(')
-        .then(|| ret.split(" {").next().unwrap_or(ret).trim().to_string())
+        .then(|| bool_word(ret.split(" {").next().unwrap_or(ret).trim()))
+}
+
+/// A boolean tuple element spelled as `bool`: the IR's value records (`src/value_record.rs`)
+/// emit it as `u8`, the writers' own as `bool` — the pins are about the tuple's SHAPE.  No
+/// cell here carries a `u8` field.
+fn bool_word(t: &str) -> String {
+    t.replace("u8", "bool")
 }
 
 #[test]
@@ -534,7 +541,7 @@ fn signature(rust: &str, name: &str) -> String {
         .lines()
         .find(|l| l.starts_with(&format!("fn {name}(")))
         .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let sig = line.split(" {").next().unwrap_or(line);
+    let sig = bool_word(line.split(" {").next().unwrap_or(line));
     sig.replace("cell: &std::cell::UnsafeCell<Stores>, ", "")
         .replace("mut var_", "")
         .replacen(&format!("fn {name}"), "", 1)
@@ -585,7 +592,11 @@ fn a_nullable_record_parameter_crosses_as_its_fields_and_presence_word() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(PARAM_CELLS);
     let rust = emit(&src, &out, &[]);
     for (name, want) in PARAM_EXPECTED {
-        assert_eq!(signature(&rust, name), *want, "{name}: its signature");
+        assert_eq!(
+            signature(&rust, name),
+            bool_word(want),
+            "{name}: its signature"
+        );
     }
     // A record argument is read with whether it is there, and `null` is the absent tuple.
     assert!(
@@ -619,7 +630,10 @@ const STORE_EXPECTED: &[(&str, &str)] = &[
     // DECLINED since 932209dc4: its tail joins the parameter with a build (loft#2014)
     ("n_w4", "(p: (i64, bool), c: u8) -> (i64, bool)"),
     // DECLINED since 932209dc4 (loft#2014)
-    ("n_w5", "(p: (i64, bool), n: i64) -> (i64, bool)"),
+    // the record form while `(N-Store)`'s presence-carrying parameters are the writers' own
+    // (@PLN211 c4-view S2): the IR takes `id12`'s result but not its returned parameter, so
+    // `id12(g(1))` hands `g`'s record on and the writers no longer read `g(11)` as a leaf
+    ("n_w5", "(p: DbRef, n: i64, __retbuf: DbRef) -> DbRef"),
     ("n_w6", "(p: (i64, bool), c: u8) -> (i64, bool)"),
     ("n_id7", "(p: (i64, bool)) -> (i64, bool)"),
     ("n_twice", "(p: (i64, bool)) -> (i64, bool)"),
@@ -646,7 +660,11 @@ fn a_dense_slot_that_can_reach_a_nullable_carries_its_presence() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(STORE_CELLS);
     let rust = emit(&src, &out, &[]);
     for (name, want) in STORE_EXPECTED {
-        assert_eq!(signature(&rust, name), *want, "{name}: its signature");
+        assert_eq!(
+            signature(&rust, name),
+            bool_word(want),
+            "{name}: its signature"
+        );
     }
     // The one dense tuple that is widened with the constant word is a surely present one —
     // the lifted result of a build's maker — and a `null` argument is the absent tuple.
