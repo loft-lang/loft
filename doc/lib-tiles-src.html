@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>tiles source</h1>
 <article>
-<p><a href="lib-tiles.html">← tiles</a> · <a href="lib-tiles-api.html">API reference</a> · version 0.5.1</p>
-<p class="lib-legend">2 file(s), 786 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-tiles.html">← tiles</a> · <a href="lib-tiles-api.html">API reference</a> · version 0.6.0</p>
+<p class="lib-legend">2 file(s), 813 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -36,26 +36,26 @@
 <tr><td><code>tile_count</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L108">108</a></td><td>—</td><td><a href="#tests-tiles-loft-L57">57</a> <a href="#tests-tiles-loft-L116">116</a></td></tr>
 <tr><td><code>colour_count</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L112">112</a></td><td>—</td><td><a href="#tests-tiles-loft-L58">58</a></td></tr>
 <tr><td><code>free_sheet</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L116">116</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>surface</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L123">123</a></td><td>—</td><td><a href="#src-tiles-loft-L127">127</a> <a href="#src-tiles-loft-L128">128</a> <a href="#src-tiles-loft-L132">132</a> <a href="#src-tiles-loft-L133">133</a> <a href="#src-tiles-loft-L138">138</a> <a href="#src-tiles-loft-L139">139</a> … (72 total)</td></tr>
+<tr><td><code>surface</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L123">123</a></td><td>—</td><td><a href="#src-tiles-loft-L127">127</a> <a href="#src-tiles-loft-L128">128</a> <a href="#src-tiles-loft-L132">132</a> <a href="#src-tiles-loft-L133">133</a> <a href="#src-tiles-loft-L138">138</a> <a href="#src-tiles-loft-L139">139</a> … (75 total)</td></tr>
 <tr><td><code>free_surface</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L127">127</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>clear</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L132">132</a></td><td>—</td><td><a href="#tests-tiles-loft-L165">165</a> <a href="#tests-tiles-loft-L489">489</a></td></tr>
+<tr><td><code>clear</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L132">132</a></td><td>—</td><td><a href="#tests-tiles-loft-L165">165</a> <a href="#tests-tiles-loft-L489">489</a> <a href="#tests-tiles-loft-L513">513</a> <a href="#tests-tiles-loft-L518">518</a> <a href="#tests-tiles-loft-L523">523</a></td></tr>
 <tr><td><code>rect</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L138">138</a></td><td>—</td><td><a href="#src-tiles-loft-L146">146</a> <a href="#src-tiles-loft-L147">147</a> <a href="#src-tiles-loft-L148">148</a> <a href="#src-tiles-loft-L149">149</a> <a href="#tests-tiles-loft-L200">200</a> <a href="#tests-tiles-loft-L201">201</a> … (12 total)</td></tr>
 <tr><td><code>frame</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L144">144</a></td><td>—</td><td><a href="#tests-tiles-loft-L226">226</a> <a href="#tests-tiles-loft-L230">230</a> <a href="#tests-tiles-loft-L231">231</a> <a href="#tests-tiles-loft-L232">232</a></td></tr>
-<tr><td><code>SHADES</code> <span class="search-kind">const</span></td><td><a href="#src-tiles-loft-L153">153</a></td><td>—</td><td><a href="#src-tiles-loft-L163">163</a> <a href="#src-tiles-loft-L177">177</a></td></tr>
-<tr><td><code>draw</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L160">160</a></td><td>—</td><td><a href="#tests-tiles-loft-L45">45</a> <a href="#tests-tiles-loft-L64">64</a> <a href="#tests-tiles-loft-L83">83</a> <a href="#tests-tiles-loft-L86">86</a> <a href="#tests-tiles-loft-L88">88</a> <a href="#tests-tiles-loft-L93">93</a> … (18 total)</td></tr>
-<tr><td><code>draw_turned</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L174">174</a></td><td>—</td><td><a href="#tests-tiles-loft-L444">444</a> <a href="#tests-tiles-loft-L458">458</a> <a href="#tests-tiles-loft-L470">470</a> <a href="#tests-tiles-loft-L490">490</a> <a href="#tests-tiles-loft-L500">500</a> <a href="#tests-tiles-loft-L501">501</a> … (7 total)</td></tr>
-<tr><td><code>SHADE_PARTS</code> <span class="search-kind">const</span></td><td><a href="#src-tiles-loft-L182">182</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>draw_ground</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L199">199</a></td><td>—</td><td><a href="#tests-tiles-loft-L278">278</a> <a href="#tests-tiles-loft-L288">288</a> <a href="#tests-tiles-loft-L295">295</a> <a href="#tests-tiles-loft-L303">303</a> <a href="#tests-tiles-loft-L311">311</a> <a href="#tests-tiles-loft-L319">319</a> … (21 total)</td></tr>
-<tr><td><code>pixels</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L208">208</a></td><td>—</td><td><a href="#tests-tiles-loft-L46">46</a> <a href="#tests-tiles-loft-L65">65</a> <a href="#tests-tiles-loft-L84">84</a> <a href="#tests-tiles-loft-L87">87</a> <a href="#tests-tiles-loft-L89">89</a> <a href="#tests-tiles-loft-L94">94</a> … (33 total)</td></tr>
-<tr><td><code>present</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L218">218</a></td><td>—</td><td><a href="#tests-tiles-loft-L154">154</a> <a href="#tests-tiles-loft-L155">155</a> <a href="#tests-tiles-loft-L156">156</a> <a href="#tests-tiles-loft-L159">159</a></td></tr>
-<tr><td><code>cell</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L228">228</a></td><td>—</td><td><a href="#src-tiles-loft-L56">56</a> <a href="#src-tiles-loft-L240">240</a> <a href="#src-tiles-loft-L266">266</a> <a href="#src-tiles-loft-L267">267</a> <a href="#tests-tiles-loft-L127">127</a> <a href="#tests-tiles-loft-L139">139</a> … (8 total)</td></tr>
-<tr><td><code>from_tiled</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L236">236</a></td><td>—</td><td><a href="#src-tiles-loft-L256">256</a> <a href="#tests-tiles-loft-L136">136</a> <a href="#tests-tiles-loft-L137">137</a> <a href="#tests-tiles-loft-L138">138</a> <a href="#tests-tiles-loft-L139">139</a> <a href="#tests-tiles-loft-L140">140</a></td></tr>
-<tr><td><code>layer</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L244">244</a></td><td>—</td><td><a href="#src-tiles-loft-L258">258</a> <a href="#src-tiles-loft-L261">261</a> <a href="#src-tiles-loft-L262">262</a> <a href="#src-tiles-loft-L266">266</a> <a href="#src-tiles-loft-L267">267</a> <a href="#src-tiles-loft-L270">270</a> … (11 total)</td></tr>
-<tr><td><code>layer_from_tiled_csv</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L252">252</a></td><td>—</td><td><a href="#tests-tiles-loft-L141">141</a></td></tr>
-<tr><td><code>free_layer</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L261">261</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>set_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L266">266</a></td><td>—</td><td><a href="#tests-tiles-loft-L144">144</a></td></tr>
-<tr><td><code>get_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L270">270</a></td><td>—</td><td><a href="#tests-tiles-loft-L142">142</a> <a href="#tests-tiles-loft-L143">143</a> <a href="#tests-tiles-loft-L145">145</a> <a href="#tests-tiles-loft-L146">146</a></td></tr>
-<tr><td><code>draw_layer</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L277">277</a></td><td>—</td><td><a href="#tests-tiles-loft-L129">129</a></td></tr>
+<tr><td><code>SHADES</code> <span class="search-kind">const</span></td><td><a href="#src-tiles-loft-L153">153</a></td><td>—</td><td><a href="#src-tiles-loft-L165">165</a> <a href="#src-tiles-loft-L183">183</a></td></tr>
+<tr><td><code>draw</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L162">162</a></td><td>—</td><td><a href="#tests-tiles-loft-L45">45</a> <a href="#tests-tiles-loft-L64">64</a> <a href="#tests-tiles-loft-L83">83</a> <a href="#tests-tiles-loft-L86">86</a> <a href="#tests-tiles-loft-L88">88</a> <a href="#tests-tiles-loft-L93">93</a> … (20 total)</td></tr>
+<tr><td><code>draw_turned</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L179">179</a></td><td>—</td><td><a href="#tests-tiles-loft-L444">444</a> <a href="#tests-tiles-loft-L458">458</a> <a href="#tests-tiles-loft-L470">470</a> <a href="#tests-tiles-loft-L490">490</a> <a href="#tests-tiles-loft-L500">500</a> <a href="#tests-tiles-loft-L501">501</a> … (8 total)</td></tr>
+<tr><td><code>SHADE_PARTS</code> <span class="search-kind">const</span></td><td><a href="#src-tiles-loft-L189">189</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>draw_ground</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L206">206</a></td><td>—</td><td><a href="#tests-tiles-loft-L278">278</a> <a href="#tests-tiles-loft-L288">288</a> <a href="#tests-tiles-loft-L295">295</a> <a href="#tests-tiles-loft-L303">303</a> <a href="#tests-tiles-loft-L311">311</a> <a href="#tests-tiles-loft-L319">319</a> … (21 total)</td></tr>
+<tr><td><code>pixels</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L215">215</a></td><td>—</td><td><a href="#tests-tiles-loft-L46">46</a> <a href="#tests-tiles-loft-L65">65</a> <a href="#tests-tiles-loft-L84">84</a> <a href="#tests-tiles-loft-L87">87</a> <a href="#tests-tiles-loft-L89">89</a> <a href="#tests-tiles-loft-L94">94</a> … (36 total)</td></tr>
+<tr><td><code>present</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L225">225</a></td><td>—</td><td><a href="#tests-tiles-loft-L154">154</a> <a href="#tests-tiles-loft-L155">155</a> <a href="#tests-tiles-loft-L156">156</a> <a href="#tests-tiles-loft-L159">159</a></td></tr>
+<tr><td><code>cell</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L235">235</a></td><td>—</td><td><a href="#src-tiles-loft-L56">56</a> <a href="#src-tiles-loft-L247">247</a> <a href="#src-tiles-loft-L273">273</a> <a href="#src-tiles-loft-L274">274</a> <a href="#tests-tiles-loft-L127">127</a> <a href="#tests-tiles-loft-L139">139</a> … (8 total)</td></tr>
+<tr><td><code>from_tiled</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L243">243</a></td><td>—</td><td><a href="#src-tiles-loft-L263">263</a> <a href="#tests-tiles-loft-L136">136</a> <a href="#tests-tiles-loft-L137">137</a> <a href="#tests-tiles-loft-L138">138</a> <a href="#tests-tiles-loft-L139">139</a> <a href="#tests-tiles-loft-L140">140</a></td></tr>
+<tr><td><code>layer</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L251">251</a></td><td>—</td><td><a href="#src-tiles-loft-L265">265</a> <a href="#src-tiles-loft-L268">268</a> <a href="#src-tiles-loft-L269">269</a> <a href="#src-tiles-loft-L273">273</a> <a href="#src-tiles-loft-L274">274</a> <a href="#src-tiles-loft-L277">277</a> … (11 total)</td></tr>
+<tr><td><code>layer_from_tiled_csv</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L259">259</a></td><td>—</td><td><a href="#tests-tiles-loft-L141">141</a></td></tr>
+<tr><td><code>free_layer</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L268">268</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>set_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L273">273</a></td><td>—</td><td><a href="#tests-tiles-loft-L144">144</a></td></tr>
+<tr><td><code>get_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L277">277</a></td><td>—</td><td><a href="#tests-tiles-loft-L142">142</a> <a href="#tests-tiles-loft-L143">143</a> <a href="#tests-tiles-loft-L145">145</a> <a href="#tests-tiles-loft-L146">146</a></td></tr>
+<tr><td><code>draw_layer</code> <span class="search-kind">fn</span></td><td><a href="#src-tiles-loft-L284">284</a></td><td>—</td><td><a href="#tests-tiles-loft-L129">129</a></td></tr>
 </table>
 <h2 id="src-tiles-loft">src/tiles.loft</h2>
 <pre class="src"><code><span id="src-tiles-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -216,128 +216,135 @@
 <span id="src-tiles-loft-L156"><span class="cm">/// A sprite is a tile drawn this way.  Transparent pixels and whatever falls off the surface</span></span>
 <span id="src-tiles-loft-L157"><span class="cm">/// are skipped.  `shade` darkens it: 0 is the tile as it is, and each shade up to</span></span>
 <span id="src-tiles-loft-L158"><span class="cm">/// `SHADES - 1` is darker, down to about a quarter of the light, so the darkest still shows</span></span>
-<span id="src-tiles-loft-L159"><span class="cm">/// what is there.  A shade costs nothing: each sheet keeps its palette at every shade.</span></span>
-<span id="src-tiles-loft-L160"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sheet: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tile: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-tiles-loft-L161">            flip_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_v: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_d: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
-<span id="src-tiles-loft-L162">            shade: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>) {</span>
-<span id="src-tiles-loft-L163">  s = <span class="kw">if</span> shade &lt; <span class="nm">0</span> { <span class="nm">0</span> } <span class="kw">else</span> <span class="kw">if</span> shade &gt;= <span class="en">SHADES</span> { <span class="en">SHADES</span> - <span class="nm">1</span> } <span class="kw">else</span> { shade };</span>
-<span id="src-tiles-loft-L164">  <span class="fn-call">tl_draw</span>(surface, sheet, tile, x, y, <span class="fn-call">flags</span>(flip_h, flip_v, flip_d) + s * <span class="nm">256</span>);</span>
-<span id="src-tiles-loft-L165">}</span>
-<span id="src-tiles-loft-L166"></span>
-<span id="src-tiles-loft-L167"><span class="cm">/// Draw tile `tile` of `sheet` turned `degrees` clockwise about its pixel `pivot` (x, y within</span></span>
-<span id="src-tiles-loft-L168"><span class="cm">/// the tile): placed as `draw` places it at (x, y), oriented by the flips first, then turned —</span></span>
-<span id="src-tiles-loft-L169"><span class="cm">/// a character's slight lean as it walks, a weapon held at an angle or swung.  Every pixel of</span></span>
-<span id="src-tiles-loft-L170"><span class="cm">/// the tile lands on exactly one pixel of the surface (the turn is whole quarter turns and three</span></span>
-<span id="src-tiles-loft-L171"><span class="cm">/// shears of whole rows and columns), so the pixel art keeps its pixels and colours at any angle;</span></span>
-<span id="src-tiles-loft-L172"><span class="cm">/// 0 degrees is `draw`, and 90, 180 and 270 are its quarter turns.  The shade, transparency</span></span>
-<span id="src-tiles-loft-L173"><span class="cm">/// and clipping are `draw`'s.</span></span>
-<span id="src-tiles-loft-L174"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_turned</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sheet: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tile: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-tiles-loft-L175">                   degrees: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pivot: (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>), flip_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
-<span id="src-tiles-loft-L176">                   flip_v: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_d: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, shade: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>) {</span>
-<span id="src-tiles-loft-L177">  s = <span class="kw">if</span> shade &lt; <span class="nm">0</span> { <span class="nm">0</span> } <span class="kw">else</span> <span class="kw">if</span> shade &gt;= <span class="en">SHADES</span> { <span class="en">SHADES</span> - <span class="nm">1</span> } <span class="kw">else</span> { shade };</span>
-<span id="src-tiles-loft-L178">  <span class="fn-call">tl_draw_turned</span>(surface, sheet, tile, x, y, degrees, pivot.<span class="nm">0</span>, pivot.<span class="nm">1</span>, <span class="fn-call">flags</span>(flip_h, flip_v, flip_d) + s * <span class="nm">256</span>);</span>
-<span id="src-tiles-loft-L179">}</span>
-<span id="src-tiles-loft-L180"></span>
-<span id="src-tiles-loft-L181"><span class="cm">/// How finely `draw_ground` shades: its darkness is counted in sixteenths of a shade.</span></span>
-<span id="src-tiles-loft-L182"><span class="kw">pub</span> const <span class="en">SHADE_PARTS</span> = <span class="nm">16</span>;</span>
-<span id="src-tiles-loft-L183"></span>
-<span id="src-tiles-loft-L184"><span class="cm">/// Draw tile `tile` of `sheet` as a piece of ground that slopes and is lit gradually: its place</span></span>
-<span id="src-tiles-loft-L185"><span class="cm">/// is the plain `draw`'s at (x, y), with its corners — top-left, top-right, bottom-left,</span></span>
-<span id="src-tiles-loft-L186"><span class="cm">/// bottom-right — lifted `lift` pixels (up is positive, so (4, 4, 0, 0) leans its far edge up</span></span>
-<span id="src-tiles-loft-L187"><span class="cm">/// a step) and darkened `shade` sixteenths of a shade (`SHADE_PARTS` is one whole shade darker;</span></span>
-<span id="src-tiles-loft-L188"><span class="cm">/// past `SHADES - 1` whole shades it stays the darkest).</span></span>
-<span id="src-tiles-loft-L189"><span class="cm">///</span></span>
-<span id="src-tiles-loft-L190"><span class="cm">/// Each column of the tile stays a column of pixels, stretched or squeezed between its top and</span></span>
-<span id="src-tiles-loft-L191"><span class="cm">/// bottom edges, whose lifts are interpolated from the corners at the column's centre.  So two</span></span>
-<span id="src-tiles-loft-L192"><span class="cm">/// tiles that give their shared corners the same lifts meet exactly, with no gap — a slope, a</span></span>
-<span id="src-tiles-loft-L193"><span class="cm">/// mound, a ramp onto a higher floor; and a drop between them shows as the gap a wall tile (or a</span></span>
-<span id="src-tiles-loft-L194"><span class="cm">/// darker one) fills, drawn the same way.  The darkness is interpolated across the tile and</span></span>
-<span id="src-tiles-loft-L195"><span class="cm">/// shared between the two nearest shades by a fixed 4x4 dither, so light fades smoothly within</span></span>
-<span id="src-tiles-loft-L196"><span class="cm">/// a tile and the pattern stays with the ground as the view moves.  Over a plain `draw` it costs</span></span>
-<span id="src-tiles-loft-L197"><span class="cm">/// a little per column and a table lookup per pixel; a tile with every lift and shade 0 draws</span></span>
-<span id="src-tiles-loft-L198"><span class="cm">/// exactly what `draw` draws.  Orientation, transparency and clipping are `draw`'s.</span></span>
-<span id="src-tiles-loft-L199"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_ground</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sheet: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tile: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-tiles-loft-L200">                   lift: (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>),</span>
-<span id="src-tiles-loft-L201">                   shade: (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) = (<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>),</span>
-<span id="src-tiles-loft-L202">                   flip_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_v: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_d: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) {</span>
-<span id="src-tiles-loft-L203">  <span class="fn-call">tl_draw_ground</span>(surface, sheet, tile, x, y, lift.<span class="nm">0</span>, lift.<span class="nm">1</span>, lift.<span class="nm">2</span>, lift.<span class="nm">3</span>,</span>
-<span id="src-tiles-loft-L204">                 shade.<span class="nm">0</span>, shade.<span class="nm">1</span>, shade.<span class="nm">2</span>, shade.<span class="nm">3</span>, <span class="fn-call">flags</span>(flip_h, flip_v, flip_d));</span>
-<span id="src-tiles-loft-L205">}</span>
-<span id="src-tiles-loft-L206"></span>
-<span id="src-tiles-loft-L207"><span class="cm">/// The surface's pixels, row by row, each an RGB565 value.</span></span>
-<span id="src-tiles-loft-L208"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pixels</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; {</span>
-<span id="src-tiles-loft-L209">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; = [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>; width * height];</span>
-<span id="src-tiles-loft-L210">  <span class="fn-call">tl_pixels</span>(surface, out);</span>
-<span id="src-tiles-loft-L211">  out</span>
+<span id="src-tiles-loft-L159"><span class="cm">/// what is there.  A shade costs nothing: each sheet keeps its palette at every shade.  A</span></span>
+<span id="src-tiles-loft-L160"><span class="cm">/// `ghost` draws every other pixel only, in a checkerboard fixed to the surface — what is behind</span></span>
+<span id="src-tiles-loft-L161"><span class="cm">/// shows through: a figure seen through what stands in front of it.</span></span>
+<span id="src-tiles-loft-L162"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sheet: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tile: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tiles-loft-L163">            flip_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_v: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_d: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
+<span id="src-tiles-loft-L164">            shade: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>, ghost: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) {</span>
+<span id="src-tiles-loft-L165">  s = <span class="kw">if</span> shade &lt; <span class="nm">0</span> { <span class="nm">0</span> } <span class="kw">else</span> <span class="kw">if</span> shade &gt;= <span class="en">SHADES</span> { <span class="en">SHADES</span> - <span class="nm">1</span> } <span class="kw">else</span> { shade };</span>
+<span id="src-tiles-loft-L166">  <span class="fn-call">tl_draw</span>(surface, sheet, tile, x, y, <span class="fn-call">flags</span>(flip_h, flip_v, flip_d) + s * <span class="nm">256</span> + (<span class="kw">if</span> ghost { <span class="en">GHOST</span> } <span class="kw">else</span> { <span class="nm">0</span> }));</span>
+<span id="src-tiles-loft-L167">}</span>
+<span id="src-tiles-loft-L168"></span>
+<span id="src-tiles-loft-L169"><span class="cm">// The flags bit of a ghost (c/tiles.c).</span></span>
+<span id="src-tiles-loft-L170">const <span class="en">GHOST</span> = <span class="nm">4096</span>;</span>
+<span id="src-tiles-loft-L171"></span>
+<span id="src-tiles-loft-L172"><span class="cm">/// Draw tile `tile` of `sheet` turned `degrees` clockwise about its pixel `pivot` (x, y within</span></span>
+<span id="src-tiles-loft-L173"><span class="cm">/// the tile): placed as `draw` places it at (x, y), oriented by the flips first, then turned —</span></span>
+<span id="src-tiles-loft-L174"><span class="cm">/// a character's slight lean as it walks, a weapon held at an angle or swung.  Every pixel of</span></span>
+<span id="src-tiles-loft-L175"><span class="cm">/// the tile lands on exactly one pixel of the surface (the turn is whole quarter turns and three</span></span>
+<span id="src-tiles-loft-L176"><span class="cm">/// shears of whole rows and columns), so the pixel art keeps its pixels and colours at any angle;</span></span>
+<span id="src-tiles-loft-L177"><span class="cm">/// 0 degrees is `draw`, and 90, 180 and 270 are its quarter turns.  The shade, the ghost,</span></span>
+<span id="src-tiles-loft-L178"><span class="cm">/// transparency and clipping are `draw`'s.</span></span>
+<span id="src-tiles-loft-L179"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_turned</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sheet: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tile: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tiles-loft-L180">                   degrees: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pivot: (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>), flip_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
+<span id="src-tiles-loft-L181">                   flip_v: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_d: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, shade: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-tiles-loft-L182">                   ghost: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) {</span>
+<span id="src-tiles-loft-L183">  s = <span class="kw">if</span> shade &lt; <span class="nm">0</span> { <span class="nm">0</span> } <span class="kw">else</span> <span class="kw">if</span> shade &gt;= <span class="en">SHADES</span> { <span class="en">SHADES</span> - <span class="nm">1</span> } <span class="kw">else</span> { shade };</span>
+<span id="src-tiles-loft-L184">  <span class="fn-call">tl_draw_turned</span>(surface, sheet, tile, x, y, degrees, pivot.<span class="nm">0</span>, pivot.<span class="nm">1</span>,</span>
+<span id="src-tiles-loft-L185">                 <span class="fn-call">flags</span>(flip_h, flip_v, flip_d) + s * <span class="nm">256</span> + (<span class="kw">if</span> ghost { <span class="en">GHOST</span> } <span class="kw">else</span> { <span class="nm">0</span> }));</span>
+<span id="src-tiles-loft-L186">}</span>
+<span id="src-tiles-loft-L187"></span>
+<span id="src-tiles-loft-L188"><span class="cm">/// How finely `draw_ground` shades: its darkness is counted in sixteenths of a shade.</span></span>
+<span id="src-tiles-loft-L189"><span class="kw">pub</span> const <span class="en">SHADE_PARTS</span> = <span class="nm">16</span>;</span>
+<span id="src-tiles-loft-L190"></span>
+<span id="src-tiles-loft-L191"><span class="cm">/// Draw tile `tile` of `sheet` as a piece of ground that slopes and is lit gradually: its place</span></span>
+<span id="src-tiles-loft-L192"><span class="cm">/// is the plain `draw`'s at (x, y), with its corners — top-left, top-right, bottom-left,</span></span>
+<span id="src-tiles-loft-L193"><span class="cm">/// bottom-right — lifted `lift` pixels (up is positive, so (4, 4, 0, 0) leans its far edge up</span></span>
+<span id="src-tiles-loft-L194"><span class="cm">/// a step) and darkened `shade` sixteenths of a shade (`SHADE_PARTS` is one whole shade darker;</span></span>
+<span id="src-tiles-loft-L195"><span class="cm">/// past `SHADES - 1` whole shades it stays the darkest).</span></span>
+<span id="src-tiles-loft-L196"><span class="cm">///</span></span>
+<span id="src-tiles-loft-L197"><span class="cm">/// Each column of the tile stays a column of pixels, stretched or squeezed between its top and</span></span>
+<span id="src-tiles-loft-L198"><span class="cm">/// bottom edges, whose lifts are interpolated from the corners at the column's centre.  So two</span></span>
+<span id="src-tiles-loft-L199"><span class="cm">/// tiles that give their shared corners the same lifts meet exactly, with no gap — a slope, a</span></span>
+<span id="src-tiles-loft-L200"><span class="cm">/// mound, a ramp onto a higher floor; and a drop between them shows as the gap a wall tile (or a</span></span>
+<span id="src-tiles-loft-L201"><span class="cm">/// darker one) fills, drawn the same way.  The darkness is interpolated across the tile and</span></span>
+<span id="src-tiles-loft-L202"><span class="cm">/// shared between the two nearest shades by a fixed 4x4 dither, so light fades smoothly within</span></span>
+<span id="src-tiles-loft-L203"><span class="cm">/// a tile and the pattern stays with the ground as the view moves.  Over a plain `draw` it costs</span></span>
+<span id="src-tiles-loft-L204"><span class="cm">/// a little per column and a table lookup per pixel; a tile with every lift and shade 0 draws</span></span>
+<span id="src-tiles-loft-L205"><span class="cm">/// exactly what `draw` draws.  Orientation, transparency and clipping are `draw`'s.</span></span>
+<span id="src-tiles-loft-L206"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_ground</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sheet: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tile: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tiles-loft-L207">                   lift: (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>),</span>
+<span id="src-tiles-loft-L208">                   shade: (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) = (<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>),</span>
+<span id="src-tiles-loft-L209">                   flip_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_v: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_d: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) {</span>
+<span id="src-tiles-loft-L210">  <span class="fn-call">tl_draw_ground</span>(surface, sheet, tile, x, y, lift.<span class="nm">0</span>, lift.<span class="nm">1</span>, lift.<span class="nm">2</span>, lift.<span class="nm">3</span>,</span>
+<span id="src-tiles-loft-L211">                 shade.<span class="nm">0</span>, shade.<span class="nm">1</span>, shade.<span class="nm">2</span>, shade.<span class="nm">3</span>, <span class="fn-call">flags</span>(flip_h, flip_v, flip_d));</span>
 <span id="src-tiles-loft-L212">}</span>
 <span id="src-tiles-loft-L213"></span>
-<span id="src-tiles-loft-L214"><span class="cm">/// The surface scaled by the integer `scale`, as `present` hands it to a display: row by row,</span></span>
-<span id="src-tiles-loft-L215"><span class="cm">/// (width * scale) x (height * scale) RGB565 values — or, `rotate`d a quarter turn clockwise</span></span>
-<span id="src-tiles-loft-L216"><span class="cm">/// for a portrait panel, (height * scale) x (width * scale), the surface's top-left at the</span></span>
-<span id="src-tiles-loft-L217"><span class="cm">/// top-right.</span></span>
-<span id="src-tiles-loft-L218"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">present</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-tiles-loft-L219">               rotate: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; {</span>
-<span id="src-tiles-loft-L220">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; = [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>; width * height * scale * scale];</span>
-<span id="src-tiles-loft-L221">  <span class="fn-call">tl_present</span>(surface, out, scale, <span class="kw">if</span> rotate { <span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">0</span> });</span>
-<span id="src-tiles-loft-L222">  out</span>
-<span id="src-tiles-loft-L223">}</span>
-<span id="src-tiles-loft-L224"></span>
-<span id="src-tiles-loft-L225"><span class="cm">// --- Map layers ---</span></span>
-<span id="src-tiles-loft-L226"></span>
-<span id="src-tiles-loft-L227"><span class="cm">/// A layer cell: tile `tile` (from 0) in one of the eight orientations.  0 is an empty cell.</span></span>
-<span id="src-tiles-loft-L228"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell</span>(tile: <span class="ty"><a href="stdlib-types.html">integer</a></span>, flip_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_v: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
-<span id="src-tiles-loft-L229">            flip_d: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-tiles-loft-L230">  (tile + <span class="nm">1</span>) + <span class="fn-call">flags</span>(flip_h, flip_v, flip_d) * <span class="nm">16777216</span></span>
-<span id="src-tiles-loft-L231">}</span>
-<span id="src-tiles-loft-L232"></span>
-<span id="src-tiles-loft-L233"><span class="cm">/// A Tiled global tile id (with its flip bits: 31 horizontal, 30 vertical, 29 diagonal) as a</span></span>
-<span id="src-tiles-loft-L234"><span class="cm">/// cell of a sheet whose first id is `firstgid`; 0 for an empty one or a tile of another sheet</span></span>
-<span id="src-tiles-loft-L235"><span class="cm">/// (an id below `firstgid`).</span></span>
-<span id="src-tiles-loft-L236"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">from_tiled</span>(gid: <span class="ty"><a href="stdlib-types.html">integer</a></span>, firstgid: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-tiles-loft-L237">  id = gid % <span class="nm">536870912</span>;</span>
-<span id="src-tiles-loft-L238">  <span class="kw">if</span> id &lt; firstgid || id == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
-<span id="src-tiles-loft-L239">  bits = gid / <span class="nm">536870912</span>;</span>
-<span id="src-tiles-loft-L240">  <span class="fn-call">cell</span>(id - firstgid, bits / <span class="nm">4</span> % <span class="nm">2</span> == <span class="nm">1</span>, bits / <span class="nm">2</span> % <span class="nm">2</span> == <span class="nm">1</span>, bits % <span class="nm">2</span> == <span class="nm">1</span>)</span>
-<span id="src-tiles-loft-L241">}</span>
-<span id="src-tiles-loft-L242"></span>
-<span id="src-tiles-loft-L243"><span class="cm">/// A map layer of `cols * rows` cells, row by row.  Null when the cell count does not match.</span></span>
-<span id="src-tiles-loft-L244"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layer</span>(cells: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, cols: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rows: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
-<span id="src-tiles-loft-L245">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(cells) != cols * rows { <span class="kw">return</span> <span class="kw">null</span>; }</span>
-<span id="src-tiles-loft-L246">  packed: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; = [];</span>
-<span id="src-tiles-loft-L247">  <span class="kw">for</span> c <span class="kw">in</span> cells { packed += [c &amp; <span class="nm">2147483647</span>]; }</span>
-<span id="src-tiles-loft-L248">  <span class="fn-call">handle</span>(<span class="fn-call">tl_map_new</span>(packed, cols, rows))</span>
-<span id="src-tiles-loft-L249">}</span>
-<span id="src-tiles-loft-L250"></span>
-<span id="src-tiles-loft-L251"><span class="cm">/// A layer from a Tiled layer's CSV data (`&lt;data encoding="csv"&gt;`), its gids read by `from_tiled`.</span></span>
-<span id="src-tiles-loft-L252"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layer_from_tiled_csv</span>(csv: <span class="ty"><a href="stdlib-types.html">text</a></span>, cols: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rows: <span class="ty"><a href="stdlib-types.html">integer</a></span>, firstgid: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
-<span id="src-tiles-loft-L253">  cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-tiles-loft-L254">  <span class="kw">for</span> part <span class="kw">in</span> csv.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">','</span>) {</span>
-<span id="src-tiles-loft-L255">    t = part.<span class="fn-call"><a href="stdlib-text.html">trim</a></span>();</span>
-<span id="src-tiles-loft-L256">    <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(t) &gt; <span class="nm">0</span> { cells += [<span class="fn-call">from_tiled</span>(t <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>? ?? <span class="nm">0</span>, firstgid)]; }</span>
-<span id="src-tiles-loft-L257">  }</span>
-<span id="src-tiles-loft-L258">  <span class="fn-call">layer</span>(cells, cols, rows)</span>
-<span id="src-tiles-loft-L259">}</span>
-<span id="src-tiles-loft-L260"></span>
-<span id="src-tiles-loft-L261"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">free_layer</span>(layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-tiles-loft-L262">  <span class="fn-call">tl_map_free</span>(layer);</span>
-<span id="src-tiles-loft-L263">}</span>
-<span id="src-tiles-loft-L264"></span>
-<span id="src-tiles-loft-L265"><span class="cm">/// Set or read one cell; a position off the map is ignored, and reads 0.</span></span>
-<span id="src-tiles-loft-L266"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_cell</span>(layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cell: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-tiles-loft-L267">  <span class="fn-call">tl_map_set</span>(layer, x, y, cell &amp; <span class="nm">2147483647</span>);</span>
-<span id="src-tiles-loft-L268">}</span>
-<span id="src-tiles-loft-L269"></span>
-<span id="src-tiles-loft-L270"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">get_cell</span>(layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-tiles-loft-L271">  <span class="fn-call">tl_map_get</span>(layer, x, y)</span>
-<span id="src-tiles-loft-L272">}</span>
-<span id="src-tiles-loft-L273"></span>
-<span id="src-tiles-loft-L274"><span class="cm">/// Draw every cell of `layer` that shows on `surface` when the layer's pixel (cam_x, cam_y) is</span></span>
-<span id="src-tiles-loft-L275"><span class="cm">/// the surface's top-left — one call per layer, scrolling to the pixel.  Draw layers back to</span></span>
-<span id="src-tiles-loft-L276"><span class="cm">/// front.</span></span>
-<span id="src-tiles-loft-L277"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_layer</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sheet: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cam_x: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-tiles-loft-L278">                  cam_y: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>) {</span>
-<span id="src-tiles-loft-L279">  <span class="fn-call">tl_draw_map</span>(surface, layer, sheet, cam_x, cam_y);</span>
-<span id="src-tiles-loft-L280">}</span>
+<span id="src-tiles-loft-L214"><span class="cm">/// The surface's pixels, row by row, each an RGB565 value.</span></span>
+<span id="src-tiles-loft-L215"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pixels</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; {</span>
+<span id="src-tiles-loft-L216">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; = [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>; width * height];</span>
+<span id="src-tiles-loft-L217">  <span class="fn-call">tl_pixels</span>(surface, out);</span>
+<span id="src-tiles-loft-L218">  out</span>
+<span id="src-tiles-loft-L219">}</span>
+<span id="src-tiles-loft-L220"></span>
+<span id="src-tiles-loft-L221"><span class="cm">/// The surface scaled by the integer `scale`, as `present` hands it to a display: row by row,</span></span>
+<span id="src-tiles-loft-L222"><span class="cm">/// (width * scale) x (height * scale) RGB565 values — or, `rotate`d a quarter turn clockwise</span></span>
+<span id="src-tiles-loft-L223"><span class="cm">/// for a portrait panel, (height * scale) x (width * scale), the surface's top-left at the</span></span>
+<span id="src-tiles-loft-L224"><span class="cm">/// top-right.</span></span>
+<span id="src-tiles-loft-L225"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">present</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tiles-loft-L226">               rotate: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; {</span>
+<span id="src-tiles-loft-L227">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; = [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>; width * height * scale * scale];</span>
+<span id="src-tiles-loft-L228">  <span class="fn-call">tl_present</span>(surface, out, scale, <span class="kw">if</span> rotate { <span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">0</span> });</span>
+<span id="src-tiles-loft-L229">  out</span>
+<span id="src-tiles-loft-L230">}</span>
+<span id="src-tiles-loft-L231"></span>
+<span id="src-tiles-loft-L232"><span class="cm">// --- Map layers ---</span></span>
+<span id="src-tiles-loft-L233"></span>
+<span id="src-tiles-loft-L234"><span class="cm">/// A layer cell: tile `tile` (from 0) in one of the eight orientations.  0 is an empty cell.</span></span>
+<span id="src-tiles-loft-L235"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell</span>(tile: <span class="ty"><a href="stdlib-types.html">integer</a></span>, flip_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, flip_v: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
+<span id="src-tiles-loft-L236">            flip_d: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-tiles-loft-L237">  (tile + <span class="nm">1</span>) + <span class="fn-call">flags</span>(flip_h, flip_v, flip_d) * <span class="nm">16777216</span></span>
+<span id="src-tiles-loft-L238">}</span>
+<span id="src-tiles-loft-L239"></span>
+<span id="src-tiles-loft-L240"><span class="cm">/// A Tiled global tile id (with its flip bits: 31 horizontal, 30 vertical, 29 diagonal) as a</span></span>
+<span id="src-tiles-loft-L241"><span class="cm">/// cell of a sheet whose first id is `firstgid`; 0 for an empty one or a tile of another sheet</span></span>
+<span id="src-tiles-loft-L242"><span class="cm">/// (an id below `firstgid`).</span></span>
+<span id="src-tiles-loft-L243"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">from_tiled</span>(gid: <span class="ty"><a href="stdlib-types.html">integer</a></span>, firstgid: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-tiles-loft-L244">  id = gid % <span class="nm">536870912</span>;</span>
+<span id="src-tiles-loft-L245">  <span class="kw">if</span> id &lt; firstgid || id == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-tiles-loft-L246">  bits = gid / <span class="nm">536870912</span>;</span>
+<span id="src-tiles-loft-L247">  <span class="fn-call">cell</span>(id - firstgid, bits / <span class="nm">4</span> % <span class="nm">2</span> == <span class="nm">1</span>, bits / <span class="nm">2</span> % <span class="nm">2</span> == <span class="nm">1</span>, bits % <span class="nm">2</span> == <span class="nm">1</span>)</span>
+<span id="src-tiles-loft-L248">}</span>
+<span id="src-tiles-loft-L249"></span>
+<span id="src-tiles-loft-L250"><span class="cm">/// A map layer of `cols * rows` cells, row by row.  Null when the cell count does not match.</span></span>
+<span id="src-tiles-loft-L251"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layer</span>(cells: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, cols: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rows: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
+<span id="src-tiles-loft-L252">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(cells) != cols * rows { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-tiles-loft-L253">  packed: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt; = [];</span>
+<span id="src-tiles-loft-L254">  <span class="kw">for</span> c <span class="kw">in</span> cells { packed += [c &amp; <span class="nm">2147483647</span>]; }</span>
+<span id="src-tiles-loft-L255">  <span class="fn-call">handle</span>(<span class="fn-call">tl_map_new</span>(packed, cols, rows))</span>
+<span id="src-tiles-loft-L256">}</span>
+<span id="src-tiles-loft-L257"></span>
+<span id="src-tiles-loft-L258"><span class="cm">/// A layer from a Tiled layer's CSV data (`&lt;data encoding="csv"&gt;`), its gids read by `from_tiled`.</span></span>
+<span id="src-tiles-loft-L259"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layer_from_tiled_csv</span>(csv: <span class="ty"><a href="stdlib-types.html">text</a></span>, cols: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rows: <span class="ty"><a href="stdlib-types.html">integer</a></span>, firstgid: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
+<span id="src-tiles-loft-L260">  cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-tiles-loft-L261">  <span class="kw">for</span> part <span class="kw">in</span> csv.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">','</span>) {</span>
+<span id="src-tiles-loft-L262">    t = part.<span class="fn-call"><a href="stdlib-text.html">trim</a></span>();</span>
+<span id="src-tiles-loft-L263">    <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(t) &gt; <span class="nm">0</span> { cells += [<span class="fn-call">from_tiled</span>(t <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>? ?? <span class="nm">0</span>, firstgid)]; }</span>
+<span id="src-tiles-loft-L264">  }</span>
+<span id="src-tiles-loft-L265">  <span class="fn-call">layer</span>(cells, cols, rows)</span>
+<span id="src-tiles-loft-L266">}</span>
+<span id="src-tiles-loft-L267"></span>
+<span id="src-tiles-loft-L268"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">free_layer</span>(layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-tiles-loft-L269">  <span class="fn-call">tl_map_free</span>(layer);</span>
+<span id="src-tiles-loft-L270">}</span>
+<span id="src-tiles-loft-L271"></span>
+<span id="src-tiles-loft-L272"><span class="cm">/// Set or read one cell; a position off the map is ignored, and reads 0.</span></span>
+<span id="src-tiles-loft-L273"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_cell</span>(layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cell: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-tiles-loft-L274">  <span class="fn-call">tl_map_set</span>(layer, x, y, cell &amp; <span class="nm">2147483647</span>);</span>
+<span id="src-tiles-loft-L275">}</span>
+<span id="src-tiles-loft-L276"></span>
+<span id="src-tiles-loft-L277"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">get_cell</span>(layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-tiles-loft-L278">  <span class="fn-call">tl_map_get</span>(layer, x, y)</span>
+<span id="src-tiles-loft-L279">}</span>
+<span id="src-tiles-loft-L280"></span>
+<span id="src-tiles-loft-L281"><span class="cm">/// Draw every cell of `layer` that shows on `surface` when the layer's pixel (cam_x, cam_y) is</span></span>
+<span id="src-tiles-loft-L282"><span class="cm">/// the surface's top-left — one call per layer, scrolling to the pixel.  Draw layers back to</span></span>
+<span id="src-tiles-loft-L283"><span class="cm">/// front.</span></span>
+<span id="src-tiles-loft-L284"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_layer</span>(surface: <span class="ty"><a href="stdlib-types.html">integer</a></span>, layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sheet: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cam_x: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-tiles-loft-L285">                  cam_y: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>) {</span>
+<span id="src-tiles-loft-L286">  <span class="fn-call">tl_draw_map</span>(surface, layer, sheet, cam_x, cam_y);</span>
+<span id="src-tiles-loft-L287">}</span>
 </code></pre>
 <h2 id="tests-tiles-loft">tests/tiles.loft</h2>
 <pre class="src"><code><span id="tests-tiles-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -846,6 +853,26 @@
 <span id="tests-tiles-loft-L504">  tiles::<span class="fn-call">draw_turned</span>(t, <span class="fn-call">fixture</span>(), <span class="nm">1</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, (<span class="nm">0</span>, <span class="nm">0</span>), <span class="kw">false</span>, <span class="kw">false</span>, <span class="kw">false</span>, <span class="nm">7</span>);</span>
 <span id="tests-tiles-loft-L505">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">show</span>(tiles::<span class="fn-call">pixels</span>(t, <span class="nm">2</span>, <span class="nm">2</span>)) == <span class="st">"14791,14791,14791,14791,"</span>, <span class="st">"shade 7: {show(tiles::pixels(t, 2, 2))}"</span>);</span>
 <span id="tests-tiles-loft-L506">}</span>
+<span id="tests-tiles-loft-L507"></span>
+<span id="tests-tiles-loft-L508"><span class="cm">// A ghost draws every other pixel, a checkerboard fixed to the surface: the white tile at (1, 1)</span></span>
+<span id="tests-tiles-loft-L509"><span class="cm">// on a blue surface keeps (1, 1) and (2, 2) — x + y even — and leaves the blue at (2, 1) and</span></span>
+<span id="tests-tiles-loft-L510"><span class="cm">// (1, 2); at (2, 1) it keeps (3, 1) and (2, 2).  Turned 0 degrees, the same.</span></span>
+<span id="tests-tiles-loft-L511"><span class="kw">fn</span> <span class="fn-call">test_a_ghost_lets_what_is_behind_show</span>() {</span>
+<span id="tests-tiles-loft-L512">  s = tiles::<span class="fn-call">surface</span>(<span class="nm">4</span>, <span class="nm">3</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-tiles-loft-L513">  tiles::<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(s, <span class="en">B</span>);</span>
+<span id="tests-tiles-loft-L514">  tiles::<span class="fn-call">draw</span>(s, <span class="fn-call">fixture</span>(), <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="kw">false</span>, <span class="kw">false</span>, <span class="kw">false</span>, <span class="nm">0</span>, <span class="kw">true</span>);</span>
+<span id="tests-tiles-loft-L515">  got = <span class="fn-call">show</span>(tiles::<span class="fn-call">pixels</span>(s, <span class="nm">4</span>, <span class="nm">3</span>));</span>
+<span id="tests-tiles-loft-L516">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got == <span class="st">"{B},{B},{B},{B},{B},{W},{B},{B},{B},{B},{W},{B},"</span>, <span class="st">"at (1, 1): {got}"</span>);</span>
+<span id="tests-tiles-loft-L517">  t = tiles::<span class="fn-call">surface</span>(<span class="nm">4</span>, <span class="nm">3</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-tiles-loft-L518">  tiles::<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(t, <span class="en">B</span>);</span>
+<span id="tests-tiles-loft-L519">  tiles::<span class="fn-call">draw</span>(t, <span class="fn-call">fixture</span>(), <span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">1</span>, <span class="kw">false</span>, <span class="kw">false</span>, <span class="kw">false</span>, <span class="nm">0</span>, <span class="kw">true</span>);</span>
+<span id="tests-tiles-loft-L520">  got2 = <span class="fn-call">show</span>(tiles::<span class="fn-call">pixels</span>(t, <span class="nm">4</span>, <span class="nm">3</span>));</span>
+<span id="tests-tiles-loft-L521">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got2 == <span class="st">"{B},{B},{B},{B},{B},{B},{B},{W},{B},{B},{W},{B},"</span>, <span class="st">"at (2, 1): {got2}"</span>);</span>
+<span id="tests-tiles-loft-L522">  u = tiles::<span class="fn-call">surface</span>(<span class="nm">4</span>, <span class="nm">3</span>) ?? <span class="nm">0</span>;</span>
+<span id="tests-tiles-loft-L523">  tiles::<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(u, <span class="en">B</span>);</span>
+<span id="tests-tiles-loft-L524">  tiles::<span class="fn-call">draw_turned</span>(u, <span class="fn-call">fixture</span>(), <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">0</span>, (<span class="nm">0</span>, <span class="nm">0</span>), <span class="kw">false</span>, <span class="kw">false</span>, <span class="kw">false</span>, <span class="nm">0</span>, <span class="kw">true</span>);</span>
+<span id="tests-tiles-loft-L525">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">show</span>(tiles::<span class="fn-call">pixels</span>(u, <span class="nm">4</span>, <span class="nm">3</span>)) == got, <span class="st">"turned 0: {show(tiles::pixels(u, 4, 3))}"</span>);</span>
+<span id="tests-tiles-loft-L526">}</span>
 </code></pre>
 
   </article>

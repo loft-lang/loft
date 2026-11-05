@@ -403,7 +403,7 @@
 <span id="src-tile-world-loft-L319"></span>
 <span id="src-tile-world-loft-L320"><span class="cm">// --- Edges and rise ---</span></span>
 <span id="src-tile-world-loft-L321"></span>
-<span id="src-tile-world-loft-L322"><span class="kw">fn</span> <span class="fn-call">word</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-tile-world-loft-L322"><span class="kw">fn</span> <span class="fn-call"><a href="stdlib-types.html">word</a></span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="src-tile-world-loft-L323">  c = w.chunks[<span class="fn-call">chunk_of</span>(x), <span class="fn-call">chunk_of</span>(y), z];</span>
 <span id="src-tile-world-loft-L324">  <span class="kw">if</span> !c { <span class="kw">return</span> <span class="nm">0</span>; }</span>
 <span id="src-tile-world-loft-L325">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(c.extra) == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
@@ -431,14 +431,14 @@
 <span id="src-tile-world-loft-L347"><span class="cm">/// same edge: setting one sets both.</span></span>
 <span id="src-tile-world-loft-L348"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_edge</span>(w: <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
 <span id="src-tile-world-loft-L349">  h = <span class="fn-call">edge_home</span>(x, y, side);</span>
-<span id="src-tile-world-loft-L350">  v = <span class="fn-call">word</span>(w, h.<span class="nm">0</span>, h.<span class="nm">1</span>, z);</span>
+<span id="src-tile-world-loft-L350">  v = <span class="fn-call"><a href="stdlib-types.html">word</a></span>(w, h.<span class="nm">0</span>, h.<span class="nm">1</span>, z);</span>
 <span id="src-tile-world-loft-L351">  <span class="fn-call">set_word</span>(w, h.<span class="nm">0</span>, h.<span class="nm">1</span>, z, (v &amp; ~(<span class="nm">255</span> &lt;&lt; h.<span class="nm">2</span>)) | ((kind &amp; <span class="nm">255</span>) &lt;&lt; h.<span class="nm">2</span>));</span>
 <span id="src-tile-world-loft-L352">}</span>
 <span id="src-tile-world-loft-L353"></span>
 <span id="src-tile-world-loft-L354"><span class="cm">/// The edge kind on `side` of cell (x, y, z), 0 for none.</span></span>
 <span id="src-tile-world-loft-L355"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="src-tile-world-loft-L356">  h = <span class="fn-call">edge_home</span>(x, y, side);</span>
-<span id="src-tile-world-loft-L357">  (<span class="fn-call">word</span>(w, h.<span class="nm">0</span>, h.<span class="nm">1</span>, z) &gt;&gt; h.<span class="nm">2</span>) &amp; <span class="nm">255</span></span>
+<span id="src-tile-world-loft-L357">  (<span class="fn-call"><a href="stdlib-types.html">word</a></span>(w, h.<span class="nm">0</span>, h.<span class="nm">1</span>, z) &gt;&gt; h.<span class="nm">2</span>) &amp; <span class="nm">255</span></span>
 <span id="src-tile-world-loft-L358">}</span>
 <span id="src-tile-world-loft-L359"></span>
 <span id="src-tile-world-loft-L360"><span class="cm">// The edge crossed stepping from (x, y) by (dx, dy), one of the four directions.</span></span>
@@ -471,13 +471,13 @@
 <span id="src-tile-world-loft-L387"><span class="cm">/// A hillside is cells rising one step at a time, so a walker that steps up one at a time walks</span></span>
 <span id="src-tile-world-loft-L388"><span class="cm">/// up it.</span></span>
 <span id="src-tile-world-loft-L389"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_rise</span>(w: <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, steps: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-tile-world-loft-L390">  v = <span class="fn-call">word</span>(w, x, y, z);</span>
+<span id="src-tile-world-loft-L390">  v = <span class="fn-call"><a href="stdlib-types.html">word</a></span>(w, x, y, z);</span>
 <span id="src-tile-world-loft-L391">  <span class="fn-call">set_word</span>(w, x, y, z, (v &amp; ~(<span class="nm">15</span> &lt;&lt; <span class="nm">16</span>)) | ((steps &amp; <span class="nm">15</span>) &lt;&lt; <span class="nm">16</span>));</span>
 <span id="src-tile-world-loft-L392">}</span>
 <span id="src-tile-world-loft-L393"></span>
 <span id="src-tile-world-loft-L394"><span class="cm">/// A cell's rise in steps, 0 for a flat one.</span></span>
 <span id="src-tile-world-loft-L395"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rise</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-tile-world-loft-L396">  (<span class="fn-call">word</span>(w, x, y, z) &gt;&gt; <span class="nm">16</span>) &amp; <span class="nm">15</span></span>
+<span id="src-tile-world-loft-L396">  (<span class="fn-call"><a href="stdlib-types.html">word</a></span>(w, x, y, z) &gt;&gt; <span class="nm">16</span>) &amp; <span class="nm">15</span></span>
 <span id="src-tile-world-loft-L397">}</span>
 <span id="src-tile-world-loft-L398"></span>
 <span id="src-tile-world-loft-L399"><span class="cm">/// Is (x, y, z) under the open sky: nothing set on the layer above it.</span></span>
@@ -837,7 +837,7 @@
 <span id="src-tile-world-loft-L753">      <span class="kw">for</span> x <span class="kw">in</span> x0..=x1 {</span>
 <span id="src-tile-world-loft-L754">        r = <span class="fn-call">raw</span>(w, x, y, z);</span>
 <span id="src-tile-world-loft-L755">        <span class="kw">if</span> r != <span class="en">UNSET</span> { <span class="fn-call">put_raw</span>(out, x - x0, y - y0, z - z0, r); }</span>
-<span id="src-tile-world-loft-L756">        v = <span class="fn-call">word</span>(w, x, y, z);</span>
+<span id="src-tile-world-loft-L756">        v = <span class="fn-call"><a href="stdlib-types.html">word</a></span>(w, x, y, z);</span>
 <span id="src-tile-world-loft-L757">        <span class="kw">if</span> v != <span class="nm">0</span> { <span class="fn-call">set_word</span>(out, x - x0, y - y0, z - z0, v); }</span>
 <span id="src-tile-world-loft-L758">        <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">things</span>(w, x, y, z) { <span class="fn-call">place</span>(out, x - x0, y - y0, z - z0, t); }</span>
 <span id="src-tile-world-loft-L759">      }</span>
@@ -857,10 +857,10 @@
 <span id="src-tile-world-loft-L773">        fx = c.cx * <span class="en">CHUNK</span> + i;</span>
 <span id="src-tile-world-loft-L774">        fy = c.cy * <span class="en">CHUNK</span> + j;</span>
 <span id="src-tile-world-loft-L775">        r = <span class="fn-call">raw</span>(from, fx, fy, c.z);</span>
-<span id="src-tile-world-loft-L776">        v = <span class="fn-call">word</span>(from, fx, fy, c.z);</span>
+<span id="src-tile-world-loft-L776">        v = <span class="fn-call"><a href="stdlib-types.html">word</a></span>(from, fx, fy, c.z);</span>
 <span id="src-tile-world-loft-L777">        <span class="kw">if</span> r == <span class="en">UNSET</span> &amp;&amp; v == <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
 <span id="src-tile-world-loft-L778">        <span class="kw">if</span> r != <span class="en">UNSET</span> { <span class="fn-call">put_raw</span>(w, x + fx, y + fy, z + c.z, r); }</span>
-<span id="src-tile-world-loft-L779">        <span class="kw">if</span> v != <span class="nm">0</span> || <span class="fn-call">word</span>(w, x + fx, y + fy, z + c.z) != <span class="nm">0</span> { <span class="fn-call">set_word</span>(w, x + fx, y + fy, z + c.z, v); }</span>
+<span id="src-tile-world-loft-L779">        <span class="kw">if</span> v != <span class="nm">0</span> || <span class="fn-call"><a href="stdlib-types.html">word</a></span>(w, x + fx, y + fy, z + c.z) != <span class="nm">0</span> { <span class="fn-call">set_word</span>(w, x + fx, y + fy, z + c.z, v); }</span>
 <span id="src-tile-world-loft-L780">        w.stacks[x + fx, y + fy, z + c.z] = <span class="kw">null</span>;</span>
 <span id="src-tile-world-loft-L781">      }</span>
 <span id="src-tile-world-loft-L782">    }</span>

@@ -81,6 +81,14 @@
 <p>The 64-bit <code>float</code>, spelled so that it stays a double in a file under the 32-bit regime (<code>#width 32</code>), where a plain <code>float</code> is a <code>single</code>.  Elsewhere it is <code>float</code>.</p>
 </div>
 <div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">type</span> word = <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The operand of a 64-bit machine operation: what the <code>Op…</code> declarations below bind an operator to, one per machine width.  <code>integer</code> as the standard library has always meant it, named so that it keeps that meaning when the library is built under the 32-bit regime (@PLN217), where a plain <code>integer</code> is an <code>i32</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">type</span> fword = <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>The 64-bit <code>float</code> an <code>Op…</code> declaration computes in, named as <code>word</code> is.</p>
+</div>
+<div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-types.html">Ordering</a></span> {
   <span class="en">Less</span>,
   <span class="en">Equal</span>,

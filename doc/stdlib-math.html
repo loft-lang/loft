@@ -93,7 +93,7 @@
 <p>Raises the value to the power given second: <code>pow(2.0, 10.0)</code> is 1024. Null when the answer is not a real number (<code>pow(-8.0, 0.5)</code>). Use for exponential growth curves and scaling.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">abs</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">abs</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Absolute value for double-precision floats.</p>
 </div>
 <div class="item">
@@ -105,55 +105,55 @@
 <p>Euler's number, the base of natural logarithms (2.71828...).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">cos</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">cos</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Cosine. Use for circular motion: x = r * cos(angle).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">sin</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">sin</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Sine. Use for circular motion: y = r * sin(angle).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">tan</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">tan</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Tangent. Use for slopes and perspective projection.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">acos</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">acos</a></span>(self: f64) -&gt; f64?</code></pre>
 <p>Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside [-1, 1].</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">asin</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">asin</a></span>(self: f64) -&gt; f64?</code></pre>
 <p>Arc sine. Returns the angle whose sine is the value; null outside [-1, 1].</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">atan</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">atan</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Arc tangent of a single value. Returns angle in (-PI/2, PI/2).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">ceil</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">ceil</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">floor</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">floor</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Round down to the nearest integer value. Use to convert a float position to a tile index.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">round</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">round</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Round to the nearest integer value (half rounds away from zero).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(self: f64) -&gt; f64?</code></pre>
 <p>Square root. Use for distances and normalization. Null for a negative value.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">atan2</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, v2: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">atan2</a></span>(self: f64, v2: f64) -&gt; f64</code></pre>
 <p>Arc tangent of y/x as <code>y.atan2(x)</code>, preserving the correct quadrant: <code>atan2(1.0, 0.0)</code> is PI/2. Use instead of atan when you have separate x/y components.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">log</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, v2: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">log</a></span>(self: f64, v2: f64) -&gt; f64?</code></pre>
 <p>Logarithm in the base given second: <code>log(8.0, 2.0)</code> is 3. Null for a negative value, -inf at 0. Use for converting between scales (e.g., decibels).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">pow</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, v2: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">pow</a></span>(self: f64, v2: f64) -&gt; f64?</code></pre>
 <p>Raises the value to the power given second: <code>pow(2.0, 10.0)</code> is 1024. Null when the answer is not a real number (<code>pow(-8.0, 0.5)</code>). Use for exponential growth curves and scaling.</p>
 </div>
 
