@@ -9550,6 +9550,19 @@ fn operator_of(e: el::El, form: text, lt: ir::TypeT, arity: integer) -> integer 
   d
 }
 
+// `struct_enum_of`: the struct enum a value is of — its own, or a variant's parent — through a
+// `&` but not a `?` (`peel_link`), or -1.
+fn content_enum(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyEnum { n, is_ref } => if is_ref && !starts_with(el::def(e, n).name, "__nullable<") { n } else { -1 },
+    TyReference { n } => {
+      p = el::def(e, n).parent;
+      if el::def(e, n).def_type == el::DT_ENUM_VALUE && p >= 0 && el::def(e, p).def_type == el::DT_ENUM { p } else { -1 }
+    },
+    _ => -1
+  }
+}
+
 fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
   // `@FR-Op-Back`: on a program's own type `a ⊕ b` is one call of the left operand's
   // `operator` method, its type the method's (`arith_through_operator`).
@@ -9615,6 +9628,26 @@ fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
     // (`vector_of`); two element types are compared pair by pair (`mixed_vector_eq`) — refused.
     av = match a.tp { TyRefVar { inner } => inner, _ => a.tp };
     bv = match b.tp { TyRefVar { inner } => inner, _ => b.tp };
+    // `content_eq_type`'s keyed arm: two keyed collections of one type by their records, at
+    // the collection's own store type.
+    if keyed_kind(av) && !(av is TyOptional) && el_types::is_equal(e, av, bv) {
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyBoolean);
+      }
+      kt = el_schema::keyed_type(e, av);
+      if kt >= 0 && kt != el::NO_TYPE {
+        return ex(el_ir::cl(e, if op == "==" { "OpEqContent" } else { "OpNeContent" }, [a.code, b.code, ir::NdInt { n: kt }]), ir::TyBoolean);
+      }
+    }
+    // Its struct-enum arm: two values of one struct enum (a variant counts as its enum) by
+    // variant and fields, at the enum's store type.
+    ea = content_enum(e, av);
+    if ea >= 0 && ea == content_enum(e, bv) && e.first_pass {
+      return ex(ir::NdNull, ir::TyBoolean);
+    }
+    if ea >= 0 && ea == content_enum(e, bv) && el::def(e, ea).known_type != el::NO_TYPE {
+      return ex(el_ir::cl(e, if op == "==" { "OpEqContent" } else { "OpNeContent" }, [a.code, b.code, ir::NdInt { n: el::def(e, ea).known_type }]), ir::TyBoolean);
+    }
     match av {
       TyVector { inner: ea } => match bv {
         TyVector { inner: eb } => {
