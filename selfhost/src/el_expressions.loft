@@ -3349,12 +3349,15 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   // self-append — `x = x + a + b` appends `a` and `b` to `x`, which then borrows itself.
   tail_parts = self_concat_parts(e, rhs!, written);
   vt0 = el_vars::tp(vars, v);
-  if len(tail_parts) > 0 && vt0 is TyText && !vars.vars[v].argument {
+  // A promoted `&text` accumulator (the return buffer a text local became, an argument) appends
+  // through the link as the local did (`concat_operand`'s stack appends), keeping its type.
+  promoted = match vt0 { TyRefVar { inner } => inner is TyText, _ => false };
+  if len(tail_parts) > 0 && (vt0 is TyText && !vars.vars[v].argument || promoted) {
     ops: vector<ir::Node> = [];
     for n in tail_parts {
       concat_operand(e, vars, ops, v, expression(e, vars, n));
     }
-    if !el_vars::change_var_type(e, vars, v, ir::TyText { dep: [v] }) {
+    if !promoted && !el_vars::change_var_type(e, vars, v, ir::TyText { dep: [v] }) {
       el::refuse(e, "a local that changes type");
     }
     return ex(ir::NdInsert { items: ops }, ir::TyVoid);
@@ -14350,6 +14353,11 @@ fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: integer)
   dest = vars.concat_dest;
   vars.concat_dest = -1;
   a = expression(e, vars, first);
+  // `@FR-B-Ref-Uniform`: a `&τ` first operand concatenates as its `τ`.
+  match a.tp {
+    TyRefVar { inner } => { a = ex(a.code, inner); },
+    _ => {}
+  }
   if el_types::base(a.tp) is TyText && !(a.tp is TyOptional) {
     parts: vector<Ex> = [];
     for n in rights {

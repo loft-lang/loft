@@ -596,6 +596,13 @@ pub fn convert_store(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::Ty
   // program) and stored as its base.
   match src {
     TyOptional { inner } => return convert_store(e, vars, code, inner, should),
+    // `@FR-B-Ref-Uniform`: a `&τ` value is read as its `τ` — reading a link reads its
+    // referent (`convert`'s `RefVar` source arm).
+    TyRefVar { inner } => {
+      if !(should is TyRefVar) {
+        return convert_store(e, vars, code, inner, should);
+      }
+    },
     _ => {}
   }
   if plain_enum(src) {
