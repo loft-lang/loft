@@ -4875,11 +4875,27 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   el_vars::mark_built(vars, v);
+  ref_mark = vars.work_ref;
+  p2_mark = vars.work_ref_p2;
   list = object_fields(e, vars, v, d, fields);
   if list == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   ops = list!;
+  // `(H-Drop)`'s order (`rebuild_releases`): rebuilding a whole local whose struct owns a
+  // droppable releases what it held after the re-init, so a field value the program can see
+  // run (`ir_has_user_call`) would run after that release.  Such a literal is parsed again
+  // built apart — in a `__ref_p2_N` of its own, then bound — and the first attempt's work
+  // refs are abandoned (`abandon_work_refs`: kept, never freed).
+  if !e.first_pass && !el_vars::is_compiler_generated(vars, v) && struct_ref(e, el_types::base(vt)) == d && el_types::owns_droppable(e, d, []) && any_user_call(e, ops[2..]) {
+    if vars.vars[v].argument {
+      el::refuse(e, "a literal of a droppable built apart for a parameter it rebinds");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    abandon_work_refs(vars, ref_mark, p2_mark);
+    o = object_fresh(e, vars, d, fields, ir::TyReference { n: d, dep: [] });
+    return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
+  }
   // `self_read_root` of an in-place build into a local the program names: a field value that
   // reads the local, or anything that may view its store (for a parameter, every other heap
   // parameter — the caller may hand one store twice), is computed into a `__ref_N` before the
@@ -4931,6 +4947,46 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   }
   staged += ops;
   ex(ir::NdInsert { items: staged }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
+}
+
+// `ir_has_user_call` over a list: a call of anything but an operator, a call through a
+// function value, or a bind, anywhere inside.
+fn any_user_call(e: el::El, ops: vector<ir::Node>) -> boolean {
+  for op in ops {
+    match op {
+      NdSet { var: _ } => { return true; },
+      NdCallRef { var: _ } => { return true; },
+      NdCall { def_nr } => {
+        if !starts_with(el::def(e, def_nr).name, "Op") {
+          return true;
+        }
+      },
+      _ => {}
+    }
+    if any_user_call(e, el_ir::children(op)) {
+      return true;
+    }
+  }
+  false
+}
+
+// `abandon_work_refs`: the work refs minted since the marks belong to a construction given up
+// (`clean_work_refs`), so none is freed; the counters keep their place.  A name that is an
+// argument (the return buffer the counter stepped over) is the caller's.
+fn abandon_work_refs(vars: el_vars::Vars, ref_mark: integer, p2_mark: integer) {
+  for w in ref_mark..vars.work_ref {
+    skip_free_named(vars, "__ref_{w + 1}");
+  }
+  for w in p2_mark..vars.work_ref_p2 {
+    skip_free_named(vars, "__ref_p2_{w + 1}");
+  }
+}
+
+fn skip_free_named(vars: el_vars::Vars, n: text) {
+  nr = el_vars::var(vars, n);
+  if nr >= 0 && !vars.vars[nr].argument {
+    vars.vars[nr].skip_free = true;
+  }
 }
 
 // The literal's build into record local `v`: nulled, given a record of the struct's store type,
