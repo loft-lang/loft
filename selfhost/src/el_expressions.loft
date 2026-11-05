@@ -1168,9 +1168,9 @@ fn buffer_bound(e: el::El) -> boolean {
 }
 
 // The variable a returned value `x` hands the return buffer to, or -1: a plain local struct
-// record bound by a literal, from a buffered call, or declared (`y: S = b` owns its record) (`SkipReassigned` counts the records made
-// through it in `code`; one built by a literal and rebound from a call is no candidate), or —
-// on the first pass — a call's hidden `__ref_N` buffer.
+// record that borrows nothing (`allow_rename`: none viewing an argument; `SkipReassigned` counts
+// the records made through it in `code`, and one built by a literal and rebound from a call is
+// no candidate), or — on the first pass — a call's hidden `__ref_N` buffer.
 fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::Node) -> integer {
   // A template answering its variable takes no record delivery (`generic_promote_ok`).
   if el::def(e, e.context).def_type == el::DT_GENERIC {
@@ -1178,7 +1178,7 @@ fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::Node)
   }
   match x {
     NdVar { n } => {
-      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 && (el_vars::was_built(vars, n) || el_vars::was_adopted(vars, n) || vars.annotated.contains(n)) && child_allocs(e, vars, code, n) < 2 && !(el_vars::was_built(vars, n) && bound_from_call(code, n)) {
+      if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && len(el_types::deps(el_vars::tp(vars, n))) == 0 &&  child_allocs(e, vars, code, n) < 2 && !(el_vars::was_built(vars, n) && bound_from_call(code, n)) {
         return n;
       }
     },
@@ -2437,6 +2437,49 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
       l[-1] = ir::NdReturn { inner: tail };
     }
   }
+  // `lift_borrowing_call_value`: in a bind's value, a block answering a call that may hand back
+  // one of its arguments answers a copy of it in a store of this frame.
+  if context != "return from block" && len(l) > 0 {
+    lifted = lift_borrowing_call(e, vars, l[-1] ?? ir::NdNull, t);
+    if lifted != null {
+      l[-1] = lifted!.code;
+      t = lifted!.tp;
+    }
+  }
+  // …and a record value that borrows a variable the block defines — a read of a local borrows
+  // that local (`parse_var`'s `depending`) — answers a copy in a fresh `__ref_p2_N`
+  // (`materialize_view_value`), so it outlives the block.
+  if context != "return from block" && len(l) > 0 && !(t is TyOptional) && el_types::base(t) is TyReference {
+    tv = match el_ir::unspan(l[-1] ?? ir::NdNull) { NdVar { n } => n, _ => -1 };
+    ls = el_types::deps(t);
+    if tv >= 0 && !ls.contains(tv) {
+      ls += [tv];
+    }
+    defined = false;
+    for x in ls {
+      for op in l {
+        if stmt_defines_var(op, x) {
+          defined = true;
+        }
+      }
+    }
+    td = heap_def(t);
+    if defined && td >= 0 && tv >= 0 {
+      rt = ir::TyReference { n: td, dep: [] };
+      if e.first_pass {
+        t = rt;
+      } else {
+        w = el_vars::work_ref_p2(vars, rt);
+        copy = copy_into_buffer(e, vars, l[-1] ?? ir::NdNull, tv, w, rt);
+        if copy != null {
+          l[-1] = copy!;
+          t = el_vars::tp(vars, w);
+        }
+      }
+    } else if defined && td >= 0 {
+      el::refuse(e, "a value block answering a record it builds from something other than a local");
+    }
+  }
   // A value block whose tail is a text local the block defines answers a borrow of that local,
   // not of what the local borrows (`{ r = R {…}; s = r.name; s }` is `text["s"]`).
   if context != "return from block" && len(l) > 0 && el_types::base(t) is TyText {
@@ -3334,7 +3377,10 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   vars.read_into = leftmost(e, rhs!);
   vars.expect_node = rhs!;
   vars.expect = el_vars::tp(vars, v);
+  outer_bind = vars.bind_rhs;
+  vars.bind_rhs = op == "=";
   x = expression(e, vars, rhs!);
+  vars.bind_rhs = outer_bind;
   vars.expect_node = -1;
   vars.read_into = outer_into;
   vars.concat_dest = -1;
@@ -9517,6 +9563,16 @@ fn outside_deps(arm: ir::Node, deps: vector<integer>) -> vector<integer> {
   kept
 }
 
+// `stmt_defines_var`: a statement that binds `v` at this block's level — a `Set`, or one inside
+// a spliced insert (not one nested in a block of its own).
+fn stmt_defines_var(op: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(op) {
+    NdSet { var } => var == v,
+    NdInsert { items } => { for o in items { if stmt_defines_var(o, v) { return true; } } false },
+    _ => false
+  }
+}
+
 // Is `v` set anywhere in `n`?
 fn sets_var(n: ir::Node, v: integer) -> boolean {
   match n {
@@ -10006,6 +10062,39 @@ fn bind_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, w: integer, buf
     return x;
   }
   copy_into_buffer(e, vars, x, w, buf, ret)
+}
+
+// `Parser::lift_borrowing_call_value`: a call to a loft function whose result may be one of its
+// arguments (`returns_borrowed_view`), met as a value inside a bind's right-hand side, is held
+// in `___arm_call_N` and copied into a fresh `__ref_p2_N` (`materialize_view_value`): the bound
+// local owns its record whichever path the callee took.  Null where it does not apply.
+fn lift_borrowing_call(e: el::El, vars: el_vars::Vars, code: ir::Node, t: ir::TypeT) -> Ex? {
+  if !vars.bind_rhs || t is TyOptional {
+    return null;
+  }
+  td = match el_types::base(t) { TyReference { n } => n, _ => -1 };
+  if td < 0 {
+    return null;
+  }
+  match el_ir::unspan(code) {
+    NdCall { def_nr } => {
+      d = el::def(e, def_nr);
+      if def_nr == e.context || !(starts_with(d.name, "n_") || starts_with(d.name, "t_")) || el_ir::is_null(d.code[0] ?? ir::NdNull) || !returns_argument_view(d) {
+        return null;
+      }
+    },
+    _ => return null
+  }
+  if e.first_pass {
+    return ex(code, ir::TyReference { n: td, dep: [] });
+  }
+  tmp = el_vars::create_unique(vars, "__arm_call", ir::TyReference { n: td, dep: [] });
+  w = el_vars::work_ref_p2(vars, ir::TyReference { n: td, dep: [] });
+  copy = copy_into_buffer(e, vars, ir::NdVar { n: tmp }, tmp, w, ir::TyReference { n: td, dep: [] });
+  if copy == null {
+    return null;
+  }
+  ex(ir::NdInsert { items: [el_ir::v_set(tmp, code), copy!] }, el_vars::tp(vars, w))
 }
 
 // `materialize_return_into` for a record local `v`: `{ buf = null; OpDatabase(buf, tp);
@@ -11944,6 +12033,11 @@ fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::TypeT)
     return parse_block(e, vars, body!, "match_arm", expected);
   }
   x = expression(e, vars, body!);
+  // An arm answering a call that may hand back an argument, in a bind's value: its copy.
+  lifted = lift_borrowing_call(e, vars, x.code, x.tp);
+  if lifted != null {
+    return lifted!;
+  }
   if e.first_pass || el_types::is_unknown(expected) || x.tp is TyVoid || x.tp is TyNull || x.tp is TyNever {
     return x;
   }
