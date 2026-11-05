@@ -6238,20 +6238,6 @@ impl Parser {
                 {
                     true_type = enum_tp.clone();
                 }
-                // ...and when the arms really are two DIFFERENT variants, the join is the
-                // ENUM, so that is this expression's type.  Keeping the then-arm's variant
-                // would let `v: A = if c { E::A { … } } else { E::B { … } }` through — a
-                // slot declared as one variant holding another, whose fields are read at
-                // this variant's offsets (loft#980's class).  `(C-Var)` converts the enum
-                // to nothing narrower, so the declaration is refused where it belongs.
-                //
-                // Two arms of the SAME variant keep that variant: nothing was widened, and
-                // a `v: A` destination stays legal for them.
-                if let Some(enum_tp) = &variant_enum
-                    && self.joins_to_enum(enum_tp, &true_type, &false_type)
-                {
-                    true_type = enum_tp.clone();
-                }
                 // @FR-I-Widen — an else arm WIDER than the then arm (`block_result` kept its
                 // own type) makes the join that wider type, and the then arm converts to it
                 // exactly as an else arm converts to a wider then arm (loft#1793).
