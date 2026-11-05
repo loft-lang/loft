@@ -371,6 +371,25 @@ pub fn placed_locals(code: &Value, data: &Data) -> HashSet<u16> {
     out
 }
 
+/// The hosts of [`placed_locals`]: the locals whose store an `OpPlaceRecord` put another
+/// local's record in.  Such a store is named by that record too, so it is never fresh for
+/// [`StoreFacts`] — a push into the host grows the store the placed record lives in.
+#[must_use]
+pub fn placed_hosts(code: &Value, data: &Data) -> HashSet<u16> {
+    let mut out = HashSet::new();
+    code.any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpPlaceRecord"
+            && let Some(Value::Var(host)) = args.first().map(Value::unspan)
+        {
+            out.insert(*host);
+        }
+        false
+    });
+    out
+}
+
 /// The root variable of every push, pre-allocation and record mint in `stmts` — the stores
 /// they grow — in first-appearance order.  Exactly the ops [`blocks_header_hoist`] lets
 /// through under the push and mint tiers, so a caller that proves every root apart from a

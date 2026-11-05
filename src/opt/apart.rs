@@ -715,6 +715,7 @@ pub(crate) fn kept_growth_param(data: &Data, d: u32) -> Option<usize> {
     let facts = StoreFacts {
         vars,
         placed: &placed,
+        hosts: &placed,
         adopted: None,
         owned: None,
         assumed: &[],

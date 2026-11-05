@@ -304,6 +304,8 @@ pub(crate) struct FnWriter<'a> {
     /// The locals `(R-Place)` put in another record's store (`hoist::placed_locals`), for
     /// the store facts the loop verdict proves bases apart with.
     placed: std::collections::HashSet<u16>,
+    /// The hosts of `placed` (`hoist::placed_hosts`): never a fresh store.
+    hosts: std::collections::HashSet<u16>,
     /// `@FR-R-Alias`'s versioned clause: the variable pairs the loop copy being written may
     /// take as holding apart stores, tested at its entry.  Empty outside such a copy.
     assumed: Vec<(u16, u16)>,
@@ -776,6 +778,7 @@ impl<'a> FnWriter<'a> {
             invariants: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
+            hosts: crate::opt::hoist::placed_hosts(def.code(), cx.data),
             assumed: Vec::new(),
             range_facts: None,
             cur_line: 0,
@@ -1798,6 +1801,7 @@ impl<'a> FnWriter<'a> {
         (!self.cx.switches.distinct_growth_disabled).then(|| crate::opt::hoist::StoreFacts {
             vars: self.vars,
             placed: &self.placed,
+            hosts: &self.hosts,
             adopted: self.adopt.as_ref().map(|a| (a.v, a.vdb)),
             owned: None,
             assumed: &self.assumed,
