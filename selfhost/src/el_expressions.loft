@@ -11692,16 +11692,25 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
     if (el_convert::plain_scalar(result) || result is TyText) && branch_yields_null(e, chain) {
       return ex(blk, ir::TyOptional { inner: result });
     }
-    return ex(blk, result);
+    return own_match_arms(e, vars, ex(blk, result));
   }
   if null_arm && el_convert::sentinel_value(result) {
     result = ir::TyOptional { inner: result };
   }
   // A struct enum read in place needs no `match` block.
   if sd >= 0 {
-    return ex(chain, result);
+    return own_match_arms(e, vars, ex(chain, result));
   }
-  ex(el_ir::v_block([el_ir::v_set(v, x.code), chain], result, "match"), result)
+  own_match_arms(e, vars, ex(el_ir::v_block([el_ir::v_set(v, x.code), chain], result, "match"), result))
+}
+
+// `own_joined_call_arms` (loft#1019) for a `match`: where the merged record borrows, an arm whose
+// value is a call answering a fresh record is given a home in this frame (`own_join_arm`).
+fn own_match_arms(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
+  if e.first_pass || !(el_types::base(x.tp) is TyReference) || len(el_types::deps(x.tp)) == 0 {
+    return x;
+  }
+  ex(own_join_arm(e, vars, x.code, x.tp), x.tp)
 }
 
 // The struct enum a match subject of type `t` reads its variant from — the enum, or the enum a
@@ -11818,9 +11827,9 @@ fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: vector
     chain = if a.guard == null { a.code } else { el_ir::v_if(a.guard!, a.code, chain) };
   }
   if len(hoisted) > 0 {
-    return ex(el_ir::v_block(hoisted + [chain], result, "match"), result);
+    return own_match_arms(e, vars, ex(el_ir::v_block(hoisted + [chain], result, "match"), result));
   }
-  ex(chain, result)
+  own_match_arms(e, vars, ex(chain, result))
 }
 
 // `Parser::parse_vector_match` for a vector of plain scalars or texts: the subject held in
@@ -11913,7 +11922,7 @@ fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) ->
   for a in rev(out[..len(out) - 1]) {
     chain = if a.guard == null { a.code } else { el_ir::v_if(a.guard!, a.code, chain) };
   }
-  ex(el_ir::v_block([el_ir::v_set(sv, x.code), chain], result, "vector_match"), result)
+  own_match_arms(e, vars, ex(el_ir::v_block([el_ir::v_set(sv, x.code), chain], result, "vector_match"), result))
 }
 
 // Does an arm's code answer a variable one of its `binds` set?
