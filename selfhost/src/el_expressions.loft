@@ -11109,6 +11109,11 @@ fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT, rev: bool
   if !record {
     get = elem_read(e, elem, get);
   }
+  // A struct enum's element is read as the enum's place in it (its store type at 0).
+  sed = el_types::struct_enum_def(elem);
+  if record && sed >= 0 && !e.first_pass {
+    get = el_ir::cl(e, "OpGetField", [get, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, sed).known_type }]);
+  }
   // A tuple element is read as its record.
   st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, _ => el_types::without_deps(elem) };
   // A reversed walk steps down, past the first element to the `i32` null (the "rev step").
@@ -13215,6 +13220,21 @@ fn struct_literal_def(e: el::El, n: integer) -> integer {
   }
 }
 
+// A literal of a struct enum's variant with fields (`Circle { r: 2 }`), plainly named: the
+// variant's definition, or -1.
+fn variant_literal_def(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SStructLit { name, member, base } => {
+      if member != "" || base != null {
+        return -1;
+      }
+      d = el::def_nr(e, name);
+      if d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE && len(el::def(e, d).attributes) > 0 { d } else { -1 }
+    },
+    _ => -1
+  }
+}
+
 // The first pass of a struct literal: its field values read, for the locals they make.
 fn literal_field_exprs(e: el::El, vars: el_vars::Vars, n: integer) {
   match e.p.nodes[n] {
@@ -13301,6 +13321,9 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       return refused_build();
     }
     sd = struct_literal_def(e, it);
+    if sd < 0 {
+      sd = variant_literal_def(e, it);
+    }
     if sd >= 0 {
       recs += [it];
       if e.first_pass {
@@ -13342,12 +13365,22 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       return refused_build();
     }
     in_t = el_types::without_deps(xs[0].tp);
+    // `parse_item`'s variant join (`@FR-C-Var`): items that are variants of one struct enum
+    // make the element that enum.
+    pe = variant_parent(e, in_t);
+    if pe >= 0 {
+      for x in xs {
+        if variant_parent(e, x.tp) == pe && !el_types::is_equal(e, in_t, x.tp) {
+          in_t = ir::TyEnum { n: pe, is_ref: true, dep: [] };
+        }
+      }
+    }
   }
   if el_types::is_unknown(in_t) {
     return refused_build();
   }
   for x in xs {
-    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, in_t, x.tp) {
+    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, in_t, x.tp) && !(el_types::struct_enum_def(in_t) >= 0 && variant_parent(e, x.tp) == el_types::struct_enum_def(in_t)) {
       el::refuse(e, "a vector item of another type than the first");
       return refused_build();
     }
@@ -13449,8 +13482,13 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     rd = struct_literal_def(e, recs[0]);
     // The element temp is typed as its record (`Reference(type_def_nr(parent_tp.content()))`),
     // except where no context gives the literal an element type: it keeps the bare reference.
+    // A struct enum's element is typed as the enum, each variant literal built into it.
     if hinted {
-      el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+      if el_types::struct_enum_def(in_t) >= 0 {
+        el_vars::set_var_type(vars, elm, ir::TyEnum { n: el_types::struct_enum_def(in_t), is_ref: true, dep: [v] });
+      } else {
+        el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+      }
     }
     at = ir::NdVar { n: elm };
     for it in recs {
@@ -13459,9 +13497,23 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
         SStructLit { fields: fs } => { fields = fs; },
         _ => {}
       }
-      fl = object_fields(e, vars, elm, rd, fields);
+      id = struct_literal_def(e, it);
+      if id < 0 {
+        id = variant_literal_def(e, it);
+      }
+      fl = object_fields(e, vars, elm, id, fields);
       if fl == null {
         return refused_build();
+      }
+      // `(I-Comp)`: a record item whose fields read the vector it is appended to reads it as the
+      // statement began — Rust snapshots it first (`_build_src`), not carried: refused by name.
+      if append && v >= 0 {
+        for op in fl! {
+          if op#index >= 2 && el_ir::reads_var(op, v) {
+            el::refuse(e, "an appended record item that reads the vector it is appended to (a snapshot)");
+            return refused_build();
+          }
+        }
       }
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
       // `object_fields`' own header (a fresh record) is the element's `OpNewRecord` here.
@@ -14166,6 +14218,11 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   code = el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: size }, i.code]);
   if !record {
     code = elem_read(e, inner, code);
+  }
+  // A struct enum's element is read as the enum's place in it, as a walk reads it.
+  sed = el_types::struct_enum_def(inner);
+  if record && sed >= 0 && !e.first_pass {
+    code = el_ir::cl(e, "OpGetField", [code, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, sed).known_type }]);
   }
   if !e.first_pass {
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
