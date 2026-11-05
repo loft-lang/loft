@@ -11101,6 +11101,11 @@ fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT, rev: bool
   op = read_op(elem);
   record = false;
   marked = false;
+  // A vector element is its four-byte handle.
+  if elem is TyVector {
+    size = 4;
+    record = true;
+  }
   if size == -2 {
     size = if e.first_pass { 0 } else { record_size(e, elem) };
     record = size >= 0;
@@ -11121,10 +11126,11 @@ fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT, rev: bool
   if !record {
     get = elem_read(e, elem, get);
   }
-  // A struct enum's element is read as the enum's place in it (its store type at 0).
-  sed = el_types::struct_enum_def(elem);
-  if record && sed >= 0 && !e.first_pass {
-    get = el_ir::cl(e, "OpGetField", [get, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, sed).known_type }]);
+  // A struct enum's element is read as the enum's place in it (its store type at 0), a vector's
+  // as the inner vector's.
+  pk = element_place_type(e, elem);
+  if record && pk >= 0 && !e.first_pass {
+    get = el_ir::cl(e, "OpGetField", [get, ir::NdInt { n: 0 }, ir::NdInt { n: pk }]);
   }
   // A tuple element is read as its record.
   st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, _ => el_types::without_deps(elem) };
@@ -13265,6 +13271,19 @@ fn nested_item_type(e: el::El, vars: el_vars::Vars, n: integer, want: ir::TypeT)
   if el_types::is_unknown(first) { want } else { ir::TyVector { inner: first, dep: [] } }
 }
 
+// The store type an element is read as in its slot (`OpGetField(…, 0, T)`): a struct enum's
+// own, a vector's inner vector's; -1 for an element read as it is.
+fn element_place_type(e: el::El, t: ir::TypeT) -> integer {
+  sed = el_types::struct_enum_def(t);
+  if sed >= 0 {
+    return el::def(e, sed).known_type;
+  }
+  match t {
+    TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
+    _ => -1
+  }
+}
+
 // `Data::type_def_nr`: the definition a type is of — a scalar's library definition, a record's
 // or an enum's own; 0 for anything else.
 fn type_def_of(e: el::El, t: ir::TypeT) -> integer {
@@ -13681,6 +13700,12 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   // `depend_all`; a bind's element was typed so when it was made.
   if value && elm >= 0 && (push == "" || len(recs) > 0) {
     el_vars::depend(vars, elm, v);
+  }
+  // A vector item that is no literal (a local, a slice) is copied into its element
+  // (`OpCopyRecord` with the copy flag) — not carried: refused by name.
+  if in_t is TyVector && len(xs) > 0 && !e.first_pass {
+    el::refuse(e, "a vector element that is not a vector literal");
+    return refused_build();
   }
   for x in xs {
     if push != "" {
@@ -14305,6 +14330,11 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
       marked = true;
     }
   }
+  // A vector element is its four-byte handle, read as the inner vector's place.
+  if inner is TyVector {
+    size = 4;
+    record = true;
+  }
   if (size < 0 && !marked) || (op == "" && !record) {
     el::refuse(e, "an index into a vector of records");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -14329,10 +14359,11 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   if !record {
     code = elem_read(e, inner, code);
   }
-  // A struct enum's element is read as the enum's place in it, as a walk reads it.
-  sed = el_types::struct_enum_def(inner);
-  if record && sed >= 0 && !e.first_pass {
-    code = el_ir::cl(e, "OpGetField", [code, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, sed).known_type }]);
+  // A struct enum's element is read as the enum's place in it, as a walk reads it; a vector's
+  // as the inner vector's place.
+  pk = element_place_type(e, inner);
+  if record && pk >= 0 && !e.first_pass {
+    code = el_ir::cl(e, "OpGetField", [code, ir::NdInt { n: 0 }, ir::NdInt { n: pk }]);
   }
   if !e.first_pass {
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
