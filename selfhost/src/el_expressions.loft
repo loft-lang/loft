@@ -2057,23 +2057,55 @@ fn object_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integer, 
   el_ir::v_block(built, el_types::with_deps(el_types::without_deps(lit_t), [rb]), "Object")
 }
 
-// Every `Var(from)` in `n` as `Var(to)` (`substitute_work_ref`).
+// `variant_parent_enum`: the struct enum whose variant `t` is a record of (through a `?`), or -1.
+fn variant_parent(e: el::El, t: ir::TypeT) -> integer {
+  match el_types::base(t) {
+    TyReference { n } => if el::def(e, n).def_type == el::DT_ENUM_VALUE { el::def(e, n).parent } else { -1 },
+    _ => -1
+  }
+}
+
+// Every `Var(from)` in `n` as `Var(to)` (`substitute_work_ref`): reads, assignment targets and
+// a block's result dependency alike.
 fn rename_var(n: ir::Node, from: integer, to: integer) -> ir::Node {
   match n {
     NdVar { n: v } => if v == from { ir::NdVar { n: to } } else { n },
-    NdCall { def_nr, args } => {
-      na: vector<ir::Node> = [];
-      for a in args {
-        na += [rename_var(a, from, to)];
-      }
-      ir::NdCall { def_nr: def_nr, args: na }
-    },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: rename_list(args, from, to) },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: rename_list(args, from, to) },
     NdSet { var, inner } => ir::NdSet { var: if var == from { to } else { var }, inner: rename_var(inner, from, to) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: if var == from { to } else { var }, idx: idx, inner: rename_var(inner, from, to) },
     NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rename_var(inner, from, to) },
+    NdReturn { inner } => ir::NdReturn { inner: rename_var(inner, from, to) },
+    NdDrop { inner } => ir::NdDrop { inner: rename_var(inner, from, to) },
+    NdYield { inner } => ir::NdYield { inner: rename_var(inner, from, to) },
     NdIf { cond, t, f } => ir::NdIf { cond: rename_var(cond, from, to), t: rename_var(t, from, to), f: rename_var(f, from, to) },
-    NdInsert { items } => ir::NdInsert { items: [for x in items { rename_var(x, from, to) }] },
+    NdInsert { items } => ir::NdInsert { items: rename_list(items, from, to) },
+    NdTuple { items } => ir::NdTuple { items: rename_list(items, from, to) },
+    NdParallel { arms } => ir::NdParallel { arms: rename_list(arms, from, to) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: rename_var(create, from, to), next: rename_var(next, from, to), init: rename_var(init, from, to) },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = rename_list(b.operators, from, to);
+      b.result = [rename_dep(b.result[0], from, to)];
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = rename_list(b.operators, from, to);
+      b.result = [rename_dep(b.result[0], from, to)];
+      ir::NdLoop { block: [b] }
+    },
     _ => n
   }
+}
+
+// `rewrite_dep_in_type`: a type's dependency on `from` as one on `to`.
+fn rename_dep(t: ir::TypeT, from: integer, to: integer) -> ir::TypeT {
+  el_types::with_deps(t, [for d in el_types::deps(t) { if d == from { to } else { d } }])
+}
+
+fn rename_list(l: vector<ir::Node>, from: integer, to: integer) -> vector<ir::Node> {
+  [for x in l { rename_var(x, from, to) }]
 }
 
 // `Parser::finish_body`, the work texts: each `__work_N` the body minted starts empty at its
@@ -2376,8 +2408,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   }
   // P236 (`unify_if_branches_work_refs`): a body's `if` tail over a heap result whose arm
   // terminals are all work references delivers through one of them, wrapped in a `return`.
-  // Arms ending in two or more different work references are renamed onto the first — not
-  // carried: refused by name.
+  // Arms ending in two or more different work references are renamed onto the first.
   if !e.first_pass && context == "return from block" && len(l) > 0 && dbref_type(el_types::base(result)) && el_ir::unspan(l[-1]) is NdIf {
     terms: vector<integer> = [];
     branch_terminals(el_ir::unspan(l[-1]), terms);
@@ -2388,10 +2419,12 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
         work = false;
       }
     }
-    if work && len(terms) > 1 {
-      el::refuse(e, "an `if` tail whose arms end in different work references");
-    } else if work {
-      l[-1] = ir::NdReturn { inner: l[-1] ?? ir::NdNull };
+    if work {
+      tail = l[-1] ?? ir::NdNull;
+      for v in terms[1..] {
+        tail = rename_var(tail, v, terms[0]);
+      }
+      l[-1] = ir::NdReturn { inner: tail };
     }
   }
   // A value block whose tail is a text local the block defines answers a borrow of that local,
@@ -9311,6 +9344,13 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
       return ex(el_ir::v_if(c.code, tc, fb!), ir::TyOptional { inner: tt });
     }
   }
+  // `@FR-C-Var` (`joins_to_enum`): two different variants of one struct enum — or a variant and
+  // the enum — join to the enum, which is the expression's type; the arms keep their own.
+  ven = variant_parent(e, t.tp);
+  if ven >= 0 && !el_types::is_equal(e, t.tp, f.tp) && (variant_parent(e, f.tp) == ven || el_types::struct_enum_def(f.tp) == ven) {
+    t = ex(t.code, ir::TyEnum { n: ven, is_ref: true, dep: el_types::deps(t.tp) });
+    f = ex(f.code, ir::TyEnum { n: ven, is_ref: true, dep: el_types::deps(f.tp) });
+  }
   if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) {
     el::refuse(e, "`if` arms of different types: {type_kind(t.tp)}, {type_kind(f.tp)}");
   }
@@ -9333,7 +9373,7 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   // `arm_join_type` with `joined_deps` (loft#978): a record arm's dep on a store the arm itself
   // mints (a literal's `__ref_p2_N`) is its ownership marker, not a borrow — the arm block is
   // typed without it, and the `if` borrows what either arm still names.
-  if el_types::base(t.tp) is TyReference && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
+  if (el_types::base(t.tp) is TyReference || el_types::struct_enum_def(t.tp) >= 0) && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
     td = outside_deps(t.code, el_types::deps(t.tp));
     fd = outside_deps(f.code, el_types::deps(f.tp));
     deps = td;
