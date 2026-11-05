@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tile_world API — Loft, a programming language for small browser games</title>
+  <meta name="description" content="The public API of the loft library tile_world — every function, struct and enum it exports, with its documentation.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-tile_world-api.html">
+<meta property="og:title" content="tile_world API — Loft, a programming language for small browser games">
+<meta property="og:description" content="The public API of the loft library tile_world — every function, struct and enum it exports, with its documentation.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-tile_world-api.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="tile_world API — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="The public API of the loft library tile_world — every function, struct and enum it exports, with its documentation.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>tile_world API</h1>
+<article>
+<p><a href="lib-tile_world.html">← tile_world</a> · version 0.7.0</p>
+<p class="lib-legend">45 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">World</span> { chunks: <span class="ty">hash</span>&lt;<span class="en">Chunk</span>[cx, cy, z]&gt;, stacks: <span class="ty">hash</span>&lt;<span class="en">Stack</span>[x, y, z]&gt;, terrains: <span class="ty">hash</span>&lt;<span class="en">TerrainKind</span>[kd]&gt;, objects: <span class="ty">hash</span>&lt;<span class="en">ThingKind</span>[kd]&gt;, edges: <span class="ty">hash</span>&lt;<span class="en">EdgeKind</span>[kd]&gt;, grounds: <span class="ty">hash</span>&lt;<span class="en">Ground</span>[gz]&gt; }</code></pre>
+<p>The world: its chunks, its stacks, and the kinds the game declared.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">world</span>() -&gt; <span class="en">World</span></code></pre>
+<p>An empty world: every cell void, no kinds declared.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">terrain_kind</span>(w: <span class="en">World</span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>, walk: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, opaque: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, light: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, glyph: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">"?"</span>)</code></pre>
+<p>Declare terrain kind <code>kind</code> (1..15): whether it can be walked on, whether it stops sight and light, whether it gives light (a lava floor, a window), and its glyph in <code>view</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">thing_kind</span>(w: <span class="en">World</span>, thing: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, blocks: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, opaque: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, light: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, glyph: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">"?"</span>)</code></pre>
+<p>Declare thing <code>thing</code>: how many height steps it adds to its stack, whether it blocks a cell for walking (<code>passable</code>, <code>shortest_path</code>), whether it stops sight and light, whether it gives light (a torch), and its glyph in <code>view</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_kind</span>(w: <span class="en">World</span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>, walk: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, opaque: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, glyph: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">"|"</span>)</code></pre>
+<p>Declare edge kind <code>kind</code> (1..255): whether it can be walked across (an open doorway) and whether it stops sight and light (a wall, a closed door; not a fence or a window), and its glyph.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">walkable_kind</span>(w: const <span class="en">World</span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Can terrain kind <code>kind</code> be walked on: as declared; void and an undeclared kind cannot.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">thing_height</span>(w: const <span class="en">World</span>, thing: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>How many height steps thing <code>thing</code> adds: as declared, 1 for an undeclared thing.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_of</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>floor(v / 32): the chunk a coordinate is in, west and north of the origin included.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">inside</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>v mod 32 in [0, 31]: the coordinate inside its chunk.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_count</span>(w: const <span class="en">World</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>How many chunks the world holds — the measure of its memory, 2 KB each.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layers</span>(w: const <span class="en">World</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;</code></pre>
+<p>The layers that hold any terrain, lowest first — what saving the world walks.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunks</span>(w: const <span class="en">World</span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;(<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>)&gt;</code></pre>
+<p>The chunks layer z holds, as (cx, cy), in reading order (row by row, west to east) — each one 32x32 cells from (cx * 32, cy * 32).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stacks</span>(w: const <span class="en">World</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;(<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>)&gt;</code></pre>
+<p>Every cell that holds things, as (x, y, z): layer by layer, lowest first, each in reading order.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_terrain</span>(w: <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tile: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>)</code></pre>
+<p>Set a cell's terrain: a kind (0..15) and, for the picture, a tile number (0..4095).  VOID makes the cell void even on a layer with a ground — a pit, a hole; <code>clear</code> unsets it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(w: <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Make a cell unset again: it reads as its layer's ground, or as void.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_set</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Was this cell set (to anything, void included), rather than read from the ground?</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_ground</span>(w: <span class="en">World</span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tile: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>)</code></pre>
+<p>Give layer z a ground: every cell of it nobody set reads as terrain <code>kind</code> with picture <code>tile</code> — open land that costs no memory.  Kind VOID takes the ground away.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_layers</span>(w: const <span class="en">World</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;</code></pre>
+<p>The layers that have a ground, lowest first — with <code>layers</code>, what saving a world walks.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground</span>(w: const <span class="en">World</span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Layer z's ground kind, VOID when it has none.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_tile</span>(w: const <span class="en">World</span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Layer z's ground tile, 0 when it has none.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fill</span>(w: <span class="en">World</span>, x0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tile: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>)</code></pre>
+<p>Set a rectangle of terrain, corners included.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">terrain</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>A cell's terrain kind: what it was set to, or its layer's ground when it was not.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">tile</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>A cell's tile number, its picture: what it was set to, or its layer's ground tile.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_edge</span>(w: <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Put edge kind <code>kind</code> (1..255) on <code>side</code> (NORTH, EAST, SOUTH, WEST) of cell (x, y, z); 0 takes the edge away.  The east edge of a cell is its east neighbour's west edge, and the same edge: setting one sets both.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The edge kind on <code>side</code> of cell (x, y, z), 0 for none.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">crossable</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Can a walker step from (x, y, z) by (dx, dy) — one of the four directions — across the edge between: no edge, or one declared walkable.  Whether the cell it lands on can be stood on is <code>passable</code>'s question.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">see_through</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Do sight and light pass from (x, y, z) by (dx, dy) across the edge between.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_rise</span>(w: <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, steps: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Give cell (x, y, z) a rise of <code>steps</code> (0..15): its own height, under whatever stands on it. A hillside is cells rising one step at a time, so a walker that steps up one at a time walks up it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rise</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>A cell's rise in steps, 0 for a flat one.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">open_sky</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Is (x, y, z) under the open sky: nothing set on the layer above it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">place</span>(w: <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, thing: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Put a thing on top of a cell's stack.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">take</span>(w: <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Take the top thing off a cell's stack and answer it; 0 when the cell has none.  The stack goes when it empties.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">things</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;</code></pre>
+<p>The things on a cell, bottom first.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">top</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The top thing on a cell, 0 when there is none.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">height</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The height of a cell in steps: its rise and the declared heights of the things on it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">passable</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Can a cell be walked into: walkable terrain and nothing on it that blocks.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">opaque</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Does a cell stop sight and light: opaque terrain, or an opaque thing on it.  An undeclared terrain kind (not void) is opaque.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">lit</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, daylight: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">true</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Does a cell give light: under the open sky (by day: <code>daylight</code>, the default), lit terrain, or a lit thing on it.  A void cell gives none.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">shortest_path</span>(w: const <span class="en">World</span>, x0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="kw">limit</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">64</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;(<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>)&gt;</code></pre>
+<p>The shortest walk from (x0, y0) to (x1, y1) on layer z, in steps to the four neighbours over <code>passable</code> cells and <code>crossable</code> edges: the cells passed through, the goal last, the start left out.  Empty when the goal cannot be reached within <code>limit</code> steps (or is the start).  The goal itself need not be passable, so a path can lead up to a thing to act on.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">line_of_sight</span>(w: const <span class="en">World</span>, x0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Can (x1, y1) be seen from (x0, y0) on layer z: no opaque cell on the straight line between them (Bresenham's), and no opaque edge it crosses.  The two ends themselves do not count, so a wall is seen, and an eye in a doorway sees out.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">shades</span>(w: const <span class="en">World</span>, x0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, lights: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;(<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>)&gt; = [], start: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [], daylight: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">true</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;</code></pre>
+<p>How dark each cell of (x0, y0) .. (x1, y1) on layer z is, row by row: 0 at a light, one shade darker for each step from the nearest one, up to <code>DARKEST</code>, never black.  A light is a <code>lit</code> cell or one of <code>lights</code> (cells the game says give light now: what a figure carries, a torch).  A light of <code>lights</code> starts at its shade in <code>start</code> (0, the default, is full; a dimmer light — a torch burning down — reaches less far), the k-th entry for the k-th light. Light spreads over every cell but an opaque one, which is lit but passes no light on unless it is itself a light, and never across an opaque edge.  A light up to <code>DARKEST</code> cells outside the rectangle counts. <code>daylight</code> false: the open sky is no light — night, when only what gives light of itself (a lamp, a lit terrain) and <code>lights</code> light the world.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">view</span>(w: const <span class="en">World</span>, x0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, marks: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;(<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">text</a></span>)&gt; = []) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>A layer as text, one line per row: each cell's top thing's glyph, or its terrain's, or a space for void.  <code>marks</code> puts a glyph of the game's at a cell (a figure): (x, y, glyph).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">region</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="kw">limit</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;(<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>)&gt;</code></pre>
+<p>The cells of layer z connected to (x, y) that hold the same terrain as it — the same kind and tile, set or read from the ground — four ways, never across an edge between two cells: what a fill paints.  Nearest first (breadth first), (x, y) itself first, and at most <code>limit</code> of them, because a layer's ground has no end: a region exactly <code>limit</code> long may go on.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">copy</span>(w: const <span class="en">World</span>, x0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z1: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">World</span></code></pre>
+<p>A stamp: the cells of the box x0..x1, y0..y1 on layers z0..z1, corners included — terrain as set (an unset cell stays unset), rise, the north and west edges each cell holds, and the stacks — moved so the corner (x0, y0, z0) is (0, 0, 0).  The kinds come along: the stamp is a world of its own, to <code>paste</code> back or keep.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">paste</span>(w: <span class="en">World</span>, from: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Write stamp <code>from</code> (a <code>copy</code>) into <code>w</code> with its (0, 0, 0) at (x, y, z).  Each cell the stamp holds anything at replaces the cell there: its terrain when the stamp set it, its rise and north and west edges, and its stack (none when the stamp's cell has none).  A cell the stamp holds nothing at leaves <code>w</code> as it was.</p>
+</div>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>
