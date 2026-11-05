@@ -8807,6 +8807,26 @@ fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: integer?
       return ex(ir::NdNull, ir::TyNever);
     }
   }
+  // `x#remove` in a forward walk of a vector local: `OpRemove(x#index, v, on, row)` — `on` the
+  // walk's flags (0: forward), `row` the element's (`vector_element_type`, `append_row`).  Any
+  // other walk (a reversed one, a slice, a keyed snapshot, a generator) is refused by name.
+  if attr == "remove" && arg == null && tp == null {
+    lv = el_vars::var(vars, var);
+    k = len(vars.active_loops) - 1;
+    while k >= 0 && vars.active_loops[k] != lv {
+      k -= 1;
+    }
+    coll = if k >= 0 { vars.active_values[k] ?? ir::NdNull } else { ir::NdNull };
+    idx = if lv >= 0 { el_vars::var(vars, "{el_vars::name_of(vars, lv)}#index") } else { -1 };
+    elem = if lv >= 0 { el_vars::tp(vars, lv) } else { ir::TyVoid };
+    row = append_row(e, elem);
+    if el_ir::unspan(coll) is NdVar && el_types::base(el_vars::tp(vars, match el_ir::unspan(coll) { NdVar { n } => n, _ => 0 })) is TyVector && idx >= 0 && row >= 0 && !(el_types::base(elem) is TyIterator) {
+      el_vars::in_use(vars, idx, true);
+      return ex(el_ir::cl(e, "OpRemove", [ir::NdVar { n: idx }, el_ir::unspan(coll), ir::NdInt { n: 0 }, ir::NdInt { n: row }]), ir::TyVoid);
+    }
+    el::refuse(e, "a `#remove` in a walk that is not a forward walk of a vector local");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   if (attr == "count" || attr == "first") && arg == null && tp == null {
     lv = el_vars::var(vars, var);
     c = if lv >= 0 { el_vars::loop_count(vars, lv) } else { -1 };
