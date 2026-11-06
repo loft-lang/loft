@@ -93,6 +93,9 @@ pub struct Vars {
   pub nonzero: vector<integer>,
   // `(N-Guard)`: the record locals a test proves present where they are read
   pub present: vector<integer>,
+  // Projections a condition proved present in the arm being read (`narrowed_non_null_exprs`),
+  // compared by their IR without spans.
+  pub present_exprs: vector<ir::Node>,
   // `bind_text_link_kind`: the locals bound as text links, and of those the store kind (a text
   // field or element, read and written through `OpVarRef`)
   pub text_links: vector<integer>,
@@ -143,7 +146,7 @@ pub struct Vars {
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, reversed: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], text_links: [], store_links: [], amp_vectors: [], amp_places: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, bind_rhs: false, rebuilt: [], lit_hint_node: -1, lit_hint: ir::TyVoid }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, reversed: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], present_exprs: [], text_links: [], store_links: [], amp_vectors: [], amp_places: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, bind_rhs: false, rebuilt: [], lit_hint_node: -1, lit_hint: ir::TyVoid }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {

@@ -2635,6 +2635,11 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
         } else {
           l += [x.code];
         }
+        // loft#1496 — a branch another statement follows is a statement: an arm that dropped
+        // its tail stops claiming the dropped value's type (`void_dropped_statement_arms`).
+        if s#index < len(stmts) - 1 && len(l) > 0 {
+          l[-1] = void_dropped_arms(l[-1]);
+        }
         // A statement followed by `;` (or by another statement) leaves the block no value.
         if s#index < len(stmts) - 1 || semi {
           if !(t is TyNever) {
@@ -6435,7 +6440,7 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
   }
   // A field of a record that may be null (`x: S?`) may be null too — unless a guard proved
   // the record present here (`(N-Guard)`).
-  proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => false };
+  proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => vars.present_exprs.contains(bare(x.code)) };
   if rt is TyOptional && !(t is TyOptional) && !proven {
     t = ir::TyOptional { inner: t };
   }
@@ -9642,6 +9647,63 @@ fn presence_proof(e: el::El, test: ir::Node) -> DivProof {
   }
 }
 
+pub struct ProjProof {
+  place: ir::Node,
+  then: boolean
+}
+
+// `projection_narrowing_from_condition`: the projection (a call, spans stripped) a test proves
+// present, and whether in the then arm — `if p` and `if !<p is null>` there, `if !p` and
+// `if <p is null>` in the else.  Null for any other test.
+fn projection_proof(e: el::El, test: ir::Node) -> ProjProof? {
+  match el_ir::unspan(test) {
+    NdCall { def_nr, args } => {
+      if len(args) != 1 {
+        return null;
+      }
+      nm = el::def(e, def_nr).name;
+      a = el_ir::unspan(args[0]);
+      if nm == "OpNot" {
+        match a {
+          NdCall { def_nr: d2, args: a2 } => {
+            n2 = el::def(e, d2).name;
+            if len(a2) == 1 && el_ir::unspan(a2[0]) is NdCall {
+              if starts_with(n2, "OpConvBoolFrom") {
+                return ProjProof { place: bare(a2[0]), then: false };
+              }
+              if n2 == "OpRefIsNull" || n2 == "OpVectorIsNull" {
+                return ProjProof { place: bare(a2[0]), then: true };
+              }
+            }
+          },
+          _ => {}
+        }
+        return null;
+      }
+      if !(a is NdCall) {
+        return null;
+      }
+      if starts_with(nm, "OpConvBoolFrom") {
+        return ProjProof { place: bare(a), then: true };
+      }
+      if nm == "OpRefIsNull" || nm == "OpVectorIsNull" {
+        return ProjProof { place: bare(a), then: false };
+      }
+      null
+    },
+    _ => null
+  }
+}
+
+// A node with its spans removed, for comparing two spellings of one place.
+fn bare(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { inner } => bare(inner),
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { bare(a) }] },
+    _ => n
+  }
+}
+
 // The null literal converted to a type (`OpConv…FromNull()`).
 fn from_null(e: el::El, n: ir::Node) -> boolean {
   match el_ir::unspan(n) {
@@ -10787,9 +10849,16 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   if pp.then {
     push_present(vars, pp.v);
   }
+  // `projection_narrowing_from_condition`: a tested field path, present in one arm.
+  jp = projection_proof(e, c.code);
+  dj = len(vars.present_exprs);
+  if jp != null && jp!.then {
+    vars.present_exprs += [jp!.place];
+  }
   t = parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
   truncate_nonzero(vars, dz);
   vars.present = vars.present[0..dp];
+  vars.present_exprs = vars.present_exprs[0..dj];
   // An untyped `[]` arm where the bind's target names the vector is built in its place.
   if el_types::base(expected) is TyVector && syntax_tail_empty(e, then) {
     t = empty_arm(e, vars, t, expected, ir::TyVoid);
@@ -10802,7 +10871,7 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     return ex(el_ir::v_if(c.code, t.code, ir::NdNull), ir::TyVoid);
   }
-  if t.tp is TyNever || t.tp is TyNull {
+  if t.tp is TyNull {
     el::refuse(e, "an `if` arm that never finishes or is null");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -10818,16 +10887,25 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   if !pp.then {
     push_present(vars, pp.v);
   }
+  if jp != null && !jp!.then {
+    vars.present_exprs += [jp!.place];
+  }
   // An untyped `[]` then arm gives the `else` nothing to be read against (`true_type`
   // unknown, as a `null` arm's).
   then_empty = syntax_tail_empty(e, then) && !(el_types::base(expected) is TyVector);
   f = if e.p.nodes[other!] is SIf {
     expression(e, vars, other!)
   } else {
-    parse_block(e, vars, other!, "else", if then_empty { ir::TyUnknown { n: 0 } } else { arm_expectation(t.tp) })
+    parse_block(e, vars, other!, "else", if then_empty || t.tp is TyNever { ir::TyUnknown { n: 0 } } else { arm_expectation(t.tp) })
   };
   truncate_nonzero(vars, dz);
+  // `@FR-C-Never`: a then arm that never finishes answers nothing, so it takes the else's type
+  // (`true_type = false_type`, its block re-typed).
+  if t.tp is TyNever && !(f.tp is TyNever) && !(f.tp is TyNull) {
+    t = ex(block_typed(t.code, f.tp), f.tp);
+  }
   vars.present = vars.present[0..dp];
+  vars.present_exprs = vars.present_exprs[0..dj];
   // `@FR-Col-Cons` (loft#2407): an arm answering an untyped `[]` beside a vector arm is that
   // vector's empty literal, built once the other arm is read.
   if then_empty && el_types::base(f.tp) is TyVector {
@@ -10890,6 +10968,38 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   if ven >= 0 && !el_types::is_equal(e, t.tp, f.tp) && (variant_parent(e, f.tp) == ven || el_types::struct_enum_def(f.tp) == ven) {
     t = ex(t.code, ir::TyEnum { n: ven, is_ref: true, dep: el_types::deps(t.tp) });
     f = ex(f.code, ir::TyEnum { n: ven, is_ref: true, dep: el_types::deps(f.tp) });
+  }
+  // An else that never finishes leaves the then arm's type (`merge_dependencies`).  A statement
+  // `if` with a void then arm drops the else's value; a then arm's value beside a void else is
+  // the join's, which the statement drops.  `(N-Join)`: `τ` beside `τ?` joins to `τ?`.
+  if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) {
+    if f.tp is TyNever {
+      return ex(el_ir::v_if(c.code, t.code, f.code), t.tp);
+    }
+    if t.tp is TyVoid {
+      match f.code {
+        NdBlock { block } => {
+          eb = block[0];
+          if len(eb.operators) > 0 && !(el_ir::unspan(eb.operators[-1]) is NdDrop) {
+            eb.operators[-1] = el_ir::respan(eb.operators[-1], ir::NdDrop { inner: el_ir::unspan(eb.operators[-1]) });
+          }
+          return ex(el_ir::v_if(c.code, t.code, ir::NdBlock { block: [eb] }), ir::TyVoid);
+        },
+        _ => {}
+      }
+    }
+    if f.tp is TyVoid && !(t.tp is TyNull) {
+      return ex(el_ir::v_if(c.code, t.code, f.code), t.tp);
+    }
+    if (t.tp is TyOptional || f.tp is TyOptional) && scalar(el_types::base(t.tp)) && el_types::is_equal(e, el_types::without_deps(el_types::base(t.tp)), el_types::without_deps(el_types::base(f.tp))) {
+      ds = el_types::deps(t.tp);
+      for x in el_types::deps(f.tp) {
+        if !ds.contains(x) {
+          ds += [x];
+        }
+      }
+      return ex(el_ir::v_if(c.code, t.code, f.code), ir::TyOptional { inner: el_types::with_deps(el_types::base(t.tp), ds) });
+    }
   }
   if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) {
     el::refuse(e, "`if` arms of different types: {type_kind(t.tp)}, {type_kind(f.tp)}");
@@ -11117,6 +11227,48 @@ fn retail(code: ir::Node, tail: ir::Node?, t: ir::TypeT) -> ir::Node? {
 
 // `Parser::arm_expectation`: what the else arm is read against — a plain integer as the
 // default integer, a sized one as nothing in particular, anything else as itself.
+// `void_dropped_statement_arms`: the arms of a branch in statement position, each voided.
+fn void_dropped_arms(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: void_dropped_arms(inner) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: void_arm(t), f: void_arm(f) },
+    _ => n
+  }
+}
+
+// `void_statement_arm`: an arm discards its value in the body and in the type alike.
+fn void_arm(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: void_arm(inner) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: void_arm(t), f: void_arm(f) },
+    NdBlock { block } => {
+      b = block[0];
+      rt = b.result[0] ?? ir::TyVoid;
+      if el_types::base(rt) is TyVoid || el_types::base(rt) is TyNever {
+        return n;
+      }
+      if len(b.operators) > 0 && !(el_ir::unspan(b.operators[-1]) is NdDrop) {
+        b.operators[-1] = ir::NdDrop { inner: b.operators[-1] };
+      }
+      b.result = [ir::TyVoid];
+      ir::NdBlock { block: [b] }
+    },
+    _ => n
+  }
+}
+
+// A block arm re-typed as `t` (its result), any other node as it is.
+fn block_typed(n: ir::Node, t: ir::TypeT) -> ir::Node {
+  match n {
+    NdBlock { block } => {
+      b = block[0];
+      b.result = [t];
+      ir::NdBlock { block: [b] }
+    },
+    _ => n
+  }
+}
+
 fn arm_expectation(t: ir::TypeT) -> ir::TypeT {
   match t {
     TyInteger { spec } => if spec.forced_size == 0 { ir::TyInteger { spec: i32_spec() } } else { ir::TyUnknown { n: 0 } },
