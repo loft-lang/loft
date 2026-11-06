@@ -60,7 +60,7 @@
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-file-system.html">File</a></span> {
   <span class="kw">pub</span> path: <span class="ty"><a href="stdlib-types.html">text</a></span>,
 
-  <span class="kw">pub</span> size: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  <span class="kw">pub</span> size: <span class="ty"><a href="stdlib-types.html">i64</a></span>,
 
   <span class="cm">// A fresh File reads as `NotExists` until `file()` has determined the real format for</span>
   <span class="cm">// the path, so this default is a placeholder rather than a claim about the path — it is</span>
@@ -69,9 +69,9 @@
 
   ref: <span class="ty"><a href="stdlib-types.html">i32</a></span>?,
 
-  current: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  current: <span class="ty"><a href="stdlib-types.html">i64</a></span>,
 
-  next: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  next: <span class="ty"><a href="stdlib-types.html">i64</a></span>,
 }</code></pre>
 <p>A handle to a filesystem entry. Fields: path (full path), size (file size in bytes), format (open mode), current (byte position after last read), next (byte position to read next).</p>
 </div>

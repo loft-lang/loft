@@ -27,13 +27,13 @@
 <pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-json.html">JsonValue</a></span> {
   <span class="en">JNull</span>,
   <span class="en">JBool</span> { value: <span class="ty"><a href="stdlib-types.html">boolean</a></span> },
-  <span class="en">JNumber</span> { value: <span class="ty"><a href="stdlib-types.html">float</a></span> },
+  <span class="en">JNumber</span> { value: f64 },
   <span class="en">JString</span> { value: <span class="ty"><a href="stdlib-types.html">text</a></span> },
   <span class="en">JArray</span> { <span class="kw">pub</span> items: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonValue</a></span>&gt; },
   <span class="en">JObject</span> { <span class="kw">pub</span> fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonField</a></span>&gt; },
-  <span class="en">JInteger</span> { value: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">JInteger</span> { value: <span class="ty"><a href="stdlib-types.html">i64</a></span> },
 }</code></pre>
-<p>Typed union of JSON values.  The discriminant (1..7) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus <code>JInteger</code> for an integer-shaped number preserved to an exact <code>integer</code> (i64).</p>
+<p>Typed union of JSON values.  The discriminant (1..7) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus <code>JInteger</code> for an integer-shaped number preserved to an exact <code>integer</code> (i64). Both numbers keep the wire format's width in every build: RFC 8259 numbers are doubles, and the parser writes them at 8 bytes.</p>
 <p><code>JInteger</code> MUST stay the LAST variant: the store discriminant it gets (7) is hard-coded as <code>JV_DISCR_INT</code> in <code>src/native.rs</code>, and the existing variants' discriminants (1–6) must not shift.</p>
 </div>
 <div class="item">

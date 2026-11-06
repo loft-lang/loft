@@ -8043,18 +8043,6 @@ pub type f64 = float
 The 64-bit `float`, spelled so that it stays a double in a file under the 32-bit regime (`\#width 32`), where a plain `float` is a `single`.  Elsewhere it is `float`.
 
 ```rust
-pub type word = integer
-```
-
-The operand of a 64-bit machine operation: what the `Op…` declarations below bind an operator to, one per machine width.  `integer` as the standard library has always meant it, named so that it keeps that meaning when the library is built under the 32-bit regime (\@PLN217), where a plain `integer` is an `i32`.
-
-```rust
-pub type fword = float
-```
-
-The 64-bit `float` an `Op…` declaration computes in, named as `word` is.
-
-```rust
 pub enum Ordering {
   Less,
   Equal,
@@ -9065,7 +9053,7 @@ True when the result is `FileResult.Ok`. Use to test a file op for success.
 pub struct File {
   pub path: text,
 
-  pub size: integer,
+  pub size: i64,
 
   // A fresh File reads as `NotExists` until `file()` has determined the real format for
   // the path, so this default is a placeholder rather than a claim about the path — it is
@@ -9074,9 +9062,9 @@ pub struct File {
 
   ref: i32?,
 
-  current: integer,
+  current: i64,
 
-  next: integer,
+  next: i64,
 }
 ```
 
@@ -9715,8 +9703,8 @@ pub enum ArgValue {
   NullVal,
   BoolVal { b: boolean },
   IntVal { pub n: integer },
-  LongVal { pub n: integer },
-  FloatVal { f: float },
+  LongVal { pub n: i64 },
+  FloatVal { f: f64 },
   SingleVal { f: single },
   CharVal { c: character },
   TextVal { pub t: text },
@@ -9786,15 +9774,15 @@ Lifecycle state of a coroutine frame. Transitions: Created -\> Running -\> Suspe
 pub enum JsonValue {
   JNull,
   JBool { value: boolean },
-  JNumber { value: float },
+  JNumber { value: f64 },
   JString { value: text },
   JArray { pub items: vector<JsonValue> },
   JObject { pub fields: vector<JsonField> },
-  JInteger { value: integer },
+  JInteger { value: i64 },
 }
 ```
 
-Typed union of JSON values.  The discriminant (1..7) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus `JInteger` for an integer-shaped number preserved to an exact `integer` (i64).
+Typed union of JSON values.  The discriminant (1..7) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus `JInteger` for an integer-shaped number preserved to an exact `integer` (i64). Both numbers keep the wire format's width in every build: RFC 8259 numbers are doubles, and the parser writes them at 8 bytes.
 `JInteger` MUST stay the LAST variant: the store discriminant it gets (7) is hard-coded as `JV\_DISCR\_INT` in `src/native.rs`, and the existing variants' discriminants (1–6) must not shift.
 
 ```rust
