@@ -20,21 +20,18 @@ struct Node { v: integer, next: Node? }
 /// (height about 3 ln n), never the chain a progression of keys would build.
 fn key(i: integer, salt: integer) -> integer { ((i * 1103515245 + 12345 + salt * 7919) % 2147483648) % 100000 }
 
-/// Insert `k` below `t` through a `&` link re-pointed down the out-of-line children (a plain
-/// `cur = t` would bind a COPY); false when the key is present.
+/// Insert `k` below `t`; false when the key is present.  A `&` link walks to the empty field
+/// the key belongs in, and a whole write through it fills that field.
 fn insert(t: Tree, k: integer) -> boolean {
-  cur = &t;
-  while true {
+  if k == t.k { return false; }
+  cur = &t.right;
+  if k < t.k { cur = &t.left; }
+  while cur != null {
     if k == cur.k { return false; }
-    if k < cur.k {
-      if cur.left == null { cur.left = Tree { k: k, left: null, right: null }; return true; }
-      cur = &cur.left;
-    } else {
-      if cur.right == null { cur.right = Tree { k: k, left: null, right: null }; return true; }
-      cur = &cur.right;
-    }
+    if k < cur.k { cur = &cur.left; } else { cur = &cur.right; }
   }
-  false
+  cur = Tree { k: k, left: null, right: null };
+  true
 }
 
 fn find(t: Tree, k: integer) -> boolean {
@@ -75,56 +72,27 @@ fn build(total: integer, salt: integer) -> Tree {
   t
 }
 
-/// Remove the leftmost node below `p` (`p.left` is present) and answer its key: a FIELD write
-/// on a shared heap parameter, the record reached by recursion down the left spine.
-fn take_min(p: Tree) -> integer {
-  if p.left.left == null {
-    k = p.left.k!;
-    p.left = p.left.right;
-    return k;
-  }
-  take_min(p.left!)
-}
-
-/// Unlink the child of `p` on `left_side` (never the root): its key taken from its successor
-/// when it has two children, the successor unlinked in its place; otherwise its child takes its
-/// place.  Every change is a FIELD write (loft#2433: a whole-value write through a link to an
-/// out-of-line child is not carried yet).
-fn unlink(p: Tree, left_side: boolean) {
-  c = &p.left;
-  if !left_side { c = &p.right; }
-  if c.left != null && c.right != null {
-    if c.right.left == null {
-      c.k = c.right.k!;
-      c.right = c.right.right;
-    } else {
-      c.k = take_min(c.right!);
-    }
-    return;
-  }
-  has_left = c.left != null;
-  if left_side {
-    p.left = if has_left { p.left.left } else { p.left.right };
-  } else {
-    p.right = if has_left { p.right.left } else { p.right.right };
-  }
-}
-
-/// Delete `k` below the root `t` (the root itself is never asked for); true when found.
+/// Delete `k` below the root `t` (the root itself is never asked for); true when found.  A `&`
+/// link walks to the field that holds the node; a node with two children takes its successor's
+/// key and a second link unlinks the successor, any other node is replaced by its one child.
 fn remove_key(t: Tree, k: integer) -> boolean {
-  cur = &t;
-  while true {
-    if k < cur.k {
-      if cur.left == null { return false; }
-      if cur.left.k == k { unlink(cur, true); return true; }
-      cur = &cur.left;
-    } else {
-      if cur.right == null { return false; }
-      if cur.right.k == k { unlink(cur, false); return true; }
-      cur = &cur.right;
-    }
+  cur = &t.right;
+  if k < t.k { cur = &t.left; }
+  while cur != null && cur.k != k {
+    if k < cur.k { cur = &cur.left; } else { cur = &cur.right; }
   }
-  false
+  if cur == null { return false; }
+  if cur.left != null && cur.right != null {
+    m = &cur.right;
+    while m.left != null { m = &m.left; }
+    cur.k = m.k!;
+    m = m.right;
+  } else if cur.left != null {
+    cur = cur.left;
+  } else {
+    cur = cur.right;
+  }
+  true
 }
 
 fn tree_insert(total: integer, salt: integer) -> integer {
