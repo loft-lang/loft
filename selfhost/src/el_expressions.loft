@@ -3344,9 +3344,9 @@ fn captured_name(e: el::El, vars: el_vars::Vars, n: integer, own: vector<text>) 
   ""
 }
 
-// A tuple literal whose members are scalars or texts (`(T-Cons)`): a stack tuple, typed by its
-// members.  A member that is a record, a collection, nullable or null — the shapes Rust rewrites
-// into a `__tuple<…>` record or types otherwise — is refused by name.
+// A tuple literal whose members are scalars, texts, record or vector locals (copied) or struct
+// literals (`(T-Cons)`): a stack tuple, typed by its members.  Any other member — nullable,
+// null, a call's record — is refused by name.
 fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
   items: vector<ir::Node> = [];
   tps: vector<ir::TypeT> = [];
@@ -3364,6 +3364,13 @@ fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
       }
       items += [c!.code];
       tps += [c!.tp];
+      continue;
+    }
+    // A struct literal member is the record it builds in a work ref of its own; the member is
+    // typed as the bare record (`(T-Cons)` names no store).
+    if struct_literal_def(e, n) >= 0 && el_types::unrewritten(x.tp) is TyReference {
+      items += [x.code];
+      tps += [el_types::without_deps(el_types::unrewritten(x.tp))];
       continue;
     }
     if !(is_scalar(x.tp) || x.tp is TyText) {
