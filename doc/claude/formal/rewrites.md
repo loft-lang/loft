@@ -2936,7 +2936,7 @@ local-root and format clauses from the same decision (`opt::text_borrow`,
 variable's slot holds a `Str` (`Function::holds_str`), every bind puts the bound `Str` whole —
 the empty literal's too, since a view is never cleared and appended to — and its release emits
 nothing.  The tested and call clauses keep the copy.  Every reader of a text slot's layout asks
-`holds_str`, including the release of a halted frame's texts (loft#2432).  On the probe
+`holds_str`, including the release of a halted frame's texts.  On the probe
 (a record parameter's field bound to a local): 62 784 → 51 344 instructions an iteration,
 −18.2 %.  Switch `LOFT_NO_TEXT_BORROW` (both backends).  Cell
 `loft-suite/rules/rewrites/R-TextBorrow/a-borrowed-text-rebound-takes-each-bind-whole.loft`

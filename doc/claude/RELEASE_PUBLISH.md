@@ -290,7 +290,7 @@ exempt, because it is not a `loft package`, and the weekly `repro-build.yml` cov
   `scripts/repro-flags.sh` passes `/Brepro` and `/DEBUG:NONE` on a Windows host.  A Windows
   bundle ships no PDB.  With `/Brepro` the TimeDateStamp is a hash of the image, so a stamp
   that differs means other bytes differ too.  An occasional Windows rebuild orders two `.data`
-  objects differently from the others ([loft#2431](https://github.com/loft-lang/loft/issues/2431)).
+  objects differently from the others ([loft#2431](https://github.com/loft-lang/loft/issues/2431)). <!-- doc-lint: ok -->
   The linker relinks identical inputs to identical bytes, so the variation is in the object
   files rustc hands it.  `repro-build.yml` therefore has `rust-lld` record the `loft.exe`
   link's inputs (`LLD_REPRODUCE`) and uploads that tarball when the bytes differ.  Diff it
