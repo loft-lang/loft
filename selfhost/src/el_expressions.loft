@@ -267,6 +267,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // now — the signature takes its name; the body keeps its own build.
   renamed_now = false;
   arms_answer = false;
+  view_answer = false;
   ba = attr_nr(el::def(e, e.context), "__retbuf");
   if rb >= 0 && !e.first_pass && ba >= 0 && !el_types::deps(el::def(e, e.context).returned[0]).contains(ba) {
     rename_ret_buffer(e, vars, code, rb);
@@ -277,7 +278,14 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     if delivered != null {
       code = delivered!;
     } else if !e.first_pass {
-      built = build_into_buffer(e, vars, code, rb, result);
+      // A `??` tail viewing parameters alone answers that view (`MergeAttr`), before any
+      // delivery is asked of it.
+      ncc_tail = match body_tail(code) { NdBlock { block } => block[0].name == "ncc", _ => false };
+      built = if ncc_tail { merge_view_call(e, vars, code) } else { null };
+      view_answer = built != null;
+      if built == null {
+        built = build_into_buffer(e, vars, code, rb, result);
+      }
       if built == null && buffer_bound(e) {
         built = bind_tail_call(e, vars, code, rb);
       }
@@ -359,7 +367,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // it — the deps the first pass gave it, in attribute numbering.  So is a template's answering
   // its variable, which takes none of the record delivery (`generic_promote_ok`).
   templated = el::def(e, e.context).def_type == el::DT_GENERIC && el_types::type_var(e, el_types::base(result)) >= 0;
-  if (rb >= 0 && !e.first_pass && el_types::base(result) is TyReference) || templated {
+  if (rb >= 0 && !e.first_pass && el_types::base(result) is TyReference && !view_answer) || templated {
     match code {
       NdBlock { block } => {
         bl = block[0];
@@ -9071,11 +9079,19 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     vars.vars[buf].caller_hidden_buf = true;
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
+    // An argument that is a variable is borrowed itself; any other value lends what its own
+    // type borrows (a literal its store, `resolve_deps`).
     for i in el_types::deps(rp) {
       if i < len(list) {
-        match list[i] {
-          NdVar { n: av } => { ds += [av]; },
-          _ => {}
+        match el_ir::unspan(list[i]) {
+          NdVar { n: av } => { if !ds.contains(av) { ds += [av]; } },
+          _ => {
+            for x in el_types::deps(types[i] ?? ir::TyVoid) {
+              if !ds.contains(x) {
+                ds += [x];
+              }
+            }
+          }
         }
       }
     }
@@ -11871,6 +11887,14 @@ fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node? 
         return null;
       }
     },
+    // A `??` whose join borrows parameters alone (its default's own literal store is no
+    // borrow, `arm_join_type`) answers a view of them too.
+    NdBlock { block } => {
+      if block[0].name != "ncc" {
+        return null;
+      }
+      bl.result = [block[0].result[0] ?? ir::TyVoid];
+    },
     _ => return null
   }
   tp = bl.result[0] ?? ir::TyVoid;
@@ -11887,7 +11911,7 @@ fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node? 
   }
   ret = el::def(e, d).returned[0];
   e.b.data.definitions[d].returned = [el_types::with_deps(ret, attrs)];
-  code
+  ir::NdBlock { block: [bl] }
 }
 
 // `Parser::return_buffer`: the variable of the function's hidden record return buffer, by
