@@ -1368,7 +1368,8 @@ fn written_scalar_params(
 }
 
 /// loft#1899 — the LINK locals of a generator body (`c = &x`, a `&` to a scalar, a text, a
-/// fn-ref, a value enum or a record (loft#2061): the `*mut T` a local link holds), each with
+/// fn-ref, a value enum, a record (loft#2061) or a struct-enum, which is a record as well
+/// (`Type::heap_def_nr`): the `*mut T` a local link holds), each with
 /// its field's name and its Rust pointer type.  A compiler temp is left out: no author's `&` names one.
 /// The field name avoids every name already on the struct.
 fn link_locals(
@@ -1393,7 +1394,7 @@ fn link_locals(
                 | Type::Character
                 | Type::Text(_)
                 | Type::Function(..)
-                | Type::Enum(_, false, _)
+                | Type::Enum(_, _, _)
                 | Type::Reference(..)
         ) {
             continue;
@@ -3260,6 +3261,7 @@ impl Output<'_> {
                 &yield_tp,
                 &persistent,
                 &fields,
+                &links,
                 &tail,
             )?;
         }
@@ -3280,6 +3282,7 @@ impl Output<'_> {
         yield_tp: &Type,
         persistent: &[(u16, Type)],
         fields: &std::collections::HashMap<u16, String>,
+        links: &[(u16, String, String, String)],
         tail: &[Value],
     ) -> std::io::Result<()> {
         let is_text = is_text_slot(yield_tp);
@@ -3608,6 +3611,11 @@ impl Output<'_> {
             let n = &fields[v];
             let init = persistent_default(tp);
             writeln!(w, "        var_{n}: {init},")?;
+        }
+        // The link fields `emit_struct_def` declared, as `emit_factory_fn` initialises them:
+        // the eager body ran with its links as locals, so the struct's are never read.
+        for (_, _, field, _) in links {
+            writeln!(w, "        var_{field}: std::ptr::null_mut(),")?;
         }
         // ForLoopBody: value buffer + index (+ the snapshot store for handles).
         writeln!(w, "        __values,")?;
