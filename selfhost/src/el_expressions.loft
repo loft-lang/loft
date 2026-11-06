@@ -358,9 +358,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     match code {
       NdBlock { block } => {
         bl = block[0];
-        // Where the arms are the answer the body is typed as the `if`, whose borrows are its
-        // first arm's (a literal arm borrows nothing).
-        bl.result = [if arms_answer { el_types::with_deps(result, el_types::deps(first_arm_type(code) ?? result)) } else { result }];
+        // Where the arms are the answer the body is typed as the `if`, which borrows what either
+        // arm does (`joined_deps`; a literal arm borrows nothing).
+        ad = arms_deps(code);
+        bl.result = [if arms_answer { el_types::with_deps(result, ad ?? el_types::deps(result)) } else { result }];
         code = ir::NdBlock { block: [bl] };
       },
       _ => {}
@@ -1652,10 +1653,27 @@ fn field_root(e: el::El, n: ir::Node) -> integer {
 }
 
 // The type of the first arm of the `if` at a body's tail, where that arm is a block.
-fn first_arm_type(code: ir::Node) -> ir::TypeT? {
+// What the arms of a tail `if` borrow, the first arm's deps first: the deps of each arm block's
+// type.  Null where the tail is no `if` of blocks.
+fn arms_deps(code: ir::Node) -> vector<integer>? {
   tail = match code { NdBlock { block } => el_ir::unspan(el_ir::last(block[0].operators)), _ => code };
   match tail {
-    NdIf { cond: _, t, f: _ } => match el_ir::unspan(t) { NdBlock { block } => block[0].result[0], _ => null },
+    NdIf { cond: _, t, f } => {
+      r: vector<integer> = [];
+      for arm in [t, f] {
+        match el_ir::unspan(arm) {
+          NdBlock { block } => {
+            for d in el_types::deps(block[0].result[0]) {
+              if !r.contains(d) {
+                r += [d];
+              }
+            }
+          },
+          _ => return null
+        }
+      }
+      r
+    },
     _ => null
   }
 }
@@ -2617,6 +2635,14 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   // …and takes the declared result's range (`guard_declared_range`), the types equal or not.
   if !e.first_pass && !discharged && context == "return from block" && len(l) > 0 && el_types::base(result) is TyInteger && !el_convert::null_source(e, l[-1]) {
     l = l[..-1] + [el_convert::guard_range(e, l[-1], result, t, result is TyOptional)];
+  }
+  // loft#1368 (`tail_is_borrowing_branch`): a record function whose tail is an `if` answering
+  // two or more of its parameters is bound to a `___ret_join_N` local first — not carried.
+  if !e.first_pass && context == "return from block" && len(l) > 0 && (el_types::base(result) is TyReference || el_types::struct_enum_def(result) >= 0) && el::def(e, e.context).def_type != el::DT_GENERIC {
+    ps: vector<integer> = [];
+    if branch_params(vars, l[-1], ps) && len(ps) > 1 {
+      el::refuse(e, "a record function answering one of several parameters");
+    }
   }
   // P236 (`unify_if_branches_work_refs`): a body's `if` tail over a heap result whose arm
   // terminals are all work references delivers through one of them, wrapped in a `return`.
@@ -3809,6 +3835,24 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if e.p.nodes[rhs!] is SComprehension {
     return comprehension_into(e, vars, v, rhs!);
   }
+  // A struct literal that receives a call (`s = S { n: s.n + 1 }.me()`) is first parsed by
+  // `parse_object` as built in place, its fields that read `s` staged in `__ref_N`s; the
+  // postfix then sends it back to be built apart (loft#1304), and the abandoned attempt's
+  // work refs stay declared — not carried.
+  rcv = rhs!;
+  while e.p.nodes[rcv] is SMember {
+    match e.p.nodes[rcv] {
+      SMember { e: me } => { rcv = me ?? -1; },
+      _ => {}
+    }
+    if rcv < 0 {
+      break;
+    }
+  }
+  if rcv >= 0 && rcv != rhs! && e.p.nodes[rcv] is SStructLit && syntax_names(e, rcv, el_vars::name_of(vars, v)) {
+    el::refuse(e, "a struct literal receiving a call, bound to a local it reads");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   if e.p.nodes[rhs!] is SStructLit {
     // Built in place in the local (`parse_object`): the statement is the build itself, with
     // no `Set` around it.
@@ -4066,6 +4110,15 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     slot = el_vars::tp(vars, v);
     g = el_convert::guard_discharge(e, vars, x.code, slot);
     x.code = g ?? el_convert::guard_range(e, x.code, slot, x.tp, slot is TyOptional);
+  }
+  // A bare `null` written to a `τ?` record, collection or struct-enum local is stored as
+  // `convert_store` stores it: the reference sentinel (`@FR-L-Null`).
+  cur_tp = el_vars::tp(vars, v);
+  if x.tp is TyNull && match cur_tp { TyOptional { inner } => !el_convert::sentinel_value(inner), _ => false } {
+    c = el_convert::convert_store(e, vars, x.code, x.tp, cur_tp);
+    if c != null {
+      x.code = c!;
+    }
   }
   ex(el_ir::v_set(v, x.code), ir::TyVoid)
 }
@@ -5379,10 +5432,11 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   // A local the first pass found borrowing another (`s = me(t)` later) is not built into:
-  // `parse_object` builds its literal in a `__ref_p2_N` instead — not carried.
+  // `parse_object` builds its literal apart, in a `__ref_p2_N`, and binds it.
   if !e.first_pass && !vars.vars[v].argument && len(el_types::deps(vt)) > 0 {
-    el::refuse(e, "a struct literal bound to a local that borrows another");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    el_vars::mark_built(vars, v);
+    o = object_fresh(e, vars, d, fields, ir::TyReference { n: d, dep: [] });
+    return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
   }
   el_vars::mark_built(vars, v);
   ref_mark = vars.work_ref;
@@ -5474,6 +5528,55 @@ fn any_user_call(e: el::El, ops: vector<ir::Node>) -> boolean {
       _ => {}
     }
     if any_user_call(e, el_ir::children(op)) {
+      return true;
+    }
+  }
+  false
+}
+
+// `is_borrowing_branch`'s walk: whether `v` is an `if`, collecting into `out` the parameters its
+// arms (a block's last operator, nested `if`s) answer as bare variables.
+fn branch_params(vars: el_vars::Vars, v: ir::Node, out: vector<integer>) -> boolean {
+  x = el_ir::unspan(v);
+  while x is NdBlock {
+    match x {
+      NdBlock { block } => {
+        if len(block[0].operators) == 0 {
+          return false;
+        }
+        x = el_ir::unspan(el_ir::last(block[0].operators));
+      },
+      _ => {}
+    }
+  }
+  match x {
+    NdIf { cond: _, t, f } => {
+      branch_params(vars, t, out);
+      branch_params(vars, f, out);
+      true
+    },
+    NdVar { n } => {
+      if vars.vars[n]!.argument && !out.contains(n) {
+        out += [n];
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// Does the syntax under `n` read the plain name `name`?
+fn syntax_names(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SName { name: nm, member } => {
+      if member == "" && nm == name {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if syntax_names(e, c, name) {
       return true;
     }
   }
