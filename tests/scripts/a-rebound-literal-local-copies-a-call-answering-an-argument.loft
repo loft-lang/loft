@@ -1,0 +1,122 @@
+// A local that holds a struct literal and is later rebound to a call is built APART, in a
+// construction buffer, because it borrows from the second bind on; the rebind must not free
+// that buffer's store (loft#1522), but it still COPIES a call answer that is an argument's
+// store (`@FR-B-Copy`: a whole-value bind is independent, whoever frees).  Each cell rebinds
+// such a local in a loop and writes through it; `u` and `w` must keep their values, and the
+// local's scope-exit free must not release an argument's store under it.
+// @falsified-at: 369b941cf — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+struct S { v: integer, t: text }
+
+fn par_first(s: S, i: integer) -> S { if i % 2 == 1 { s } else { S { v: i, t: "m{i}" } } }
+fn id(s: S) -> S { s }
+fn either(a: S, b: S, i: integer) -> S { if i % 2 == 1 { a } else { b } }
+fn mk(i: integer) -> S { S { v: i, t: "k{i}" } }
+
+// The callee answers its argument on odd passes and mints on even ones.
+fn one_base_or_minted(u: S) -> integer {
+  tot = 0;
+  for i in 0..4 {
+    x = S { v: 1, t: "x{i}" };
+    tot += x.v;
+    x = par_first(u, i);
+    x.v += 1;
+    tot += x.v;
+  }
+  tot
+}
+
+// The callee always answers its argument.
+fn always_the_argument(u: S) -> integer {
+  tot = 0;
+  for i in 0..4 {
+    x = S { v: 1, t: "x{i}" };
+    tot += x.v;
+    x = id(u);
+    x.v += 1;
+    tot += x.v;
+  }
+  tot
+}
+
+// The callee answers one of two arguments.
+fn one_of_two(u: S, w: S) -> integer {
+  tot = 0;
+  for i in 0..4 {
+    x = S { v: 1, t: "x{i}" };
+    tot += x.v;
+    x = either(u, w, i);
+    x.v += 1;
+    tot += x.v;
+  }
+  tot
+}
+
+// The right-hand side reads the local itself, and may answer it.
+fn reads_itself() -> integer {
+  tot = 0;
+  for i in 0..4 {
+    x = S { v: 7, t: "x{i}" };
+    tot += x.v;
+    x = par_first(x, i);
+    x.v += 1;
+    tot += x.v;
+  }
+  tot
+}
+
+// The callee always mints: adopted, freed once per pass.
+fn always_minted() -> integer {
+  tot = 0;
+  for i in 0..4 {
+    x = S { v: 1, t: "x{i}" };
+    tot += x.v;
+    x = mk(i);
+    x.v += 1;
+    tot += x.v;
+  }
+  tot
+}
+
+// A nullable local, the same storage behind `?`.
+fn nullable_local(u: S) -> integer {
+  tot = 0;
+  for i in 0..4 {
+    x: S? = S { v: 1, t: "x{i}" };
+    tot += x!.v;
+    x = par_first(u, i);
+    x.v += 1;
+    tot += x!.v;
+  }
+  tot
+}
+
+// Through a fn-ref, whose target the bind cannot see.
+fn through_a_fn_ref(u: S) -> integer {
+  f = par_first;
+  tot = 0;
+  for i in 0..4 {
+    x = S { v: 1, t: "x{i}" };
+    tot += x.v;
+    x = f(u, i);
+    x.v += 1;
+    tot += x.v;
+  }
+  tot
+}
+
+// Each pass adds 1 (or 7) for the literal, then the answer's `v + 1`: a minted answer on
+// pass i is `i + 1`, `u`'s is 901 and `w`'s is 51.
+fn main() {
+  u = S { v: 900, t: "u" };
+  w = S { v: 50, t: "w" };
+  assert(one_base_or_minted(u) == 1810, "one base or minted {one_base_or_minted(u)}");
+  assert(always_the_argument(u) == 3608, "always the argument {always_the_argument(u)}");
+  assert(one_of_two(u, w) == 1908, "one of two {one_of_two(u, w)}");
+  assert(reads_itself() == 48, "reads itself {reads_itself()}");
+  assert(always_minted() == 14, "always minted {always_minted()}");
+  assert(nullable_local(u) == 1810, "nullable local {nullable_local(u)}");
+  assert(through_a_fn_ref(u) == 1810, "through a fn-ref {through_a_fn_ref(u)}");
+  assert(u.v == 900 && u.t == "u", "u changed: {u.v} {u.t}");
+  assert(w.v == 50 && w.t == "w", "w changed: {w.v} {w.t}");
+}

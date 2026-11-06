@@ -2778,6 +2778,16 @@ impl State {
             // the allocation), since the local may be holding a VIEW at that moment and an
             // in-place `OpDatabase` would write the copy into the viewed record.
             let witnessed = stack.function.owner_witness(v).is_some();
+            // loft#1522's veto (`rebind_keeps_displaced`) takes the displaced FREE away from a
+            // local that adopted a construction buffer's store — a struct literal built apart
+            // because the local later borrows — and `owned_ref` above is false for it.  It does
+            // not take the COPY away: @FR-B-Copy does not depend on who frees, so the copy arms
+            // below run for it as they do for a witnessed local, and add no free.  Without them
+            // `x = S { … }; x = id(u)` aliased `u`, and the scope-exit free released `u`'s store
+            // while `u` still named it — on the interpreter alone; the C backend copies at every
+            // such bind.  A right-hand side that reads `x` keeps the plain bind: the callee may
+            // answer `x`'s own store, which a copy arm would clear before copying from it.
+            let buffer_kept = !rhs_reads_v && stack.function.rebind_keeps_displaced(v);
             // `@FR-O-Buffer` — the hidden buffer a right-hand-side CALL is handed may come
             // back as the call's result, and a POOLED buffer (`OpClear` on re-entry, one store
             // per site per activation) holds the previous call's record — which is what `v`
@@ -2874,7 +2884,7 @@ impl State {
             // arm (the source-free then frees it) and materialises the borrow arm (the
             // source-free hits the copy; the borrowed arg is intact). A static gate
             // cannot — the source-free is load-bearing for the owned branch.
-            if owned_ref
+            if (owned_ref || buffer_kept)
                 && !s1_substituted
                 && !stash_old_for_post_free
                 // The runtime adopt-vs-copy guard is for a FRESH runtime-Join value
@@ -2899,9 +2909,10 @@ impl State {
             {
                 let tp_nr = stack.data.def(d_nr).known_type();
                 note_bind("R1");
-                // The DISPLACED old store is already released: this branch is reached only
-                // past the plain owned-reassign free above (`owned_ref && !s1_substituted`, not
-                // the stashed post-free), whose witnesses — the entry's, and the hidden buffer
+                // The DISPLACED old store is already released — or, for a `buffer_kept` local,
+                // is the construction buffer's, which that buffer releases: this branch is
+                // reached only past the plain owned-reassign free above (`owned_ref &&
+                // !s1_substituted`, not the stashed post-free), whose witnesses — the entry's, and the hidden buffer
                 // the call is handed (`@FR-O-Buffer`) — keep it off a store `v` shares with
                 // either.  A second, unwitnessed free here released the caller's POOLED buffer
                 // whenever the previous pass adopted the record the callee built into it: the
@@ -2923,7 +2934,7 @@ impl State {
                 self.code_add(tp_nr);
                 return;
             }
-            if (owned_ref || witnessed) && !s1_substituted {
+            if (owned_ref || witnessed || buffer_kept) && !s1_substituted {
                 // when the value is a call whose return is tied to a passed
                 // buffer/param, the callee returns via a hidden __ref_N that is
                 // reused across calls — or a BORROW of a param's store (e.g.
