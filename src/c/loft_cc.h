@@ -205,9 +205,7 @@ static inline int loft_mul_ovf_c99(int64_t a, int64_t b, int64_t *r) {
 
 /* ── Proof sites ──────────────────────────────────────────────────────────────────────── */
 
-/* A fact a rewrite proved, at `site`: nothing in the default modes, checked under LOFT_VERIFY.
- * A plain operator computes through uint64_t, so a wrong proof is a wrong value and never
- * undefined behaviour. */
+/* A fact a rewrite proved, at `site`: nothing in the default modes, checked under LOFT_VERIFY. */
 #if defined(LOFT_VERIFY)
 LOFT_COLD static void loft_proof_failed(const char *site) {
     fprintf(stderr, "loft: a proof the C generator relied on is false at %s\n", site);
@@ -220,9 +218,44 @@ LOFT_COLD static void loft_proof_failed(const char *site) {
 #define LOFT_PROVED(cond, site) ((void) (0 && (cond)))
 #endif
 
-#define LOFT_PLAIN_ADD(a, b, site) ((int64_t) ((uint64_t) (a) + (uint64_t) (b)))
-#define LOFT_PLAIN_SUB(a, b, site) ((int64_t) ((uint64_t) (a) - (uint64_t) (b)))
-#define LOFT_PLAIN_MUL(a, b, site) ((int64_t) ((uint64_t) (a) * (uint64_t) (b)))
+/* `@FR-R-Range`'s plain operators, where the range proof showed the checked operator cannot
+ * fault: the plain SIGNED C operator, which the compiler may reason about (a counted loop's step
+ * through a wrapping or checked form is a loop GCC does not count).  Under LOFT_VERIFY each
+ * checks the proof's claim — no overflow, no division by zero or of INT64_MIN by -1, and a
+ * result that is not the null sentinel, the answers the checked operator gives null for —
+ * and aborts naming its site, the C twin of native's `ops::range_verify`. */
+#if defined(LOFT_VERIFY)
+static inline int64_t loft_plain_ovf(int ovf, int64_t r, const char *site) {
+    if (ovf || r == INT64_MIN) loft_proof_failed(site);
+    return r;
+}
+static inline int64_t loft_plain_add_v(int64_t a, int64_t b, const char *site) {
+    int64_t r; int o = LOFT_ADD_OVF(a, b, &r); return loft_plain_ovf(o, r, site);
+}
+static inline int64_t loft_plain_sub_v(int64_t a, int64_t b, const char *site) {
+    int64_t r; int o = LOFT_SUB_OVF(a, b, &r); return loft_plain_ovf(o, r, site);
+}
+static inline int64_t loft_plain_mul_v(int64_t a, int64_t b, const char *site) {
+    int64_t r; int o = LOFT_MUL_OVF(a, b, &r); return loft_plain_ovf(o, r, site);
+}
+static inline int64_t loft_plain_div_v(int64_t a, int64_t b, int rem, const char *site) {
+    if (b == 0 || (a == INT64_MIN && b == -1)) loft_proof_failed(site);
+    return loft_plain_ovf(0, rem ? a % b : a / b, site);
+}
+#define LOFT_PLAIN_ADD(a, b, site) loft_plain_add_v((a), (b), (site))
+#define LOFT_PLAIN_SUB(a, b, site) loft_plain_sub_v((a), (b), (site))
+#define LOFT_PLAIN_MUL(a, b, site) loft_plain_mul_v((a), (b), (site))
+#define LOFT_PLAIN_DIV(a, b, site) loft_plain_div_v((a), (b), 0, (site))
+#define LOFT_PLAIN_REM(a, b, site) loft_plain_div_v((a), (b), 1, (site))
+#define LOFT_PLAIN_NEG(a, site) loft_plain_sub_v(0, (a), (site))
+#else
+#define LOFT_PLAIN_ADD(a, b, site) ((a) + (b))
+#define LOFT_PLAIN_SUB(a, b, site) ((a) - (b))
+#define LOFT_PLAIN_MUL(a, b, site) ((a) * (b))
+#define LOFT_PLAIN_DIV(a, b, site) ((a) / (b))
+#define LOFT_PLAIN_REM(a, b, site) ((a) % (b))
+#define LOFT_PLAIN_NEG(a, site) (-(a))
+#endif
 
 /* ── Ship sites (@PLN201) ─────────────────────────────────────────────────────────────── */
 

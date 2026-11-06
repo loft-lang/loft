@@ -8029,19 +8029,26 @@ impl<'a> FnWriter<'a> {
         ind: usize,
     ) -> Result<Option<E>, String> {
         crate::rewrite_census::fired("R-Range", 1);
+        // The proof's site, which `-DLOFT_VERIFY` names when the claim is false (`loft_cc.h`).
+        let site = format!("\"R-Range:{}\"", self.cx.data.def(self.d).name());
         if form == "wrapping_neg" {
             let a = self.one(name, args, ind)?;
-            return Ok(Some(E::new(format!("(-({}))", as_int(a)?), K::Int)));
+            return Ok(Some(E::new(
+                format!("LOFT_PLAIN_NEG({}, {site})", as_int(a)?),
+                K::Int,
+            )));
         }
-        let op = match form {
-            "wrapping_add" => "+",
-            "wrapping_sub" => "-",
-            "wrapping_mul" => "*",
-            other => other,
+        let mac = match form {
+            "wrapping_add" => "LOFT_PLAIN_ADD",
+            "wrapping_sub" => "LOFT_PLAIN_SUB",
+            "wrapping_mul" => "LOFT_PLAIN_MUL",
+            "/" => "LOFT_PLAIN_DIV",
+            "%" => "LOFT_PLAIN_REM",
+            other => return Err(format!("range_plain: no C form for `{other}`")),
         };
         let (a, b) = self.two(name, args, ind)?;
         Ok(Some(E::new(
-            format!("(({}) {op} ({}))", as_int(a)?, as_int(b)?),
+            format!("{mac}({}, {}, {site})", as_int(a)?, as_int(b)?),
             K::Int,
         )))
     }
