@@ -588,61 +588,10 @@ impl OpCopyRecordEmitter {
         }
         write!(ctx.w, "}}")
     }
-
-    /// `@C137`'s fresh-field arm (loft#2044) — a record copy into a FIELD of an element the
-    /// literal group is building ([`hoist::CompleteWrites::fresh_fields`]): the destination
-    /// was just created, so a null source leaves it the default of `sub`, which is what the
-    /// prefill writes there.  An element minted without the prefill holds whatever its slot
-    /// held, and the copy's own null arm keeps that for a destination it does not know is
-    /// fresh.  A present source takes the copy as before.
-    ///
-    /// [`hoist::CompleteWrites::fresh_fields`]: super::super::hoist::CompleteWrites::fresh_fields
-    fn fresh_field(ctx: &mut EmitCtx<'_, '_>, args: &[Value], sub: u16) -> io::Result<()> {
-        let [src, dst, tp_val] = args else {
-            return Ok(());
-        };
-        if let Value::Var(v) = src.unspan()
-            && let Some(d) = ctx.output.value_record_locals.get(v).copied()
-            && ctx.output.plan.value_records.types.contains_key(&d)
-        {
-            return Self::materialise_local(ctx, *v, d, dst, tp_val, Some(sub));
-        }
-        // A variable is read twice; anything else is bound once, so a call is not repeated.
-        let bound = !matches!(src.unspan(), Value::Var(_));
-        let from = if bound {
-            write!(ctx.w, "{{ let __ns: DbRef = ")?;
-            ctx.emit(src)?;
-            write!(ctx.w, "; ")?;
-            Value::RawExpr("__ns".to_string())
-        } else {
-            write!(ctx.w, "{{ ")?;
-            src.clone()
-        };
-        write!(ctx.w, "if ")?;
-        ctx.emit(&from)?;
-        write!(
-            ctx.w,
-            ".store_nr == u16::MAX {{ stores.set_default_value({}, &(",
-            ctx.output.type_lit_bare(sub, "u16")
-        )?;
-        ctx.emit(dst)?;
-        write!(ctx.w, ")); }} else {{ ")?;
-        Self::copy(ctx, &[from, dst.clone(), tp_val.clone()])?;
-        write!(ctx.w, " }} }}")
-    }
 }
 
 impl OpEmitter for OpCopyRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        if let Some(sub) = ctx
-            .output
-            .complete_writes
-            .fresh_fields
-            .get(&(args.as_ptr() as usize))
-            .copied()
-        {
-            return Self::fresh_field(ctx, args, sub);
-        }
         Self::copy(ctx, args)
     }
 }

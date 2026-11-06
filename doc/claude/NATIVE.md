@@ -77,15 +77,20 @@ list, which leaves out the debugging aids (`strict-stores`).  `LOFT_NATIVE_RELEA
 `rustc` arguments to the shipped tier and the in-repo performance lanes alike, folded into
 every release cache key: a candidate flag is measured before it joins the list
 (`cache::release_rustc_args`).  Loop alignment joined it that way: it takes the code-layout
-lottery out of a routine's time (the list's own comment has the measurement).  The numbers behind the split, on the drawing pass consumer lane: the lean
-tier alone took `hash` 4.7M → 1.2M ns/op, `hair` −55 %, `wide_line` −32 %, `composite`
-−16 %, `lock` −13 %, `smooth` −19 %; `codegen-units=1` on top −3–5 % broadly and −15–20 %
-on `hash`; opt-level 3 alone and `-C target-cpu=native` moved nothing.  The runtime rlib
-itself stays on cargo's default release profile: rebuilt with one codegen unit it moved
-neither `lock` nor `hash` (its hot accessors are `#[inline]` already), so the cost to
-`make ci`'s build is not paid for a gain that did not appear.  `--lean` remains the way
-to strip the tier from a `--native` build; `--html` keeps its named frames (the browser
-panic hook's frame block is a pinned contract).
+lottery out of a routine's time (the list's own comment has the measurement).  The runtime
+rlib itself stays on cargo's default release profile; the measurements behind the split are in
+[NATIVE-history.md § The optimisation tiers, measured](NATIVE-history.md#the-optimisation-tiers-measured).
+`--lean` remains the way to strip the tier from a `--native` build; `--html` keeps its named
+frames (the browser panic hook's frame block is a pinned contract).
+
+**The semantics tier is an open program; the other two are closed programs (the owner's ruling).**  A
+build that ships the live tier parses the program again at run time and may flip or replace any
+function (`Data::open_world`), so a whole-program rewrite that needs the closed program — one
+that changes a signature, inlines a callee or picks a call target (`@FR-R-ValueRecord`'s IR
+pass, the leaf inliner, the constructor-literal rewrite) — does not apply there, and no writer
+keeps a copy of it for that build: the dynamic build need not be fully optimised.  The
+performance lanes and `--ship` are closed and get every such rewrite.  So a check of such a
+rule runs a closed build (`--lean`): a semantics run never reaches it.
 
 **The tier that does not exist yet (owner, 2026-09-15).**  Every tier above keeps the
 null-sentinel and overflow checks that make an integer fault a reported null rather than

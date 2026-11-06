@@ -20,8 +20,8 @@ range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-KeyedEntry)`, `(R-E
 `(R-LoopBuffer)` (§ Arc C's moves); **arc C′ is next** — those moves brought to ONE place each,
 no writer clause or writer compensation left (§ Arc C′), before any further rule moves; **arc C′
 is closed** (C′1–C′4), with `(R-ElemFirst)`'s view-exit form deferred to the `(R-ValueRecord)`
-view-clause move (§ What arc C′ skips); then `(R-LoopRecord)` moved (§ Arc C's moves),
-`(R-CompleteWrite)` is next.  It
+view-clause move (§ What arc C′ skips); then `(R-LoopRecord)` and `(R-CompleteWrite)` moved (§ Arc C's moves; the latter's design
+in [cw-plan.md](cw-plan.md)), `(R-ValueRecord)`'s view clause is next.  It
 was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
@@ -241,6 +241,12 @@ library, and the sweep reports those as `differ` — C′1's and C′3's sweeps 
 library rebuild (`cargo build --lib`) would rewrite that rlib beneath it, so the next step builds
 the `loft` binary and runs its cells, and the test binaries wait.  One heavy job at a time on the laptop (both at once ran it out of memory).  A
 chunk's cut goes to a PR only once its corpus checks are in.
+
+**A rule that needs the closed program is checked closed.**  A whole-program rewrite that
+changes a signature (`(R-ValueRecord)`'s IR pass) does not run in a semantics build, which is
+an open program (NATIVE.md § Optimisation tiers), and no writer keeps a copy of it there.  Its
+cells, falsifiers and corpus checks therefore run `--lean` on the C and rustc; a plain
+`--native` / `--native-c` run passes without reaching it.
 
 Each phase can go red alone: an emission that changes where the census did not, a guard
 cell, a falsified plant.  A rule whose comparison shows the IR clause admitting FEWER sites
@@ -545,6 +551,27 @@ only — the plain answer stays right by accident); `tests/loop_record.rs` re-pi
 locked_writes, loop_buffer.  On the interpreter: 3 058 → 1 613 instructions a pass of the
 probe, −47.3 %.
 
+**`(R-CompleteWrite)` — moved.**  `src/opt/complete_write.rs`, in `close_program` ahead of
+`opt::loop_record` ([cw-plan.md](cw-plan.md) S0–S4).  The decision is a STORED fact, not an IR
+spelling: `Definition::no_prefill` holds the locals and the mint parent types whose literal
+group writes every field, keyed so a later pass cannot stale it, and it crosses the program
+image (`selfhost/src/ir.loft`, both codecs).  The interpreter's code generator emits the twin
+opcode (`OpDatabaseNP`, `OpNewRecordNP`, new operators); rustc and the C read the fact and lose
+their own computation.  The twins first stood in the IR (S2), which made ~126 later readers of
+`OpDatabase` / `OpNewRecord` decline (the census under it: 40+ rules, `R-RetAdopt` −76,
+`R-Mint` −74, …); the stored fact leaves those readers unchanged.  The fresh-field null arm
+is spelled in the IR instead: the copy is flagged `COPY_FRESH_DEST`, whose null source every
+runtime writes as the type's defaults — S1, which fixed loft#2414 on the way (a vector-literal
+slot's nullable field read 0, not null).  `opt::writes::in_place_copy` admits a fresh-flagged
+copy of a type that owns no heap.  Census: the rule applied by `ir`; rustc and the C counted per
+emitted copy, the IR once per function; emission against the writer-clause binary: no bench
+program writes a prefill it did not (rustc's kept-record mints no-prefill again, its
+`set_default_value` null arms in the flagged copy's runtime arm, the C fewer `loft_fill`).
+Evidence: switch A/B (`LOFT_NO_COMPLETE_WRITE`, 2 917 programs): 0 defects; the C sweep (2 953 programs) 2 584 match plain and under `--poison`, the one differ the attic cell that expects a parse error; the 2414 / 2044 / loop-record cells on the interpreter, the C and rustc in
+both switch states; the pins (`complete_write`, `field_append`, `field_mint`, `group_push`,
+`place_result`, `prefill_image`, `record_push`, `ir_schema_roundtrip`, the codec units).  On
+the interpreter: a push loop of complete literals 3 922 → 3 746 instructions a pass, −4.5 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -614,7 +641,7 @@ function before and not after.
 
 | rule | weight | evidence | verdict |
 |---|--:|---|---|
-| `(R-CompleteWrite)` | 30.9 | the heaviest work rule the interpreter lacks; the skipped prefill cannot be spelled in loft | INTERP-CLAUSE, the first to build; measured on arc C's beside build |
+| `(R-CompleteWrite)` | 30.9 | the heaviest work rule the interpreter lacked; the skipped prefill cannot be spelled in loft | **MOVED** (`opt::complete_write`, arc C's eighth: a stored fact, the twin opcodes; [cw-plan.md](cw-plan.md)) |
 | `(R-TextBorrow)` | 13.7 | `text_borrow` (the parameter-text clause, 16 borrows a pass): 62 800 → 57 791, **−8.0 %**, about 310 instructions per borrowed text | INTERP-CLAUSE (`mark_text_views` widened); the risk is a view outliving its source on an early exit |
 | `(R-FlatCopy)` | 1.1 | a runtime fast path, not spellable | INTERP-CLAUSE, by weight after the two above |
 | `(R-FieldAppend)` | 2.6 | the interpreter's `Stores::record_new` / `record_finish` already apply it (`plain_field_vector`); the census counts only the writers' clause | done — no move |

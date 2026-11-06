@@ -23,15 +23,19 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>random API</h1>
 <article>
-<p><a href="lib-random.html">← random</a> · version 0.3.6</p>
-<p class="lib-legend">7 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
+<p><a href="lib-random.html">← random</a> · version 0.5.1</p>
+<p class="lib-legend">18 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rand</span>(lo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hi: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>?</code></pre>
 <p>Returns a random integer in [lo, hi] (inclusive). Returns null when lo &gt; hi or when either argument is null. Draws from the ONE hidden generator every call site shares — see <code>rand_seed</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rand_seed</span>(seed: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
-<p>Seeds the thread-local random number generator with the given value. Call this before rand() or rand_indices() to get reproducible sequences — but note that it fixes what the GENERATOR produces, not what you receive: it is shared, so one <code>rand()</code> from anywhere else shifts everything after it.  When reproducibility is a requirement rather than a convenience, own a stream.</p>
+<p>Seeds the shared random number generator with the given value. Call this before rand() or rand_indices() to get reproducible sequences — but note that it fixes what the GENERATOR produces, not what you receive: it is shared, so one <code>rand()</code> from anywhere else shifts everything after it.  When reproducibility is a requirement rather than a convenience, own a stream.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rand_below</span>(m: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The next draw of the shared generator reduced modulo m, in [0, m); 0 when m &lt; 1. The step of a shuffle (<code>rand_indices</code>), published so a shuffle of your own draws the same sequence.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rand_indices</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;</code></pre>
@@ -52,6 +56,46 @@
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">indices</span>(self: <span class="en">RandStream</span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;</code></pre>
 <p>A random permutation of [0, 1, ..., n-1] from THIS stream (Fisher-Yates), advancing it by exactly n - 1 draws. Empty when n is 0, negative or null (the same contract as rand_indices()).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Rand32</span> { st: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; }</code></pre>
+<p>An owned 32-bit stream: assigning one copies it, passing one to a function links it, as a <code>RandStream</code> does.  Its state is opaque: sixteen bytes only the C part reads and writes.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seed32</span>(seed: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Rand32</span></code></pre>
+<p>Seed an owned 32-bit stream.  Any seed is valid; equal seeds give equal streams, and different seeds give decorrelated ones (SplitMix64 spreads the seed over the state).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">get32</span>(self: <span class="en">Rand32</span>, lo: <span class="ty"><a href="stdlib-types.html">i32</a></span>, hi: <span class="ty"><a href="stdlib-types.html">i32</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">i32</a></span>?</code></pre>
+<p>A random <code>i32</code> in [lo, hi] (inclusive) from THIS stream, advancing it; null when lo &gt; hi. Unbiased: every value of the range is equally likely.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">bits31</span>(self: <span class="en">Rand32</span>) -&gt; <span class="ty"><a href="stdlib-types.html">i32</a></span></code></pre>
+<p>The next 31 random bits of THIS stream, in [0, 2147483647].</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">unit32</span>(self: <span class="en">Rand32</span>) -&gt; <span class="ty"><a href="stdlib-types.html">single</a></span></code></pre>
+<p>A random <code>single</code> in [0, 1) from THIS stream: 24 random bits, all a single holds.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">indices32</span>(self: <span class="en">Rand32</span>, n: <span class="ty"><a href="stdlib-types.html">i32</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt;</code></pre>
+<p>A random permutation of [0, 1, ..., n-1] from THIS stream (Fisher-Yates), advancing it by exactly n - 1 draws.  Empty when n is 0 or negative.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rand32</span>(lo: <span class="ty"><a href="stdlib-types.html">i32</a></span>, hi: <span class="ty"><a href="stdlib-types.html">i32</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">i32</a></span>?</code></pre>
+<p>A random <code>i32</code> in [lo, hi] from the shared 32-bit generator (seeded with 12345 at startup); null when lo &gt; hi.  Shared like <code>rand</code>: any other call site's draw shifts your sequence.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rand32_seed</span>(seed: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Seed the shared 32-bit generator.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rand32_unit</span>() -&gt; <span class="ty"><a href="stdlib-types.html">single</a></span></code></pre>
+<p>A random <code>single</code> in [0, 1) from the shared 32-bit generator.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seed_hw</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>?</code></pre>
+<p>A seed from the platform's entropy — the hardware random number generator on the Tanmatsu (ESP-IDF), the operating system's elsewhere — for a run that is NOT meant to be reproduced: <code>seed32(seed_hw() ?? 1)</code>.  Null where the platform has no entropy source (the wasm builds).</p>
 </div>
 
   </article>

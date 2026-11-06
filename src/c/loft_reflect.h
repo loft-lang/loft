@@ -47,8 +47,24 @@ static uint32_t loft_rstr(loft_store_t *s, const char *t) {
     return loft_rstr_n(s, t, strlen(t));
 }
 
+/* A width-neutral number of the reflection records, at the build's width: 4 bytes under the
+ * 32-bit regime (`LOFT_STD_INT4`, null INT32_MIN; `LOFT_STD_SINGLE`), 8 outside it. */
 static void loft_rint(loft_store_t *s, uint32_t rec, uint32_t at, int64_t v) {
+#ifdef LOFT_STD_INT4
+    int32_t x = v < INT32_MIN || v > INT32_MAX ? INT32_MIN : (int32_t) v;
+    memcpy(loft_at(s, rec, at), &x, 4);
+#else
     memcpy(loft_at(s, rec, at), &v, 8);
+#endif
+}
+
+static void loft_rflt(loft_store_t *s, uint32_t rec, uint32_t at, double v) {
+#ifdef LOFT_STD_SINGLE
+    float x = (float) v;
+    memcpy(loft_at(s, rec, at), &x, 4);
+#else
+    memcpy(loft_at(s, rec, at), &v, 8);
+#endif
 }
 
 /* A vector of `n` elements of `bytes`, claimed whole, its length written and its handle at
@@ -122,8 +138,7 @@ static loft_ref loft_reflect_field_at(const loft_rlayout *L, const loft_rtype *T
     loft_set_u32(s, out.rec, 4, L->vf_tp);
     *loft_at(s, out.rec, out.pos + L->vf_kind) = kind;
     loft_rint(s, out.rec, out.pos + L->vf_i, 0);
-    double zero = 0.0;
-    memcpy(loft_at(s, out.rec, out.pos + L->vf_f), &zero, 8);
+    loft_rflt(s, out.rec, out.pos + L->vf_f, 0.0);
     loft_set_u32(s, out.rec, out.pos + L->vf_t, 0);
     int is_null = 0;
     if (kind != 14) {
@@ -170,7 +185,7 @@ static loft_ref loft_reflect_field_at(const loft_rlayout *L, const loft_rtype *T
         }
         if (!is_null) {
             loft_rint(s, out.rec, out.pos + L->vf_i, iv);
-            memcpy(loft_at(s, out.rec, out.pos + L->vf_f), &fv, 8);
+            loft_rflt(s, out.rec, out.pos + L->vf_f, fv);
             if (has_t) loft_set_u32(s, out.rec, out.pos + L->vf_t, loft_rstr_n(s, tv.p ? tv.p : "", tv.len));
         }
         loft_text_free(&tv);

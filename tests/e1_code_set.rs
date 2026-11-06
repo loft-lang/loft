@@ -44,12 +44,13 @@ const CODES: &[(&str, &str)] = &[
     // The two API-design advices (@FR-R-Escape): per-call work a `pub` contract forces on
     // every caller and no rewrite can share — a parameter's collection answered by copy, and
     // a heap-owning intermediate built from the parameter and discarded after one value.
-    // @PLN130 F8 — a view of a field, the owner reassigned while the view is still read.
+    // @PLN130 F8 — a view of a field, the owner reassigned while the view is still written
+    // through (a view only READ after the copy reads the same bytes, and is not reported).
     (
         "view-copied",
         "struct B { n: integer }\nstruct H { b: B, t: integer }\n\
          fn main() { h = H { b: B { n: 3 }, t: 1 }; w = h.b; h = H { b: B { n: 4 }, t: 2 }; \
-         print(\"{w.n} {h.b.n}\"); }",
+         w.n = 5; print(\"{w.n} {h.b.n}\"); }",
     ),
     (
         "api-copies-collection",

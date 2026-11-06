@@ -43,6 +43,7 @@ fn emit_src(cells: &str, tag: &str, env: &[(&str, &str)]) -> String {
     let status = loft(
         &[
             "--native-rust",
+            "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
             "--native-emit",
             out.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -183,6 +184,7 @@ fn the_declines_are_the_designed_ones() {
     let out = loft(
         &[
             "--native-rust",
+            "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
             "--native-emit",
             loft::platform::null_sink(),
             src.to_str().unwrap(),

@@ -62,7 +62,7 @@ optimisation that relied on the unwrapped shape.
 
 | sites a `Span` hides the shape from — must not grow |
 |---:|
-| **26** |
+| **27** |
 
 `python3 scripts/ir_walker_audit.py unspan` reports it; `quality_unspan_table_matches_the_audit`
 holds this row.  Origin: [QUALITY-history.md § B4f](QUALITY-history.md).

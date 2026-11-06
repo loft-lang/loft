@@ -40,7 +40,10 @@ const MARK: &str = "V-z element minted";
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> (String, HashMap<String, (usize, usize)>) {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--native-rust")
+    // `--lean`: the CLOSED program, where the value records the view-exit pairs ride on run
+    // (NATIVE.md § Optimisation tiers).
+    cmd.arg("--lean")
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -185,14 +188,24 @@ fn a_parameter_collection_and_a_call_take_the_element_first_build() {
             .unwrap_or_else(|| panic!("{name} was not emitted"));
         assert_eq!(g, *mints, "{name}: elements minted at a declaration site");
     }
-    // The joined arms: the else-arm's element is the one minted at the declaration.
+    let body = |func: &str| {
+        let start = rust
+            .0
+            .find(&format!("fn {func}("))
+            .unwrap_or_else(|| panic!("{func} is not in the emission"));
+        let rest = &rust.0[start..];
+        rest[..rest[1..].find("\nfn ").map_or(rest.len(), |e| e + 1)].to_owned()
+    };
+    // The joined arms build into ONE element, minted at the declaration (the IR's pass).
+    let g16 = body("n_g16");
     assert!(
-        rust.0.contains("var__elm_2 = var__elm_1; //@PLN164 E-2b"),
-        "g16's second arm aliases the early element"
+        g16.contains("let mut var__elm_1: DbRef = stores.field_vector_append")
+            && !g16.contains("var__elm_2"),
+        "g16's arms share the early element:\n{g16}"
     );
     // The call is handed the element's field as its buffer.
     assert!(
-        rust.0.contains("= n_mkpts(cell, var_n, DbRef { store_nr: var__elm_1.store_nr, rec: var__elm_1.rec, pos: var__elm_1.pos + 24 });"),
+        body("n_g1").contains("= n_mkpts(cell, var_n, {{ let _v_v1 = (var__elm_1); DbRef {store_nr: _v_v1.store_nr, rec: _v_v1.rec, pos: _v_v1.pos + (24_i64) as u32} }});"),
         "g1's call builds into the element"
     );
     let _ = fa::remove_file(&out);

@@ -22,7 +22,7 @@ impl Parser {
     /// `use` keeps it.  The `#width` line is consumed; any other `#` line is left in place.
     pub(crate) fn width_header(&mut self) {
         let src = self.data.source;
-        if src != crate::data::STD_SOURCE && !self.width_decided.contains(&src) {
+        if !self.width_decided.contains(&src) {
             self.width_decided.insert(src);
             self.data.set_width32(src, crate::keys::width32_all());
         }
@@ -179,6 +179,45 @@ impl Parser {
         } else {
             to
         })
+    }
+
+    /// The type a file under the regime means by `name`: a plain `integer` is an `i32` and a
+    /// plain `float` a `single`; `integer limit(…)` names its own range, and a standard-library
+    /// type definition or runtime binding (`machine_types`) its machine width.  Anything else,
+    /// and every name outside the regime, is `name` itself.
+    pub(crate) fn width32_name<'a>(&self, name: &'a str) -> &'a str {
+        if !self.data.width32() || self.machine_types {
+            return name;
+        }
+        match name {
+            "integer"
+                if !matches!(&self.lexer.peek().has,
+                    crate::lexer::LexItem::Identifier(n) if n == "limit") =>
+            {
+                "i32"
+            }
+            "float" => "single",
+            other => other,
+        }
+    }
+
+    /// @PLN217 — does the function whose signature begins here end in `;`, a binding to the
+    /// runtime with no loft body?  Looks ahead to the first `;` or `{` and comes back.
+    pub(crate) fn body_less_ahead(&mut self) -> bool {
+        let back = self.lexer.link();
+        let found = loop {
+            if self.lexer.peek_token(";") {
+                break true;
+            }
+            if self.lexer.peek_token("{")
+                || matches!(self.lexer.peek().has, crate::lexer::LexItem::None)
+            {
+                break false;
+            }
+            self.lexer.cont();
+        };
+        self.lexer.revert(back);
+        found
     }
 
     /// A function answering how many elements, characters or bytes something holds.

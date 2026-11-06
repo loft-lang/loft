@@ -1264,3 +1264,49 @@ fn a_hidden_directory_in_a_library_is_not_loaded() {
         "a file under a hidden directory must not load"
     );
 }
+
+/// A construction written AHEAD of its own file's `struct W` compiles even when another
+/// `use`d library declares a PRIVATE `W`.  Pass 1 meets the construction before the file's
+/// declaration, so the name is unresolved there; the private-type refusal (#271) fired on
+/// that pass and named the other library's `W`, a type the program never meant.  Both
+/// import orders (the defect needed the private library loaded first), both backends, and
+/// the control: a library that declares no `W` of its own is still refused.
+// @falsified-at: 369b941cf — installed main refused the `ab` order (`ba` printed 7 18); here both print 7 18
+#[test]
+fn a_forward_construction_is_not_refused_for_another_librarys_private_type() {
+    let s = sep_str();
+    let libs = format!("tests{s}lib");
+    let run = |backend: &str, main: &str| {
+        loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+            "CARGO_BIN_EXE_loft"
+        )))
+        .arg(backend)
+        .arg("--lib")
+        .arg(&libs)
+        .arg(format!("tests{s}lib{s}{main}"))
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "180")
+        .output()
+        .expect("failed to invoke the loft binary")
+    };
+    for backend in ["--interpret", "--native-c"] {
+        for main in ["fwdpriv_ab_main.loft", "fwdpriv_ba_main.loft"] {
+            let out = run(backend, main);
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            // 7 from the private library's own `W`; 11 + 2 + 0 + 5 from the forward ones.
+            assert_eq!(
+                stdout.trim(),
+                "7 18",
+                "{backend} {main}: each library builds its own `W`; stderr {stderr:?}"
+            );
+        }
+    }
+    let out = run("--interpret", "fwdpriv_ac_main.loft");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.matches("type 'W' is private").count(),
+        1,
+        "a construction of another library's private type is refused, once: {stderr:?}"
+    );
+}

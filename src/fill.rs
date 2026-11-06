@@ -285,6 +285,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     vec_end_jump::<false>,
     null_reported::<false>,
     tag_v_c_jump::<false>,
+    new_record_n_p::<false>,
     cast_text_from_bool::<false>,
     range_default::<false>,
     narrow32::<false>,
@@ -377,6 +378,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     coroutine_exhausted::<false>,
     coroutine_retain::<false>,
     set_child_rec::<false>,
+    database_n_p::<false>,
 ];
 
 /// [`OPERATORS`] with the direct stack path compiled in (`@FR-R-FastTable`): valid
@@ -639,6 +641,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     vec_end_jump::<true>,
     null_reported::<true>,
     tag_v_c_jump::<true>,
+    new_record_n_p::<true>,
     cast_text_from_bool::<true>,
     range_default::<true>,
     narrow32::<true>,
@@ -731,6 +734,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     coroutine_exhausted::<true>,
     coroutine_retain::<true>,
     set_child_rec::<true>,
+    database_n_p::<true>,
 ];
 
 /// [`OPERATORS_FAST`] with the bytecode position and the stack top passed in and
@@ -993,6 +997,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     vec_end_jump_r,
     null_reported_r,
     tag_v_c_jump_r,
+    new_record_n_p_r,
     cast_text_from_bool_r,
     range_default_r,
     narrow32_r,
@@ -1085,6 +1090,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     coroutine_exhausted_r,
     coroutine_retain_r,
     set_child_rec_r,
+    database_n_p_r,
 ];
 
 // The slot names and class sizes these tables are laid out by: `op_layout`.
@@ -6851,6 +6857,28 @@ fn set_child_rec<const F: bool>(s: &mut State) {
 fn set_child_rec_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     set_child_rec::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn database_n_p<const F: bool>(s: &mut State) {
+    s.database_n_p();
+}
+
+fn database_n_p_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    database_n_p::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn new_record_n_p<const F: bool>(s: &mut State) {
+    s.new_record_n_p();
+}
+
+fn new_record_n_p_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    new_record_n_p::<true>(s);
     s.regs_out()
 }
 

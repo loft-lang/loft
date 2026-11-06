@@ -17,6 +17,8 @@
 /// active variant; variant data lives in the variant's fields.
 /// Matches the RFC 8259 kinds, plus `JInteger` for an
 /// integer-shaped number preserved to an exact `integer` (i64).
+/// Both numbers keep the wire format's width in every build:
+/// RFC 8259 numbers are doubles, and the parser writes them at 8 bytes.
 ///
 /// `JInteger` MUST stay the LAST variant: the store discriminant it
 /// gets (7) is hard-coded as `JV_DISCR_INT` in `src/native.rs`, and the
@@ -24,11 +26,11 @@
 pub enum JsonValue {
   JNull,
   JBool { value: boolean },
-  JNumber { value: float },
+  JNumber { value: f64 },
   JString { value: text },
   JArray { pub items: vector<JsonValue> },
   JObject { pub fields: vector<JsonField> },
-  JInteger { value: integer },
+  JInteger { value: i64 },
 }
 
 /// One field of a `JObject`.  A `JObject` keeps its fields as a

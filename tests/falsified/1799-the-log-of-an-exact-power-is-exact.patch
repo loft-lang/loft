@@ -1,8 +1,8 @@
 diff --git a/default/01_code.loft b/default/01_code.loft
-index ff87f9a40..041921d67 100644
+index bcad6981b..cdd88af86 100644
 --- a/default/01_code.loft
 +++ b/default/01_code.loft
-@@ -474,11 +474,9 @@ pub fn sqrt(self: single) -> single? {
+@@ -502,11 +502,9 @@ pub fn sqrt(self: single) -> single? {
  }
  #pure
  
@@ -15,23 +15,23 @@ index ff87f9a40..041921d67 100644
  /// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
  /// Use instead of atan when you have separate x/y components.
  pub fn atan2(self: single, v2: single) -> single {
-@@ -628,10 +626,8 @@ pub fn sqrt(self: float) -> float? {
+@@ -667,10 +665,8 @@ pub fn sqrt(self: f64) -> f64? {
  }
  #pure
  
 -// `log` in base 10 or 2 takes the dedicated routine: `x.log(b)` is a ratio of natural
 -// logarithms, which can miss an exact power by one unit in the last place (loft#1799).
- fn OpMathFunc2Float(fn_id: const i8, v1: float, v2: float) -> float;
+ fn OpMathFunc2Float(fn_id: const i8, v1: __fword, v2: __fword) -> __fword;
 -#rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => {{ let __b = @v2; if __b.to_bits() == 10.0_f64.to_bits() {{ @v1.log10() }} else if __b.to_bits() == 2.0_f64.to_bits() {{ @v1.log2() }} else {{ @v1.log(__b) }} }}, _ => f64::NAN }}"
 +#rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => @v1.log(@v2), _ => f64::NAN }}"
  /// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
  /// Use instead of atan when you have separate x/y components.
- pub fn atan2(self: float, v2: float) -> float {
+ pub fn atan2(self: f64, v2: f64) -> f64 {
 diff --git a/src/fill.rs b/src/fill.rs
-index 915a6921a..59e92dc22 100644
+index 6c760d3ad..a8914d071 100644
 --- a/src/fill.rs
 +++ b/src/fill.rs
-@@ -2733,16 +2733,7 @@ fn math_func2_single<const F: bool>(s: &mut State) {
+@@ -2409,16 +2409,7 @@ fn math_func2_single<const F: bool>(s: &mut State) {
      let v_v1 = s.get_stack_m::<F, f32>();
      let new_value = match v_fn_id {
          0 => v_v1.atan2(v_v2),
@@ -49,7 +49,7 @@ index 915a6921a..59e92dc22 100644
          _ => f32::NAN,
      };
      s.put_stack_m::<F, _>(new_value);
-@@ -3002,16 +2993,7 @@ fn math_func2_float<const F: bool>(s: &mut State) {
+@@ -2692,16 +2683,7 @@ fn math_func2_float<const F: bool>(s: &mut State) {
      let v_v1 = s.get_stack_m::<F, f64>();
      let new_value = match v_fn_id {
          0 => v_v1.atan2(v_v2),

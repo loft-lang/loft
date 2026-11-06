@@ -1630,10 +1630,14 @@ impl State {
             stack.add_op("OpCoroutineReturn", self);
             self.code_add(yield_size);
         } else {
+            // The returned value's type for the debug dumps — a tuple the IR's value records
+            // made (`src/value_record.rs`) has no registered `__tuple<…>` definition to name it.
             if return_type != &Type::Void {
                 let ret_nr = stack.data.type_def_nr(return_type);
-                let known = stack.data.def(ret_nr).known_type();
-                self.types.insert(self.code_pos, known);
+                if ret_nr != u32::MAX {
+                    let known = stack.data.def(ret_nr).known_type();
+                    self.types.insert(self.code_pos, known);
+                }
             }
             stack.add_op("OpReturn", self);
             self.code_add(self.arguments);
@@ -2774,6 +2778,20 @@ impl State {
             // the allocation), since the local may be holding a VIEW at that moment and an
             // in-place `OpDatabase` would write the copy into the viewed record.
             let witnessed = stack.function.owner_witness(v).is_some();
+            // loft#1522's veto (`rebind_keeps_displaced`) takes the displaced FREE away from an
+            // owner that adopted a construction buffer's store — a struct literal built apart
+            // because the local later borrows — and `owned_ref` above is false for it.  A VIEW
+            // can carry the veto too (one path of `e = v[i]?` adopts a work ref) and is no owner:
+            // its slot names the viewed record, which a copy arm would mint over.  It does
+            // not take the COPY away: @FR-B-Copy does not depend on who frees, so the copy arms
+            // below run for it as they do for a witnessed local, and add no free.  Without them
+            // `x = S { … }; x = id(u)` aliased `u`, and the scope-exit free released `u`'s store
+            // while `u` still named it — on the interpreter alone; the C backend copies at every
+            // such bind.  A right-hand side that reads `x` keeps the plain bind: the callee may
+            // answer `x`'s own store, which a copy arm would clear before copying from it.
+            let buffer_kept = !rhs_reads_v
+                && stack.function.rebind_keeps_displaced(v)
+                && stack.function.owns_its_binding(v, value, stack.data);
             // `@FR-O-Buffer` — the hidden buffer a right-hand-side CALL is handed may come
             // back as the call's result, and a POOLED buffer (`OpClear` on re-entry, one store
             // per site per activation) holds the previous call's record — which is what `v`
@@ -2870,7 +2888,7 @@ impl State {
             // arm (the source-free then frees it) and materialises the borrow arm (the
             // source-free hits the copy; the borrowed arg is intact). A static gate
             // cannot — the source-free is load-bearing for the owned branch.
-            if owned_ref
+            if (owned_ref || buffer_kept)
                 && !s1_substituted
                 && !stash_old_for_post_free
                 // The runtime adopt-vs-copy guard is for a FRESH runtime-Join value
@@ -2895,9 +2913,10 @@ impl State {
             {
                 let tp_nr = stack.data.def(d_nr).known_type();
                 note_bind("R1");
-                // The DISPLACED old store is already released: this branch is reached only
-                // past the plain owned-reassign free above (`owned_ref && !s1_substituted`, not
-                // the stashed post-free), whose witnesses — the entry's, and the hidden buffer
+                // The DISPLACED old store is already released — or, for a `buffer_kept` local,
+                // is the construction buffer's, which that buffer releases: this branch is
+                // reached only past the plain owned-reassign free above (`owned_ref &&
+                // !s1_substituted`, not the stashed post-free), whose witnesses — the entry's, and the hidden buffer
                 // the call is handed (`@FR-O-Buffer`) — keep it off a store `v` shares with
                 // either.  A second, unwitnessed free here released the caller's POOLED buffer
                 // whenever the previous pass adopted the record the callee built into it: the
@@ -2919,7 +2938,7 @@ impl State {
                 self.code_add(tp_nr);
                 return;
             }
-            if (owned_ref || witnessed) && !s1_substituted {
+            if (owned_ref || witnessed || buffer_kept) && !s1_substituted {
                 // when the value is a call whose return is tied to a passed
                 // buffer/param, the callee returns via a hidden __ref_N that is
                 // reused across calls — or a BORROW of a param's store (e.g.
@@ -2987,7 +3006,7 @@ impl State {
                     self.code_add(stack.var_pos(v));
                     self.code_add(tp_nr);
                     if stash_old_for_post_free {
-                        self.free_stashed(stack, v, entry_w);
+                        self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
                     crate::copy_manifest::record(
                         stack.def_nr,
@@ -3320,7 +3339,7 @@ impl State {
                         // #330 epilogue: free the stashed old store unless
                         // the assignment kept it (witness = v's NEW DbRef;
                         // same store → no-op).
-                        self.free_stashed(stack, v, entry_w);
+                        self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
                     // @PLN130 — REASSIGNMENT from a call.  A lift temp inside an expression
                     // (`__lift_N = file(path)`) is compiled here, not through any first-bind
@@ -3392,7 +3411,7 @@ impl State {
                         // #330 epilogue: free the stashed old store unless
                         // the assignment kept it (witness = v's NEW DbRef;
                         // same store → no-op).
-                        self.free_stashed(stack, v, entry_w);
+                        self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
                     return;
                 }
@@ -3428,7 +3447,7 @@ impl State {
                     note_bind("R2d");
                     self.gen_set_first_ref_elem_copy(stack, v, value, d_nr);
                     if stash_old_for_post_free {
-                        self.free_stashed(stack, v, entry_w);
+                        self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
                     return;
                 }
@@ -3437,7 +3456,7 @@ impl State {
             self.set_var(stack, v, value);
             if stash_old_for_post_free {
                 // #330 epilogue (fall-through path): see above.
-                self.free_stashed(stack, v, entry_w);
+                self.free_stashed(stack, v, entry_w, buffer_witness);
             }
         } else {
             // First allocation — slot pre-assigned by assign_slots.
@@ -3587,10 +3606,17 @@ impl State {
     /// Free the store `v` held before its assignment, stashed on the stack, unless `v` now
     /// holds that same store — and, for a promoted return buffer, unless it is the store the
     /// caller handed in (`entry`, `@FR-O-Buffer`).
-    fn free_stashed(&mut self, stack: &mut Stack, v: u16, entry: Option<u16>) {
+    fn free_stashed(&mut self, stack: &mut Stack, v: u16, entry: Option<u16>, buffer: Option<u16>) {
         self.push_var_ref(stack, v);
-        if let Some(entry) = entry {
-            self.push_var_ref(stack, entry);
+        // `@FR-O-Buffer` — the call's hidden buffer is a witness of this free as it is of the
+        // pre-`Set` one: a POOLED buffer comes back as the call's result whenever the callee
+        // builds into it, so the stashed store is the buffer itself on the pass after such a
+        // result.  A nullable local takes this post-free (`nullable_local` above), and without
+        // the witness `m = s.capture(p)` released the caller's pooled buffer on the first miss
+        // after a hit; the next hit then built into a freed store.  The op has one keep-slot
+        // beside the new value, and a local with an entry witness keeps it for that witness.
+        if let Some(keep) = entry.or(buffer) {
+            self.push_var_ref(stack, keep);
             stack.add_op("OpFreeRefUnlessEntry", self);
         } else {
             stack.add_op("OpFreeRefIfDistinct", self);
@@ -5119,6 +5145,9 @@ impl State {
                 None
             };
             let actual_op = stack_variant.map_or(op, |n| stack.data.def_nr(n));
+            // `@FR-R-CompleteWrite` — the mint the front decided needs no prefill
+            // (`Definition::no_prefill`, `opt::complete_write`) runs as its no-prefill twin.
+            let actual_op = no_prefill_twin(stack, actual_op, parameters).unwrap_or(actual_op);
             let before_stack = stack.position;
             self.remember_stack(stack.position);
             let code = self.code_pos;
@@ -7571,4 +7600,29 @@ fn bind_trace_write(line: &str) {
     {
         let _ = writeln!(f, "{line}");
     }
+}
+
+/// `@FR-R-CompleteWrite` — the no-prefill twin of a mint the front decided writes every field
+/// (`Definition::no_prefill`): `OpDatabase(v, …)` of a listed local, `OpNewRecord(…, ptp, …)` of
+/// a listed parent type.  `None` for any other call.
+fn no_prefill_twin(stack: &Stack, op: u32, parameters: &[Value]) -> Option<u32> {
+    let fact = &stack.data.def(stack.def_nr).no_prefill;
+    if fact.is_empty() {
+        return None;
+    }
+    let twin = match stack.data.def(op).name() {
+        "OpDatabase" => match parameters.first().map(Value::unspan) {
+            Some(Value::Var(v)) if fact.locals.contains(v) => "OpDatabaseNP",
+            _ => return None,
+        },
+        "OpNewRecord" => match parameters.get(1).map(Value::unspan) {
+            Some(Value::Int(t)) if u16::try_from(*t).is_ok_and(|t| fact.mints.contains(&t)) => {
+                "OpNewRecordNP"
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let nr = stack.data.def_nr(twin);
+    (nr != u32::MAX).then_some(nr)
 }

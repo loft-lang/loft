@@ -4,8 +4,9 @@
 //! `@FR-R-Escape` — the two API-design advices: which `pub` functions they name and, as
 //! importantly, which they leave alone.  A shape a rewrite still reaches, a no-heap
 //! intermediate, a stdlib producer, an answered intermediate, a private function, a producer
-//! answering a view of its parameter, an intermediate built from a loop variable, one read only in
-//! a condition and a function answering nothing are the negatives; the switch silences both.
+//! answering a view of its parameter, an intermediate built from a loop variable, one read only
+//! in a condition, a workspace the reader writes and a function answering nothing are the
+//! negatives; the switch silences both.
 
 use loft::file_access as fa;
 use std::path::PathBuf;
@@ -40,11 +41,15 @@ pub fn print_op(frame: vector<integer>) { println(decode(frame).op) }
 fn decode_at(frame: vector<integer>, k: integer) -> Decoded { Decoded { op: "op{frame[k] ?? 0}", fields: [k] } }
 pub fn all_ops(frame: vector<integer>) -> text { t = ""; for k in 0..len(frame) { t += decode_at(frame, k).op; } t }
 pub fn has_fields(frame: vector<integer>, k: integer) -> integer { if len(decode(frame).fields) > 1 { k } else { 0 } }
+struct Memo { ops: vector<integer>, seen: vector<integer> }
+fn fresh(ops: vector<integer>) -> Memo { Memo { ops: ops, seen: [] } }
+fn classify(m: Memo, d: integer) -> integer { m.seen += [d]; len(m.seen) + len(m.ops) }
+pub fn class_of(ops: vector<integer>, d: integer) -> integer { classify(fresh(ops), d) }
 fn main() {
   d = Doc { buf: [1, 2, 3], pieces: [Piece { start: 0, count: 3 }], title: "t" };
   println("{len(pieces(d))} {len(d.buffer())} {len(kept(d))} {len(pieces_private(d))} {len(starts(d))} {req_op([7])} {req_n([7])} {area(d)} {first_word("a b")} {len(drop_first(d).pieces)} {decoded([1]).op}");
   sh = Shelf { items: [decode([4])] };
-  println("{entry_op(sh, 0)} {all_ops([5, 6])} {has_fields([9], 2)}");
+  println("{entry_op(sh, 0)} {all_ops([5, 6])} {has_fields([9], 2)} {class_of([1], 3)}");
   print_op([8]);
 }
 "#;
@@ -112,6 +117,9 @@ fn the_two_shapes_are_named_and_the_negatives_stay_silent() {
         "print_op",
         "all_ops",
         "has_fields",
+        // A reader that writes the intermediate is handed a workspace (a memo it fills), not
+        // a record whose fields a caller would keep.
+        "class_of",
     ] {
         assert!(
             !got.iter().any(|(_, n)| n == silent),

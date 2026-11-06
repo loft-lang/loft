@@ -110,7 +110,10 @@ const CHAIN_EXPECTED: &[(&str, bool)] = &[
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--native-rust")
+    // `--lean`: the CLOSED program — `(R-ValueRecord)` is a whole-program rewrite, and an open
+    // build (one that ships the live tier) takes none (NATIVE.md § Optimisation tiers).
+    cmd.arg("--lean")
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -304,12 +307,15 @@ fn each_chain_cell_returns_by_value_exactly_where_predicted() {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    // The chain's assignment lands in the phantom, declared at its tuple's zero and bound
-    // from the callee's tuple call — no buffer argument, no mint, no copy.
+    // The chain's assignment lands in the phantom, declared at the null tuple (the IR's
+    // value-record pass, in SCHEMA order) and bound from the callee's tuple call — no buffer
+    // argument, no mint, no copy.
     for name in ["n_read_uint", "n_pick"] {
         let body = body_of(name);
         assert!(
-            body.contains("let mut var___ref_1: (bool, i64, f64) = Default::default();"),
+            body.contains(
+                "let mut var___ref_1: (i64, f64, u8) = (-9223372036854775808_i64, f64::NAN,"
+            ),
             "{name} declares its phantom as the tuple"
         );
         assert!(
@@ -336,15 +342,15 @@ fn each_chain_cell_returns_by_value_exactly_where_predicted() {
     // The promoted local IS the phantom: read field-wise off the tuple, returned whole.
     let body = body_of("n_at_width");
     assert!(
-        body.contains("let mut var_n: (bool, i64, f64) = Default::default();")
+        body.contains("let mut var_n: (i64, f64, u8) = (-9223372036854775808_i64, f64::NAN,")
             && body.contains("var_n = n_read_num8(cell, ")
-            && body.contains("var_n.0"),
+            && body.contains("var_n.2"),
         "n_at_width's promoted local is its tuple"
     );
     // An `Object` that returns what it builds: the tuple first, then the return.
     let body = body_of("n_read_colour_pair");
     assert!(
-        body.contains("let __obj = (") && body.contains("return __obj"),
+        body.contains("return (var__vf_"),
         "n_read_colour_pair's early returns are tuples returned from their own block"
     );
     assert!(
@@ -408,7 +414,14 @@ fn tuple_type(rust: &str, name: &str) -> Option<String> {
         .unwrap_or_else(|| panic!("{name} was not emitted"));
     let ret = line.split("->").nth(1)?.trim_start();
     ret.starts_with('(')
-        .then(|| ret.split(" {").next().unwrap_or(ret).trim().to_string())
+        .then(|| bool_word(ret.split(" {").next().unwrap_or(ret).trim()))
+}
+
+/// A boolean tuple element spelled as `bool`: the IR's value records (`src/value_record.rs`)
+/// emit it as `u8`, the writers' own as `bool` — the pins are about the tuple's SHAPE.  No
+/// cell here carries a `u8` field.
+fn bool_word(t: &str) -> String {
+    t.replace("u8", "bool")
 }
 
 #[test]
@@ -528,7 +541,7 @@ fn signature(rust: &str, name: &str) -> String {
         .lines()
         .find(|l| l.starts_with(&format!("fn {name}(")))
         .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let sig = line.split(" {").next().unwrap_or(line);
+    let sig = bool_word(line.split(" {").next().unwrap_or(line));
     sig.replace("cell: &std::cell::UnsafeCell<Stores>, ", "")
         .replace("mut var_", "")
         .replacen(&format!("fn {name}"), "", 1)
@@ -579,7 +592,11 @@ fn a_nullable_record_parameter_crosses_as_its_fields_and_presence_word() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(PARAM_CELLS);
     let rust = emit(&src, &out, &[]);
     for (name, want) in PARAM_EXPECTED {
-        assert_eq!(signature(&rust, name), *want, "{name}: its signature");
+        assert_eq!(
+            signature(&rust, name),
+            bool_word(want),
+            "{name}: its signature"
+        );
     }
     // A record argument is read with whether it is there, and `null` is the absent tuple.
     assert!(
@@ -613,7 +630,10 @@ const STORE_EXPECTED: &[(&str, &str)] = &[
     // DECLINED since 932209dc4: its tail joins the parameter with a build (loft#2014)
     ("n_w4", "(p: (i64, bool), c: u8) -> (i64, bool)"),
     // DECLINED since 932209dc4 (loft#2014)
-    ("n_w5", "(p: (i64, bool), n: i64) -> (i64, bool)"),
+    // the record form while `(N-Store)`'s presence-carrying parameters are the writers' own
+    // (@PLN211 c4-view S2): the IR takes `id12`'s result but not its returned parameter, so
+    // `id12(g(1))` hands `g`'s record on and the writers no longer read `g(11)` as a leaf
+    ("n_w5", "(p: DbRef, n: i64, __retbuf: DbRef) -> DbRef"),
     ("n_w6", "(p: (i64, bool), c: u8) -> (i64, bool)"),
     ("n_id7", "(p: (i64, bool)) -> (i64, bool)"),
     ("n_twice", "(p: (i64, bool)) -> (i64, bool)"),
@@ -631,7 +651,8 @@ const STORE_EXPECTED: &[(&str, &str)] = &[
     ("n_add2", "(p: (i64, bool), q: (i64, bool)) -> i64"),
     ("n_w12", "(c: u8) -> (i64, bool)"),
     // Control: a build is surely present, so its maker keeps the dense tuple.
-    ("n_g", "(n: i64) -> (i64,)"),
+    // the same cause as w5: `id12(g(1))` hands `g`'s record on
+    ("n_g", "(n: i64, __retbuf: DbRef) -> DbRef"),
 ];
 
 #[test]
@@ -640,12 +661,19 @@ fn a_dense_slot_that_can_reach_a_nullable_carries_its_presence() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(STORE_CELLS);
     let rust = emit(&src, &out, &[]);
     for (name, want) in STORE_EXPECTED {
-        assert_eq!(signature(&rust, name), *want, "{name}: its signature");
+        assert_eq!(
+            signature(&rust, name),
+            bool_word(want),
+            "{name}: its signature"
+        );
     }
     // The one dense tuple that is widened with the constant word is a surely present one —
     // the lifted result of a build's maker — and a `null` argument is the absent tuple.
     assert!(
-        rust.contains("n_id2(cell, { let __wd = var___lift_1; (__wd.0, true) })"),
+        // the record's own presence while `g` is the writers' record (see w5 above)
+        rust.contains("n_id2(cell, { let __wd = ")
+            && (rust.contains("(__wd.0, true) })")
+                || rust.contains("(__wd.0, (var___lift_1).rec != 0) })")),
         "a build's maker is widened where it is handed on"
     );
     assert!(

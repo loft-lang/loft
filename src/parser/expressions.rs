@@ -1934,7 +1934,7 @@ use a separate collection or add after the loop"
         if op != "=" && matches!(f_type.peel_link(), Type::Vector(..)) {
             return;
         }
-        let Some(place) = self.vars.loop_source_written(to) else {
+        let Some((place, innermost)) = self.vars.loop_source_written(to) else {
             return;
         };
         let root = lhs_base_var(&place, &self.data);
@@ -1961,8 +1961,41 @@ use a separate collection or add after the loop"
         } else {
             format!("a field of `{name}`")
         };
-        diagnostic!(
+        // Held to the end of the statement: a write the loop leaves right after (a `return`,
+        // or a `break` of the loop that read the place) runs no further round, so nothing
+        // computes differently and the notice would only be noise (`settle_loop_write`).
+        self.settle_loop_write();
+        self.pending_loop_write = Some((
+            self.lexer.report_position(),
+            what,
+            innermost,
+            self.block_path.len(),
+        ));
+    }
+
+    /// Raise the held `loop-source-written` notice — unless the statement that follows the
+    /// write leaves the loop before another round: a `return`, or a `break` out of the loop
+    /// whose source the write changed.  Asked where a block's next statement starts, so a
+    /// block that ends after the write (its loop body going round again) raises it — but only
+    /// by the block that holds the writing statement or one around it: a block INSIDE the
+    /// write (a comprehension's body on its right-hand side) is not what follows it.
+    pub(crate) fn settle_loop_write(&mut self) {
+        if self
+            .pending_loop_write
+            .as_ref()
+            .is_some_and(|p| self.block_path.len() > p.3)
+        {
+            return;
+        }
+        let Some((at, what, innermost, _)) = self.pending_loop_write.take() else {
+            return;
+        };
+        if self.lexer.peek_token("return") || (innermost && self.lexer.peek_token("break")) {
+            return;
+        }
+        diagnostic_at!(
             self.lexer,
+            &at,
             Level::Warning,
             code = "loop-source-written",
             "the loop read {what} once, before its first round, so this write does not change \

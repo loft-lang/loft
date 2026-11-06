@@ -133,7 +133,11 @@ impl FnWriter<'_> {
         let mut extra = Vec::new();
         for (i, x) in extras.iter().enumerate() {
             let e = self.expr(x, ind)?;
-            extra.push(as_shape(e, shapes.get(i).copied().unwrap_or(CType::Int))?);
+            extra.push(as_shape(
+                self.cx,
+                e,
+                shapes.get(i).copied().unwrap_or(CType::Int),
+            )?);
         }
         let WorkerCall {
             args: call_args,
@@ -522,7 +526,10 @@ impl FnWriter<'_> {
         // A vector result's buffer is minted per row (a record result mints its own from null).
         let mut vec_buffers = Vec::new();
         let mut visible = 0;
-        for a in def.attributes() {
+        // A tuple row the worker takes by pointer (`Cx::vr_ptr_params`) goes as the address of
+        // its compound literal.
+        let by_ptr = cx.vr_ptr_params(d);
+        for (i, a) in def.attributes().iter().enumerate() {
             if a.hidden {
                 match a.typedef.base() {
                     Type::RefVar(t) if matches!(t.base(), Type::Text(_)) => {
@@ -559,8 +566,15 @@ impl FnWriter<'_> {
                     CType::Bool | CType::Enum => format!("(uint8_t) {bits}"),
                     // A function row is its definition number.
                     CType::Fn => format!("loft_fn_of((int64_t) (uint32_t) {bits})"),
-                    CType::Tuple(_) => stored_value(cx, "loft_e", a.typedef.base())
-                        .ok_or("a par worker over rows of tuples holding references")?,
+                    CType::Tuple(_) => {
+                        let x = stored_value(cx, "loft_e", a.typedef.base())
+                            .ok_or("a par worker over rows of tuples holding references")?;
+                        if by_ptr.contains(&i) {
+                            format!("&{x}")
+                        } else {
+                            x
+                        }
+                    }
                     CType::Tr(_) | CType::TrVec => {
                         return Err("a par worker over transient rows".into());
                     }

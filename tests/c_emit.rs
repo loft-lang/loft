@@ -4721,7 +4721,7 @@ impl Crossed {
 
 /// The owner's acceptance for the image (@PLN200 B5 step (e)): a store file written by any
 /// backend is read by every backend — the interpreter, the C, and `--native` where `rustc` is
-/// on PATH — and each reader renders the same data.  The C's image is also the interpreter's,
+/// on PATH — and each reader renders the same data.  The C's and rustc's images are the interpreter's,
 /// byte for byte (a fixed hash seed; the sidecar's slot line names each writer's own scratch).
 #[test]
 fn a_store_image_crosses_every_backend() {
@@ -4761,6 +4761,13 @@ fn a_store_image_crosses_every_backend() {
             read(format!("interpret.{suffix}")),
             "the C's {suffix} image is the interpreter's"
         );
+        if backends.contains(&"native") {
+            assert_eq!(
+                read(format!("native.{suffix}")),
+                read(format!("interpret.{suffix}")),
+                "rustc's {suffix} image is the interpreter's"
+            );
+        }
         let sidecar = |w: &str| -> String {
             String::from_utf8_lossy(&read(format!("{w}.{suffix}.dschema")))
                 .lines()
@@ -4910,6 +4917,13 @@ small true 20 len=1 verify=true
             read("interpret"),
             "the C's .{suffix} image is the interpreter's"
         );
+        if x.backends.contains(&"native") {
+            assert_eq!(
+                read("native"),
+                read("interpret"),
+                "rustc's .{suffix} image is the interpreter's"
+            );
+        }
     }
 }
 

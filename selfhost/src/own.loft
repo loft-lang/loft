@@ -1689,6 +1689,11 @@ pub fn return_ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer) -> Own {
   return_ownership(b, new_state(ops), d_nr)
 }
 
+// `use_analysis::return_ownership` of definition `d_nr` as the bundle holds it now.
+pub fn return_ownership_now(b: ir::Bundle, d_nr: integer) -> Own {
+  return_ownership(b, new_state(ops_of(b)), d_nr)
+}
+
 // src/use_analysis.rs:4955 fn text_return_orphan_risk: the risk kind when text function `d_nr`
 // hands owned text back by value — a frame-local text local, or a tail or early return the
 // oracle finds owned or a view or join of something other than an argument — and no hidden

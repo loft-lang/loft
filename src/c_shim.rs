@@ -29,6 +29,20 @@ use crate::platform::process::{Program, Spawn};
 /// one "delete this to force a rebuild" answer covers both.
 const OUT_DIR: &str = "native-auto";
 
+/// @PLN217 — `loft_width.h`: the build's width for C that meets loft (`loft_int`,
+/// `loft_float`), put beside every shim loft compiles.
+pub const LOFT_WIDTH_H: &str = include_str!("c/loft_width.h");
+
+/// Write `loft_width.h` into `dir`, so a shim's `#include "loft_width.h"` finds it there; a
+/// 32-bit build (`--width 32`) also defines `LOFT_WIDTH32` for it.
+///
+/// # Errors
+/// When the header cannot be written.
+pub(crate) fn put_width_header(dir: &std::path::Path) -> Result<(), String> {
+    crate::file_access::write(dir.join("loft_width.h"), LOFT_WIDTH_H)
+        .map_err(|e| format!("cannot write loft_width.h: {e}"))
+}
+
 /// Build (or reuse) the shim for `pkg_dir` from `sources`, returning the shared
 /// library's path.
 ///
@@ -75,6 +89,11 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     let mut cmd = Spawn::new(Program::os(cc_program()));
     // `@C158`: these fixed flags are a shim's only ones — a package declares none.
     cmd.push_arg("-O2").push_arg("-fPIC").push_arg("-shared");
+    put_width_header(&stage)?;
+    cmd.push_arg("-I").push_arg(&stage);
+    if crate::keys::width32_all() {
+        cmd.push_arg("-DLOFT_WIDTH32");
+    }
     // A shim must not drag its COMPILER's runtime along. A MinGW `cc` links
     // `libgcc_s_seh-1.dll` (and `libwinpthread-1.dll`) by default, so the shim
     // loads only where MinGW's `bin` is on PATH — which the build machine has and
@@ -244,6 +263,11 @@ fn identity(
     // different `cc` is a different artifact, and reusing one across a toolchain
     // change is how a stale ABI survives an upgrade.
     hasher.update(cc_identity().as_bytes());
+    // @PLN217 — a 32-bit build compiles the same source to other code (`loft_width.h`); a
+    // 64-bit build's identity, and so its archive's name, stays what it was.
+    if crate::keys::width32_all() {
+        hasher.update(b"w32");
+    }
     let digest = hasher.finalize();
     let key = u64::from_le_bytes(digest[..8].try_into().unwrap_or([0; 8]));
     Ok((
@@ -300,6 +324,7 @@ fn archive_with(
     // static link sees no archive or a complete one.
     let stage = out_dir.join(format!(".stage-a.{}", std::process::id()));
     crate::file_access::create_dir_all(&stage).map_err(|e| format!("cannot create {e}"))?;
+    put_width_header(&stage)?;
     let fail = |msg: String| {
         let _ = crate::file_access::remove_dir_all(&stage);
         Err(msg)
@@ -333,7 +358,7 @@ fn archive_with(
                     if i >= paths.len() {
                         break;
                     }
-                    let why = match tools.compile(cc, &paths[i], &objects[i]).run(b"") {
+                    let why = match tools.compile(cc, &paths[i], &objects[i], &stage).run(b"") {
                         Ok(o) if o.status.success() => continue,
                         Ok(o) => format!("did not compile.\n{}", said(&o)),
                         Err(e) => format!(
@@ -586,6 +611,7 @@ pub fn wasm_objects(
         ("stdlib.h", WASM_STDLIB_H),
         ("stdio.h", WASM_STDIO_H),
         ("loft_wasm_libc.c", WASM_LIBC),
+        ("loft_width.h", LOFT_WIDTH_H),
     ] {
         if let Err(e) = crate::file_access::write(include.join(name), text) {
             return fail(format!("cannot write {name}: {e}"));
@@ -604,6 +630,9 @@ pub fn wasm_objects(
         let mut cmd = Spawn::new(Program::os(&cc));
         if browser {
             cmd.push_arg("-DLOFT_BROWSER");
+        }
+        if crate::keys::width32_all() {
+            cmd.push_arg("-DLOFT_WIDTH32");
         }
         let run = cmd
             .arg("--target=wasm32-unknown-unknown")

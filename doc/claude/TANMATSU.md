@@ -22,8 +22,11 @@ device.  How to add another device is in [HARDWARE_BACKENDS.md](HARDWARE_BACKEND
 | Random numbers | A hardware random source (`esp_fill_random`) | `random::seed_hw()` |
 
 The board support package is `badgeteam/badge-bsp`, from the ESP component registry
-(`bsp/audio.h`, `bsp/input.h`, `bsp/display.h`).  The Tanmatsu app template
-(`Nicolai-Electronics/tanmatsu-template`) names the version an app uses.
+(`bsp/audio.h`, `bsp/input.h`, `bsp/display.h`).  loft pins 2.0.0, the version the launcher
+runs (`src/esp_app.rs`): it drives the boards' second display panel (SW39480800PN03-01-1,
+through `mipi_dsi_abstraction` 2.0), and its own code is 1.6.4's, so the start-up steps
+`loft_esp.h` runs one by one are the same.  Against 1.6.4 on ESP-IDF v6.0.3 the display starts
+as fast and a 192x176 frame at scale 2 takes 30 us more (11.31 ms); the app is 1.2 KB larger.
 
 **The BSP owns the differences between hardware batches.**  Boards from different batches can
 carry a different part that needs its own start-up code, a display panel for example.  Nicolai
@@ -257,6 +260,57 @@ between them (about half a second, the state carried in a file), and behaviour h
 Not measured yet: how long entering an area takes (decoding its sheets and sounds), and how much
 PSRAM one area needs.
 
+## The radio, the network and the launcher's settings
+
+**The radio chip.**  The ESP32-C6 runs `Nicolai-Electronics/tanmatsu-radio`, a fork of Espressif's
+esp-hosted-mcu, and talks to the P4 over SDIO.  The C6 does the radio work: Wi-Fi and its WPA
+handshake, the Bluetooth controller, 802.15.4, LoRa (an SX126x on the C6, reached through
+`tanmatsu-lora`) and infrared transmit (`tanmatsu-infrared`, NEC codes).  TCP/IP, TLS and
+WebSocket run on the P4, and so does the Bluetooth host (NimBLE).  esp-hosted's "network split", which gives the C6
+a TCP/IP stack of its own, is off in the Tanmatsu build (`ESP_HOSTED_NETWORK_SPLIT_ENABLED`).  The
+launcher checks the radio firmware's version by exact match and offers to replace one it does not
+expect, so a radio firmware reaches every Tanmatsu only through the launcher.
+
+**Wi-Fi is configured once, in the launcher.**  The launcher stores networks with `wifi-manager` in
+the NVS namespace `wifi` (up to 255 slots: SSID, password, and identity and username for enterprise
+networks).  An app shares that NVS partition (`nvs` at `0x19000`) and joins with the launcher's
+sequence: `wifi_remote_initialize()` (`tanmatsu-wifi`), `wifi_connection_init_stack()`, then
+`wifi_connect_try_all()`.
+
+**The launcher's settings are the device's settings.**  `tanmatsu-settings` keeps them in the NVS
+namespace `system`; an app reads them through the same component and writes none of them:
+
+| Keys in `system` | What |
+|---|---|
+| `disp.brightness`, `kb.brightness`, `led.brightness`, `speaker.volume`, `hp.volume` | the owner's brightness and volume |
+| `timezone`, `tz` (a POSIX rule: `setenv("TZ")` + `tzset()`), `ntp` | the clock |
+| `owner.nickname`, `owner.bday.day`, `owner.bday.mon`, `owner.theme` | the owner |
+| `lora.freq`, `.sf`, `.bandwidth`, `.codingrate`, `.power`, `.offset`, `.autooffset`, `.ldro` | the LoRa parameters the launcher sends to the radio |
+| `repo.server`, `repo.baseuri`, `fw.patch`, `fw.welcome` | the app store and the launcher's own state |
+
+The launcher also keeps `app_fav`, `app_usage`, `appfs`, `plugins` and one `plugin_<slug>` namespace
+per launcher plugin.  The radio chip has an NVS of its own: its board revision and country, and
+ESP-IDF's cached Wi-Fi state.  An app's own saved data belongs in a file in the FAT area, not in NVS.
+
+**The network on the device.**  `web`, `server` and `ssh` do not run on the Tanmatsu yet.  The C
+runtime compiles its sockets out under `ESP_PLATFORM` (`loft_cc.h` defines no `LOFT_POSIX_HOST`
+there), and their natives are bound to the build machine's `libloft_net.so`, so a call stops the
+program at run time.  The socket layer itself builds against ESP-IDF's lwIP with two changes:
+`<sys/poll.h>` for `<poll.h>`, and a stand-in for `gai_strerror`.  The way there, Wi-Fi validation
+included: [@PLN213](https://github.com/loft-lang/plans/issues/213).
+
+## Processors
+
+| Processor | What runs there |
+|---|---|
+| P4, two fast cores | the loft program, its libraries' C, the `audio` mix task (not pinned to a core) and, with networking, TCP/IP and TLS |
+| P4, low-power core | nothing of loft's |
+| C6 | the radio firmware above |
+
+On the device a `par` loop runs its rows in order: `loft_cc.h` turns `LOFT_THREADS` on only for POSIX
+hosts and Windows.  Using the second core, and moving network work to the C6, are optional work after
+measurement: [@PLN213](https://github.com/loft-lang/plans/issues/213) tier C.
+
 ## Games for the Tanmatsu
 
 The Tanmatsu suits games that are decided by thought rather than reflexes: its full keyboard
@@ -267,6 +321,7 @@ spend it on software rendering.  The three larger loft games, as their trees sta
 |---|---|---|---|
 | dryopea | a sci-fi tower defence on a fixed tick (`fixstep`), a strategy game by its design | `graphics::Canvas`, the library's software rasteriser in loft; GL only to put the canvas on the screen | closest: Canvas compiles for the C backend, so only the frame's way to the screen (`screen`) and the keys (`input`) need the Tanmatsu path.  Open: whether Canvas, drawing per pixel in loft, is fast enough on the P4 |
 | crawler | a ZAngband-style hex roguelike; time advances with the distance travelled, turning is free | a 2D egocentric view, a character map (`ovmap`), and first-person 3D through GL shaders | the game fits; its 3D needs a renderer for a machine without a GPU (below).  4.9 MB of sprites: the asset inspection takes what is named, and a larger set goes per area |
+| a 2.5D dogfighter ([@PLN214](https://github.com/loft-lang/plans/issues/214)) | arcade air combat with PvP over the network, planes nearer the camera drawn bigger | sprites rendered from a 3D model when the game is built, rotated and shrunk while it runs; no 3D on the device | planned as the Tanmatsu's network test: several Tanmatsus against one server, each reporting its performance figures |
 | moros | an RPG whose game world is still to be built; the tree holds its tabletop rules and cards and the lavition hex-world editor | the editor through GL shaders and voxel meshes | the RPG, once it exists, fits as crawler does and shares crawler's world model (`moros_map`, `moros_render`); the editor stays a desktop tool |
 
 **One world, drawn at more than one fidelity.**  A game keeps its world in packages that draw
@@ -355,6 +410,11 @@ not yet published), where the pixel-by-pixel path took 63 ms.
   does on the CPU; the chip's ROM has an inflater (`tinfl_decompress`) lodepng could use; the
   runtime's hash seed reads `/dev/urandom`, which ESP-IDF does not have, where the hardware
   random number generator is (`esp_fill_random`).
+- `loft_esp_nvs` (`loft_esp.h`) erases the whole NVS partition when it is full or of a newer format.
+  That partition is the launcher's, with its Wi-Fi networks and settings; an app must never erase it
+  ([@PLN213](https://github.com/loft-lang/plans/issues/213) T0.4).
+- The network libraries on the device, and the build-time refusal a native without C on the target
+  owes ([@PLN213](https://github.com/loft-lang/plans/issues/213) T0.3, T3–T5).
 - The screen's physical size, for a game that draws to scale: a loft call with a defined
   "unknown" answer, filled on the Tanmatsu from the panel's specification until the BSP
   reports it.

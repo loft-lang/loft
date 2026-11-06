@@ -1,0 +1,14 @@
+// Constructions of `W` written AHEAD of this file's own `struct W`: as a literal with fields,
+// an empty literal and a return type.  Another library's private `W` is no reason to refuse
+// them.
+pub fn fwdpriv_b_val() -> integer {
+  w = W { b: 11, c: 2 };
+  e = W {};
+  w.b + w.c + e.b + made(5).c
+}
+
+fn made(c: integer) -> W {
+  W { b: 0, c: c }
+}
+
+struct W { b: integer, c: integer }

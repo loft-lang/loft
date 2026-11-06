@@ -6684,7 +6684,16 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             t = *tp.clone();
         }
         if in_t.is_unknown() {
-            *in_t = t.clone();
+            // A record element is a slot of the vector's own store, whatever the first item
+            // borrowed: its type names no frame variable (one would leak into the shared
+            // `vector<T>` definition), and a nullable one (`S?`) is the same slot.  A pointer
+            // element keeps its marker.
+            *in_t = match t.base() {
+                Type::Reference(_, d) | Type::Enum(_, true, d) if !d.is_pointer_marker() => {
+                    t.without_deps()
+                }
+                _ => t.clone(),
+            };
         }
         if t.is_unknown() {
             t = in_t.clone();

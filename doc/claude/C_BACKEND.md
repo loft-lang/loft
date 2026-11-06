@@ -315,9 +315,10 @@ reserves its pushes once and opens a `loft_win` on the vector — element 0's ad
 reached, the room — and every push of that path is a compare, a store and a bump; a record mint
 takes the window's next slot.  The record's length is written back at the loop's exit, and the
 cold growth arm (a locked store, an absent vector) is the ordinary append.  `LOFT_VERIFY` checks
-each push against a fresh derivation.  A mint of a type `hoist::complete_writes` proves every
-literal writes completely copies no default image (`@FR-R-CompleteWrite`), unless the function
-copies a record into a fresh element's field, where a null source leaves what the fill wrote.  `LOFT_NO_PUSH_FILL=1`,
+each push against a fresh derivation.  A mint of a type the IR proves every
+literal writes completely copies no default image (`@FR-R-CompleteWrite`, `Definition::no_prefill`);
+a record copy into such an element's field is flagged fresh there, and its null arm writes the
+field's default image.  `LOFT_NO_PUSH_FILL=1`,
 `LOFT_NO_PUSH_WINDOW=1`, `LOFT_NO_RECORD_PUSH=1` and `LOFT_NO_COMPLETE_WRITE=1` turn the pieces
 off, as on native.  A loop the counted rule declines whose scalar pushes, at any depth, reach
 ONE path takes a DEEP window where `hoist::deep_window_ok` admits it — the root exclusive,

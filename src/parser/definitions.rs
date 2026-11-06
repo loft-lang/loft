@@ -1255,7 +1255,12 @@ impl Parser {
         self.limit_refused = false;
         if self.lexer.has_token("=") {
             self.type_fact = AliasFact::Plain;
-            if let Some(tp) = self.parse_type_full(d_nr, false) {
+            // @PLN217 — a standard-library type definition names a machine width (`i32`,
+            // `f64`, `word`), so the 32-bit regime does not read its right-hand side.
+            self.machine_types = self.default;
+            let parsed = self.parse_type_full(d_nr, false);
+            self.machine_types = false;
+            if let Some(tp) = parsed {
                 if self.first_pass && !conflict && d_nr != u32::MAX {
                     self.data.set_returned(d_nr, tp);
                 }
@@ -1715,9 +1720,11 @@ impl Parser {
         let scalar_or_text =
             |tp: &Type| -> bool { !self.type_owns_heap(tp) && !matches!(tp.base(), Type::Void) };
         // Per callee, which parameters its body WRITES (`callee_param_writes`, field writes and
-        // forwarded writes included): a call that writes one of its other arguments is no
-        // reader of the intermediate — `work_ref(v, tp(v, p))` adds a variable to `v` on every
-        // call, so answering `tp(v, p)` once would not turn three calls into one.
+        // forwarded writes included): a call that writes any of its arguments is no reader of
+        // the intermediate.  `work_ref(v, tp(v, p))` adds a variable to `v` on every call, so
+        // answering `tp(v, p)` once would not turn three calls into one; and a call writing
+        // the intermediate itself (`classify(fresh(ops), d)`, a memo it fills) is given a
+        // workspace, whose fields are no value a caller would keep between reads.
         let mut writes_cache = crate::fxhash::FxHashMap::default();
         let mut found: Option<(u32, u16)> = None;
         let mut visit = |n: &Value| {
@@ -1733,23 +1740,19 @@ impl Parser {
             let scalar_call = (name.starts_with("n_") || name.starts_with("t_"))
                 && data.def(*op).is_loft_defined()
                 && scalar_or_text(data.def(*op).returned());
-            let writes = if scalar_call {
-                super::closures::callee_param_writes(*op, data, &mut writes_cache)
-            } else {
-                Vec::new()
-            };
+            // A hidden parameter is the compiler's (a text result's buffer), not the author's.
+            if scalar_call {
+                let attrs = data.def(*op).attributes();
+                if super::closures::callee_param_writes(*op, data, &mut writes_cache)
+                    .iter()
+                    .enumerate()
+                    .any(|(j, w)| *w && attrs.get(j).is_some_and(|at| !at.hidden))
+                {
+                    return;
+                }
+            }
             for (i, a) in args.iter().enumerate() {
                 if !((projection && i == 0) || scalar_call) {
-                    continue;
-                }
-                // A hidden parameter is the compiler's (a text result's buffer), not the author's.
-                let attrs = data.def(*op).attributes();
-                if scalar_call
-                    && writes
-                        .iter()
-                        .enumerate()
-                        .any(|(j, w)| *w && j != i && attrs.get(j).is_some_and(|at| !at.hidden))
-                {
                     continue;
                 }
                 if let Value::Call(g, g_args) = a.unspan()
@@ -3007,6 +3010,7 @@ impl Parser {
         } else {
             return false;
         };
+        let name_at = *self.lexer.peek_pos();
         let Some(fn_name) = self.parse_fn_name() else {
             return false;
         };
@@ -3059,6 +3063,12 @@ impl Parser {
                 header[0].name
             );
         }
+        // @PLN217 — a standard-library function without a loft body binds the runtime, which
+        // computes in 64 bits: under the regime its signature keeps the 64-bit `integer` /
+        // `float`, as an `Op…` declaration's `__word` does, and a 32-bit caller's answer is
+        // narrowed where the call returns (`width32_call_result`).
+        let wide_binding = self.default && self.data.width32() && self.body_less_ahead();
+        self.machine_types = wide_binding;
         let mut arguments = Vec::new();
         if self.lexer.token("(") {
             // register the type variable as a struct so parse_type
@@ -3079,6 +3089,7 @@ impl Parser {
                 }
             }
             if !self.parse_arguments(&fn_name, &mut arguments) {
+                self.machine_types = false;
                 return true;
             }
             self.lexer.token(")");
@@ -3185,8 +3196,10 @@ impl Parser {
             self.data.get_fn(&fn_name, &arguments)
         };
         if self.context == u32::MAX {
+            self.machine_types = false;
             return false;
         }
+        self.fn_name_at.insert(self.context, name_at);
         if is_operator {
             self.data.definitions[self.context as usize].operator_form = true;
         }
@@ -3316,6 +3329,10 @@ impl Parser {
         } else {
             Type::Void
         };
+        self.machine_types = false;
+        if wide_binding && self.context != u32::MAX {
+            self.data.mark_wide_instance(self.context);
+        }
         if is_operator && !self.first_pass {
             let written = written_name.as_deref().unwrap_or(&fn_name);
             self.check_operator_definition(written, &arguments, &result);
@@ -4824,20 +4841,7 @@ impl Parser {
         // @PLN204 — under the 32-bit regime a plain `integer` is an `i32` and a plain
         // `float` a `single`; `i64` / `f64` name the 64-bit forms there and everywhere.
         // `integer limit(…)` names its own range, and `limit` follows `integer` only.
-        let type_name = if self.data.width32() {
-            match type_name {
-                "integer"
-                    if !matches!(&self.lexer.peek().has,
-                        crate::lexer::LexItem::Identifier(n) if n == "limit") =>
-                {
-                    "i32"
-                }
-                "float" => "single",
-                other => other,
-            }
-        } else {
-            type_name
-        };
+        let type_name = self.width32_name(type_name);
         // @PLN204 — `i64` is the wide template (`IntegerSpec::i64`), in every file.
         if type_name == "i64" {
             return Some(Type::Integer(crate::narrow::IntegerSpec::i64()));

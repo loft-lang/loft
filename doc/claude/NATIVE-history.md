@@ -1125,3 +1125,13 @@ writing and the `n9_generated_fill_matches_src` test enforces byte-exact match.
   `generation/` resets `store_nr` to `u16::MAX` after `OpFreeRef`.
 - **Pre-eval extension:** `needs_pre_eval` now covers `Value::Insert` and `Value::Iter`;
   `collect_pre_evals_inner` handles `Value::Return`.
+
+## The optimisation tiers, measured
+
+Moved from NATIVE.md § Optimisation tiers.  The numbers behind the split (2026-09-08), on the
+drawing pass consumer lane: the lean tier alone took `hash` 4.7M → 1.2M ns/op, `hair` −55 %,
+`wide_line` −32 %, `composite` −16 %, `lock` −13 %, `smooth` −19 %; `codegen-units=1` on top
+−3–5 % broadly and −15–20 % on `hash`; opt-level 3 alone and `-C target-cpu=native` moved
+nothing.  The runtime rlib rebuilt with one codegen unit moved neither `lock` nor `hash` (its hot
+accessors are `#[inline]` already), so the cost to `make ci`'s build was not paid for a gain that
+did not appear.

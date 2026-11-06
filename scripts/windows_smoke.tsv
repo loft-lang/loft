@@ -16,6 +16,8 @@ bench/portal/local.py	--help
 bench/run_bench.sh	--help
 bench/stats.py	--help
 doc/claude/plans/211-rule-phases/probes/run.py	--help
+doc/claude/plans/218-tanmatsu-stage-engine/kit/mkdrivers.py	--help
+doc/claude/plans/218-tanmatsu-stage-engine/kit/tlog.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/grammar_gen.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/ownership_fuzz.py	--help
 doc/claude/presentations/par/build_par_slides.sh	--help
@@ -92,11 +94,13 @@ scripts/sweep_ignored.sh	--help
 scripts/sweep_scratch.sh	--help
 scripts/tanmatsu_log.py	--help
 scripts/test_speed.py	--help
+scripts/thirdparty.py	--help
 scripts/timing_compare.py	--help
 scripts/unreleased-work.py	--help
 scripts/validator-dryrun.py	--help
 scripts/wait_for.sh	--help
 scripts/warm_diff.sh	--help
+scripts/width64_census.py	--help
 scripts/windows_parity.py	--help
 scripts/work-issues.sh	--help
 scripts/worst.py	--help

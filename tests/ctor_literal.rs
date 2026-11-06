@@ -98,12 +98,9 @@ fn a_constructor_call_is_its_literal_where_the_cells_say_and_nowhere_else() {
             ),
             // c1, c2, c3, c5, c8, c9, c11.
             ("ctor-literal: n_fm_new written in place in n_main".to_string(), 7),
-            // c12: the profitable case only — a call of scalars stays a value record.
-            (
-                "ctor-literal: n_pt_new kept a call in n_pt_loop: a record of scalars (its call travels as a value record)"
-                    .to_string(),
-                1
-            ),
+            // c12: the profitable case only — a call of scalars stays a value record: the IR's
+            // value-record pass (`src/value_record.rs`, ahead of this one) already made `pt_new`
+            // answer a tuple, so no constructor call is left here to keep or decline.
     ];
     want.sort();
     assert_eq!(trace(&out, "ctor-literal:"), want);
@@ -127,6 +124,7 @@ fn the_refill_clause_keeps_the_designed_loop_records() {
         &[
             "--ship",
             "--native-rust",
+            "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
             "--native-emit",
             loft::platform::null_sink(),
         ],
@@ -160,6 +158,7 @@ fn the_refill_clause_keeps_the_designed_loop_records() {
         &[
             "--ship",
             "--native-rust",
+            "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
             "--native-emit",
             loft::platform::null_sink(),
         ],

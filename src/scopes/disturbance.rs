@@ -27,6 +27,11 @@ use crate::variables::Function;
 /// It is the same principle the `Grown` arm's note below already states: a reader sent looking
 /// for a statement that is not in the function pays for the difference, and a disturbance one
 /// frame down is exactly that — nothing in `c_grow_callee` appends to `sc`.
+///
+/// `observable` is [`Scopes::copy_is_observable`]: a view nothing writes through reads the same
+/// values from its copy, so the author is told only of one that is written through.  Every
+/// copy is still named under `LOFT_TRACE_DISTURB=1`, which is how a guard sees one the
+/// author is not told of.
 pub(super) fn report_materialised_view(
     cause: ViewCause,
     vname: &str,
@@ -34,10 +39,17 @@ pub(super) fn report_materialised_view(
     fname: &str,
     via: Option<&str>,
     at: (&str, u32),
+    observable: bool,
 ) {
     // The advice is the author's to read, so a payload binding is named as they wrote it.
     let vname = crate::variables::author_spelling(vname);
     let vname = vname.as_str();
+    if crate::env_once!(std::env::var_os("LOFT_TRACE_DISTURB").is_some()) {
+        eprintln!("[materialise] {fname} `{vname}` out of `{cname}` ({cause:?})");
+    }
+    if !observable {
+        return;
+    }
     match cause {
         ViewCause::Reshaped => {
             crate::copy_manifest::note_materialised_view(vname, cname, fname, via, at);
@@ -61,6 +73,18 @@ pub(super) fn report_materialised_view(
         ViewCause::Overwritten => {
             crate::copy_manifest::note_overwritten_view(vname, cname, fname, via, at);
         }
+    }
+}
+
+impl super::Scopes<'_> {
+    /// Does the copy of view `v` change what the program computes?  Only where something
+    /// writes through `v` (`use_analysis::written_through_locals`): the copy is what makes such
+    /// a write miss the container, which is what `view-copied` warns of.  A view that is only
+    /// ever READ — directly, or by callees that write none of what they are handed — reads the
+    /// same bytes from the copy as from the place, so its copy is silent.  The walk counts what
+    /// it cannot see into as a write, so a doubtful view is still reported.
+    pub(super) fn copy_is_observable(&self, v: u16) -> bool {
+        self.written_through.contains(&v)
     }
 }
 

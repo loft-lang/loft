@@ -303,7 +303,14 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     }
     r.insert("OpPreAllocVector", Box::new(vector_ops::PreAllocEmitter));
     r.insert("OpKeepRange", Box::new(vector_ops::KeepRangeEmitter));
-    r.insert("OpNewRecord", Box::new(vector_ops::NewRecordEmitter));
+    r.insert(
+        "OpNewRecord",
+        Box::new(vector_ops::NewRecordEmitter { np: false }),
+    );
+    r.insert(
+        "OpNewRecordNP",
+        Box::new(vector_ops::NewRecordEmitter { np: true }),
+    );
     r.insert("OpFinishRecord", Box::new(vector_ops::FinishRecordEmitter));
 
     r.insert("OpGetRecord", Box::new(key_ops::OpGetRecordEmitter));
@@ -400,7 +407,14 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
         Box::new(misc_ops::OpConvRefFromNullEmitter),
     );
     r.insert("OpGetTextSub", Box::new(misc_ops::OpGetTextSubEmitter));
-    r.insert("OpDatabase", Box::new(misc_ops::OpDatabaseEmitter));
+    r.insert(
+        "OpDatabase",
+        Box::new(misc_ops::OpDatabaseEmitter { np: false }),
+    );
+    r.insert(
+        "OpDatabaseNP",
+        Box::new(misc_ops::OpDatabaseEmitter { np: true }),
+    );
     r.insert("OpStep", Box::new(misc_ops::OpStepEmitter));
     r.insert("OpRemove", Box::new(misc_ops::OpRemoveEmitter));
 
@@ -642,7 +656,7 @@ mod tests {
         // `@FR-R-KeyedEntry` adds two, `KeyedEntryEmitter` for the IR's `n_keyed_entry_ints`
         // and `n_keyed_entry_text`: each key shape's fastest store call.
         assert!(
-            count <= 142,
+            count <= 144,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

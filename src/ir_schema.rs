@@ -1120,6 +1120,8 @@ fn write_definition(out: &mut String, d: &Definition) {
     let _ = write!(out, ",\"operator_form\":{}", d.operator_form);
     out.push_str(",\"returned_fact\":");
     write_str(out, &d.returned_fact.encode());
+    out.push_str(",\"no_prefill\":"); // @FR-R-CompleteWrite
+    write_str(out, &d.no_prefill.encode());
     let _ = write!(out, ",\"returned_const\":{}", d.returned_const);
     // forced_size: Option<u8>, n ∈ {1,2,4,8}; 0 is never valid → encodes None.
     let _ = write!(out, ",\"forced_size\":{}", d.forced_size.unwrap_or(0));
@@ -1421,6 +1423,11 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
             Ok(f) => crate::data::AliasFact::decode(&as_str(f)?),
             Err(_) => crate::data::AliasFact::Plain,
         },
+        // Tolerant of older JSON without the field, as `returned_fact` is.
+        no_prefill: match field(p, "no_prefill") {
+            Ok(f) => crate::data::NoPrefill::decode(&as_str(f)?),
+            Err(_) => crate::data::NoPrefill::default(),
+        }, // @FR-R-CompleteWrite
         // Tolerant of older JSON without the field, as `returned_fact` is.
         returned_const: match field(p, "returned_const") {
             Ok(f) => as_bool(f)?,
@@ -2471,6 +2478,7 @@ mod tests {
             builtin: true,
             operator_form: true,
             returned_fact: crate::data::AliasFact::Alias(9),
+            no_prefill: crate::data::NoPrefill::decode("l3,5;m7"),
             returned_const: true,
             const_ref: None,
             literal_const: u32::MAX,
@@ -2558,6 +2566,7 @@ mod tests {
             builtin: false,
             operator_form: false,
             returned_fact: crate::data::AliasFact::Plain,
+            no_prefill: crate::data::NoPrefill::default(),
             returned_const: false,
             const_ref: None,
             literal_const: u32::MAX,

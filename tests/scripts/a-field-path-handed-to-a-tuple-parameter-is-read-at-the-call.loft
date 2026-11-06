@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-R-ValueRecord`, `(R-ValueLocal)` — a small record PARAMETER the IR's value records make a
+// tuple (`src/value_record.rs`) is handed a FIELD PATH by a caller that carries no tuple of its
+// own: `rect_contains(b.btn_rect, …)`.  The path's fields are read into the tuple at the call,
+// so that caller's body is rewritten too — left alone, it handed a record reference where the
+// callee takes four integers, and the frame's slots no longer matched (the interpreter stopped
+// at the next local; the writers declared the wrong argument).
+//
+// The values, by hand: (5, 5) is inside the one button → its id 7; (5, 30) misses the button
+// and hits the list at local y 30 - 20 + 0 = 10, item 10 / 5 = 2 → 102; (90, 90) hits nothing.
+//
+// @falsified-at: hand-measured (2026-11-05) — with the caller left unrewritten the run stopped
+// with "Incorrect var local_y[80] versus 72" on `--interpret` and `--native-c --lean`.
+
+struct Rect { r_x: integer, r_y: integer, r_w: integer, r_h: integer }
+struct Btn { btn_rect: Rect, btn_id: integer }
+struct List { lb_rect: Rect, lb_scroll: integer, lb_item_height: integer }
+struct Panel { p_rect: Rect, p_toolbar: vector<Btn>, p_list: List }
+
+fn rect_contains(r: Rect, x: integer, y: integer) -> boolean {
+  x >= r.r_x && x < r.r_x + r.r_w && y >= r.r_y && y < r.r_y + r.r_h
+}
+
+fn hit(p: Panel, mx: integer, my: integer) -> integer {
+  for b in p.p_toolbar {
+    if rect_contains(b.btn_rect, mx, my) { return b.btn_id; }
+  }
+  if rect_contains(p.p_list.lb_rect, mx, my) {
+    local_y = my - p.p_list.lb_rect.r_y + p.p_list.lb_scroll;
+    return 100 + local_y / p.p_list.lb_item_height;
+  }
+  -1
+}
+
+fn main() {
+  p = Panel { p_rect: Rect { r_x: 0, r_y: 0, r_w: 100, r_h: 100 },
+              p_toolbar: [Btn { btn_rect: Rect { r_x: 0, r_y: 0, r_w: 10, r_h: 10 }, btn_id: 7 }],
+              p_list: List { lb_rect: Rect { r_x: 0, r_y: 20, r_w: 50, r_h: 50 }, lb_scroll: 0, lb_item_height: 5 } };
+  assert(hit(p, 5, 5) == 7, "the button: {hit(p, 5, 5)}");
+  assert(hit(p, 5, 30) == 102, "the list: {hit(p, 5, 30)}");
+  assert(hit(p, 90, 90) == -1, "nothing: {hit(p, 90, 90)}");
+  println("a-field-path-handed-to-a-tuple-parameter-is-read-at-the-call: every cell holds");
+}

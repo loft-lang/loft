@@ -37,7 +37,7 @@ pub fn synth_drop_cascades(e: el::El) {
         wanted = len(cascade_fields(e, t)) > 0 || len(cascade_vectors(e, t)) > 0;
       }
     } else if d.def_type == el::DT_ENUM {
-      if owns_droppable(e, t, []) && d.returned[0] == ir::TyEnum { n: t, is_ref: true, dep: [] } {
+      if el_types::owns_droppable(e, t, []) && d.returned[0] == ir::TyEnum { n: t, is_ref: true, dep: [] } {
         el::refuse(e, "a drop cascade over an enum's variants");
         return;
       }
@@ -57,13 +57,6 @@ pub fn synth_drop_cascades(e: el::El) {
   }
   for t in targets {
     fill(e, t, made[t#index] ?? -1);
-  }
-  // The cascades are made as Rust makes them, but a program whose types hold a droppable also
-  // meets the lowerings Rust keys on a droppable (a literal built apart, a call result's member
-  // read as a view, a rebinding literal's store minted after its items, …), which are not
-  // carried: refused by name until they are.
-  if len(targets) > 0 {
-    el::refuse(e, "a type holding a droppable (the lowerings a droppable takes)");
   }
 }
 
@@ -85,16 +78,11 @@ fn cascade_name(e: el::El, t: integer) -> text {
   "t_{len(nm)}{nm}_OpDropAll"
 }
 
-// `drop_hook_nr`: the type's own `OpDrop`, or -1.
-fn hook(e: el::El, t: integer) -> integer {
-  nm = el::def(e, t).name;
-  el::def_nr(e, "t_{len(nm)}{nm}_OpDrop")
-}
 
 // `drop_cascade_nr`: what dropping a value of `t` calls — its cascade, or its hook.
 fn target(e: el::El, t: integer) -> integer {
   c = el::def_nr(e, cascade_name(e, t));
-  if c >= 0 { c } else { hook(e, t) }
+  if c >= 0 { c } else { el_types::hook(e, t) }
 }
 
 // `cascade_self_type`: the parameter a cascade takes.
@@ -106,55 +94,6 @@ fn self_type(e: el::El, t: integer) -> ir::TypeT {
   ir::TyReference { n: t, dep: [] }
 }
 
-// `owns_droppable_walk`: a value of definition `t` holds a droppable — its own hook, a field's,
-// a variant's — each definition visited once on a path.
-fn owns_droppable(e: el::El, t: integer, path: vector<integer>) -> boolean {
-  if t < 0 || path.contains(t) {
-    return false;
-  }
-  path += [t];
-  if hook(e, t) >= 0 {
-    return true;
-  }
-  for a in el::def(e, t).attributes {
-    if type_owns(e, a.typedef[0] ?? ir::TyVoid, path) {
-      return true;
-    }
-  }
-  for x in e.b.data.definitions {
-    if x.def_type == el::DT_ENUM_VALUE && x.parent == t && owns_droppable(e, x#index, path) {
-      return true;
-    }
-  }
-  false
-}
-
-// `type_owns_droppable`.
-fn type_owns(e: el::El, t: ir::TypeT, path: vector<integer>) -> boolean {
-  match t {
-    TyReference { n } => owns_droppable(e, n, path),
-    TyEnum { n, is_ref } => is_ref && owns_droppable(e, n, path),
-    TySorted { n } => owns_droppable(e, n, path),
-    TyIndex { n } => owns_droppable(e, n, path),
-    TyRadix { n } => owns_droppable(e, n, path),
-    TyTrie { n } => owns_droppable(e, n, path),
-    TyHash { n } => owns_droppable(e, n, path),
-    TyVector { inner } => type_owns(e, inner, path),
-    TyOptional { inner } => type_owns(e, inner, path),
-    TyRefVar { inner } => type_owns(e, inner, path),
-    TyRewritten { inner } => type_owns(e, inner, path),
-    TyTuple { elems } => {
-      for m in elems {
-        if type_owns(e, m, path) {
-          return true;
-        }
-      }
-      false
-    },
-    TyIterator { step: _ } => true,
-    _ => false
-  }
-}
 
 // The cascade shapes a record of `t` would need that the port does not carry, refused by name:
 // a keyed collection, an owner slot, an iterator or a tuple field holding a droppable.
@@ -165,7 +104,7 @@ fn refused_shapes(e: el::El, t: integer) -> boolean {
     }
     at = el_types::base(a.typedef[0] ?? ir::TyVoid);
     keyed = at is TyHash || at is TySorted || at is TyIndex || at is TyRadix || at is TyTrie;
-    if (keyed || at is TyIterator || at is TyTuple || ends_with(a.name, "__own")) && type_owns(e, at, []) {
+    if (keyed || at is TyIterator || at is TyTuple || ends_with(a.name, "__own")) && el_types::type_owns(e, at, []) {
       el::refuse(e, "a drop cascade through a keyed collection, an iterator, a tuple or an owner slot");
       return false;
     }
@@ -182,7 +121,7 @@ fn cascade_fields(e: el::El, t: integer) -> vector<integer> {
       continue;
     }
     fd = field_record(a.typedef[0] ?? ir::TyVoid);
-    if fd < 0 || fd == t || !owns_droppable(e, fd, []) {
+    if fd < 0 || fd == t || !el_types::owns_droppable(e, fd, []) {
       continue;
     }
     if el_schema::field_position(e, el::def(e, t).known_type, a.name) == el::NO_TYPE {
@@ -212,7 +151,7 @@ fn cascade_vectors(e: el::El, t: integer) -> vector<integer> {
     }
     match el_types::base(a.typedef[0] ?? ir::TyVoid) {
       TyVector { inner } => {
-        if element_def(e, inner) >= 0 && type_owns(e, inner, []) && el_schema::field_position(e, el::def(e, t).known_type, a.name) != el::NO_TYPE {
+        if element_def(e, inner) >= 0 && el_types::type_owns(e, inner, []) && el_schema::field_position(e, el::def(e, t).known_type, a.name) != el::NO_TYPE {
           r += [a#index];
         }
       },
@@ -239,7 +178,7 @@ fn element_def(e: el::El, t: ir::TypeT) -> integer {
 // `collection_elem_cascade`: the element definition a vector type walks, or -1.
 fn collection_element(e: el::El, t: integer) -> integer {
   match el::def(e, t).returned[0] ?? ir::TyVoid {
-    TyVector { inner } => if type_owns(e, inner, []) { element_def(e, inner) } else { -1 },
+    TyVector { inner } => if el_types::type_owns(e, inner, []) { element_def(e, inner) } else { -1 },
     _ => -1
   }
 }
@@ -262,7 +201,7 @@ fn fill(e: el::El, t: integer, c: integer) {
     finish(e, c, vars, ops);
     return;
   }
-  own = hook(e, t);
+  own = el_types::hook(e, t);
   if own >= 0 {
     ops += [ir::NdCall { def_nr: own, args: [me] }];
   }

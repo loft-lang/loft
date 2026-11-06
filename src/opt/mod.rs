@@ -17,6 +17,7 @@ pub mod attrs;
 pub mod body_writes;
 pub mod buffer_owner;
 pub mod char_walk;
+pub mod complete_write;
 pub mod elem_first;
 pub mod empty_slot;
 pub mod facts;

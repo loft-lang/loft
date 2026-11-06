@@ -88,10 +88,11 @@ fn discharge(v: &Value) -> Option<(u16, &Value, u32, &Value)> {
         .then_some((*t, &**read, *conv, &**default))
 }
 
-/// Is `v` built only from read operators, locals and literals?
+/// Is `v` built only from read operators, locals and literals?  A tuple local's element
+/// (`TupleGet` — the IR's value records spell a small record's field read so) is a local.
 fn plain_read(data: &Data, v: &Value) -> bool {
     match v.unspan() {
-        Value::Var(_) | Value::Int(_) | Value::Long(_) => true,
+        Value::Var(_) | Value::TupleGet(..) | Value::Int(_) | Value::Long(_) => true,
         Value::Call(op, args) => {
             named(data, *op, &READS) && args.iter().all(|a| plain_read(data, a))
         }
@@ -105,6 +106,7 @@ pub(crate) fn pure(data: &Data, v: &Value) -> bool {
     match v {
         Value::Span(s) => pure(data, &s.1),
         Value::Var(_)
+        | Value::TupleGet(..)
         | Value::Int(_)
         | Value::Long(_)
         | Value::Float(_)

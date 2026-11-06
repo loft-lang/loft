@@ -1372,7 +1372,7 @@ pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
                                 .unwrap_or(data.def(c_nr).known_type)
                         };
                         let tp = database.vector(c_tp);
-                        data.check_vector(c_nr, tp, &data.def(d_nr).position.clone());
+                        data.check_vector(c_nr, &c_type, tp, &data.def(d_nr).position.clone());
                         tp
                     }
                     Type::Integer(int_spec) => {

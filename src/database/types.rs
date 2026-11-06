@@ -3156,6 +3156,24 @@ impl Stores {
         }
     }
 
+    /// The byte width of `field` in `tp`, 0 when `tp` has no such field.  A width-neutral
+    /// `integer` / `float` field of a standard-library record is 4 bytes under the 32-bit
+    /// regime and 8 outside it, so a native that fills one writes at this width, never at a
+    /// fixed 8 (@PLN217).
+    #[must_use]
+    pub fn field_bytes(&self, tp: u16, field: &str) -> u16 {
+        if tp == u16::MAX {
+            return 0;
+        }
+        if let Parts::Struct(f) | Parts::EnumValue(_, f) = &self.types[tp as usize].parts {
+            f.iter()
+                .find(|fld| fld.name == field)
+                .map_or(0, |fld| self.size(fld.content))
+        } else {
+            0
+        }
+    }
+
     /// The byte offset of field number `idx` in struct type `tp` — [`Self::position`]'s twin,
     /// asked by INDEX rather than by name.
     ///

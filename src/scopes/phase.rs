@@ -188,6 +188,7 @@ pub(super) fn run_scan_phase(
             orig_vars.var_count(),
             data,
         ),
+        written_through: crate::use_analysis::written_through_locals(orig_code, data),
         // Filled below, from the working copy that records which views are materialised.
         capture_build_backing: crate::variables::CaptureBuilds::default(),
         closure_keep: closure_keep_set(data, orig_vars, orig_code),

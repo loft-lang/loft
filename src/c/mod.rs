@@ -144,6 +144,13 @@ pub(crate) enum CType {
     Void,
 }
 
+/// @PLN217 — a 32-bit build (`--width 32`) whose C holds 32-bit integers in `int32_t`: every
+/// body is under the regime, so a parameter, a result, a tuple member and a field read are
+/// 32-bit too, not only a local.
+pub(crate) fn width32_c() -> bool {
+    crate::keys::width32_all() && !no_c_int32()
+}
+
 /// @PLN204 — `LOFT_NO_C_INT32=1` holds every integer in `int64_t`, as before `CType::Int32`:
 /// the first bisect step for a C-only wrong answer on a program with 32-bit integers.
 pub(crate) fn no_c_int32() -> bool {
@@ -191,6 +198,8 @@ pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
     pub(crate) stores: &'a Stores,
     tuples: std::cell::RefCell<Vec<Vec<CType>>>,
+    /// @PLN217 — the tuple conversions `tuple_cast` handed out, as (from, to): one C function each.
+    tuple_casts: std::cell::RefCell<std::collections::BTreeSet<(u32, u32)>>,
     /// `@FR-R-Destination`'s callee shapes, by `(callee, moved field offset)`.
     pub(crate) dest_memo: std::cell::RefCell<
         std::collections::HashMap<(u32, i64), Option<crate::lower::destination::Shape>>,
@@ -391,6 +400,7 @@ impl<'a> Cx<'a> {
             wasm: browser || WASM_UNIT.with(std::cell::Cell::get),
             source_lines: SOURCE_LINES.with(std::cell::Cell::get),
             tuples: std::cell::RefCell::new(Vec::new()),
+            tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             described: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             names_types: std::cell::Cell::new(false),
@@ -491,7 +501,13 @@ impl<'a> Cx<'a> {
         self.vr
             .get_or_init(|| {
                 use crate::opt::value_records::layout as vl;
-                let vr = crate::opt::value_records::value_records(self.data, self.stores, false);
+                // An OPEN program takes no whole-program rewrite (NATIVE.md § Optimisation
+                // tiers): no value records.
+                let vr = if self.data.open_world {
+                    vl::ValueRecords::default()
+                } else {
+                    crate::opt::value_records::value_records(self.data, self.stores, false)
+                };
                 crate::rewrite_census::fired("R-ValueRecord", vr.fns.len());
                 // `(O-ViewField)` — the functions with a view leaf (@PLN211 C′4's measure).
                 crate::rewrite_census::fired("R-ValueRecord/view", vr.views.len());
@@ -905,6 +921,11 @@ impl<'a> Cx<'a> {
     /// The C shape of `tp`, nullable or not — a null is held in the same shape — or `None`.
     pub(crate) fn ctype(&self, tp: &Type) -> Option<CType> {
         match tp.base() {
+            // @PLN217 — a 32-bit build (`--width 32`) holds an integer that is 32-bit by
+            // declaration in `int32_t` everywhere — a parameter, a result, a tuple member, a
+            // function type — as `local_ctype` holds a local: every body is under the regime
+            // there, so no boundary is left for two widths to meet at.  `i64` stays 64-bit.
+            Type::Integer(spec) if width32_c() && spec.is_width32() => Some(CType::Int32),
             // A narrow integer is held as a plain one: its range is enforced where a value
             // enters it (`OpRangeDefault`) and where a field stores it.
             Type::Integer(_) => Some(CType::Int),
@@ -954,6 +975,32 @@ impl<'a> Cx<'a> {
         }
         t.push(shapes);
         (t.len() - 1) as u32
+    }
+
+    /// @PLN217 — the C function that converts a tuple of struct `from` to struct `to`, or
+    /// `None` when a member cannot be converted.  Two structs of one loft tuple type meet in a
+    /// 32-bit build: a literal is shaped by its members (an operator's result is `int64_t`, a
+    /// 32-bit local `int32_t`) while the place it goes to is shaped by its declared type.  A
+    /// member converts as a scalar store does: `loft_n32` narrows (null when it does not fit),
+    /// `loft_w64` widens, keeping null as null.
+    pub(crate) fn tuple_cast(&self, from: u32, to: u32) -> Option<String> {
+        let (a, b) = (self.tuple_shapes(from), self.tuple_shapes(to));
+        if a.len() != b.len() {
+            return None;
+        }
+        for (x, y) in a.iter().zip(&b) {
+            let ok = x == y
+                || matches!(
+                    (x, y),
+                    (CType::Int, CType::Int32) | (CType::Int32, CType::Int)
+                )
+                || matches!((x, y), (CType::Tuple(p), CType::Tuple(q)) if self.tuple_cast(*p, *q).is_some());
+            if !ok {
+                return None;
+            }
+        }
+        self.tuple_casts.borrow_mut().insert((from, to));
+        Some(format!("loft_tup{from}_as{to}"))
     }
 
     /// The element shapes of tuple struct `id`.
@@ -1266,6 +1313,10 @@ impl<'a> Cx<'a> {
     }
 
     /// The tuple structs, each after the ones it holds, and the default images.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one writer per typedef form, in the order C needs them declared"
+    )]
     fn typedefs(&self) -> String {
         let mut out = String::new();
         // The table names the key parts of the hashes in it, so it is written first.
@@ -1347,6 +1398,35 @@ impl<'a> Cx<'a> {
                 fields.join(" ")
             );
         }
+        let casts = self.tuple_casts.borrow();
+        for &(from, to) in casts.iter() {
+            let _ = writeln!(
+                out,
+                "static loft_tup{to} loft_tup{from}_as{to}(loft_tup{from} t);"
+            );
+        }
+        for &(from, to) in casts.iter() {
+            let members: Vec<String> = self
+                .tuple_shapes(from)
+                .iter()
+                .zip(self.tuple_shapes(to))
+                .enumerate()
+                .map(|(i, (x, y))| match (x, y) {
+                    (CType::Int, CType::Int32) => format!("loft_n32(t.f{i})"),
+                    (CType::Int32, CType::Int) => format!("loft_w64(t.f{i})"),
+                    (CType::Tuple(p), CType::Tuple(q)) if *p != q => {
+                        format!("loft_tup{p}_as{q}(t.f{i})")
+                    }
+                    _ => format!("t.f{i}"),
+                })
+                .collect();
+            let _ = writeln!(
+                out,
+                "static loft_tup{to} loft_tup{from}_as{to}(loft_tup{from} t) {{ loft_tup{to} r = {{ {} }}; return r; }}",
+                members.join(", ")
+            );
+        }
+        drop(casts);
         out.push_str(&self.show_code());
         for &tp in self.swap_worlds.borrow().iter() {
             let call = self.show_top_call(tp, "s", "r", "2");
@@ -1521,7 +1601,23 @@ impl Cx<'_> {
                 };
                 if self.tuple_shapes(id).len() >= 3
                     && !matches!(vars.tp(a).base(), Type::RefVar(_))
-                    && vr_param_read_only(self.data, def.code(), a)
+                    && crate::value_record::vr_param_read_only(self.data, def.code(), a)
+                {
+                    out.push(i);
+                }
+            }
+        }
+        // The IR's tuples (`src/value_record.rs`, a tuple the source writes): a parameter of
+        // three or more SCALAR members the body only reads goes by pointer the same way — a
+        // member the callee owns (a text) is freed by it, which the caller's struct still holds.
+        if !off && !apv {
+            let def = self.data.def(d);
+            let vars = def.variables();
+            for (i, &a) in vars.arguments().iter().enumerate() {
+                if !out.contains(&i)
+                    && matches!(vars.tp(a).base(), Type::Tuple(es)
+                        if es.len() >= 3 && es.iter().all(crate::data::is_scalar))
+                    && crate::value_record::vr_param_read_only(self.data, def.code(), a)
                 {
                     out.push(i);
                 }
@@ -2060,8 +2156,30 @@ pub fn emit_unit_for(
         let written = tidy::tidy_unit(&out[at..]);
         out.truncate(at);
         out.push_str(&written);
+        // @PLN217 — a `#c` binding is declared in the C its library's shim is written in, which
+        // spells a loft `integer` / `float` as the build's width (`loft_width.h`).  The header
+        // goes in with the runtime, before the bindings, and only where a binding names it, so
+        // a program that binds none is written as it was.
+        if names_a_width(&out[at..]) {
+            let mut width = String::new();
+            if crate::keys::width32_all() {
+                width.push_str("#ifndef LOFT_WIDTH32\n#define LOFT_WIDTH32\n#endif\n");
+            }
+            width.push_str(include_str!("loft_width.h"));
+            out.insert_str(at - RUNTIME_END.len(), &width);
+        }
     }
     Ok(out)
+}
+
+/// Whether `code` names one of `loft_width.h`'s types as a whole identifier.
+fn names_a_width(code: &str) -> bool {
+    ["loft_int", "loft_uint", "loft_float"].iter().any(|name| {
+        code.match_indices(name).any(|(i, _)| {
+            let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+            !code[..i].ends_with(ident) && !code[i + name.len()..].starts_with(ident)
+        })
+    })
 }
 
 /// The program's lazy drivers as the runtime calls them (`loft_lazy_miss`): an adapter per
@@ -2386,6 +2504,10 @@ fn package_identity(pkg_dir: &str) -> (String, String) {
 /// The macros a unit's runtime is compiled under, from what it reaches: a foreign store, the
 /// JSON reader and tree, the typed parse, reflection, frames — and whether it parses and
 /// reflects, which add tables after the runtime.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one define per runtime feature a unit can reach, in the runtime's order"
+)]
 fn unit_defines(
     data: &Data,
     stores: &Stores,
@@ -2495,6 +2617,15 @@ fn unit_defines(
             at("arguments"),
             at("variables")
         );
+    }
+    // @PLN217 — under the 32-bit regime a width-neutral field of the standard library's
+    // stack-frame and reflection records is 4 bytes, and the runtime writes it at that width.
+    // Nothing is written in a 64-bit build.
+    if stores.field_bytes(stores.name("StackFrame"), "line") == 4 {
+        out.push_str("#define LOFT_STD_INT4 1\n");
+    }
+    if stores.field_bytes(stores.name("ValueInfo"), "f") == 4 {
+        out.push_str("#define LOFT_STD_SINGLE 1\n");
     }
     // The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`), stated here so
     // the runtime cannot hold a copy of the number that drifts from it.
@@ -2803,57 +2934,6 @@ pub(crate) fn variable_shapes(
         shapes.push(c);
     }
     Ok(shapes)
-}
-
-/// Whether `body` only READS value-record parameter `a`: every mention of it is a field read,
-/// a sub-record read, a presence test, a copy's source, a release (a tuple holds no store, so
-/// it is nothing), a whole-value bind to another variable or a by-value argument of a user
-/// function.  An allow-list: a mention of any other kind — a rebind, a field write, a copy
-/// into it, a `&` argument, an operator not listed — answers false, and the parameter stays
-/// by value (`Cx::vr_ptr_params`, `@FR-R-ValueRecord`).
-fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
-    let is_a = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == a);
-    let mentions = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == a));
-    let mut ok = true;
-    body.any_node(&mut |n| {
-        match n {
-            Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == a => ok = false,
-            Value::Call(op, args) if (*op as usize) < data.definitions.len() => {
-                let def = data.def(*op);
-                let name = def.name();
-                for (i, x) in args.iter().enumerate() {
-                    let writes_into =
-                        (name.starts_with("OpSet") && i == 0) || (name == "OpCopyRecord" && i == 1);
-                    if writes_into && mentions(x) {
-                        ok = false;
-                    } else if is_a(x) {
-                        let read = crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
-                            || matches!(
-                                name,
-                                "OpGetField"
-                                    | "OpConvBoolFromRef"
-                                    | "OpRefIsNull"
-                                    | "OpFreeRef"
-                                    | "OpFreeRefIfDistinct"
-                                    | "OpClear"
-                            )
-                            || (name == "OpCopyRecord" && i == 0)
-                            || (!name.starts_with("Op")
-                                && def
-                                    .attributes()
-                                    .get(i)
-                                    .is_some_and(|p| !matches!(p.typedef.base(), Type::RefVar(_))));
-                        if !read {
-                            ok = false;
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        !ok
-    });
-    ok
 }
 
 /// `@FR-R-Inline`: a function of at most twelve statements is declared `inline`.  The hint

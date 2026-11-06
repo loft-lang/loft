@@ -41,7 +41,7 @@
 <h2 id="audio">audio</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-audio.html"><code>audio</code></a></td><td>0.2.0</td><td>Clips, voices and one mix: the same sound on a PC and on a 32-bit device</td></tr>
+<tr><td><a href="lib-audio.html"><code>audio</code></a></td><td>0.2.1</td><td>Clips, voices and one mix: the same sound on a PC and on a 32-bit device</td></tr>
 <tr><td><a href="lib-audio_bus.html"><code>audio_bus</code></a></td><td>0.2.0</td><td>A mixer for game audio — buses that multiply, and a duck that restores exactly</td></tr>
 </table>
 <h2 id="cli">Command line</h2>
@@ -53,7 +53,7 @@
 <h2 id="crypto">Cryptography</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-crypto.html"><code>crypto</code></a></td><td>0.4.0</td><td>Cryptographic primitives — SHA-256, HMAC, base64; Ed25519, X25519, HPKE (RFC 9180), ChaCha20-Poly1305 / XChaCha20-Poly1305 / AES-256-GCM, HKDF, OS CSPRNG.</td></tr>
+<tr><td><a href="lib-crypto.html"><code>crypto</code></a></td><td>0.4.1</td><td>Cryptographic primitives — SHA-256, HMAC, base64; Ed25519, X25519, HPKE (RFC 9180), ChaCha20-Poly1305 / XChaCha20-Poly1305 / AES-256-GCM, HKDF, OS CSPRNG.</td></tr>
 </table>
 <h2 id="encoding">Encoding</h2>
 <table class="lib-table">
@@ -64,15 +64,15 @@
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-assets.html"><code>assets</code></a></td><td>0.5.1</td><td>A game's content pack that IS a loft store — art, audio and the scenes that place them, range-read off a static file server.  No codec, no parse step, no server-side code.</td></tr>
-<tr><td><a href="lib-audio.html"><code>audio</code></a></td><td>0.2.0</td><td>Clips, voices and one mix: the same sound on a PC and on a 32-bit device</td></tr>
+<tr><td><a href="lib-audio.html"><code>audio</code></a></td><td>0.2.1</td><td>Clips, voices and one mix: the same sound on a PC and on a 32-bit device</td></tr>
 <tr><td><a href="lib-audio_bus.html"><code>audio_bus</code></a></td><td>0.2.0</td><td>A mixer for game audio — buses that multiply, and a duck that restores exactly</td></tr>
 <tr><td><a href="lib-fixstep.html"><code>fixstep</code></a></td><td>0.1.4</td><td>A fixed simulation step in exact integer time — clock, bank, one-shot timer</td></tr>
 <tr><td><a href="lib-game_protocol.html"><code>game_protocol</code></a></td><td>0.1.7</td><td>The message types a multiplayer game's client and server share — envelopes, kinds and constructors; pure loft, transport-agnostic</td></tr>
 <tr><td><a href="lib-input.html"><code>input</code></a></td><td>0.3.0</td><td>Game input for loft — action/axis bindings resolved to per-tick input state.</td></tr>
-<tr><td><a href="lib-screen.html"><code>screen</code></a></td><td>0.1.0</td><td>A small frame on the machine's screen, scaled up, with the keys of its window — one API on a desktop and a device</td></tr>
+<tr><td><a href="lib-screen.html"><code>screen</code></a></td><td>0.1.1</td><td>A small frame on the machine's screen, scaled up, with the keys of its window — one API on a desktop and a device</td></tr>
 <tr><td><a href="lib-stage.html"><code>stage</code></a></td><td>0.19.0</td><td>A retained 2-D scene for loft: a node tree you mutate, with transforms, clipping, batching, pointer routing and widget states</td></tr>
 <tr><td><a href="lib-tile_world.html"><code>tile_world</code></a></td><td>0.7.0</td><td>An unbounded, layered square-grid world, and the routines that answer questions about it: paths, sight and light</td></tr>
-<tr><td><a href="lib-tiles.html"><code>tiles</code></a></td><td>0.5.1</td><td>Tile sheets, map layers and sprites on a small 16-bit surface, scaled up once per frame</td></tr>
+<tr><td><a href="lib-tiles.html"><code>tiles</code></a></td><td>0.6.0</td><td>Tile sheets, map layers and sprites on a small 16-bit surface, scaled up once per frame</td></tr>
 <tr><td><a href="lib-time.html"><code>time</code></a></td><td>0.4.1</td><td>Date/time arithmetic on millisecond-since-epoch integers — proleptic Gregorian, same model as JavaScript Date.  Pure-loft; identical results on interp, --native, WASM.</td></tr>
 <tr><td><a href="lib-tween.html"><code>tween</code></a></td><td>0.1.2</td><td>Property tweens in exact integer time — eleven easing curves, chains and groups</td></tr>
 </table>
@@ -99,28 +99,28 @@
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-drawing.html"><code>drawing</code></a></td><td>0.4.3</td><td>Render a .draw scene — a sprite authored as lines of text — pixel-identically to the Python renderer it replaces</td></tr>
 <tr><td><a href="lib-glb.html"><code>glb</code></a></td><td>0.1.7</td><td>glTF 2.0 binary (.glb) writer — exports Mesh / Scene as a glb file readable by Blender, three.js, gltf-validator.  Standalone (pure-loft, no GPU).</td></tr>
-<tr><td><a href="lib-graphics.html"><code>graphics</code></a></td><td>0.11.1</td><td>2D canvas + 3D rendering for loft (Canvas pixel surface, Mesh / Scene / glTF, OpenGL bindings).</td></tr>
+<tr><td><a href="lib-graphics.html"><code>graphics</code></a></td><td>0.11.2</td><td>2D canvas + 3D rendering for loft (Canvas pixel surface, Mesh / Scene / glTF, OpenGL bindings).</td></tr>
 <tr><td><a href="lib-gridmesh.html"><code>gridmesh</code></a></td><td>0.2.7</td><td>Chunk-local mesh-generation primitives for world-building algorithms.</td></tr>
-<tr><td><a href="lib-imaging.html"><code>imaging</code></a></td><td>0.5.1</td><td>PNG load/save + pixel manipulation for loft (Stage A — interpreter + native; wasm bridge deferred pending loft-host-ffi crate).</td></tr>
+<tr><td><a href="lib-imaging.html"><code>imaging</code></a></td><td>0.5.2</td><td>PNG load/save + pixel manipulation for loft (Stage A — interpreter + native; wasm bridge deferred pending loft-host-ffi crate).</td></tr>
 <tr><td><a href="lib-lavition_ui.html"><code>lavition_ui</code></a></td><td>—</td><td>Panel layout, hit-testing and text metrics for an in-engine editor UI: rectangles and hits, with no world, no lattice, no window and no GL.</td></tr>
 <tr><td><a href="lib-mesh3d.html"><code>mesh3d</code></a></td><td>0.1.5</td><td>3D geometry primitives — Vec/Mat, Mesh, Scene, Camera, Light.  Standalone (pure-loft, no GPU).</td></tr>
-<tr><td><a href="lib-screen.html"><code>screen</code></a></td><td>0.1.0</td><td>A small frame on the machine's screen, scaled up, with the keys of its window — one API on a desktop and a device</td></tr>
+<tr><td><a href="lib-screen.html"><code>screen</code></a></td><td>0.1.1</td><td>A small frame on the machine's screen, scaled up, with the keys of its window — one API on a desktop and a device</td></tr>
 <tr><td><a href="lib-stage.html"><code>stage</code></a></td><td>0.19.0</td><td>A retained 2-D scene for loft: a node tree you mutate, with transforms, clipping, batching, pointer routing and widget states</td></tr>
 <tr><td><a href="lib-text2d.html"><code>text2d</code></a></td><td>0.4.6</td><td>Text that always draws — a built-in face, a glyph atlas, measured metrics, wrapping and alignment, with no font file and no GL context</td></tr>
-<tr><td><a href="lib-tiles.html"><code>tiles</code></a></td><td>0.5.1</td><td>Tile sheets, map layers and sprites on a small 16-bit surface, scaled up once per frame</td></tr>
+<tr><td><a href="lib-tiles.html"><code>tiles</code></a></td><td>0.6.0</td><td>Tile sheets, map layers and sprites on a small 16-bit surface, scaled up once per frame</td></tr>
 </table>
 <h2 id="math">Mathematics</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-random.html"><code>random</code></a></td><td>0.3.6</td><td>Pseudo-random number generation — PCG-64 thread-local PRNG with rand_seed reproducibility.</td></tr>
+<tr><td><a href="lib-random.html"><code>random</code></a></td><td>0.5.1</td><td>Pseudo-random number generation — PCG-64 thread-local PRNG with rand_seed reproducibility.</td></tr>
 </table>
 <h2 id="net">Networking</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-game_protocol.html"><code>game_protocol</code></a></td><td>0.1.7</td><td>The message types a multiplayer game's client and server share — envelopes, kinds and constructors; pure loft, transport-agnostic</td></tr>
-<tr><td><a href="lib-server.html"><code>server</code></a></td><td>0.7.5</td><td>HTTP + WebSocket server for loft — TCP sockets + tungstenite via cdylib.</td></tr>
-<tr><td><a href="lib-ssh.html"><code>ssh</code></a></td><td>0.1.4</td><td>SSH client for loft — drive an interactive remote shell (e.g. attach tmux) over password auth, never stored. Native-only.</td></tr>
-<tr><td><a href="lib-web.html"><code>web</code></a></td><td>0.4.5</td><td>HTTP client + WebSocket client for loft — ureq + tungstenite via cdylib.</td></tr>
+<tr><td><a href="lib-server.html"><code>server</code></a></td><td>0.7.6</td><td>HTTP + WebSocket server for loft — the natives are loft's `net` component, so the package builds no crate.</td></tr>
+<tr><td><a href="lib-ssh.html"><code>ssh</code></a></td><td>0.1.5</td><td>SSH client for loft — drive an interactive remote shell (e.g. attach tmux) over password auth, never stored. Native-only.</td></tr>
+<tr><td><a href="lib-web.html"><code>web</code></a></td><td>0.5.0</td><td>HTTP client + WebSocket client for loft — the natives are loft's `net` component, so the package builds no crate.</td></tr>
 </table>
 <h2 id="plugins">Plugins</h2>
 <table class="lib-table">
@@ -130,14 +130,14 @@
 <h2 id="random">Randomness</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-random.html"><code>random</code></a></td><td>0.3.6</td><td>Pseudo-random number generation — PCG-64 thread-local PRNG with rand_seed reproducibility.</td></tr>
+<tr><td><a href="lib-random.html"><code>random</code></a></td><td>0.5.1</td><td>Pseudo-random number generation — PCG-64 thread-local PRNG with rand_seed reproducibility.</td></tr>
 </table>
 <h2 id="text">Text</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-html.html"><code>html</code></a></td><td>0.1.3</td><td>HTML escaping helpers for loft.</td></tr>
 <tr><td><a href="lib-markdown.html"><code>markdown</code></a></td><td>0.2.5</td><td>Markdown-to-HTML rendering for loft — headings, inline spans, slugify, link rewriting.</td></tr>
-<tr><td><a href="lib-regex.html"><code>regex</code></a></td><td>0.5.0</td><td>Small-script regex: `search`, `matches`, `capture` / `capture_all` with groups, `replace_on` and a lazy `split_on`, with a thread-local pattern cache.</td></tr>
+<tr><td><a href="lib-regex.html"><code>regex</code></a></td><td>0.6.0</td><td>Small-script regex: `search`, `matches`, `capture` / `capture_all` with groups, `replace_on` and a lazy `split_on`, with a cache of compiled patterns.</td></tr>
 <tr><td><a href="lib-text2d.html"><code>text2d</code></a></td><td>0.4.6</td><td>Text that always draws — a built-in face, a glyph atlas, measured metrics, wrapping and alignment, with no font file and no GL context</td></tr>
 <tr><td><a href="lib-zttext.html"><code>zttext</code></a></td><td>0.1.6</td><td>A text engine for loft: piece-table content core, transactional undo, and portable layout with measurement injected</td></tr>
 </table>

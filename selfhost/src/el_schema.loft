@@ -78,15 +78,16 @@ pub fn fill_all(e: el::El) {
       fill_database(e, d#index);
     }
   }
-  // P191: each keyed local's store type — a `hash` or `index`, through a `?` — registered before
-  // the schema is finished, in function and variable order; a `sorted` is made where it is met.
+  // P191: each keyed local's store type — a `hash`, `index`, `spatial` or `trie`, through a `?` —
+  // registered before the schema is finished, in function and variable order; a `sorted` is made
+  // where it is met.
   for d in e.b.data.definitions {
     if d.def_type != el::DT_FUNCTION || d.source != e.source {
       continue;
     }
     for v in d.variables.variables {
       t = el_types::base(v.type_def[0] ?? ir::TyVoid);
-      if (t is TyHash || t is TyIndex) && keyed_content_known(e, t) {
+      if !(t is TySorted) && keyed_content_known(e, t) {
         keyed_type(e, t);
       }
     }
@@ -137,11 +138,7 @@ fn record_reference_targets(e: el::El) {
 
 // The pre-registration's guard: the element struct already has its store type.
 fn keyed_content_known(e: el::El, t: ir::TypeT) -> boolean {
-  n = match t {
-    TyHash { n } => n,
-    TyIndex { n } => n,
-    _ => -1
-  };
+  n = el_types::keyed_elem(t);
   n >= 0 && el::def(e, n).known_type != NO_TYPE
 }
 
@@ -158,6 +155,8 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
       TyReference { n } => n,
       TyEnum { n } => n,
       TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
+      // `type_def_nr` of any vector is the library's `vector`.
+      TyVector { inner: _ } => el::source_nr(e, 0, "vector"),
       _ => el::source_nr(e, 0, nm)
     };
   }
@@ -421,41 +420,60 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       }
       vt
     },
-    // `database.hash` / `sorted` / `index` over the element's store type, its key fields made
-    // immutable in the element's definition (`set_mutable`).
-    TyHash { n, names } => {
-      c = keyed_content(e, n);
-      if c < 0 {
-        return -1;
-      }
-      nm = "hash<{e.b.types[c].name}[";
-      nrs: vector<integer> = [];
-      for k in names {
-        if k#index > 0 {
-          nm += ",";
-        }
-        nm += k.name;
-        f = field_nr(e, c, k.name);
-        if f >= 0 {
-          nrs += [f];
-        }
-        if field {
-          immutable(e, n, k.name);
-        }
-      }
-      nm += "]>";
-      ht = schema_type(e, nm);
-      if ht >= 0 {
-        return ht;
-      }
-      num = len(e.b.types);
-      e.b.types += [ir::DbType { name: nm, parts: [ir::PtHash { content: c, fields: nrs }], keys: [], complex: true, linked: false, size: 4, align: 4, field_groups: [] }];
-      num
-    },
+    // `database.hash` / `spatial` / `trie` / `sorted` / `index` over the element's store type,
+    // its key fields made immutable in the element's definition (`set_mutable`).
+    TyHash { n, names } => keyed_by_names(e, "hash", n, key_names(names), field),
+    TyRadix { n, names } => keyed_by_names(e, "spatial", n, key_names(names), field),
+    TyTrie { n, key } => keyed_by_names(e, "trie", n, [key], field),
     TySorted { n, keys } => sorted_type(e, "sorted", n, keys, field),
     TyIndex { n, keys } => sorted_type(e, "index", n, keys, field),
     _ => -1
   }
+}
+
+fn key_names(names: vector<ir::NameRef>) -> vector<text> {
+  r: vector<text> = [];
+  for k in names {
+    r += [k.name];
+  }
+  r
+}
+
+// `Stores::hash` / `spatial` / `trie`: the row named `kind<content[k1,k2]>`, keyed on the
+// element's field numbers, made where it is missing.  A trie whose key names no field has no
+// row (`Stores::trie` answers `u16::MAX`).
+fn keyed_by_names(e: el::El, kind: text, n: integer, keys: vector<text>, field: boolean) -> integer {
+  c = keyed_content(e, n);
+  if c < 0 {
+    return -1;
+  }
+  nm = "{kind}<{e.b.types[c].name}[";
+  nrs: vector<integer> = [];
+  for k in keys {
+    if k#index > 0 {
+      nm += ",";
+    }
+    nm += k;
+    f = field_nr(e, c, k);
+    if f >= 0 {
+      nrs += [f];
+    }
+    if field {
+      immutable(e, n, k);
+    }
+  }
+  nm += "]>";
+  if kind == "trie" && len(nrs) == 0 {
+    return -1;
+  }
+  t = schema_type(e, nm);
+  if t >= 0 {
+    return t;
+  }
+  part = if kind == "hash" { ir::PtHash { content: c, fields: nrs } } else if kind == "spatial" { ir::PtRadix { content: c, fields: nrs } } else { ir::PtTrie { content: c, key: nrs[0] } };
+  num = len(e.b.types);
+  e.b.types += [ir::DbType { name: nm, parts: [part], keys: [], complex: true, linked: false, size: 4, align: 4, field_groups: [] }];
+  num
 }
 
 // `Stores::determine_keys_for`: a keyed store type's key descriptors — per key field its
@@ -471,6 +489,13 @@ pub fn key_descriptors(e: el::El, t: integer) -> vector<ir::Key> {
         ks += [ir::KeyField { nr: f, asc: true }];
       }
     },
+    PtRadix { content, fields } => {
+      c = content;
+      for f in fields {
+        ks += [ir::KeyField { nr: f, asc: true }];
+      }
+    },
+    PtTrie { content, key } => { c = content; ks = [ir::KeyField { nr: key, asc: true }]; },
     PtSorted { content, keys } => { c = content; ks = keys; },
     PtIndex { content, keys } => { c = content; ks = keys; },
     _ => {}
@@ -558,7 +583,17 @@ fn sorted_type(e: el::El, kind: text, n: integer, keys: vector<ir::SortKey>, fie
 // range gives; the kind that width and the field's nullability pick (`NarrowIntKind::of`, never a
 // narrow-vector element here); the Part that kind stores, under its `min` (`part_min`) — the
 // wide kind keeps `integer`'s 8 bytes.
-fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean) -> integer {
+// `Parser::write_to_file`'s row for a value cast to a narrow alias: `database.byte` /
+// `database.short` (a `short`, not the `short_raw` a field stores) or the 4-byte encoding
+// `narrow_io_part` picks — at the alias's width `w`.
+pub fn io_int_part(e: el::El, spec: ir::IntegerSpec, w: integer) -> integer {
+  if w == 2 {
+    return narrow_part(e, "short<{spec.min},false>", ir::PtShort { start: spec.min, nullable: false }, 2);
+  }
+  int_part(e, spec, el::NONE, false)
+}
+
+pub fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: boolean) -> integer {
   s = 0;
   if alias != el::NONE && el::def(e, alias).forced_size > 0 {
     s = el::def(e, alias).forced_size;
@@ -818,27 +853,63 @@ fn is_record(t: ir::DbType) -> boolean {
 
 // `Stores::finish`, for the struct types: every one not sized yet is laid out.
 fn finish(e: el::El) {
-  // `@C145`, `@FR-H-LongRef`: a record a pointer field names is linked, and every `vector` of
-  // it is laid out by id (`array<T>`, its records pushed out) — not carried: refused by name.
+  // `@C145`, `@FR-H-LongRef`: a linked record — one a pointer field names, the element of a
+  // keyed field (`hash`, `index`, `radix`, `trie`), or of a field in a linked group — has every
+  // `vector` and `sorted` of it laid out by id (`array<T>`, `ordered<T[…]>`, its records pushed
+  // out) — not carried: refused by name.
   linked: vector<integer> = [];
   for t in e.b.types {
-    if !is_record(t) || starts_with(t.name, "__closure_") {
+    if !is_record(t) {
       continue;
     }
     for f in struct_fields(e, t#index) {
-      if f.target != NO_TYPE && (e.b.types[f.content]!.parts[0] ?? ir::PtBase) is PtDbRef && record_target(e.b.types[f.target]!) && !starts_with(e.b.types[f.target]!.name, "__") {
+      keyed = match e.b.types[f.content]!.parts[0] ?? ir::PtBase {
+        PtHash { content } => content,
+        PtIndex { content } => content,
+        PtRadix { content } => content,
+        PtTrie { content } => content,
+        _ => NO_TYPE
+      };
+      if keyed != NO_TYPE {
+        linked += [keyed];
+      }
+      if len(f.other_indexes) > 0 {
+        grouped = match e.b.types[f.content]!.parts[0] ?? ir::PtBase {
+          PtVector { content } => content,
+          PtSorted { content } => content,
+          PtHash { content } => content,
+          PtIndex { content } => content,
+          _ => NO_TYPE
+        };
+        if grouped != NO_TYPE {
+          linked += [grouped];
+        }
+      }
+      if !starts_with(t.name, "__closure_") && f.target != NO_TYPE && (e.b.types[f.content]!.parts[0] ?? ir::PtBase) is PtDbRef && record_target(e.b.types[f.target]!) && !starts_with(e.b.types[f.target]!.name, "__") {
         linked += [f.target];
       }
     }
   }
+  // Only a FIELD's collection is laid out again (`finish_type` walks the struct's fields): a
+  // `vector<T>` a local holds keeps its own type.
   for t in e.b.types {
-    match t.parts[0] ?? ir::PtBase {
-      PtVector { content } => {
-        if linked.contains(content) {
-          el::refuse(e, "a vector of a record a pointer field links (laid out by id)");
-        }
-      },
-      _ => {}
+    if !is_record(t) {
+      continue;
+    }
+    for f in struct_fields(e, t#index) {
+      match e.b.types[f.content]!.parts[0] ?? ir::PtBase {
+        PtVector { content } => {
+          if linked.contains(content) {
+            el::refuse(e, "a vector field of a linked record (laid out by id)");
+          }
+        },
+        PtSorted { content } => {
+          if linked.contains(content) {
+            el::refuse(e, "a sorted field of a linked record (laid out by id)");
+          }
+        },
+        _ => {}
+      }
     }
   }
   for t in e.b.types {
@@ -853,7 +924,7 @@ fn finish(e: el::El) {
   }
   // `determine_keys`, once every record is laid out: each keyed type's key descriptors.
   for t in e.b.types {
-    if t.parts[0] is PtHash || t.parts[0] is PtSorted || t.parts[0] is PtIndex {
+    if t.parts[0] is PtHash || t.parts[0] is PtSorted || t.parts[0] is PtIndex || t.parts[0] is PtRadix || t.parts[0] is PtTrie {
       e.b.types[t#index].keys = key_descriptors(e, t#index);
     }
   }

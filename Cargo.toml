@@ -87,7 +87,7 @@ png          = ["dep:png"]
 # cargo-fuzz `program_source` target. Also compiled under `cfg(test)`, so the
 # seed-corpus replay runs without this flag.
 fuzzing      = []
-mmap         = ["dep:mmap-storage", "dep:memmap"]
+mmap         = ["dep:memmap2"]
 random            = ["dep:rand_core", "dep:rand_pcg"]
 native-extensions = ["dep:libloading"]
 # @PLN97 arc G — the remote/paged working-set store loader. In `default` so
@@ -139,9 +139,9 @@ rand_core          = { version = "0.9", optional = true }
 rand_pcg           = { version = "0.9", optional = true }
 png                = { version = "0.17", optional = true }
 fontdue            = { version = "0.9", optional = true }
-mmap-storage       = { version = "0.10", optional = true }
-# @PLN174 — a READ-ONLY mapping for `file_map` (mmap-storage maps read-write only).
-memmap             = { version = "0.7", optional = true }
+# The store's file mapping (src/mmap_file.rs) and the read-only `file_map` one.  0.9.11+ for
+# RUSTSEC-2026-0186; `memmap` and `mmap-storage` (built on it) are unmaintained.
+memmap2            = { version = "0.9.12", optional = true }
 crc32fast          = "1"
 dirs               = "5"
 wasm-bindgen       = { version = "0.2", optional = true }

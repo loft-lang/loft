@@ -22,8 +22,9 @@ fn main() {
 
     w = h.b;            // a struct field — a view into `h`
     h = Holder { b: Box { n: 40 }, tag: 2, list: [] };   // `h` reassigned — `w`'s place is gone
+    w.n = 31;           // a write through `w` after its place is gone
     // advice: in `main`, `w` was copied out of `h` because `h` is reassigned while `w` is in
     //   use — a view names a place inside `h`, and giving `h` a new value leaves nothing for
     //   it to point at. Writes through `w` no longer reach `h`.
-    println("{w.n} {h.b.n}");      // 30 40 — `w` kept the value it was bound to
+    println("{w.n} {h.b.n}");      // 31 40 — the write stayed in `w`'s copy
 }

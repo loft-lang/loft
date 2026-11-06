@@ -244,7 +244,7 @@ Carries the static type of a `Value`. Key variants:
 | `RefVar(Box<Type>)` | Stack reference (`&T` parameter) |
 | `Iterator(result, state)` | Iterator type |
 | `Function(Vec<Type>, Box<Type>)` | First-class function type (arg types + return type); runtime value is `i32` d_nr; variables of this type are callable via normal call syntax |
-| `Rewritten(Box<Type>)` | Marker that text/vector append was rewritten |
+| `Rewritten(Box<Type>)` | The value was built in place (a pass-1 struct literal, an append rewrite). It says how one expression was built, not what it borrows: `borrow_deps` reads through it, it stays outermost (`Type::optional`), and a join or an adopted arm type keeps it only when every input carries it (`Type::built_in_place`) |
 
 The dependency lists (`deps: Vec<u16>`) track which variables a reference-typed value "depends on" for lifetime purposes, used by scope analysis.
 

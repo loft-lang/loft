@@ -15,6 +15,7 @@
 #          plus the declared capabilities
 #   V4     public API surface (informational — diff vs the prior version by eye)
 #   V1     `loft package` sha256 + size (the entry the maintainer will sign)
+#   V7     third-party code, links and loads declared in loft.toml (THIRDPARTY.md)
 #
 # Usage:
 #   scripts/vet-lib.sh <org/repo> <tag> [package] [--native]
@@ -76,6 +77,15 @@ else
   echo "V6 risk tier     : pure loft — auto-trustable"
 fi
 [ -n "$caps" ] && echo "   declared capabilities: $caps"
+
+# V7 — third-party code declared (THIRDPARTY.md): what the package ships, compiles in or
+# opens that its author did not write is in its loft.toml, the same gate own libs pass.
+if python3 "$ROOT/scripts/thirdparty.py" --gate --repo "$DIR" > /dev/null 2>&1; then
+  echo "V7 third-party   : declared"
+else
+  echo "V7 third-party   : ✗ undeclared — python3 scripts/thirdparty.py --gate --repo <dir> lists it"
+  fail=1
+fi
 
 # V2/V3 — parity gate + compiles against THIS loft (interpret = hard gate)
 printf "V2/V3 interpret  : "

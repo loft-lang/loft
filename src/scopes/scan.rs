@@ -283,6 +283,7 @@ impl Scopes<'_> {
                         &fname,
                         via.as_deref(),
                         disturbance_site(data, self.d_nr, &cause),
+                        self.copy_is_observable(v),
                     );
                 }
                 Value::Null

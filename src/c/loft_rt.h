@@ -2137,6 +2137,20 @@ static int64_t loft_get_int4(loft_ref r, uint32_t fld) {
     return loft_dec_int4(loft_at(loft_store_of(r), r.rec, r.pos + fld));
 }
 
+/* OpGetInt4 in a 32-bit build (@PLN217): the field as it is stored, its null (INT32_MIN) being
+ * the 32-bit null, so no 64-bit value is formed to be narrowed again. */
+LOFT_HOT_INLINE int32_t loft_pa_int4_32(const uint8_t *p, uint32_t fld) {
+    int32_t x;
+    if (!p) return LOFT_NULL32;
+    memcpy(&x, p + fld, 4);
+    return x;
+}
+
+static int32_t loft_get_int4_32(loft_ref r, uint32_t fld) {
+    if (r.rec == 0) return LOFT_NULL32;
+    return loft_pa_int4_32(loft_at(loft_store_of(r), r.rec, r.pos), fld);
+}
+
 /* OpGetInt4Raw / OpGetInt4Full / OpSetInt4Raw: an unsigned 4-byte field — the Raw form keeps
  * 0xFFFFFFFF for null, the Full form reserves nothing. */
 LOFT_HOT_INLINE int64_t loft_dec_int4_raw(const uint8_t *q) {
@@ -3506,7 +3520,11 @@ static loft_ref loft_stack_trace(void) {
         loft_ref e = loft_vec_append(vec, LOFT_SF_SIZE);
         loft_set_text(e, LOFT_SF_FUNCTION, loft_lit(loft_frames[i].fn, strlen(loft_frames[i].fn)));
         loft_set_text(e, LOFT_SF_FILE, loft_lit(loft_frames[i].file, strlen(loft_frames[i].file)));
+#ifdef LOFT_STD_INT4
+        loft_set_int4(e, LOFT_SF_LINE, i == 0 ? 0 : (int64_t) loft_frames[i - 1].site);
+#else
         loft_set_int(e, LOFT_SF_LINE, i == 0 ? 0 : (int64_t) loft_frames[i - 1].site);
+#endif
         loft_set_u32(loft_store_of(e), e.rec, e.pos + LOFT_SF_ARGS, 0);
         loft_set_u32(loft_store_of(e), e.rec, e.pos + LOFT_SF_VARS, 0);
         loft_vec_finish(vec);

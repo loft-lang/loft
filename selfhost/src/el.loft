@@ -25,6 +25,12 @@ pub struct TypeVar {
   pub holder: integer
 }
 
+// A local of the enclosing function a lambda reads (`Parser::captured_names`): its name and type.
+pub struct Capture {
+  pub name: text,
+  pub tp: ir::TypeT
+}
+
 // An instance made before its template's second-pass body was read: filled after the pass.
 pub struct StaleInstance {
   pub d: integer,
@@ -53,6 +59,10 @@ pub struct El {
   pub line: integer,
   // what elaboration does not carry yet, by name: the gate counts a program that reaches one
   pub refused: vector<text>,
+  // The vector locals whose last first-pass literal bind was `[]` (`function * 65536 + local`):
+  // Rust's first pass builds that literal in the local, which then names only itself, so the
+  // second pass finds it holding no backing (`vector_needs_db`).
+  pub unbacked: vector<integer>,
   // the functions the program declares whose definition elaboration refused: a call of one is
   // not refused again, as a call of an unknown function
   pub declined: vector<text>,
@@ -63,7 +73,12 @@ pub struct El {
   pub type_vars: vector<TypeVar>,
   // `Parser::pass2_bodies`: the generic templates whose second-pass body has been read
   pub bodies2: vector<integer>,
-  pub stale: vector<StaleInstance>
+  pub stale: vector<StaleInstance>,
+  // The lambda being read: the enclosing function's locals it captures, its closure record and
+  // the `__closure` parameter they are read through (-1 where there is none yet).
+  pub captures: vector<Capture>,
+  pub closure_rec: integer,
+  pub closure_var: integer
 }
 
 pub const STD_SOURCE = 0;
@@ -99,11 +114,15 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     context: -1,
     line: 0,
     refused: [],
+    unbacked: [],
     declined: [],
     lines: [],
     type_vars: [],
     bodies2: [],
-    stale: []
+    stale: [],
+    captures: [],
+    closure_rec: -1,
+    closure_var: -1
   }
 }
 

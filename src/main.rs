@@ -9833,7 +9833,10 @@ fn main() {
     {
         !(lean || ship_build)
     } else {
-        false
+        // A live-reload session (the install below, `LOFT_LIVE_RELOAD`) is an OPEN program:
+        // its code changes under it, so it takes no whole-program rewrite — and the reload's
+        // parse-only shadow must see the definitions the running program has.
+        std::env::var_os("LOFT_LIVE_RELOAD").is_some()
     };
     let mut warm_store: Option<(loft::database::Stores, loft::keys::DbRef)> = None;
     if html_out.is_some() {

@@ -1,0 +1,83 @@
+# What loft ships, links or builds in that it did not write — one table per dependency.
+# `scripts/thirdparty.py` checks this against the tree and asks each named advisory register;
+# the format is THIRDPARTY.md, the same a library writes in its loft.toml.
+
+# Files loft embeds or compiles that are ours but carry no licence header.
+[own]
+paths = ["src/c/loft_*.h", "src/c/tls/loft_*.c", "doc/loft-*.js", "index/*.json",
+         "src/native_release_args.txt"]
+
+[thirdparty.bearssl]
+kind       = "vendored"
+path       = "src/c/tls/bearssl"
+upstream   = "https://www.bearssl.org/git/BearSSL"
+commit     = "7bea48e5e850ab4cafbe68d3765cdaba13a86d6f"
+version    = "0.6+"
+digest     = "sha256:bd789853c394f011ffb425b0a000526d4dc5e9d84551539117128daaae35af7d"
+advisories = ["nvd:bearssl", "osv:commit"]
+
+[thirdparty.esp-idf]
+kind       = "sdk"
+source     = "https://github.com/espressif/esp-idf"
+version    = "v6.0.3"
+pinned     = "src/esp_app.rs:IDF_VERSION"
+advisories = ["github:espressif/esp-idf"]
+
+[thirdparty.esp-idf.reviewed]
+CVE-2025-55297  = "not-reached: the BluFi example program; no app is built from it"
+CVE-2026-113781 = "not-reached: BLE Mesh, and the app's sdkconfig sets CONFIG_BT_ENABLED=n"
+CVE-2026-113782 = "not-reached: the OpenThread Border Router, which no app enables"
+CVE-2026-113780 = "not-reached: ESP-TEE is not part of a loft app — the build has no esp_tee object and its link map no esp_tee_vectors trap entry"
+CVE-2026-113783 = "fixed: in v6.0.3, our pin (lwIP dns_lookup() bounds the cached addresses it copies)"
+
+[thirdparty.badge-bsp]
+kind       = "sdk"
+source     = "esp-registry:badgeteam/badge-bsp"
+version    = "2.0.0"
+pinned     = "src/esp_app.rs:BSP"
+# 2.0 for the features: mipi_dsi_abstraction 2.0 drives the boards' second display panel
+# (SW39480800PN03-01-1); the BSP's own code is unchanged from 1.6.4.  Measured against 1.6.4 on
+# ESP-IDF v6.0.3: the same display start, 30 us more per 192x176 frame (11.31 vs 11.28 ms), 1.2 KB.
+advisories = ["github:badgeteam/esp32-component-badge-bsp"]
+
+[thirdparty.libc]
+kind     = "system"
+names    = ["c", "m", "dl", "pthread", "gcc_s", "ld-linux-x86-64", "vcruntime140",
+            # the Universal CRT, imported through its API-set names: the whole family, one library
+            "api-ms-win-crt-conio-l1-1-0", "api-ms-win-crt-convert-l1-1-0", "api-ms-win-crt-environment-l1-1-0",
+            "api-ms-win-crt-filesystem-l1-1-0", "api-ms-win-crt-heap-l1-1-0", "api-ms-win-crt-locale-l1-1-0",
+            "api-ms-win-crt-math-l1-1-0", "api-ms-win-crt-multibyte-l1-1-0", "api-ms-win-crt-private-l1-1-0",
+            "api-ms-win-crt-process-l1-1-0", "api-ms-win-crt-runtime-l1-1-0", "api-ms-win-crt-stdio-l1-1-0",
+            "api-ms-win-crt-string-l1-1-0", "api-ms-win-crt-time-l1-1-0", "api-ms-win-crt-utility-l1-1-0"]
+provider = "the platform's C library and compiler runtime (glibc or musl and libgcc on Linux, libSystem on macOS, the Universal CRT and vcruntime on Windows)"
+
+[thirdparty.windows]
+kind     = "system"
+names    = ["ws2_32", "crypt32", "advapi32", "bcrypt", "bcryptprimitives", "kernel32", "user32", "gdi32",
+            "shell32", "ole32", "oleaut32", "windows", "ntdll", "combase", "api-ms-win-core-synch-l1-2-0"]
+provider = "Windows: the native API (ntdll) and the wait-on-address primitives (api-ms-win-core-synch) Rust's std calls, the COM runtime (combase), Winsock, the certificate store, the random source (bcrypt, bcryptprimitives for getrandom 0.4), the console and clipboard (rustyline), the API import library (windows-targets)"
+
+[thirdparty.macos]
+kind     = "system"
+names    = ["Security", "ServiceManagement", "CoreFoundation", "bsm", "iconv"]
+provider = "macOS: the keychain trust store (rustls-native-certs), CoreFoundation, the audit library (nix through zip), libiconv (the libc crate links it on Apple targets)"
+
+[thirdparty.wasi-libc]
+kind     = "system"
+names    = ["setjmp", "wasi-emulated-signal", "wasi-emulated-process-clocks"]
+provider = "wasi-libc, from the WASI SDK the wasm C build links against"
+
+[thirdparty.sqlite]
+kind     = "system"
+names    = ["sqlite3", "winsqlite3"]
+provider = "the OS's SQLite (libsqlite3; winsqlite3 ships with Windows), opened when a program reads a `sqlite:` source"
+
+[thirdparty.rust]
+kind     = "cargo"
+lockfile = ["Cargo.lock", "loft-ffi/Cargo.lock", "loft-ffi-build/Cargo.lock",
+            "loft-ffi-macros/Cargo.lock", "wasm-sync/Cargo.lock"]
+# ring compiles BoringSSL-derived C and assembly (rustls' crypto); its advisories are RustSec's.
+compiles-c = ["ring"]
+
+[thirdparty.rust.reviewed]
+RUSTSEC-2026-0192 = "applies: ttf-parser 0.21 is unmaintained; fontdue 0.9 (the `fontdue` feature) parses font files through it — a font from outside reaches it"

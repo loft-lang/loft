@@ -1999,6 +1999,20 @@ impl Type {
         t
     }
 
+    /// Whether this value wears the `Rewritten` marker — it was BUILT IN PLACE (a first-pass
+    /// struct literal).  It is a fact about one expression: a join or an adopted expected type
+    /// keeps it only when every input carries it (`joined_deps`, `with_deps_of`).
+    #[must_use]
+    pub fn built_in_place(&self) -> bool {
+        match self {
+            Type::Rewritten(_) => true,
+            // `Type::optional` keeps the marker OUTERMOST (loft#1714), so a `τ?` never wears
+            // it — and `unrewritten`, which the callers peel with, peels only the outside.
+            Type::Optional(_) => false,
+            _ => false,
+        }
+    }
+
     /// Pass-2 keystone, the `Type` twin of `Value::for_each_child`
     /// (STABILITY_PASS2.md): the ONE place that knows which `Type`
     /// variants carry child types.  Exhaustive on purpose — a new
@@ -2475,6 +2489,13 @@ impl Type {
     /// alone (a diverging or scalar tail has no borrow to state).
     #[must_use]
     pub fn with_deps_of(&self, src: &Type) -> Type {
+        // Nor can it say how that value was BUILT: `Rewritten` (built in place) belongs to the
+        // value in hand, so an arm beside a struct-literal sibling is not a literal itself.
+        // Adopted, the marker hid the arm's borrow from the record-return delivery on pass 1
+        // (see `joined_deps`).
+        if self.built_in_place() && !src.built_in_place() {
+            return self.unrewritten().with_deps_of(src);
+        }
         match src.borrow_deps() {
             Some(d) => self.rewrap_deps(&d),
             None => self.clone(),
@@ -2533,6 +2554,15 @@ impl Type {
     /// result carries what IT owns.
     #[must_use]
     pub fn joined_deps(&self, other: &Type) -> Type {
+        // `Rewritten` (built in place) is true of a join only when it is true of every arm.
+        // Kept from a struct-literal first arm, it hid the join's borrow list from the
+        // record-return delivery (`heap_def_nr` peels `Optional` only), so `if c { S { … } }
+        // else { s }` published its parameter borrow a pass late, and its callers lowered
+        // differently from `if c { s } else { S { … } }` with the same signature
+        // (`(O-Move)`, `(O-Deps)`).
+        if self.built_in_place() != other.built_in_place() {
+            return self.unrewritten().joined_deps(&other.unrewritten());
+        }
         // A tuple carries no list of its own — join element-wise, where the deps live.
         if let (Type::Tuple(a), Type::Tuple(b)) = (self, other)
             && a.len() == b.len()
@@ -4057,6 +4087,51 @@ pub struct Argument {
 /// `pub` is ABSTRACT outside its file (`parser::abstract_alias`), so the checker follows these
 /// positions through a program while the `Type` stays the alias's underlying type.  A
 /// position no alias names is `Plain`; a compound whose positions are all plain is `Plain`.
+/// `@FR-R-CompleteWrite` — the mints of a function whose literal group writes every field, so
+/// the default prefill writes nothing that survives.  Decided ONCE, in `close_program`
+/// (`opt::complete_write`), and read by every backend: the interpreter's code generator emits
+/// the no-prefill twin opcode (`OpDatabaseNP`, `OpNewRecordNP`), rustc and the C write their
+/// no-prefill mint.  Keyed so later passes cannot stale it: `locals` by the variable an
+/// `OpDatabase(v, …)` mints (every such site covers), `mints` by an `OpNewRecord`'s parent type
+/// (every mint of it in the function covers).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct NoPrefill {
+    pub locals: BTreeSet<u16>,
+    pub mints: BTreeSet<u16>,
+}
+
+impl NoPrefill {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.locals.is_empty() && self.mints.is_empty()
+    }
+
+    /// The program image's spelling: `l<v>,<v>;m<tp>,<tp>`, `""` for none.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        if self.is_empty() {
+            return String::new();
+        }
+        let join = |s: &BTreeSet<u16>| s.iter().map(u16::to_string).collect::<Vec<_>>().join(",");
+        format!("l{};m{}", join(&self.locals), join(&self.mints))
+    }
+
+    /// The inverse of [`Self::encode`]; anything it did not write reads as none.
+    #[must_use]
+    pub fn decode(s: &str) -> Self {
+        let mut out = Self::default();
+        for part in s.split(';') {
+            let (set, rest) = match part.split_at_checked(1) {
+                Some(("l", r)) => (&mut out.locals, r),
+                Some(("m", r)) => (&mut out.mints, r),
+                _ => continue,
+            };
+            set.extend(rest.split(',').filter_map(|x| x.parse::<u16>().ok()));
+        }
+        out
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum AliasFact {
     #[default]
@@ -4478,6 +4553,8 @@ pub struct Definition {
     /// `returned` holds the underlying type; this keeps what a caller in another file sees,
     /// so a non-`pub` alias can stay abstract there (C140).
     pub returned_fact: AliasFact,
+    /// `@FR-R-CompleteWrite`: this function's mints that skip the default prefill.
+    pub no_prefill: NoPrefill,
     pub returned_not_null: bool,
     /// Rust code
     pub rust: String,
@@ -6701,7 +6778,8 @@ impl Data {
         )
     }
 
-    /// @PLN204 — instance `d` was minted from a template in a 64-bit source.
+    /// @PLN204 — instance `d` was minted from a template in a 64-bit source; @PLN217 — or
+    /// `d` is a standard-library binding to the 64-bit runtime.  Either way its body is 64-bit.
     pub fn mark_wide_instance(&mut self, d: u32) {
         self.wide_instances.insert(d);
     }
@@ -7281,6 +7359,7 @@ impl Data {
             returned: Type::Unknown(rec),
             returned_not_null: false,
             returned_fact: AliasFact::Plain,
+            no_prefill: NoPrefill::default(),
             rust: String::new(),
             native: String::new(),
             native_answer_tp: u16::MAX,
@@ -11408,8 +11487,15 @@ impl Data {
         d
     }
 
-    pub fn check_vector(&mut self, d_nr: u32, vec_tp: u16, pos: &Position) -> u32 {
-        let vec_name = format!("vector<{}>", self.def(d_nr).name);
+    pub fn check_vector(&mut self, d_nr: u32, elem: &Type, vec_tp: u16, pos: &Position) -> u32 {
+        // A vector element's definition is the library's generic `vector` (`type_def_nr`), whose
+        // name says nothing of the element: named after it, a `vector<vector<integer>>` was
+        // registered a second time as `vector<vector>`, and the real one never took its type.
+        let vec_name = if matches!(elem.base(), Type::Vector(..)) {
+            Type::Vector(Box::new(elem.base().clone()), Deps::none()).name(self)
+        } else {
+            format!("vector<{}>", self.def(d_nr).name)
+        };
         let mut v_nr = self.def_nr(&vec_name);
         if v_nr == u32::MAX {
             v_nr = self.add_def(&vec_name, pos, DefType::Vector);

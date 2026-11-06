@@ -188,7 +188,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-CodeBase)` | not counted — executor: bytecode reads through a cached base |
 | `(R-Cold)` | not counted — runtime: the runtime helpers' own shape |
 | `(R-Compact)` | `R-Compact` ir · `/prepend` ir |
-| `(R-CompleteWrite)` | `R-CompleteWrite` c, native |
+| `(R-CompleteWrite)` | `R-CompleteWrite` ir |
 | `(R-Const)` | `R-Const` ir · `/fn` parse |
 | `(R-CopyView)` | `R-CopyView` ir |
 | `(R-Counter)` | `R-Counter` ir, c, native |
@@ -265,7 +265,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-RangedCall)` | `R-RangedCall` native |
 | `(R-Rebind)` | `R-Rebind` ir |
 | `(R-RebindBuffer)` | `R-RebindBuffer` native |
-| `(R-RecPtr)` | `R-RecPtr` c, native · `/element` native · `/held` c · `/index` native · `/nested` native · `/param` c · `/text` c |
+| `(R-RecPtr)` | `R-RecPtr` c, native · `/held` c · `/index` native · `/nested` native · `/param` c · `/text` c |
 | `(R-RefParam)` | `R-RefParam` c |
 | `(R-RefillBuffer)` | `R-RefillBuffer` native |
 | `(R-RefillText)` | `R-RefillText` native |
@@ -4673,11 +4673,24 @@ line in `Output::output_function`'s prelude.
                  reads is left to the prefill.  `db_vars`
                  is keyed by the local (every `OpDatabase` site must cover);
                  `mint_tps` by the element type (every mint group in the function
-                 must).  The interpreter keeps the prefill and is the oracle.  In
-                 the C, `FnWriter::mint_complete` reads the same proof and
-                 `fresh_null_arm` writes the field type's default image for a null
-                 source, the null arm above — the plain copy and a value record's
-                 absent arm alike.
+                 must).  APPLIED IN THE IR, once for every backend
+                 (`opt::complete_write`, in `close_program` ahead of
+                 `(R-LoopRecord)`): the two keys are stored on the function
+                 (`Definition::no_prefill`), the IR keeps `OpDatabase` and
+                 `OpNewRecord`, and each backend reads the fact where it writes
+                 the mint — the interpreter's code generator emits the twin
+                 opcode (`OpDatabaseNP`, `OpNewRecordNP`), rustc and the C their
+                 no-prefill mint, which still zeroes the element's bytes: the group
+                 writes every FIELD, not a type's padding, and a persisted image
+                 holds the same bytes on every backend (`Stores::record_new_np`,
+                 the C's mint).  The null arm above is SPELLED in the IR: each
+                 copy into a field of an element a group builds is flagged
+                 `COPY_FRESH_DEST`, whose null source every runtime writes as the
+                 field type's default walk (`Stores::copy_null_into`, the C's
+                 default image) — flagged whether the rule is on or off, because
+                 rustc's record push mints its element without the prefill either
+                 way.  The oracles: the switch (`LOFT_NO_COMPLETE_WRITE=1`) and
+                 `LOFT_POISON_CLAIM` (a field read before any write reads poison).
 
   (R-ElemFirst)  a local vector consumed EXACTLY ONCE as a record-literal field of
                  an append (`out += [R { f: v, … }]`) is built INSIDE the appended
@@ -6535,8 +6548,10 @@ of materials this way: 54.0M → 45.9M instructions per op alone (gcc).  Site:
 ### A self-call in tail position is a jump
 
 ```
-  (R-TailSelf)   In a function whose result is a scalar, nothing, a text or a store-held
-                 value, the body is wrapped in a loop and every SELF-call
+  (R-TailSelf)   In a function whose result is a scalar, nothing, a text, a store-held
+                 value or a tuple of scalars and store-held values (each delivered by
+                 value, as the IR's value records answer a small record), the body is
+                 wrapped in a loop and every SELF-call
                  in TAIL position — the value a `return` answers, the value an `if` arm or
                  a block answers in that position, the last statement of a void body, the
                  value of the temporary the scope pass hands to a `return` — binds its

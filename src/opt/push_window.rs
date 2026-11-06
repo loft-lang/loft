@@ -34,7 +34,8 @@ use std::collections::HashSet;
 /// FRESH — minted by this activation and shared with nothing but its borrowers: a `__vdb_N`
 /// witness, or a user-named local record that owns its store.  Never fresh: the witness a
 /// return-buffer adoption left unallocated (`RetAdopt`: the local IS the caller's buffer), a
-/// buffer `(R-Place)` claimed in a parameter's store, and an emitter-owned buffer or witness
+/// buffer `(R-Place)` claimed in another record's store, the store that HOSTS such a buffer
+/// (a `__vdb_N` witness included: the placed record names it too), and an emitter-owned buffer or witness
 /// ([`HoistOwned`](crate::opt::writes::HoistOwned): a § V-z witness binds an element's slot).  Two arguments, or an argument
 /// beside the return buffer, are never proven apart — a caller can hand two fields of one
 /// record — and a chain that forks (a tuple's union) or leaves the table answers nothing.
@@ -42,6 +43,9 @@ pub struct StoreFacts<'a> {
     pub vars: &'a crate::variables::Function,
     /// The locals whose buffer `(R-Place)` claimed in another record's store.
     pub placed: &'a HashSet<u16>,
+    /// The locals whose store hosts one of `placed` ([`placed_hosts`](crate::opt::hoist::placed_hosts)):
+    /// named by the placed record as well, so never fresh.
+    pub hosts: &'a HashSet<u16>,
     /// `RetAdopt`'s result local and its witness, when the function adopts its buffer.
     pub adopted: Option<(u16, u16)>,
     pub owned: Option<&'a HoistOwned>,
@@ -98,6 +102,7 @@ impl StoreFacts<'_> {
         let vars = self.vars;
         if self.adopted.is_some_and(|(v, vdb)| t == v || t == vdb)
             || self.placed.contains(&t)
+            || self.hosts.contains(&t)
             || self
                 .owned
                 .is_some_and(|o| o.buffers.contains(&t) || o.records.contains(&t))

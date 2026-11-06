@@ -304,6 +304,8 @@ pub(crate) struct FnWriter<'a> {
     /// The locals `(R-Place)` put in another record's store (`hoist::placed_locals`), for
     /// the store facts the loop verdict proves bases apart with.
     placed: std::collections::HashSet<u16>,
+    /// The hosts of `placed` (`hoist::placed_hosts`): never a fresh store.
+    hosts: std::collections::HashSet<u16>,
     /// `@FR-R-Alias`'s versioned clause: the variable pairs the loop copy being written may
     /// take as holding apart stores, tested at its entry.  Empty outside such a copy.
     assumed: Vec<(u16, u16)>,
@@ -373,14 +375,6 @@ pub(crate) struct FnWriter<'a> {
     /// `st<var>` declared up front; the walks' hidden vectors map to their table.
     split_tabs: std::collections::BTreeMap<u16, crate::opt::text_borrow::SplitTable>,
     tab_alias: std::collections::BTreeMap<u16, u16>,
-    /// `@FR-R-CompleteWrite` (`hoist::complete_writes`): the element types every mint of this
-    /// function writes completely, so the default image copied into a fresh element writes
-    /// nothing that survives; computed on first use.
-    complete_mints: Option<std::collections::HashSet<u16>>,
-    /// The record copies into a field of an element a literal group builds, by argument slice,
-    /// with the field's type (`CompleteWrites::fresh_fields`): their null arm writes the
-    /// field's default (`fresh_null_arm`); computed with `complete_mints`.
-    fresh_fields: std::collections::HashMap<usize, u16>,
     /// `@FR-R-Apart` instance 4: this body's apart records of record vectors and their push
     /// groups' elements, or its `__apr` twin's parameter (`apart.rs`), and the program's plan.
     apr: crate::lower::apart_records::RecRoles,
@@ -776,6 +770,7 @@ impl<'a> FnWriter<'a> {
             invariants: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
+            hosts: crate::opt::hoist::placed_hosts(def.code(), cx.data),
             assumed: Vec::new(),
             range_facts: None,
             cur_line: 0,
@@ -810,8 +805,6 @@ impl<'a> FnWriter<'a> {
             } else {
                 crate::opt::char_walk::char_walks(cx.data, d)
             },
-            complete_mints: None,
-            fresh_fields: std::collections::HashMap::new(),
             apr: crate::lower::apart_records::RecRoles::default(),
             apr_plan: None,
             apv: crate::lower::apart_vector::VecRoles::default(),
@@ -1047,7 +1040,6 @@ impl<'a> FnWriter<'a> {
             fired("R-CharWalk", self.char_walks.len());
             fired("R-RetAdopt", usize::from(self.adopt.is_some()));
         }
-        self.complete_writes_once();
         let code = self.code;
         self.dc = self.deferred_plan();
         let mut flags: Vec<u16> = self.dc.vars.keys().copied().collect();
@@ -1409,7 +1401,7 @@ impl<'a> FnWriter<'a> {
                 let name = format!("s{}", self.decls.len() + 1);
                 self.decls
                     .push(format!("{} {name} = {};", held(c), self.cx.initial(c)));
-                self.line(ind, &format!("{name} = {};", as_shape(e, c)?));
+                self.line(ind, &format!("{name} = {};", as_shape(self.cx, e, c)?));
                 held_scalars.push((*key, name, c));
             }
             let bases = self.kept_bases(&verdict);
@@ -1760,7 +1752,7 @@ impl<'a> FnWriter<'a> {
                 K::Void,
             )));
         }
-        if !matches!(name, "OpNewRecord" | "OpFinishRecord") {
+        if !matches!(name, "OpNewRecord" | "OpNewRecordNP" | "OpFinishRecord") {
             return Ok(None);
         }
         let Some(t) = crate::opt::writes::mint_target(data, self.cx.stores, name, args, self.vars)
@@ -1785,7 +1777,7 @@ impl<'a> FnWriter<'a> {
                 c_string(&proof_at)
             ),
         );
-        if !self.mint_complete(ptp) {
+        if !(name == "OpNewRecordNP" || self.mint_complete(ptp)) {
             let (image, n) = self.cx.default_image(elem);
             self.line(ind, &format!("loft_fill({e}, {image}, {n});"));
         }
@@ -1798,6 +1790,7 @@ impl<'a> FnWriter<'a> {
         (!self.cx.switches.distinct_growth_disabled).then(|| crate::opt::hoist::StoreFacts {
             vars: self.vars,
             placed: &self.placed,
+            hosts: &self.hosts,
             adopted: self.adopt.as_ref().map(|a| (a.v, a.vdb)),
             owned: None,
             assumed: &self.assumed,
@@ -2281,34 +2274,16 @@ impl<'a> FnWriter<'a> {
 
     /// `@FR-R-CompleteWrite` — does every mint of element type `tp` in this function write it
     /// completely?  Then the default image a fresh element is filled with writes nothing that
-    /// survives, and the copy is left out, as native calls `OpNewRecordNP`.  A record copy into
-    /// a field of such an element writes that field's default for a null source
-    /// (`fresh_null_arm`, loft#2044), so the group covers the field either way.
-    fn mint_complete(&mut self, tp: u16) -> bool {
-        if std::env::var("LOFT_NO_COMPLETE_WRITE").is_ok_and(|v| v != "0") {
-            return false;
-        }
-        self.complete_writes_once();
-        self.complete_mints
-            .as_ref()
-            .is_some_and(|m| m.contains(&tp))
+    /// survives, and the copy is left out.  Decided in the IR and stored on the function
+    /// (`Definition::no_prefill`, `opt::complete_write`); a record copy into a field of such an
+    /// element is flagged a fresh copy there, whose null arm writes the field's defaults.
+    fn mint_complete(&self, tp: u16) -> bool {
+        self.cx.data.def(self.d).no_prefill.mints.contains(&tp)
     }
 
-    fn complete_writes_once(&mut self) {
-        if self.complete_mints.is_none() {
-            let c = crate::opt::ret_adopt::complete_writes(self.cx.data, self.cx.stores, self.d);
-            crate::rewrite_census::fired("R-CompleteWrite", c.db_vars.len() + c.mint_tps.len());
-            self.fresh_fields = c.fresh_fields;
-            self.complete_mints = Some(c.mint_tps);
-        }
-    }
-
-    /// `@FR-R-CompleteWrite`'s null arm — `@C137`'s fresh-field arm (loft#2044), as native's
-    /// `OpCopyRecordEmitter::fresh_field`: a
-    /// record copy into a field of an element a literal group is building writes, for a null
-    /// source, the field type's default — what the prefill would have left there — so the
-    /// element needs no prefill.  The C statement for a null `src` into `dst`, or `None` for a
-    /// copy that is no such field's.
+    /// The null arm of a copy into a fresh destination (`@C137`, loft#2044, loft#2414): for a
+    /// null `src`, the type's default image into `dst`, as `Stores::copy_null_into` writes it
+    /// on the other backends.  `None` where the C runtime's own null arm (a zero fill) is that.
     fn fresh_null_arm(&mut self, args: &[Value], dst: &str) -> Option<String> {
         let sub = self.fresh_default_tp(args)?;
         let (image, n) = self.cx.default_image(sub);
@@ -2316,15 +2291,12 @@ impl<'a> FnWriter<'a> {
     }
 
     /// The type whose default image a null source writes into this copy's destination, or
-    /// `None` where the runtime's own null arm is right.  A field of an element being built
-    /// (`@C137`'s fresh-field arm); and a copy flagged `COPY_FRESH_DEST` into a STRUCT whose
-    /// default is not all zero bytes — `Stores::copy_null_into` writes the default walk there
-    /// (a nullable field's null, loft#2414), where the C runtime's null arm only zeroes.
+    /// `None` where the runtime's own null arm is right: a copy flagged `COPY_FRESH_DEST` into a
+    /// STRUCT whose default is not all zero bytes — `Stores::copy_null_into` writes the default
+    /// walk there (a nullable field's null, loft#2414), where the C runtime's null arm only
+    /// zeroes.  The IR flags each copy into a field of an element it mints without the prefill
+    /// (`opt::complete_write`), so that element's fields take this arm too.
     fn fresh_default_tp(&mut self, args: &[Value]) -> Option<u16> {
-        self.complete_writes_once();
-        if let Some(sub) = self.fresh_fields.get(&(args.as_ptr() as usize)) {
-            return Some(*sub);
-        }
         let Value::Int(raw) = args.get(2)?.unspan() else {
             return None;
         };
@@ -2361,7 +2333,7 @@ impl<'a> FnWriter<'a> {
                 .and_then(|v| window_of(self, v))
                 .map(|_| E::new("((void) 0)", K::Void)));
         }
-        if matches!(name, "OpNewRecord" | "OpFinishRecord")
+        if matches!(name, "OpNewRecord" | "OpNewRecordNP" | "OpFinishRecord")
             && let Some(t) =
                 crate::opt::writes::mint_target(data, self.cx.stores, name, args, self.vars)
             && let Some((w, pv, size)) = by_path(self, &t.path)
@@ -2384,7 +2356,7 @@ impl<'a> FnWriter<'a> {
                     c_string(&site)
                 ),
             );
-            if !self.mint_complete(ptp) {
+            if !(name == "OpNewRecordNP" || self.mint_complete(ptp)) {
                 let (image, n) = self.cx.default_image(elem);
                 self.line(ind, &format!("loft_fill({e}, {image}, {n});"));
             }
@@ -2495,6 +2467,8 @@ impl<'a> FnWriter<'a> {
             "OpGetFloat" => ("loft_pa_f64", K::Float),
             "OpGetSingle" => ("loft_pa_f32", K::Single),
             "OpGetEnum" => ("loft_pa_enum", K::Enum),
+            // @PLN217 — a 32-bit build reads a 4-byte field as the `int32_t` it is.
+            "OpGetInt4" if super::width32_c() => ("loft_pa_int4_32", K::Int32),
             "OpGetInt4" => ("loft_pa_int4", K::Int),
             "OpGetInt4Raw" => ("loft_pa_int4_raw", K::Int),
             "OpGetInt4Full" => ("loft_pa_int4_full", K::Int),
@@ -6208,7 +6182,7 @@ impl<'a> FnWriter<'a> {
                     c => {
                         // An arm that keeps the value (`lo = if lo < 0 { lo + n } else { lo }`)
                         // assigns the target to itself: nothing to write.
-                        let value = as_shape(e, c)?;
+                        let value = as_shape(self.cx, e, c)?;
                         if value == target {
                             return Ok(());
                         }
@@ -6232,7 +6206,7 @@ impl<'a> FnWriter<'a> {
         for t in &old {
             let _ = write!(frees, " loft_text_free(&{t});");
         }
-        let value = as_shape(e, c)?;
+        let value = as_shape(self.cx, e, c)?;
         self.line(
             ind,
             &format!("{{ {} mv = {value};{frees} {target} = mv; }}", held(c)),
@@ -6481,6 +6455,10 @@ impl<'a> FnWriter<'a> {
                 Ok(CType::Void) | Err(_) => self.shape_of(e),
                 ok => ok,
             },
+            // @PLN217 — in a 32-bit build a literal that fits `i32` is an `int32_t`, as the
+            // parameter, result and tuple member it lands in are (`Ctx::ctype`); a 64-bit
+            // literal (`123l`, `Value::Long`) stays 64-bit.
+            Value::Int(n) if super::width32_c() && *n != i32::MIN => Ok(CType::Int32),
             Value::Int(_) | Value::Long(_) => Ok(CType::Int),
             Value::Enum(..) => Ok(CType::Enum),
             Value::Float(_) => Ok(CType::Float),
@@ -7128,6 +7106,12 @@ impl<'a> FnWriter<'a> {
         let r = self.value_args(args, &shapes, &values, &mut xs, reads, ind);
         self.slice_carriers.truncate(carriers);
         r?;
+        // An IR tuple the callee takes by pointer (`Cx::vr_ptr_params`): its address.
+        for &i in ptr.iter() {
+            if !tuple_params.iter().any(|(t, _, _)| *t == i) && dropped != Some(i) {
+                xs[i] = self.tuple_arg_address(args, i, &xs[i], shapes[i], ind);
+            }
+        }
         if let Some(i) = dropped {
             xs.remove(i);
         }
@@ -7497,7 +7481,7 @@ impl<'a> FnWriter<'a> {
             } else {
                 self.arg_with(&args[i], later_writes, ind)?
             };
-            xs[i] = as_shape(e, shapes[i])?;
+            xs[i] = as_shape(self.cx, e, shapes[i])?;
         }
         Ok(())
     }
@@ -8930,7 +8914,8 @@ impl<'a> FnWriter<'a> {
             {
                 Ok(E::new("((void) 0)", K::Void))
             }
-            ("OpDatabase", [Value::Var(v), tp]) => self.database_operator(*v, tp),
+            // The C's local mint writes no defaults, so the no-prefill twin is the same mint.
+            ("OpDatabase" | "OpDatabaseNP", [Value::Var(v), tp]) => self.database_operator(*v, tp),
             ("OpRefIsNull", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
@@ -9468,12 +9453,13 @@ impl<'a> FnWriter<'a> {
             ("OpGetInt4" | "OpGetInt4Raw" | "OpGetInt4Full", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
-                let f = match name {
-                    "OpGetInt4" => "loft_get_int4",
-                    "OpGetInt4Raw" => "loft_get_int4_raw",
-                    _ => "loft_get_int4_full",
+                let (f, k) = match name {
+                    "OpGetInt4" if super::width32_c() => ("loft_get_int4_32", K::Int32),
+                    "OpGetInt4" => ("loft_get_int4", K::Int),
+                    "OpGetInt4Raw" => ("loft_get_int4_raw", K::Int),
+                    _ => ("loft_get_int4_full", K::Int),
                 };
-                Ok(E::new(format!("{f}({}, {fld})", as_ref(r)?), K::Int))
+                Ok(E::new(format!("{f}({}, {fld})", as_ref(r)?), k))
             }
             ("OpSetInt4Raw", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -9586,7 +9572,7 @@ impl<'a> FnWriter<'a> {
     /// The operators over vectors.
     fn vector_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
-            ("OpNewRecord", [data, ptp, fld]) => {
+            ("OpNewRecord" | "OpNewRecordNP", [data, ptp, fld]) => {
                 let (v, elem, coll) = self.record_collection(data, ptp, fld, ind)?;
                 match coll {
                     Coll::Keyed(tp) => return self.keyed_new(&v, tp, ind),
@@ -9610,7 +9596,7 @@ impl<'a> FnWriter<'a> {
                 );
                 let ptp = u16::try_from(Self::literal(ptp, "type")?)
                     .map_err(|_| "a type number out of range")?;
-                if !self.mint_complete(ptp) {
+                if !(name == "OpNewRecordNP" || self.mint_complete(ptp)) {
                     let (image, n) = self.cx.default_image(elem);
                     self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
                 }
@@ -10175,9 +10161,10 @@ fn as_ref(e: E) -> Result<String, String> {
     }
 }
 
-fn as_tuple(e: E, id: u32) -> Result<String, String> {
+fn as_tuple(cx: &Cx, e: E, id: u32) -> Result<String, String> {
     match e.kind {
         K::Tup(i) if i == id => Ok(e.code),
+        K::Tup(i) if let Some(cast) = cx.tuple_cast(i, id) => Ok(format!("{cast}({})", e.code)),
         k => Err(format!("a tuple expected, a {k:?} found")),
     }
 }
@@ -10239,14 +10226,14 @@ fn as_int32(e: E) -> Result<String, String> {
     }
 }
 
-fn as_shape(e: E, c: CType) -> Result<String, String> {
+fn as_shape(cx: &Cx, e: E, c: CType) -> Result<String, String> {
     match c {
         CType::Int => as_int(e),
         CType::Int32 => as_int32(e),
         CType::Bool => as_bool(e),
         CType::Text => as_view(e),
         CType::Ref => as_ref(e),
-        CType::Tuple(id) => as_tuple(e, id),
+        CType::Tuple(id) => as_tuple(cx, e, id),
         CType::Enum => as_enum(e),
         CType::Float => as_float(e),
         CType::Single => as_single(e),

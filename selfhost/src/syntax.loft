@@ -50,7 +50,8 @@ pub enum Syn {
   STyFn { pub at: integer, pub args: vector<integer>, pub ret: integer? },
   STyArg { pub at: integer, pub amp: boolean, pub fixed: boolean, pub tp: integer? },
   // ── statements ──
-  SBlock { pub at: integer, pub stmts: vector<integer> },
+  // `end`: the closing `}`'s token, which no count of braces can find past a string hole.
+  SBlock { pub at: integer, pub stmts: vector<integer>, pub end: integer },
   // One statement; `semi` says a `;` ended it, `orelse` is a store's failure block.
   SStmt { pub at: integer, pub e: integer?, pub semi: boolean, pub orelse: integer? },
   SFor { pub at: integer, pub binds: vector<text>, pub source: integer, pub par: integer?, pub filter: integer?, pub body: integer? },
@@ -962,7 +963,7 @@ pub fn block(p: Syntax) -> integer? {
   was = p.head;
   p.head = false;
   r = match p {
-    [LBrace, (ss: stmt)*, RBrace] => add(p, SBlock { at: at, stmts: ss }),
+    [LBrace, (ss: stmt)*, RBrace] => add(p, SBlock { at: at, stmts: ss, end: p.pos - 1 }),
     _ => null
   };
   p.head = was;

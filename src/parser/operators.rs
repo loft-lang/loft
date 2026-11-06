@@ -4503,7 +4503,20 @@ impl Parser {
                 ..*nspec
             })
         } else if widen_ints {
-            crate::data::I64.clone()
+            // @PLN217 — under the 32-bit regime two integers that are both 32-bit by
+            // declaration (an `i32` element and an `i32` field: two spellings, one width)
+            // share the native `int32_t`, so the branches meet at `i32`, not `i64` — which
+            // would carry 64-bit work into a 32-bit body and refuse its narrowing.
+            let both32 = self.data.width32()
+                && matches!((lhs_type.base(), rhs_type.base()),
+                    (Type::Integer(a), Type::Integer(b)) if a.is_width32() && b.is_width32());
+            // The value's own `i32` (its forced 4-byte width), not the `signed32` template,
+            // which a declared `i32` destination would still read as a narrowing.
+            if both32 {
+                lhs_type.clone()
+            } else {
+                crate::data::I64.clone()
+            }
         } else if self.unboxes_stored_tuple(lhs_type, &rhs_type) {
             // A tuple is one loft type written two ways, and the coalesce is a place the two
             // MEET: the value arrives boxed (`Reference(__tuple<…>)` — what a generic `-> T?`

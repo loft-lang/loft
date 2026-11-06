@@ -16,12 +16,12 @@ use loft::platform::process::{Program, Spawn};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-/// The BSP the libraries' Tanmatsu sections are written against, as the Tanmatsu app template
-/// pins it.
-const BSP: &str = "badgeteam/badge-bsp: \"=1.6.4\"";
+/// The BSP the libraries' Tanmatsu sections are written against: 2.0, the one the launcher
+/// runs, which knows every display panel the boards ship with (THIRDPARTY.md, `badge-bsp`).
+const BSP: &str = "badgeteam/badge-bsp: \"=2.0.0\"";
 
 /// The ESP-IDF release the template builds with.
-const IDF_VERSION: &str = "v6.0.2";
+const IDF_VERSION: &str = "v6.0.3";
 
 /// The partition table the build checks the app against.  It is never installed: badgelink
 /// uploads `application.bin` alone, into the launcher's `appfs` (8 MB on a Tanmatsu, shared by
@@ -244,6 +244,10 @@ fn cmake_path(p: &Path) -> String {
 ///
 /// # Errors
 /// A file that cannot be read or written.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one ESP-IDF project written top to bottom; each block is one of its files"
+)]
 pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, String> {
     let main = out.join("main");
     fa::create_dir_all(&main).map_err(|e| format!("cannot create {}: {e}", main.display()))?;
@@ -314,6 +318,8 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
     }
     put(out.join("loft-esp-report.txt"), &report)?;
     put(main.join("loft_assets.c"), &assets)?;
+    // @PLN217 — the build's width for the libraries' C (`loft_int`, `loft_float`).
+    put(main.join("loft_width.h"), loft::c_shim::LOFT_WIDTH_H)?;
     let mut srcs = String::from("\"loft_app.c\" \"loft_assets.c\"");
     let mut dirs = String::from("\".\"");
     for s in app.shims {
@@ -327,7 +333,15 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
         }
     }
     // The ship tier drops the call chain a fault names its frames by, as on every C target.
-    let tier = if app.ship { "" } else { " -DLOFT_CALL_CHAIN" };
+    let tier = format!(
+        "{}{}",
+        if app.ship { "" } else { " -DLOFT_CALL_CHAIN" },
+        if loft::keys::width32_all() {
+            " -DLOFT_WIDTH32"
+        } else {
+            ""
+        }
+    );
     // loft's C (the program and the runtime) is built for size: most of it runs once (loading,
     // set-up, the editor), and with the hot helpers forced inline it was the larger part of the
     // app.  The libraries' C, where a game's pixels are drawn and its pictures decoded, keeps the

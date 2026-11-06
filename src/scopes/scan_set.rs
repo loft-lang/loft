@@ -1540,6 +1540,7 @@ impl Scopes<'_> {
                 &fname,
                 via.as_deref(),
                 disturbance_site(data, self.d_nr, &cause),
+                self.copy_is_observable(v),
             );
         }
         // Companion to the !adopts_fresh_store (deep-copy) branch above for the
@@ -1625,6 +1626,7 @@ impl Scopes<'_> {
                     &data.def(self.d_nr).original_name(),
                     via.as_deref(),
                     disturbance_site(data, self.d_nr, &cause),
+                    self.copy_is_observable(v),
                 );
             }
             rewritten_arms = rw;

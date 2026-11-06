@@ -48,15 +48,15 @@
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(self: f64, b: f64) -&gt; f64</code></pre>
 <p>Smallest of two double-precision float values.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>(self: f64, b: f64) -&gt; f64</code></pre>
 <p>Largest of two double-precision float values.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">clamp</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, lo: <span class="ty"><a href="stdlib-types.html">float</a></span>, hi: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">clamp</a></span>(self: f64, lo: f64, hi: f64) -&gt; f64</code></pre>
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
@@ -72,7 +72,7 @@
 <p>Where <code>self</code> stands against <code>other</code>, in the order <code>&lt;</code> uses.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: f64, other: f64) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span></code></pre>
 <p>Where <code>self</code> stands against <code>other</code>, in the order <code>&lt;</code> uses.</p>
 </div>
 <div class="item">
@@ -124,31 +124,31 @@
 <p><code>%</code> as a method: <code>a.remainder(b)</code> is <code>a % b</code>, null on a zero divisor.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">plus</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">plus</span>(self: f64, other: f64) -&gt; f64</code></pre>
 <p><code>+</code> as the method <code>Addable</code> names: <code>a.plus(b)</code> is <code>a + b</code>.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">minus</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">minus</span>(self: f64, other: f64) -&gt; f64</code></pre>
 <p><code>-</code> as the method <code>Subtractable</code> names: <code>a.minus(b)</code> is <code>a - b</code>.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">times</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">times</span>(self: f64, other: f64) -&gt; f64</code></pre>
 <p><code>*</code> as the method <code>Numeric</code> names: <code>a.times(b)</code> is <code>a * b</code>.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">negate</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">negate</span>(self: f64) -&gt; f64</code></pre>
 <p>The unary <code>-</code> as the method <code>Numeric</code> names: <code>a.negate()</code> is <code>-a</code>.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">divided_by</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">divided_by</span>(self: f64, other: f64) -&gt; f64?</code></pre>
 <p><code>/</code> as a method: <code>a.divided_by(b)</code> is <code>a / b</code>, null on a zero divisor.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">remainder</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">remainder</span>(self: f64, other: f64) -&gt; f64?</code></pre>
 <p><code>%</code> as a method: <code>a.remainder(b)</code> is <code>a % b</code>, null on a zero divisor.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">approx</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>, eps: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">approx</a></span>(self: f64, b: f64, eps: f64) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>Approximate equality: true when a and b differ by at most eps (inclusive). <code>==</code> on float/single is EXACT IEEE equality — use <code>approx</code> when you want a tolerance, e.g. comparing computed transcendentals: <code>approx(sqrt(2.0) * sqrt(2.0), 2.0, 1e-9)</code>. A null (NaN) operand is not approximately equal to anything, so the result is false.</p>
 </div>
 <div class="item">

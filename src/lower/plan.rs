@@ -50,7 +50,14 @@ pub fn plan_program(
     emit_live: bool,
 ) -> ProgramPlan {
     let mut plan = ProgramPlan {
-        value_records: value_records(data, stores, library),
+        // `(R-ValueRecord)` is a whole-program rewrite: an OPEN program (one that ships the
+        // live tier) takes none, and no writer keeps a copy of it for that build (NATIVE.md
+        // § Optimisation tiers).
+        value_records: if data.open_world {
+            ValueRecords::default()
+        } else {
+            value_records(data, stores, library)
+        },
         ..ProgramPlan::default()
     };
     crate::rewrite_census::fired("R-ValueRecord", plan.value_records.fns.len());

@@ -141,13 +141,15 @@ jobs:
           restore-keys: revalidate-loft-${{ steps.rust.outputs.cachekey }}-
 
       # The components too (`make components`): a package with `[native] component = "net"`
-      # finds its natives only in `target/components/` beside `target/release/loft`
-      # (src/components.rs), as library-ci-reusable.yml builds them.
+      # finds its natives only in a `components/` directory loft searches (src/components.rs).
+      # They are built into `target/release/components/` — the binary's own directory, one of
+      # those searched — so the upload below carries them to the legs, which download into
+      # `target/release/`; the default `target/components/` is outside the artifact's root.
       - name: Build loft
         working-directory: loft-src
         run: |
           cargo build --release --lib --bin loft --bin loft-components
-          target/release/loft-components
+          target/release/loft-components --out target/release/components
 
       # What a library leg runs: the binary, and the rlibs `--native` links a test program
       # against (`native_utils` finds them beside the binary or in `deps/`).
@@ -160,7 +162,10 @@ jobs:
             loft-src/target/release/libloft.rlib
             loft-src/target/release/deps/*.rlib
             loft-src/target/release/deps/*.so
+            loft-src/target/release/components/
           if-no-files-found: error
+          # The components' `.loft-build-fp`: a component is taken only beside its fingerprint.
+          include-hidden-files: true
           retention-days: 1
 
       - name: Save cargo cache (main only)
@@ -215,6 +220,17 @@ jobs:
           repository: ${{ matrix.repo }}
           ref: ${{ matrix.tag }}
           path: lib
+
+      # THIRDPARTY.md, in the same pass over the published libraries: what this release
+      # ships, compiles in or opens that its author did not write is declared, matches its
+      # upstream, and every advisory a register reports against it has a verdict.  Not on a
+      # loft PR: a published tag cannot change and a loft PR cannot fix it, so failing one
+      # there would block the wrong change; the nightly run and the release gate fail on it.
+      - name: Third-party code — ${{ matrix.name }} ${{ matrix.version }}
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 loft-src/scripts/thirdparty.py --check --repo "lib/${{ matrix.sub }}"
 
       # System libraries the lib's native crate links against, declared as `build-deps`
       # in its loft.toml (graphics → libgl-dev, libasound2-dev) and in the manifests of

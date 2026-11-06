@@ -213,7 +213,7 @@ if [ -n "$missing_clone" ] || [ -n "$missing_tag" ]; then
 fi
 
 printf '%-18s %-9s %s\n' PACKAGE VERSION VERDICT
-breaks=0 passed=0 skipped=0 envfail=0 nbreaks=0 nbest=0
+breaks=0 passed=0 skipped=0 envfail=0 nbreaks=0 nbest=0 tpfail=0
 while IFS=$'\t' read -r n v repo tag sub; do
   if [ ${#want[@]} -gt 0 ]; then
     printf '%s\n' "${want[@]}" | grep -qxF "$n" || continue
@@ -226,6 +226,13 @@ while IFS=$'\t' read -r n v repo tag sub; do
     printf '%-18s %-9s %s\n' "$n" "$v" "SKIP (no tests/)"; skipped=$((skipped + 1)); continue
   fi
   log="$work/$n.log"
+  # THIRDPARTY.md, in the same pass: the workflow's leg runs it with the registers; here it
+  # is the offline gate, so the sweep stays fast and needs no network.
+  if ! python3 "$here/thirdparty.py" --gate --repo "$p" > "$work/$n.thirdparty" 2>&1; then
+    printf '%-18s %-9s %s\n' "$n" "$v" "third-party UNDECLARED — $(head -1 "$work/$n.thirdparty")"
+    sed -n '2,6p' "$work/$n.thirdparty" | sed 's/^/    /'
+    tpfail=$((tpfail + 1))
+  fi
   if (cd "$p" && LOFT_TIMEOUT=240 "$loft" --interpret --tests tests) >"$log" 2>&1; then
     # The WARNING reading, off the log the run already produced, so it costs nothing.
     # CI has had this since the dashboard existed; this gate had not, which meant the
@@ -293,4 +300,5 @@ fi
 # fault.  `release_rc` is a fact about the libraries as they stand; the exit code carries it
 # so a script can read it, and the line above says which of the two went wrong.
 [ "$release_rc" -eq 0 ] || echo "…and one or more libraries cannot be released as they stand (above) — the ecosystem's state, not this change's"
-exit $(( (breaks > 0) || (nbreaks > 0) || release_rc != 0 ))
+[ "$tpfail" -eq 0 ] || echo "…and $tpfail published release(s) ship third-party code or links they do not declare (THIRDPARTY.md) — the ecosystem's state, not this change's; a new release with the declaration fixes it"
+exit $(( (breaks > 0) || (nbreaks > 0) || release_rc != 0 || tpfail > 0 ))

@@ -57,6 +57,169 @@ function has an element-first pair that needs the plan: rustc's element-first cl
 nowhere on the benches.  So the clause carries weight on its own — the value form of a parser's
 result — and the element-first form rides on it; S1 comes next, before `(R-LoopRecord)`.
 
+## S1's design
+
+What the IR holds at the two ends (`LOFT_LOG=static`, a `parse_poly`-shaped probe):
+
+```text
+callee exit   OpSetInt4(buf, 0, 0); OpAppendVector(OpGetField(buf, 0, Vec), g2_p, …)
+              — after  _elm_2 = OpNewRecord(sc, Op, ops) … OpAppendVector(OpGetField(_elm_2, 8, Vec), g2_p, …)
+caller        m = n_g2(sc, x, __ref_1);  … OpLengthVector(OpGetField(m, 0, Vec)) …
+              OpGetVector(OpGetField(m, 0, Vec), 16, 1) …  OpFreeRefIfDistinct(m, __ref_1)
+```
+
+- **One analysis.**  `value_record::rewrite_program` already calls
+  `opt::value_records::value_records` on the IR it rewrites; its `views` (the per-exit
+  `LeafSource`), `view_offs` and its call-site verdict are read there, on the same IR, as the
+  address idiom requires.  The IR pass computes no plan of its own.
+- **The layout** gains a view kind: a heap field whose offset `view_offs` lists for the record,
+  carried as the field's own vector type with a dependency (a borrowed member:
+  `tuple_members.rs` frees only a member whose type has no dependency).  Only a RESULT layout
+  takes it; a tuple parameter stays flat.
+- **The callee**: each exit's view field becomes its leaf, by `views[f].leaves[(exit, off)]`:
+  `Elem` → `OpGetField(Var(elem), off, tp)`, `Null` → the null vector.  `Last` declines the
+  function in S1 (no bench function has it).  The exit's copy into the buffer field goes with the
+  buffer.
+- **The caller**: a carrier's `OpGetField(m, off, Vec)` at a view offset becomes
+  `TupleGet(m, i)`; a site the analysis's verdict does not hold for owes the record form (the
+  twin road), so a site that may disturb the place reads a copy, as now.
+- **The writers** emit the IR's tuple: a vector member is their reference part
+  (`CType::Ref`, `DbRef`).  They then find no view-leaf function of their own where the IR took
+  it; S2 deletes what remains.
+
+**Built so far** (`value_record.rs`): `Kind::View`; the `Elem`, `Null` and `Last` leaves
+spelled in the IR; a view carrier admitted only as one of the analysis's value locals; an
+exit literal that ends in its own `return` admitted anywhere (an early `if … { return S {…} }`,
+which also widens the flat form).
+
+**S1 done (2026-11-05).**  The four FORWARDS (`p2`, `p8`, `p11`, `p16`: an early-return literal
+beside a `return g()`) declined because the scan read the function's own exit literal as raw
+buffer writes, and a one-buffer chain's carrier rewrite turned that literal's writes into tuple
+puts before `literals_to_tuples` could see it.  Fixed: the scan reads an own literal as what the
+rewrite keeps of it (`Scan::own`), and the literals become tuples before the carrier rewrite.
+All sixteen view functions of `164-view-field.loft` now answer the IR's `(DbRef, u8, u8)`
+closed, pinned by `tests/view_field.rs::the_closed_build_spells_the_view_in_the_irs_tuple`;
+the cells run on `--interpret`, `--native-c --lean` and `--native --lean` under the store
+falsifiers.  The plant (the view freed right after each carrier's bind) stops `a1` on all three;
+removing the IR's own carrier gate moved no cell (the analysis declines the disturbing sites
+first) — both recorded in the cell's `@falsified-at`.  Switch A/B (`LOFT_NO_IR_VALUE_RECORD`,
+the closed interpreter): 0 defects over 2 918; the C sweep (`--emit-c` is closed, identical to
+`--lean`): 2 585 match, plain and `--poison`, the one differ an `attic` program that differs on
+installed main too.
+
+**The open world.**  The IR value-record pass runs only on a CLOSED program: a semantics-tier
+`--native` / `--native-c` run ships the live tier (`ships_live_tier`), which opens the world, and
+the pass does not run there.  The owner's ruling (NATIVE.md § Optimisation tiers): the dynamic
+build need not be fully optimised, so no writer keeps a copy of the rule for it — an open build
+simply has no value records, and the closed builds (`--lean`, `--ship`, the performance lanes,
+the census) have the IR's.  So a check of this move runs closed (`--lean`); a semantics run never
+reaches it.
+
+Probed: a loft tuple carries an OWNED vector member on all three backends; a null reference
+reads as length 0 (`vector::length_vector`).  A BORROWED member has no user spelling (a whole
+collection bind copies, `(B-Copy)`), so S1's plant (the view freed with the tuple) is its
+falsifier.
+
+## S2 — what the IR does not take yet, measured (2026-11-05)
+
+**Built.**  An OPEN program takes no value records from the writers either (`lower::plan`,
+the C's `FnWriter::value_records` read `data.open_world`), so the open world has none at all and
+the pins read the closed build (`--lean`).  The IR pass grew: a `pub` function the analysis
+admits is SPLIT (`split_public`) — the API keeps its record for callers outside `(R-Escape)`,
+every loft call reaches an internal copy `<f>_in` the pass treats as any function; a literal
+whose values are staged before its mint is a literal; a literal under `return { … }` is the
+function's own; a cdylib-carried function (`Definition::native`) is no candidate; every decline
+names itself under `LOFT_TRACE_IR_VALUEREC`.  And `(R-TailSelf)` delivers a tuple result, so a
+self-recursive forward the pass now admits stays a loop
+(`a-tail-recursive-small-record-function-is-a-loop.loft`).
+
+**The measure** (`scratchpad` script over the census programs, closed Rust emission: a function
+the writer returns as a tuple while the IR still returns a record, and whether anything in the
+program calls it).  Of 305 writer-only admissions: 77 are `pub` APIs whose `_in` copy the IR
+takes, 148 have no caller in their program, 59 of the 70 later-pass variants (`__kh`, `__inv`,
+`__d`) are dead.  **25 are called**, about a dozen shapes:
+
+| shape | functions | what dropping the writers' copy costs (C ship) |
+|---|---|---|
+| NULLABLE result `-> S?` (the presence word) | moros `map_get_hex` + its `__kh`/`__rg` variants | `emit_to_material` 4.4×, `slope_path_with_undo` 3.2×, `resolve_move` 2.3× |
+| a fn-ref arm `(R-FnRefValue)` | zttext `default_resolver` | 7 zttext routines +6–8 % |
+| a branch in the result position (`if … { g(…) } else { h(…) }`, different buffers) | glb `glb_pos_min`/`max` (4 programs), drawing `ctrl`, `read_at_width`, … | drawing `smooth` 1.36× |
+| a later variant of a declined function | `terrain_surface_at_in__kh`, `read_value__d`, `try_listen_*_in`, `pa_get__vr` | hex_terrain +4–6 % |
+
+So nothing here is dropped: the nullable clause, the fn-ref arms and the branching tail move
+into the IR, in that order (cost).  The ONE-FIELD record (a bare scalar, since a loft tuple has
+two or more elements) was built and reverted: the IR taking a one-field `-> S` twins it for the
+sites that consume its record, and the writers' nullable clause then stops reading `g(…)` as a
+value leaf (`tests/value_record.rs` j5, j6) — it moves WITH the nullable clause.
+
+Timing (C ship, `bench/stats.py --lanes cship`, the affected programs): the S2 work so far
+against the pre-S2 tip is neutral (median 1.009), zttext 5–8 % faster from the split; every
+drawing routine ~5 % slower including ones that call nothing changed (a whole-program shift,
+noted, not chased).
+
+**Moved since (2026-11-05, later).**  One translation of an exit value into the tuple
+(`value_record::Exits`) at every result position: a literal (own or local buffer), `null`, a
+record VIEW (read field-wise with whether it is there; an owned one freed after the read), a
+materialised view's return, a call whose answer is the exit (widened from a dense callee), and a
+branch or block of those; a local set only from such values is a DELIVERY local.  Layout keys
+carry the nullable bit; a nullable carrier's presence test reads its word, a write through it is
+the setter's own null arm, a copy out of it the record copy's null arm, a copy's destination and
+a view's source are bound without copying (`OpPutRef`).  Also: a promoted local rebound from a
+call into a local buffer (`at_width`), `(R-TailSelf)` over a tuple result, `(R-SameRead)` over
+`TupleGet`, and the C passing a 3+-member IR tuple parameter by `const` pointer.
+
+Re-measured: **14 called writer-only functions** remain (from 25) — moros is the IR's entirely,
+glb's branching tails too.  Left, by cost:
+
+| shape | functions | next step |
+|---|---|---|
+| fn-ref arms `(R-FnRefValue)` | zttext `default_resolver` | the fn-ref value names the `pub` API; the function TYPE in signatures, `fnref::dispatch_arms` and the `CallRef` sites move together — zttext is already 7–11 % faster than the start from the `pub` split |
+| later-pass variants (`__d`, `__kh`, `__inv`, `__vr`) | cbor/pluginabi `read_value__d`, `terrain_surface_at_in__kh`, `pa_get__vr`, drawing `half_chord__inv` | why their source is the record form at the variant's making |
+| `(N-Store)`'s presence-carrying parameters, the one-field form | `tests/value_record.rs` w5, g (pinned to the record form until then) | the parameter side of the nullable clause |
+| drawing parser forwards | `read_rgb_at`, `find_tol`, `half_chord` | "a free it only witnesses" on a forward's local |
+| no flat layout | server `try_listen*` | a field kind the layout lacks |
+
+**Step 1 of the deletion, measured (2026-11-05, late).**  The writers' plan made empty in every
+build is three edits — `lower::plan::plan_program` (`ProgramPlan::default()`), the C's
+`FnWriter::value_records` (`ValueRecords::default()`), and the cdylib bridge in `native_lib.rs`
+(the `pub` API keeps its record, so no tuple crosses it).  Timed against the session's start
+(interleaved C ship, best of two, 65 routines): median 1.003, every hash equal, but moros
+`slope_path_with_undo` 2.16×, `emit_to_material` 1.40×, `resolve_move` 1.21× and drawing
+`smooth` 1.31×.  So step 1 waits for one more IR form:
+
+- **a carrier handed to a RECORD parameter** — `cur = map_get_hex(…); cur.h = …;
+  map_set_hex(…, cur)`: the analysis keeps `map_set_hex`'s `h` a record (its body writes a
+  record of that type), so the IR declines `cur`; the writers materialised the tuple into a
+  record at the call.  The IR spelling is a mint per hand-on, the field writes, the call, the
+  release — design it first (where the release goes when the hand-on is in a loop).
+- then re-measure `smooth` and `resolve_move` (`resolve_move`'s `__lift_1`).
+
+Until step 1, the shared analysis keeps a record function that already takes tuple parameters
+out of its candidates (`value_records`): the IR's twin original, whose body a writer's own tuple
+broke (`vertex`).
+
+**Step 1, re-measured after the lend, the place bind and field-path hand-ons (2026-11-05,
+night).**  With the writers' plan empty the C and the Rust emission of ALL 58 census programs is
+byte-identical to the writers-on build — the writers' clause no longer changes a bench.  It still
+changes the pinned CELLS, so step 1 waits for these forms to be moved or deliberately dropped,
+each a decision recorded in its pin:
+
+| cell (tests/value_record.rs) | form |
+|---|---|
+| V-aa `mk_smp_kept` | a maker's result appended to a vector — the copy FROM the tuple materialised into the element |
+| V-ah `pt` | a maker's result delivered into a push slot |
+| V-an `scan_fail` | a chain's failure maker whose record a site consumes |
+| nullable `n12`, join `j5` | a nullable `if … { null } else { S { … } }`, a one-field `-> S` beside a build |
+| 1993/1994 `q1`, `w1` | `(N-Store)`'s presence-carrying tuple parameters |
+
+The remaining bench gaps against the session's start — moros `slope_path_with_undo` 1.23×,
+drawing `smooth` 1.12× — are the IR's spelling against the old writer forms (the lend mints per
+call where the writers passed a tuple pointer), not step 1.
+
+**S3's IR half is already met.**  Closed, the IR pairs every view-exit case of
+`164-element-place.loft` (g1, g2, g4, g10, g16, g20) and neither writer applies its own
+element-first clause anywhere; what S3 still owes is deleting those clauses.
+
 ## The invariant
 
 **One value-record decision per function, made in the IR phase and spelled in the IR**, so that
@@ -70,8 +233,8 @@ needs no plan at all: the exit is `Tuple(…, g2_p, …)`, and the element-first
 | # | step | done when |
 |---|---|---|
 | S0 | **Probe the premise** (design-protocol: the cheapest check that could falsify it).  Count, on the benches and the corpus, the functions the writers admit ONLY through a view leaf, and for each pair of `164-element-place.loft` whether its function is one.  If no bench function needs a view leaf, the clause's weight is the cells and the libraries (`make libcatalogue`'s consumers), and that decides S1's priority | **done** — § S0 below the measurements |
-| S1 | **A tuple element that is a reference.**  The IR's value-record tuple gains a reference part for a view leaf: the interpreter carries it as a `DbRef` slot, the writers as their reference (`loft_ref` / `DbRef`), never freed by the tuple (a view is never freed).  `body_shape` admits a result position that is a view of a place `(O-ViewField)` admits | the tuple form spells a view on all three backends; the value-record cells pass; a plant (the view freed with the tuple) caught |
-| S2 | **The writers read it.**  The view-leaf delivery is the IR's tuple; `lower::plan` and the C's `value_records` drop their view leaves for a function the IR already rewrote; `ViewPlan` then serves only what remains a writer clause, if anything | rustc's and the C's emission byte-identical before and after for every function the IR did not rewrite (`loft-codegen`: a refactor proves emission unchanged) |
+| S1 | **A tuple element that is a reference.**  The IR's value-record tuple gains a reference part for a view leaf: the interpreter carries it as a `DbRef` slot, the writers as their reference (`loft_ref` / `DbRef`), never freed by the tuple (a view is never freed).  `body_shape` admits a result position that is a view of a place `(O-ViewField)` admits | the tuple form spells a view on all three backends; the value-record cells pass; a plant (the view freed with the tuple) caught **done** |
+| S2 | **The writers' copy deleted.**  An open build has no value records (the ruling above), and a closed one runs the IR's: each writer's own view-leaf delivery (`lower::plan`, the C's `value_records`) goes, and with it whatever of `ViewPlan` only they read.  Which other writer forms of `(R-ValueRecord)` (the nullable clause, `(R-FnRefValue)`, the parameters) the IR does not take yet is S2's first measure: each is moved or dropped, never kept for the open world | the census: `R-ValueRecord` applied by the IR alone; the cells and the corpus checks pass closed (`--lean`) on the C and rustc, and open with no value records |
 | S3 | **`(R-ElemFirst)` takes the form.**  The pass pairs a temp whose exit is a tuple element naming it; the rename makes it the element's field.  Both writers' element-first clauses are deleted | the 164 cells' pairs taken by the IR (`tests/element_first.rs` counts the trace); `rule_tags.py sites @FR-R-ElemFirst` shows no writer clause; D-phase-4 closed |
 
 Each step goes red alone; the checks per step and per chunk are the move protocol's

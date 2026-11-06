@@ -43,7 +43,10 @@ impl OpEmitter for OpGetTextSubEmitter {
 
 /// `OpDatabase` — modifies its `DbRef` argument in-place; emit as a
 /// reassignment `<var> = OpDatabase(cell, <var>, <tp>_i32)`.  `args`: `[var, tp]`.
-pub struct OpDatabaseEmitter;
+/// `np`: the IR's `OpDatabaseNP` (`@FR-R-CompleteWrite`), always the no-prefill mint.
+pub struct OpDatabaseEmitter {
+    pub np: bool,
+}
 
 impl OpEmitter for OpDatabaseEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
@@ -94,8 +97,13 @@ impl OpEmitter for OpDatabaseEmitter {
             }
             // @PLN157 § V-y (`@FR-R-CompleteWrite`) — a site whose literal group covers
             // every field calls the no-prefill twin.
-            let np = matches!(var_val.unspan(), Value::Var(w)
-                if ctx.output.complete_writes.db_vars.contains(w));
+            // `@FR-R-RefillText` — a refill twin reads every text slot of its buffer, so the
+            // buffer it mints keeps the zero-filling mint whatever the IR says.
+            let np = (self.np
+                || matches!(var_val.unspan(), Value::Var(w)
+                    if ctx.output.complete_writes.db_vars.contains(w)))
+                && !matches!(var_val.unspan(), Value::Var(w)
+                    if ctx.output.refill_twin_buf == Some(*w));
             // `@FR-R-RefillBuffer` — a refilling return buffer may take the kept store.
             let refill = hosted.is_empty()
                 && matches!(var_val.unspan(), Value::Var(w) if ctx.output.refill.var == Some(*w));

@@ -33,6 +33,11 @@ pub struct LenLocal {
   pub vec: ir::Node
 }
 
+pub struct LoopCounter {
+  pub lv: integer,
+  pub count: integer
+}
+
 pub struct Vars {
   pub name: text,
   pub file: text,
@@ -65,6 +70,14 @@ pub struct Vars {
   pub work_refs: vector<integer>,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
+  // The `x#count` counter a body asked of an open loop (`Function::loop_count_of`), by its loop
+  // variable.
+  pub loop_counts: vector<LoopCounter>,
+  // The `while` loops open: loops of their own in `#break`'s count, which `active_loops` (the
+  // `for` loops) does not hold.
+  pub whiles: integer,
+  // The loop variables of the open `rev(…)` walks (`on`'s reverse bit, which `#remove` reads).
+  pub reversed: vector<integer>,
   // `Iterator::value` of each open loop, beside `active_loops`: the vector a `for` walks, or
   // null for any other loop
   pub active_values: vector<ir::Node>,
@@ -80,6 +93,10 @@ pub struct Vars {
   pub nonzero: vector<integer>,
   // `(N-Guard)`: the record locals a test proves present where they are read
   pub present: vector<integer>,
+  // `bind_text_link_kind`: the locals bound as text links, and of those the store kind (a text
+  // field or element, read and written through `OpVarRef`)
+  pub text_links: vector<integer>,
+  pub store_links: vector<integer>,
   // `Function::work_ctext`: the `__work_cN` text buffers a call hands a text-returning callee
   pub work_ctext: integer,
   // `Function::work_text_p2`: the `__work_p2_N` destinations a text-dest call is given
@@ -110,12 +127,18 @@ pub struct Vars {
   // `parse_var`'s `into` arm: the syntax node of a local bind's right-hand side read first,
   // into the destination — a text read there keeps its own type (-1: none)
   pub read_into: integer,
+  // Parsing the value of a plain local's `=` (`Parser::in_bind_rhs`).
+  pub bind_rhs: boolean,
   // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.
-  pub rebuilt: vector<integer>
+  pub rebuilt: vector<integer>,
+  // The element type the context gives the vector literal at node `lit_hint_node` (an
+  // operator's right operand takes its left's), or -1.
+  pub lit_hint_node: integer,
+  pub lit_hint: ir::TypeT
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, rebuilt: [] }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, reversed: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], text_links: [], store_links: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, bind_rhs: false, rebuilt: [], lit_hint_node: -1, lit_hint: ir::TyVoid }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -403,6 +426,9 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.work_ref_p2 = 0;
   v.work_refs = [];
   v.active_loops = [];
+  v.loop_counts = [];
+  v.whiles = 0;
+  v.reversed = [];
   v.active_values = [];
   v.len_locals = [];
   v.loop_binds = [];
@@ -686,4 +712,42 @@ pub fn is_unknown(t: ir::TypeT) -> boolean {
     TyReference { n } => n == 0,
     _ => false
   }
+}
+
+// The innermost open loop closed: its `x#count` counter, or -1 where its body asked for none.
+pub fn pop_loop(v: Vars) -> integer {
+  lv = v.active_loops[-1] ?? -1;
+  v.active_loops = v.active_loops[..-1];
+  if v.reversed.contains(lv) {
+    v.reversed = [for r in v.reversed if r != lv { r }];
+  }
+  for c in v.loop_counts {
+    if c.lv == lv {
+      v.loop_counts = [for k in v.loop_counts if k.lv != lv { k }];
+      return c.count;
+    }
+  }
+  -1
+}
+
+// `Parser::iter_op`'s `#count` / `#first`: the counter of the open loop over `lv`, made where the
+// body first names it (`{lv}#count`, an `i32`) and registered on that loop.  -1 when `lv` walks no
+// open loop.
+pub fn loop_count(v: Vars, lv: integer) -> integer {
+  if !v.active_loops.contains(lv) {
+    return -1;
+  }
+  for c in v.loop_counts {
+    if c.lv == lv {
+      return c.count;
+    }
+  }
+  nm = "{name_of(v, lv)}#count";
+  c = var(v, nm);
+  if c < 0 {
+    c = add_variable(v, nm, ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 } });
+  }
+  set_defined(v, c);
+  v.loop_counts += [LoopCounter { lv: lv, count: c }];
+  c
 }

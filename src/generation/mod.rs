@@ -511,6 +511,8 @@ pub struct Output<'a> {
     /// The locals `(R-Place)` built in another record's store ([`hoist::placed_locals`]),
     /// rebuilt per function: never a fresh store for [`hoist::StoreFacts`].
     pub placed_locals: HashSet<u16>,
+    /// The hosts of [`Self::placed_locals`] ([`hoist::placed_hosts`]), rebuilt per function.
+    pub placed_hosts: HashSet<u16>,
     /// `LOFT_TRACE_NEST=1` — name every nest admitted and every loop declined, with why.
     pub nest_trace: bool,
     /// `@FR-R-BoundedNest` step 2 — set while the plain arm of a nest whose guard also proved
@@ -1812,6 +1814,7 @@ impl<'a> Output<'a> {
             fault_flag_exact: HashSet::new(),
             fault_flag_pure: std::cell::RefCell::new(HashMap::new()),
             placed_locals: HashSet::new(),
+            placed_hosts: HashSet::new(),
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             nest_raw_arm: false,
             rec_ptrs: Vec::new(),
@@ -2272,6 +2275,7 @@ impl Output<'_> {
         self.param_rec_ptrs.clear();
         self.indent = 0;
         self.placed_locals = hoist::placed_locals(self.data.def(def_nr).code(), self.data);
+        self.placed_hosts = hoist::placed_hosts(self.data.def(def_nr).code(), self.data);
         // @PLN157 § V-j — the function's paired move-appends, before anything emits.
         self.invariant_lits = if self.switches.literal_hoist_disabled {
             hoist::LitHoist::default()
@@ -2333,13 +2337,14 @@ impl Output<'_> {
                 self.plan.value_records.views.get(&def_nr),
             )
         };
-        // The fresh-field arms are kept whatever the switch says: they are what a copy owes
-        // a destination just created, not the elision the switch turns off.
-        self.complete_writes = hoist::complete_writes(self.data, self.stores, def_nr);
-        if self.switches.complete_write_disabled {
-            self.complete_writes.db_vars.clear();
-            self.complete_writes.mint_tps.clear();
-        }
+        // `@FR-R-CompleteWrite` is decided in the IR (`opt::complete_write`) and stored on the
+        // function: the mints written without the prefill are that fact's.
+        let fact = &self.data.def(def_nr).no_prefill;
+        self.complete_writes = hoist::CompleteWrites {
+            db_vars: fact.locals.iter().copied().collect(),
+            mint_tps: fact.mints.iter().copied().collect(),
+            ..hoist::CompleteWrites::default()
+        };
         // `@FR-R-RefillText` — a refill twin reads every text slot of its buffer, so a buffer
         // it mints itself keeps the zero-filling mint (a slot holds 0 or a block it owns).
         if let Some(b) = self.refill_twin_buf {
@@ -2502,6 +2507,19 @@ impl Output<'_> {
         } else {
             hoist::ret_adopt(self.data, def_nr)
         };
+        // `@FR-R-MoveAppend` places the paired call's buffer in the destination's store
+        // (§ V-j), the placement `(R-Place)` makes in the IR: the buffer is a placed local and
+        // its host is no fresh store — a push into the destination grows the store the
+        // iterated buffer lives in, so a header of that buffer keeps no base across it.
+        for p in self.move_pairs.values() {
+            self.placed_locals.insert(p.buf);
+            self.placed_hosts.insert(p.host_vdb);
+            if let Some(a) = &self.ret_adopt
+                && a.vdb == p.host_vdb
+            {
+                self.placed_hosts.insert(a.buf);
+            }
+        }
         // `(R-Mint)`'s rebound clause — the buffer vars whose mint the hoist admission lets
         // through: what the emitter itself owns the mint of.
         self.hoist_owned = hoist::HoistOwned {
@@ -2568,10 +2586,6 @@ impl Output<'_> {
         );
         fired("R-ValueLocal", self.value_record_locals.len());
         fired("R-ElemFirst", self.elem_first.pairs.len());
-        fired(
-            "R-CompleteWrite",
-            self.complete_writes.db_vars.len() + self.complete_writes.mint_tps.len(),
-        );
         fired("R-MoveAppend", self.move_pairs.len());
         fired("R-LazySplit", self.lazy_splits.len());
         fired("R-SplitTable", self.split_tables.len());
@@ -3546,6 +3560,7 @@ impl Output<'_> {
         let facts = (!self.switches.distinct_growth_disabled).then_some(hoist::StoreFacts {
             vars: self.data.def(self.def_nr).variables(),
             placed: &self.placed_locals,
+            hosts: &self.placed_hosts,
             adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
             owned: Some(&self.hoist_owned),
             assumed: &self.assumed_distinct,
@@ -4161,6 +4176,7 @@ impl Output<'_> {
                     Some(&hoist::StoreFacts {
                         vars: this.data.def(this.def_nr).variables(),
                         placed: &this.placed_locals,
+                        hosts: &this.placed_hosts,
                         adopted: this.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
                         owned: Some(&this.hoist_owned),
                         assumed,
@@ -4199,6 +4215,7 @@ impl Output<'_> {
                 .then_some(hoist::StoreFacts {
                     vars: self.data.def(self.def_nr).variables(),
                     placed: &self.placed_locals,
+                    hosts: &self.placed_hosts,
                     adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
                     owned: Some(&self.hoist_owned),
                     assumed: &self.assumed_distinct,
@@ -4273,6 +4290,7 @@ impl Output<'_> {
             let facts = hoist::StoreFacts {
                 vars: self.data.def(self.def_nr).variables(),
                 placed: &self.placed_locals,
+                hosts: &self.placed_hosts,
                 adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
                 owned: Some(&self.hoist_owned),
                 assumed: &self.assumed_distinct,
@@ -5157,6 +5175,7 @@ impl Output<'_> {
                 .then_some(hoist::StoreFacts {
                     vars: self.data.def(self.def_nr).variables(),
                     placed: &self.placed_locals,
+                    hosts: &self.placed_hosts,
                     adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
                     owned: Some(&self.hoist_owned),
                     assumed: &self.assumed_distinct,
@@ -5321,6 +5340,7 @@ impl Output<'_> {
                     .then_some(hoist::StoreFacts {
                         vars: self.data.def(self.def_nr).variables(),
                         placed: &self.placed_locals,
+                        hosts: &self.placed_hosts,
                         adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
                         owned: Some(&self.hoist_owned),
                         assumed: &self.assumed_distinct,

@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-R-TailSelf`, `@FR-R-ValueRecord` — a self-call in tail position is a jump to the
+// function's entry also when the function answers a TUPLE: one its source writes, or one the
+// IR's value records make of a small record result (`src/value_record.rs`).  `count_down`
+// returns a three-field record through `return count_down(…)` — a forward the value-record
+// pass rewrites to answer `(integer, float, boolean)` — and `sum_pair` a tuple the source
+// writes.  Each recurses 300 000 deep, past the call-depth limit, so each must be a loop.
+//
+// The values, by hand: `count_down(n, 0)` sums n … 1 = n (n + 1) / 2 = 45 000 150 000 and
+// ends at i = 0; `sum_pair(n, 0, 0.0)` counts n ones and n halves.
+//
+// @falsified-at: hand-measured (2026-11-05) — with the jump switched off (`LOFT_NO_TAIL_SELF=1`)
+// the run stops at the call-depth limit on `--interpret` and `--native-c --lean`; the same
+// stop is what a tuple result the jump refused gave `count_down` once the value-record pass
+// admitted its forward (`tail_frame::admit_frame_at` named "its result is a `(integer,
+// float, boolean)`, which the jump cannot yet deliver").
+
+struct Scan { at: integer, value: float, ok: boolean }
+
+fn count_down(i: integer, acc: integer) -> Scan {
+  if i > 0 { return count_down(i - 1, acc + i) }
+  Scan { ok: true, at: acc, value: i as float }
+}
+
+fn sum_pair(i: integer, a: integer, b: float) -> (integer, float) {
+  if i == 0 { return (a, b) }
+  sum_pair(i - 1, a + 1, b + 0.5)
+}
+
+fn main() {
+  r = count_down(300000, 0);
+  assert(r.at == 45000150000, "count_down sum: {r.at}");
+  assert(r.value == 0.0, "count_down end: {r.value}");
+  assert(r.ok, "count_down ok");
+  (x, y) = sum_pair(300000, 0, 0.0);
+  assert(x == 300000, "sum_pair count: {x}");
+  assert(y == 150000.0, "sum_pair halves: {y}");
+  println("a-tail-recursive-small-record-function-is-a-loop: every cell holds");
+}

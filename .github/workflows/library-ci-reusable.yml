@@ -119,6 +119,12 @@ jobs:
           target/release/loft-components
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
+      # THIRDPARTY.md: what the package ships that it did not write is declared in its
+      # loft.toml — vendored code, the system libraries its C links or opens (read from the
+      # built shim as well as the source) — before any of it is tested.
+      - name: Third-party code declared — ${{ matrix.package }}
+        run: python3 loft-src/scripts/thirdparty.py --gate --repo "${{ matrix.package }}"
+
       # System libraries the package's native crate links against, declared as
       # `build-deps` in loft.toml (graphics → libgl-dev, libasound2-dev).  Needed on
       # BOTH gates: the cdylib is built even under --interpret, because #native fns

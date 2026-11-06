@@ -42,7 +42,7 @@
 //! be backed by a memory-mapped file (`mmap` feature).
 
 #[cfg(feature = "mmap")]
-use mmap_storage::file::Storage as MmapStorage;
+use crate::mmap_file::MmapFile as MmapStorage;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
@@ -684,7 +684,7 @@ pub enum ForeignOwner {
     Bytes(Vec<u8>),
     /// A read-only mapping of a file (`file_map`).
     #[cfg(feature = "mmap")]
-    Map(memmap::Mmap),
+    Map(memmap2::Mmap),
     /// @PLN174 F5 — a block a cdylib handed over across the C ABI
     /// (`loft_ffi::LoftStore::foreign_vector_from_owned`): the parts of its `Vec<u8>`
     /// and the cdylib's own release, which frees the block in the allocator that made
@@ -5810,6 +5810,40 @@ impl Store {
             true
         } else {
             false
+        }
+    }
+
+    /// An integer from a field of `bytes` — [`Self::set_int_sized`]'s reading.
+    #[must_use]
+    pub fn get_int_sized(&self, rec: u32, fld: u32, bytes: u16) -> i64 {
+        if bytes == 4 {
+            let v = self.get_i32_raw(rec, fld);
+            if v == i32::MIN {
+                i64::MIN
+            } else {
+                i64::from(v)
+            }
+        } else {
+            self.get_int(rec, fld)
+        }
+    }
+
+    /// An integer into a field of `bytes` (`Stores::field_bytes`): 4 is an `i32`, null as
+    /// `i32::MIN` (`OpSetInt4`'s encoding), anything else the 8-byte `integer`.
+    pub fn set_int_sized(&mut self, rec: u32, fld: u32, bytes: u16, val: i64) -> bool {
+        if bytes == 4 {
+            self.set_i32_raw(rec, fld, i32::try_from(val).unwrap_or(i32::MIN))
+        } else {
+            self.set_int(rec, fld, val)
+        }
+    }
+
+    /// A float into a field of `bytes`: 4 is a `single`, anything else the 8-byte `float`.
+    pub fn set_float_sized(&mut self, rec: u32, fld: u32, bytes: u16, val: f64) -> bool {
+        if bytes == 4 {
+            self.set_single(rec, fld, val as f32)
+        } else {
+            self.set_float(rec, fld, val)
         }
     }
 }

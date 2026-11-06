@@ -19,13 +19,18 @@ fn write(path: &Path, body: &str) {
 
 /// Run `main` with `lib` as `wlib.loft` on the lib path, `width` as `LOFT_WIDTH` (or unset).
 fn run(name: &str, lib: &str, main: &str, width: Option<&str>) -> String {
+    run_on("--interpret", name, lib, main, width)
+}
+
+/// [`run`] on `backend` (`--interpret` or `--native-c`).
+fn run_on(backend: &str, name: &str, lib: &str, main: &str, width: Option<&str>) -> String {
     let dir = std::env::temp_dir().join(format!("loft-width32-{}-{name}", std::process::id()));
     let _ = fa::remove_dir_all(&dir);
     write(&dir.join("lib").join("wlib.loft"), lib);
     write(&dir.join("main.loft"), main);
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--interpret")
+    cmd.arg(backend)
         .arg("--lib")
         .arg(dir.join("lib"))
         .arg(dir.join("main.loft"))
@@ -132,5 +137,160 @@ fn main() {
     assert_eq!(
         run("boundary", lib, main, None),
         "42 null 1.5 22 42 5000000000 4278190080\n"
+    );
+}
+
+/// @PLN217 — the standard library under the regime, where the runtime fills its records: a
+/// body-less binding answers 64 bits narrowed at the call (`as_number`, a double, reads 2.5
+/// rather than its bytes as a single), `File` keeps its 64-bit offsets (the path is found and
+/// the size is this file's), a JSON integer keeps 64 bits (`as_long`), and a stack frame's
+/// line, a type's size, a field's position and a variant's tag are written at the 4 bytes
+/// their width-neutral fields take.  Two `i64` fields: 16 bytes at 0 and 8; tags count from 1;
+/// `depth()` is called on line 12.  The same answers on both backends and both widths.
+#[test]
+fn the_standard_library_s_runtime_records_keep_their_layout() {
+    let main = "struct P { a: i64, b: i64 }
+enum E { One, Two }
+fn depth() -> i64 {
+  s = stack_trace();
+  s[len(s) - 1].line
+}
+fn main() {
+  f = file(\"main.loft\");
+  v = json_parse(\"[400, 2.5, 5000000000]\");
+  t = type_named(\"P\")!;
+  e = type_named(\"E\")!;
+  println(\"{f.size} {f.path} {v.item(0).as_long()} {v.item(1).as_number()} {v.item(2).as_long()} {depth()} {t.size} {t.fields[0].position} {t.fields[1].position} {e.variants[0].tag} {e.variants[1].tag}\");
+}
+";
+    let want = format!(
+        "{} main.loft 400 2.5 5000000000 12 16 0 8 1 2\n",
+        main.len()
+    );
+    for backend in ["--interpret", "--native-c"] {
+        for width in [None, Some("32")] {
+            let name = format!("records{}{}", &backend[2..5], width.unwrap_or("64"));
+            assert_eq!(
+                run_on(backend, &name, "", main, width),
+                want,
+                "{backend} width {width:?}"
+            );
+        }
+    }
+}
+
+/// The program for [`the_32_bit_regime_computes_in_32_bits`]: sizes, and the edges where a 32-bit
+/// answer differs from a 64-bit one.
+const CALC: &str = "struct S { a: integer, b: float }
+struct W { a: i64, b: f64 }
+fn main() {
+  m = 2147483647;
+  x = 46341;
+  f = 16777216.0;
+  t = 0.1;
+  v = [1, 2, 3];
+  j = json_parse(\"[2.5, 400]\");
+  println(\"sizes {sizeof(integer)} {sizeof(float)} {sizeof(i64)} {sizeof(f64)} {sizeof(1)} {sizeof(1l)} {sizeof(2.5)} {sizeof(2.5d)}\");
+  println(\"results {sizeof(m + m)} {sizeof(m + 1l)} {sizeof(f * f)} {sizeof(f + 1.0d)} {sizeof(v[0])} {sizeof(len(v))}\");
+  println(\"stdlib {sizeof(PI)} {sizeof(sin(f))} {sizeof(abs(-3))} {sizeof(ticks())} {sizeof(j.item(0).as_number())} {sizeof(j.item(1).as_long())}\");
+  println(\"layout {sizeof(S)} {sizeof(W)}\");
+  println(\"integer {m + 1} {x * x} {m + 1l} {-m - 2}\");
+  println(\"float {f + 1.0 == f} {t + 0.2} {f + 1.0d == f as f64}\");
+}
+";
+
+/// The C the C backend writes for `main` under `width`.
+fn emit_c(name: &str, main: &str, width: Option<&str>) -> String {
+    let dir = std::env::temp_dir().join(format!("loft-width32-{}-{name}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    write(&dir.join("main.loft"), main);
+    let out = dir.join("main.c");
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    cmd.arg("--native-c")
+        .arg("--native-emit")
+        .arg(&out)
+        .arg(dir.join("main.loft"))
+        .env_remove("LOFT_WIDTH")
+        .env_remove("LOFT_NO_C_INT32")
+        .env("LOFT_NO_CACHE", "1");
+    if let Some(w) = width {
+        cmd.env("LOFT_WIDTH", w);
+    }
+    let _ = cmd.output().expect("run loft");
+    fa::read_to_string(&out).expect("the emitted C")
+}
+
+/// The C type `c` declares the local `name` with (`int32_t v0_m = …` → `int32_t`).
+fn local_ctype<'a>(c: &'a str, name: &str) -> &'a str {
+    let suffix = format!("_{name} = ");
+    c.lines()
+        .map(str::trim)
+        .find(|l| l.contains(&suffix) && l.starts_with(|ch: char| ch.is_ascii_lowercase()))
+        .and_then(|l| l.split(' ').next())
+        .unwrap_or("")
+}
+
+/// @PLN217 — under `LOFT_WIDTH=32` the program, the standard library and the C computes in 32
+/// bits, and only what is written `i64` / `f64` in 64.  Sizes: `integer`, `float`, a plain
+/// literal, a 32-bit result, an element, a count, `PI`, `sin`, `abs` and a JSON number narrowed
+/// at the call are 4 bytes; `i64`, `f64`, `1l`, `2.5d`, an operation with an `i64` / `f64`
+/// operand, `ticks()` and `as_long()` stay 8; a struct of an `integer` and a `float` is 8 bytes.
+/// Values: i32::MAX + 1 and 46341² = 2147488281 do not fit and read null, -i32::MAX - 2 too;
+/// with an `i64` operand the sum is 2147483648.  A single cannot hold 2^24 + 1, so 16777216.0 +
+/// 1.0 is 16777216.0, and 0.1 + 0.2 prints as the single 0.3; the `f64` sum keeps the 1.  The 64-bit
+/// build answers 8 everywhere, the exact sums and the double's 0.30000000000000004.  The same on
+/// both backends; and the C itself holds the 32-bit locals in `int32_t` / `float` and adds and
+/// multiplies them with `loft_add32` / `loft_mul32`.
+#[test]
+fn the_32_bit_regime_computes_in_32_bits() {
+    let want32 = "sizes 4 4 8 8 4 8 4 8
+results 4 8 4 8 4 4
+stdlib 4 4 4 8 4 8
+layout 8 16
+integer null null 2147483648 null
+float true 0.3 false
+";
+    let want64 = "sizes 8 8 8 8 8 8 8 8
+results 8 8 8 8 8 8
+stdlib 8 8 8 8 8 8
+layout 16 16
+integer 2147483648 2147488281 2147483648 -2147483649
+float false 0.30000000000000004 false
+";
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        assert_eq!(
+            run_on(backend, &format!("calc{b}32"), "", CALC, Some("32")),
+            want32,
+            "{backend}"
+        );
+        assert_eq!(
+            run_on(backend, &format!("calc{b}64"), "", CALC, None),
+            want64,
+            "{backend}"
+        );
+    }
+    let c32 = emit_c("calc-c32", CALC, Some("32"));
+    let c64 = emit_c("calc-c64", CALC, None);
+    for (local, narrow, wide) in [
+        ("m", "int32_t", "int64_t"),
+        ("x", "int32_t", "int64_t"),
+        ("f", "float", "double"),
+    ] {
+        assert_eq!(
+            local_ctype(&c32, local),
+            narrow,
+            "`{local}` under the regime"
+        );
+        assert_eq!(
+            local_ctype(&c64, local),
+            wide,
+            "`{local}` in the 64-bit build"
+        );
+    }
+    assert!(
+        c32.contains("loft_add32(") && c32.contains("loft_mul32("),
+        "32-bit operations"
     );
 }

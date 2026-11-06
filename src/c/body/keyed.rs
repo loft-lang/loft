@@ -1398,7 +1398,7 @@ impl FnWriter<'_> {
                         let temp = self.temp(shape);
                         self.line(
                             ind,
-                            &format!("{temp} = {};", super::as_shape(value, shape)?),
+                            &format!("{temp} = {};", super::as_shape(self.cx, value, shape)?),
                         );
                         self.raw.insert(temp.clone(), super::kind_of(shape));
                         staged.push(Value::RawExpr(temp));

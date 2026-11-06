@@ -46,6 +46,26 @@ implementation compared byte for byte with the Rust one at every level (@PLN91 �
 whatever is decided at the front is verified twice, and the intrinsic problems a single
 implementation hides surface as disagreements.
 
+**Games and the Tanmatsu: 2D first, 3D grown from it.**  The 3D stack exists, but using it to the
+fullest needs a large body of consistent art: world models (buildings, trees, hills, roads,
+bridges), characters and props.  The 2D work on the Tanmatsu gives results sooner, so it comes
+first:
+- the whole device from loft, multiplayer over Wi-Fi included ([@PLN213](https://github.com/loft-lang/plans/issues/213));
+- its practice game, a 2.5D dogfighter ([@PLN214](https://github.com/loft-lang/plans/issues/214));
+- glb import ([@PLN215](https://github.com/loft-lang/plans/issues/215));
+- 60 fps: the landscape drawn when it changes, the actors every frame, in a C engine under
+  `stage` ([@PLN218](https://github.com/loft-lang/plans/issues/218));
+- the libraries' shared C rewritten in loft, the hardware calls and the engine kept C ([@PLN216](https://github.com/loft-lang/plans/issues/216)).
+
+The 3D art grows out of it: the dogfighter's sprites are rendered from a 3D model, so every model
+made for a 2D game is also 3D content.  The order to start in:
+1. @PLN213 T0.4: an app's start-up never erases the launcher's settings.  This is a defect in the
+   released loft.
+2. @PLN214 G0: the drawing budget on the device, measured before anything is built on it.
+3. @PLN213 T0–T2: the BSP update, the build-time refusal, and the components a library names.
+
+The language features @PLN216 finds come after loft-in-loft; its rewrites do not wait for them.
+
 ## Re-measuring this page
 
 The plan list below is a copy of the tracker's open plans, so it is only as current as its
@@ -99,6 +119,11 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN56](https://github.com/loft-lang/plans/issues/56) | future | Rigged characters |
 | [@PLN49](https://github.com/loft-lang/plans/issues/49) | future | dryopea — sci-fi free-build / tower-defence game |
 | [@PLN209](https://github.com/loft-lang/plans/issues/209) | next | Platform-agnostic game libraries — one game source on the Tanmatsu, the web and the desktop; every game with a small-format version ([plan](plans/209-platform-agnostic-games/README.md)) |
+| [@PLN218](https://github.com/loft-lang/plans/issues/218) | next | A Tanmatsu engine for `stage` — the landscape drawn when it changes, the actors every frame, one scene model for 2D and 3D; the engine in C, the game in loft; 60 fps |
+| [@PLN213](https://github.com/loft-lang/plans/issues/213) | future | The whole Tanmatsu from loft — the board, the radios, add-ons, and multiplayer games over Wi-Fi through an outside server |
+| [@PLN214](https://github.com/loft-lang/plans/issues/214) | future | A 2.5D arcade dogfighter with PvP over the network — Tanmatsu, desktop and browser; @PLN213's practice game, cheap fixed drawing so it measures the network and the game |
+| [@PLN215](https://github.com/loft-lang/plans/issues/215) | future | glb import — read glTF 2.0 binary files into `mesh3d` scenes, tested on known CC0 models; FBX is converted offline, not read |
+| [@PLN216](https://github.com/loft-lang/plans/issues/216) | future | The libraries' shared C rewritten in loft — only hardware calls (screen, audio device, keys, BSP) and the engine that models the hardware (memory placement, rotation, scaling, composition; @PLN218) stay C |
 | [@PLN51](https://github.com/loft-lang/plans/issues/51) | future | Bumper-airplanes — the next audience demo |
 | [@PLN111](https://github.com/loft-lang/plans/issues/111) | parked | `graphics` — browser (`--html`) port |
 | [@PLN73](https://github.com/loft-lang/plans/issues/73) | parked | Universal editor |

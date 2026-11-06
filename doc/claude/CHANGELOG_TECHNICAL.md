@@ -17,6 +17,17 @@ All notable changes to the loft language and interpreter.
   rule).  A C clause that stops firing fails the gate on its C row; before this no C admission
   reached a baseline.  `--writer rust|c` runs one writer; a four-column row reads as Rust's.
 
+### `(R-CompleteWrite)` runs in the IR (@PLN211 arc C)
+
+- A record built by a literal that writes every field skips the default prefill on every
+  backend, the interpreter included: the IR decides it once and stores it on the function
+  (`Definition::no_prefill`); the interpreter runs the two new no-prefill operators
+  (`OpDatabaseNP`, `OpNewRecordNP`), rustc and the C their own spelling.  A push loop of
+  complete literals runs 4.5 % fewer instructions on the interpreter.
+  `LOFT_NO_COMPLETE_WRITE` turns it off, now on every backend.
+- A null record copied into a just-created place reads absent on every backend: its nullable
+  fields `null` (loft#2414; a vector-literal slot read them as `0`).
+
 ### `(R-LoopRecord)` runs in the IR (@PLN211 arc C)
 
 - A record local built by a literal inside a loop keeps its store across the passes on every

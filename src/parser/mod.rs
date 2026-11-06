@@ -253,6 +253,10 @@ pub struct Parser {
     /// Deepest control-flow nesting reached per definition, with the source line where it
     /// was reached — so the advice can say WHERE to cut instead of only how bad it is.
     pub(crate) cc_deepest: HashMap<u32, (u32, u32)>,
+    /// Where each function's NAME is written.  A definition's `position` is past its signature
+    /// (the `{`), which is what identifies it; a diagnostic ABOUT the function — the
+    /// complexity and parameter-count advice — points at the name instead.
+    pub(crate) fn_name_at: HashMap<u32, crate::lexer::Position>,
     /// Control-flow nesting depth while parsing, for [`Parser::complexity`]. Bumped only
     /// around a construct's BODY, so an `else if` chain — which re-enters `parse_if` after
     /// the `then` body has closed — charges once per link at the chain's own depth rather
@@ -970,6 +974,10 @@ pub struct Parser {
     /// at loop start (`@FR-I-For`: the source is evaluated once).  Keyed by the root's NAME,
     /// which both passes agree on; two loops over one root both copy, which is conservative.
     loop_sources_replaced: std::collections::HashSet<(u32, String)>,
+    /// A `loop-source-written` notice held to the end of its statement
+    /// (`Parser::settle_loop_write`): `(where, what the loop read, the place belongs to the
+    /// innermost loop, the depth of the block whose statement wrote it)`.
+    pub(crate) pending_loop_write: Option<(crate::lexer::Position, String, bool, usize)>,
     /// `@FR-B-Scope` — the names a pattern has pointed at its own bindings since the last
     /// `=>`, each with the variable it named before (`Parser::pattern_binding`).  The arrow
     /// seals them into a frame of `pattern_bind_frames`; the end of the arm's body restores
@@ -1125,6 +1133,9 @@ pub struct Parser {
     /// @PLN204 — the sources whose regime (`Data::width32`) is settled, so a file resumed
     /// after a `use` keeps the `#width` it began with.
     pub(crate) width_decided: std::collections::BTreeSet<u16>,
+    /// @PLN217 — reading the right-hand side of a standard-library type definition, which the
+    /// 32-bit regime leaves as written (`Parser::parse_typedef`).
+    pub(crate) machine_types: bool,
     /// `DefType::Unknown` stubs collected by `actual_types_deferred`
     /// during each `parse_file` run.  Resolved (or finally reported) by
     /// `resolve_deferred_unknowns` after all files in the recursion have
@@ -1929,6 +1940,7 @@ impl Parser {
             in_control_head: false,
             complexity: HashMap::new(),
             cc_deepest: HashMap::new(),
+            fn_name_at: HashMap::new(),
             cc_nest: 0,
             in_format_expr: false,
             prefix_operand: false,
@@ -2032,6 +2044,7 @@ impl Parser {
             pending_tuple_args: Vec::new(),
             tuple_place_wanted: false,
             loop_sources_replaced: std::collections::HashSet::new(),
+            pending_loop_write: None,
             pattern_binds_pending: Vec::new(),
             pattern_bind_frames: Vec::new(),
             text_link_kinds: std::collections::HashMap::new(),
@@ -2104,6 +2117,7 @@ impl Parser {
             pub_taken: false,
             applied_imports: Vec::new(),
             width_decided: std::collections::BTreeSet::new(),
+            machine_types: false,
             deferred_unknown: Vec::new(),
             record_resolutions: false,
             resolutions: Vec::new(),

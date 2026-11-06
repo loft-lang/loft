@@ -211,7 +211,7 @@ impl FnWriter<'_> {
                     return Ok(None);
                 };
                 let val = self.expr(val, ind)?;
-                let val = as_shape(val, c)?;
+                let val = as_shape(self.cx, val, c)?;
                 // A write through an absent `τ?` struct lands nowhere, and is reported, as the
                 // setter's null record arm does.
                 let dropped = format!("loft_write_dropped(loft_ref_null(), {})", self.site());
@@ -527,7 +527,7 @@ impl FnWriter<'_> {
                     "bool" => CType::Bool,
                     _ => CType::Int,
                 };
-                parts.push(as_shape(e, shape)?);
+                parts.push(as_shape(self.cx, e, shape)?);
             }
             if layout.nullable {
                 // Present exactly when the value local it is part of is.
@@ -622,7 +622,7 @@ impl FnWriter<'_> {
                 .ok_or("a value record field left unwritten")?;
             let e = self.expr(&val, ind)?;
             let t = self.temp(shapes[i]);
-            self.line(ind, &format!("{t} = {};", as_shape(e, shapes[i])?));
+            self.line(ind, &format!("{t} = {};", as_shape(self.cx, e, shapes[i])?));
             parts[i] = t;
         }
         // A view leaf's part is the place this exit's gate proved (`ViewPlan::leaves`).
@@ -954,6 +954,30 @@ impl FnWriter<'_> {
         let t = self.temp(c);
         self.line(ind, &format!("{t} = {x};"));
         Ok(format!("&{t}"))
+    }
+
+    /// [`Self::vr_arg_address`] for an IR tuple: the caller's own variable where no other
+    /// argument names it, else a temporary of shape `c` holding `x`.
+    pub(super) fn tuple_arg_address(
+        &mut self,
+        args: &[Value],
+        i: usize,
+        x: &str,
+        c: CType,
+        ind: usize,
+    ) -> String {
+        if let Value::Var(v) = args[i].unspan()
+            && x == self.var(*v)
+            && !args
+                .iter()
+                .enumerate()
+                .any(|(j, o)| j != i && o.any_node(&mut |n| matches!(n, Value::Var(w) if w == v)))
+        {
+            return format!("&{x}");
+        }
+        let t = self.temp(c);
+        self.line(ind, &format!("{t} = {x};"));
+        format!("&{t}")
     }
 
     /// The buffer of a FORWARD call: the site `forward_sites` names — by its node, or, where

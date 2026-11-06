@@ -121,7 +121,8 @@ pub fn is_equal(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
       TyFunction { args: fb, result: rb } => len(fa) == len(fb) && all_equal(e, fa, fb) && is_equal(e, ra, rb),
       _ => false
     },
-    _ => a == b
+    // A keyed collection: its content and keys, whatever stores it borrows.
+    _ => without_deps(a) == without_deps(b)
   }
 }
 
@@ -223,7 +224,9 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     TySingle => "single",
     TyCharacter => "character",
     TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
-    TyEnum { n, is_ref } => if is_ref { "" } else { el::def(e, n).name },
+    TyEnum { n, is_ref } => if is_ref && starts_with(el::def(e, n).name, "__nullable<") { "" } else { el::def(e, n).name },
+    // A vector of vectors: its element is named as the inner vector's own type.
+    TyVector { inner } => if elem_name(e, inner) == "" { "" } else { "vector<{elem_name(e, inner)}>" },
     _ => ""
   }
 }
@@ -295,6 +298,31 @@ pub fn struct_enum_def(t: ir::TypeT) -> integer {
   match base(t) {
     TyEnum { n, is_ref } => if is_ref { n } else { -1 },
     _ => -1
+  }
+}
+
+// A keyed collection's element definition (`hash`, `sorted`, `index`, `spatial`, `trie`), or -1
+// for any other type.
+pub fn keyed_elem(t: ir::TypeT) -> integer {
+  match t {
+    TyHash { n } => n,
+    TySorted { n } => n,
+    TyIndex { n } => n,
+    TyRadix { n } => n,
+    TyTrie { n } => n,
+    _ => -1
+  }
+}
+
+// A keyed collection's key field names, in declared order (a direction dropped).
+pub fn key_names(t: ir::TypeT) -> vector<text> {
+  match t {
+    TyHash { names } => [for k in names { k.name }],
+    TyRadix { names } => [for k in names { k.name }],
+    TySorted { keys } => [for k in keys { k.name }],
+    TyIndex { keys } => [for k in keys { k.name }],
+    TyTrie { key } => [key],
+    _ => []
   }
 }
 
@@ -370,6 +398,35 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
           sk += [if starts_with(k, "-") { ir::SortKey { name: k[1..], asc: false } } else { ir::SortKey { name: k, asc: true } }];
         }
         c = if name == "sorted" { ir::TySorted { n: sub, keys: sk, dep: [] } } else { ir::TyIndex { n: sub, keys: sk, dep: [] } };
+        return if nullable { ir::TyOptional { inner: c } } else { c };
+      }
+      // `sub_type_inner`'s `trie` and `spatial` arms: a record element and its key fields, one
+      // text key for a trie, the coordinate axes for a spatial index; neither takes a direction.
+      if (name == "trie" || name == "spatial") && member == "" && len(args) == 1 && !elem_null && len(keys) > 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
+        inner = parse_type(e, args[0]);
+        if inner == null {
+          return null;
+        }
+        sub = match inner! {
+          TyReference { n } => n,
+          _ => {
+            el::refuse(e, "a keyed collection of this element: {name}");
+            return null;
+          }
+        };
+        names: vector<ir::NameRef> = [];
+        for k in keys {
+          if starts_with(k, "-") {
+            el::refuse(e, "a descending {name} key");
+            return null;
+          }
+          names += [ir::NameRef { name: k }];
+        }
+        if name == "trie" && len(keys) != 1 {
+          el::refuse(e, "a trie over more than one key");
+          return null;
+        }
+        c = if name == "trie" { ir::TyTrie { n: sub, key: keys[0], dep: [] } } else { ir::TyRadix { n: sub, names: names, dep: [] } };
         return if nullable { ir::TyOptional { inner: c } } else { c };
       }
       // `sub_type`'s iterator arm: a generator's `iterator<T>`, carried for a plain scalar, a text
@@ -645,4 +702,103 @@ fn closing_paren(e: el::El, open: integer) -> integer {
     i += 1;
   }
   open
+}
+
+// `drop_hook_nr`: the type's own `OpDrop`, or -1.
+pub fn hook(e: el::El, t: integer) -> integer {
+  nm = el::def(e, t).name;
+  el::def_nr(e, "t_{len(nm)}{nm}_OpDrop")
+}
+
+// `owns_droppable_walk`: a value of definition `t` holds a droppable — its own hook, a field's,
+// a variant's — each definition visited once on a path.
+pub fn owns_droppable(e: el::El, t: integer, path: vector<integer>) -> boolean {
+  if t < 0 || path.contains(t) {
+    return false;
+  }
+  path += [t];
+  if hook(e, t) >= 0 {
+    return true;
+  }
+  for a in el::def(e, t).attributes {
+    if type_owns(e, a.typedef[0] ?? ir::TyVoid, path) {
+      return true;
+    }
+  }
+  for x in e.b.data.definitions {
+    if x.def_type == el::DT_ENUM_VALUE && x.parent == t && owns_droppable(e, x#index, path) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Data::type_holds_generator`: a value of this type holds a generator's frame — an
+// `iterator<…>` itself, or one in a field, a variant's field, an element or a tuple member —
+// each definition visited once on a path.
+pub fn holds_generator(e: el::El, t: ir::TypeT, path: vector<integer>) -> boolean {
+  match t {
+    TyIterator { step: _ } => true,
+    TyVector { inner } => holds_generator(e, inner, path),
+    TyOptional { inner } => holds_generator(e, inner, path),
+    TyRefVar { inner } => holds_generator(e, inner, path),
+    TyRewritten { inner } => holds_generator(e, inner, path),
+    TyTuple { elems } => {
+      for m in elems {
+        if holds_generator(e, m, path) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => {
+      d = match t { TyReference { n } => n, TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => keyed_elem(t) };
+      if d < 0 || path.contains(d) {
+        return false;
+      }
+      path += [d];
+      for a in el::def(e, d).attributes {
+        if holds_generator(e, a.typedef[0] ?? ir::TyVoid, path) {
+          return true;
+        }
+      }
+      for x in e.b.data.definitions {
+        if x.def_type == el::DT_ENUM_VALUE && x.parent == d {
+          for a in x.attributes {
+            if holds_generator(e, a.typedef[0] ?? ir::TyVoid, path) {
+              return true;
+            }
+          }
+        }
+      }
+      false
+    }
+  }
+}
+
+// `type_owns_droppable`.
+pub fn type_owns(e: el::El, t: ir::TypeT, path: vector<integer>) -> boolean {
+  match t {
+    TyReference { n } => owns_droppable(e, n, path),
+    TyEnum { n, is_ref } => is_ref && owns_droppable(e, n, path),
+    TySorted { n } => owns_droppable(e, n, path),
+    TyIndex { n } => owns_droppable(e, n, path),
+    TyRadix { n } => owns_droppable(e, n, path),
+    TyTrie { n } => owns_droppable(e, n, path),
+    TyHash { n } => owns_droppable(e, n, path),
+    TyVector { inner } => type_owns(e, inner, path),
+    TyOptional { inner } => type_owns(e, inner, path),
+    TyRefVar { inner } => type_owns(e, inner, path),
+    TyRewritten { inner } => type_owns(e, inner, path),
+    TyTuple { elems } => {
+      for m in elems {
+        if type_owns(e, m, path) {
+          return true;
+        }
+      }
+      false
+    },
+    TyIterator { step: _ } => true,
+    _ => false
+  }
 }

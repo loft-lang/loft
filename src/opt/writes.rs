@@ -408,7 +408,7 @@ pub fn mint_target(
     vars: &crate::variables::Function,
 ) -> Option<MintTarget> {
     let arity = match op {
-        "OpNewRecord" => 3,
+        "OpNewRecord" | "OpNewRecordNP" => 3,
         "OpFinishRecord" => 4,
         _ => return None,
     };
@@ -530,8 +530,10 @@ pub(crate) const TEXT_VARIABLE_OPS: [&str; 16] = [
 /// what an in-place scalar set is at a larger width.  Nothing is claimed, released or moved
 /// — the claim walks a heap-owning type needs (`remove_claims`, `copy_claims`) are exactly
 /// what `owns_heap` rules out — so every header, base and record address a loop holds stays
-/// valid across it.  A flagged copy frees its source store (`COPY_FREE_SOURCE`) or marks a
-/// fresh destination, and stays a store writer.  Answers the record type, which a hoisted
+/// valid across it.  A copy that frees its source store (`COPY_FREE_SOURCE`) stays a store
+/// writer; one into a fresh destination (`COPY_FRESH_DEST`) is no case apart for such a type —
+/// it releases nothing either way, and a null source's defaults are written in place
+/// (`Stores::copy_null_into`).  Answers the record type, which a hoisted
 /// scalar's write set takes WHOLE.  The write-back idiom is this op: `e = v[i]?; …;
 /// v[i] = e` copies the view onto the place it views, which the runtime makes a no-op.
 #[must_use]
@@ -542,10 +544,11 @@ pub fn in_place_copy(stores: Option<&Stores>, op: &str, args: &[Value]) -> Optio
     let Value::Int(tp) = args[2].unspan() else {
         return None;
     };
-    let tp = u16::try_from(*tp).ok()?;
-    if tp & !crate::keys::COPY_TP_MASK != 0 {
+    let raw = u16::try_from(*tp).ok()?;
+    if raw & crate::keys::COPY_FREE_SOURCE != 0 {
         return None;
     }
+    let tp = raw & crate::keys::COPY_TP_MASK;
     let stores = stores?;
     (stores.is_struct(tp) && !stores.owns_heap(tp)).then_some(tp)
 }

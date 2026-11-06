@@ -1,0 +1,129 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// The Tanmatsu frame pipeline, one stage at a time: what each costs on the device.
+//   LOFT_WIDTH=32 loft --native-esp <dir> --lib libs bench.loft
+// Every measurement prints `@b <what> <us per op> us/op (<ops> ops, <us> us)` on the console.
+use tiles;
+use screen;
+use input;
+use audio;
+use tile_world;
+use rules;
+use game;
+
+fn report(what: text, start: i64, ops: integer) {
+  us = ticks() - start;
+  println("@b {what} {us / (ops as i64)} us/op ({ops} ops, {us} us)");
+}
+
+// The same loop body in each width: what the 32-bit regime buys on this CPU.
+fn arithmetic() {
+  n = 200000;
+  t = ticks();
+  a = 1;
+  for i in 0..n { a = (a * 3 + i) & 65535; }
+  report("i32 mul-add-and x{n}", t, 1);
+  t = ticks();
+  b = 1l;
+  for i in 0..n { b = (b * 3 + i) & 65535l; }
+  report("i64 mul-add-and x{n}", t, 1);
+  t = ticks();
+  f = 1.0;
+  for _i in 0..n { f = f * 0.5 + 1.0; }
+  report("single mul-add x{n}", t, 1);
+  t = ticks();
+  d = 1.0d;
+  for _i in 0..n { d = d * 0.5d + 1.0d; }
+  report("f64 mul-add x{n}", t, 1);
+  println("@b keep {a} {b} {f} {d}");
+}
+
+// loft writing and reading `n` i32 elements, `reps` times: per element, by the vector's size.
+fn memory(n: integer, reps: integer) {
+  v: vector<i32> = [0 as i32; n];
+  t = ticks();
+  for r in 0..reps {
+    for i in 0..n { v[i] = i + r; }
+  }
+  report("vector<i32> write {n * 4} B, per 1000 elements", t, reps * n / 1000);
+  t = ticks();
+  s = 0;
+  for _r in 0..reps {
+    for i in 0..n { s = s ^ (v[i] ?? 0); }
+  }
+  report("vector<i32> read {n * 4} B, per 1000 elements", t, reps * n / 1000);
+  println("@b keep {s}");
+}
+
+// The game's surface at `w` x `h`, its camera showing the W x H view at the whole zoom that fits.
+fn surface_for(g: game::Game, w: integer, h: integer) {
+  s = tiles::display_surface(w, h) ?? return;
+  tiles::free_surface(g.surface);
+  g.surface = s;
+  zoom = w / game::W;
+  if h / game::H < zoom { zoom = h / game::H; }
+  if zoom < 1 { zoom = 1; }
+  z = zoom as float;
+  tiles::camera(s, z, -((w as float) / z - (game::W as float)) / 2.0,
+                -((h as float) / z - (game::H as float)) / 2.0);
+}
+
+// Each stage of a frame at `w` x `h`.
+fn stages(g: game::Game, w: integer, h: integer) {
+  surface_for(g, w, h);
+  s = g.surface;
+  n = 20;
+  t = ticks();
+  for _i in 0..n { tiles::clear(s, 0); }
+  report("clear {w}x{h}", t, n);
+  t = ticks();
+  for _i in 0..n { game::draw(g); }
+  report("game::draw {w}x{h}", t, n);
+  px = tiles::pixels(s, w, h);
+  t = ticks();
+  for _i in 0..n { px = tiles::pixels(s, w, h); }
+  report("tiles::pixels {w}x{h}", t, n);
+  t = ticks();
+  for _i in 0..n { screen::show(px, w, h); }
+  report("screen::show {w}x{h}", t, n);
+}
+
+fn main() {
+  println("@b start");
+  arithmetic();
+  memory(1024, 50);
+  memory(16384, 4);
+  memory(196608, 1);
+  if !screen::open(game::W, game::H, 4, "bench", fill: true) {
+    _ = screen::open(game::W, game::H, 4, "bench", offscreen: true);
+  }
+  keys_here = screen::has_keys();
+  if !keys_here { _ = input::device_open(); }
+  g = game::new_game(".") ?? return;
+  if !game::start_world(g, "demo") { game::start_level(g, 0); }
+  t = ticks();
+  for _i in 0..200 { _ = screen::poll(0); }
+  report("screen::poll(0)", t, 200);
+  t = ticks();
+  for _i in 0..20 { _ = screen::poll(15); }
+  report("screen::poll(15)", t, 20);
+  if !keys_here {
+    t = ticks();
+    for _i in 0..200 { g.keys.input_tick_device(); }
+    report("input_tick_device", t, 200);
+  }
+  now = ticks() / 1000;
+  t = ticks();
+  for i in 0..100 { _ = game::update(g, 16, now + i * 16); }
+  report("game::update 16 ms", t, 100);
+  stages(g, game::W, game::H);
+  stages(g, screen::width(), screen::height());
+  audio::init(44100);
+  _ = audio::start();
+  stages(g, game::W, game::H);
+  println("@b done");
+  screen::close();
+  audio::stop_output();
+  if !keys_here { input::device_close(); }
+}

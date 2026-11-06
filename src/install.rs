@@ -207,11 +207,16 @@ fn prebuilt_status(host: &str, available: &[String], installed: bool) -> String 
 /// instead and wrote that to the lock, beside a declaration it left standing — and the load,
 /// which lets a declaration overrule the lock, then used the other version (loft#1751).
 /// `loft install x@v` is how a declared pin moves.
+///
+/// `keep_locked`: the packages `package_name` pulls in keep what the governing lock pins
+/// for them ([`resolve_declared`]) — the `use`-driven install, which fetches one package and
+/// moves no other.
 fn resolve_named(
     index: &RegistryIndex,
     package_name: &str,
     constraint: Option<&str>,
     opts: &InstallOptions,
+    keep_locked: bool,
 ) -> Result<Vec<ResolvedPackage>, String> {
     let declared = declared_requirements(opts);
     let constraint = constraint.or_else(|| declared.get(package_name).map(String::as_str));
@@ -222,6 +227,7 @@ fn resolve_named(
         constraint,
         opts,
         &held_versions(opts),
+        keep_locked,
         &declared,
         &mut graph,
     )?;
@@ -245,8 +251,19 @@ pub fn install_one(
     constraint: Option<&str>,
     opts: &InstallOptions,
 ) -> Result<InstallReport, String> {
+    install_resolved(package_name, constraint, opts, false)
+}
+
+/// [`install_one`], saying whether the packages `package_name` pulls in keep their lock pins
+/// ([`resolve_named`]'s `keep_locked`).
+fn install_resolved(
+    package_name: &str,
+    constraint: Option<&str>,
+    opts: &InstallOptions,
+    keep_locked: bool,
+) -> Result<InstallReport, String> {
     let index = load_index(opts)?;
-    let graph = resolve_named(&index, package_name, constraint, opts)?;
+    let graph = resolve_named(&index, package_name, constraint, opts, keep_locked)?;
     check_against_lockfile(&graph, opts)?;
 
     let mut report = InstallReport {
@@ -986,7 +1003,7 @@ fn resolve_recursive(
     graph: &mut Vec<ResolvedPackage>,
 ) -> Result<(), String> {
     let declared = std::collections::BTreeMap::new();
-    resolve_declared(index, name, constraint, opts, held, &declared, graph)
+    resolve_declared(index, name, constraint, opts, held, false, &declared, graph)
 }
 
 /// [`resolve_recursive`] under the project's own declarations: what `loft.toml` declares
@@ -1000,12 +1017,21 @@ fn resolve_recursive(
 /// manifest — and a root pin no dependency could accept installed without a word and failed
 /// at the first run.  The package NAMED at the top is not bound this way, because
 /// `loft install zp@0.2.0` is how a declaration is changed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the recursion carries the project's lock and declarations unchanged to every level"
+)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one resolution step: pick the version, explain a refusal, recurse into its deps"
+)]
 fn resolve_declared(
     index: &RegistryIndex,
     name: &str,
     constraint: Option<&str>,
     opts: &InstallOptions,
     held: &std::collections::BTreeMap<String, String>,
+    keep_locked: bool,
     declared: &std::collections::BTreeMap<String, String>,
     graph: &mut Vec<ResolvedPackage>,
 ) -> Result<(), String> {
@@ -1039,7 +1065,10 @@ fn resolve_declared(
         .packages
         .get(name)
         .ok_or_else(|| format!("package `{name}` not found in registry"))?;
-    let constraint_str = constraint.unwrap_or("*");
+    let kept_pin = (keep_locked && !graph.is_empty())
+        .then(|| kept_lock_pin(pkg, held.get(name), constraint))
+        .flatten();
+    let constraint_str = kept_pin.as_deref().or(constraint).unwrap_or("*");
     // Step 6: if this project already holds a version, re-resolving is an
     // UPGRADE, and an upgrade must not hand it a release that declared it
     // breaks them.  Nothing held → nothing to be a drop-in for, so the fresh
@@ -1120,18 +1149,44 @@ fn resolve_declared(
             Some(root) if *root != dep_constraint => format!("{dep_constraint}, {root}"),
             _ => dep_constraint.clone(),
         };
-        resolve_declared(index, &dep_name, Some(&both), opts, held, declared, graph).map_err(
-            |e| match declared.get(&dep_name) {
-                Some(root) if *root != dep_constraint => format!(
-                    "{e} — `{name}` requires `{dep_name} {dep_constraint}` and this project \
+        resolve_declared(
+            index,
+            &dep_name,
+            Some(&both),
+            opts,
+            held,
+            keep_locked,
+            declared,
+            graph,
+        )
+        .map_err(|e| match declared.get(&dep_name) {
+            Some(root) if *root != dep_constraint => format!(
+                "{e} — `{name}` requires `{dep_name} {dep_constraint}` and this project \
                      declares `{dep_name} = \"{root}\"`; change the declaration to a version \
                      `{name}` accepts"
-                ),
-                _ => e,
-            },
-        )?;
+            ),
+            _ => e,
+        })?;
     }
     Ok(())
+}
+
+/// The exact constraint that keeps a TRANSITIVE package of a `use`-driven install at the
+/// version the governing lock pins for it (`held`), while that pin satisfies every
+/// declaration in force (`constraint`): the lock is the resolved form of the declarations
+/// (PACKAGES.md § Lock file), so fetching one package moves no other pin.  A pin a
+/// declaration has excluded is stale and resolves afresh (`None`), as at load
+/// (`lock_pin_in_force`).
+fn kept_lock_pin(
+    pkg: &registry_index::Package,
+    held: Option<&String>,
+    constraint: Option<&str>,
+) -> Option<String> {
+    held.filter(|v| {
+        pkg.versions.contains_key(v.as_str())
+            && constraint.is_none_or(|c| registry_index::satisfies(v, c))
+    })
+    .map(|v| format!("={v}"))
 }
 
 fn build_lockfile(graph: &[ResolvedPackage]) -> LockFile {
@@ -1218,7 +1273,7 @@ pub fn auto_install_if_in_catalog(
     // as the fresh cache it now is.
     if from_cache
         && (!index.packages.contains_key(name)
-            || resolve_named(&index, name, constraint, opts).is_err())
+            || resolve_named(&index, name, constraint, opts, true).is_err())
         && let Ok(fresh) = load_index(&InstallOptions {
             refresh: true,
             ..opts.clone()
@@ -1230,10 +1285,11 @@ pub fn auto_install_if_in_catalog(
     if !index.packages.contains_key(name) {
         return Ok(None);
     }
-    let report = install_one(name, constraint, opts).map_err(|message| AutoInstallFailure {
-        message,
-        registry_answered,
-    })?;
+    let report =
+        install_resolved(name, constraint, opts, true).map_err(|message| AutoInstallFailure {
+            message,
+            registry_answered,
+        })?;
     for (n, v) in &report.installed {
         eprintln!("[registry] installed {n} {v}");
     }
@@ -1387,7 +1443,17 @@ mod tests {
             .collect();
         let held = BTreeMap::default();
         let mut graph = Vec::new();
-        resolve_declared(&idx, "a", None, &opts(), &held, &declared, &mut graph).unwrap();
+        resolve_declared(
+            &idx,
+            "a",
+            None,
+            &opts(),
+            &held,
+            false,
+            &declared,
+            &mut graph,
+        )
+        .unwrap();
         let b = graph.iter().find(|r| r.name == "b").expect("b");
         assert_eq!(
             b.version.semver, "0.1.0",
@@ -1403,6 +1469,7 @@ mod tests {
             Some("=0.1.2"),
             &opts(),
             &held,
+            false,
             &declared,
             &mut graph,
         )
@@ -1413,12 +1480,98 @@ mod tests {
             .into_iter()
             .collect();
         let mut graph = Vec::new();
-        let err =
-            resolve_declared(&idx, "a", None, &opts(), &held, &declared, &mut graph).unwrap_err();
+        let err = resolve_declared(
+            &idx,
+            "a",
+            None,
+            &opts(),
+            &held,
+            false,
+            &declared,
+            &mut graph,
+        )
+        .unwrap_err();
         assert!(
             err.contains("`a` requires `b ^0.1` and this project declares `b = \"=0.2.0\"`"),
             "{err}"
         );
+    }
+
+    // ── resolve_declared — a `use`-driven install keeps a transitive package's lock pin ──
+
+    /// The multiplayer tests' lock pinned `server 0.7.5` and `web 0.4.5`; fetching the pinned
+    /// server re-resolved its `web >=0.4` to the newest, 0.5.0, loaded that and rewrote the
+    /// lock.  Cells: a pin that still satisfies every range stands; one a range excludes
+    /// resolves afresh; the package NAMED is never bound by its own old pin; and `loft
+    /// install` / `loft update` (`keep_locked` false) still take the newest.
+    #[test]
+    fn a_use_driven_install_keeps_a_transitive_lock_pin() {
+        let idx = index(vec![
+            pkg("srv", vec![ver("0.7.5", &[("w", ">=0.4")])]),
+            pkg(
+                "w",
+                vec![ver("0.4.5", &[]), ver("0.4.7", &[]), ver("0.5.0", &[])],
+            ),
+        ]);
+        let none = BTreeMap::default();
+        let held = |w: &str| -> BTreeMap<String, String> {
+            [("w".to_string(), w.to_string())].into_iter().collect()
+        };
+        let w_of =
+            |held: &BTreeMap<String, String>, keep: bool, declared: &BTreeMap<String, String>| {
+                let mut graph = Vec::new();
+                resolve_declared(
+                    &idx,
+                    "srv",
+                    Some("=0.7.5"),
+                    &opts(),
+                    held,
+                    keep,
+                    declared,
+                    &mut graph,
+                )
+                .unwrap();
+                graph
+                    .iter()
+                    .find(|r| r.name == "w")
+                    .expect("w")
+                    .version
+                    .semver
+                    .clone()
+            };
+        assert_eq!(w_of(&held("0.4.5"), true, &none), "0.4.5", "the pin stands");
+        assert_eq!(
+            w_of(&held("0.4.5"), false, &none),
+            "0.5.0",
+            "an install re-resolves"
+        );
+        assert_eq!(
+            w_of(&none, true, &none),
+            "0.5.0",
+            "nothing pinned: the newest"
+        );
+        let floor: BTreeMap<String, String> = [("w".to_string(), ">=0.4.7".to_string())]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            w_of(&held("0.4.5"), true, &floor),
+            "0.5.0",
+            "a pin the project's floor excludes is stale"
+        );
+        // The package named is what the `use` asked for, under the constraint it passed.
+        let mut graph = Vec::new();
+        resolve_declared(
+            &idx,
+            "w",
+            None,
+            &opts(),
+            &held("0.4.5"),
+            true,
+            &none,
+            &mut graph,
+        )
+        .unwrap();
+        assert_eq!(graph[0].version.semver, "0.5.0");
     }
 
     fn opts() -> InstallOptions {

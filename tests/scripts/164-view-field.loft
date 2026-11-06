@@ -6,9 +6,11 @@
 // into it — is gone.
 //
 // Every value below is what the program answers WITHOUT the rewrite, hand-computed from the
-// declarations: the record form is the oracle and the view leaf may not move it.  The
-// interpreter keeps the record form always, so this file on `--interpret` measures the
-// oracle itself.
+// declarations: the record form is the oracle and the view leaf may not move it
+// (`LOFT_NO_VIEW_FIELD=1` runs the oracle on every backend).  A CLOSED program — the
+// interpreter, `--lean`, `--ship` — carries the view as an element of the IR's value-record
+// tuple (`src/value_record.rs`, @PLN211 c4-view S1); a plain `--native` / `--native-c` run
+// is open and carries the writers' own form.
 //
 // The shape that is ADMITTED is the one a program actually writes: a local filled by a call,
 // appended into a collection the caller owns, and returned in the record beside it.  The
@@ -47,6 +49,12 @@
 //     container's FIRST element instead of its last: 3,9 for 4,18.
 // The admissions' receipt is STRUCTURAL and pinned in `tests/view_field.rs`: the tuple
 // signature, the dropped buffer argument, and every decline still declining.
+// @falsified-at: hand-measured (2026-11-05), the IR's view tuple (@PLN211 c4-view S1) — the
+// view freed with the tuple, planted as `OpFreeRef(m.0)` right after each carrier's bind in
+// `value_record.rs`'s carrier rewrite: `a1`'s next read of its points (`len(m1.mpts)`), under
+// `LOFT_POISON=1 LOFT_STRICT_STORES=1`, stopped the run on `--interpret`, `--native-c --lean`
+// and `--native --lean`.  The IR's own carrier gate (`is_value_local`) moved no cell when
+// removed: the sites that disturb the place are declined by the analysis before it.
 
 struct Pt { px: integer = 0, py: integer = 0 }
 struct Op { opts: vector<Pt>, ow: integer = 0 }

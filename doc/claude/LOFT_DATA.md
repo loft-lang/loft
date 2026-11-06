@@ -152,8 +152,9 @@ through the view on a keyed collection, and **reassigning the container itself**
 (`bx = T{…}`).  Each counts where it happens: in this function, or in a function it
 calls with the container.  After the
 copy, writes through the binding no longer reach the container — which is why it
-is reported and not silent.  To keep writing through, re-read the view after the
-change (`c = bx.v[0]`).
+is reported where the code writes through the view after the change, and made
+silently where the view is only read (the copy reads the same values).  To keep
+writing through, re-read the view after the change (`c = bx.v[0]`).
 
 The copy happens only when you still USE the view after the change — *"while `c`
 is in use"* is meant literally.  Finish with the view first and it keeps writing

@@ -3,21 +3,21 @@
 1 22 8
 ==== stderr ====
 advice[function-complexity]: `complex_function_marker` scores 40 for control-flow complexity (nudge at 40) — its deepest nesting is 1 levels, at line 12
-  --> <cases>/48_advice_points_at_the_function_it_names.loft:10:42
+  --> <cases>/48_advice_points_at_the_function_it_names.loft:10:4
    |
 10 | fn complex_function_marker(x: integer) -> integer {
-   |                                          ^
+   |    ^
 
 advice[too-many-parameters]: `wide_function_marker` takes 8 required parameters (nudge at 8) — every caller has to get all 8 right, in order
-  --> <cases>/48_advice_points_at_the_function_it_names.loft:66:5
+  --> <cases>/48_advice_points_at_the_function_it_names.loft:57:4
    |
-66 | ) -> integer {
-   |     ^
+57 | fn wide_function_marker(
+   |    ^
 
 advice[trailing-boolean-parameters]: `wide_function_marker` ends with 2 boolean parameters — a call reading `wide_function_marker(…, true, false)` says nothing about which flag is which
-  --> <cases>/48_advice_points_at_the_function_it_names.loft:66:5
+  --> <cases>/48_advice_points_at_the_function_it_names.loft:57:4
    |
-66 | ) -> integer {
-   |     ^
+57 | fn wide_function_marker(
+   |    ^
 
 note: 3 diagnostics above suggest what to write instead — re-run with `--explain`

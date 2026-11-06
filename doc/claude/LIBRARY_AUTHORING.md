@@ -140,6 +140,10 @@ the detail, and that place wins if the two ever differ — fix this line, not th
     loft-library skill (`references/publish.md`)
 28. **Healthy means** no open branches, `main` green against the current loft, zero warnings.
     [§ 5](LIBRARY_PUBLISH.md#5-maintain)
+29. **Declare every third-party dependency in `loft.toml`**: vendored source, a system library
+    it links or opens, with where it came from and the advisory registers that report on it.
+    Library CI and the publish step refuse what is undeclared
+    (`make thirdparty ARGS="--gate --repo <pkg-dir>"`).  [THIRDPARTY.md](THIRDPARTY.md)
 
 The review side of the same rules — what a registry PR checks — is
 [LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md).

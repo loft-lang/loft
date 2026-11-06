@@ -43,15 +43,15 @@ fn top_item(e: el::El, it: integer) {
     SAlias { at, name, tp, size } => { parse_typedef(e, at, name, tp, size); },
     SEnum { at, name, tvars, variants } => { parse_enum(e, at, name, tvars, variants); },
     SInterface { at, name, members, end } => { parse_interface(e, at, name, members, end); },
-    SFn { at, is_op, name, tvars, params, ret, ret_const, cap, body, annots } => {
-      key = parse_function(e, at, is_op, name, tvars, params, ret, ret_const, cap, body, annots);
+    SFn { at, is_op, name, tvars, params, ret, ret_const, body, annots } => {
+      key = parse_function(e, at, name, params, ret, body, is_op, tvars, ret_const, annots);
       e.type_vars = [];
       if e.first_pass && (key == "" || el::def_nr(e, key) < 0) {
         e.declined += [name];
       }
     },
     SStruct { at, value, name, tvars, fields } => { parse_struct(e, at, value, name, tvars, fields); },
-    SConst { at } => { el::refuse(e, "constant"); },
+    SConst { at, name, tp, value } => { parse_constant(e, at, name, tp, value); },
     _ => { el::refuse(e, "item"); }
   }
 }
@@ -123,7 +123,26 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
           continue;
         }
         t = el_types::parse_type(e, tn!);
-        if t == null || !e.first_pass {
+        if t == null {
+          continue;
+        }
+        fi = field_init_node(e, mods);
+        dv: ir::Node? = null;
+        if fi != null {
+          dv = field_default_value(e, fi!, t!);
+          if dv == null {
+            continue;
+          }
+        }
+        if !e.first_pass {
+          // The second pass converts the default to the field (`set_attr_value`).
+          if dv != null {
+            for a in el::def(e, d).attributes {
+              if a.name == fname {
+                e.b.data.definitions[d].attributes[a#index].value = [dv!];
+              }
+            }
+          }
           continue;
         }
         tp = t!;
@@ -142,6 +161,9 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
           }
         }
         a = el::attribute(fname, tp);
+        if dv != null {
+          a.value = [dv!];
+        }
         a.nullable = nullable;
         a.pub_field = public;
         // The alias an integer field is named by (`u8`, `i32`), whose `size(n)` routes its slot.
@@ -163,15 +185,99 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
   e.context = ctx;
 }
 
-// A field declaration's one type, when it is nothing but a type.
+// A field declaration's one type, when it is nothing but a type and maybe a `= default`.
 fn field_type_node(e: el::El, mods: vector<integer>) -> integer? {
   if len(mods) != 1 {
     return null;
   }
   match e.p.nodes[mods[0]] {
-    SFieldType { tp, init, caps } => if init == null && len(caps) == 0 { tp } else { null },
+    SFieldType { tp, caps } => if len(caps) == 0 { tp } else { null },
     _ => null
   }
+}
+
+// The `= default` of a field declaration, or null.
+fn field_init_node(e: el::El, mods: vector<integer>) -> integer? {
+  match e.p.nodes[mods[0] ?? 0] {
+    SFieldType { init } => init,
+    _ => null
+  }
+}
+
+// `parse_stored_default`: a field's `= value` read in the struct's context, with no frame of its
+// own, and on the second pass converted to the field's type (`convert`).  A plain scalar or a
+// literal text that names no slot is carried; anything else is refused by name.
+fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
+  vars = el_vars::new_vars("__default", e.file);
+  x = el_expressions::expression(e, vars, init);
+  if el_types::is_unknown(x.tp) {
+    return if e.first_pass { ir::NdNull } else { null };
+  }
+  plain_enum = match el_types::base(x.tp) { TyEnum { is_ref } => !is_ref, _ => false };
+  plain = el_convert::plain_scalar(el_types::base(x.tp)) || plain_enum || (el_types::base(x.tp) is TyText && el_ir::unspan(x.code) is NdText);
+  slot = false;
+  for v in 0..len(vars.vars) {
+    if el_ir::reads_var(x.code, v) {
+      slot = true;
+    }
+  }
+  if !plain || slot {
+    el::refuse(e, "a field default of this kind: {el_expressions::type_kind(x.tp)}");
+    return null;
+  }
+  if e.first_pass {
+    return x.code;
+  }
+  el_convert::convert(e, vars, x.code, x.tp, el_types::base(ft), false)
+}
+
+// `Parser::parse_constant`, `const NAME = value;`: a definition of its own (`DefType::Constant`),
+// positioned where the parser stands on the `;`, typed by its value and holding the value's code,
+// which every use inlines.  The value is read with no frame of its own.  A declared type, and a
+// value other than a plain scalar or a literal text — a vector, a record, a text assembled in a
+// buffer, anything that names a slot — are refused by name.
+fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integer?) {
+  if tp != null || value == null {
+    el::refuse(e, "a constant with a declared type or no value");
+    return;
+  }
+  was = e.context;
+  e.context = -1;
+  vars = el_vars::new_vars("__const_{name}", e.file);
+  x = el_expressions::expression(e, vars, value!);
+  e.context = was;
+  if el_types::is_unknown(x.tp) {
+    return;
+  }
+  plain = el_convert::plain_scalar(x.tp) || (x.tp is TyText && el_ir::unspan(x.code) is NdText);
+  // A value that names a slot of the scratch frame needs a temporary the use site does not have.
+  slot = false;
+  for v in 0..len(vars.vars) {
+    if el_ir::reads_var(x.code, v) {
+      slot = true;
+    }
+  }
+  if !plain || slot {
+    el::refuse(e, "a constant of this kind: {el_expressions::type_kind(x.tp)}");
+    return;
+  }
+  semi = at;
+  while semi < len(e.p.src) && !(e.p.src[semi] is Semi) {
+    semi += 1;
+  }
+  d = el::def_nr(e, name);
+  if e.first_pass {
+    if d >= 0 {
+      el::refuse(e, "a constant over an existing name");
+      return;
+    }
+    d = el::add_def(e, name, el::pos_at(e, semi), el::DT_CONSTANT);
+  }
+  if d < 0 || el::def(e, d).def_type != el::DT_CONSTANT {
+    return;
+  }
+  el::set_returned(e, d, el_types::without_deps(x.tp));
+  e.b.data.definitions[d].code = [x.code];
 }
 
 // `type Name (= Type)? (size(n))? ;`                               Parser::parse_typedef
@@ -427,14 +533,63 @@ fn sole_vector_literal(e: el::El, body: integer) -> boolean {
   }
 }
 
+// `literal_body_constant`'s admission: a plain function (no instance, not synthetic) whose every
+// parameter is hidden and which has its return buffer, answering a plain vector whose element
+// the constant store holds — no collection, and no record holding one — and whose literal is
+// made of constants (`const_vector_blocker`).
+fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
+  def = el::def(e, d);
+  if def.def_type != el::DT_FUNCTION || def.instance_of >= 0 || def.synthetic != "" {
+    return false;
+  }
+  buffered = false;
+  for a in def.attributes {
+    if !a.hidden {
+      return false;
+    }
+    if a.name == "__retbuf" {
+      buffered = true;
+    }
+  }
+  rt = def.returned[0] ?? ir::TyVoid;
+  elem = match rt { TyVector { inner } => inner, _ => ir::TyVoid };
+  if !buffered || elem is TyVoid || el_types::is_collection(elem) {
+    return false;
+  }
+  match el_types::base(elem) {
+    TyTuple { elems } => {
+      for m in elems {
+        b = el_types::base(m);
+        if el_types::is_collection(b) || b is TyReference || b is TyEnum {
+          return false;
+        }
+      }
+    },
+    TyReference { n } => {
+      for a in el::def(e, n).attributes {
+        b = el_types::base(a.typedef[0] ?? ir::TyVoid);
+        if el_types::is_collection(b) || b is TyReference || b is TyEnum {
+          return false;
+        }
+      }
+    },
+    _ => {}
+  }
+  stmts = match e.p.nodes[body] { SBlock { stmts: ss } => ss, _ => [] };
+  lit = match e.p.nodes[stmts[0] ?? 0] { SStmt { e: x } => x ?? -1, _ => -1 };
+  lit >= 0 && el_expressions::constant_literal(e, lit)
+}
+
 // `fn name(params) (-> type)? (; / block)`                    Parser::parse_function
-// The plain path: no type variables, no operator form, no capability, no annotation, no `both`.
+// The plain path: no type variables, no operator form, no annotation, no `both`.
 // A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
 // the definition's key, or "" where the declaration was refused before one was known.
-pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars: vector<integer>, params: vector<integer>, ret: integer?, ret_const: boolean, cap: integer?, body: integer?, annots: vector<integer>) -> text {
-  if is_op || cap != null || len(annots) > 0 || ret_const {
-    kind = if is_op { "an operator form" } else if cap != null { "a capability" } else if len(annots) > 0 { "annotations" } else { "`-> const`" };
-    el::refuse(e, "a function with an operator form, a capability, annotations or `-> const`: {kind}");
+pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer>, ret: integer?, body: integer?, is_op: boolean = false, tvars: vector<integer> = [], ret_const: boolean = false, annots: vector<integer> = []) -> text {
+  // A capability (`fs#read`) and a `-> const` result are checks at the call and the return; the
+  // definition's image is the plain one, so both are read past.  An `operator` form is the
+  // method of its name, marked (`operator_form`) so the form it backs reaches it.
+  if len(annots) > 0 {
+    el::refuse(e, "a function with annotations");
     return "";
   }
   // `parse_type_var_header` (@F25): each header variable bound to its placeholder before the
@@ -454,12 +609,6 @@ pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars:
       },
       _ => {}
     }
-  }
-  // `@FR-R-Const`: a function of no parameters whose whole body is one vector literal gets a
-  // constant twin (`__const_n_<name>`) the calls of it read — not carried: refused by name.
-  if len(params) == 0 && body != null && sole_vector_literal(e, body!) {
-    el::refuse(e, "a function whose body is one vector literal (a constant twin)");
-    return "";
   }
   vars = el_vars::new_vars(name, e.file);
   arguments: vector<Argument> = [];
@@ -501,11 +650,13 @@ pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars:
   after = at;
   rt: ir::TypeT = ir::TyVoid;
   if ret != null {
-    // `-> T` (or `-> const T`, a function or a tuple type): the lexer stood on the `->`.
+    // `-> T` (or `-> const T`, a function or a tuple type): the lexer stood on the `->`, which a
+    // `const` stands between.
+    back = if ret_const { 2 } else { 1 };
     match e.p.nodes[ret ?? 0] {
-      STy { at: tat } => { after = tat - 1; },
-      STyFn { at: tat } => { after = tat - 1; },
-      STyTuple { at: tat } => { after = tat - 1; },
+      STy { at: tat } => { after = tat - back; },
+      STyFn { at: tat } => { after = tat - back; },
+      STyTuple { at: tat } => { after = tat - back; },
       _ => {}
     }
   } else if body != null {
@@ -522,6 +673,9 @@ pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars:
     e.context = add_fn(e, key, name, arguments, el::pos_at(e, after));
     if len(e.type_vars) > 0 && e.context >= 0 {
       e.b.data.definitions[e.context].def_type = el::DT_GENERIC;
+    }
+    if is_op && e.context >= 0 {
+      e.b.data.definitions[e.context].operator_form = true;
     }
   } else {
     e.context = el::def_nr(e, key);
@@ -582,8 +736,34 @@ pub fn parse_function(e: el::El, at: integer, is_op: boolean, name: text, tvars:
       rb = el_vars::add_variable(vars, "__retbuf", el_types::without_deps(rp));
       el_vars::become_argument(vars, rb);
     }
+    // `parse_lambda_body` (pass 2): a lambda with a closure record reads its captures through a
+    // last `__closure` parameter of the record's type.
+    if !e.first_pass && e.closure_rec >= 0 {
+      ct = ir::TyReference { n: e.closure_rec, dep: [] };
+      has = false;
+      for a in el::def(e, e.context).attributes {
+        if a.name == "__closure" {
+          has = true;
+        }
+      }
+      if !has {
+        e.b.data.definitions[e.context].attributes += [el::attribute("__closure", ct)];
+      }
+      cv = el_vars::add_variable(vars, "__closure", ct);
+      el_vars::become_argument(vars, cv);
+      e.closure_var = cv;
+    }
     code = el_expressions::parse_code(e, vars, body ?? 0);
     e.b.data.definitions[e.context].code = [code];
+    // `@FR-R-Const` (`literal_body_constant`, pass 1): a plain function of no parameters whose
+    // whole body is one vector literal of constants, answering a plain vector through its
+    // buffer, gets a constant twin `__const_<name>` with its result — what a read of a call of
+    // it is later answered from (`const_fn::rewrite`).
+    if e.first_pass && len(params) == 0 && len(tvars) == 0 && sole_vector_literal(e, body!) && const_twin_ok(e, e.context, body!) {
+      cd = el::add_def(e, "__const_{el::def(e, e.context).name}", el::def(e, e.context).position, el::DT_CONSTANT);
+      e.b.data.definitions[cd].returned = el::def(e, e.context).returned;
+      e.b.data.definitions[cd].synthetic = "literal_const";
+    }
     if !e.first_pass && len(e.type_vars) > 0 {
       e.bodies2 += [e.context];
     }

@@ -4276,67 +4276,67 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Raises the value to the power given second: <code>pow(2.0, 10.0)</code> is 1024. Null when the answer is not a real number (<code>pow(-8.0, 0.5)</code>). Use for exponential growth curves and scaling.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">abs</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">abs</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Absolute value for double-precision floats.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="en"><a href="stdlib-math.html">PI</a></span> = <span class="en">OpMathPiFloat</span>()</code></pre>
+<pre><code><span class="kw">pub</span> <span class="en"><a href="stdlib-math.html">PI</a></span> = <span class="en">OpMathPiFloat</span>() <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
 <p>The ratio of a circle's circumference to its diameter (3.14159...).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="en"><a href="stdlib-math.html">E</a></span> = <span class="en">OpMathEFloat</span>()</code></pre>
+<pre><code><span class="kw">pub</span> <span class="en"><a href="stdlib-math.html">E</a></span> = <span class="en">OpMathEFloat</span>() <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
 <p>Euler's number, the base of natural logarithms (2.71828...).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">cos</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">cos</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Cosine. Use for circular motion: x = r * cos(angle).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">sin</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">sin</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Sine. Use for circular motion: y = r * sin(angle).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">tan</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">tan</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Tangent. Use for slopes and perspective projection.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">acos</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">acos</a></span>(self: f64) -&gt; f64?</code></pre>
 <p>Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside [-1, 1].</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">asin</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">asin</a></span>(self: f64) -&gt; f64?</code></pre>
 <p>Arc sine. Returns the angle whose sine is the value; null outside [-1, 1].</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">atan</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">atan</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Arc tangent of a single value. Returns angle in (-PI/2, PI/2).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">ceil</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">ceil</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">floor</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">floor</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Round down to the nearest integer value. Use to convert a float position to a tile index.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">round</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">round</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Round to the nearest integer value (half rounds away from zero).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(self: f64) -&gt; f64?</code></pre>
 <p>Square root. Use for distances and normalization. Null for a negative value.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">atan2</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, v2: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">atan2</a></span>(self: f64, v2: f64) -&gt; f64</code></pre>
 <p>Arc tangent of y/x as <code>y.atan2(x)</code>, preserving the correct quadrant: <code>atan2(1.0, 0.0)</code> is PI/2. Use instead of atan when you have separate x/y components.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">log</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, v2: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">log</a></span>(self: f64, v2: f64) -&gt; f64?</code></pre>
 <p>Logarithm in the base given second: <code>log(8.0, 2.0)</code> is 3. Null for a negative value, -inf at 0. Use for converting between scales (e.g., decibels).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">pow</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, v2: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-math.html">pow</a></span>(self: f64, v2: f64) -&gt; f64?</code></pre>
 <p>Raises the value to the power given second: <code>pow(2.0, 10.0)</code> is 1024. Null when the answer is not a real number (<code>pow(-8.0, 0.5)</code>). Use for exponential growth curves and scaling.</p>
 </div>
 <h2 id="stdlib-exp-ln-log2-log10">exp / ln / log2 / log10</h2>
@@ -4345,7 +4345,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Raises E (2.71828…) to the power v. Use for exponential growth models.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">exp</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">exp</a></span>(self: f64) -&gt; f64</code></pre>
 <p>Double-precision exp (e^v).</p>
 </div>
 <div class="item">
@@ -4353,7 +4353,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Natural logarithm (base E). Use for growth rates and information entropy.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">ln</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">ln</a></span>(self: f64) -&gt; f64?</code></pre>
 <p>Double-precision natural logarithm.</p>
 </div>
 <div class="item">
@@ -4361,7 +4361,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Base-2 logarithm. Use for bit-count calculations and information theory.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">log2</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">log2</a></span>(self: f64) -&gt; f64?</code></pre>
 <p>Double-precision base-2 logarithm.</p>
 </div>
 <div class="item">
@@ -4369,7 +4369,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Base-10 logarithm. Use for decibels, orders of magnitude, and display scales.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">log10</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">log10</a></span>(self: f64) -&gt; f64?</code></pre>
 <p>Double-precision base-10 logarithm.</p>
 </div>
 <h2 id="stdlib-min-max-clamp">min / max / clamp</h2>
@@ -4398,15 +4398,15 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(self: f64, b: f64) -&gt; f64</code></pre>
 <p>Smallest of two double-precision float values.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>(self: f64, b: f64) -&gt; f64</code></pre>
 <p>Largest of two double-precision float values.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">clamp</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, lo: <span class="ty"><a href="stdlib-types.html">float</a></span>, hi: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">clamp</a></span>(self: f64, lo: f64, hi: f64) -&gt; f64</code></pre>
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
@@ -4422,7 +4422,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Where <code>self</code> stands against <code>other</code>, in the order <code>&lt;</code> uses.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: f64, other: f64) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span></code></pre>
 <p>Where <code>self</code> stands against <code>other</code>, in the order <code>&lt;</code> uses.</p>
 </div>
 <div class="item">
@@ -4474,31 +4474,31 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p><code>%</code> as a method: <code>a.remainder(b)</code> is <code>a % b</code>, null on a zero divisor.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">plus</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">plus</span>(self: f64, other: f64) -&gt; f64</code></pre>
 <p><code>+</code> as the method <code>Addable</code> names: <code>a.plus(b)</code> is <code>a + b</code>.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">minus</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">minus</span>(self: f64, other: f64) -&gt; f64</code></pre>
 <p><code>-</code> as the method <code>Subtractable</code> names: <code>a.minus(b)</code> is <code>a - b</code>.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">times</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">times</span>(self: f64, other: f64) -&gt; f64</code></pre>
 <p><code>*</code> as the method <code>Numeric</code> names: <code>a.times(b)</code> is <code>a * b</code>.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">negate</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">negate</span>(self: f64) -&gt; f64</code></pre>
 <p>The unary <code>-</code> as the method <code>Numeric</code> names: <code>a.negate()</code> is <code>-a</code>.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">divided_by</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">divided_by</span>(self: f64, other: f64) -&gt; f64?</code></pre>
 <p><code>/</code> as a method: <code>a.divided_by(b)</code> is <code>a / b</code>, null on a zero divisor.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">remainder</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, other: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span>?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">remainder</span>(self: f64, other: f64) -&gt; f64?</code></pre>
 <p><code>%</code> as a method: <code>a.remainder(b)</code> is <code>a % b</code>, null on a zero divisor.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">approx</a></span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>, eps: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">approx</a></span>(self: f64, b: f64, eps: f64) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>Approximate equality: true when a and b differ by at most eps (inclusive). <code>==</code> on float/single is EXACT IEEE equality — use <code>approx</code> when you want a tolerance, e.g. comparing computed transcendentals: <code>approx(sqrt(2.0) * sqrt(2.0), 2.0, 1e-9)</code>. A null (NaN) operand is not approximately equal to anything, so the result is false.</p>
 </div>
 <div class="item">
@@ -4786,7 +4786,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Converts an integer to its decimal text. Built-in types define <code>to_text</code> so they satisfy the <code>Printable</code> interface (used by <code>print</code>, format strings, …).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: f64) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Converts a float to its text representation.</p>
 </div>
 <div class="item">
@@ -4843,7 +4843,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-file-system.html">File</a></span> {
   <span class="kw">pub</span> path: <span class="ty"><a href="stdlib-types.html">text</a></span>,
 
-  <span class="kw">pub</span> size: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  <span class="kw">pub</span> size: <span class="ty"><a href="stdlib-types.html">i64</a></span>,
 
   <span class="cm">// A fresh File reads as `NotExists` until `file()` has determined the real format for</span>
   <span class="cm">// the path, so this default is a placeholder rather than a claim about the path — it is</span>
@@ -4852,9 +4852,9 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 
   ref: <span class="ty"><a href="stdlib-types.html">i32</a></span>?,
 
-  current: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  current: <span class="ty"><a href="stdlib-types.html">i64</a></span>,
 
-  next: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  next: <span class="ty"><a href="stdlib-types.html">i64</a></span>,
 }</code></pre>
 <p>A handle to a filesystem entry. Fields: path (full path), size (file size in bytes), format (open mode), current (byte position after last read), next (byte position to read next).</p>
 </div>
@@ -5289,8 +5289,8 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="en">NullVal</span>,
   <span class="en">BoolVal</span> { b: <span class="ty"><a href="stdlib-types.html">boolean</a></span> },
   <span class="en">IntVal</span> { <span class="kw">pub</span> n: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
-  <span class="en">LongVal</span> { <span class="kw">pub</span> n: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
-  <span class="en">FloatVal</span> { f: <span class="ty"><a href="stdlib-types.html">float</a></span> },
+  <span class="en">LongVal</span> { <span class="kw">pub</span> n: <span class="ty"><a href="stdlib-types.html">i64</a></span> },
+  <span class="en">FloatVal</span> { f: f64 },
   <span class="en">SingleVal</span> { f: <span class="ty"><a href="stdlib-types.html">single</a></span> },
   <span class="en">CharVal</span> { c: <span class="ty"><a href="stdlib-types.html">character</a></span> },
   <span class="en">TextVal</span> { <span class="kw">pub</span> t: <span class="ty"><a href="stdlib-types.html">text</a></span> },
@@ -5346,13 +5346,13 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-json.html">JsonValue</a></span> {
   <span class="en">JNull</span>,
   <span class="en">JBool</span> { value: <span class="ty"><a href="stdlib-types.html">boolean</a></span> },
-  <span class="en">JNumber</span> { value: <span class="ty"><a href="stdlib-types.html">float</a></span> },
+  <span class="en">JNumber</span> { value: f64 },
   <span class="en">JString</span> { value: <span class="ty"><a href="stdlib-types.html">text</a></span> },
   <span class="en">JArray</span> { <span class="kw">pub</span> items: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonValue</a></span>&gt; },
   <span class="en">JObject</span> { <span class="kw">pub</span> fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonField</a></span>&gt; },
-  <span class="en">JInteger</span> { value: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">JInteger</span> { value: <span class="ty"><a href="stdlib-types.html">i64</a></span> },
 }</code></pre>
-<p>Typed union of JSON values.  The discriminant (1..7) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus <code>JInteger</code> for an integer-shaped number preserved to an exact <code>integer</code> (i64).</p>
+<p>Typed union of JSON values.  The discriminant (1..7) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus <code>JInteger</code> for an integer-shaped number preserved to an exact <code>integer</code> (i64). Both numbers keep the wire format's width in every build: RFC 8259 numbers are doubles, and the parser writes them at 8 bytes.</p>
 <p><code>JInteger</code> MUST stay the LAST variant: the store discriminant it gets (7) is hard-coded as <code>JV_DISCR_INT</code> in <code>src/native.rs</code>, and the existing variants' discriminants (1–6) must not shift.</p>
 </div>
 <div class="item">

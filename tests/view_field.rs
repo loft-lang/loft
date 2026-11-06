@@ -35,8 +35,15 @@ fn emitted(env: &[(&str, &str)]) -> String {
     emitted_from(GUARD, env)
 }
 
-/// [`emitted`] for another guard.
+/// [`emitted`] for another guard — the CLOSED program (`--lean`): `(R-ValueRecord)` is a
+/// whole-program rewrite, made in the IR (`src/value_record.rs`), and an open build (one that
+/// ships the live tier) takes none (NATIVE.md § Optimisation tiers).
 fn emitted_from(file: &str, env: &[(&str, &str)]) -> String {
+    emitted_with(file, &["--lean"], env)
+}
+
+/// [`emitted_from`] with extra driver flags.
+fn emitted_with(file: &str, flags: &[&str], env: &[(&str, &str)]) -> String {
     // One path per CALL, not per env: the tests run in parallel in one process, so two of
     // them sharing a name means one reads a file the other has already removed.
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -46,7 +53,8 @@ fn emitted_from(file: &str, env: &[(&str, &str)]) -> String {
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let mut cmd = loft();
-    cmd.arg("--native-rust")
+    cmd.args(flags)
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(file));
@@ -86,7 +94,7 @@ fn an_admitted_function_returns_its_heap_field_as_a_reference() {
     ] {
         let sig = signature(&src, func);
         assert!(
-            sig.contains("-> (bool, bool, DbRef)"),
+            sig.contains("-> (DbRef, u8, u8)"),
             "{func} must answer the value tuple with a view leaf:\n{sig}"
         );
         let params = &sig[..sig.find(") ->").unwrap_or(sig.len())];
@@ -102,13 +110,13 @@ fn an_admitted_function_returns_its_heap_field_as_a_reference() {
 fn a_site_reads_the_leaf_off_the_tuple() {
     let src = emitted(ON);
     assert!(
-        src.contains("let mut var_m1: (bool, bool, DbRef) = n_a1(cell, var_s1, 3_i64);"),
+        src.contains("let mut var_m1: (DbRef, u8, u8) = n_a1(cell, var_s1, 3_i64);"),
         "the site binds the tuple and passes no buffer"
     );
     // `len(m1.pts)` is its op over the path (`(R-Wrapper)` over a pure vector path, since
     // @PLN158 round 3), and the path over a value-record local reads the tuple's leaf.
     assert!(
-        src.contains("vector::length_vector(&(var_m1.2), &stores.allocations)"),
+        src.contains("vector::length_vector(&(var_m1.0), &stores.allocations)"),
         "a length reads the leaf's reference straight off the tuple"
     );
 }
@@ -129,14 +137,14 @@ fn a_joined_append_views_the_last_element() {
     for func in ["p1", "p11", "p12", "p14"] {
         let b = body(func);
         assert!(
-            b.contains("let _ve = vector::get_vector(&_vc, 16u32, -1, &stores.allocations)"),
+            b.contains("vec_get") && b.contains("-1_i64"),
             "{func} appends in more than one arm, so it views the last element:\n{b}"
         );
     }
     for func in ["a1", "p2", "p8", "p13", "p16"] {
         let b = body(func);
         assert!(
-            b.contains("let _vl = var__elm_") && !b.contains("get_vector(&_vc"),
+            b.contains("let _v_v1 = (var__elm_") && !b.contains("-1_i64"),
             "{func} appends through one temp on every path, so it views that element:\n{b}"
         );
     }
@@ -213,7 +221,7 @@ fn a_pooled_caller_mints_nothing_for_a_tuple() {
     let main = &src[start..];
     let main = &main[..main.find("  } /*block_1").unwrap_or(main.len())];
     assert!(
-        main.contains("let mut var_me1: (bool, bool, DbRef) = n_a1(cell, var_se1,"),
+        main.contains("let mut var_me1: (DbRef, u8, u8) = n_a1(cell, var_se1,"),
         "e1 binds the tuple:\n{main}"
     );
     assert!(
@@ -236,7 +244,7 @@ fn the_switch_restores_the_record() {
     );
     let on = emitted(ON);
     assert!(
-        signature(&on, "a1").contains("-> (bool, bool, DbRef)"),
+        signature(&on, "a1").contains("-> (DbRef, u8, u8)"),
         "by default a1 answers the tuple"
     );
 }
@@ -317,9 +325,16 @@ fn the_cells_hold_on_both_backends_under_every_falsifier() {
         (GUARD, "164-view-field: every cell holds"),
         (FORWARD, "164-forward-tuple: every cell holds"),
     ] {
-        for backend in ["--interpret", "--native"] {
+        // The interpreter and the two `--lean` runs are CLOSED programs, where the IR's tuple
+        // carries the view; a plain `--native` is open and runs the writers' own form.
+        for backend in [
+            &["--interpret"][..],
+            &["--native"],
+            &["--native", "--lean"],
+            &["--native-c", "--lean"],
+        ] {
             let mut cmd = loft();
-            cmd.arg(backend)
+            cmd.args(backend)
                 .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(file));
             for (k, v) in strict {
                 cmd.env(k, v);
@@ -332,11 +347,11 @@ fn the_cells_hold_on_both_backends_under_every_falsifier() {
             );
             assert!(
                 out.status.success() && text.contains(done),
-                "{file} on {backend} did not hold under the falsifiers:\n{text}"
+                "{file} on {backend:?} did not hold under the falsifiers:\n{text}"
             );
             assert!(
                 !text.contains("stores not freed"),
-                "{file} on {backend} leaked:\n{text}"
+                "{file} on {backend:?} leaked:\n{text}"
             );
         }
     }

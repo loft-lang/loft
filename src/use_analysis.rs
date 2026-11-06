@@ -8454,6 +8454,115 @@ pub fn c_binding_call_unsupported(
     }
 }
 
+/// The locals of `body` something WRITES THROUGH — a field or element write rooted at one
+/// (`find_field_written_vars`), or the local handed to a callee that writes through that
+/// parameter, at any depth of the call graph.  `view-copied`'s question: a view copied out of
+/// its container is observable only where a write through it would have reached the
+/// container (`Scopes::copy_is_observable`).
+///
+/// It errs toward WRITTEN: an argument to a `&` parameter, to a call through a function value,
+/// or to a function with no loft body (a native), and a local returned bare, all count — each
+/// hands the view to code this walk does not read.
+pub(crate) fn written_through_locals(body: &Value, data: &Data) -> HashSet<u16> {
+    let mut written = HashSet::default();
+    crate::parser::find_field_written_vars(body, data, &mut written);
+    let mut memo: HashMap<u32, HashSet<u16>> = HashMap::default();
+    body.any_node(&mut |n| {
+        match n {
+            Value::Call(callee, args) => {
+                let def = data.def(*callee);
+                if def.name().starts_with("Op") {
+                    return false;
+                }
+                let params = callee_written_params(data, *callee, &mut memo, &mut Vec::new());
+                for (i, arg) in args.iter().enumerate() {
+                    if let Some(v) = arg_root(data, arg)
+                        && (params.contains(&(i as u16))
+                            || *def.code() == Value::Null
+                            || matches!(
+                                def.attributes.get(i).map(|a| a.typedef.base()),
+                                Some(Type::RefVar(_))
+                            ))
+                    {
+                        written.insert(v);
+                    }
+                }
+            }
+            Value::CallRef(_, args) => {
+                for arg in args {
+                    if let Some(v) = arg_root(data, arg) {
+                        written.insert(v);
+                    }
+                }
+            }
+            Value::Return(inner) => {
+                if let Value::Var(v) = inner.unspan() {
+                    written.insert(*v);
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    written
+}
+
+/// The variable an argument is a place of: the variable itself, or the root of a projection
+/// chain on it.
+fn arg_root(data: &Data, arg: &Value) -> Option<u16> {
+    match arg.unspan() {
+        Value::Var(v) => Some(*v),
+        Value::Call(op, items) if is_projection_op(data, *op) => {
+            items.first().and_then(|a| arg_root(data, a))
+        }
+        _ => None,
+    }
+}
+
+/// [`write_through_params`] closed over the call graph: a parameter the callee writes through,
+/// or hands on to a callee that does.  `visiting` breaks a recursion: a cycle adds nothing a
+/// body on it does not already write.
+fn callee_written_params(
+    data: &Data,
+    callee: u32,
+    memo: &mut HashMap<u32, HashSet<u16>>,
+    visiting: &mut Vec<u32>,
+) -> HashSet<u16> {
+    if let Some(w) = memo.get(&callee) {
+        return w.clone();
+    }
+    let def = data.def(callee);
+    if *def.code() == Value::Null || visiting.contains(&callee) {
+        return HashSet::default();
+    }
+    visiting.push(callee);
+    let mut written = write_through_params(data, callee);
+    let func = &def.variables;
+    let mut onward: Vec<(u32, usize, u16)> = Vec::new();
+    def.code().any_node(&mut |n| {
+        if let Value::Call(c, args) = n
+            && !data.def(*c).name().starts_with("Op")
+        {
+            for (i, arg) in args.iter().enumerate() {
+                if let Some(v) = arg_root(data, arg)
+                    && func.is_argument(v)
+                {
+                    onward.push((*c, i, v));
+                }
+            }
+        }
+        false
+    });
+    for (c, i, v) in onward {
+        if callee_written_params(data, c, memo, visiting).contains(&(i as u16)) {
+            written.insert(v);
+        }
+    }
+    visiting.pop();
+    memo.insert(callee, written.clone());
+    written
+}
+
 /// Which of `callee`'s parameters does its body WRITE THROUGH — `fn hurt(e: E) { e.taken = … }`?
 ///
 /// Answered from the callee's own emitted body, so it covers any depth of field or element
