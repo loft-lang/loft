@@ -31,7 +31,7 @@
 //! `LOFT_HOIST_VERIFY=1` checks each plain operator as `(R-Range)` does.
 
 use super::range::{self, Range, Ranges};
-use crate::data::{Block, Data, Type, Value};
+use crate::data::{Block, Type, Value};
 use std::collections::HashSet;
 
 /// `LOFT_NO_RANGED_CALL_VARS=1` — the variable clause off: a guard takes hoisted record fields
@@ -41,64 +41,14 @@ fn variable_clause_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("LOFT_NO_RANGED_CALL_VARS").map_or(true, |v| v == "0"))
 }
 
-/// The bound a ranged variant's integer parameters and scalar inputs are assumed within.
-pub const L: i64 = 1 << 30;
+pub use crate::opt::ranged_call::L;
+use crate::opt::ranged_call::{benefits, within};
 /// The bound a guarded copy tests each hoisted field against.
 pub const G: i64 = 1 << 20;
-
-fn within(r: Range, b: i64) -> bool {
-    r.0 >= -b && r.1 <= b
-}
 
 fn is_integer(tp: &Type) -> bool {
     matches!(tp.base(), Type::Integer(_))
 }
-
-/// The checked integer operators a call of `d` runs — its own and its callees', three deep —
-/// which a ranged variant may turn plain.
-fn checked_ops(data: &Data, d: u32, depth: u8) -> usize {
-    if depth > 3 || (d as usize) >= data.definitions.len() {
-        return 0;
-    }
-    let def = data.def(d);
-    if !def.is_loft_defined() || matches!(def.returned().base(), Type::Iterator(_, _)) {
-        return 0;
-    }
-    let mut n = 0;
-    def.code().walk(&mut |c| {
-        let Value::Call(c, _) = c else { return };
-        if (*c as usize) >= data.definitions.len() {
-            return;
-        }
-        let cd = data.def(*c);
-        if matches!(
-            cd.name(),
-            "OpAddInt"
-                | "OpMinInt"
-                | "OpMulInt"
-                | "OpMinSingleInt"
-                | "OpAddIntNullable"
-                | "OpMinIntNullable"
-                | "OpMulIntNullable"
-        ) {
-            n += 1;
-        } else if cd.is_loft_defined() && *c != d {
-            n += checked_ops(data, *c, depth + 1);
-        }
-    });
-    n
-}
-
-/// Does a call of `d` repay a ranged variant — and, in a guarded copy, the duplicated loop?
-/// The guard and the copy cost per loop and per code byte; a callee with one or two checked
-/// operators saves too little to repay them (`(R-GuardedChain)` measured the same trade:
-/// one-operator loops LOST 18–50 %).  Three or more reachable operators qualify.
-pub fn benefits(data: &Data, d: u32, _depth: u8) -> bool {
-    checked_ops(data, d, 0) >= MIN_CHECKED_OPS
-}
-
-/// The checked operators a callee must run for its ranged variant to be worth emitting.
-const MIN_CHECKED_OPS: usize = 3;
 
 /// The variables written anywhere in `code` outside the block `skip` (by address).
 fn sets_outside(code: &Value, skip: *const Block, out: &mut HashSet<u16>) {
@@ -231,7 +181,7 @@ impl super::Output<'_> {
         let mut left_checked: Option<u32> = None;
         block.walk(&mut |n| {
             if let Value::Call(d, args) = n
-                && benefits(self.data, *d, 0)
+                && benefits(self.data, *d)
             {
                 if !self.args_ranged(*d, args, copy, nn) {
                     left_checked.get_or_insert(*d);
@@ -264,50 +214,7 @@ impl super::Output<'_> {
     /// (`__apv`) has nothing for the ranges to change.  Memoised; a recursive function meets
     /// itself as no gain.
     pub(super) fn variant_gains(&mut self, d: u32, depth: u8) -> bool {
-        if depth > 3 || !benefits(self.data, d, 0) {
-            return false;
-        }
-        if let Some(g) = self.rg_gains.get(&d) {
-            return *g;
-        }
-        self.rg_gains.insert(d, false);
-        let data = self.data;
-        let def = data.def(d);
-        let code = def.code();
-        let seeded = self.variant_ranges(d, false);
-        let nn = super::non_sentinel::non_sentinel_vars(data, def.variables(), code);
-        let plain = range::range_vars(
-            data,
-            def.variables(),
-            code,
-            &nn,
-            &std::collections::BTreeMap::new(),
-            &Ranges::default(),
-        );
-        let mut gain = false;
-        let mut calls: Vec<u32> = Vec::new();
-        code.walk(&mut |n| {
-            let Value::Call(c, args) = n else { return };
-            if gain || (*c as usize) >= data.definitions.len() {
-                return;
-            }
-            let name = data.def(*c).name();
-            if range::plain_form(name, args.len()).is_some() {
-                gain = range::op_range(data, &nn, &seeded, name, args, 0).is_some()
-                    && range::op_range(data, &nn, &plain, name, args, 0).is_none();
-            } else if *c != d
-                && data.def(*c).is_loft_defined()
-                && self.args_ranged(*c, args, &seeded, &nn)
-                && !self.args_ranged(*c, args, &plain, &nn)
-            {
-                calls.push(*c);
-            }
-        });
-        if !gain {
-            gain = calls.into_iter().any(|c| self.variant_gains(c, depth + 1));
-        }
-        self.rg_gains.insert(d, gain);
-        gain
+        crate::opt::ranged_call::variant_gains(self.data, d, depth, &mut self.rg_gains)
     }
 
     /// The facts the guarded copy of `bl` runs under: the function's own, the copy's facts for
@@ -492,22 +399,7 @@ impl super::Output<'_> {
         facts: &Ranges,
         nn: &std::collections::HashMap<u16, bool>,
     ) -> bool {
-        let def = self.data.def(d);
-        let attrs = def.attributes();
-        if attrs.len() < args.len() {
-            return false;
-        }
-        let mut any = false;
-        for (at, arg) in attrs.iter().zip(args) {
-            if !is_integer(&at.typedef) {
-                continue;
-            }
-            match range::range(self.data, nn, facts, arg, 0) {
-                Some(r) if within(r, L) => any = true,
-                _ => return false,
-            }
-        }
-        any
+        crate::opt::ranged_call::args_ranged(self.data, d, args, facts, nn)
     }
 
     /// `@FR-R-RangedCall` — may this call of `d` take the ranged variant: the callee gains
@@ -587,28 +479,12 @@ impl super::Output<'_> {
     /// (`range_vars` drops the seed of one the body assigns), and for a twin each scalar
     /// input field of its parameter.
     pub(super) fn variant_ranges(&mut self, d: u32, twin: bool) -> Ranges {
-        let def = self.data.def(d);
-        let vars = def.variables();
-        let mut seeds = Ranges::default();
-        for at in def.attributes() {
-            let v = vars.var(&at.name);
-            if v != u16::MAX && is_integer(vars.tp(v)) && !at.hidden {
-                seeds.vars.insert(v, (-L, L));
-            }
-        }
+        let mut seeds = crate::opt::ranged_call::param_seeds(self.data, d);
         if twin && let Some(inputs) = self.callee_inputs_of(d) {
             for (p, fld, _) in &inputs.scalars {
                 seeds.fields.insert((*p, *fld), (-L, L));
             }
         }
-        let nn = super::non_sentinel::non_sentinel_vars(self.data, def.variables(), def.code());
-        range::range_vars(
-            self.data,
-            vars,
-            def.code(),
-            &nn,
-            &std::collections::BTreeMap::new(),
-            &seeds,
-        )
+        crate::opt::ranged_call::ranges_under(self.data, d, &seeds)
     }
 }
