@@ -7371,6 +7371,18 @@ fn report_writes_dead_after(
     diags: &mut crate::diagnostics::Diagnostics,
 ) -> bool {
     let func = &def.variables;
+    // A scalar holds no place, so nothing is written through it (`e = ch#index`): no walk.
+    if matches!(
+        func.tp(v).base(),
+        Type::Integer(_)
+            | Type::Boolean
+            | Type::Float
+            | Type::Single
+            | Type::Character
+            | Type::Enum(_, false, _)
+    ) {
+        return false;
+    }
     // Every whole bind of `v` copies a place, steps into what `v` already holds, or is `null`.
     let mut copies = false;
     let mut other = false;
@@ -7435,6 +7447,7 @@ fn report_writes_dead_after(
         span: None,
         line: None,
         lost: Vec::new(),
+        acc: Vec::new(),
     };
     walk.live_in(&def.code, false, true);
     if walk.lost.is_empty() {
@@ -7543,6 +7556,9 @@ struct PathLive<'a> {
     span: Option<Position>,
     line: Option<u32>,
     lost: Vec<Option<Position>>,
+    /// [`Self::stmt`]'s per-variable access counts, reset for each statement: one buffer for
+    /// the walk, not one per statement (`tests/frontend_counts.rs`).
+    acc: Vec<(u16, u16)>,
 }
 
 impl PathLive<'_> {
@@ -7640,11 +7656,12 @@ impl PathLive<'_> {
         if holds_jump(node) {
             return true;
         }
-        let mut acc = vec![(0u16, 0u16); self.func.var_count()];
-        classify_access(node, &self.cx, &mut acc);
+        self.acc.clear();
+        self.acc.resize(self.func.var_count(), (0, 0));
+        classify_access(node, &self.cx, &mut self.acc);
         let (mut reads, mut writes) = (0u32, 0u32);
         for g in self.group {
-            if let Some(&(r, w)) = acc.get(*g as usize) {
+            if let Some(&(r, w)) = self.acc.get(*g as usize) {
                 reads += u32::from(r);
                 writes += u32::from(w);
             }

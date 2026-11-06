@@ -328,8 +328,9 @@ impl Parser {
                 && !self.vars.is_argument(*v)
                 && self.data.slot_link_def(should).is_some()
             {
-                let key = (self.context, self.vars.name(*v).to_string());
-                self.slot_links.entry(key).or_default().passed = true;
+                self.slot_links
+                    .note(self.context, *v, self.vars.name(*v))
+                    .passed = true;
             }
             return None;
         }

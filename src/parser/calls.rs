@@ -355,9 +355,7 @@ impl Parser {
             for a in list {
                 if let Value::Var(v) = a.unspan()
                     && self.vars.exists(*v)
-                    && let Some(facts) = self
-                        .slot_links
-                        .get_mut(&(self.context, self.vars.name(*v).to_string()))
+                    && let Some(facts) = self.slot_links.get_mut(self.context, self.vars.name(*v))
                     && facts.field
                 {
                     facts.passed = true;

@@ -3893,12 +3893,14 @@ use a separate collection or add after the loop"
         if !self.vars.exists(*v) || self.vars.is_argument(*v) {
             return;
         }
-        let key = (self.context, self.vars.name(*v).to_string());
-        let field = self.amp_pending && self.child_rec_place(rhs).is_some();
-        let facts = self.slot_links.entry(key).or_default();
         if !self.amp_pending {
-            facts.whole = true;
-        } else if field {
+            self.slot_links
+                .whole_write(self.context, *v, self.vars.name(*v));
+            return;
+        }
+        let field = self.child_rec_place(rhs).is_some();
+        let facts = self.slot_links.note(self.context, *v, self.vars.name(*v));
+        if field {
             facts.field = true;
         } else {
             facts.other = true;
@@ -3915,8 +3917,7 @@ use a separate collection or add after the loop"
         if self.first_pass || var == u16::MAX {
             return;
         }
-        let key = (self.context, self.vars.name(var).to_string());
-        let Some(facts) = self.slot_links.get(&key).copied() else {
+        let Some(facts) = self.slot_links.get(self.context, self.vars.name(var)) else {
             return;
         };
         if !facts.field || facts.other || !(facts.whole || facts.passed) {
@@ -4169,8 +4170,7 @@ use a separate collection or add after the loop"
         let Some(&(slot, kt)) = self.slot_vars.get(&(self.context, v)) else {
             let facts = self
                 .slot_links
-                .get(&(self.context, self.vars.name(v).to_string()))
-                .copied()
+                .get(self.context, self.vars.name(v))
                 .unwrap_or_default();
             if facts.field && facts.other && facts.whole {
                 let name = self.vars.name(v).to_string();

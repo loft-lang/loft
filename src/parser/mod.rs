@@ -190,6 +190,92 @@ pub(crate) struct SlotLinkFacts {
     pub(crate) passed: bool,
 }
 
+/// [`Parser::slot_links`]: the pass-1 facts per `(function, link name)`.  The name is the key
+/// because a link's variable NUMBER is not stable between the passes.  The map is asked on
+/// every `=` of both passes and at every argument of a later-declared call, so neither a
+/// lookup nor a whole write builds the owned `String` key: a name is spelled into the map
+/// only when a `&` bind or a hand-on gives it facts that can matter.  Keying every write
+/// cost two allocations per assignment on the front-end pins (`tests/frontend_counts.rs`).
+#[derive(Default)]
+pub(crate) struct SlotLinks {
+    facts: HashMap<(u32, String), SlotLinkFacts>,
+    /// Pass 1: the locals written whole before anything gave them facts, by `(function,
+    /// variable)` — within one pass a variable number is its name's one spelling, and most
+    /// locals are never `&`-bound, so they are never named here.  Folded into the facts when
+    /// the first `&` bind or hand-on records them ([`Self::note`]).
+    whole_before: HashSet<(u32, u16)>,
+}
+
+/// A `(function, name)` key read without owning the name: what [`SlotLinks`] looks up by.
+trait LinkKey {
+    fn parts(&self) -> (u32, &str);
+}
+
+impl LinkKey for (u32, String) {
+    fn parts(&self) -> (u32, &str) {
+        (self.0, &self.1)
+    }
+}
+
+impl LinkKey for (u32, &str) {
+    fn parts(&self) -> (u32, &str) {
+        *self
+    }
+}
+
+impl<'a> std::borrow::Borrow<dyn LinkKey + 'a> for (u32, String) {
+    fn borrow(&self) -> &(dyn LinkKey + 'a) {
+        self
+    }
+}
+
+// Hashes as `(u32, String)` does: a tuple hashes its fields in order, and a `String` as its `str`.
+impl std::hash::Hash for dyn LinkKey + '_ {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.parts().hash(h);
+    }
+}
+
+impl PartialEq for dyn LinkKey + '_ {
+    fn eq(&self, other: &Self) -> bool {
+        self.parts() == other.parts()
+    }
+}
+
+impl Eq for dyn LinkKey + '_ {}
+
+impl SlotLinks {
+    pub(crate) fn get(&self, ctx: u32, name: &str) -> Option<SlotLinkFacts> {
+        self.facts.get(&(ctx, name) as &dyn LinkKey).copied()
+    }
+
+    pub(crate) fn get_mut(&mut self, ctx: u32, name: &str) -> Option<&mut SlotLinkFacts> {
+        self.facts.get_mut(&(ctx, name) as &dyn LinkKey)
+    }
+
+    /// Pass 1: local `var` (spelled `name`) of `ctx` is written whole.
+    pub(crate) fn whole_write(&mut self, ctx: u32, var: u16, name: &str) {
+        if let Some(facts) = self.get_mut(ctx, name) {
+            facts.whole = true;
+        } else {
+            self.whole_before.insert((ctx, var));
+        }
+    }
+
+    /// Pass 1: the facts of local `var` (spelled `name`) of `ctx`, recorded when there were
+    /// none yet, with the whole writes made before.
+    pub(crate) fn note(&mut self, ctx: u32, var: u16, name: &str) -> &mut SlotLinkFacts {
+        if !self.facts.contains_key(&(ctx, name) as &dyn LinkKey) {
+            let facts = SlotLinkFacts {
+                whole: self.whole_before.contains(&(ctx, var)),
+                ..SlotLinkFacts::default()
+            };
+            self.facts.insert((ctx, name.to_string()), facts);
+        }
+        self.get_mut(ctx, name).expect("just recorded")
+    }
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct Parser {
     pub todo_files: Vec<(String, u16)>,
@@ -1552,7 +1638,7 @@ pub struct Parser {
     /// name, what pass 1 saw bound to it and whether it is written whole.  A link only ever
     /// bound to such fields and written whole keeps the FIELD it names in a slot local
     /// ([`Parser::slot_vars`]), so the write lands in the field.
-    pub(crate) slot_links: HashMap<(u32, String), SlotLinkFacts>,
+    pub(crate) slot_links: SlotLinks,
     /// Pass 2: a field link's slot local and the field's known type, per function and link.
     pub(crate) slot_vars: HashMap<(u32, u16), (u16, i32)>,
     /// `@FR-O-Detach` for a tuple — the snapshot an assignment's value must read instead of
@@ -2234,7 +2320,7 @@ impl Parser {
             pending_link_slot: Vec::new(),
             slot_nulled: HashMap::new(),
             slot_bound_depth: HashMap::new(),
-            slot_links: HashMap::new(),
+            slot_links: SlotLinks::default(),
             slot_vars: HashMap::new(),
             tuple_self_snapshot: None,
             ncc_default_end: None,
