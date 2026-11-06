@@ -519,9 +519,15 @@ impl<'a> BareScan<'a> {
                 end += 1;
             }
             let word = &content[start..end];
-            let mut next = end;
-            while next < len && (bytes[next] == b' ' || bytes[next] == b'\t') {
-                next += 1;
+            let mut next = skip_blanks(bytes, end);
+            // A generic declares its type variables between its name and `(`:
+            // `fn put<T>(self: vector<T>, …)` declares the method `put` as `fn put(` does.
+            // Missing it let the program's own generic `put` load (and download) a library's
+            // (`@FR-Disp-Trigger`, loft#2393).
+            if self.prev == Prev::FnKeyword
+                && let Some(close) = generic_close(bytes, next)
+            {
+                next = skip_blanks(bytes, close + 1);
             }
             let called = next < len && bytes[next] == b'(';
             match self.prev {
@@ -555,6 +561,37 @@ impl<'a> BareScan<'a> {
             *at += 1;
         }
     }
+}
+
+/// The first position at or after `at` that is not a space or a tab.
+fn skip_blanks(bytes: &[u8], mut at: usize) -> usize {
+    while at < bytes.len() && (bytes[at] == b' ' || bytes[at] == b'\t') {
+        at += 1;
+    }
+    at
+}
+
+/// The `>` closing a type-variable list that opens with the `<` at `at`, or `None` when
+/// `at` holds no `<` or the list ends before its close (a `(`, `{`, `;` or line end first).
+fn generic_close(bytes: &[u8], at: usize) -> Option<usize> {
+    if bytes.get(at) != Some(&b'<') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (i, &b) in bytes.iter().enumerate().skip(at) {
+        match b {
+            b'<' => depth += 1,
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            b'(' | b'{' | b';' | b'\n' => return None,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Does a parameter list (the text after its `(`) open with `self`?
@@ -711,5 +748,18 @@ mod tests {
         assert_eq!(calls, vec!["set", "println", "count", "keep"], "{calls:?}");
         assert_eq!(decls, vec!["main", "count", "to_text"], "{decls:?}");
         assert_eq!(methods, vec!["to_text"], "{methods:?}");
+    }
+
+    /// loft#2393: a generic method is declared with its type variables between the name and
+    /// `(`, spaced or not, and with a bound; `x < y (` in a body is a comparison, no call.
+    #[test]
+    fn a_generic_declaration_is_a_declaration() {
+        let src = "fn put < T > (self: vector<T>, s: vector<T>) { }\n\
+                   fn get<T: Ordered>(self: vector<T>) -> T { self[0] }\n\
+                   fn make<T>(n: integer) -> vector<T> { [] }\n\
+                   fn main() { v.put(w); b = a < c (d); }\n";
+        let (_, decls, methods) = scan_bare_calls_and_fn_declarations(src);
+        assert_eq!(decls, vec!["put", "get", "make", "main"], "{decls:?}");
+        assert_eq!(methods, vec!["put", "get"], "{methods:?}");
     }
 }

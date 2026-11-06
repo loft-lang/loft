@@ -476,16 +476,21 @@ fn a_method_the_program_declares_loads_no_library() {
     let bare = "fn main() { println(\"x\".poke()); }\n";
     let other = "struct Cv { n: integer }\nfn poke(self: Cv) -> integer { self.n }\n\
                  fn main() { println(\"x\".poke()); }\n";
-    for (tag, src) in [("own", own), ("bare", bare), ("other", other)] {
+    // A GENERIC method names its type variables between the name and `(`.
+    let generic = "fn poke < T > (self: vector<T>) -> integer { len(self) + 40 }\n\
+                   fn main() { v: vector<integer> = [1, 2]; println(\"{v.poke()}\"); }\n";
+    for (tag, src) in [("own", own), ("bare", bare), ("other", other), ("generic", generic)] {
         fa::write(tmp.join(format!("{tag}.loft")), src).expect("script");
     }
     for backend in ["--interpret", "--native-c"] {
-        let (ok, stdout, stderr) =
-            run_trigger(&tmp.join("own.loft"), backend, Some(&lib), None, &home);
-        assert!(
-            ok && stdout == "42",
-            "[{backend}] the program's own `poke` loaded the library:\n{stdout}\n{stderr}"
-        );
+        for own in ["own", "generic"] {
+            let (ok, stdout, stderr) =
+                run_trigger(&tmp.join(format!("{own}.loft")), backend, Some(&lib), None, &home);
+            assert!(
+                ok && stdout == "42",
+                "[{backend}] the program's own `poke` ({own}) loaded the library:\n{stdout}\n{stderr}"
+            );
+        }
         let (ok, stdout, stderr) =
             run_trigger(&tmp.join("bare.loft"), backend, Some(&lib), None, &home);
         assert!(
