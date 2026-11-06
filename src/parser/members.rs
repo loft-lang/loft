@@ -508,7 +508,14 @@ impl Parser {
             &[Value::Var(placed), Value::Var(child), k.clone()],
         );
         let free = self.cl("OpFreeRecordIn", &[Value::Var(placed), k.clone()]);
-        let mut present_ops = vec![v_set(placed, place), out, v_set(child, claim), back, free];
+        let mut present_ops = if crate::parser::objects::direct_demote() {
+            vec![self.cl(
+                "OpDemoteRec",
+                &[Value::Var(r), Value::Int(g_off), Value::Int(kt)],
+            )]
+        } else {
+            vec![v_set(placed, place), out, v_set(child, claim), back, free]
+        };
         present_ops.extend(writes.iter().map(|w| swap(w, r)));
         let new_child = self.cl("OpChildRec", &[field.clone(), k]);
         let mut absent_ops = vec![v_set(fresh, new_child)];

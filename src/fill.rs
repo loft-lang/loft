@@ -250,6 +250,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     move_field::<false>,
     move_vector::<false>,
     free_record_in::<false>,
+    demote_rec::<false>,
     copy_ref_or_null::<false>,
     bind_or_copy::<false>,
     index_group::<false>,
@@ -609,6 +610,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     move_field::<true>,
     move_vector::<true>,
     free_record_in::<true>,
+    demote_rec::<true>,
     copy_ref_or_null::<true>,
     bind_or_copy::<true>,
     index_group::<true>,
@@ -968,6 +970,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     move_field_r,
     move_vector_r,
     free_record_in_r,
+    demote_rec_r,
     copy_ref_or_null_r,
     bind_or_copy_r,
     index_group_r,
@@ -5630,6 +5633,21 @@ fn free_record_in<const F: bool>(s: &mut State) {
 fn free_record_in_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     free_record_in::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn demote_rec<const F: bool>(s: &mut State) {
+    let operands = s.operands(4);
+    let v_fld = operands.get::<u16>(0);
+    let v_tp = operands.get::<u16>(2);
+    let v_r = s.get_stack_m::<F, DbRef>();
+    s.database.demote_rec(&v_r, v_fld, v_tp);
+}
+
+fn demote_rec_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    demote_rec::<true>(s);
     s.regs_out()
 }
 

@@ -7853,6 +7853,56 @@ fn main() {
     );
 }
 
+/// `@FR-R-NoThreads`: a unit that runs no `par` loop on threads and reaches no engine kernel is
+/// compiled with `LOFT_NO_THREADS` — its runtime tables are plain statics; one with a `par` loop
+/// is not.  `LOFT_NO_THREAD_FACT=1` keeps the thread-locals everywhere.  The answer is the same
+/// either way (hand-computed: 1+2+3+4 doubled = 20).
+#[test]
+fn a_unit_that_starts_no_thread_keeps_no_thread_locals() {
+    let plain =
+        "fn main() {\n  s = 0;\n  for x in [1, 2, 3, 4] { s += 2 * x; }\n  println(\"{s}\");\n}\n";
+    let par = "fn dbl(x: integer) -> integer { 2 * x }\nfn main() {\n  v = [1, 2, 3, 4];\n  s = 0;\n  for x in v par(d = dbl(x), 2) { s += d; }\n  println(\"{s}\");\n}\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("no-threads");
+    for (name, src, switch, fact) in [
+        ("plain", plain, "", true),
+        ("plain-off", plain, "LOFT_NO_THREAD_FACT", false),
+        ("par", par, "", false),
+    ] {
+        let file = dir.join(format!("{name}.loft"));
+        fa::write(&file, src).expect("write program");
+        let c = dir.join(format!("{name}.c"));
+        let mut emit = loft::platform::process::harness_command(loft);
+        if !switch.is_empty() {
+            emit.env(switch, "1");
+        }
+        let out = emit
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            out.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        let defined = text.lines().any(|l| l == "#define LOFT_NO_THREADS 1");
+        assert_eq!(defined, fact, "{name}: the fact");
+        let run = loft::platform::process::harness_command(loft)
+            .arg("--native-c")
+            .arg(&file)
+            .output()
+            .expect("run loft --native-c");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "20\n",
+            "{name}: the answer"
+        );
+    }
+}
+
 /// `@FR-R-NoLocks`: a unit that reaches no `#lock = …`, no `file_map` and no constant store is
 /// compiled with `LOFT_NO_LOCKS`; one that locks a store is not, and keeps (H-WriteLocked)'s
 /// production discard (the locked-write cells above run that unit in production and must see

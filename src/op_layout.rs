@@ -231,6 +231,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpMoveField",
     "OpMoveVector",
     "OpFreeRecordIn",
+    "OpDemoteRec",
     "OpCopyRefOrNull",
     "OpBindOrCopy",
     "OpIndexGroup",
@@ -371,4 +372,4 @@ pub const OPERATOR_NAMES: &[&str] = &[
 pub const OP_HOT: u16 = 36;
 /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the
 /// `#cold` operators follow them, into the two-byte opcodes.
-pub const OP_NORMAL: u16 = 225;
+pub const OP_NORMAL: u16 = 226;

@@ -86,6 +86,7 @@ OpCoroutineYield
 OpCreateStack
 OpDatabase
 OpDatabaseNP
+OpDemoteRec
 OpDistinctStore
 OpDivFloat
 OpDivFloatNullable
@@ -346,7 +347,7 @@ __iface_34#2_OpMin
 __iface_34#2_minus
 __iface_37#2_scale
 __iface_39#1_to_text
-__iface_529#1_children
+__iface_530#1_children
 i_7integer_n_sum
 n___ledger
 n___ledger_div

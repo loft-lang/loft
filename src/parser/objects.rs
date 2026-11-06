@@ -5688,10 +5688,38 @@ impl Parser {
         let tp = i32::from(self.data.def(td_nr).known_type());
         let off = i32::from(self.field_position(td_nr, fname));
         let view = Type::Reference(td_nr, crate::data::Deps::frame1(h));
-        let placed = self.create_unique("demote_old", &view);
+        let demote = if direct_demote() {
+            let d = self.cl(
+                "OpDemoteRec",
+                &[Value::Var(h), Value::Int(off), Value::Int(tp)],
+            );
+            v_block(vec![d], Type::Void, "demote")
+        } else {
+            self.demote_five_ops(h, off, tp, &view)
+        };
+        let mut fresh = prelude.to_vec();
+        fresh.push(self.cl(
+            "OpSetInt4",
+            &[Value::Var(h), Value::Int(off), Value::Int(0)],
+        ));
+        let is_null = self.cl("OpRefIsNull", &[Value::Var(h)]);
+        let has_rec = self.cl("OpConvBoolFromRef", &[Value::Var(h)]);
+        let present = v_if(is_null, Value::Boolean(false), has_rec);
+        Some(vec![v_if(
+            present,
+            demote,
+            v_block(fresh, Type::Void, "demote_fresh"),
+        )])
+    }
+
+    /// The demote as five ops — `OpPlaceRecord`, `OpMoveField` out, `OpChildRec`, `OpMoveField`
+    /// back, `OpFreeRecordIn` — under `LOFT_NO_DIRECT_DEMOTE=1`, the switch `OpDemoteRec` is
+    /// measured against.
+    fn demote_five_ops(&mut self, h: u16, off: i32, tp: i32, view: &Type) -> Value {
+        let placed = self.create_unique("demote_old", view);
         self.vars.defined(placed);
         self.vars.set_skip_free(placed);
-        let child = self.create_unique("demote_child", &view);
+        let child = self.create_unique("demote_child", view);
         self.vars.defined(child);
         self.vars.set_skip_free(child);
         let place = self.cl("OpPlaceRecord", &[Value::Var(h), Value::Int(tp)]);
@@ -5709,24 +5737,11 @@ impl Parser {
             &[Value::Var(placed), Value::Var(child), Value::Int(tp)],
         );
         let free = self.cl("OpFreeRecordIn", &[Value::Var(placed), Value::Int(tp)]);
-        let demote = v_block(
+        v_block(
             vec![v_set(placed, place), out, v_set(child, claim), back, free],
             Type::Void,
             "demote",
-        );
-        let mut fresh = prelude.to_vec();
-        fresh.push(self.cl(
-            "OpSetInt4",
-            &[Value::Var(h), Value::Int(off), Value::Int(0)],
-        ));
-        let is_null = self.cl("OpRefIsNull", &[Value::Var(h)]);
-        let has_rec = self.cl("OpConvBoolFromRef", &[Value::Var(h)]);
-        let present = v_if(is_null, Value::Boolean(false), has_rec);
-        Some(vec![v_if(
-            present,
-            demote,
-            v_block(fresh, Type::Void, "demote_fresh"),
-        )])
+        )
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -8689,4 +8704,10 @@ pub(crate) fn collection_groups_of(
     }
     groups.retain(|(_, m)| m.len() >= 2 && m.iter().any(|x| x.keyed));
     groups
+}
+
+/// `@FR-R-Demote` — the demote is the one op `OpDemoteRec`; `LOFT_NO_DIRECT_DEMOTE=1` keeps the
+/// five-op form it replaces.
+pub(crate) fn direct_demote() -> bool {
+    !crate::env_once!(std::env::var("LOFT_NO_DIRECT_DEMOTE").is_ok_and(|v| v != "0"))
 }

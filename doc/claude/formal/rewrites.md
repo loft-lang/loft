@@ -250,6 +250,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-MoveAppend)` | `R-MoveAppend` native |
 | `(R-MoveLast)` | `R-MoveLast` ir · `/host` ir · `/local` ir |
 | `(R-NoLocks)` | `R-NoLocks` c |
+| `(R-NoThreads)` | `R-NoThreads` c |
 | `(R-NonSentinelParam)` | `R-NonSentinelParam` c · `/twin` c |
 | `(R-OpPriority)` | not counted — executor: opcode numbering by priority |
 | `(R-OperandSpan)` | not counted — executor: fixed-width operands bounds-checked once |
@@ -5049,6 +5050,16 @@ line in `Output::output_function`'s prelude.
                  the (H-WriteLocked) production clause (@C80) had cost them, 2.16× and
                  1.14×.  Switch `LOFT_NO_LOCK_FACT=1`.
 
+  (R-NoThreads)  a C unit that runs no `par` loop on threads (`loft_par_run`) and reaches no
+                 engine kernel — the two ways loft code runs on a second thread — is
+                 compiled with `LOFT_NO_THREADS`: the runtime's store table, frame stack and
+                 pools are plain statics instead of thread-locals (`LOFT_TLS`).  Only one
+                 thread reads them, so nothing observable changes; what moves is the cost of
+                 every store access, which on macOS reaches a thread-local through a call
+                 (`_tlv_get_addr`, 13 % of a record-building recursion's profile).  Measured
+                 on Apple silicon, clang: 21_tree `build_rec` −14.5 %; every routine of
+                 @PLN219's hand pricing −10 % to −21 %.  Switch `LOFT_NO_THREAD_FACT=1`.
+
   (R-Inline)     a loft function the C writes in at most twelve statements is declared
                  `static inline`, its frame wrapper with it.  The hint changes no
                  observable behaviour; what it moves is the C compiler's inlining
@@ -5489,7 +5500,12 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  would read the emptied one), names it twice, is a variant of an enum,
                  or writes a parameter the caller passed.  Decided in the parser (the
                  local form when the literal is parsed, the place form at the
-                 out-of-line write); `LOFT_NO_DEMOTE=1` restores the copy.
+                 out-of-line write); `LOFT_NO_DEMOTE=1` restores the copy.  The move is
+                 one op, `OpDemoteRec`: one child record claimed in the destination's store,
+                 the old record's bytes copied into it, the destination's record zeroed and
+                 its field naming the child — no temporary record (measured on 21_tree
+                 `list_ops`, C: 323 → 162 µs together with (R-NoThreads));
+                 `LOFT_NO_DIRECT_DEMOTE=1` keeps the five-op form it replaces.
   (R-Prefill)    the default prefill of a minted record — the declared defaults, the
                  null sentinels and the variant tag a partial literal leaves to the
                  type — is ONE block write of a per-type IMAGE computed once from the

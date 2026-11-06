@@ -1029,6 +1029,19 @@ static void loft_set_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, lof
     if (free_source && src.store_nr != f.store_nr && !loft_free_protected(src)) loft_free_ref(src);
 }
 
+/* OpDemoteRec (Stores::demote_rec, `@FR-R-Demote`): `r`'s record bytes move into a fresh child of
+ * r's store (its handles with them), r's record is zeroed and its field at `fld` names the child. */
+static void loft_demote_rec(const loft_tdesc *T, uint16_t tp, loft_ref r, uint32_t fld) {
+    if (r.store_nr == 0xFFFF || r.rec == 0) return;
+    uint32_t size = T[tp].size;
+    loft_store_t *s = loft_store_of(r);
+    uint32_t c = loft_claim(s, 1 + (size + 7) / 8);
+    loft_ref child = { r.store_nr, c, 8, 0 };
+    loft_copy_bytes(child, 0, r, 0, size);
+    if (size) memset(loft_at(s, r.rec, r.pos), 0, size);
+    loft_set_u32(s, r.rec, r.pos + fld, c);
+}
+
 /* Stores::slot_write (@PLN219): a whole write through a slot cell — the field write when the cell
  * names a field (its free bit giving up an owned value's store), else the value written back. */
 static void loft_slot_write(const loft_tdesc *T, uint16_t tp, loft_ref *cell, loft_ref v, int free_source) {

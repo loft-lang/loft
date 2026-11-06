@@ -1867,6 +1867,13 @@ fn OpMoveVector(dest: vector, src: vector, tp: const u16);
 fn OpFreeRecordIn(rec: reference, tp: const u16);
 #rust"stores.free_record_in(&@rec, @tp);"
 #impure(parent_write)
+// `@FR-R-Demote`, emitted directly: the record at `r` moves into a fresh child record of its own
+// store, `r`'s record is left zeroed and its out-of-line field at `fld` names the child — what
+// `OpPlaceRecord`, two `OpMoveField`s, `OpChildRec` and `OpFreeRecordIn` leave, with no
+// temporary record.  A null `r` is left as it is.
+fn OpDemoteRec(r: reference, fld: const u16, tp: const u16);
+#rust"stores.demote_rec(&@r, @fld, @tp);"
+#impure(parent_write)
 // ABI-B caller path for `v = call()` (heap-param callee returning struct-OR-null):
 // pops the call result `src`; `pos` is the destination var's slot (already holding
 // a fresh OpDatabase record).  A null `src` (sentinel) frees that record and binds

@@ -3209,6 +3209,27 @@ impl Stores {
     /// wrapper whose scalars are read after) keeps its block and owns nothing of what moved.
     /// Across stores the handles cannot travel: the copy is deep and the source's heap is
     /// released, the same end state by the longer road.  Null-guarded like every record op.
+    /// `OpDemoteRec` — `@FR-R-Demote` in one step: `r`'s record bytes go into a fresh child
+    /// record of `r`'s store (its heap handles with them: the same store, nothing re-claimed),
+    /// `r`'s record is zeroed, and the out-of-line field at `fld` names the child.
+    pub fn demote_rec(&mut self, r: &crate::keys::DbRef, fld: u16, tp: u16) {
+        if r.store_nr == u16::MAX || r.rec == 0 || (r.store_nr as usize) >= self.allocations.len() {
+            return;
+        }
+        let size = u32::from(self.size(tp));
+        let words = self.child_rec_words(tp);
+        let c = self.allocations[r.store_nr as usize].claim(words);
+        let child = crate::keys::DbRef {
+            store_nr: r.store_nr,
+            rec: c,
+            pos: 8,
+        };
+        self.copy_block(r, &child, size);
+        self.allocations[r.store_nr as usize].zero_range(r.rec, r.pos, size);
+        self.store_mut(r)
+            .set_u32_raw(r.rec, r.pos + u32::from(fld), c);
+    }
+
     pub fn move_field_out(&mut self, src: &crate::keys::DbRef, dst: &crate::keys::DbRef, tp: u16) {
         if src.store_nr == u16::MAX
             || src.rec == 0

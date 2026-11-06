@@ -279,6 +279,10 @@ pub(crate) struct Cx<'a> {
     /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
     /// consults the binding on a miss (`loft_lazy_miss`).
     pub(crate) lazy: std::cell::Cell<bool>,
+    /// The unit runs a `par` loop on threads (`loft_par_run`): without one, and without an
+    /// engine kernel, no thread runs loft code and the runtime's tables are plain statics
+    /// (`(R-NoThreads)`).
+    pub(crate) threads: std::cell::Cell<bool>,
     /// The prebuilt native parts the unit calls ([`library_native`]), each as its package
     /// directory and file: a unit that calls one is compiled with `LOFT_FFI`, and a shipped
     /// program opens each at start by search order (`loft_cboundlibs`).
@@ -442,6 +446,7 @@ impl<'a> Cx<'a> {
             swap_worlds: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
+            threads: std::cell::Cell::new(false),
             ffi_libs: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             par_sites: std::cell::Cell::new(0),
             sql_plans: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -2545,6 +2550,27 @@ fn unit_defines(
         // The unit is the site: credited to the C writer, no function.
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
         crate::rewrite_census::fired("R-NoLocks", 1);
+    }
+    // `@FR-R-NoThreads`: the runtime keeps its store table, frames and pools thread-local
+    // (`LOFT_TLS`) for the threads that run loft code — a `par` loop's workers and an engine
+    // kernel's HTTP workers.  A unit with neither runs loft code on one thread, and its tables
+    // are plain statics: on macOS every thread-local access is a call (`_tlv_get_addr`).
+    let engine = reached
+        .iter()
+        .filter_map(|&d| in_binary_native(data.def(d).native()))
+        .any(|r| {
+            r.starts_with("loft_kernel_")
+                || r.starts_with("loft_swap_")
+                || r.starts_with("loft_rebuild_")
+                || r == "loft_live_flip"
+        });
+    if !cx.threads.get()
+        && !engine
+        && !crate::env_once!(std::env::var("LOFT_NO_THREAD_FACT").is_ok_and(|v| v != "0"))
+    {
+        out.push_str("#define LOFT_NO_THREADS 1\n");
+        let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        crate::rewrite_census::fired("R-NoThreads", 1);
     }
     // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
     // tree with its layout read from this program's type table for one that reaches a JSON

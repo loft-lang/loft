@@ -261,6 +261,17 @@ impl FnWriter<'_> {
                     K::Ref,
                 ))
             }
+            ("OpDemoteRec", [r, fld, tp]) => {
+                let fld = Self::literal(fld, "field")?;
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let tp = self.copyable(tp)?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_demote_rec(loft_types, {tp}, {}, {fld})", as_ref(r)?),
+                    K::Void,
+                ))
+            }
             ("OpSlotTag", [f]) => {
                 let f = self.expr(f, ind)?;
                 Ok(E::new(format!("loft_slot_tag({})", as_ref(f)?), K::Ref))
