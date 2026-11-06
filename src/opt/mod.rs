@@ -39,6 +39,7 @@ pub mod native_key;
 pub mod non_sentinel;
 pub mod push_window;
 pub mod range;
+pub mod ranged_call;
 pub mod ret_adopt;
 pub mod store_text_borrow;
 pub mod tabulate;
