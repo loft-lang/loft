@@ -20,8 +20,10 @@
 # `LOFT_NO_LAZY_BUFFER=1` told the difference at once.
 #
 # A program whose output differs between two runs with the rewrite ON is nondeterministic
-# (time, randomness, a temp path) and is reported as NOISE, never as a defect.  Exit 1 when
-# any defect is found, 0 otherwise.
+# (time, randomness) and is reported as NOISE, never as a defect — so a NOISE program is
+# one the A/B does not check, and each is a finding to remove, not a state to keep.  A
+# file name in the temporary directory is masked before the comparison (see `semantic`).
+# Exit 1 when any defect is found, 0 otherwise.
 #
 # The comparison is of SEMANTICS (formal/rewrites.md (R-Escape)): how many copies a value
 # takes and where the code that allocates it sits are the compiler's to change.  So two
@@ -116,12 +118,26 @@ export -f run_one
 
 # The output with what (R-Escape) leaves to the compiler removed — see the header — and a
 # panic's thread id, which changes from run to run: a crash on every run is a crash, not noise.
+# A path in the temporary directory is spelled with its digits masked: a program that writes
+# there names its file after the clock (`loft_2174_{now()}_{ticks()}.store`) so that two runs
+# at once never share one, and a refusal the runtime logs for that file quotes it.  The rest
+# of such a path, and every other line, is compared — a refusal is a meaning.
+TMP_ROOT="${TMPDIR:-/tmp}"; TMP_ROOT="${TMP_ROOT%/}"
 semantic() {
-  awk '/^advice\[avoidable-copy\]/ { skip = 1; next }
+  awk -v tmp="$TMP_ROOT/" -v q="'" '/^advice\[avoidable-copy\]/ { skip = 1; next }
        skip && /^$/ { skip = 0; next }
        skip { next }
        /^note: [0-9]+ diagnostics? above suggests? / { next }
-       { gsub(/ bc:[0-9]+/, " bc:_"); gsub(/thread .[^ ]*. \([0-9]+\)/, "thread _"); print }' "$1"
+       { gsub(/ bc:[0-9]+/, " bc:_"); gsub(/thread .[^ ]*. \([0-9]+\)/, "thread _")
+         out = ""
+         while ((at = index($0, tmp)) > 0) {
+           rest = substr($0, at + length(tmp))
+           n = match(rest, "[ \t`\"" q "]") ? RSTART - 1 : length(rest)
+           name = substr(rest, 1, n); gsub(/[0-9]+/, "#", name)
+           out = out substr($0, 1, at - 1) "$TMP/" name
+           $0 = substr(rest, n + 1)
+         }
+         print out $0 }' "$1"
 }
 
 # A fresh copy of consumer DIR for one mode; prints the copy's path.  Its siblings are
