@@ -209,8 +209,13 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
-  // A lambda's late buffer is delivered nothing: its body builds the record it answers as a
-  // value (`ref_return` renamed nothing on the first pass, when the lambda had no buffer).
+  // A lambda's vector literal tail is copied into its late buffer (`one_buffer_vec_copy`): the
+  // buffer is reserved between the passes, so nothing was renamed onto the literal.
+  if lambda && !e.first_pass && rb >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) {
+    code = lambda_vector_copy(e, code, rb, result);
+  }
+  // A lambda's late buffer is delivered nothing else: its body builds the record it answers as
+  // a value (`ref_return` renamed nothing on the first pass, when the lambda had no buffer).
   if lambda {
     rb = -1;
   }
@@ -1943,9 +1948,11 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
   // A local built in two or more steps, counted on the first pass (`child_allocs` reads that
   // pass's code); the second acts on the borrow the first declared.
   local = match tail { NdVar { n } => if !vars.vars[n].argument && el_vars::tp(vars, n) is TyVector && (!e.first_pass || child_allocs(e, vars, code, n) >= 2) { n } else { -1 }, _ => -1 };
+  // A vector field of a local record is copied into the buffer at the tail, as such a local is.
+  field_tail = calls(e, tail, "OpGetField") && place_root(e, tail) >= 0 && !vars.vars[place_root(e, tail)]!.argument;
   ret = el::def(e, d).returned[0];
   if e.first_pass {
-    if (literal || local >= 0) && !el_types::deps(ret).contains(ba) {
+    if (literal || local >= 0 || field_tail) && !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
     } else if !literal && local < 0 && returned_local(vars, tail) >= 0 {
       // A trailing `return v` is delivered in the buffer, renamed onto `v`'s literal backing on
@@ -2005,7 +2012,7 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
     rename_onto(e, vars, rb, db[0]);
     buf = db[0];
     bl.result = [el_types::without_deps(el_types::base(result))];
-  } else if local >= 0 {
+  } else if local >= 0 || field_tail {
     nm = el_types::elem_name(e, elem);
     // A record element's own row; any other's content type (a narrow integer is stored at its
     // width, `byte` for `u8`, which its name does not say).
@@ -2016,13 +2023,45 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
     }
     own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
     b = ir::NdVar { n: rb };
-    bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, ir::NdVar { n: local }, ir::NdInt { n: rec }]), b], own, "one_buffer_vec_copy");
+    src = if local >= 0 { ir::NdVar { n: local } } else { tail };
+    bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, src, ir::NdInt { n: rec }]), b], own, "one_buffer_vec_copy");
     bl.result = [own];
   } else {
     el::refuse(e, "a function returning a vector from this tail: {tail_kind(e, vars, code)}");
     return code;
   }
   bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: buf }]), bl.operators[0]] };
+  ir::NdBlock { block: [bl] }
+}
+
+// A lambda's literal (or comprehension) tail copied into its buffer `rb`, the body clearing it
+// first and answering it; the result borrows the buffer.  Any other tail is left as it is.
+fn lambda_vector_copy(e: el::El, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
+  bl = match code { NdBlock { block } => block[0], _ => return code };
+  if len(bl.operators) == 0 {
+    return code;
+  }
+  lit = match el_ir::unspan(bl.operators[-1]) { NdBlock { block } => literal_backing_store(block[0]) >= 0, _ => false };
+  if !lit {
+    return code;
+  }
+  elem = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
+  rec = element_content(e, elem);
+  if rec < 0 {
+    el::refuse(e, "a lambda returning a vector of this element type: {type_kind(elem)}");
+    return code;
+  }
+  b = ir::NdVar { n: rb };
+  own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, bl.operators[-1], ir::NdInt { n: rec }]), b], own, "one_buffer_vec_copy");
+  bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), bl.operators[0]] };
+  bl.result = [el_types::without_deps(el_types::base(result))];
+  d = e.context;
+  ba = attr_nr(el::def(e, d), "__retbuf");
+  ret = el::def(e, d).returned[0];
+  if ba >= 0 && !el_types::deps(ret).contains(ba) {
+    e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+  }
   ir::NdBlock { block: [bl] }
 }
 
@@ -2047,6 +2086,11 @@ fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, res
     return code;
   }
   param = match tail { NdVar { n } => vars.vars[n]!.argument && !hidden_param(e, vars, n) && el_types::base(el_vars::tp(vars, n)) is TyVector, _ => false };
+  // A vector field of a parameter is copied in as a whole vector parameter is.
+  if !param && calls(e, tail, "OpGetField") {
+    pr = place_root(e, tail);
+    param = pr >= 0 && vars.vars[pr]!.argument && !hidden_param(e, vars, pr);
+  }
   // The first pass's `if` is a placeholder: its arms are read off the syntax.
   arms = !param && (if e.first_pass { syntax_literal_arms(e, tail_syntax(e, vars.body)) } else { tail is NdIf && literal_arms(e, tail) });
   if !param && !arms {
