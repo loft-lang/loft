@@ -6457,7 +6457,13 @@ impl State {
                     crate::use_analysis::ownership_of(stack.data, stack.def_nr, value),
                     crate::use_analysis::Own::Owned
                 );
-            if amp_owned_writeback {
+            // `@FR-F-ParamRef` — a RECORD written back from a borrowed value displaces the
+            // caller's store as an owned one does: the store is released unless the new value
+            // lives in it.  `slot = slot.right` keeps the store (a view of its own child); the
+            // write that ends a drain, `slot = slot.right` reading null, releases it.
+            let amp_displaces = amp_owned_writeback
+                || matches!(*tp, Type::Reference(_, _) | Type::Enum(_, true, _));
+            if amp_displaces {
                 // stash OLD = *o (by value — survives the SetStackRef below)
                 let var_pos = stack.var_pos(var);
                 stack.add_op("OpVarRef", self);
@@ -6553,7 +6559,7 @@ impl State {
             {
                 self.code_add(slot.min);
             }
-            if amp_owned_writeback {
+            if amp_displaces {
                 // free OLD unless the install kept it (witness = *o's NEW store)
                 let var_pos = stack.var_pos(var);
                 stack.add_op("OpVarRef", self);

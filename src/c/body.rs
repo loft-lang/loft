@@ -5256,6 +5256,10 @@ impl<'a> FnWriter<'a> {
             crate::use_analysis::ownership_of(self.cx.data, self.d, x),
             crate::use_analysis::Own::Owned
         );
+        // `@FR-F-ParamRef` — a RECORD written back from a borrowed value displaces the caller's
+        // store as an owned one does: released unless the new value lives in it (a drain's last
+        // `slot = slot.right` reads null).
+        let displaces = owned || matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _));
         let e = self.expr(x, ind)?;
         let r = self.temp(CType::Ref);
         self.line(ind, &format!("{r} = {};", as_ref(e)?));
@@ -5274,14 +5278,14 @@ impl<'a> FnWriter<'a> {
                     u8::from(owned)
                 ),
             );
-            if owned {
+            if displaces {
                 self.line(ind, &format!("loft_free_displaced({old}, {raw});"));
             }
             self.flush(ind);
             return Ok(());
         }
         let name = self.var(var);
-        if owned {
+        if displaces {
             let old = self.temp(CType::Ref);
             self.line(ind, &format!("{old} = {name};"));
             self.line(ind, &format!("{name} = {r};"));

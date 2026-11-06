@@ -10,8 +10,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 Active.  The semantics of a link to an out-of-line field is settled and built (loft#2433, loft#2434,
 C77 amended), and so is the parameter half (P, which absorbed P1): a `&` parameter of a type held
 out of line takes a field and writes it.  The bench programs that expose user-built structures
-(B) and the walk-or-write warning (W) are built.  Open: § Also open, and the drain leak in
-§ Composition matrix.  Work lives on `tuxedo-quality`.
+(B) and the walk-or-write warning (W) are built.  Open: § Also open.  Work lives on `tuxedo-quality`.
 
 ## Goal
 
@@ -121,7 +120,7 @@ the position (loop · straight line), another view or link live across the write
 | a view or link live across a write through another view or link | green — `B-Disturb/2433-a-write-through-a-view-or-link-…`; a second live `&` link is refused as for the direct write |
 | `&` parameter given a field, a field link (0, 1, 2 iterations), a forwarder, a whole variable; null on entry; insert walks; a callee declared later | green, three backends — `calls/F-ParamRef/a-slot-parameter-writes-the-field-it-is-handed` |
 | a view live across a call that unlinks through a `&` parameter (the child, below it, through a link) | green, same cell |
-| a `&` variable drained to null by its callee (`while u != null { take_min(u) }`) | **interpreter leaks the store** — the variable write-back of a view of its own child (in the 2026.10 release too) |
+| a `&` variable drained to null by its callee (`while u != null { take_min(u) }`) | green, three backends, leak gate — the same suite cell: a record write-back releases the displaced store unless the new value lives in it, borrowed value or owned |
 | forgotten `&` in a walk | warns `walk-or-write` — `tests/scripts/a-forgotten-amp-in-a-walk-warns-walk-or-write.loft`, exact set pinned in `tests/dead_code_lint.rs` |
 | unlink cost | O(subtree) copy (M) |
 

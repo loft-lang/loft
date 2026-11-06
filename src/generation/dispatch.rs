@@ -851,9 +851,7 @@ impl Output<'_> {
                         w,
                         "; unsafe {{ let _old_disp = *var_{name}; stores.slot_write(&mut *var_{name}, &_slot_v, {kt});"
                     )?;
-                    if owned {
-                        write!(w, " OpFreeRefIfDistinct(cell, _old_disp, *var_{name});")?;
-                    }
+                    write!(w, " OpFreeRefIfDistinct(cell, _old_disp, *var_{name});")?;
                     write!(w, " }} }}")?;
                     return Ok(());
                 }
@@ -898,14 +896,17 @@ impl Output<'_> {
                 // one are all the SLOT's.  Asked bare, a `&text?` write-back emitted
                 // `*var_p = "z"` with no `.to_string()` and rustc rejected it.
                 let inner_slot = inner.base();
-                let amp_owned_writeback = (matches!(
+                let amp_owned_writeback = ((matches!(
                     inner_slot,
                     Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                 ) || crate::parser::vectors::is_keyed(inner_slot))
                     && matches!(
                         crate::use_analysis::ownership_of(self.data, self.def_nr, to),
                         crate::use_analysis::Own::Owned
-                    );
+                    ))
+                    // `@FR-F-ParamRef` — a RECORD written back from a borrowed value displaces
+                    // the caller's store too: released unless the new value lives in it.
+                    || matches!(inner_slot, Type::Reference(_, _) | Type::Enum(_, true, _));
                 let needs_text_coerce = matches!(inner_slot, Type::Text(_));
                 // A `&boolean` slot holds the tri-state STORAGE byte (`u8`: 0/1/255,
                 // null-capable) while an expression like `!b` produces a two-state
