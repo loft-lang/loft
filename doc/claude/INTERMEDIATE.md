@@ -107,7 +107,7 @@ pub enum Type {
     Function(Vec<Type>, Box<Type>),          // First-class fn: arg types + return type
                                              // Stored as i32 d_nr at runtime (same as integer)
                                              // Variables of this type are callable: f(args)
-    Rewritten(Box<Type>),                    // After append rewrite (Text/structs)
+    Rewritten(Box<Type>),                    // Built in place (struct literal, append); see COMPILER.md
 }
 ```
 

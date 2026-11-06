@@ -1,0 +1,80 @@
+// A function whose tail joins a struct literal with a parameter BORROWS the parameter on
+// every path (`(O-Move)`), whichever arm comes first.  The literal's built-in-place marker
+// is a fact about that arm alone, so the join's borrow reaches the signature on pass 1 for
+// every order and every spelling of the join, and the callers below lower identically
+// (`tests/join_arm_order.rs` compares their IR).  Each caller rebinds a local holding a
+// literal to the call and writes through it: the parameter must keep its value.
+// @falsified-at: 369b941cf — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+struct S { v: integer, t: text }
+
+fn lit_first(s: S, i: integer) -> S { if i % 2 == 0 { S { v: i, t: "m{i}" } } else { s } }
+fn par_first(s: S, i: integer) -> S { if i % 2 == 1 { s } else { S { v: i, t: "m{i}" } } }
+fn chain(s: S, i: integer) -> S {
+  if i % 2 == 0 { S { v: i, t: "m{i}" } } else if i < 0 { S { v: 0, t: "" } } else { s }
+}
+fn by_match(s: S, i: integer) -> S {
+  match i % 2 { 0 => S { v: i, t: "m{i}" }, _ => s }
+}
+
+fn run_lit_first(n: integer) -> integer {
+  u = S { v: 900, t: "u" };
+  tot = 0;
+  for i in 0..n {
+    x = S { v: 1, t: "x{i}" };
+    tot += x.v;
+    x = lit_first(u, i);
+    x.v += 1;
+    tot += x.v + len(x.t);
+  }
+  tot + u.v
+}
+
+fn run_par_first(n: integer) -> integer {
+  u = S { v: 900, t: "u" };
+  tot = 0;
+  for i in 0..n {
+    x = S { v: 1, t: "x{i}" };
+    tot += x.v;
+    x = par_first(u, i);
+    x.v += 1;
+    tot += x.v + len(x.t);
+  }
+  tot + u.v
+}
+
+fn run_chain(n: integer) -> integer {
+  u = S { v: 900, t: "u" };
+  tot = 0;
+  for i in 0..n {
+    x = S { v: 1, t: "x{i}" };
+    tot += x.v;
+    x = chain(u, i);
+    x.v += 1;
+    tot += x.v + len(x.t);
+  }
+  tot + u.v
+}
+
+fn run_by_match(n: integer) -> integer {
+  u = S { v: 900, t: "u" };
+  tot = 0;
+  for i in 0..n {
+    x = S { v: 1, t: "x{i}" };
+    tot += x.v;
+    x = by_match(u, i);
+    x.v += 1;
+    tot += x.v + len(x.t);
+  }
+  tot + u.v
+}
+
+// Over 0..4: the literal arm runs for 0 and 2 (v+1 = 1, 3; "m0", "m2" are 2 long), the
+// parameter arm for 1 and 3 (901 each, "u" is 1 long), plus 1 per pass for the first `x`,
+// and `u.v` stays 900: 4 + (3 + 5) + (902 + 902) + 900 = 2716.
+fn main() {
+  assert(run_lit_first(4) == 2716, "lit_first {run_lit_first(4)}");
+  assert(run_par_first(4) == 2716, "par_first {run_par_first(4)}");
+  assert(run_chain(4) == 2716, "chain {run_chain(4)}");
+  assert(run_by_match(4) == 2716, "by_match {run_by_match(4)}");
+}
