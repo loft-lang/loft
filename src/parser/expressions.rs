@@ -5333,8 +5333,16 @@ use a separate collection or add after the loop"
             // `OpVarRef(b)` so it cannot be read as `c = b`, which writes `b`'s value through `c`
             // (`@FR-B-Ref-Write`); as one IR the two meant one thing to each backend
             // (`formal/binding.md` D-bind-41).
+            // A COLLECTION source is not a link copied: a `&vector` / `&hash` PARAMETER names
+            // the caller's handle, and a link to it SHARES that handle, the lowering
+            // `amp_collection_bind` takes (loft#2424).  Copied as a link, both spellings broke.
             let link_src = match *code.unspan() {
-                Value::Var(src) if matches!(self.vars.tp(src).base(), Type::RefVar(_)) => Some(src),
+                Value::Var(src)
+                    if matches!(self.vars.tp(src).base(), Type::RefVar(_))
+                        && !amp_collection_bind =>
+                {
+                    Some(src)
+                }
                 // A store-kind text link is parsed as its field, so `c = &t` arrives in that
                 // spelling rather than as `Var(t)`.
                 _ => self.store_text_link_of(code),
