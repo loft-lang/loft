@@ -262,6 +262,11 @@ draining library code out of the compiler crate (@PLN3).
   too narrow about the rest.  Those chips are fast approaching the
   Tanmatsu's class, so as they do, the 32-bit build (loft-32) gains
   that audience without loft aiming at it.
+- **Give industrial users the tools, not the paperwork.**  A device
+  maker who needs loft certified does the certification.  loft
+  supplies what that work rests on: the formal rules, the code sites
+  that cite them, guards with falsification receipts and the rule
+  crossings ledger (owner, 2026-11-06).
 
 ---
 
