@@ -4015,10 +4015,6 @@ use a separate collection or add after the loop"
     /// when that shape stands inside an outer loop that binds the link afresh); a node with no other
     /// out-of-line field (a list) drops nothing; `cur.g = null;` before the write says the
     /// drop is meant.  Every `=` to the link ends what was recorded for it.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one walk over the assignment shapes the lint reads; split it only as a move"
-    )]
     fn warn_walk_or_write(&mut self, op: &str, to: &Value, rhs: &Value) {
         if self.first_pass || op != "=" {
             return;
