@@ -1,0 +1,116 @@
+// Benchmark 23: An LRU cache — a `hash` that owns the entries and a doubly linked recency list
+// threaded through them with `reference<Node>?` back-links, the shape a user builds when owned
+// records and links between them must live side by side.
+//
+// One routine, ONE OP per repetition, on keys that differ by the salt in VALUE, never in the
+// amount of work, folded into `sink`:
+//   lru_mixed  a fresh cache of 500 entries given 4,000 accesses over 1,000 keys: a hit moves the
+//              entry to the front, a miss inserts it there and evicts the least recently used
+//              one when full; then the hits, the sum of the values read and a walk of the list
+// The `hash` column is one canonical op's result: every lane must print the same one.
+
+struct Node { key: integer, val: integer, prev: reference<Node>?, next: reference<Node>? }
+struct Lru { nodes: hash<Node[key]>, head: reference<Node>?, tail: reference<Node>?, cap: integer }
+
+fn key(i: integer, salt: integer) -> integer { ((i * 1103515245 + 12345 + salt * 7919) % 2147483648) % 100000 }
+
+fn unlink(c: Lru, n: Node) {
+  if n.prev { n.prev.next = n.next; } else { c.head = n.next; }
+  if n.next { n.next.prev = n.prev; } else { c.tail = n.prev; }
+  n.prev = null;
+  n.next = null;
+}
+
+fn push_front(c: Lru, n: Node) {
+  n.next = c.head;
+  if c.head { c.head.prev = &n; } else { c.tail = &n; }
+  c.head = &n;
+}
+
+/// The value under `k`, -1 when absent; a hit becomes the most recently used entry.
+fn get(c: Lru, k: integer) -> integer {
+  n = c.nodes[k];
+  if n == null { return -1; }
+  if c.head.key != k {
+    unlink(c, n);
+    push_front(c, n);
+  }
+  n.val
+}
+
+/// Store `v` under `k` as the most recently used entry, evicting the least recently used one
+/// when the cache is full.
+fn put(c: Lru, k: integer, v: integer) {
+  n = c.nodes[k];
+  if n != null {
+    n.val = v;
+    unlink(c, n);
+    push_front(c, n);
+    return;
+  }
+  t = c.tail;
+  if len(c.nodes) >= c.cap && t != null {
+    old = t.key;
+    unlink(c, t);
+    c.nodes[old] = null;
+  }
+  c.nodes += [Node { key: k, val: v }];
+  m = c.nodes[k];
+  if m != null { push_front(c, m); }
+}
+
+fn lru_mixed(total: integer, salt: integer) -> integer {
+  c = Lru { cap: 500 };
+  hits = 0;
+  sum = 0;
+  for i in 0..total {
+    k = key(i, salt) % 1000;
+    v = get(c, k);
+    if v < 0 {
+      put(c, k, i);
+    } else {
+      hits += 1;
+      sum = (sum + v) % 1000000007;
+    }
+  }
+  walk = 0;
+  p = c.head;
+  while p {
+    walk = (walk * 31 + p.key) % 1000000007;
+    p = p.next;
+  }
+  hits * 1000003 + (sum + walk) % 1000000007
+}
+
+/// `--n N`: how many ops the timed loop runs (the harness calibrates it per lane).
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+/// One measured routine, in the row format every lane prints (bench/README.md).
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer, sink: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+  println("time: {us / 1000}ms sink={sink}");
+}
+
+fn main() {
+  n = arg_n(10);
+  t0 = ticks();
+  sink = 0;
+  for r in 0..n { sink += lru_mixed(4000, r & 1); }
+  row("lru_mixed", n, ticks() - t0, 4000, lru_mixed(4000, 0), sink);
+}

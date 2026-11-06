@@ -11,10 +11,17 @@
 //                takes its successor's key), then an in-order checksum that also checks the order
 //   list_ops     2,000 pushes to the front of a list, 500 inserts after its head, a reversal into
 //                a second list, a walk of each, and the first popped empty
+//   build_rec    the 2,000-key tree of tree_insert built by the textbook recursion
+//                (`t.left = insert_rec(t.left, k)`), then its height and an in-order checksum
+//   enum_list    a 2,000-cell `Cons` list built at its front (`l = Cons { v, next: l }`), walked,
+//                reversed into a second list and walked again
+//   lookup_copy  tree_query's 4,000 lookups by the cursor nearly everyone writes first,
+//                `cur: Tree? = t; … cur = cur.left`
 // The `hash` column is one canonical op's result: every lane must print the same one.
 
 struct Tree { k: integer, left: Tree?, right: Tree? }
 struct Node { v: integer, next: Node? }
+enum List { Nil, Cons { v: integer, next: List } }
 
 /// A scrambled key: an LCG step of `i`, so the tree is one a random insertion order builds
 /// (height about 3 ln n), never the chain a progression of keys would build.
@@ -72,9 +79,18 @@ fn build(total: integer, salt: integer) -> Tree {
   t
 }
 
+/// Remove the leftmost node below a non-empty slot and answer its key.  The slot is a field
+/// of the caller's tree; `slot = &slot.left` walks it, a whole write unlinks the node.
+fn take_min(slot: &Tree?) -> integer {
+  while slot.left != null { slot = &slot.left; }
+  k = slot.k!;
+  slot = slot.right;
+  k
+}
+
 /// Delete `k` below the root `t` (the root itself is never asked for); true when found.  A `&`
 /// link walks to the field that holds the node; a node with two children takes its successor's
-/// key and a second link unlinks the successor, any other node is replaced by its one child.
+/// key (`take_min`), any other node is replaced by its one child.
 fn remove_key(t: Tree, k: integer) -> boolean {
   cur = &t.right;
   if k < t.k { cur = &t.left; }
@@ -83,10 +99,7 @@ fn remove_key(t: Tree, k: integer) -> boolean {
   }
   if cur == null { return false; }
   if cur.left != null && cur.right != null {
-    m = &cur.right;
-    while m.left != null { m = &m.left; }
-    cur.k = m.k!;
-    m = m.right;
+    cur.k = take_min(cur.right);
   } else if cur.left != null {
     cur = cur.left;
   } else {
@@ -134,6 +147,76 @@ fn list_ops(total: integer, salt: integer) -> integer {
   (sum + back) % 1000000007 + n
 }
 
+/// Insert `k` below `t` by the textbook recursion: the subtree comes back and is written into
+/// the field it came from.
+fn insert_rec(t: Tree?, k: integer) -> Tree? {
+  if t == null { return Tree { k: k, left: null, right: null }; }
+  if k < t.k {
+    t.left = insert_rec(t.left, k);
+  } else if k > t.k {
+    t.right = insert_rec(t.right, k);
+  }
+  t
+}
+
+fn build_rec(total: integer, salt: integer) -> integer {
+  t: Tree? = null;
+  for i in 0..total { t = insert_rec(t, key(i, salt)); }
+  height(t) * 1000003 + checksum(t!)
+}
+
+fn enum_list(total: integer, salt: integer) -> integer {
+  l = Nil;
+  for i in 0..total { l = Cons { v: key(i, salt), next: l }; }
+  sum = 0;
+  r = Nil;
+  cur = l;
+  more = true;
+  while more {
+    match cur {
+      Cons { v, next } => {
+        sum = (sum * 31 + v) % 1000000007;
+        r = Cons { v: v, next: r };
+        cur = next;
+      }
+      Nil => { more = false; }
+    }
+  }
+  back = 0;
+  n = 0;
+  cur = r;
+  more = true;
+  while more {
+    match cur {
+      Cons { v, next } => {
+        back = (back * 17 + v) % 1000000007;
+        n += 1;
+        cur = next;
+      }
+      Nil => { more = false; }
+    }
+  }
+  (sum + back) % 1000000007 + n
+}
+
+/// `find` by the cursor most programs write first: a plain local the walk rebinds.
+fn find_copy(t: Tree, k: integer) -> boolean {
+  cur: Tree? = t;
+  while cur != null {
+    if k == cur.k { return true; }
+    if k < cur.k { cur = cur.left; } else { cur = cur.right; }
+  }
+  false
+}
+
+fn lookup_copy(t: Tree, total: integer, salt: integer) -> integer {
+  hits = 0;
+  for i in 0..total * 2 {
+    if find_copy(t, key(i, salt)) { hits += 1; }
+  }
+  hits * 1000003 + checksum(t) + height(t)
+}
+
 /// `--n N`: how many ops the timed loop runs (the harness calibrates it per lane).
 fn arg_n(dflt: integer) -> integer {
   an_args = arguments();
@@ -178,4 +261,16 @@ fn main() {
   sink = 0;
   for r in 0..n { sink += list_ops(2000, r & 1); }
   row("list_ops", n, ticks() - t0, 2000, list_ops(2000, 0), sink);
+  t0 = ticks();
+  sink = 0;
+  for r in 0..n { sink += build_rec(2000, r & 1); }
+  row("build_rec", n, ticks() - t0, 2000, build_rec(2000, 0), sink);
+  t0 = ticks();
+  sink = 0;
+  for r in 0..n { sink += enum_list(2000, r & 1); }
+  row("enum_list", n, ticks() - t0, 2000, enum_list(2000, 0), sink);
+  t0 = ticks();
+  sink = 0;
+  for r in 0..n { sink += lookup_copy(q, 2000, r & 1); }
+  row("lookup_copy", n, ticks() - t0, 4000, lookup_copy(q, 2000, 0), sink);
 }

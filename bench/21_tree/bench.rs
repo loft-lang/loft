@@ -26,6 +26,11 @@ struct Node {
     next: Option<Box<Node>>,
 }
 
+enum List {
+    Nil,
+    Cons(i64, Box<List>),
+}
+
 fn key(i: i64, salt: i64) -> i64 {
     ((i * 1103515245 + 12345 + salt * 7919) % 2147483648) % 100000
 }
@@ -189,6 +194,73 @@ fn list_ops(total: i64, salt: i64) -> i64 {
     (sum + back) % 1000000007 + n
 }
 
+/// Insert `k` by the textbook recursion: the subtree is moved in and handed back.
+fn insert_rec(t: Option<Box<Tree>>, k: i64) -> Option<Box<Tree>> {
+    match t {
+        None => Some(leaf(k)),
+        Some(mut n) => {
+            if k < n.k {
+                n.left = insert_rec(n.left.take(), k);
+            } else if k > n.k {
+                n.right = insert_rec(n.right.take(), k);
+            }
+            Some(n)
+        }
+    }
+}
+
+fn build_rec(total: i64, salt: i64) -> i64 {
+    let mut t: Option<Box<Tree>> = None;
+    for i in 0..total {
+        t = insert_rec(t, key(i, salt));
+    }
+    let t = t.unwrap();
+    height(Some(&t)) * 1000003 + checksum(&t)
+}
+
+/// Drop a list one cell at a time, never by recursion.
+fn drop_list(mut l: List) {
+    while let List::Cons(_, next) = l {
+        l = *next;
+    }
+}
+
+fn enum_list(total: i64, salt: i64) -> i64 {
+    let mut l = List::Nil;
+    for i in 0..total {
+        l = List::Cons(key(i, salt), Box::new(l));
+    }
+    let mut sum = 0;
+    let mut r = List::Nil;
+    let mut cur = &l;
+    while let List::Cons(v, next) = cur {
+        sum = (sum * 31 + v) % 1000000007;
+        r = List::Cons(*v, Box::new(r));
+        cur = next;
+    }
+    let mut back = 0;
+    let mut n = 0;
+    let mut cur = &r;
+    while let List::Cons(v, next) = cur {
+        back = (back * 17 + v) % 1000000007;
+        n += 1;
+        cur = next;
+    }
+    drop_list(l);
+    drop_list(r);
+    (sum + back) % 1000000007 + n
+}
+
+fn lookup_copy(t: &Tree, total: i64, salt: i64) -> i64 {
+    let mut hits = 0;
+    for i in 0..total * 2 {
+        if find(t, key(i, salt)) {
+            hits += 1;
+        }
+    }
+    hits * 1000003 + checksum(t) + height(Some(t))
+}
+
 /// `--n N`: how many ops the timed loop runs (the harness calibrates it per lane).
 fn arg_n(dflt: i64) -> i64 {
     let args: Vec<String> = std::env::args().collect();
@@ -240,4 +312,22 @@ fn main() {
         sink = sink.wrapping_add(list_ops(black_box(2000), black_box(r & 1)));
     }
     row("list_ops", n, t0.elapsed().as_micros() as i64, 2000, list_ops(2000, 0), sink);
+    let t0 = Instant::now();
+    let mut sink: i64 = 0;
+    for r in 0..n {
+        sink = sink.wrapping_add(build_rec(black_box(2000), black_box(r & 1)));
+    }
+    row("build_rec", n, t0.elapsed().as_micros() as i64, 2000, build_rec(2000, 0), sink);
+    let t0 = Instant::now();
+    let mut sink: i64 = 0;
+    for r in 0..n {
+        sink = sink.wrapping_add(enum_list(black_box(2000), black_box(r & 1)));
+    }
+    row("enum_list", n, t0.elapsed().as_micros() as i64, 2000, enum_list(2000, 0), sink);
+    let t0 = Instant::now();
+    let mut sink: i64 = 0;
+    for r in 0..n {
+        sink = sink.wrapping_add(lookup_copy(&q, black_box(2000), black_box(r & 1)));
+    }
+    row("lookup_copy", n, t0.elapsed().as_micros() as i64, 4000, lookup_copy(&q, 2000, 0), sink);
 }
