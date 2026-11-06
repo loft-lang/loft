@@ -292,10 +292,6 @@ fn fill_database(e: el::El, d: integer) {
       el::refuse(e, "a struct field of this type");
       return;
     }
-    if joins_group(e, s, c) {
-      el::refuse(e, "a struct with a linked collection group");
-      return;
-    }
     f = field(e, s, a.name, c);
     if a.nullable {
       set_field_nullable(e, s, f);
@@ -766,32 +762,52 @@ fn keyed_part(e: el::El, t: integer) -> boolean {
   }
 }
 
-// Would a field of store type `c` link with an earlier one (`@FR-Col-Group`): two collections of
-// one element, one of them keyed.
-fn joins_group(e: el::El, s: integer, c: integer) -> boolean {
-  elem = element_of(e, c);
-  if elem < 0 {
-    return false;
-  }
-  for f in struct_fields(e, s) {
-    if element_of(e, f.content) == elem && (keyed_part(e, c) || keyed_part(e, f.content)) {
-      return true;
-    }
-  }
-  false
-}
-
-// `Stores::field`, for a field that joins no group: appended unplaced; the struct becomes
-// complex past eight fields or with a record field.
+// `Stores::field`: appended unplaced; the struct becomes complex past eight fields or with a
+// record field.  `@FR-Col-Group`: collections over one element type in one struct, at least one
+// of them keyed, are routes to one record set — each member lists the others both ways
+// (`other_indexes`), the new one led by the view marker `NO_TYPE`, and a keyed member arriving
+// last joins the members that were independent before it.
 fn field(e: el::El, s: integer, name: text, content: integer) -> integer {
   fields = struct_fields(e, s);
   num = len(fields);
+  others: vector<integer> = [];
+  elem = element_of(e, content);
+  new_keyed = keyed_part(e, content);
+  matched: vector<integer> = [];
+  group_key = new_keyed;
+  for f in fields {
+    if elem >= 0 && element_of(e, f.content) == elem && keyed_part(e, f.content) {
+      group_key = true;
+    }
+  }
+  if elem >= 0 && group_key {
+    for f in fields {
+      if element_of(e, f.content) != elem {
+        continue;
+      }
+      if len(others) == 0 {
+        others += [NO_TYPE];
+      }
+      others += [f#index];
+      matched += [f#index];
+      link_field(fields, f#index, num);
+    }
+    if new_keyed {
+      for x in matched {
+        for y in matched {
+          if x != y {
+            link_field(fields, x, y);
+          }
+        }
+      }
+    }
+  }
   fields += [ir::DbField {
     name: name,
     content: content,
     position: NO_TYPE,
     default: [],
-    other_indexes: [],
+    other_indexes: others,
     nullable: false,
     target: NO_TYPE
   }];
@@ -801,6 +817,12 @@ fn field(e: el::El, s: integer, name: text, content: integer) -> integer {
     e.b.types[s].complex = true;
   }
   num
+}
+
+fn link_field(fields: vector<ir::DbField>, f: integer, other: integer) {
+  if !fields[f]!.other_indexes.contains(other) {
+    fields[f].other_indexes += [other];
+  }
 }
 
 fn set_field_nullable(e: el::El, s: integer, f: integer) {

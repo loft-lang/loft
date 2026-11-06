@@ -5662,6 +5662,27 @@ fn nested_literal(e: el::El, vars: el_vars::Vars, v: integer, at: ir::TypeT, fe:
 fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
   def = el::def(e, d);
   list: vector<ir::Node> = [];
+  // loft#924 — a linked collection group's headers are zeroed as one block, in offset order,
+  // before any member is filled: an insert through one member indexes the record into all.  A
+  // member the literal names is not carried yet (`group_fills`, the bulk-fill maintenance).
+  group: vector<integer> = if e.first_pass { [] } else { linked_offsets(e, d) };
+  for off in group {
+    list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: off }, ir::NdInt { n: 0 }])];
+  }
+  if len(group) > 0 {
+    for fi in fields {
+      match e.p.nodes[fi] {
+        SFieldInit { name: fname, e: fe } => {
+          empty = match e.p.nodes[fe ?? 0] { SVecLit { items } => fe != null && len(items) == 0, _ => false };
+          if group.contains(field_position(e, d, fname)) && !empty {
+            el::refuse(e, "a literal that fills a member of a linked collection group");
+            return null;
+          }
+        },
+        _ => {}
+      }
+    }
+  }
   // `parse_object_field`'s header prime: each WRITTEN vector field's handle zeroed right after
   // the record is made, in literal order (#437).  A keyed field's is zeroed where its records
   // are added, below: those inserts are ordered against a sibling's prime.
@@ -5669,7 +5690,7 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
     match e.p.nodes[fi] {
       SFieldInit { name: fname } => {
         a = attr_nr(def, fname);
-        if a >= 0 && def.attributes[a]!.typedef[0] is TyVector {
+        if a >= 0 && def.attributes[a]!.typedef[0] is TyVector && !group.contains(field_position(e, d, fname)) {
           list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: 0 }])];
         }
       },
@@ -5721,7 +5742,11 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
           if built == null {
             return null;
           }
-          list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: 0 }]), ir::NdInsert { items: built! }];
+          // A group member's header was zeroed with its siblings' (loft#924).
+          if !group.contains(field_position(e, d, fname)) {
+            list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: 0 }])];
+          }
+          list += [ir::NdInsert { items: built! }];
           found += [fname];
           continue;
         }
@@ -5799,6 +5824,16 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
       if a.constant || found.contains(a.name) {
         continue;
       }
+      // A group member's zeroed header is its whole initialisation (`object_init` skips it);
+      // a declared default beside it is not carried.
+      if group.contains(field_position(e, d, a.name)) {
+        dv = el_ir::unspan(a.value[0] ?? ir::NdNull);
+        if dv is NdNull || dv == ir::NdInsert { items: [ir::NdNull] } {
+          continue;
+        }
+        el::refuse(e, "an omitted member of a linked collection group with a declared default");
+        return null;
+      }
       defaults = field_default(e, d, a#index, r, 0);
       if defaults == null {
         return null;
@@ -5809,6 +5844,29 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
     }
   }
   list
+}
+
+// `linked_group_offsets`: the offsets of a struct's collection fields that belong to a linked
+// group (`keyed_field_is_linked`: a non-empty `other_indexes`), ascending.
+fn linked_offsets(e: el::El, d: integer) -> vector<integer> {
+  k = el::def(e, d).known_type;
+  out: vector<integer> = [];
+  if k == el_schema::NO_TYPE {
+    return out;
+  }
+  for a in el::def(e, d).attributes {
+    if !el_types::is_collection(el_types::base(a.typedef[0] ?? ir::TyVoid)) {
+      continue;
+    }
+    off = el_schema::field_position(e, k, a.name);
+    for f in el_schema::struct_fields(e, k) {
+      if f.position == off && len(f.other_indexes) > 0 && !out.contains(off) {
+        out += [off];
+      }
+    }
+  }
+  out.sort();
+  out
 }
 
 // `object_init` for one omitted field at `base` bytes into the record `r`: a plain field its
@@ -10721,8 +10779,9 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   record_null = vector_null || variant_null || (f.tp is TyNull && !(t.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0);
   // A plain enum's null is `OpConvEnumFromNull` of its store type (`null_of`).
   enum_null = match t.tp { TyEnum { is_ref } => !is_ref, _ => false };
-  // An arm already `τ?` of a plain scalar beside a `null` arm: the null is `τ`'s, the join `τ?`.
-  if f.tp is TyNull && t.tp is TyOptional && el_convert::plain_scalar(el_types::base(t.tp)) && !el_convert::plain_enum(el_types::base(t.tp)) {
+  // An arm already `τ?` of a plain scalar or a plain enum beside a `null` arm: the null is `τ`'s,
+  // the join `τ?`.
+  if f.tp is TyNull && t.tp is TyOptional && (el_convert::plain_scalar(el_types::base(t.tp)) || el_convert::plain_enum(el_types::base(t.tp))) {
     if e.first_pass {
       return ex(ir::NdNull, t.tp);
     }
