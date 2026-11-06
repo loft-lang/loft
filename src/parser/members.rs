@@ -346,11 +346,18 @@ impl Parser {
         // Read by the write and the guarded release alone: the call's result is delivered to it
         // as it is, on every backend — never the bind's copy (@PLN157 § V-g's elision).
         self.vars.mark_view_elided(r);
-        let set = self.cl("OpSetChildRec", &[field.clone(), Value::Var(r), Value::Int(kt)]);
+        let set = self.cl(
+            "OpSetChildRec",
+            &[field.clone(), Value::Var(r), Value::Int(kt)],
+        );
         let distinct = self.cl("OpDistinctStore", &[Value::Var(r), Value::Var(host)]);
         let release = self.cl("OpFreeRefIfDistinct", &[Value::Var(r), Value::Var(buf)]);
         Some(v_block(
-            vec![v_set(r, val.clone()), set, v_if(distinct, release, Value::Null)],
+            vec![
+                v_set(r, val.clone()),
+                set,
+                v_if(distinct, release, Value::Null),
+            ],
             Type::Void,
             "write_back_call",
         ))
@@ -364,6 +371,10 @@ impl Parser {
     /// absent, a fresh child takes them.  Nothing the place holds is copied.  `None` — the copy
     /// stands — for any other shape: a literal that reads `r` again, or reads the place's root
     /// anywhere else, or names its temporary other than as a value.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one shape match read in order: the place read, the literal's prelude, its fields, the move"
+    )]
     fn place_demote(&mut self, field: &Value, kt: i32, val: &Value) -> Option<Value> {
         if self.first_pass || !crate::keys::demote_enabled() {
             return None;
@@ -397,9 +408,10 @@ impl Parser {
         let Value::Call(db, dargs) = ops[at_db] else {
             return None;
         };
-        let (Some(Value::Var(tmp)), Some(Value::Int(lit_tp))) =
-            (dargs.first().map(Value::unspan), dargs.get(1).map(Value::unspan))
-        else {
+        let (Some(Value::Var(tmp)), Some(Value::Int(lit_tp))) = (
+            dargs.first().map(Value::unspan),
+            dargs.get(1).map(Value::unspan),
+        ) else {
             return None;
         };
         let tmp = *tmp;
@@ -485,10 +497,16 @@ impl Parser {
         self.vars.set_skip_free(fresh);
         let k = Value::Int(kt);
         let place = self.cl("OpPlaceRecord", &[Value::Var(r), k.clone()]);
-        let out = self.cl("OpMoveField", &[Value::Var(r), Value::Var(placed), k.clone()]);
+        let out = self.cl(
+            "OpMoveField",
+            &[Value::Var(r), Value::Var(placed), k.clone()],
+        );
         let gfield = self.cl("OpGetField", &[Value::Var(r), Value::Int(g_off), k.clone()]);
         let claim = self.cl("OpChildRec", &[gfield, k.clone()]);
-        let back = self.cl("OpMoveField", &[Value::Var(placed), Value::Var(child), k.clone()]);
+        let back = self.cl(
+            "OpMoveField",
+            &[Value::Var(placed), Value::Var(child), k.clone()],
+        );
         let free = self.cl("OpFreeRecordIn", &[Value::Var(placed), k.clone()]);
         let mut present_ops = vec![v_set(placed, place), out, v_set(child, claim), back, free];
         present_ops.extend(writes.iter().map(|w| swap(w, r)));

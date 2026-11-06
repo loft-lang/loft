@@ -5041,6 +5041,10 @@ impl Stores {
         true
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the release walk and its out-of-line-chain loop share one record-kind dispatch"
+    )]
     fn remove_claims_mode(&mut self, rec: &DbRef, tp: u16, borrowed: bool) {
         // loft#796 — the record itself must be inside its store before anything reads
         // its fields.  The per-edge guards in `for_each_owned_child` catch a rotten

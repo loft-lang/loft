@@ -5638,7 +5638,6 @@ impl Parser {
         ))
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `@FR-R-Demote` — does a field's value read the literal's destination `dest` anywhere but
     /// as the receiver of its own in-place build (`OpGetField(dest, pos, …)`, how a collection
     /// field is filled where it stands)?  Only such a read sees the record the move empties.
@@ -5668,7 +5667,13 @@ impl Parser {
     /// of `OpPlaceRecord`, `OpMoveField`, `OpChildRec` and `OpFreeRecordIn`: each moves one
     /// record's bytes, so the cost does not grow with what the record holds.  `None` — the
     /// literal keeps its prelude — where `f` is not an out-of-line field of `T` itself.
-    fn demote_prelude(&mut self, td_nr: u32, h: u16, fname: &str, prelude: &[Value]) -> Option<Vec<Value>> {
+    fn demote_prelude(
+        &mut self,
+        td_nr: u32,
+        h: u16,
+        fname: &str,
+        prelude: &[Value],
+    ) -> Option<Vec<Value>> {
         let nr = self.data.attr(td_nr, fname);
         if nr == usize::MAX || !self.data.field_is_out_of_line(td_nr, nr) {
             return None;
@@ -5690,10 +5695,19 @@ impl Parser {
         self.vars.defined(child);
         self.vars.set_skip_free(child);
         let place = self.cl("OpPlaceRecord", &[Value::Var(h), Value::Int(tp)]);
-        let out = self.cl("OpMoveField", &[Value::Var(h), Value::Var(placed), Value::Int(tp)]);
-        let field = self.cl("OpGetField", &[Value::Var(h), Value::Int(off), Value::Int(tp)]);
+        let out = self.cl(
+            "OpMoveField",
+            &[Value::Var(h), Value::Var(placed), Value::Int(tp)],
+        );
+        let field = self.cl(
+            "OpGetField",
+            &[Value::Var(h), Value::Int(off), Value::Int(tp)],
+        );
         let claim = self.cl("OpChildRec", &[field, Value::Int(tp)]);
-        let back = self.cl("OpMoveField", &[Value::Var(placed), Value::Var(child), Value::Int(tp)]);
+        let back = self.cl(
+            "OpMoveField",
+            &[Value::Var(placed), Value::Var(child), Value::Int(tp)],
+        );
         let free = self.cl("OpFreeRecordIn", &[Value::Var(placed), Value::Int(tp)]);
         let demote = v_block(
             vec![v_set(placed, place), out, v_set(child, claim), back, free],
@@ -5715,6 +5729,7 @@ impl Parser {
         )])
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_object_field(
         &mut self,
         td_nr: u32,
@@ -6950,7 +6965,7 @@ impl Parser {
             && crate::keys::demote_enabled()
             && let Some(h) = in_place_var
             && sinks.demote_dest == Some(h)
-            && !(self.vars.is_argument(h) && !self.is_hidden_param(h))
+            && (!self.vars.is_argument(h) || self.is_hidden_param(h))
             && !self
                 .demote_declined
                 .contains(&(self.context, literal_pos.line, literal_pos.pos))

@@ -10482,7 +10482,7 @@ impl Parser {
         borrow_src: u16,
         cond: &mut Option<Value>,
         bindings: &mut Vec<Value>,
-        group_cap: Option<String>,
+        group_cap: Option<&str>,
     ) {
         self.lexer.token("(");
         // branches[i] = the sequence for branch i: [(disc, variant_def, fields)] per position.
@@ -10684,13 +10684,17 @@ impl Parser {
                 borrow_src,
                 bindings,
             );
-            if let Some(name) = &group_cap {
-                let span = AltSpan {
-                    head_len,
-                    optional,
-                };
+            if let Some(name) = group_cap {
+                let span = AltSpan { head_len, optional };
                 self.bind_alternation_group(
-                    name, &branches, &branch_conds, span, v, elm_size, elm_tp, bindings,
+                    name,
+                    &branches,
+                    &branch_conds,
+                    span,
+                    v,
+                    elm_size,
+                    elm_tp,
+                    bindings,
                 );
             }
             if let Some(name) = rest_name {
@@ -10747,13 +10751,20 @@ impl Parser {
             borrow_src,
             bindings,
         );
-        if let Some(name) = &group_cap {
+        if let Some(name) = group_cap {
             let span = AltSpan {
                 head_len: 0,
                 optional,
             };
             self.bind_alternation_group(
-                name, &branches, &branch_conds, span, v, elm_size, elm_tp, bindings,
+                name,
+                &branches,
+                &branch_conds,
+                span,
+                v,
+                elm_size,
+                elm_tp,
+                bindings,
             );
         }
         if let Some(name) = rest_name {
@@ -10964,10 +10975,17 @@ impl Parser {
         if span.optional {
             let built = self.vars.tp(cap_var).clone();
             if let Some(&db) = built.depend().first() {
-                let absent =
-                    self.conv_op("==", Value::Var(end_var), Value::Int(span.head_len), I32.clone(), I32.clone());
-                let null_header =
-                    self.cl("OpSetInt4", &[Value::Var(db), Value::Int(0), Value::Int(-1)]);
+                let absent = self.conv_op(
+                    "==",
+                    Value::Var(end_var),
+                    Value::Int(span.head_len),
+                    I32.clone(),
+                    I32.clone(),
+                );
+                let null_header = self.cl(
+                    "OpSetInt4",
+                    &[Value::Var(db), Value::Int(0), Value::Int(-1)],
+                );
                 bindings.push(v_if(absent, null_header, Value::Null));
             }
             self.vars.set_type(cap_var, Type::optional(built));
@@ -13576,10 +13594,7 @@ impl Parser {
             } else {
                 SliceGroupKind::Other
             };
-            if group_cap.is_some()
-                && group_kind == SliceGroupKind::Other
-                && !self.first_pass
-            {
+            if group_cap.is_some() && group_kind == SliceGroupKind::Other && !self.first_pass {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -13889,7 +13904,7 @@ impl Parser {
                         borrow_src,
                         cond,
                         bindings,
-                        group_cap.take(),
+                        group_cap.take().as_deref(),
                     );
                     multi_alt = true;
                 } else {
