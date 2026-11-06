@@ -11722,6 +11722,17 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
       return ex(ir::NdReturn { inner: built! }, ir::TyNever);
     }
   }
+  // A buffer a chain renamed onto its work ref (`chain_return_buffer_var`) is still the
+  // caller's: a literal is built into it as into `__retbuf`.
+  if !e.first_pass && !unrenamed {
+    cb = return_buffer(e, vars);
+    if cb >= 0 && starts_with(el_vars::name_of(vars, cb), "__ref_") && !starts_with(el_vars::name_of(vars, cb), "__ref_p2_") {
+      built = object_into_buffer(e, vars, x, cb, result);
+      if built != null {
+        return ex(ir::NdReturn { inner: built! }, ir::TyNever);
+      }
+    }
+  }
   w = -1;
   chain = false;
   match x {
