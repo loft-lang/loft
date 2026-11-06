@@ -1,0 +1,198 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The layout-upgrade drain (src/parser/definitions.rs `synth_upgrade_drain`, @PLN196 step 8),
+// made after the second pass: every call of a whole-image loader is wrapped in
+// `__upgrade_drain(call)`, which takes each field the load left owed and then finishes the load.
+// A program that calls no loader gets no drain.  The fill functions a computed field default
+// needs (`synth_upgrade_fills`) and the `upgrade` routines (`synth_upgrade_routines`,
+// `__upgrade_register`) are not carried: a program that needs either is refused by name.
+use ir;
+use el;
+use el_ir;
+use el_vars;
+use el_expressions;
+
+pub fn synth_upgrade_drain(e: el::El) {
+  loads: vector<integer> = [];
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_FUNCTION && is_loader(d.name) {
+      loads += [d#index];
+    }
+  }
+  if len(loads) == 0 {
+    return;
+  }
+  drain = el::def_nr(e, "n___upgrade_drain");
+  callers: vector<integer> = [];
+  for d in e.b.data.definitions {
+    if d#index != drain && calls_unwrapped(d.code[0] ?? ir::NdNull, loads, drain) {
+      callers += [d#index];
+    }
+  }
+  if len(callers) == 0 {
+    return;
+  }
+  if drain < 0 {
+    if needs_fills(e) {
+      el::refuse(e, "a store load in a program whose struct fields compute their default (upgrade fills)");
+      return;
+    }
+    if has_upgrade_routines(e) {
+      el::refuse(e, "a store load in a program with `upgrade` routines");
+      return;
+    }
+    drain = drain_fn(e);
+  }
+  for c in callers {
+    e.b.data.definitions[c].code = [wrap(e.b.data.definitions[c].code[0] ?? ir::NdNull, loads, drain)];
+  }
+}
+
+// The loaders the drain follows, by name in every source (`swap_world` is the `engine_host`
+// library's).
+fn is_loader(nm: text) -> boolean {
+  nm == "n_store_load" || nm == "n_store_load_untrusted" || nm == "n_store_load_url" || nm == "n_store_load_url_trusted" || nm == "n_swap_world"
+}
+
+// `calls_unwrapped`: does `n` call a loader outside a drain call?
+fn calls_unwrapped(n: ir::Node, loads: vector<integer>, drain: integer) -> boolean {
+  match n {
+    NdCall { def_nr } => {
+      if def_nr == drain {
+        return false;
+      }
+      if loads.contains(def_nr) {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if calls_unwrapped(c, loads, drain) {
+      return true;
+    }
+  }
+  false
+}
+
+// `wrap_loads` with no register: each loader call not in a drain becomes `drain(call)`, its
+// arguments wrapped first.
+fn wrap(n: ir::Node, loads: vector<integer>, drain: integer) -> ir::Node {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr == drain {
+        return n;
+      }
+      call = ir::NdCall { def_nr: def_nr, args: wrap_list(args, loads, drain) };
+      if loads.contains(def_nr) {
+        return ir::NdCall { def_nr: drain, args: [call] };
+      }
+      call
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: wrap(inner, loads, drain) },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: wrap_list(args, loads, drain) },
+    NdInsert { items } => ir::NdInsert { items: wrap_list(items, loads, drain) },
+    NdTuple { items } => ir::NdTuple { items: wrap_list(items, loads, drain) },
+    NdParallel { arms } => ir::NdParallel { arms: wrap_list(arms, loads, drain) },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = wrap_list(b.operators, loads, drain);
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = wrap_list(b.operators, loads, drain);
+      ir::NdLoop { block: [b] }
+    },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: wrap(inner, loads, drain) },
+    NdIf { cond, t, f } => ir::NdIf { cond: wrap(cond, loads, drain), t: wrap(t, loads, drain), f: wrap(f, loads, drain) },
+    NdReturn { inner } => ir::NdReturn { inner: wrap(inner, loads, drain) },
+    NdDrop { inner } => ir::NdDrop { inner: wrap(inner, loads, drain) },
+    NdYield { inner } => ir::NdYield { inner: wrap(inner, loads, drain) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: wrap(inner, loads, drain) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: wrap(create, loads, drain), next: wrap(next, loads, drain), init: wrap(init, loads, drain) },
+    _ => n
+  }
+}
+
+fn wrap_list(l: vector<ir::Node>, loads: vector<integer>, drain: integer) -> vector<ir::Node> {
+  [for x in l { wrap(x, loads, drain) }]
+}
+
+// `synth_upgrade_fills`' selection: a stored field of a program struct whose declared default is
+// neither absent, a constant, nor a literal (`fold_declared_default`).
+fn needs_fills(e: el::El) -> boolean {
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_STRUCT || d.known_type == el::NO_TYPE || starts_with(d.name, "__") {
+      continue;
+    }
+    for a in d.attributes {
+      if !a.constant && !folds(e, a.value[0] ?? ir::NdNull) {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// `fold_declared_default` answers a constant (an absent default counts as one here).
+fn folds(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdNull => true,
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdEnum { ord } => ord > 0,
+    NdBoolean { b: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    NdText { s: _ } => true,
+    // `= -1` is the negation of a numeric literal.
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      len(args) == 1 && (nm == "OpMinSingleInt" || nm == "OpMinSingleFloat" || nm == "OpMinSingleSingle") && numeric_literal(args[0])
+    },
+    _ => false
+  }
+}
+
+fn numeric_literal(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    _ => false
+  }
+}
+
+// `upgrade_routine_defs`' candidates: a function `upgrade`, or an overload set of it.
+fn has_upgrade_routines(e: el::El) -> boolean {
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_FUNCTION && (d.name == "n_upgrade" || ends_with(d.name, "_upgrade")) {
+      return true;
+    }
+  }
+  false
+}
+
+// `synth_drain_fn` with no fill and no routine: `fn __upgrade_drain(ok: boolean) -> boolean`,
+// `loop { k = owed_next(); if k < 0 { break } }` then `if owed_finish() { ok } else { false }`.
+fn drain_fn(e: el::El) -> integer {
+  f = el::add_def(e, "n___upgrade_drain", el::def(e, el::def_nr(e, "n_store_load")).position, el::DT_FUNCTION);
+  el::set_returned(e, f, ir::TyBoolean);
+  e.b.data.definitions[f].attributes += [el::attribute("ok", ir::TyBoolean)];
+  vars = el_vars::new_vars("__upgrade_drain", el::def(e, f).position.file);
+  ok = el_vars::add_variable(vars, "ok", ir::TyBoolean);
+  el_vars::become_argument(vars, ok);
+  k = el_vars::add_variable(vars, "k", ir::TyInteger { spec: el_expressions::wide_spec() });
+  el_vars::set_defined(vars, k);
+  next = ir::NdCall { def_nr: el::def_nr(e, "n_store_upgrade_owed_next"), args: [] };
+  finish = ir::NdCall { def_nr: el::def_nr(e, "n_store_upgrade_owed_finish"), args: [] };
+  done = el_ir::cl(e, "OpLtInt", [ir::NdVar { n: k }, ir::NdInt { n: 0 }]);
+  step: vector<ir::Node> = [el_ir::v_set(k, next), el_ir::v_if(done, ir::NdBreak { n: 0 }, ir::NdNull), ir::NdNull];
+  body: vector<ir::Node> = [el_ir::v_loop(step, "upgrade drain"), el_ir::v_if(finish, ir::NdVar { n: ok }, ir::NdBoolean { b: false })];
+  e.b.data.definitions[f].code = [el_ir::v_block(body, ir::TyBoolean, "block")];
+  e.b.data.definitions[f].variables = el_vars::stored(vars);
+  f
+}

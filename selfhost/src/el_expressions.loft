@@ -8648,12 +8648,6 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     }
     return call_args(e, vars, inst, given, types);
   }
-  // `synth_upgrade_drain` (@PLN196): every store load is wrapped in a synthesised
-  // `__upgrade_drain(…)` after the parse, with the fill functions it calls — not carried.
-  if def.name == "n_store_load" || def.name == "n_store_load_untrusted" || def.name == "n_store_load_url" || def.name == "n_store_load_url_trusted" || def.name == "n_swap_world" {
-    el::refuse(e, "a store load, which the layout-upgrade drain wraps");
-    return null;
-  }
   n = len(def.attributes);
   // The hidden return buffer, whatever local it was renamed after (`RetPromotion::Rename`).
   // A hidden vector buffer (`add_defaults`' vector arm): a fresh `__ref_N` the result is
@@ -8899,7 +8893,8 @@ fn takes(e: el::El, param: ir::TypeT, arg: ir::TypeT) -> boolean {
   }
   // A bare collection parameter (`sorted`, `hash`, `index`, `spatial`, `trie`) takes any instance
   // of its kind, and
-  // a bare `reference` any keyed collection, whose handle is a `DbRef` (the store builtins);
+  // a bare `reference` any record or keyed collection, whose handle is a `DbRef` (the store
+  // builtins, `convert`'s `check_type = reference`);
   // a nullable one as its base (`@FR-N-Store` reports it).
   match param {
     TyVector { inner } => el_types::is_unknown(inner) && el_types::base(arg) is TyVector,
@@ -8911,7 +8906,7 @@ fn takes(e: el::El, param: ir::TypeT, arg: ir::TypeT) -> boolean {
     TyReference { n } => {
       a = el_types::base(arg);
       nm = el::def(e, n).name;
-      (nm == "reference" && keyed_kind(a)) || (nm == "sorted" && a is TySorted) || (nm == "hash" && a is TyHash) || (nm == "index" && a is TyIndex) || (nm == "spatial" && a is TyRadix) || (nm == "trie" && a is TyTrie)
+      (nm == "reference" && (keyed_kind(a) || a is TyReference)) || (nm == "sorted" && a is TySorted) || (nm == "hash" && a is TyHash) || (nm == "index" && a is TyIndex) || (nm == "spatial" && a is TyRadix) || (nm == "trie" && a is TyTrie)
     },
     _ => false
   }

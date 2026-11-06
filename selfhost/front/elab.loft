@@ -16,6 +16,7 @@ use load;
 use el_buffers;
 use el_tret;
 use el_drop;
+use el_upgrade;
 
 fn main() {
   files = arguments();
@@ -80,7 +81,8 @@ fn program(image: text, f: text, std_image: text) {
   // promotion, then the work buffers.
   el_tret::promote_text_returns(e);
   el_buffers::promote_work_buffers(e);
-  // Then `synth_drop_cascades`.
+  // Then `synth_drop_cascades`: the layout-upgrade drain first, then the drop cascades.
+  el_upgrade::synth_upgrade_drain(e);
   el_drop::synth_drop_cascades(e);
   print(report::defs_report(e.b, upto, templates: env_variable("LOFT_DEFS_TEMPLATES") == "1"));
   if len(std_image) > 0 {
