@@ -1500,7 +1500,7 @@ fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Lit
                     && let Some((v, base)) = place_of(place, ops)
                     && v == buf =>
             {
-                let (lo, hi) = layout.extent(base, *tp as u16)?;
+                let (lo, hi) = layout.extent(base, *tp as u16 & crate::keys::COPY_TP_MASK)?;
                 if !pure_place(src, ops) || mentions(src, buf) {
                     return None;
                 }
@@ -2182,7 +2182,8 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                 && let [src, dst, Value::Int(tp)] = args.as_slice()
                 && let Value::Var(v) = src.unspan()
             {
-                s.copies.push((*v, *tp as u16, pure_place(dst, ops)));
+                // The type without the copy's flags (`COPY_FRESH_DEST` on a push's element).
+                s.copies.push((*v, *tp as u16 & crate::keys::COPY_TP_MASK, pure_place(dst, ops)));
                 scan(dst, false, w, s);
                 return;
             }
