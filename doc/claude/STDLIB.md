@@ -595,11 +595,11 @@ JSON support has two layers:
 pub enum JsonValue {
   JNull,
   JBool { value: boolean },
-  JNumber { value: float },
+  JNumber { value: f64 },
   JString { value: text },
   JArray { pub items: vector<JsonValue> },
   JObject { pub fields: vector<JsonField> },
-  JInteger { value: integer },
+  JInteger { value: i64 },
 }
 ```
 <!-- from default/06_json.loft -->
