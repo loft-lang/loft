@@ -10184,7 +10184,31 @@ use a separate collection or add after the loop"
                     // `ps[0]` while `.y` correctly did not, and native emitted a `_place` it
                     // never declared.  This arm answers both offsets correctly, so there is
                     // nothing for a second one to add.
-                    let elem_tp = parent_tp.base().clone();
+                    let mut elem_tp = parent_tp.base().clone();
+                    // A TUPLE element is reached as the `__tuple<…>` RECORD the accessor answers
+                    // (`@FR-T-Ref-Rep`: a `vector<(…)>` element is that record), so the place
+                    // binding holds a reference to it.  Typed as the stack tuple, the binding
+                    // held a record reference under a by-value type: the interpreter wrote
+                    // through it by accident of layout and `--native-c` refused the program.
+                    if let Type::Tuple(elems) = &elem_tp
+                        && crate::data::ref_tuple_is_record(elems)
+                    {
+                        let elems = elems.clone();
+                        let d = self.data.tuple_def(&mut self.lexer, &elems);
+                        // A VIEW of the container's element, as a struct element's binding is
+                        // (`@FR-B-View`): it borrows the container's root, or the bind would
+                        // copy the element and the write land in the copy.
+                        let root = crate::use_analysis::projection_container_var(
+                            &self.data,
+                            accessor.unspan(),
+                        );
+                        if d != u32::MAX {
+                            elem_tp = Type::Reference(
+                                d,
+                                root.map_or_else(Deps::none, Deps::frame1),
+                            );
+                        }
+                    }
                     let elem_var = self.create_unique("_place", &elem_tp);
                     f2_setup = Some(v_set(elem_var, accessor));
                     let rebuilt = Value::Call(get_d, vec![Value::Var(elem_var), offset]);
