@@ -53,8 +53,10 @@
 # CAUGHT.  One that no longer moves is VACUOUS — the guard has stopped seeing the defect its
 # switch restores — and counts as a defect.  A `@catches` program runs with LOFT_STRICT_STORES
 # and LOFT_POISON armed on both legs, so a restored early release shows as a fault wherever
-# the allocator puts the next block.  Every program without the header is compared as usual
-# under the cure's switch too.
+# the allocator puts the next block.  A `@catches` program with `fn test…` and no `main` also
+# runs its tests (`--tests`), since a plain run executes `main` only and would show nothing
+# but its diagnostics.  Every program without the header is compared as usual under the
+# cure's switch too.
 set -uo pipefail
 if [ $# -lt 1 ] || [[ "$1" != LOFT_NO_* ]]; then
   echo "usage: $0 LOFT_NO_<REWRITE> [--consumer DIR]..." >&2
@@ -92,14 +94,19 @@ run_one() {
   # inside one.  A release of the wrong store is then a fault the output shows, instead of
   # a value that moves only when a later allocation happens to reuse the freed memory.
   # (Both arm on presence, so every other program runs with them unset.)
-  local poison=(-u LOFT_POISON -u LOFT_STRICT_STORES)
-  grep -qE "^// @catches:.*\b$SWITCH\b" "$file" && poison=(LOFT_POISON=1 LOFT_STRICT_STORES=1)
-  if [ "$mode" = off ]; then
-    env "${poison[@]}" "$SWITCH=1" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret $args "$file" >"$WORK/$mode/$base.out" 2>&1
-  else
-    env -u "$SWITCH" "${poison[@]}" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret $args "$file" >"$WORK/$mode/$base.out" 2>&1
-  fi
+  # `env` takes its `-u` options before any assignment, so the unsets come first.
+  local unset=(-u LOFT_POISON -u LOFT_STRICT_STORES) set=() catches=0
+  grep -qE "^// @catches:.*\b$SWITCH\b" "$file" && { unset=(); set=(LOFT_POISON=1 LOFT_STRICT_STORES=1); catches=1; }
+  if [ "$mode" = off ]; then set+=("$SWITCH=1"); else unset+=(-u "$SWITCH"); fi
+  env "${unset[@]}" "${set[@]}" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret $args "$file" >"$WORK/$mode/$base.out" 2>&1
   echo "exit=$?" >>"$WORK/$mode/$base.out"
+  # A run executes `main` alone, so a program without one shows only its diagnostics.  A
+  # catching program's assertions are its catch: one with tests and no `main` runs them too,
+  # as the runner does, after the plain run whose diagnostics it already compares.
+  if [ "$catches" = 1 ] && ! grep -q '^fn main\b' "$file" && grep -q '^fn test' "$file"; then
+    env "${unset[@]}" "${set[@]}" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret --tests "$file" >>"$WORK/$mode/$base.out" 2>&1
+    echo "tests-exit=$?" >>"$WORK/$mode/$base.out"
+  fi
 }
 export -f run_one
 
