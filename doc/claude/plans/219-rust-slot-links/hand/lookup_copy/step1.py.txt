@@ -1,0 +1,13 @@
+# step 1 — (R-CopyView) walk clause, as list_ops step 1: `cur: Tree? = t; … cur = cur.left`
+# only reads and rebinds to a child of itself, so `cur` is a view of `t`; no copy, no witness.
+import re, sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+a = 'loft_bind_copy(loft_types, 101, &v2_cur, v0_t);'
+assert s.count(a) == 1
+s = s.replace(a, 'v2_cur = v0_t;', 1)
+s, n = re.subn(r'\n *if \(v3___own_cur\.store_nr != v2_cur\.store_nr\) \{\n\s*loft_free_var\(&v3___own_cur\);\n\s*v3___own_cur = loft_ref_null\(\);\n\s*\}', '', s)
+assert n == 3, n
+s, n = re.subn(r'\n *v3___own_cur = v2_cur;', '', s)
+assert n == 1
+open(dst, 'w').write(s)

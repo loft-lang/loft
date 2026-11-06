@@ -1,0 +1,128 @@
+--- base.c
++++ s2.c
+@@ -16732,6 +16732,16 @@
+ /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
+  * element record copied into a fresh record of the destination's store, its heap deep-copied, a
+  * null slot kept null. */
++
++/* hand: the direct demote — `h`'s record bytes move into a fresh child of h's store, and the
++ * out-of-line field at `fpos` names it; the literal's other fields are written after. */
++static void loft_demote(loft_ref h, uint32_t size, uint32_t fpos) {
++    loft_store_t *s = loft_store_of(h);
++    uint32_t c = loft_claim(s, 1 + (size + 7) / 8);
++    loft_ref ch = { h.store_nr, c, 8, 0 };
++    loft_copy_bytes(ch, 0, h, 0, size);
++    loft_set_u32(s, h.rec, h.pos + fpos, c);
++}
+ static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+     int64_t n = loft_vec_len(o);
+     if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+@@ -32330,12 +32340,7 @@
+             t4 = (uint8_t) (v2_h.rec != 0);
+         }
+         if (t4 == 1) {
+-            v15__demote_old_1 = loft_place_record(v2_h, 103, 16, loft_dflt103, 16, 0);
+-            loft_move_field(loft_types, 103, v2_h, v15__demote_old_1);
+-            t5 = loft_new_child_rec(loft_types, 103, loft_field(v2_h, 8), loft_dflt103, 16);
+-            v16__demote_child_1 = t5;
+-            loft_move_field(loft_types, 103, v15__demote_old_1, v16__demote_child_1);
+-            loft_free_record_in(loft_types, 103, v15__demote_old_1);
++            loft_demote(v2_h, 16, 8);
+         } else {
+             loft_database_typed(&v2_h, 16, 103);
+             loft_set_int4_at(v2_h, 8, INT64_C(0), "DRIVER.loft", 135);
+@@ -32366,24 +32371,14 @@
+             t9 = (int64_t) (v8_i_1);
+             loft_pa_set_at(loft_pa21_0, loft_pl21_0, 0, &t9, sizeof(int64_t), v21__demote_fresh_1, "DRIVER.loft", 136);
+         } else {
+-            v19__demote_old_2 = loft_place_record(v18___ref_1, 103, 16, loft_dflt103, 16, 0);
+-            loft_move_field(loft_types, 103, v18___ref_1, v19__demote_old_2);
+-            t10 = loft_new_child_rec(loft_types, 103, loft_field(v18___ref_1, 8), loft_dflt103, 16);
+-            v20__demote_child_2 = t10;
+-            loft_move_field(loft_types, 103, v19__demote_old_2, v20__demote_child_2);
+-            loft_free_record_in(loft_types, 103, v19__demote_old_2);
++            loft_demote(v18___ref_1, 16, 8);
+             loft_set_int_at(v18___ref_1, 0, v8_i_1, "DRIVER.loft", 136);
+         }
+     }
+     brk_2:;
+     v9_r = loft_ref_null();
+     v10_cur = loft_ref_null();
+-    loft_bind_copy(loft_types, 103, &v10_cur, v2_h);
+-    if (v24___own_cur.store_nr != v10_cur.store_nr) {
+-        loft_free_var(&v24___own_cur);
+-        v24___own_cur = loft_ref_null();
+-    }
+-    v24___own_cur = v10_cur;
++    v10_cur = v2_h;
+     v11_sum = INT64_C(0);
+     for (;;) {
+         t11 = (uint8_t) (v10_cur.store_nr == 0xFFFF);
+@@ -32403,12 +32398,7 @@
+             t16 = (uint8_t) (v9_r.rec != 0);
+         }
+         if (t16 == 1) {
+-            v22__demote_old_3 = loft_place_record(v9_r, 103, 16, loft_dflt103, 16, 0);
+-            loft_move_field(loft_types, 103, v9_r, v22__demote_old_3);
+-            t17 = loft_new_child_rec(loft_types, 103, loft_field(v9_r, 8), loft_dflt103, 16);
+-            v23__demote_child_3 = t17;
+-            loft_move_field(loft_types, 103, v22__demote_old_3, v23__demote_child_3);
+-            loft_free_record_in(loft_types, 103, v22__demote_old_3);
++            loft_demote(v9_r, 16, 8);
+         } else {
+             loft_database_typed(&v9_r, 16, 103);
+             loft_set_int4_at(v9_r, 8, INT64_C(0), "DRIVER.loft", 140);
+@@ -32416,20 +32406,11 @@
+         t18 = loft_get_int(v10_cur, 0);
+         loft_set_int_at(v9_r, 0, t18, "DRIVER.loft", 140);
+         v10_cur = loft_ref_from_child_rec(loft_field(v10_cur, 8));
+-        if (v24___own_cur.store_nr != v10_cur.store_nr) {
+-            loft_free_var(&v24___own_cur);
+-            v24___own_cur = loft_ref_null();
+-        }
+     }
+     brk_3:;
+     v12_back = INT64_C(0);
+     v10_cur = loft_ref_null();
+-    loft_bind_copy(loft_types, 103, &v10_cur, v9_r);
+-    if (v24___own_cur.store_nr != v10_cur.store_nr) {
+-        loft_free_var(&v24___own_cur);
+-        v24___own_cur = loft_ref_null();
+-    }
+-    v24___own_cur = v10_cur;
++    v10_cur = v9_r;
+     for (;;) {
+         t19 = (uint8_t) (v10_cur.store_nr == 0xFFFF);
+         t20 = (uint8_t) (!(t19 == 1));
+@@ -32441,19 +32422,10 @@
+         t23 = loft_add(t21, t22);
+         v12_back = loft_rem_at(t23, INT64_C(1000000007), "DRIVER.loft", 143);
+         v10_cur = loft_ref_from_child_rec(loft_field(v10_cur, 8));
+-        if (v24___own_cur.store_nr != v10_cur.store_nr) {
+-            loft_free_var(&v24___own_cur);
+-            v24___own_cur = loft_ref_null();
+-        }
+     }
+     brk_4:;
+     v13_p = loft_ref_null();
+-    loft_bind_copy(loft_types, 103, &v13_p, v2_h);
+-    if (v25___own_p.store_nr != v13_p.store_nr) {
+-        loft_free_var(&v25___own_p);
+-        v25___own_p = loft_ref_null();
+-    }
+-    v25___own_p = v13_p;
++    v13_p = v2_h;
+     v14_n = INT64_C(0);
+     for (;;) {
+         t24 = (uint8_t) (v13_p.store_nr == 0xFFFF);
+@@ -32463,10 +32435,6 @@
+         }
+         v14_n = loft_add(v14_n, INT64_C(1));
+         v13_p = loft_ref_from_child_rec(loft_field(v13_p, 8));
+-        if (v25___own_p.store_nr != v13_p.store_nr) {
+-            loft_free_var(&v25___own_p);
+-            v25___own_p = loft_ref_null();
+-        }
+     }
+     brk_5:;
+     t26 = loft_add(v11_sum, v12_back);

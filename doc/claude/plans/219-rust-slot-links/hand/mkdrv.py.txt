@@ -1,0 +1,28 @@
+import re, sys, os
+ROOT='/Users/Jurjen/workspace/loft/bench'
+L={ # routine: (bench, loft main body, rust main body)
+ 'tree_delete':('21_tree','  for r in 0..n { sink += tree_delete(1200, r & 1); }\n  row("tree_delete", n, ticks() - t0, 1200, tree_delete(1200, 0), sink);',
+   '    for r in 0..n { sink = sink.wrapping_add(tree_delete(black_box(1200), black_box(r & 1))); }\n    row("tree_delete", n, t0.elapsed().as_micros() as i64, 1200, tree_delete(1200, 0), sink);'),
+ 'list_ops':('21_tree','  for r in 0..n { sink += list_ops(2000, r & 1); }\n  row("list_ops", n, ticks() - t0, 2000, list_ops(2000, 0), sink);',
+   '    for r in 0..n { sink = sink.wrapping_add(list_ops(black_box(2000), black_box(r & 1))); }\n    row("list_ops", n, t0.elapsed().as_micros() as i64, 2000, list_ops(2000, 0), sink);'),
+ 'build_rec':('21_tree','  for r in 0..n { sink += build_rec(2000, r & 1); }\n  row("build_rec", n, ticks() - t0, 2000, build_rec(2000, 0), sink);',
+   '    for r in 0..n { sink = sink.wrapping_add(build_rec(black_box(2000), black_box(r & 1))); }\n    row("build_rec", n, t0.elapsed().as_micros() as i64, 2000, build_rec(2000, 0), sink);'),
+ 'enum_list':('21_tree','  for r in 0..n { sink += enum_list(2000, r & 1); }\n  row("enum_list", n, ticks() - t0, 2000, enum_list(2000, 0), sink);',
+   '    for r in 0..n { sink = sink.wrapping_add(enum_list(black_box(2000), black_box(r & 1))); }\n    row("enum_list", n, t0.elapsed().as_micros() as i64, 2000, enum_list(2000, 0), sink);'),
+ 'lookup_copy':('21_tree','  for r in 0..n { sink += lookup_copy(q, 2000, r & 1); }\n  row("lookup_copy", n, ticks() - t0, 4000, lookup_copy(q, 2000, 0), sink);',
+   '    for r in 0..n { sink = sink.wrapping_add(lookup_copy(&q, black_box(2000), black_box(r & 1))); }\n    row("lookup_copy", n, t0.elapsed().as_micros() as i64, 4000, lookup_copy(&q, 2000, 0), sink);'),
+ 'expr_build':('22_expr','  for r in 0..n { sink += expr_build(r & 1); }\n  row("expr_build", n, ticks() - t0, 2047, expr_build(0), sink);',
+   '    for r in 0..n { sink = sink.wrapping_add(expr_build(black_box(r & 1))); }\n    row("expr_build", n, t0.elapsed().as_micros() as i64, 2047, expr_build(0), sink);'),
+ 'expr_simplify':('22_expr','  for r in 0..n { sink += expr_simplify(if r & 1 == 0 { e0 } else { e1 }); }\n  row("expr_simplify", n, ticks() - t0, 2047, expr_simplify(e0), sink);',
+   '    for r in 0..n { sink = sink.wrapping_add(expr_simplify(&e[black_box(r & 1) as usize])); }\n    row("expr_simplify", n, t0.elapsed().as_micros() as i64, 2047, expr_simplify(&e[0]), sink);'),
+ 'lru_mixed':('23_lru',None,None),
+}
+for r,(b,lm,rm) in L.items():
+    lsrc=open(f'{ROOT}/{b}/bench.loft').read(); rsrc=open(f'{ROOT}/{b}/bench.rs').read()
+    if lm:
+        pre={'21_tree':'  q = build(2000, 0);\n','22_expr':'  e0 = gen(10, 0, 0);\n  e1 = gen(10, 0, 1);\n'}[b]
+        rpre={'21_tree':'    let q = build(2000, 0);\n','22_expr':'    let e = [gen(10, 0, 0), gen(10, 0, 1)];\n'}[b]
+        lsrc=lsrc[:lsrc.index('fn main() {')]+'fn main() {\n  n = arg_n(10);\n'+pre+'  t0 = ticks();\n  sink = 0;\n'+lm+'\n}\n'
+        rsrc=rsrc[:rsrc.index('fn main() {')]+'fn main() {\n    let n = arg_n(10);\n'+rpre+'    let t0 = Instant::now();\n    let mut sink: i64 = 0;\n'+rm+'\n}\n'
+    open(f'drv/{r}.loft','w').write(lsrc); open(f'drv/{r}.rs','w').write(rsrc)
+print('ok')

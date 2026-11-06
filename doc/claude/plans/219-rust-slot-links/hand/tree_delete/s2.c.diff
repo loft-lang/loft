@@ -1,0 +1,83 @@
+--- base.c
++++ s2.c
+@@ -16732,6 +16732,32 @@
+ /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
+  * element record copied into a fresh record of the destination's store, its heap deep-copied, a
+  * null slot kept null. */
++
++/* hand: OpMoveChildRec — `f` takes the child record `src_f` names (a field inside the record `f`
++ * holds): the number is detached from `src_f` and installed in `f`; the replaced record — now
++ * owning nothing the move took — is released. */
++static void loft_move_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, loft_ref src_f) {
++    if (f.store_nr == 0xFFFF || f.rec == 0) return;
++    uint32_t old = loft_u32(loft_store_of(f), f.rec, f.pos);
++    uint32_t moved = (src_f.store_nr == 0xFFFF || src_f.rec == 0) ? 0 : loft_u32(loft_store_of(src_f), src_f.rec, src_f.pos);
++    if (moved) loft_set_u32(loft_store_of(src_f), src_f.rec, src_f.pos, 0);
++    loft_set_u32(loft_store_of(f), f.rec, f.pos, moved);
++    if (old) {
++        loft_ref o = { f.store_nr, old, 8, 0 };
++        loft_remove_claims(T, tp, o);
++        loft_st_delete(loft_store_of(f), old);
++    }
++}
++static void loft_slot_move(const loft_tdesc *T, uint16_t tp, loft_ref *cell, loft_ref src_f) {
++    if (loft_slot_is_field(*cell)) {
++        loft_ref f = *cell;
++        f.pos &= ~LOFT_SLOT_FIELD_BIT;
++        loft_move_child_rec(T, tp, f, src_f);
++    } else {
++        *cell = loft_ref_from_child_rec(src_f);
++    }
++}
++static const uint8_t loft_zero16[16] = { 0 };
+ static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+     int64_t n = loft_vec_len(o);
+     if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+@@ -32234,18 +32260,8 @@
+         }
+     }
+     brk_1:;
+-    t10 = v3__slot_cur_1;
+-    loft_database_typed(&v4___ref_p2_1, 16, 101);
+-    loft_set_int_at(v4___ref_p2_1, 0, v1_k, "DRIVER.loft", 40);
+-    t12 = loft_field(v4___ref_p2_1, 8);
+-    t13 = loft_ref_null();
+-    loft_set_child_rec(loft_types, 101, t12, t13, 0);
+-    t14 = loft_field(v4___ref_p2_1, 12);
+-    t15 = loft_ref_null();
+-    loft_set_child_rec(loft_types, 101, t14, t15, 0);
+-    t11 = v4___ref_p2_1;
+-    loft_set_child_rec(loft_types, 101, t10, t11, 0);
+-    v2_cur = loft_ref_from_child_rec(v3__slot_cur_1);
++    v2_cur = loft_new_child_rec(loft_types, 101, v3__slot_cur_1, loft_zero16, 16);
++    loft_set_int_at(v2_cur, 0, v1_k, "DRIVER.loft", 40);
+     v7___ret_3 = (uint8_t) (1);
+     loft_free_var(&v4___ref_p2_1);
+     t16 = v7___ret_3;
+@@ -32368,10 +32384,7 @@
+         loft_panic(loft_lit("slot.k is null", 14), loft_lit("DRIVER.loft", 43), INT64_C(86));
+     }
+     v1_k = v2__ncr_1;
+-    t5 = loft_ref_from_child_rec(loft_field(loft_slot_read(*v0_slot), 12));
+-    t6 = (*v0_slot);
+-    loft_slot_write(loft_types, 101, &(*v0_slot), t5, 0);
+-    loft_free_displaced(t6, (*v0_slot));
++    loft_slot_move(loft_types, 101, v0_slot, loft_field(loft_slot_read(*v0_slot), 12));
+     t7 = v1_k;
+     return t7;
+     return t1;
+@@ -32448,12 +32461,10 @@
+     } else {
+         t13 = (uint8_t) (loft_ref_from_child_rec(loft_field(v2_cur, 8)).store_nr == 0xFFFF);
+         if (!(t13 == 1)) {
+-            t14 = loft_ref_from_child_rec(loft_field(v2_cur, 8));
+-            loft_set_child_rec(loft_types, 101, v4__slot_cur_1, t14, 0);
++            loft_move_child_rec(loft_types, 101, v4__slot_cur_1, loft_field(v2_cur, 8));
+             v2_cur = loft_ref_from_child_rec(v4__slot_cur_1);
+         } else {
+-            t15 = loft_ref_from_child_rec(loft_field(v2_cur, 12));
+-            loft_set_child_rec(loft_types, 101, v4__slot_cur_1, t15, 0);
++            loft_move_child_rec(loft_types, 101, v4__slot_cur_1, loft_field(v2_cur, 12));
+             v2_cur = loft_ref_from_child_rec(v4__slot_cur_1);
+         }
+     }

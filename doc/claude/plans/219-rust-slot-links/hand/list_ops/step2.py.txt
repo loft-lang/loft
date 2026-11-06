@@ -1,0 +1,46 @@
+# step 2 — (R-Demote) emitted directly: the old record's bytes go into ONE fresh child record of
+# the same store (its handles move with them: same store, nothing to re-claim), and the field
+# names the child; no temporary record, no two field moves, no free.
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+RT = '''
+/* hand: the direct demote — `h`'s record bytes move into a fresh child of h's store, and the
+ * out-of-line field at `fpos` names it; the literal's other fields are written after. */
+static void loft_demote(loft_ref h, uint32_t size, uint32_t fpos) {
+    loft_store_t *s = loft_store_of(h);
+    uint32_t c = loft_claim(s, 1 + (size + 7) / 8);
+    loft_ref ch = { h.store_nr, c, 8, 0 };
+    loft_copy_bytes(ch, 0, h, 0, size);
+    loft_set_u32(s, h.rec, h.pos + fpos, c);
+}
+'''
+anchor = 'static void loft_vec_add_array('
+s = s.replace(anchor, RT + anchor, 1)
+reps = [
+ ('''            v15__demote_old_1 = loft_place_record(v2_h, 103, 16, loft_dflt103, 16, 0);
+            loft_move_field(loft_types, 103, v2_h, v15__demote_old_1);
+            t5 = loft_new_child_rec(loft_types, 103, loft_field(v2_h, 8), loft_dflt103, 16);
+            v16__demote_child_1 = t5;
+            loft_move_field(loft_types, 103, v15__demote_old_1, v16__demote_child_1);
+            loft_free_record_in(loft_types, 103, v15__demote_old_1);''',
+  '''            loft_demote(v2_h, 16, 8);'''),
+ ('''            v19__demote_old_2 = loft_place_record(v18___ref_1, 103, 16, loft_dflt103, 16, 0);
+            loft_move_field(loft_types, 103, v18___ref_1, v19__demote_old_2);
+            t10 = loft_new_child_rec(loft_types, 103, loft_field(v18___ref_1, 8), loft_dflt103, 16);
+            v20__demote_child_2 = t10;
+            loft_move_field(loft_types, 103, v19__demote_old_2, v20__demote_child_2);
+            loft_free_record_in(loft_types, 103, v19__demote_old_2);''',
+  '''            loft_demote(v18___ref_1, 16, 8);'''),
+ ('''            v22__demote_old_3 = loft_place_record(v9_r, 103, 16, loft_dflt103, 16, 0);
+            loft_move_field(loft_types, 103, v9_r, v22__demote_old_3);
+            t17 = loft_new_child_rec(loft_types, 103, loft_field(v9_r, 8), loft_dflt103, 16);
+            v23__demote_child_3 = t17;
+            loft_move_field(loft_types, 103, v22__demote_old_3, v23__demote_child_3);
+            loft_free_record_in(loft_types, 103, v22__demote_old_3);''',
+  '''            loft_demote(v9_r, 16, 8);'''),
+]
+for a, b in reps:
+    assert s.count(a) == 1, a[:70]
+    s = s.replace(a, b, 1)
+open(dst, 'w').write(s)

@@ -1,0 +1,60 @@
+--- base.c
++++ s3.c
+@@ -16732,6 +16732,21 @@
+ /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
+  * element record copied into a fresh record of the destination's store, its heap deep-copied, a
+  * null slot kept null. */
++
++/* hand: a buffer naming a store and no record — the callee claims its result there. */
++static loft_ref loft_store_buf(loft_ref host) { loft_ref b = { host.store_nr, 0, 0, 0 }; return b; }
++/* hand: write the result of a call handed `loft_store_buf(host)` into the out-of-line field `f`:
++ * a record the callee claimed in f's store is adopted by number; anything else is written as
++ * `OpSetChildRec` writes it (its argument handed back: the field already says it). */
++static inline void loft_adopt_child(const loft_tdesc *T, uint16_t tp, loft_ref f, loft_ref v) {
++    if (v.store_nr == f.store_nr && v.rec != 0) {
++        uint32_t cur = loft_u32(loft_store_of(f), f.rec, f.pos);
++        if (v.rec == cur && v.pos == 8) return;
++        loft_set_u32(loft_store_of(f), f.rec, f.pos, v.rec);
++    } else {
++        loft_set_child_rec(T, tp, f, v, 0);
++    }
++}
+ static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+     int64_t n = loft_vec_len(o);
+     if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+@@ -32397,6 +32412,11 @@
+             t2 = (uint8_t) (v2___retbuf.rec != 0);
+         }
+         if (t2 == 1) {
++        } else if (v2___retbuf.store_nr != 0xFFFF) {
++            v2___retbuf.rec = loft_claim(loft_store_of(v2___retbuf), 3);
++            v2___retbuf.pos = 8;
++            loft_set_u32(loft_store_of(v2___retbuf), v2___retbuf.rec, 16, 0);
++            loft_set_u32(loft_store_of(v2___retbuf), v2___retbuf.rec, 20, 0);
+         } else {
+             loft_database_typed(&v2___retbuf, 16, 101);
+         }
+@@ -32419,9 +32439,9 @@
+     if (v1_k < t8) {
+         loft_frame_site(155);
+         t9 = loft_ref_from_child_rec(loft_field(v0_t, 8));
+-        v6__written_back_1 = n_insert_rec(t9, v1_k, v3___ref_1);
++        v6__written_back_1 = n_insert_rec(t9, v1_k, loft_store_buf(v0_t));
+         t10 = loft_field(v0_t, 8);
+-        loft_set_child_rec(loft_types, 101, t10, v6__written_back_1, 0);
++        loft_adopt_child(loft_types, 101, t10, v6__written_back_1);
+         if (v6__written_back_1.store_nr != v0_t.store_nr) {
+             loft_free_var_distinct(&v6__written_back_1, v3___ref_1);
+         }
+@@ -32431,9 +32451,9 @@
+         if (t11 < v1_k) {
+             loft_frame_site(157);
+             t12 = loft_ref_from_child_rec(loft_field(v0_t, 12));
+-            v7__written_back_2 = n_insert_rec(t12, v1_k, v4___ref_2);
++            v7__written_back_2 = n_insert_rec(t12, v1_k, loft_store_buf(v0_t));
+             t13 = loft_field(v0_t, 12);
+-            loft_set_child_rec(loft_types, 101, t13, v7__written_back_2, 0);
++            loft_adopt_child(loft_types, 101, t13, v7__written_back_2);
+             if (v7__written_back_2.store_nr != v0_t.store_nr) {
+                 loft_free_var_distinct(&v7__written_back_2, v4___ref_2);
+             }

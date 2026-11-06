@@ -1,0 +1,33 @@
+--- base.c
++++ s1.c
+@@ -32382,12 +32382,7 @@
+     uint8_t t7;
+     v3___own_cur = loft_ref_null();
+     v2_cur = loft_ref_null();
+-    loft_bind_copy(loft_types, 101, &v2_cur, v0_t);
+-    if (v3___own_cur.store_nr != v2_cur.store_nr) {
+-        loft_free_var(&v3___own_cur);
+-        v3___own_cur = loft_ref_null();
+-    }
+-    v3___own_cur = v2_cur;
++    v2_cur = v0_t;
+     for (;;) {
+         t2 = (uint8_t) (v2_cur.store_nr == 0xFFFF);
+         t3 = (uint8_t) (!(t2 == 1));
+@@ -32405,16 +32400,8 @@
+         t6 = loft_get_int(v2_cur, 0);
+         if (v1_k < t6) {
+             v2_cur = loft_ref_from_child_rec(loft_field(v2_cur, 8));
+-            if (v3___own_cur.store_nr != v2_cur.store_nr) {
+-                loft_free_var(&v3___own_cur);
+-                v3___own_cur = loft_ref_null();
+-            }
+         } else {
+             v2_cur = loft_ref_from_child_rec(loft_field(v2_cur, 12));
+-            if (v3___own_cur.store_nr != v2_cur.store_nr) {
+-                loft_free_var(&v3___own_cur);
+-                v3___own_cur = loft_ref_null();
+-            }
+         }
+     }
+     brk_1:;

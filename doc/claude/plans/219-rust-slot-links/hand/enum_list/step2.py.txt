@@ -1,0 +1,19 @@
+# step 2 — the walk is views: `cur = l`, the match payload `next` (only read: copied into cur),
+# and `cur = next` view the list; the per-step payload release and the cursor's release go.
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+for a, b in [
+    ('loft_bind_copy(loft_types, 100, &v8_cur, v2_l);', 'v8_cur = v2_l;'),
+    ('loft_bind_copy(loft_types, 100, &v8_cur, v7_r);', 'v8_cur = v7_r;'),
+    ('loft_bind_copy(loft_types, 100, &v11__mv_next_1, t10);', 'v11__mv_next_1 = t10;'),
+    ('loft_bind_copy(loft_types, 100, &v15__mv_next_2, t19);', 'v15__mv_next_2 = t19;'),
+    ('loft_bind_copy(loft_types, 100, &v8_cur, v11__mv_next_1);', 'v8_cur = v11__mv_next_1;'),
+    ('loft_bind_copy(loft_types, 100, &v8_cur, v15__mv_next_2);', 'v8_cur = v15__mv_next_2;'),
+    ('        loft_free_var(&v11__mv_next_1);\n', ''),
+    ('        loft_free_var(&v15__mv_next_2);\n', ''),
+    ('    loft_free_var(&v8_cur);\n', ''),
+]:
+    assert s.count(a) == 1, a
+    s = s.replace(a, b, 1)
+open(dst, 'w').write(s)

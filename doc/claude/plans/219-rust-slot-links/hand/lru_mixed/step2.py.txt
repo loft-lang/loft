@@ -1,0 +1,11 @@
+# step 2 — the key just added answers the record just filed: `c.nodes += [Node { key: k, … }];
+# m = c.nodes[k]` with nothing written between reads the record the insert filed (a linked entry
+# is a record of its own and does not move), not a second probe.
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+a = '''    t13 = loft_field(v0_c, 8);
+    v7_m = loft_h_find_i64(t13, loft_keys104, v1_k);'''
+assert s.count(a) == 1
+s = s.replace(a, '    v7_m = v6__elm_1;', 1)
+open(dst, 'w').write(s)

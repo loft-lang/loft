@@ -1,0 +1,44 @@
+# step 1 — recursive construction into the CALLER's store: the node `gen` builds is claimed in
+# the store its buffer names (a fresh store at the top), and each child call is handed a buffer
+# naming the node's store, so the finished child is ADOPTED by its number — no store per node,
+# no copy of the child subtree into its parent, no free of the child's store.
+import re, sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+RT = '''
+static loft_ref loft_store_buf(loft_ref host) { loft_ref b = { host.store_nr, 0, 0, 0 }; return b; }
+/* hand: the result record of a call handed `buf`: claimed in buf's store when it names one, else
+ * a fresh store as `OpDatabase` makes; its bytes zeroed (every child absent). */
+static loft_ref loft_buf_record(loft_ref buf, uint32_t size, uint16_t tp) {
+    if (buf.store_nr != 0xFFFF && buf.rec == 0) {
+        loft_store_t *s = loft_store_of(buf);
+        loft_ref r = { buf.store_nr, loft_claim(s, 1 + (size + 7) / 8), 8, 0 };
+        memset(loft_at(s, r.rec, r.pos), 0, size);
+        return r;
+    }
+    loft_ref r = loft_ref_null();
+    loft_database_typed(&r, size, tp);
+    return r;
+}
+/* hand: a child built in the host's store is adopted by number. */
+static inline void loft_adopt_new(loft_ref f, loft_ref v) {
+    loft_set_u32(loft_store_of(f), f.rec, f.pos, v.rec);
+}
+'''
+anchor = 'static void loft_vec_add_array('
+s = s.replace(anchor, RT + anchor, 1)
+a = s.index('static loft_ref n_gen__fr(int64_t v0_d, int64_t v1_i, int64_t v2_salt, loft_ref v3___retbuf__in) {')
+a = s.index('{', a)
+b = s.index('\n}\n', a)
+body = s[a:b]
+body = body.replace('    (void) v3___retbuf;\n', '')
+body, n = re.subn(r'loft_database_typed\(&(v\d+___ref_p2_\d+), 16, (\d+)\);', r'\1 = loft_buf_record(v3___retbuf, 16, \2);', body)
+assert n == 3, n
+body, n = re.subn(r'(v1[2-5]___lift_\d) = n_gen\(([^;]*), v\d___ref_\d\);', r'\1 = n_gen(\2, loft_store_buf(v10___ref_p2_2));', body)
+assert n == 4, n
+body, n = re.subn(r'loft_set_child_rec\(loft_types, 100, (t\d+), (v1[2-5]___lift_\d), 1\);', r'loft_adopt_new(\1, \2);', body)
+assert n == 4, n
+body, n = re.subn(r'\n *loft_free_var\(&v1[2-5]___lift_\d\);', '', body)
+assert n == 4, n
+s = s[:a] + body + s[b:]
+open(dst, 'w').write(s)

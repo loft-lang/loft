@@ -1,0 +1,9 @@
+# step 2 (pricing only) — a self-recursive call skips the frame wrapper (`loft_frame_push`/pop,
+# hold mark): what the per-call frame bookkeeping costs on a recursion ~13 levels deep.
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+for a in ('v6__written_back_1 = n_insert_rec(t9,', 'v7__written_back_2 = n_insert_rec(t12,'):
+    assert s.count(a) == 1
+    s = s.replace(a, a.replace('n_insert_rec(', 'n_insert_rec__fr('), 1)
+open(dst, 'w').write(s)

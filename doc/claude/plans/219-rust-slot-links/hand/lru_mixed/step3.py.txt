@@ -1,0 +1,13 @@
+# step 3 (runtime only) — the reference accessors inline: `loft_get_dbref` / `loft_set_dbref` and
+# what they call per access (`loft_record_removed`, `loft_st_note_referenced`, the bit-set
+# insert and test) are hot-inline, as `loft_get_int` already is.
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+for name in ('loft_get_dbref', 'loft_set_dbref', 'loft_record_removed', 'loft_st_note_referenced',
+             'loft_bits_insert', 'loft_st_is_removed', 'loft_bits_contains'):
+    s, n = re.subn(r'^static (\w[\w *]*?\b)' + name + r'\(', r'LOFT_HOT_INLINE \1' + name + '(', s, flags=re.M)
+    assert n >= 1, name
+# LOFT_HOT_INLINE is defined after some of these; define it early as well
+s = s.replace('#include', '#ifndef LOFT_HOT_INLINE\n#define LOFT_HOT_INLINE static inline __attribute__((always_inline))\n#endif\n#include', 1)
+open(dst, 'w').write(s)

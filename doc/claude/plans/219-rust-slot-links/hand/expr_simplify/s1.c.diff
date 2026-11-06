@@ -1,0 +1,277 @@
+--- base.c
++++ s1.c
+@@ -16732,6 +16732,24 @@
+ /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
+  * element record copied into a fresh record of the destination's store, its heap deep-copied, a
+  * null slot kept null. */
++
++static loft_ref loft_store_buf(loft_ref host) { loft_ref b = { host.store_nr, 0, 0, 0 }; return b; }
++static loft_ref loft_buf_record(loft_ref buf, uint32_t size, uint16_t tp) {
++    if (buf.store_nr != 0xFFFF && buf.rec == 0) {
++        loft_store_t *s = loft_store_of(buf);
++        loft_ref r = { buf.store_nr, loft_claim(s, 1 + (size + 7) / 8), 8, 0 };
++        memset(loft_at(s, r.rec, r.pos), 0, size);
++        return r;
++    }
++    loft_ref r = loft_ref_null();
++    loft_database_typed(&r, size, tp);
++    return r;
++}
++/* hand: a record of the destination store the result does not keep, released with what it owns. */
++static void loft_release_rec(const loft_tdesc *T, uint16_t tp, loft_ref r) {
++    loft_remove_claims(T, tp, r);
++    loft_st_delete(loft_store_of(r), r.rec);
++}
+ static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+     int64_t n = loft_vec_len(o);
+     if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+@@ -32492,221 +32510,35 @@
+ static loft_ref n_simplify__fr(loft_ref v0_e__in, loft_ref v7_b__in) {
+     LOFT_REF_IN(v0_e);
+     LOFT_REF_IN(v7_b);
+-    int64_t v2__mv_v_1 = LOFT_NULL;
+-    loft_ref v3__mv_l_1 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v4__mv_r_1 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v5_a = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v6___ref_1 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v8___ref_2 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v9__mv_l_2 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v10__mv_r_2 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v11___ref_3 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v12___ref_4 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v13___ref_p2_1 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v14___ref_p2_2 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v15___ref_p2_3 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v16___ref_p2_4 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v17___rbw_b = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v18___ret_1 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref v19___ret_2 = { 0xFFFF, 0, 0, 0 };
+-    loft_ref t1;
+-    uint8_t t2;
+-    int64_t t3;
+-    uint8_t t4;
+-    uint8_t t5;
+-    int64_t t6;
+-    loft_ref t7;
+-    loft_ref t8;
+-    loft_ref t9;
+-    loft_ref t10;
+-    loft_ref t11;
+-    loft_ref t12;
+-    uint8_t t13;
+-    uint8_t t14;
+-    int64_t t15;
+-    loft_ref t16;
+-    loft_ref t17;
+-    uint8_t t18;
+-    uint8_t t19;
+-    loft_ref t20;
+-    loft_ref t21;
+-    loft_ref t22;
+-    loft_ref t23;
+-    loft_ref t24;
+-    uint8_t t25;
+-    loft_ref t26;
+-    v17___rbw_b = v7_b;
+-    v16___ref_p2_4 = loft_ref_null();
+-    v15___ref_p2_3 = loft_ref_null();
+-    v14___ref_p2_2 = loft_ref_null();
+-    v13___ref_p2_1 = loft_ref_null();
+-    v12___ref_4 = loft_ref_null();
+-    v11___ref_3 = loft_ref_null();
+-    v8___ref_2 = loft_ref_null();
+-    v6___ref_1 = loft_ref_null();
+-    loft_frame_site(63);
+-    v3__mv_l_1 = loft_ref_null();
+-    v4__mv_r_1 = loft_ref_null();
+-    v5_a = loft_ref_null();
+-    v9__mv_l_2 = loft_ref_null();
+-    v10__mv_r_2 = loft_ref_null();
+-    t2 = loft_get_enum(v0_e, 0);
+-    t3 = (t2 == 255 ? LOFT_NULL : (int64_t) t2);
+-    if (t3 == loft_w64(INT32_C(1))) {
+-        v2__mv_v_1 = loft_get_int(v0_e, 8);
+-        loft_database_typed(&v13___ref_p2_1, 16, 101);
+-        loft_set_int_at(v13___ref_p2_1, 8, v2__mv_v_1, "DRIVER.loft", 63);
+-        t4 = (uint8_t) 1;
+-        loft_set_byte_at(v13___ref_p2_1, 0, t4, "DRIVER.loft", 63);
+-        v19___ret_2 = v13___ref_p2_1;
++    loft_ref n, a, b;
++    uint8_t tag = loft_get_enum(v0_e, 0);
++    if (tag == 1) {
++        n = loft_buf_record(v7_b, 16, 101);
++        loft_set_int_at(n, 8, loft_get_int(v0_e, 8), "", 63);
++        loft_set_byte_at(n, 0, (uint8_t) 1, "", 63);
++        return n;
++    }
++    a = n_simplify(loft_ref_from_child_rec(loft_field(v0_e, 4)), v7_b);
++    b = n_simplify(loft_ref_from_child_rec(loft_field(v0_e, 8)), loft_store_buf(a));
++    if (tag == 2) {
++        if (n_is_num(a, INT64_C(0)) == 1) { loft_release_rec(loft_types, 100, a); return b; }
++        if (n_is_num(b, INT64_C(0)) == 1) { loft_release_rec(loft_types, 100, b); return a; }
+     } else {
+-        t5 = loft_get_enum(v0_e, 0);
+-        t6 = (t5 == 255 ? LOFT_NULL : (int64_t) t5);
+-        if (t6 == loft_w64(INT32_C(2))) {
+-            v3__mv_l_1 = loft_ref_from_child_rec(loft_field(v0_e, 4));
+-            v4__mv_r_1 = loft_ref_from_child_rec(loft_field(v0_e, 8));
+-            loft_frame_site(66);
+-            t7 = v5_a;
+-            v5_a = n_simplify(v3__mv_l_1, v6___ref_1);
+-            if (t7.store_nr != v5_a.store_nr && t7.store_nr != v6___ref_1.store_nr) loft_free_ref(t7);
+-            loft_frame_site(67);
+-            t8 = n_simplify(v4__mv_r_1, v8___ref_2);
+-            if (!(t8.store_nr != v7_b.store_nr && t8.store_nr != v4__mv_r_1.store_nr && t8.store_nr != v8___ref_2.store_nr && loft_swap_rebind(100, t8, &v7_b))) { loft_bind_copy(loft_types, 100, &v7_b, t8); if (t8.store_nr != v7_b.store_nr && t8.store_nr != v4__mv_r_1.store_nr && t8.store_nr != v8___ref_2.store_nr) loft_free_ref(t8); }
+-            loft_frame_site(68);
+-            if (n_is_num(v5_a, INT64_C(0)) == 1) {
+-                loft_free_var_distinct(&v5_a, v7_b);
+-                loft_free_var_distinct(&v6___ref_1, v5_a);
+-                loft_free_var_distinct(&v8___ref_2, v7_b);
+-                loft_free_var_distinct(&v11___ref_3, v7_b);
+-                loft_free_var_distinct(&v12___ref_4, v7_b);
+-                loft_free_var_distinct(&v13___ref_p2_1, v7_b);
+-                loft_free_var_distinct(&v14___ref_p2_2, v7_b);
+-                loft_free_var_distinct(&v15___ref_p2_3, v7_b);
+-                loft_free_var_distinct(&v16___ref_p2_4, v7_b);
+-                t9 = v7_b;
+-                return t9;
+-            }
+-            loft_frame_site(69);
+-            if (n_is_num(v7_b, INT64_C(0)) == 1) {
+-                loft_database_typed(&v7_b, 16, 100);
+-                loft_copy_record_at(loft_types, 100, v5_a, v7_b, 2, "DRIVER.loft", 69);
+-                loft_free_var_distinct(&v5_a, v7_b);
+-                loft_free_var_distinct(&v6___ref_1, v5_a);
+-                loft_free_var_distinct(&v8___ref_2, v7_b);
+-                loft_free_var_distinct(&v11___ref_3, v7_b);
+-                loft_free_var_distinct(&v12___ref_4, v7_b);
+-                loft_free_var_distinct(&v13___ref_p2_1, v7_b);
+-                loft_free_var_distinct(&v14___ref_p2_2, v7_b);
+-                loft_free_var_distinct(&v15___ref_p2_3, v7_b);
+-                loft_free_var_distinct(&v16___ref_p2_4, v7_b);
+-                t10 = v7_b;
+-                return t10;
+-            }
+-            loft_database_typed(&v13___ref_p2_1, 16, 102);
+-            t11 = loft_field(v13___ref_p2_1, 4);
+-            loft_set_child_rec(loft_types, 100, t11, v5_a, 0);
+-            t12 = loft_field(v13___ref_p2_1, 8);
+-            loft_set_child_rec(loft_types, 100, t12, v7_b, 0);
+-            t13 = (uint8_t) 2;
+-            loft_set_byte_at(v13___ref_p2_1, 0, t13, "DRIVER.loft", 70);
+-            v19___ret_2 = v13___ref_p2_1;
+-        } else {
+-            t14 = loft_get_enum(v0_e, 0);
+-            t15 = (t14 == 255 ? LOFT_NULL : (int64_t) t14);
+-            if (t15 == loft_w64(INT32_C(3))) {
+-                v9__mv_l_2 = loft_ref_from_child_rec(loft_field(v0_e, 4));
+-                v10__mv_r_2 = loft_ref_from_child_rec(loft_field(v0_e, 8));
+-                loft_frame_site(73);
+-                t16 = v5_a;
+-                v5_a = n_simplify(v9__mv_l_2, v11___ref_3);
+-                if (t16.store_nr != v5_a.store_nr && t16.store_nr != v11___ref_3.store_nr) loft_free_ref(t16);
+-                loft_frame_site(74);
+-                t17 = n_simplify(v10__mv_r_2, v12___ref_4);
+-                if (!(t17.store_nr != v7_b.store_nr && t17.store_nr != v10__mv_r_2.store_nr && t17.store_nr != v12___ref_4.store_nr && loft_swap_rebind(100, t17, &v7_b))) { loft_bind_copy(loft_types, 100, &v7_b, t17); if (t17.store_nr != v7_b.store_nr && t17.store_nr != v10__mv_r_2.store_nr && t17.store_nr != v12___ref_4.store_nr) loft_free_ref(t17); }
+-                loft_frame_site(75);
+-                if (n_is_num(v5_a, INT64_C(0)) == 1) {
+-                    t18 = (uint8_t) (1);
+-                } else {
+-                    t18 = n_is_num(v7_b, INT64_C(0));
+-                }
+-                if (t18 == 1) {
+-                    loft_database_typed(&v15___ref_p2_3, 16, 101);
+-                    loft_set_int_at(v15___ref_p2_3, 8, INT64_C(0), "DRIVER.loft", 75);
+-                    t19 = (uint8_t) 1;
+-                    loft_set_byte_at(v15___ref_p2_3, 0, t19, "DRIVER.loft", 75);
+-                    v18___ret_1 = v15___ref_p2_3;
+-                    loft_free_var_distinct(&v5_a, v15___ref_p2_3);
+-                    loft_free_var_distinct(&v6___ref_1, v5_a);
+-                    loft_free_var_distinct(&v8___ref_2, v7_b);
+-                    loft_free_var_distinct(&v11___ref_3, v5_a);
+-                    loft_free_var_distinct(&v12___ref_4, v7_b);
+-                    loft_free_var_distinct(&v13___ref_p2_1, v15___ref_p2_3);
+-                    loft_free_var_distinct(&v14___ref_p2_2, v15___ref_p2_3);
+-                    loft_free_var_distinct(&v16___ref_p2_4, v15___ref_p2_3);
+-                    if (v7_b.store_nr != v17___rbw_b.store_nr) {
+-                        loft_free_var_distinct(&v7_b, v18___ret_1);
+-                    }
+-                    t20 = v18___ret_1;
+-                    return t20;
+-                }
+-                loft_frame_site(76);
+-                if (n_is_num(v5_a, INT64_C(1)) == 1) {
+-                    loft_free_var_distinct(&v5_a, v7_b);
+-                    loft_free_var_distinct(&v6___ref_1, v5_a);
+-                    loft_free_var_distinct(&v8___ref_2, v7_b);
+-                    loft_free_var_distinct(&v11___ref_3, v5_a);
+-                    loft_free_var_distinct(&v12___ref_4, v7_b);
+-                    loft_free_var_distinct(&v13___ref_p2_1, v7_b);
+-                    loft_free_var_distinct(&v14___ref_p2_2, v7_b);
+-                    loft_free_var_distinct(&v15___ref_p2_3, v7_b);
+-                    loft_free_var_distinct(&v16___ref_p2_4, v7_b);
+-                    t21 = v7_b;
+-                    return t21;
+-                }
+-                loft_frame_site(77);
+-                if (n_is_num(v7_b, INT64_C(1)) == 1) {
+-                    loft_database_typed(&v7_b, 16, 100);
+-                    loft_copy_record_at(loft_types, 100, v5_a, v7_b, 2, "DRIVER.loft", 77);
+-                    loft_free_var_distinct(&v5_a, v7_b);
+-                    loft_free_var_distinct(&v6___ref_1, v5_a);
+-                    loft_free_var_distinct(&v8___ref_2, v7_b);
+-                    loft_free_var_distinct(&v11___ref_3, v5_a);
+-                    loft_free_var_distinct(&v12___ref_4, v7_b);
+-                    loft_free_var_distinct(&v13___ref_p2_1, v7_b);
+-                    loft_free_var_distinct(&v14___ref_p2_2, v7_b);
+-                    loft_free_var_distinct(&v15___ref_p2_3, v7_b);
+-                    loft_free_var_distinct(&v16___ref_p2_4, v7_b);
+-                    t22 = v7_b;
+-                    return t22;
+-                }
+-                loft_database_typed(&v13___ref_p2_1, 16, 104);
+-                t23 = loft_field(v13___ref_p2_1, 4);
+-                loft_set_child_rec(loft_types, 100, t23, v5_a, 0);
+-                t24 = loft_field(v13___ref_p2_1, 8);
+-                loft_set_child_rec(loft_types, 100, t24, v7_b, 0);
+-                t25 = (uint8_t) 3;
+-                loft_set_byte_at(v13___ref_p2_1, 0, t25, "DRIVER.loft", 78);
+-                v19___ret_2 = v13___ref_p2_1;
+-            } else {
+-                v19___ret_2 = loft_ref_null();
+-            }
+-        }
+-    }
+-    loft_free_var_distinct(&v5_a, v13___ref_p2_1);
+-    loft_free_var_distinct(&v6___ref_1, v5_a);
+-    loft_free_var_distinct(&v8___ref_2, v7_b);
+-    loft_free_var_distinct(&v11___ref_3, v5_a);
+-    loft_free_var_distinct(&v12___ref_4, v7_b);
+-    loft_free_var_distinct(&v14___ref_p2_2, v13___ref_p2_1);
+-    loft_free_var_distinct(&v15___ref_p2_3, v13___ref_p2_1);
+-    loft_free_var_distinct(&v16___ref_p2_4, v13___ref_p2_1);
+-    loft_free_var_distinct(&v13___ref_p2_1, v19___ret_2);
+-    if (v7_b.store_nr != v17___rbw_b.store_nr) {
+-        loft_free_var_distinct(&v7_b, v19___ret_2);
+-    }
+-    t26 = v19___ret_2;
+-    return t26;
+-    return t1;
++        if (n_is_num(a, INT64_C(0)) == 1 || n_is_num(b, INT64_C(0)) == 1) {
++            loft_release_rec(loft_types, 100, a);
++            loft_release_rec(loft_types, 100, b);
++            n = loft_buf_record(loft_store_buf(a), 16, 101);
++            loft_set_byte_at(n, 0, (uint8_t) 1, "", 75);
++            return n;
++        }
++        if (n_is_num(a, INT64_C(1)) == 1) { loft_release_rec(loft_types, 100, a); return b; }
++        if (n_is_num(b, INT64_C(1)) == 1) { loft_release_rec(loft_types, 100, b); return a; }
++    }
++    n = loft_buf_record(loft_store_buf(a), 16, 100);
++    loft_set_u32(loft_store_of(n), n.rec, n.pos + 4, a.rec);
++    loft_set_u32(loft_store_of(n), n.rec, n.pos + 8, b.rec);
++    loft_set_byte_at(n, 0, tag, "", 70);
++    return n;
+ }
+ 
+ static inline int64_t n_expr_simplify__fr(loft_ref v0_e__in) {

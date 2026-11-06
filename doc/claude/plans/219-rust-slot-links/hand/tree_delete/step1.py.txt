@@ -1,0 +1,52 @@
+# step 1 — (M) the unlink MOVES: `h.f = <a child read of h.f's own child>` detaches that child's
+# record number and installs it in `h.f`, releasing only the replaced node — never copying the
+# subtree (`loft_set_child_rec` copied it into a fresh record and its claims, then released the old).
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+RT = '''
+/* hand: OpMoveChildRec — `f` takes the child record `src_f` names (a field inside the record `f`
+ * holds): the number is detached from `src_f` and installed in `f`; the replaced record — now
+ * owning nothing the move took — is released. */
+static void loft_move_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, loft_ref src_f) {
+    if (f.store_nr == 0xFFFF || f.rec == 0) return;
+    uint32_t old = loft_u32(loft_store_of(f), f.rec, f.pos);
+    uint32_t moved = (src_f.store_nr == 0xFFFF || src_f.rec == 0) ? 0 : loft_u32(loft_store_of(src_f), src_f.rec, src_f.pos);
+    if (moved) loft_set_u32(loft_store_of(src_f), src_f.rec, src_f.pos, 0);
+    loft_set_u32(loft_store_of(f), f.rec, f.pos, moved);
+    if (old) {
+        loft_ref o = { f.store_nr, old, 8, 0 };
+        loft_remove_claims(T, tp, o);
+        loft_st_delete(loft_store_of(f), old);
+    }
+}
+static void loft_slot_move(const loft_tdesc *T, uint16_t tp, loft_ref *cell, loft_ref src_f) {
+    if (loft_slot_is_field(*cell)) {
+        loft_ref f = *cell;
+        f.pos &= ~LOFT_SLOT_FIELD_BIT;
+        loft_move_child_rec(T, tp, f, src_f);
+    } else {
+        *cell = loft_ref_from_child_rec(src_f);
+    }
+}
+'''
+anchor = 'static void loft_vec_add_array('
+assert s.count(anchor) == 1
+s = s.replace(anchor, RT + anchor, 1)
+reps = [
+ ('''            t14 = loft_ref_from_child_rec(loft_field(v2_cur, 8));
+            loft_set_child_rec(loft_types, 101, v4__slot_cur_1, t14, 0);''',
+  '''            loft_move_child_rec(loft_types, 101, v4__slot_cur_1, loft_field(v2_cur, 8));'''),
+ ('''            t15 = loft_ref_from_child_rec(loft_field(v2_cur, 12));
+            loft_set_child_rec(loft_types, 101, v4__slot_cur_1, t15, 0);''',
+  '''            loft_move_child_rec(loft_types, 101, v4__slot_cur_1, loft_field(v2_cur, 12));'''),
+ ('''    t5 = loft_ref_from_child_rec(loft_field(loft_slot_read(*v0_slot), 12));
+    t6 = (*v0_slot);
+    loft_slot_write(loft_types, 101, &(*v0_slot), t5, 0);
+    loft_free_displaced(t6, (*v0_slot));''',
+  '''    loft_slot_move(loft_types, 101, v0_slot, loft_field(loft_slot_read(*v0_slot), 12));'''),
+]
+for a, b in reps:
+    assert s.count(a) == 1, a[:60]
+    s = s.replace(a, b, 1)
+open(dst, 'w').write(s)

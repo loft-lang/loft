@@ -1,0 +1,25 @@
+# step 2 — (R-InPlaceLiteral) for an out-of-line field: the literal written whole into a field
+# (`cur = Tree { k: k, left: null, right: null }` through a field link) is built IN the field's
+# child record (`loft_new_child_rec`), not in a fresh store copied in and freed.
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+a = '''    t10 = v3__slot_cur_1;
+    loft_database_typed(&v4___ref_p2_1, 16, 101);
+    loft_set_int_at(v4___ref_p2_1, 0, v1_k, "/private/tmp/p219/hand/drv/tree_delete.loft", 40);
+    t12 = loft_field(v4___ref_p2_1, 8);
+    t13 = loft_ref_null();
+    loft_set_child_rec(loft_types, 101, t12, t13, 0);
+    t14 = loft_field(v4___ref_p2_1, 12);
+    t15 = loft_ref_null();
+    loft_set_child_rec(loft_types, 101, t14, t15, 0);
+    t11 = v4___ref_p2_1;
+    loft_set_child_rec(loft_types, 101, t10, t11, 0);
+    v2_cur = loft_ref_from_child_rec(v3__slot_cur_1);'''
+b = '''    v2_cur = loft_new_child_rec(loft_types, 101, v3__slot_cur_1, loft_zero16, 16);
+    loft_set_int_at(v2_cur, 0, v1_k, "/private/tmp/p219/hand/drv/tree_delete.loft", 40);'''
+assert s.count(a) == 1
+s = s.replace(a, b, 1)
+anchor = 'static void loft_vec_add_array('
+s = s.replace(anchor, 'static const uint8_t loft_zero16[16] = { 0 };\n' + anchor, 1)
+open(dst, 'w').write(s)
