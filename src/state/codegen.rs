@@ -3006,7 +3006,7 @@ impl State {
                     self.code_add(stack.var_pos(v));
                     self.code_add(tp_nr);
                     if stash_old_for_post_free {
-                        self.free_stashed(stack, v, entry_w);
+                        self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
                     crate::copy_manifest::record(
                         stack.def_nr,
@@ -3339,7 +3339,7 @@ impl State {
                         // #330 epilogue: free the stashed old store unless
                         // the assignment kept it (witness = v's NEW DbRef;
                         // same store → no-op).
-                        self.free_stashed(stack, v, entry_w);
+                        self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
                     // @PLN130 — REASSIGNMENT from a call.  A lift temp inside an expression
                     // (`__lift_N = file(path)`) is compiled here, not through any first-bind
@@ -3411,7 +3411,7 @@ impl State {
                         // #330 epilogue: free the stashed old store unless
                         // the assignment kept it (witness = v's NEW DbRef;
                         // same store → no-op).
-                        self.free_stashed(stack, v, entry_w);
+                        self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
                     return;
                 }
@@ -3447,7 +3447,7 @@ impl State {
                     note_bind("R2d");
                     self.gen_set_first_ref_elem_copy(stack, v, value, d_nr);
                     if stash_old_for_post_free {
-                        self.free_stashed(stack, v, entry_w);
+                        self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
                     return;
                 }
@@ -3456,7 +3456,7 @@ impl State {
             self.set_var(stack, v, value);
             if stash_old_for_post_free {
                 // #330 epilogue (fall-through path): see above.
-                self.free_stashed(stack, v, entry_w);
+                self.free_stashed(stack, v, entry_w, buffer_witness);
             }
         } else {
             // First allocation — slot pre-assigned by assign_slots.
@@ -3606,10 +3606,17 @@ impl State {
     /// Free the store `v` held before its assignment, stashed on the stack, unless `v` now
     /// holds that same store — and, for a promoted return buffer, unless it is the store the
     /// caller handed in (`entry`, `@FR-O-Buffer`).
-    fn free_stashed(&mut self, stack: &mut Stack, v: u16, entry: Option<u16>) {
+    fn free_stashed(&mut self, stack: &mut Stack, v: u16, entry: Option<u16>, buffer: Option<u16>) {
         self.push_var_ref(stack, v);
-        if let Some(entry) = entry {
-            self.push_var_ref(stack, entry);
+        // `@FR-O-Buffer` — the call's hidden buffer is a witness of this free as it is of the
+        // pre-`Set` one: a POOLED buffer comes back as the call's result whenever the callee
+        // builds into it, so the stashed store is the buffer itself on the pass after such a
+        // result.  A nullable local takes this post-free (`nullable_local` above), and without
+        // the witness `m = s.capture(p)` released the caller's pooled buffer on the first miss
+        // after a hit; the next hit then built into a freed store.  The op has one keep-slot
+        // beside the new value, and a local with an entry witness keeps it for that witness.
+        if let Some(keep) = entry.or(buffer) {
+            self.push_var_ref(stack, keep);
             stack.add_op("OpFreeRefUnlessEntry", self);
         } else {
             stack.add_op("OpFreeRefIfDistinct", self);

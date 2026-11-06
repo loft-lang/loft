@@ -1,0 +1,76 @@
+// A nullable record a call answers through its caller's POOLED buffer (one store per call
+// site, re-used each pass) comes back as that buffer when the callee builds into it.  The
+// next pass rebinds the local — here the temp `s.capture().group(1)` lifts — and the
+// displaced store is the buffer itself, which the caller still owns and hands the call
+// again: the rebind must not free it (`@FR-O-Buffer`).  A miss after a hit is the shape that
+// reached it; each cell walks [miss, hit, miss, hit] three times.
+// @falsified-at: 369b941cf — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+struct G { text: text?, start: integer }
+struct M { text: text, groups: vector<G> }
+
+fn spans(input: text) -> vector<integer> {
+  if !input.starts_with("fn ") { return []; }
+  [1, 2, 3, 4]
+}
+
+// Builds into the caller's buffer on a hit, answers null on a miss.
+fn capture_from(self: text, from: integer) -> M? {
+  sp = spans(self);
+  if len(sp) < 2 { return null; }
+  gs: vector<G> = [];
+  gs += [G { text: self[3..8], start: from }];
+  M { text: self[0..8], groups: gs }
+}
+
+// Forwards `capture_from`'s answer, so its buffer is its caller's.
+fn capture(self: text) -> M? { self.capture_from(0) }
+
+// Mints a store of its own on a hit.
+fn fresh(self: text) -> M? {
+  if !self.starts_with("fn ") { return null; }
+  r = M { text: self[0..8], groups: [G { text: self[3..8], start: 0 }] };
+  r
+}
+
+fn group(self: M?, i: integer) -> text? {
+  if self == null || i < 0 { return null; }
+  if i == 0 { return self.text; }
+  g = self.groups[i - 1];
+  if g == null { return null; }
+  g.text
+}
+
+fn lines() -> vector<text> { ["x", "fn alpha(", "y", "fn beta_("] }
+
+// The lifted temp of a chained call: the shape that freed the buffer.
+fn chained() -> text {
+  out = "";
+  ls = lines();
+  for _ in 0..3 { for j in 0..len(ls) { n = ls[j].capture().group(1); out += "{n},"; } }
+  out
+}
+
+// A named nullable local declared outside the loop.
+fn named_local() -> text {
+  out = "";
+  ls = lines();
+  m: M? = null;
+  for _ in 0..3 { for j in 0..len(ls) { m = ls[j].capture(); out += "{m.group(1)},"; } }
+  out
+}
+
+// A callee that mints: the displaced store is its own and is released.
+fn minted() -> text {
+  out = "";
+  ls = lines();
+  for _ in 0..3 { for j in 0..len(ls) { n = ls[j].fresh().group(1); out += "{n},"; } }
+  out
+}
+
+fn main() {
+  want = "null,alpha,null,beta_,null,alpha,null,beta_,null,alpha,null,beta_,";
+  assert(chained() == want, "chained: {chained()}");
+  assert(named_local() == want, "named local: {named_local()}");
+  assert(minted() == want, "minted: {minted()}");
+}
