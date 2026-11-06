@@ -55,6 +55,13 @@ writer alone; each moved rule left in one place (§ Arc C's finishing condition,
 each rule's most frequent refusals on the benches either admitted by a generalised clause or
 recorded as the rule's boundary.
 
+**What counts as a duplicate** (owner, 2026-11-06): a rule implemented TWICE INSIDE ONE BACKEND —
+an IR pass and that backend's own writer clause both reaching its output — and a rule that would
+speed the interpreter but lives only in a writer.  The same clause in the rustc writer and the C
+writer is not, in itself, the problem: most of the rustc backend will be shelved, so the C writer's
+clauses are what this plan judges.  The one known duplicate left by ruling: `(R-ValueRecord)` on the
+C, the IR pass beside the C writer's clause for the forms the IR declines ([c4-view-plan.md](c4-view-plan.md) § S2).
+
 A faster interpreter follows from it — work a rule removes in the IR, every backend stops doing
 — and is measured per move, but it is the CONSEQUENCE, not the aim: a move that speeds the
 interpreter while leaving the rule in two places is not finished, and a cleanup that only
