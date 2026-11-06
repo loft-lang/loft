@@ -991,6 +991,9 @@ static void loft_set_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, lof
         }
         return;
     }
+    /* The child the field already holds, written back (`t.left = insert(t.left, k)` handing its
+     * argument back): the field already says it, so nothing is copied or released. */
+    if (old != 0 && src.store_nr == f.store_nr && src.rec == old && src.pos == 8) return;
     uint32_t size = T[tp].size;
     uint32_t fresh = loft_claim(loft_store_of(f), 1 + (size + 7) / 8);
     loft_ref nw = { f.store_nr, fresh, 8, 0 };

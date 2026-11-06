@@ -301,6 +301,61 @@ impl Parser {
         }
     }
 
+    /// `@FR-B-OutOfLine` — the out-of-line write of a call's result where the callee answers its
+    /// ARGUMENT or a record it built in the caller's buffer (`t.left = insert(t.left, k)`, the
+    /// textbook recursion).  The result is bound as a borrow, never copied at the bind:
+    /// `OpSetChildRec` copies what it must and leaves the child the field already holds as it
+    /// is.  Afterwards a result in a store that is neither the host's (the argument handed back)
+    /// nor the buffer's (the buffer filled in place) is the store the callee minted for this
+    /// call, and is released.  Lifted and copied at the bind instead, every write-back cost the
+    /// argument's whole subtree.
+    fn write_back_call(&mut self, field: &Value, kt: i32, val: &Value) -> Option<Value> {
+        if self.first_pass {
+            return None;
+        }
+        let Value::Call(fn_nr, args) = val.unspan() else {
+            return None;
+        };
+        let def = self.data.def(*fn_nr);
+        if !def.returns_borrowed_view() {
+            return None;
+        }
+        let buf_at = def.hidden_return_buffer_attr()?;
+        let Some(Value::Var(buf)) = args.get(buf_at).map(Value::unspan) else {
+            return None;
+        };
+        let buf = *buf;
+        let mut host: Option<u16> = None;
+        field.walk(&mut |nd| {
+            if host.is_none()
+                && let Value::Var(v) = nd
+            {
+                host = Some(*v);
+            }
+        });
+        let host = host?;
+        let d = match self.vars.tp(buf).base() {
+            Type::Reference(d, _) => *d,
+            _ => return None,
+        };
+        let borrow = Type::Reference(d, crate::data::Deps::frame1(host));
+        let r = self.create_unique("written_back", &borrow);
+        self.vars.set_type(r, borrow);
+        self.vars.defined(r);
+        self.vars.set_skip_free(r);
+        // Read by the write and the guarded release alone: the call's result is delivered to it
+        // as it is, on every backend — never the bind's copy (@PLN157 § V-g's elision).
+        self.vars.mark_view_elided(r);
+        let set = self.cl("OpSetChildRec", &[field.clone(), Value::Var(r), Value::Int(kt)]);
+        let distinct = self.cl("OpDistinctStore", &[Value::Var(r), Value::Var(host)]);
+        let release = self.cl("OpFreeRefIfDistinct", &[Value::Var(r), Value::Var(buf)]);
+        Some(v_block(
+            vec![v_set(r, val.clone()), set, v_if(distinct, release, Value::Null)],
+            Type::Void,
+            "write_back_call",
+        ))
+    }
+
     /// `@FR-R-Demote`, the PLACE clause — `o.f = T { …, g: o.f, … }`, where `f` and `g` are
     /// out-of-line fields of `T`: the literal arrives built in a temporary store, the place read
     /// once into `r` and `r` written whole into the literal's `g`.  Where `f` holds a record, that
@@ -463,6 +518,9 @@ impl Parser {
     pub(crate) fn out_of_line_set(&mut self, field: Value, kt: i32, val: &Value) -> Value {
         if let Some(demoted) = self.place_demote(&field, kt, val) {
             return demoted;
+        }
+        if let Some(written) = self.write_back_call(&field, kt, val) {
+            return written;
         }
         let source = if self.is_null_source(val) {
             self.cl("OpNullRefSentinel", &[])

@@ -1724,6 +1724,7 @@ impl Stores {
     /// - A null value releases the child the field held, all the way down, and leaves the
     ///   field absent (record 0).  `Store::delete` entombs it where a stored reference named
     ///   it (`@FR-H-Removed`), so such a link reads null afterwards.
+    /// - The child the field already holds, written back, is left as it is.
     /// - A value is copied into a FRESH record of the host's store first, because it may lie
     ///   inside the child it replaces (`t.left = t.left.left`).  An absent field then takes
     ///   the fresh record.  A present child keeps its record NUMBER: its claims are released
@@ -1754,6 +1755,12 @@ impl Stores {
                 self.remove_claims(&old_db, tp);
                 self.store_mut(field).delete(old);
             }
+            return;
+        }
+        // The child the field already holds, written back — `t.left = insert(t.left, k)` with the
+        // callee handing its argument back: the field already says it, so nothing is copied or
+        // released, where the copy below cost the child's whole extent per write.
+        if old != 0 && data.store_nr == field.store_nr && data.rec == old && data.pos == 8 {
             return;
         }
         let size = u32::from(self.enum_parent_size(tp));
