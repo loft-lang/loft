@@ -691,9 +691,9 @@ impl State {
                 // but answers the LINK's type, so the pushed value is a τ: sized as the link, a
                 // yielded `&integer` took 12 bytes off an 8-byte push and a `&text` 12 off a
                 // 16-byte one.
-                let t = match t {
-                    Type::RefVar(inner) => *inner,
-                    other => other,
+                let t = match t.base() {
+                    Type::RefVar(inner) => (**inner).clone(),
+                    _ => t,
                 };
                 let value_size = crate::variables::size(&t, &crate::data::Context::Argument);
                 stack.add_op("OpCoroutineYield", self);
