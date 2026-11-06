@@ -132,14 +132,13 @@ on their own branches at the same time: no step waits on them, and none touches 
    rule 6), and arm `gh pr merge --auto --squash`.
 5. **Start the next branch** (`<host>-pr<N>-next`) on the PR's tip, and fix the PR run's red
    steps there, each checked with its own probe as in step 3.  **Work each red job as it
-   ends, not when the run does**: every five minutes, list the run's finished jobs
-   (`gh pr checks <N>`, `gh run view <run> --json jobs`), fetch a newly red job's log at once
-   (`gh api repos/{owner}/{repo}/actions/jobs/<job>/logs`) and start its fix, so the fixes are
-   ready when the run finishes.  **Main's nightly reds are
-   fixed in the same pass**: the PR's `Nightly health (informational)` check names them, and
-   the PR cycle is mostly waiting on runners anyway.  Read the latest run of each scheduled
-   workflow on `main` (`gh run list --branch main --event schedule`), and fix each red there
-   like a PR red; one the PR already fixes needs only that check.
+   ends, not when the run does**: `scripts/pr_watch.py <N>` in the background looks every
+   five minutes and exits on each newly red job with its log saved, so its fix starts at once
+   and is ready when the run finishes; run it again after each exit.  **Main's nightly reds
+   are fixed in the same pass**: the PR's `Nightly health (informational)` check names them,
+   and the PR cycle is mostly waiting on runners anyway.  `pr_watch.py`'s first call lists
+   the latest red run of each scheduled workflow on `main`; fix each red there like a PR
+   red, and one the PR already fixes needs only that check.
 6. **Push those fixes to the PR branch only after its current run has finished**, all at once.
    Each run is then read whole, and its red steps are fixed before the next run starts.
    Cancel the runs a push made obsolete (`gh run cancel`).
@@ -154,7 +153,9 @@ three platforms — the Linux one gathers every test shard — `Clippy`, `Format
 suite`; the list is `gh api repos/{owner}/{repo}/rules/branches/main`).  A red required check
 holds auto-merge, so its fix is pushed for a third run.  Anything else red does not stop
 auto-merge from landing the PR: its fix stays on the next branch and goes with the NEXT PR,
-as does any fix left there at the merge: fixed, just not on `main` yet.
+as does any fix left there at the merge: fixed, just not on `main` yet.  The same holds when
+the FIRST run already has every required check green, which is rare: auto-merge lands it
+then, and the discovery fixes wait on the next branch the same way, at most a day.
 
 A nightly red in a consumer's suite (`switch-ab`, `consumer-main-health`) is triaged before
 it is fixed: run the consumer's suite on `main`'s own binary.  A failure there too is the
