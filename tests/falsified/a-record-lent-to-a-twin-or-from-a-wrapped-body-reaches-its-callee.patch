@@ -1,7 +1,7 @@
-diff --git b/src/scopes.rs a/src/scopes.rs
+diff --git a/src/scopes.rs b/src/scopes.rs
 index 4a26b0d88..4836d02e2 100644
---- b/src/scopes.rs
-+++ a/src/scopes.rs
+--- a/src/scopes.rs
++++ b/src/scopes.rs
 @@ -80,7 +80,6 @@ mod backings;
  mod branches;
  mod buffer_detach;
@@ -10,10 +10,10 @@ index 4a26b0d88..4836d02e2 100644
  mod capture_adoption;
  mod capture_builds;
  mod closure_keep;
-diff --git b/src/scopes/buffers.rs a/src/scopes/buffers.rs
+diff --git a/src/scopes/buffers.rs b/src/scopes/buffers.rs
 index 9f5b662e0..c13a3f61e 100644
---- b/src/scopes/buffers.rs
-+++ a/src/scopes/buffers.rs
+--- a/src/scopes/buffers.rs
++++ b/src/scopes/buffers.rs
 @@ -316,7 +316,7 @@ pub(super) fn reuse_record_buffers(
  /// not a body this pass rewrites.  Matching a bare `Block` alone skipped every such function
  /// in silence — the pool, the lazy mints and the entry-time flag and witness initialisers
@@ -23,10 +23,10 @@ index 9f5b662e0..c13a3f61e 100644
      match code {
          Value::Span(b) => body_block_mut(&mut b.1),
          Value::Block(bl) => Some(&mut **bl),
-diff --git b/src/value_record.rs a/src/value_record.rs
-index 0c6f74133..5e7bdc322 100644
---- b/src/value_record.rs
-+++ a/src/value_record.rs
+diff --git a/src/value_record.rs b/src/value_record.rs
+index 22382b1b6..50bddd766 100644
+--- a/src/value_record.rs
++++ b/src/value_record.rs
 @@ -596,18 +596,6 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
          for (i, r) in own {
              w.params.insert((t, i), r);
@@ -46,7 +46,7 @@ index 0c6f74133..5e7bdc322 100644
      }
      let mut touched: HashSet<u32> = HashSet::default();
      // The literals first: a one-buffer chain makes the buffer a carrier too, and the carrier
-@@ -2263,10 +2251,10 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
+@@ -2268,10 +2256,10 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
  fn rewrite_function(data: &mut Data, w: &World, twins: &HashMap<u32, u32>, f: u32, plan: &Plan) {
      let def = &mut data.definitions[f as usize];
      let mut code = std::mem::replace(&mut def.code, Value::Null);
@@ -61,13 +61,16 @@ index 0c6f74133..5e7bdc322 100644
      // A record per LENT carrier, declared null at the body's top: minted at its first lend,
      // overwritten whole at each, released where the carrier's own scope ends.
      let mut lends: HashMap<u16, u16> = HashMap::default();
-@@ -2293,12 +2281,10 @@ fn rewrite_function(data: &mut Data, w: &World, twins: &HashMap<u32, u32>, f: u3
+@@ -2298,15 +2286,10 @@ fn rewrite_function(data: &mut Data, w: &World, twins: &HashMap<u32, u32>, f: u3
          lends,
      }
      .uses(&mut code);
 -    if !decls.is_empty() {
 -        let b = crate::scopes::body_block_mut(&mut code);
--        debug_assert!(b.is_some(), "a lending body has a block to declare its records in");
+-        debug_assert!(
+-            b.is_some(),
+-            "a lending body has a block to declare its records in"
+-        );
 -        if let Some(b) = b {
 -            b.operators.splice(0..0, decls);
 -        }

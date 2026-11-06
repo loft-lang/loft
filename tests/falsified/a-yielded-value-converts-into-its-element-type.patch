@@ -1,17 +1,11 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index e2acebffe..75c1b62ad 100644
+index a3b302781..aee474314 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -1577,30 +1577,7 @@ impl Parser {
-                 // came out as 300 (`@FR-I-Narrow`), into `iterator<float>` as the integer's
-                 // bits read as a float, a `null` or a `text` crashed the interpreter and broke
-                 // the native build, and a nullable ended the loop early on `--native` only.
--                // The yielded value's type from here on: the element type once the store face
--                // converted it.  A call's tuple result is a `__tuple` RECORD that the
--                // conversion unboxes into a stack tuple, so asking the hand-over below about
--                // the pre-conversion type copied that stack tuple as if it were the record
--                // (`OpCopyRecord` over a tuple value: SIGSEGV, loft#1903).
--                let mut v_tp = v_tp;
+@@ -1592,24 +1592,7 @@ impl Parser {
+                 if matches!(v_tp.base(), Type::RefVar(_)) {
+                     self.un_ref(&mut v_tp, &mut v);
+                 }
 -                if let Type::Iterator(elem_tp, _) = r_type.base() {
 -                    let elem = (**elem_tp).clone();
 -                    let value_at = Some(&expr_start.position);

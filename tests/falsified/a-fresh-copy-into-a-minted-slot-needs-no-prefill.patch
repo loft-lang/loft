@@ -1,21 +1,21 @@
 diff --git a/src/opt/loop_records.rs b/src/opt/loop_records.rs
-index 198fb3c5a..6f722ed70 100644
+index badc4303d..020c68055 100644
 --- a/src/opt/loop_records.rs
 +++ b/src/opt/loop_records.rs
-@@ -150,7 +150,7 @@ pub(crate) fn group_covers_type(
-                     Some(Value::Int(n)) if u16::try_from(*n).is_ok_and(|n|
-                         n & crate::keys::COPY_FRESH_DEST != 0
-                             && n & crate::keys::COPY_TP_MASK == tp));
--                return fresh_same_type || !stores.owns_heap(tp);
-+                return true || fresh_same_type || !stores.owns_heap(tp);
-             }
-             // A record copy into one of the element's FIELDS writes that field whole: its
-             // null arm writes the field's default (`CompleteWrites::fresh_fields`, the same
+@@ -285,7 +285,7 @@ fn whole_copy_covers(args: &[Value], tp: u16, stores: &Stores) -> bool {
+         Some(Value::Int(n)) if u16::try_from(*n).is_ok_and(|n|
+             n & crate::keys::COPY_FRESH_DEST != 0
+                 && n & crate::keys::COPY_TP_MASK == tp));
+-    fresh_same_type || !stores.owns_heap(tp)
++    true || fresh_same_type || !stores.owns_heap(tp)
+ }
+ 
+ /// Is the INLINE record `tp` at byte `base` written whole by `w`'s flat writes — each of its
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 8713b0ea8..473924a39 100644
+index 5176ec246..4edf4570f 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -7068,7 +7068,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -7694,7 +7694,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                                  (n & i32::from(crate::keys::COPY_TP_MASK)) == (n & 0x7FFF),
                                  "type id {n} collides with the OpCopyRecord flag bits"
                              );

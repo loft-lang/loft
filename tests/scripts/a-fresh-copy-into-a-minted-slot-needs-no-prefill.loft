@@ -19,7 +19,7 @@
 //   CHANNEL: the PANIC channel, native only — the patch drops the append copy's FRESH flag
 //   and admits the copy anyway, so the slot is minted without its prefill and the copy
 //   releases the handles it finds there.
-//   WITNESS: under the patch native panics in `src/vector.rs` releasing a handle the
+//   WITNESS: under the patch native panics in `src/store.rs` releasing a handle the
 //   unprefilled slot held; this tree runs every cell clean.
 //   HOLDS: the interpreter keeps the prefill and is exact on both trees; leak and
 //   free-refusal are clean on both.
