@@ -678,7 +678,10 @@ scripts/claim.py check N           # who holds it
   main --event schedule`) — the aim is a GREEN daily run, now that loft is stabilising — and
   fixes each red job on the `-next` branch, as an issue without an issue: a red the waiting
   branch already fixes is noted, and a runner lost or out of disk, or a job past its time
-  limit, is read as a cause to find (its annotations), not a flake to re-run.  It also reads each job's
+  limit, is read as a cause to find (its annotations), not a flake to re-run.  The sweep covers
+  every workflow, not only CI: the post-merge phase (each workflow that ran on `main`'s latest
+  merge commit, `gh run list --commit <sha>`) and each scheduled workflow's latest run on
+  `main`, the weekly ones included.  It also reads each job's
   `Flaky test (passed only on retry)` annotations, on that run and on main's push runs: a pass
   on retry is a finding, and the race is deleted as [GUARDS.md](GUARDS.md) § A fixed delay is
   not synchronisation describes (sequence the steps, never widen the margin), so a green run
