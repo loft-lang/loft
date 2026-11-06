@@ -21,7 +21,10 @@ range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-KeyedEntry)`, `(R-E
 no writer clause or writer compensation left (§ Arc C′), before any further rule moves; **arc C′
 is closed** (C′1–C′4), with `(R-ElemFirst)`'s view-exit form deferred to the `(R-ValueRecord)`
 view-clause move (§ What arc C′ skips); then `(R-LoopRecord)` and `(R-CompleteWrite)` moved (§ Arc C's moves; the latter's design
-in [cw-plan.md](cw-plan.md)), `(R-ValueRecord)`'s view clause is next.  It
+in [cw-plan.md](cw-plan.md)), and `(R-ValueRecord)`'s view clause moved (c4-view S1, S2);
+the forms of `(R-ValueRecord)` the IR declines stay in the writers, closed builds only, since
+spelling them in the IR would not speed the interpreter (owner ruling, [c4-view-plan.md](c4-view-plan.md)
+§ S2).  Next: c4-view S3 (both writers' element-first clauses deleted).  It
 was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
