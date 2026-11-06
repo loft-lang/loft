@@ -585,6 +585,25 @@ both switch states; the pins (`complete_write`, `field_append`, `field_mint`, `g
 `place_result`, `prefill_image`, `record_push`, `ir_schema_roundtrip`, the codec units).  On
 the interpreter: a push loop of complete literals 3 922 → 3 746 instructions a pass, −4.5 %.
 
+**`(R-TextBorrow)` — moved to the interpreter.**  An interpreter clause, not an IR spelling: the
+decision already lived once in `opt::text_borrow` / `opt::store_text_borrow`, and only the
+writers applied it.  `State::mark_text_views` (`src/state/codegen.rs`) now marks every variable
+that decision admits, asked as the C asks it (walks, discharge temps, the store-read, local-root
+and format clauses); the tested clause (a run-time test) and the call clause (the compiled
+writers' calling convention — on the interpreter `j = join(v, ", ")` read `""`) keep the copy.
+A view slot holds a `Str`: a rebind skips `OpClearText`, and the empty literal is put on the
+first bind and on a rebind.  Every reader of a text slot's layout asks `holds_str` — the halted
+frame's release did not, which aborted main's interpreter on a failed assert inside a borrowed
+walk (loft#2432, fixed on the way).  Census: `R-TextBorrow` and `R-SliceBorrow` applied by
+`interp` too.  Evidence: the switch A/B (`LOFT_NO_TEXT_BORROW`, 2 925 programs) 0 defects (its
+first run found the call clause and loft#2432); the C sweep (2 961 programs) 2 592 match, the
+one differ the attic cell that expects a parse error; `find_problems --subject` c, docs,
+runtime, codegen: 2 526 passed; a 17-cell probe matrix under `LOFT_POISON` and
+`LOFT_STRICT_STORES`; the cell
+`a-borrowed-text-rebound-takes-each-bind-whole.loft` (falsified by leaving the empty rebind's
+put out: r1 = 663) and `tests/scripts/2432-…`.  On the interpreter: 62 784 → 51 344
+instructions a pass of the probe, −18.2 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
