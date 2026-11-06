@@ -1409,6 +1409,7 @@ impl Parser {
                 I32.clone()
             }
         } else if let Some(nr) = self.lexer.has_long() {
+            // `@FR-W-Lit` — a literal past i32 in a regime file is refused with its cure.
             if self.data.width32() && !self.first_pass {
                 diagnostic!(
                     self.lexer,

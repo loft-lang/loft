@@ -7,7 +7,9 @@
 //! the file in place (`switch_to_dep`).  So the regime a whole-program `LOFT_WIDTH=32` gives a
 //! library, and a library's own `#width` line, are read where that switch happens.  Each cell
 //! is a library and a program in a scratch directory, run on the interpreter, with its output
-//! computed by hand.
+//! computed by hand.  Guards `@FR-W-Regime` (the switch and a library's own `#width` line),
+//! `@FR-W-Call` (narrowing on both sides of a call), `@FR-W-Op` (i32::MAX + 1 reads null),
+//! `@FR-W-Store` (a 64-bit field into an `i32` slot) and `@FR-W-Count` (`sizeof(len(v))` is 4).
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
@@ -91,6 +93,56 @@ fn main() {
 }
 ";
     assert_eq!(run("opt-out", lib, main, Some("32")), "null 2147483648\n");
+}
+
+/// `@FR-W-Store`: a 64-bit library's `integer` field, read in a `#width 32` file into an
+/// `integer` (an `i32` there), is narrowed at the store: 7 fits, 5000000000 reads null.  The
+/// same program without the regime keeps 5000000000; a `u8` target is still refused
+/// (`@FR-I-Narrow`).  Both backends.
+#[test]
+fn a_64_bit_field_stored_in_a_32_bit_slot_is_narrowed() {
+    let lib = "#width 64
+pub struct Big { pub v: integer }
+pub fn mk(x: i64) -> Big { Big { v: x } }
+";
+    let main32 = "#width 32
+use wlib::*;
+fn main() {
+  ka: integer = mk(7l).v;
+  kb: integer = mk(5000000000l).v;
+  println(\"{ka} {kb}\");
+}
+";
+    let main64 = "use wlib::*;
+fn main() {
+  kb: integer = mk(5000000000l).v;
+  println(\"{kb}\");
+}
+";
+    let to_u8 = "#width 32
+use wlib::*;
+fn main() {
+  z: u8 = mk(7l).v;
+  println(\"{z}\");
+}
+";
+    for backend in ["--interpret", "--native-c"] {
+        assert_eq!(
+            run_on(backend, "store32", lib, main32, None),
+            "7 null\n",
+            "{backend}"
+        );
+        assert_eq!(
+            run_on(backend, "store64", lib, main64, None),
+            "5000000000\n",
+            "{backend}"
+        );
+        let refused = run_on(backend, "store-u8", lib, to_u8, None);
+        assert!(
+            refused.contains("cannot implicitly narrow"),
+            "{backend}: {refused}"
+        );
+    }
 }
 
 /// A library that begins `#width 32` is 32-bit inside a 64-bit program: its sum of two

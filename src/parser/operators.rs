@@ -6482,7 +6482,7 @@ impl Parser {
             // @PLN204 — under the 32-bit regime an integer operation on two 32-bit operands is
             // a 32-bit operation: its result is an `i32`, and a value leaving that range reads
             // null (`OpNarrow32`).  An `i64` operand (or a plain `integer` from a 64-bit file)
-            // keeps the operation 64-bit.
+            // keeps the operation 64-bit.  Enforces `@FR-W-Op`.
             let regime32 = user_member.is_none()
                 && self.data.width32()
                 && matches!(
