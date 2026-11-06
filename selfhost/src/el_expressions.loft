@@ -5990,7 +5990,7 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
     match e.p.nodes[fi] {
       SFieldInit { name: fname } => {
         a = attr_nr(def, fname);
-        if a >= 0 && def.attributes[a]!.typedef[0] is TyVector && !group.contains(field_position(e, d, fname)) {
+        if a >= 0 && el_types::base(def.attributes[a]!.typedef[0]) is TyVector && !group.contains(field_position(e, d, fname)) {
           list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: 0 }])];
         }
       },
@@ -6011,6 +6011,16 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
           return null;
         }
         at = def.attributes[a]!.typedef[0];
+        // A `vector<T>?` field is written as its dense twin is; a `null` marks the primed
+        // handle absent (`-1`).
+        if at is TyOptional && el_types::base(at) is TyVector {
+          if e.p.nodes[fe!] is SNull {
+            list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: -1 }])];
+            found += [fname];
+            continue;
+          }
+          at = el_types::base(at);
+        }
         match at {
           TyVector { inner } => {
             if !(e.p.nodes[fe!] is SVecLit) {
@@ -6181,6 +6191,10 @@ fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) 
     z = el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]);
     return [z, z];
   }
+  // An omitted `vector<T>?` field defaults to null: its handle primed, then marked absent.
+  if ft is TyOptional && el_types::base(ft) is TyVector {
+    return [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: -1 }])];
+  }
   match ft {
     // An omitted pointer field (`reference<T>`) names nothing; a `reference<T>?` defaults to the
     // `null` literal (`object_init`'s nullable arm).
@@ -6292,7 +6306,8 @@ fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fn
 // added through the record itself.
 fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fname: text, n: integer) -> vector<ir::Node>? {
   def = el::def(e, d);
-  ft = def.attributes[attr_nr(def, fname)]!.typedef[0];
+  // A `vector<T>?` field is built as its dense twin.
+  ft = el_types::base(def.attributes[attr_nr(def, fname)]!.typedef[0]);
   keyed = !(ft is TyVector);
   inner = match ft { TyVector { inner: vi } => vi, _ => ir::TyReference { n: el_types::keyed_elem(ft), dep: [] } };
   items: vector<integer> = [];
@@ -10779,14 +10794,16 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
       el::refuse(e, "a `!` on a record that is not a local");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
-  } else if !el_convert::plain_scalar(b) {
+  } else if !el_convert::plain_scalar(b) && !(b is TyVector) {
     el::refuse(e, "a `!` on this type: {type_kind(b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if e.first_pass {
     return ex(ir::NdNull, b);
   }
-  code = if record { x.code } else { nullable_arith(e, x.code, true) };
+  // A vector is tested with `OpVectorIsNull` (`handle_present`'s collection arm), held as read.
+  vec = b is TyVector;
+  code = if record || vec { x.code } else { nullable_arith(e, x.code, true) };
   held = -1;
   subject = code;
   match code {
@@ -10796,7 +10813,7 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
       subject = ir::NdVar { n: held };
     }
   }
-  check = if record { el_ir::cl(e, "OpConvBoolFromRef", [subject]) } else { el_convert::convert_admitting(e, vars, subject, b, ir::TyBoolean) };
+  check = if record { el_ir::cl(e, "OpConvBoolFromRef", [subject]) } else if vec { el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [subject])]) } else { el_convert::convert_admitting(e, vars, subject, b, ir::TyBoolean) };
   if b is TyBoolean {
     check = el_ir::cl(e, "OpNeBool", [subject, el_ir::cl(e, "OpConvBoolFromNull", [])]);
   }
