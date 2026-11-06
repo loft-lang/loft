@@ -20121,16 +20121,18 @@ impl Parser {
         sentinel_nr: u32,
     ) {
         match op {
-            Value::Span(b) => self.split_nullable_vector_arms(&mut b.1, w, is_null_nr, sentinel_nr),
+            Value::Span(sp) => {
+                self.split_nullable_vector_arms(&mut sp.1, w, is_null_nr, sentinel_nr)
+            }
             Value::Return(inner) | Value::Drop(inner) => {
                 self.split_nullable_vector_arms(inner, w, is_null_nr, sentinel_nr);
             }
-            Value::If(c, t, f) => {
-                let split_already = matches!(c.unspan(), Value::Call(d, _) if *d == is_null_nr)
-                    && matches!(t.unspan(), Value::Call(d, args) if *d == sentinel_nr && args.is_empty());
+            Value::If(cond, then_arm, else_arm) => {
+                let split_already = matches!(cond.unspan(), Value::Call(d, _) if *d == is_null_nr)
+                    && matches!(then_arm.unspan(), Value::Call(d, args) if *d == sentinel_nr && args.is_empty());
                 if !split_already {
-                    self.split_nullable_vector_arms(t, w, is_null_nr, sentinel_nr);
-                    self.split_nullable_vector_arms(f, w, is_null_nr, sentinel_nr);
+                    self.split_nullable_vector_arms(then_arm, w, is_null_nr, sentinel_nr);
+                    self.split_nullable_vector_arms(else_arm, w, is_null_nr, sentinel_nr);
                 }
             }
             Value::Block(bl) => {
@@ -20151,6 +20153,18 @@ impl Parser {
                 Self::split_nullable_vector_tail(op, is_null_nr, sentinel_nr);
             }
             _ => {}
+        }
+    }
+
+    /// Is `tail`'s value never null: a block or a variable whose own type has no `?`?
+    /// Anything else (a call, a branch) answers `false`, so the caller keeps its null path.
+    fn tail_cannot_be_null(&self, tail: &Value) -> bool {
+        match tail {
+            Value::Span(b) => self.tail_cannot_be_null(&b.1),
+            Value::Return(inner) => self.tail_cannot_be_null(inner),
+            Value::Block(bl) => !matches!(bl.result, Type::Optional(_) | Type::Unknown(_)),
+            Value::Var(v) => !matches!(self.vars.tp(*v), Type::Optional(_)),
+            _ => false,
         }
     }
 
@@ -21799,6 +21813,16 @@ impl Parser {
                                     {
                                         let elm = (**elm).clone();
                                         self.materialize_vector_arms_into(&elm, tail, buf_var);
+                                    } else if let Type::Vector(elm, _) = inner.base()
+                                        && self.tail_cannot_be_null(tail)
+                                    {
+                                        // A tail that cannot be null (`[9]`, a dense local)
+                                        // under a `?` result whose signature names the
+                                        // buffer: copied whole, as the dense twin's is.
+                                        // Left raw, its own store was the answer and the
+                                        // caller, freeing only its buffer, leaked it.
+                                        let elm = (**elm).clone();
+                                        self.materialize_vector_return_into(&elm, tail, buf_var);
                                     } else if let Type::Reference(td, _) | Type::Enum(td, true, _) =
                                         inner.base()
                                         && inner.takes_ret_buffer()
@@ -22507,9 +22531,12 @@ impl Parser {
                         // `+=` DROPPED the returned elements (#437).  Finalizing the
                         // dep makes the caller bind to the buffer it passed, so the
                         // result owns an appendable store and `+=` grows it in place.
+                        // Through `set_delivered_vector_return`, which keeps a declared `?`:
+                        // written as a bare vector, `-> vector<T>?` lost it on the pass that
+                        // delivered, every other `return null` then answered the buffer, and
+                        // the store checks told the author to declare the `?` it already had.
                         if buf_attr != u16::MAX {
-                            self.data.definitions[self.context as usize].returned =
-                                Type::Vector(Box::new(elm), Deps::attrs(vec![buf_attr]));
+                            self.set_delivered_vector_return(elm, buf_attr);
                         }
                         return;
                     }

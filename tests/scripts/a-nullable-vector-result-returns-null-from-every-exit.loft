@@ -30,6 +30,22 @@ fn early_local(n: integer) -> vector<integer>? {
   m
 }
 
+// A mid-body `return <literal>` delivered into the buffer, then `return null`: the signature
+// keeps its `?` on the pass that delivers, so `tp(1)`'s null comes back as null.
+fn literal_first(n: integer) -> vector<integer>? {
+  if n == 9 { return null; }
+  if n > 4 { return [1]; }
+  if n == 0 { a = literal_first(5); r = a!; r } else { m = literal_first(9); return m; }
+}
+
+// A parameter returned mid-body, `return null`, and a literal tail: the tail is copied into
+// the buffer the signature names, not handed back as its own store.
+fn param_first(v: vector<integer>, n: integer) -> vector<integer>? {
+  if n > 4 { return v; }
+  if n == 2 { return null; }
+  [n, n]
+}
+
 // Controls: a direct `return null`, a nullable tail alone, a null arm.
 fn direct_null(n: integer) -> vector<integer>? {
   if n > 4 { return null; }
@@ -55,5 +71,13 @@ fn main() {
     assert((i == 0) == (t != null), "tail_only({i}): {t}");
     u = null_arm(i);
     assert((i == 0) == (u != null), "null_arm({i}): {u}");
+    l = literal_first(i);
+    assert((i != 0) == (l == null), "literal_first({i}) null: {l}");
+    if i == 0 { assert(len(l!) == 1 && l![0] == 1, "literal_first(0): {l}"); }
+    p = param_first([4, 5, 6], i + 1);
+    assert((i == 1) == (p == null), "param_first({i + 1}) null: {p}");
+    if i != 1 { assert(len(p!) == 2 && p![1] == i + 1, "param_first({i + 1}): {p}"); }
   }
+  q = param_first([4, 5, 6], 5);
+  assert(len(q!) == 3 && q![2] == 6, "param_first(5): {q}");
 }
