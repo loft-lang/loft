@@ -6561,7 +6561,9 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
   match ft {
     TyVector { inner } => {
       // The schema is laid out after the first pass, whose code is not kept.
-      vk = if e.first_pass { 0 } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
+      // A vector field of a linked record is its own `array<T>` (laid out by id).
+      ak = if e.first_pass || def.known_type == el_schema::NO_TYPE { -1 } else { el_schema::array_field_type(e, def.known_type, def.attributes[a]!.name) };
+      vk = if e.first_pass { 0 } else if ak >= 0 { ak } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
       if vk < 0 {
         el::refuse(e, "a field read of a vector the library has no rows for");
         return null;
@@ -7914,7 +7916,19 @@ fn substitute_block(e: el::El, b: ir::Block?, h: integer, bound: ir::TypeT) -> i
 // size.
 pub fn element_stride(e: el::El, t: ir::TypeT) -> integer {
   sz = elem_size(t);
-  if sz == -2 { record_size(e, t) } else { sz }
+  if sz == -2 { if linked_record(e, t) { 4 } else { record_size(e, t) } } else { sz }
+}
+
+// `Stores::is_linked` of a record element's store type: a linked record is held in a vector by
+// its four-byte id (`@FR-H-Stride`), read through `OpVectorRef`.  Known after the first pass.
+pub fn linked_record(e: el::El, t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyReference { n } => {
+      k = el::def(e, n).known_type;
+      k != el_schema::NO_TYPE && (e.b.types[k]!.linked)
+    },
+    _ => false
+  }
 }
 
 // Does `t` hold placeholder `h` only bare, if at all — the shapes `substitute` carries?
@@ -12186,7 +12200,7 @@ fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT, rev: bool
     return null;
   }
   i = ir::NdVar { n: idx };
-  get = el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: vec }, ir::NdInt { n: size }, i]);
+  get = if record && !e.first_pass && linked_record(e, elem) { el_ir::cl(e, "OpVectorRefNullable", [ir::NdVar { n: vec }, i]) } else { el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: vec }, ir::NdInt { n: size }, i]) };
   if !record {
     get = elem_read(e, elem, get);
   }
@@ -14688,7 +14702,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   if len(xs) > 0 {
     size = elem_size(in_t);
     if size == -2 && (len(recs) > 0 || struct_ref(e, in_t) >= 0 || in_t is TyTuple) {
-      size = record_size(e, in_t);
+      size = if !e.first_pass && linked_record(e, in_t) { 4 } else { record_size(e, in_t) };
     }
     // A vector element is the four-byte handle of its own vector.
     if in_t is TyVector {
@@ -15538,7 +15552,7 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   if may_miss {
     t = ir::TyOptional { inner: t };
   }
-  code = el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: size }, i.code]);
+  code = if record && !e.first_pass && linked_record(e, inner) { el_ir::cl(e, "OpVectorRef", [x.code, i.code]) } else { el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: size }, i.code]) };
   if !record {
     code = elem_read(e, inner, code);
   }

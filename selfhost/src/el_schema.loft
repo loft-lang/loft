@@ -697,6 +697,17 @@ pub fn field_position(e: el::El, t: integer, name: text) -> integer {
   NO_TYPE
 }
 
+// The store type of the field named `name` in store type `t` laid out by id (`array<T>`, a
+// vector field of a linked record), or -1 for any other field.
+pub fn array_field_type(e: el::El, t: integer, name: text) -> integer {
+  for f in struct_fields(e, t) {
+    if f.name == name && (e.b.types[f.content]!.parts[0] ?? ir::PtBase) is PtArray {
+      return f.content;
+    }
+  }
+  -1
+}
+
 // `Stores::field_nr`: the number of the field named `name` in store type `t`, or -1.
 pub fn field_nr(e: el::El, t: integer, name: text) -> integer {
   for f in struct_fields(e, t) {
@@ -707,11 +718,20 @@ pub fn field_nr(e: el::El, t: integer, name: text) -> integer {
   -1
 }
 
-// `Stores::names`: the schema type of that name, or -1.
+// `Stores::names`: the schema type of that name, or -1.  A `vector<T>` relaid by id keeps its
+// old name too (`rename_type` adds the new one): it answers the `array<T>` it became.
 pub fn schema_type(e: el::El, name: text) -> integer {
   for t in e.b.types {
     if t.name == name {
       return t#index;
+    }
+  }
+  if starts_with(name, "vector<") {
+    an = "array<{name[7..]}";
+    for t in e.b.types {
+      if t.name == an && (t.parts[0] ?? ir::PtBase) is PtArray {
+        return t#index;
+      }
     }
   }
   -1
@@ -877,8 +897,8 @@ fn is_record(t: ir::DbType) -> boolean {
 fn finish(e: el::El) {
   // `@C145`, `@FR-H-LongRef`: a linked record — one a pointer field names, the element of a
   // keyed field (`hash`, `index`, `radix`, `trie`), or of a field in a linked group — has every
-  // `vector` and `sorted` of it laid out by id (`array<T>`, `ordered<T[…]>`, its records pushed
-  // out) — not carried: refused by name.
+  // `vector` field of it laid out by id (`array<T>`, its records pushed out, the element marked
+  // linked).  A `sorted` field of one (`ordered<T[…]>`) is refused by name.
   linked: vector<integer> = [];
   for t in e.b.types {
     if !is_record(t) {
@@ -922,7 +942,9 @@ fn finish(e: el::El) {
       match e.b.types[f.content]!.parts[0] ?? ir::PtBase {
         PtVector { content } => {
           if linked.contains(content) {
-            el::refuse(e, "a vector field of a linked record (laid out by id)");
+            e.b.types[content].linked = true;
+            e.b.types[f.content].parts = [ir::PtArray { content: content }];
+            e.b.types[f.content].name = "array<{e.b.types[content]!.name}>";
           }
         },
         PtSorted { content } => {
