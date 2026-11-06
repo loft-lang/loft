@@ -194,9 +194,9 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Counter)` | `R-Counter` ir, c, native |
 | `(R-CtorLiteral)` | `R-CtorLiteral` parse |
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
-| `(R-DecodeView)` | counted; admitted on no bench program |
+| `(R-DecodeView)` | `R-DecodeView` native · `/structure` native |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
-| `(R-Demote)` | counted; admitted on no bench program |
+| `(R-Demote)` | `R-Demote` parse · `/place` parse |
 | `(R-Destination)` | `R-Destination` c, native |
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
@@ -286,21 +286,21 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SelfReplace)` | `R-SelfReplace` parse |
 | `(R-SharedCall)` | not counted — unbuilt: only its narrow case is built, counted as R-PureReuse/shared |
 | `(R-SingleUse)` | `R-SingleUse` parse |
-| `(R-SliceArg)` | `/range` ir |
+| `(R-SliceArg)` | counted; admitted on no bench program |
 | `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
-| `(R-SliceInto)` | `R-SliceInto` c · `/transient` c |
+| `(R-SliceInto)` | counted; admitted on no bench program |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
 | `(R-StartStep)` | `R-StartStep` interp |
 | `(R-State)` | not counted — condition: the hoist state the header rules share; counted under them |
 | `(R-StreamWalk)` | `R-StreamWalk` native |
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
-| `(R-Tabulate)` | `R-Tabulate` c |
+| `(R-Tabulate)` | counted; admitted on no bench program |
 | `(R-TailSelf)` | `R-TailSelf` parse |
 | `(R-TextBorrow)` | `R-TextBorrow` interp, c, native · `/tested` c, native |
 | `(R-TextClear)` | `R-TextClear` native |
 | `(R-TextLen)` | `R-TextLen` parse |
-| `(R-TextRun)` | counted; admitted on no bench program |
+| `(R-TextRun)` | `R-TextRun` ir |
 | `(R-Transient)` | `R-Transient` c |
 | `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/text` c, native |
 | `(R-TypedRead)` | `R-TypedRead` c, native |
