@@ -35,7 +35,9 @@ switches, [RUN_BOUNDS.md](../../../doc/claude/RUN_BOUNDS.md)):
 - *Which free released the store a later read touched?* `LOFT_POISON=1` (freed bytes read
   as 0xDEADBEEF, so a lucky read becomes a loud one) with `LOFT_STRICT_STORES=1` (names
   the violation, and every store never freed, at exit).  A probe that prints the right
-  answer is not clean until it passes under both.
+  answer is not clean until it passes under both.  Both instrument the INTERPRETER: a bare
+  `loft p.loft` runs native, where they are silent, so a clean reading needs `--interpret`
+  (or `loft test`, which interprets).
 - *Where does this hang loop?* `LOFT_MAX_OPS=<n>` set low, in a debug-assertions build
   (RUN_BOUNDS.md § Hang guard) — it prints the last sixteen ops.
 - *A leak, or a runaway length?* The store-heap ceiling's report under `--tests` /
