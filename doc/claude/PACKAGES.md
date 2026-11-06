@@ -536,7 +536,9 @@ rule.  So:
   0.1.0; `loft install` then rewrites the entry.  The declarations asked are the project's
   `[dependencies]` and those of the package whose file says `use glb`.
 - **One lock governs the whole program** — the entry file's.  A `use` inside a dependency
-  resolves through it too, so the consumer's lock pins a transitive package.
+  resolves through it too, so the consumer's lock pins a transitive package.  A `use` that
+  fetches a pinned package keeps those pins: what it pulls in installs at the locked version
+  while that version satisfies every declaration (`install::kept_lock_pin`).
 - **`loft install` binds a transitive package to what the project declares for it**, on top
   of what the package pulling it requires, so the lock records the version the program
   loads whatever order `[dependencies]` lists.  A declaration no dependency can accept is
