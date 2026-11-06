@@ -149,9 +149,12 @@ union is not green before the checks the PR exists for have run, so a red first 
 design working.  Every red it shows — the tests, the informational and advisory steps, and
 main's nightly reds (step 5) — is fixed on the next branch before the second run, and the
 SECOND run is meant to be entirely green: it lands the PR on `main`.  What slips through to
-it is sorted by kind.  A red test or required check is fixed and pushed for a third run.  A
-red informational or advisory step is fixed on the next branch and waits for the NEXT PR,
-as does any fix left there when the PR merges: fixed, just not on `main` yet.
+it is sorted by whether it blocks the merge, which only a REQUIRED check does (`Test` on the
+three platforms — the Linux one gathers every test shard — `Clippy`, `Format`, `Language
+suite`; the list is `gh api repos/{owner}/{repo}/rules/branches/main`).  A red required check
+holds auto-merge, so its fix is pushed for a third run.  Anything else red does not stop
+auto-merge from landing the PR: its fix stays on the next branch and goes with the NEXT PR,
+as does any fix left there at the merge: fixed, just not on `main` yet.
 
 A nightly red in a consumer's suite (`switch-ab`, `consumer-main-health`) is triaged before
 it is fixed: run the consumer's suite on `main`'s own binary.  A failure there too is the
