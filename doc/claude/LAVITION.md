@@ -46,7 +46,8 @@ So games are *runnable without lavition*, *authorable with it*.
 for:
 
 1. **Prototype in the fast 2D engine.**  Put the world, enemy, combat and puzzle logic in, and
-   validate that the game works and is fun before any art is made.
+   validate that the game works and is fun before any art is made.  In 2D the game stays fast
+   to run and easy to test; a 3D world makes every validation slower.
 2. **Bring the design into a barren 3D world.**  The same world and the same logic, now laid
    out in 3D with placeholder shapes.
 3. **Flesh it out slowly** into the full game: more detail, more world, more art.
