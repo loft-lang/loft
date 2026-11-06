@@ -24,6 +24,9 @@ working mode, the games and consumer libraries with their own agents, a Tanmatsu
 progress — while the soundness floor's own gate (the nightly sanitizer run) was still red
 (2026-11-01 to 2026-11-05).  The section now states the floors as the bars the game work
 stands on.
+On that day, by the owner's account, most consumer projects had validated their state against
+the C backend and some their performance on it too; the Tanmatsu work was to lead the next
+game-engine work.
 
 ## Two floors — the 2026-08-09 readings
 

@@ -880,7 +880,8 @@ slow anyway.
 
 The dogfood loop sets the agenda (CLAUDE.md § Dogfood loop): the games and the consumer
 libraries are built while the two floors under them are raised, and a gap a consumer finds
-is fixed in the language.  The floors are the two bars a game rests on, each with an explicit
+is fixed in the language.  It resumes project by project: a consumer first validates its
+state against the C backend, then, where it can, its performance there.  The floors are the two bars a game rests on, each with an explicit
 bar tied to what a game actually needs, not "all of A" or "all of B", so neither grows
 without end:
 

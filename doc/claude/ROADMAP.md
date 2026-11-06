@@ -57,8 +57,11 @@ first:
   `stage` ([@PLN218](https://github.com/loft-lang/plans/issues/218));
 - the libraries' shared C rewritten in loft, the hardware calls and the engine kept C ([@PLN216](https://github.com/loft-lang/plans/issues/216)).
 
-The 3D art grows out of it: the dogfighter's sprites are rendered from a 3D model, so every model
-made for a 2D game is also 3D content.  The order to start in:
+The Tanmatsu work leads the next game-engine work, and the 3D world grows out of it twice.  The
+art: the dogfighter's sprites are rendered from a 3D model, so every model made for a 2D game is
+also 3D content.  The world: the device's limited editor, a hex world editor in the frame tier
+([@PLN209](https://github.com/loft-lang/plans/issues/209) F12), writes the worlds the 3D games
+load, so it lays the base for the 3D hex world.  The order to start in:
 1. @PLN213 T0.4: an app's start-up never erases the launcher's settings.  This is a defect in the
    released loft.
 2. @PLN214 G0: the drawing budget on the device, measured before anything is built on it.
