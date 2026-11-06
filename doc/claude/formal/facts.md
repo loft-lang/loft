@@ -228,7 +228,7 @@ Outside the routine (D-fact-1, D-fact-2): `view_return::callee` (whether a call 
 
 ## Deviations
 
-### D-fact-1 (OPEN, @PLN210) — three callee facts keep their own walk or memo ([#2351](https://github.com/loft-lang/loft/issues/2351))
+### D-fact-1 (OPEN, @PLN211) — three callee facts keep their own walk or memo
 - **Violates:** `Fact-One`
 - **Where:** `lower::view_return::callee` (native's `vr_memo`), `opt::ret_adopt::callee_reinits_buffer`,
   `lower::stream_walk::written_params`
@@ -237,7 +237,7 @@ Outside the routine (D-fact-1, D-fact-2): `view_return::callee` (whether a call 
 - **Removal:** one long-lived handle per writer (today a writer builds a handle per question
   over the memos it keeps), the three as kinds of reach `own` on it.
 
-### D-fact-2 (OPEN, @PLN210) — interval entry facts exist only in native's writer ([#2351](https://github.com/loft-lang/loft/issues/2351))
+### D-fact-2 (OPEN, @PLN211) — interval entry facts exist only in native's writer
 - **Violates:** `Fact-Engine` (every writer reads the same answers)
 - **Where:** `src/generation/ranged_call.rs` (the seeding, the guarded copy, `__rg`)
 - **Effect:** the C writer has no `(R-RangedCall)`: 384 native admissions on the benches, none
@@ -245,7 +245,7 @@ Outside the routine (D-fact-1, D-fact-2): `view_return::callee` (whether a call 
 - **Removal:** the `entry` kind's interval domain in the routine; `__rg` a twin key of
   `Fact-Twin`, emitted by both writers.
 
-### D-fact-3 (OPEN, @PLN210) — each twin kind carries its own key ([#2351](https://github.com/loft-lang/loft/issues/2351))
+### D-fact-3 (OPEN, @PLN211) — each twin kind carries its own key
 - **Violates:** `Fact-Twin` (one key, one registry)
 - **Where:** `src/c/mod.rs` (`INV_BIT` … `VF_BIT`, `NN_MASK`); native's name suffixes and its
   bit keys OR'd into a definition number (`DV_BIT`, `src/lower/decode_view.rs`; `KH_BIT`,

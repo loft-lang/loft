@@ -121,8 +121,8 @@ agent right now to harmonize a lot of optimizations across the project, this wil
 it").  `A-deviations` reads red on them by design: each is a fact computed apart from the one
 routine `facts(kind, reach)` (`formal/facts.md`), so no program answers differently — a callee
 fact with its own walk (D-fact-1), interval entry facts only in the rustc writer (D-fact-2, an
-index check the C keeps), each twin kind keyed by hand (D-fact-3).  Their removal is loft#2351,
-in the perf agent's harmonisation work after the tag.
+index check the C keeps), each twin kind keyed by hand (D-fact-3).  Their removal is @PLN211's
+(`plans/211-rule-phases/design.md` § The facts deviations), the perf agent's harmonisation work after the tag.
 
 **`A-ci` on the paperwork branch** (`4db9a938f`): the local `make ci` does not finish in its 20-minute
 budget on this box under the sibling sessions' load (average 31-36; it reached test 5548 of 6540,
