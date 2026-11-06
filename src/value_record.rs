@@ -2195,7 +2195,11 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                 && let Value::Var(v) = src.unspan()
             {
                 // The type without the copy's flags (`COPY_FRESH_DEST` on a push's element).
-                s.copies.push((*v, *tp as u16 & crate::keys::COPY_TP_MASK, pure_place(dst, ops)));
+                s.copies.push((
+                    *v,
+                    *tp as u16 & crate::keys::COPY_TP_MASK,
+                    pure_place(dst, ops),
+                ));
                 scan(dst, false, w, s);
                 return;
             }
