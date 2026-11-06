@@ -6511,6 +6511,18 @@ impl State {
                 stack.add_op("OpGetStackRef", self);
                 self.code_add(0u16);
             }
+            // @PLN219 — `slot = slot.f` through a slot cell MOVES the child (`OpMoveSlotRef`).
+            if let Some(d) = stack.data.slot_link_def(stack.function.tp(var))
+                && let Some(src) = stack.data.slot_self_step(value, var)
+            {
+                let var_pos = stack.var_pos(var);
+                stack.add_op("OpVarRef", self);
+                self.code_add(var_pos);
+                self.generate(&src, stack, false);
+                stack.add_op("OpMoveSlotRef", self);
+                self.code_add(stack.data.def(d).known_type());
+                return;
+            }
             let var_pos = stack.var_pos(var);
             stack.add_op("OpVarRef", self);
             self.code_add(var_pos);

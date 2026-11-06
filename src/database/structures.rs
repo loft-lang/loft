@@ -1728,6 +1728,21 @@ impl Stores {
         }
     }
 
+    /// `OpMoveSlotRef` — `slot = slot.f` through a slot cell: the move (`move_child_rec`) when the
+    /// cell names a field, else the cell takes the child's view (the variable's write-back).
+    pub fn slot_move(&mut self, cell: &mut DbRef, src: &DbRef, tp: u16) {
+        if crate::keys::slot_is_field(cell) {
+            let field = crate::keys::slot_field(cell);
+            self.move_child_rec(&field, src, tp);
+        } else {
+            // The variable's write-back: it views its own child now, and the store it held is
+            // released where the child is not in it — a drain's last step reads null.
+            let old = *cell;
+            *cell = self.ref_from_child_rec(src);
+            self.free_displaced(&old, cell);
+        }
+    }
+
     /// `@FR-F-ParamRef` (@PLN219) — a whole write through a slot cell: a cell naming a field is
     /// the field write `h.f = v` (`OpSetChildRec`, `raw_tp` with its `COPY_FREE_SOURCE` bit
     /// giving up an owned value's store), and the cell keeps naming the field; any other cell

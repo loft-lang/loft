@@ -32,6 +32,7 @@ OpCastTextFromBool
 OpCastTextFromEnum
 OpCastVectorFromText
 OpChildRec
+OpChildRecInPlace
 OpClear
 OpClearKeyed
 OpClearStackText
@@ -205,8 +206,10 @@ OpMinSingle
 OpMinSingleFloat
 OpMinSingleInt
 OpMinSingleSingle
+OpMoveChildRec
 OpMoveField
 OpMoveRecord
+OpMoveSlotRef
 OpMoveVector
 OpMulFloat
 OpMulInt
@@ -347,7 +350,7 @@ __iface_34#2_OpMin
 __iface_34#2_minus
 __iface_37#2_scale
 __iface_39#1_to_text
-__iface_530#1_children
+__iface_533#1_children
 i_7integer_n_sum
 n___ledger
 n___ledger_div

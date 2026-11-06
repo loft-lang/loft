@@ -3230,6 +3230,65 @@ impl Stores {
             .set_u32_raw(r.rec, r.pos + u32::from(fld), c);
     }
 
+    /// `OpMoveChildRec` — `field` takes the child record the field `src` names by its number;
+    /// `src` lies inside the record `field` holds, and is cleared, so the release of that
+    /// record — what it still owns — leaves the moved subtree alone.
+    pub fn move_child_rec(
+        &mut self,
+        field: &crate::keys::DbRef,
+        src: &crate::keys::DbRef,
+        tp: u16,
+    ) {
+        if field.store_nr == u16::MAX || field.rec == 0 {
+            return;
+        }
+        let old = self.store(field).get_u32_raw(field.rec, field.pos);
+        let moved = if src.store_nr == u16::MAX || src.rec == 0 {
+            0
+        } else {
+            self.store(src).get_u32_raw(src.rec, src.pos)
+        };
+        if moved != 0 {
+            self.store_mut(src).set_u32_raw(src.rec, src.pos, 0);
+        }
+        self.store_mut(field)
+            .set_u32_raw(field.rec, field.pos, moved);
+        if old != 0 && old != moved {
+            let o = crate::keys::DbRef {
+                store_nr: field.store_nr,
+                rec: old,
+                pos: 8,
+            };
+            self.remove_claims(&o, tp);
+            self.store_mut(field).delete(old);
+        }
+    }
+
+    /// `OpChildRecInPlace` — the child record a literal is written into: the present child,
+    /// what it owns released and its bytes reset to `tp`'s defaults (its number kept), else a
+    /// fresh child where the field is absent.
+    pub fn child_rec_in_place(
+        &mut self,
+        field: &crate::keys::DbRef,
+        tp: u16,
+    ) -> crate::keys::DbRef {
+        if field.store_nr == u16::MAX || field.rec == 0 {
+            return crate::keys::DbRef::NULL;
+        }
+        let old = self.store(field).get_u32_raw(field.rec, field.pos);
+        if old == 0 {
+            return self.new_child_rec(field, tp);
+        }
+        let o = crate::keys::DbRef {
+            store_nr: field.store_nr,
+            rec: old,
+            pos: 8,
+        };
+        self.remove_claims(&o, tp);
+        self.set_default_value(tp, &o);
+        o
+    }
+
     pub fn move_field_out(&mut self, src: &crate::keys::DbRef, dst: &crate::keys::DbRef, tp: u16) {
         if src.store_nr == u16::MAX
             || src.rec == 0

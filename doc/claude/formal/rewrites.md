@@ -227,7 +227,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Header)` | `R-Header` c, native · `/apart` c, native · `/apart-param` c, native · `/function` native · `/grown` c · `/grown-held` c · `/kept` native · `/kept-growth` c · `/kept-twin` c, native · `/narrow` c · `/rebind` c · `/text` c, native |
 | `(R-HotInline)` | not counted — executor: #hot operators inlined into the lean loop |
 | `(R-InPlace)` | not counted — condition: the write test the header hoists ask; counted under them |
-| `(R-InPlaceLiteral)` | `R-InPlaceLiteral` parse |
+| `(R-InPlaceLiteral)` | `R-InPlaceLiteral` parse · `/child` parse |
 | `(R-InRange)` | `R-InRange` parse |
 | `(R-Inline)` | `R-Inline` c · `/helper` c |
 | `(R-InlineLeaf)` | `R-InlineLeaf` parse |
@@ -248,6 +248,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-MaskRange)` | `R-MaskRange` parse |
 | `(R-Mint)` | `R-Mint` c, native |
 | `(R-MoveAppend)` | `R-MoveAppend` native |
+| `(R-MoveChild)` | `R-MoveChild` parse |
 | `(R-MoveLast)` | `R-MoveLast` ir · `/host` ir · `/local` ir |
 | `(R-NoLocks)` | `R-NoLocks` c |
 | `(R-NoThreads)` | `R-NoThreads` c |
@@ -5050,6 +5051,22 @@ line in `Output::output_function`'s prelude.
                  the (H-WriteLocked) production clause (@C80) had cost them, 2.16× and
                  1.14×.  Switch `LOFT_NO_LOCK_FACT=1`.
 
+  (R-MoveChild)  a whole write into an out-of-line field whose value is a chain of child reads
+                 rooted at the field's OWN child — `h.f = h.f.g`, `cur = cur.left` through a
+                 field link, `slot = slot.right` through a slot parameter — installs that
+                 child's record by its number and releases only the record it replaces
+                 (`OpMoveChildRec`; `OpMoveSlotRef` for the parameter), where `OpSetChildRec`
+                 copied the surviving subtree into a fresh record, its claims too, and released
+                 the old one.  The value is the copy's: the moved subtree lay inside the
+                 replaced record, which nothing reads afterwards — a view of that record live
+                 across the write is copied at its bind, as for any write that may be null
+                 ((B-Disturb), `released_children` names the move).  A write-back to a whole
+                 variable through a slot parameter takes the child's view and releases the
+                 displaced store unless the child lies in it.  Measured: 21_tree `tree_delete`
+                 3.65× → 0.68× Rust, with the out-of-line clause of (R-InPlaceLiteral).
+                 `LOFT_NO_MOVE_CHILD=1`; guard
+                 `loft-suite/rules/binding/B-OutOfLine/an-unlink-moves-and-a-literal-is-built-in-its-child.loft`.
+
   (R-NoThreads)  a C unit that runs no `par` loop on threads (`loft_par_run`) and reaches no
                  engine kernel — the two ways loft code runs on a second thread — is
                  compiled with `LOFT_NO_THREADS`: the runtime's store table, frame stack and
@@ -5513,6 +5530,15 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  not a fixed byte pattern keeps the walk for itself alone.  The image
                  is what the walk writes, so no value changes.
 ```
+                 OUT-OF-LINE CLAUSE: a literal written whole into an out-of-line field
+                 (`t.left = Tree { … }`, `cur = Tree { … }` through a field link) is built in
+                 the field's child — `OpChildRecInPlace`: the present child's owned heap
+                 released and its bytes reset to the type's defaults, its number kept (a view
+                 of it reads the new value, (B-OutOfLine)), or a fresh child where the field is
+                 absent — where it was built in a store of its own, copied in and the store
+                 freed.  Only for a literal whose field values read no record or collection
+                 and nest no literal: the child is reset before they run.  The disturbance
+                 walk treats it as the overwrite it is.  `LOFT_NO_CHILD_LITERAL=1`.
 
 **In words.** @PLN164's rewrite list (its README § *The rewrite list*), derived by
 reading the drawing library's natural `parse_poly` beside the version a programmer

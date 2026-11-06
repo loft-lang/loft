@@ -1874,6 +1874,18 @@ fn OpFreeRecordIn(rec: reference, tp: const u16);
 fn OpDemoteRec(r: reference, fld: const u16, tp: const u16);
 #rust"stores.demote_rec(&@r, @fld, @tp);"
 #impure(parent_write)
+// `@FR-B-OutOfLine`, the move: `field` takes the child record `src` names — a field inside the
+// record `field` holds — by its number: `src` is cleared, the replaced record released with
+// what it still owns.  The value `h.f = h.f.g` gives, without copying the subtree.
+fn OpMoveChildRec(field: reference, src: reference, tp: const u16);
+#rust"stores.move_child_rec(&@field, &@src, @tp);"
+#impure(parent_write)
+// `@FR-R-InPlaceLiteral` for an out-of-line field: the child record a literal is written into —
+// the present child, its owned heap released and its bytes reset to the type's defaults (its
+// number kept, as `OpSetChildRec` keeps it), or a fresh one where the field is absent.
+fn OpChildRecInPlace(field: reference, tp: const u16) -> reference[field];
+#rust"stores.child_rec_in_place(&@field, @tp)"
+#impure(parent_write)
 // ABI-B caller path for `v = call()` (heap-param callee returning struct-OR-null):
 // pops the call result `src`; `pos` is the destination var's slot (already holding
 // a fresh OpDatabase record).  A null `src` (sentinel) frees that record and binds
@@ -2034,6 +2046,9 @@ fn OpSetStackRef(r: reference, v1: reference);
 // holds and is written as the field (`OpSetChildRec`, `tp` with its free-source bit); any
 // other cell is read and written as `OpGetStackRef` / `OpSetStackRef` do.
 fn OpGetSlotRef(r: reference, fld: const u16) -> reference;
+// The move twin of `OpSetSlotRef` (`slot = slot.right`): a field-naming cell takes the child `src`
+// (a field inside its node) by number (`OpMoveChildRec`); any other cell takes the child's view.
+fn OpMoveSlotRef(r: reference, src: reference, tp: const u16);
 fn OpSetSlotRef(r: reference, v1: reference, tp: const u16);
 // Write a fn-ref THROUGH a `&fn(…)` link.  The link's own slot holds a DbRef to the
 // caller's fn-ref slot, so this is the two-step `&text` already performs: read the link

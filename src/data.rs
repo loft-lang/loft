@@ -8179,6 +8179,32 @@ impl Data {
             .any(|h| (0..self.attributes(h)).any(|a| self.field_is_out_of_line(h, a)))
     }
 
+    /// @PLN219 — the field address a whole write through slot parameter `var` MOVES from: `Some(X)`
+    /// for the value `OpRefFromChildRec(X)` with `X = OpGetField(var, pos, kt)` — a child of the
+    /// node the parameter names (`slot = slot.right`), which lies inside the record the write
+    /// replaces.  `None` for any other value, or under `LOFT_NO_MOVE_CHILD=1`.
+    #[must_use]
+    pub fn slot_self_step(&self, value: &Value, var: u16) -> Option<Value> {
+        if std::env::var("LOFT_NO_MOVE_CHILD").is_ok_and(|v| v != "0") {
+            return None;
+        }
+        let Value::Call(rf, a) = value.unspan() else {
+            return None;
+        };
+        if self.def(*rf).name() != "OpRefFromChildRec" {
+            return None;
+        }
+        let x = a.first()?;
+        let Value::Call(gf, ga) = x.unspan() else {
+            return None;
+        };
+        (self.def(*gf).name() == "OpGetField"
+            && ga.len() == 3
+            && matches!(ga[0].unspan(), Value::Var(v) if *v == var)
+            && matches!(ga[1].unspan(), Value::Int(_)))
+        .then(|| x.clone())
+    }
+
     /// @PLN219 — the slot type a `&` parameter of type `tp` links, as its definition: `Some(d)`
     /// for `&S` / `&S?` with `S` [held out of line](Self::held_out_of_line), the parameters
     /// whose cell may name a field.  `None` for every other type, which pays nothing.

@@ -1042,6 +1042,48 @@ static void loft_demote_rec(const loft_tdesc *T, uint16_t tp, loft_ref r, uint32
     loft_set_u32(s, r.rec, r.pos + fld, c);
 }
 
+/* OpMoveChildRec (Stores::move_child_rec): `f` takes the child `src_f` names (a field inside the
+ * record f holds) by number; src_f is cleared and the replaced record released with what it owns. */
+static void loft_move_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, loft_ref src_f) {
+    if (f.store_nr == 0xFFFF || f.rec == 0) return;
+    uint32_t old = loft_u32(loft_store_of(f), f.rec, f.pos);
+    uint32_t moved = (src_f.store_nr == 0xFFFF || src_f.rec == 0) ? 0 : loft_u32(loft_store_of(src_f), src_f.rec, src_f.pos);
+    if (moved) loft_set_u32(loft_store_of(src_f), src_f.rec, src_f.pos, 0);
+    loft_set_u32(loft_store_of(f), f.rec, f.pos, moved);
+    if (old && old != moved) {
+        loft_ref o = { f.store_nr, old, 8, 0 };
+        loft_remove_claims(T, tp, o);
+        loft_st_delete(loft_store_of(f), old);
+    }
+}
+
+/* OpChildRecInPlace (Stores::child_rec_in_place): the present child, its claims released and its
+ * bytes the type's defaults (number kept), else a fresh child where the field is absent. */
+static loft_ref loft_child_rec_in_place(const loft_tdesc *T, uint16_t tp, loft_ref f, const uint8_t *image,
+                                        uint32_t n) {
+    if (f.store_nr == 0xFFFF || f.rec == 0) return loft_ref_null();
+    uint32_t old = loft_u32(loft_store_of(f), f.rec, f.pos);
+    if (old == 0) return loft_new_child_rec(T, tp, f, image, n);
+    loft_ref o = { f.store_nr, old, 8, 0 };
+    loft_remove_claims(T, tp, o);
+    loft_fill(o, image, n);
+    return o;
+}
+
+/* Stores::slot_move (@PLN219): `slot = slot.f` — a field-naming cell takes the child by number,
+ * any other cell the child's view. */
+static void loft_slot_move(const loft_tdesc *T, uint16_t tp, loft_ref *cell, loft_ref src_f) {
+    if (loft_slot_is_field(*cell)) {
+        loft_ref f = *cell;
+        f.pos &= ~LOFT_SLOT_FIELD_BIT;
+        loft_move_child_rec(T, tp, f, src_f);
+    } else {
+        loft_ref old = *cell;
+        *cell = loft_ref_from_child_rec(src_f);
+        loft_free_displaced(old, *cell);
+    }
+}
+
 /* Stores::slot_write (@PLN219): a whole write through a slot cell — the field write when the cell
  * names a field (its free bit giving up an owned value's store), else the value written back. */
 static void loft_slot_write(const loft_tdesc *T, uint16_t tp, loft_ref *cell, loft_ref v, int free_source) {
@@ -1580,8 +1622,11 @@ typedef void (*loft_par_body)(void *ctx, int64_t lo, int64_t hi);
  * until the workers have joined (`loft_ffi_own_*` hands a library native a copy instead).
  * Per thread: it covers the table of the thread running `loft_par_run`, whose workers share it.
  * A worker's own view of those stores is marked `pinned`, which asks for the same copy, so a
- * nested `par` in a worker counts on that worker's thread and races with no other. */
+ * nested `par` in a worker counts on that worker's thread and races with no other.  Declared
+ * only where something reads it: the threaded `par` and the library host. */
+#if defined(LOFT_THREADS) || defined(LOFT_FFI)
 static LOFT_TLS int loft_par_sharing;
+#endif
 
 /* @PLN203 C4 tier 2 — a worker whose result is a RECORD makes it in a store of its own table.
  * `adopt(ctx, lo, hi, parent_n)` runs in the caller after that worker joined, with the worker's

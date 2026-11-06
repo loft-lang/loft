@@ -240,7 +240,14 @@ pub(super) fn released_children(code: &Value, data: &Data) -> HashMap<(u16, u32)
         } else {
             None
         };
-        let field = if let Some(field) = slot_arg {
+        let moved = if let Value::Call(d, args) = v
+            && data.def(*d).name() == "OpMoveChildRec"
+        {
+            args.first()
+        } else {
+            None
+        };
+        let field = if let Some(field) = slot_arg.or(moved) {
             Some(field)
         } else if let Value::Call(d, args) = v
             && data.def(*d).name() == "OpSetChildRec"
@@ -308,6 +315,18 @@ pub(super) fn overwritten_records(
                             index: crate::use_analysis::root_element_index(data, dst),
                         },
                         size: database.map(|db| u32::from(db.size(tp))),
+                    });
+                }
+            }
+            ("OpChildRecInPlace", [field, _]) => {
+                if let Some((place, depth)) = named_place_depth(field, data) {
+                    out.push(Overwrite {
+                        place,
+                        at: ContainerAt {
+                            depth: depth.saturating_add(1),
+                            index: crate::use_analysis::root_element_index(data, field),
+                        },
+                        size: Some(4),
                     });
                 }
             }

@@ -261,21 +261,6 @@ impl FnWriter<'_> {
                     K::Ref,
                 ))
             }
-            ("OpDemoteRec", [r, fld, tp]) => {
-                let fld = Self::literal(fld, "field")?;
-                let tp = u16::try_from(Self::literal(tp, "type")?)
-                    .map_err(|_| "a type number out of range".to_string())?;
-                let tp = self.copyable(tp)?;
-                let r = self.expr(r, ind)?;
-                Ok(E::new(
-                    format!("loft_demote_rec(loft_types, {tp}, {}, {fld})", as_ref(r)?),
-                    K::Void,
-                ))
-            }
-            ("OpSlotTag", [f]) => {
-                let f = self.expr(f, ind)?;
-                Ok(E::new(format!("loft_slot_tag({})", as_ref(f)?), K::Ref))
-            }
             ("OpChildRec", [f, tp]) => {
                 let tp =
                     u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
@@ -332,6 +317,65 @@ impl FnWriter<'_> {
                     ),
                     K::Void,
                 ))
+            }
+            _ => self.out_of_line_operator(name, args, ind),
+        }
+    }
+
+    /// The out-of-line field operators (@PLN219): the move, the in-place child, the demote and
+    /// the slot tag.  The end of the operator chain: an operator not carried is refused by name.
+    fn out_of_line_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        match (name, args) {
+            ("OpMoveChildRec", [f, src, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let tp = self.copyable(tp)?;
+                let (f, src) = self.two(name, &[f, src], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_move_child_rec(loft_types, {tp}, {}, {})",
+                        as_ref(f)?,
+                        as_ref(src)?
+                    ),
+                    K::Void,
+                ))
+            }
+            ("OpChildRecInPlace", [f, tp]) => {
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                self.cx.name_types();
+                self.cx.describe_type(tp);
+                let (image, n) = self.cx.default_image(tp);
+                let f = self.expr(f, ind)?;
+                let t = self.temp(CType::Ref);
+                self.line(
+                    ind,
+                    &format!(
+                        "{t} = loft_child_rec_in_place(loft_types, {tp}, {}, {image}, {n});",
+                        as_ref(f)?
+                    ),
+                );
+                Ok(E::new(t, K::Ref))
+            }
+            ("OpDemoteRec", [r, fld, tp]) => {
+                let fld = Self::literal(fld, "field")?;
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let tp = self.copyable(tp)?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_demote_rec(loft_types, {tp}, {}, {fld})", as_ref(r)?),
+                    K::Void,
+                ))
+            }
+            ("OpSlotTag", [f]) => {
+                let f = self.expr(f, ind)?;
+                Ok(E::new(format!("loft_slot_tag({})", as_ref(f)?), K::Ref))
             }
             _ => Err(format!("operator {name}")),
         }

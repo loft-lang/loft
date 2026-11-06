@@ -536,6 +536,128 @@ impl Parser {
         ))
     }
 
+    /// The field place a value read names as its ROOT child: `OpRefFromChildRec(OpGetField(…))`
+    /// chains walked down to the innermost, which must be the child `field` holds — the same
+    /// field read (`h.f = h.f.g`) or the field link that keeps `field` (`cur = cur.left`).
+    /// Answers the field address the value's own child sits in (`OpGetField(X, pos, kt)` of
+    /// the outermost read).
+    fn child_chain_of(&self, field: &Value, val: &Value) -> Option<Value> {
+        let rf = self.data.def_nr("OpRefFromChildRec");
+        let gf = self.data.def_nr("OpGetField");
+        let Value::Call(r, a) = val.unspan() else {
+            return None;
+        };
+        if *r != rf {
+            return None;
+        }
+        let src = a.first()?.clone();
+        let mut cur = &src;
+        loop {
+            let Value::Call(g, ga) = cur.unspan() else {
+                return None;
+            };
+            if *g != gf || ga.len() != 3 || !matches!(ga[1].unspan(), Value::Int(_)) {
+                return None;
+            }
+            match ga[0].unspan() {
+                // A field link that keeps `field` itself.
+                Value::Var(v) => {
+                    let keeps = matches!(field.unspan(), Value::Var(slot)
+                        if self.slot_vars.get(&(self.context, *v)).is_some_and(|(s, _)| s == slot));
+                    return keeps.then_some(src.clone());
+                }
+                Value::Call(r2, a2) if *r2 == rf => {
+                    let inner = a2.first()?;
+                    if inner.unspan() == field.unspan() {
+                        return Some(src.clone());
+                    }
+                    cur = inner;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// `@FR-B-OutOfLine`, the MOVE — `h.f = <a child read rooted at h.f's own child>` (`cur =
+    /// cur.left` through a field link, `t.left = t.left.right`) installs that child's record by
+    /// its number and releases only the replaced record (`OpMoveChildRec`), where `OpSetChildRec`
+    /// copied the surviving subtree into a fresh record first.  The value is the same: the moved
+    /// subtree lay inside the record the write replaces, which nothing reads afterwards — a
+    /// view of it live across the write is copied at its bind, as for any write that may be
+    /// null (B-Disturb).  `LOFT_NO_MOVE_CHILD=1` keeps the copy.
+    fn move_child(&mut self, field: &Value, kt: i32, val: &Value) -> Option<Value> {
+        if self.first_pass || kt <= 0 || !move_child_enabled() {
+            return None;
+        }
+        let src = self.child_chain_of(field, val)?;
+        crate::rewrite_census::fired("R-MoveChild", 1);
+        Some(self.cl("OpMoveChildRec", &[field.clone(), src, Value::Int(kt)]))
+    }
+
+    /// `@FR-R-InPlaceLiteral` for an out-of-line field — a record literal written whole into the
+    /// field is built IN the field's child (`OpChildRecInPlace`: the present child reset, its
+    /// number kept, or a fresh one), where it was built in a store of its own, copied in and the
+    /// store freed.  Only for a literal whose field values read no record and no collection:
+    /// the child is reset before they are evaluated.  `LOFT_NO_CHILD_LITERAL=1` keeps the copy.
+    fn literal_in_child(&mut self, field: &Value, kt: i32, val: &Value) -> Option<Value> {
+        if self.first_pass || kt <= 0 || !child_literal_enabled() {
+            return None;
+        }
+        let Value::Block(bl) = val.unspan() else {
+            return None;
+        };
+        if bl.name != "Object" {
+            return None;
+        }
+        let Some(Value::Var(w)) = bl.operators.last().map(Value::unspan) else {
+            return None;
+        };
+        let w = *w;
+        let db = self.data.def_nr("OpDatabase");
+        let at = bl.operators.iter().position(|op| {
+            matches!(op.unspan(), Value::Call(d, a) if *d == db
+                && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == w))
+        })?;
+        // Every other variable the literal reads is a scalar or a text: nothing it reads can
+        // lie in the child the build resets.
+        let mut plain = true;
+        for op in &bl.operators {
+            op.walk(&mut |n| {
+                if let Value::Var(x) = n
+                    && *x != w
+                {
+                    let tp = self.vars.tp(*x);
+                    if !(crate::data::is_scalar(tp) || matches!(tp.base(), Type::Text(_))) {
+                        plain = false;
+                    }
+                }
+                // A nested literal builds a record of its own the reset could not see.
+                if let Value::Block(b) = n
+                    && b.name == "Object"
+                {
+                    plain = false;
+                }
+            });
+        }
+        if !plain {
+            return None;
+        }
+        let claim = self.cl("OpChildRecInPlace", &[field.clone(), Value::Int(kt)]);
+        let mut ops: Vec<Value> = Vec::new();
+        for (i, op) in bl.operators.iter().enumerate() {
+            if i == at {
+                ops.push(v_set(w, claim.clone()));
+            } else if i + 1 == bl.operators.len() {
+                // the trailing `w`: the literal's value is the field now
+            } else {
+                ops.push(op.clone());
+            }
+        }
+        self.vars.set_skip_free(w);
+        crate::rewrite_census::fired("R-InPlaceLiteral/child", 1);
+        Some(Value::Insert(ops))
+    }
+
     /// `@FR-B-OutOfLine` — write `val` into the out-of-line field at `field` (content row
     /// `kt`): `OpSetChildRec`, which copies the value into the host's store (in place over a
     /// present child) or releases the child for a null.  A call's returned store is given up
@@ -546,6 +668,12 @@ impl Parser {
         }
         if let Some(written) = self.write_back_call(&field, kt, val) {
             return written;
+        }
+        if let Some(moved) = self.move_child(&field, kt, val) {
+            return moved;
+        }
+        if let Some(built) = self.literal_in_child(&field, kt, val) {
+            return built;
         }
         let source = if self.is_null_source(val) {
             self.note_slot_nulled(&field);
@@ -1946,4 +2074,14 @@ impl Parser {
         self.trace_types_lines
             .push(format!("{fn_name}\t{}:{}\t{type_str}", pos.line, pos.pos));
     }
+}
+
+/// `@FR-B-OutOfLine`'s move (`OpMoveChildRec`); `LOFT_NO_MOVE_CHILD=1` keeps the copy.
+fn move_child_enabled() -> bool {
+    !crate::env_once!(std::env::var("LOFT_NO_MOVE_CHILD").is_ok_and(|v| v != "0"))
+}
+
+/// `@FR-R-InPlaceLiteral`'s out-of-line clause; `LOFT_NO_CHILD_LITERAL=1` keeps the copy.
+fn child_literal_enabled() -> bool {
+    !crate::env_once!(std::env::var("LOFT_NO_CHILD_LITERAL").is_ok_and(|v| v != "0"))
 }

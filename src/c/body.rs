@@ -5286,6 +5286,19 @@ impl<'a> FnWriter<'a> {
         // @PLN219 `@FR-F-ParamRef` — a slot cell: the field write when it names a field (an
         // owned value given up there), the write-back otherwise.  A field-naming cell is the
         // same before and after, so the displaced-store release below finds nothing to free.
+        if let Some(d) = self.cx.data.slot_link_def(self.vars.tp(var))
+            && let Some(src) = self.cx.data.slot_self_step(x, var)
+        {
+            let tp = self.copyable(self.cx.data.def(d).known_type())?;
+            let e = self.expr(&src, ind)?;
+            let name = var_name(self.vars.name(var), var);
+            self.line(
+                ind,
+                &format!("loft_slot_move(loft_types, {tp}, {name}, {});", as_ref(e)?),
+            );
+            self.flush(ind);
+            return Ok(());
+        }
         if let Some(d) = self.cx.data.slot_link_def(self.vars.tp(var)) {
             let raw = format!("(*{})", var_name(self.vars.name(var), var));
             let tp = self.copyable(self.cx.data.def(d).known_type())?;
@@ -10559,6 +10572,7 @@ const OP_REF: &[&str] = &[
     "OpInsertVector",
     "OpRefFromChildRec",
     "OpSlotTag",
+    "OpChildRecInPlace",
     "OpChildRec",
     "OpCopyClosure",
     "OpCoroutineRetain",
