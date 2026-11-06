@@ -185,7 +185,7 @@ The natural-code list this plan grew out of, outside its core:
 ## See also
 
 - loft#2433, loft#2434 — the two defects this arc fixed.
-- [`DESIGN_DECISIONS_OWNERSHIP.md` § C77](../DESIGN_DECISIONS_OWNERSHIP.md).
-- [`formal/binding.md`](../formal/binding.md) — `(B-Ref-Write)`, `(B-OutOfLine)`,
+- [`DESIGN_DECISIONS_OWNERSHIP.md` § C77](../../DESIGN_DECISIONS_OWNERSHIP.md).
+- [`formal/binding.md`](../../formal/binding.md) — `(B-Ref-Write)`, `(B-OutOfLine)`,
   `(B-Disturb)`, `(B-Ref-Reshape)`.
 - `bench/21_tree/` — the routines and their Rust twin.
