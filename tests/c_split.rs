@@ -101,6 +101,10 @@ fn emitted(prog: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> Strin
 /// @PLN212 P2: a semantics build splits an over-budget function by default (the MSVC sweep's
 /// `cl` time stays bounded without a switch), and a shipped build (`--ship`) never does — not
 /// even under a switch that asks — so a shipped artefact's C is the C it was before the split.
+///
+/// @falsified-at: 4bce889d7 — by hand.  The default-on assertion fails on the tree before it
+/// (no `__part` without `LOFT_C_SPLIT`); with `functions_whole` planted to answer false, the
+/// `--ship` assertion fails ("a shipped unit keeps its functions whole").
 #[test]
 fn a_semantics_build_splits_by_default_and_a_shipped_one_never() {
     let dir = std::env::temp_dir().join(format!("loft-c-split-tier-{}", std::process::id()));
