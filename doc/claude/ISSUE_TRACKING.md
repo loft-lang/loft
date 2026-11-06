@@ -674,7 +674,10 @@ scripts/claim.py check N           # who holds it
   names for it sweeps the open issues about every two hours: each one without a live claim is
   taken and fixed, or handed to the agent whose branch or area it is.  An automated issue
   (the advisory list, a `nightly-failure`) is first checked against what `main` and the open
-  PR already fix.
+  PR already fix.  The same sweep reads `main`'s latest scheduled CI run (`gh run list --branch
+  main --event schedule`) and fixes each red job on the `-next` branch, as an issue without an
+  issue: a red the waiting branch already fixes is noted, and a runner lost or out of disk is
+  read as a cause to find (its annotations), not a flake to re-run.
 
 A claim written in prose ("claimed by the … stream") is invisible to the script, the work queue
 and the hook.  Write it with the script.
