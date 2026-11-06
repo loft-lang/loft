@@ -5715,7 +5715,7 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
 // literal order, and — on the second pass — each omitted field its type's default, in
 // declaration order (`object_init`).  The value is the build, typed as a record of the struct
 // rewritten in place.  A qualified name, an update (`..base`), a quoted field name, a field
-// value its type converts and a literal that rebinds a built local are refused by name.
+// value its type converts and a literal rebinding a local of another type are refused by name.
 fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   name = "";
   fields: vector<integer> = [];
@@ -5741,7 +5741,9 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
     TyReference { n: vd } => vd == d,
     _ => false
   };
-  if !matches || el_vars::was_built(vars, v) {
+  // A local built before is built again in place, as its first bind built it (`p = null`,
+  // its store, its fields); the scope pass frees the store it held.
+  if !matches {
     el::refuse(e, "a struct literal rebinding a local");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
