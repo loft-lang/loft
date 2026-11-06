@@ -19,6 +19,13 @@ what Rust's costs.
 
 ## Why
 
+loft ships its data structures (`vector`, `hash`, `index`, `sorted`, …) and gave a user little
+room to build their own for a custom situation.  Field links and the textbook recursion fill most
+of that gap: a user's own tree, trie or list is written directly, at a cost near Rust's.  What is
+left of the gap is in § Also open — building a structure is still O(n²) in its two most natural
+spellings, and a structure with shared nodes or back-links (a graph, parent pointers) mixes owned
+children with `reference<T>`, which no cell or bench exercises yet.
+
 The owner's ruling (C77, amended 2026-11-06): Rust programmers must feel at home in loft, whose
 syntax stays close to Rust's even where the semantics differ.  So the shapes a Rust programmer
 writes with `&mut` are admitted ahead of C77's narrowing of `&`.  The rules already said so for
@@ -144,8 +151,10 @@ The natural-code list this plan grew out of, outside its core:
 - **The read-only cursor `cur = t`** — the spelling nearly everyone writes for a lookup copies
   the whole tree at the bind; elide the copy where nothing writes through the local.
 - **Recursive construction `N { v, next: mk(n - 1) }`** — O(n²); a design question
-  (`(O-Buffer)`).
-- **Enum lists `l = Cons { v, next: l }`** — O(n²).
+  (`(O-Buffer)`).  First of this list: a user building their own structure meets it first.
+- **Enum lists `l = Cons { v, next: l }`** — O(n²); second, for the same reason.
+- **Owned children beside `reference<T>` back-links** — a doubly linked list or a tree with
+  parent pointers, as a cell and a bench routine.
 - **list_ops at 3.91×** — find the mechanism behind it.
 - **Before the PR** — RULE_CROSSINGS ledger rows for the pairs these fixes crossed, `make
   check-rlib` (the wasm rlib was stale), `make ci`.
