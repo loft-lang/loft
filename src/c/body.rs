@@ -200,6 +200,14 @@ pub(crate) struct FnWriter<'a> {
     kh_passed: std::collections::HashSet<String>,
     /// A `__nn` twin: the parameters its caller's arguments prove (`super::NN_MASK`).
     nn_seed: Vec<u16>,
+    /// A `__rg` twin (`super::RG_BIT`): its integer parameters seeded within `[-L, L]`, the
+    /// base of its range facts (`nn_facts`).
+    rg_seed: crate::opt::range::Ranges,
+    /// `@FR-R-RangedCall`'s guarded copy: the facts the copy being written runs under, which
+    /// `range_operator` and `ranged_call` read before the function's own (`nn_facts`).
+    range_override: Vec<std::rc::Rc<crate::opt::range::Ranges>>,
+    /// Inside either copy of a guarded `For` block: no guard nests in it.
+    in_range_copy: bool,
     /// The record scalars each enclosing loop reads once before it (`@FR-R-Scalar`): the
     /// `(variable, field offset)` key, the local holding it and its shape, innermost last.
     scalars: Vec<Vec<(crate::opt::hoist::ScalarKey, String, CType)>>,
@@ -726,6 +734,9 @@ impl<'a> FnWriter<'a> {
             pending_grown: Vec::new(),
             kh_passed: std::collections::HashSet::new(),
             nn_seed: Vec::new(),
+            rg_seed: crate::opt::range::Ranges::default(),
+            range_override: Vec::new(),
+            in_range_copy: false,
             push_heads: Vec::new(),
             slice_carriers: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
@@ -974,6 +985,21 @@ impl<'a> FnWriter<'a> {
     pub(crate) fn nn_seed(mut self, mask: u64) -> Self {
         let bits = (mask & super::NN_MASK) >> super::NN_SHIFT;
         self.nn_seed = (0..26u16).filter(|i| bits & (1 << i) != 0).collect();
+        self
+    }
+
+    /// A `__rg` twin (`super::RG_BIT`): its range facts start from its parameters' seeds —
+    /// and, for an `__inv` twin (`inv`), its scalar inputs' too, which its call site proved.
+    pub(crate) fn ranged(mut self, on: bool, inv: bool) -> Self {
+        if on {
+            let data = self.cx.data;
+            self.rg_seed = match self.cx.callee_inputs(self.d) {
+                Some(inputs) if inv => {
+                    crate::opt::ranged_call::twin_seeds(data, self.d, &inputs.scalars)
+                }
+                _ => crate::opt::ranged_call::param_seeds(data, self.d),
+            };
+        }
         self
     }
 
@@ -6020,11 +6046,104 @@ impl<'a> FnWriter<'a> {
     }
 
     fn block_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        // `@FR-R-RangedCall`'s guarded copy: the block once more behind `|x| <= G` for each
+        // leaf the plan names, its calls taking their ranged twins under the copy's facts.
+        if b.name == "For block"
+            && !self.in_range_copy
+            && let Some((test, facts)) = self.range_guard(b, ind)?
+        {
+            self.flush(ind);
+            self.line(ind, &format!("if ({test}) {{"));
+            self.in_range_copy = true;
+            self.range_override.push(std::rc::Rc::new(facts));
+            let r = self.ops_stmt(&b.operators, ind + 1);
+            self.range_override.pop();
+            r?;
+            self.line(ind, "} else {");
+            let r = self.ops_stmt(&b.operators, ind + 1);
+            self.in_range_copy = false;
+            r?;
+            self.line(ind, "}");
+            crate::rewrite_census::fired("R-RangedCall/guard", 1);
+            return Ok(());
+        }
         let delivery = self.delivery_block(b);
         self.in_delivery += u32::from(delivery);
         let r = self.ops_stmt(&b.operators, ind);
         self.in_delivery -= u32::from(delivery);
         r
+    }
+
+    /// `@FR-R-RangedCall`'s guarded copy for the `For` block `b`: the test (`|x| <= G` for
+    /// each leaf, spelled so that a null fails it) and the facts the copy runs under, as
+    /// `opt::ranged_call::guard_plan` decides them over this loop's hoisted integer fields.
+    fn range_guard(
+        &mut self,
+        b: &Block,
+        ind: usize,
+    ) -> Result<Option<(String, crate::opt::range::Ranges)>, String> {
+        let data = self.cx.data;
+        if !crate::opt::range::ranged_calls_enabled()
+            || crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"))
+            || self.gen_elem.is_some()
+            || b.operators.iter().any(|op| {
+                op.any_node(&mut |n| {
+                    matches!(
+                        n,
+                        Value::Yield(_) | Value::Parallel(_) | Value::CallRef(_, _)
+                    )
+                })
+            })
+        {
+            return Ok(None);
+        }
+        let Some(lp) = b.operators.iter().find_map(|op| match op.unspan() {
+            Value::Loop(lp) => Some(lp.clone()),
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+        let mut fields: Vec<crate::opt::ranged_call::GuardField> = Vec::new();
+        if let Some(verdict) = self.verdict(&lp) {
+            for (key, getter) in verdict.scalars {
+                if let Value::Call(g, args) = getter.unspan()
+                    && data.def(*g).name() == "OpGetInt"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == key.0)
+                {
+                    fields.push((key, getter.clone()));
+                }
+            }
+        }
+        let facts = self.nn_facts();
+        let over = self.range_override.last().cloned();
+        let known = over.as_deref().unwrap_or(&facts.1);
+        let gf = crate::opt::ranged_call::GuardFacts {
+            f: self.d,
+            known,
+            nn: &facts.0,
+            walks: &self.char_walks,
+        };
+        let plan = crate::opt::ranged_call::guard_plan(
+            data,
+            b,
+            fields,
+            &gf,
+            &mut self.cx.rg_gains.borrow_mut(),
+        );
+        let Some((fields, leaves, merged)) = plan else {
+            return Ok(None);
+        };
+        let g = crate::opt::ranged_call::G;
+        let bound = |x: &str| format!("((uint64_t) ({x}) + UINT64_C({g}) <= UINT64_C({}))", 2 * g);
+        let mut test: Vec<String> = Vec::new();
+        for (_, getter) in &fields {
+            let e = self.nested(|w| w.expr(getter, ind))?;
+            test.push(bound(&as_int(e)?));
+        }
+        for v in &leaves {
+            test.push(bound(&self.var(*v)));
+        }
+        Ok(Some((test.join(" && "), merged)))
     }
 
     /// `@FR-R-RetAdopt` — is `b` the exit delivery of an adopted result local?  Inside it the
@@ -7204,6 +7323,14 @@ impl<'a> FnWriter<'a> {
                     mask |= bits << super::NN_SHIFT;
                 }
             }
+            // `@FR-R-RangedCall`: a call whose integer arguments this body proves within
+            // `[-L, L]` takes the callee's `__rg` twin, which seeds its parameters there.
+            if super::native_c(route).is_none()
+                && !self.apr_twin_call(d, args)
+                && self.ranged_call(d, args, mask & super::INV_BIT != 0)
+            {
+                mask |= super::RG_BIT;
+            }
             // `@FR-R-Apart` instance 4: an apart value handed over goes to the callee's `__apr` twin,
             // which takes it as its buffers (`expr` answered them at that argument).
             if self.apr_twin_call(d, args) {
@@ -8018,7 +8145,9 @@ impl<'a> FnWriter<'a> {
             return Ok(None);
         }
         let facts = self.nn_facts();
-        if crate::opt::range::op_range(self.cx.data, &facts.0, &facts.1, name, args, 0).is_none() {
+        let over = self.range_override.last().cloned();
+        let ranges = over.as_deref().unwrap_or(&facts.1);
+        if crate::opt::range::op_range(self.cx.data, &facts.0, ranges, name, args, 0).is_none() {
             return Ok(None);
         }
         self.range_plain(form, name, args, ind)
@@ -8050,13 +8179,60 @@ impl<'a> FnWriter<'a> {
                     def.code(),
                     &nn,
                     &self.char_walks,
-                    &crate::opt::range::Ranges::default(),
+                    &self.rg_seed,
                 );
                 let f = std::rc::Rc::new((nn, rv));
                 self.range_facts = Some(f.clone());
                 f
             }
         }
+    }
+
+    /// `@FR-R-RangedCall` — may this call of `d` take its `__rg` twin: the rule is on, `d` is a
+    /// loft function whose ranged variant gains (`opt::ranged_call::variant_gains`), and every
+    /// integer argument is proven within `[-L, L]` under this body's facts.  A generator's body
+    /// keeps every call plain, as native's coroutine bodies do.
+    fn ranged_call(&mut self, d: u32, args: &[Value], inv: bool) -> bool {
+        let data = self.cx.data;
+        if !crate::opt::range::ranged_calls_enabled()
+            || crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"))
+            || self.gen_elem.is_some()
+            || (d as usize) >= data.definitions.len()
+            || !data.def(d).is_loft_defined()
+            || !crate::opt::ranged_call::variant_gains(
+                data,
+                d,
+                0,
+                &mut self.cx.rg_gains.borrow_mut(),
+            )
+        {
+            return false;
+        }
+        let facts = self.nn_facts();
+        let over = self.range_override.last().cloned();
+        let ranges = over.as_deref().unwrap_or(&facts.1);
+        if !crate::opt::ranged_call::args_ranged(data, d, args, ranges, &facts.0) {
+            return false;
+        }
+        // An `__inv` twin's scalar inputs are seeded too, so each must be proven here.
+        if inv {
+            let Some(inputs) = self.cx.callee_inputs(d) else {
+                return false;
+            };
+            if crate::opt::ranged_call::scalar_inputs_ranged(
+                data,
+                self.vars,
+                args,
+                &inputs.scalars,
+                ranges,
+            )
+            .is_err()
+            {
+                return false;
+            }
+        }
+        crate::rewrite_census::fired("R-RangedCall", 1);
+        true
     }
 
     /// The plain C operator for `name` over `args`, which `op_range` proved fault-free.

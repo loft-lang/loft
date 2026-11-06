@@ -263,7 +263,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c |
 | `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
 | `(R-Range)` | `R-Range` c, native |
-| `(R-RangedCall)` | `R-RangedCall` native |
+| `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
 | `(R-Rebind)` | `R-Rebind` ir |
 | `(R-RebindBuffer)` | `R-RebindBuffer` native |
 | `(R-RecPtr)` | `R-RecPtr` c, native · `/held` c · `/index` native · `/nested` native · `/param` c · `/text` c |
