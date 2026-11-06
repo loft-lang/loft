@@ -3475,6 +3475,10 @@ fn first_vector_bind(e: el::El, vars: el_vars::Vars, v: integer, t: ir::TypeT, a
 fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
   field_read = !(el_ir::unspan(x.code) is NdVar);
+  if vars.amp_vectors.contains(v) {
+    el::refuse(e, "a whole-vector rebind of a vector local a `&` links (refilled in place)");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   if x.tp is TyOptional || el_vars::tp(vars, v) is TyOptional || vars.vars[v].argument {
     el::refuse(e, "a whole-vector copy bind of a nullable vector or into a parameter");
     return ex(ir::NdNull, ir::TyVoid);
@@ -3734,6 +3738,18 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
       return ex(ir::NdInsert { items: [el_ir::v_set(held, x.code), free, detach, el_ir::v_set(v, ir::NdVar { n: held })] }, ir::TyVoid);
     }
     return ex(ir::NdInsert { items: [free, detach, el_ir::v_set(v, x.code)] }, ir::TyVoid);
+  }
+  // A local a `&` bound to a place in a store names that place (`set_amp_link`): for a record,
+  // a whole-value write through it copies into the place (`copy_ref`, loft#1376), where a
+  // plain view would rebind — not carried yet, so refused by name.  A new `&` re-points it.
+  amp_rhs = match e.p.nodes[rhs!] { SUnary { op } => op == "&", _ => false };
+  if amp_rhs && match e.p.nodes[rhs!] { SUnary { e: o } => o != null && !(e.p.nodes[o!] is SName), _ => false } && !vars.amp_places.contains(v) {
+    vars.amp_places += [v];
+  }
+  vb = el_types::base(el_vars::tp(vars, v));
+  if !amp_rhs && vars.amp_places.contains(v) && (struct_ref(e, vb) >= 0 || el_convert::struct_enum(vb)) {
+    el::refuse(e, "a whole-value write through a `&` link to a record place");
+    return ex(ir::NdNull, ir::TyVoid);
   }
   // A parameter of a heap type rebound whole takes the rebound-parameter road (an entry witness,
   // the detach before the bind) or, for a text, a shadow local — not carried yet.
@@ -4096,7 +4112,14 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   // `bind_text_link_kind`: a local bound to a text link records its kind — the store kind for
   // a text field or element, the variable kind for a text local's slot.
   if x.tp is TyRefVar && !vars.vars[v].argument && match x.tp { TyRefVar { inner } => inner is TyText, _ => false } {
-    store = match el_ir::unspan(x.code) { NdCall { def_nr, args } => (el::def(e, def_nr).name == "OpGetField" && len(args) == 2) || el::def(e, def_nr).name == "OpGetVector", _ => false };
+    // A copy of a store-kind link (`OpVarRef(t)`) is the store kind too.
+    store = match el_ir::unspan(x.code) {
+      NdCall { def_nr, args } => {
+        nm = el::def(e, def_nr).name;
+        (nm == "OpGetField" && len(args) == 2) || nm == "OpGetVector" || (nm == "OpVarRef" && len(args) == 1 && match el_ir::unspan(args[0]) { NdVar { n: s } => store_text_link(vars, s), _ => false })
+      },
+      _ => false
+    };
     if !vars.text_links.contains(v) {
       vars.text_links += [v];
     }
@@ -4109,7 +4132,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if !e.first_pass {
     slot = el_vars::tp(vars, v);
     g = el_convert::guard_discharge(e, vars, x.code, slot);
-    x.code = g ?? el_convert::guard_range(e, x.code, slot, x.tp, slot is TyOptional);
+    x.code = g ?? el_convert::guard_range(e, x.code, slot, el_convert::guard_source(vars, x.code, x.tp), slot is TyOptional);
   }
   // A bare `null` written to a `τ?` record, collection or struct-enum local is stored as
   // `convert_store` stores it: the reference sentinel (`@FR-L-Null`).
@@ -5391,7 +5414,7 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   code = c!;
   if !e.first_pass {
     g = el_convert::guard_discharge(e, vars, code, declared!);
-    code = g ?? el_convert::guard_range(e, code, declared!, x.tp, declared! is TyOptional);
+    code = g ?? el_convert::guard_range(e, code, declared!, el_convert::guard_source(vars, code, x.tp), declared! is TyOptional);
   }
   ex(el_ir::v_set(v, code), ir::TyVoid)
 }
@@ -8926,7 +8949,7 @@ fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>) -> 
           el::refuse(e, "a hole with no value");
           return ex(ir::NdNull, ir::TyText { dep: [] });
         }
-        x = expression(e, vars, he!);
+        x = un_ref(e, vars, expression(e, vars, he!));
         f = hole_spec(e, vars, spec, spec_end);
         if f == null {
           return ex(ir::NdNull, ir::TyText { dep: [] });
@@ -9134,6 +9157,30 @@ fn vector_row_def(e: el::El, tp: ir::TypeT, at: integer) {
     },
     _ => {}
   }
+}
+
+// `Parser::un_ref`: a read of a link converted to the value it names (`convert(&τ → τ)`).  A
+// scalar link reads as `τ` already; the conversion adds the range guard of a `τ` that declares
+// one, which a link's source type (`&τ`, no integer range) never proves needless.
+fn un_ref(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
+  if e.first_pass {
+    return x;
+  }
+  match el_ir::unspan(x.code) {
+    NdVar { n } => {
+      lt = el_vars::tp(vars, n);
+      match lt {
+        TyRefVar { inner } => {
+          if is_scalar(el_types::base(inner)) {
+            return ex(el_convert::guard_range(e, x.code, inner, lt, inner is TyOptional), x.tp);
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  x
 }
 
 // `Parser::append_data` with the default output state: the format op a value of this type
@@ -15749,10 +15796,35 @@ fn store_text_link(vars: el_vars::Vars, v: integer) -> boolean {
   vars.store_links.contains(v)
 }
 
+// The store-kind text link a mention spells (`OpGetText(OpVarRef(t), 0)`), or -1.
+fn store_link_mention(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetText" || len(args) != 2 {
+        return -1;
+      }
+      match el_ir::unspan(args[0]) {
+        NdCall { def_nr: r, args: ra } => {
+          if el::def(e, r).name == "OpVarRef" && len(ra) == 1 {
+            match el_ir::unspan(ra[0]) {
+              NdVar { n: v } => { if store_text_link(vars, v) { return v; } },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
 // `Parser::parse_single`'s prefix operators: `-x`, `!x` and `~x` call the one-operand builtin
-// candidates (`OpMinSingle…`, `OpNot`, `OpBitNotSingle…`) on the operand.  `&a` of a scalar local
-// is a link to it (`OpCreateStack`, typed `&τ`), of a link a copy of it (`OpVarRef`); any other
-// `&` is refused by name.
+// candidates (`OpMinSingle…`, `OpNot`, `OpBitNotSingle…`) on the operand.  `&a` names a place
+// (`Parser::parse_assign_op`'s `&` lowering): a scalar local or tuple member by its slot
+// (`OpCreateStack`, typed `&τ`), a link by the link it holds (`OpVarRef`), a scalar, text or
+// record in a store by the place itself.  Any other `&` is refused by name.
 fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
   if n == null {
     el::refuse(e, "a prefix operator with no operand");
@@ -15760,14 +15832,43 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
   }
   if op == "&" {
     a = expression(e, vars, n!);
-    if a.code is NdVar && el_convert::plain_scalar(a.tp) {
-      // A local that is itself a link (`p: &integer`) is copied as the link (`OpVarRef`): a
-      // link to it would point at this frame's slot (`formal/binding.md` D-bind-41).
-      linked = match a.code {
-        NdVar { n: lv } => scalar_link(vars, lv),
-        _ => false
-      };
-      return ex(el_ir::cl(e, if linked { "OpVarRef" } else { "OpCreateStack" }, [a.code]), ir::TyRefVar { inner: a.tp });
+    lv = match a.code { NdVar { n: x } => x, _ => -1 };
+    if lv >= 0 {
+      vt = el_vars::tp(vars, lv);
+      // A local that is itself a link (`p: &integer`, `g = &e`) is copied as the link
+      // (`OpVarRef`), typed as it: a link to it would point at this frame's slot
+      // (`formal/binding.md` D-bind-41).
+      if vt is TyRefVar {
+        return ex(el_ir::cl(e, "OpVarRef", [a.code]), vt);
+      }
+      // A scalar local, nullable or narrow, is linked by its slot, typed by its declaration.
+      if is_scalar(el_types::base(vt)) {
+        return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: vt });
+      }
+    }
+    // A store-kind text link is mentioned as its field (`OpGetText(OpVarRef(t), 0)`); `&t` takes
+    // the link it holds.
+    sl = store_link_mention(e, vars, a.code);
+    if sl >= 0 {
+      return ex(el_ir::cl(e, "OpVarRef", [ir::NdVar { n: sl }]), el_vars::tp(vars, sl));
+    }
+    // A scalar member of a tuple local is a place (`@FR-B-Ref-Lvalue`): the tuple's slot at the
+    // member (`OpCreateStack(t.i)`).  A member of a tuple link, a text or a heap member is
+    // refused by name.
+    match el_ir::unspan(a.code) {
+      NdTupleGet { var: tv, idx } => {
+        match el_vars::tp(vars, tv) {
+          TyTuple { elems } => {
+            if idx < len(elems) && is_scalar(el_types::base(elems[idx])) {
+              return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: elems[idx] });
+            }
+          },
+          _ => {}
+        }
+        el::refuse(e, "a `&` to a tuple member that is not a scalar of a tuple local");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      },
+      _ => {}
     }
     // A link to a record local or parameter (`g = &e`) is its slot (`OpCreateStack`), typed as
     // a link to the record borrowing that local alone.  A link to a link is not carried.
@@ -15796,9 +15897,20 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
         return ex(place!, ir::TyRefVar { inner: a.tp });
       }
     }
+    // A link to a record in a store — a vector's element, a record's field — is the place's
+    // view, as the bare bind already is (`@FR-B-View`); Rust lowers both alike and marks the
+    // variable an `&` link for the scope pass's reshape refusals (`set_amp_link`), which the
+    // image does not carry.
+    rb = el_types::base(a.tp);
+    if !(a.code is NdVar) && !(a.tp is TyOptional) && (struct_ref(e, rb) >= 0 || el_convert::struct_enum(rb)) && place_root(e, a.code) >= 0 {
+      return a;
+    }
     // A link to a vector is the vector's view itself — a local or a field of one, typed as
     // borrowing it — where a bare bind would copy (`@FR-B-Copy`).
     if a.tp is TyVector && (a.code is NdVar || calls(e, a.code, "OpGetField")) && len(el_types::deps(a.tp)) > 0 {
+      if lv >= 0 && !vars.amp_vectors.contains(lv) {
+        vars.amp_vectors += [lv];
+      }
       return a;
     }
     if e.first_pass && el_types::is_unknown(a.tp) {
