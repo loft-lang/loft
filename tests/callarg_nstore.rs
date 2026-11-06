@@ -270,12 +270,22 @@ const A_TRUTHY: &str = "fn sink(s: text) -> integer { len(s) }\n\
 fn f(s: text?) -> integer { assert(s, \"s\"); sink(s) }\n\
 fn main() { x = f(\"hi\"); print(\"x={x}\"); }\n";
 
+// `t₁ && t₂` proves what each proves where it holds, so an assert of a conjunction narrows BOTH
+// names; the single-fact reading narrowed the first and left the second warning.
+const A_CONJ: &str = "fn sink(s: text) -> integer { len(s) }\n\
+fn f(s: text?, t: text?) -> integer { assert(s != null && t != null, \"both\"); sink(s) + sink(t) }\n\
+fn main() { x = f(\"h\", \"i\"); print(\"x={x}\"); }\n";
+
 const AW_NULL_CASE: &str = "fn sink(s: text) -> integer { len(s) }\n\
 fn f(s: text?) -> integer { assert(s == null, \"s\"); sink(s) }\n\
 fn main() { x = f(null); print(\"x={x}\"); }\n";
 const AW_REASSIGNED: &str = "fn sink(s: text) -> integer { len(s) }\n\
 fn f(s: text?) -> integer { t = s; assert(t != null, \"t\"); t = s; sink(t) }\n\
 fn main() { x = f(\"hi\"); print(\"x={x}\"); }\n";
+// A disjunction proves neither name where it holds.
+const AW_DISJ: &str = "fn sink(s: text) -> integer { len(s) }\n\
+fn f(s: text?, t: text?) -> integer { assert(s != null || t != null, \"one\"); sink(s) }\n\
+fn main() { x = f(\"hi\", null); print(\"x={x}\"); }\n";
 const AW_NESTED_COND: &str = "fn sink(s: text) -> integer { len(s) }\n\
 fn f(s: text?, b: boolean) -> integer { if b { assert(s != null, \"s\"); } sink(s) }\n\
 fn main() { x = f(\"hi\", true); print(\"x={x}\"); }\n";
@@ -285,6 +295,7 @@ fn assert_narrows(backend: &str) {
         (A_CONST_MSG, "a_const_msg"),
         (A_BUILT_MSG, "a_built_msg"),
         (A_TRUTHY, "a_truthy"),
+        (A_CONJ, "a_conj"),
     ] {
         let (ok, warns, out) = run(body, backend, true, &format!("{tag}_{backend}"));
         assert!(
@@ -300,6 +311,7 @@ fn assert_narrows(backend: &str) {
         (AW_NULL_CASE, "aw_null_case"),
         (AW_REASSIGNED, "aw_reassigned"),
         (AW_NESTED_COND, "aw_nested_cond"),
+        (AW_DISJ, "aw_disj"),
     ] {
         let (_, warns, _) = run(body, backend, true, &format!("{tag}_{backend}"));
         assert_eq!(

@@ -1480,10 +1480,14 @@ impl Parser {
             // families as the guard clause above, from the condition's THEN side.
             if let Some(test) = self.assert_condition(&n) {
                 let test = test.clone();
-                if let Some((v, true)) = self.narrowing_from_condition(&test)
-                    && !self.narrowed_non_null.contains(&v)
-                {
-                    self.narrowed_non_null.push(v);
+                // Every fact the condition proves where it holds — `assert(a != null && b !=
+                // null)` proves BOTH (`t₁ && t₂` proves what each tᵢ proves).  The single-fact
+                // `narrowing_from_condition` answers a compound with its FIRST fact only, which
+                // narrowed `a` and left `b` nullable: two reads of one shape answered apart.
+                for (v, p) in self.narrowings_from_condition(&test) {
+                    if p && !self.narrowed_non_null.contains(&v) {
+                        self.narrowed_non_null.push(v);
+                    }
                 }
                 let caps = std::collections::HashMap::new();
                 for pair in crate::parser::operators::collect_guard_pairs(&test, &self.data, &caps)
