@@ -6682,8 +6682,13 @@ impl Parser {
                 let tp = self.parse_scalar_match(subject, &subject_type, code, &match_pos);
                 return self.dn1_widen_branch_null(tp, code);
             }
-            // vector types — dispatch to vector match handler.
+            // vector types — dispatch to vector match handler.  A KEYED collection takes the
+            // same handler for the arms it has — `null`, a capture, `_` (`@FR-N-Match` at every
+            // τ, loft#2427); it has no positions, so a slice arm is refused there.
             Type::Vector(_, _) => {
+                return self.parse_vector_match(subject, &subject_type, code);
+            }
+            t if crate::parser::vectors::is_collection(t) => {
                 return self.parse_vector_match(subject, &subject_type, code);
             }
             // @PLN35 Phase 7 (Path B) — a coroutine `iterator<T>` subject: materialise it into a
@@ -13119,7 +13124,28 @@ impl Parser {
             let mut arm_shapes: Vec<Option<SliceShape>> = Vec::new();
             // Every pattern of the arm takes a token before its body runs.
             let mut arm_consumes = false;
-            if self.lexer.has_token("[") {
+            // `@FR-N-Match` — a nullable VECTOR subject takes the `null` arm and the `x: _`
+            // capture every other subject takes (`@FR-P-Cap` at the arm root): without them the
+            // arm head matched none of `[`, `_` or a bare name, and the match did not parse
+            // (loft#2427).  The null arm tests the subject's sentinel; on a dense subject it
+            // never matches.
+            if self.lexer.has_token("null") {
+                if !self.first_pass {
+                    cond = self.null_test(Value::Var(v), subject_type, false);
+                }
+            } else if !matches!(subject_type.base(), Type::Vector(_, _))
+                && self.lexer.peek_token("[")
+            {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a keyed collection has no positions for a slice pattern to match; \
+                         match it as a whole (`null`, `x: _`, `_`) and look elements up by key"
+                    );
+                }
+                break;
+            } else if self.lexer.has_token("[") {
                 let subject = SliceSubject {
                     v,
                     elm_tp: &elm_tp,
@@ -13157,11 +13183,31 @@ impl Parser {
                 if id == "_" {
                     is_total = true;
                 } else {
-                    // bare name — wildcard binding
+                    // bare name — wildcard binding; `name: _` is the same capture spelled with
+                    // its pattern (`@FR-P-Cap`).
                     let bind_nr = self.pattern_binding(&id, subject_type);
                     self.vars.defined(bind_nr);
-                    bindings.push(v_set(bind_nr, Value::Var(v)));
+                    // A KEYED subject's capture is a view of its store, bound once ahead of the
+                    // arm chain: first bound inside an arm, it was pre-inited to null there, and
+                    // a keyed null-init mints a store the view then overwrote — one orphaned
+                    // store per match (loft#2427).
+                    if matches!(subject_type.base(), Type::Vector(_, _)) {
+                        bindings.push(v_set(bind_nr, Value::Var(v)));
+                    } else {
+                        prechain.push(v_set(bind_nr, Value::Var(v)));
+                    }
                     is_total = true;
+                    if self.lexer.has_token(":")
+                        && self.lexer.has_identifier().as_deref() != Some("_")
+                        && !self.first_pass
+                    {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "a vector match arm captures the whole subject as `{id}: _`; a slice \
+                             pattern binds its parts by name inside `[…]`"
+                        );
+                    }
                 }
             } else {
                 // Unrecognized arm head (not `[…]`, `_`, or a binding). No branch above
@@ -13171,7 +13217,7 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "expected slice pattern '[...]' or '_' in vector match arm"
+                        "expected slice pattern '[...]', 'null' or '_' in vector match arm"
                     );
                 }
                 break;
