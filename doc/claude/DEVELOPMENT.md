@@ -138,7 +138,15 @@ on their own branches at the same time: no step waits on them, and none touches 
    like a PR red; one the PR already fixes needs only that check.
 6. **Push those fixes to the PR branch only after its current run has finished**, all at once.
    Each run is then read whole, and its red steps are fixed before the next run starts.
-   Cancel the runs a push made obsolete (`gh run cancel`).  Repeat 5–6 until the PR merges.
+   Cancel the runs a push made obsolete (`gh run cancel`).
+
+**Two runs, two jobs.**  The FIRST run is discovery: with optimization work this destructive, a
+union is not green before the checks the PR exists for have run, so a red first run is the
+design working.  Every red it shows — the tests, the informational and advisory steps, and
+main's nightly reds (step 5) — is fixed on the next branch before the second run.  The SECOND
+run exists to land the PR on `main`: what it shows that the first run did not is fixed on the
+next branch and waits for the NEXT PR, as does any fix left there when the PR merges.  A third
+run on the same PR is the exception, for a red that blocks the merge itself.
 
 A nightly red in a consumer's suite (`switch-ab`, `consumer-main-health`) is triaged before
 it is fixed: run the consumer's suite on `main`'s own binary.  A failure there too is the
