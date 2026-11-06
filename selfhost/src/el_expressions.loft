@@ -2074,9 +2074,52 @@ fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, res
     }
     return ir::NdBlock { block: [bl] };
   }
+  // One literal arm, every other a halt: the buffer is renamed onto that literal's store, as for
+  // a literal tail (`Rename` of the tail's one dep).
+  one = sole_literal_arm(e, tail);
+  if one >= 0 && !(result is TyOptional) && starts_with(el_vars::name_of(vars, one), "__vdb_") {
+    rename_onto(e, vars, rb, one);
+    bl.result = [el_types::without_deps(el_types::base(result))];
+    bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: one }]), bl.operators[0]] };
+    return ir::NdBlock { block: [bl] };
+  }
   bl.operators[-1] = deliver_arms(e, tail, rb, rec);
   bl.result = [if result is TyOptional { ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) } } else { el_types::without_deps(el_types::base(result)) }];
   ir::NdBlock { block: [bl] }
+}
+
+// The store of the one literal arm of the `if` at `n` when every other arm halts, else -1.
+fn sole_literal_arm(e: el::El, n: ir::Node) -> integer {
+  stores: vector<integer> = [];
+  if !literal_or_halt_arms(e, n, stores) || len(stores) != 1 {
+    return -1;
+  }
+  stores[0]
+}
+
+fn literal_or_halt_arms(e: el::El, n: ir::Node, stores: vector<integer>) -> boolean {
+  match n {
+    NdSpan { inner } => literal_or_halt_arms(e, inner, stores),
+    NdIf { cond: _, t, f } => literal_or_halt_arms(e, t, stores) && literal_or_halt_arms(e, f, stores),
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        return false;
+      }
+      if block[0].name == "halt" || (len(ops) >= 2 && ends_in_halt(e, ops[-2])) {
+        return true;
+      }
+      st = literal_backing_store(block[0]);
+      if st >= 0 {
+        if !stores.contains(st) {
+          stores += [st];
+        }
+        return true;
+      }
+      literal_or_halt_arms(e, ops[-1]!, stores)
+    },
+    _ => false
+  }
 }
 
 // Is every arm of the `if` at `n` a vector literal (`Vector`, its own `__vdb_N`) or the null
@@ -2710,6 +2753,25 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
   }
   if !e.first_pass {
     l = defend_faults(e, l);
+  }
+  // `@FR-C-Never` (loft#2260): a halt (`exit`, `panic`) where a value is wanted keeps the halt as
+  // a statement and answers the wanted type's null after it, which no run reaches
+  // (`give_halt_a_value`): a block tail gets the null appended, a bare call is wrapped in `halt`.
+  if (t is TyVoid || t is TyNever) && !(el_types::base(result) is TyVoid) && !(el_types::base(result) is TyNever) && !el_types::is_unknown(result) && len(l) > 0 && ends_in_halt(e, l[-1]) {
+    nv = halt_null(e, result);
+    if nv != null {
+      last = l[-1];
+      l[-1] = match last {
+        NdBlock { block } => {
+          hb = block[0];
+          hb.operators += [nv!];
+          hb.result = [result];
+          ir::NdBlock { block: [hb] }
+        },
+        _ => el_ir::v_block([last, nv!], result, "halt")
+      };
+      return ex(el_ir::v_block(l, result, "block"), result);
+    }
   }
   // A function body that ends in a jump is typed as its declared result, and so is a
   // generator's: what it answers is the iterator its `yield`s feed, not its last statement.
@@ -10923,6 +10985,10 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     return ex(el_ir::v_if(c.code, t.code, ir::NdNull), ir::TyVoid);
   }
+  // `@FR-C-Never` — a then arm that ends in a halt answers nothing, as a jump does.
+  if other != null && t.tp is TyVoid && ends_in_halt(e, t.code) {
+    t = ex(t.code, ir::TyNever);
+  }
   if t.tp is TyNull {
     el::refuse(e, "an `if` arm that never finishes or is null");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -10954,7 +11020,19 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   // `@FR-C-Never`: a then arm that never finishes answers nothing, so it takes the else's type
   // (`true_type = false_type`, its block re-typed).
   if t.tp is TyNever && !(f.tp is TyNever) && !(f.tp is TyNull) {
-    t = ex(block_typed(t.code, f.tp), f.tp);
+    hv = if ends_in_halt(e, t.code) { halt_null(e, f.tp) } else { null };
+    tc = t.code;
+    if hv != null {
+      match tc {
+        NdBlock { block } => {
+          hb = block[0];
+          hb.operators += [hv!];
+          tc = ir::NdBlock { block: [hb] };
+        },
+        _ => {}
+      }
+    }
+    t = ex(block_typed(tc, f.tp), f.tp);
   }
   vars.present = vars.present[0..dp];
   vars.present_exprs = vars.present_exprs[0..dj];
@@ -11279,6 +11357,34 @@ fn retail(code: ir::Node, tail: ir::Node?, t: ir::TypeT) -> ir::Node? {
 
 // `Parser::arm_expectation`: what the else arm is read against — a plain integer as the
 // default integer, a sized one as nothing in particular, anything else as itself.
+// `ends_in_halt`: the halt call itself (`exit`, `panic`), or a block whose last operator does.
+fn ends_in_halt(e: el::El, n: ir::Node) -> boolean {
+  cur = el_ir::unspan(n);
+  while true {
+    match cur {
+      NdBlock { block } => {
+        if len(block[0].operators) == 0 {
+          return false;
+        }
+        cur = el_ir::unspan(block[0].operators[-1]);
+      },
+      NdCall { def_nr } => { return el::def(e, def_nr).name == "n_exit" || el::def(e, def_nr).name == "n_panic"; },
+      _ => { return false; }
+    }
+  }
+  false
+}
+
+// `Parser::null_value` of the wanted type: a collection, record or struct enum's reference
+// sentinel, a scalar's or a text's own null.  Null where none is carried.
+fn halt_null(e: el::El, t: ir::TypeT) -> ir::Node? {
+  b = el_types::base(t);
+  if el_types::is_collection(b) || b is TyReference || el_convert::struct_enum(b) {
+    return el_ir::cl(e, "OpNullRefSentinel", []);
+  }
+  el_convert::null_of(e, b)
+}
+
 // `void_dropped_statement_arms`: the arms of a branch in statement position, each voided.
 fn void_dropped_arms(n: ir::Node) -> ir::Node {
   match n {
@@ -13128,9 +13234,26 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   rbase = el_types::base(result);
   if !(rbase is TyVoid) && !(rbase is TyNull) {
     nl = el_convert::null_of(e, rbase);
+    hn = halt_null(e, result);
     for a in out {
       if nl != null && el_ir::is_null(a.code) {
         out[a#index].code = nl!;
+      } else if hn != null && ends_in_halt(e, a.code) && !scalar(rbase) {
+        // Beside a record arm the arms' own literal stores are stripped from the join
+        // (`arm_join_type`) — not carried.
+        el::refuse(e, "a match arm that halts beside a record or collection result");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      } else if hn != null && ends_in_halt(e, a.code) {
+        // `@FR-C-Never`: the halt, then a value of the result type no run reaches.
+        out[a#index].code = match a.code {
+          NdBlock { block } => {
+            hb = block[0];
+            hb.operators += [hn!];
+            hb.result = [result];
+            ir::NdBlock { block: [hb] }
+          },
+          _ => el_ir::v_block([a.code, hn!], result, "halt")
+        };
       }
     }
   }
@@ -13354,6 +13477,12 @@ fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) ->
         }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { arm_expectation(result) };
         b = arm_body(e, vars, body, expected);
+        // `@FR-C-Never`'s typed halt in a vector match (`type_null_arms` over the slice arms) is
+        // not carried.
+        if !e.first_pass && ends_in_halt(e, b.code) {
+          el::refuse(e, "a vector match arm that halts");
+          return void;
+        }
         if unsettled(result) {
           result = b.tp;
         }
