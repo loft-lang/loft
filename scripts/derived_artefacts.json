@@ -260,11 +260,19 @@
       "scripts/gate_preflight.sh"
     ],
     [
+      "rustfmt",
+      "cargo fmt -- --check"
+    ],
+    [
       "cargo check",
       "cargo check --all-targets -q"
     ],
     [
       "clippy",
+      "cargo clippy -q -- -D warnings"
+    ],
+    [
+      "clippy tests",
       "cargo clippy -q --tests -- -D warnings"
     ],
     [

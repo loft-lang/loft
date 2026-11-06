@@ -146,7 +146,10 @@ on their own branches at the same time: no step waits on them, and none touches 
    work an agent keeps building waits for the next PR, and only FIXES for what this PR carries
    are still taken.
 2. **Fix what the join broke, at once** — a conflict's compile error, a clippy finding, a
-   derived artefact both sides changed (re-derive it, never pick a side).
+   derived artefact both sides changed (re-derive it, never pick a side).  Format first
+   (`cargo fmt`), then clippy (`scripts/join.py verify` runs them in that order): rustfmt
+   can lengthen a function past clippy's `too_many_lines`, so a clippy run before it passes
+   code the PR's Clippy job then refuses.
 3. **Check each fix on its own**, with a targeted CI probe on the step it repairs
    (`gh workflow run linux-probe.yml -f filter=…` or `-f run=…`; `windows-probe.yml` for a
    Windows step), not with a full gate.  A probe that cannot fail proves nothing: check that
