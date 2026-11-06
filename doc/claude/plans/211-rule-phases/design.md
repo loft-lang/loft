@@ -371,6 +371,19 @@ operator by default, checked under `-DLOFT_VERIFY` (overflow, a zero or `MIN / -
 null sentinel) — a plant admitting an unproven add aborts at its site; then hand-price one
 hex routine's `__rg` form on the C (gcc and clang) before building (1), (3) and (4).
 
+**Priced** (hex_field's SHIP unit, `bench/portal/ab.py`, interleaved and pinned): the
+`loft_wrap_*` operators of the fifteen functions native routes through `__rg` made plain
+signed — what the C's ranged variants would emit for a bounded caller:
+
+| routine | gcc | clang |
+|---|---|---|
+| `edgeset_count` (a triple loop through `edge_mat` → `eg_index` → `eg_dir_from`) | **0.343×** | **0.671×** |
+| `stencil_rotate` | 0.877× | 0.988× (same) |
+
+gcc's baseline is the slow one (1.33 ms against clang's 0.62 ms): the wrapping form is what
+keeps gcc from folding the index chain.  So the port is built: (1), then (3) the C's `__rg`
+twin and routing; (4) the guarded copy priced again after.
+
 **`(Fact-Oracle)` itself** — the interpreter checking a MUST `entry` fact on entry and a MAY
 `writes` summary as a superset of what the call did — is built with step 2, under
 `LOFT_FACT_VERIFY=1`, so a widened reach has a run-time falsifier on the interpreter as the C's
