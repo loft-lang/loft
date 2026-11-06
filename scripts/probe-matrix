@@ -20,8 +20,10 @@
 #   --baseline <path>   reference binary (e.g. a main worktree build); its
 #                       column classifies failures: work-fails + baseline-passes
 #                       = REGRESSION, both-fail = PRE-EXISTING
-#   --backend <b>       interp | native | both   (default: interp — native pays
-#                       a rustc compile per cell; use `both` for final verify)
+#   --backend <b>       interp | c | native | both   (default: interp — c and
+#                       native pay a compile per cell; `both` = interp + c, the
+#                       pair CLAUDE.md's debugging policy verifies on; `native`
+#                       is rustc, for a change to what it emits)
 #   --filter <substr>   only run cells whose filename contains <substr>
 #
 # Cell header annotations (loft comments, anywhere in the file):
@@ -90,7 +92,18 @@ while [ $# -gt 0 ]; do
 done
 [ -x "$bin" ] || die "binary not executable: $bin (build with: cargo build --release --bin loft)"
 [ -z "$baseline" ] || [ -x "$baseline" ] || die "baseline not executable: $baseline"
-case "$backend" in interp|native|both) ;; *) die "--backend must be interp|native|both" ;; esac
+case "$backend" in interp|c|native|both) ;; *) die "--backend must be interp|c|native|both" ;; esac
+
+# `timeout(1)` is coreutils; macOS ships without it.  Fall back to perl's alarm, which
+# every supported host has, so a cell that hangs still ends instead of the whole matrix
+# reading VACUOUS with `timeout: command not found`.
+if command -v timeout >/dev/null 2>&1; then
+    bound() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    bound() { gtimeout "$@"; }
+else
+    bound() { local s="$1"; shift; perl -e 'alarm shift; exec @ARGV or exit 127' "$s" "$@"; }
+fi
 
 # ------------------------------------------------------------- run one cell
 # run_cell <binary> <backend-flag> <file> ; sets g_status (PASS/FAIL/VACUOUS)
@@ -99,14 +112,14 @@ run_cell() {
     local b="$1" flag="$2" f="$3"
     local out err
     out="$(mktemp)"; err="$(mktemp)"
-    if [ "$flag" = "--native" ]; then
-        LOFT_NATIVE_LEAK_CHECK=1 timeout 300 "$b" --native --no-warnings "$f" >"$out" 2>"$err"
+    if [ "$flag" = "--interpret" ]; then
+        bound 120 "$b" --interpret --no-warnings "$f" >"$out" 2>"$err"
     else
-        timeout 120 "$b" --interpret --no-warnings "$f" >"$out" 2>"$err"
+        LOFT_NATIVE_LEAK_CHECK=1 bound 300 "$b" "$flag" --no-warnings "$f" >"$out" 2>"$err"
     fi
     local rc=$?
     local expected leak_expected
-    expected="$(grep -oP '^// @EXPECT: \K.*' "$f")"
+    expected="$(sed -n 's|^// @EXPECT: ||p' "$f")"
     grep -q '^// @EXPECT_LEAK' "$f" && leak_expected=1 || leak_expected=0
 
     g_status="PASS"; g_reason=""
@@ -138,8 +151,9 @@ run_cell() {
 
 # ---------------------------------------------------------------- main loop
 backends="interp"
+[ "$backend" = "c" ] && backends="c"
 [ "$backend" = "native" ] && backends="native"
-[ "$backend" = "both" ] && backends="interp native"
+[ "$backend" = "both" ] && backends="interp c"
 
 fail=0 control_seen=0 control_failed=0 vacuous=0 missing_expect=0
 printf '%-34s %-7s %-22s %s\n' "CELL" "BACKEND" "WORK" "${baseline:+BASELINE}"
@@ -156,7 +170,7 @@ for f in "$dir"/*.loft; do
         continue
     fi
     for be in $backends; do
-        flag="--interpret"; [ "$be" = "native" ] && flag="--native"
+        case "$be" in interp) flag="--interpret" ;; c) flag="--native-c" ;; *) flag="--native" ;; esac
         run_cell "$bin" "$flag" "$f"
         w_status="$g_status"; w_reason="$g_reason"
         b_col=""

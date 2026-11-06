@@ -1583,6 +1583,15 @@ impl Parser {
                 // the pre-conversion type copied that stack tuple as if it were the record
                 // (`OpCopyRecord` over a tuple value: SIGSEGV, loft#1903).
                 let mut v_tp = v_tp;
+                // @FR-B-Ref-Uniform — a `&τ` local is used exactly like a `τ`, so a yield of
+                // one yields the value it links to, as a `return` or a block tail does.  Left
+                // as the link, the channel carried the link's own slot: a scalar came out as
+                // garbage (no value, a bogus free, a SIGBUS), a text parameter's link crashed,
+                // and a record skipped `@FR-G-Own`'s copy — the consumer's value tracked the
+                // generator's later writes, on both backends.
+                if matches!(v_tp, Type::RefVar(_)) {
+                    self.un_ref(&mut v_tp, &mut v);
+                }
                 if let Type::Iterator(elem_tp, _) = r_type.base() {
                     let elem = (**elem_tp).clone();
                     let value_at = Some(&expr_start.position);

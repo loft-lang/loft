@@ -687,6 +687,14 @@ impl State {
                     stack.add_op("OpPutRef", self);
                     self.code_add(pos);
                 }
+                // A `&τ` local reads through its link (`generate_var`'s deref, @FR-B-Ref-Uniform)
+                // but answers the LINK's type, so the pushed value is a τ: sized as the link, a
+                // yielded `&integer` took 12 bytes off an 8-byte push and a `&text` 12 off a
+                // 16-byte one.
+                let t = match t {
+                    Type::RefVar(inner) => *inner,
+                    other => other,
+                };
                 let value_size = crate::variables::size(&t, &crate::data::Context::Argument);
                 stack.add_op("OpCoroutineYield", self);
                 self.code_add(value_size);

@@ -92,6 +92,10 @@ Two products replace it, and both are measurements rather than rankings:
     and pinned another: a pair, not a value.  Its thin row is `spatial`, which 20 of the
     892 guards reach at all.
 
+RULE pairs are not axes: the walk's pair queue is `rule_tags.py pairs`, and the pairs
+already crossed and verified are skipped there through doc/claude/RULE_CROSSINGS.md's
+ledger.  A crossing reaches THIS report through the suite cell its ledger row names.
+
 A REPORT, never a gate.  It reads syntax, so it under-reports on anything it cannot
 spell (see `caveats`).
 

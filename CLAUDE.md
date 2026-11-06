@@ -326,7 +326,8 @@ Networked runs: `LOFT_NET_PROFILE` (PERFORMANCE.md § LOFT_NET_PROFILE).
 [DESIGN_DECISIONS.md](doc/claude/DESIGN_DECISIONS.md) · [DESIGN_PROTOCOL.md](doc/claude/DESIGN_PROTOCOL.md) /
 [DESIGN_VERIFICATION.md](doc/claude/DESIGN_VERIFICATION.md) · [FORMATTER.md](doc/claude/FORMATTER.md) · stability:
 [STABILITY_ROADMAP.md](doc/claude/STABILITY_ROADMAP.md) · [STABILITY_METHOD.md](doc/claude/STABILITY_METHOD.md) (§ The rule-led
-walk, `make rule-coverage`, `make rule-depth`) / [_SWEEP](doc/claude/STABILITY_SWEEP.md) /
+walk, `make rule-coverage`, `make rule-depth`) / [RULE_CROSSINGS.md](doc/claude/RULE_CROSSINGS.md) the rule pairs
+already verified, which `rule_tags.py pairs` skips / [_SWEEP](doc/claude/STABILITY_SWEEP.md) /
 [_HOTSPOTS](doc/claude/STABILITY_HOTSPOTS.md) / [_REDFLAGS](doc/claude/STABILITY_REDFLAGS.md) ·
 [BRITTLE.md](doc/claude/BRITTLE.md) · [DEPS_INVENTORY.md](doc/claude/DEPS_INVENTORY.md) · formal lens:
 [FORMALIZATION.md](doc/claude/FORMALIZATION.md) / [TYPING_RELATION.md](doc/claude/TYPING_RELATION.md) · strict:
