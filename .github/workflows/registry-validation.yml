@@ -255,6 +255,13 @@ jobs:
           cargo build --release --lib --bin loft
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
+      - name: Build loft's components
+        # The prebuilt libraries behind a package's `[native] component = "<name>"`
+        # (@PLN205): web, server and ssh take their natives from `net`.  Without them
+        # every such package fails with "native function `n_byte_at` not loaded".
+        # They land in target/components/, where target/release/loft looks.
+        run: cargo run --release --quiet --bin loft-components
+
       - name: Validate ${{ matrix.package }}
         env:
           VERSIONS: ${{ matrix.package }}
