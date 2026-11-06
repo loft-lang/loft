@@ -132,20 +132,35 @@ pub fn ranges_under(data: &Data, d: u32, seeds: &Ranges) -> Ranges {
     )
 }
 
-/// Does `d`'s ranged variant turn any operator plain that its plain body keeps checked — one of
-/// its own, under its parameters seeded `[-L, L]`, or one of a callee whose call it newly
-/// ranges and whose variant gains in turn?  A variant equal to its plain body only duplicates
-/// code: a function whose arithmetic is all in the apart variants it calls (`__apv`) has
-/// nothing for the ranges to change.  Memoised in `memo`; a recursive function meets itself as
-/// no gain.
+/// Does `d`'s ranged variant repay its copy of the body: does it turn at least
+/// `MIN_CHECKED_OPS` operators plain that its plain body keeps checked ([`gained_ops`])?  The
+/// threshold is [`benefits`]' trade read on what the variant SAVES, not on what the callee
+/// runs: a variant that plains one subtraction of a long body still doubles that body, and the
+/// second copy costs its callees their called-once inlining (text2d's `atlas_cell` twin, one
+/// operator, ran the hot base 17 % slower with `blit_glyph` left out of line).  A variant equal
+/// to its plain body only duplicates code: a function whose arithmetic is all in the apart
+/// variants it calls (`__apv`) has nothing for the ranges to change.  Memoised in `memo`.
 pub fn variant_gains(data: &Data, d: u32, depth: u8, memo: &mut HashMap<u32, bool>) -> bool {
+    if let Some(g) = memo.get(&d) {
+        return *g;
+    }
+    let gain = gained_ops(data, d, depth, &mut HashMap::new()) >= MIN_CHECKED_OPS;
+    memo.insert(d, gain);
+    gain
+}
+
+/// The operators `d`'s ranged variant turns plain that its plain body keeps checked: its own,
+/// under its parameters seeded `[-L, L]`, and for each call it newly ranges, that callee's
+/// variant's in turn (three deep).  Memoised in `memo`; a recursive function meets itself as
+/// no gain.
+fn gained_ops(data: &Data, d: u32, depth: u8, memo: &mut HashMap<u32, usize>) -> usize {
     if depth > 3 || !benefits(data, d) {
-        return false;
+        return 0;
     }
     if let Some(g) = memo.get(&d) {
         return *g;
     }
-    memo.insert(d, false);
+    memo.insert(d, 0);
     let def = data.def(d);
     let code = def.code();
     let seeded = ranges_under(data, d, &param_seeds(data, d));
@@ -158,17 +173,20 @@ pub fn variant_gains(data: &Data, d: u32, depth: u8, memo: &mut HashMap<u32, boo
         &std::collections::BTreeMap::new(),
         &Ranges::default(),
     );
-    let mut gain = false;
+    let mut gained = 0;
     let mut calls: Vec<u32> = Vec::new();
     code.walk(&mut |n| {
         let Value::Call(c, args) = n else { return };
-        if gain || (*c as usize) >= data.definitions.len() {
+        if (*c as usize) >= data.definitions.len() {
             return;
         }
         let name = data.def(*c).name();
         if range::plain_form(name, args.len()).is_some() {
-            gain = range::op_range(data, &nn, &seeded, name, args, 0).is_some()
-                && range::op_range(data, &nn, &plain, name, args, 0).is_none();
+            if range::op_range(data, &nn, &seeded, name, args, 0).is_some()
+                && range::op_range(data, &nn, &plain, name, args, 0).is_none()
+            {
+                gained += 1;
+            }
         } else if *c != d
             && data.def(*c).is_loft_defined()
             && args_ranged(data, *c, args, &seeded, &nn)
@@ -177,13 +195,11 @@ pub fn variant_gains(data: &Data, d: u32, depth: u8, memo: &mut HashMap<u32, boo
             calls.push(*c);
         }
     });
-    if !gain {
-        gain = calls
-            .into_iter()
-            .any(|c| variant_gains(data, c, depth + 1, memo));
+    for c in calls {
+        gained += gained_ops(data, c, depth + 1, memo);
     }
-    memo.insert(d, gain);
-    gain
+    memo.insert(d, gained);
+    gained
 }
 
 /// The bound a guarded copy tests each leaf against: `G = 2^20` leaves `L` room for the sums a
