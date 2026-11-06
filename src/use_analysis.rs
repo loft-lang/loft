@@ -153,30 +153,8 @@ pub(crate) fn releases_first_arg(data: &Data, op: u32) -> bool {
 /// [`projection_ops`]: `d.f[i]=x` → `OpSetInt(OpGetField(Var(d),f), i, v)` descends to the
 /// root var `d`, and the projection's INDEX args are ordinary reads.
 pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) -> Vec<(u16, u16)> {
-    let ops = data.op_sets();
     let mut acc = vec![(0u16, 0u16); func.var_count()];
-    let cx = AccessCx {
-        data,
-        func,
-        fill_dests: [
-            data.def_nr("OpPreAllocVector"),
-            data.def_nr("OpFinishRecord"),
-            data.def_nr("OpAppendText"),
-            data.def_nr("OpAppendCharacter"),
-        ],
-        copy_fills: [
-            (data.def_nr("OpReplaceVector"), 0),
-            (data.def_nr("OpReplaceKeyed"), 1),
-        ],
-        projs: &ops.projections,
-        writes: &ops.write_first_arg,
-        lens: &ops.lengths,
-        copy_record: data.def_nr("OpCopyRecord"),
-        database: data.def_nr("OpDatabase"),
-        value_struct_copies: (0..func.count())
-            .filter_map(|v| func.name(v).strip_prefix("__vs_src_")?.parse::<u16>().ok())
-            .collect(),
-    };
+    let cx = AccessCx::new(data, func);
     classify_access(body, &cx, &mut acc);
     // loft#1840 — the program's own `+=` is the mutation an append-family op cannot show: the
     // ops it lowers to are the ones a copy's fill is made of, so the parser marked the local.
@@ -188,6 +166,34 @@ pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) ->
         }
     }
     acc
+}
+
+impl<'a> AccessCx<'a> {
+    fn new(data: &'a Data, func: &'a Function) -> Self {
+        let ops = data.op_sets();
+        AccessCx {
+            data,
+            func,
+            fill_dests: [
+                data.def_nr("OpPreAllocVector"),
+                data.def_nr("OpFinishRecord"),
+                data.def_nr("OpAppendText"),
+                data.def_nr("OpAppendCharacter"),
+            ],
+            copy_fills: [
+                (data.def_nr("OpReplaceVector"), 0),
+                (data.def_nr("OpReplaceKeyed"), 1),
+            ],
+            projs: std::sync::Arc::clone(&ops.projections),
+            writes: std::sync::Arc::clone(&ops.write_first_arg),
+            lens: std::sync::Arc::clone(&ops.lengths),
+            copy_record: data.def_nr("OpCopyRecord"),
+            database: data.def_nr("OpDatabase"),
+            value_struct_copies: (0..func.count())
+                .filter_map(|v| func.name(v).strip_prefix("__vs_src_")?.parse::<u16>().ok())
+                .collect(),
+        }
+    }
 }
 
 /// Shared read-only context for the access walk (op-name sets computed once).
@@ -212,14 +218,14 @@ struct AccessCx<'a> {
     copy_fills: [(u32, usize); 2],
     /// Projection ops (`OpGetField`/`OpGetVector`/…) — a write through one of these
     /// propagates the write context to arg 0.
-    projs: &'a HashSet<u32>,
+    projs: std::sync::Arc<HashSet<u32>>,
     /// Ops that write through arg 0 (`first_arg_write_ops`): their arg-0 base is a
     /// write-DESTINATION, never a read (this is what makes the `d = s.f` copy-fill append
     /// stop counting `d` as read).
-    writes: &'a HashSet<u32>,
+    writes: std::sync::Arc<HashSet<u32>>,
     /// Collection `len` methods ([`length_ops`]): the subject is observed for its COUNT,
     /// which no element write can change, so it is not a value read.
-    lens: &'a HashSet<u32>,
+    lens: std::sync::Arc<HashSet<u32>>,
     /// `OpCopyRecord` — the one write op whose destination is arg **1**, not arg 0
     /// (`OpCopyRecord(source, dest, type)`).  `w[i] = Row{…}` lowers to it, so without
     /// this the whole-element assign was invisible to the dead-store lint (loft#670).
@@ -7263,6 +7269,10 @@ fn report_lost_field_writes(
     def_file: &str,
     diags: &mut crate::diagnostics::Diagnostics,
 ) {
+    // The path shape names the write itself; the field shape below is its order-blind fallback.
+    if report_writes_dead_after(data, def, v, def_file, diags) {
+        return;
+    }
     let func = &def.variables;
     let crate::data::Type::Reference(d, _) = func.tp(v).base() else {
         return;
@@ -7341,6 +7351,326 @@ fn report_lost_field_writes(
             concept: "copy",
             concept_ref: "@F106",
         });
+    }
+}
+
+/// `lost-write`, the PATH shape (`@FR-B-Copy`): a local that only ever holds a COPY of a place
+/// — or a view into that copy — written through, after which no path reads it before it dies.
+/// The cursor walk `cur = t; … cur.left = Tree {…}; return` is the case: `cur` is read on every
+/// step of the walk, so neither the count nor the per-field shape sees the last write, which
+/// lands in the copy and is freed with it.  Answers whether it reported.
+///
+/// A backward liveness pass over the body for `v` and every local bound from it.  Anything the
+/// pass cannot follow — a jump inside an expression, an iterator, a generator — counts as a
+/// read, so it under-approximates: a write it reports is lost on every run that reaches it.
+fn report_writes_dead_after(
+    data: &Data,
+    def: &crate::data::Definition,
+    v: u16,
+    def_file: &str,
+    diags: &mut crate::diagnostics::Diagnostics,
+) -> bool {
+    let func = &def.variables;
+    // Every whole bind of `v` copies a place, steps into what `v` already holds, or is `null`.
+    let mut copies = false;
+    let mut other = false;
+    let mut generator = false;
+    def.code.walk(&mut |n| match n {
+        Value::Set(to, rhs) if *to == v => match rhs.unspan() {
+            Value::Null => {}
+            r if place_root(r, data) == Some(v) && !matches!(r, Value::Var(_)) => {}
+            r if steps_into(r, v, data) => {}
+            _ if copies_a_place(data, func, rhs, v) => copies = true,
+            // A projection the parser lowered as a copy (`v = s.items`, `(B-Copy)`).
+            r if func.copy_bound(v) && place_root(r, data).is_some_and(|x| x != v) => {
+                copies = true;
+            }
+            _ => other = true,
+        },
+        Value::Yield(_) => generator = true,
+        _ => {}
+    });
+    if !copies || other || generator {
+        return false;
+    }
+    // The group: `v` and every local whose bind reads it and whose type can view a store (a
+    // view of the copy, or anything that may hold one — a read of it is counted as a read of
+    // the copy).  A scalar, a character or a text read out of the copy views nothing.
+    let mut group: HashSet<u16> = HashSet::default();
+    group.insert(v);
+    loop {
+        let before = group.len();
+        def.code.walk(&mut |n| {
+            if let Value::Set(to, rhs) = n
+                && !group.contains(to)
+                && !func.name(*to).starts_with("__own_")
+                && !matches!(
+                    func.tp(*to).base(),
+                    Type::Integer(_)
+                        | Type::Boolean
+                        | Type::Float
+                        | Type::Single
+                        | Type::Character
+                        | Type::Text(_)
+                        | Type::Enum(_, false, _)
+                )
+                && mentions_any(rhs, &group)
+            {
+                group.insert(*to);
+            }
+        });
+        if group.len() == before {
+            break;
+        }
+    }
+    let mut walk = PathLive {
+        data,
+        func,
+        v,
+        group: &group,
+        cx: AccessCx::new(data, func),
+        distinct: data.def_nr("OpDistinctStore"),
+        breaks: Vec::new(),
+        continues: Vec::new(),
+        span: None,
+        line: None,
+        lost: Vec::new(),
+    };
+    walk.live_in(&def.code, false, true);
+    if walk.lost.is_empty() {
+        return false;
+    }
+    let mut seen = HashSet::default();
+    for at in walk.lost {
+        let (line, col) = at
+            .as_ref()
+            .map_or_else(|| func.var_source(v), |p| (p.line, p.pos));
+        if !seen.insert((line, col)) {
+            continue;
+        }
+        let file = match &at {
+            Some(p) if !p.file.is_empty() => p.file.as_str(),
+            _ => def_file,
+        };
+        report_dead_after_write(func.name(v), file, (line, col), diags);
+    }
+    true
+}
+
+/// One [`report_writes_dead_after`] finding, with the `&` cure.
+fn report_dead_after_write(
+    name: &str,
+    file: &str,
+    (line, col): (u32, u32),
+    diags: &mut crate::diagnostics::Diagnostics,
+) {
+    {
+        let msg = format!(
+            "'{name}' holds a COPY, and nothing reads it after this write — the write is LOST. \
+             A whole-value bind (`{name} = …`) copies the place it reads, so the write lands in \
+             the copy, which is freed unread."
+        );
+        diags.add_at_coded(
+            crate::diagnostics::Level::Warning,
+            Some("lost-write"),
+            &msg,
+            file,
+            line,
+            col,
+        );
+        diags.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!(
+                "bind a live reference: `{name} = &…`, and step with `{name} = &{name}.…`"
+            ),
+            condition: Some(format!(
+                "the write is meant to reach the place `{name}` was copied from"
+            )),
+            edit: None,
+            concept: "reference",
+            concept_ref: "@F21",
+        });
+    }
+}
+
+/// Does `rhs` step `v` into what it already holds — a child reached through an out-of-line
+/// field (`cur = cur.left`, `OpRefFromChildRec(OpGetField(cur, …))`)?
+fn steps_into(rhs: &Value, v: u16, data: &Data) -> bool {
+    match rhs.unspan() {
+        Value::Call(_, args) if args.len() == 1 => place_root(&args[0], data) == Some(v),
+        _ => false,
+    }
+}
+
+/// Does `node` mention any variable of `group`?
+fn mentions_any(node: &Value, group: &HashSet<u16>) -> bool {
+    let mut hit = false;
+    node.walk(&mut |n| {
+        if let Value::Var(x) = n
+            && group.contains(x)
+        {
+            hit = true;
+        }
+    });
+    hit
+}
+
+/// Does `node` hold a jump (`return`, `break`, `continue`) that an expression-level walk
+/// cannot follow?
+fn holds_jump(node: &Value) -> bool {
+    let mut hit = false;
+    node.walk(&mut |n| {
+        if matches!(n, Value::Return(_) | Value::Break(_) | Value::Continue(_)) {
+            hit = true;
+        }
+    });
+    hit
+}
+
+/// The backward walk of [`report_writes_dead_after`]: is the copy read on some path from a
+/// point on?
+struct PathLive<'a> {
+    data: &'a Data,
+    func: &'a Function,
+    v: u16,
+    group: &'a HashSet<u16>,
+    cx: AccessCx<'a>,
+    /// `OpDistinctStore` — the scope pass's own ownership test, which observes nothing.
+    distinct: u32,
+    /// Liveness at each enclosing loop's exit and head, innermost last.
+    breaks: Vec<bool>,
+    continues: Vec<bool>,
+    span: Option<Position>,
+    line: Option<u32>,
+    lost: Vec<Option<Position>>,
+}
+
+impl PathLive<'_> {
+    /// Liveness before `node`, given liveness after it; records a lost write when `report`.
+    fn live_in(&mut self, node: &Value, out: bool, report: bool) -> bool {
+        match node {
+            Value::Span(b) => {
+                let saved = self.span;
+                self.span = Some(b.0);
+                let r = self.live_in(&b.1, out, report);
+                self.span = saved;
+                r
+            }
+            Value::Line(l) => {
+                self.line = Some(*l);
+                out
+            }
+            Value::Block(b) => self.seq(&b.operators, out, report),
+            Value::Insert(ops) => self.seq(ops, out, report),
+            Value::If(c, t, e) => {
+                if self.is_machinery(c) {
+                    return out;
+                }
+                let lt = self.live_in(t, out, report);
+                let le = self.live_in(e, out, report);
+                self.stmt(c, lt || le, false)
+            }
+            Value::Loop(b) => {
+                // The head's liveness is a fixpoint over the body; report on the final pass.
+                let mut head = false;
+                loop {
+                    self.breaks.push(out);
+                    self.continues.push(head);
+                    let next = self.seq(&b.operators, head, false);
+                    self.breaks.pop();
+                    self.continues.pop();
+                    if next == head {
+                        break;
+                    }
+                    head = next;
+                }
+                self.breaks.push(out);
+                self.continues.push(head);
+                let r = self.seq(&b.operators, head, report);
+                self.breaks.pop();
+                self.continues.pop();
+                r
+            }
+            Value::Break(n) => Self::jump(&self.breaks, *n),
+            Value::Continue(n) => Self::jump(&self.continues, *n),
+            Value::Return(val) => self.stmt(val, false, false),
+            Value::Set(to, _) if self.func.name(*to).starts_with("__own_") => out,
+            Value::Iter(..) | Value::Parallel(_) | Value::Yield(_) => {
+                out || mentions_any(node, self.group)
+            }
+            other => self.stmt(other, out, report),
+        }
+    }
+
+    fn seq(&mut self, ops: &[Value], out: bool, report: bool) -> bool {
+        // A statement's line marker comes BEFORE it, so walk forward once to pair each
+        // statement with its line, then fold backward.
+        let mut lines = Vec::with_capacity(ops.len());
+        let mut line = self.line;
+        for op in ops {
+            if let Value::Line(l) = op {
+                line = Some(*l);
+            }
+            lines.push(line);
+        }
+        let mut after = out;
+        for (op, l) in ops.iter().zip(lines).rev() {
+            self.line = l;
+            after = self.live_in(op, after, report);
+        }
+        after
+    }
+
+    fn jump(targets: &[bool], n: u16) -> bool {
+        targets
+            .len()
+            .checked_sub(1 + n as usize)
+            .and_then(|i| targets.get(i))
+            .copied()
+            .unwrap_or(true)
+    }
+
+    /// The scope pass's `if OpDistinctStore(__own_v, v) { free }` — machinery, no read.
+    fn is_machinery(&self, cond: &Value) -> bool {
+        matches!(cond.unspan(), Value::Call(op, _) if *op == self.distinct)
+    }
+
+    /// One statement the walk treats as a unit.
+    fn stmt(&mut self, node: &Value, out: bool, report: bool) -> bool {
+        if holds_jump(node) {
+            return true;
+        }
+        let mut acc = vec![(0u16, 0u16); self.func.var_count()];
+        classify_access(node, &self.cx, &mut acc);
+        let (mut reads, mut writes) = (0u32, 0u32);
+        for g in self.group {
+            if let Some(&(r, w)) = acc.get(*g as usize) {
+                reads += u32::from(r);
+                writes += u32::from(w);
+            }
+        }
+        if report && writes > 0 && !out {
+            let at = match (self.span, self.line) {
+                (Some(p), Some(l)) if p.line != l => Some(Position {
+                    file: p.file,
+                    line: l,
+                    pos: 0,
+                }),
+                (Some(p), _) => Some(p),
+                (None, Some(l)) => Some(Position {
+                    file: crate::lexer::no_file(),
+                    line: l,
+                    pos: 0,
+                }),
+                (None, None) => None,
+            };
+            self.lost.push(at);
+        }
+        // A whole rebind of `v` to a fresh copy ends the old one, when nothing else views it.
+        let kills = self.group.len() == 1
+            && matches!(node.unspan(), Value::Set(to, rhs) if *to == self.v
+                && place_root(rhs, self.data) != Some(self.v));
+        reads > 0 || (out && !kills)
     }
 }
 
