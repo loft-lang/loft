@@ -138,6 +138,20 @@ this is where it is written down.
 
 ## Deviations carried by rewrites.md, @PLN211 arc C′
 
+### D-phase-4 — CLOSED 2026-11-06 (@PLN211 c4-view S3) — `(R-ElemFirst)`'s view-exit form stays in both writers
+- **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)
+- **Where:** `generation::emit` (the element-first statement handling), `c::body::elem_first` —
+  both now find only the pairs the IR declines: a temp whose function also returns it inside
+  its record, which `element_first` pairs only with the view plan (`ValueRecords::views`).
+- **Effect:** the interpreter keeps the temp-store build and the copy for that form; on the
+  benches neither writer applies it (no bench pair needs the plan), in the cells it is
+  `164-element-place.loft` g1, g2, g4, g10, g16 (the `parse_circle` shape), g20.
+- **Removal:** waits for D-phase-5: once the IR spells a view leaf, the exit is a tuple element
+  naming the temp and the pass takes the form with no plan (`plans/211-rule-phases/c4-view-plan.md`
+  S3), and both writers' clauses go.
+- **Closed by:** c4-view S1 made the view leaf an IR tuple element, so `opt::elem_first` pairs the view-exit temp with no plan; S3 deleted both writers' clauses (`src/c/body/elem_first.rs`, `generation::emit`'s element-first statement handling) with byte-identical emission over the corpus.
+
+
 ### D-phase-3 — CLOSED 2026-11-04 (@PLN211 arc C′3) — `(R-KeyedEntry)`'s subscript clause stays in both writers
 - **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)
 - **Where:** `generation::emit` (`output_keyed_place`'s subscript clause), the C's keyed-place arm

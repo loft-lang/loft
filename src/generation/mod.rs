@@ -806,10 +806,6 @@ pub struct Output<'a> {
     /// @PLN164 E-1 — the current function's FORWARDS (`hoist::forward_sites`): the address
     /// of an admitted call's argument list → the buffer the site writes the tuple into.
     pub forward_sites: HashMap<usize, u16>,
-    /// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first pairings of the current
-    /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
-    /// appended element instead of its own store.
-    pub elem_first: hoist::ElemFirstMap,
     /// `@FR-R-RefillBuffer`'s in-place clause (`LOFT_NO_REFILL_IN_PLACE` turns it off).
     pub refill_in_place: bool,
     /// `LOFT_NO_INLINE_HINT` (generation time): loft functions carry no `#[inline]`
@@ -1922,7 +1918,6 @@ impl<'a> Output<'a> {
             value_phantom: None,
             dead_buffers: HashSet::new(),
             forward_sites: HashMap::new(),
-            elem_first: hoist::ElemFirstMap::default(),
             refill_in_place: crate::keys::refill_in_place_enabled(),
             rebind_buffer: None,
             rebind_buffer_used: false,
@@ -2323,20 +2318,6 @@ impl Output<'_> {
                     .filter(|v| *v != u16::MAX);
             }
         }
-        // `@FR-R-ElemFirst` is decided and applied in the IR (`opt::elem_first`); what this map
-        // still finds is the ONE form the IR declines — a temp its function also returns inside
-        // its record, paired only through the view plan (`formal/rewrites.md` D-phase-4, which
-        // waits on `(R-ValueRecord)`'s view clause moving into the IR, D-phase-5).
-        self.elem_first = if self.switches.element_first_disabled {
-            hoist::ElemFirstMap::default()
-        } else {
-            hoist::element_first(
-                self.data,
-                self.stores,
-                def_nr,
-                self.plan.value_records.views.get(&def_nr),
-            )
-        };
         // `@FR-R-CompleteWrite` is decided in the IR (`opt::complete_write`) and stored on the
         // function: the mints written without the prefill are that fact's.
         let fact = &self.data.def(def_nr).no_prefill;
@@ -2523,26 +2504,11 @@ impl Output<'_> {
         // `(R-Mint)`'s rebound clause — the buffer vars whose mint the hoist admission lets
         // through: what the emitter itself owns the mint of.
         self.hoist_owned = hoist::HoistOwned {
-            buffers: self
-                .elem_first
-                .by_vdb
-                .keys()
-                .copied()
-                .chain(crate::opt::loop_buffer::kept(
-                    self.data,
-                    self.data.def(def_nr).code(),
-                ))
-                .collect(),
-            elem_fields: self
-                .elem_first
-                .pairs
-                .iter()
-                .flat_map(|p| p.binds.iter().map(move |b| (p.elm, i64::from(b.field_off))))
-                .chain(crate::opt::elem_first::kept_fields(
-                    self.data,
-                    self.data.def(def_nr).code(),
-                ))
-                .collect(),
+            buffers: crate::opt::loop_buffer::kept(self.data, self.data.def(def_nr).code()),
+            elem_fields: crate::opt::elem_first::kept_fields(
+                self.data,
+                self.data.def(def_nr).code(),
+            ),
             records: HashSet::new(),
             value_locals: self.value_record_locals.keys().copied().collect(),
             dead_buffers: self.dead_buffers.clone(),
@@ -2585,7 +2551,6 @@ impl Output<'_> {
             self.invariant_lits.wrapped.len() + self.invariant_lits.flat.len(),
         );
         fired("R-ValueLocal", self.value_record_locals.len());
-        fired("R-ElemFirst", self.elem_first.pairs.len());
         fired("R-MoveAppend", self.move_pairs.len());
         fired("R-LazySplit", self.lazy_splits.len());
         fired("R-SplitTable", self.split_tables.len());
@@ -11764,13 +11729,6 @@ extern crate loft;"
                         // @PLN157 § V-x — an invariant literal's local is the once-flag
                         // of its own build guard, so it must outlive the loop body.
                         || self.invariant_lits.contains(v)
-                        // @PLN157 § V-z — an element-first pair's element is minted at
-                        // the first temp's declaration site, and each temp is bound
-                        // there to its field slot: both lose their in-place `let`.
-                        || self.elem_first.elms.contains(&v)
-                        || self.elem_first.pairs.iter().any(|p| {
-                            p.binds.iter().any(|b| b.tmp == v && !b.from_call)
-                        })
                         || (returned_vars.contains(&v) && !vars.tp(v).depend().is_empty()))
                     && rust_type(vars.tp(v), &Context::Variable) == "DbRef"
                 {
