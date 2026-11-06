@@ -37,6 +37,7 @@ scripts/contract_labels.py	--help
 scripts/corpus.py	--help
 scripts/corpus_files.sh	--help
 scripts/crate_layers.py	--help
+scripts/crossings.py	check
 scripts/decisions.py	--help
 scripts/decline_census.py	--help
 scripts/doc-review.sh	--help
