@@ -13,7 +13,7 @@ header verdict's callee clause, …) reads it from ONE generic routine.  This ch
 that routine computes, which way each fact may err, how far it follows calls, and how a fact
 proven at a call site specialises the callee.
 
-**OPEN: 3** — the register at the end.  The rewrites themselves stay in `rewrites.md`; this
+**OPEN: 2** — the register at the end.  The rewrites themselves stay in `rewrites.md`; this
 chapter is the fact source they cite.
 
 ## The routine
@@ -221,12 +221,15 @@ function value as top (FNREFS `opaque`) and a native by its declaration.
 | total | effect-free and unable to report a fault | `solve`, least | — | `shared_call::total` |
 | non-sentinel entry | per (function, parameter) | `solve`, greatest | — | `opt::non_sentinel` |
 
-Outside the routine (D-fact-1, D-fact-2): `view_return::callee` (whether a call answers a view
+Outside the routine (D-fact-1): `view_return::callee` (whether a call answers a view
 — its own body only, memoised privately by native's writer), `ret_adopt::callee_reinits_buffer`
-(its own body only), `stream_walk::written_params` (the signature only), and the interval
-`entry` facts of `generation::ranged_call` (native only).
+(its own body only), `stream_walk::written_params` (the signature only).  The interval `entry`
+facts are `opt::ranged_call`'s (the gain test, the argument and scalar-input tests, the seeds,
+the guarded copy's plan), one copy both writers read.
 
 ## Deviations
+
+Closed entries: [facts-history.md](facts-history.md).
 
 ### D-fact-1 (OPEN, @PLN211) — three callee facts keep their own walk or memo
 - **Violates:** `Fact-One`
@@ -236,14 +239,6 @@ Outside the routine (D-fact-1, D-fact-2): `view_return::callee` (whether a call 
   rule; a memo of a callee fact still lives outside the handle.
 - **Removal:** one long-lived handle per writer (today a writer builds a handle per question
   over the memos it keeps), the three as kinds of reach `own` on it.
-
-### D-fact-2 (OPEN, @PLN211) — interval entry facts exist only in native's writer
-- **Violates:** `Fact-Engine` (every writer reads the same answers)
-- **Where:** `src/generation/ranged_call.rs` (the seeding, the guarded copy, `__rg`)
-- **Effect:** the C writer has no `(R-RangedCall)`: 384 native admissions on the benches, none
-  on the C (`bench/portal/analysis/c-libraries.md` § The census against rustc).
-- **Removal:** the `entry` kind's interval domain in the routine; `__rg` a twin key of
-  `Fact-Twin`, emitted by both writers.
 
 ### D-fact-3 (OPEN, @PLN211) — each twin kind carries its own key
 - **Violates:** `Fact-Twin` (one key, one registry)
