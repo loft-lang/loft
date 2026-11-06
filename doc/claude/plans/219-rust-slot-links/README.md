@@ -149,8 +149,14 @@ The natural-code list this plan grew out of, outside its core:
 - **Recursive construction `N { v, next: mk(n - 1) }`** and **enum lists `l = Cons { v, next:
   l }`** — O(n²); exposed by B, made fast by the portal (`(O-Buffer)` is the design question).
 - **list_ops at 3.91×** — the portal's, like every row B adds.
-- **Before the PR** — RULE_CROSSINGS ledger rows for the pairs these fixes crossed, `make
-  check-rlib` (the wasm rlib was stale), `make ci`.
+- **`h[k]!` makes a copy a reference cannot keep** — `push_front(c, c.nodes[k]!)` is refused
+  ("would outlive the record it names … `_ncr_1`") while the nullable warning names `!` as the
+  cure; `(B-View)` makes the `?`-discharged element read a view, and `!` should match it.  Found
+  writing 23_lru, which uses the `if n != null` guard instead.
+- **Strict-mode store count** — under `LOFT_STRICT_STORES=1`, `O-NoDiverge/1328`, `/1329` and
+  `O-Proxy/1320` report "store table exhausted by the checking mode, not by a leak" on this
+  branch and not on the installed 0e95172cd; none of them uses `&`.  Unattributed.
+- **Before the PR** — `make ci`.
 
 ## Documentation
 
