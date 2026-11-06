@@ -3348,10 +3348,10 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, int
   el_vars::in_use(vars, v, true);
   // A read of a heap local borrows the local (`depending`); a text keeps its own deps.  A link
   // to a scalar (`link = &a`) reads as the scalar it names (`@FR-B-Ref-Uniform`); a text link
-  // into a store as the text there (`OpGetText(OpVarRef(t), 0)`).
+  // into a store as the text there (`OpGetText(OpVarRef(t), 0)`), borrowing the link.
   t = el_vars::tp(vars, v);
   if store_text_link(vars, v) {
-    return ex(el_ir::cl(e, "OpGetText", [el_ir::cl(e, "OpVarRef", [ir::NdVar { n: v }]), ir::NdInt { n: 0 }]), ir::TyText { dep: [] });
+    return ex(el_ir::cl(e, "OpGetText", [el_ir::cl(e, "OpVarRef", [ir::NdVar { n: v }]), ir::NdInt { n: 0 }]), ir::TyText { dep: [v] });
   }
   match t {
     TyRefVar { inner } => {
@@ -15718,6 +15718,32 @@ fn text_place(e: el::El, n: ir::Node) -> ir::Node? {
   }
 }
 
+// `Parser::scalar_place_ref` outside a tuple: the place a scalar read in a store reads.  A bare
+// element op is the place; an `OpGet*(x, fld, …)` read is its field `OpGetField(x, fld)` — through
+// an element accessor at field 0 the element itself, whose address the field shares.  A narrow
+// read's third operand is decoding, not address.  Null for anything that is not a place read.
+fn scalar_place(e: el::El, n: ir::Node) -> ir::Node? {
+  inner = el_ir::unspan(n);
+  match inner {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpGetVector" || nm == "OpVectorRef" {
+        return inner;
+      }
+      if !nm.starts_with("OpGet") || len(args) < 2 {
+        return null;
+      }
+      if calls(e, args[0], "OpGetVector") || calls(e, args[0], "OpVectorRef") {
+        if el_ir::unspan(args[1]) == ir::NdInt { n: 0 } {
+          return args[0];
+        }
+      }
+      el_ir::cl(e, "OpGetField", [args[0], args[1]])
+    },
+    _ => null
+  }
+}
+
 // A text link local bound into a store — a text field or element (`bind_text_link_kind`).
 fn store_text_link(vars: el_vars::Vars, v: integer) -> boolean {
   vars.store_links.contains(v)
@@ -15761,6 +15787,15 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
         return ex(place!, ir::TyRefVar { inner: ir::TyText { dep: if root >= 0 { [root] } else { [] } } });
       }
     }
+    // A link to a scalar in a store — a vector's element, a record's field, nullable or not — is
+    // that place, typed as a link to the scalar (`heap_ref`).  It names no dependency: the
+    // link reads and writes through the place's `DbRef`.
+    if !(a.code is NdVar) && is_scalar(el_types::base(a.tp)) {
+      place = scalar_place(e, a.code);
+      if place != null {
+        return ex(place!, ir::TyRefVar { inner: a.tp });
+      }
+    }
     // A link to a vector is the vector's view itself — a local or a field of one, typed as
     // borrowing it — where a bare bind would copy (`@FR-B-Copy`).
     if a.tp is TyVector && (a.code is NdVar || calls(e, a.code, "OpGetField")) && len(el_types::deps(a.tp)) > 0 {
@@ -15769,7 +15804,7 @@ fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     if e.first_pass && el_types::is_unknown(a.tp) {
       return a;
     }
-    el::refuse(e, "a `&` reference to something other than a scalar or a vector place");
+    el::refuse(e, "a `&` reference to something other than a scalar or a vector place: {type_kind(el_types::base(a.tp))}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   x = expression(e, vars, n!);
