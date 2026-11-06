@@ -242,10 +242,18 @@ function __wbg_get_imports() {
                 wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
             }
         },
+        __wbg_from_eac91875c8a5ffa4: function(arg0) {
+            const ret = Array.from(arg0);
+            return ret;
+        },
         __wbg_get_2080c49015e35254: function() { return handleError(function (arg0, arg1) {
             const ret = Reflect.get(arg0, arg1);
             return ret;
         }, arguments); },
+        __wbg_get_d7176cfb76d71114: function(arg0, arg1) {
+            const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
         __wbg_get_unchecked_e6325ad374eff861: function(arg0, arg1) {
             const ret = arg0[arg1 >>> 0];
             return ret;
