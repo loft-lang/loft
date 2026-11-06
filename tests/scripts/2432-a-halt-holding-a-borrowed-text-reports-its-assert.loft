@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A HALT HOLDING A BORROWED TEXT REPORTS ITS ASSERT (loft#2432): a halt releases the text
+// buffers of the frames it abandons (loft#2121), and a text local that BORROWS its bytes
+// (`@FR-R-TextBorrow` — a walked element, a parameter's field) holds a slice, not a buffer of
+// its own.  Releasing it as a buffer aborted the interpreter (`free(): invalid pointer`)
+// instead of reporting the failed assert.  Each expected-fail function halts with a borrow
+// live: a walk's loop variable, a parameter's field bound to a local, and a discharge temp.
+// The function after them must still compute its texts.
+//
+// @falsified-at: 0de1794d4 — interpret: `free(): invalid pointer` (SIGABRT) in the first
+//   function; the C reported the assertion.
+
+struct Item { name: text, n: integer }
+
+// @EXPECT_FAIL: too long at cde 5
+fn test_a_halt_inside_a_borrowed_walk() {
+  words = ["ab", "cde", "fgh"];
+  n = 0;
+  for p in words {
+    n += len(p);
+    assert(n < 5, "too long at {p} {n}");
+  }
+}
+
+fn named(it: Item) -> integer {
+  t = it.name;
+  assert(len(t) < 3, "named {t} is {len(t)} long");
+  len(t)
+}
+
+// @EXPECT_FAIL: named Qwerty is 6 long
+fn test_a_halt_holding_a_parameters_field() {
+  it = Item { name: "Qwerty", n: 1 };
+  println("{named(it)}");
+}
+
+fn first_of(v: vector<text>, i: integer) -> integer {
+  k = len(v[i] ?? "none");
+  assert(k == 0, "first of {i} is {k} long");
+  k
+}
+
+// @EXPECT_FAIL: first of 1 is 2 long
+fn test_a_halt_beside_a_discharge_temp() {
+  println("{first_of(["alpha", "be"], 1)}");
+}
+
+fn test_the_next_function_computes_its_texts() {
+  it = Item { name: "second", n: 2 };
+  t = it.name;
+  w = "{t} t{it.n}!";
+  assert(w == "second t2!" && len(w) == 10, "the next function {w}");
+}
