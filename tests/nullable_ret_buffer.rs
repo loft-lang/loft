@@ -480,6 +480,10 @@ fn every_dense_and_nullable_pair_takes_one_road() {
         .arg(root.join("scripts/nullable_road.py"))
         .arg("--check")
         .env("LOFT_BIN", loft_bin())
+        // The pairs compare the RECORD form's two roads; the IR's value records
+        // (`src/value_record.rs`) answer a small record as a tuple instead, which each half
+        // takes on its own terms — held off, so the pairs keep their subject.
+        .env("LOFT_NO_IR_VALUE_RECORD", "1")
         .output()
         .expect("python3 runs scripts/nullable_road.py");
     let text = String::from_utf8_lossy(&out.stdout);

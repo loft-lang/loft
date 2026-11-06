@@ -40,11 +40,11 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     // `LOFT_NO_GUARDED_CHAIN=1` or `LOFT_NO_FORWARD_WALK=1` gives (3, 2).
     // c9 / c10 — a value of the element type appended WHOLE (`b.ps += [p]`): the one
     // `OpCopyRecord` into the element covers every field, so the heap-free P3 mint skips
-    // (n_add_p — its one prefilled site is the live-dispatch prelude's `OpDatabase` that
-    // materialises the tuple parameter, not a mint), and so does the text-owning NT mint
+    // (n_add_p — read on the CLOSED build, which ships no live-dispatch prelude to
+    // materialise its tuple parameter), and so does the text-owning NT mint
     // (n_add_n): its copy is flagged FRESH, so it never reads the slot's handles.  The two
     // drivers mint their bag with a vector store apiece, covered.
-    ("n_add_p", 1, 1),
+    ("n_add_p", 1, 0),
     ("n_add_n", 1, 0),
     ("n_c9", 2, 0),
     ("n_c10", 2, 0),
@@ -54,6 +54,7 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-rust")
+        .arg("--lean") // the CLOSED program: an open build takes no value records (NATIVE.md § Optimisation tiers)
         .arg("--native-emit")
         .arg(out)
         .arg(src)

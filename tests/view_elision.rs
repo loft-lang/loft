@@ -31,7 +31,12 @@ fn main() {
 fn introspect(src: &std::path::Path, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("introspect").arg(src).env("LOFT_TIMEOUT", "120");
+    // The IR's value records (`src/value_record.rs`) would answer `ctrl`'s small record as a
+    // tuple, which borrows nothing; this pins the view elision on the record form.
+    cmd.arg("introspect")
+        .arg(src)
+        .env("LOFT_TIMEOUT", "120")
+        .env("LOFT_NO_IR_VALUE_RECORD", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }

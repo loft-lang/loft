@@ -223,6 +223,7 @@ fn a_scanner_beside_a_chain_keeps_its_registers() {
     let out = std::env::temp_dir().join("loft_literal_exit_chain.rs");
     let status = loft()
         .arg("--native-rust")
+        .arg("--lean") // the CLOSED program: an open build takes no value records (NATIVE.md § Optimisation tiers)
         .arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(CHAIN_GUARD))
@@ -235,9 +236,9 @@ fn a_scanner_beside_a_chain_keeps_its_registers() {
     );
     let rust = fa::read_to_string(&out).expect("read the emitted Rust");
     for sig in [
-        "fn n_find_w(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_c: i64, mut var_start: i64) -> (bool, i64, f64)",
-        "fn n_digits(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_i: i64) -> (bool, i64, f64)",
-        "fn n_either(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_i: i64) -> (bool, i64, f64)",
+        "fn n_find_w(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_c: i64, mut var_start: i64) -> (i64, f64, u8)",
+        "fn n_digits(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_i: i64) -> (i64, f64, u8)",
+        "fn n_either(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_i: i64) -> (i64, f64, u8)",
     ] {
         assert!(rust.contains(sig), "still a value record: {sig}");
     }

@@ -29,6 +29,9 @@ fn introspect(src: &std::path::Path) -> String {
         .arg("introspect")
         .arg(src)
         .env("LOFT_TIMEOUT", "120")
+        // The IR's value records (`src/value_record.rs`) would answer `pt` as a tuple written
+        // into the element; this pins Route R's in-place build of the record form.
+        .env("LOFT_NO_IR_VALUE_RECORD", "1")
         .output()
         .expect("spawn loft introspect");
     String::from_utf8_lossy(&out.stdout).into_owned()

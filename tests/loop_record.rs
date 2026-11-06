@@ -60,6 +60,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     let status = loft(
         &[
             "--native-rust",
+            "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
             "--native-emit",
             out.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -122,11 +123,13 @@ fn the_cells_hold_on_both_backends_in_both_switch_states_under_the_falsifiers() 
 #[test]
 fn an_admitted_record_is_declared_at_the_prelude_kept_across_passes_and_freed_once_after() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    // l1–l7, l9 (two), l14, l15, l17 keep their store: twelve records; l8's `r` is returned,
-    // l10's owns text, l11's is copied, l12's `o` carries a record field, l13's is appended,
-    // l16's is handed to a callee whose return borrows that parameter.
+    // l1–l7, l9 (two), l14–l17 keep their store: thirteen records; l8's `r` is returned,
+    // l10's owns text, l11's is copied, l12's `o` carries a record field, l13's is appended.
+    // l16's callee `lr_same(x) { x }` answers the IR's value-record tuple (`src/value_record.rs`
+    // reads the fields at the exit), so its result borrows nothing and `r` is kept; the
+    // decline itself is pinned with that pass held off (`the_declines_are_the_designed_ones`).
     let (kept, _) = ir_of(&src, "n_main", &[]);
-    assert_eq!(kept.len(), 12, "kept records: {kept:?}");
+    assert_eq!(kept.len(), 13, "kept records: {kept:?}");
     // The per-pass mint is null-guarded: every literal here is a complete write (the parser
     // spells an omitted field's declared default as an explicit write — l15's `Ld { a: i }`
     // writes `k = 5` itself), so each kept record's mint is one `loop record mint` block.
@@ -134,7 +137,7 @@ fn an_admitted_record_is_declared_at_the_prelude_kept_across_passes_and_freed_on
     let main = body(&rust, "n_main");
     assert_eq!(
         main.matches("//loop record mint").count(),
-        12,
+        13,
         "kept-record mints:\n{main}"
     );
     // A record returned from inside the loop is not kept.
@@ -160,9 +163,15 @@ fn the_switch_restores_the_per_pass_free_and_fresh_store() {
 fn the_declines_are_the_designed_ones() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     // The IR pass asks the analysis for every backend; the interpreter's run is the cheapest.
+    // The IR's value records are held off: with them l16's callee answers a tuple, which
+    // borrows nothing, and the borrowing hand-off this pins has no subject.
     let out = loft(
         &["--interpret", src.to_str().unwrap()],
-        &[("LOFT_TRACE_LOOP_RECORD", "1"), ("LOFT_NO_CACHE", "1")],
+        &[
+            ("LOFT_TRACE_LOOP_RECORD", "1"),
+            ("LOFT_NO_CACHE", "1"),
+            ("LOFT_NO_IR_VALUE_RECORD", "1"),
+        ],
     );
     let trace = String::from_utf8_lossy(&out.stderr);
     assert!(

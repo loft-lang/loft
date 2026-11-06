@@ -42,6 +42,7 @@ fn with_env(cmd: &mut Command, env: &[(&str, &str)]) {
 fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd = loft();
     cmd.arg("--native-rust")
+        .arg("--lean") // the CLOSED program: an open build takes no value records (NATIVE.md § Optimisation tiers)
         .arg("--native-emit")
         .arg(out)
         .arg(cells());
@@ -204,7 +205,7 @@ fn a_bind_after_an_if_pre_init_adopts() {
     // A value-record scanner keeps its result in registers beside the entry witness.
     assert!(
         rust.contains(
-            "fn n_find_at(cell: &std::cell::UnsafeCell<Stores>, mut var_n: i64, mut var_want: i64) -> (bool, i64)"
+            "fn n_find_at(cell: &std::cell::UnsafeCell<Stores>, mut var_n: i64, mut var_want: i64) -> (i64, u8)"
         ),
         "find_at: still a value record"
     );
@@ -266,6 +267,7 @@ fn a_chain_of_chains_adopts_its_callees_answer() {
         .join("tests/scripts/164-a-chain-of-chains-adopts-its-callees-answer.loft");
     let mut cmd = loft();
     cmd.arg("--native-rust")
+        .arg("--lean") // the CLOSED program: an open build takes no value records (NATIVE.md § Optimisation tiers)
         .arg("--native-emit")
         .arg(&out)
         .arg(&guard);
@@ -343,7 +345,10 @@ fn the_store_census_drops() {
         // 2026-11-05: `(R-LoopRecord)` moved into the IR keeps a loop's record store on the
         // interpreter too: 237/349 → 232/344 there, native unchanged.  `LOFT_NO_LOOP_RECORD=1`
         // gives back 237/349 (and, the rule then off on native as well, 109/215 there).
-        (232, 344, 104, 210),
+        // 2026-11-06: (R-ValueRecord) decided in the IR (@PLN211 c4-view S2) — the closed
+        // interpreter mints 4 fewer pooled; the plain `--native-rust` run is an OPEN program,
+        // which takes no value records at all now (NATIVE.md § Optimisation tiers), 4 and 22 more.
+        (228, 344, 108, 232),
         "mints (interpret on, off, native on, off)"
     );
 }
