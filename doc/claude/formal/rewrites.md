@@ -3985,7 +3985,9 @@ read it.  Guard
                  the fewest leaves that do (fields, then unranged variables, then wider
                  ones); a variable ranged both by the function and by the copy keeps
                  the intersection.  A variant counts as ranging a call only when it
-                 turns an operator plain that the plain body keeps checked.  Inside the guarded copy a
+                 turns at least three operators plain that the plain body keeps
+                 checked — its own, and those of the callee variants it newly
+                 ranges, three deep.  Inside the guarded copy a
                  local's derived range is kept only when every assignment of it in the
                  whole function lies in the block and it never escapes by reference.  A
                  call there — or inside a ranged variant — whose every integer argument
@@ -4008,7 +4010,10 @@ arithmetic in the helpers alone is −4 %, with the window's two range ends too 
 LLVM inlines and folds the walk only once no operator on it carries the overflow report.
 Guarding any other variable, or a copy that leaves a checked call beside the ranged ones,
 duplicates the loop for a few operators and cost the inlining it was for (`slope_path_with_undo`
-+7 %, `stencil_rotate` +10 %, `edgeset_count` +65 % before these conditions).
++7 %, `stencil_rotate` +10 %, `edgeset_count` +65 % before these conditions).  The three
+operators are counted on what the variant SAVES: a variant that plains one subtraction of a long
+body still doubles that body, and on the C the second copy cost its callees their called-once
+inlining — text2d's `atlas_cell` twin, one operator, ran the hot base +17 %, `layout` +15 %.
 The variable clause's own switch is `LOFT_NO_RANGED_CALL_VARS=1`; cell
 `tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft`, pins
 `tests/ranged_call_vars.rs`.  `(R-Range)` cannot range a parameter or a field by
