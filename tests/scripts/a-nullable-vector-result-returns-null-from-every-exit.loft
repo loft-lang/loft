@@ -6,6 +6,7 @@
 // r's own store while the caller's buffer leaked.  Each cell asserts the value, its length and
 // (through the run's store check) that nothing leaks.
 // @falsified-at: 369b941cf — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic, free-refusal are equal on both trees, on both backends (no expectations).
 // CHANNEL: the asserts; the store-leak report at exit.
 // ARMED: no instrument.
 // WITNESS: each message prints the answer.
