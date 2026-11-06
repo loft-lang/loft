@@ -5257,6 +5257,18 @@ use a separate collection or add after the loop"
             // the bind copied, so `c = &n; c = Sq {…}` left `n` alone (loft#1836).  A LOCAL
             // link only: a `reference<E>` field or element given `&e` holds the record, as it
             // always has (`1579-…`).
+            // `@FR-B-Ref-Lvalue` — a link to a text PARAMETER links its owned copy, as a write
+            // to it does: the parameter itself is the caller's borrowed view (loft#2422).
+            // Both spellings, `c = &t` and `c: &text = t`, reach here; pass 1 promotes, and
+            // pass 2 reads the name as the copy.
+            if self.first_pass
+                && let Value::Var(p) = *code.unspan()
+                && p < self.vars.count()
+                && self.vars.is_argument(p)
+                && matches!(self.vars.tp(p).base(), Type::Text(_))
+            {
+                *code = Value::Var(self.promote_text_param(p));
+            }
             let stack_src = match *code.unspan() {
                 Value::Var(src)
                     if is_scalar(self.vars.tp(src))
@@ -7087,25 +7099,7 @@ use a separate collection or add after the loop"
                 && self.vars.is_argument(var_nr)
                 && (op == "=" || op == "+=")
             {
-                let name = self.vars.name(var_nr).to_string();
-                let shadow = self.vars.add_variable(
-                    &format!("__tp_{name}"),
-                    &Type::Text(Deps::none()),
-                    &mut self.lexer,
-                );
-                self.vars.set_promoted_from(shadow, var_nr);
-                // @PLN40 — a const text arg still promotes to a local String so a rebind
-                // (`p = …`) has a slot to write, but the promoted local INHERITS the
-                // const axis so the const guard still fires: value-const blocks `+=`
-                // (mutation) while allowing `=` (rebind); binding-const the reverse.
-                if self.vars.is_value_const(var_nr) {
-                    self.vars.set_value_const(shadow);
-                }
-                if self.vars.is_const_binding(var_nr) {
-                    self.vars.set_const_binding(shadow);
-                }
-                self.vars.remap_name(&name, shadow);
-                shadow
+                self.promote_text_param(var_nr)
             } else {
                 var_nr
             };
@@ -8988,6 +8982,32 @@ use a separate collection or add after the loop"
                  (`m = file_map(p)`), and copy that where a writable value is needed (`{name} = m`)"
             );
         }
+    }
+
+    /// A text PARAMETER that is written — `t = …`, `t += …` — or LINKED (`c = &t`) takes an
+    /// owned local (`__tp_<name>`, seeded at function entry) the first time either names it.
+    /// The parameter is the caller's text passed borrowed (a `Str` view), so neither a write
+    /// nor a link can land on it: a link to the view read its bytes as a `String` (an empty
+    /// result, then a crash, loft#2422).  First pass only — the name is remapped, so the
+    /// second pass reads every mention as the owned local, which is `(F-ParamScalar)`'s copy.
+    pub(crate) fn promote_text_param(&mut self, var_nr: u16) -> u16 {
+        let name = self.vars.name(var_nr).to_string();
+        let shadow =
+            self.vars
+                .add_variable(&format!("__tp_{name}"), &Type::Text(Deps::none()), &mut self.lexer);
+        self.vars.set_promoted_from(shadow, var_nr);
+        // @PLN40 — a const text arg still promotes to a local String so a rebind
+        // (`p = …`) has a slot to write, but the promoted local INHERITS the
+        // const axis so the const guard still fires: value-const blocks `+=`
+        // (mutation) while allowing `=` (rebind); binding-const the reverse.
+        if self.vars.is_value_const(var_nr) {
+            self.vars.set_value_const(shadow);
+        }
+        if self.vars.is_const_binding(var_nr) {
+            self.vars.set_const_binding(shadow);
+        }
+        self.vars.remap_name(&name, shadow);
+        shadow
     }
 
     /// loft#1278 — a by-value tuple PARAMETER carrying text whose member is written takes an
