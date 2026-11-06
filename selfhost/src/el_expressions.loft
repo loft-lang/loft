@@ -10038,6 +10038,21 @@ fn register_default_literal(vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT) {
   }
 }
 
+// A call of a loft-bodied function whose last argument is its hidden vector return buffer.
+fn buffered_loft_call(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      def = el::def(e, def_nr);
+      if def.rust != "" || def.def_type != el::DT_FUNCTION || el_ir::is_null(def.code[0] ?? ir::NdNull) || len(args) == 0 || len(def.attributes) != len(args) {
+        return false;
+      }
+      last = def.attributes[len(args) - 1]!;
+      last.hidden && !last.work_buffer && el_types::base(last.typedef[0] ?? ir::TyVoid) is TyVector
+    },
+    _ => false
+  }
+}
+
 fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if el_types::is_unknown(x.tp) || el_types::is_unknown(d.tp) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -10087,9 +10102,30 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // it is present, the default where it is not — a bind sinks into that `if`'s arms
   // (`sink_vec_bind_into_arms`).  A call subject (held in `__ncc_N`) is not carried: refused.
   if lhs is TyVector {
-    if !(x.code is NdVar) || !(el_types::base(d.tp) is TyVector) {
-      el::refuse(e, "a vector `??` on something other than a local");
+    if !(el_types::base(d.tp) is TyVector) {
+      el::refuse(e, "a vector `??` default of another type");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    // A call of a loft function answering through its hidden buffer is held in a `__ncc_N`
+    // typed as it (never freed: what it holds is the buffer's), the "ncc" block answering it
+    // where present and the default where not.  Any other subject is refused by name.
+    if !(x.code is NdVar) && !buffered_loft_call(e, x.code) {
+      el::refuse(e, "a vector `??` on something other than a local or a buffered loft call");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if !(x.code is NdVar) {
+      held = el_vars::create_unique(vars, "_ncc", lhs);
+      vars.vars[held].skip_free = true;
+      ht = el_types::with_deps(el_types::without_deps(lhs), [held]);
+      if e.first_pass {
+        return ex(ir::NdNull, ht);
+      }
+      // Typed as this pass's subject, peeled: the borrow its call's buffer gives it.
+      el_vars::set_var_type(vars, held, lhs);
+      register_default_literal(vars, d.code, ht);
+      h = ir::NdVar { n: held };
+      present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
+      return ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(present, h, d.code)], ht, "ncc"), ht);
     }
     register_default_literal(vars, d.code, x.tp);
     vt = el_types::without_deps(lhs);
@@ -10589,6 +10625,12 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
     }
     if b is TyText {
       return coalesce_with(e, vars, x, ex(ir::NdText { s: "" }, ir::TyText { dep: [] }));
+    }
+    // A vector of scalars defaults to `[]` (`build_default`'s collection arm): `x?` is
+    // `x ?? []`.  A vector of records registers its default's types where Rust does not yet.
+    if b is TyVector && el_convert::plain_scalar(match b { TyVector { inner } => inner, _ => ir::TyVoid }) {
+      vt = el_types::without_deps(b);
+      return coalesce_with(e, vars, x, ex(empty_literal_to(e, vars, vt), vt));
     }
     if !el_convert::plain_scalar(b) {
       el::refuse(e, "a `?` default of this type: {type_kind(b)}");
