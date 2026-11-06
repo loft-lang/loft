@@ -169,8 +169,8 @@ jobs:
           # Run as two jobs they are concurrent, so the leg costs the LONGER of the
           # two rather than their sum.  Two earlier sharding attempts failed because
           # they cut ACROSS this group, putting a serial slot in every shard; cutting
-          # ALONG it is the untried axis.  Only the PR path is split — push/nightly
-          # keeps one job per OS, so its three required contexts are unchanged.
+          # ALONG it is the untried axis.  Push/nightly splits every OS the same way
+          # (the last branch below); the PR's required contexts are the placeholders.
           # `inputs.os` is set by a dispatch or by the release gate's call and is
           # empty on every other event, so the test needs no event name.
           if [ -n "${{ inputs.os }}" ] && [ "${{ inputs.os }}" != "all" ]; then
@@ -186,6 +186,8 @@ jobs:
               echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
             elif [ "${{ inputs.os }}" = "windows-latest" ]; then
               echo 'legs=[{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
+            elif [ "${{ inputs.os }}" = "macos-latest" ]; then
+              echo 'legs=[{"os":"macos-latest","shard":"heavy"},{"os":"macos-latest","shard":"corpus"},{"os":"macos-latest","shard":"rest-a"},{"os":"macos-latest","shard":"rest-b"},{"os":"macos-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
             else
               echo 'legs=[{"os":"${{ inputs.os }}"}]' >> "$GITHUB_OUTPUT"
             fi
@@ -203,8 +205,9 @@ jobs:
             # `Test (windows-latest)` is the PR-path placeholder job, unaffected by the names
             # these legs carry.  Ubuntu is sharded the same way: unsharded, the whole suite on
             # one runner filled its disk (`No space left on device`, the runner lost mid-Test,
-            # on every push to main from 2026-10-07).
-            echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"},{"os":"macos-latest"},{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
+            # on every push to main from 2026-10-07).  macOS too: one leg ran 75-90 min against
+            # the 90-min job limit and was cancelled on both main runs of 2026-11-06.
+            echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"},{"os":"macos-latest","shard":"heavy"},{"os":"macos-latest","shard":"corpus"},{"os":"macos-latest","shard":"rest-a"},{"os":"macos-latest","shard":"rest-b"},{"os":"macos-latest","shard":"rest-c"},{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
           fi
       - id: diff
         shell: bash
@@ -855,7 +858,7 @@ jobs:
           LOFT_REQUIRE_GL_GOLD: ${{ runner.os == 'Linux' && '1' || '' }}
         run: |
           # The exclusions and the shard boundary both live in the script — the
-          # sharded PR legs and the unsharded push/nightly legs have to agree on
+          # PR legs and the push/nightly legs have to agree on
           # them, and a filter spelled twice drifts into a phantom flake.  It reads
           # the `heavy-serial` membership straight out of .config/nextest.toml
           # rather than restating it.
