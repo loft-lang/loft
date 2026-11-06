@@ -7188,6 +7188,24 @@ impl Stores {
             .then(|| crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]))
     }
 
+    /// Why an image path is refused when the image itself cannot be opened, as every loader
+    /// says it (the C runtime's `loft_image_gate` the same words).
+    const NO_IMAGE: &'static str = "the image cannot be opened";
+
+    /// Why an image with no sidecar is refused: [`Self::NO_IMAGE`] when the image at `what`
+    /// (a path, or a `file://` address) cannot be opened, else [`Self::BARE_IMAGE`].  An image
+    /// that is not there has no sidecar either, so this names the missing file instead of a
+    /// missing `.dschema`.  It stays a refusal: answering "safe" would let an image that
+    /// appears before the read be read raw with no recorded layout.
+    fn bare_reason(what: &str) -> &'static str {
+        let local = what.strip_prefix("file://").unwrap_or(what);
+        if !local.contains("://") && crate::file_access::open(local).is_err() {
+            Self::NO_IMAGE
+        } else {
+            Self::BARE_IMAGE
+        }
+    }
+
     /// Why an image with no sidecar is refused, as every loader says it.
     const BARE_IMAGE: &'static str = "it has no layout sidecar (`.dschema`) beside it, so nothing records the \
          layout its records were written with; write it with store_persist_copy, which writes both";
@@ -7209,7 +7227,7 @@ impl Stores {
             return false;
         }
         if *verdict == crate::schema_sidecar::SchemaVerdict::Bare {
-            crate::loft_eprintln!("{builtin}: refusing {what} — {}.", Self::BARE_IMAGE);
+            crate::loft_eprintln!("{builtin}: refusing {what} — {}.", Self::bare_reason(what));
             return false;
         }
         let detail = match verdict {
@@ -7272,7 +7290,7 @@ impl Stores {
         // it back too: a refusal reachable by one route and not another is the
         // same silence in a different place (loft#802).
         let reason = match verdict {
-            crate::schema_sidecar::SchemaVerdict::Bare => Self::BARE_IMAGE.to_string(),
+            crate::schema_sidecar::SchemaVerdict::Bare => Self::bare_reason(path).to_string(),
             // A refusal carries its own sentence: a store too old for this release, or a
             // sidecar that could not be fetched.
             crate::schema_sidecar::SchemaVerdict::Refused(why) => why,
