@@ -16,6 +16,7 @@
 use ir;
 use el;
 use el_ir;
+use el_types;
 
 pub fn check_stored_reference_homes(e: el::El) {
   for d in e.b.data.definitions {
@@ -127,7 +128,7 @@ fn later_fresh_bind(e: el::El, f: integer, vars: ir::Function, n: ir::Node) -> b
           if x != null && !x!.argument && def_nr > f && cd.source == el::MAIN_SOURCE && cd.def_type == el::DT_FUNCTION && cd.rust == "" {
             match x!.type_def[0] ?? ir::TyVoid {
               TyVector { inner: _, dep } => {
-                rt = cd.returned[0] ?? ir::TyVoid;
+                rt = el_types::base(cd.returned[0] ?? ir::TyVoid);
                 if len(dep) > 0 && rt is TyVector {
                   return true;
                 }

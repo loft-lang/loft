@@ -10250,7 +10250,14 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       return ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
     }
     if !(x.code is NdVar) && !buffered_loft_call(e, x.code) {
-      el::refuse(e, "a vector `??` on something other than a local or a buffered loft call");
+      el::refuse(e, "a vector `??` on something other than a local or a buffered loft call: {tail_kind(e, vars, x.code)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    // `own_fresh_binds` wraps the holder's bind of a callee declared further down, not of one
+    // declared above (the pass-order window `el_refhome` names): refused by name.
+    later = match el_ir::unspan(x.code) { NdCall { def_nr } => def_nr > e.context && el::def(e, def_nr).source == el::MAIN_SOURCE, _ => false };
+    if later {
+      el::refuse(e, "a vector local bound from a later-declared function's vector result (own_fresh_binds' pass order)");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     if !(x.code is NdVar) {
