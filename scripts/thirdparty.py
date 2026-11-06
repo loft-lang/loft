@@ -160,7 +160,7 @@ def lib_base(name):
         s = s[2:].lstrip(":")
     s = os.path.basename(s)
     s = re.sub(r"\.(so(\.\d+)*|dylib|dll|lib|a)$", "", s, flags=re.I)
-    s = re.sub(r"(\.(\d+|A))+$", "", s)
+    s = re.sub(r"(\.(\d+|[A-Z]))+$", "", s)   # a framework version letter: libobjc.A, libSystem.B
     if s.startswith("lib") and len(s) > 3:
         s = s[3:]
     return s.lower()
@@ -170,6 +170,13 @@ def split_list(v):
     if isinstance(v, list):
         return [str(x).strip() for x in v if str(x).strip()]
     return [x.strip() for x in str(v or "").split(",") if x.strip()]
+
+
+def posix(p):
+    """A tree-relative path in the one spelling the audit compares: `/`-separated, as the file
+    list and the manifests write it.  `os.path.normpath` and `os.path.relpath` answer with `\\`
+    on Windows, which no `startswith(p + "/")` and no lookup in the file list then matches."""
+    return os.path.normpath(p).replace(os.sep, "/")
 
 
 def shipped(rel):
@@ -210,7 +217,7 @@ class Tree:
             for d, dirs, names in os.walk(root):
                 dirs[:] = [x for x in dirs if x != ".git"]
                 for n in names:
-                    self.files.append(os.path.relpath(os.path.join(d, n), root))
+                    self.files.append(posix(os.path.relpath(os.path.join(d, n), root)))
         self.files.sort()
 
 
@@ -322,7 +329,7 @@ def tree_digest(dirpath):
             if n.endswith(CODE_EXT):
                 p = os.path.join(d, n)
                 with open(p, "rb") as f:
-                    h.update(f"{os.path.relpath(p, dirpath)}\0{hashlib.sha256(f.read()).hexdigest()}\n".encode())
+                    h.update(f"{posix(os.path.relpath(p, dirpath))}\0{hashlib.sha256(f.read()).hexdigest()}\n".encode())
     return "sha256:" + h.hexdigest()
 
 
@@ -516,7 +523,7 @@ def loft_embedded(tree):
     found = {}
     for f, text in loft_rust_source(tree):
         for m in INCLUDE_LIT.finditer(text):
-            rel = os.path.normpath(os.path.join(os.path.dirname(f), m.group(1)))
+            rel = posix(os.path.join(os.path.dirname(f), m.group(1)))
             if os.path.isfile(os.path.join(tree.root, rel)):
                 found.setdefault(rel, f)
     return found
@@ -591,7 +598,7 @@ def shim_closure(root, d, shim):
         with open(os.path.join(root, f), encoding="utf-8", errors="replace") as fh:
             for inc in INCLUDE_C.findall(fh.read()):
                 for base in (os.path.dirname(f), os.path.join(d, "c"), d):
-                    cand = os.path.normpath(os.path.join(base, inc))
+                    cand = posix(os.path.join(base, inc))
                     if os.path.isfile(os.path.join(root, cand)):
                         todo.append(cand)
                         break
@@ -700,7 +707,7 @@ def audit_tree(tree, a, offline):
                 a.need(where, f"{n}: `kind` must be \"vendored\", \"system\", \"sdk\" or \"cargo\"")
             elif x.get("kind") == "cargo":
                 for lf in split_list(x.get("lockfile")) or ["?"]:
-                    cargo_decls[os.path.normpath(os.path.join(d, lf))] = (n, x, where)
+                    cargo_decls[posix(os.path.join(d, lf))] = (n, x, where)
         if tree.is_loft and d == "":
             sources = {norm_source(x.get("source")) for x in here.values() if x.get("kind") == "sdk"}
             for src, f in sorted(loft_sdk_pins(tree).items()):
@@ -708,7 +715,7 @@ def audit_tree(tree, a, offline):
                     a.need(where, f"{f} fetches `{src}` into what it builds; no `sdk` entry declares it")
 
         # Third-party code outside every declared vendored path.
-        paths = [os.path.normpath(os.path.join(d, x.get("path", ""))) for x in vendored.values()]
+        paths = [posix(os.path.join(d, x.get("path", ""))) for x in vendored.values()]
         loose = [f for f in foreign.get(d, []) if not any(f.startswith(p + "/") for p in paths)]
         for g in sorted({os.path.dirname(f) for f in loose}):
             nf = sum(1 for f in loose if os.path.dirname(f) == g)
@@ -732,9 +739,9 @@ def audit_tree(tree, a, offline):
 
         # A library's [c] shim is exact: every source it lists and every file those include is
         # compiled into the package, so each must be ours by notice, by `[own] paths`, or vendored.
-        shim = [os.path.normpath(os.path.join(d, x)) for x in split_list((m.get("c") or {}).get("shim"))]
+        shim = [posix(os.path.join(d, x)) for x in split_list((m.get("c") or {}).get("shim"))]
         if shim and not tree.is_loft:
-            pkg_own = [os.path.normpath(os.path.join(d, g)) for g in split_list((m.get("own") or {}).get("paths"))]
+            pkg_own = [posix(os.path.join(d, g)) for g in split_list((m.get("own") or {}).get("paths"))]
             for f in sorted(shim_closure(tree.root, d, shim)):
                 if any(f.startswith(p + "/") for p in paths) or any(fnmatch.fnmatch(f, g) for g in pkg_own) \
                         or f in loose:
@@ -846,9 +853,9 @@ def triage(n, x, where, found, a):
 
 
 def check_vendored(tree, d, n, x, where, a, offline):
-    rel = os.path.normpath(os.path.join(d, x.get("path", "")))
+    rel = posix(os.path.join(d, x.get("path", "")))
     path = os.path.join(tree.root, rel)
-    files = sorted(os.path.relpath(os.path.join(dd, f), path)
+    files = sorted(posix(os.path.relpath(os.path.join(dd, f), path))
                    for dd, _, fs in os.walk(path) for f in fs if f.endswith(CODE_EXT)) if os.path.isdir(path) else []
     if not files:
         a.need(where, f"{n}: `path` {rel} holds no code")

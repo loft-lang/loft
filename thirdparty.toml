@@ -42,19 +42,25 @@ advisories = ["github:badgeteam/esp32-component-badge-bsp"]
 
 [thirdparty.libc]
 kind     = "system"
-names    = ["c", "m", "dl", "pthread", "gcc_s", "ld-linux-x86-64"]
-provider = "the platform's C library and compiler runtime (glibc or musl and libgcc on Linux, libSystem on macOS)"
+names    = ["c", "m", "dl", "pthread", "gcc_s", "ld-linux-x86-64", "vcruntime140",
+            # the Universal CRT, imported through its API-set names: the whole family, one library
+            "api-ms-win-crt-conio-l1-1-0", "api-ms-win-crt-convert-l1-1-0", "api-ms-win-crt-environment-l1-1-0",
+            "api-ms-win-crt-filesystem-l1-1-0", "api-ms-win-crt-heap-l1-1-0", "api-ms-win-crt-locale-l1-1-0",
+            "api-ms-win-crt-math-l1-1-0", "api-ms-win-crt-multibyte-l1-1-0", "api-ms-win-crt-private-l1-1-0",
+            "api-ms-win-crt-process-l1-1-0", "api-ms-win-crt-runtime-l1-1-0", "api-ms-win-crt-stdio-l1-1-0",
+            "api-ms-win-crt-string-l1-1-0", "api-ms-win-crt-time-l1-1-0", "api-ms-win-crt-utility-l1-1-0"]
+provider = "the platform's C library and compiler runtime (glibc or musl and libgcc on Linux, libSystem on macOS, the Universal CRT and vcruntime on Windows)"
 
 [thirdparty.windows]
 kind     = "system"
 names    = ["ws2_32", "crypt32", "advapi32", "bcrypt", "bcryptprimitives", "kernel32", "user32", "gdi32",
-            "shell32", "ole32", "oleaut32", "windows"]
-provider = "Windows: Winsock, the certificate store, the random source (bcrypt, bcryptprimitives for getrandom 0.4), the console and clipboard (rustyline), the API import library (windows-targets)"
+            "shell32", "ole32", "oleaut32", "windows", "ntdll", "combase", "api-ms-win-core-synch-l1-2-0"]
+provider = "Windows: the native API (ntdll) and the wait-on-address primitives (api-ms-win-core-synch) Rust's std calls, the COM runtime (combase), Winsock, the certificate store, the random source (bcrypt, bcryptprimitives for getrandom 0.4), the console and clipboard (rustyline), the API import library (windows-targets)"
 
 [thirdparty.macos]
 kind     = "system"
-names    = ["Security", "ServiceManagement", "CoreFoundation", "bsm"]
-provider = "macOS: the keychain trust store (rustls-native-certs), CoreFoundation, the audit library (nix through zip)"
+names    = ["Security", "ServiceManagement", "CoreFoundation", "bsm", "iconv"]
+provider = "macOS: the keychain trust store (rustls-native-certs), CoreFoundation, the audit library (nix through zip), libiconv (the libc crate links it on Apple targets)"
 
 [thirdparty.wasi-libc]
 kind     = "system"
