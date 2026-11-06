@@ -225,6 +225,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-GuardedChain)` | `R-GuardedChain` c, native · `/operators` c, native |
 | `(R-HandOver)` | `/rotate` c, native |
 | `(R-Header)` | `R-Header` c, native · `/apart` c, native · `/apart-param` c, native · `/function` native · `/grown` c · `/grown-held` c · `/kept` native · `/kept-growth` c · `/kept-twin` c, native · `/narrow` c · `/rebind` c · `/text` c, native |
+| `(R-HostStore)` | `R-HostStore` ir |
 | `(R-HotInline)` | not counted — executor: #hot operators inlined into the lean loop |
 | `(R-InPlace)` | not counted — condition: the write test the header hoists ask; counted under them |
 | `(R-InPlaceLiteral)` | `R-InPlaceLiteral` parse · `/child` parse |
@@ -5050,6 +5051,25 @@ line in `Output::output_function`'s prelude.
                  2026-10-31 (gcc): random `indices` 0.458×, `get` 0.871× — exactly what
                  the (H-WriteLocked) production clause (@C80) had cost them, 2.16× and
                  1.14×.  Switch `LOFT_NO_LOCK_FACT=1`.
+
+  (R-HostStore)  a write-back `t.f = g(t.f, …)` (`write_back_call`) whose callee answers, on
+                 every return, only its argument handed the field's child or its return
+                 buffer — and uses that buffer only as a buffer: minted by `OpDatabase`, its
+                 fields written, tested, a release's witness, answered — hands the callee a
+                 buffer naming `t`'s STORE and no record (`OpStoreBuf`, `keys::STORE_BUF_BIT`):
+                 the callee's `OpDatabase` claims its record there and the field ADOPTS it by
+                 its number (`OpAdoptChildRec`); the argument handed back is the child the field
+                 already holds.  Before, every such call minted a store, the write-back copied
+                 the record into `t`'s store and freed it.  A callee answering anything else —
+                 a child of its argument (`return t.right`) — keeps the copy: adopting such a
+                 record by number would make it a child twice.  Decided after every body is
+                 settled, on the callee's final IR (`host_store::rewrite_program`).  Measured:
+                 21_tree `build_rec` 3.14× → 1.92× Rust.  `LOFT_NO_HOST_STORE=1`,
+                 `LOFT_TRACE_HOST_STORE=1`; guard
+                 `loft-suite/rules/rewrites/R-HostStore/a-recursion-builds-its-result-in-the-field-it-is-written-to.loft`.
+                 NOT YET: a callee whose result literals are built in work stores of their
+                 own rather than in its buffer (`gen`, `simplify` of bench 22) — the callee
+                 half, and the release by record of a result the caller drops (§ @PLN219).
 
   (R-MoveChild)  a whole write into an out-of-line field whose value is a chain of child reads
                  rooted at the field's OWN child — `h.f = h.f.g`, `cur = cur.left` through a

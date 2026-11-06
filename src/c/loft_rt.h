@@ -1575,7 +1575,18 @@ static void loft_vector_store(loft_ref *var) {
     loft_database(var, 24);
 }
 
+#define LOFT_STORE_BUF_BIT 0x20000000u
 static void loft_database_typed(loft_ref *var, uint32_t bytes, uint16_t tp) {
+    /* `@FR-R-HostStore`: a buffer naming its caller's store — the record is claimed there,
+     * zeroed (the literal that follows writes every field). */
+    if (var->store_nr != 0xFFFF && var->rec == 0 && (var->pos & LOFT_STORE_BUF_BIT)) {
+        loft_store_t *s = &loft_stores[var->store_nr];
+        uint32_t rec = loft_claim(s, 1 + (bytes + 7) / 8);
+        var->rec = rec;
+        var->pos = 8;
+        memset(loft_at(s, rec, 8), 0, bytes);
+        return;
+    }
     loft_database(var, bytes);
     loft_stores[var->store_nr].known = tp;
     loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, tp);

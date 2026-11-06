@@ -3230,6 +3230,61 @@ impl Stores {
             .set_u32_raw(r.rec, r.pos + u32::from(fld), c);
     }
 
+    /// `OpStoreBuf` ([`crate::keys::store_buf`]).
+    #[must_use]
+    pub fn store_buf(&self, host: &crate::keys::DbRef) -> crate::keys::DbRef {
+        crate::keys::store_buf(host)
+    }
+
+    /// `OpDatabase` on a store buffer (`@FR-R-HostStore`): a `tp` record claimed in the
+    /// buffer's store, its bytes the type's defaults.
+    pub fn claim_in_store_buf(&mut self, buf: &crate::keys::DbRef, tp: u16) -> crate::keys::DbRef {
+        let words = self.child_rec_words(tp);
+        let rec = self.allocations[buf.store_nr as usize].claim(words);
+        let r = crate::keys::DbRef {
+            store_nr: buf.store_nr,
+            rec,
+            pos: 8,
+        };
+        self.set_default_value(tp, &r);
+        r
+    }
+
+    /// `OpAdoptChildRec` — `field` takes `value` by its number when `value` is a record of the
+    /// field's store (the callee claimed it in the buffer, or it is the child already held,
+    /// which is left as it is); any other value is `set_child_rec`'s copy.
+    pub fn adopt_child_rec(
+        &mut self,
+        field: &crate::keys::DbRef,
+        value: &crate::keys::DbRef,
+        tp: u16,
+    ) {
+        if field.store_nr == u16::MAX
+            || field.rec == 0
+            || value.store_nr != field.store_nr
+            || value.rec == 0
+            || value.pos != 8
+        {
+            self.set_child_rec(field, value, tp);
+            return;
+        }
+        let old = self.store(field).get_u32_raw(field.rec, field.pos);
+        if old == value.rec {
+            return;
+        }
+        self.store_mut(field)
+            .set_u32_raw(field.rec, field.pos, value.rec);
+        if old != 0 {
+            let o = crate::keys::DbRef {
+                store_nr: field.store_nr,
+                rec: old,
+                pos: 8,
+            };
+            self.remove_claims(&o, tp);
+            self.store_mut(field).delete(old);
+        }
+    }
+
     /// `OpMoveChildRec` — `field` takes the child record the field `src` names by its number;
     /// `src` lies inside the record `field` holds, and is cleared, so the release of that
     /// record — what it still owns — leaves the moved subtree alone.

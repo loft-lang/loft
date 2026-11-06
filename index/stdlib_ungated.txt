@@ -5,6 +5,7 @@ OpAddFloat
 OpAddInt
 OpAddIntNullable
 OpAddSingle
+OpAdoptChildRec
 OpAdoptVector
 OpAppendCharacter
 OpAppendCopy
@@ -311,6 +312,7 @@ OpSlotTag
 OpSortVector
 OpStaticCall
 OpStep
+OpStoreBuf
 OpStoreLive
 OpStoreTag
 OpTagVCJump
@@ -350,7 +352,7 @@ __iface_34#2_OpMin
 __iface_34#2_minus
 __iface_37#2_scale
 __iface_39#1_to_text
-__iface_533#1_children
+__iface_535#1_children
 i_7integer_n_sum
 n___ledger
 n___ledger_div

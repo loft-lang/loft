@@ -1337,6 +1337,32 @@ pub const COPY_TP_MASK: u16 = 0x3FFF;
 /// position never reaches bit 30, and a null keeps its own `REPORTED_BIT` (bit 31).
 pub const SLOT_FIELD_BIT: u32 = 0x4000_0000;
 
+/// `@FR-R-HostStore` (@PLN219) — the `pos` bit of a return buffer that names a STORE and no
+/// record (`rec == 0`): `OpDatabase` on it claims the callee's result as a record of that store,
+/// where the caller's field adopts it by its number, instead of making a store of its own.
+pub const STORE_BUF_BIT: u32 = 0x2000_0000;
+
+/// `OpStoreBuf` — the buffer naming `host`'s store; null for a null host.
+#[inline]
+#[must_use]
+pub fn store_buf(host: &DbRef) -> DbRef {
+    if host.store_nr == u16::MAX {
+        return DbRef::NULL;
+    }
+    DbRef {
+        store_nr: host.store_nr,
+        rec: 0,
+        pos: STORE_BUF_BIT,
+    }
+}
+
+/// Is `r` a buffer naming a store and no record ([`STORE_BUF_BIT`])?
+#[inline]
+#[must_use]
+pub fn is_store_buf(r: &DbRef) -> bool {
+    r.store_nr != u16::MAX && r.rec == 0 && r.pos & STORE_BUF_BIT != 0
+}
+
 /// Does the cell content `r` name an out-of-line field ([`SLOT_FIELD_BIT`])?
 #[inline]
 #[must_use]

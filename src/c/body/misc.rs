@@ -331,6 +331,24 @@ impl FnWriter<'_> {
         ind: usize,
     ) -> Result<E, String> {
         match (name, args) {
+            ("OpStoreBuf", [h]) => {
+                let h = self.expr(h, ind)?;
+                Ok(E::new(format!("loft_store_buf({})", as_ref(h)?), K::Ref))
+            }
+            ("OpAdoptChildRec", [f, v, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let tp = self.copyable(tp)?;
+                let (f, v) = self.two(name, &[f, v], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_adopt_child_rec(loft_types, {tp}, {}, {})",
+                        as_ref(f)?,
+                        as_ref(v)?
+                    ),
+                    K::Void,
+                ))
+            }
             ("OpMoveChildRec", [f, src, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "type")?)
                     .map_err(|_| "a type number out of range".to_string())?;

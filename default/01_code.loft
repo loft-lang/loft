@@ -1883,6 +1883,17 @@ fn OpMoveChildRec(field: reference, src: reference, tp: const u16);
 // `@FR-R-InPlaceLiteral` for an out-of-line field: the child record a literal is written into —
 // the present child, its owned heap released and its bytes reset to the type's defaults (its
 // number kept, as `OpSetChildRec` keeps it), or a fresh one where the field is absent.
+// `@FR-R-HostStore`: the return buffer naming `host`'s store and no record — the callee's
+// `OpDatabase` claims its result as a record there (`keys::STORE_BUF_BIT`).
+fn OpStoreBuf(host: reference) -> reference;
+#rust"stores.store_buf(&@host)"
+#pure
+// `@FR-R-HostStore`: the out-of-line `field` takes `value` — a record its callee claimed in the
+// field's store, or the child the field already holds — by its number; any other value is
+// written as `OpSetChildRec` writes it.
+fn OpAdoptChildRec(field: reference, value: reference, tp: const u16);
+#rust"stores.adopt_child_rec(&@field, &@value, @tp);"
+#impure(parent_write)
 fn OpChildRecInPlace(field: reference, tp: const u16) -> reference[field];
 #rust"stores.child_rec_in_place(&@field, @tp)"
 #impure(parent_write)

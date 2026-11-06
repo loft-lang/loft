@@ -167,6 +167,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// `db`, then returns the updated `DbRef`.
 /// Bytecode equivalent: `OpDatabase` in `src/state/io.rs:319`.
 pub fn OpDatabase(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: i32) -> DbRef {
+    // `@FR-R-HostStore` — a buffer naming its caller's store: the record is claimed there.
+    if crate::keys::is_store_buf(&db) {
+        let stores: &mut Stores = unsafe { &mut *cell.get() };
+        return stores.claim_in_store_buf(&db, db_tp as u16);
+    }
     op_database_inner(cell, db, db_tp, true)
 }
 

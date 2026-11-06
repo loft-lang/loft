@@ -922,6 +922,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     if crate::keys::buffer_detach_enabled() {
         buffer_detach::detach_owned_buffers(data);
     }
+    // `@FR-R-HostStore` — a recursion's result written back into the field it came from is
+    // built in the field's store: decided on every callee's settled IR.
+    crate::host_store::rewrite_program(data);
     // loft#2357, `@FR-L-CapKeep` — a capture whose local the loop re-assigns is released by the
     // last of its names to let go, decided by store identity at each let-go point.
     rebound_captures::release_rebound_captures(data);

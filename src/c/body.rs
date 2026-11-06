@@ -10572,6 +10572,7 @@ const OP_REF: &[&str] = &[
     "OpInsertVector",
     "OpRefFromChildRec",
     "OpSlotTag",
+    "OpStoreBuf",
     "OpChildRecInPlace",
     "OpChildRec",
     "OpCopyClosure",

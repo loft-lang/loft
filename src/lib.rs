@@ -353,6 +353,7 @@ pub mod exit_vector;
 pub mod file_access;
 pub mod forward_result;
 pub mod forward_walk;
+pub mod host_store;
 pub mod in_range;
 pub mod leaf_inline;
 pub mod ledger;

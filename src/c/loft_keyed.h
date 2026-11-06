@@ -1042,6 +1042,28 @@ static void loft_demote_rec(const loft_tdesc *T, uint16_t tp, loft_ref r, uint32
     loft_set_u32(s, r.rec, r.pos + fld, c);
 }
 
+/* OpStoreBuf (keys::store_buf): the buffer naming host's store and no record. */
+static inline loft_ref loft_store_buf(loft_ref host) {
+    if (host.store_nr == 0xFFFF) return loft_ref_null();
+    loft_ref b = { host.store_nr, 0, LOFT_STORE_BUF_BIT, 0 };
+    return b;
+}
+/* OpAdoptChildRec (Stores::adopt_child_rec): a record of f's store adopted by number. */
+static void loft_adopt_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, loft_ref v) {
+    if (f.store_nr == 0xFFFF || f.rec == 0 || v.store_nr != f.store_nr || v.rec == 0 || v.pos != 8) {
+        loft_set_child_rec(T, tp, f, v, 0);
+        return;
+    }
+    uint32_t old = loft_u32(loft_store_of(f), f.rec, f.pos);
+    if (old == v.rec) return;
+    loft_set_u32(loft_store_of(f), f.rec, f.pos, v.rec);
+    if (old) {
+        loft_ref o = { f.store_nr, old, 8, 0 };
+        loft_remove_claims(T, tp, o);
+        loft_st_delete(loft_store_of(f), old);
+    }
+}
+
 /* OpMoveChildRec (Stores::move_child_rec): `f` takes the child `src_f` names (a field inside the
  * record f holds) by number; src_f is cleared and the replaced record released with what it owns. */
 static void loft_move_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, loft_ref src_f) {
