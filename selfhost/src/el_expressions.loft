@@ -10019,14 +10019,16 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   // A field's view as the subject: its literal default is built against the subject's type,
   // which names the record it borrows — no store of its own (`build_null_coalesce_default`).
   d = match e.p.nodes[r] {
-    SVecLit { items } => if len(items) > 0 && len(view_borrows(e, vars, x)) > 0 { vector_value(e, vars, r, borrows: view_borrows(e, vars, x)).x } else { expression(e, vars, r) },
+    SVecLit { items } => if len(items) > 0 && el_types::base(x.tp) is TyVector { vector_value(e, vars, r, borrows: view_borrows(e, vars, x), elem: match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } }).x } else { expression(e, vars, r) },
     _ => expression(e, vars, r)
   };
   // `build_null_coalesce_default` reads the default against the subject's type: an untyped
   // `[]` is the subject's empty vector, built there.
   if is_empty_literal(d.code) && el_types::base(x.tp) is TyVector {
     vt = el_types::without_deps(el_types::base(x.tp));
-    d = ex(if e.first_pass { ir::NdNull } else { empty_literal_to(e, vars, vt, borrows: view_borrows(e, vars, x)) }, vt);
+    // Built on the first pass too beside a native call: its buffer is a work ref registered
+    // there, in source order.
+    d = ex(if e.first_pass && !fresh_native_call(e, x.code) { ir::NdNull } else { empty_literal_to(e, vars, vt, borrows: view_borrows(e, vars, x)) }, vt);
   }
   if is_empty_literal(d.code) {
     el::refuse(e, "a `??` with an empty vector literal as its default");
@@ -10162,6 +10164,29 @@ fn register_default_literal(vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT) {
 }
 
 // A call of a loft-bodied function whose last argument is its hidden vector return buffer.
+// A refusal's detail: the kind of node a value is, a call by its callee.
+fn node_kind(e: el::El, n: ir::Node) -> text {
+  match el_ir::unspan(n) {
+    NdCall { def_nr } => "call {el::def(e, def_nr).name}",
+    NdBlock { block } => "block {block[0].name}",
+    NdVar { n: _ } => "variable",
+    NdIf { cond: _ } => "if",
+    NdNull => "null",
+    _ => "other"
+  }
+}
+
+// A call of a native (`#rust`) function: its vector result is a fresh store of its own.
+fn fresh_native_call(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr } => {
+      def = el::def(e, def_nr);
+      def.rust != "" && def.def_type == el::DT_FUNCTION && !starts_with(def.name, "Op")
+    },
+    _ => false
+  }
+}
+
 fn buffered_loft_call(e: el::El, n: ir::Node) -> boolean {
   match el_ir::unspan(n) {
     NdCall { def_nr, args } => {
@@ -10249,8 +10274,11 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
       return ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
     }
-    if !(x.code is NdVar) && !buffered_loft_call(e, x.code) {
-      el::refuse(e, "a vector `??` on something other than a local or a buffered loft call: {tail_kind(e, vars, x.code)}");
+    // A native call answers a fresh vector: held in a `__ncc_N` of its own type (nulled before
+    // its statement), the result borrowing the holder.
+    native = fresh_native_call(e, x.code);
+    if !(x.code is NdVar) && !buffered_loft_call(e, x.code) && !native {
+      el::refuse(e, "a vector `??` on something other than a local or a buffered loft call: {node_kind(e, x.code)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     // `own_fresh_binds` wraps the holder's bind of a callee declared further down, not of one
@@ -10265,7 +10293,20 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       vars.vars[held].skip_free = true;
       ht = el_types::with_deps(el_types::without_deps(lhs), [held]);
       if e.first_pass {
+        // A native call's default: its buffer is a work ref from this pass on.
+        if native {
+          borrowed_literal_buffer(vars, d.code);
+        }
         return ex(ir::NdNull, ht);
+      }
+      if native {
+        el_vars::register_work_ref(vars, held);
+        el_vars::mark_inline(vars, held);
+        el_vars::set_var_type(vars, held, el_types::without_deps(lhs));
+        register_default_literal(vars, d.code, el_types::without_deps(lhs));
+        h = ir::NdVar { n: held };
+        present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
+        return ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(present, h, d.code)], ht, "ncc"), ht);
       }
       // Typed as this pass's subject, peeled: the borrow its call's buffer gives it.
       el_vars::set_var_type(vars, held, lhs);
@@ -14973,9 +15014,11 @@ fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared:
 // `borrows`: the deps of a hint that names a store (a `??` default beside a field's view): the
 // literal is built with no store of its own and typed as borrowing them (`parse_vector` under a
 // `parent_tp` with deps).
-fn vector_value(e: el::El, vars: el_vars::Vars, n: integer, hinted: boolean = true, borrows: vector<integer> = []) -> Built {
+// `elem`: the element type a hint names (a `??` default's subject), else unknown.
+// The definitions a hinted literal makes are made at its `]`.
+fn vector_value(e: el::El, vars: el_vars::Vars, n: integer, hinted: boolean = true, borrows: vector<integer> = [], elem: ir::TypeT = ir::TyUnknown { n: 0 }) -> Built {
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
-  vector_build(e, vars, v, n, ir::TyUnknown { n: 0 }, value: true, hinted: hinted, borrows: borrows)
+  vector_build(e, vars, v, n, elem, value: true, hinted: hinted, borrows: borrows, at_close: !el_types::is_unknown(elem))
 }
 
 // `w += [items]` on a vector local that already has its store: the same build appended to it —
@@ -15591,6 +15634,11 @@ fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: vecto
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: inner, dep: [] });
   // `parse_vector` with the element type known mints the literal's `elm` too (`unique_elm_var`).
   el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  // The first pass makes the buffer only; its store is minted on the second, in that pass's
+  // order.
+  if e.first_pass {
+    return el_ir::v_block([ir::NdVar { n: v }], el_vars::tp(vars, v), "Vector");
+  }
   // Built against a field's view: no store of its own, the buffer answered as borrowing it.
   if len(borrows) > 0 {
     bt = el_types::with_deps(el_vars::tp(vars, v), borrows);
