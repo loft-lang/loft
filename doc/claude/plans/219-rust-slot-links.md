@@ -8,14 +8,16 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 ## Status
 
 Active.  The semantics of a link to an out-of-line field is settled and built (loft#2433, loft#2434,
-C77 amended); a regression of that build on `&` parameters, the parameter half, the
-walk-or-write warning and the O(1) unlink are open.  Work lives on `tuxedo-quality`.
+C77 amended); open: a regression of that build on `&` parameters, the bench programs that expose
+user-built structures, the walk-or-write warning and the parameter half.  Work lives on `tuxedo-quality`.
 
 ## Goal
 
 A Rust programmer's tree and list code — the `&mut Option<Box<T>>` slot cursor and a slot handed
-to a function — compiles in loft in its `&` spelling, warns when a walk forgot its `&`, and costs
-what Rust's costs.
+to a function — compiles in loft in its `&` spelling and warns when a walk forgot its `&`; and the
+performance suite holds programs that build their own structures the natural way, so the portal
+shows what they cost against Rust.  Making them fast is the ordinary performance loop
+(`loft-optimize`), not this plan's.
 
 ## Why
 
@@ -120,27 +122,36 @@ the position (loop · straight line), another view or link live across the write
 
 ## Phases
 
-Each phase names the comparison that can make it go red.
+Each phase names the comparison that can make it go red.  In order:
 
 - **P1 — the parameter regression** (S).  The slot rewrite fires on a `&` parameter and leaves the
   first write before any re-point with no field.  Interim fix: no slot rewrite on an argument, so
   the parameter keeps today's path.  Red: the zero-iteration `take_min` cell, both backends.
-- **W — walk-or-write warning** (S).  The six rows above as cells of one fixture with the exact
-  set of warned locals pinned (`tests/dead_code_lint.rs` style).  Red: the forgotten-`&` cell
+- **B — programs that expose the cost** (M).  Each with a Rust twin, in the spelling a user writes,
+  one op per repetition, keys varying in value and never in the amount of work, hashes from an
+  independent oracle:
+
+  | bench | routines | exposes |
+  |---|---|---|
+  | 22_expr — a recursive enum (`Num`, `Add { l, r }`, `Mul { l, r }`) | build random expressions recursively, evaluate, simplify by rewriting, render | recursive construction, enum children, matching over a user tree |
+  | 23_lru — a `hash` of keys and a doubly linked list with `reference<T>` back-links | get/put at a fixed hit rate, evictions | owned children beside back-links |
+  | 21_tree, extended | `build_rec` (`t.left = insert(t.left, k)`), `enum_list` (`l = Cons { v, next: l }`, sum, reverse), `lookup_copy` (`cur = t`) | the spellings still O(n²) or copying |
+
+  Red: a hash that disagrees with the twin or the oracle; a routine that cannot be written in
+  its natural spelling is a language defect, fixed or filed on the spot.
+- **W — walk-or-write warning** (S).  The six rows of § Design as cells of one fixture with the
+  exact set of warned locals pinned (`tests/dead_code_lint.rs` style).  Red: the forgotten-`&` cell
   stays silent, or a silent row warns.
 - **P — slot parameters, exact link** (M).  Probe first: the address test in a hand-written
   callee on both backends.  Then the caller side (field argument, slot-link argument, variable
   argument) and the callee side (field link from the first line).  Red: the four parameter
-  cells above, the view-across-the-call cell, and the existing `&` parameter cells unchanged.
-- **M — the move op** (M).  Hand form first (loft-optimize step 4): the detach-install-release
-  sequence written into the generated C for bench 21's delete, timed against the copy; build
-  only if the prize is real.  Then the op on all three backends, a `LOFT_NO_MOVE_CHILD` switch,
-  `make surface-gen` and the wasm rlib.  Red: switch on and off answer alike, live-record counts
-  equal, the bench delete moves.
-- **B — bench 21 in the Rust shape** (S).  `take_min` restored as a helper so the loft and Rust
-  sources match routine for routine; hashes unchanged (`d0fc3f4 829a302c 41ceb783 3b0656d6`);
-  emitted C read for each routine; the row recorded.  Last measured (C against Rust):
-  insert 1.76×, query 0.47×, delete 3.77×, list 3.91×.
+  cells of § Composition matrix, the view-across-the-call cell, the existing `&` parameter cells
+  unchanged.  21_tree then restores `take_min` as a helper, so the loft and Rust sources match
+  routine for routine.
+
+The O(1) unlink (§ Design, M) is no longer a phase: it is the portal's work once 21_tree's delete
+row asks for it — hand form first, the op on all three backends behind `LOFT_NO_MOVE_CHILD`.
+Last measured, C against Rust: insert 1.76×, query 0.47×, delete 3.77×, list 3.91×.
 
 ## Also open from the same arc
 
@@ -149,13 +160,10 @@ The natural-code list this plan grew out of, outside its core:
 - **R-Demote cells and census** — cells under `rules/rewrites/R-Demote/` (correctness and the
   efficiency scale); `scripts/rewrite_census.py --bless-unless-drop`.
 - **The read-only cursor `cur = t`** — the spelling nearly everyone writes for a lookup copies
-  the whole tree at the bind; elide the copy where nothing writes through the local.
-- **Recursive construction `N { v, next: mk(n - 1) }`** — O(n²); a design question
-  (`(O-Buffer)`).  First of this list: a user building their own structure meets it first.
-- **Enum lists `l = Cons { v, next: l }`** — O(n²); second, for the same reason.
-- **Owned children beside `reference<T>` back-links** — a doubly linked list or a tree with
-  parent pointers, as a cell and a bench routine.
-- **list_ops at 3.91×** — find the mechanism behind it.
+  the whole tree at the bind; exposed by B's `lookup_copy`.
+- **Recursive construction `N { v, next: mk(n - 1) }`** and **enum lists `l = Cons { v, next:
+  l }`** — O(n²); exposed by B, made fast by the portal (`(O-Buffer)` is the design question).
+- **list_ops at 3.91×** — the portal's, like every row B adds.
 - **Before the PR** — RULE_CROSSINGS ledger rows for the pairs these fixes crossed, `make
   check-rlib` (the wasm rlib was stale), `make ci`.
 
@@ -169,7 +177,8 @@ The natural-code list this plan grew out of, outside its core:
 - `BOTH_BACKEND_SWITCHES.md` — `LOFT_NO_MOVE_CHILD` (M).
 - `DESIGN_DECISIONS_OWNERSHIP.md` C77 — done.
 - `doc/00-vs-rust.html` — the slot cursor beside Rust's (B).
-- `bench/README.md` row 21 — the Rust-shaped routines (B).
+- `bench/README.md` — rows 22 and 23, row 21's new routines; `bench/portal/routines.tsv` and
+  `classes.tsv` (B).
 - `RULE_CROSSINGS-history.md` — the verified pairs.
 - `CHANGELOG.md` — the user-visible change: tree code in Rust's shape.
 
