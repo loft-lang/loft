@@ -1,0 +1,59 @@
+// A `vector<T>?` result answers null wherever the function returns null — at the tail, at a
+// mid-body `return`, and through a nullable local handed back from either (`@FR-N-Shape`: the
+// result is the buffer one `?` down).  A nullable local delivered into the buffer by an arm of
+// the tail `if` was copied in without its null test, so `return m` with `m == null` answered
+// `[]`; and an early `return r` beside a nullable tail was not delivered at all, handing back
+// r's own store while the caller's buffer leaked.  Each cell asserts the value, its length and
+// (through the run's store check) that nothing leaks.
+// @falsified-at: 369b941cf — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the asserts; the store-leak report at exit.
+// ARMED: no instrument.
+// WITNESS: each message prints the answer.
+
+// The arm returns a nullable local (`return m`), the other arm a local.
+fn arm_return(n: integer) -> vector<integer>? {
+  if n > 4 { return null; }
+  if n == 0 { r = [7]; r } else { m = arm_return(n + 10); return m; }
+}
+
+// The same with a literal arm.
+fn arm_return_lit(n: integer) -> vector<integer>? {
+  if n > 4 { return null; }
+  if n == 0 { [7, 8] } else { m = arm_return_lit(n + 10); return m; }
+}
+
+// An early `return r` beside a nullable local at the tail.
+fn early_local(n: integer) -> vector<integer>? {
+  if n > 4 { return null; }
+  if n == 0 { r = [7]; return r; }
+  m = early_local(n + 10);
+  m
+}
+
+// Controls: a direct `return null`, a nullable tail alone, a null arm.
+fn direct_null(n: integer) -> vector<integer>? {
+  if n > 4 { return null; }
+  if n == 0 { r = [7]; r } else { return null; }
+}
+fn tail_only(n: integer) -> vector<integer>? { if n != 0 { return null; } r = [7]; r }
+fn null_arm(n: integer) -> vector<integer>? { if n == 0 { r = [7]; r } else { null } }
+
+fn main() {
+  for i in 0..3 {
+    a = arm_return(i);
+    assert((i == 0) == (a != null), "arm_return({i}) present: {a}");
+    if i == 0 { assert(len(a!) == 1 && a![0] == 7, "arm_return(0): {a}"); }
+    b = arm_return_lit(i);
+    assert((i == 0) == (b != null), "arm_return_lit({i}) present: {b}");
+    if i == 0 { assert(len(b!) == 2 && b![1] == 8, "arm_return_lit(0): {b}"); }
+    c = early_local(i);
+    assert((i == 0) == (c != null), "early_local({i}) present: {c}");
+    if i == 0 { assert(len(c!) == 1 && c![0] == 7, "early_local(0): {c}"); }
+    d = direct_null(i);
+    assert((i == 0) == (d != null), "direct_null({i}): {d}");
+    t = tail_only(i);
+    assert((i == 0) == (t != null), "tail_only({i}): {t}");
+    u = null_arm(i);
+    assert((i == 0) == (u != null), "null_arm({i}): {u}");
+  }
+}

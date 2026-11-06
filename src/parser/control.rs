@@ -20110,6 +20110,50 @@ impl Parser {
     /// into `if OpVectorIsNull(v) { null } else { v }`, the branch
     /// [`Self::materialize_vector_arms_into`] delivers one arm at a time.  `false` when the
     /// terminal is not a bare local, and the tail is left as it was.
+    /// Every arm of a branch that ends in a nullable vector local other than the buffer `w`
+    /// is split on that local's null test (`split_nullable_vector_tail`, per arm).  An arm
+    /// already split is left as it is.
+    fn split_nullable_vector_arms(
+        &self,
+        op: &mut Value,
+        w: u16,
+        is_null_nr: u32,
+        sentinel_nr: u32,
+    ) {
+        match op {
+            Value::Span(b) => self.split_nullable_vector_arms(&mut b.1, w, is_null_nr, sentinel_nr),
+            Value::Return(inner) | Value::Drop(inner) => {
+                self.split_nullable_vector_arms(inner, w, is_null_nr, sentinel_nr);
+            }
+            Value::If(c, t, f) => {
+                let split_already = matches!(c.unspan(), Value::Call(d, _) if *d == is_null_nr)
+                    && matches!(t.unspan(), Value::Call(d, args) if *d == sentinel_nr && args.is_empty());
+                if !split_already {
+                    self.split_nullable_vector_arms(t, w, is_null_nr, sentinel_nr);
+                    self.split_nullable_vector_arms(f, w, is_null_nr, sentinel_nr);
+                }
+            }
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.split_nullable_vector_arms(last, w, is_null_nr, sentinel_nr);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops.last_mut() {
+                    self.split_nullable_vector_arms(last, w, is_null_nr, sentinel_nr);
+                }
+            }
+            Value::Var(v)
+                if *v != w
+                    && matches!(self.vars.tp(*v), Type::Optional(_))
+                    && matches!(self.vars.tp(*v).base(), Type::Vector(_, _)) =>
+            {
+                Self::split_nullable_vector_tail(op, is_null_nr, sentinel_nr);
+            }
+            _ => {}
+        }
+    }
+
     fn split_nullable_vector_tail(tail: &mut Value, is_null_nr: u32, sentinel_nr: u32) -> bool {
         match tail {
             Value::Span(b) => Self::split_nullable_vector_tail(&mut b.1, is_null_nr, sentinel_nr),
@@ -20141,6 +20185,16 @@ impl Parser {
     /// (fixing the interp orphan leak) while staying native-compilable. `null` arms
     /// (an exhaustive match's unreachable fall-through) are left untouched.
     fn materialize_vector_arms_into(&mut self, elm: &Type, op: &mut Value, w: u16) -> bool {
+        // `@FR-N-Shape` — an arm answering a NULLABLE vector local into a `vector<T>?` result
+        // answers null where the local holds null, as a bare nullable tail does
+        // (`split_nullable_vector_tail`).  Copied into the buffer, its absence became an EMPTY
+        // vector: `if c { r } else { m = f(); return m }` answered `[]` for a null `m`, in
+        // silence on both backends.
+        if matches!(self.data.def(self.context).returned(), Type::Optional(_)) {
+            let is_null = self.data.def_nr("OpVectorIsNull");
+            let sentinel = self.data.def_nr("OpNullRefSentinel");
+            self.split_nullable_vector_arms(op, w, is_null, sentinel);
+        }
         let mut consumed = Vec::new();
         self.materialize_vector_arms_collect(elm, op, w, &mut consumed)
     }
@@ -21812,6 +21866,20 @@ impl Parser {
             // `__ref_3`-named buffer and the leaf vectors leaked, #355
             // fallout) — rewrite them here, where the binding decision is
             // final and the full body is in hand.
+            // `@FR-N-Shape` — a `vector<T>?` result is the same buffer one `?` down: its mid-body
+            // `return r` is delivered too.  Asked of the dense type alone, an early `return r`
+            // beside a nullable tail handed back r's own store and the caller's buffer leaked.
+            // Its tail is delivered per arm (`split_nullable_vector_tail`), which clears the
+            // buffer on each path, so the dense-only steps below stay dense-only.
+            if site == RetSite::BlockTail
+                && let Type::Optional(inner) = &ret
+                && let Type::Vector(elm, _) = inner.base()
+                && let Some((buf_attr, buf_var)) = self.return_buffer()
+                && dep.contains(&buf_attr)
+            {
+                let elm = (**elm).clone();
+                self.deliver_mid_vector_returns(&elm, body, buf_var);
+            }
             if site == RetSite::BlockTail
                 && let Type::Vector(elm, _) = &ret
                 && let Some((buf_attr, buf_var)) = self.return_buffer()
