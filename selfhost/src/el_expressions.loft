@@ -1634,7 +1634,8 @@ fn alloc_temps(e: el::El, n: ir::Node, v: integer, temps: vector<integer>) {
 // The parameters an `if` tail's arms hand back, every other arm answering the null sentinel;
 // null when an arm answers anything else.
 fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<integer>? {
-  tail = match code { NdBlock { block } => el_ir::unspan(el_ir::last(block[0].operators)), _ => code };
+  // A body's block is read at its tail; a record literal's block is the arm itself.
+  tail = match code { NdBlock { block } => if block[0].name == "Object" { code } else { el_ir::unspan(el_ir::last(block[0].operators)) }, _ => code };
   match tail {
     NdIf { cond: _, t, f } => {
       a = if_tail_params(e, vars, t);
@@ -1669,8 +1670,18 @@ fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<inte
     },
     // The first pass's `null` arm, before it answers the sentinel.
     NdNull => [],
-    // A record literal arm builds in a work ref of its own and borrows nothing.
-    NdBlock { block } => if block[0].name == "Object" { [] } else { null },
+    // A record literal arm builds in a work ref of its own and borrows nothing; a `match` is the
+    // `if` chain it ends in, past its subject's binding.
+    NdBlock { block } => {
+      if block[0].name == "Object" {
+        return [];
+      }
+      if block[0].name == "scalar_match" {
+        mps = if_tail_params(e, vars, el_ir::last(block[0].operators));
+        return mps;
+      }
+      null
+    },
     _ => null
   }
 }
@@ -13362,11 +13373,15 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         if len(binds) > 0 {
           b.code = el_ir::v_block(binds + [b.code], b.tp, "match_arm");
         }
-        if b.tp is TyNull || el_ir::is_null(b.code) {
+        // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
+        // (`first_pass_null_arm`).
+        if b.tp is TyNull || (!e.first_pass && el_ir::is_null(b.code)) {
           null_arm = true;
         }
         if unsettled(result) {
-          result = b.tp;
+          // An arm's dep on a store it mints itself (a literal's work ref) is no borrow of the
+          // join (`arm_join_type`).
+          result = if el_types::base(b.tp) is TyReference { el_types::with_deps(b.tp, outside_deps(b.code, el_types::deps(b.tp))) } else { b.tp };
         } else if b.tp is TyOptional && !(result is TyOptional) {
           result = ir::TyOptional { inner: result };
         }
@@ -13380,13 +13395,33 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
           }
           result = el_types::with_deps(result, joined);
         }
-        out += [MArm { cond: cond, code: b.code, tp: b.tp }];
+        // A record arm's block is typed without the store its own literal mints (`arm_join_type`);
+        // a bare literal arm keeps it.
+        ac = b.code;
+        if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
+          ac = match b.code { NdBlock { block } => if block[0].name == "Object" { b.code } else { arm_typed(b.code, outside_deps(b.code, el_types::deps(b.tp))) }, _ => b.code };
+        }
+        out += [MArm { cond: cond, code: ac, tp: b.tp }];
         if wild {
           break;
         }
       },
       _ => {}
     }
+  }
+  // A record result with a `null` arm is `τ?` on both passes (`(N-Join)`).
+  if null_arm && el_types::base(result) is TyReference && !(result is TyOptional) {
+    result = ir::TyOptional { inner: result };
+  }
+  // A record join keeps its arms on the first pass (as an `if` does): the parameters they hand
+  // back are what the result borrows.
+  if e.first_pass && el_types::base(result) is TyReference && len(out) > 0 {
+    // A wildcard arm is the chain's last value, not an `if` beside a `null`.
+    fc = ir::NdNull;
+    for a in rev(out) {
+      fc = if a.cond == null { a.code } else { el_ir::v_if(a.cond!, a.code, fc) };
+    }
+    return ex(el_ir::v_block([fc], result, "scalar_match"), result);
   }
   if e.first_pass || (!scalar_subject && !enum_subject && sd < 0) {
     return ex(ir::NdNull, result);
