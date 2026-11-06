@@ -131,10 +131,20 @@ on their own branches at the same time: no step waits on them, and none touches 
 4. **Open the PR** on the joined branch, current on `origin/main` (CLAUDE.md § Branch policy
    rule 6), and arm `gh pr merge --auto --squash`.
 5. **Start the next branch** (`<host>-pr<N>-next`) on the PR's tip, and fix the PR run's red
-   steps there, each checked with its own probe as in step 3.
+   steps there, each checked with its own probe as in step 3.  **Main's nightly reds are
+   fixed in the same pass**: the PR's `Nightly health (informational)` check names them, and
+   the PR cycle is mostly waiting on runners anyway.  Read the latest run of each scheduled
+   workflow on `main` (`gh run list --branch main --event schedule`), and fix each red there
+   like a PR red; one the PR already fixes needs only that check.
 6. **Push those fixes to the PR branch only after its current run has finished**, all at once.
    Each run is then read whole, and its red steps are fixed before the next run starts.
    Cancel the runs a push made obsolete (`gh run cancel`).  Repeat 5–6 until the PR merges.
+
+A nightly red in a consumer's suite (`switch-ab`, `consumer-main-health`) is triaged before
+it is fixed: run the consumer's suite on `main`'s own binary.  A failure there too is the
+consumer lagging the language (a stale lock, an API the rules now refuse), not this PR's
+regression.  The consumer's tree stays read-only (CLAUDE.md § Dogfood loop): its fix is made
+in a fresh clone and pushed only on the owner's word.
 
 A language change can retro-break a shipped library while every branch gate stays green,
 because the library gate runs only on PRs and on `main`: run
