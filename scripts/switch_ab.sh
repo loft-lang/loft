@@ -56,7 +56,11 @@
 # the allocator puts the next block.  A `@catches` program with `fn test…` and no `main` also
 # runs its tests (`--tests`), since a plain run executes `main` only and would show nothing
 # but its diagnostics.  Every program without the header is compared as usual under the
-# cure's switch too.
+# cure's switch too.  Every OTHER program without `main` is compared on its diagnostics only,
+# on purpose: its tests are assertions, and the language suite and the test runner already
+# run them (`loft --tests`) with every rewrite on, so a rewrite that breaks one fails there.
+# Running them here too would add a large share to every leg for a difference no assertion
+# checks.
 set -uo pipefail
 if [ $# -lt 1 ] || [[ "$1" != LOFT_NO_* ]]; then
   echo "usage: $0 LOFT_NO_<REWRITE> [--consumer DIR]..." >&2
