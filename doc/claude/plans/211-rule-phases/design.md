@@ -417,6 +417,16 @@ only a function with no twin mask, so `nb_q__rg` went out of line where `nb_q` w
 gcc ran the guarded copy 2.15× SLOWER; a `__rg` twin is now hinted as its base
 (`RG_BIT` masked off in `hot_twin` / `hot_helper_size`).
 
+**(5) The gain threshold.**  Over the hex and graphics libraries the port gained beyond
+hex_field (hex_fit `draft_fit_p` 0.91×, hex_shape `wall_chain_walk` 0.92×) and slowed text2d
+`atlas_cell` +17 % and `layout` +15 %: a twin of `atlas_cell` that plained ONE subtraction,
+called only from a warm-up, gave `blit_glyph` a second caller, so gcc stopped inlining it into
+the hot base.  `variant_gains` admitted any one saved operator although `benefits` asked three
+reachable; it now counts what the variant saves (`gained_ops`, own and through newly ranged
+callees) against the same three.  text2d even again, graphics `draw_line` 0.89×, `edgeset_count`
+kept.  Left as layout: hex_field `trace`, and hex_terrain `terrain_hydrology` +3.6 % — its hot
+selection scans are identical C outside the guarded copy, which only enlarges the function.
+
 **`(Fact-Oracle)` itself** — the interpreter checking a MUST `entry` fact on entry and a MAY
 `writes` summary as a superset of what the call did — is built with step 2, under
 `LOFT_FACT_VERIFY=1`, so a widened reach has a run-time falsifier on the interpreter as the C's
