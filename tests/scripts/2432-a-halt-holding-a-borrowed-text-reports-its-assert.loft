@@ -11,6 +11,9 @@
 //
 // @falsified-at: 0de1794d4 — interpret: `free(): invalid pointer` (SIGABRT) in the first
 //   function; the C reported the assertion.
+// CHANNEL: the expected failures' messages (the abort replaced the first one) and the passing
+//   function's assert.
+// HOLDS: the three expected-fail messages, and the last function's `second t2!`.
 
 struct Item { name: text, n: integer }
 

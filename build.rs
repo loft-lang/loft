@@ -42,15 +42,7 @@ fn main() {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .or_else(|| {
-            std::process::Command::new("git")
-                .args(["rev-parse", "--short", "HEAD"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .filter(|v| !v.is_empty())
-        })
+        .or_else(|| git(&["rev-parse", "--short", "HEAD"]))
         .unwrap_or_else(|| {
             // Fallback: seconds since epoch — changes on every build.
             std::time::SystemTime::now()
@@ -278,6 +270,17 @@ fn main() {
     warn_stale_compiled_stdlib();
 }
 
+/// `git <args>`'s trimmed output, or `None` outside a git checkout or when git fails.
+fn git(args: &[&str]) -> Option<String> {
+    std::process::Command::new("git")
+        .args(args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 /// The files that say which commit this checkout is at — what the build id reads — and only
 /// those that exist.  Cargo treats a watched path that does not exist as CHANGED on every
 /// build, so a literal `.git/HEAD` rebuilt the whole crate on every cargo command in a git
@@ -287,15 +290,6 @@ fn main() {
 /// shared one; the ref is a loose file or a line of `packed-refs`.  Watching the shared
 /// `refs/` whole would rebuild this checkout whenever a sibling worktree commits.
 fn git_head_paths() -> Vec<std::path::PathBuf> {
-    let git = |args: &[&str]| {
-        std::process::Command::new("git")
-            .args(args)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .filter(|v| !v.is_empty())
-    };
     let Some(git_dir) = git(&["rev-parse", "--absolute-git-dir"]) else {
         return Vec::new();
     };
