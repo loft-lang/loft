@@ -699,6 +699,30 @@ impl Parser {
             .is_some_and(|a| self.data.mentions_type_var(&a.typedef))
     }
 
+    /// `D-Key` (@FR-G-Key) — the key of the template `g_nr`'s instance at `var_bindings`: every
+    /// bound type by its full identity, then the template.  A template's name is unique only
+    /// within its source, and the instance lookup is program-wide, so a library's template adds
+    /// its library to the spelling (`@<library>`): two modules each declaring a private
+    /// `pick<T>` and calling it at `integer` minted one key, and the second module's call ran
+    /// the first module's body (loft#2435).  The template's own name stays the key's rest, the
+    /// part every decoder reads back (`Data::split_key`).
+    pub(super) fn instance_key(&self, g_nr: u32, var_bindings: &[(u32, Type)]) -> String {
+        let mut spelling = var_bindings
+            .iter()
+            .map(|(_, b)| self.data.identity_spelling(b))
+            .collect::<Vec<_>>()
+            .join("#");
+        let template = self.data.def(g_nr);
+        if !matches!(
+            template.source,
+            crate::data::STD_SOURCE | crate::data::MAIN_SOURCE
+        ) {
+            spelling.push('@');
+            spelling.push_str(&self.data.source_label(template.source));
+        }
+        crate::data::Data::mangle_instance(&spelling, template.name())
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
         if types.is_empty() || (self.first_param_binds(g_nr) && types[0].is_unknown()) {
@@ -780,23 +804,15 @@ impl Parser {
         let type_nr = self.data.type_def_nr(&concrete);
         // `D-Key` (@FR-G-Key) — the instance's key names its template and every bound type.
         let mangled = if crate::keys::instance_key_enabled() {
-            let spelling: Vec<String> = var_bindings
-                .iter()
-                .map(|(_, b)| self.data.identity_spelling(b))
-                .collect();
-            crate::data::Data::mangle_instance(&spelling.join("#"), self.data.def(g_nr).name())
+            self.instance_key(g_nr, &var_bindings)
         } else {
             self.method_shaped_instance_key(g_nr, name, &concrete, type_nr)
         };
         if crate::env_once!(std::env::var_os("LOFT_TRACE_INSTANCE_KEY").is_some()) {
-            let spelling: Vec<String> = var_bindings
-                .iter()
-                .map(|(_, b)| self.data.identity_spelling(b))
-                .collect();
             eprintln!(
                 "[instance-key] {} -> {}",
                 self.method_shaped_instance_key(g_nr, name, &concrete, type_nr),
-                crate::data::Data::mangle_instance(&spelling.join("#"), self.data.def(g_nr).name())
+                self.instance_key(g_nr, &var_bindings)
             );
         }
         // Return existing instantiation if already created — by any source: `@FR-G-Mono` is

@@ -9242,19 +9242,23 @@ impl Data {
                 format!("vector<{}>", rec(elm))
             }
             Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
-            // A tuple keeps its synthetic struct's name (`__tuple<integer,text>`), the one
-            // spelling a boxed and an unboxed tuple share — computed as `tuple_def` names it,
-            // whether or not that struct is registered yet: read off the registry, a key
-            // spelled `(integer, text)` before the struct existed and `__tuple<…>` after,
-            // and one type minted two instances (@PLN165 D11).
-            Type::Tuple(elems) => format!(
-                "__tuple<{}>",
-                elems
-                    .iter()
-                    .map(|t| t.name(self))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
+            // A tuple is spelled `__tuple<…>` from its MEMBERS, boxed or not, whether or not
+            // its synthetic struct is registered yet: read off the registry, a key spelled
+            // `(integer, text)` before the struct existed and `__tuple<…>` after, and one type
+            // minted two instances (@PLN165 D11).  Each member by its own identity, as any
+            // other former's: by the registry's member NAMES, `(ma::Fill, integer)` and
+            // `(mb::Fill, integer)` were one key (loft#2435).
+            Type::Tuple(elems) => Self::tuple_identity(elems.iter().map(rec)),
+            Type::Reference(t, _) if self.def(*t).name.starts_with("__tuple<") => {
+                Self::tuple_identity(self.def(*t).attributes.iter().map(|a| rec(&a.typedef)))
+            }
+            // A keyed collection names its element by the element's identity, its keys as the
+            // schema key does.
+            Type::Sorted(e, key, _) => format!("sorted<{},{key:?}>", self.declared_identity(*e)),
+            Type::Hash(e, key, _) => format!("hash<{},{key:?}>", self.declared_identity(*e)),
+            Type::Index(e, key, _) => format!("index<{},{key:?}>", self.declared_identity(*e)),
+            Type::Radix(e, key, _) => format!("spatial<{},{key:?}>", self.declared_identity(*e)),
+            Type::Trie(e, key, _) => format!("trie<{}[{key}]>", self.declared_identity(*e)),
             Type::Function(params, ret, _, consts) => {
                 let p: Vec<String> = params
                     .iter()
@@ -9303,6 +9307,11 @@ impl Data {
         }
     }
 
+    /// A tuple's identity, boxed or not: `__tuple<…>` over its members' identities.
+    fn tuple_identity(members: impl Iterator<Item = String>) -> String {
+        format!("__tuple<{}>", members.collect::<Vec<_>>().join(","))
+    }
+
     /// The identity spelling before @PLN165 B1 — an instance's key as A5 minted it, which
     /// erased a `τ?`'s nullability and a function type's signature.  `LOFT_NO_ELEMENT_KEY=1`.
     fn identity_spelling_erasing(&self, tp: &Type) -> String {
@@ -9320,8 +9329,31 @@ impl Data {
             if nr == u32::MAX {
                 tp.name(self)
             } else {
-                self.def(nr).name().to_string()
+                self.declared_identity(nr)
             }
+        }
+    }
+
+    /// Definition `nr` as an instance key names it (`@FR-G-Key`: each bound type by its full
+    /// identity, and one key per template): the bare name for the standard library's and the
+    /// program's own, `<library>::<name>` for a library's.  A name is unique only within its
+    /// source — two libraries may each declare a `Fill`, or a private `pick<T>` (loft#2435) —
+    /// and the instance lookup is program-wide, so a bare name let the second module's call
+    /// reach the first module's instance: refused as "expected vector<Fill>, got vector<Fill>"
+    /// at a type, and answered by the other module's body at a template.  The label is the
+    /// source's program-independent name ([`Self::source_label`]), the one `lib_ids::fn_key`
+    /// keys a library artifact by, so an instance is named alike in every program that loads
+    /// the library.  A name spelled from other types (`__tuple<…>`, a generic type's instance,
+    /// a type variable's `T#4`) is minted by whichever source named it first, so its source is
+    /// no part of its identity, and it stays bare — as `lib_ids::TypeNames` keys it.
+    #[must_use]
+    pub fn declared_identity(&self, nr: u32) -> String {
+        let def = self.def(nr);
+        let name = def.name();
+        if matches!(def.source, STD_SOURCE | MAIN_SOURCE) || name.contains(['<', '#']) {
+            name.to_string()
+        } else {
+            format!("{}::{name}", self.source_label(def.source))
         }
     }
 
@@ -10805,9 +10837,12 @@ impl Data {
         }
         let args: Vec<Type> = args.iter().map(Type::without_deps).collect();
         let spelled: Vec<String> = args.iter().map(|a| self.identity_spelling(a)).collect();
+        // The template by its identity too: an instance lives in the standard library's
+        // namespace, so two libraries each declaring a `Box<T>` minted one `Box<integer>`
+        // (loft#2435).
         let name = format!(
             "{}<{}>",
-            self.definitions[template as usize].name,
+            self.declared_identity(template),
             spelled.join(",")
         );
         if let Some(nr) = self.def_names.get(&name, STD_SOURCE) {

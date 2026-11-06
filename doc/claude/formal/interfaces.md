@@ -191,16 +191,23 @@ but a call in it that depends on the variable is decided per instance, so `wrap<
             order the variables FIRST APPEAR in g's parameters — is keyed
                 i_<LEN><τ₁#τ₂#…#τₙ>_<key of g>
             each τᵢ spelled by its full identity (a collection's element, an integer's width,
-            a `τ?`'s nullability, a function type's signature).  One key per (template, bound
-            types): two templates of one name, or one template at two types, are two keys;
+            a `τ?`'s nullability, a function type's signature, a library's type its library:
+            `ma::Fill`).  One key per (template, bound types): two templates of one name, or
+            one template at two types, are two keys — a name is unique only within its
+            module, so a library's template adds its library (`…@ma`);
             an instance is never keyed as a METHOD on a bound type.
 ```
 
 **In words.** `pair_up<K, V>` called at `(integer, text)` and at `(text, integer)` is two
 functions, `i_12integer#text_n_pair_up` and `i_12text#integer_n_pair_up`; the template's own key
 closes the name, so `f<T>(v: vector<T>)` and `f<T>(x: T)` bound at one type are two instances
-too.  Every reader of a key — the emitter's identifier, the display name, the stack trace — goes
-through one decoder, so a new key kind cannot be half-read.
+too.  Two modules that each declare a `Fill` and sort a `vector<Fill>` mint
+`i_16ma::Fill#integer_t_6vector_sort_by` and `i_16mb::Fill#integer_t_6vector_sort_by`, and two
+modules' private `pick<T>` at
+`integer` mint `i_10integer@ma_n_pick` and `i_10integer@mb_n_pick`; the program's own types and
+templates, and the standard library's, keep their bare names.  Every reader of a key — the
+emitter's identifier, the display name, the stack trace — goes through one decoder, so a new key
+kind cannot be half-read.
 
 ### Scope — compile-time polymorphism only (decided boundaries)
 

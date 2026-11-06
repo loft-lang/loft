@@ -101,12 +101,13 @@ impl Parser {
             kind
         };
         let lib = Self::library_of(&owner.position.file);
+        // The type as the reader writes it: a generic type's instance is its template applied
+        // to its arguments (`Q<integer>`), where its def name is the instance's KEY (which
+        // carries a width, and a library's template its library).
+        let shown = Type::Reference(d_nr, crate::data::Deps::none()).source_name(&self.data);
         let (why, fix) = match (kind, attr) {
             ("field" | "literal-field" | "pattern-field" | "key", Some(a)) if !a.pub_field => (
-                format!(
-                    "field `{}` of `{}` is not `pub` in `{lib}`",
-                    a.name, def.name
-                ),
+                format!("field `{}` of `{shown}` is not `pub` in `{lib}`", a.name),
                 format!("`{lib}` declares it `pub {}`", a.name),
             ),
             ("literal", _) if !owner.pub_visible => {
@@ -130,13 +131,12 @@ impl Parser {
                 };
                 (
                     format!(
-                        "`{}` cannot be built outside `{lib}`: its field `{}` is not `pub`",
-                        def.name, private.name
+                        "`{shown}` cannot be built outside `{lib}`: its field `{}` is not `pub`",
+                        private.name
                     ),
                     format!(
-                        "`{lib}` declares every field of `{}` `pub`, or the program builds it \
-                         with `{lib}`'s functions",
-                        def.name
+                        "`{lib}` declares every field of `{shown}` `pub`, or the program builds \
+                         it with `{lib}`'s functions"
                     ),
                 )
             }
