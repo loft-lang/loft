@@ -3173,6 +3173,8 @@ impl Stores {
             last_json_errors: Vec::new(),
             child_copies: Vec::new(),
             child_copy_depth: 0,
+            child_releases: Vec::new(),
+            child_release_depth: 0,
             parse_unfilled: None,
             // The worker inherits the parent's program context, so a `par`
             // inside a `par` worker can dispatch in turn.  Without it the
@@ -5065,6 +5067,38 @@ impl Stores {
         #[cfg(not(host_fs))]
         if !borrowed && !self.files.is_empty() && self.types[tp as usize].name == "File" {
             self.release_file_handle(rec);
+        }
+        // `@FR-F-Render-Child` — an owned out-of-line child is released as a LOOP, never one
+        // stack frame per link: a list 20000 records long overflowed the interpreter's stack
+        // here (`remove_claims_mode` → `remove_struct_claims` → … per link).  Its field is
+        // cleared now and the child queued; the outermost release drains the queue, and each
+        // child's fields are released before its record is deleted, the walk's own order.
+        if !borrowed && let Parts::ChildRec(ct) = self.types[tp as usize].parts {
+            let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
+            if cur == 0 || Self::owned_edge_absent(cur) {
+                return;
+            }
+            if !self.owned_edge_in_store(rec, cur) {
+                self.refuse_owned_edge(rec, tp, cur, "child record");
+                return;
+            }
+            self.store_mut(rec).set_u32_raw(rec.rec, rec.pos, 0);
+            let child = DbRef {
+                store_nr: rec.store_nr,
+                rec: cur,
+                pos: 8,
+            };
+            self.child_releases.push((child, ct, cur));
+            if self.child_release_depth > 0 {
+                return;
+            }
+            self.child_release_depth += 1;
+            while let Some((child, ct, cur)) = self.child_releases.pop() {
+                self.remove_claims_mode(&child, ct, false);
+                self.store_mut(&child).delete(cur);
+            }
+            self.child_release_depth -= 1;
+            return;
         }
         // A view's own text/leaf fields do not exist — it is a collection, never a
         // scalar — so the borrowed mode only ever reaches the cascade arm below.
