@@ -11,7 +11,8 @@ Active.  The semantics of a link to an out-of-line field is settled and built (l
 C77 amended), and so is the parameter half (P, which absorbed P1): a `&` parameter of a type held
 out of line takes a field and writes it.  The bench programs that expose user-built structures
 (B) and the walk-or-write warning (W) are built, and the C routines over 3× Rust are priced by
-hand (§ The C to 2×): seven rewrites to build.  Open: those, and § Also open.  Work lives on `tuxedo-quality`.
+hand (§ The C to 2×): five of its rewrites are built (four routines at or under 2× from the
+compiler).  Open: the rest of § The C to 2×, and § Also open.  Work lives on `tuxedo-quality`.
 
 ## Goal
 
@@ -233,6 +234,49 @@ conditions it must prove, and what it reaches beyond the bench.  The order is th
    of `(R-TypedKeyed)`), and every reference write marks its target for `(H-Removed)`
    (`loft_st_note_referenced`, 9 %) and every read tests it.  No hand form of those was written;
    each is a runtime change to price next, the key stored beside the tag in the bucket first.
+
+**Built, and what the compiler now emits** (median of 7, C ÷ Rust, the same drivers and flags;
+each emitted unit checked for the hand form's shape — `loft_demote_rec`, `loft_move_child_rec` /
+`loft_slot_move`, `loft_child_rec_in_place`, `loft_store_buf` + `loft_adopt_child_rec`, no
+`loft_bind_copy` of a walk cursor, `#define LOFT_NO_THREADS`):
+
+| rewrite | rule | switch | guard |
+|---|---|---|---|
+| 6 | `(R-NoThreads)` | `LOFT_NO_THREAD_FACT` | `tests/c_emit.rs` `a_unit_that_starts_no_thread_keeps_no_thread_locals` |
+| 4, direct | `(R-Demote)` as `OpDemoteRec` | `LOFT_NO_DIRECT_DEMOTE` | `rewrites/R-Demote/a-front-push-moves-the-old-node-and-keeps-what-it-owns` |
+| 1 | `(R-CopyView)` walk clause | `LOFT_NO_COPY_VIEW_WALK` | `rewrites/R-CopyView/a-cursor-that-only-walks-is-a-view` |
+| 2 | `(R-MoveChild)` | `LOFT_NO_MOVE_CHILD` | `binding/B-OutOfLine/an-unlink-moves-and-a-literal-is-built-in-its-child` |
+| 3 | `(R-InPlaceLiteral)` out-of-line clause | `LOFT_NO_CHILD_LITERAL` | the same cell |
+| 5, write-back half | `(R-HostStore)` | `LOFT_NO_HOST_STORE` | `rewrites/R-HostStore/a-recursion-builds-its-result-in-the-field-it-is-written-to` |
+
+| routine | before | now | hand form |
+|---|--:|--:|--:|
+| tree_delete | 3.73× | **0.65×** | 0.58× |
+| list_ops | 4.00× | **0.61×** | 0.57× |
+| lookup_copy | 1340× | **1.24×** | 1.23× |
+| build_rec | 3.16× | **1.92×** | 1.65× |
+| expr_build | 10.4× | 8.99× | 1.46× |
+| expr_simplify | 13.3× | 11.5× | 0.91× |
+| lru_mixed | 3.53× | 3.39× | 3.05× |
+| enum_list | ~6000× | ~5300× | 0.56× |
+
+**Still to build**, each with the hand form to compare against (`hand/compare.sh.txt`):
+
+- **5, the callee half** — `gen` and `simplify` build their result literals in work stores of
+  their own and never touch the buffer (`(void) __retbuf`), so `(R-HostStore)`'s proof declines
+  them.  Two pieces: a callee whose every answer is a fresh literal builds it in its return
+  buffer (each literal site's `OpDatabase` on the buffer — the return-buffer promotion insert_rec
+  already gets); and a record the caller DROPS that lives in the host store is released by
+  record (`OpSetChildRec`'s null path, `remove_claims` + delete), never by `OpFreeRef` of its
+  store — today's scope pass frees a dropped result's whole store, which would free the host's
+  tree.  That second piece is the ownership question of `(O-Buffer)`: design it with
+  `design-protocol` before building.
+- **4, the variant clause, and the `match` payload view** — `l = Cons { v, next: l }` builds the
+  variant in a work store and copies the list in and back (`demote_prelude` admits only a
+  struct literal built into its destination); and `match cur { Cons { v, next } => cur = next }`
+  binds `next` by a deep copy each step.  Both are needed before `enum_list` moves.
+- **7** — `(R-TypedKeyed)`'s removal clause and the just-added lookup, then the hash table's own
+  cost per operation (§ rewrite 7).
 
 Not a cost, measured: the per-call frame (`loft_frame_push`/`pop`, `build_rec` step 2: 0 %) and
 inlining the reference accessors (`lru_mixed` step 3: 2.5 %).
