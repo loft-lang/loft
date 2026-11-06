@@ -2880,8 +2880,11 @@ impl Output<'_> {
         // `let _pre_N` belongs inside the braces and in front of whatever wrapper follows
         // (loft#1611).  `Block`/`b_true` opens no brace of its own here: its statements
         // collect their own pre-evals, as every block's do.
+        // A block inside the parentheses around a text arm too, for the reason the boolean arm
+        // gives: the arm can be a STATEMENT sequence — a lifted call ahead of the value, as a
+        // dynamically dispatched call in a `match` arm is — and `( stmt; expr )` is not Rust.
         let open_rest = if text_string_unify {
-            "("
+            "({"
         } else if bool_unify {
             // Block, not parens, around the arm: the arm can be a STATEMENT sequence (a boolean
             // operand that lifted a value-struct-returning call → `<lift>; <predicate>`), so
@@ -2892,7 +2895,7 @@ impl Output<'_> {
             // whatever the arm yields, and a `Block` arm brings its own braces inside it.
             ""
         } else if text_unify {
-            "&*("
+            "&*({"
         } else {
             ""
         };
@@ -2931,9 +2934,9 @@ impl Output<'_> {
         self.close_arm_pre_evals(true_pre);
         self.indent -= u32::from(!b_true || text_string_unify || bool_unify);
         if text_string_unify {
-            write!(w, ").to_string()}} else ")?;
+            write!(w, "}}).to_string()}} else ")?;
         } else if text_unify {
-            write!(w, ")}} else ")?;
+            write!(w, "}})}} else ")?;
         } else if bool_unify {
             write!(w, "}} as u8)}} else ")?;
         } else if stmt_discard {
@@ -2949,9 +2952,9 @@ impl Output<'_> {
             write!(w, "}} else ")?;
         }
         let (false_braced, false_rest) = if f_text_string_unify {
-            (true, "(")
+            (true, "({")
         } else if f_text_unify {
-            (true, "&*(")
+            (true, "&*({")
         } else if f_bool_unify {
             (true, "({")
         } else if stmt_discard || !b_false {
@@ -2986,9 +2989,9 @@ impl Output<'_> {
         }
         self.close_arm_pre_evals(false_pre);
         if f_text_string_unify {
-            write!(w, ").to_string()}}")?;
+            write!(w, "}}).to_string()}}")?;
         } else if f_text_unify {
-            write!(w, ")}}")?;
+            write!(w, "}})}}")?;
         } else if f_bool_unify {
             write!(w, "}} as u8)}}")?;
         } else if stmt_discard {
