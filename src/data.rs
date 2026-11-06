@@ -1999,6 +1999,20 @@ impl Type {
         t
     }
 
+    /// Whether this value wears the `Rewritten` marker — it was BUILT IN PLACE (a first-pass
+    /// struct literal).  It is a fact about one expression: a join or an adopted expected type
+    /// keeps it only when every input carries it (`joined_deps`, `with_deps_of`).
+    #[must_use]
+    pub fn built_in_place(&self) -> bool {
+        match self {
+            Type::Rewritten(_) => true,
+            // `Type::optional` keeps the marker OUTERMOST (loft#1714), so a `τ?` never wears
+            // it — and `unrewritten`, which the callers peel with, peels only the outside.
+            Type::Optional(_) => false,
+            _ => false,
+        }
+    }
+
     /// Pass-2 keystone, the `Type` twin of `Value::for_each_child`
     /// (STABILITY_PASS2.md): the ONE place that knows which `Type`
     /// variants carry child types.  Exhaustive on purpose — a new
@@ -2475,6 +2489,13 @@ impl Type {
     /// alone (a diverging or scalar tail has no borrow to state).
     #[must_use]
     pub fn with_deps_of(&self, src: &Type) -> Type {
+        // Nor can it say how that value was BUILT: `Rewritten` (built in place) belongs to the
+        // value in hand, so an arm beside a struct-literal sibling is not a literal itself.
+        // Adopted, the marker hid the arm's borrow from the record-return delivery on pass 1
+        // (see `joined_deps`).
+        if self.built_in_place() && !src.built_in_place() {
+            return self.unrewritten().with_deps_of(src);
+        }
         match src.borrow_deps() {
             Some(d) => self.rewrap_deps(&d),
             None => self.clone(),
@@ -2533,6 +2554,15 @@ impl Type {
     /// result carries what IT owns.
     #[must_use]
     pub fn joined_deps(&self, other: &Type) -> Type {
+        // `Rewritten` (built in place) is true of a join only when it is true of every arm.
+        // Kept from a struct-literal first arm, it hid the join's borrow list from the
+        // record-return delivery (`heap_def_nr` peels `Optional` only), so `if c { S { … } }
+        // else { s }` published its parameter borrow a pass late, and its callers lowered
+        // differently from `if c { s } else { S { … } }` with the same signature
+        // (`(O-Move)`, `(O-Deps)`).
+        if self.built_in_place() != other.built_in_place() {
+            return self.unrewritten().joined_deps(&other.unrewritten());
+        }
         // A tuple carries no list of its own — join element-wise, where the deps live.
         if let (Type::Tuple(a), Type::Tuple(b)) = (self, other)
             && a.len() == b.len()
