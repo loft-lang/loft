@@ -413,6 +413,19 @@ pub fn null_source(e: el::El, n: ir::Node) -> boolean {
   }
 }
 
+// The type the Rust front end gives a read for a range guard's source: a mention of a link local
+// is typed as the link (`&τ`), whose `base()` answers no integer range, so its value is guarded
+// even where `τ`'s own range fits the slot.  The elaboration reads a scalar link as `τ`.
+pub fn guard_source(vars: el_vars::Vars, code: ir::Node, tp: ir::TypeT) -> ir::TypeT {
+  match el_ir::unspan(code) {
+    NdVar { n } => {
+      lt = el_vars::tp(vars, n);
+      match lt { TyRefVar { inner: _ } => lt, _ => tp }
+    },
+    _ => tp
+  }
+}
+
 // `Parser::convert`: the conversion (`convert_value`), then the range guard of a store into a
 // slot that declares one — a `??` in the value is guarded inside instead.
 pub fn convert(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, should: ir::TypeT, explicit: boolean) -> ir::Node? {
@@ -426,7 +439,7 @@ pub fn convert(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, s
   if c == null || explicit || e.first_pass || null_source(e, code) {
     return c;
   }
-  guard_range(e, c!, should, src, should is TyOptional)
+  guard_range(e, c!, should, guard_source(vars, code, src), should is TyOptional)
 }
 
 fn convert_value(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, should: ir::TypeT, explicit: boolean) -> ir::Node? {

@@ -350,6 +350,17 @@ impl Parser {
                 ret
             }
         } else if self.first_pass && !self.default {
+            // @PLN219 — a callee declared later is unknown here, so a field link handed to it
+            // keeps its field in case the parameter is a slot (`Self::slot_cell_argument`).
+            for a in list {
+                if let Value::Var(v) = a.unspan()
+                    && self.vars.exists(*v)
+                    && let Some(facts) = self.slot_links.get_mut(self.context, self.vars.name(*v))
+                    && facts.field
+                {
+                    facts.passed = true;
+                }
+            }
             Type::Unknown(0)
         } else if let Some(tp) = self.call_with_slice_receiver(
             code, source, name, list, types, named_args, arg_pos, name_pos,

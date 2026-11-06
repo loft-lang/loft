@@ -392,6 +392,17 @@ pub(crate) const CONNECT_BOUND: std::time::Duration = std::time::Duration::from_
 #[cfg(feature = "registry")]
 pub(crate) const DOWNLOAD_BOUND: std::time::Duration = std::time::Duration::from_mins(1);
 
+/// The pauses before asking a GET again after a 502/503/504 — three tries in all.
+#[cfg(feature = "registry")]
+#[cfg(not(test))]
+const RETRY_PAUSES: [std::time::Duration; 2] = [
+    std::time::Duration::from_secs(1),
+    std::time::Duration::from_secs(4),
+];
+#[cfg(feature = "registry")]
+#[cfg(test)]
+const RETRY_PAUSES: [std::time::Duration; 2] = [std::time::Duration::ZERO; 2];
+
 /// Why a request answered no bytes.  Only one of the two says anything about the file:
 /// a host that answers "not there" has spoken for it, a request that got no usable
 /// answer has not.
@@ -433,16 +444,89 @@ pub(crate) fn http_get_within(
         .timeout_connect(connect)
         .timeout(whole)
         .build();
-    let response = agent.get(url).call().map_err(|e| {
-        let why = format!("HTTP error: {e}");
-        match e {
-            ureq::Error::Status(403 | 404 | 410, _) => Miss::Absent(why),
-            _ => Miss::Failed(why),
+    // A 502/503/504 is the host saying "not now", so the GET is asked again after a short
+    // pause.  Only those: a 4xx speaks for the file, and a host that does not answer at all
+    // must keep failing fast (the index's ref probe relies on it).  GitHub's release CDN
+    // answered 504 three times in a row in one CI test, which then failed.
+    let mut pauses = RETRY_PAUSES.iter();
+    let response = loop {
+        match agent.get(url).call() {
+            Ok(r) => break r,
+            Err(ureq::Error::Status(502..=504, _)) if pauses.len() > 0 => {
+                std::thread::sleep(*pauses.next().unwrap_or(&std::time::Duration::ZERO));
+            }
+            Err(e) => {
+                let why = format!("HTTP error: {e}");
+                return Err(match e {
+                    ureq::Error::Status(403 | 404 | 410, _) => Miss::Absent(why),
+                    _ => Miss::Failed(why),
+                });
+            }
         }
-    })?;
+    };
     let status = response.status();
     if !(200..300).contains(&status) {
         return Err(Miss::Failed(format!("HTTP {status} for {url}")));
     }
     read_capped(response.into_reader(), max_download_bytes()).map_err(Miss::Failed)
+}
+
+#[cfg(all(test, feature = "registry"))]
+mod retry_tests {
+    use std::io::{Read, Write};
+
+    /// A one-thread HTTP host answering each request with the next status in `answers`
+    /// (body `ok` on a 200); returns its URL and a counter of the requests it saw.
+    fn host(answers: &'static [u16]) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("http://{}/f", listener.local_addr().expect("addr"));
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = seen.clone();
+        std::thread::spawn(move || {
+            for &status in answers {
+                let Ok((mut s, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf);
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = if status == 200 { "ok" } else { "" };
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        (url, seen)
+    }
+
+    fn get(url: &str) -> Result<Vec<u8>, super::Miss> {
+        super::http_get_within(
+            url,
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(10),
+        )
+    }
+
+    #[test]
+    fn a_503_then_200_answers_the_bytes_on_the_second_ask() {
+        let (url, seen) = host(&[503, 200]);
+        assert_eq!(get(&url).expect("retried"), b"ok");
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn three_504s_fail_after_three_asks() {
+        let (url, seen) = host(&[504, 504, 504, 200]);
+        assert!(matches!(get(&url), Err(super::Miss::Failed(_))));
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_404_is_absent_and_asked_once() {
+        let (url, seen) = host(&[404, 200]);
+        assert!(matches!(get(&url), Err(super::Miss::Absent(_))));
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
 }

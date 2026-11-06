@@ -1,8 +1,8 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 032208c6b..ff74c213a 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -4022,20 +4022,8 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index d2a9f612e..48ae222f7 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -4251,20 +4251,8 @@ impl Parser {
              Type::Reference(td, Deps::frame1(buf_var)),
              "fwd_copy_409_ref",
          );
@@ -24,38 +24,7 @@ index 032208c6b..ff74c213a 100644
      }
  
      /// when there is no buffer, no work-var, or no tail.
-@@ -5298,14 +5286,6 @@ impl Parser {
-         if let Value::Var(v) = test.unspan() {
-             return Some((*v, true));
-         }
--        // A HEAP value tests against `null` through a dedicated op rather than a comparison
--        // with a null literal, so the scalar arm below never sees one: `s == null` on a
--        // struct or a vector is `OpRefIsNull(s)` / `OpVectorIsNull(s)`, and on a struct-enum
--        // that test with a second question behind it, which is not a call at all.  The bare
--        // test is the `== null` question, which proves the var non-null on the ELSE side.
--        if let Some(v) = self.heap_null_test(test) {
--            return Some((v, false));
--        }
-         let Value::Call(op, args) = test.unspan() else {
-             return None;
-         };
-@@ -5324,6 +5304,15 @@ impl Parser {
-                 return Some((v, name.starts_with("OpNe")));
-             }
-         }
-+        // A HEAP value tests against `null` through a dedicated op rather than a comparison
-+        // with a null literal, so the scalar arm above never sees one: `s == null` on a
-+        // struct or a vector is `OpRefIsNull(s)` / `OpVectorIsNull(s)`, and `s != null` is
-+        // that test under `OpNot`.  The polarity follows the test's own sense — the bare op
-+        // is the `== null` question, which proves the var non-null on the ELSE side, and
-+        // negated it is `!= null`, which proves it in the THEN branch.
-+        if let Some(v) = self.heap_null_test(test) {
-+            return Some((v, false));
-+        }
-         // A NEGATED test proves what its operand proves, on the other side: "the test is `p`
-         // proves `v` present" is the same statement as "the negation is `!p` proves it".  So
-         // one arm reads every negation — `s != null` on a heap value (its null test under
-@@ -5405,19 +5394,7 @@ impl Parser {
+@@ -5692,19 +5680,7 @@ impl Parser {
      /// `coalesce_not_null` mirrors.  Unrecognised, `if e != null { s += e.a }` over such an
      /// element proved nothing and `e.a` stayed `integer?`.  Only a wrapper qualifies: an
      /// ordinary enum's discriminant test says nothing about null.
@@ -75,11 +44,11 @@ index 032208c6b..ff74c213a 100644
          let Value::Call(op, args) = test.unspan() else {
              return None;
          };
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index 1bea4c17c..5d52cf4a7 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
-@@ -3380,14 +3380,7 @@ impl Parser {
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 6c4c92c49..a3a6a66d9 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -3520,14 +3520,7 @@ impl Parser {
                  );
              }
          }

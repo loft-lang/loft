@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Inside a loop, a whole write `cur = cur.f` through a field link or a `&` slot parameter
+// writes the field and drops the node's other subtrees, where a walk meant the step
+// `cur = &cur.f` (`walk-or-write`, DIAGNOSTICS.md).  Rust's `slot = &mut …` versus `*slot = …`
+// tells the two apart by type; loft has only the `&`.  The six rows of the @PLN219 table:
+//   fg_c  a lookup walk that forgot one `&`                          warns
+//   ul_c  remove_key's unlink after its walk (no loop)               silent
+//   tm_s  take_min's write after its loop                            silent
+//   ls_c  a list run removed: a list node has no other child         silent
+//   tr_c  a trim that drops left subtrees, uncleared                 warns
+//   tc_c  the same trim with `tc_c.left = null;` first               silent
+//   os_c  a forgotten `&` on one step outside a loop                 missed: indistinguishable
+//   ol_c  take_min's unlink inside an outer loop that binds afresh   silent
+//   fp_s  the slot-parameter twin of fg_c                            warns
+// `tests/dead_code_lint.rs` runs this file and asserts the EXACT set of links warned.
+//
+// @falsified-at: 367551e64 — BY HAND, because `make falsify` cannot see a warning: no
+//   `walk-or-write` there (the code did not exist), 3 here (fg_c fp_s tr_c), on both backends.
+//   CHANNEL: the warnings.  ARMED: nothing.
+//   HOLDS: exit 0 and every assertion on both backends.
+
+struct Tree { k: integer, left: Tree?, right: Tree? }
+struct Node { v: integer, next: Node? }
+
+fn size(t: Tree?) -> integer { if t == null { return 0; } 1 + size(t.left) + size(t.right) }
+fn sample() -> Tree {
+  Tree { k: 50, left: Tree { k: 30, left: Tree { k: 20 }, right: Tree { k: 40 } },
+    right: Tree { k: 70, left: Tree { k: 60 }, right: Tree { k: 80 } } }
+}
+
+fn forgot(t: Tree, k: integer) -> boolean {
+  fg_c = &t.left;
+  while fg_c != null {
+    if k == fg_c.k { return true; }
+    if k < fg_c.k { fg_c = fg_c.left; } else { fg_c = &fg_c.right; }
+  }
+  false
+}
+fn unlink(t: Tree, k: integer) -> boolean {
+  ul_c = &t.left;
+  while ul_c != null && ul_c.k != k { if k < ul_c.k { ul_c = &ul_c.left; } else { ul_c = &ul_c.right; } }
+  if ul_c == null { return false; }
+  if ul_c.left == null { ul_c = ul_c.right; } else { ul_c = ul_c.left; }
+  true
+}
+fn take_min(tm_s: &Tree?) -> integer {
+  while tm_s.left != null { tm_s = &tm_s.left; }
+  k = tm_s.k!;
+  tm_s = tm_s.right;
+  k
+}
+fn drop_negative(h: Node) {
+  ls_c = &h.next;
+  while ls_c != null && ls_c.v < 0 { ls_c = ls_c.next; }
+}
+fn trim(t: Tree) {
+  tr_c = &t.right;
+  while tr_c != null && tr_c.k < 75 { tr_c = tr_c.right; }
+}
+fn trim_cleared(t: Tree) {
+  tc_c = &t.right;
+  while tc_c != null && tc_c.k < 75 { tc_c.left = null; tc_c = tc_c.right; }
+}
+fn one_step(t: Tree) -> integer {
+  os_c = &t.left;
+  os_c = os_c.left;
+  if os_c == null { 0 } else { os_c.k }
+}
+fn take_twice(t: Tree) {
+  for _round in 0..2 {
+    ol_c = &t.right;
+    while ol_c.left != null { ol_c = &ol_c.left; }
+    ol_c = ol_c.right;
+  }
+}
+fn forgot_param(fp_s: &Tree?, k: integer) {
+  while fp_s != null {
+    if k < fp_s.k { fp_s = fp_s.left; } else { fp_s = &fp_s.right; }
+  }
+  fp_s = Tree { k: k };
+}
+
+fn main() {
+  t1 = sample();
+  assert(forgot(t1, 20) && size(t1) == 5, "the forgotten `&` replaced 30 by 20, dropping 40: {size(t1)}");
+  t2 = sample();
+  assert(unlink(t2, 40) && size(t2) == 6, "40 unlinked: {size(t2)}");
+  t3 = sample();
+  assert(take_min(t3.left) == 20 && size(t3) == 6, "20 taken: {size(t3)}");
+  h = Node { v: 1, next: Node { v: -1, next: Node { v: 5 } } };
+  drop_negative(h);
+  assert(h.next.v == 5, "the negative run removed: {h.next.v}");
+  t4 = sample();
+  trim(t4);
+  t5 = sample();
+  trim_cleared(t5);
+  assert(size(t4) == 5 && size(t5) == 5, "both trims keep 80 below 50: {size(t4)} {size(t5)}");
+  t6 = sample();
+  assert(one_step(t6) == 20 && size(t6) == 5, "one unlinking step drops 30 and 40: {size(t6)}");
+  t7 = sample();
+  take_twice(t7);
+  assert(size(t7) == 5 && t7.right.k == 80, "60, then 70, taken from the right: {size(t7)}");
+  u: Tree? = sample();
+  forgot_param(u, 10);
+  assert(size(u) == 1, "each forgotten step rewrote `u` with its left child, down to null: {size(u)}");
+  println("walk-or-write ok");
+}

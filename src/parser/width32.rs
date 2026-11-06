@@ -20,6 +20,7 @@ impl Parser {
     /// but the stdlib, unless the file's first line is `#width 64`; elsewhere only a file
     /// whose first line is `#width 32`.  Decided once per source, so a file resumed after a
     /// `use` keeps it.  The `#width` line is consumed; any other `#` line is left in place.
+    /// Enforces `@FR-W-Regime`.
     pub(crate) fn width_header(&mut self) {
         let src = self.data.source;
         if !self.width_decided.contains(&src) {
@@ -59,7 +60,7 @@ impl Parser {
     /// `#index`, a 64-bit file's field — stored into a slot that holds the whole `i32` range
     /// is narrowed there (`OpNarrow32`, null when it does not fit) rather than refused.  An
     /// `i64` or `u32` source, and a target narrower than `i32`, keep the refusal.  Answers
-    /// whether `code` was wrapped.
+    /// whether `code` was wrapped.  Enforces `@FR-W-Store`.
     pub(crate) fn width32_narrow_store(
         &mut self,
         code: &mut Value,
@@ -90,7 +91,7 @@ impl Parser {
     /// inside the `i32` range by its type (not `i64` or `u32`) or a plain `float` from a callee
     /// whose body is 64-bit ([`crate::data::Data::body_width32`]) is
     /// narrowed to 32 bits here, and `code` wrapped in the conversion.  Anything else is `tp`
-    /// unchanged.
+    /// unchanged.  Enforces `@FR-W-Call` (the answer's side) and `@FR-W-Count`.
     pub(crate) fn width32_call_result(&mut self, code: &mut Value, tp: Type) -> Type {
         if !self.data.width32() {
             return tp;
@@ -143,8 +144,9 @@ impl Parser {
     /// `integer` for a parameter the regime made 32-bit (a whole-range `i32`) is narrowed at
     /// the call (`OpNarrow32`, null when it does not fit), and a `float` for a `single` one is
     /// rounded (`OpCastSingleFromFloat`), so a library can go under the regime without its
-    /// 64-bit callers changing a line.  An `i64` / `f64` parameter is wide and takes the value
-    /// as it is; a 32-bit caller needs nothing here.  Answers the argument's new type.
+    /// 64-bit callers changing a line (`@FR-W-Call`, the argument's side).  An `i64` / `f64`
+    /// parameter is wide and takes the value as it is; a 32-bit caller needs nothing here.
+    /// Answers the argument's new type.
     pub(crate) fn width32_call_argument(
         &mut self,
         code: &mut Value,
@@ -184,7 +186,7 @@ impl Parser {
     /// The type a file under the regime means by `name`: a plain `integer` is an `i32` and a
     /// plain `float` a `single`; `integer limit(…)` names its own range, and a standard-library
     /// type definition or runtime binding (`machine_types`) its machine width.  Anything else,
-    /// and every name outside the regime, is `name` itself.
+    /// and every name outside the regime, is `name` itself.  Enforces `@FR-W-Name`.
     pub(crate) fn width32_name<'a>(&self, name: &'a str) -> &'a str {
         if !self.data.width32() || self.machine_types {
             return name;

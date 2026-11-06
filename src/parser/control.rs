@@ -480,6 +480,13 @@ struct EnumArm {
     cond: Option<Value>,
 }
 
+/// Where a group stands in its slice pattern, for `Parser::bind_alternation_group` (@C161).
+#[derive(Clone, Copy)]
+struct AltSpan {
+    head_len: i32,
+    optional: bool,
+}
+
 /// The subject a vector match's slice patterns read: its held copy `v`, its element type and
 /// size, and the variable its element views borrow from.
 #[derive(Clone, Copy)]
@@ -1473,10 +1480,14 @@ impl Parser {
             // families as the guard clause above, from the condition's THEN side.
             if let Some(test) = self.assert_condition(&n) {
                 let test = test.clone();
-                if let Some((v, true)) = self.narrowing_from_condition(&test)
-                    && !self.narrowed_non_null.contains(&v)
-                {
-                    self.narrowed_non_null.push(v);
+                // Every fact the condition proves where it holds — `assert(a != null && b !=
+                // null)` proves BOTH (`t₁ && t₂` proves what each tᵢ proves).  The single-fact
+                // `narrowing_from_condition` answers a compound with its FIRST fact only, which
+                // narrowed `a` and left `b` nullable: two reads of one shape answered apart.
+                for (v, p) in self.narrowings_from_condition(&test) {
+                    if p && !self.narrowed_non_null.contains(&v) {
+                        self.narrowed_non_null.push(v);
+                    }
                 }
                 let caps = std::collections::HashMap::new();
                 for pair in crate::parser::operators::collect_guard_pairs(&test, &self.data, &caps)
@@ -5532,6 +5543,30 @@ impl Parser {
         }
     }
 
+    /// `@FR-N-Guard` — every null fact a condition proves, [`Self::narrowing_from_condition`]'s
+    /// facts read through `&&` and `||`.  `a && b` lowers to `if a { b } else { false }`: where
+    /// it is TRUE both operands are, so it proves what each proves true
+    /// (`len(c) >= cap && t != null`).  `a || b` is `if a { true } else { b }`: where it is
+    /// FALSE both are, so it proves what each proves false (`t == null || u == null` guarding
+    /// a return).
+    pub(crate) fn narrowings_from_condition(&self, test: &Value) -> Vec<(u16, bool)> {
+        let Value::If(a, b, c) = test.unspan() else {
+            return self.narrowing_from_condition(test).into_iter().collect();
+        };
+        let (sides, polarity) = if matches!(c.unspan(), Value::Boolean(false)) {
+            ([a.as_ref(), b.as_ref()], true)
+        } else if matches!(b.unspan(), Value::Boolean(true)) {
+            ([a.as_ref(), c.as_ref()], false)
+        } else {
+            return Vec::new();
+        };
+        sides
+            .into_iter()
+            .flat_map(|side| self.narrowings_from_condition(side))
+            .filter(|&(_, p)| p == polarity)
+            .collect()
+    }
+
     /// `@FR-N-Guard` — the null fact a condition proves: `Some((v, p))` says that where the
     /// test evaluates to `p`, the variable `v` is present.  The fallback is `None`, because a
     /// shape not named here (a compound condition, a comparison with anything but the null
@@ -5556,6 +5591,11 @@ impl Parser {
         // test is the `== null` question, which proves the var non-null on the ELSE side.
         if let Some(v) = self.heap_null_test(test) {
             return Some((v, false));
+        }
+        // `a && b` / `a || b` prove one fact per operand ([`Self::narrowings_from_condition`]);
+        // a caller that takes a single fact gets the first.
+        if matches!(test.unspan(), Value::If(..)) {
+            return self.narrowings_from_condition(test).into_iter().next();
         }
         let Value::Call(op, args) = test.unspan() else {
             return None;
@@ -5990,10 +6030,12 @@ impl Parser {
         self.convert_condition_at(&mut test, &tp, Some(&cond_at));
         // @PLN25 DN3: a non-null proof from the condition narrows the proven var inside the
         // matching branch (then for `!= null`/truthy, else for `== null`).
-        let narrow = self.narrowing_from_condition(&test);
+        let narrow = self.narrowings_from_condition(&test);
         let narrow_base = self.narrowed_non_null.len();
-        if let Some((v, true)) = narrow {
-            self.narrowed_non_null.push(v);
+        for &(v, p) in &narrow {
+            if p {
+                self.narrowed_non_null.push(v);
+            }
         }
         // …and the PROJECTION twin, pushed and truncated on the same discipline.
         let proj_narrow = self.projection_narrowing_from_condition(&test);
@@ -6071,7 +6113,7 @@ impl Parser {
         self.variant_proven.truncate(variant_base);
         // Leaving the THEN branch — drop its `idx < len(vec)` in-bounds proofs (THEN-only).
         self.index_bounded.truncate(index_base);
-        if let Some((v, false)) = narrow {
+        for &(v, _) in narrow.iter().filter(|&&(_, p)| !p) {
             self.narrowed_non_null.push(v);
         }
         if let Some((ref e, false)) = proj_narrow {
@@ -6682,8 +6724,13 @@ impl Parser {
                 let tp = self.parse_scalar_match(subject, &subject_type, code, &match_pos);
                 return self.dn1_widen_branch_null(tp, code);
             }
-            // vector types — dispatch to vector match handler.
+            // vector types — dispatch to vector match handler.  A KEYED collection takes the
+            // same handler for the arms it has — `null`, a capture, `_` (`@FR-N-Match` at every
+            // τ, loft#2427); it has no positions, so a slice arm is refused there.
             Type::Vector(_, _) => {
+                return self.parse_vector_match(subject, &subject_type, code);
+            }
+            t if crate::parser::vectors::is_collection(t) => {
                 return self.parse_vector_match(subject, &subject_type, code);
             }
             // @PLN35 Phase 7 (Path B) — a coroutine `iterator<T>` subject: materialise it into a
@@ -9825,6 +9872,7 @@ impl Parser {
     /// lexer is at the `(`; consumes through `]`.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    #[allow(clippy::too_many_arguments)]
     fn parse_slice_repetition(
         &mut self,
         e_nr: u32,
@@ -9835,6 +9883,7 @@ impl Parser {
         borrow_src: u16,
         cond: &mut Option<Value>,
         bindings: &mut Vec<Value>,
+        group_cap: Option<String>,
     ) {
         self.lexer.token("(");
         // Optional `name:` capture prefix.
@@ -9844,6 +9893,10 @@ impl Parser {
             self.lexer.has_identifier();
             self.lexer.token(":");
         }
+        // @C161 — a capture of the repetition GROUP, `g:( V )*`, is what `(P-Rep)` says a run
+        // yields: the elements it collected, which is what `( g: V )*` binds.  Written both ways
+        // (`g:( x: V )*`), both names take the run.
+        let cap_names: Vec<String> = cap_name.into_iter().chain(group_cap).collect();
         // The body variant.
         let vname = self.lexer.has_identifier().unwrap_or_default();
         let real = if self.lexer.has_token("::") {
@@ -10248,7 +10301,7 @@ impl Parser {
         // (V Sep V Sep …), so it reads with a stride of 2 to skip separators (a bare run: 1).
         let cap_step = if sep_disc.is_some() { 2 } else { 1 };
         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-        if let Some(name) = cap_name {
+        for name in cap_names {
             let cap_var = self.pattern_binding(&name, &vec_tp);
             self.vars.defined(cap_var);
             if !self.first_pass && cap_var != u16::MAX {
@@ -10453,6 +10506,7 @@ impl Parser {
     /// Phase 4.3 step 5 (deferred here with a diagnostic).
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    #[allow(clippy::too_many_arguments)]
     fn parse_multi_element_alternation(
         &mut self,
         e_nr: u32,
@@ -10463,6 +10517,7 @@ impl Parser {
         borrow_src: u16,
         cond: &mut Option<Value>,
         bindings: &mut Vec<Value>,
+        group_cap: Option<&str>,
     ) {
         self.lexer.token("(");
         // branches[i] = the sequence for branch i: [(disc, variant_def, fields)] per position.
@@ -10664,6 +10719,19 @@ impl Parser {
                 borrow_src,
                 bindings,
             );
+            if let Some(name) = group_cap {
+                let span = AltSpan { head_len, optional };
+                self.bind_alternation_group(
+                    name,
+                    &branches,
+                    &branch_conds,
+                    span,
+                    v,
+                    elm_size,
+                    elm_tp,
+                    bindings,
+                );
+            }
             if let Some(name) = rest_name {
                 self.bind_alternation_rest(
                     &name,
@@ -10718,6 +10786,22 @@ impl Parser {
             borrow_src,
             bindings,
         );
+        if let Some(name) = group_cap {
+            let span = AltSpan {
+                head_len: 0,
+                optional,
+            };
+            self.bind_alternation_group(
+                name,
+                &branches,
+                &branch_conds,
+                span,
+                v,
+                elm_size,
+                elm_tp,
+                bindings,
+            );
+        }
         if let Some(name) = rest_name {
             self.bind_alternation_rest(
                 &name,
@@ -10868,6 +10952,78 @@ impl Parser {
             }
             let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), borrow_src);
             self.vars.set_type(v_nr, bound_tp);
+        }
+    }
+
+    /// @C161, `@FR-P-Cap` over a GROUP — `g:( … )?` / `g:( … | … )` binds the sub-slice the
+    /// taken branch matched, `v[head_len .. head_len + width]`, as a FRESH vector (the store
+    /// `(P-Rest)` gives a rest, independent of the subject).  An OPTIONAL group whose real
+    /// branches all failed took its empty branch, and then `g` is null, as `(P-Opt)` makes every
+    /// capture inside it: the binding is `vector<T>?`, its null the vector-header sentinel the
+    /// parser writes for `x = null` on a nullable vector.
+    #[allow(clippy::too_many_arguments)]
+    fn bind_alternation_group(
+        &mut self,
+        name: &str,
+        branches: &[Vec<(i32, u32, Vec<(String, usize, Type)>)>],
+        branch_conds: &[Value],
+        span: AltSpan,
+        v: u16,
+        elm_size: &Value,
+        elm_tp: &Type,
+        bindings: &mut Vec<Value>,
+    ) {
+        let end_var = self.create_unique("grp_end", &I32);
+        self.vars.defined(end_var);
+        // end = head + the width of the FIRST branch that holds (ordered choice, `(P-Alt)`).
+        let mut end_acc = Value::Int(span.head_len);
+        for (i, bc) in branch_conds.iter().enumerate().rev() {
+            end_acc = v_if(
+                bc.clone(),
+                Value::Int(span.head_len + branches[i].len() as i32),
+                end_acc,
+            );
+        }
+        bindings.push(v_set(end_var, end_acc));
+        let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
+        let bind_tp = if span.optional {
+            Type::optional(vec_tp.clone())
+        } else {
+            vec_tp.clone()
+        };
+        let cap_var = self.pattern_binding(name, &bind_tp);
+        self.vars.defined(cap_var);
+        if self.first_pass || cap_var == u16::MAX {
+            return;
+        }
+        self.materialize_named_rest(
+            v,
+            elm_tp,
+            elm_size,
+            cap_var,
+            &vec_tp,
+            Value::Int(span.head_len),
+            Value::Var(end_var),
+            1,
+            bindings,
+        );
+        if span.optional {
+            let built = self.vars.tp(cap_var).clone();
+            if let Some(&db) = built.depend().first() {
+                let absent = self.conv_op(
+                    "==",
+                    Value::Var(end_var),
+                    Value::Int(span.head_len),
+                    I32.clone(),
+                    I32.clone(),
+                );
+                let null_header = self.cl(
+                    "OpSetInt4",
+                    &[Value::Var(db), Value::Int(0), Value::Int(-1)],
+                );
+                bindings.push(v_if(absent, null_header, Value::Null));
+            }
+            self.vars.set_type(cap_var, Type::optional(built));
         }
     }
 
@@ -13119,7 +13275,28 @@ impl Parser {
             let mut arm_shapes: Vec<Option<SliceShape>> = Vec::new();
             // Every pattern of the arm takes a token before its body runs.
             let mut arm_consumes = false;
-            if self.lexer.has_token("[") {
+            // `@FR-N-Match` — a nullable VECTOR subject takes the `null` arm and the `x: _`
+            // capture every other subject takes (`@FR-P-Cap` at the arm root): without them the
+            // arm head matched none of `[`, `_` or a bare name, and the match did not parse
+            // (loft#2427).  The null arm tests the subject's sentinel; on a dense subject it
+            // never matches.
+            if self.lexer.has_token("null") {
+                if !self.first_pass {
+                    cond = self.null_test(Value::Var(v), subject_type, false);
+                }
+            } else if !matches!(subject_type.base(), Type::Vector(_, _))
+                && self.lexer.peek_token("[")
+            {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a keyed collection has no positions for a slice pattern to match; \
+                         match it as a whole (`null`, `x: _`, `_`) and look elements up by key"
+                    );
+                }
+                break;
+            } else if self.lexer.has_token("[") {
                 let subject = SliceSubject {
                     v,
                     elm_tp: &elm_tp,
@@ -13157,11 +13334,31 @@ impl Parser {
                 if id == "_" {
                     is_total = true;
                 } else {
-                    // bare name — wildcard binding
+                    // bare name — wildcard binding; `name: _` is the same capture spelled with
+                    // its pattern (`@FR-P-Cap`).
                     let bind_nr = self.pattern_binding(&id, subject_type);
                     self.vars.defined(bind_nr);
-                    bindings.push(v_set(bind_nr, Value::Var(v)));
+                    // A KEYED subject's capture is a view of its store, bound once ahead of the
+                    // arm chain: first bound inside an arm, it was pre-inited to null there, and
+                    // a keyed null-init mints a store the view then overwrote — one orphaned
+                    // store per match (loft#2427).
+                    if matches!(subject_type.base(), Type::Vector(_, _)) {
+                        bindings.push(v_set(bind_nr, Value::Var(v)));
+                    } else {
+                        prechain.push(v_set(bind_nr, Value::Var(v)));
+                    }
                     is_total = true;
+                    if self.lexer.has_token(":")
+                        && self.lexer.has_identifier().as_deref() != Some("_")
+                        && !self.first_pass
+                    {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "a vector match arm captures the whole subject as `{id}: _`; a slice \
+                             pattern binds its parts by name inside `[…]`"
+                        );
+                    }
                 }
             } else {
                 // Unrecognized arm head (not `[…]`, `_`, or a binding). No branch above
@@ -13171,7 +13368,7 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "expected slice pattern '[...]' or '_' in vector match arm"
+                        "expected slice pattern '[...]', 'null' or '_' in vector match arm"
                     );
                 }
                 break;
@@ -13413,11 +13610,34 @@ impl Parser {
             // over the same region corrupts the lexer replay buffer).  A `Repetition`
             // may sit MID-slice (fixed head before it); an `Alt` is whole-slice only, so
             // its branch keeps the `head.is_empty()` guard.
+            // `@FR-P-Cap` over a GROUP, @C161 — `g:( … )?`, `g:( … | … )`, `g:( … )*`: the name
+            // binds the sub-slice the group matched.  Read before the group is classified, so the
+            // group's own handler binds it.  A cursor pattern's `name: rule` is not this.
+            let mut group_cap: Option<String> = None;
+            if !has_rest && self.match_cursor.is_none() && self.lexer.peek_named_arg().is_some() {
+                let lnk = self.lexer.link();
+                let name = self.lexer.has_identifier();
+                self.lexer.token(":");
+                if self.lexer.peek_token("(") {
+                    group_cap = name;
+                } else {
+                    self.lexer.revert(lnk);
+                }
+            }
             let group_kind = if !has_rest && self.lexer.peek_token("(") {
                 self.peek_group_kind()
             } else {
                 SliceGroupKind::Other
             };
+            if group_cap.is_some() && group_kind == SliceGroupKind::Other && !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{}:( … )` captures a GROUP — a `( … )?`, `( … | … )` or `( … )*` over a \
+                     struct-enum element; this `( … )` is none of those",
+                    group_cap.as_deref().unwrap_or("")
+                );
+            }
             if self.lexer.has_token("..") {
                 // @PLN35 Phase 2 (P-Rest) — `..name` with the name ADJACENT to `..` (no
                 // comma) captures the tail sub-slice as a FRESH vector. `.., x` (a comma
@@ -13664,7 +13884,15 @@ impl Parser {
                         self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
                     }
                     self.parse_slice_repetition(
-                        e_nr, v, elm_size, elm_tp, head_len, borrow_src, cond, bindings,
+                        e_nr,
+                        v,
+                        elm_size,
+                        elm_tp,
+                        head_len,
+                        borrow_src,
+                        cond,
+                        bindings,
+                        group_cap.take(),
                     );
                     multi_alt = true;
                 } else {
@@ -13703,7 +13931,15 @@ impl Parser {
                         self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
                     }
                     self.parse_multi_element_alternation(
-                        e_nr, v, elm_size, elm_tp, head_len, borrow_src, cond, bindings,
+                        e_nr,
+                        v,
+                        elm_size,
+                        elm_tp,
+                        head_len,
+                        borrow_src,
+                        cond,
+                        bindings,
+                        group_cap.take().as_deref(),
                     );
                     multi_alt = true;
                 } else {
@@ -19878,6 +20114,64 @@ impl Parser {
     /// into `if OpVectorIsNull(v) { null } else { v }`, the branch
     /// [`Self::materialize_vector_arms_into`] delivers one arm at a time.  `false` when the
     /// terminal is not a bare local, and the tail is left as it was.
+    /// Every arm of a branch that ends in a nullable vector local other than the buffer `w`
+    /// is split on that local's null test (`split_nullable_vector_tail`, per arm).  An arm
+    /// already split is left as it is.
+    fn split_nullable_vector_arms(
+        &self,
+        op: &mut Value,
+        w: u16,
+        is_null_nr: u32,
+        sentinel_nr: u32,
+    ) {
+        match op {
+            Value::Span(sp) => {
+                self.split_nullable_vector_arms(&mut sp.1, w, is_null_nr, sentinel_nr)
+            }
+            Value::Return(inner) | Value::Drop(inner) => {
+                self.split_nullable_vector_arms(inner, w, is_null_nr, sentinel_nr);
+            }
+            Value::If(cond, then_arm, else_arm) => {
+                let split_already = matches!(cond.unspan(), Value::Call(d, _) if *d == is_null_nr)
+                    && matches!(then_arm.unspan(), Value::Call(d, args) if *d == sentinel_nr && args.is_empty());
+                if !split_already {
+                    self.split_nullable_vector_arms(then_arm, w, is_null_nr, sentinel_nr);
+                    self.split_nullable_vector_arms(else_arm, w, is_null_nr, sentinel_nr);
+                }
+            }
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.split_nullable_vector_arms(last, w, is_null_nr, sentinel_nr);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops.last_mut() {
+                    self.split_nullable_vector_arms(last, w, is_null_nr, sentinel_nr);
+                }
+            }
+            Value::Var(v)
+                if *v != w
+                    && matches!(self.vars.tp(*v), Type::Optional(_))
+                    && matches!(self.vars.tp(*v).base(), Type::Vector(_, _)) =>
+            {
+                Self::split_nullable_vector_tail(op, is_null_nr, sentinel_nr);
+            }
+            _ => {}
+        }
+    }
+
+    /// Is `tail`'s value never null: a block or a variable whose own type has no `?`?
+    /// Anything else (a call, a branch) answers `false`, so the caller keeps its null path.
+    fn tail_cannot_be_null(&self, tail: &Value) -> bool {
+        match tail {
+            Value::Span(b) => self.tail_cannot_be_null(&b.1),
+            Value::Return(inner) => self.tail_cannot_be_null(inner),
+            Value::Block(bl) => !matches!(bl.result, Type::Optional(_) | Type::Unknown(_)),
+            Value::Var(v) => !matches!(self.vars.tp(*v), Type::Optional(_)),
+            _ => false,
+        }
+    }
+
     fn split_nullable_vector_tail(tail: &mut Value, is_null_nr: u32, sentinel_nr: u32) -> bool {
         match tail {
             Value::Span(b) => Self::split_nullable_vector_tail(&mut b.1, is_null_nr, sentinel_nr),
@@ -19909,6 +20203,16 @@ impl Parser {
     /// (fixing the interp orphan leak) while staying native-compilable. `null` arms
     /// (an exhaustive match's unreachable fall-through) are left untouched.
     fn materialize_vector_arms_into(&mut self, elm: &Type, op: &mut Value, w: u16) -> bool {
+        // `@FR-N-Shape` — an arm answering a NULLABLE vector local into a `vector<T>?` result
+        // answers null where the local holds null, as a bare nullable tail does
+        // (`split_nullable_vector_tail`).  Copied into the buffer, its absence became an EMPTY
+        // vector: `if c { r } else { m = f(); return m }` answered `[]` for a null `m`, in
+        // silence on both backends.
+        if matches!(self.data.def(self.context).returned(), Type::Optional(_)) {
+            let is_null = self.data.def_nr("OpVectorIsNull");
+            let sentinel = self.data.def_nr("OpNullRefSentinel");
+            self.split_nullable_vector_arms(op, w, is_null, sentinel);
+        }
         let mut consumed = Vec::new();
         self.materialize_vector_arms_collect(elm, op, w, &mut consumed)
     }
@@ -21513,6 +21817,16 @@ impl Parser {
                                     {
                                         let elm = (**elm).clone();
                                         self.materialize_vector_arms_into(&elm, tail, buf_var);
+                                    } else if let Type::Vector(elm, _) = inner.base()
+                                        && self.tail_cannot_be_null(tail)
+                                    {
+                                        // A tail that cannot be null (`[9]`, a dense local)
+                                        // under a `?` result whose signature names the
+                                        // buffer: copied whole, as the dense twin's is.
+                                        // Left raw, its own store was the answer and the
+                                        // caller, freeing only its buffer, leaked it.
+                                        let elm = (**elm).clone();
+                                        self.materialize_vector_return_into(&elm, tail, buf_var);
                                     } else if let Type::Reference(td, _) | Type::Enum(td, true, _) =
                                         inner.base()
                                         && inner.takes_ret_buffer()
@@ -21580,6 +21894,20 @@ impl Parser {
             // `__ref_3`-named buffer and the leaf vectors leaked, #355
             // fallout) — rewrite them here, where the binding decision is
             // final and the full body is in hand.
+            // `@FR-N-Shape` — a `vector<T>?` result is the same buffer one `?` down: its mid-body
+            // `return r` is delivered too.  Asked of the dense type alone, an early `return r`
+            // beside a nullable tail handed back r's own store and the caller's buffer leaked.
+            // Its tail is delivered per arm (`split_nullable_vector_tail`), which clears the
+            // buffer on each path, so the dense-only steps below stay dense-only.
+            if site == RetSite::BlockTail
+                && let Type::Optional(inner) = &ret
+                && let Type::Vector(elm, _) = inner.base()
+                && let Some((buf_attr, buf_var)) = self.return_buffer()
+                && dep.contains(&buf_attr)
+            {
+                let elm = (**elm).clone();
+                self.deliver_mid_vector_returns(&elm, body, buf_var);
+            }
             if site == RetSite::BlockTail
                 && let Type::Vector(elm, _) = &ret
                 && let Some((buf_attr, buf_var)) = self.return_buffer()
@@ -22207,9 +22535,12 @@ impl Parser {
                         // `+=` DROPPED the returned elements (#437).  Finalizing the
                         // dep makes the caller bind to the buffer it passed, so the
                         // result owns an appendable store and `+=` grows it in place.
+                        // Through `set_delivered_vector_return`, which keeps a declared `?`:
+                        // written as a bare vector, `-> vector<T>?` lost it on the pass that
+                        // delivered, every other `return null` then answered the buffer, and
+                        // the store checks told the author to declare the `?` it already had.
                         if buf_attr != u16::MAX {
-                            self.data.definitions[self.context as usize].returned =
-                                Type::Vector(Box::new(elm), Deps::attrs(vec![buf_attr]));
+                            self.set_delivered_vector_return(elm, buf_attr);
                         }
                         return;
                     }

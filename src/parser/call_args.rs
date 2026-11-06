@@ -182,6 +182,9 @@ impl Parser {
                 && !Self::is_addressable(&actual_code, &self.data)
                 && !Self::stored_tuple_dest(&actual_code)
                     .is_some_and(|d| d.is_place_read(&self.data))
+                // @PLN219 — an out-of-line field is a place a slot parameter links.
+                && !(self.out_of_line_place(&actual_code).is_some()
+                    && self.data.slot_link_def(&tp).is_some())
             {
                 // Defer on pass 1 (#375): a field access on a struct whose
                 // layout is not yet finalised — because one of its fields is a

@@ -20,6 +20,9 @@ Performance comparison across five targets: Python, loft interpreter, loft nativ
 | 10 | sort | Insertion sort of 3,000 integers, built and sorted per op |
 | 11 | par | Parallel for-loop, 100K elements × 50-iter Newton's sqrt |
 | 12 | drawing | Drawing hot loops: seeded hash (100K calls) + brush-lock raster (~22K px), output hashes asserted — the loft#1426 / @PLN157 workload; per-routine ratios gated by `scripts/native_ratio.sh` against `ratio_oracle.tsv` |
+| 21 | tree | Linked records: a 2,000-key search tree built by insertion and by the textbook recursion, queried 4,000 times by a `&` cursor and by a plain copied one, and thinned by deletion (a `take_min` slot helper); a linked list grown at its front and after its head, reversed and walked; a `Cons` list of a recursive enum — the out-of-line layout (`L-OutOfLine`) and `@FR-R-Demote` |
+| 22 | expr | A recursive enum: complete depth-10 arithmetic expressions (`Num`, `Add`, `Mul`) built by recursion, evaluated, simplified by rewriting and rendered as text |
+| 23 | lru | An LRU cache of 500 entries: a `hash` owning the entries and a recency list of `reference<Node>?` back-links, 4,000 accesses over 1,000 keys |
 | 20 | interpreter | The @PLN91 self-host's bytecode interpreter loop (a `match` on a plain enum per op, `Op` records in a vector, a `vector<integer?>` stack written through a helper) running its kernels: `fib(20)`, `mix(50000)`, `longest(1, 300)` |
 
 Each workload above is ONE OP.  A program runs its op `--n` times and reports the time per

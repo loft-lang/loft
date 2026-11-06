@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: slots
+// @CLAIM: Rust's `&mut Option<Box<T>>` slot cursor is `&T?` in loft: `slot = &slot.left`
+//         walks to a child's field, a whole write `slot = …` writes that field, and a field
+//         is handed to a `&` parameter as it is to Rust's `&mut`.
+// @SEEN-FROM: 00-vs-rust.html#slots
+// @RATIONALE: DESIGN_DECISIONS_OWNERSHIP.md C77 (Rust's `&mut` shapes are admitted in their `&`
+//         spelling); formal/binding.md (B-OutOfLine), formal/calls.md (F-ParamRef)
+//
+// Rust, for the same helper:
+//     fn take_min(slot: &mut Option<Box<Tree>>) -> i64 {
+//         let mut slot = slot;
+//         while slot.as_ref().is_some_and(|n| n.left.is_some()) {
+//             slot = &mut slot.as_mut().unwrap().left;
+//         }
+//         let mut node = slot.take().unwrap();
+//         *slot = node.right.take();
+//         node.k
+//     }
+//     let k = take_min(&mut t.right);
+// @SCRIPT — the page's block is a top-level window; the cells below are called at the end.
+
+// --- as shown on 00-vs-rust.html#slots (a verbatim window: `rule_tags.py fences`) ---
+struct Tree { k: integer, left: Tree?, right: Tree? }
+
+// remove the smallest key below a slot and answer it
+fn take_min(slot: &Tree?) -> integer {
+    while slot.left != null { slot = &slot.left; }   // walk: `&`
+    k = slot.k!;
+    slot = slot.right;                                // write: unlinks the node
+    k
+}
+
+t = Tree { k: 50, left: Tree { k: 30 }, right: Tree { k: 70, left: Tree { k: 60 } } };
+k = take_min(t.right);
+// --- end of the window ---
+
+fn size(n: Tree?) -> integer { if n == null { return 0; } 1 + size(n.left) + size(n.right) }
+assert(k == 60 && size(t) == 3 && t.right.left == null, "the smallest key of the right subtree, unlinked: {k} {size(t)}");
+// Without the `&` the walk would WRITE: `slot = slot.left` replaces the field with its child.
+fn drop_left(slot: &Tree?) { slot = slot.left; }
+u = Tree { k: 1, left: Tree { k: 2, left: Tree { k: 3 } } };
+drop_left(u.left);
+assert(size(u) == 2 && u.left.k == 3, "a whole write replaced u.left by its own child: {size(u)}");

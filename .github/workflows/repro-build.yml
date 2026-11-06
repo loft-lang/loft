@@ -160,6 +160,13 @@ jobs:
           LOFT_REPRO_OUT: ${{ runner.temp }}/repro-out
         run: |
           set +e
+          # Windows: rust-lld records the inputs of every link it runs in one tarball (loft#2431).
+          # The binary's link is the build's last, so the file left holds loft.exe's objects.
+          # It is kept only when the bytes differ (the step below); it costs ~2 min a build.
+          if [ "$RUNNER_OS" = Windows ]; then
+            mkdir -p "$RUNNER_TEMP/lld-repro"
+            export LLD_REPRODUCE="$RUNNER_TEMP\\lld-repro\\loft-link.tar"
+          fi
           bash scripts/repro-verify.sh --target ${{ matrix.target }} ${{ inputs.version && format('--version {0}', inputs.version) || '' }}
           code=$?
           set -e
@@ -179,5 +186,17 @@ jobs:
         with:
           name: repro-rebuilt-${{ matrix.target }}
           path: ${{ runner.temp }}/repro-out
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # What to do with it: rebuild once more until the bytes match, unpack both tarballs and
+      # diff their object files — the crate whose objects differ is the nondeterministic one
+      # (the linker itself relinked one tarball to the same bytes 38 times, loft#2431).
+      - name: Keep lld's record of the loft.exe link when it differs (Windows)
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-lld-link-${{ matrix.target }}
+          path: ${{ runner.temp }}/lld-repro
           if-no-files-found: ignore
           retention-days: 7

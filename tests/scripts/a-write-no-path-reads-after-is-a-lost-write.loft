@@ -1,0 +1,121 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A write into a local that holds a COPY of a place, or into a view of that copy, is a lost
+// write when no path from it reads the copy again — even though the copy is read before it
+// (`@FR-B-Copy`).  The cursor walk is the case people write: `cur = t` copies the tree, the walk
+// reads `cur` on every step, and the one write it makes, `cur.left = Tree {…}; return`, lands in
+// the copy and is freed with it.  Counting reads, or reading per field, sees `cur.left` read
+// and stays silent.
+//
+// Each warning cell names its local after the cell; `tests/dead_code_lint.rs` runs this file
+// and asserts the EXACT set of locals warned — the silent cells are half the claim: a `&`
+// cursor, a write read back, read by the loop head, returned, passed on, read after a `break`,
+// read after a `continue`, a read through a view, and a fresh literal.
+//
+// @falsified-at: b8db68cc4 — BY HAND, because `make falsify` cannot see a warning: 0 path
+//   `lost-write` reports there, 5 here (bk_c cu_c rb_c vc_v vw_c), on both backends;
+//   `tests/dead_code_lint.rs` asserts the exact set.  CHANNEL: the warnings.  ARMED: nothing.
+//   HOLDS: exit 0 and every assertion on both trees and both backends.
+
+struct Q { x: integer }
+struct Tree { k: integer, q: Q, left: Tree?, right: Tree? }
+struct S { items: vector<integer> }
+
+fn leaf(k: integer) -> Tree { Tree { k: k, q: Q { x: 0 }, left: null, right: null } }
+fn key_of(x: Tree) -> integer { x.k }
+fn size(t: Tree?) -> integer {
+  if t == null { return 0; }
+  1 + size(t.left) + size(t.right)
+}
+
+// ------------------------------------------------------------------ the write is lost
+
+// @EXPECT_WARNING: 'cu_c' holds a COPY, and nothing reads it after this write
+fn cursor(t: Tree, k: integer) {
+  cu_c: Tree? = t;
+  while cu_c != null {
+    if k < cu_c.k {
+      if cu_c.left == null { cu_c.left = leaf(k); return; }
+      cu_c = cu_c.left;
+    } else {
+      if cu_c.right == null { cu_c.right = leaf(k); return; }
+      cu_c = cu_c.right;
+    }
+  }
+}
+// @EXPECT_WARNING: 'bk_c' holds a COPY, and nothing reads it after this write
+fn after_break(t: Tree) -> integer {
+  bk_c = t;
+  for i in 0..10 { if bk_c.k > 3 { bk_c.k = 99; break; } bk_c.k += i; }
+  t.k
+}
+// @EXPECT_WARNING: 'vw_c' holds a COPY, and nothing reads it after this write
+fn through_a_view(t: Tree) -> integer {
+  vw_c = t;
+  if vw_c.k > 0 { n = vw_c.q; n.x = 5; }
+  t.q.x
+}
+// @EXPECT_WARNING: 'rb_c' holds a COPY, and nothing reads it after this write
+fn before_a_rebind(t: Tree, u: Tree) -> integer {
+  rb_c = t;
+  if rb_c.k > 0 { rb_c.k = 5; }
+  rb_c = u;
+  rb_c.k
+}
+// @EXPECT_WARNING: 'vc_v' holds a COPY, and nothing reads it after this write
+fn vector_copy(s: S) -> integer {
+  vc_v = s.items;
+  if vc_v[0] > 0 { vc_v[0] = 9; }
+  s.items[0]
+}
+
+// ------------------------------------------------------------------ the write is observed
+
+fn linked(t: Tree, k: integer) {
+  lk_c = &t;
+  while true {
+    if k < lk_c.k {
+      if lk_c.left == null { lk_c.left = leaf(k); return; }
+      lk_c = &lk_c.left;
+    } else {
+      if lk_c.right == null { lk_c.right = leaf(k); return; }
+      lk_c = &lk_c.right;
+    }
+  }
+}
+fn read_back(t: Tree) -> integer { ra_c = t; ra_c.k = 5; ra_c.k }
+fn loop_head(t: Tree) -> integer { lh_c = t; while lh_c.k < 10 { lh_c.k += 1; } t.k }
+fn returned(t: Tree) -> Tree { rt_c = t; if rt_c.k > 0 { rt_c.k = 9; } rt_c }
+fn passed(t: Tree) -> integer { ps_c = t; if ps_c.k > 0 { ps_c.k = 7; } key_of(ps_c) }
+fn read_after_break(t: Tree) -> integer {
+  ab_c = t;
+  for i in 0..10 { if ab_c.k > 3 { ab_c.k = 99; break; } ab_c.k += i; }
+  ab_c.k
+}
+fn read_after_continue(t: Tree) -> integer {
+  ac_c = t;
+  for i in 0..10 { if i % 2 == 0 { ac_c.k += 1; continue; } ac_c.k += 2; }
+  ac_c.k
+}
+fn view_read(t: Tree) -> integer {
+  vr_c = t;
+  if vr_c.k > 0 { n = vr_c.q; n.x = 5; }
+  vr_c.q.x
+}
+fn literal() -> integer { li_c = leaf(3); li_c.k = li_c.k + 1; li_c.q.x = 4; li_c.k }
+
+fn main() {
+  t = leaf(50);
+  for k in [30, 70, 20] { cursor(t, k); }
+  assert(size(t) == 1, "the copy's insert never reaches t");
+  for k in [30, 70, 20] { linked(t, k); }
+  assert(size(t) == 4 && t.left.left.k == 20, "a & cursor writes through");
+  u = leaf(1);
+  assert(after_break(u) == 1 && through_a_view(u) == 0 && before_a_rebind(u, leaf(8)) == 8, "lost");
+  assert(vector_copy(S { items: [1, 2] }) == 1, "lost vector");
+  assert(read_back(u) == 5 && loop_head(u) == 1 && returned(u).k == 9 && passed(u) == 7, "observed 1");
+  assert(read_after_break(u) == 99 && read_after_continue(u) == 16 && view_read(u) == 5, "observed 2");
+  assert(literal() == 4 && u.k == 1 && u.q.x == 0, "observed 3");
+  println("path-copy ok");
+}

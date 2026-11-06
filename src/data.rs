@@ -8156,6 +8156,45 @@ impl Data {
         self.reaches_inline(target, d_nr, &mut seen)
     }
 
+    /// @PLN219 `@FR-F-ParamRef` — is the struct or struct-enum `d_nr` HELD OUT OF LINE
+    /// somewhere: does it lie on a size cycle (`@FR-L-OutOfLine`)?  Then some field of its own
+    /// is out of line, and every field on the cycle — the one of type `d_nr` among them — is.
+    /// A `&` parameter of such a type can be handed an out-of-line field, so it points at a
+    /// SLOT CELL ([`crate::keys::SLOT_FIELD_BIT`]).
+    #[must_use]
+    pub fn held_out_of_line(&self, d_nr: u32) -> bool {
+        if d_nr == u32::MAX || !crate::keys::out_of_line_enabled() {
+            return false;
+        }
+        let holders: Vec<u32> = match self.def_type(d_nr) {
+            DefType::Struct | DefType::EnumValue => vec![d_nr],
+            DefType::Enum => self
+                .children_of(d_nr)
+                .filter(|&c| self.def_type(c) == DefType::EnumValue)
+                .collect(),
+            _ => return false,
+        };
+        holders
+            .into_iter()
+            .any(|h| (0..self.attributes(h)).any(|a| self.field_is_out_of_line(h, a)))
+    }
+
+    /// @PLN219 — the slot type a `&` parameter of type `tp` links, as its definition: `Some(d)`
+    /// for `&S` / `&S?` with `S` [held out of line](Self::held_out_of_line), the parameters
+    /// whose cell may name a field.  `None` for every other type, which pays nothing.
+    #[must_use]
+    pub fn slot_link_def(&self, tp: &Type) -> Option<u32> {
+        let Type::RefVar(inner) = tp.base() else {
+            return None;
+        };
+        let d = match inner.base() {
+            Type::Reference(d, deps) if !deps.is_pointer_marker() => *d,
+            Type::Enum(d, true, _) => *d,
+            _ => return None,
+        };
+        self.held_out_of_line(d).then_some(d)
+    }
+
     /// Does a type reachable from `from` through inline edges (embedded fields, tuple members,
     /// enum variants) still carry a field naming an unresolved type — a forward stub?  While it
     /// does, which of those fields are out of line (`@FR-L-OutOfLine`) is not decided.
@@ -9242,19 +9281,23 @@ impl Data {
                 format!("vector<{}>", rec(elm))
             }
             Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
-            // A tuple keeps its synthetic struct's name (`__tuple<integer,text>`), the one
-            // spelling a boxed and an unboxed tuple share — computed as `tuple_def` names it,
-            // whether or not that struct is registered yet: read off the registry, a key
-            // spelled `(integer, text)` before the struct existed and `__tuple<…>` after,
-            // and one type minted two instances (@PLN165 D11).
-            Type::Tuple(elems) => format!(
-                "__tuple<{}>",
-                elems
-                    .iter()
-                    .map(|t| t.name(self))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
+            // A tuple is spelled `__tuple<…>` from its MEMBERS, boxed or not, whether or not
+            // its synthetic struct is registered yet: read off the registry, a key spelled
+            // `(integer, text)` before the struct existed and `__tuple<…>` after, and one type
+            // minted two instances (@PLN165 D11).  Each member by its own identity, as any
+            // other former's: by the registry's member NAMES, `(ma::Fill, integer)` and
+            // `(mb::Fill, integer)` were one key (loft#2435).
+            Type::Tuple(elems) => Self::tuple_identity(elems.iter().map(rec)),
+            Type::Reference(t, _) if self.def(*t).name.starts_with("__tuple<") => {
+                Self::tuple_identity(self.def(*t).attributes.iter().map(|a| rec(&a.typedef)))
+            }
+            // A keyed collection names its element by the element's identity, its keys as the
+            // schema key does.
+            Type::Sorted(e, key, _) => format!("sorted<{},{key:?}>", self.declared_identity(*e)),
+            Type::Hash(e, key, _) => format!("hash<{},{key:?}>", self.declared_identity(*e)),
+            Type::Index(e, key, _) => format!("index<{},{key:?}>", self.declared_identity(*e)),
+            Type::Radix(e, key, _) => format!("spatial<{},{key:?}>", self.declared_identity(*e)),
+            Type::Trie(e, key, _) => format!("trie<{}[{key}]>", self.declared_identity(*e)),
             Type::Function(params, ret, _, consts) => {
                 let p: Vec<String> = params
                     .iter()
@@ -9303,6 +9346,11 @@ impl Data {
         }
     }
 
+    /// A tuple's identity, boxed or not: `__tuple<…>` over its members' identities.
+    fn tuple_identity(members: impl Iterator<Item = String>) -> String {
+        format!("__tuple<{}>", members.collect::<Vec<_>>().join(","))
+    }
+
     /// The identity spelling before @PLN165 B1 — an instance's key as A5 minted it, which
     /// erased a `τ?`'s nullability and a function type's signature.  `LOFT_NO_ELEMENT_KEY=1`.
     fn identity_spelling_erasing(&self, tp: &Type) -> String {
@@ -9320,8 +9368,31 @@ impl Data {
             if nr == u32::MAX {
                 tp.name(self)
             } else {
-                self.def(nr).name().to_string()
+                self.declared_identity(nr)
             }
+        }
+    }
+
+    /// Definition `nr` as an instance key names it (`@FR-G-Key`: each bound type by its full
+    /// identity, and one key per template): the bare name for the standard library's and the
+    /// program's own, `<library>::<name>` for a library's.  A name is unique only within its
+    /// source — two libraries may each declare a `Fill`, or a private `pick<T>` (loft#2435) —
+    /// and the instance lookup is program-wide, so a bare name let the second module's call
+    /// reach the first module's instance: refused as "expected vector<Fill>, got vector<Fill>"
+    /// at a type, and answered by the other module's body at a template.  The label is the
+    /// source's program-independent name ([`Self::source_label`]), the one `lib_ids::fn_key`
+    /// keys a library artifact by, so an instance is named alike in every program that loads
+    /// the library.  A name spelled from other types (`__tuple<…>`, a generic type's instance,
+    /// a type variable's `T#4`) is minted by whichever source named it first, so its source is
+    /// no part of its identity, and it stays bare — as `lib_ids::TypeNames` keys it.
+    #[must_use]
+    pub fn declared_identity(&self, nr: u32) -> String {
+        let def = self.def(nr);
+        let name = def.name();
+        if matches!(def.source, STD_SOURCE | MAIN_SOURCE) || name.contains(['<', '#']) {
+            name.to_string()
+        } else {
+            format!("{}::{name}", self.source_label(def.source))
         }
     }
 
@@ -10805,9 +10876,12 @@ impl Data {
         }
         let args: Vec<Type> = args.iter().map(Type::without_deps).collect();
         let spelled: Vec<String> = args.iter().map(|a| self.identity_spelling(a)).collect();
+        // The template by its identity too: an instance lives in the standard library's
+        // namespace, so two libraries each declaring a `Box<T>` minted one `Box<integer>`
+        // (loft#2435).
         let name = format!(
             "{}<{}>",
-            self.definitions[template as usize].name,
+            self.declared_identity(template),
             spelled.join(",")
         );
         if let Some(nr) = self.def_names.get(&name, STD_SOURCE) {

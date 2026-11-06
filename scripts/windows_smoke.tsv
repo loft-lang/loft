@@ -37,6 +37,7 @@ scripts/contract_labels.py	--help
 scripts/corpus.py	--help
 scripts/corpus_files.sh	--help
 scripts/crate_layers.py	--help
+scripts/crossings.py	check
 scripts/decisions.py	--help
 scripts/decline_census.py	--help
 scripts/doc-review.sh	--help
@@ -66,6 +67,7 @@ scripts/nullable_road.py	--help
 scripts/op_census.py	--help
 scripts/perf_check.py	--help
 scripts/perf_trend.py	--help
+scripts/pr_watch.py	--help
 scripts/profile.sh	--help
 scripts/profile_corpus.sh	--help
 scripts/pub_migrate.py	--help

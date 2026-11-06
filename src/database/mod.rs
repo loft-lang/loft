@@ -547,6 +547,11 @@ pub struct Stores {
     /// so a chain of any length takes no stack per link.
     pub child_copies: Vec<(DbRef, DbRef, u16)>,
     pub child_copy_depth: u32,
+    /// `@FR-L-OutOfLine` / `@FR-F-Render-Child` — the release twin: the child records a release
+    /// has reached and not yet torn down (the child, its content type, its record), and whether a
+    /// release of one is already running — that outermost one walks them as a loop.
+    pub child_releases: Vec<(DbRef, u16, u32)>,
+    pub child_release_depth: u32,
     /// loft#2079 — the first non-null enum FIELD the running text parse left with no value
     /// (`Stores::write_absent_value`): `record_from_text` answers null for it.
     pub parse_unfilled: Option<String>,
@@ -817,6 +822,8 @@ impl Clone for Stores {
             last_json_errors: Vec::new(),
             child_copies: Vec::new(),
             child_copy_depth: 0,
+            child_releases: Vec::new(),
+            child_release_depth: 0,
             parse_unfilled: None,
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
@@ -1605,6 +1612,8 @@ impl Stores {
             last_json_errors: Vec::new(),
             child_copies: Vec::new(),
             child_copy_depth: 0,
+            child_releases: Vec::new(),
+            child_release_depth: 0,
             parse_unfilled: None,
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),

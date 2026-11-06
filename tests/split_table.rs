@@ -186,7 +186,7 @@ fn a_discharged_element_read_borrows_its_slice() {
     let indexed = body(&rust, "n_indexed");
     assert!(
         indexed.contains("let var___ncc_1: &str = loft::codegen_runtime::split_table_get(&__st_")
-            && indexed.contains("_ret = if (((var___ncc_1) != loft::state::STRING_NULL) as u8) == 1 {&*(var___ncc_1)} else {&*(\"\")};")
+            && indexed.contains("_ret = if (((var___ncc_1) != loft::state::STRING_NULL) as u8) == 1 {&*({var___ncc_1})} else {&*({\"\"})};")
             && !indexed.contains("_ret.to_string()")
             && !indexed.contains("var___ncc_1: String"),
         "indexed: the `?` temp borrows the slice and the block yields it"

@@ -363,3 +363,25 @@ every bare variant is the cheaper rule.  Decided 2026-10-28 (owner) — [record]
 **Holds at:** `tests/reference/enum-variants.loft` (one owner, sibling arms of an `if` and a
 `match`), `tests/reference/enum-variants-refused.loft` (two owners, no context).
 **Catalogue:** [LOFT_DECLARATIONS.md § Enum-scoped variants](LOFT_DECLARATIONS.md#enum-scoped-variants-pln22).
+
+## C161 — a capture of a pattern group binds the sub-slice the group matched
+
+**Decision.** `g:( … )` in a slice pattern binds `g` to the elements the group consumed, as a
+fresh `vector<T>` independent of the subject — the store `..rest` gets.  An alternation
+`g:(A B | C)` binds the branch taken.  An optional group `g:( … )?` binds null when it matched
+nothing, as every capture inside it is null then; `g` is `vector<T>?`.  A repetition `g:( V )*`
+binds the V's the run collected, without the separators of a `*(Sep)`: the same vector
+`( g: V )*` binds, and a run of zero is an empty vector, not null.  A `( … )` that is not a group
+(a tuple element's pattern) is refused under a capture.  **Why.** `(P-Cap)` binds "p's result"
+and said nothing of a group's; the sub-slice is the one answer defined for every group shape —
+a single element, a sequence and a run — and it reuses `(P-Rest)`'s fresh-vector ownership.  The
+element alone (`T?`) cannot describe a sequence, and a tuple of the inner captures repeats names
+the group can already bind.
+
+**Revisit when.** A program wants the group's position rather than its elements — a span type
+would then serve both.  Decided 2026-11-06 (owner).
+**Holds at:** `@C161` — `./scripts/idx tag:@C161`: `Parser::bind_alternation_group` and the
+group capture in `Parser::parse_slice_pattern` / `parse_slice_repetition`
+(`src/parser/control.rs`); `formal/matching.md` `(P-Cap)`; guard
+`loft-suite/rules/matching/P-Cap/a-capture-of-a-group-binds-the-sub-slice-it-matched.loft`.
+**Catalogue:** `formal/matching.md` `(P-Rest)`, `(P-Opt)`, `(P-Rep)`.

@@ -343,6 +343,30 @@ pub(super) fn run_scan_phase(
         scopes.var_order.push(w);
         scopes.view_rebind.insert(v, w);
     }
+    // @PLN219 `@FR-B-Ref-Repoint` — the cell a `&` PARAMETER is re-pointed to (`slot =
+    // &slot.left` names the field through a compiler-made cell, `Parser::repoint_slot_param`)
+    // is read through the parameter for the rest of the call, where its own name is not
+    // mentioned, so it lives for the whole function: a cell scoped to a loop body would give its
+    // bytes to the next temporary while the parameter still points at them.
+    let create_stack = data.def_nr("OpCreateStack");
+    let mut slot_cells: Vec<u16> = Vec::new();
+    orig_code.walk(&mut |nd| {
+        if let Value::Set(p, val) = nd
+            && function.is_argument(*p)
+            && let Value::Call(op, args) = val.unspan()
+            && *op == create_stack
+            && let [Value::Var(c)] = args.as_slice()
+            && function.is_compiler_generated(*c)
+            && !function.is_argument(*c)
+            && !slot_cells.contains(c)
+        {
+            slot_cells.push(*c);
+        }
+    });
+    for &c in &slot_cells {
+        scopes.var_scope.insert(c, 0);
+        scopes.var_order.push(c);
+    }
     // ⚠ @FR-N-Road (@PLN160) — this mechanism is NULLABLE BY CONSTRUCTION, and the dense
     // spelling of the same mixed-ownership local answers the identical question by STORE
     // IDENTITY (`OpFreeRefIfDistinct`, plus the `_old_` guard at the rebind).  @C90 makes the two
@@ -547,6 +571,18 @@ pub(super) fn run_scan_phase(
                     v_set(w, Value::Call(data.def_nr("OpNullRefSentinel"), vec![])),
                 );
             }
+        }
+    }
+    // @PLN219 — a slot cell is declared at the top, where every backend gives it the frame's
+    // lifetime; a cell first set in a loop body was otherwise declared inside it.
+    if !slot_cells.is_empty()
+        && let Some(bl) = body_block_mut(&mut code)
+    {
+        for &c in slot_cells.iter().rev() {
+            bl.operators.insert(
+                0,
+                v_set(c, Value::Call(data.def_nr("OpNullRefSentinel"), vec![])),
+            );
         }
     }
     if !scopes.owner_witness.is_empty()

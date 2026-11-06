@@ -1,0 +1,150 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-RefHome` (src/scopes/stored_refs.rs `stored_reference_homes`): a record a stored
+// reference names lives as long as its holder.  Where the record's local is bound in a block
+// deeper than the holder's (`if h.r == null { s = …; h.r = s[1]; }`), the Rust front end moves
+// the local's home out to the holder's block after the parse.  That move is not carried: such a
+// program is refused by name.
+//
+// `own_fresh_binds` (src/parser/expressions.rs): a vector local that borrows at one bind and is
+// bound to a call's fresh vector result at another takes an owner for that result.  It reads the
+// callee's declared result as the pass meets it, so a loft callee declared further down — whose
+// result borrow its own body has not declared yet — is wrapped while one declared above is not.
+// The elaboration declares that borrow on its first pass, so the pass-order window is not
+// carried: such a bind is refused by name.
+use ir;
+use el;
+use el_ir;
+
+pub fn check_stored_reference_homes(e: el::El) {
+  for d in e.b.data.definitions {
+    if d.source != el::MAIN_SOURCE || d.def_type != el::DT_FUNCTION {
+      continue;
+    }
+    code = d.code[0] ?? ir::NdNull;
+    depths: vector<integer> = [];
+    for _ in d.variables.variables {
+      depths += [-1];
+    }
+    bind_depths(code, 0, depths);
+    if lifted_home(e, code, depths) {
+      el::refuse(e, "a stored reference to a record whose local is bound in a deeper block than its holder");
+      return;
+    }
+  }
+}
+
+// The block depth of each variable's first bind.
+fn bind_depths(n: ir::Node, depth: integer, depths: vector<integer>) {
+  match n {
+    NdSet { var, inner } => {
+      if var < len(depths) && depths[var] == -1 {
+        depths[var] = depth;
+      }
+      bind_depths(inner, depth, depths);
+      return;
+    },
+    NdIf { cond, t, f } => {
+      bind_depths(cond, depth, depths);
+      bind_depths(t, depth + 1, depths);
+      bind_depths(f, depth + 1, depths);
+      return;
+    },
+    NdLoop { block } => {
+      for x in block[0].operators {
+        bind_depths(x, depth + 1, depths);
+      }
+      return;
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    bind_depths(c, depth, depths);
+  }
+}
+
+// Does `n` hold a stored-reference write whose value's local was bound deeper than the holder?
+fn lifted_home(e: el::El, n: ir::Node, depths: vector<integer>) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpSetDbRef" && len(args) == 3 {
+        h = root(e, args[0]);
+        s = root(e, args[2]);
+        if h >= 0 && s >= 0 && h != s && s < len(depths) && h < len(depths) && depths[s] > depths[h] && depths[h] >= 0 {
+          return true;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if lifted_home(e, c, depths) {
+      return true;
+    }
+  }
+  false
+}
+
+// The local a place or a record read is rooted at, or -1.
+fn root(e: el::El, n: ir::Node) -> integer {
+  cur = el_ir::unspan(n);
+  while true {
+    match cur {
+      NdVar { n: v } => { return v; },
+      NdCall { def_nr, args } => {
+        nm = el::def(e, def_nr).name;
+        if len(args) == 0 || !(nm == "OpGetField" || nm == "OpGetVector" || nm == "OpVectorRef" || nm == "OpGetRecord" || nm == "OpGetDbRef") {
+          return -1;
+        }
+        cur = el_ir::unspan(args[0]);
+      },
+      _ => { return -1; }
+    }
+  }
+  -1
+}
+
+pub fn check_later_fresh_binds(e: el::El) {
+  for d in e.b.data.definitions {
+    if d.source != el::MAIN_SOURCE || d.def_type != el::DT_FUNCTION {
+      continue;
+    }
+    if later_fresh_bind(e, d#index, d.variables, d.code[0] ?? ir::NdNull) {
+      el::refuse(e, "a vector local bound from a later-declared function's vector result (own_fresh_binds' pass order)");
+      return;
+    }
+  }
+}
+
+fn later_fresh_bind(e: el::El, f: integer, vars: ir::Function, n: ir::Node) -> boolean {
+  match n {
+    NdSet { var, inner } => {
+      match el_ir::unspan(inner) {
+        NdCall { def_nr } => {
+          x = vars.variables[var];
+          cd = el::def(e, def_nr);
+          if x != null && !x!.argument && def_nr > f && cd.source == el::MAIN_SOURCE && cd.def_type == el::DT_FUNCTION && cd.rust == "" {
+            match x!.type_def[0] ?? ir::TyVoid {
+              TyVector { inner: _, dep } => {
+                rt = cd.returned[0] ?? ir::TyVoid;
+                if len(dep) > 0 && rt is TyVector {
+                  return true;
+                }
+              },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if later_fresh_bind(e, f, vars, c) {
+      return true;
+    }
+  }
+  false
+}

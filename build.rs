@@ -42,15 +42,7 @@ fn main() {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .or_else(|| {
-            std::process::Command::new("git")
-                .args(["rev-parse", "--short", "HEAD"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .filter(|v| !v.is_empty())
-        })
+        .or_else(|| git(&["rev-parse", "--short", "HEAD"]))
         .unwrap_or_else(|| {
             // Fallback: seconds since epoch — changes on every build.
             std::time::SystemTime::now()
@@ -261,8 +253,9 @@ fn main() {
     // `d_nr=u32::MAX`).  loft-ffi/src keeps LOFT_FFI_FINGERPRINT accurate.  git
     // HEAD alone is blind to WIP; these make the rerun fire on the edits a content
     // hash must reflect.
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/refs");
+    for path in git_head_paths() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=default");
@@ -275,6 +268,55 @@ fn main() {
     // …and when rustc itself changes, so LOFT_BUILD_RUSTC stays accurate.
     println!("cargo:rerun-if-env-changed=RUSTC");
     warn_stale_compiled_stdlib();
+}
+
+/// `git <args>`'s trimmed output, or `None` outside a git checkout or when git fails.
+fn git(args: &[&str]) -> Option<String> {
+    std::process::Command::new("git")
+        .args(args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// The files that say which commit this checkout is at — what the build id reads — and only
+/// those that exist.  Cargo treats a watched path that does not exist as CHANGED on every
+/// build, so a literal `.git/HEAD` rebuilt the whole crate on every cargo command in a git
+/// worktree (where `.git` is a file naming the real git dir) and in a source archive (no
+/// `.git` at all): about a minute and 5 GB per command, three such compiles at once in a
+/// test build.  A worktree keeps its `HEAD` in its own git dir and its branch's ref in the
+/// shared one; the ref is a loose file or a line of `packed-refs`.  Watching the shared
+/// `refs/` whole would rebuild this checkout whenever a sibling worktree commits.
+fn git_head_paths() -> Vec<std::path::PathBuf> {
+    let Some(git_dir) = git(&["rev-parse", "--absolute-git-dir"]) else {
+        return Vec::new();
+    };
+    let git_dir = std::path::PathBuf::from(git_dir);
+    let common = git(&["rev-parse", "--git-common-dir"]).map_or_else(
+        || git_dir.clone(),
+        |c| {
+            let c = std::path::PathBuf::from(c);
+            if c.is_absolute() {
+                c
+            } else {
+                std::env::current_dir().map(|d| d.join(&c)).unwrap_or(c)
+            }
+        },
+    );
+    let mut paths = vec![git_dir.join("HEAD")];
+    // A detached HEAD names a commit itself: nothing more to watch.
+    if let Some(head_ref) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        let loose = common.join(&head_ref);
+        paths.push(if loose.exists() {
+            loose
+        } else {
+            common.join("packed-refs")
+        });
+    }
+    paths.retain(|p| p.exists());
+    paths
 }
 
 /// @PLN181 — say so, on every build, when the compiled standard library was compiled from a

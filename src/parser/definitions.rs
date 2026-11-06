@@ -8446,6 +8446,30 @@ impl Parser {
         }
     }
 
+    /// Is the synthesized function `name` of type `t` declared in `t`'s OWN source — where
+    /// every lookup of it (`Data::drop_cascade_nr`, `lease::copy_cascade_nr`) finds it?
+    fn cascade_declared(&self, t: u32, name: &str) -> bool {
+        self.data.source_nr(self.data.def(t).source, name) != u32::MAX
+    }
+
+    /// Declare the synthesized function `name` of type `t` in `t`'s own source.  The passes run
+    /// once, at the end of pass 2, with the PROGRAM current, and a cascade's key is its type's
+    /// name — so a library's `vector<Pair>` and the program's `vector<lib::Pair>` (two defs of
+    /// one name, each in its own source) both declared `t_12vector<Pair>_OpDropAll` in the
+    /// program and the second was a "Dual definition" (loft#2436).  Keyed to the type's
+    /// source, as the lookups already are, each lives beside its type.
+    fn declare_cascade(&mut self, t: u32, name: &str) -> u32 {
+        let pos = *self.data.def(t).position();
+        let src = self.data.def(t).source;
+        let current = self.data.source;
+        if src != u16::MAX {
+            self.data.source = src;
+        }
+        let c_nr = self.data.add_def(name, &pos, DefType::Function);
+        self.data.source = current;
+        c_nr
+    }
+
     /// The type's own hook — `OpDrop` or `OpCopy` — or `u32::MAX`.
     fn hook_own_nr(&self, hook: Hook, t: u32) -> u32 {
         match hook {
@@ -8480,7 +8504,7 @@ impl Parser {
         }
         let mut targets: Vec<u32> = Vec::new();
         for d_nr in 0..self.data.definitions() {
-            if self.data.def_nr(&self.hook_cascade_name(Hook::Copy, d_nr)) != u32::MAX {
+            if self.cascade_declared(d_nr, &self.hook_cascade_name(Hook::Copy, d_nr)) {
                 continue;
             }
             let wanted = match self.data.def_type(d_nr) {
@@ -8500,8 +8524,7 @@ impl Parser {
         let mut made: Vec<(u32, u32)> = Vec::new();
         for &t in &targets {
             let name = self.hook_cascade_name(Hook::Copy, t);
-            let pos = *self.data.def(t).position();
-            let c_nr = self.data.add_def(&name, &pos, DefType::Function);
+            let c_nr = self.declare_cascade(t, &name);
             self.data.set_returned(c_nr, Type::Void);
             let self_tp = self.cascade_self_type(t);
             let _ = self
@@ -8522,7 +8545,7 @@ impl Parser {
         // counter of its own — the slots are assigned by then — so the walk is a function.
         for d_nr in 0..self.data.definitions() {
             let name = self.data.drop_cascade_key(d_nr, "OpCopyTail");
-            if self.data.def_type(d_nr) != DefType::Vector || self.data.def_nr(&name) != u32::MAX {
+            if self.data.def_type(d_nr) != DefType::Vector || self.cascade_declared(d_nr, &name) {
                 continue;
             }
             let Some((elem_tp, ed)) = self.collection_elem_cascade_for(Hook::Copy, d_nr) else {
@@ -8532,8 +8555,7 @@ impl Parser {
             if target == u32::MAX {
                 continue;
             }
-            let pos = *self.data.def(d_nr).position();
-            let c_nr = self.data.add_def(&name, &pos, DefType::Function);
+            let c_nr = self.declare_cascade(d_nr, &name);
             self.data.set_returned(c_nr, Type::Void);
             let self_tp = self.cascade_self_type(d_nr);
             let int_tp = self
@@ -8652,7 +8674,7 @@ impl Parser {
         }
         let mut targets: Vec<u32> = Vec::new();
         for d_nr in 0..self.data.definitions() {
-            if self.data.def_nr(&Self::drop_cascade_name(&self.data, d_nr)) != u32::MAX {
+            if self.cascade_declared(d_nr, &Self::drop_cascade_name(&self.data, d_nr)) {
                 continue; // already synthesized — the several parse tails share this pass
             }
             let wanted = match self.data.def_type(d_nr) {
@@ -8713,8 +8735,7 @@ impl Parser {
         let mut made: Vec<(u32, u32)> = Vec::new();
         for &t in &targets {
             let name = Self::drop_cascade_name(&self.data, t);
-            let pos = *self.data.def(t).position();
-            let c_nr = self.data.add_def(&name, &pos, DefType::Function);
+            let c_nr = self.declare_cascade(t, &name);
             self.data.set_returned(c_nr, Type::Void);
             let self_tp = self.cascade_self_type(t);
             let _ = self

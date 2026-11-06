@@ -1,8 +1,8 @@
-diff --git b/src/scopes.rs a/src/scopes.rs
-index d93bc8a68..7fab40155 100644
---- b/src/scopes.rs
-+++ a/src/scopes.rs
-@@ -398,14 +398,6 @@ struct Scopes<'s> {
+diff --git a/src/scopes.rs b/src/scopes.rs
+index 4a26b0d88..d0168f617 100644
+--- a/src/scopes.rs
++++ b/src/scopes.rs
+@@ -411,14 +411,6 @@ struct Scopes<'s> {
      /// itself is never freed.  Keyed on every id the local is known by (the original and
      /// any scope copy `scan_set` makes of it).  [`owner_witness_locals`] picks them.
      owner_witness: HashMap<u16, u16>,
@@ -17,11 +17,11 @@ index d93bc8a68..7fab40155 100644
      /// `@FR-L-CapRebind` — the closure records the statement being scanned releases in its
      /// prefix (the record a rebuild is about to overwrite, loft#1388).  The rebuild's own
      /// snapshot (`displaced_drop`) skips them: one release per displaced record.
-diff --git b/src/scopes/args.rs a/src/scopes/args.rs
-index f7c56f87c..4ed0902c0 100644
---- b/src/scopes/args.rs
-+++ a/src/scopes/args.rs
-@@ -309,21 +309,6 @@ impl Scopes<'_> {
+diff --git a/src/scopes/args.rs b/src/scopes/args.rs
+index 2cb33b147..93c927067 100644
+--- a/src/scopes/args.rs
++++ b/src/scopes/args.rs
+@@ -311,21 +311,6 @@ impl Scopes<'_> {
              {
                  amp_foreign.push(orig);
              }
@@ -43,7 +43,7 @@ index f7c56f87c..4ed0902c0 100644
              if let Value::Insert(ops) = scanned {
                  // Existing A5.6 hoisting: lift Set(w, Null) for owned Reference.
                  let is_a56_hoisted = Self::is_null_init_preamble(&ops, function);
-@@ -680,7 +665,6 @@ impl Scopes<'_> {
+@@ -690,7 +675,6 @@ impl Scopes<'_> {
                      .is_some_and(|at| at.typedef.is_amp_rebindable_heap())
                  || function.is_argument(*v)
                  || function.rebind_orig(*v).is_some()
@@ -51,10 +51,10 @@ index f7c56f87c..4ed0902c0 100644
                  // @FR-O-Proxy asks free — a free follows (the snapshot's release after the
                  // call), so the local must own its store: empty deps, and @FR-O-Override's
                  // never-free flag vetoes it.
-diff --git b/src/scopes/buffers.rs a/src/scopes/buffers.rs
-index c13a3f61e..bd75cb73d 100644
---- b/src/scopes/buffers.rs
-+++ a/src/scopes/buffers.rs
+diff --git a/src/scopes/buffers.rs b/src/scopes/buffers.rs
+index 9f5b662e0..8a82ca113 100644
+--- a/src/scopes/buffers.rs
++++ b/src/scopes/buffers.rs
 @@ -77,52 +77,6 @@ pub(super) fn coalesce_tail_calls(v: &Value) -> Vec<&Value> {
          .unwrap_or_default()
  }
@@ -141,10 +141,10 @@ index c13a3f61e..bd75cb73d 100644
          if !ungated
              && fed_locals
                  .get(&av)
-diff --git b/src/scopes/get_free_vars.rs a/src/scopes/get_free_vars.rs
-index 4bc24e5b5..633bb2527 100644
---- b/src/scopes/get_free_vars.rs
-+++ a/src/scopes/get_free_vars.rs
+diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
+index b00d5743a..aba14fb7c 100644
+--- a/src/scopes/get_free_vars.rs
++++ b/src/scopes/get_free_vars.rs
 @@ -196,12 +196,6 @@ impl Scopes<'_> {
          let mut guarded_hooks: std::collections::HashSet<u16> =
              std::collections::HashSet::default();
@@ -158,7 +158,7 @@ index 4bc24e5b5..633bb2527 100644
          if scope_debug {
              eprintln!(
                  "[get_free_vars] fn={} to_scope={to_scope} scope={} vars={vars:?} ret_var={ret_var} \
-@@ -1147,22 +1141,6 @@ impl Scopes<'_> {
+@@ -1212,22 +1206,6 @@ impl Scopes<'_> {
                  }
              }
          }
@@ -181,11 +181,11 @@ index 4bc24e5b5..633bb2527 100644
          if !guarded.is_empty() {
              guarded.append(&mut ls);
              ls = guarded;
-diff --git b/src/scopes/phase.rs a/src/scopes/phase.rs
-index 25a7c6a73..0cc5f7552 100644
---- b/src/scopes/phase.rs
-+++ a/src/scopes/phase.rs
-@@ -198,7 +198,6 @@ pub(super) fn run_scan_phase(
+diff --git a/src/scopes/phase.rs b/src/scopes/phase.rs
+index ba47c763a..e057a4c2e 100644
+--- a/src/scopes/phase.rs
++++ b/src/scopes/phase.rs
+@@ -202,7 +202,6 @@ pub(super) fn run_scan_phase(
          entry_witness: None,
          local_owns: HashMap::default(),
          owner_witness: HashMap::default(),
@@ -193,7 +193,7 @@ index 25a7c6a73..0cc5f7552 100644
          prefix_released: Vec::new(),
          displaced_owned,
          views_to_materialise,
-@@ -322,18 +321,6 @@ pub(super) fn run_scan_phase(
+@@ -331,18 +330,6 @@ pub(super) fn run_scan_phase(
          scopes.var_order.push(w);
          scopes.owner_witness.insert(v, w);
      }
@@ -209,10 +209,10 @@ index 25a7c6a73..0cc5f7552 100644
 -        scopes.var_order.push(w);
 -        scopes.view_rebind.insert(v, w);
 -    }
-     // ⚠ @FR-N-Road (@PLN160) — this mechanism is NULLABLE BY CONSTRUCTION, and the dense
-     // spelling of the same mixed-ownership local answers the identical question by STORE
-     // IDENTITY (`OpFreeRefIfDistinct`, plus the `_old_` guard at the rebind).  @C90 makes the two
-@@ -522,24 +509,6 @@ pub(super) fn run_scan_phase(
+     // @PLN219 `@FR-B-Ref-Repoint` — the cell a `&` PARAMETER is re-pointed to (`slot =
+     // &slot.left` names the field through a compiler-made cell, `Parser::repoint_slot_param`)
+     // is read through the parameter for the rest of the call, where its own name is not
+@@ -555,24 +542,6 @@ pub(super) fn run_scan_phase(
      // call and not as `null`, because a heap local's `= null` lowers to `OpInitRef` — a
      // stack-record placeholder the allocator is expected to replace — and a free of THAT is
      // the `#306` refusal.
@@ -234,10 +234,10 @@ index 25a7c6a73..0cc5f7552 100644
 -            }
 -        }
 -    }
-     if !scopes.owner_witness.is_empty()
-         && let Some(bl) = body_block_mut(&mut code)
-     {
-@@ -949,89 +918,3 @@ pub(super) fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Da
+     // @PLN219 — a slot cell is declared at the top, where every backend gives it the frame's
+     // lifetime; a cell first set in a loop body was otherwise declared inside it.
+     if !slot_cells.is_empty()
+@@ -1033,89 +1002,3 @@ pub(super) fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Da
      let v = function.var(&name);
      (v != u16::MAX).then_some(v)
  }

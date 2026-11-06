@@ -212,6 +212,30 @@ each a decision recorded in its pin:
 | nullable `n12`, join `j5` | a nullable `if … { null } else { S { … } }`, a one-field `-> S` beside a build |
 | 1993/1994 `q1`, `w1` | `(N-Store)`'s presence-carrying tuple parameters |
 
+**Step 1, measured in full, and the ruling that closes it (2026-11-06).**  The five forms above
+are each test's FIRST failure.  With the writers' plan empty, every row of every table in
+`tests/value_record.rs` checked (`scratchpad` checker): 48 functions differ, in four groups —
+
+| group | functions | why the IR does not return the tuple |
+|---|---|---|
+| A — admitted, twinned | `pt`, `half`, `pt5`, `scan_fail`, `bump`, `mk6` | the IR takes them; one site per family wants a RECORD (t4's branch-bound local, t5's mixed arm, `via_obj`'s chain, `keep6`'s kept buffer), so the IR keeps a record twin for that site where the writers materialised the tuple there |
+| B — dense, declined | `half5`, `pt10`, `maybe`, `pt13`, `gpick`, `gmax`, `via_obj` | a mixed arm the shared analysis declines; the nullable t10/t13; t14's generic selecting tail ("no return buffer"); n5's literal-argument chain |
+| C — nullable results | `n12`, `whole`, `fwdr`, `j5`–`j11`, `j15` | a forward that cannot carry, a call at an exit of another layout, a local mentioned otherwise |
+| D — nullable and one-field PARAMETERS | every `PARAM_CELLS` / `STORE_CELLS` row (`q*`, `w*`, `id*`, `t_1S_add`) | `(N-Store)`'s presence-carrying parameters: a parameter returned, no flat layout, shared return buffers, the one-field `(i64,)` form |
+
+Every value holds without the writers (the seven cell files print `ok` / the same output on
+the interpreter, the C and rustc, closed): the 48 are speed in the CLOSED build, not meaning.
+One gap was the IR's own bug, fixed (`495a68397`): a copy out of a carrier into a pushed element
+carries `COPY_FRESH_DEST`, which the pass compared unmasked — V-aa c3, V-ah t3, t12 are the IR's.
+
+**Ruling (owner, 2026-11-06): these forms stay in the writers.**  Spelling them in the IR would
+not speed the interpreter, so the IR is no better home for them: the writers keep their
+`(R-ValueRecord)` clause for what the IR declines, in the closed build only (an open build
+takes none — § S2's first paragraph).  Step 1 is therefore NOT taken; S2 ends at what is built
+(the IR's forms, the open world without value records).  The writers' code for a form the IR
+takes is dead there (the writers see the IR's tuple and find only what the pass declined), so
+what can still go is that dead code — byte-identical emission is its check.
+
 The remaining bench gaps against the session's start — moros `slope_path_with_undo` 1.23×,
 drawing `smooth` 1.12× — are the IR's spelling against the old writer forms (the lend mints per
 call where the writers passed a tuple pointer), not step 1.
@@ -234,8 +258,8 @@ needs no plan at all: the exit is `Tuple(…, g2_p, …)`, and the element-first
 |---|---|---|
 | S0 | **Probe the premise** (design-protocol: the cheapest check that could falsify it).  Count, on the benches and the corpus, the functions the writers admit ONLY through a view leaf, and for each pair of `164-element-place.loft` whether its function is one.  If no bench function needs a view leaf, the clause's weight is the cells and the libraries (`make libcatalogue`'s consumers), and that decides S1's priority | **done** — § S0 below the measurements |
 | S1 | **A tuple element that is a reference.**  The IR's value-record tuple gains a reference part for a view leaf: the interpreter carries it as a `DbRef` slot, the writers as their reference (`loft_ref` / `DbRef`), never freed by the tuple (a view is never freed).  `body_shape` admits a result position that is a view of a place `(O-ViewField)` admits | the tuple form spells a view on all three backends; the value-record cells pass; a plant (the view freed with the tuple) caught **done** |
-| S2 | **The writers' copy deleted.**  An open build has no value records (the ruling above), and a closed one runs the IR's: each writer's own view-leaf delivery (`lower::plan`, the C's `value_records`) goes, and with it whatever of `ViewPlan` only they read.  Which other writer forms of `(R-ValueRecord)` (the nullable clause, `(R-FnRefValue)`, the parameters) the IR does not take yet is S2's first measure: each is moved or dropped, never kept for the open world | the census: `R-ValueRecord` applied by the IR alone; the cells and the corpus checks pass closed (`--lean`) on the C and rustc, and open with no value records |
-| S3 | **`(R-ElemFirst)` takes the form.**  The pass pairs a temp whose exit is a tuple element naming it; the rename makes it the element's field.  Both writers' element-first clauses are deleted | the 164 cells' pairs taken by the IR (`tests/element_first.rs` counts the trace); `rule_tags.py sites @FR-R-ElemFirst` shows no writer clause; D-phase-4 closed |
+| S2 | **CLOSED by the 2026-11-06 ruling (§ S2): the writers keep the forms the IR declines.** Was: **The writers' copy deleted.**  An open build has no value records (the ruling above), and a closed one runs the IR's: each writer's own view-leaf delivery (`lower::plan`, the C's `value_records`) goes, and with it whatever of `ViewPlan` only they read.  Which other writer forms of `(R-ValueRecord)` (the nullable clause, `(R-FnRefValue)`, the parameters) the IR does not take yet is S2's first measure: each is moved or dropped, never kept for the open world | the census: `R-ValueRecord` applied by the IR alone; the cells and the corpus checks pass closed (`--lean`) on the C and rustc, and open with no value records |
+| S3 | **DONE (2026-11-06): both writers' clauses deleted, emission byte-identical over the corpus; D-phase-4 closed.** `(R-ElemFirst)` takes the form.  The pass pairs a temp whose exit is a tuple element naming it; the rename makes it the element's field.  Both writers' element-first clauses are deleted | the 164 cells' pairs taken by the IR (`tests/element_first.rs` counts the trace); `rule_tags.py sites @FR-R-ElemFirst` shows no writer clause; D-phase-4 closed |
 
 Each step goes red alone; the checks per step and per chunk are the move protocol's
 ([README.md § Arc C](README.md#arc-c--moving-them)).

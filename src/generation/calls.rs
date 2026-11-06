@@ -483,18 +483,6 @@ impl Output<'_> {
                 write!(w, ", ")?;
             }
             first_arg = false;
-            // @PLN164 E-2 — a call-filled temp's buffer is the element's field: the call
-            // builds there, and the buffer itself is never minted.
-            if let Value::Var(b) = v.unspan()
-                && let Some(&(elm, off)) = self.elem_first.buf_place.get(b)
-            {
-                let elmn = super::sanitize(self.data.def(self.def_nr).variables().name(elm));
-                write!(
-                    w,
-                    "DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {off} }}"
-                )?;
-                continue;
-            }
             // `@FR-R-Apart` instance 4 — an apart record goes to its twin as its value.
             if let Value::Var(x) = v.unspan()
                 && let Some(arg) = self.apr_arg(*x)
@@ -759,11 +747,18 @@ impl Output<'_> {
                 || caller_vars.is_argument(*nr)
                 || crate::generation::is_raw_tuple_link(caller_vars, *nr)
                 || matches!(caller_vars.tp(*nr).base(), Type::RefVar(inner)
-                    if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)));
+                    if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)))
+                // A text link to a VARIABLE is the `*mut String` its slot holds; one to a
+                // field or element is that place's `DbRef` (`is_store_text_link`) and keeps
+                // the address arm below.
+                || (matches!(caller_vars.tp(*nr).base(), Type::RefVar(inner)
+                    if matches!(inner.base(), Type::Text(_)))
+                    && !caller_vars.is_store_text_link(*nr));
             if holds_pointer && pass_raw {
-                // A scalar link, a `&` parameter, a `&`-bound tuple local and a `&`-bound
-                // RECORD local (`b: &P = a`) all hold the `*mut T` the callee takes: the
-                // pointer is passed on, so a link forwarded twice is one place twice.
+                // A scalar link, a `&` parameter, a `&`-bound tuple local, a `&`-bound
+                // RECORD local (`b: &P = a`) and a text variable link all hold the `*mut T`
+                // the callee takes: the pointer is passed on, so a link forwarded twice is
+                // one place twice.
                 write!(w, "var_{name}")?;
             } else if holds_pointer {
                 // A runtime function's `&mut T`, re-borrowed through the pointer.

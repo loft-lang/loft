@@ -78,6 +78,3 @@ lockfile = ["Cargo.lock", "loft-ffi/Cargo.lock", "loft-ffi-build/Cargo.lock",
             "loft-ffi-macros/Cargo.lock", "wasm-sync/Cargo.lock"]
 # ring compiles BoringSSL-derived C and assembly (rustls' crypto); its advisories are RustSec's.
 compiles-c = ["ring"]
-
-[thirdparty.rust.reviewed]
-RUSTSEC-2026-0192 = "applies: ttf-parser 0.21 is unmaintained; fontdue 0.9 (the `fontdue` feature) parses font files through it — a font from outside reaches it"

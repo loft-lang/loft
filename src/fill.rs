@@ -235,6 +235,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     push_character::<false>,
     push_byte::<false>,
     ref_from_child_rec::<false>,
+    slot_tag::<false>,
     child_rec::<false>,
     get_record::<false>,
     hash_add::<false>,
@@ -260,6 +261,8 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     get_stack_text::<false>,
     get_stack_ref::<false>,
     set_stack_ref::<false>,
+    get_slot_ref::<false>,
+    set_slot_ref::<false>,
     set_stack_fn_ref::<false>,
     get_stack_fn_ref::<false>,
     drop_fn_ref::<false>,
@@ -591,6 +594,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     push_character::<true>,
     push_byte::<true>,
     ref_from_child_rec::<true>,
+    slot_tag::<true>,
     child_rec::<true>,
     get_record::<true>,
     hash_add::<true>,
@@ -616,6 +620,8 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     get_stack_text::<true>,
     get_stack_ref::<true>,
     set_stack_ref::<true>,
+    get_slot_ref::<true>,
+    set_slot_ref::<true>,
     set_stack_fn_ref::<true>,
     get_stack_fn_ref::<true>,
     drop_fn_ref::<true>,
@@ -947,6 +953,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     push_character_r,
     push_byte_r,
     ref_from_child_rec_r,
+    slot_tag_r,
     child_rec_r,
     get_record_r,
     hash_add_r,
@@ -972,6 +979,8 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     get_stack_text_r,
     get_stack_ref_r,
     set_stack_ref_r,
+    get_slot_ref_r,
+    set_slot_ref_r,
     set_stack_fn_ref_r,
     get_stack_fn_ref_r,
     drop_fn_ref_r,
@@ -5275,6 +5284,19 @@ fn ref_from_child_rec_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
+fn slot_tag<const F: bool>(s: &mut State) {
+    let v_field = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.slot_tag(&v_field);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn slot_tag_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    slot_tag::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
 fn child_rec<const F: bool>(s: &mut State) {
     let operands = s.operands(2);
     let v_tp = operands.get::<u16>(0);
@@ -5840,6 +5862,28 @@ fn set_stack_ref<const F: bool>(s: &mut State) {
 fn set_stack_ref_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     set_stack_ref::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn get_slot_ref<const F: bool>(s: &mut State) {
+    s.get_slot_ref();
+}
+
+fn get_slot_ref_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    get_slot_ref::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn set_slot_ref<const F: bool>(s: &mut State) {
+    s.set_slot_ref();
+}
+
+fn set_slot_ref_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    set_slot_ref::<true>(s);
     s.regs_out()
 }
 

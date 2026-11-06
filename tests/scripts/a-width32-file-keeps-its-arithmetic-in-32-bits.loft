@@ -6,6 +6,7 @@
 // and an expression on 32-bit values stays 32-bit: a result outside the `i32` range reads null
 // (WIDTH32.md).  `i64` / `123l` and `f64` / `2.5d` keep 64 bits.  Each cell's value is
 // hand-computed in its comment; the interpreter, `--native` and `--native-c` must all answer it.
+// Guards `@FR-W-Name`, `@FR-W-Op`, `@FR-W-Lit` and `@FR-W-Call` (a generic's narrowed answer).
 //
 // @falsified-at: hand-measured (control, 2026-10-27) — the same cells without the `#width 32`
 // line, each printed rather than asserted, on the interpreter: c1 c2 c3 c4 c5 c9 c10 c11 c11b

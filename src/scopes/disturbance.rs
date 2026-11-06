@@ -228,10 +228,30 @@ pub(super) fn reshaped_containers(
 pub(super) fn released_children(code: &Value, data: &Data) -> HashMap<(u16, u32), ContainerAt> {
     let mut out: HashMap<(u16, u32), ContainerAt> = HashMap::default();
     code.walk(&mut |v| {
-        if let Value::Call(d, args) = v
+        // @PLN219 — an out-of-line field handed to a `&` parameter as a slot cell
+        // (`Parser::slot_cell_argument`): the callee may write it null, as `h.f = v` may.
+        let slot_arg = if let Value::Insert(ops) = v
+            && let [Value::Set(_, tag), Value::Call(cs, _)] = &ops[..]
+            && data.def(*cs).name() == "OpCreateStack"
+            && let Value::Call(t, targs) = tag.unspan()
+            && data.def(*t).name() == "OpSlotTag"
+        {
+            targs.first()
+        } else {
+            None
+        };
+        let field = if let Some(field) = slot_arg {
+            Some(field)
+        } else if let Value::Call(d, args) = v
             && data.def(*d).name() == "OpSetChildRec"
             && let [field, value, _] = &args[..]
             && !matches!(value.unspan(), Value::Block(_) | Value::Insert(_))
+        {
+            Some(field)
+        } else {
+            None
+        };
+        if let Some(field) = field
             && let Some((place, depth)) = named_place_depth(field, data)
         {
             let at = out

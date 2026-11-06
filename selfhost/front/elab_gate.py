@@ -27,10 +27,16 @@ def corpus(root, suite):
     }
 
 
+BUILD_SECONDS = 1800
+
+
 def build(loft, src, out, env):
     os.makedirs(out, exist_ok=True)
-    b = subprocess.run([loft, "--native-c", "--ship", "--out", out, src], env=env,
-                       capture_output=True, text=True, timeout=1800)
+    # The tools' own build is bounded by the build's limit, not by the per-program one: an
+    # optimised build of the elaborator takes minutes on a loaded box.
+    b = subprocess.run([loft, "--native-c", "--ship", "--out", out, src],
+                       env=dict(env, LOFT_TIMEOUT=str(BUILD_SECONDS)),
+                       capture_output=True, text=True, timeout=BUILD_SECONDS + 60)
     exe = os.path.join(out, os.path.splitext(os.path.basename(src))[0])
     if not os.path.exists(exe):
         sys.exit(f"{src} did not build:\n{b.stderr[-3000:]}")

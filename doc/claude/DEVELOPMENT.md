@@ -54,6 +54,10 @@ cycle: the feature, and every bug found along the way.
 - **Bundle many subjects into one PR**, even unrelated ones: a docs stream, a soundness fix and
   a language feature ride together.  Split only when the owner wants an independent merge
   clock for one item.
+- **Nothing lands alone.**  A change joins the branch only with every follow-up it needs to be
+  complete: the regression it exposes, the half that makes it consistent, its derived
+  artefacts.  Keep it on its own worktree until the follow-up is done and verified, then join
+  both; "land it now, or with the follow-up?" is not a question to ask.
 
 **Renaming a branch** whose name has drifted from its work: `git branch -m <from> <to>` before
 the PR is opened.  Replacing an already-pushed name on the remote needs the user's instruction.
@@ -100,6 +104,19 @@ so the opening is not held for a local `make ci` (a slower duplicate, which on a
 sibling's `pkill` can kill).  **A branch a sibling has joined twice is overdue**; that is a fact
 to report, not a request to make.
 
+**Between PRs, a sibling's work is not joined.**  Agents doing real work push continuously,
+and chasing their heads keeps a branch in a re-derive loop that never reaches a PR.  A peer's
+"take X at your next join" goes on a list of what is open to merge
+(`scripts/join.py survey --days 3` refreshes it, read-only), and the owner's ask for a PR is
+when it comes in, at one cut per source.  The one exception is a red the open PR cannot pass
+without — and that is said and asked first.
+
+**A fix the PR's own checks surface never gets a loft PR of its own**: it goes on the next
+branch and with the next PR (§ The PR cycle, two runs).  A fix that belongs in a library
+lands there, through that library's own PR.  **A large arc may get its own PR** right after
+the general one, so its CI verdict is its own — the owner's call, for an arc that piled up,
+not the default shape: arcs normally finish inside the day's PR.
+
 The bar for a unit of work is not "green": a PR that looks right while carrying internal
 regressions is worse for a language's users than no PR, so an arc ships only with its own
 verification complete — both backends, the matrix built and hand-checked, guards falsified,
@@ -121,9 +138,18 @@ on their own branches at the same time: no step waits on them, and none touches 
    green stays out.  **Re-check every cut right before applying:** the other agents keep
    working, so fetch again and re-survey on each branch's CURRENT head (and each sibling
    checkout's local one).  A survey or an announced sha from an hour ago is a floor, not the
-   cut.
+   cut.  **Ask each branch's agent for its cut**: `ListAgents` names them, Remote Control and
+   cloud sessions included.  An agent no message reaches (no Remote Control) is not asked:
+   its branch's pushed head is the cut, and only its finished, pushed fixes come in.  What the
+   join and those messages bring up comes in too: a fix the agent pushes in answer, a defect
+   its own branch carried.  The gathering takes minutes, not hours: once a cut is set, the NEW
+   work an agent keeps building waits for the next PR, and only FIXES for what this PR carries
+   are still taken.
 2. **Fix what the join broke, at once** — a conflict's compile error, a clippy finding, a
-   derived artefact both sides changed (re-derive it, never pick a side).
+   derived artefact both sides changed (re-derive it, never pick a side).  Format first
+   (`cargo fmt`), then clippy (`scripts/join.py verify` runs them in that order): rustfmt
+   can lengthen a function past clippy's `too_many_lines`, so a clippy run before it passes
+   code the PR's Clippy job then refuses.
 3. **Check each fix on its own**, with a targeted CI probe on the step it repairs
    (`gh workflow run linux-probe.yml -f filter=…` or `-f run=…`; `windows-probe.yml` for a
    Windows step), not with a full gate.  A probe that cannot fail proves nothing: check that
@@ -131,10 +157,44 @@ on their own branches at the same time: no step waits on them, and none touches 
 4. **Open the PR** on the joined branch, current on `origin/main` (CLAUDE.md § Branch policy
    rule 6), and arm `gh pr merge --auto --squash`.
 5. **Start the next branch** (`<host>-pr<N>-next`) on the PR's tip, and fix the PR run's red
-   steps there, each checked with its own probe as in step 3.
+   steps there, each checked with its own probe as in step 3.  **Work each red job as it
+   ends, not when the run does**: `scripts/pr_watch.py <N>` in the background looks every
+   five minutes and exits on each newly red job with its log saved, so its fix starts at once
+   and is ready when the run finishes; run it again after each exit.  **Main's nightly reds
+   are fixed in the same pass**: the PR's `Nightly health (informational)` check names them,
+   and the PR cycle is mostly waiting on runners anyway.  `pr_watch.py`'s first call lists
+   the latest red run of each scheduled workflow on `main`; fix each red there like a PR
+   red, and one the PR already fixes needs only that check.
 6. **Push those fixes to the PR branch only after its current run has finished**, all at once.
    Each run is then read whole, and its red steps are fixed before the next run starts.
-   Cancel the runs a push made obsolete (`gh run cancel`).  Repeat 5–6 until the PR merges.
+   Cancel the runs a push made obsolete (`gh run cancel`).
+7. **Once it has merged, install the new main as the box's `loft`**: `make install-main`
+   (into `~/.local`, from main's daily build when this machine's rustc built it, else
+   rebuilt where only what changed is compiled; [GUARDS.md](GUARDS.md) § The control is
+   installed main).  Every agent on the box scores its guards against that binary
+   (`make falsify` without `REF`); a stale one makes each score against an older main, and a
+   fix main now holds reads INERT only once the install has it.  `cat
+   ~/.local/share/loft/SOURCE` names the commit it was built from.
+
+**Two runs, two jobs.**  The FIRST run is discovery: with optimization work this destructive, a
+union is not green before the checks the PR exists for have run, so a red first run is the
+design working.  Every red it shows — the tests, the informational and advisory steps, and
+main's nightly reds (step 5) — is fixed on the next branch before the second run, and the
+SECOND run is meant to be entirely green: it lands the PR on `main`.  What slips through to
+it is sorted by whether it blocks the merge, which only a REQUIRED check does (`Test` on the
+three platforms — the Linux one gathers every test shard — `Clippy`, `Format`, `Language
+suite`; the list is `gh api repos/{owner}/{repo}/rules/branches/main`).  A red required check
+holds auto-merge, so its fix is pushed for a third run.  Anything else red does not stop
+auto-merge from landing the PR: its fix stays on the next branch and goes with the NEXT PR,
+as does any fix left there at the merge: fixed, just not on `main` yet.  The same holds when
+the FIRST run already has every required check green, which is rare: auto-merge lands it
+then, and the discovery fixes wait on the next branch the same way, at most a day.
+
+A nightly red in a consumer's suite (`switch-ab`, `consumer-main-health`) is triaged before
+it is fixed: run the consumer's suite on `main`'s own binary.  A failure there too is the
+consumer lagging the language (a stale lock, an API the rules now refuse), not this PR's
+regression.  The consumer's tree stays read-only (CLAUDE.md § Dogfood loop): its fix is made
+in a fresh clone and pushed only on the owner's word.
 
 A language change can retro-break a shipped library while every branch gate stays green,
 because the library gate runs only on PRs and on `main`: run

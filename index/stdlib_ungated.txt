@@ -145,6 +145,7 @@ OpGetShortFull
 OpGetShortRaw
 OpGetShortSpare
 OpGetSingle
+OpGetSlotRef
 OpGetStackFnRef
 OpGetStackRef
 OpGetStackText
@@ -286,6 +287,7 @@ OpSetRef
 OpSetShort
 OpSetShortRaw
 OpSetSingle
+OpSetSlotRef
 OpSetStackFnRef
 OpSetStackRef
 OpSetText
@@ -301,6 +303,7 @@ OpSizeVector
 OpSizeofRef
 OpSliceVector
 OpSliceView
+OpSlotTag
 OpSortVector
 OpStaticCall
 OpStep
@@ -343,7 +346,7 @@ __iface_34#2_OpMin
 __iface_34#2_minus
 __iface_37#2_scale
 __iface_39#1_to_text
-__iface_526#1_children
+__iface_529#1_children
 i_7integer_n_sum
 n___ledger
 n___ledger_div

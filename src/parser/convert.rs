@@ -314,6 +314,49 @@ impl Parser {
         }
     }
 
+    /// @PLN219 `@FR-F-ParamRef`, `@FR-B-Ref-Lvalue` — an out-of-line FIELD handed to a `&S`
+    /// parameter whose `S` is held out of line: the callee gets a cell of this frame naming the
+    /// field ([`crate::keys::SLOT_FIELD_BIT`]), so its whole write is the field write, made when
+    /// the callee makes it.  The field is the argument itself (`take_min(t.right)`) or what a
+    /// local field link keeps (`n = &t.right; take_min(n)`); the link reads the field again
+    /// once the call returns.  `None` for every other argument, which keeps its own path.
+    fn slot_cell_argument(&mut self, should: &Type, orig: &Value) -> Option<Value> {
+        if self.first_pass {
+            // Pass 1 records that the link is handed on, so pass 2 keeps its field.
+            if let Value::Var(v) = orig.unspan()
+                && self.vars.exists(*v)
+                && !self.vars.is_argument(*v)
+                && self.data.slot_link_def(should).is_some()
+            {
+                self.slot_links
+                    .note(self.context, *v, self.vars.name(*v))
+                    .passed = true;
+            }
+            return None;
+        }
+        let d = self.data.slot_link_def(should)?;
+        let (field, relink) = match orig.unspan() {
+            Value::Var(v) if !self.vars.is_argument(*v) => {
+                let (slot, _) = *self.slot_vars.get(&(self.context, *v))?;
+                let read = self.cl("OpRefFromChildRec", &[Value::Var(slot)]);
+                (Value::Var(slot), Some(v_set(*v, read)))
+            }
+            Value::Var(_) => return None,
+            _ => (self.out_of_line_place(orig)?.0, None),
+        };
+        let tp = Type::Reference(d, Deps::none());
+        let cell = self.vars.work_refs_p2(&tp, &mut self.lexer);
+        self.vars.set_skip_free(cell);
+        let tag = self.cl("OpSlotTag", &[field]);
+        if let Some(relink) = relink {
+            self.pending_arg_posts.push(relink);
+        }
+        Some(Value::Insert(vec![
+            v_set(cell, tag),
+            self.cl("OpCreateStack", &[Value::Var(cell)]),
+        ]))
+    }
+
     /// `@FR-T-Sub` — a value synthesised as `is_type` is accepted where `should` is expected
     /// when `is_type ⤳ should`, and `code` is rewritten to deliver it (a widening, a member-wise
     /// tuple rebuild, a variant into its enum).  `false` when no conversion is licensed; the
@@ -1106,7 +1149,9 @@ impl Parser {
                 }
             } else {
                 let orig = std::mem::replace(code, Value::Null);
-                if let Value::Var(v) = orig {
+                if let Some(linked) = self.slot_cell_argument(should, &orig) {
+                    *code = linked;
+                } else if let Value::Var(v) = orig {
                     // @PLN167 decision 1 — handed to a `&` parameter, a narrow local holds its
                     // field encoding from here on (`Variable::linked_narrow`).
                     self.vars.set_linked_narrow(v);
@@ -1682,19 +1727,34 @@ impl Parser {
             // identically and the reader has nothing to go on; the collision is exactly
             // what they need told, and it is the one case where the position of a TYPE
             // (rather than of the value) is the useful fact.
-            let (want_nr, have_nr) = (
-                self.data.type_def_nr(should),
-                self.data.type_def_nr(test_type),
-            );
-            if want == have && want_nr != have_nr && want_nr != u32::MAX && have_nr != u32::MAX {
+            //
+            // The two can sit INSIDE a former as well — `vector<Fill>` against `vector<Fill>`
+            // when two modules each declare a `Fill` (loft#2435) — so the pair is the first
+            // two declared types, in the same place in both, that differ under one name.
+            let pair = if want == have {
+                self.same_named_pair(should, test_type)
+            } else {
+                None
+            };
+            if let Some((want_nr, have_nr)) = pair {
+                // The pair is the whole type (`Fill`, `Fill?`), or the type a former holds,
+                // named on its own after the former the reader wrote.
+                let (named, former) = if want_nr == self.data.type_def_nr(should) {
+                    (want, String::new())
+                } else {
+                    (
+                        self.data.def(want_nr).name().to_string(),
+                        format!("`{want}` with "),
+                    )
+                };
                 // @C101 — the program's type shadows a standard-library one wherever the bare
                 // name is written; `std::` names the standard library's (loft#1882).
                 let std_cure = if self.data.def(have_nr).source == crate::data::STD_SOURCE
                     || self.data.def(want_nr).source == crate::data::STD_SOURCE
                 {
                     format!(
-                        "; the program's `{want}` shadows the standard library's — write \
-                         `std::{want}` where the standard library's is meant"
+                        "; the program's `{named}` shadows the standard library's — write \
+                         `std::{named}` where the standard library's is meant"
                     )
                 } else {
                     String::new()
@@ -1703,8 +1763,8 @@ impl Parser {
                     self.lexer,
                     pos,
                     Level::Error,
-                    "expected the `{want}` declared at {}, got the one declared at {} — two \
-                     different types share this name on {context}{std_cure}",
+                    "expected {former}the `{named}` declared at {}, got the one declared at {} \
+                     — two different types share this name on {context}{std_cure}",
                     self.data.def(want_nr).position(),
                     self.data.def(have_nr).position()
                 );
@@ -1721,6 +1781,42 @@ impl Parser {
 }
 
 impl Parser {
+    /// The first two DIFFERENT declared types that `a` and `b` hold at the same place under one
+    /// name — the pair a message reading "expected X, got X" has to tell apart — or `None`.
+    /// Read in the order the type's nodes are visited, which is the same order for two types
+    /// that render alike.  A type without a declared one at some place (a scalar, a function's
+    /// arity) adds nothing there, so a pair is only reported where the two lists agree in
+    /// length; `None` otherwise is the plain message, which is all a caller falls back to.
+    fn same_named_pair(&self, a: &Type, b: &Type) -> Option<(u32, u32)> {
+        let declared = |tp: &Type| {
+            let mut out = Vec::new();
+            tp.any_node(&mut |t| {
+                match t {
+                    Type::Reference(d, _)
+                    | Type::Enum(d, _, _)
+                    | Type::Hash(d, _, _)
+                    | Type::Sorted(d, _, _)
+                    | Type::Index(d, _, _)
+                    | Type::Radix(d, _, _)
+                    | Type::Trie(d, _, _) => out.push(*d),
+                    _ => {}
+                }
+                false
+            });
+            out
+        };
+        let (da, db) = (declared(a), declared(b));
+        if da.len() != db.len() {
+            return None;
+        }
+        da.into_iter().zip(db).find(|&(x, y)| {
+            x != y
+                && x != u32::MAX
+                && y != u32::MAX
+                && self.data.def(x).name() == self.data.def(y).name()
+        })
+    }
+
     /// The null leaves of a `null`-typed control-flow value converted to `should` in place: an
     /// `if`'s arms, a block's (or insert's) last operator, through spans.  A leaf that never
     /// finishes (`return`, `break`, `continue`, a halt) stays.  False — nothing changed — when

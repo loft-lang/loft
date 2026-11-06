@@ -687,13 +687,16 @@ impl ViewWalk<'_> {
         let released = released_children(stmt, self.data);
         for (place, at) in reshaped_containers(stmt, self.data, self.function) {
             if released.contains_key(&place) {
-                self.shake_places_deeper(place, at.depth, None, ViewCause::Released, None);
+                self.shake_deeper_through_views(place, at.depth, None, ViewCause::Released);
                 continue;
             }
             if at.depth == 0 {
                 whole.insert(place);
+                if let Some((root, depth)) = self.through_views(place, 0) {
+                    self.shake_places_deeper(root, depth, None, ViewCause::Reshaped, None);
+                }
             } else {
-                self.shake_places_deeper(place, at.depth, at.index, ViewCause::Reshaped, None);
+                self.shake_deeper_through_views(place, at.depth, at.index, ViewCause::Reshaped);
             }
         }
         self.shake_places_keyed(
@@ -723,7 +726,7 @@ impl ViewWalk<'_> {
             }
         });
         for (place, depth, index) in rebuilt {
-            self.shake_places_deeper(place, depth, index, ViewCause::Reassigned, None);
+            self.shake_deeper_through_views(place, depth, index, ViewCause::Reassigned);
         }
         // A whole record written into a place releases what the old value owned
         // (`(B-Disturb)`'s fifth event): the views deeper than the place and inside the record
@@ -731,24 +734,50 @@ impl ViewWalk<'_> {
         // own vector or child, anywhere in the written record, so each such slot is shaken.
         for w in overwritten_records(stmt, self.data, self.database) {
             for place in self.overwritten_slots(w.place, w.size) {
-                self.shake_places_deeper(
+                self.shake_deeper_through_views(
                     place,
                     w.at.depth,
                     w.at.index,
                     ViewCause::Overwritten,
-                    None,
                 );
             }
         }
         // A growth ends the views deeper than the container it grows (`shake_places_keyed`).
         for (place, at) in grown_containers(stmt, self.data, self.function, self.database) {
-            self.shake_places_deeper(place, at.depth, at.index, ViewCause::Grown, None);
+            self.shake_deeper_through_views(place, at.depth, at.index, ViewCause::Grown);
         }
         let established = established_stores(stmt, self.function, self.data, Establish::Inline);
         if via_calls {
             self.disturb_callees(stmt);
         }
         self.shake(&established, ViewCause::Reassigned, None);
+    }
+
+    /// The place a disturbance names, read through the open views it was made through
+    /// (`@FR-B-Disturb`): a write at `w.left` where `w = t.left` is a write at `t.left.left`, and
+    /// ends the views of `t` that reach below it — `n = t.left.left` names the record it
+    /// releases.  The views are composed as a binding's are ([`Self::resolve_view_root`]), and
+    /// the place's own depth below the view adds to the view's.  `None` when `place` is not
+    /// inside an open view.
+    fn through_views(&self, place: (u16, u32), depth: u8) -> Option<((u16, u32), u8)> {
+        let mut hops = Vec::new();
+        let (root, view_depth, _) = self.resolve_view_root(place.0, place.1, &mut hops);
+        (root.0 != place.0).then(|| (root, view_depth.saturating_add(depth)))
+    }
+
+    /// [`Self::shake_places_deeper`] at `place` and, where it lies inside an open view, at the
+    /// place that view names ([`Self::through_views`]).
+    fn shake_deeper_through_views(
+        &mut self,
+        place: (u16, u32),
+        depth: u8,
+        index: Option<(u32, i32)>,
+        cause: ViewCause,
+    ) {
+        self.shake_places_deeper(place, depth, index, cause, None);
+        if let Some((root, at)) = self.through_views(place, depth) {
+            self.shake_places_deeper(root, at, None, cause, None);
+        }
     }
 
     /// The disturbances `stmt` makes ONE FRAME DOWN, in one place so a call's order can be

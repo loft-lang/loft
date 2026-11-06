@@ -70,6 +70,18 @@ const CASES: &[(&str, &[i64], &str)] = &[
 
 /// Where the body of the function `name` opens in `text` (its definition, `… name(…) {`, not a
 /// prototype): the byte of the `{` line's end.
+/// The body a call of `base` reaches: `<base>__rg__fr` when the unit holds the function's
+/// `__rg` twin (`@FR-R-RangedCall`: a call with bounded arguments runs it, with the same
+/// holders), else `<base>__fr`.
+fn reached_body(text: &str, base: &str) -> String {
+    let rg = format!("{base}__rg__fr");
+    if text.contains(&format!("{rg}(")) {
+        rg
+    } else {
+        format!("{base}__fr")
+    }
+}
+
 fn definition_of(text: &str, name: &str) -> Option<usize> {
     let mut from = 0;
     while let Some(i) = text[from..].find(&format!("{name}(")) {
@@ -912,8 +924,10 @@ fn main() {
             String::from_utf8_lossy(&emit.stderr)
         );
         let text = fa::read_to_string(&c).expect("read the C");
+        // Counted per FUNCTION: a `__rg` twin (`@FR-R-RangedCall`) of an adopting function
+        // adopts as its base does, and is the same function.
         assert_eq!(
-            text.matches(bind).count(),
+            functions_containing(&text, bind).len(),
             binds,
             "{mode}: split, vfill, twice and rec each adopt their buffer"
         );
@@ -1600,9 +1614,10 @@ fn main() {
             .lines()
             .filter(|l| l.contains(" = loft_ph_of("))
             .count();
+        let mints_fn = reached_body(body, "n_mints");
         let mints_headers = body
-            .find("n_mints__fr(")
-            .and_then(|_| definition_of(body, "n_mints__fr"))
+            .find(&format!("{mints_fn}("))
+            .and_then(|_| definition_of(body, &mints_fn))
             .map_or(0, |at| {
                 body[at..at + body[at..].find("\n}\n").unwrap_or(0)]
                     .lines()
@@ -1615,9 +1630,10 @@ fn main() {
             scalar_pushed,
             "{mode}: the scalar push headers"
         );
+        let scal_fn = reached_body(body, "n_scal");
         let scal = body
-            .find("n_scal__fr(")
-            .and_then(|_| definition_of(body, "n_scal__fr"))
+            .find(&format!("{scal_fn}("))
+            .and_then(|_| definition_of(body, &scal_fn))
             .map_or("", |at| {
                 &body[at..at + body[at..].find("\n}\n").unwrap_or(0)]
             });
@@ -8008,4 +8024,26 @@ fn the_written_c_compiles_without_a_lint_warning() {
             "{name}: the C did not compile cleanly under the lint:\n{err}"
         );
     }
+}
+
+/// The functions of the C unit `text` whose body holds `needle`, by base name: a twin's suffix
+/// (`__fr`, `__rg`) is dropped, so a function and its ranged twin count once.
+fn functions_containing(text: &str, needle: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        if line.starts_with("static ") && line.ends_with('{') {
+            current = line
+                .split('(')
+                .next()
+                .and_then(|h| h.split_whitespace().last())
+                .map(|n| n.replace("__fr", "").replace("__rg", ""));
+        }
+        if line.contains(needle)
+            && let Some(f) = &current
+        {
+            out.insert(f.clone());
+        }
+    }
+    out
 }

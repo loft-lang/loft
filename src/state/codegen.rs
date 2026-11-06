@@ -687,6 +687,14 @@ impl State {
                     stack.add_op("OpPutRef", self);
                     self.code_add(pos);
                 }
+                // A `&τ` local reads through its link (`generate_var`'s deref, @FR-B-Ref-Uniform)
+                // but answers the LINK's type, so the pushed value is a τ: sized as the link, a
+                // yielded `&integer` took 12 bytes off an 8-byte push and a `&text` 12 off a
+                // 16-byte one.
+                let t = match t {
+                    Type::RefVar(inner) => *inner,
+                    other => other,
+                };
                 let value_size = crate::variables::size(&t, &crate::data::Context::Argument);
                 stack.add_op("OpCoroutineYield", self);
                 self.code_add(value_size);
@@ -1768,27 +1776,62 @@ impl State {
         self.code_add(dep_offset + step);
     }
 
-    /// @PLN198 (`@FR-R-TextBorrow`) — mark this function's text loop variables that BORROW
-    /// their element: `for p in words` whose rest reads `p` only as a text value and writes
-    /// no store.  The admission is the native generator's own
-    /// ([`crate::opt::text_borrow::borrowed_text_walks`]), asked without the walks only the
-    /// native generator lowers (a lazy split's pieces, a split table), so both backends
-    /// borrow the same walks of a real vector.  The element's bytes live in the vector's
-    /// store, which an admitted body never writes, so the `Str` stays valid for the
-    /// iteration.  `LOFT_NO_TEXT_BORROW=1` keeps the copy here as it does there.
+    /// `@FR-R-TextBorrow` — mark this function's text variables that BORROW their bytes
+    /// instead of copying them: the walk clause's loop variables, the `?` / `??` discharge
+    /// temps, and the store-read clause's locals (a parameter's text, a slice of one, a
+    /// literal, the frame's own format or call work text).  The decision is the writers'
+    /// own, asked as the C asks it (`opt::text_borrow`, `opt::store_text_borrow`, local
+    /// roots on), without the walks only a compiled writer lowers (a lazy split's pieces, a
+    /// split table) and without the tested clause, whose borrow needs a run-time test.  Each
+    /// admitted variable's every bind is a text the borrowed bytes outlive, so its slot holds
+    /// a `Str` (`Function::holds_str`) and a bind puts it as it is.  `LOFT_NO_TEXT_BORROW=1`
+    /// keeps the copy here as it does in the writers.
     fn mark_text_views(def_nr: u32, data: &mut Data) {
         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *OFF.get_or_init(|| std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0")) {
             return;
         }
-        let views = crate::opt::text_borrow::borrowed_text_walks(
+        let tables = std::collections::BTreeMap::new();
+        let mut views = crate::opt::text_borrow::borrowed_text_walks(
             data,
             def_nr,
             &std::collections::BTreeSet::new(),
-            &std::collections::BTreeMap::new(),
+            &tables,
         );
-        for v in views.keys() {
-            data.def_mut(def_nr).variables.mark_text_view(*v);
+        views.extend(crate::opt::hoist::borrowed_discharge_temps(
+            data, def_nr, &tables,
+        ));
+        let store = crate::opt::store_text_borrow::borrowed_store_texts(data, def_nr, &views, true);
+        views.extend(store.borrows);
+        // The call clause stays a copy here, as on the C: its premise — the call's answer IS
+        // the work text it was handed — is the compiled writers' calling convention, and the
+        // interpreter's answer is another `Str`.  A work-text borrower is kept only when its
+        // every bind is a literal or a format block (`StoreTextBorrows::work`'s format clause).
+        let format_only = |v: u16| {
+            !data.def(def_nr).code().any_node(&mut |n| {
+                matches!(n, Value::Set(w, x) if *w == v && !matches!(x.unspan(),
+                    Value::Text(_)) && !matches!(x.unspan(),
+                    Value::Block(b) if b.name == "Formatted string"))
+            })
+        };
+        let marked: Vec<u16> = {
+            let vars = data.def(def_nr).variables();
+            views
+                .keys()
+                .copied()
+                .filter(|v| {
+                    !store.tested.contains_key(v)
+                        && (!store.work.contains(v) || format_only(*v))
+                        && !vars.is_argument(*v)
+                        && matches!(vars.tp(*v).base(), Type::Text(_))
+                })
+                .collect()
+        };
+        let slices = marked.iter().filter(|v| store.slices.contains(v)).count();
+        crate::rewrite_census::fired("R-TextBorrow", marked.len());
+        crate::rewrite_census::fired("R-SliceBorrow", slices);
+        for v in marked {
+            data.def_mut(def_nr).variables.mark_text_view(v);
         }
     }
 
@@ -1808,13 +1851,16 @@ impl State {
             self.code_add(advance);
             stack.grow(advance);
         }
-        // A text view (@PLN198) owns no `String`: nothing to start, and `set_var` puts the
-        // element's `Str` into the slot.
-        if !stack.function.is_text_view(v) {
-            let slot_offset = stack.position - pos;
-            stack.add_op("OpInitText", self);
-            self.code_add(slot_offset);
+        // A text view (`@FR-R-TextBorrow`) owns no `String`: nothing to start, and `set_var`
+        // puts the bound `Str` into the slot — the empty literal's too, since no init wrote
+        // the slot.
+        if stack.function.is_text_view(v) {
+            self.set_var(stack, v, value);
+            return;
         }
+        let slot_offset = stack.position - pos;
+        stack.add_op("OpInitText", self);
+        self.code_add(slot_offset);
         if let Value::Text(s) = value {
             if !s.is_empty() {
                 self.set_var(stack, v, value);
@@ -2541,7 +2587,10 @@ impl State {
             // @PLN25: a `text?` reassignment must CLEAR before the append, exactly like plain
             // `text` (set_var's OpAppendText appends in place) — peel the marker. Without this
             // `a: text? = "hi"; a = "x"` appended → "hix".
-            if matches!(stack.function.tp(v).base(), Type::Text(_)) {
+            // A text view (`@FR-R-TextBorrow`) holds a `Str`, which its put replaces whole.
+            if matches!(stack.function.tp(v).base(), Type::Text(_))
+                && !stack.function.is_text_view(v)
+            {
                 let var_pos = stack.position - pos;
                 stack.add_op("OpClearText", self);
                 self.code_add(var_pos);
@@ -5975,6 +6024,16 @@ impl State {
                 // two missing.  One predicate answers "is this a collection?" for every kind at
                 // once, and a kind added to the language reaches this site without anyone
                 // remembering to.
+                // @PLN219 `@FR-F-ParamRef` — a `&S` link whose `S` is held out of line points at
+                // a slot cell, which may name a field: read through the test.
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+                    if stack
+                        .data
+                        .slot_link_def(stack.function.tp(variable))
+                        .is_some() =>
+                {
+                    stack.add_op("OpGetSlotRef", self);
+                }
                 Type::Reference(_, _) | Type::Enum(_, true, _) => {
                     stack.add_op("OpGetStackRef", self);
                 }
@@ -6439,7 +6498,12 @@ impl State {
                     crate::use_analysis::ownership_of(stack.data, stack.def_nr, value),
                     crate::use_analysis::Own::Owned
                 );
-            if amp_owned_writeback {
+            // `@FR-F-ParamRef` — a RECORD written back from a borrowed value displaces the
+            // caller's store as an owned one does: the store is released unless the new value
+            // lives in it.  `slot = slot.right` keeps the store (a view of its own child); the
+            // write that ends a drain, `slot = slot.right` reading null, releases it.
+            let amp_displaces = amp_owned_writeback || tp.heap_def_nr().is_some();
+            if amp_displaces {
                 // stash OLD = *o (by value — survives the SetStackRef below)
                 let var_pos = stack.var_pos(var);
                 stack.add_op("OpVarRef", self);
@@ -6502,6 +6566,21 @@ impl State {
                 // The list was Vector/Reference/Enum and a `&hash<T[k]>` fell into the
                 // `panic!` — an allow-list whose omission costs an ICE rather than an
                 // optimisation, which is the trade the other way round (loft#1292).
+                // @PLN219 `@FR-F-ParamRef` — a whole write through a slot cell: the field write
+                // when the cell names a field, the write-back otherwise.  An OWNED value is
+                // copied into the field, so its store is given up there (`COPY_FREE_SOURCE`);
+                // written back, it moves into the caller's variable as before.
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+                    if let Some(d) = stack.data.slot_link_def(stack.function.tp(var)) =>
+                {
+                    stack.add_op("OpSetSlotRef", self);
+                    let mut kt = stack.data.def(d).known_type();
+                    if amp_owned_writeback {
+                        kt |= crate::keys::COPY_FREE_SOURCE;
+                    }
+                    self.code_add(kt);
+                    false
+                }
                 Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, true, _) => {
                     stack.add_op("OpSetStackRef", self);
                     false
@@ -6520,7 +6599,7 @@ impl State {
             {
                 self.code_add(slot.min);
             }
-            if amp_owned_writeback {
+            if amp_displaces {
                 // free OLD unless the install kept it (witness = *o's NEW store)
                 let var_pos = stack.var_pos(var);
                 stack.add_op("OpVarRef", self);
@@ -6592,8 +6671,10 @@ impl State {
         // freeing that at scope exit aborted the interpreter (`free(): invalid
         // pointer`).  `gen_set_first_text` already skips the whole `set_var` for
         // this value; this is the reassignment path agreeing with it.
+        // A text view (`@FR-R-TextBorrow`) was not cleared: it takes the empty `Str` by put.
         if matches!(stack.function.tp(var).base(), Type::Text(_))
             && value == &Value::Text(String::new())
+            && !stack.function.is_text_view(var)
         {
             return;
         }

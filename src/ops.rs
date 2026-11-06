@@ -327,7 +327,7 @@ pub fn op_conv_bool_from_long(val: i64) -> bool {
 
 /// @PLN204 — `OpNarrow32`: the 32-bit regime's overflow.  A value outside
 /// `i32::MIN + 1 ..= i32::MAX` (where `i32::MIN` is the 32-bit null) reads null, as a 64-bit
-/// overflow does; a null stays null.
+/// overflow does; a null stays null.  The runtime half of `@FR-W-Op` and `@FR-W-Call`.
 #[inline]
 #[must_use]
 pub fn op_narrow32(v: i64) -> i64 {

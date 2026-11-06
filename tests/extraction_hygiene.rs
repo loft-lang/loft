@@ -298,12 +298,15 @@ fn forbidden_library_symbols() -> Vec<(String, String)> {
 }
 
 /// Cargo dependencies that belong to a library's `native/` crate, not
-/// the main loft crate.  Currently empty — the `png` / `ureq` / etc.
-/// deps still live in `Cargo.toml` because Tier-B libraries
-/// (graphics/imaging/random/server) are still linked as workspace
-/// members and the cdylib loader hasn't shipped yet.  Add a row when
-/// a dep moves out for real.
+/// the main loft crate.  The `png` / `ureq` / etc. deps still live in
+/// `Cargo.toml` because Tier-B libraries (graphics/imaging/random/server)
+/// are still linked as workspace members and the cdylib loader hasn't
+/// shipped yet.  Add a row when a dep moves out for real.
 const FORBIDDEN_MAIN_CRATE_DEPS: &[&str] = &[
+    // The browser bundle draws text with the page's own font engine
+    // (`src/wasm_gl.rs` § GL7.3); a font parser in loft's crate is one more
+    // unmaintained dependency every font from outside reaches.
+    "fontdue",
     // Add rows when a library's drain removes its dep from the main
     // crate.  Until then this gate is intentionally lenient — the
     // symbol gate above catches the more important regression

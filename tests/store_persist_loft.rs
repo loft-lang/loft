@@ -4135,3 +4135,72 @@ fn an_image_in_the_old_key_order_is_converted() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// A lazy load of an image that is not there is refused by naming the IMAGE, not a missing
+/// `.dschema`: an absent image has no sidecar either, and "no layout sidecar" sends the reader
+/// looking for the wrong file.  It stays a refusal (nothing is read), and an image that IS
+/// there without its sidecar still names the sidecar.  Both backends, the same words.
+#[test]
+fn a_missing_image_is_refused_as_missing_not_as_bare() {
+    let dir = scratch("missing_image_names_the_image");
+    let program = |image: &Path, write_first: bool| {
+        format!(
+            "struct Part {{ id: integer, name: text }}
+fn main() {{
+  p = \"{}\";
+  _ = delete(p); _ = delete(\"{{p}}.dschema\");
+  if {write_first} {{
+    src: hash<Part[id]> = [];
+    src += Part {{ id: 7, name: \"bolt\" }};
+    assert(store_persist_copy(src, p), \"written\");
+    _ = delete(\"{{p}}.dschema\");
+  }}
+  parts: hash<Part[id]> = [];
+  assert(store_bind_lazy(parts, p), \"binds\");
+  println(\"null {{parts[7] == null}} faults {{store_lazy_faults(parts)}}\");
+}}
+",
+            image.display().to_string().replace('\\', "/")
+        )
+    };
+    for (name, write_first, says, never) in [
+        (
+            "absent",
+            false,
+            "the image cannot be opened",
+            "no layout sidecar",
+        ),
+        (
+            "bare",
+            true,
+            "no layout sidecar",
+            "the image cannot be opened",
+        ),
+    ] {
+        let script = dir.join(format!("{name}.loft"));
+        fa::write(
+            &script,
+            program(&dir.join(format!("{name}.store")), write_first),
+        )
+        .expect("write the probe");
+        for backend in ["--interpret", "--native-c"] {
+            let out = loft::platform::process::harness_command(loft_bin())
+                .arg(backend)
+                .arg("--no-warnings")
+                .arg(&script)
+                .current_dir(workspace_root())
+                .output()
+                .expect("run loft");
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                stdout.contains("null true faults 1"),
+                "{name} {backend}: nothing is read\nstdout: {stdout}\nstderr: {stderr}"
+            );
+            assert!(
+                stderr.contains(says) && !stderr.contains(never),
+                "{name} {backend}: the refusal says `{says}`\nstderr: {stderr}"
+            );
+        }
+    }
+}

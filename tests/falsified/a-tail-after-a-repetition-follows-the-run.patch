@@ -1,8 +1,8 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index f4bfeede9..e9faa4055 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -8292,13 +8292,14 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index d2a9f612e..682ed4643 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -9859,13 +9859,14 @@ impl Parser {
      /// [, ..rest] ]` / `…+`.  The body `V` is one variant of the struct-enum element type; the
      /// repetition matches the MAXIMAL run of `V` starting at `head_len` (the count of fixed head
      /// elements already parsed).  A runtime run-loop counts that run into `end`; `name` (if given)
@@ -23,8 +23,8 @@ index f4bfeede9..e9faa4055 100644
 +    /// elements, are deferred (rejected here).
      #[allow(clippy::too_many_arguments)]
      #[expect(clippy::too_many_lines, reason = "inherited")]
-     fn parse_slice_repetition(
-@@ -8407,24 +8408,19 @@ impl Parser {
+     #[allow(clippy::too_many_arguments)]
+@@ -9980,24 +9981,19 @@ impl Parser {
          // becomes `V (Sep V)*`.  `Sep` is ONE variant, CONSUMED between elements but never
          // captured (`name` collects only the V's — a stride-2 read skips the separators).
          let sep_disc = self.parse_repetition_separator(e_nr);
@@ -56,7 +56,7 @@ index f4bfeede9..e9faa4055 100644
                      break;
                  }
                  // Skip one element up to the next top-level `,` or `]` (tracking bracket depth so
-@@ -8453,13 +8449,9 @@ impl Parser {
+@@ -10026,13 +10022,9 @@ impl Parser {
              self.lexer.revert(save);
              n
          };
@@ -73,7 +73,7 @@ index f4bfeede9..e9faa4055 100644
          let mut tail_conds: Vec<Value> = Vec::new();
          let mut has_rest = false;
          let mut rest_name: Option<String> = None;
-@@ -8470,17 +8462,7 @@ impl Parser {
+@@ -10043,17 +10035,7 @@ impl Parser {
                  rest_name = self.lexer.has_identifier();
                  break;
              }
@@ -92,7 +92,7 @@ index f4bfeede9..e9faa4055 100644
              if self.peek_is_slice_literal() {
                  let mut lit = Value::Null;
                  let lit_tp = self.expression(&mut lit);
-@@ -8537,6 +8519,13 @@ impl Parser {
+@@ -10110,6 +10092,13 @@ impl Parser {
              }
              j += 1;
          }
@@ -106,7 +106,7 @@ index f4bfeede9..e9faa4055 100644
          self.lexer.token("]");
  
          // @PLN35 PC — a CURSOR-mode repetition PREFIX-consumes: the run begins at the
-@@ -8545,8 +8534,17 @@ impl Parser {
+@@ -10118,8 +10107,17 @@ impl Parser {
          // (a plain vector must instead consume through to its end).  `base` is that
          // absolute start: plain `head_len` in vector mode (so the emitted IR stays
          // byte-identical there), a `pos + head_len` temp in cursor mode.  A fixed tail
@@ -125,7 +125,7 @@ index f4bfeede9..e9faa4055 100644
          let (base_val, base_setup) = if let Some((_, _, _, pos_var)) = cursor_ctx {
              let b = self.create_unique("rep_base", &I32);
              self.vars.defined(b);
-@@ -8562,6 +8560,10 @@ impl Parser {
+@@ -10135,6 +10133,10 @@ impl Parser {
              (Value::Int(head_len), None)
          };
  
@@ -136,7 +136,7 @@ index f4bfeede9..e9faa4055 100644
          let mut run_ops: Vec<Value> = Vec::new();
          if let Some(bs) = base_setup {
              run_ops.push(bs);
-@@ -8666,18 +8668,7 @@ impl Parser {
+@@ -10239,18 +10241,7 @@ impl Parser {
          // Match boolean (after the loop): no-rest requires the run to reach exactly the start of
          // the fixed tail (`end == len - tail_len`); a rest just needs room for the head
          // (`head_len <= len`).  `+` additionally requires a non-empty run (`end > head_len`).
@@ -156,7 +156,7 @@ index f4bfeede9..e9faa4055 100644
              // A cursor PREFIX-consumes: the run took the maximal V prefix and any
              // non-V tail simply stays unconsumed, so the arm matches whenever the head
              // fits (`base <= len`).  A vector `..rest` matches on the same "room for the
-@@ -8703,17 +8694,16 @@ impl Parser {
+@@ -10276,17 +10267,16 @@ impl Parser {
          } else {
              base
          };
@@ -182,7 +182,7 @@ index f4bfeede9..e9faa4055 100644
          *cond = match cond.take() {
              Some(existing) => Some(v_if(existing, arm_cond, Value::Boolean(false))),
              None => Some(arm_cond),
-@@ -8763,19 +8753,6 @@ impl Parser {
+@@ -10336,19 +10326,6 @@ impl Parser {
                  );
              }
          }
@@ -202,7 +202,7 @@ index f4bfeede9..e9faa4055 100644
          if let Some(name) = rest_name {
              let rest_var = self.pattern_binding(&name, &vec_tp);
              self.vars.defined(rest_var);
-@@ -8787,7 +8764,7 @@ impl Parser {
+@@ -10360,7 +10337,7 @@ impl Parser {
                      elm_size,
                      rest_var,
                      &vec_tp,
@@ -211,7 +211,7 @@ index f4bfeede9..e9faa4055 100644
                      hi_val,
                      1,
                      bindings,
-@@ -8809,7 +8786,7 @@ impl Parser {
+@@ -10382,7 +10359,7 @@ impl Parser {
                  bindings.push(v_set(t, lc));
                  Value::Var(t)
              } else {

@@ -23,6 +23,9 @@ struct P3 { x: float, y: float, z: float }
 struct Box3 { ps: vector<P3> }
 struct NT { name: text, k: integer }
 struct Bag2 { ns: vector<NT> }
+struct V2 { u: float, v: float }
+struct Vx { pos: P3, uv: V2 }
+struct Mesh { vs: vector<Vx> }
 
 // c1 — every field named, minted per iteration: the prefill walk is skipped and every
 // value is exactly the write's.
@@ -149,4 +152,26 @@ fn c11() {
   println("c11 {len(rs)} {rs[0].name}{rs[0].k} {rs[1].name}{rs[1].k}");
 }
 
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); }
+// c12 — a record with INLINE record fields, pushed whole from a tuple parameter
+// (`@FR-R-ValueRecord`): the IR writes the tuple into the element at the nested fields' FLAT
+// offsets, behind the presence test (`if av.5 { the sets } else <copy of null>`) — each arm
+// writes the whole record, so the mint skips the prefill.
+fn add_vx(m: Mesh, av: Vx) -> integer {
+  m.vs += [av];
+  len(m.vs)
+}
+
+fn mk_vx(f: float) -> Vx { Vx { pos: P3 { x: f, y: 1.0, z: 2.0 }, uv: V2 { u: 3.0, v: f } } }
+
+fn c12() {
+  m = Mesh { vs: [] };
+  n = 0;
+  for i in 0..3 { n = add_vx(m, mk_vx(i as float)); }
+  t = 0.0;
+  for w in m.vs { t = (t + w.pos.x + w.pos.y + w.pos.z + w.uv.u + w.uv.v) ?? 0.0; }
+  // each 6 + 2f, f = 0, 1, 2: 6 + 8 + 10
+  assert(t == 24.0 && n == 3, "c12 {t} {n}");
+  println("c12 {t} {n}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); }

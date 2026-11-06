@@ -930,6 +930,25 @@ static loft_ref loft_ref_from_child_rec(loft_ref f) {
     return r;
 }
 
+/* @PLN219 slot cells (keys::SLOT_FIELD_BIT): a `&S` parameter whose `S` is held out of line points
+ * at a cell holding a view, or the address of an out-of-line field with this bit in its position. */
+#define LOFT_SLOT_FIELD_BIT 0x40000000u
+static inline int loft_slot_is_field(loft_ref c) {
+    return c.store_nr != 0xFFFF && (c.pos & LOFT_SLOT_FIELD_BIT) != 0;
+}
+/* OpSlotTag (keys::slot_tag): the cell content naming field `f`; null for an absent field. */
+static inline loft_ref loft_slot_tag(loft_ref f) {
+    if (f.store_nr == 0xFFFF || f.rec == 0) return loft_ref_null();
+    f.pos |= LOFT_SLOT_FIELD_BIT;
+    return f;
+}
+/* Stores::slot_read: the child a field-naming cell holds, else the cell's own view. */
+static inline loft_ref loft_slot_read(loft_ref c) {
+    if (!loft_slot_is_field(c)) return c;
+    c.pos &= ~LOFT_SLOT_FIELD_BIT;
+    return loft_ref_from_child_rec(c);
+}
+
 /* OpChildRec (Stores::new_child_rec): a fresh `tp` child record in field `f`'s store, filled with
  * its defaults and named by the field; a record the field held before is released as this
  * store's bytes.  The claim is its header word and payload (`Stores::child_rec_words`). */
@@ -991,6 +1010,9 @@ static void loft_set_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, lof
         }
         return;
     }
+    /* The child the field already holds, written back (`t.left = insert(t.left, k)` handing its
+     * argument back): the field already says it, so nothing is copied or released. */
+    if (old != 0 && src.store_nr == f.store_nr && src.rec == old && src.pos == 8) return;
     uint32_t size = T[tp].size;
     uint32_t fresh = loft_claim(loft_store_of(f), 1 + (size + 7) / 8);
     loft_ref nw = { f.store_nr, fresh, 8, 0 };
@@ -1005,6 +1027,18 @@ static void loft_set_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, lof
         loft_st_delete(loft_store_of(f), fresh);
     }
     if (free_source && src.store_nr != f.store_nr && !loft_free_protected(src)) loft_free_ref(src);
+}
+
+/* Stores::slot_write (@PLN219): a whole write through a slot cell — the field write when the cell
+ * names a field (its free bit giving up an owned value's store), else the value written back. */
+static void loft_slot_write(const loft_tdesc *T, uint16_t tp, loft_ref *cell, loft_ref v, int free_source) {
+    if (loft_slot_is_field(*cell)) {
+        loft_ref f = *cell;
+        f.pos &= ~LOFT_SLOT_FIELD_BIT;
+        loft_set_child_rec(T, tp, f, v, free_source);
+    } else {
+        *cell = v;
+    }
 }
 
 /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each

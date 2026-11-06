@@ -667,6 +667,25 @@ scripts/claim.py check N           # who holds it
 - **A claim with no activity for 48 hours** may be taken over (`take N --take-over`), and the
   take-over is written on the issue.  `fixed-pending-merge` ends the race on its own: `take`
   refuses an issue whose fix has already landed on a branch.
+- **A fix agent's claim is its own stream** (its worktree branch), so the session that started
+  it cannot `release` it; once the agent has finished, that session takes it over
+  (`take N --take-over`) and then fixes, watches or releases it as its own.
+- **One stream keeps the list near green.**  Outside the PR gatherings, the stream the owner
+  names for it sweeps the open issues about every two hours: each one without a live claim is
+  taken and fixed, or handed to the agent whose branch or area it is.  An automated issue
+  (the advisory list, a `nightly-failure`) is first checked against what `main` and the open
+  PR already fix.  The same sweep reads `main`'s latest scheduled CI run (`gh run list --branch
+  main --event schedule`) — the aim is a GREEN daily run, now that loft is stabilising — and
+  fixes each red job on the `-next` branch, as an issue without an issue: a red the waiting
+  branch already fixes is noted, and a runner lost or out of disk, or a job past its time
+  limit, is read as a cause to find (its annotations), not a flake to re-run.  The sweep covers
+  every workflow, not only CI: the post-merge phase (each workflow that ran on `main`'s latest
+  merge commit, `gh run list --commit <sha>`) and each scheduled workflow's latest run on
+  `main`, the weekly ones included.  It also reads each job's
+  `Flaky test (passed only on retry)` annotations, on that run and on main's push runs: a pass
+  on retry is a finding, and the race is deleted as [GUARDS.md](GUARDS.md) § A fixed delay is
+  not synchronisation describes (sequence the steps, never widen the margin), so a green run
+  stays evidence.
 
 A claim written in prose ("claimed by the … stream") is invisible to the script, the work queue
 and the hook.  Write it with the script.

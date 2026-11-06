@@ -32,6 +32,12 @@ ships, the next month's branch starts fresh from the new `main` tip.  A cycle's 
 written in its `releases/<cycle>/README.md`; what work is in scope during a cycle is
 [ROADMAP.md § Scope during a cycle](ROADMAP.md#scope-during-a-cycle--the-warm-feature-freeze).
 
+**While the release is brought green, its branch takes only FIXES for what blocks that
+release** — its gate's reds, its checklist rows.  New work from the sibling streams (a perf
+rewrite, a feature round, a validated batch) waits for the next cycle, even a stream the
+owner asked to include earlier: every join brings join-only reds and restarts the gate, so a
+branch that keeps taking batches never ships.  A batch already joined and verified stays.
+
 ### Documentation validation — required for EVERY release
 
 **No release is tagged until its documentation has been validated against the build it ships,

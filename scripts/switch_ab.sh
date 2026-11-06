@@ -20,8 +20,10 @@
 # `LOFT_NO_LAZY_BUFFER=1` told the difference at once.
 #
 # A program whose output differs between two runs with the rewrite ON is nondeterministic
-# (time, randomness, a temp path) and is reported as NOISE, never as a defect.  Exit 1 when
-# any defect is found, 0 otherwise.
+# (time, randomness) and is reported as NOISE, never as a defect — so a NOISE program is
+# one the A/B does not check, and each is a finding to remove, not a state to keep.  A
+# file name in the temporary directory is masked before the comparison (see `semantic`).
+# Exit 1 when any defect is found, 0 otherwise.
 #
 # The comparison is of SEMANTICS (formal/rewrites.md (R-Escape)): how many copies a value
 # takes and where the code that allocates it sits are the compiler's to change.  So two
@@ -53,8 +55,14 @@
 # CAUGHT.  One that no longer moves is VACUOUS — the guard has stopped seeing the defect its
 # switch restores — and counts as a defect.  A `@catches` program runs with LOFT_STRICT_STORES
 # and LOFT_POISON armed on both legs, so a restored early release shows as a fault wherever
-# the allocator puts the next block.  Every program without the header is compared as usual
-# under the cure's switch too.
+# the allocator puts the next block.  A `@catches` program with `fn test…` and no `main` also
+# runs its tests (`--tests`), since a plain run executes `main` only and would show nothing
+# but its diagnostics.  Every program without the header is compared as usual under the
+# cure's switch too.  Every OTHER program without `main` is compared on its diagnostics only,
+# on purpose: its tests are assertions, and the language suite and the test runner already
+# run them (`loft --tests`) with every rewrite on, so a rewrite that breaks one fails there.
+# Running them here too would add a large share to every leg for a difference no assertion
+# checks.
 set -uo pipefail
 if [ $# -lt 1 ] || [[ "$1" != LOFT_NO_* ]]; then
   echo "usage: $0 LOFT_NO_<REWRITE> [--consumer DIR]..." >&2
@@ -92,25 +100,44 @@ run_one() {
   # inside one.  A release of the wrong store is then a fault the output shows, instead of
   # a value that moves only when a later allocation happens to reuse the freed memory.
   # (Both arm on presence, so every other program runs with them unset.)
-  local poison=(-u LOFT_POISON -u LOFT_STRICT_STORES)
-  grep -qE "^// @catches:.*\b$SWITCH\b" "$file" && poison=(LOFT_POISON=1 LOFT_STRICT_STORES=1)
-  if [ "$mode" = off ]; then
-    env "${poison[@]}" "$SWITCH=1" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret $args "$file" >"$WORK/$mode/$base.out" 2>&1
-  else
-    env -u "$SWITCH" "${poison[@]}" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret $args "$file" >"$WORK/$mode/$base.out" 2>&1
-  fi
+  # `env` takes its `-u` options before any assignment, so the unsets come first.
+  local unset=(-u LOFT_POISON -u LOFT_STRICT_STORES) set=() catches=0
+  grep -qE "^// @catches:.*\b$SWITCH\b" "$file" && { unset=(); set=(LOFT_POISON=1 LOFT_STRICT_STORES=1); catches=1; }
+  if [ "$mode" = off ]; then set+=("$SWITCH=1"); else unset+=(-u "$SWITCH"); fi
+  env "${unset[@]}" "${set[@]}" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret $args "$file" >"$WORK/$mode/$base.out" 2>&1
   echo "exit=$?" >>"$WORK/$mode/$base.out"
+  # A run executes `main` alone, so a program without one shows only its diagnostics.  A
+  # catching program's assertions are its catch: one with tests and no `main` runs them too,
+  # as the runner does, after the plain run whose diagnostics it already compares.
+  if [ "$catches" = 1 ] && ! grep -q '^fn main\b' "$file" && grep -q '^fn test' "$file"; then
+    env "${unset[@]}" "${set[@]}" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret --tests "$file" >>"$WORK/$mode/$base.out" 2>&1
+    echo "tests-exit=$?" >>"$WORK/$mode/$base.out"
+  fi
 }
 export -f run_one
 
 # The output with what (R-Escape) leaves to the compiler removed — see the header — and a
 # panic's thread id, which changes from run to run: a crash on every run is a crash, not noise.
+# A path in the temporary directory is spelled with its digits masked: a program that writes
+# there names its file after the clock (`loft_2174_{now()}_{ticks()}.store`) so that two runs
+# at once never share one, and a refusal the runtime logs for that file quotes it.  The rest
+# of such a path, and every other line, is compared — a refusal is a meaning.
+TMP_ROOT="${TMPDIR:-/tmp}"; TMP_ROOT="${TMP_ROOT%/}"
 semantic() {
-  awk '/^advice\[avoidable-copy\]/ { skip = 1; next }
+  awk -v tmp="$TMP_ROOT/" -v q="'" '/^advice\[avoidable-copy\]/ { skip = 1; next }
        skip && /^$/ { skip = 0; next }
        skip { next }
        /^note: [0-9]+ diagnostics? above suggests? / { next }
-       { gsub(/ bc:[0-9]+/, " bc:_"); gsub(/thread .[^ ]*. \([0-9]+\)/, "thread _"); print }' "$1"
+       { gsub(/ bc:[0-9]+/, " bc:_"); gsub(/thread .[^ ]*. \([0-9]+\)/, "thread _")
+         out = ""
+         while ((at = index($0, tmp)) > 0) {
+           rest = substr($0, at + length(tmp))
+           n = match(rest, "[ \t`\"" q "]") ? RSTART - 1 : length(rest)
+           name = substr(rest, 1, n); gsub(/[0-9]+/, "#", name)
+           out = out substr($0, 1, at - 1) "$TMP/" name
+           $0 = substr(rest, n + 1)
+         }
+         print out $0 }' "$1"
 }
 
 # A fresh copy of consumer DIR for one mode; prints the copy's path.  Its siblings are

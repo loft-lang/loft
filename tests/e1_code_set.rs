@@ -106,6 +106,14 @@ const CODES: &[(&str, &str)] = &[
         "struct O { s: text }\nfn main() { v = \"ab\"; o = O { s: \"cd\" }; t = &v; t = &o.s; \
          print(\"{t}\"); }",
     ),
+    // @PLN219 — a whole write through a field link inside a loop that drops a sibling subtree:
+    // the walk meant `cur = &cur.left`.
+    (
+        "walk-or-write",
+        "struct T { k: integer, left: T?, right: T? }\n\
+         fn f(t: T) { c = &t.left; while c != null { c = c.left; } }\n\
+         fn main() { t = T { k: 1, left: T { k: 2 } }; f(t); print(\"{t.k}\"); }",
+    ),
     (
         "lost-write",
         "struct D { items: vector<integer> }\n\

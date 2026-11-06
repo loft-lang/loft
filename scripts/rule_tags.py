@@ -35,7 +35,9 @@
 #   pairs          the rule PAIRS a rule's own text names (`(Other)` or `@FR-Other` inside its
 #                  rules-block entry) where both rules are guarded yet no one guard file names
 #                  both — the composition the formal text promises and no test was written
-#                  for; `--chapter <name>` narrows it, `--all` lists every pair (default 40)
+#                  for; `--chapter <name>` narrows it, `--all` lists every pair (default 40);
+#                  a pair the crossing ledger records as verified (doc/claude/RULE_CROSSINGS.md)
+#                  is left out unless `--include-verified`
 #   dups           rules cited from 2+ sites — the duplication question, asked by MEANING
 #                  rather than by code shape (which is what rule_predicate_audit.py does)
 #   claims         the LIMITATION sentences of the hand-written reference docs (LOFT*.md,
@@ -1374,6 +1376,15 @@ def main():
         both = [p for p in sorted(pairs) if files[p[0]] and files[p[1]]]
         gaps = [p for p in both if not files[p[0]] & files[p[1]]]
         unstated = [p for p in sorted(pairs) if p not in stated]
+        # The crossing ledger (doc/claude/RULE_CROSSINGS.md): a pair already built,
+        # hand-computed and found to hold — or fixed — is left out of the queue, so the next
+        # walk does not build it again.  `--include-verified` keeps it.
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from crossings import verified_pairs
+        verified = set() if "--include-verified" in sys.argv else verified_pairs()
+        skipped = {p for p in set(gaps) | set(unstated) if p in verified}
+        gaps = [p for p in gaps if p not in verified]
+        unstated = [p for p in unstated if p not in verified]
         want = sys.argv[sys.argv.index("--chapter") + 1] if "--chapter" in sys.argv else None
         if want:
             gaps = [p for p in gaps if want in (chapter(p[0]), chapter(p[1]))]
@@ -1381,6 +1392,9 @@ def main():
         print(f"{len(pairs)} rule pairs the formal text names; {len(stated)} with the composition "
               f"STATED (which applies, when); {len(both)} with both rules guarded; {len(gaps)} that "
               f"no guard file names together" + (f" (touching {want})" if want else ""))
+        if verified:
+            print(f"{len(verified)} pairs verified in doc/claude/RULE_CROSSINGS-history.md are "
+                  "left out below (--include-verified lists them)")
         if "--unstated" in sys.argv:
             # The ones that have ALREADY failed first: a defect-born cell cites both rules, so
             # the composition bit and the text still does not say which rule governs there.
@@ -1390,6 +1404,9 @@ def main():
             for a in files:
                 for b in files:
                     if a < b and (a, b) not in pairs and bitten((a, b)):
+                        if (a, b) in verified:
+                            skipped.add((a, b))
+                            continue
                         cited[(a, b)] += len(bitten((a, b)))
             if cited:
                 print(f"\n{len(cited)} pairs a defect-born cell cites together that no rule's entry "

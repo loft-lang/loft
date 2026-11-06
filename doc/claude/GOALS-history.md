@@ -9,6 +9,25 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 The timeline behind [GOALS.md](GOALS.md): dated readings of the two floors and progress notes.  The working doc states the bar and the Check; this file keeps what they read on the day.
 
+## The dogfood pause, as GOALS.md stated it until 2026-11-06
+
+GOALS.md § The two floors used to open: the dogfood loop "is **paused right now, on purpose**
+— because the loop did its job and hit two walls": it kept surfacing instability (the
+soundness floor, Goal A) and it fought the library/package structure (the structure floor,
+Goal B's packaging half).  "Building a game on either un-cleared floor means building on a
+base that can still shift under you.  So Goal C (the game work especially) waits on A and B —
+*by choice, not neglect*", and each floor got an explicit resume bar so the pause could not
+become permanent by drift.
+
+By 2026-11-06 the loop was running again in practice — CLAUDE.md § Dogfood loop as the
+working mode, the games and consumer libraries with their own agents, a Tanmatsu game demo in
+progress — while the soundness floor's own gate (the nightly sanitizer run) was still red
+(2026-11-01 to 2026-11-05).  The section now states the floors as the bars the game work
+stands on.
+On that day, by the owner's account, most consumer projects had validated their state against
+the C backend and some their performance on it too; the Tanmatsu work was to lead the next
+game-engine work.
+
 ## Two floors — the 2026-08-09 readings
 
 ### Soundness floor

@@ -172,6 +172,110 @@ pub struct ArmMismatch {
     pub at: Position,
 }
 
+/// What pass 1 saw of one `&` link (loft#2433, [`Parser::slot_links`]).
+#[derive(Default, Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "four independent facts pass 1 records per link; no state machine joins them"
+)]
+pub(crate) struct SlotLinkFacts {
+    /// Bound `&` to an out-of-line field (`cur = &t.left`).
+    pub(crate) field: bool,
+    /// Bound `&` to anything else (`cur = &t`).
+    pub(crate) other: bool,
+    /// Written whole (`cur = cur.right`, `cur = null`).
+    pub(crate) whole: bool,
+    /// Handed to a `&` parameter whose type is held out of line (`take_min(cur)`, @PLN219):
+    /// the callee's whole write lands in the field the link keeps.
+    pub(crate) passed: bool,
+}
+
+/// [`Parser::slot_links`]: the pass-1 facts per `(function, link name)`.  The name is the key
+/// because a link's variable NUMBER is not stable between the passes.  The map is asked on
+/// every `=` of both passes and at every argument of a later-declared call, so neither a
+/// lookup nor a whole write builds the owned `String` key: a name is spelled into the map
+/// only when a `&` bind or a hand-on gives it facts that can matter.  Keying every write
+/// cost two allocations per assignment on the front-end pins (`tests/frontend_counts.rs`).
+#[derive(Default)]
+pub(crate) struct SlotLinks {
+    facts: HashMap<(u32, String), SlotLinkFacts>,
+    /// Pass 1: the locals written whole before anything gave them facts, by `(function,
+    /// variable)` — within one pass a variable number is its name's one spelling, and most
+    /// locals are never `&`-bound, so they are never named here.  Folded into the facts when
+    /// the first `&` bind or hand-on records them ([`Self::note`]).
+    whole_before: HashSet<(u32, u16)>,
+}
+
+/// A `(function, name)` key read without owning the name: what [`SlotLinks`] looks up by.
+trait LinkKey {
+    fn parts(&self) -> (u32, &str);
+}
+
+impl LinkKey for (u32, String) {
+    fn parts(&self) -> (u32, &str) {
+        (self.0, &self.1)
+    }
+}
+
+impl LinkKey for (u32, &str) {
+    fn parts(&self) -> (u32, &str) {
+        *self
+    }
+}
+
+impl<'a> std::borrow::Borrow<dyn LinkKey + 'a> for (u32, String) {
+    fn borrow(&self) -> &(dyn LinkKey + 'a) {
+        self
+    }
+}
+
+// Hashes as `(u32, String)` does: a tuple hashes its fields in order, and a `String` as its `str`.
+impl std::hash::Hash for dyn LinkKey + '_ {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.parts().hash(h);
+    }
+}
+
+impl PartialEq for dyn LinkKey + '_ {
+    fn eq(&self, other: &Self) -> bool {
+        self.parts() == other.parts()
+    }
+}
+
+impl Eq for dyn LinkKey + '_ {}
+
+impl SlotLinks {
+    pub(crate) fn get(&self, ctx: u32, name: &str) -> Option<SlotLinkFacts> {
+        self.facts.get(&(ctx, name) as &dyn LinkKey).copied()
+    }
+
+    pub(crate) fn get_mut(&mut self, ctx: u32, name: &str) -> Option<&mut SlotLinkFacts> {
+        self.facts.get_mut(&(ctx, name) as &dyn LinkKey)
+    }
+
+    /// Pass 1: local `var` (spelled `name`) of `ctx` is written whole.
+    pub(crate) fn whole_write(&mut self, ctx: u32, var: u16, name: &str) {
+        if let Some(facts) = self.get_mut(ctx, name) {
+            facts.whole = true;
+        } else {
+            self.whole_before.insert((ctx, var));
+        }
+    }
+
+    /// Pass 1: the facts of local `var` (spelled `name`) of `ctx`, recorded when there were
+    /// none yet, with the whole writes made before.
+    pub(crate) fn note(&mut self, ctx: u32, var: u16, name: &str) -> &mut SlotLinkFacts {
+        if !self.facts.contains_key(&(ctx, name) as &dyn LinkKey) {
+            let facts = SlotLinkFacts {
+                whole: self.whole_before.contains(&(ctx, var)),
+                ..SlotLinkFacts::default()
+            };
+            self.facts.insert((ctx, name.to_string()), facts);
+        }
+        self.get_mut(ctx, name).expect("just recorded")
+    }
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct Parser {
     pub todo_files: Vec<(String, u16)>,
@@ -507,6 +611,13 @@ pub struct Parser {
     /// road before the roads that mint a work reference run, so nothing is minted for a
     /// record the update never builds (loft-lang/plans#202 P2).
     pub(crate) update_literals: HashSet<(u32, u32, u32)>,
+    /// `@FR-R-Demote` — `(function, line, column)` of a literal's `{` whose one out-of-line field
+    /// is its destination variable, read nowhere else in the literal: pass 1 records the field's
+    /// name, and pass 2 moves the old record into that field instead of copying it.
+    pub(crate) demote_literals: HashMap<(u32, u32, u32), String>,
+    /// `@FR-R-Demote` — the literals pass 2 found reading their destination beyond the moved
+    /// field: parsed again without the move.
+    pub(crate) demote_declined: HashSet<(u32, u32, u32)>,
     /// `@FR-B-Scope` — the `(function, variable, after_end)` triples whose binding the
     /// statement being parsed STARTS: its first binding, or (`after_end`) a bind after the
     /// name's block ended.  Innermost last.  The variable holds nothing until that statement
@@ -1515,6 +1626,21 @@ pub struct Parser {
     /// handle (`Parser::null_local_slot`).  Built where the bind's right side is parsed and
     /// placed before its statement by `parse_assign_op`; empty between binds.
     pub(crate) pending_link_slot: Vec<Value>,
+    /// @PLN219 `walk-or-write` — per function and link, the out-of-line fields of the node the
+    /// link names that the program wrote null since the link was last written or re-pointed
+    /// (`cur.left = null`): a whole write `cur = cur.right` then drops nothing it still holds.
+    pub(crate) slot_nulled: HashMap<(u32, u16), Vec<i32>>,
+    /// @PLN219 `walk-or-write` — per function and link, the loop depth of its last fresh `&`
+    /// bind (`cur = &t.left`, not a step `cur = &cur.left`): a write in a deeper loop is
+    /// carried across that loop's iterations, a walk.
+    pub(crate) slot_bound_depth: HashMap<(u32, u16), u16>,
+    /// `@FR-B-Ref-Write` for a link to an OUT-OF-LINE field (loft#2433): per function and link
+    /// name, what pass 1 saw bound to it and whether it is written whole.  A link only ever
+    /// bound to such fields and written whole keeps the FIELD it names in a slot local
+    /// ([`Parser::slot_vars`]), so the write lands in the field.
+    pub(crate) slot_links: SlotLinks,
+    /// Pass 2: a field link's slot local and the field's known type, per function and link.
+    pub(crate) slot_vars: HashMap<(u32, u16), (u16, i32)>,
     /// `@FR-O-Detach` for a tuple — the snapshot an assignment's value must read instead of
     /// the tuple it writes (`Parser::snapshot_tuple_self_read`), run as a statement of its own
     /// ahead of the assignment by `parse_assign_op` (loft#2261).
@@ -1994,6 +2120,8 @@ impl Parser {
             first_bind_targets: Vec::new(),
             first_bind_at: HashMap::new(),
             update_literals: HashSet::new(),
+            demote_literals: HashMap::new(),
+            demote_declined: HashSet::new(),
             binding_starts: Vec::new(),
             stmt_if_pending: false,
             fit_candidate: None,
@@ -2190,6 +2318,10 @@ impl Parser {
             pending_default_rhs: None,
             pending_default_src: None,
             pending_link_slot: Vec::new(),
+            slot_nulled: HashMap::new(),
+            slot_bound_depth: HashMap::new(),
+            slot_links: SlotLinks::default(),
+            slot_vars: HashMap::new(),
             tuple_self_snapshot: None,
             ncc_default_end: None,
             last_place_discharge: false,

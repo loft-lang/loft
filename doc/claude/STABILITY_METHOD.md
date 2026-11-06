@@ -348,7 +348,10 @@ as` or `governs` beside it, and the cell that fails when the order is wrong citi
 as a pair notation, which would grow as the square of the rules and index nothing the two
 names do not. `python3 scripts/rule_tags.py pairs --unstated` lists the pairs the text names
 without saying which applies, and the pairs a defect-born cell cites together that no rule's
-entry names at all, the ones that have already failed first.
+entry names at all, the ones that have already failed first.  A pair already crossed and found
+to hold, or fixed, is recorded in [RULE_CROSSINGS.md](RULE_CROSSINGS.md)'s ledger and left out
+of both lists, so a walk starts where the last one stopped; record a row once the crossing's
+probes are graduated into a cell.
 
 ⚠ **"A queue measured in years" was this doc's own projection, and it was wrong.** Measured
 2026-09-17 off `git grep "@FR-" <rev> -- src`: citation went from none to most of the corpus

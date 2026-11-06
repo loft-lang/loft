@@ -216,6 +216,12 @@ scripts/derive-ci.sh                     # the PURE derived artefacts (compiled 
                                          #   browser bundle, doc pages, …) regenerated ON A
                                          #   RUNNER and committed back; ratchets stay local —
                                          #   JOINING.md § Derived artefacts on a runner
+scripts/pr_watch.py <PR>                 # a PR run's reds AS THEY END: run it in the background;
+                                         #   it exits on each new red job (log saved under
+                                         #   .git/loft-pr-watch/), at the run's end and its
+                                         #   deadline; first call lists main's red nightlies.
+                                         #   `--once` one look · `--sha` a probe's commit —
+                                         #   DEVELOPMENT.md § The PR cycle
 make view                                # branch-aware doc/code viewer; binds LOOPBACK,
                                          #   LOFT_VIEW_PORT (default 8765).  Remote:
                                          #   ssh -N -L 8765:127.0.0.1:8765 <host>

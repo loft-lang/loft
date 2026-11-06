@@ -79,6 +79,65 @@ fn check(name: &str, split: &[&str]) {
     }
 }
 
+/// The C `args` write for `prog`, the split switches cleared and `env` set.
+fn emitted(prog: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> String {
+    let out =
+        loft::file_access::with_extension(prog, &format!("{}.c", args.len() * 10 + env.len()));
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
+    cmd.args(["--native-c", "--no-warnings"])
+        .args(args)
+        .arg("--native-emit")
+        .arg(&out)
+        .arg(prog)
+        .env_remove("LOFT_C_SPLIT")
+        .env_remove("LOFT_NO_C_SPLIT");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let r = cmd.output().expect("loft runs");
+    assert!(r.status.success(), "{args:?} {env:?}: {r:?}");
+    loft::file_access::read_to_string(&out).expect("the unit is written")
+}
+
+/// @PLN212 P2: a semantics build splits an over-budget function by default (the MSVC sweep's
+/// `cl` time stays bounded without a switch), and a shipped build (`--ship`) never does — not
+/// even under a switch that asks — so a shipped artefact's C is the C it was before the split.
+///
+/// @falsified-at: 4bce889d7 — by hand.  The default-on assertion fails on the tree before it
+/// (no `__part` without `LOFT_C_SPLIT`); with `functions_whole` planted to answer false, the
+/// `--ship` assertion fails ("a shipped unit keeps its functions whole").
+#[test]
+fn a_semantics_build_splits_by_default_and_a_shipped_one_never() {
+    let dir = std::env::temp_dir().join(format!("loft-c-split-tier-{}", std::process::id()));
+    loft::file_access::create_dir_all(&dir).unwrap();
+    // A `main` far over the default budget of runtime-call sites: each line appends to a text
+    // and checks its length.
+    let mut src = String::from("fn main() {\n    s = \"\";\n");
+    for i in 0..400 {
+        src += &format!("    s += \"{i}\";\n    assert(len(s) > {i}, \"grew\");\n");
+    }
+    src += "    println(\"{len(s)}\");\n}\n";
+    let prog = dir.join("large.loft");
+    loft::file_access::write(&prog, src).unwrap();
+    assert!(
+        emitted(&prog, &[], &[]).contains("n_main__fr__part"),
+        "the default build splits"
+    );
+    assert!(
+        !emitted(&prog, &["--ship"], &[]).contains("__part"),
+        "a shipped unit keeps its functions whole"
+    );
+    assert!(
+        !emitted(&prog, &["--ship"], &[("LOFT_C_SPLIT", "4")]).contains("__part"),
+        "no switch splits a shipped unit"
+    );
+    assert!(
+        !emitted(&prog, &[], &[("LOFT_NO_C_SPLIT", "1")]).contains("__part"),
+        "LOFT_NO_C_SPLIT keeps the semantics build whole"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
 #[test]
 fn every_member_shape_crosses_from_part_to_part() {
     check("members", &["n_main"]);

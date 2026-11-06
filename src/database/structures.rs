@@ -1711,6 +1711,37 @@ impl Stores {
         }
     }
 
+    /// `OpSlotTag` ([`crate::keys::slot_tag`]).
+    #[must_use]
+    pub fn slot_tag(&self, field: &DbRef) -> DbRef {
+        crate::keys::slot_tag(field)
+    }
+
+    /// `@FR-F-ParamRef` (@PLN219) — what a slot cell's content reads as: the child a tagged
+    /// field address holds ([`crate::keys::SLOT_FIELD_BIT`]), else the content itself.
+    #[must_use]
+    pub fn slot_read(&self, content: &DbRef) -> DbRef {
+        if crate::keys::slot_is_field(content) {
+            self.ref_from_child_rec(&crate::keys::slot_field(content))
+        } else {
+            *content
+        }
+    }
+
+    /// `@FR-F-ParamRef` (@PLN219) — a whole write through a slot cell: a cell naming a field is
+    /// the field write `h.f = v` (`OpSetChildRec`, `raw_tp` with its `COPY_FREE_SOURCE` bit
+    /// giving up an owned value's store), and the cell keeps naming the field; any other cell
+    /// takes the value, as the write-back to a variable does.  The free bit is then not used:
+    /// the value moved into the caller's variable.
+    pub fn slot_write(&mut self, cell: &mut DbRef, data: &DbRef, raw_tp: u16) {
+        if crate::keys::slot_is_field(cell) {
+            let field = crate::keys::slot_field(cell);
+            self.set_child_rec(&field, data, raw_tp);
+        } else {
+            *cell = *data;
+        }
+    }
+
     /// The words a `tp` child record claims: its header word and its payload, an enum's at
     /// its largest variant's size (`enum_parent_size`).
     #[must_use]
@@ -1724,6 +1755,7 @@ impl Stores {
     /// - A null value releases the child the field held, all the way down, and leaves the
     ///   field absent (record 0).  `Store::delete` entombs it where a stored reference named
     ///   it (`@FR-H-Removed`), so such a link reads null afterwards.
+    /// - The child the field already holds, written back, is left as it is.
     /// - A value is copied into a FRESH record of the host's store first, because it may lie
     ///   inside the child it replaces (`t.left = t.left.left`).  An absent field then takes
     ///   the fresh record.  A present child keeps its record NUMBER: its claims are released
@@ -1754,6 +1786,12 @@ impl Stores {
                 self.remove_claims(&old_db, tp);
                 self.store_mut(field).delete(old);
             }
+            return;
+        }
+        // The child the field already holds, written back — `t.left = insert(t.left, k)` with the
+        // callee handing its argument back: the field already says it, so nothing is copied or
+        // released, where the copy below cost the child's whole extent per write.
+        if old != 0 && data.store_nr == field.store_nr && data.rec == old && data.pos == 8 {
             return;
         }
         let size = u32::from(self.enum_parent_size(tp));

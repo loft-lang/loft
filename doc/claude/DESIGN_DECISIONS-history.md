@@ -1412,6 +1412,14 @@ cheaper guard.
 > rare shape) and the alternative of making `q = h.r` a copy.  It replaces the plan issue's
 > "no refusal where the language can give the answer".
 
+> **AMENDED (2026-11-06, owner, loft#2433).** Rust programmers must feel at home in loft: its
+> syntax stays close to Rust's even where the semantics differ.  So the code a Rust programmer
+> writes with `&mut` is admitted in its `&` spelling, ahead of the narrowing above — the slot
+> cursor `cur = &t.left; …; cur = cur.right` (Rust's `&mut Option<Box<T>>` walk) and the slot
+> handed to a function (`take_min(&mut node.right)`).  Asked while choosing between a refusal
+> and the write-through for a whole write through a link to an out-of-line field: the refusal
+> left the Rust twin's `remove_key` without a loft spelling.
+
 ---
 
 ## C78 — The Rust-engine ↔ loft-library boundary: mechanism not genre, and no black boxes above the engine

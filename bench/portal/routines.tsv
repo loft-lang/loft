@@ -216,3 +216,15 @@ hex_way	way_stamp	float-kernel	library:hex_way	two full window sweeps of sqrt / 
 hex_edge	sweep_path_from	float-kernel	library:hex_edge	up to 256 lattice steps, each solving 6 bisector intersections in doubles
 hex_field	stencil_rotate	record-field	library:hex_field	two full passes through four accessor families, then a halo pass of three calls per slot
 hex_field	doc_read	native-boundary	library:hex_field	one file-read builtin crossing PER CELL per section
+21_tree	tree_insert	linked-record	engine	2,000 keys inserted into a fresh search tree through a `&` link re-pointed down its out-of-line children, then its height and an in-order walk
+21_tree	tree_query	linked-record	engine	4,000 lookups (half misses) in a 2,000-key search tree, an in-order walk and the height
+21_tree	tree_delete	linked-record	engine	a fresh 1,200-key search tree with every third key unlinked (two children: the successor's key), then an ordered walk
+21_tree	list_ops	linked-record	engine	a linked list grown by 2,000 front pushes and 500 inserts after its head (`@FR-R-Demote`), reversed into a second list, both walked
+21_tree	build_rec	linked-record	engine	the 2,000-key tree of tree_insert built by the textbook recursion, `t.left = insert_rec(t.left, k)`, then its height and an in-order walk
+21_tree	enum_list	linked-record	engine	a 2,000-cell `Cons` list of a recursive enum built at its front (`l = Cons { v, next: l }`), walked, reversed into a second list and walked
+21_tree	lookup_copy	linked-record	engine	tree_query's 4,000 lookups by the cursor written first, `cur: Tree? = t; … cur = cur.left`
+22_expr	expr_build	linked-record	engine	a complete depth-10 expression of a recursive enum (`Num`, `Add`, `Mul`) built by recursion, then its size and its value
+22_expr	expr_eval	linked-record	engine	the value of a prebuilt 2,047-node expression by a `match` over the user's tree
+22_expr	expr_simplify	linked-record	engine	a prebuilt 2,047-node expression rewritten without `x * 0`, `x * 1` and `x + 0`, then the size and value of the result
+22_expr	expr_render	text-build	engine	a prebuilt 2,047-node expression rendered as fully parenthesised text by recursion, then a hash of its characters
+23_lru	lru_mixed	linked-record	engine	a 500-entry LRU cache — a `hash` owning the entries, a recency list of `reference<Node>?` back-links — given 4,000 accesses over 1,000 keys

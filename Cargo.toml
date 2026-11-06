@@ -67,7 +67,7 @@ path = "src/bin/loft-dap.rs"
 default      = ["mmap", "random", "threading", "registry", "native-extensions", "remote-store", "strict-stores", "stack-verify"]
 threading    = ["dep:rayon"]
 wasm         = ["dep:wasm-bindgen", "dep:serde", "dep:serde-wasm-bindgen",
-                "dep:js-sys", "dep:web-sys", "png", "dep:fontdue",
+                "dep:js-sys", "dep:web-sys", "png",
                 "dep:console_error_panic_hook"]
 # @PLN117 — the gallery bundle: wasm-bindgen PLUS loft's own browser thread
 # pool.  The pool is not wasm-bindgen's and never was loft-specific glue on top of
@@ -95,10 +95,10 @@ native-extensions = ["dep:libloading"]
 # compiles NONE of the paged/remote machinery (the zero-cost-to-non-users
 # invariant). The HTTP `Range` page provider (Phase 5) pulls in `ureq`; the
 # local-file provider (Phases 2–4) is dependency-free.
-remote-store      = ["dep:ureq", "dep:rustls", "dep:webpki-roots", "dep:rustls-native-certs"]
+remote-store      = ["dep:ureq", "dep:rustls", "dep:webpki-roots", "dep:rustls-native-certs", "dep:simd-adler32"]
 # sha2 is a base (non-optional) dependency — used by the startup-cache key
 # (@PLAN28) — so it is no longer listed as `dep:sha2` under `registry`.
-registry     = ["dep:ureq", "dep:rustls", "dep:webpki-roots", "dep:rustls-native-certs", "dep:zip", "dep:tar", "dep:flate2", "dep:ed25519-dalek"]
+registry     = ["dep:ureq", "dep:rustls", "dep:webpki-roots", "dep:rustls-native-certs", "dep:zip", "dep:tar", "dep:flate2", "dep:ed25519-dalek", "dep:simd-adler32"]
 # @PLAN53 cluster 2 / S4 — arm the homegrown stack-alignment guards (frame
 # `stack_pos % 8` + per-access slot alignment).  Off by default → zero hot-path
 # cost.  NOT gated on debug_assertions: [profile.dev.package.loft] disables
@@ -138,7 +138,6 @@ sha2 = { version = "0.10" }
 rand_core          = { version = "0.9", optional = true }
 rand_pcg           = { version = "0.9", optional = true }
 png                = { version = "0.17", optional = true }
-fontdue            = { version = "0.9", optional = true }
 # The store's file mapping (src/mmap_file.rs) and the read-only `file_map` one.  0.9.11+ for
 # RUSTSEC-2026-0186; `memmap` and `mmap-storage` (built on it) are unmaintained.
 memmap2            = { version = "0.9.12", optional = true }
@@ -168,6 +167,12 @@ tar                = { version = "0.4", optional = true }
 flate2             = { version = "1", optional = true }
 sha2               = { version = "0.10" }
 ed25519-dalek      = { version = "2", optional = true, default-features = false, features = ["std"] }
+# Not used directly: a FEATURE PIN.  `flate2` (under `ureq` and `zip`) uses it with `std` only,
+# while the dev-dependency `png` adds `default` and `const-generics` in a test build — so the
+# library hashed differently for `cargo build` and `cargo test`, and since it is also a
+# `cdylib` both builds share ONE file: each command rebuilt the 5 GB library the other had
+# written.  Asking for the test build's features here makes the two resolve the same.
+simd-adler32       = { version = "0.3", optional = true, features = ["const-generics"] }
 
 # @PLN117 — rayon's `web_spin_lock` feature hard-codes a dependency on the
 # crates.io `wasm_sync`, whose main-thread detection needs wasm-bindgen.  loft's

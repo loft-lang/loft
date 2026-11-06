@@ -9,9 +9,10 @@
 // to write it back into `es` — observe nothing outside the copy.
 //
 // Each warning cell names its local after the cell; `tests/dead_code_lint.rs` runs this file
-// and asserts the EXACT set of locals warned — the silent cells are half the claim: a view read
-// for its value, a write-back into the SOURCE, a `&` bind, a copy read after the write, and a
-// borrowed base, where the same lines write through.
+// and asserts the EXACT set of locals warned — the silent cells are half the claim: a
+// write-back into the SOURCE, a `&` bind, a copy read after the write, and a borrowed base,
+// where the same lines write through.  A view read for its value BEFORE the write observes
+// nothing the write did, so `vr_es` warns.
 //
 // One cell found a second defect: `view_of_a_view` wrote `w` — the copy `vv_es = w.es` off a
 // plain parameter was ELIDED because only its direct borrower `e` was checked for writes, and
@@ -49,10 +50,12 @@ fn copy_within_the_copy(w: W1864) { cw_es = w.es; cw_es[1] = cw_es[0]; }
 // A `len` observes the count, which no element write changes.
 // @EXPECT_WARNING: 'ln_es' is mutated but its value is never read
 fn len_after(w: W1864) -> integer { ln_es = w.es; e = ln_es[0]; e.awake = false; ln_es[0] = e; len(ln_es) }
+// The view is read for its value BEFORE the write, and nothing reads the copy after it.
+// @EXPECT_WARNING: 'vr_es' holds a COPY, and nothing reads it after this write
+fn view_read(w: W1864) -> integer { vr_es = w.es; e = vr_es[0]; v = e.hp; vr_es[0] = E1864 { hp: 7, awake: false, inn: In1864 { x: 0 } }; v }
 
 // ------------------------------------------------------------------ the write is observed
 
-fn view_read(w: W1864) -> integer { vr_es = w.es; e = vr_es[0]; v = e.hp; vr_es[0] = E1864 { hp: 7, awake: false, inn: In1864 { x: 0 } }; v }
 fn written_to_source(w: W1864) { ws_es = w.es; e = ws_es[0]; e.awake = false; w.es[1] = e; }
 fn linked(w: W1864) { lk_es = &w.es; e = lk_es[0]; e.awake = false; lk_es[0] = e; }
 fn read_after(w: W1864) -> boolean { ra_es = w.es; e = ra_es[0]; e.awake = false; ra_es[0] = e; ra_es[0].awake }

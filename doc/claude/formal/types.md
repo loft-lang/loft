@@ -21,7 +21,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   [binding.md](binding.md). In *this* doc it appears only in the conversion relation —
   it reads through to its referent (`C-Ref`).
 - `Integer[a,b]` — an integer type with closed value range `[a, b]` (the `IntegerSpec`
-  min/max). `integer` = `Integer[i64::MIN+1, i64::MAX]` (symmetric — the reserved null
+  min/max). `integer` = `Integer[i64::MIN+1, i64::MAX]` outside the 32-bit regime and
+  `Integer[i32::MIN+1, i32::MAX]` inside it (`(W-Name)`, § The 32-bit regime) (symmetric — the reserved null
   sentinel `i64::MIN` is EXCLUDED from the value range; see
   [operational.md `(E-Null)`](operational.md)); `u8` = `Integer[0, 255]` (a *non-null* `u8`;
   a nullable `u8?` reserves `255` for null, so its non-null values are `[0, 254]`); etc.
@@ -213,7 +214,10 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                    only where it fails: b reads with what `if t`'s then side, or its else
                    side, proves.  `i < len(v) && v[i] > 0` needs no discharge.
                A test of one name proves it: `v != null`, a truthy `v`, or `v == null` /
-               `!v` on the side where it fails; a compound condition proves nothing.  The same
+               `!v` on the side where it fails.  `t₁ && t₂` proves, where it holds, what
+               each tᵢ proves where it holds, and `t₁ || t₂`, where it fails, what each
+               proves where it fails: `if len(c) >= cap && t != null { t.k }` reads `t`
+               as present.  Any other compound proves nothing.  The same
                tests feed the other facts a guard proves — an index in bounds, a divisor not
                zero, a math operand's sign (`(N-Domain)`) — with the same polarity.  An `||` of
                such tests in a guard is a list of them, as above; any other compound proves
@@ -732,6 +736,58 @@ construction and loft holds by having **one integer type, no special index type*
 overflows *at runtime* yields **null and keeps running** (operational.md `E-Uncomp`, @C80) —
 `as` is compile-time intent, null is runtime keep-going. See
 [GOALS.md § the wrong moment](../GOALS.md) and [DESIGN_DECISIONS.md @C79/@C80](../DESIGN_DECISIONS.md).
+
+### The 32-bit regime — which range a width-neutral name denotes
+
+A number's width is decided once per build, by its type name: `integer` and `float` are the
+build's width, and `i64` / `f64` are 64-bit everywhere.  On a 32-bit processor 64-bit work is
+then a deliberate choice, never the default and never refused.  The rules decide what the
+names denote and where a value crosses between the widths; the integer model above is
+unchanged, since every type here is still an `Integer[a,b]`.
+
+```
+  (W-Regime)  each source file is under the 32-bit regime or not, decided once, before its
+              first declaration: `#width 32` as its first line puts it under, `#width 64`
+              keeps it out, and `LOFT_WIDTH=32` / `--width 32` puts every file under that has
+              no `#width 64` line.  The standard library is never under it.
+  (W-Name)    in a file under the regime, `integer` denotes Integer[i32::MIN+1, i32::MAX]
+              (null is i32::MIN) and `float` denotes `single`; outside it they denote the
+              64-bit types.  `i64` and `f64` denote the 64-bit types in EVERY file, and are
+              the one way a regime file asks for 64 bits.  A `limit(…)` range and a narrow
+              alias (`u8`, `i16`, …) name their own range everywhere.
+  (W-Lit)     in a regime file an integer literal without a suffix has the i32 type and a
+              float literal the `single` type.  An integer literal outside the i32 range is
+              refused, and the refusal names the `l` suffix and an `i64` binding as its cure.
+              `123l` and `2.5d` are 64-bit literals in every file.  This refines (I-Lit):
+              the literal still checks at an expected width.
+  (W-Op)      in a regime file an integer operation (+ - * / % << >> & | ^, a compound
+              assignment, unary -) whose operands are both 32-bit is a 32-bit operation: its
+              result has the i32 type, and a value outside the i32 range reads null, as a
+              64-bit overflow does (operational.md (E-Uncomp)).  An i64 operand makes the
+              operation 64-bit; that is the one way to widen an expression.
+  (W-Call)    where a call crosses between a regime file and a 64-bit file, a value of a
+              width-neutral type crosses at the receiving side's width: a 64-bit callee's
+              plain `integer` or `float` answer is narrowed where the call returns, and an
+              argument for a parameter the regime made 32-bit is narrowed at the call — null
+              when an integer does not fit, a float rounded to `single`.  An `i64`, `f64` or
+              `u32` crosses unchanged.  A generic instance counts as its template's file.
+  (W-Store)   in a regime file a plain 64-bit integer that is not a call (an element's
+              `#index`, a 64-bit file's field) stored into a whole-range i32 slot is narrowed
+              there, null when it does not fit.  This governs over (I-Narrow) for that one
+              target, because the regime chose the slot's width and null is the answer an
+              unchosen width gets.  A target narrower than i32 (`u8`, a `limit`) is still
+              refused as (I-Narrow) says, and so is an `i64` or `u32` source.
+  (W-Count)   in a regime file a count — a collection's `len`, a text's `size` — has the i32
+              type.
+```
+
+**In words.** Under `#width 32` the everyday names mean 32 bits, and a program that needs 64
+bits says `i64` or `f64` where it needs them.  Arithmetic stays 32-bit until an `i64` joins
+it, and where a 32-bit file meets a 64-bit one the value takes the receiving side's width.  A
+value that does not fit reads null, the same keep-running answer as any overflow (@C80).  So
+one program answers the same on every backend and every processor
+([WIDTH32.md](../WIDTH32.md)); the guards are `tests/width32.rs` and the `@PLN204` probes in
+`tests/scripts/`.
 
 ### Coercion closure
 

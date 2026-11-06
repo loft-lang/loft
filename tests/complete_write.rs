@@ -48,6 +48,12 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_add_n", 1, 0),
     ("n_c9", 2, 0),
     ("n_c10", 2, 0),
+    // c12 — a record with inline record fields pushed whole from a TUPLE parameter
+    // (`@FR-R-ValueRecord`): the IR's copy sets the nested fields at their flat offsets behind
+    // the presence test, and each arm writes the whole record, so the element skips the
+    // prefill.  Without the presence-test arm and the flat-offset coverage it reads (0, 1).
+    ("n_add_vx", 1, 0),
+    ("n_c12", 1, 0),
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {

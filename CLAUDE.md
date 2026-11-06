@@ -175,7 +175,9 @@ src/main.rs            CLI; loads default/ then user file
    [DEVELOPMENT.md § Opening a PR is the owner's call](doc/claude/DEVELOPMENT.md#opening-a-pr-is-the-owners-call).
 4. **A running PR is never interrupted: nothing is pushed to it while its run is in flight.**
    Fixes go on the branch stacked on it (`<host>-pr<N>-next`), each checked by its own probe; once
-   the run has FINISHED they are pushed together. Anything else is a NEW PR on that branch
+   the run has FINISHED they are pushed together. The first run is discovery (its reds, main's
+   nightly reds — watched with `scripts/pr_watch.py`), the second is meant to land it green; a
+   later red that does not hold auto-merge waits on that branch for the NEXT PR
    ([DEVELOPMENT.md § The PR cycle](doc/claude/DEVELOPMENT.md#the-pr-cycle)).
 5. **While a PR is unmerged, branch from the TIP of that in-flight work, not from `main`** — new
    work almost always needs what is still in the open PR; rebase the stack onto `main` after it
@@ -324,7 +326,8 @@ Networked runs: `LOFT_NET_PROFILE` (PERFORMANCE.md § LOFT_NET_PROFILE).
 [DESIGN_DECISIONS.md](doc/claude/DESIGN_DECISIONS.md) · [DESIGN_PROTOCOL.md](doc/claude/DESIGN_PROTOCOL.md) /
 [DESIGN_VERIFICATION.md](doc/claude/DESIGN_VERIFICATION.md) · [FORMATTER.md](doc/claude/FORMATTER.md) · stability:
 [STABILITY_ROADMAP.md](doc/claude/STABILITY_ROADMAP.md) · [STABILITY_METHOD.md](doc/claude/STABILITY_METHOD.md) (§ The rule-led
-walk, `make rule-coverage`, `make rule-depth`) / [_SWEEP](doc/claude/STABILITY_SWEEP.md) /
+walk, `make rule-coverage`, `make rule-depth`) / [RULE_CROSSINGS.md](doc/claude/RULE_CROSSINGS.md) the rule pairs
+already verified, which `rule_tags.py pairs` skips / [_SWEEP](doc/claude/STABILITY_SWEEP.md) /
 [_HOTSPOTS](doc/claude/STABILITY_HOTSPOTS.md) / [_REDFLAGS](doc/claude/STABILITY_REDFLAGS.md) ·
 [BRITTLE.md](doc/claude/BRITTLE.md) · [DEPS_INVENTORY.md](doc/claude/DEPS_INVENTORY.md) · formal lens:
 [FORMALIZATION.md](doc/claude/FORMALIZATION.md) / [TYPING_RELATION.md](doc/claude/TYPING_RELATION.md) · strict:

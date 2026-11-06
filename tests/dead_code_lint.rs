@@ -1087,7 +1087,9 @@ fn assert_copy_through_its_view(backend: &str) {
     warned.sort_unstable();
     assert_eq!(
         warned,
-        ["cw_es", "ln_es", "nv_es", "rmw_es", "th_es", "vv_es"],
+        [
+            "cw_es", "ln_es", "nv_es", "rmw_es", "th_es", "vr_es", "vv_es"
+        ],
         "[{backend}] the copies written only through their own views, and nothing else\n{diag}"
     );
 }
@@ -1143,6 +1145,94 @@ fn a_field_written_into_a_copy_and_never_read_is_a_lost_write_interpret() {
 #[test]
 fn a_field_written_into_a_copy_and_never_read_is_a_lost_write_native() {
     assert_field_of_a_copy("--native");
+}
+
+/// `@FR-B-Copy` — a write into a copy, or a view of one, that no path reads afterwards is a
+/// lost write even though the copy is read before it: the cursor walk `cur = t; … cur.left =
+/// leaf(k); return`.  Pins the EXACT set of locals warned, so the silent cells — a `&` cursor,
+/// a read back, a loop head, a return, a call, a read after `break` and after `continue`, a
+/// view read, a literal — are half the claim.
+fn assert_path_of_a_copy(backend: &str) {
+    let (stdout, diag, code) = run_env(
+        backend,
+        &workspace("tests/scripts/a-write-no-path-reads-after-is-a-lost-write.loft"),
+        &[],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] fixture did not exit 0\n{stdout}\n---\n{diag}"
+    );
+    assert!(
+        stdout.contains("path-copy ok"),
+        "[{backend}] {stdout}\n---\n{diag}"
+    );
+    let mut warned: Vec<&str> = diag
+        .lines()
+        .filter_map(|l| l.strip_prefix("warning[lost-write]: '"))
+        .filter_map(|l| l.split('\'').next())
+        .collect();
+    warned.sort_unstable();
+    warned.dedup();
+    assert_eq!(
+        warned,
+        ["bk_c", "cu_c", "rb_c", "vc_v", "vw_c"],
+        "[{backend}] the writes no path reads after, and nothing else\n{diag}"
+    );
+}
+
+#[test]
+fn a_write_no_path_reads_after_is_a_lost_write_interpret() {
+    assert_path_of_a_copy("--interpret");
+}
+
+#[test]
+fn a_write_no_path_reads_after_is_a_lost_write_native_c() {
+    assert_path_of_a_copy("--native-c");
+}
+
+/// @PLN219 `walk-or-write` — inside a loop, a whole write `cur = cur.f` through a field link or
+/// a `&` slot parameter drops the node's other subtrees, where a walk meant `cur = &cur.f`.
+/// The fixture holds the six rows of the plan's table and the parameter twin; the silent rows
+/// (an unlink after the walk, a list, a trim that nulls the sibling first, a step outside a
+/// loop) are half the claim.
+fn assert_walk_or_write(backend: &str) {
+    let (stdout, diag, code) = run_env(
+        backend,
+        &workspace("tests/scripts/a-forgotten-amp-in-a-walk-warns-walk-or-write.loft"),
+        &[],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] fixture did not exit 0\n{stdout}\n---\n{diag}"
+    );
+    assert!(
+        stdout.contains("walk-or-write ok"),
+        "[{backend}] {stdout}\n---\n{diag}"
+    );
+    let mut warned: Vec<&str> = diag
+        .lines()
+        .filter_map(|l| l.strip_prefix("warning[walk-or-write]: to step down, write `"))
+        .filter_map(|l| l.split(' ').next())
+        .collect();
+    warned.sort_unstable();
+    warned.dedup();
+    assert_eq!(
+        warned,
+        ["fg_c", "fp_s", "tr_c"],
+        "[{backend}] the walks that forgot their `&`, and nothing else\n{diag}"
+    );
+}
+
+#[test]
+fn a_forgotten_amp_in_a_walk_warns_interpret() {
+    assert_walk_or_write("--interpret");
+}
+
+#[test]
+fn a_forgotten_amp_in_a_walk_warns_native_c() {
+    assert_walk_or_write("--native-c");
 }
 
 /// loft#1871 — a parameter the callee REBINDS before writing a field writes the callee's own

@@ -213,6 +213,31 @@ POSIX where `loft_cc.h` finds the platform to be one (`LOFT_POSIX`).  `-DLOFT_NO
 against ISO C99 alone: the clock is `clock()`, a file is what `fopen` opens, a directory is
 never seen, a listing is empty and the directory operations answer `Other`.
 
+## Large functions are split into parts (`(R-CSplit)`)
+
+A semantics build never hands the C compiler one huge function.  MSVC's `cl /O1` takes about
+quadratic time above 400 runtime-call sites in one function, where gcc stays linear, so one
+long test `main` can cost minutes.  `src/c/split.rs` therefore writes a function body over
+300 runtime-call sites as a chain of `LOFT_NOINLINE` parts, `<fn>__part<k>`.  Each part holds
+consecutive top-level statements, and the locals that live across parts share one frame
+struct.  A body the pass cannot read for certain stays whole: a `setjmp`, a preprocessor
+conditional, a block comment over lines, or a label it cannot place.  A split changes no
+answer.
+
+- **Where it runs:** every semantics build — `--native-c`, `--native-debug`, `loft test`,
+  `--emit-c`, the C sweep (`scripts/c_sweep.py`), and the non-`--ship` wasm and page builds.
+- **Where it never runs:** a shipped artefact keeps every function whole, so its C is
+  exactly what it would be without the pass (NATIVE.md § Optimisation tiers).  That covers a
+  `--ship` run (`loft::c::ship_units`) and an ESP app (`emit_esp_program`), even under
+  `LOFT_C_SPLIT`.
+- **Switches:** `LOFT_C_SPLIT=<n>` sets the budget (`1` keeps the default, `0` turns the
+  pass off), `LOFT_NO_C_SPLIT=1` turns it off over any setting (the bisect step), and
+  `LOFT_TRACE_C_SPLIT=1` names each over-budget function, its parts and its frame size, or
+  why it stayed whole.
+- **Guards:** `tests/c_split.rs` runs the split cells on both backends at budget 4, and
+  asserts that the default build splits and a `--ship` unit holds no part.  The plan and
+  its measurements are [@PLN212](https://github.com/loft-lang/plans/issues/212).
+
 ## The model
 
 The C runtime's stores are the standard of [STORE_MODEL.md](STORE_MODEL.md) (@PLN206): one
@@ -338,9 +363,10 @@ end and a parse result's root taking the general copy.  A function of one intege
 can evaluate for every byte (`opt::tabulate`, `@FR-R-Tabulate`) answers a byte argument from a
 function-local table of those evaluations; `LOFT_NO_TABULATE=1` keeps the body.  A local vector
 consumed once as a field of an appended record literal is built inside the element
-(`hoist::element_first`, `@FR-R-ElemFirst`, `c::body::elem_first`): the element minted and its
-vector fields zeroed at the temp's declaration, the temp bound to its field slot, the append
-keeping only its scalar sets and finish; `LOFT_NO_ELEMENT_FIRST=1` turns it off.  An
+(`@FR-R-ElemFirst`, decided and applied in the IR by `opt::elem_first`; the C writes what it
+receives): the element minted and its vector fields zeroed at the temp's declaration, the temp
+bound to its field slot, the append keeping only its scalar sets and finish;
+`LOFT_NO_ELEMENT_FIRST=1` turns it off.  An
 innermost counted loop that calls a leaf's held-inputs twin — an accessor whose bounds tests
 are linear in its arguments (`opt::version::leaf`, `@FR-R-Version`, `c::body::version`) —
 decides at its prelude whether the leaf's precondition (`f__vp`) holds at the counter's first

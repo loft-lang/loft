@@ -68,10 +68,11 @@ pub fn register_wgl_natives(state: &mut crate::state::State) {
     state.replace_native("loft_gl_mouse_button", wgl_mouse_button);
     // GL7.2: PNG save
     state.replace_native("loft_save_png", wgl_save_png);
-    // GL7.3: Font/text — delegate to JS host
+    // GL7.3: Font/text — the host's 2D canvas, as under `--html`
     state.replace_native("loft_gl_load_font", wgl_load_font);
     state.replace_native("loft_gl_measure_text", wgl_measure_text);
     state.replace_native("loft_text_height", wgl_text_height);
+    state.replace_native("loft_gl_font_ascent", wgl_font_ascent);
     state.replace_native("loft_rasterize_text_into", wgl_rasterize_text_into);
 }
 
@@ -745,54 +746,30 @@ fn wgl_save_png(stores: &mut Stores, stack: &mut DbRef) {
     }
 }
 
-// ── GL7.3: Font / text (fontdue in WASM) ─────────────────────────────────────
+// ── GL7.3: Font / text (the browser's own rasteriser) ───────────────────────
+//
+// The page already HAS a font engine, so text goes to the host's 2D canvas:
+// `measureText` for the metrics and `fillText` for the coverage bitmap — the same
+// path `loft --html` takes (`doc/loft-gl-wasm.js`, `src/html_fonts.rs`).  A font
+// PATH resolves to a CSS family under its base name; a font the page does not
+// have draws in a generic fallback, never as an error.  No font file is parsed in
+// the bundle itself.
 
-#[cfg(feature = "wasm")]
-use std::cell::RefCell;
-
-#[cfg(feature = "wasm")]
-thread_local! {
-    static FONTS: RefCell<Vec<fontdue::Font>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Gl_load_font(path) -> integer
+/// Gl_load_font(path) -> integer: a 0-based handle, or null when the host has none.
 fn wgl_load_font(stores: &mut Stores, stack: &mut DbRef) {
     let path = stores.get::<Str>(stack);
     #[cfg(feature = "wasm")]
     {
-        // Ask JS for binary asset data (Uint8Array — no base64 overhead).
         let args = js_sys::Array::of1(&path.str().into());
-        let result = gl_call("load_binary_asset", &args);
-        let data = if wasm_bindgen::JsCast::is_instance_of::<js_sys::Uint8Array>(&result) {
-            let arr = js_sys::Uint8Array::from(result);
-            let mut buf = vec![0u8; arr.length() as usize];
-            arr.copy_to(&mut buf);
-            Some(buf)
-        } else {
-            None
-        };
-        let Some(bytes) = data else {
-            stores.put(stack, -1i64);
-            return;
-        };
-        let Ok(font) =
-            fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
-        else {
-            stores.put(stack, -1i64);
-            return;
-        };
-        let idx = FONTS.with(|fonts| {
-            let mut fonts = fonts.borrow_mut();
-            let idx = fonts.len() as i64;
-            fonts.push(font);
-            idx
-        });
-        stores.put(stack, idx);
+        let handle = gl_call("gl_load_font", &args)
+            .as_f64()
+            .filter(|h| h.is_finite() && *h >= 0.0);
+        stores.put(stack, handle.map_or(i64::MIN, |h| h as i64));
     }
     #[cfg(not(feature = "wasm"))]
     {
         let _ = path;
-        stores.put(stack, -1i64);
+        stores.put(stack, i64::MIN);
     }
 }
 
@@ -803,20 +780,8 @@ fn wgl_measure_text(stores: &mut Stores, stack: &mut DbRef) {
     let font_idx = stores.get::<i64>(stack);
     #[cfg(feature = "wasm")]
     {
-        let width: f64 = FONTS.with(|fonts| {
-            let fonts = fonts.borrow();
-            let Some(font) = fonts.get(font_idx as usize) else {
-                return 0.0;
-            };
-            content
-                .str()
-                .chars()
-                .map(|c| {
-                    let (metrics, _) = font.rasterize(c, size as f32);
-                    f64::from(metrics.advance_width)
-                })
-                .sum()
-        });
+        let args = js_sys::Array::of3(&font_idx.into(), &content.str().into(), &size.into());
+        let width = gl_call("gl_measure_text", &args).as_f64().unwrap_or(0.0);
         stores.put(stack, width);
     }
     #[cfg(not(feature = "wasm"))]
@@ -826,15 +791,50 @@ fn wgl_measure_text(stores: &mut Stores, stack: &mut DbRef) {
     }
 }
 
-/// Gl_text_height(font, size) -> integer
+/// Gl_text_height(font, size) -> integer: the line height a rasterised bitmap gets.
 fn wgl_text_height(stores: &mut Stores, stack: &mut DbRef) {
     let size = stores.get::<f64>(stack);
-    let _font_idx = stores.get::<i64>(stack);
-    stores.put(stack, (size * 1.2) as i64);
+    let font_idx = stores.get::<i64>(stack);
+    // `size * 1.2` is the line height the desktop backend also falls back to.
+    let fallback = (size * 1.2).ceil();
+    #[cfg(feature = "wasm")]
+    let height = {
+        let args = js_sys::Array::of2(&font_idx.into(), &size.into());
+        gl_call("gl_text_height", &args)
+            .as_f64()
+            .unwrap_or(fallback)
+    };
+    #[cfg(not(feature = "wasm"))]
+    let height = {
+        let _ = font_idx;
+        fallback
+    };
+    stores.put(stack, height as i64);
+}
+
+/// Gl_font_ascent(font, size) -> float: baseline to the top of the glyphs.
+fn wgl_font_ascent(stores: &mut Stores, stack: &mut DbRef) {
+    let size = stores.get::<f64>(stack);
+    let font_idx = stores.get::<i64>(stack);
+    let fallback = size * 0.8;
+    #[cfg(feature = "wasm")]
+    let ascent = {
+        let args = js_sys::Array::of2(&font_idx.into(), &size.into());
+        gl_call("gl_font_ascent", &args)
+            .as_f64()
+            .unwrap_or(fallback)
+    };
+    #[cfg(not(feature = "wasm"))]
+    let ascent = {
+        let _ = font_idx;
+        fallback
+    };
+    stores.put(stack, ascent);
 }
 
 /// Rasterize_text_into(font, content, size, buf) -> integer (width)
-/// Rasterizes text into a pre-allocated loft vector<integer> of alpha values.
+/// Writes the host's alpha coverage (0-255) into a pre-allocated loft
+/// `vector<integer>`, row-major at the returned width; 0 when nothing was drawn.
 fn wgl_rasterize_text_into(stores: &mut Stores, stack: &mut DbRef) {
     let buf_ref = stores.get::<DbRef>(stack);
     let size = stores.get::<f64>(stack);
@@ -849,54 +849,21 @@ fn wgl_rasterize_text_into(stores: &mut Stores, stack: &mut DbRef) {
 
     #[cfg(feature = "wasm")]
     {
-        let size_f32 = size as f32;
-        let text = content.str().to_string();
-        let (bw, _bh, pixels) = FONTS.with(|fonts| {
-            let fonts = fonts.borrow();
-            let Some(font) = fonts.get(font_idx as usize) else {
-                return (0u32, 0u32, Vec::new());
-            };
-            // Rasterize each glyph
-            let mut glyphs: Vec<(fontdue::Metrics, Vec<u8>)> = Vec::new();
-            let mut total_w = 0u32;
-            for c in text.chars() {
-                let (m, bmp) = font.rasterize(c, size_f32);
-                total_w += m.advance_width as u32;
-                glyphs.push((m, bmp));
-            }
-            let line_h = (size_f32 * 1.2) as u32;
-            if total_w == 0 || line_h == 0 {
-                return (0, 0, Vec::new());
-            }
-            let mut px = vec![0u8; (total_w * line_h) as usize];
-            let mut cx = 0u32;
-            for (m, bmp) in &glyphs {
-                let gw = m.width as u32;
-                let gh = m.height as u32;
-                let baseline = (size_f32 * 0.8) as i32;
-                let y_off = (baseline - m.height as i32 - m.ymin).max(0) as u32;
-                for gy in 0..gh {
-                    for gx in 0..gw {
-                        let dx = cx + gx;
-                        let dy = y_off + gy;
-                        if dx < total_w && dy < line_h {
-                            let src = bmp[(gy * gw + gx) as usize];
-                            let di = (dy * total_w + dx) as usize;
-                            if di < px.len() {
-                                px[di] = src.max(px[di]);
-                            }
-                        }
-                    }
-                }
-                cx += m.advance_width as u32;
-            }
-            (total_w, line_h, px)
-        });
-
-        if bw == 0 || pixels.is_empty() {
+        // The host answers `[width, Uint8Array alpha]`, or null for nothing to draw.
+        let args = js_sys::Array::of3(&font_idx.into(), &content.str().into(), &size.into());
+        let result = gl_call("gl_rasterize_text", &args);
+        if !js_sys::Array::is_array(&result) {
             stores.put(stack, 0i64);
             return;
         }
+        let pair = js_sys::Array::from(&result);
+        let width = pair.get(0).as_f64().unwrap_or(0.0);
+        let alpha = pair.get(1);
+        if width < 1.0 || !wasm_bindgen::JsCast::is_instance_of::<js_sys::Uint8Array>(&alpha) {
+            stores.put(stack, 0i64);
+            return;
+        }
+        let pixels = js_sys::Uint8Array::from(alpha).to_vec();
 
         // Write alpha values into the loft vector<integer> buffer.
         let allocs = &mut stores.allocations;
@@ -910,6 +877,6 @@ fn wgl_rasterize_text_into(stores: &mut Stores, stack: &mut DbRef) {
             }
         }
 
-        stores.put(stack, i64::from(bw));
+        stores.put(stack, width as i64);
     } // cfg(feature = "wasm")
 }

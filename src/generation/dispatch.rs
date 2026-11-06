@@ -818,6 +818,43 @@ impl Output<'_> {
                     write!(w, "var_{name} = var_{src_name}")?;
                     return Ok(());
                 }
+                // @PLN219 `@FR-B-Ref-Repoint` — a record or struct-enum parameter re-pointed to
+                // a local: the cell a slot re-point names (`Parser::repoint_slot_param`), or a
+                // record local the author links.
+                if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _))
+                    && let Value::Call(d_nr, cargs) = to.unspan()
+                    && self.data.def(*d_nr).name() == "OpCreateStack"
+                    && let [src_arg] = cargs.as_slice()
+                    && let Value::Var(src) = src_arg.unspan()
+                    && !matches!(variables.tp(*src).base(), Type::RefVar(_))
+                {
+                    let src_place = self.var_place(*src);
+                    write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
+                    return Ok(());
+                }
+                // @PLN219 `@FR-F-ParamRef` — a whole write through a slot cell: the field write
+                // when the cell names a field (an owned value given up there), the write-back
+                // otherwise; a field-naming cell is unchanged, so nothing is displaced.
+                if let Some(d) = self.data.slot_link_def(variables.tp(var)) {
+                    let owned = matches!(
+                        crate::use_analysis::ownership_of(self.data, self.def_nr, to),
+                        crate::use_analysis::Own::Owned
+                    );
+                    let mut kt = self.data.def(d).known_type();
+                    if owned {
+                        kt |= crate::keys::COPY_FREE_SOURCE;
+                    }
+                    let kt = self.type_lit_u16(kt);
+                    write!(w, "{{ let _slot_v = ")?;
+                    self.output_code_inner(w, to)?;
+                    write!(
+                        w,
+                        "; unsafe {{ let _old_disp = *var_{name}; stores.slot_write(&mut *var_{name}, &_slot_v, {kt});"
+                    )?;
+                    write!(w, " OpFreeRefIfDistinct(cell, _old_disp, *var_{name});")?;
+                    write!(w, " }} }}")?;
+                    return Ok(());
+                }
                 // `c = &v[i]`, `c = &o.f` and `c = &m` on a SCALAR parameter.
                 if crate::data::is_scalar(inner)
                     && let Value::Call(d_nr, cargs) = to.unspan()
@@ -859,14 +896,17 @@ impl Output<'_> {
                 // one are all the SLOT's.  Asked bare, a `&text?` write-back emitted
                 // `*var_p = "z"` with no `.to_string()` and rustc rejected it.
                 let inner_slot = inner.base();
-                let amp_owned_writeback = (matches!(
+                let amp_owned_writeback = ((matches!(
                     inner_slot,
                     Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                 ) || crate::parser::vectors::is_keyed(inner_slot))
                     && matches!(
                         crate::use_analysis::ownership_of(self.data, self.def_nr, to),
                         crate::use_analysis::Own::Owned
-                    );
+                    ))
+                    // `@FR-F-ParamRef` — a RECORD written back from a borrowed value displaces
+                    // the caller's store too: released unless the new value lives in it.
+                    || matches!(inner_slot, Type::Reference(_, _) | Type::Enum(_, true, _));
                 let needs_text_coerce = matches!(inner_slot, Type::Text(_));
                 // A `&boolean` slot holds the tri-state STORAGE byte (`u8`: 0/1/255,
                 // null-capable) while an expression like `!b` produces a two-state

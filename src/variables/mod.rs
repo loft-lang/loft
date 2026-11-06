@@ -1568,6 +1568,18 @@ impl Function {
         false
     }
 
+    /// How many loops enclose the code being parsed now: 0 at a function's top level.
+    #[must_use]
+    pub fn loop_depth(&self) -> u16 {
+        let mut depth = 0;
+        let mut l = self.current_loop;
+        while l != u16::MAX {
+            depth += 1;
+            l = self.loops[l as usize].inside;
+        }
+        depth
+    }
+
     /**
     Stop the current loop.
     # Panics
@@ -5253,7 +5265,7 @@ impl Function {
             let Some(&nr) = self.names.get(&n) else {
                 break self.add_variable(&n, tp, lexer);
             };
-            if self.retypes_argument(nr, tp) {
+            if self.retypes_argument(nr, tp) || self.argument_of_another_site(nr, lexer) {
                 continue;
             }
             self.set_type(nr, tp.clone());
@@ -5357,6 +5369,24 @@ impl Function {
         crate::keys::work_ref_stepover_enabled()
             && self.is_argument(v)
             && self.tp(v).without_deps() != tp.without_deps()
+    }
+
+    /// Was argument `v` promoted from a work-ref that ANOTHER site minted on pass 1?
+    ///
+    /// The type is not enough to tell the roles apart: a call to a function declared later in
+    /// the file mints no buffer on pass 1 and one on pass 2, so it can claim the name pass 1
+    /// left on the return buffer while asking for the very type that buffer has.  The call was
+    /// then handed the caller's record as its own out-buffer, and the local it answered —
+    /// freed once read — freed the caller's store with it (`cc = condition(c)` before a
+    /// `return ex(…)` in the elaborator's `if_expr`).  A mint is the same site on both passes
+    /// exactly when it stands at the same source position, which `source` holds from the
+    /// pass-1 mint.
+    fn argument_of_another_site(&self, v: u16, lexer: &Lexer) -> bool {
+        let source = self.variables[v as usize].source;
+        crate::keys::work_ref_stepover_enabled()
+            && self.is_argument(v)
+            && source != (0, 0)
+            && source != lexer.at()
     }
 
     /// Work-ref for `vector_db()` — uses a separate `__vdb_N` counter/namespace.

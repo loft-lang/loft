@@ -7175,9 +7175,9 @@ impl State {
             let at = u32::from(vars.stack(i));
             (at, at + u32::from(crate::variables::size(vars.tp(i), &ctx)))
         };
-        // A `text?` local holds the same `String` (@FR-N-Shape); a `&text` is not owned.
-        let owned_text =
-            |i: u16| !vars.is_argument(i) && matches!(vars.tp(i).base(), Type::Text(_));
+        // A `text?` local holds the same `String` (@FR-N-Shape); a `&text` is not owned, and
+        // neither is a text view's `Str` (`@FR-R-TextBorrow`, `Function::holds_str`).
+        let owned_text = |i: u16| !vars.holds_str(i) && matches!(vars.tp(i).base(), Type::Text(_));
         let n = vars.count();
         self.frame_view(d_nr, pc, data)
             .into_iter()

@@ -172,7 +172,7 @@ select {
 
 <script type="module">
 import init, { compile_and_start, resume_frame } from './pkg/loft.js?v=ec8343fdbebc';
-import { initLoftGL } from './loft-gl.js?v=6925fdf3267a';
+import { initLoftGL } from './loft-gl.js?v=917a52668ad4';
 import { GALLERY_EXAMPLES, GALLERY_LIST } from './gallery-examples.js?v=997df6476118';
 import { createHost } from './loft-rt.js?v=5c94f0e5117d';
 
@@ -197,18 +197,20 @@ const canvas = document.getElementById('gl-canvas');
 let loftGL = null;
 
 // Asset map: example key → list of { name, type } to pre-load.
-// type: 'image' = decode as HTMLImageElement, 'binary' = store as base64,
+// type: 'image' = decode as HTMLImageElement, 'font' = register as a page font,
 //       'store'  = a loft store image, written into the page's own filesystem.
 //
-// The three types differ in WHO reads the bytes.  An image and a binary are handed
-// to the WebGL shim through `loftGL.assets`; a store is read by the loft program
-// itself, through `store_load` and the paged loaders, so it has to land in the
-// host filesystem under exactly the path the program passes.  `path` is that
+// The types differ in WHO reads the bytes.  An image is handed to the WebGL shim
+// through `loftGL.assets`, a font to the browser's own font engine (the text
+// bridge resolves `gl_load_font(path)` to the family of the path's base name); a
+// store is read by the loft program itself, through `store_load` and the paged
+// loaders, so it has to land in the host filesystem under exactly the path the
+// program passes.  `path` is that
 // string: `assets::pack_read(pk, "assets/bb")` reads `assets/bb.meta.store`, and
 // the pack's bulk half is paged out of `assets/bb.blobs.store` a key at a time.
 const ASSET_MAP = {
   '04-textures': [{ name: 'wall.jpg', type: 'image' }],
-  '20-textured-cube': [{ name: 'DejaVuSans-Bold.ttf', type: 'binary' }],
+  '20-textured-cube': [{ name: 'DejaVuSans-Bold.ttf', type: 'font' }],
   '25-brick-buster': [
     { name: 'bb.meta.store', type: 'store', path: 'assets/bb.meta.store' },
     { name: 'bb.blobs.store', type: 'store', path: 'assets/bb.blobs.store' },
@@ -266,18 +268,17 @@ async function preloadAssets(exampleKey) {
       });
       registered[entry.name] = { image: img };
       registered['examples/' + entry.name] = { image: img };
-    } else if (entry.type === 'binary') {
+    } else if (entry.type === 'font') {
+      // A font becomes a PAGE font, registered under the base name of its file and
+      // of each alias — the family `gl_load_font(path)` resolves to — and awaited
+      // here, before the program draws its first frame.
       try {
         const resp = await fetch(ASSET_BASE + entry.name);
-        const bytes = new Uint8Array(await resp.arrayBuffer());
-        registered[entry.name] = { bytes };
-        for (const [alias, target] of Object.entries(FONT_ALIASES)) {
-          if (target === entry.name) {
-            registered[alias] = { bytes };
-          }
-        }
+        const bytes = await resp.arrayBuffer();
+        const aliases = Object.keys(FONT_ALIASES).filter(a => FONT_ALIASES[a] === entry.name);
+        await loftGL.registerFontAsset(bytes, [entry.name, ...aliases]);
       } catch (e) {
-        console.warn('Failed to load binary asset:', entry.name, e);
+        console.warn('Failed to load font asset:', entry.name, e);
       }
     } else if (entry.type === 'store') {
       // Into the page's FILESYSTEM, not into `loftGL.assets`: the reader is the

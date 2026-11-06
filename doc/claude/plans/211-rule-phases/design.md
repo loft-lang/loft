@@ -361,6 +361,72 @@ the C's routing and seeding (`nn_facts` already passes a seed, `Ranges::default(
 (4) the C guarded copy.  The C census RISES (native 384 admissions, the C 0): a port, every new
 admission read by hand.  Effort M, toward L with the guarded copy.
 
+**Re-planned (2026-11-06), by the owner's test of a duplicate** (README § Goal): what counts is
+a rule twice inside ONE backend, or an interpreter-gaining rule left in a writer — not the same
+clause in the rustc and the C writer.  So D-fact-2 no longer waits on D-fact-1's handle or
+D-fact-3's registry: the C gains `(R-RangedCall)` on its own twin bits, the seed and the gain
+test shared from `opt/` (both writers read one copy).  Order: (2) the C falsifier — BUILT:
+`range_plain` writes `LOFT_PLAIN_{ADD,SUB,MUL,DIV,REM,NEG}(…, "R-Range:<fn>")`, the plain signed
+operator by default, checked under `-DLOFT_VERIFY` (overflow, a zero or `MIN / -1` divisor, the
+null sentinel) — a plant admitting an unproven add aborts at its site; then hand-price one
+hex routine's `__rg` form on the C (gcc and clang) before building (1), (3) and (4).
+
+**Priced** (hex_field's SHIP unit, `bench/portal/ab.py`, interleaved and pinned): the
+`loft_wrap_*` operators of the fifteen functions native routes through `__rg` made plain
+signed — what the C's ranged variants would emit for a bounded caller:
+
+| routine | gcc | clang |
+|---|---|---|
+| `edgeset_count` (a triple loop through `edge_mat` → `eg_index` → `eg_dir_from`) | **0.343×** | **0.671×** |
+| `stencil_rotate` | 0.877× | 0.988× (same) |
+
+gcc's baseline is the slow one (1.33 ms against clang's 0.62 ms): the wrapping form is what
+keeps gcc from folding the index chain.  So the port is built: (1), then (3) the C's `__rg`
+twin and routing; (4) the guarded copy priced again after.
+
+**(1) and (3) built.**  `opt::ranged_call` holds the gain test, the argument test and the seeds
+(native byte-identical); the C's `__rg` twin is `RG_BIT` (bit 55, `NN_PARAMS` 23), seeded by
+`FnWriter::ranged`, chosen at the call site by `FnWriter::ranged_call`.  hex_field: 86
+admissions, every routine's hash equal to the interpreter's, `-DLOFT_VERIFY` clean — and
+`edgeset_count` unchanged (1.00× gcc and clang), `stencil_rotate` 0.98× gcc, 0.95× clang.  The
+hand form's gain sits in `eg_index`'s index chain over the hoisted `e.eg_q0`, `e.eg_gw`, …: the
+`__inv__rg` twin's SCALAR INPUTS, which native seeds because its guarded copy proved the
+caller's held fields within `G` first.  So the gain is step (4).
+
+**(4), designed.**  The guard's decision moves to `opt::ranged_call` as step (1) moved the
+gain test: `guard_plan(data, f, block, known, nn, char_walks, fields)` → the leaves (the
+hoisted integer fields first, then the variables a counted range is built from —
+`variable_leaves`), the facts the copy runs under (`guarded_facts`: the copy's own derived
+under the seeds, met with the function's, for locals assigned only inside and never escaped),
+and the decline when the copy leaves a gaining call checked (`copy_gains`).  Native's
+`range_guard_for` calls it and spells the test; the C's `loop_copy` calls it beside
+`chain_guard` and writes `if (|x| <= G && …) { the copy under the facts } else { the loop }`,
+the facts held on a stack that `nn_facts`' readers (`range_operator`, `ranged_call`) consult
+first, and the `__inv__rg` call seeding each scalar input the facts prove within `L`
+(`Ranges::fields` keyed by `(param, field)`, as native's `variant_ranges(d, true)`).  Checks:
+native byte-identical after the move; the C's census, hex_field's hashes, `-DLOFT_VERIFY`
+clean, the C sweep; priced against the hand form's 0.343× / 0.671×.
+
+**(4) built.**  `opt::ranged_call::guard_plan` (with `scalar_inputs_ranged`, `twin_seeds`) is
+the one decision; native's `range_guard_for` and the C's `FnWriter::range_guard` each supply
+their loop hoist's integer fields and spell the test.  Native byte-identical (hex_field,
+hex_fit, hex_shape).  hex_field on the C: 3 guarded copies, 101 ranged calls, every routine's
+hash equal under `-DLOFT_VERIFY`; `edgeset_count` **0.331×** gcc, **0.805×** clang
+(`stencil_rotate` the same on both).  One trap on the way: `@FR-R-Inline`'s helper clause hints
+only a function with no twin mask, so `nb_q__rg` went out of line where `nb_q` was inline and
+gcc ran the guarded copy 2.15× SLOWER; a `__rg` twin is now hinted as its base
+(`RG_BIT` masked off in `hot_twin` / `hot_helper_size`).
+
+**(5) The gain threshold.**  Over the hex and graphics libraries the port gained beyond
+hex_field (hex_fit `draft_fit_p` 0.91×, hex_shape `wall_chain_walk` 0.92×) and slowed text2d
+`atlas_cell` +17 % and `layout` +15 %: a twin of `atlas_cell` that plained ONE subtraction,
+called only from a warm-up, gave `blit_glyph` a second caller, so gcc stopped inlining it into
+the hot base.  `variant_gains` admitted any one saved operator although `benefits` asked three
+reachable; it now counts what the variant saves (`gained_ops`, own and through newly ranged
+callees) against the same three.  text2d even again, graphics `draw_line` 0.89×, `edgeset_count`
+kept.  Left as layout: hex_field `trace`, and hex_terrain `terrain_hydrology` +3.6 % — its hot
+selection scans are identical C outside the guarded copy, which only enlarges the function.
+
 **`(Fact-Oracle)` itself** — the interpreter checking a MUST `entry` fact on entry and a MAY
 `writes` summary as a superset of what the call did — is built with step 2, under
 `LOFT_FACT_VERIFY=1`, so a widened reach has a run-time falsifier on the interpreter as the C's

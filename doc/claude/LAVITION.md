@@ -42,6 +42,21 @@ on its own schedule without collateral churn.
 
 So games are *runnable without lavition*, *authorable with it*.
 
+**How an indie game grows — a 2D prototype, then a 3D world.**  The path the engine is built
+for:
+
+1. **Prototype in the fast 2D engine.**  Put the world, enemy, combat and puzzle logic in, and
+   validate that the game works and is fun before any art is made.  In 2D the game stays fast
+   to run and easy to test; a 3D world makes every validation slower.
+2. **Bring the design into a barren 3D world.**  The same world and the same logic, now laid
+   out in 3D with placeholder shapes.
+3. **Flesh it out slowly** into the full game: more detail, more world, more art.
+
+The libraries follow from it: the game logic validated in step 1 must carry into step 2
+unchanged, so it may not depend on how the world is drawn: a game keeps its world in packages
+that draw nothing, and each machine draws it at the fidelity it can afford ([TANMATSU.md](TANMATSU.md),
+"One world, drawn at more than one fidelity").  The Tanmatsu work is the first run of this path ([ROADMAP.md](ROADMAP.md) § Games and the Tanmatsu).
+
 ## Naming principle — brand in metadata, symbols stay descriptive
 
 The brand belongs where users find the product: org URLs, repo names,

@@ -342,12 +342,12 @@ ten minutes, whether it's real.
 
 **The turn-off.** They get past the playground, reach for a library to build their
 *own* thing, and it **fights them** — because the libraries on top do not meet the
-bar yet, and the dogfood loop is paused on the soundness and structure floors. The
+bar yet, and the soundness floor under them is not yet clear. The
 on-ramp delivers; the first real step off it stumbles, and a first impression
 doesn't get a second try.
 
-**Raise it higher.** Clear the two floors (soundness A, structure/packaging B) so the
-dogfood loop resumes and the libraries reach [LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md).
+**Raise it higher.** Clear the two floors (soundness A, structure/packaging B) and bring
+the libraries to [LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md).
 The acceptance test is loft's own: **a thing is done when picking it up is *fun***,
 not when it is feature-complete. *Check:* on a clean machine, a new user installs
 loft, runs a first program, and `use`s a library to build something — from the docs

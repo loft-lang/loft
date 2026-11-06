@@ -448,6 +448,23 @@ rebuild_native_cdylibs() {
   # `wait` exits after the slowest).  Serial builds have already finished.
   for pid in ${jobs[@]+"${jobs[@]}"}; do wait "$pid"; done
 
+  # 5. The library's own unit tests, ALONE, after every rebuild above (also under
+  #    LOFT_PARALLEL_REBUILD=1).  Three compiles of the whole crate size each take 4–6 GB:
+  #    the library (step 4), its `cfg(test)` build, and the `loft` binary's test build.
+  #    Cargo starts a dependent as soon as the library's metadata exists, so left to the
+  #    runner the last two overlapped each other (and, while the library rebuilt on every
+  #    command in a worktree, the library too): a 14 GiB box fell to 0.5 GB available and
+  #    the run was killed.  Built here, the runner meets only the binary's test build and
+  #    the small integration tests.  Same command shape as the runner, so the same unit.
+  if cargo nextest --version >/dev/null 2>&1; then
+    echo "== build the library's unit tests ==" >> "$log"
+    local tf="$timing_dir/$idx"
+    timing_files+=("$tf")
+    idx=$(( idx + 1 ))
+    rebuild_one "library unit tests" "$repo_root" \
+      "cd '$repo_root' && cargo nextest run --no-run --lib" "$log" "$tf"
+  fi
+
   # Collect timings — one file per scheduled job.  Concatenate in
   # scheduled order so the summary table reads top-to-bottom by
   # submission, even though jobs finished in arbitrary order.

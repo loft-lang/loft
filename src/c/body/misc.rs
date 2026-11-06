@@ -261,6 +261,10 @@ impl FnWriter<'_> {
                     K::Ref,
                 ))
             }
+            ("OpSlotTag", [f]) => {
+                let f = self.expr(f, ind)?;
+                Ok(E::new(format!("loft_slot_tag({})", as_ref(f)?), K::Ref))
+            }
             ("OpChildRec", [f, tp]) => {
                 let tp =
                     u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;

@@ -356,7 +356,7 @@ crack in the foundation becomes a crack in everything above it. The same bar hol
 for the libraries on top — and they are the real end. The shift up is now underway:
 the libraries are **extracted, versioned, and installable** through the
 [`loft-lang/registry`](https://github.com/loft-lang/registry) (Goal B's structure
-floor — see [The two floors](#the-two-floors--why-dogfood-is-paused-and-when-it-resumes)),
+floor — see [The two floors](#the-two-floors--what-the-game-work-stands-on)),
 so the foundation has largely finished its job. What the libraries do **not** all
 meet yet is the next bar up — **per-library quality**: each one, on every target,
 good enough to be fun ([LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md): cross-target
@@ -432,22 +432,31 @@ time; the single-closure accumulator — one record, one owner, sound — stays.
 entry naming the cost it avoided and the supported alternative, and its
 rejection diagnostic is pinned by a test.
 
-## The two engines (both required; neither finds the other's bugs)
+## The three engines (all required; none finds the others' bugs)
 
 - **Dogfood — "is loft useful?"** Build real programs in loft (the branch-review
   viewer, the tracker indexer, `lib/markdown`, the games moros/dryopea). Learn
   what the language is missing, fix it, and ship the result. This finds the bugs
   users hit *today*: missing features, awkward ergonomics, feature-interaction
-  bugs, design inconsistencies. (See CLAUDE.md § "Development cadence".)
+  bugs, design inconsistencies. (See CLAUDE.md § Dogfood loop.)
 - **Sanitizer — "is loft safe?"** Use tools to detect UB — Miri, the homegrown
   `stack_align_guard`, and fuzzing — covering bad alignment, use-after-free,
   uninitialised reads, aliasing, and leaks, whether or not the output looks
   correct today. This finds the correct-today, corrupt-tomorrow bugs that
   dogfooding cannot see.
+- **The rule-led walk — "does loft do what its rules say?"** Take the formal rules
+  ([formal/](formal/README.md)) one at a time, then two at a time where they meet,
+  and build probe cells whose answers are computed by hand from the rules, on the
+  interpreter and the C backend ([STABILITY_METHOD.md § The rule-led
+  walk](STABILITY_METHOD.md#the-rule-led-walk--the-standing-practice)).  This finds
+  the wrong answer nothing reports: a program that runs clean, agrees on both
+  backends, and is still wrong by the rules — which no consumer notices and no
+  sanitizer flags.
 
-These feed four goals: **A** (soundness) is the sanitizer engine; **C**
-(capability) and **B** (release) are the dogfood engine; **D** (parity) uses
-sanitizer-style differential testing but serves both.
+These feed the goals: **A** (soundness) is the sanitizer engine; **C**
+(capability) and **B** (release) are the dogfood engine; the rule-led walk serves
+**A** and **E** (the rules are the stated model); **D** (parity) uses
+sanitizer-style differential testing but serves all three.
 
 ---
 
@@ -527,17 +536,24 @@ Goal C's fraction measures *useful*, not *stable*: a consumer exercises only the
 
 ## Goal D — Cross-platform + cross-backend parity
 
-**Definition.** loft behaves identically on **ubuntu / macOS-ARM / windows** and
-across the **interpret / native / wasm** backends. No result depends on the
-platform or the backend. macOS-ARM matters most here: it requires aligned memory
-reads, so an unaligned read is a real fault there. The three backends are three
-separate implementations of the same language.
+**Definition.** loft behaves identically on **ubuntu / macOS-ARM / windows**, on
+**64-bit and 32-bit processors**, and across its backends: the **interpreter**, the
+**C backend** (`--native-c`, the compiled standard — every CI test's `--native` runs
+it), the **Rust writer** (`--native` without `LOFT_NATIVE_BACKEND=c`) and **wasm**
+(`--native-wasm`, `--html`). No result depends on the platform, the width or the
+backend. macOS-ARM matters most here: it requires aligned memory reads, so an
+unaligned read is a real fault there. A `#width 32` program answers the same on
+every backend and every processor ([WIDTH32.md](WIDTH32.md), formal/types.md § The
+32-bit regime). The backends are separate implementations of the same language.
 
 **Check.**
 - The 3-OS CI matrix (`ci.yml`) is green on `main`.
 - A differential run executes one shared set of programs on interpret / native /
   wasm and checks for **identical output and diagnostics** — zero differences.
   Per-backend green is *not* enough; the backends must agree on the same input.
+- The 32-bit C sweeps (`scripts/c_sweep.py --m32`, `--riscv32`) agree with the
+  interpreter: run by hand until they become nightly jobs
+  ([@PLN204](https://github.com/loft-lang/plans/issues/204) S8).
 
 ---
 
@@ -860,25 +876,16 @@ slow anyway.
 
 ---
 
-## The two floors — why dogfood is paused, and when it resumes
+## The two floors — what the game work stands on
 
-The dogfood loop normally sets the agenda (CLAUDE.md § "Development cadence"). It is
-**paused right now, on purpose** — because the loop did its job and hit two walls:
+The dogfood loop sets the agenda (CLAUDE.md § Dogfood loop): the games and the consumer
+libraries are built while the two floors under them are raised, and a gap a consumer finds
+is fixed in the language.  It resumes project by project: a consumer first validates its
+state against the C backend, then, where it can, its performance there.  The floors are the two bars a game rests on, each with an explicit
+bar tied to what a game actually needs, not "all of A" or "all of B", so neither grows
+without end:
 
-- it **kept surfacing instability** → the **soundness floor** (Goal A);
-- it **fought the library/package structure** → the **structure floor** (Goal B's
-  packaging half).
-
-Building a game on either un-cleared floor means building on a base that can still
-shift under you. So Goal C (the game work especially) waits on A and B — *by
-choice, not neglect*.
-
-The risk of a deliberate pause is that open-ended floors make it permanent by
-drift: soundness can always take one more sanitizer leg, packaging one more polish.
-So each floor has an **explicit resume bar, tied to what a game actually needs** —
-not "all of A" or "all of B":
-
-- **Soundness floor — cleared when:** the sanitizer gate is green on `main` **and**
+**Soundness floor — cleared when:** the sanitizer gate is green on `main` **and**
   the Miri/ASan set covers the surfaces the games use (eval stack, store
   claim/copy/resize, vectors, fn-refs, text). *Not* "every Goal-A coverage leg
   shipped."
@@ -889,11 +896,10 @@ not "all of A" or "all of B":
   polished."
   **Where it stands:** the registry's nightly `registry-validation` gate — every package leg green means `installable` is a working artifact, not just resolve + fetch.  Dated readings: [GOALS-history.md](GOALS-history.md).
 
-When both floors read true the dogfood loop sets the
-agenda again — and the work above it is no longer *extracting* libraries but raising
-each to the **per-library quality bar** (cross-target parity + `verified`,
+Once both floors read true, the work above them is raising each library to the
+**per-library quality bar** (cross-target parity + `verified`,
 [LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md)) — a Goal-C-and-up concern, not a
-foundation floor. Until the soundness floor confirms, A stays the foundation work
+foundation floor.  Until the soundness floor reads true, A stays the foundation work
 *because* C and D asked for it.
 
 ---
@@ -905,8 +911,8 @@ foundation floor. Until the soundness floor confirms, A stays the foundation wor
    C (capability)      A (soundness)      E (predictable memory)
    B (release)         D (parity)             the programmer's model
         │                                     is the truth
-        └── paused until the soundness floor (A) and
-            structure floor (B) clear, then resumes as agenda-setter
+        └── sets the agenda, standing on the soundness floor (A)
+            and the structure floor (B)
 
    F (friction-free surface) ── orthogonal: the user-friction cost
         of delivering any of A–E must stay near zero

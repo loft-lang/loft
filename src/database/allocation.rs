@@ -3173,6 +3173,8 @@ impl Stores {
             last_json_errors: Vec::new(),
             child_copies: Vec::new(),
             child_copy_depth: 0,
+            child_releases: Vec::new(),
+            child_release_depth: 0,
             parse_unfilled: None,
             // The worker inherits the parent's program context, so a `par`
             // inside a `par` worker can dispatch in turn.  Without it the
@@ -5039,6 +5041,10 @@ impl Stores {
         true
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the release walk and its out-of-line-chain loop share one record-kind dispatch"
+    )]
     fn remove_claims_mode(&mut self, rec: &DbRef, tp: u16, borrowed: bool) {
         // loft#796 — the record itself must be inside its store before anything reads
         // its fields.  The per-edge guards in `for_each_owned_child` catch a rotten
@@ -5065,6 +5071,38 @@ impl Stores {
         #[cfg(not(host_fs))]
         if !borrowed && !self.files.is_empty() && self.types[tp as usize].name == "File" {
             self.release_file_handle(rec);
+        }
+        // `@FR-F-Render-Child` — an owned out-of-line child is released as a LOOP, never one
+        // stack frame per link: a list 20000 records long overflowed the interpreter's stack
+        // here (`remove_claims_mode` → `remove_struct_claims` → … per link).  Its field is
+        // cleared now and the child queued; the outermost release drains the queue, and each
+        // child's fields are released before its record is deleted, the walk's own order.
+        if !borrowed && let Parts::ChildRec(ct) = self.types[tp as usize].parts {
+            let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
+            if cur == 0 || Self::owned_edge_absent(cur) {
+                return;
+            }
+            if !self.owned_edge_in_store(rec, cur) {
+                self.refuse_owned_edge(rec, tp, cur, "child record");
+                return;
+            }
+            self.store_mut(rec).set_u32_raw(rec.rec, rec.pos, 0);
+            let child = DbRef {
+                store_nr: rec.store_nr,
+                rec: cur,
+                pos: 8,
+            };
+            self.child_releases.push((child, ct, cur));
+            if self.child_release_depth > 0 {
+                return;
+            }
+            self.child_release_depth += 1;
+            while let Some((child, ct, cur)) = self.child_releases.pop() {
+                self.remove_claims_mode(&child, ct, false);
+                self.store_mut(&child).delete(cur);
+            }
+            self.child_release_depth -= 1;
+            return;
         }
         // A view's own text/leaf fields do not exist — it is a collection, never a
         // scalar — so the borrowed mode only ever reaches the cascade arm below.
@@ -7188,6 +7226,24 @@ impl Stores {
             .then(|| crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]))
     }
 
+    /// Why an image path is refused when the image itself cannot be opened, as every loader
+    /// says it (the C runtime's `loft_image_gate` the same words).
+    const NO_IMAGE: &'static str = "the image cannot be opened";
+
+    /// Why an image with no sidecar is refused: [`Self::NO_IMAGE`] when the image at `what`
+    /// (a path, or a `file://` address) cannot be opened, else [`Self::BARE_IMAGE`].  An image
+    /// that is not there has no sidecar either, so this names the missing file instead of a
+    /// missing `.dschema`.  It stays a refusal: answering "safe" would let an image that
+    /// appears before the read be read raw with no recorded layout.
+    fn bare_reason(what: &str) -> &'static str {
+        let local = what.strip_prefix("file://").unwrap_or(what);
+        if !local.contains("://") && crate::file_access::open(local).is_err() {
+            Self::NO_IMAGE
+        } else {
+            Self::BARE_IMAGE
+        }
+    }
+
     /// Why an image with no sidecar is refused, as every loader says it.
     const BARE_IMAGE: &'static str = "it has no layout sidecar (`.dschema`) beside it, so nothing records the \
          layout its records were written with; write it with store_persist_copy, which writes both";
@@ -7209,7 +7265,7 @@ impl Stores {
             return false;
         }
         if *verdict == crate::schema_sidecar::SchemaVerdict::Bare {
-            crate::loft_eprintln!("{builtin}: refusing {what} — {}.", Self::BARE_IMAGE);
+            crate::loft_eprintln!("{builtin}: refusing {what} — {}.", Self::bare_reason(what));
             return false;
         }
         let detail = match verdict {
@@ -7272,7 +7328,7 @@ impl Stores {
         // it back too: a refusal reachable by one route and not another is the
         // same silence in a different place (loft#802).
         let reason = match verdict {
-            crate::schema_sidecar::SchemaVerdict::Bare => Self::BARE_IMAGE.to_string(),
+            crate::schema_sidecar::SchemaVerdict::Bare => Self::bare_reason(path).to_string(),
             // A refusal carries its own sentence: a store too old for this release, or a
             // sidecar that could not be fetched.
             crate::schema_sidecar::SchemaVerdict::Refused(why) => why,

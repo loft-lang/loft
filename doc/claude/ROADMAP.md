@@ -57,8 +57,11 @@ first:
   `stage` ([@PLN218](https://github.com/loft-lang/plans/issues/218));
 - the libraries' shared C rewritten in loft, the hardware calls and the engine kept C ([@PLN216](https://github.com/loft-lang/plans/issues/216)).
 
-The 3D art grows out of it: the dogfighter's sprites are rendered from a 3D model, so every model
-made for a 2D game is also 3D content.  The order to start in:
+The Tanmatsu work leads the next game-engine work, and the 3D world grows out of it twice.  The
+art: the dogfighter's sprites are rendered from a 3D model, so every model made for a 2D game is
+also 3D content.  The world: the device's limited editor, a hex world editor in the frame tier
+([@PLN209](https://github.com/loft-lang/plans/issues/209) F12), writes the worlds the 3D games
+load, so it lays the base for the 3D hex world.  The order to start in:
 1. @PLN213 T0.4: an app's start-up never erases the launcher's settings.  This is a defect in the
    released loft.
 2. @PLN214 G0: the drawing budget on the device, measured before anything is built on it.
@@ -142,6 +145,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 
 | Plan | status | What it is |
 |---|---|---|
+| [@PLN219](https://github.com/loft-lang/plans/issues/219) | active | Rust's `&mut` tree idioms in loft — the slot cursor, a slot handed to a function, a warning for a walk that forgot its `&`, and bench programs of user-built structures against Rust ([plan](plans/219-rust-slot-links/README.md)) |
 | [@PLN192](https://github.com/loft-lang/plans/issues/192) | future | Regex captures, find-all and replace — a `Match` whose texts the compiler can keep a view of the subject ([plan](plans/192-regex-captures-as-spans.md)) |
 | [@PLN171](https://github.com/loft-lang/plans/issues/171) | future | LSP / DAP follow-ups |
 | [@PLN66](https://github.com/loft-lang/plans/issues/66) | future | Viewer ↔ LSP bridge |

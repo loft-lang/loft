@@ -535,6 +535,15 @@ impl Parser {
         // field link on a `&S` parameter leaves the advice to drop the `&` standing.
         let vars = &self.vars;
         let link_bind = |data: &Data, n: &Value| -> Option<(u16, u16)> {
+            // A COLLECTION link shares its source's handle, so its bind is a plain
+            // `Set(link, Var(src))` on a variable the `&` marked (`is_amp_container_link`):
+            // a whole-value write through it refills the source's store (loft#2424).
+            if let Value::Set(v, rhs) = n.unspan()
+                && let Value::Var(src) = rhs.unspan()
+                && vars.is_amp_container_link(*v)
+            {
+                return Some((*v, *src));
+            }
             if let Value::Set(v, rhs) = n.unspan()
                 && let Value::Call(op, args) = rhs.unspan()
             {
@@ -557,10 +566,18 @@ impl Parser {
             }
             None
         };
-        let mut link_src: HashMap<u16, u16> = HashMap::new();
+        // EVERY place a link is bound to, not the last: `p = &a; p = 4; p = &b` writes `a`
+        // before the re-point (`@FR-B-Ref-Repoint`), and keeping one source per link credited
+        // that write to `b` and refused a correct `&a` (loft#2425).  Flow-insensitive, so a
+        // write anywhere through `p` counts for each place `p` ever named: the refusal can
+        // only fire less, never on a parameter that is written.
+        let mut link_src: HashMap<u16, Vec<u16>> = HashMap::new();
         code.walk(&mut |n| {
             if let Some((v, src)) = link_bind(&self.data, n) {
-                link_src.insert(v, src);
+                let srcs = link_src.entry(v).or_default();
+                if !srcs.contains(&src) {
+                    srcs.push(src);
+                }
             }
         });
         let mut through_written = crate::fxhash::FxHashSet::default();
@@ -588,13 +605,18 @@ impl Parser {
             .copied()
             .filter(|w| link_src.contains_key(w))
             .collect();
-        for w in through {
-            let (mut at, mut hops) = (w, 0);
-            while let Some(&src) = link_src.get(&at)
-                && hops < link_src.len()
-            {
-                written.insert(src);
-                (at, hops) = (src, hops + 1);
+        // Follow each chain of links (`d = &c; c = &p`) to every place it reaches.
+        let mut todo: Vec<u16> = through;
+        let mut seen: HashSet<u16> = HashSet::new();
+        while let Some(at) = todo.pop() {
+            if !seen.insert(at) {
+                continue;
+            }
+            if let Some(srcs) = link_src.get(&at) {
+                for &src in srcs {
+                    written.insert(src);
+                    todo.push(src);
+                }
             }
         }
         // A write from inside a CLOSURE lives in the lambda's own definition, so walking this

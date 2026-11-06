@@ -1583,6 +1583,15 @@ impl Parser {
                 // the pre-conversion type copied that stack tuple as if it were the record
                 // (`OpCopyRecord` over a tuple value: SIGSEGV, loft#1903).
                 let mut v_tp = v_tp;
+                // @FR-B-Ref-Uniform — a `&τ` local is used exactly like a `τ`, so a yield of
+                // one yields the value it links to, as a `return` or a block tail does.  Left
+                // as the link, the channel carried the link's own slot: a scalar came out as
+                // garbage (no value, a bogus free, a SIGBUS), a text parameter's link crashed,
+                // and a record skipped `@FR-G-Own`'s copy — the consumer's value tracked the
+                // generator's later writes, on both backends.
+                if matches!(v_tp.base(), Type::RefVar(_)) {
+                    self.un_ref(&mut v_tp, &mut v);
+                }
                 if let Type::Iterator(elem_tp, _) = r_type.base() {
                     let elem = (**elem_tp).clone();
                     let value_at = Some(&expr_start.position);
@@ -1747,10 +1756,11 @@ impl Parser {
         // A reassignment inside the body drops the proof at the write (`narrowed_non_null` is
         // retained-against on assignment), which is what keeps the `cur = cur.next` step
         // honest: the proof covers the reads BEFORE the advance, and nothing after it.
-        let narrow = self.narrowing_from_condition(&cond);
         let narrow_base = self.narrowed_non_null.len();
-        if let Some((v, true)) = narrow {
-            self.narrowed_non_null.push(v);
+        for (v, p) in self.narrowings_from_condition(&cond) {
+            if p {
+                self.narrowed_non_null.push(v);
+            }
         }
         let proj_narrow = self.projection_narrowing_from_condition(&cond);
         let proj_base = self.narrowed_non_null_exprs.len();
@@ -3847,6 +3857,341 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// The out-of-line field a `&` bind's place names: `OpRefFromChildRec(OpGetField(…))`,
+    /// with the field's known type (0 in pass 1, before the layout exists).
+    fn child_rec_place(&self, place: &Value) -> Option<(Value, i32)> {
+        let Value::Call(d, args) = place.unspan() else {
+            return None;
+        };
+        if self.data.def(*d).name() != "OpRefFromChildRec" {
+            return None;
+        }
+        let field = args.first()?;
+        let Value::Call(g, gargs) = field.unspan() else {
+            return None;
+        };
+        if self.data.def(*g).name() != "OpGetField" {
+            return None;
+        }
+        match gargs.get(2).map(Value::unspan) {
+            Some(Value::Int(kt)) => Some((field.clone(), *kt)),
+            _ => None,
+        }
+    }
+
+    /// Pass 1 — what each `&` link is bound to and whether it is written whole
+    /// ([`Parser::slot_links`], loft#2433).
+    fn note_slot_link(&mut self, op: &str, to: &Value, rhs: &Value) {
+        if !self.first_pass || op != "=" {
+            return;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return;
+        };
+        // A `&` PARAMETER keeps its own path: it holds its caller's place from the first line,
+        // so a slot set only at a re-point would leave a whole write before it with no field.
+        if !self.vars.exists(*v) || self.vars.is_argument(*v) {
+            return;
+        }
+        if !self.amp_pending {
+            self.slot_links
+                .whole_write(self.context, *v, self.vars.name(*v));
+            return;
+        }
+        let field = self.child_rec_place(rhs).is_some();
+        let facts = self.slot_links.note(self.context, *v, self.vars.name(*v));
+        if field {
+            facts.field = true;
+        } else {
+            facts.other = true;
+        }
+    }
+
+    /// `@FR-B-Ref-Write` (loft#2433) — a `&` bind of `var` to an out-of-line field: the link
+    /// keeps the FIELD in a slot local, set before the bind's statement, and views the record
+    /// the field holds through it.  Only for a link bound to such fields alone and written
+    /// whole somewhere, or handed to a `&` parameter of a type held out of line: a whole write
+    /// then has a field to land in ([`Self::slot_link_whole_write`],
+    /// `Self::slot_cell_argument`, @PLN219).
+    fn bind_slot_link(&mut self, var: u16, code: &mut Value, view: &Type) {
+        if self.first_pass || var == u16::MAX {
+            return;
+        }
+        let Some(facts) = self.slot_links.get(self.context, self.vars.name(var)) else {
+            return;
+        };
+        if !facts.field || facts.other || !(facts.whole || facts.passed) {
+            return;
+        }
+        let Some((field, kt)) = self.child_rec_place(code) else {
+            return;
+        };
+        if kt == 0 {
+            return;
+        }
+        let slot = if let Some((slot, _)) = self.slot_vars.get(&(self.context, var)) {
+            *slot
+        } else {
+            let name = format!("slot_{}", self.vars.name(var));
+            let slot = self.create_unique(&name, view);
+            self.vars.set_type(slot, view.clone());
+            self.vars.set_skip_free(slot);
+            self.slot_vars.insert((self.context, var), (slot, kt));
+            slot
+        };
+        self.vars.defined(slot);
+        self.pending_link_slot.push(v_set(slot, field));
+        *code = self.cl("OpRefFromChildRec", &[Value::Var(slot)]);
+    }
+
+    /// The link a slot-link or slot-parameter write names: a local that keeps an out-of-line
+    /// field ([`Parser::slot_vars`]) or a `&` parameter of a type held out of line, with the
+    /// definition of the node it names.
+    fn slot_link_node(&self, v: u16) -> Option<u32> {
+        if v == u16::MAX || !self.vars.exists(v) {
+            return None;
+        }
+        if self.vars.is_argument(v) {
+            return self.data.slot_link_def(self.vars.tp(v));
+        }
+        self.slot_vars.get(&(self.context, v))?;
+        let d = self.data.type_def_nr(self.vars.tp(v).base());
+        (d != u32::MAX).then_some(d)
+    }
+
+    /// Record `cur.g = null` for the `walk-or-write` warning: the field `g` of the node `cur`
+    /// names holds nothing a later whole write of `cur` could drop.
+    pub(crate) fn note_slot_nulled(&mut self, field: &Value) {
+        if self.first_pass {
+            return;
+        }
+        let Value::Call(g, args) = field.unspan() else {
+            return;
+        };
+        if self.data.def(*g).name() != "OpGetField" {
+            return;
+        }
+        let (Some(Value::Var(v)), Some(Value::Int(pos))) = (
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) else {
+            return;
+        };
+        if self.slot_link_node(*v).is_some() {
+            self.slot_nulled
+                .entry((self.context, *v))
+                .or_default()
+                .push(*pos);
+        }
+    }
+
+    /// @PLN219 `walk-or-write` — inside a loop, a whole write `cur = cur.f` through a field link
+    /// or a slot parameter that drops a sibling subtree not known to be null: the author meant
+    /// the step `cur = &cur.f`, which Rust's types would have told apart.  "Inside a loop" is a
+    /// loop the link was bound OUTSIDE of, so the link is carried from one iteration to the
+    /// next; a write anywhere else is the unlink it reads as (`remove_key`, `take_min`, also
+    /// when that shape stands inside an outer loop that binds the link afresh); a node with no other
+    /// out-of-line field (a list) drops nothing; `cur.g = null;` before the write says the
+    /// drop is meant.  Every `=` to the link ends what was recorded for it.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one walk over the assignment shapes the lint reads; split it only as a move"
+    )]
+    fn warn_walk_or_write(&mut self, op: &str, to: &Value, rhs: &Value) {
+        if self.first_pass || op != "=" {
+            return;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return;
+        };
+        let v = *v;
+        let nulled = self
+            .slot_nulled
+            .remove(&(self.context, v))
+            .unwrap_or_default();
+        let depth = self.vars.loop_depth();
+        if self.amp_pending {
+            // A fresh bind (`cur = &t.left`) starts the walk at this depth; a step
+            // (`cur = &cur.left`) continues it.
+            let step = self
+                .out_of_line_place(rhs)
+                .and_then(|(f, _)| match f.unspan() {
+                    Value::Call(_, a) => a
+                        .first()
+                        .map(|b| matches!(b.unspan(), Value::Var(b) if *b == v)),
+                    _ => None,
+                })
+                .unwrap_or(false);
+            if !step {
+                self.slot_bound_depth.insert((self.context, v), depth);
+            }
+            return;
+        }
+        // A parameter is bound at the function's entry.
+        let bound = self
+            .slot_bound_depth
+            .get(&(self.context, v))
+            .copied()
+            .unwrap_or(0);
+        if depth <= bound {
+            return;
+        }
+        let Some(d) = self.slot_link_node(v) else {
+            return;
+        };
+        let Some((field, _)) = self.out_of_line_place(rhs) else {
+            return;
+        };
+        let Value::Call(_, gargs) = field.unspan() else {
+            return;
+        };
+        let (Some(Value::Var(base)), Some(Value::Int(pos))) = (
+            gargs.first().map(Value::unspan),
+            gargs.get(1).map(Value::unspan),
+        ) else {
+            return;
+        };
+        if *base != v {
+            return;
+        }
+        let kt = self.data.def(d).known_type();
+        let mut written = String::new();
+        let mut dropped: Vec<String> = Vec::new();
+        for a in 0..self.data.attributes(d) {
+            if !self.data.field_is_out_of_line(d, a) {
+                continue;
+            }
+            let name = self.data.attr_name(d, a);
+            let at = i32::from(self.database.position(kt, &name));
+            if at == *pos {
+                written = name;
+            } else if !nulled.contains(&at) {
+                dropped.push(name);
+            }
+        }
+        if dropped.is_empty() || written.is_empty() {
+            return;
+        }
+        let link = self.vars.name(v).to_string();
+        let gone = dropped
+            .iter()
+            .map(|f| format!("`{link}.{f}`"))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        let clear = dropped
+            .iter()
+            .map(|f| format!("{link}.{f} = null;"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        diagnostic!(
+            self.lexer,
+            Level::Warning,
+            code = "walk-or-write",
+            "to step down, write `{link} = &{link}.{written}` — `{link} = {link}.{written}` writes \
+             the field `{link}` names and drops {gone} with the node; to drop it on purpose, \
+             write `{clear}` first"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("step with `{link} = &{link}.{written}`"),
+            condition: Some("the loop walks down the tree".to_string()),
+            edit: None,
+            concept: "references `&T`",
+            concept_ref: "@F21",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("write `{clear}` before it"),
+            condition: Some(format!("the node and {gone} are meant to go")),
+            edit: None,
+            concept: "references `&T`",
+            concept_ref: "@F21",
+        });
+    }
+
+    /// @PLN219 `@FR-B-Ref-Repoint`, `@FR-F-ParamRef` — `slot = &slot.f` on a `&S` PARAMETER
+    /// whose `S` is held out of line re-points the parameter to the FIELD: the field's address
+    /// goes into a cell of this frame ([`crate::keys::SLOT_FIELD_BIT`]) and the parameter points
+    /// at the cell, so a later read sees the child and a whole write is the field write.
+    /// Written as the write-through it was, the re-point rebound the caller's variable.
+    fn repoint_slot_param(&mut self, var: u16, code: &mut Value) {
+        if self.first_pass || var == u16::MAX || !self.vars.is_argument(var) {
+            return;
+        }
+        let Some(d) = self.data.slot_link_def(self.vars.tp(var)) else {
+            return;
+        };
+        let Some((field, kt)) = self.child_rec_place(code) else {
+            return;
+        };
+        if kt == 0 {
+            return;
+        }
+        let cell = if let Some((cell, _)) = self.slot_vars.get(&(self.context, var)) {
+            *cell
+        } else {
+            let name = format!("slot_{}", self.vars.name(var));
+            let tp = Type::Reference(d, Deps::none());
+            let cell = self.create_unique(&name, &tp);
+            self.vars.set_type(cell, tp);
+            self.vars.set_skip_free(cell);
+            self.slot_vars.insert((self.context, var), (cell, kt));
+            cell
+        };
+        self.vars.defined(cell);
+        let tag = self.cl("OpSlotTag", &[field]);
+        self.pending_link_slot.push(v_set(cell, tag));
+        *code = self.cl("OpCreateStack", &[Value::Var(cell)]);
+    }
+
+    /// `@FR-B-Ref-Write` (loft#2433) — a WHOLE write through a link to an out-of-line field
+    /// (`cur = cur.right`, `cur = null`) writes the field the link names, then views what the
+    /// field holds now.  Without the slot the write rebound the local and the field kept its
+    /// record.  A link also bound to a whole variable has no one place for the write, and is
+    /// refused rather than rebound.
+    fn slot_link_whole_write(
+        &mut self,
+        op: &str,
+        to: &Value,
+        rhs: &Value,
+        rhs_tp: &Type,
+    ) -> Option<Value> {
+        if self.first_pass || op != "=" || self.amp_pending {
+            return None;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return None;
+        };
+        let v = *v;
+        // A `&` parameter's cell is written through the parameter (`OpSetSlotRef`).
+        if self.vars.is_argument(v) {
+            return None;
+        }
+        let Some(&(slot, kt)) = self.slot_vars.get(&(self.context, v)) else {
+            let facts = self
+                .slot_links
+                .get(self.context, self.vars.name(v))
+                .unwrap_or_default();
+            if facts.field && facts.other && facts.whole {
+                let name = self.vars.name(v).to_string();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "'{name}' is linked to a variable at one `&` bind and to a field at another, \
+                     so writing it whole has no one place to land — keep the parent and write \
+                     its field (`p.left = …`), or link only fields"
+                );
+            }
+            return None;
+        };
+        if !matches!(rhs_tp.base(), Type::Null | Type::Reference(..)) {
+            return None;
+        }
+        let write = self.out_of_line_set(Value::Var(slot), kt, rhs);
+        let read = self.cl("OpRefFromChildRec", &[Value::Var(slot)]);
+        Some(Value::Insert(vec![write, v_set(v, read)]))
+    }
+
     /// `p = (a, b)` where `p` is a `&(…)` link: `@FR-B-Ref-Uniform` makes a `&τ` written exactly
     /// as a `τ` is, so the whole value is written THROUGH the link — each element into the
     /// caller's tuple, as `p.0 = a; p.1 = b` writes it (loft#1673).  The right-hand side is
@@ -3980,6 +4325,8 @@ use a separate collection or add after the loop"
         matches!(self.vars.declared_type(v).base(), Type::RefVar(_))
             || self.vars.is_store_text_link(v)
             || self.vars.is_amp_container_link(v)
+            // A link to an out-of-line field writes the field (loft#2433).
+            || self.slot_vars.contains_key(&(self.context, v))
             || (matches!(tp, Type::Vector(..)) && {
                 // A scan rather than a keyed lookup: the key is an owned `String`, and building
                 // one per assignment is an allocation the front end does not otherwise make.
@@ -5072,6 +5419,12 @@ use a separate collection or add after the loop"
             *code = steps;
             return Type::Void;
         }
+        self.warn_walk_or_write(op, to, code);
+        self.note_slot_link(op, to, code);
+        if let Some(steps) = self.slot_link_whole_write(op, to, code, &s_type) {
+            *code = steps;
+            return Type::Void;
+        }
         // A `& vector` bind (`d = &v` / `d = &self.data`): the source is a vector lvalue
         // and the `&` opts INTO aliasing (B-Ref-Write — the write-through "north star" —
         // for a vector, which plain `d = v` deliberately does NOT give: it COPIES,
@@ -5248,6 +5601,18 @@ use a separate collection or add after the loop"
             // the bind copied, so `c = &n; c = Sq {…}` left `n` alone (loft#1836).  A LOCAL
             // link only: a `reference<E>` field or element given `&e` holds the record, as it
             // always has (`1579-…`).
+            // `@FR-B-Ref-Lvalue` — a link to a text PARAMETER links its owned copy, as a write
+            // to it does: the parameter itself is the caller's borrowed view (loft#2422).
+            // Both spellings, `c = &t` and `c: &text = t`, reach here; pass 1 promotes, and
+            // pass 2 reads the name as the copy.
+            if self.first_pass
+                && let Value::Var(p) = *code.unspan()
+                && p < self.vars.count()
+                && self.vars.is_argument(p)
+                && matches!(self.vars.tp(p).base(), Type::Text(_))
+            {
+                *code = Value::Var(self.promote_text_param(p));
+            }
             let stack_src = match *code.unspan() {
                 Value::Var(src)
                     if is_scalar(self.vars.tp(src))
@@ -5312,8 +5677,16 @@ use a separate collection or add after the loop"
             // `OpVarRef(b)` so it cannot be read as `c = b`, which writes `b`'s value through `c`
             // (`@FR-B-Ref-Write`); as one IR the two meant one thing to each backend
             // (`formal/binding.md` D-bind-41).
+            // A COLLECTION source is not a link copied: a `&vector` / `&hash` PARAMETER names
+            // the caller's handle, and a link to it SHARES that handle, the lowering
+            // `amp_collection_bind` takes (loft#2424).  Copied as a link, both spellings broke.
             let link_src = match *code.unspan() {
-                Value::Var(src) if matches!(self.vars.tp(src).base(), Type::RefVar(_)) => Some(src),
+                Value::Var(src)
+                    if matches!(self.vars.tp(src).base(), Type::RefVar(_))
+                        && !amp_collection_bind =>
+                {
+                    Some(src)
+                }
                 // A store-kind text link is parsed as its field, so `c = &t` arrives in that
                 // spelling rather than as `Var(t)`.
                 _ => self.store_text_link_of(code),
@@ -5555,6 +5928,9 @@ use a separate collection or add after the loop"
             && matches!(s_type.base(), Type::Reference(..) | Type::Enum(_, true, _))
         {
             self.vars.set_amp_link(var_nr);
+            let view = s_type.clone();
+            self.bind_slot_link(var_nr, code, &view);
+            self.repoint_slot_param(var_nr, code);
         }
         // `amp_pending` is a one-shot per binding — clear it here so a `&` that did
         // NOT take the scalar-reference path (a heap `&`-view, a non-`Var` source, an
@@ -7078,25 +7454,7 @@ use a separate collection or add after the loop"
                 && self.vars.is_argument(var_nr)
                 && (op == "=" || op == "+=")
             {
-                let name = self.vars.name(var_nr).to_string();
-                let shadow = self.vars.add_variable(
-                    &format!("__tp_{name}"),
-                    &Type::Text(Deps::none()),
-                    &mut self.lexer,
-                );
-                self.vars.set_promoted_from(shadow, var_nr);
-                // @PLN40 — a const text arg still promotes to a local String so a rebind
-                // (`p = …`) has a slot to write, but the promoted local INHERITS the
-                // const axis so the const guard still fires: value-const blocks `+=`
-                // (mutation) while allowing `=` (rebind); binding-const the reverse.
-                if self.vars.is_value_const(var_nr) {
-                    self.vars.set_value_const(shadow);
-                }
-                if self.vars.is_const_binding(var_nr) {
-                    self.vars.set_const_binding(shadow);
-                }
-                self.vars.remap_name(&name, shadow);
-                shadow
+                self.promote_text_param(var_nr)
             } else {
                 var_nr
             };
@@ -8981,6 +9339,34 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// A text PARAMETER that is written — `t = …`, `t += …` — or LINKED (`c = &t`) takes an
+    /// owned local (`__tp_<name>`, seeded at function entry) the first time either names it.
+    /// The parameter is the caller's text passed borrowed (a `Str` view), so neither a write
+    /// nor a link can land on it: a link to the view read its bytes as a `String` (an empty
+    /// result, then a crash, loft#2422).  First pass only — the name is remapped, so the
+    /// second pass reads every mention as the owned local, which is `(F-ParamScalar)`'s copy.
+    pub(crate) fn promote_text_param(&mut self, var_nr: u16) -> u16 {
+        let name = self.vars.name(var_nr).to_string();
+        let shadow = self.vars.add_variable(
+            &format!("__tp_{name}"),
+            &Type::Text(Deps::none()),
+            &mut self.lexer,
+        );
+        self.vars.set_promoted_from(shadow, var_nr);
+        // @PLN40 — a const text arg still promotes to a local String so a rebind
+        // (`p = …`) has a slot to write, but the promoted local INHERITS the
+        // const axis so the const guard still fires: value-const blocks `+=`
+        // (mutation) while allowing `=` (rebind); binding-const the reverse.
+        if self.vars.is_value_const(var_nr) {
+            self.vars.set_value_const(shadow);
+        }
+        if self.vars.is_const_binding(var_nr) {
+            self.vars.set_const_binding(shadow);
+        }
+        self.vars.remap_name(&name, shadow);
+        shadow
+    }
+
     /// loft#1278 — a by-value tuple PARAMETER carrying text whose member is written takes an
     /// owned shadow local (`__tp_<name>`, seeded at function entry), the first time any write
     /// names it: a plain `t.0 = …` and a compound `t.0 += …` alike.  The parameter itself is
@@ -10147,7 +10533,29 @@ use a separate collection or add after the loop"
                     // `ps[0]` while `.y` correctly did not, and native emitted a `_place` it
                     // never declared.  This arm answers both offsets correctly, so there is
                     // nothing for a second one to add.
-                    let elem_tp = parent_tp.base().clone();
+                    let mut elem_tp = parent_tp.base().clone();
+                    // A TUPLE element is reached as the `__tuple<…>` RECORD the accessor answers
+                    // (`@FR-T-Ref-Rep`: a `vector<(…)>` element is that record), so the place
+                    // binding holds a reference to it.  Typed as the stack tuple, the binding
+                    // held a record reference under a by-value type: the interpreter wrote
+                    // through it by accident of layout and `--native-c` refused the program.
+                    if let Type::Tuple(elems) = elem_tp.base()
+                        && crate::data::ref_tuple_is_record(elems)
+                    {
+                        let elems = elems.clone();
+                        let d = self.data.tuple_def(&mut self.lexer, &elems);
+                        // A VIEW of the container's element, as a struct element's binding is
+                        // (`@FR-B-View`): it borrows the container's root, or the bind would
+                        // copy the element and the write land in the copy.
+                        let root = crate::use_analysis::projection_container_var(
+                            &self.data,
+                            accessor.unspan(),
+                        );
+                        if d != u32::MAX {
+                            elem_tp =
+                                Type::Reference(d, root.map_or_else(Deps::none, Deps::frame1));
+                        }
+                    }
                     let elem_var = self.create_unique("_place", &elem_tp);
                     f2_setup = Some(v_set(elem_var, accessor));
                     let rebuilt = Value::Call(get_d, vec![Value::Var(elem_var), offset]);

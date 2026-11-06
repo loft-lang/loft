@@ -202,6 +202,12 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
              `(a)+` = a then (a)*.  A separator `*(s)` is consumed between iterations, not captured.
              BOUNDED by len(src) for slices ⟹ terminates; for iterators, by `max_lookahead` (P-IterBound).
   (P-Cap)    ⟨name:p, κ⟩: run p; on Match(bs,κ') ⟹ Match(bs ∪ {name ↦ p's result}, κ').
+             A POINT pattern's result is the element it matched.  A GROUP's result is the
+             sub-slice it consumed, src[i .. i'] for κ = ⟨i,src⟩ and κ' = ⟨i',src⟩, a FRESH
+             vector exactly as (P-Rest) gives one (@C161): `g:(a b | c)` binds the branch
+             taken; `g:(a)?` binds null where (P-Opt) took its empty branch, as it nulls every
+             capture inside; `g:(a)*` binds what (P-Rep) collected — the a's, without the
+             separators a `*(s)` consumed — which is what `(g: a)*` binds.
   (P-Rest)   ⟨..name, κ=⟨i,src⟩⟩ ⟹ Match({name ↦ a FRESH vector of src[i .. len−t]}, ⟨len−t, src⟩),
              t = fixed patterns after the rest (H-Alloc — a new store, independent of src).
              A slice holds AT MOST ONE rest: a second has no length of its own (the first takes

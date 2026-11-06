@@ -21,7 +21,13 @@ range clause, `(R-Wrapper)`, `(R-PushFill)`'s fill form, `(R-KeyedEntry)`, `(R-E
 no writer clause or writer compensation left (§ Arc C′), before any further rule moves; **arc C′
 is closed** (C′1–C′4), with `(R-ElemFirst)`'s view-exit form deferred to the `(R-ValueRecord)`
 view-clause move (§ What arc C′ skips); then `(R-LoopRecord)` and `(R-CompleteWrite)` moved (§ Arc C's moves; the latter's design
-in [cw-plan.md](cw-plan.md)), `(R-ValueRecord)`'s view clause is next.  It
+in [cw-plan.md](cw-plan.md)), and `(R-ValueRecord)`'s view clause moved (c4-view S1, S2);
+the forms of `(R-ValueRecord)` the IR declines stay in the writers, closed builds only, since
+spelling them in the IR would not speed the interpreter (owner ruling, [c4-view-plan.md](c4-view-plan.md)
+§ S2); c4-view S3 deleted both writers' element-first clauses (D-phase-4 closed).  D-fact-2
+gave the C `(R-RangedCall)` (its gain test now counts the operators a variant saves), and
+`(R-TextBorrow)` moved to the interpreter (§ Arc C's moves).  Next: `(R-SliceInto)` and
+`(R-RetAdopt)` measured on their beside builds; `(R-RefillText)` stays.  It
 was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
@@ -51,6 +57,13 @@ interpreter-runtime clause) unless a stated reason keeps it in a writer, and the
 writer alone; each moved rule left in one place (§ Arc C's finishing condition, arc C′); and
 each rule's most frequent refusals on the benches either admitted by a generalised clause or
 recorded as the rule's boundary.
+
+**What counts as a duplicate** (owner, 2026-11-06): a rule implemented TWICE INSIDE ONE BACKEND —
+an IR pass and that backend's own writer clause both reaching its output — and a rule that would
+speed the interpreter but lives only in a writer.  The same clause in the rustc writer and the C
+writer is not, in itself, the problem: most of the rustc backend will be shelved, so the C writer's
+clauses are what this plan judges.  The one known duplicate left by ruling: `(R-ValueRecord)` on the
+C, the IR pass beside the C writer's clause for the forms the IR declines ([c4-view-plan.md](c4-view-plan.md) § S2).
 
 A faster interpreter follows from it — work a rule removes in the IR, every backend stops doing
 — and is measured per move, but it is the CONSEQUENCE, not the aim: a move that speeds the
@@ -572,6 +585,25 @@ both switch states; the pins (`complete_write`, `field_append`, `field_mint`, `g
 `place_result`, `prefill_image`, `record_push`, `ir_schema_roundtrip`, the codec units).  On
 the interpreter: a push loop of complete literals 3 922 → 3 746 instructions a pass, −4.5 %.
 
+**`(R-TextBorrow)` — moved to the interpreter.**  An interpreter clause, not an IR spelling: the
+decision already lived once in `opt::text_borrow` / `opt::store_text_borrow`, and only the
+writers applied it.  `State::mark_text_views` (`src/state/codegen.rs`) now marks every variable
+that decision admits, asked as the C asks it (walks, discharge temps, the store-read, local-root
+and format clauses); the tested clause (a run-time test) and the call clause (the compiled
+writers' calling convention — on the interpreter `j = join(v, ", ")` read `""`) keep the copy.
+A view slot holds a `Str`: a rebind skips `OpClearText`, and the empty literal is put on the
+first bind and on a rebind.  Every reader of a text slot's layout asks `holds_str` — the halted
+frame's release did not, which aborted main's interpreter on a failed assert inside a borrowed
+walk (loft#2432, fixed on the way).  Census: `R-TextBorrow` and `R-SliceBorrow` applied by
+`interp` too.  Evidence: the switch A/B (`LOFT_NO_TEXT_BORROW`, 2 925 programs) 0 defects (its
+first run found the call clause and loft#2432); the C sweep (2 961 programs) 2 592 match, the
+one differ the attic cell that expects a parse error; `find_problems --subject` c, docs,
+runtime, codegen: 2 526 passed; a 17-cell probe matrix under `LOFT_POISON` and
+`LOFT_STRICT_STORES`; the cell
+`a-borrowed-text-rebound-takes-each-bind-whole.loft` (falsified by leaving the empty rebind's
+put out: r1 = 663) and `tests/scripts/2432-…`.  On the interpreter: 62 784 → 51 344
+instructions a pass of the probe, −18.2 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -590,7 +622,7 @@ variant is no fusion but saves little where dispatch is the cost, and `(R-Transi
 
 ## Cross-arc dependencies
 
-- **#2351 / `formal/facts.md`** — its three deviations are removed inside this plan
+- **`formal/facts.md`** (was #2351, closed into this plan) — its three deviations are removed inside this plan
   (design.md § The facts deviations); a moved rule's callee facts come from the facts routine;
   D-fact-2 (interval entry facts) is `(R-RangedCall)`'s precondition to leave the rustc
   writer.  The two plans share B2's "decidable on the IR" question.
@@ -630,7 +662,7 @@ function before and not after.
 | rule | the new piece | weight | evidence | verdict |
 |---|---|--:|---|---|
 | `(R-KeyedEntry)` | find-or-insert answering a reference, a stdlib function through one `OpStaticCall` | 4.2 | `keyed_entry`: an overwriting append of a present key 16 068–16 835 → 1 790 instructions, **−89 %** over two runs (the before form moves with the hash seed; the hand form looks up, then writes or inserts); moved: 15 550 → 2 073, **−86.7 %** | **MOVED** (`opt::keyed_entry`, arc C's fourth) |
-| `(R-RefillText)` | the refill twin | 0.6 | not a DROP: with `LOFT_NO_REFILL_TEXT=1` the rustc build of game_protocol runs **+148.6 %** instructions (`msg_ping`, same hash), so `(R-Reuse)`'s pool reset does not take its cost.  The C takes that cost another way: `ping_op` calls `n_msg_ping__tr0r`, an `(R-Transient)` twin.  No hand form for the interpreter | MOVE (twin), after wave 1; measured on arc C's beside build |
+| `(R-RefillText)` | the refill twin | 0.6 | not a DROP: with `LOFT_NO_REFILL_TEXT=1` the rustc build of game_protocol runs **+148.6 %** instructions (`msg_ping`, same hash), so `(R-Reuse)`'s pool reset does not take its cost.  The C takes that cost another way: `ping_op` calls `n_msg_ping__tr0r`, an `(R-Transient)` twin.  No hand form for the interpreter | **STAYS** in the rustc writer (2026-11-06, by § Goal's test of a duplicate): no C clause beside it, and no interpreter gain to move it for |
 | `(R-RefillBuffer)` | a REFILL bit on `OpDatabase` | 4.4 | its switch A/B on the rustc build: bench 17 **+0.0 %**, game_protocol **−0.2 %** instructions — it saves nothing measurable where it fires most | STAYS — no flag for a rule with no measured effect; whether to drop it is the owner's call |
 | `(R-FoldCompare)` | `fold_compare`, a stdlib function | 0.0 | admitted in no function a bench routine runs | DEFER until a consumer reaches it |
 | `(R-HandOver)` rotate | `rotate_into` + the `__nk` twin | 0.1 | two routines | DEFER by weight |
@@ -642,7 +674,7 @@ function before and not after.
 | rule | weight | evidence | verdict |
 |---|--:|---|---|
 | `(R-CompleteWrite)` | 30.9 | the heaviest work rule the interpreter lacked; the skipped prefill cannot be spelled in loft | **MOVED** (`opt::complete_write`, arc C's eighth: a stored fact, the twin opcodes; [cw-plan.md](cw-plan.md)) |
-| `(R-TextBorrow)` | 13.7 | `text_borrow` (the parameter-text clause, 16 borrows a pass): 62 800 → 57 791, **−8.0 %**, about 310 instructions per borrowed text | INTERP-CLAUSE (`mark_text_views` widened); the risk is a view outliving its source on an early exit |
+| `(R-TextBorrow)` | 13.7 | `text_borrow` (the parameter-text clause, 16 borrows a pass): 62 800 → 57 791, **−8.0 %**, about 310 instructions per borrowed text; moved: 62 784 → 51 344, **−18.2 %** | **MOVED** (`mark_text_views` reads the writers' decision; § Arc C's moves) |
 | `(R-FlatCopy)` | 1.1 | a runtime fast path, not spellable | INTERP-CLAUSE, by weight after the two above |
 | `(R-FieldAppend)` | 2.6 | the interpreter's `Stores::record_new` / `record_finish` already apply it (`plain_field_vector`); the census counts only the writers' clause | done — no move |
 | `(R-Apart)` instance 4 | 2.4 | `(R-Reuse)`'s reset widened to the owner local | arc D, as that widening |

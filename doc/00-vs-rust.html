@@ -407,6 +407,43 @@ let sum: i32 = scores.par_iter()
 <p class="down"><strong>Downside</strong> A worker is a named function, not a closure: context from the calling scope reaches it only as extra <em>scalar</em> arguments, because each worker runs on its own copy of the heap and cannot reach a struct or vector of the caller's. Nor may it touch shared state (no <code>println</code>, no file access) — a rule the compiler does not check. For multi-stage transformations, use <code>map()</code> / <code>filter()</code> / <code>reduce()</code> sequentially — each stage allocates a new intermediate vector.</p>
 </div>
 
+<h2 id="slots">15. Tree slots — <code>&amp;Tree?</code> instead of <code>&amp;mut Option&lt;Box&lt;Tree&gt;&gt;</code></h2>
+<div class="compare">
+<div>
+  <p class="lang-label loft-label">Loft</p>
+  <pre><code><span class="kw">struct</span> <span class="en">Tree</span> { k: <span class="ty"><a href="stdlib-types.html">integer</a></span>, left: <span class="en">Tree</span>?, right: <span class="en">Tree</span>? }
+
+<span class="cm">// remove the smallest key below a slot and answer it</span>
+<span class="kw">fn</span> <span class="fn-call">take_min</span>(slot: &amp;<span class="en">Tree</span>?) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+    <span class="kw">while</span> slot.left != <span class="kw">null</span> { slot = &amp;slot.left; }   <span class="cm">// walk: `&amp;`</span>
+    k = slot.k!;
+    slot = slot.right;                                <span class="cm">// write: unlinks the node</span>
+    k
+}
+
+t = <span class="en">Tree</span> { k: <span class="nm">50</span>, left: <span class="en">Tree</span> { k: <span class="nm">30</span> }, right: <span class="en">Tree</span> { k: <span class="nm">70</span>, left: <span class="en">Tree</span> { k: <span class="nm">60</span> } } };
+k = <span class="fn-call">take_min</span>(t.right);</code></pre>
+</div>
+<div>
+  <p class="lang-label rust-label">Rust</p>
+  <pre class="rust-pre"><code>fn take_min(slot: &amp;mut Option&lt;Box&lt;Tree&gt;&gt;) -&gt; i64 {
+    let mut slot = slot;
+    while slot.as_ref().is_some_and(|n| n.left.is_some()) {
+        slot = &amp;mut slot.as_mut().unwrap().left;
+    }
+    let mut node = slot.take().unwrap();
+    *slot = node.right.take();
+    node.k
+}
+
+let k = take_min(&amp;mut t.right);</code></pre>
+</div>
+</div>
+<div class="verdict">
+<p class="up"><strong>Upside</strong> The code reads as the textbook algorithm: no <code>take()</code>, no <code>unwrap()</code>, no <code>as_mut()</code>, and about a third shorter.  A field is a place: handed to a <code>&amp;</code> parameter, a whole write in the callee writes that field, so a user's own tree, trie or list is built and taken apart without an index arena.</p>
+<p class="down"><strong>Downside</strong> Only the <code>&amp;</code> tells a walk from a write: <code>slot = &amp;slot.left</code> steps down, <code>slot = slot.left</code> replaces the field with its child.  Rust's types catch a forgotten <code>&amp;mut</code>; loft does not yet warn.  The call <code>take_min(t.right)</code> does not show that it writes, and the unlink copies the subtree into the field where Rust's <code>take()</code> moves a pointer.</p>
+</div>
+
 </article>
 <script src="search-index.js"></script>
 <script src="search.js"></script>

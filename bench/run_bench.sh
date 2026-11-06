@@ -191,7 +191,8 @@ run_bench() {
   if [[ $HAS_LOFT -eq 1 && $HAS_RUST -eq 1 && -n "$LOFT_LIB" && $NO_BUILD -eq 0 && -f "$dir/bench.loft" ]]; then
     mkdir -p "$build_dir"
     native_rs="$build_dir/bench.rs"
-    "$LOFT" --native-emit "$native_rs" --lean "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
+    # The rustc emitter, whatever backend the environment selects (its C is not Rust).
+    LOFT_NATIVE_BACKEND= "$LOFT" --native-emit "$native_rs" --lean "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
     if [[ -f "$native_rs" ]]; then
       rustc "${RELEASE_ARGS[@]}" --edition=2024 \
         --extern "loft=$LOFT_LIB/libloft.rlib" \

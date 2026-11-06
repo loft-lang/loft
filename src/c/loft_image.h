@@ -799,6 +799,14 @@ static char *loft_image_sidecar(const char *path) {
 static int loft_image_gate(const char *path, const loft_sidecar *sc, const char *who, int convert) {
     char *text = loft_image_sidecar(path);
     if (!text) {
+        /* An image that is not there has no sidecar either: name the image (the interpreter's
+         * `NO_IMAGE`), still refusing, so an image that appears before the read is not read raw. */
+        FILE *img = fopen(path, "rb");
+        if (!img) {
+            loft_gate_refuse(who, path, "the image cannot be opened");
+            return 0;
+        }
+        fclose(img);
         loft_gate_refuse(who, path, "it has no layout sidecar (`.dschema`) beside it, so nothing records the "
                          "layout its records were written with; write it with store_persist_copy, which writes both");
         return 0;

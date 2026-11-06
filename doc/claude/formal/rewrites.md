@@ -196,6 +196,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
 | `(R-DecodeView)` | counted; admitted on no bench program |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
+| `(R-Demote)` | counted; admitted on no bench program |
 | `(R-Destination)` | `R-Destination` c, native |
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
@@ -262,7 +263,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c |
 | `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
 | `(R-Range)` | `R-Range` c, native |
-| `(R-RangedCall)` | `R-RangedCall` native |
+| `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
 | `(R-Rebind)` | `R-Rebind` ir |
 | `(R-RebindBuffer)` | `R-RebindBuffer` native |
 | `(R-RecPtr)` | `R-RecPtr` c, native · `/held` c · `/index` native · `/nested` native · `/param` c · `/text` c |
@@ -283,7 +284,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SharedCall)` | not counted — unbuilt: only its narrow case is built, counted as R-PureReuse/shared |
 | `(R-SingleUse)` | `R-SingleUse` parse |
 | `(R-SliceArg)` | `/range` ir |
-| `(R-SliceBorrow)` | `R-SliceBorrow` native |
+| `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
 | `(R-SliceInto)` | `R-SliceInto` c · `/transient` c |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
@@ -293,7 +294,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
 | `(R-Tabulate)` | `R-Tabulate` c |
 | `(R-TailSelf)` | `R-TailSelf` parse |
-| `(R-TextBorrow)` | `R-TextBorrow` c, native · `/tested` c, native |
+| `(R-TextBorrow)` | `R-TextBorrow` interp, c, native · `/tested` c, native |
 | `(R-TextClear)` | `R-TextClear` native |
 | `(R-TextLen)` | `R-TextLen` parse |
 | `(R-TextRun)` | counted; admitted on no bench program |
@@ -2863,7 +2864,8 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  place; and no fn-ref call, parallel arm or yield runs.  A writer
                  that names no store, or takes an operand of any other kind,
                  declines.
-                 LOCAL-ROOT CLAUSE (the C writer's): the `?` / `??` temp of such a
+                 LOCAL-ROOT CLAUSE (the C writer's and the interpreter's): the `?` /
+                 `??` temp of such a
                  read whose R is a frame LOCAL (`texts[si] ?? ""`, `f.names[i] ?? d`)
                  borrows on the stricter condition that over the same block NO store
                  writer runs at all — a frame-minted store counts as foreign here,
@@ -2911,7 +2913,10 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  format — under the same conditions on the local — and, holding no
                  store's bytes, is read in place by a store write
                  (`Output::text_value_unborrowed`).  A release emits no code on
-                 native, so an early exit's does not end the text.
+                 native, so an early exit's does not end the text.  The rustc
+                 writer's alone: its premise — the call's answer IS the work text
+                 it was handed — is that writer's calling convention, so the C and
+                 the interpreter keep the copy.
                  OPERAND CLAUSE: a text read `OpGetText(R, f)` that is an operand
                  of a text VALUE op — or a `text` argument of a call that runs no
                  store write (F-ParamText) and hands no store place to a `&`
@@ -2924,6 +2929,19 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  may write keeps the copy, and so does a call through a function
                  value, whose callee is unknown.
 ```
+
+**On the interpreter, in words.**  The interpreter applies the walk, discharge, store-read,
+local-root and format clauses from the same decision (`opt::text_borrow`,
+`opt::store_text_borrow`, asked as the C asks it), in `State::mark_text_views`: an admitted
+variable's slot holds a `Str` (`Function::holds_str`), every bind puts the bound `Str` whole —
+the empty literal's too, since a view is never cleared and appended to — and its release emits
+nothing.  The tested and call clauses keep the copy.  Every reader of a text slot's layout asks
+`holds_str`, including the release of a halted frame's texts.  On the probe
+(a record parameter's field bound to a local): 62 784 → 51 344 instructions an iteration,
+−18.2 %.  Switch `LOFT_NO_TEXT_BORROW` (both backends).  Cell
+`loft-suite/rules/rewrites/R-TextBorrow/a-borrowed-text-rebound-takes-each-bind-whole.loft`
+(r1–r5: an empty and a literal rebind, a one-arm rebind, a first bind to `""` kept across
+iterations, an early return, a break).
 
 **The call clause, in words.**  zttext's `slice_runs` binds `s = buf_slice_text(…)`, whose
 result is the work text the call fills, and sets it into a run: the bind copied the work text
@@ -3985,7 +4003,9 @@ read it.  Guard
                  the fewest leaves that do (fields, then unranged variables, then wider
                  ones); a variable ranged both by the function and by the copy keeps
                  the intersection.  A variant counts as ranging a call only when it
-                 turns an operator plain that the plain body keeps checked.  Inside the guarded copy a
+                 turns at least three operators plain that the plain body keeps
+                 checked — its own, and those of the callee variants it newly
+                 ranges, three deep.  Inside the guarded copy a
                  local's derived range is kept only when every assignment of it in the
                  whole function lies in the block and it never escapes by reference.  A
                  call there — or inside a ranged variant — whose every integer argument
@@ -4008,7 +4028,10 @@ arithmetic in the helpers alone is −4 %, with the window's two range ends too 
 LLVM inlines and folds the walk only once no operator on it carries the overflow report.
 Guarding any other variable, or a copy that leaves a checked call beside the ranged ones,
 duplicates the loop for a few operators and cost the inlining it was for (`slope_path_with_undo`
-+7 %, `stencil_rotate` +10 %, `edgeset_count` +65 % before these conditions).
++7 %, `stencil_rotate` +10 %, `edgeset_count` +65 % before these conditions).  The three
+operators are counted on what the variant SAVES: a variant that plains one subtraction of a long
+body still doubles that body, and on the C the second copy cost its callees their called-once
+inlining — text2d's `atlas_cell` twin, one operator, ran the hot base +17 %, `layout` +15 %.
 The variable clause's own switch is `LOFT_NO_RANGED_CALL_VARS=1`; cell
 `tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft`, pins
 `tests/ranged_call_vars.rs`.  `(R-Range)` cannot range a parameter or a field by
@@ -5448,6 +5471,25 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  A text field declines (a staged text may borrow the store the claim
                  mutates), as does a partial subscript (its key is the literal's
                  own) and a literal whose buffer is named outside it.
+  (R-Demote)     a struct LITERAL whose one out-of-line field (L-OutOfLine) is the
+                 WHOLE old value of the literal's own destination — `h = T { …, f: h,
+                 … }` for an owned local, `o.g = T { …, f: o.g, … }` for an out-of-line
+                 field place — is written by MOVING that old record into `f`, never by
+                 copying it: in the destination's own store a fresh child record takes
+                 the old record's bytes (its heap handles keep their claims), the
+                 destination's record — its number, so every link to it, kept — is
+                 left with nothing it owns, and the literal's other fields are written
+                 into it; where the destination is absent, the literal is built as
+                 ever with `f` absent.  The program sees exactly the value the copy
+                 would have built (B-OutOfLine, B-Copy: the old value is dead after the
+                 assignment), at the cost of one record instead of the old value's
+                 whole extent, so a list or a tree grown one node at a time costs
+                 linear time.  Declines — the copy stands — where the literal reads the
+                 destination anywhere but that one field (a view of the old record
+                 would read the emptied one), names it twice, is a variant of an enum,
+                 or writes a parameter the caller passed.  Decided in the parser (the
+                 local form when the literal is parsed, the place form at the
+                 out-of-line write); `LOFT_NO_DEMOTE=1` restores the copy.
   (R-Prefill)    the default prefill of a minted record — the declared defaults, the
                  null sentinels and the variant tag a partial literal leaves to the
                  type — is ONE block write of a per-type IMAGE computed once from the
@@ -8188,19 +8230,7 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 2** — each `(R-Phase)`'s ONE PLACE, left by @PLN211's moves (arc C′ removes them).
-
-### D-phase-4 (OPEN, @PLN211) — `(R-ElemFirst)`'s view-exit form stays in both writers
-- **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)
-- **Where:** `generation::emit` (the element-first statement handling), `c::body::elem_first` —
-  both now find only the pairs the IR declines: a temp whose function also returns it inside
-  its record, which `element_first` pairs only with the view plan (`ValueRecords::views`).
-- **Effect:** the interpreter keeps the temp-store build and the copy for that form; on the
-  benches neither writer applies it (no bench pair needs the plan), in the cells it is
-  `164-element-place.loft` g1, g2, g4, g10, g16 (the `parse_circle` shape), g20.
-- **Removal:** waits for D-phase-5: once the IR spells a view leaf, the exit is a tuple element
-  naming the temp and the pass takes the form with no plan (`plans/211-rule-phases/c4-view-plan.md`
-  S3), and both writers' clauses go.
+**OPEN: 1** — `(R-Phase)`'s ONE PLACE, left by @PLN211's moves.
 
 ### D-phase-5 (OPEN, @PLN211) — `(R-ValueRecord)`'s view-leaf clause is the writers' alone
 - **Violates:** `R-Phase` (one place: a work-removing rule applied in the IR unless a stated
@@ -8211,5 +8241,8 @@ Two instruments check the assumptions, and the chapter is not complete without b
 - **Effect:** the interpreter returns the record through its buffer for those functions; the
   plan is computed by each writer.  On the benches 3 functions (`R-ValueRecord/view`), drawing's
   `parse_lock` and `parse_poly` among them.
-- **Removal:** a reference element in the IR's value-record tuple on all three backends
-  (`c4-view-plan.md` S1, S2), moved in arc C's order by its weight.
+- **Removal:** the IR's value-record tuple carries a reference element on all three backends
+  (`c4-view-plan.md` S1) and takes every view leaf it can spell; the leaves it declines stay in
+  the writers by the owner's ruling (`c4-view-plan.md` § S2): an IR spelling that would not
+  speed the interpreter is no reason to move a form.  Open while the C writer and the IR both
+  apply `(R-ValueRecord)`.

@@ -261,6 +261,8 @@ pub(crate) struct Cx<'a> {
     /// `@FR-R-Inline`'s twin clause, its helper half: the small plain functions written with a
     /// `/*loft_hot:D*/` storage marker, resolved once every twin is written (`hot_helpers`).
     hot_candidates: std::cell::RefCell<std::collections::BTreeSet<u32>>,
+    /// `@FR-R-RangedCall`'s gain test per callee (`opt::ranged_call::variant_gains`), memoised.
+    pub(crate) rg_gains: std::cell::RefCell<std::collections::HashMap<u32, bool>>,
     /// The functions called in the body of a loop that calls an `__inv` twin: the twin is
     /// taken into that loop, so they are roots of `hot_helpers` as much as the twin is.
     pub(crate) loop_callees: std::cell::RefCell<std::collections::BTreeSet<u32>>,
@@ -367,14 +369,21 @@ pub(crate) const VF_BIT: u64 = 1 << 56;
 /// bit 32: the function written again with those parameters seeded as non-sentinel, called by
 /// a call site whose arguments prove them where the program-wide fact cannot (another caller
 /// passes a value that may be null).  The first [`NN_PARAMS`] parameters can be named, so the
-/// mask ends at bit 55, below every named twin bit — one bit more and parameter 25 would read
-/// as `DS_BIT`.
+/// mask ends at bit 54, below every named twin bit — one bit more and parameter 24 would read
+/// as `RG_BIT`.
 pub(crate) const NN_SHIFT: u32 = 32;
-pub(crate) const NN_PARAMS: usize = 24;
+pub(crate) const NN_PARAMS: usize = 23;
 pub(crate) const NN_MASK: u64 = ((1u64 << NN_PARAMS) - 1) << NN_SHIFT;
 const _: () = assert!(
-    NN_MASK & (VF_BIT | DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT) == 0
+    NN_MASK & (RG_BIT | VF_BIT | DS_BIT | AP_BIT | KH_BIT | APV_BIT | APR_BIT | NK_BIT | INV_BIT)
+        == 0
 );
+
+/// The mask bit of a `__rg` twin (`@FR-R-RangedCall`): the function written again with its
+/// integer parameters seeded within `[-L, L]` (`opt::ranged_call::param_seeds`), called where
+/// the caller's facts prove every integer argument there, so `(R-Range)` writes the operators
+/// those bounds make unable to fault plain — native's `__rg` variant.
+pub(crate) const RG_BIT: u64 = 1 << 55;
 
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
@@ -426,6 +435,7 @@ impl<'a> Cx<'a> {
             tr: std::cell::RefCell::new(body::transient::TrState::default()),
             ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),
             hot_candidates: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            rg_gains: std::cell::RefCell::new(std::collections::HashMap::new()),
             loop_callees: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             upgrades: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -1511,6 +1521,7 @@ pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
         & !AP_BIT
         & !DS_BIT
         & !VF_BIT
+        & !RG_BIT
         & !NN_MASK;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
     let kh = if mask & KH_BIT == 0 { "" } else { "__kh" };
@@ -1526,11 +1537,12 @@ pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
     let ap = if mask & AP_BIT == 0 { "" } else { "__ap" };
     let ds = if mask & DS_BIT == 0 { "" } else { "__d" };
     let vf = if mask & VF_BIT == 0 { "" } else { "__vf" };
+    let rg = if mask & RG_BIT == 0 { "" } else { "__rg" };
     if places == 0 {
-        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}", c_name(data, d))
+        format!("{}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}{rg}", c_name(data, d))
     } else {
         format!(
-            "{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}",
+            "{}_pl{places}{inv}{nk}{apr}{apv}{kh}{ap}{ds}{vf}{rg}",
             c_name(data, d)
         )
     }
@@ -2829,6 +2841,14 @@ pub fn emit_esp_program(data: &Data, stores: &Stores) -> Result<String, Refusal>
             why: "an app without a main".into(),
         });
     }
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ESP_UNIT.with(|s| s.set(false));
+        }
+    }
+    ESP_UNIT.with(|s| s.set(true));
+    let _reset = Reset;
     let (main, call) = program_main(data, main)?;
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
@@ -3025,6 +3045,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         & !AP_BIT
         & !DS_BIT
         & !VF_BIT
+        & !RG_BIT
         & !NN_MASK;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
@@ -3249,6 +3270,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .scalar_inputs(scalar_inputs)
             .kept_growth(kept)
             .nn_seed(mask)
+            .ranged(mask & RG_BIT != 0, mask & INV_BIT != 0)
             .nokeep(mask & NK_BIT != 0)?
             .apart(mask & APR_BIT != 0)
             .apart_value(mask & APV_BIT != 0)
@@ -3260,9 +3282,10 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let (body, statements) = body;
     let body = tabulated(cx, d, ret, &params, body);
     // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
-    let inline = small_function(statements) || hot_twin(mask, statements);
+    // A `__rg` twin is its base's body with plainer operators: it is hinted as its base is.
+    let inline = small_function(statements) || hot_twin(mask & !RG_BIT, statements);
     crate::rewrite_census::fired("R-Inline", usize::from(inline));
-    let helper = !inline && hot_helper_size(mask, statements);
+    let helper = !inline && hot_helper_size(mask & !RG_BIT, statements);
     let storage = if inline {
         "static inline".to_string()
     } else if helper {
@@ -4443,7 +4466,26 @@ fn framed(
     }
 }
 
+/// Set by a `--ship` run before it writes its unit ([`ship_units`]).
+static SHIPPED_UNITS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Every unit this process writes from now on is a shipped artefact's (`--ship`, NATIVE.md
+/// § Optimisation tiers): its functions stay whole, as [`functions_whole`] says.
+pub fn ship_units() {
+    SHIPPED_UNITS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether the unit being written keeps every function whole: a shipped artefact's (a
+/// `--ship` run, an ESP app), which takes full optimisation of its C as written.  A semantics
+/// build splits an over-budget function into parts instead (`(R-CSplit)`, `split::budget`),
+/// so the C compiler's optimiser time stays bounded.
+pub(crate) fn functions_whole() -> bool {
+    SHIPPED_UNITS.load(std::sync::atomic::Ordering::Relaxed) || ESP_UNIT.with(std::cell::Cell::get)
+}
+
 thread_local! {
+    /// Set for the length of one [`emit_esp_program`]: an app is a shipped artefact.
+    static ESP_UNIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set for the length of one [`emit_program_with_source_lines`]: the unit marks its statements
     /// with their loft lines (`Cx::source_lines`).
     static SOURCE_LINES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };

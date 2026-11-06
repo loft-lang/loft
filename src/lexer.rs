@@ -1160,7 +1160,13 @@ impl Lexer {
                     };
                     if let Some(single) = found {
                         self.next_char();
-                        let may_pair = !c.is_ascii() || self.tok2[c as usize];
+                        // `@FR-F-Spec-Fill` — a spec's fill and flags are ONE character each,
+                        // so `Formatting` mode never pairs two into an operator: `{s:=>5}` is
+                        // fill `=` then `>`, not the arm arrow, and `{s:->5}`, `{s:>>5}`,
+                        // `{s:<>5}`, `{s:^^5}` likewise.  Paired, the fill or the alignment
+                        // was lost with nothing said (loft#2428).  A width is read in `Code`.
+                        let may_pair = self.mode != Mode::Formatting
+                            && (!c.is_ascii() || self.tok2[c as usize]);
                         let token = if let Some(&d) = self.iter.peek() {
                             // Spelled only where the first character can begin a pair.
                             let double = if may_pair {

@@ -80,6 +80,7 @@ mod backings;
 mod branches;
 mod buffer_detach;
 mod buffers;
+pub(crate) use buffers::body_block_mut;
 mod capture_adoption;
 mod capture_builds;
 mod closure_keep;
