@@ -84,6 +84,7 @@ fn program(image: text, f: text, std_image: text) {
   el_buffers::promote_work_buffers(e);
   // Then `synth_drop_cascades`: the layout-upgrade drain first, then the drop cascades.
   el_refhome::check_stored_reference_homes(e);
+  el_refhome::check_later_fresh_binds(e);
   el_upgrade::synth_upgrade_drain(e);
   el_drop::synth_drop_cascades(e);
   print(report::defs_report(e.b, upto, templates: env_variable("LOFT_DEFS_TEMPLATES") == "1"));

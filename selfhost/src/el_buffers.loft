@@ -30,13 +30,27 @@ pub fn promote_work_buffers(e: el::El) {
     if def_decline(e, d#index, taken) {
       continue;
     }
-    // `@FR-R-WorkBuffer`'s result clause (`result_buffer.rs`): a call's vector result only read
-    // where it stands is filled into the caller's buffer — not carried: refused by name.
-    if hands_result_buffer(e, d.code[0] ?? ir::NdNull, el_vars::load(d.variables)) {
-      el::refuse(e, "a call's vector result filled into a caller's buffer (the result clause)");
-    }
     if promote_in(e, d#index) > 0 {
       promoted += [d#index];
+    }
+  }
+  // `@FR-R-WorkBuffer`'s result clause (`result_buffer.rs`): a call's vector result only read
+  // where it stands is filled into the caller's buffer, in a function that runs again.
+  any_ref = false;
+  for d in e.b.data.definitions {
+    if len(result_refs(e, d#index)) > 0 {
+      any_ref = true;
+    }
+  }
+  if any_ref {
+    again = runs_again(e);
+    for d in e.b.data.definitions {
+      if def_decline(e, d#index, taken) {
+        continue;
+      }
+      if promote_result_refs_in(e, d#index, again[d#index] ?? false) > 0 && !promoted.contains(d#index) {
+        promoted += [d#index];
+      }
     }
   }
   if len(promoted) == 0 {
@@ -889,4 +903,581 @@ fn callees(e: el::El, n: ir::Node) -> vector<integer> {
     }
   }
   out
+}
+
+// ── the result clause (src/parser/result_buffer.rs) ──
+
+// `result_refs`: each `__ref_N` a definition mints for a call's hidden plain-vector buffer and
+// owns outright — no argument, inline ref, skip-free ref or view.
+fn result_refs(e: el::El, d: integer) -> vector<integer> {
+  f = el::def(e, d).variables;
+  out: vector<integer> = [];
+  for x in f.variables {
+    r = x#index;
+    if !x.caller_hidden_buf || x.argument || x.skip_free || f.inline_refs.contains(r) || !starts_with(x.name, "__ref_") {
+      continue;
+    }
+    match x.type_def[0] ?? ir::TyVoid {
+      TyVector { inner: _, dep } => { if len(dep) == 0 { out += [r]; } },
+      _ => {}
+    }
+  }
+  out
+}
+
+// `runs_again`: per definition, whether it can be entered more than once in one activation of a
+// frame above it — a direct call of it stands in a loop, or in a function that itself runs
+// again or calls itself.
+fn runs_again(e: el::El) -> vector<boolean> {
+  again: vector<boolean> = [];
+  for _d in e.b.data.definitions {
+    again += [false];
+  }
+  for d in e.b.data.definitions {
+    looped(d.code[0] ?? ir::NdNull, false, again);
+  }
+  graph: vector<vector<integer>> = [];
+  for d in e.b.data.definitions {
+    graph += [callees(e, d.code[0] ?? ir::NdNull)];
+  }
+  grew = true;
+  while grew {
+    grew = false;
+    for cs in graph {
+      d = cs#index;
+      if again[d] ?? false || cs.contains(d) {
+        for c in cs {
+          if !(again[c] ?? true) {
+            again[c] = true;
+            grew = true;
+          }
+        }
+      }
+    }
+  }
+  again
+}
+
+fn looped(n: ir::Node, in_loop: boolean, out: vector<boolean>) {
+  if in_loop {
+    match n {
+      NdCall { def_nr } => { out[def_nr] = true; },
+      _ => {}
+    }
+  }
+  inner = in_loop || n is NdLoop;
+  for c in el_ir::children(n) {
+    looped(c, inner, out);
+  }
+}
+
+// `promote_result_refs_in`: the result refs of definition `d` promoted, counted.
+fn promote_result_refs_in(e: el::El, d: integer, again: boolean) -> integer {
+  refs = result_refs(e, d);
+  if len(refs) == 0 || !again {
+    return 0;
+  }
+  vars = el_vars::load(el::def(e, d).variables);
+  code = el::def(e, d).code[0] ?? ir::NdNull;
+  n = 0;
+  for r in refs {
+    elem = admit_result_ref(e, d, vars, code, r);
+    if elem != null {
+      code = promote_result_ref(e, d, vars, code, r, elem!);
+      n += 1;
+    }
+  }
+  if n > 0 {
+    e.b.data.definitions[d].code = [code];
+    e.b.data.definitions[d].variables = el_vars::stored(vars);
+  }
+  n
+}
+
+// `admit_result_ref`: `r` is named once, as the hidden vector buffer of one call of a callee
+// that cannot reach back here; that call is the whole value of the one bind of a plain local
+// viewing `r` alone; and every view of it is only read where it stands.  Its element, or null.
+fn admit_result_ref(e: el::El, d: integer, vars: el_vars::Vars, code: ir::Node, r: integer) -> ir::TypeT? {
+  elem = match el_vars::tp(vars, r) { TyVector { inner, dep } => if len(dep) == 0 { inner } else { return null }, _ => return null };
+  for x in vars.vars {
+    if x.argument && x#index > r {
+      return null;
+    }
+  }
+  bl = match el_ir::unspan(code) { NdBlock { block } => block[0], _ => return null };
+  top = 0;
+  for op in bl.operators {
+    match el_ir::unspan(op) {
+      NdSet { var, inner } => { if var == r && el_ir::unspan(inner) is NdNull { top += 1; } },
+      _ => {}
+    }
+  }
+  if top != 1 || set_count(code, r) != 1 || el_ir::mentions(code, r) != 1 {
+    return null;
+  }
+  x = result_bind(e, d, vars, code, r);
+  if x < 0 {
+    return null;
+  }
+  w = ReadWalk { r: r, vecs: [x], elems: [], grew: false };
+  while true {
+    w.grew = false;
+    verdict = rw_node(e, vars, w, code, CTX_OTHER);
+    if !w.grew {
+      if verdict != "" {
+        return null;
+      }
+      return elem;
+    }
+  }
+  null
+}
+
+fn set_count(n: ir::Node, v: integer) -> integer {
+  c = match n { NdSet { var } => if var == v { 1 } else { 0 }, _ => 0 };
+  for ch in el_ir::children(n) {
+    c += set_count(ch, v);
+  }
+  c
+}
+
+// The `Set(x, callee(…, r, …))` handing `r` to a call as the bind's whole value: `x`, or -1.
+fn find_bind_var(n: ir::Node, r: integer) -> integer {
+  match n {
+    NdSet { var, inner } => {
+      match el_ir::unspan(inner) {
+        NdCall { args } => {
+          for a in args {
+            if el_ir::unspan(a) == ir::NdVar { n: r } {
+              return var;
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for ch in el_ir::children(n) {
+    x = find_bind_var(ch, r);
+    if x >= 0 {
+      return x;
+    }
+  }
+  -1
+}
+
+fn find_bind_call(n: ir::Node, r: integer) -> ir::Node {
+  match n {
+    NdSet { inner } => {
+      match el_ir::unspan(inner) {
+        NdCall { args } => {
+          for a in args {
+            if el_ir::unspan(a) == ir::NdVar { n: r } {
+              return el_ir::unspan(inner);
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for ch in el_ir::children(n) {
+    c = find_bind_call(ch, r);
+    if !(c is NdNull) {
+      return c;
+    }
+  }
+  ir::NdNull
+}
+
+// `result_bind`: the one bind of `r`'s call — its result local, or -1 where it declines.
+fn result_bind(e: el::El, d: integer, vars: el_vars::Vars, code: ir::Node, r: integer) -> integer {
+  x = find_bind_var(code, r);
+  call = find_bind_call(code, r);
+  if x < 0 {
+    return -1;
+  }
+  match call {
+    NdCall { def_nr: callee, args } => {
+      at = -1;
+      for a in args {
+        if el_ir::unspan(a) == ir::NdVar { n: r } {
+          at = a#index;
+        }
+      }
+      cd = el::def(e, callee);
+      if cd.def_type != el::DT_FUNCTION || cd.rust != "" || !(el_ir::unspan(cd.code[0] ?? ir::NdNull) is NdBlock) {
+        return -1;
+      }
+      ca = cd.attributes[at];
+      if ca == null || !ca!.hidden || ca!.work_buffer || !(el_types::base(ca!.typedef[0] ?? ir::TyVoid) is TyVector) {
+        return -1;
+      }
+      if reaches(e, callee, d, []) {
+        return -1;
+      }
+      // `@FR-R-LazySplit` / `@FR-R-SplitTable`: a constant split reads no vector.
+      if cd.name == "t_4text_split" && cd.source == 0 && len(args) == 3 && constant_separator(e, args[1]) {
+        return -1;
+      }
+    },
+    _ => { return -1; }
+  }
+  xt = el_vars::tp(vars, x);
+  if vars.vars[x].argument || xt is TyOptional {
+    return -1;
+  }
+  match xt {
+    TyVector { inner: _, dep } => { if dep != [r] { return -1; } },
+    _ => { return -1; }
+  }
+  if set_count(code, x) - null_sets(code, x) != 1 {
+    return -1;
+  }
+  if iterated_call(code, r) {
+    return -1;
+  }
+  x
+}
+
+fn constant_separator(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpConvCharacterFromInt" && len(args) == 1 && match el_ir::unspan(args[0]) { NdInt { n: k } => k > 0, _ => false },
+    _ => false
+  }
+}
+
+fn null_sets(n: ir::Node, v: integer) -> integer {
+  c = match n { NdSet { var, inner } => if var == v && el_ir::unspan(inner) is NdNull { 1 } else { 0 }, _ => 0 };
+  for ch in el_ir::children(n) {
+    c += null_sets(ch, v);
+  }
+  c
+}
+
+// `@FR-R-ElemFirst`'s loop source: a `For block` whose first statement binds the call.
+fn iterated_call(n: ir::Node, r: integer) -> boolean {
+  match n {
+    NdBlock { block } => {
+      if block[0].name == "For block" && len(block[0].operators) > 0 {
+        match el_ir::unspan(block[0].operators[0]) {
+          NdSet { inner } => {
+            match el_ir::unspan(inner) {
+              NdCall { args } => {
+                for a in args {
+                  if el_ir::unspan(a) == ir::NdVar { n: r } {
+                    return true;
+                  }
+                }
+              },
+              _ => {}
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for ch in el_ir::children(n) {
+    if iterated_call(ch, r) {
+      return true;
+    }
+  }
+  false
+}
+
+pub struct ReadWalk {
+  r: integer,
+  vecs: vector<integer>,
+  elems: vector<integer>,
+  grew: boolean
+}
+
+const CTX_OTHER = 0;
+const CTX_DISCARD = 1;
+const CTX_READ_VEC = 2;
+const CTX_READ_ELEM = 3;
+const CTX_FLOW = 4;
+
+fn vector_read_at_0(nm: text) -> boolean {
+  nm == "OpLengthVector" || nm == "OpVectorIsNull" || nm == "OpGetVector" || nm == "OpGetVectorNullable"
+}
+
+fn element_read_at_0(nm: text) -> boolean {
+  (scalar_accessor(nm) && starts_with(nm, "OpGet")) || nm == "OpGetText" || nm == "OpConvBoolFromRef"
+}
+
+fn rw_op_name(e: el::El, d: integer) -> text {
+  op = one_op_wrapper(e, d);
+  if op >= 0 { el::def(e, op).name } else { el::def(e, d).name }
+}
+
+fn rw_tracked(w: ReadWalk, x: integer) -> boolean {
+  w.vecs.contains(x) || w.elems.contains(x)
+}
+
+// `ReadWalk::yields`: 1 where `n` can evaluate to the buffer's vector, 0 to an element of it,
+// -1 for any shape not named.
+fn rw_yields(e: el::El, w: ReadWalk, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdVar { n: x } => if w.vecs.contains(x) { 1 } else if w.elems.contains(x) { 0 } else { -1 },
+    NdCall { def_nr, args } => {
+      nm = rw_op_name(e, def_nr);
+      if (nm == "OpGetVector" || nm == "OpGetVectorNullable") && len(args) > 0 && match el_ir::unspan(args[0]) { NdVar { n: x } => w.vecs.contains(x), _ => false } { 0 } else { -1 }
+    },
+    NdBlock { block } => {
+      if len(block[0].operators) == 0 {
+        return -1;
+      }
+      y = rw_yields(e, w, block[0].operators[-1]);
+      y
+    },
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return -1;
+      }
+      y = rw_yields(e, w, items[-1]);
+      y
+    },
+    NdIf { cond: _, t, f } => {
+      y = rw_yields(e, w, t);
+      if y < 0 {
+        y = rw_yields(e, w, f);
+      }
+      y
+    },
+    _ => -1
+  }
+}
+
+fn rw_list(e: el::El, vars: el_vars::Vars, w: ReadWalk, ops: vector<ir::Node>, tail: integer) -> text {
+  for op in ops {
+    why = rw_node(e, vars, w, op, if op#index + 1 == len(ops) { tail } else { CTX_DISCARD });
+    if why != "" {
+      return why;
+    }
+  }
+  ""
+}
+
+fn rw_node(e: el::El, vars: el_vars::Vars, w: ReadWalk, n: ir::Node, ctx: integer) -> text {
+  match el_ir::unspan(n) {
+    NdVar { n: x } => {
+      if w.vecs.contains(x) {
+        return if ctx == CTX_READ_VEC || ctx == CTX_DISCARD || ctx == CTX_FLOW { "" } else { "its result is mentioned outside a read" };
+      }
+      if w.elems.contains(x) {
+        return if ctx == CTX_READ_ELEM || ctx == CTX_DISCARD || ctx == CTX_FLOW { "" } else { "an element of its result is mentioned outside a read" };
+      }
+      ""
+    },
+    NdCall { def_nr, args } => {
+      nm = rw_op_name(e, def_nr);
+      first = CTX_OTHER;
+      if vector_read_at_0(nm) {
+        if rw_yields(e, w, n) == 0 && !(ctx == CTX_READ_ELEM || ctx == CTX_DISCARD || ctx == CTX_FLOW) {
+          return "an element of its result is mentioned outside a read";
+        }
+        first = CTX_READ_VEC;
+      } else if element_read_at_0(nm) {
+        first = CTX_READ_ELEM;
+      }
+      for a in args {
+        why = rw_node(e, vars, w, a, if a#index == 0 { first } else { CTX_OTHER });
+        if why != "" {
+          return why;
+        }
+      }
+      ""
+    },
+    NdSet { var: x, inner } => rw_bind(e, vars, w, x, inner),
+    NdIter { var: x, create, next, init } => {
+      if rw_tracked(w, x) {
+        return "its result is bound by a loop";
+      }
+      for c in [create, next, init] {
+        why = rw_node(e, vars, w, c, CTX_OTHER);
+        if why != "" {
+          return why;
+        }
+      }
+      ""
+    },
+    NdTupleGet { var: b } => if rw_tracked(w, b) { "its result is in a tuple" } else { "" },
+    NdTuplePut { var: b, inner } => {
+      if rw_tracked(w, b) {
+        return "its result is in a tuple";
+      }
+      why = rw_node(e, vars, w, inner, CTX_OTHER);
+      why
+    },
+    NdCallRef { var: f, args } => {
+      if rw_tracked(w, f) {
+        return "its result is called as a function value";
+      }
+      for a in args {
+        why = rw_node(e, vars, w, a, CTX_OTHER);
+        if why != "" {
+          return why;
+        }
+      }
+      ""
+    },
+    NdFnRef { var: c } => if rw_tracked(w, c) { "its result is captured by a closure" } else { "" },
+    NdFnRefDnr { n: x } => if rw_tracked(w, x) { "its result is read as a function reference" } else { "" },
+    NdBlock { block } => rw_list(e, vars, w, block[0].operators, ctx),
+    NdLoop { block } => rw_list(e, vars, w, block[0].operators, CTX_DISCARD),
+    NdInsert { items } => rw_list(e, vars, w, items, ctx),
+    NdTuple { items } => rw_list(e, vars, w, items, CTX_OTHER),
+    NdParallel { arms } => rw_list(e, vars, w, arms, CTX_OTHER),
+    NdIf { cond, t, f } => {
+      why = rw_node(e, vars, w, cond, CTX_OTHER);
+      if why == "" {
+        why = rw_node(e, vars, w, t, ctx);
+      }
+      if why == "" {
+        why = rw_node(e, vars, w, f, ctx);
+      }
+      why
+    },
+    NdReturn { inner } => {
+      why = rw_node(e, vars, w, inner, CTX_OTHER);
+      why
+    },
+    NdYield { inner } => {
+      why = rw_node(e, vars, w, inner, CTX_OTHER);
+      why
+    },
+    NdDrop { inner } => {
+      why = rw_node(e, vars, w, inner, CTX_DISCARD);
+      why
+    },
+    _ => ""
+  }
+}
+
+// `ReadWalk::bind`: the buffer's own call, a null-init, a local bound to a view of the buffer
+// (tracked from here on), or any other value.
+fn rw_bind(e: el::El, vars: el_vars::Vars, w: ReadWalk, x: integer, rhs: ir::Node) -> text {
+  v = el_ir::unspan(rhs);
+  if v is NdNull {
+    return "";
+  }
+  match v {
+    NdCall { args } => {
+      own = false;
+      for a in args {
+        if el_ir::unspan(a) == ir::NdVar { n: w.r } {
+          own = true;
+        }
+      }
+      if own {
+        for a in args {
+          if el_ir::unspan(a) != ir::NdVar { n: w.r } {
+            why = rw_node(e, vars, w, a, CTX_OTHER);
+            if why != "" {
+              return why;
+            }
+          }
+        }
+        return "";
+      }
+    },
+    _ => {}
+  }
+  y = rw_yields(e, w, rhs);
+  if y < 0 {
+    return rw_node(e, vars, w, rhs, CTX_OTHER);
+  }
+  if vars.vars[x].argument {
+    return "its result is copied into a parameter";
+  }
+  borrows = false;
+  for dep in el_types::deps(el_vars::tp(vars, x)) {
+    if dep == w.r || rw_tracked(w, dep) {
+      borrows = true;
+    }
+  }
+  if !borrows {
+    return "its result is copied whole into a local";
+  }
+  if y == 1 {
+    if !w.vecs.contains(x) {
+      w.vecs += [x];
+      w.grew = true;
+    }
+  } else if !w.elems.contains(x) {
+    w.elems += [x];
+    w.grew = true;
+  }
+  rw_node(e, vars, w, rhs, CTX_FLOW)
+}
+
+// `promote_result_ref`: the hidden work-buffer attribute, the argument, the entry witness's
+// stash and the null road's mint in front of the statement that makes the call.
+fn promote_result_ref(e: el::El, d: integer, vars: el_vars::Vars, code: ir::Node, buf: integer, elem: ir::TypeT) -> ir::Node {
+  a = el::attribute(el_vars::name_of(vars, buf), ir::TyVector { inner: elem, dep: [] });
+  a.hidden = true;
+  a.work_buffer = true;
+  e.b.data.definitions[d].attributes += [a];
+  el_vars::become_argument(vars, buf);
+  w = el_vars::rebind_witness(vars, buf);
+  rows = el_expressions::vector_rows(e, elem, 0, true);
+  if rows == null {
+    return code;
+  }
+  rw = rows!;
+  db = el_vars::work_vec_db(vars, ir::TyReference { n: rw.main_def, dep: [] });
+  el_vars::depend(vars, buf, db);
+  b = ir::NdVar { n: buf };
+  mint = ir::NdInsert { items: [
+    el_ir::cl(e, "OpFreeRefIfDistinct", [b, ir::NdVar { n: w }]),
+    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: rw.main_known }]),
+    el_ir::v_set(buf, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: rw.vec_known }])),
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+  ] };
+  bl = match el_ir::unspan(code) { NdBlock { block } => block[0], _ => return code };
+  ops: vector<ir::Node> = [el_ir::v_set(w, ir::NdNull), el_ir::v_set(db, ir::NdNull)];
+  for op in bl.operators {
+    drop_it = match el_ir::unspan(op) { NdSet { var, inner } => var == buf && el_ir::unspan(inner) is NdNull, _ => false };
+    if !drop_it {
+      ops += [op];
+    }
+  }
+  at = len(ops);
+  for op in ops {
+    lead = match el_ir::unspan(op) { NdSet { inner } => el_ir::unspan(inner) is NdNull, _ => false };
+    if !lead && at == len(ops) {
+      at = op#index;
+    }
+  }
+  call_at = -1;
+  for op in ops {
+    if call_at < 0 && el_ir::mentions(op, buf) > 0 {
+      call_at = op#index;
+    }
+  }
+  if call_at < 0 {
+    call_at = at;
+  }
+  // The mint goes in at the call's statement, then the stash at the first statement past the
+  // null-inits — in front of the mint where the two are one place.
+  out: vector<ir::Node> = [];
+  for op in ops {
+    if op#index == at {
+      out += [el_ir::cl(e, "OpPutRef", [ir::NdVar { n: w }, b])];
+    }
+    if op#index == call_at {
+      out += [el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [b]), mint, ir::NdNull)];
+    }
+    out += [op];
+  }
+  if at >= len(ops) {
+    out += [el_ir::cl(e, "OpPutRef", [ir::NdVar { n: w }, b])];
+  }
+  bl.operators = out;
+  el_ir::respan(code, ir::NdBlock { block: [bl] })
 }

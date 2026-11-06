@@ -688,6 +688,13 @@ pub fn load(f: ir::Function) -> Vars {
         v.work_ref = k;
       }
     }
+    // `sync_work_counters`: a vector backing minted after the passes numbers on too.
+    if starts_with(n.name, "__vdb_") {
+      k = (n.name[6..] as integer?) ?? -1;
+      if k > v.work_vdb {
+        v.work_vdb = k;
+      }
+    }
     // `sync_work_counters`: a caller's text buffer minted after the passes numbers on.
     if starts_with(n.name, "__work_c") {
       k = (n.name[8..] as integer?) ?? -1;

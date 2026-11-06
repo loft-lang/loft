@@ -6,6 +6,13 @@
 // deeper than the holder's (`if h.r == null { s = …; h.r = s[1]; }`), the Rust front end moves
 // the local's home out to the holder's block after the parse.  That move is not carried: such a
 // program is refused by name.
+//
+// `own_fresh_binds` (src/parser/expressions.rs): a vector local that borrows at one bind and is
+// bound to a call's fresh vector result at another takes an owner for that result.  It reads the
+// callee's declared result as the pass meets it, so a loft callee declared further down — whose
+// result borrow its own body has not declared yet — is wrapped while one declared above is not.
+// The elaboration declares that borrow on its first pass, so the pass-order window is not
+// carried: such a bind is refused by name.
 use ir;
 use el;
 use el_ir;
@@ -96,4 +103,48 @@ fn root(e: el::El, n: ir::Node) -> integer {
     }
   }
   -1
+}
+
+pub fn check_later_fresh_binds(e: el::El) {
+  for d in e.b.data.definitions {
+    if d.source != el::MAIN_SOURCE || d.def_type != el::DT_FUNCTION {
+      continue;
+    }
+    if later_fresh_bind(e, d#index, d.variables, d.code[0] ?? ir::NdNull) {
+      el::refuse(e, "a vector local bound from a later-declared function's vector result (own_fresh_binds' pass order)");
+      return;
+    }
+  }
+}
+
+fn later_fresh_bind(e: el::El, f: integer, vars: ir::Function, n: ir::Node) -> boolean {
+  match n {
+    NdSet { var, inner } => {
+      match el_ir::unspan(inner) {
+        NdCall { def_nr } => {
+          x = vars.variables[var];
+          cd = el::def(e, def_nr);
+          if x != null && !x!.argument && def_nr > f && cd.source == el::MAIN_SOURCE && cd.def_type == el::DT_FUNCTION && cd.rust == "" {
+            match x!.type_def[0] ?? ir::TyVoid {
+              TyVector { inner: _, dep } => {
+                rt = cd.returned[0] ?? ir::TyVoid;
+                if len(dep) > 0 && rt is TyVector {
+                  return true;
+                }
+              },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if later_fresh_bind(e, f, vars, c) {
+      return true;
+    }
+  }
+  false
 }

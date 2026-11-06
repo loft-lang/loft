@@ -9068,6 +9068,7 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
       return null;
     }
     buf = el_vars::work_ref(vars, el_types::without_deps(rp));
+    vars.vars[buf].caller_hidden_buf = true;
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
     for i in el_types::deps(rp) {
@@ -9152,6 +9153,7 @@ fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vector<i
     return null;
   }
   buf = el_vars::work_ref(vars, ir::TyVector { inner: inner, dep: [] });
+  vars.vars[buf].caller_hidden_buf = true;
   // The declared result names the buffer when the callee delivers into it; one answering
   // something else (a `null`) declares no borrow, and the call borrows nothing.
   rt = if e.first_pass { el_types::with_deps(ret, []) } else if len(el_types::deps(el_types::base(ret))) > 0 { el_types::with_deps(ret, [buf]) } else { ret };
@@ -14409,7 +14411,7 @@ pub struct VecRows {
   pub vec_known: integer
 }
 
-fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
+pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
   if t is TyTuple {
     return tuple_vector_rows(e, t, lit, declared);
   }
@@ -15825,7 +15827,9 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
     el::refuse(e, "an index that is a range, a key list or a limit");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  x = expression(e, vars, c!);
+  // A literal indexed where it stands has no context for its element type: its element temp
+  // keeps the bare reference (`unique_elm_var`'s `was`), as a literal a `for` walks does.
+  x = if e.p.nodes[c!] is SVecLit && match e.p.nodes[c!] { SVecLit { items } => len(items) > 0, _ => false } { vector_value(e, vars, c!, hinted: false).x } else { expression(e, vars, c!) };
   if ranged && (x.tp is TyTrie || x.tp is TyRadix) {
     return keyed_slice(e, vars, x, keys, hi, limit);
   }
