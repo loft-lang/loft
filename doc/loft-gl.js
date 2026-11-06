@@ -147,6 +147,63 @@ export function initLoftGL(canvas) {
     mouseBtn &= ~1;
   }, { passive: false });
 
+  // ── Text ────────────────────────────────────────────────────────────────
+  // The browser already HAS a rasteriser, so text is a 2D canvas: `measureText` for
+  // the metrics and `fillText` white-on-transparent for the coverage bitmap (its
+  // alpha channel IS the coverage).  The bitmap's height is the line height and its
+  // baseline sits `ascent` from the top, as on the desktop backend.  A font PATH
+  // resolves to a CSS family under its base name; a page brings the real face as a
+  // `FontFace` (see `registerFontAsset`) or its own CSS, and anything else draws in
+  // a generic guessed from the name.  This is the same bridge `loft --html` uses
+  // (`loft-gl-wasm.js`, § text) — keep the two answering alike.
+  let fonts = [], textCv = null, textCx = null;
+  function text2d() {
+    if (!textCx) {
+      textCv = document.createElement('canvas');
+      textCx = textCv.getContext('2d', { willReadFrequently: true });
+    }
+    return textCx;
+  }
+  function baseNameOf(path) {
+    return String(path).split(/[\\/]/).pop().replace(/\.[^.]*$/, '');
+  }
+  function genericFor(base) {
+    const b = base.toLowerCase();
+    if (/mono|courier|consol|code/.test(b)) return 'monospace';
+    if (/serif/.test(b) && !/sans/.test(b)) return 'serif';
+    return 'sans-serif';
+  }
+  function familyFor(base) {
+    return '"' + base.replace(/"/g, '') + '", ' + genericFor(base);
+  }
+  // Metrics for font `fi` at `sz`: `asc` from the font's own box, `line` the
+  // height a bitmap gets.
+  function fontMetrics(fi, sz) {
+    const f = fonts[fi];
+    const cx = text2d();
+    cx.font = sz + 'px ' + (f ? f.family : 'sans-serif');
+    const m = cx.measureText('Mg');
+    const asc = m.fontBoundingBoxAscent || m.actualBoundingBoxAscent || sz * 0.8;
+    const desc = m.fontBoundingBoxDescent || m.actualBoundingBoxDescent || sz * 0.2;
+    return { cx: cx, asc: asc, line: Math.max(1, Math.ceil(asc + desc)) };
+  }
+
+  /** Register a served font file's bytes as a page font under the base name of each
+   *  path in `paths` — the family `gl_load_font(path)` resolves to.  Await it before
+   *  the program starts: a face still loading draws in the fallback.  The browser
+   *  parses the file; a file it refuses leaves text in the generic fallback. */
+  async function registerFontAsset(bytes, paths) {
+    const families = [...new Set(paths.map(baseNameOf))].filter(b => b);
+    await Promise.all(families.map(async (family) => {
+      try {
+        document.fonts.add(await new FontFace(family, bytes).load());
+      } catch (e) {
+        console.warn('[loft] font "' + family + '" could not be registered — text draws in '
+          + genericFor(family) + '.');
+      }
+    }));
+  }
+
   // ── Control object ──────────────────────────────────────────────────────
 
   const ctrl = {
@@ -154,6 +211,7 @@ export function initLoftGL(canvas) {
     shouldClose: false,
     /** Pre-loaded binary assets keyed by filename. Set .image to an HTMLImageElement. */
     assets: {},
+    registerFontAsset,
   };
 
   // ── loftHost interface ──────────────────────────────────────────────────
@@ -548,21 +606,48 @@ export function initLoftGL(canvas) {
       });
     },
 
-    // Binary asset loading (fonts, etc.) — returns Uint8Array or null.
-    load_binary_asset(path) {
-      const asset = ctrl.assets[path];
-      if (asset && asset.bytes) return asset.bytes;
-      for (const [k, v] of Object.entries(ctrl.assets)) {
-        if (path.endsWith(k) && v.bytes) return v.bytes;
-      }
-      return null;
+    // Font/text (see § Text above).  The handle is 0-based, as on the desktop
+    // backend; a non-number or negative answer is the null handle on the loft side.
+    gl_load_font(path) {
+      const base = baseNameOf(path);
+      if (!base) return -1;
+      fonts.push({ family: familyFor(base), base: base });
+      return fonts.length - 1;
     },
-
-    // Font/text — now handled by fontdue in WASM (Rust-side).
-    // These JS stubs remain as fallbacks if fontdue is not available.
-    gl_load_font(_path) { return -1; },
-    gl_measure_text(_fontIdx, _text, _size) { return 0.0; },
-    gl_text_height(_fontIdx, size) { return Math.ceil(size * 1.2); },
+    gl_measure_text(fi, s, sz) {
+      if (!fonts[fi]) return 0.0;
+      return fontMetrics(fi, sz).cx.measureText(String(s)).width;
+    },
+    gl_text_height(fi, sz) {
+      if (!fonts[fi]) return Math.ceil(sz * 1.2);
+      return fontMetrics(fi, sz).line;
+    },
+    gl_font_ascent(fi, sz) {
+      if (!fonts[fi]) return sz * 0.8;
+      return fontMetrics(fi, sz).asc;
+    },
+    // `[width, Uint8Array alpha]` with rows `width` wide, or null when there is
+    // nothing to draw.  The width is `ceil(measure_text)`, which the loft caller
+    // sized its buffer from.
+    gl_rasterize_text(fi, s, sz) {
+      s = String(s);
+      if (!fonts[fi] || !s) return null;
+      const mt = fontMetrics(fi, sz);
+      const w = Math.ceil(mt.cx.measureText(s).width);
+      const h = mt.line;
+      if (w <= 0 || h <= 0) return null;
+      textCv.width = w; textCv.height = h;
+      // Resizing the canvas resets its context state, so re-apply the font.
+      mt.cx.font = sz + 'px ' + fonts[fi].family;
+      mt.cx.clearRect(0, 0, w, h);
+      mt.cx.fillStyle = '#fff';
+      mt.cx.textBaseline = 'alphabetic';
+      mt.cx.fillText(s, 0, mt.asc);
+      const rgba = mt.cx.getImageData(0, 0, w, h).data;
+      const alpha = new Uint8Array(w * h);
+      for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4 + 3];
+      return [w, alpha];
+    },
 
     // Input
     gl_key_pressed(keyCode) { return keys.has(keyCode); },

@@ -227,6 +227,13 @@ the browser has overrides both, one it does not follows each.  `gl_load_font`
 does exactly that and `console.warn`s when the answer is no; every resolution is
 recorded on `globalThis.loftFonts`.
 
+The wasm-bindgen gallery bundle (the `wasm` feature, `src/wasm_gl.rs` § GL7.3)
+draws text through the same 2D-canvas bridge, in `doc/loft-gl.js`: no font file
+is parsed inside the bundle.  A font the gallery serves is registered as a
+`FontFace` under its base name before the program starts (`registerFontAsset`),
+which is the gallery's `[[font]]`.  The two bridges are copies — a change to
+one's metrics or bitmap geometry is made in both.
+
 `gl_upload_alpha_texture` takes a coverage buffer the PROGRAM computed — already
 in wasm memory, so no fetch and no asset pipeline.  WebGL2 has no
 `TEXTURE_SWIZZLE`, which is how the desktop backend makes a RED texture sample as

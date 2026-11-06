@@ -67,7 +67,7 @@ path = "src/bin/loft-dap.rs"
 default      = ["mmap", "random", "threading", "registry", "native-extensions", "remote-store", "strict-stores", "stack-verify"]
 threading    = ["dep:rayon"]
 wasm         = ["dep:wasm-bindgen", "dep:serde", "dep:serde-wasm-bindgen",
-                "dep:js-sys", "dep:web-sys", "png", "dep:fontdue",
+                "dep:js-sys", "dep:web-sys", "png",
                 "dep:console_error_panic_hook"]
 # @PLN117 — the gallery bundle: wasm-bindgen PLUS loft's own browser thread
 # pool.  The pool is not wasm-bindgen's and never was loft-specific glue on top of
@@ -138,7 +138,6 @@ sha2 = { version = "0.10" }
 rand_core          = { version = "0.9", optional = true }
 rand_pcg           = { version = "0.9", optional = true }
 png                = { version = "0.17", optional = true }
-fontdue            = { version = "0.9", optional = true }
 # The store's file mapping (src/mmap_file.rs) and the read-only `file_map` one.  0.9.11+ for
 # RUSTSEC-2026-0186; `memmap` and `mmap-storage` (built on it) are unmaintained.
 memmap2            = { version = "0.9.12", optional = true }
