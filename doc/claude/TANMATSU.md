@@ -386,7 +386,10 @@ behind the same loft API it has everywhere.
   the same on every backend and every processor.
 - **The C on a RISC-V 32-bit core:** `scripts/c_sweep.py --riscv32` builds each program with
   `zig cc -target riscv32-linux-musl` and runs it under `qemu-riscv32`.  `--m32` does the same
-  for 32-bit x86.  Every library above passes its tests on both.
+  for 32-bit x86.  Every library above passes its tests on both.  No CI workflow runs either
+  sweep yet: they become nightly jobs, with `scripts/width64_census.py` as an efficiency
+  ratchet, once a game demo runs on the device at 60 fps
+  ([@PLN204](https://github.com/loft-lang/plans/issues/204) S8).
 - **The Tanmatsu sections:** each library's `ESP_PLATFORM` code is type-checked against the real
   BSP headers, with small stand-ins for the FreeRTOS and ESP-IDF headers
   ([HARDWARE_BACKENDS.md § Checking a platform section](HARDWARE_BACKENDS.md#checking-a-platform-section)).
