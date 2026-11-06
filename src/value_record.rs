@@ -596,6 +596,18 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         for (i, r) in own {
             w.params.insert((t, i), r);
         }
+        // The twin's body is `d`'s, so its record parameters lend as `d`'s do: a carrier's
+        // bind calls the twin, and a lend asked of the twin's parameter that is not here
+        // handed the bare tuple to a record parameter (a null or a wild record).
+        let lent: Vec<(usize, u32)> = w
+            .lendable
+            .iter()
+            .filter(|((f, _), _)| *f == d)
+            .map(|((_, i), r)| (*i, *r))
+            .collect();
+        for (i, r) in lent {
+            w.lendable.insert((t, i), r);
+        }
     }
     let mut touched: HashSet<u32> = HashSet::default();
     // The literals first: a one-buffer chain makes the buffer a carrier too, and the carrier
@@ -2251,10 +2263,10 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
 fn rewrite_function(data: &mut Data, w: &World, twins: &HashMap<u32, u32>, f: u32, plan: &Plan) {
     let def = &mut data.definitions[f as usize];
     let mut code = std::mem::replace(&mut def.code, Value::Null);
-    let scope = match code.unspan() {
-        Value::Block(b) => b.scope,
-        _ => 0,
-    };
+    // The body's own block — found inside the `Insert([Set(w, null), Block])` a hoisted
+    // result reference wraps it in, too: a bare `Block` match left the lend records of such
+    // a body undeclared, in scope 0, with no frame slot.
+    let scope = crate::scopes::body_block_mut(&mut code).map_or(0, |b| b.scope);
     // A record per LENT carrier, declared null at the body's top: minted at its first lend,
     // overwritten whole at each, released where the carrier's own scope ends.
     let mut lends: HashMap<u16, u16> = HashMap::default();
@@ -2281,10 +2293,15 @@ fn rewrite_function(data: &mut Data, w: &World, twins: &HashMap<u32, u32>, f: u3
         lends,
     }
     .uses(&mut code);
-    if !decls.is_empty()
-        && let Value::Block(b) = code.unspan_mut()
-    {
-        b.operators.splice(0..0, decls);
+    if !decls.is_empty() {
+        let b = crate::scopes::body_block_mut(&mut code);
+        debug_assert!(
+            b.is_some(),
+            "a lending body has a block to declare its records in"
+        );
+        if let Some(b) = b {
+            b.operators.splice(0..0, decls);
+        }
     }
     def.code = code;
     for (v, record) in &plan.carriers {

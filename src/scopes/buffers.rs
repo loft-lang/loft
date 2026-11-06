@@ -316,7 +316,7 @@ pub(super) fn reuse_record_buffers(
 /// not a body this pass rewrites.  Matching a bare `Block` alone skipped every such function
 /// in silence — the pool, the lazy mints and the entry-time flag and witness initialisers
 /// alike.
-pub(super) fn body_block_mut(code: &mut Value) -> Option<&mut Block> {
+pub(crate) fn body_block_mut(code: &mut Value) -> Option<&mut Block> {
     match code {
         Value::Span(b) => body_block_mut(&mut b.1),
         Value::Block(bl) => Some(&mut **bl),
