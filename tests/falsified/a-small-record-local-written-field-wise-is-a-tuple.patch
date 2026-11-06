@@ -1,13 +1,20 @@
 diff --git a/src/value_record.rs b/src/value_record.rs
-index 202d2b381..1a8fac546 100644
+index 5e7bdc322..46d4f5612 100644
 --- a/src/value_record.rs
 +++ b/src/value_record.rs
-@@ -1362,7 +1362,7 @@ impl Rewrite<'_> {
-                 {
-                     let mut value = args.pop().unwrap_or(Value::Null);
-                     self.uses(&mut value);
--                    *n = Value::TuplePut(v, i, Box::new(value));
-+                    *n = Value::TuplePut(v, 0, Box::new(value));
+@@ -2419,13 +2419,13 @@ impl Rewrite<'_> {
+                         // reported, as the setter's null-record arm does: it IS that arm.
+                         Some(p) => Value::If(
+                             Box::new(Value::TupleGet(v, p)),
+-                            Box::new(Value::TuplePut(v, i, Box::new(value.clone()))),
++                            Box::new(Value::TuplePut(v, 0, Box::new(value.clone()))),
+                             Box::new(Value::Call(
+                                 set,
+                                 vec![Value::Call(ops.null_ref, Vec::new()), Value::Int(at), value],
+                             )),
+                         ),
+-                        None => Value::TuplePut(v, i, Box::new(value)),
++                        None => Value::TuplePut(v, 0, Box::new(value)),
+                     };
                      return;
                  }
-                 let d = *op;
