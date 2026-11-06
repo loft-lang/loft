@@ -88,7 +88,7 @@ fn take_min(p: Tree) -> integer {
 
 /// Unlink the child of `p` on `left_side` (never the root): its key taken from its successor
 /// when it has two children, the successor unlinked in its place; otherwise its child takes its
-/// place.  Every change is a FIELD write (loft#2431: a whole-value write through a link to an
+/// place.  Every change is a FIELD write (loft#2433: a whole-value write through a link to an
 /// out-of-line child is not carried yet).
 fn unlink(p: Tree, left_side: boolean) {
   c = &p.left;

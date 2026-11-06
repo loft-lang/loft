@@ -3856,6 +3856,133 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// The out-of-line field a `&` bind's place names: `OpRefFromChildRec(OpGetField(…))`,
+    /// with the field's known type (0 in pass 1, before the layout exists).
+    fn child_rec_place(&self, place: &Value) -> Option<(Value, i32)> {
+        let Value::Call(d, args) = place.unspan() else {
+            return None;
+        };
+        if self.data.def(*d).name() != "OpRefFromChildRec" {
+            return None;
+        }
+        let field = args.first()?;
+        let Value::Call(g, gargs) = field.unspan() else {
+            return None;
+        };
+        if self.data.def(*g).name() != "OpGetField" {
+            return None;
+        }
+        match gargs.get(2).map(Value::unspan) {
+            Some(Value::Int(kt)) => Some((field.clone(), *kt)),
+            _ => None,
+        }
+    }
+
+    /// Pass 1 — what each `&` link is bound to and whether it is written whole
+    /// ([`Parser::slot_links`], loft#2433).
+    fn note_slot_link(&mut self, op: &str, to: &Value, rhs: &Value) {
+        if !self.first_pass || op != "=" {
+            return;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return;
+        };
+        if !self.vars.exists(*v) {
+            return;
+        }
+        let key = (self.context, self.vars.name(*v).to_string());
+        let field = self.amp_pending && self.child_rec_place(rhs).is_some();
+        let facts = self.slot_links.entry(key).or_default();
+        if !self.amp_pending {
+            facts.whole = true;
+        } else if field {
+            facts.field = true;
+        } else {
+            facts.other = true;
+        }
+    }
+
+    /// `@FR-B-Ref-Write` (loft#2433) — a `&` bind of `var` to an out-of-line field: the link
+    /// keeps the FIELD in a slot local, set before the bind's statement, and views the record
+    /// the field holds through it.  Only for a link bound to such fields alone and written
+    /// whole somewhere: a whole write then has a field to land in ([`Self::slot_link_whole_write`]).
+    fn bind_slot_link(&mut self, var: u16, code: &mut Value, view: &Type) {
+        if self.first_pass || var == u16::MAX {
+            return;
+        }
+        let key = (self.context, self.vars.name(var).to_string());
+        let Some(facts) = self.slot_links.get(&key).copied() else {
+            return;
+        };
+        if !facts.field || facts.other || !facts.whole {
+            return;
+        }
+        let Some((field, kt)) = self.child_rec_place(code) else {
+            return;
+        };
+        if kt == 0 {
+            return;
+        }
+        let slot = if let Some((slot, _)) = self.slot_vars.get(&(self.context, var)) {
+            *slot
+        } else {
+            let name = format!("slot_{}", self.vars.name(var));
+            let slot = self.create_unique(&name, view);
+            self.vars.set_type(slot, view.clone());
+            self.vars.set_skip_free(slot);
+            self.slot_vars.insert((self.context, var), (slot, kt));
+            slot
+        };
+        self.vars.defined(slot);
+        self.pending_link_slot.push(v_set(slot, field));
+        *code = self.cl("OpRefFromChildRec", &[Value::Var(slot)]);
+    }
+
+    /// `@FR-B-Ref-Write` (loft#2433) — a WHOLE write through a link to an out-of-line field
+    /// (`cur = cur.right`, `cur = null`) writes the field the link names, then views what the
+    /// field holds now.  Without the slot the write rebound the local and the field kept its
+    /// record.  A link also bound to a whole variable has no one place for the write, and is
+    /// refused rather than rebound.
+    fn slot_link_whole_write(
+        &mut self,
+        op: &str,
+        to: &Value,
+        rhs: &Value,
+        rhs_tp: &Type,
+    ) -> Option<Value> {
+        if self.first_pass || op != "=" || self.amp_pending {
+            return None;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return None;
+        };
+        let v = *v;
+        let Some(&(slot, kt)) = self.slot_vars.get(&(self.context, v)) else {
+            let facts = self
+                .slot_links
+                .get(&(self.context, self.vars.name(v).to_string()))
+                .copied()
+                .unwrap_or_default();
+            if facts.field && facts.other && facts.whole {
+                let name = self.vars.name(v).to_string();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "'{name}' is linked to a variable at one `&` bind and to a field at another, \
+                     so writing it whole has no one place to land — keep the parent and write \
+                     its field (`p.left = …`), or link only fields"
+                );
+            }
+            return None;
+        };
+        if !matches!(rhs_tp.base(), Type::Null | Type::Reference(..)) {
+            return None;
+        }
+        let write = self.out_of_line_set(Value::Var(slot), kt, rhs);
+        let read = self.cl("OpRefFromChildRec", &[Value::Var(slot)]);
+        Some(Value::Insert(vec![write, v_set(v, read)]))
+    }
+
     /// `p = (a, b)` where `p` is a `&(…)` link: `@FR-B-Ref-Uniform` makes a `&τ` written exactly
     /// as a `τ` is, so the whole value is written THROUGH the link — each element into the
     /// caller's tuple, as `p.0 = a; p.1 = b` writes it (loft#1673).  The right-hand side is
@@ -3989,6 +4116,8 @@ use a separate collection or add after the loop"
         matches!(self.vars.declared_type(v).base(), Type::RefVar(_))
             || self.vars.is_store_text_link(v)
             || self.vars.is_amp_container_link(v)
+            // A link to an out-of-line field writes the field (loft#2433).
+            || self.slot_vars.contains_key(&(self.context, v))
             || (matches!(tp, Type::Vector(..)) && {
                 // A scan rather than a keyed lookup: the key is an owned `String`, and building
                 // one per assignment is an allocation the front end does not otherwise make.
@@ -5081,6 +5210,11 @@ use a separate collection or add after the loop"
             *code = steps;
             return Type::Void;
         }
+        self.note_slot_link(op, to, code);
+        if let Some(steps) = self.slot_link_whole_write(op, to, code, &s_type) {
+            *code = steps;
+            return Type::Void;
+        }
         // A `& vector` bind (`d = &v` / `d = &self.data`): the source is a vector lvalue
         // and the `&` opts INTO aliasing (B-Ref-Write — the write-through "north star" —
         // for a vector, which plain `d = v` deliberately does NOT give: it COPIES,
@@ -5584,6 +5718,8 @@ use a separate collection or add after the loop"
             && matches!(s_type.base(), Type::Reference(..) | Type::Enum(_, true, _))
         {
             self.vars.set_amp_link(var_nr);
+            let view = s_type.clone();
+            self.bind_slot_link(var_nr, code, &view);
         }
         // `amp_pending` is a one-shot per binding — clear it here so a `&` that did
         // NOT take the scalar-reference path (a heap `&`-view, a non-`Var` source, an
@@ -9000,9 +9136,11 @@ use a separate collection or add after the loop"
     /// second pass reads every mention as the owned local, which is `(F-ParamScalar)`'s copy.
     pub(crate) fn promote_text_param(&mut self, var_nr: u16) -> u16 {
         let name = self.vars.name(var_nr).to_string();
-        let shadow =
-            self.vars
-                .add_variable(&format!("__tp_{name}"), &Type::Text(Deps::none()), &mut self.lexer);
+        let shadow = self.vars.add_variable(
+            &format!("__tp_{name}"),
+            &Type::Text(Deps::none()),
+            &mut self.lexer,
+        );
         self.vars.set_promoted_from(shadow, var_nr);
         // @PLN40 — a const text arg still promotes to a local String so a rebind
         // (`p = …`) has a slot to write, but the promoted local INHERITS the
@@ -10203,10 +10341,8 @@ use a separate collection or add after the loop"
                             accessor.unspan(),
                         );
                         if d != u32::MAX {
-                            elem_tp = Type::Reference(
-                                d,
-                                root.map_or_else(Deps::none, Deps::frame1),
-                            );
+                            elem_tp =
+                                Type::Reference(d, root.map_or_else(Deps::none, Deps::frame1));
                         }
                     }
                     let elem_var = self.create_unique("_place", &elem_tp);

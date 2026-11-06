@@ -284,6 +284,10 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   inline read `4294967401` with it one frame down, on both backends, until
                   @PLN164 C3 gave the walk the callee's half of the question.  Which side
                   of a call a statement sits on is not one of the five events.
+                  Nor is the spelling of the place: an event made THROUGH a view or a link
+                  is the event on the place that view names.  With `w = t.left`, the write
+                  `w.left = null` releases `t.left.left`, and ends a view `n = t.left.left`
+                  exactly as `t.left.left = null` does.
   (B-Ref-Reshape) DISTURBING a container while a `&` reference into it is still LIVE is
                   a COMPILE-TIME ERROR.  These are the shapes where B-Ref-Alias could
                   not hold, and declining them is what makes B-Ref-Alias unconditional
@@ -355,6 +359,13 @@ control — an UNDISTURBED view still aliases and still writes through, on both 
               the child live across a write that may be null is copied out at its bind, and a
               stored `reference<T>` to the child reads null after it (heap.md H-Removed).  A
               child is never shared: one node in two places is a `reference<T>`.
+              A `&` link to an out-of-line field (`cur = &h.f`, re-pointed by `cur = &cur.g`)
+              names the FIELD: it reads the child the field holds, and a WHOLE write through it
+              — `cur = v`, `cur = null`, `cur = cur.g` — is the write `h.f = v` (B-Ref-Write),
+              after which the link reads what the field holds now.  A link bound to a whole
+              variable at one `&` bind and to an out-of-line field at another has no one place
+              such a write could land in, and the write is a compile-time error that names the
+              cure; a field write through that link (`cur.k = 1`) is not affected.
 ```
 
 **In words.** `t.left = Tree { key: 4 }` builds the value and copies it into `t`'s store;

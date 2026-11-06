@@ -172,6 +172,17 @@ pub struct ArmMismatch {
     pub at: Position,
 }
 
+/// What pass 1 saw of one `&` link (loft#2433, [`Parser::slot_links`]).
+#[derive(Default, Clone, Copy)]
+pub(crate) struct SlotLinkFacts {
+    /// Bound `&` to an out-of-line field (`cur = &t.left`).
+    pub(crate) field: bool,
+    /// Bound `&` to anything else (`cur = &t`).
+    pub(crate) other: bool,
+    /// Written whole (`cur = cur.right`, `cur = null`).
+    pub(crate) whole: bool,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct Parser {
     pub todo_files: Vec<(String, u16)>,
@@ -1522,6 +1533,13 @@ pub struct Parser {
     /// handle (`Parser::null_local_slot`).  Built where the bind's right side is parsed and
     /// placed before its statement by `parse_assign_op`; empty between binds.
     pub(crate) pending_link_slot: Vec<Value>,
+    /// `@FR-B-Ref-Write` for a link to an OUT-OF-LINE field (loft#2433): per function and link
+    /// name, what pass 1 saw bound to it and whether it is written whole.  A link only ever
+    /// bound to such fields and written whole keeps the FIELD it names in a slot local
+    /// ([`Parser::slot_vars`]), so the write lands in the field.
+    pub(crate) slot_links: HashMap<(u32, String), SlotLinkFacts>,
+    /// Pass 2: a field link's slot local and the field's known type, per function and link.
+    pub(crate) slot_vars: HashMap<(u32, u16), (u16, i32)>,
     /// `@FR-O-Detach` for a tuple — the snapshot an assignment's value must read instead of
     /// the tuple it writes (`Parser::snapshot_tuple_self_read`), run as a statement of its own
     /// ahead of the assignment by `parse_assign_op` (loft#2261).
@@ -2199,6 +2217,8 @@ impl Parser {
             pending_default_rhs: None,
             pending_default_src: None,
             pending_link_slot: Vec::new(),
+            slot_links: HashMap::new(),
+            slot_vars: HashMap::new(),
             tuple_self_snapshot: None,
             ncc_default_end: None,
             last_place_discharge: false,
