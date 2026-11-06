@@ -374,7 +374,27 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         // Where the arms are the answer the body is typed as the `if`, which borrows what either
         // arm does (`joined_deps`; a literal arm borrows nothing).
         ad = arms_deps(code);
-        bl.result = [if arms_answer { el_types::with_deps(result, ad ?? el_types::deps(result)) } else { result }];
+        // A `return` that merged a parameter's borrow this pass (`record_return`'s `MergeAttr`)
+        // is in the result now.
+        now = el::def(e, e.context).returned[0];
+        rt0 = result;
+        if !arms_answer && el_types::is_equal(e, el_types::without_deps(now), el_types::without_deps(result)) {
+          extra = 0;
+          visible = true;
+          for a2 in el_types::deps(now) {
+            if !el_types::deps(result).contains(a2) {
+              extra += 1;
+              at2 = el::def(e, e.context).attributes[a2];
+              if at2 == null || at2!.hidden {
+                visible = false;
+              }
+            }
+          }
+          if extra > 0 && visible {
+            rt0 = now;
+          }
+        }
+        bl.result = [if arms_answer { el_types::with_deps(result, ad ?? el_types::deps(result)) } else { rt0 }];
         code = ir::NdBlock { block: [bl] };
       },
       _ => {}
@@ -11716,6 +11736,31 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
   d = e.context;
   unrenamed = attr_nr(el::def(e, d), "__retbuf") >= 0;
   x = el_ir::unspan(v.code);
+  // A `??` borrowing visible parameters alone is returned as that view (`MergeAttr`): the
+  // signature borrows them, nothing is delivered into the buffer.
+  is_ncc = match x { NdBlock { block } => block[0].name == "ncc", _ => false };
+  if is_ncc && len(el_types::deps(v.tp)) > 0 {
+    attrs: vector<integer> = [];
+    for dv in el_types::deps(v.tp) {
+      a0 = if vars.vars[dv].argument { attr_nr(el::def(e, d), el_vars::name_of(vars, dv)) } else { -1 };
+      if a0 < 0 || el::def(e, d).attributes[a0]!.hidden {
+        attrs = [];
+        break;
+      }
+      attrs += [a0];
+    }
+    if len(attrs) > 0 {
+      ret = el::def(e, d).returned[0];
+      ds = el_types::deps(ret);
+      for a1 in attrs {
+        if !ds.contains(a1) {
+          ds += [a1];
+        }
+      }
+      e.b.data.definitions[d].returned = [el_types::with_deps(ret, ds)];
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
+  }
   if !e.first_pass && unrenamed {
     built = object_into_buffer(e, vars, x, rb, result);
     if built != null {
@@ -15998,8 +16043,9 @@ fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vector<
   match x.code {
     NdVar { n } => { t = el_types::with_deps(t, [n]); },
     _ => {
-      // A vector read off a record (`f.ins[0]`): the element borrows what that read borrows.
-      if record && len(el_types::deps(x.tp)) > 0 {
+      // A vector read off a record (`f.ins[0]`): a record or text element borrows what that read
+      // borrows.
+      if (record || el_types::base(inner) is TyText) && len(el_types::deps(x.tp)) > 0 {
         t = el_types::with_deps(t, el_types::deps(x.tp));
       }
     }
