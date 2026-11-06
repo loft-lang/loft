@@ -252,7 +252,7 @@ draining library code out of the compiler crate (@PLN3).
 - **Do serve small 32-bit devices.**  32-bit hardware is becoming
   efficient and affordable at once, so it has a clear future in
   industry and in user devices: low cost, low energy, retro
-  computing (owner, 2026-10-26 and 2026-11-06).  loft reaches it as
+  computing (owner).  loft reaches it as
   C ([TANMATSU.md](TANMATSU.md), [WIDTH32.md](WIDTH32.md)), not as
   bare metal: the target runs an RTOS with a heap, which the store
   model needs.
@@ -266,7 +266,7 @@ draining library code out of the compiler crate (@PLN3).
   maker who needs loft certified does the certification.  loft
   supplies what that work rests on: the formal rules, the code sites
   that cite them, guards with falsification receipts and the rule
-  crossings ledger (owner, 2026-11-06).
+  crossings ledger (owner).
 
 ---
 
