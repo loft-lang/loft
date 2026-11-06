@@ -5278,7 +5278,8 @@ impl<'a> FnWriter<'a> {
         // `@FR-F-ParamRef` — a RECORD written back from a borrowed value displaces the caller's
         // store as an owned one does: released unless the new value lives in it (a drain's last
         // `slot = slot.right` reads null).
-        let displaces = owned || matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _));
+        let displaces =
+            owned || matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _));
         let e = self.expr(x, ind)?;
         let r = self.temp(CType::Ref);
         self.line(ind, &format!("{r} = {};", as_ref(e)?));

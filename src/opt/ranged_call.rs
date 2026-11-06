@@ -521,7 +521,11 @@ fn prelude_fields(data: &Data, bl: &Block, lp: &Block, fields: &mut Vec<GuardFie
 /// For a call of an `__inv` twin: is every scalar input the twin takes (`hoist::CalleeInputs`'
 /// `(parameter, field, getter)`) proven within `[-L, L]` under the caller's `facts`?  An
 /// argument that is a variable keys its field directly; any other must be a pure path
-/// (`hoist::path_scalar`).  Answers the first input that is not, for a trace.
+/// (`hoist::path_scalar`).
+///
+/// # Errors
+/// The first input that is not proven, as its `(parameter or variable, field)` key, for a
+/// trace.
 pub fn scalar_inputs_ranged(
     data: &Data,
     vars: &crate::variables::Function,

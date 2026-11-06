@@ -1798,9 +1798,10 @@ impl State {
             &std::collections::BTreeSet::new(),
             &tables,
         );
-        views.extend(crate::opt::hoist::borrowed_discharge_temps(data, def_nr, &tables));
-        let store =
-            crate::opt::store_text_borrow::borrowed_store_texts(data, def_nr, &views, true);
+        views.extend(crate::opt::hoist::borrowed_discharge_temps(
+            data, def_nr, &tables,
+        ));
+        let store = crate::opt::store_text_borrow::borrowed_store_texts(data, def_nr, &views, true);
         views.extend(store.borrows);
         // The call clause stays a copy here, as on the C: its premise — the call's answer IS
         // the work text it was handed — is the compiled writers' calling convention, and the
@@ -6501,8 +6502,7 @@ impl State {
             // caller's store as an owned one does: the store is released unless the new value
             // lives in it.  `slot = slot.right` keeps the store (a view of its own child); the
             // write that ends a drain, `slot = slot.right` reading null, releases it.
-            let amp_displaces = amp_owned_writeback
-                || tp.heap_def_nr().is_some();
+            let amp_displaces = amp_owned_writeback || tp.heap_def_nr().is_some();
             if amp_displaces {
                 // stash OLD = *o (by value — survives the SetStackRef below)
                 let var_pos = stack.var_pos(var);

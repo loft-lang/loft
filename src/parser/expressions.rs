@@ -3970,9 +3970,10 @@ use a separate collection or add after the loop"
         if self.data.def(*g).name() != "OpGetField" {
             return;
         }
-        let (Some(Value::Var(v)), Some(Value::Int(pos))) =
-            (args.first().map(Value::unspan), args.get(1).map(Value::unspan))
-        else {
+        let (Some(Value::Var(v)), Some(Value::Int(pos))) = (
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) else {
             return;
         };
         if self.slot_link_node(*v).is_some() {
@@ -3999,7 +4000,10 @@ use a separate collection or add after the loop"
             return;
         };
         let v = *v;
-        let nulled = self.slot_nulled.remove(&(self.context, v)).unwrap_or_default();
+        let nulled = self
+            .slot_nulled
+            .remove(&(self.context, v))
+            .unwrap_or_default();
         let depth = self.vars.loop_depth();
         if self.amp_pending {
             // A fresh bind (`cur = &t.left`) starts the walk at this depth; a step
@@ -4007,7 +4011,9 @@ use a separate collection or add after the loop"
             let step = self
                 .out_of_line_place(rhs)
                 .and_then(|(f, _)| match f.unspan() {
-                    Value::Call(_, a) => a.first().map(|b| matches!(b.unspan(), Value::Var(b) if *b == v)),
+                    Value::Call(_, a) => a
+                        .first()
+                        .map(|b| matches!(b.unspan(), Value::Var(b) if *b == v)),
                     _ => None,
                 })
                 .unwrap_or(false);
@@ -4017,7 +4023,11 @@ use a separate collection or add after the loop"
             return;
         }
         // A parameter is bound at the function's entry.
-        let bound = self.slot_bound_depth.get(&(self.context, v)).copied().unwrap_or(0);
+        let bound = self
+            .slot_bound_depth
+            .get(&(self.context, v))
+            .copied()
+            .unwrap_or(0);
         if depth <= bound {
             return;
         }
@@ -4030,9 +4040,10 @@ use a separate collection or add after the loop"
         let Value::Call(_, gargs) = field.unspan() else {
             return;
         };
-        let (Some(Value::Var(base)), Some(Value::Int(pos))) =
-            (gargs.first().map(Value::unspan), gargs.get(1).map(Value::unspan))
-        else {
+        let (Some(Value::Var(base)), Some(Value::Int(pos))) = (
+            gargs.first().map(Value::unspan),
+            gargs.get(1).map(Value::unspan),
+        ) else {
             return;
         };
         if *base != v {
