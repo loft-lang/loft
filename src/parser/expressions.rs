@@ -1589,7 +1589,7 @@ impl Parser {
                 // garbage (no value, a bogus free, a SIGBUS), a text parameter's link crashed,
                 // and a record skipped `@FR-G-Own`'s copy — the consumer's value tracked the
                 // generator's later writes, on both backends.
-                if matches!(v_tp, Type::RefVar(_)) {
+                if matches!(v_tp.base(), Type::RefVar(_)) {
                     self.un_ref(&mut v_tp, &mut v);
                 }
                 if let Type::Iterator(elem_tp, _) = r_type.base() {
@@ -10524,7 +10524,7 @@ use a separate collection or add after the loop"
                     // binding holds a reference to it.  Typed as the stack tuple, the binding
                     // held a record reference under a by-value type: the interpreter wrote
                     // through it by accident of layout and `--native-c` refused the program.
-                    if let Type::Tuple(elems) = &elem_tp
+                    if let Type::Tuple(elems) = elem_tp.base()
                         && crate::data::ref_tuple_is_record(elems)
                     {
                         let elems = elems.clone();

@@ -6502,7 +6502,7 @@ impl State {
             // lives in it.  `slot = slot.right` keeps the store (a view of its own child); the
             // write that ends a drain, `slot = slot.right` reading null, releases it.
             let amp_displaces = amp_owned_writeback
-                || matches!(*tp, Type::Reference(_, _) | Type::Enum(_, true, _));
+                || tp.heap_def_nr().is_some();
             if amp_displaces {
                 // stash OLD = *o (by value — survives the SetStackRef below)
                 let var_pos = stack.var_pos(var);
