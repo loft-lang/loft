@@ -7946,6 +7946,9 @@ fn main() {
             // by default (NATIVE.md § Optimisation tiers).  Which target is decided after every flag is
             // read; only the host default sets `native_mode` there.
             ship_build = true;
+            // A shipped unit keeps every function whole: `(R-CSplit)` is a semantics-tier
+            // transform (NATIVE.md § Optimisation tiers).
+            loft::c::ship_units();
         } else if a == "--native-c" {
             native_mode = true;
             native_requested = true;

@@ -22,9 +22,12 @@
 //! (a `setjmp`, a preprocessor conditional, a block comment over lines, a label it cannot
 //! place) is written unsplit.
 //!
-//! Only `LOFT_C_SPLIT` turns it on: `1` for the default budget, a larger number for that
-//! budget.  `LOFT_NO_C_SPLIT=1` turns it off over any setting; `LOFT_TRACE_C_SPLIT=1` names
-//! each function over the budget, its parts and its frame size, or why it stayed whole.
+//! It runs in every semantics build (`--native-c`, `loft test`, `--emit-c`, the C sweep) and
+//! never in a shipped one: a `--ship` unit and an ESP app keep every function whole
+//! ([`super::functions_whole`]; NATIVE.md § Optimisation tiers), so a shipped artefact's C is
+//! the C it was before the split existed.  `LOFT_C_SPLIT=<n>` sets the budget (`1` the
+//! default, `0` off); `LOFT_NO_C_SPLIT=1` turns it off over any setting; `LOFT_TRACE_C_SPLIT=1`
+//! names each function over the budget, its parts and its frame size, or why it stayed whole.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -32,16 +35,18 @@ use std::fmt::Write as _;
 /// Runtime-call sites per function above which `cl /O1`'s time stops being linear (@PLN212 P0).
 const DEFAULT_BUDGET: usize = 300;
 
-/// The budget the split runs under, or `None` when it is off.
+/// The budget the split runs under, or `None` when it is off: a shipped unit, or a switch.
 pub(crate) fn budget() -> Option<usize> {
-    if crate::env_once!(std::env::var("LOFT_NO_C_SPLIT").is_ok_and(|v| v != "0")) {
+    if super::functions_whole()
+        || crate::env_once!(std::env::var("LOFT_NO_C_SPLIT").is_ok_and(|v| v != "0"))
+    {
         return None;
     }
     *crate::env_once!(@value Option<usize>, {
-        match std::env::var("LOFT_C_SPLIT").ok().and_then(|v| v.trim().parse::<usize>().ok()) {
-            None | Some(0) => None,
-            Some(1) => Some(DEFAULT_BUDGET),
-            Some(n) => Some(n),
+        match std::env::var("LOFT_C_SPLIT").ok().map(|v| v.trim().parse::<usize>()) {
+            None | Some(Ok(1) | Err(_)) => Some(DEFAULT_BUDGET),
+            Some(Ok(0)) => None,
+            Some(Ok(n)) => Some(n),
         }
     })
 }

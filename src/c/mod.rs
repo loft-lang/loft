@@ -2829,6 +2829,14 @@ pub fn emit_esp_program(data: &Data, stores: &Stores) -> Result<String, Refusal>
             why: "an app without a main".into(),
         });
     }
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ESP_UNIT.with(|s| s.set(false));
+        }
+    }
+    ESP_UNIT.with(|s| s.set(true));
+    let _reset = Reset;
     let (main, call) = program_main(data, main)?;
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
@@ -4443,7 +4451,26 @@ fn framed(
     }
 }
 
+/// Set by a `--ship` run before it writes its unit ([`ship_units`]).
+static SHIPPED_UNITS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Every unit this process writes from now on is a shipped artefact's (`--ship`, NATIVE.md
+/// § Optimisation tiers): its functions stay whole, as [`functions_whole`] says.
+pub fn ship_units() {
+    SHIPPED_UNITS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether the unit being written keeps every function whole: a shipped artefact's (a
+/// `--ship` run, an ESP app), which takes full optimisation of its C as written.  A semantics
+/// build splits an over-budget function into parts instead (`(R-CSplit)`, `split::budget`),
+/// so the C compiler's optimiser time stays bounded.
+pub(crate) fn functions_whole() -> bool {
+    SHIPPED_UNITS.load(std::sync::atomic::Ordering::Relaxed) || ESP_UNIT.with(std::cell::Cell::get)
+}
+
 thread_local! {
+    /// Set for the length of one [`emit_esp_program`]: an app is a shipped artefact.
+    static ESP_UNIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set for the length of one [`emit_program_with_source_lines`]: the unit marks its statements
     /// with their loft lines (`Cx::source_lines`).
     static SOURCE_LINES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
