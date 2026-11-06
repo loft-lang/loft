@@ -175,7 +175,9 @@ src/main.rs            CLI; loads default/ then user file
    [DEVELOPMENT.md § Opening a PR is the owner's call](doc/claude/DEVELOPMENT.md#opening-a-pr-is-the-owners-call).
 4. **A running PR is never interrupted: nothing is pushed to it while its run is in flight.**
    Fixes go on the branch stacked on it (`<host>-pr<N>-next`), each checked by its own probe; once
-   the run has FINISHED they are pushed together. Anything else is a NEW PR on that branch
+   the run has FINISHED they are pushed together. The first run is discovery (its reds, main's
+   nightly reds — watched with `scripts/pr_watch.py`), the second is meant to land it green; a
+   later red that does not hold auto-merge waits on that branch for the NEXT PR
    ([DEVELOPMENT.md § The PR cycle](doc/claude/DEVELOPMENT.md#the-pr-cycle)).
 5. **While a PR is unmerged, branch from the TIP of that in-flight work, not from `main`** — new
    work almost always needs what is still in the open PR; rebase the stack onto `main` after it

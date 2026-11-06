@@ -54,6 +54,10 @@ cycle: the feature, and every bug found along the way.
 - **Bundle many subjects into one PR**, even unrelated ones: a docs stream, a soundness fix and
   a language feature ride together.  Split only when the owner wants an independent merge
   clock for one item.
+- **Nothing lands alone.**  A change joins the branch only with every follow-up it needs to be
+  complete: the regression it exposes, the half that makes it consistent, its derived
+  artefacts.  Keep it on its own worktree until the follow-up is done and verified, then join
+  both; "land it now, or with the follow-up?" is not a question to ask.
 
 **Renaming a branch** whose name has drifted from its work: `git branch -m <from> <to>` before
 the PR is opened.  Replacing an already-pushed name on the remote needs the user's instruction.
@@ -99,6 +103,19 @@ owner asks, opening takes minutes — the PR's own `ci.yml` runs the same gate o
 so the opening is not held for a local `make ci` (a slower duplicate, which on a shared box a
 sibling's `pkill` can kill).  **A branch a sibling has joined twice is overdue**; that is a fact
 to report, not a request to make.
+
+**Between PRs, a sibling's work is not joined.**  Agents doing real work push continuously,
+and chasing their heads keeps a branch in a re-derive loop that never reaches a PR.  A peer's
+"take X at your next join" goes on a list of what is open to merge
+(`scripts/join.py survey --days 3` refreshes it, read-only), and the owner's ask for a PR is
+when it comes in, at one cut per source.  The one exception is a red the open PR cannot pass
+without — and that is said and asked first.
+
+**A fix the PR's own checks surface never gets a loft PR of its own**: it goes on the next
+branch and with the next PR (§ The PR cycle, two runs).  A fix that belongs in a library
+lands there, through that library's own PR.  **A large arc may get its own PR** right after
+the general one, so its CI verdict is its own — the owner's call, for an arc that piled up,
+not the default shape: arcs normally finish inside the day's PR.
 
 The bar for a unit of work is not "green": a PR that looks right while carrying internal
 regressions is worse for a language's users than no PR, so an arc ships only with its own
