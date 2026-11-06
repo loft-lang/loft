@@ -1829,6 +1829,22 @@ fn literal_backing(vars: el_vars::Vars, v: integer) -> integer {
 // by name.
 fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
   d = e.context;
+  // A trailing `return <literal>` is the literal tail it returns: delivered alike.
+  if trailing_literal_return(e, vars.body) {
+    match code {
+      NdBlock { block } => {
+        cb = block[0];
+        match el_ir::unspan(el_ir::last(cb.operators)) {
+          NdReturn { inner } => {
+            cb.operators[-1] = inner;
+            code = ir::NdBlock { block: [cb] };
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
   if !e.first_pass {
     bl = match code { NdBlock { block } => block[0], _ => return code };
     tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
@@ -1921,7 +1937,7 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
   }
   lit = tail_syntax(e, vars.body);
   // A comprehension is built in its own store as a literal is, and delivered alike.
-  literal = lit >= 0 && (e.p.nodes[lit] is SVecLit || e.p.nodes[lit] is SComprehension);
+  literal = (lit >= 0 && (e.p.nodes[lit] is SVecLit || e.p.nodes[lit] is SComprehension)) || trailing_literal_return(e, vars.body);
   bl = match code { NdBlock { block } => block[0], _ => return code };
   tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
   // A local built in two or more steps, counted on the first pass (`child_allocs` reads that
@@ -2172,6 +2188,15 @@ fn constant_expr(e: el::El, n: integer) -> boolean {
     SChar { at: _ } => true,
     SBool { at: _ } => true,
     SText { at: _ } => true,
+    // A string with no hole is its text.
+    SString { parts } => {
+      for p in parts {
+        if !(e.p.nodes[p] is SText) {
+          return false;
+        }
+      }
+      true
+    },
     SUnary { e: ue } => ue != null && constant_expr(e, ue!),
     SParen { e: pe } => pe != null && constant_expr(e, pe!),
     // What `const_eval` folds: a cast and arithmetic over constants, a named constant, and a
@@ -2224,6 +2249,33 @@ fn tail_syntax(e: el::El, body: integer) -> integer {
       }
     },
     _ => -1
+  }
+}
+
+// Is a body's last statement `return <vector literal or comprehension>`?
+fn trailing_literal_return(e: el::El, body: integer) -> boolean {
+  if body < 0 {
+    return false;
+  }
+  match e.p.nodes[body] {
+    SBlock { stmts } => {
+      if len(stmts) == 0 {
+        return false;
+      }
+      match e.p.nodes[stmts[-1]] {
+        SStmt { e: se, orelse } => {
+          if se == null || orelse != null {
+            return false;
+          }
+          match e.p.nodes[se!] {
+            SJump { kind, e: x } => kind == "return" && x != null && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension),
+            _ => false
+          }
+        },
+        _ => false
+      }
+    },
+    _ => false
   }
 }
 

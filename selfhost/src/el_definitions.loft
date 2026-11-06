@@ -523,13 +523,24 @@ struct Argument {
 
 // A block whose one statement is a vector literal.
 fn sole_vector_literal(e: el::El, body: integer) -> boolean {
+  lit = sole_literal_node(e, body);
+  lit >= 0 && e.p.nodes[lit] is SVecLit
+}
+
+// The one statement of a body as its literal: the statement itself, or what a `return` of it
+// answers (`sole_vector_literal` reads through a `Return`); -1 for any other body.
+fn sole_literal_node(e: el::El, body: integer) -> integer {
   stmts = match e.p.nodes[body] { SBlock { stmts: ss } => ss, _ => [] };
   if len(stmts) != 1 {
-    return false;
+    return -1;
   }
-  match e.p.nodes[stmts[0]] {
-    SStmt { e: x } => if x == null { false } else { e.p.nodes[x!] is SVecLit },
-    _ => false
+  x = match e.p.nodes[stmts[0]] { SStmt { e: se } => se ?? -1, _ => -1 };
+  if x < 0 {
+    return -1;
+  }
+  match e.p.nodes[x] {
+    SJump { kind, e: r } => if kind == "return" { r ?? -1 } else { -1 },
+    _ => x
   }
 }
 
@@ -575,8 +586,7 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
     },
     _ => {}
   }
-  stmts = match e.p.nodes[body] { SBlock { stmts: ss } => ss, _ => [] };
-  lit = match e.p.nodes[stmts[0] ?? 0] { SStmt { e: x } => x ?? -1, _ => -1 };
+  lit = sole_literal_node(e, body);
   lit >= 0 && el_expressions::constant_literal(e, lit)
 }
 
