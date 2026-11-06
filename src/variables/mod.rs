@@ -1568,6 +1568,18 @@ impl Function {
         false
     }
 
+    /// How many loops enclose the code being parsed now: 0 at a function's top level.
+    #[must_use]
+    pub fn loop_depth(&self) -> u16 {
+        let mut depth = 0;
+        let mut l = self.current_loop;
+        while l != u16::MAX {
+            depth += 1;
+            l = self.loops[l as usize].inside;
+        }
+        depth
+    }
+
     /**
     Stop the current loop.
     # Panics

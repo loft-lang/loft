@@ -9,8 +9,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 Active.  The semantics of a link to an out-of-line field is settled and built (loft#2433, loft#2434,
 C77 amended), and so is the parameter half (P, which absorbed P1): a `&` parameter of a type held
-out of line takes a field and writes it.  Open: the bench programs that expose user-built
-structures (B) and the walk-or-write warning (W).  Work lives on `tuxedo-quality`.
+out of line takes a field and writes it.  The bench programs that expose user-built structures
+(B) and the walk-or-write warning (W) are built.  Open: § Also open, and the drain leak in
+§ Composition matrix.  Work lives on `tuxedo-quality`.
 
 ## Goal
 
@@ -87,8 +88,9 @@ disturbs the field it hands over as a write that may be null (`released_children
 lives only in those parameters (C77's cost clause).  Copy-in, copy-out at the caller was
 rejected: the write would land at the return rather than when it is made.
 
-**The walk-or-write warning (W).**  A whole write `cur = cur.f` through a field link, inside a
-loop, that discards a sibling subtree not known to be null.  The cures it names: `cur =
+**The walk-or-write warning (W, built).**  A whole write `cur = cur.f` through a field link or a
+slot parameter, inside a loop the link was bound outside of, that discards a sibling subtree
+not known to be null (`walk-or-write`, DIAGNOSTICS.md).  The cures it names: `cur =
 &cur.f` to step; `cur.g = null;` before the write to drop that subtree on purpose.
 
 | shape | loop | discards a sibling | verdict |
@@ -120,34 +122,22 @@ the position (loop · straight line), another view or link live across the write
 | `&` parameter given a field, a field link (0, 1, 2 iterations), a forwarder, a whole variable; null on entry; insert walks; a callee declared later | green, three backends — `calls/F-ParamRef/a-slot-parameter-writes-the-field-it-is-handed` |
 | a view live across a call that unlinks through a `&` parameter (the child, below it, through a link) | green, same cell |
 | a `&` variable drained to null by its callee (`while u != null { take_min(u) }`) | **interpreter leaks the store** — the variable write-back of a view of its own child (in the 2026.10 release too) |
-| forgotten `&` in a walk | silent tree damage (W) |
+| forgotten `&` in a walk | warns `walk-or-write` — `tests/scripts/a-forgotten-amp-in-a-walk-warns-walk-or-write.loft`, exact set pinned in `tests/dead_code_lint.rs` |
 | unlink cost | O(subtree) copy (M) |
 
 ## Phases
 
 Each phase names the comparison that can make it go red.  In order:
 
-- **B — programs that expose the cost** (M).  Each with a Rust twin, in the spelling a user writes,
-  one op per repetition, keys varying in value and never in the amount of work, hashes from an
-  independent oracle:
-
-  | bench | routines | exposes |
-  |---|---|---|
-  | 22_expr — a recursive enum (`Num`, `Add { l, r }`, `Mul { l, r }`) | build random expressions recursively, evaluate, simplify by rewriting, render | recursive construction, enum children, matching over a user tree |
-  | 23_lru — a `hash` of keys and a doubly linked list with `reference<T>` back-links | get/put at a fixed hit rate, evictions | owned children beside back-links |
-  | 21_tree, extended | `build_rec` (`t.left = insert(t.left, k)`), `enum_list` (`l = Cons { v, next: l }`, sum, reverse), `lookup_copy` (`cur = t`) | the spellings still O(n²) or copying |
-
-  Red: a hash that disagrees with the twin or the oracle; a routine that cannot be written in
-  its natural spelling is a language defect, fixed or filed on the spot.
-- **W — walk-or-write warning** (S).  The six rows of § Design as cells of one fixture with the
-  exact set of warned locals pinned (`tests/dead_code_lint.rs` style).  Red: the forgotten-`&` cell
-  stays silent, or a silent row warns.
-- **21_tree's `take_min` helper** — P is built: restore `take_min` as a helper so the loft and
-  Rust sources match routine for routine.
+- **B — built.**  21_tree gained `build_rec`, `enum_list`, `lookup_copy` and its `take_min`
+  helper; 22_expr and 23_lru are new.  Measured C against Rust (`stats.py --only 21,22,23`):
+  `enum_list` 6273×, `lookup_copy` 1033×, `expr_simplify` 13.7×, `expr_build` 10.7×,
+  `tree_delete` 3.9×, `lru_mixed` 3.5×; the rest within 2.3×.  Making them fast is the portal's.
+- **P — built** (absorbed P1), and **W — built**: § Design.
 
 The O(1) unlink (§ Design, M) is no longer a phase: it is the portal's work once 21_tree's delete
 row asks for it — hand form first, the op on all three backends behind `LOFT_NO_MOVE_CHILD`.
-Last measured, C against Rust: insert 1.76×, query 0.47×, delete 3.77×, list 3.91×.
+Last measured, C against Rust: insert 1.83×, query 2.25×, delete 3.93×, list 4.14×.
 
 ## Also open from the same arc
 

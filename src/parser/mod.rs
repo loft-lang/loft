@@ -1540,6 +1540,14 @@ pub struct Parser {
     /// handle (`Parser::null_local_slot`).  Built where the bind's right side is parsed and
     /// placed before its statement by `parse_assign_op`; empty between binds.
     pub(crate) pending_link_slot: Vec<Value>,
+    /// @PLN219 `walk-or-write` — per function and link, the out-of-line fields of the node the
+    /// link names that the program wrote null since the link was last written or re-pointed
+    /// (`cur.left = null`): a whole write `cur = cur.right` then drops nothing it still holds.
+    pub(crate) slot_nulled: HashMap<(u32, u16), Vec<i32>>,
+    /// @PLN219 `walk-or-write` — per function and link, the loop depth of its last fresh `&`
+    /// bind (`cur = &t.left`, not a step `cur = &cur.left`): a write in a deeper loop is
+    /// carried across that loop's iterations, a walk.
+    pub(crate) slot_bound_depth: HashMap<(u32, u16), u16>,
     /// `@FR-B-Ref-Write` for a link to an OUT-OF-LINE field (loft#2433): per function and link
     /// name, what pass 1 saw bound to it and whether it is written whole.  A link only ever
     /// bound to such fields and written whole keeps the FIELD it names in a slot local
@@ -2224,6 +2232,8 @@ impl Parser {
             pending_default_rhs: None,
             pending_default_src: None,
             pending_link_slot: Vec::new(),
+            slot_nulled: HashMap::new(),
+            slot_bound_depth: HashMap::new(),
             slot_links: HashMap::new(),
             slot_vars: HashMap::new(),
             tuple_self_snapshot: None,

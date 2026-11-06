@@ -1191,6 +1191,50 @@ fn a_write_no_path_reads_after_is_a_lost_write_native_c() {
     assert_path_of_a_copy("--native-c");
 }
 
+/// @PLN219 `walk-or-write` — inside a loop, a whole write `cur = cur.f` through a field link or
+/// a `&` slot parameter drops the node's other subtrees, where a walk meant `cur = &cur.f`.
+/// The fixture holds the six rows of the plan's table and the parameter twin; the silent rows
+/// (an unlink after the walk, a list, a trim that nulls the sibling first, a step outside a
+/// loop) are half the claim.
+fn assert_walk_or_write(backend: &str) {
+    let (stdout, diag, code) = run_env(
+        backend,
+        &workspace("tests/scripts/a-forgotten-amp-in-a-walk-warns-walk-or-write.loft"),
+        &[],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] fixture did not exit 0\n{stdout}\n---\n{diag}"
+    );
+    assert!(
+        stdout.contains("walk-or-write ok"),
+        "[{backend}] {stdout}\n---\n{diag}"
+    );
+    let mut warned: Vec<&str> = diag
+        .lines()
+        .filter_map(|l| l.strip_prefix("warning[walk-or-write]: to step down, write `"))
+        .filter_map(|l| l.split(' ').next())
+        .collect();
+    warned.sort_unstable();
+    warned.dedup();
+    assert_eq!(
+        warned,
+        ["fg_c", "fp_s", "tr_c"],
+        "[{backend}] the walks that forgot their `&`, and nothing else\n{diag}"
+    );
+}
+
+#[test]
+fn a_forgotten_amp_in_a_walk_warns_interpret() {
+    assert_walk_or_write("--interpret");
+}
+
+#[test]
+fn a_forgotten_amp_in_a_walk_warns_native_c() {
+    assert_walk_or_write("--native-c");
+}
+
 /// loft#1871 — a parameter the callee REBINDS before writing a field writes the callee's own
 /// store (`@FR-F-ParamRebind`), so a call result handed to it loses nothing.  The literal rebind
 /// `p = S { x: … }` is itself lowered as field writes into the fresh store, and those were read

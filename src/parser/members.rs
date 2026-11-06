@@ -541,6 +541,7 @@ impl Parser {
             return written;
         }
         let source = if self.is_null_source(val) {
+            self.note_slot_nulled(&field);
             self.cl("OpNullRefSentinel", &[])
         } else {
             val.clone()

@@ -3943,6 +3943,156 @@ use a separate collection or add after the loop"
         *code = self.cl("OpRefFromChildRec", &[Value::Var(slot)]);
     }
 
+    /// The link a slot-link or slot-parameter write names: a local that keeps an out-of-line
+    /// field ([`Parser::slot_vars`]) or a `&` parameter of a type held out of line, with the
+    /// definition of the node it names.
+    fn slot_link_node(&self, v: u16) -> Option<u32> {
+        if v == u16::MAX || !self.vars.exists(v) {
+            return None;
+        }
+        if self.vars.is_argument(v) {
+            return self.data.slot_link_def(self.vars.tp(v));
+        }
+        self.slot_vars.get(&(self.context, v))?;
+        let d = self.data.type_def_nr(self.vars.tp(v).base());
+        (d != u32::MAX).then_some(d)
+    }
+
+    /// Record `cur.g = null` for the `walk-or-write` warning: the field `g` of the node `cur`
+    /// names holds nothing a later whole write of `cur` could drop.
+    pub(crate) fn note_slot_nulled(&mut self, field: &Value) {
+        if self.first_pass {
+            return;
+        }
+        let Value::Call(g, args) = field.unspan() else {
+            return;
+        };
+        if self.data.def(*g).name() != "OpGetField" {
+            return;
+        }
+        let (Some(Value::Var(v)), Some(Value::Int(pos))) =
+            (args.first().map(Value::unspan), args.get(1).map(Value::unspan))
+        else {
+            return;
+        };
+        if self.slot_link_node(*v).is_some() {
+            self.slot_nulled
+                .entry((self.context, *v))
+                .or_default()
+                .push(*pos);
+        }
+    }
+
+    /// @PLN219 `walk-or-write` — inside a loop, a whole write `cur = cur.f` through a field link
+    /// or a slot parameter that drops a sibling subtree not known to be null: the author meant
+    /// the step `cur = &cur.f`, which Rust's types would have told apart.  "Inside a loop" is a
+    /// loop the link was bound OUTSIDE of, so the link is carried from one iteration to the
+    /// next; a write anywhere else is the unlink it reads as (`remove_key`, `take_min`, also
+    /// when that shape stands inside an outer loop that binds the link afresh); a node with no other
+    /// out-of-line field (a list) drops nothing; `cur.g = null;` before the write says the
+    /// drop is meant.  Every `=` to the link ends what was recorded for it.
+    fn warn_walk_or_write(&mut self, op: &str, to: &Value, rhs: &Value) {
+        if self.first_pass || op != "=" {
+            return;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return;
+        };
+        let v = *v;
+        let nulled = self.slot_nulled.remove(&(self.context, v)).unwrap_or_default();
+        let depth = self.vars.loop_depth();
+        if self.amp_pending {
+            // A fresh bind (`cur = &t.left`) starts the walk at this depth; a step
+            // (`cur = &cur.left`) continues it.
+            let step = self
+                .out_of_line_place(rhs)
+                .and_then(|(f, _)| match f.unspan() {
+                    Value::Call(_, a) => a.first().map(|b| matches!(b.unspan(), Value::Var(b) if *b == v)),
+                    _ => None,
+                })
+                .unwrap_or(false);
+            if !step {
+                self.slot_bound_depth.insert((self.context, v), depth);
+            }
+            return;
+        }
+        // A parameter is bound at the function's entry.
+        let bound = self.slot_bound_depth.get(&(self.context, v)).copied().unwrap_or(0);
+        if depth <= bound {
+            return;
+        }
+        let Some(d) = self.slot_link_node(v) else {
+            return;
+        };
+        let Some((field, _)) = self.out_of_line_place(rhs) else {
+            return;
+        };
+        let Value::Call(_, gargs) = field.unspan() else {
+            return;
+        };
+        let (Some(Value::Var(base)), Some(Value::Int(pos))) =
+            (gargs.first().map(Value::unspan), gargs.get(1).map(Value::unspan))
+        else {
+            return;
+        };
+        if *base != v {
+            return;
+        }
+        let kt = self.data.def(d).known_type();
+        let mut written = String::new();
+        let mut dropped: Vec<String> = Vec::new();
+        for a in 0..self.data.attributes(d) {
+            if !self.data.field_is_out_of_line(d, a) {
+                continue;
+            }
+            let name = self.data.attr_name(d, a);
+            let at = i32::from(self.database.position(kt, &name));
+            if at == *pos {
+                written = name;
+            } else if !nulled.contains(&at) {
+                dropped.push(name);
+            }
+        }
+        if dropped.is_empty() || written.is_empty() {
+            return;
+        }
+        let link = self.vars.name(v).to_string();
+        let gone = dropped
+            .iter()
+            .map(|f| format!("`{link}.{f}`"))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        let clear = dropped
+            .iter()
+            .map(|f| format!("{link}.{f} = null;"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        diagnostic!(
+            self.lexer,
+            Level::Warning,
+            code = "walk-or-write",
+            "to step down, write `{link} = &{link}.{written}` — `{link} = {link}.{written}` writes \
+             the field `{link}` names and drops {gone} with the node; to drop it on purpose, \
+             write `{clear}` first"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("step with `{link} = &{link}.{written}`"),
+            condition: Some("the loop walks down the tree".to_string()),
+            edit: None,
+            concept: "references `&T`",
+            concept_ref: "@F21",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("write `{clear}` before it"),
+            condition: Some(format!("the node and {gone} are meant to go")),
+            edit: None,
+            concept: "references `&T`",
+            concept_ref: "@F21",
+        });
+    }
+
     /// @PLN219 `@FR-B-Ref-Repoint`, `@FR-F-ParamRef` — `slot = &slot.f` on a `&S` PARAMETER
     /// whose `S` is held out of line re-points the parameter to the FIELD: the field's address
     /// goes into a cell of this frame ([`crate::keys::SLOT_FIELD_BIT`]) and the parameter points
@@ -5254,6 +5404,7 @@ use a separate collection or add after the loop"
             *code = steps;
             return Type::Void;
         }
+        self.warn_walk_or_write(op, to, code);
         self.note_slot_link(op, to, code);
         if let Some(steps) = self.slot_link_whole_write(op, to, code, &s_type) {
             *code = steps;
