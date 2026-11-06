@@ -10,6 +10,10 @@ loft runs there as C: the program is written out by the C backend
 ([C_BACKEND.md](C_BACKEND.md)) and built into an ESP-IDF app.  This page is about this one
 device.  How to add another device is in [HARDWARE_BACKENDS.md](HARDWARE_BACKENDS.md).
 
+Why a 32-bit device: such hardware is becoming efficient and affordable at once, so it has a
+clear future in industry and in user devices, for low-cost, low-energy and retro computing
+([BROADENING.md](BROADENING.md)).
+
 ## The hardware, as loft sees it
 
 | Part | What it is | What it means for a loft program |

@@ -90,7 +90,7 @@ need), not language rework.
 | **Data / ETL** | Good — iterators, parallel-for, DbRef, JSON | CSV/Parquet, decimal/BigInt, date/time, streaming — all **bindable Rust crates** (`csv`, `arrow`, `rust_decimal`, `chrono`), not missing libraries |
 | **Educational language** | Good — Python-like surface, strong types, good diagnostics | Playground (Web IDE planned), tutorial content |
 | **Scientific / analytics** | Bindable — Rust's numerical stack (`ndarray`, `nalgebra`, `polars`, `plotters`) wraps directly; **not** an ecosystem gap | binding ergonomics + the interactive / notebook / viz + community layer (that, not library *existence*, is Python's real moat here); pursue head-on only if a killer differentiator emerges |
-| **Embedded MCU** | Not realistic near-term | Out of scope; C54.F keeps 32-bit SBCs viable as a floor, not a target |
+| **Small 32-bit devices** | A target ([@PLN204](https://github.com/loft-lang/plans/issues/204)): the C backend builds an ESP-IDF app, `#width 32` keeps 64 bits a deliberate choice | The device port ([TANMATSU.md](TANMATSU.md)); a game demo at 60 fps, then nightly 32-bit sweeps |
 
 Games remain a flagship demo (onboarding, Web IDE, visual appeal) but
 become one entry point among several rather than the identity.
@@ -249,9 +249,13 @@ draining library code out of the compiler crate (@PLN3).
 - **Don't broaden the language surface before 1.0.**  Every domain
   above is served by ecosystem and stdlib work, not by new syntax
   or new type-system features.
-- **Don't chase embedded MCUs.**  The store-based model is the
-  wrong shape for bare-metal.  C54.F keeps 32-bit SBCs viable as a
-  floor; that is the limit of downward reach.
+- **Do serve small 32-bit devices.**  32-bit hardware is becoming
+  efficient and affordable at once, so it has a clear future in
+  industry and in user devices: low cost, low energy, retro
+  computing (owner, 2026-10-26 and 2026-11-06).  loft reaches it as
+  C ([TANMATSU.md](TANMATSU.md), [WIDTH32.md](WIDTH32.md)), not as
+  bare metal: the target runs an RTOS with a heap, which the store
+  model needs.
 
 ---
 
