@@ -131,7 +131,11 @@ on their own branches at the same time: no step waits on them, and none touches 
 4. **Open the PR** on the joined branch, current on `origin/main` (CLAUDE.md § Branch policy
    rule 6), and arm `gh pr merge --auto --squash`.
 5. **Start the next branch** (`<host>-pr<N>-next`) on the PR's tip, and fix the PR run's red
-   steps there, each checked with its own probe as in step 3.  **Main's nightly reds are
+   steps there, each checked with its own probe as in step 3.  **Work each red job as it
+   ends, not when the run does**: every five minutes, list the run's finished jobs
+   (`gh pr checks <N>`, `gh run view <run> --json jobs`), fetch a newly red job's log at once
+   (`gh api repos/{owner}/{repo}/actions/jobs/<job>/logs`) and start its fix, so the fixes are
+   ready when the run finishes.  **Main's nightly reds are
    fixed in the same pass**: the PR's `Nightly health (informational)` check names them, and
    the PR cycle is mostly waiting on runners anyway.  Read the latest run of each scheduled
    workflow on `main` (`gh run list --branch main --event schedule`), and fix each red there
