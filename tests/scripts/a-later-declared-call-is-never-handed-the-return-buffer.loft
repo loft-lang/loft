@@ -7,6 +7,9 @@
 // The elaborator's `if_expr` reached it (`cc = condition(e, c)`): a use after free under
 // `LOFT_STRICT_STORES`, a corrupted block chain on both backends.  `tests/later_call_return_buffer.rs`
 // pins the IR: the call is handed a buffer of its own.  The asserts read every answer.
+// @falsified-at: none — the values held on the control too (the runtime's displaced-buffer
+//   copies rescue every shape small enough for a script); `tests/later_call_return_buffer.rs`
+//   is the guard that fails there (`LOFT_NO_WORKREF_STEPOVER=1` restores the defect).
 enum Node { NdNull, NdInt { n: integer }, NdPair { a: integer, b: integer } }
 struct Ex { code: Node, tp: integer }
 
