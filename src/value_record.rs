@@ -327,6 +327,58 @@ struct World {
     lendable: HashMap<(u32, usize), u32>,
 }
 
+/// Whether `body` only READS value-record parameter `a`: every mention of it is a field read,
+/// a sub-record read, a presence test, a copy's source, a release (a tuple holds no store, so
+/// it is nothing), a whole-value bind to another variable or a by-value argument of a user
+/// function.  An allow-list: a mention of any other kind — a rebind, a field write, a copy
+/// into it, a `&` argument, an operator not listed — answers false, and the parameter stays
+/// by value (`c::Cx::vr_ptr_params`, `@FR-R-ValueRecord`).  Here, below both readers: the
+/// C passes such a parameter by pointer and [`World::lendable`] lends a carrier to it.
+pub(crate) fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
+    let is_a = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == a);
+    let mentions = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == a));
+    let mut ok = true;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == a => ok = false,
+            Value::Call(op, args) if (*op as usize) < data.definitions.len() => {
+                let def = data.def(*op);
+                let name = def.name();
+                for (i, x) in args.iter().enumerate() {
+                    let writes_into =
+                        (name.starts_with("OpSet") && i == 0) || (name == "OpCopyRecord" && i == 1);
+                    if writes_into && mentions(x) {
+                        ok = false;
+                    } else if is_a(x) {
+                        let read = crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
+                            || matches!(
+                                name,
+                                "OpGetField"
+                                    | "OpConvBoolFromRef"
+                                    | "OpRefIsNull"
+                                    | "OpFreeRef"
+                                    | "OpFreeRefIfDistinct"
+                                    | "OpClear"
+                            )
+                            || (name == "OpCopyRecord" && i == 0)
+                            || (!name.starts_with("Op")
+                                && def
+                                    .attributes()
+                                    .get(i)
+                                    .is_some_and(|p| !matches!(p.typedef.base(), Type::RefVar(_))));
+                        if !read {
+                            ok = false;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        !ok
+    });
+    ok
+}
+
 /// [`World::lendable`] over every function of the program.
 fn lendable_params(data: &Data) -> HashMap<(u32, usize), u32> {
     let mut out = HashMap::default();
@@ -348,7 +400,7 @@ fn lendable_params(data: &Data) -> HashMap<(u32, usize), u32> {
             if !a.hidden
                 && p != u16::MAX
                 && !def.returned().depend().contains(&p)
-                && crate::c::vr_param_read_only(data, def.code(), p)
+                && vr_param_read_only(data, def.code(), p)
             {
                 out.insert((d, i), *rec);
             }

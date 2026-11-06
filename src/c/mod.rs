@@ -1601,7 +1601,7 @@ impl Cx<'_> {
                 };
                 if self.tuple_shapes(id).len() >= 3
                     && !matches!(vars.tp(a).base(), Type::RefVar(_))
-                    && vr_param_read_only(self.data, def.code(), a)
+                    && crate::value_record::vr_param_read_only(self.data, def.code(), a)
                 {
                     out.push(i);
                 }
@@ -1617,7 +1617,7 @@ impl Cx<'_> {
                 if !out.contains(&i)
                     && matches!(vars.tp(a).base(), Type::Tuple(es)
                         if es.len() >= 3 && es.iter().all(crate::data::is_scalar))
-                    && vr_param_read_only(self.data, def.code(), a)
+                    && crate::value_record::vr_param_read_only(self.data, def.code(), a)
                 {
                     out.push(i);
                 }
@@ -2934,57 +2934,6 @@ pub(crate) fn variable_shapes(
         shapes.push(c);
     }
     Ok(shapes)
-}
-
-/// Whether `body` only READS value-record parameter `a`: every mention of it is a field read,
-/// a sub-record read, a presence test, a copy's source, a release (a tuple holds no store, so
-/// it is nothing), a whole-value bind to another variable or a by-value argument of a user
-/// function.  An allow-list: a mention of any other kind — a rebind, a field write, a copy
-/// into it, a `&` argument, an operator not listed — answers false, and the parameter stays
-/// by value (`Cx::vr_ptr_params`, `@FR-R-ValueRecord`).
-pub(crate) fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
-    let is_a = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == a);
-    let mentions = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == a));
-    let mut ok = true;
-    body.any_node(&mut |n| {
-        match n {
-            Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == a => ok = false,
-            Value::Call(op, args) if (*op as usize) < data.definitions.len() => {
-                let def = data.def(*op);
-                let name = def.name();
-                for (i, x) in args.iter().enumerate() {
-                    let writes_into =
-                        (name.starts_with("OpSet") && i == 0) || (name == "OpCopyRecord" && i == 1);
-                    if writes_into && mentions(x) {
-                        ok = false;
-                    } else if is_a(x) {
-                        let read = crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
-                            || matches!(
-                                name,
-                                "OpGetField"
-                                    | "OpConvBoolFromRef"
-                                    | "OpRefIsNull"
-                                    | "OpFreeRef"
-                                    | "OpFreeRefIfDistinct"
-                                    | "OpClear"
-                            )
-                            || (name == "OpCopyRecord" && i == 0)
-                            || (!name.starts_with("Op")
-                                && def
-                                    .attributes()
-                                    .get(i)
-                                    .is_some_and(|p| !matches!(p.typedef.base(), Type::RefVar(_))));
-                        if !read {
-                            ok = false;
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        !ok
-    });
-    ok
 }
 
 /// `@FR-R-Inline`: a function of at most twelve statements is declared `inline`.  The hint
