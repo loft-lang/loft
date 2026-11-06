@@ -1,0 +1,47 @@
+// A call's out-buffer is function scratch; the function's own return buffer is not.  `f` calls
+// `condition`, declared after it: on pass 1 that call has no known result and mints no buffer,
+// so the work-ref names shift on pass 2, and the call claims the name pass 1 left on the
+// return buffer — a buffer of the very type it asks for.  Handed that argument, the call
+// answered into the CALLER's record, and the local it answered (freed once copied out) freed
+// the caller's store with it; the `return ex(…)` after it then wrote into a released store.
+// The elaborator's `if_expr` reached it (`cc = condition(e, c)`): a use after free under
+// `LOFT_STRICT_STORES`, a corrupted block chain on both backends.  `tests/later_call_return_buffer.rs`
+// pins the IR: the call is handed a buffer of its own.  The asserts read every answer.
+enum Node { NdNull, NdInt { n: integer }, NdPair { a: integer, b: integer } }
+struct Ex { code: Node, tp: integer }
+
+fn ex(code: Node, tp: integer) -> Ex { Ex { code: code, tp: tp } }
+fn val(c: Ex) -> integer { match c.code { NdPair { a, b } => a * 100 + b, NdInt { n } => n, NdNull => -1 } }
+
+fn f(n: integer, check: boolean) -> Ex {
+  c = ex(NdInt { n: n }, 1);
+  if check {
+    cc = condition(c);
+    if cc == null { return ex(NdNull, 0); }
+    c = cc!;
+  }
+  ex(NdPair { a: val(c), b: 9 }, 2)
+}
+
+// Answers its argument on one path, so `c = cc!` mixes ownership in `f` (an owner witness).
+fn condition(c: Ex) -> Ex? {
+  if c.tp == 0 { return c; }
+  if c.tp == 1 { return ex(NdInt { n: val(c) + 1 }, 5); }
+  null
+}
+
+fn wrap(x: Ex, k: integer) -> Ex { ex(NdInt { n: val(x) + k }, x.tp) }
+fn h(n: integer) -> Ex? { if n < 0 { return null; } f(n, true) }
+
+fn main() {
+  a = f(3, true);
+  assert(val(a) == 409 && a.tp == 2, "direct: {val(a)} {a.tp}");
+  a = f(5, false);
+  assert(val(a) == 509 && a.tp == 2, "rebound, unchecked: {val(a)} {a.tp}");
+  s = 0;
+  for i in 0..3 { s += val(wrap(f(i, true), 1000)); }
+  assert(s == 1109 + 1209 + 1309, "a lifted argument: {s}");
+  t = 0;
+  for i in 0..3 { z = h(i); t += val(z!); }
+  assert(t == 109 + 209 + 309, "through a nullable caller: {t}");
+}
