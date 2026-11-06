@@ -982,11 +982,20 @@ jobs:
         # person waits for.  Measured on the corpus leg: this plus the two below were 5.7
         # of its 20.0 minutes, against 4.25 minutes of actual tests.  A dispatch is not a
         # nightly; schedule and push are.
+        #
+        # It runs on the ONE leg that built `ir_schema_roundtrip` (or an unsharded leg), and
+        # names that binary.  A bare `cargo nextest run` builds every test binary, so on the
+        # corpus leg (which builds only `native`) it filled the runner's disk on five main
+        # runs in a row, and every other leg paid the same full build.
         if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'push') }}
         shell: bash
-        run: >
-          cargo nextest run --profile ci --no-fail-fast
-          -E 'test(stdlib_load_compares_equal_to_fresh) or test(stdlib_whole_data_round_trip)'
+        run: |
+          case " ${{ steps.shard.outputs.args }} " in
+            *" --all-targets "*|*" --test ir_schema_roundtrip "*) ;;
+            *) echo "ir_schema_roundtrip runs on another leg"; exit 0 ;;
+          esac
+          cargo nextest run --profile ci --no-fail-fast --test ir_schema_roundtrip \
+            -E 'test(stdlib_load_compares_equal_to_fresh) or test(stdlib_whole_data_round_trip)'
 
       # `html_render` is NOT run here: it gates the committed
       # `doc/brick-buster.html`, and this job never rebuilds it, so the artefact is
