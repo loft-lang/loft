@@ -4640,6 +4640,12 @@ impl Function {
         self.owner_witness.insert(v, w);
     }
 
+    /// `v` releases nothing through a witness any more (`(R-CopyView)`'s walk clause made it a
+    /// view of what it walks).
+    pub fn clear_owner_witness(&mut self, v: u16) {
+        self.owner_witness.remove(&v);
+    }
+
     /// The owner witness of local `v`, or `None` when `v`'s ownership is static and the
     /// ordinary free placement applies (the common case).
     #[must_use]

@@ -190,7 +190,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Compact)` | `R-Compact` ir · `/prepend` ir |
 | `(R-CompleteWrite)` | `R-CompleteWrite` ir |
 | `(R-Const)` | `R-Const` ir · `/fn` parse |
-| `(R-CopyView)` | `R-CopyView` ir |
+| `(R-CopyView)` | `R-CopyView` ir · `/walk` ir |
 | `(R-Counter)` | `R-Counter` ir, c, native |
 | `(R-CtorLiteral)` | `R-CtorLiteral` parse |
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
@@ -5677,6 +5677,19 @@ answered here rather than decided in the code.
                  parameter — R-ValueRecord may carry a small record parameter as a
                  tuple, where its copy already costs nothing and a view would need the
                  store the tuple removed; a struct-enum.
+                 WALK CLAUSE: a record local, nullable or not, whose every set is either such
+                 a bind from a variable or a STEP to a child of itself (`t = t.left`,
+                 `OpRefFromChildRec(OpGetField(t, …))`) is a view of what it walks, its owner
+                 witness and frees gone, where it is only read (a getter, a projection, a null
+                 test, its own step) and, for each bind, the statements up to the next bind
+                 neither rebind nor free that bind's source nor run an operation that can write
+                 a record of its type — except one whose record operands are all OTHER owner
+                 locals of the frame, which hold stores the source cannot live in.  A source
+                 may be a parameter whose record holds out-of-line children (no value tuple
+                 carries those).  Measured: 21_tree `lookup_copy` 1405× → 1.17× Rust and
+                 `list_ops` 4.1× → 0.61× (with (R-NoThreads) and the one-op (R-Demote)).
+                 `LOFT_NO_COPY_VIEW_WALK=1`; guard
+                 `loft-suite/rules/rewrites/R-CopyView/a-cursor-that-only-walks-is-a-view.loft`.
   (R-ValueLocal) a plain local bound from a call R-ValueRecord admits — the result a
                  no-heap record of at most eight scalars, nested or flat — carries the
                  record's fields as its TUPLE in the binding frame too, where every use

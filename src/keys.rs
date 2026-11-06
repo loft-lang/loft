@@ -1791,6 +1791,13 @@ pub fn const_view_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_CONST_VIEW"))
 }
 
+/// `@FR-R-CopyView`'s walk clause; `LOFT_NO_COPY_VIEW_WALK=1` keeps a walk cursor's copy.
+#[must_use]
+pub fn copy_view_walk_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_COPY_VIEW_WALK"))
+}
+
 /// `@FR-R-CopyView` — a read-only copy of a record nothing can disturb is a view of it.
 /// `LOFT_NO_COPY_VIEW=1` keeps every copy (the first bisect step for a record local that reads
 /// a value its source took later, or a store freed under it).
