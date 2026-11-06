@@ -88,6 +88,7 @@ which entries nothing verifies, `./scripts/idx decision:C<n>` shows one.
 - [C140](DESIGN_DECISIONS_SYNTAX.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants) — private by default, `pub` is consent: fields, literals and variants
 - [C149](DESIGN_DECISIONS_SYNTAX.md#c149--one-structural-limit-300-for-every-count-a-program-has--a-functions-variables-included) — one structural limit, 300, for every count a program has — a function's variables included
 - [C157](DESIGN_DECISIONS_SYNTAX.md#c157--a-name-is-refused-only-when-two-definitions-own-it-and-nothing-in-its-context-picks-one) — a name is refused only when two definitions own it and nothing in its context picks one
+- [C161](DESIGN_DECISIONS_SYNTAX.md#c161--a-capture-of-a-pattern-group-binds-the-sub-slice-the-group-matched) — a capture of a pattern group binds the sub-slice the group matched
 
 ## Collections — [DESIGN_DECISIONS_COLLECTIONS.md](DESIGN_DECISIONS_COLLECTIONS.md)
 

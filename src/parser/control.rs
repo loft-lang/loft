@@ -480,6 +480,13 @@ struct EnumArm {
     cond: Option<Value>,
 }
 
+/// Where a group stands in its slice pattern, for `Parser::bind_alternation_group` (@C161).
+#[derive(Clone, Copy)]
+struct AltSpan {
+    head_len: i32,
+    optional: bool,
+}
+
 /// The subject a vector match's slice patterns read: its held copy `v`, its element type and
 /// size, and the variable its element views borrow from.
 #[derive(Clone, Copy)]
@@ -9830,6 +9837,7 @@ impl Parser {
     /// lexer is at the `(`; consumes through `]`.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    #[allow(clippy::too_many_arguments)]
     fn parse_slice_repetition(
         &mut self,
         e_nr: u32,
@@ -9840,6 +9848,7 @@ impl Parser {
         borrow_src: u16,
         cond: &mut Option<Value>,
         bindings: &mut Vec<Value>,
+        group_cap: Option<String>,
     ) {
         self.lexer.token("(");
         // Optional `name:` capture prefix.
@@ -9849,6 +9858,10 @@ impl Parser {
             self.lexer.has_identifier();
             self.lexer.token(":");
         }
+        // @C161 — a capture of the repetition GROUP, `g:( V )*`, is what `(P-Rep)` says a run
+        // yields: the elements it collected, which is what `( g: V )*` binds.  Written both ways
+        // (`g:( x: V )*`), both names take the run.
+        let cap_names: Vec<String> = cap_name.into_iter().chain(group_cap).collect();
         // The body variant.
         let vname = self.lexer.has_identifier().unwrap_or_default();
         let real = if self.lexer.has_token("::") {
@@ -10253,7 +10266,7 @@ impl Parser {
         // (V Sep V Sep …), so it reads with a stride of 2 to skip separators (a bare run: 1).
         let cap_step = if sep_disc.is_some() { 2 } else { 1 };
         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-        if let Some(name) = cap_name {
+        for name in cap_names {
             let cap_var = self.pattern_binding(&name, &vec_tp);
             self.vars.defined(cap_var);
             if !self.first_pass && cap_var != u16::MAX {
@@ -10458,6 +10471,7 @@ impl Parser {
     /// Phase 4.3 step 5 (deferred here with a diagnostic).
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    #[allow(clippy::too_many_arguments)]
     fn parse_multi_element_alternation(
         &mut self,
         e_nr: u32,
@@ -10468,6 +10482,7 @@ impl Parser {
         borrow_src: u16,
         cond: &mut Option<Value>,
         bindings: &mut Vec<Value>,
+        group_cap: Option<String>,
     ) {
         self.lexer.token("(");
         // branches[i] = the sequence for branch i: [(disc, variant_def, fields)] per position.
@@ -10669,6 +10684,15 @@ impl Parser {
                 borrow_src,
                 bindings,
             );
+            if let Some(name) = &group_cap {
+                let span = AltSpan {
+                    head_len,
+                    optional,
+                };
+                self.bind_alternation_group(
+                    name, &branches, &branch_conds, span, v, elm_size, elm_tp, bindings,
+                );
+            }
             if let Some(name) = rest_name {
                 self.bind_alternation_rest(
                     &name,
@@ -10723,6 +10747,15 @@ impl Parser {
             borrow_src,
             bindings,
         );
+        if let Some(name) = &group_cap {
+            let span = AltSpan {
+                head_len: 0,
+                optional,
+            };
+            self.bind_alternation_group(
+                name, &branches, &branch_conds, span, v, elm_size, elm_tp, bindings,
+            );
+        }
         if let Some(name) = rest_name {
             self.bind_alternation_rest(
                 &name,
@@ -10873,6 +10906,71 @@ impl Parser {
             }
             let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), borrow_src);
             self.vars.set_type(v_nr, bound_tp);
+        }
+    }
+
+    /// @C161, `@FR-P-Cap` over a GROUP — `g:( … )?` / `g:( … | … )` binds the sub-slice the
+    /// taken branch matched, `v[head_len .. head_len + width]`, as a FRESH vector (the store
+    /// `(P-Rest)` gives a rest, independent of the subject).  An OPTIONAL group whose real
+    /// branches all failed took its empty branch, and then `g` is null, as `(P-Opt)` makes every
+    /// capture inside it: the binding is `vector<T>?`, its null the vector-header sentinel the
+    /// parser writes for `x = null` on a nullable vector.
+    #[allow(clippy::too_many_arguments)]
+    fn bind_alternation_group(
+        &mut self,
+        name: &str,
+        branches: &[Vec<(i32, u32, Vec<(String, usize, Type)>)>],
+        branch_conds: &[Value],
+        span: AltSpan,
+        v: u16,
+        elm_size: &Value,
+        elm_tp: &Type,
+        bindings: &mut Vec<Value>,
+    ) {
+        let end_var = self.create_unique("grp_end", &I32);
+        self.vars.defined(end_var);
+        // end = head + the width of the FIRST branch that holds (ordered choice, `(P-Alt)`).
+        let mut end_acc = Value::Int(span.head_len);
+        for (i, bc) in branch_conds.iter().enumerate().rev() {
+            end_acc = v_if(
+                bc.clone(),
+                Value::Int(span.head_len + branches[i].len() as i32),
+                end_acc,
+            );
+        }
+        bindings.push(v_set(end_var, end_acc));
+        let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
+        let bind_tp = if span.optional {
+            Type::optional(vec_tp.clone())
+        } else {
+            vec_tp.clone()
+        };
+        let cap_var = self.pattern_binding(name, &bind_tp);
+        self.vars.defined(cap_var);
+        if self.first_pass || cap_var == u16::MAX {
+            return;
+        }
+        self.materialize_named_rest(
+            v,
+            elm_tp,
+            elm_size,
+            cap_var,
+            &vec_tp,
+            Value::Int(span.head_len),
+            Value::Var(end_var),
+            1,
+            bindings,
+        );
+        if span.optional {
+            let built = self.vars.tp(cap_var).clone();
+            if let Some(&db) = built.depend().first() {
+                let absent =
+                    self.conv_op("==", Value::Var(end_var), Value::Int(span.head_len), I32.clone(), I32.clone());
+                let null_header =
+                    self.cl("OpSetInt4", &[Value::Var(db), Value::Int(0), Value::Int(-1)]);
+                bindings.push(v_if(absent, null_header, Value::Null));
+            }
+            self.vars.set_type(cap_var, Type::optional(built));
         }
     }
 
@@ -13459,11 +13557,37 @@ impl Parser {
             // over the same region corrupts the lexer replay buffer).  A `Repetition`
             // may sit MID-slice (fixed head before it); an `Alt` is whole-slice only, so
             // its branch keeps the `head.is_empty()` guard.
+            // `@FR-P-Cap` over a GROUP, @C161 — `g:( … )?`, `g:( … | … )`, `g:( … )*`: the name
+            // binds the sub-slice the group matched.  Read before the group is classified, so the
+            // group's own handler binds it.  A cursor pattern's `name: rule` is not this.
+            let mut group_cap: Option<String> = None;
+            if !has_rest && self.match_cursor.is_none() && self.lexer.peek_named_arg().is_some() {
+                let lnk = self.lexer.link();
+                let name = self.lexer.has_identifier();
+                self.lexer.token(":");
+                if self.lexer.peek_token("(") {
+                    group_cap = name;
+                } else {
+                    self.lexer.revert(lnk);
+                }
+            }
             let group_kind = if !has_rest && self.lexer.peek_token("(") {
                 self.peek_group_kind()
             } else {
                 SliceGroupKind::Other
             };
+            if group_cap.is_some()
+                && group_kind == SliceGroupKind::Other
+                && !self.first_pass
+            {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{}:( … )` captures a GROUP — a `( … )?`, `( … | … )` or `( … )*` over a \
+                     struct-enum element; this `( … )` is none of those",
+                    group_cap.as_deref().unwrap_or("")
+                );
+            }
             if self.lexer.has_token("..") {
                 // @PLN35 Phase 2 (P-Rest) — `..name` with the name ADJACENT to `..` (no
                 // comma) captures the tail sub-slice as a FRESH vector. `.., x` (a comma
@@ -13710,7 +13834,15 @@ impl Parser {
                         self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
                     }
                     self.parse_slice_repetition(
-                        e_nr, v, elm_size, elm_tp, head_len, borrow_src, cond, bindings,
+                        e_nr,
+                        v,
+                        elm_size,
+                        elm_tp,
+                        head_len,
+                        borrow_src,
+                        cond,
+                        bindings,
+                        group_cap.take(),
                     );
                     multi_alt = true;
                 } else {
@@ -13749,7 +13881,15 @@ impl Parser {
                         self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
                     }
                     self.parse_multi_element_alternation(
-                        e_nr, v, elm_size, elm_tp, head_len, borrow_src, cond, bindings,
+                        e_nr,
+                        v,
+                        elm_size,
+                        elm_tp,
+                        head_len,
+                        borrow_src,
+                        cond,
+                        bindings,
+                        group_cap.take(),
                     );
                     multi_alt = true;
                 } else {
