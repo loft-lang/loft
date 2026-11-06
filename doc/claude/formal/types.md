@@ -214,7 +214,10 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                    only where it fails: b reads with what `if t`'s then side, or its else
                    side, proves.  `i < len(v) && v[i] > 0` needs no discharge.
                A test of one name proves it: `v != null`, a truthy `v`, or `v == null` /
-               `!v` on the side where it fails; a compound condition proves nothing.  The same
+               `!v` on the side where it fails.  `t₁ && t₂` proves, where it holds, what
+               each tᵢ proves where it holds, and `t₁ || t₂`, where it fails, what each
+               proves where it fails: `if len(c) >= cap && t != null { t.k }` reads `t`
+               as present.  Any other compound proves nothing.  The same
                tests feed the other facts a guard proves — an index in bounds, a divisor not
                zero, a math operand's sign (`(N-Domain)`) — with the same polarity.  An `||` of
                such tests in a guard is a list of them, as above; any other compound proves

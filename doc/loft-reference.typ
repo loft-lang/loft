@@ -554,6 +554,41 @@ Upside Built into the language — no external crate, no Cargo.toml edit. The co
 
 Downside A worker is a named function, not a closure: context from the calling scope reaches it only as extra scalar arguments, because each worker runs on its own copy of the heap and cannot reach a struct or vector of the caller's. Nor may it touch shared state (no println, no file access) — a rule the compiler does not check. For multi-stage transformations, use map() / filter() / reduce() sequentially — each stage allocates a new intermediate vector.
 
+=== Tree slots — &Tree? instead of &mut Option\<Box\<Tree\>\>
+
+```rust
+struct Tree { k: integer, left: Tree?, right: Tree? }
+
+// remove the smallest key below a slot and answer it
+fn take_min(slot: &Tree?) -> integer {
+    while slot.left != null { slot = &slot.left; }   // walk: `&`
+    k = slot.k!;
+    slot = slot.right;                                // write: unlinks the node
+    k
+}
+
+t = Tree { k: 50, left: Tree { k: 30 }, right: Tree { k: 70, left: Tree { k: 60 } } };
+k = take_min(t.right);
+```
+
+```rust
+fn take_min(slot: &mut Option<Box<Tree>>) -> i64 {
+    let mut slot = slot;
+    while slot.as_ref().is_some_and(|n| n.left.is_some()) {
+        slot = &mut slot.as_mut().unwrap().left;
+    }
+    let mut node = slot.take().unwrap();
+    *slot = node.right.take();
+    node.k
+}
+
+let k = take_min(&mut t.right);
+```
+
+Upside The code reads as the textbook algorithm: no take(), no unwrap(), no as\_mut(), and about a third shorter.  A field is a place: handed to a & parameter, a whole write in the callee writes that field, so a user's own tree, trie or list is built and taken apart without an index arena.
+
+Downside Only the & tells a walk from a write: slot = &slot.left steps down, slot = slot.left replaces the field with its child.  Rust's types catch a forgotten &mut; loft does not yet warn.  The call take\_min(t.right) does not show that it writes, and the unlink copies the subtree into the field where Rust's take() moves a pointer.
+
 
 = vs Python
 

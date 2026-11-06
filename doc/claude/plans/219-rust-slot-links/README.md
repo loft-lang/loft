@@ -8,8 +8,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 ## Status
 
 Active.  The semantics of a link to an out-of-line field is settled and built (loft#2433, loft#2434,
-C77 amended); open: a regression of that build on `&` parameters, the bench programs that expose
-user-built structures, the walk-or-write warning and the parameter half.  Work lives on `tuxedo-quality`.
+C77 amended), and so is the parameter half (P, which absorbed P1): a `&` parameter of a type held
+out of line takes a field and writes it.  Open: the bench programs that expose user-built
+structures (B) and the walk-or-write warning (W).  Work lives on `tuxedo-quality`.
 
 ## Goal
 
@@ -72,15 +73,19 @@ Rules: `(B-OutOfLine)`, `(B-Ref-Write)`.
 **Disturbance through views (built, loft#2434).**  An event made through a view or a link is the
 event on the place the view names (`ViewWalk::through_views`); `(B-Disturb)` says so.
 
-**Slot parameters — the exact link (P).**  A `&` parameter whose type holds itself out of line
-(`&Tree?`, `&Tree`) receives the ADDRESS of its place, as every `&` parameter does: a stack cell
-for a variable, the field for an out-of-line field.  The two hold different things — a 12-byte
-reference, a 4-byte record number — so a read or a whole write through such a parameter tests
-which one it has.  The test lives only in those parameters; no other program pays for it (C77's
-cost clause).  Inside the callee the parameter is a field link from its first line, so a
-re-point (`slot = &slot.left`) and a whole write before or after it use one path.  Copy-in,
-copy-out at the caller was rejected: the write would land at the return rather than when it is
-made, which `inc(o.y)` does not do.
+**Slot parameters — the exact link (P, built).**  A `&` parameter whose type is held out of line
+(`Data::slot_link_def`: `&S` / `&S?` with `S` on a size cycle) points at a SLOT CELL, as every `&`
+parameter points at a cell: the caller's variable, or a cell of the caller's frame holding the
+address of an out-of-line field with `keys::SLOT_FIELD_BIT` in its position (`OpSlotTag`).  A read
+through the parameter answers the child a tagged cell names (`slot_read`; interpreter
+`OpGetSlotRef`, C `loft_slot_read`, rustc `stores.slot_read`); a whole write is the field write
+(`slot_write` → `set_child_rec`, an owned value given up there).  `slot = &slot.left` sets a cell
+of the callee's own frame and re-points the parameter to it; the scope pass places that cell at
+function scope.  A field link handed to such a parameter keeps its field (`SlotLinkFacts::passed`,
+also set for a callee pass 1 cannot resolve yet) and re-reads it after the call.  The call
+disturbs the field it hands over as a write that may be null (`released_children`).  The test
+lives only in those parameters (C77's cost clause).  Copy-in, copy-out at the caller was
+rejected: the write would land at the return rather than when it is made.
 
 **The walk-or-write warning (W).**  A whole write `cur = cur.f` through a field link, inside a
 loop, that discards a sibling subtree not known to be null.  The cures it names: `cur =
@@ -112,11 +117,9 @@ the position (loop · straight line), another view or link live across the write
 | local link: unlink, clear, two-link delete, fill an empty slot, call result, write after clear, link bound in a loop body, 19 999 inserts + 6 667 deletes | green both backends — `B-Ref-Write/2433-a-whole-write-through-a-link-…` |
 | mixed variable/field link written whole | refused — `B-Ref-Write/2433-a-link-to-a-variable-and-a-field-…` |
 | a view or link live across a write through another view or link | green — `B-Disturb/2433-a-write-through-a-view-or-link-…`; a second live `&` link is refused as for the direct write |
-| `&` parameter given a slot link, loop runs ≥ 1 time (`take_min`) | answers right today |
-| `&` parameter given a slot link, loop runs 0 times | **interp panics, C loses the write** (the regression, P1) |
-| `&` parameter whole-written null on entry (`clear(n)`) | **silent: tree unchanged** (P) |
-| `&` parameter given the field directly, `take_min(cur.right)` | refused today (P) |
-| a view live across a call that unlinks through a `&` parameter | not built (P) |
+| `&` parameter given a field, a field link (0, 1, 2 iterations), a forwarder, a whole variable; null on entry; insert walks; a callee declared later | green, three backends — `calls/F-ParamRef/a-slot-parameter-writes-the-field-it-is-handed` |
+| a view live across a call that unlinks through a `&` parameter (the child, below it, through a link) | green, same cell |
+| a `&` variable drained to null by its callee (`while u != null { take_min(u) }`) | **interpreter leaks the store** — the variable write-back of a view of its own child (in the 2026.10 release too) |
 | forgotten `&` in a walk | silent tree damage (W) |
 | unlink cost | O(subtree) copy (M) |
 
@@ -124,9 +127,6 @@ the position (loop · straight line), another view or link live across the write
 
 Each phase names the comparison that can make it go red.  In order:
 
-- **P1 — the parameter regression** (S).  The slot rewrite fires on a `&` parameter and leaves the
-  first write before any re-point with no field.  Interim fix: no slot rewrite on an argument, so
-  the parameter keeps today's path.  Red: the zero-iteration `take_min` cell, both backends.
 - **B — programs that expose the cost** (M).  Each with a Rust twin, in the spelling a user writes,
   one op per repetition, keys varying in value and never in the amount of work, hashes from an
   independent oracle:
@@ -142,12 +142,8 @@ Each phase names the comparison that can make it go red.  In order:
 - **W — walk-or-write warning** (S).  The six rows of § Design as cells of one fixture with the
   exact set of warned locals pinned (`tests/dead_code_lint.rs` style).  Red: the forgotten-`&` cell
   stays silent, or a silent row warns.
-- **P — slot parameters, exact link** (M).  Probe first: the address test in a hand-written
-  callee on both backends.  Then the caller side (field argument, slot-link argument, variable
-  argument) and the callee side (field link from the first line).  Red: the four parameter
-  cells of § Composition matrix, the view-across-the-call cell, the existing `&` parameter cells
-  unchanged.  21_tree then restores `take_min` as a helper, so the loft and Rust sources match
-  routine for routine.
+- **21_tree's `take_min` helper** — P is built: restore `take_min` as a helper so the loft and
+  Rust sources match routine for routine.
 
 The O(1) unlink (§ Design, M) is no longer a phase: it is the portal's work once 21_tree's delete
 row asks for it — hand form first, the op on all three backends behind `LOFT_NO_MOVE_CHILD`.
@@ -169,9 +165,9 @@ The natural-code list this plan grew out of, outside its core:
 
 ## Documentation
 
-- `formal/binding.md` `(B-OutOfLine)`, `(B-Disturb)` — done; `(B-Ref-Write)` gains the `&`
-  parameter on a field (P).
-- `formal/calls.md` `(F-ParamRef)` — a field place as the argument (P).
+- `formal/binding.md` `(B-OutOfLine)`, `(B-Disturb)` — done, the `&` parameter on a field
+  included.
+- `formal/calls.md` `(F-ParamRef)` — a field place as the argument — done.
 - `formal/rewrites.md` — the move rewrite's entry and the Applied-by table (M).
 - `DIAGNOSTICS.md` — the walk-or-write code (W); `lost-write`'s fourth shape — done.
 - `BOTH_BACKEND_SWITCHES.md` — `LOFT_NO_MOVE_CHILD` (M).

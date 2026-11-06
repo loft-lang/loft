@@ -1711,6 +1711,37 @@ impl Stores {
         }
     }
 
+    /// `OpSlotTag` ([`crate::keys::slot_tag`]).
+    #[must_use]
+    pub fn slot_tag(&self, field: &DbRef) -> DbRef {
+        crate::keys::slot_tag(field)
+    }
+
+    /// `@FR-F-ParamRef` (@PLN219) — what a slot cell's content reads as: the child a tagged
+    /// field address holds ([`crate::keys::SLOT_FIELD_BIT`]), else the content itself.
+    #[must_use]
+    pub fn slot_read(&self, content: &DbRef) -> DbRef {
+        if crate::keys::slot_is_field(content) {
+            self.ref_from_child_rec(&crate::keys::slot_field(content))
+        } else {
+            *content
+        }
+    }
+
+    /// `@FR-F-ParamRef` (@PLN219) — a whole write through a slot cell: a cell naming a field is
+    /// the field write `h.f = v` (`OpSetChildRec`, `raw_tp` with its `COPY_FREE_SOURCE` bit
+    /// giving up an owned value's store), and the cell keeps naming the field; any other cell
+    /// takes the value, as the write-back to a variable does.  The free bit is then not used:
+    /// the value moved into the caller's variable.
+    pub fn slot_write(&mut self, cell: &mut DbRef, data: &DbRef, raw_tp: u16) {
+        if crate::keys::slot_is_field(cell) {
+            let field = crate::keys::slot_field(cell);
+            self.set_child_rec(&field, data, raw_tp);
+        } else {
+            *cell = *data;
+        }
+    }
+
     /// The words a `tp` child record claims: its header word and its payload, an enum's at
     /// its largest variant's size (`enum_parent_size`).
     #[must_use]

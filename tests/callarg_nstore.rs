@@ -396,7 +396,10 @@ const E_NOT_GUARD: &str =
     "fn f(n: text) -> integer { c = pick(n); if !c { return 0; } use_code(c) }\n";
 const EW_NULL_SIDE: &str =
     "fn f(n: text) -> integer { c = pick(n); if c == null { use_code(c) } else { 0 } }\n";
-const EW_COMPOUND: &str = "fn f(n: text) -> integer { c = pick(n); if c != null && len(n) > 0 { use_code(c) } else { 0 } }\n";
+// `@FR-N-Guard` — an `&&` of tests holds where each holds, so its THEN side proves `c`; an `||`
+// proves nothing there (either test may have passed alone).
+const E_AND: &str = "fn f(n: text) -> integer { c = pick(n); if c != null && len(n) > 0 { use_code(c) } else { 0 } }\n";
+const EW_COMPOUND: &str = "fn f(n: text) -> integer { c = pick(n); if c != null || len(n) > 5 { use_code(c) } else { 0 } }\n";
 const E_MAIN: &str = "fn main() { print(\"x={f(\"s\")} {f(\"a\")} {f(\"q\")}\"); }\n";
 
 fn enum_narrows(backend: &str) {
@@ -405,6 +408,7 @@ fn enum_narrows(backend: &str) {
         (E_EQ_ELSE, "e_eq_else"),
         (E_GUARD, "e_guard"),
         (E_NOT_GUARD, "e_not_guard"),
+        (E_AND, "e_and"),
     ] {
         let src = format!("{E_PRELUDE}{body}{E_MAIN}");
         let (ok, warns, out) = run(&src, backend, true, &format!("{tag}_{backend}"));

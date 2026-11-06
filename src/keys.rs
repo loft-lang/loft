@@ -1328,6 +1328,48 @@ pub const COPY_FREE_SOURCE: u16 = 0x8000;
 pub const COPY_FRESH_DEST: u16 = 0x4000;
 pub const COPY_TP_MASK: u16 = 0x3FFF;
 
+/// `@FR-B-Ref-Write`, `@FR-F-ParamRef` (@PLN219) — the `pos` bit that marks a SLOT CELL holding
+/// the address of an out-of-line FIELD rather than a view of a record.  A `&S` parameter whose
+/// `S` is held out of line ([`crate::data::Data::held_out_of_line`]) points at a cell, and the
+/// cell holds either what a variable holds (a view) or, for a field argument or after a
+/// re-point `slot = &slot.f`, the field's address with this bit set.  A read through the
+/// parameter answers the child the field holds; a whole write is the field write.  A field
+/// position never reaches bit 30, and a null keeps its own `REPORTED_BIT` (bit 31).
+pub const SLOT_FIELD_BIT: u32 = 0x4000_0000;
+
+/// Does the cell content `r` name an out-of-line field ([`SLOT_FIELD_BIT`])?
+#[inline]
+#[must_use]
+pub fn slot_is_field(r: &DbRef) -> bool {
+    r.store_nr != u16::MAX && r.pos & SLOT_FIELD_BIT != 0
+}
+
+/// The field address a tagged cell content names.
+#[inline]
+#[must_use]
+pub fn slot_field(r: &DbRef) -> DbRef {
+    DbRef {
+        store_nr: r.store_nr,
+        rec: r.rec,
+        pos: r.pos & !SLOT_FIELD_BIT,
+    }
+}
+
+/// `OpSlotTag` — the cell content naming the out-of-line field at `field`.  An absent field (a
+/// null host) stays null: a write through it lands nowhere, as a write to an absent place does.
+#[inline]
+#[must_use]
+pub fn slot_tag(field: &DbRef) -> DbRef {
+    if field.store_nr == u16::MAX || field.rec == 0 {
+        return DbRef::NULL;
+    }
+    DbRef {
+        store_nr: field.store_nr,
+        rec: field.rec,
+        pos: field.pos | SLOT_FIELD_BIT,
+    }
+}
+
 /// `@FR-R-Reuse`'s reset clause — set on the type of a POOL's release (`OpClear(b, tp |
 /// POOL_RESET)`, `scopes::reuse_record_buffers`): the buffer's store holds nothing but the
 /// previous result's tree, so the release resets the store to a fresh root

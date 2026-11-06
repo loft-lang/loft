@@ -5983,6 +5983,16 @@ impl State {
                 // two missing.  One predicate answers "is this a collection?" for every kind at
                 // once, and a kind added to the language reaches this site without anyone
                 // remembering to.
+                // @PLN219 `@FR-F-ParamRef` — a `&S` link whose `S` is held out of line points at
+                // a slot cell, which may name a field: read through the test.
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+                    if stack
+                        .data
+                        .slot_link_def(stack.function.tp(variable))
+                        .is_some() =>
+                {
+                    stack.add_op("OpGetSlotRef", self);
+                }
                 Type::Reference(_, _) | Type::Enum(_, true, _) => {
                     stack.add_op("OpGetStackRef", self);
                 }
@@ -6510,6 +6520,21 @@ impl State {
                 // The list was Vector/Reference/Enum and a `&hash<T[k]>` fell into the
                 // `panic!` — an allow-list whose omission costs an ICE rather than an
                 // optimisation, which is the trade the other way round (loft#1292).
+                // @PLN219 `@FR-F-ParamRef` — a whole write through a slot cell: the field write
+                // when the cell names a field, the write-back otherwise.  An OWNED value is
+                // copied into the field, so its store is given up there (`COPY_FREE_SOURCE`);
+                // written back, it moves into the caller's variable as before.
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+                    if let Some(d) = stack.data.slot_link_def(stack.function.tp(var)) =>
+                {
+                    stack.add_op("OpSetSlotRef", self);
+                    let mut kt = stack.data.def(d).known_type();
+                    if amp_owned_writeback {
+                        kt |= crate::keys::COPY_FREE_SOURCE;
+                    }
+                    self.code_add(kt);
+                    false
+                }
                 Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, true, _) => {
                     stack.add_op("OpSetStackRef", self);
                     false

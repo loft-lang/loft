@@ -1580,6 +1580,12 @@ fn OpReplaceVector(r: vector, other: vector, tp: const u16);
 fn OpRefFromChildRec(field: reference) -> reference[field];
 #rust"s.database.ref_from_child_rec(&@field)"
 #pure
+// @PLN219 `@FR-F-ParamRef` — the slot-cell content naming the out-of-line field at `field`
+// (`keys::SLOT_FIELD_BIT` set in its position), handed to a `&S` parameter whose `S` is held
+// out of line, so the callee's whole write is the field write.  Null for an absent field.
+fn OpSlotTag(field: reference) -> reference;
+#rust"s.database.slot_tag(&@field)"
+#pure
 // `@FR-L-Escape`, `@FR-L-CapOwn` — build a closure record IN PLACE in a host's child-record
 // field (loft#1867): a fresh `tp` record in the field's store, filled with the type's
 // defaults, its rec-id written into the field, answered.  The record is the host's own: its
@@ -2016,6 +2022,12 @@ fn OpGetStackText(r: reference) -> text[r];
 fn OpGetStackRef(r: reference, fld: const u16) -> reference;
 // Write a reference from a stack position.
 fn OpSetStackRef(r: reference, v1: reference);
+// @PLN219 `@FR-F-ParamRef` — read / whole-write through a slot cell (a `&S` parameter whose
+// `S` is held out of line): a cell naming a field (`OpSlotTag`) reads the child the field
+// holds and is written as the field (`OpSetChildRec`, `tp` with its free-source bit); any
+// other cell is read and written as `OpGetStackRef` / `OpSetStackRef` do.
+fn OpGetSlotRef(r: reference, fld: const u16) -> reference;
+fn OpSetSlotRef(r: reference, v1: reference, tp: const u16);
 // Write a fn-ref THROUGH a `&fn(…)` link.  The link's own slot holds a DbRef to the
 // caller's fn-ref slot, so this is the two-step `&text` already performs: read the link
 // at this frame slot, then write the 20-byte blob where it points.  A fn-ref has two

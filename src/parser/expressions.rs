@@ -1756,10 +1756,11 @@ impl Parser {
         // A reassignment inside the body drops the proof at the write (`narrowed_non_null` is
         // retained-against on assignment), which is what keeps the `cur = cur.next` step
         // honest: the proof covers the reads BEFORE the advance, and nothing after it.
-        let narrow = self.narrowing_from_condition(&cond);
         let narrow_base = self.narrowed_non_null.len();
-        if let Some((v, true)) = narrow {
-            self.narrowed_non_null.push(v);
+        for (v, p) in self.narrowings_from_condition(&cond) {
+            if p {
+                self.narrowed_non_null.push(v);
+            }
         }
         let proj_narrow = self.projection_narrowing_from_condition(&cond);
         let proj_base = self.narrowed_non_null_exprs.len();
@@ -3887,7 +3888,9 @@ use a separate collection or add after the loop"
         let Value::Var(v) = to.unspan() else {
             return;
         };
-        if !self.vars.exists(*v) {
+        // A `&` PARAMETER keeps its own path: it holds its caller's place from the first line,
+        // so a slot set only at a re-point would leave a whole write before it with no field.
+        if !self.vars.exists(*v) || self.vars.is_argument(*v) {
             return;
         }
         let key = (self.context, self.vars.name(*v).to_string());
@@ -3905,7 +3908,9 @@ use a separate collection or add after the loop"
     /// `@FR-B-Ref-Write` (loft#2433) — a `&` bind of `var` to an out-of-line field: the link
     /// keeps the FIELD in a slot local, set before the bind's statement, and views the record
     /// the field holds through it.  Only for a link bound to such fields alone and written
-    /// whole somewhere: a whole write then has a field to land in ([`Self::slot_link_whole_write`]).
+    /// whole somewhere, or handed to a `&` parameter of a type held out of line: a whole write
+    /// then has a field to land in ([`Self::slot_link_whole_write`],
+    /// `Self::slot_cell_argument`, @PLN219).
     fn bind_slot_link(&mut self, var: u16, code: &mut Value, view: &Type) {
         if self.first_pass || var == u16::MAX {
             return;
@@ -3914,7 +3919,7 @@ use a separate collection or add after the loop"
         let Some(facts) = self.slot_links.get(&key).copied() else {
             return;
         };
-        if !facts.field || facts.other || !facts.whole {
+        if !facts.field || facts.other || !(facts.whole || facts.passed) {
             return;
         }
         let Some((field, kt)) = self.child_rec_place(code) else {
@@ -3938,6 +3943,41 @@ use a separate collection or add after the loop"
         *code = self.cl("OpRefFromChildRec", &[Value::Var(slot)]);
     }
 
+    /// @PLN219 `@FR-B-Ref-Repoint`, `@FR-F-ParamRef` — `slot = &slot.f` on a `&S` PARAMETER
+    /// whose `S` is held out of line re-points the parameter to the FIELD: the field's address
+    /// goes into a cell of this frame ([`crate::keys::SLOT_FIELD_BIT`]) and the parameter points
+    /// at the cell, so a later read sees the child and a whole write is the field write.
+    /// Written as the write-through it was, the re-point rebound the caller's variable.
+    fn repoint_slot_param(&mut self, var: u16, code: &mut Value) {
+        if self.first_pass || var == u16::MAX || !self.vars.is_argument(var) {
+            return;
+        }
+        let Some(d) = self.data.slot_link_def(self.vars.tp(var)) else {
+            return;
+        };
+        let Some((field, kt)) = self.child_rec_place(code) else {
+            return;
+        };
+        if kt == 0 {
+            return;
+        }
+        let cell = if let Some((cell, _)) = self.slot_vars.get(&(self.context, var)) {
+            *cell
+        } else {
+            let name = format!("slot_{}", self.vars.name(var));
+            let tp = Type::Reference(d, Deps::none());
+            let cell = self.create_unique(&name, &tp);
+            self.vars.set_type(cell, tp);
+            self.vars.set_skip_free(cell);
+            self.slot_vars.insert((self.context, var), (cell, kt));
+            cell
+        };
+        self.vars.defined(cell);
+        let tag = self.cl("OpSlotTag", &[field]);
+        self.pending_link_slot.push(v_set(cell, tag));
+        *code = self.cl("OpCreateStack", &[Value::Var(cell)]);
+    }
+
     /// `@FR-B-Ref-Write` (loft#2433) — a WHOLE write through a link to an out-of-line field
     /// (`cur = cur.right`, `cur = null`) writes the field the link names, then views what the
     /// field holds now.  Without the slot the write rebound the local and the field kept its
@@ -3957,6 +3997,10 @@ use a separate collection or add after the loop"
             return None;
         };
         let v = *v;
+        // A `&` parameter's cell is written through the parameter (`OpSetSlotRef`).
+        if self.vars.is_argument(v) {
+            return None;
+        }
         let Some(&(slot, kt)) = self.slot_vars.get(&(self.context, v)) else {
             let facts = self
                 .slot_links
@@ -5720,6 +5764,7 @@ use a separate collection or add after the loop"
             self.vars.set_amp_link(var_nr);
             let view = s_type.clone();
             self.bind_slot_link(var_nr, code, &view);
+            self.repoint_slot_param(var_nr, code);
         }
         // `amp_pending` is a one-shot per binding — clear it here so a `&` that did
         // NOT take the scalar-reference path (a heap `&`-view, a non-`Var` source, an

@@ -1168,10 +1168,24 @@ impl<'a> FnWriter<'a> {
     /// passed by pointer (`Cx::vr_ptr_params`) is spelled the same way.
     fn var(&self, v: u16) -> String {
         let name = var_name(self.vars.name(v), v);
-        if self.links[v as usize] || self.vr_ptr[v as usize] {
+        // @PLN219 — a `&S` parameter whose `S` is held out of line points at a slot cell, which
+        // may name a field: read through the test.  Written only by `link_rebind`.
+        if self.links[v as usize] && self.cx.data.slot_link_def(self.vars.tp(v)).is_some() {
+            format!("loft_slot_read(*{name})")
+        } else if self.links[v as usize] || self.vr_ptr[v as usize] {
             format!("(*{name})")
         } else {
             name
+        }
+    }
+
+    /// `v`'s address: the variable's own, or the one a link holds — a slot cell's pointer
+    /// itself, never the read [`Self::var`] spells for it (@PLN219).
+    fn var_addr(&self, v: u16) -> String {
+        if self.links[v as usize] || self.vr_ptr[v as usize] {
+            var_name(self.vars.name(v), v)
+        } else {
+            format!("&{}", self.var(v))
         }
     }
 
@@ -5244,8 +5258,29 @@ impl<'a> FnWriter<'a> {
         );
         let e = self.expr(x, ind)?;
         let r = self.temp(CType::Ref);
-        let name = self.var(var);
         self.line(ind, &format!("{r} = {};", as_ref(e)?));
+        // @PLN219 `@FR-F-ParamRef` — a slot cell: the field write when it names a field (an
+        // owned value given up there), the write-back otherwise.  A field-naming cell is the
+        // same before and after, so the displaced-store release below finds nothing to free.
+        if let Some(d) = self.cx.data.slot_link_def(self.vars.tp(var)) {
+            let raw = format!("(*{})", var_name(self.vars.name(var), var));
+            let tp = self.copyable(self.cx.data.def(d).known_type())?;
+            let old = self.temp(CType::Ref);
+            self.line(ind, &format!("{old} = {raw};"));
+            self.line(
+                ind,
+                &format!(
+                    "loft_slot_write(loft_types, {tp}, &{raw}, {r}, {});",
+                    u8::from(owned)
+                ),
+            );
+            if owned {
+                self.line(ind, &format!("loft_free_displaced({old}, {raw});"));
+            }
+            self.flush(ind);
+            return Ok(());
+        }
+        let name = self.var(var);
         if owned {
             let old = self.temp(CType::Ref);
             self.line(ind, &format!("{old} = {name};"));
@@ -5785,7 +5820,7 @@ impl<'a> FnWriter<'a> {
                     && !self.links[*t as usize]
                     && self.shapes[*t as usize] == CType::Text) =>
             {
-                Some(format!("&{}", self.var(*t)))
+                Some(self.var_addr(*t))
             }
             // A member of a tuple local is a place a link names (`@FR-B-Ref-Lvalue`).
             // A text member of a tuple parameter is the caller's: no link writes it.
@@ -7674,7 +7709,7 @@ impl<'a> FnWriter<'a> {
         if self.shapes[v as usize] != c || (c == CType::Text && !self.text_held(v)) {
             return Err("a link to a variable of another shape".into());
         }
-        Ok(format!("&{}", self.var(v)))
+        Ok(self.var_addr(v))
     }
 
     fn one<V: Borrow<Value>>(&mut self, name: &str, args: &[V], ind: usize) -> Result<E, String> {
@@ -10342,6 +10377,7 @@ const OP_REF: &[&str] = &[
     "OpNullRefSentinel",
     "OpInsertVector",
     "OpRefFromChildRec",
+    "OpSlotTag",
     "OpChildRec",
     "OpCopyClosure",
     "OpCoroutineRetain",

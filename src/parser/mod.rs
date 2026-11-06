@@ -174,6 +174,10 @@ pub struct ArmMismatch {
 
 /// What pass 1 saw of one `&` link (loft#2433, [`Parser::slot_links`]).
 #[derive(Default, Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "four independent facts pass 1 records per link; no state machine joins them"
+)]
 pub(crate) struct SlotLinkFacts {
     /// Bound `&` to an out-of-line field (`cur = &t.left`).
     pub(crate) field: bool,
@@ -181,6 +185,9 @@ pub(crate) struct SlotLinkFacts {
     pub(crate) other: bool,
     /// Written whole (`cur = cur.right`, `cur = null`).
     pub(crate) whole: bool,
+    /// Handed to a `&` parameter whose type is held out of line (`take_min(cur)`, @PLN219):
+    /// the callee's whole write lands in the field the link keeps.
+    pub(crate) passed: bool,
 }
 
 #[allow(clippy::struct_excessive_bools)]

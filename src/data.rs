@@ -8156,6 +8156,45 @@ impl Data {
         self.reaches_inline(target, d_nr, &mut seen)
     }
 
+    /// @PLN219 `@FR-F-ParamRef` — is the struct or struct-enum `d_nr` HELD OUT OF LINE
+    /// somewhere: does it lie on a size cycle (`@FR-L-OutOfLine`)?  Then some field of its own
+    /// is out of line, and every field on the cycle — the one of type `d_nr` among them — is.
+    /// A `&` parameter of such a type can be handed an out-of-line field, so it points at a
+    /// SLOT CELL ([`crate::keys::SLOT_FIELD_BIT`]).
+    #[must_use]
+    pub fn held_out_of_line(&self, d_nr: u32) -> bool {
+        if d_nr == u32::MAX || !crate::keys::out_of_line_enabled() {
+            return false;
+        }
+        let holders: Vec<u32> = match self.def_type(d_nr) {
+            DefType::Struct | DefType::EnumValue => vec![d_nr],
+            DefType::Enum => self
+                .children_of(d_nr)
+                .filter(|&c| self.def_type(c) == DefType::EnumValue)
+                .collect(),
+            _ => return false,
+        };
+        holders
+            .into_iter()
+            .any(|h| (0..self.attributes(h)).any(|a| self.field_is_out_of_line(h, a)))
+    }
+
+    /// @PLN219 — the slot type a `&` parameter of type `tp` links, as its definition: `Some(d)`
+    /// for `&S` / `&S?` with `S` [held out of line](Self::held_out_of_line), the parameters
+    /// whose cell may name a field.  `None` for every other type, which pays nothing.
+    #[must_use]
+    pub fn slot_link_def(&self, tp: &Type) -> Option<u32> {
+        let Type::RefVar(inner) = tp.base() else {
+            return None;
+        };
+        let d = match inner.base() {
+            Type::Reference(d, deps) if !deps.is_pointer_marker() => *d,
+            Type::Enum(d, true, _) => *d,
+            _ => return None,
+        };
+        self.held_out_of_line(d).then_some(d)
+    }
+
     /// Does a type reachable from `from` through inline edges (embedded fields, tuple members,
     /// enum variants) still carry a field naming an unresolved type — a forward stub?  While it
     /// does, which of those fields are out of line (`@FR-L-OutOfLine`) is not decided.

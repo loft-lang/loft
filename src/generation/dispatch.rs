@@ -818,6 +818,45 @@ impl Output<'_> {
                     write!(w, "var_{name} = var_{src_name}")?;
                     return Ok(());
                 }
+                // @PLN219 `@FR-B-Ref-Repoint` — a record or struct-enum parameter re-pointed to
+                // a local: the cell a slot re-point names (`Parser::repoint_slot_param`), or a
+                // record local the author links.
+                if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _))
+                    && let Value::Call(d_nr, cargs) = to.unspan()
+                    && self.data.def(*d_nr).name() == "OpCreateStack"
+                    && let [src_arg] = cargs.as_slice()
+                    && let Value::Var(src) = src_arg.unspan()
+                    && !matches!(variables.tp(*src).base(), Type::RefVar(_))
+                {
+                    let src_place = self.var_place(*src);
+                    write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
+                    return Ok(());
+                }
+                // @PLN219 `@FR-F-ParamRef` — a whole write through a slot cell: the field write
+                // when the cell names a field (an owned value given up there), the write-back
+                // otherwise; a field-naming cell is unchanged, so nothing is displaced.
+                if let Some(d) = self.data.slot_link_def(variables.tp(var)) {
+                    let owned = matches!(
+                        crate::use_analysis::ownership_of(self.data, self.def_nr, to),
+                        crate::use_analysis::Own::Owned
+                    );
+                    let mut kt = self.data.def(d).known_type();
+                    if owned {
+                        kt |= crate::keys::COPY_FREE_SOURCE;
+                    }
+                    let kt = self.type_lit_u16(kt);
+                    write!(w, "{{ let _slot_v = ")?;
+                    self.output_code_inner(w, to)?;
+                    write!(
+                        w,
+                        "; unsafe {{ let _old_disp = *var_{name}; stores.slot_write(&mut *var_{name}, &_slot_v, {kt});"
+                    )?;
+                    if owned {
+                        write!(w, " OpFreeRefIfDistinct(cell, _old_disp, *var_{name});")?;
+                    }
+                    write!(w, " }} }}")?;
+                    return Ok(());
+                }
                 // `c = &v[i]`, `c = &o.f` and `c = &m` on a SCALAR parameter.
                 if crate::data::is_scalar(inner)
                     && let Value::Call(d_nr, cargs) = to.unspan()

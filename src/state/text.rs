@@ -368,6 +368,30 @@ impl State {
         self.put_stack(t);
     }
 
+    /// `OpGetSlotRef` — read through a slot cell (@PLN219, [`Stores::slot_read`]).
+    #[inline]
+    pub fn get_slot_ref(&mut self) {
+        let fld = self.code::<u16>();
+        let r = self.get_stack::<DbRef>();
+        let t = self
+            .database
+            .store(&r)
+            .read::<DbRef>(r.rec, r.pos + u32::from(fld));
+        let v = self.database.slot_read(&t);
+        self.put_stack(v);
+    }
+
+    /// `OpSetSlotRef` — a whole write through a slot cell (@PLN219, [`Stores::slot_write`]).
+    #[inline]
+    pub fn set_slot_ref(&mut self) {
+        let tp = self.code::<u16>();
+        let v1 = self.get_stack::<DbRef>();
+        let r = self.get_stack::<DbRef>();
+        let mut cell = self.database.store(&r).read::<DbRef>(r.rec, r.pos);
+        self.database.slot_write(&mut cell, &v1, tp);
+        *self.database.store_mut(&r).addr_mut::<DbRef>(r.rec, r.pos) = cell;
+    }
+
     #[inline]
     pub fn set_stack_ref(&mut self) {
         let v1 = self.get_stack::<DbRef>();

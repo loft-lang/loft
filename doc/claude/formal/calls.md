@@ -180,6 +180,9 @@ heap-returning tail discarded 800 000 times holds a flat resident size).
                    forwards the reference rather than dereferencing it, so the innermost
                    reassignment reaches the outermost caller at any depth.  A forwarder
                    therefore needs the `&` even though its own body never assigns.
+                   The argument is a PLACE (binding.md B-Ref-Lvalue): a variable, a field, an
+                   element — an out-of-line field included, whose whole write is the field
+                   write (binding.md B-OutOfLine).
 ```
 
 **In words.** What a call can do to its arguments depends on the type. A **scalar** argument is

@@ -5539,6 +5539,30 @@ impl Parser {
         }
     }
 
+    /// `@FR-N-Guard` — every null fact a condition proves, [`Self::narrowing_from_condition`]'s
+    /// facts read through `&&` and `||`.  `a && b` lowers to `if a { b } else { false }`: where
+    /// it is TRUE both operands are, so it proves what each proves true
+    /// (`len(c) >= cap && t != null`).  `a || b` is `if a { true } else { b }`: where it is
+    /// FALSE both are, so it proves what each proves false (`t == null || u == null` guarding
+    /// a return).
+    pub(crate) fn narrowings_from_condition(&self, test: &Value) -> Vec<(u16, bool)> {
+        let Value::If(a, b, c) = test.unspan() else {
+            return self.narrowing_from_condition(test).into_iter().collect();
+        };
+        let (sides, polarity) = if matches!(c.unspan(), Value::Boolean(false)) {
+            ([a.as_ref(), b.as_ref()], true)
+        } else if matches!(b.unspan(), Value::Boolean(true)) {
+            ([a.as_ref(), c.as_ref()], false)
+        } else {
+            return Vec::new();
+        };
+        sides
+            .into_iter()
+            .flat_map(|side| self.narrowings_from_condition(side))
+            .filter(|&(_, p)| p == polarity)
+            .collect()
+    }
+
     /// `@FR-N-Guard` — the null fact a condition proves: `Some((v, p))` says that where the
     /// test evaluates to `p`, the variable `v` is present.  The fallback is `None`, because a
     /// shape not named here (a compound condition, a comparison with anything but the null
@@ -5563,6 +5587,11 @@ impl Parser {
         // test is the `== null` question, which proves the var non-null on the ELSE side.
         if let Some(v) = self.heap_null_test(test) {
             return Some((v, false));
+        }
+        // `a && b` / `a || b` prove one fact per operand ([`Self::narrowings_from_condition`]);
+        // a caller that takes a single fact gets the first.
+        if matches!(test.unspan(), Value::If(..)) {
+            return self.narrowings_from_condition(test).into_iter().next();
         }
         let Value::Call(op, args) = test.unspan() else {
             return None;
@@ -5997,10 +6026,12 @@ impl Parser {
         self.convert_condition_at(&mut test, &tp, Some(&cond_at));
         // @PLN25 DN3: a non-null proof from the condition narrows the proven var inside the
         // matching branch (then for `!= null`/truthy, else for `== null`).
-        let narrow = self.narrowing_from_condition(&test);
+        let narrow = self.narrowings_from_condition(&test);
         let narrow_base = self.narrowed_non_null.len();
-        if let Some((v, true)) = narrow {
-            self.narrowed_non_null.push(v);
+        for &(v, p) in &narrow {
+            if p {
+                self.narrowed_non_null.push(v);
+            }
         }
         // …and the PROJECTION twin, pushed and truncated on the same discipline.
         let proj_narrow = self.projection_narrowing_from_condition(&test);
@@ -6078,7 +6109,7 @@ impl Parser {
         self.variant_proven.truncate(variant_base);
         // Leaving the THEN branch — drop its `idx < len(vec)` in-bounds proofs (THEN-only).
         self.index_bounded.truncate(index_base);
-        if let Some((v, false)) = narrow {
+        for &(v, _) in narrow.iter().filter(|&&(_, p)| !p) {
             self.narrowed_non_null.push(v);
         }
         if let Some((ref e, false)) = proj_narrow {

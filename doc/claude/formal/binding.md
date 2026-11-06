@@ -366,6 +366,12 @@ control — an UNDISTURBED view still aliases and still writes through, on both 
               variable at one `&` bind and to an out-of-line field at another has no one place
               such a write could land in, and the write is a compile-time error that names the
               cure; a field write through that link (`cur.k = 1`) is not affected.
+              A `&` PARAMETER of a type held out of line names its caller's place the same way:
+              handed an out-of-line field (`take_min(t.right)`, or a field link `cur`), a whole
+              write through it is that field write, made when the callee makes it — before
+              any re-point as after one — and `slot = &slot.left` re-points the parameter to
+              the child's field (B-Ref-Repoint) without touching the caller's variable.  The
+              call disturbs the field it hands over as a write that may be null does.
 ```
 
 **In words.** `t.left = Tree { key: 4 }` builds the value and copies it into `t`'s store;

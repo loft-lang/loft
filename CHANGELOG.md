@@ -22,6 +22,19 @@ only be cross-built and never run before it shipped, and loft ships only what it
 On an Intel Mac, build loft from a source checkout (`make install-user`), or keep 2026.11.0,
 the last release with an Intel Mac bundle.
 
+### New
+
+**Tree code in Rust's shape.**  A `&Tree?` parameter takes a field of a tree as its argument
+and writes that field: `take_min(t.right)` with `slot = &slot.left` to walk down and
+`slot = slot.right` to unlink a node is the helper a Rust programmer writes with
+`&mut Option<Box<Tree>>`.  A field link (`n = &t.left`) can be handed on the same way.  Before,
+a field could not be passed at all, and a whole write through such a parameter changed only a
+local of the caller.
+
+**`a && b` proves what each test proves.**  Inside `if len(c) >= cap && t != null { … }` the
+nullable `t` reads as present, as it does after a bare `if t != null`; likewise the `else` of
+`if a == null || b == null`.  The warning that asked for the test no longer fires there.
+
 ## 2026-11
 
 ### May need a change in your code

@@ -547,6 +547,10 @@ impl Output<'_> {
                         if matches!(inner.base(), Type::Text(_)) {
                             return write!(w, "unsafe {{ &*var_{var_name} }}");
                         }
+                        // @PLN219 — a slot cell may name a field: read through the test.
+                        if self.data.slot_link_def(variables.tp(var)).is_some() {
+                            return write!(w, "stores.slot_read(unsafe {{ &*var_{var_name} }})");
+                        }
                         return write!(w, "unsafe {{ *var_{var_name} }}");
                     }
                     // @PLN167 decision 1 — a by-value narrow parameter something links is

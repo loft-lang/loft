@@ -611,10 +611,10 @@ impl Parser {
             self.variant_proven.len(),
             self.index_bounded.len(),
         );
-        if let Some((v, s)) = self.narrowing_from_condition(code)
-            && s == side
-        {
-            self.narrowed_non_null.push(v);
+        for (v, s) in self.narrowings_from_condition(code) {
+            if s == side {
+                self.narrowed_non_null.push(v);
+            }
         }
         if let Some((e, s)) = self.projection_narrowing_from_condition(code)
             && s == side

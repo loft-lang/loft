@@ -314,6 +314,48 @@ impl Parser {
         }
     }
 
+    /// @PLN219 `@FR-F-ParamRef`, `@FR-B-Ref-Lvalue` — an out-of-line FIELD handed to a `&S`
+    /// parameter whose `S` is held out of line: the callee gets a cell of this frame naming the
+    /// field ([`crate::keys::SLOT_FIELD_BIT`]), so its whole write is the field write, made when
+    /// the callee makes it.  The field is the argument itself (`take_min(t.right)`) or what a
+    /// local field link keeps (`n = &t.right; take_min(n)`); the link reads the field again
+    /// once the call returns.  `None` for every other argument, which keeps its own path.
+    fn slot_cell_argument(&mut self, should: &Type, orig: &Value) -> Option<Value> {
+        if self.first_pass {
+            // Pass 1 records that the link is handed on, so pass 2 keeps its field.
+            if let Value::Var(v) = orig.unspan()
+                && self.vars.exists(*v)
+                && !self.vars.is_argument(*v)
+                && self.data.slot_link_def(should).is_some()
+            {
+                let key = (self.context, self.vars.name(*v).to_string());
+                self.slot_links.entry(key).or_default().passed = true;
+            }
+            return None;
+        }
+        let d = self.data.slot_link_def(should)?;
+        let (field, relink) = match orig.unspan() {
+            Value::Var(v) if !self.vars.is_argument(*v) => {
+                let (slot, _) = *self.slot_vars.get(&(self.context, *v))?;
+                let read = self.cl("OpRefFromChildRec", &[Value::Var(slot)]);
+                (Value::Var(slot), Some(v_set(*v, read)))
+            }
+            Value::Var(_) => return None,
+            _ => (self.out_of_line_place(orig)?.0, None),
+        };
+        let tp = Type::Reference(d, Deps::none());
+        let cell = self.vars.work_refs_p2(&tp, &mut self.lexer);
+        self.vars.set_skip_free(cell);
+        let tag = self.cl("OpSlotTag", &[field]);
+        if let Some(relink) = relink {
+            self.pending_arg_posts.push(relink);
+        }
+        Some(Value::Insert(vec![
+            v_set(cell, tag),
+            self.cl("OpCreateStack", &[Value::Var(cell)]),
+        ]))
+    }
+
     /// `@FR-T-Sub` — a value synthesised as `is_type` is accepted where `should` is expected
     /// when `is_type ⤳ should`, and `code` is rewritten to deliver it (a widening, a member-wise
     /// tuple rebuild, a variant into its enum).  `false` when no conversion is licensed; the
@@ -1106,7 +1148,9 @@ impl Parser {
                 }
             } else {
                 let orig = std::mem::replace(code, Value::Null);
-                if let Value::Var(v) = orig {
+                if let Some(linked) = self.slot_cell_argument(should, &orig) {
+                    *code = linked;
+                } else if let Value::Var(v) = orig {
                     // @PLN167 decision 1 — handed to a `&` parameter, a narrow local holds its
                     // field encoding from here on (`Variable::linked_narrow`).
                     self.vars.set_linked_narrow(v);
