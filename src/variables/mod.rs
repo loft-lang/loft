@@ -5518,6 +5518,20 @@ impl Function {
     /// produce a store, and that a retbuf-attr local carry an entry-buffer witness.
     #[must_use]
     pub fn owns_displaced_store(&self, v: u16, value: &Value, data: &Data) -> bool {
+        self.owns_its_binding(v, value, data)
+            // loft#1522 — and the store is not one a construction work-ref still NAMES.  The
+            // proxy answers "owned" for such a local because the adoption leaves its dep list
+            // empty, so without this the rebind released the buffer's store out from under it;
+            // the buffer's own scope-exit free is what releases it, once.
+            && !self.rebind_keeps_displaced(v)
+    }
+
+    /// Is `v` an OWNER at `v = value` — [`Self::owns_displaced_store`] without loft#1522's
+    /// veto?  The veto decides only who releases the displaced store; a local it applies to is
+    /// still an owner, and its bind still copies a borrowed answer (@FR-B-Copy does not depend
+    /// on who frees).  A VIEW is not one: its dep list names what it views.
+    #[must_use]
+    pub fn owns_its_binding(&self, v: u16, value: &Value, data: &Data) -> bool {
         (matches!(
             self.tp(v).base(),
             Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
@@ -5526,11 +5540,6 @@ impl Function {
             // @FR-O-Override veto is consulted right after it, as every free on the proxy must.
             && self.proxy_says_owned(v)
             && !self.is_captured(v)
-            // loft#1522 — and the store is not one a construction work-ref still NAMES.  The
-            // proxy answers "owned" for such a local because the adoption leaves its dep list
-            // empty, so without this the rebind released the buffer's store out from under it;
-            // the buffer's own scope-exit free is what releases it, once.
-            && !self.rebind_keeps_displaced(v)
             && !crate::data::is_null_sentinel_detach(v, value, data, self)
     }
 
