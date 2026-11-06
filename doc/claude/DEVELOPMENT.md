@@ -165,6 +165,13 @@ on their own branches at the same time: no step waits on them, and none touches 
 6. **Push those fixes to the PR branch only after its current run has finished**, all at once.
    Each run is then read whole, and its red steps are fixed before the next run starts.
    Cancel the runs a push made obsolete (`gh run cancel`).
+7. **Once it has merged, install the new main as the box's `loft`**: `make install-main`
+   (into `~/.local`, from main's daily build when this machine's rustc built it, else
+   rebuilt where only what changed is compiled; [GUARDS.md](GUARDS.md) § The control is
+   installed main).  Every agent on the box scores its guards against that binary
+   (`make falsify` without `REF`); a stale one makes each score against an older main, and a
+   fix main now holds reads INERT only once the install has it.  `cat
+   ~/.local/share/loft/SOURCE` names the commit it was built from.
 
 **Two runs, two jobs.**  The FIRST run is discovery: with optimization work this destructive, a
 union is not green before the checks the PR exists for have run, so a red first run is the
