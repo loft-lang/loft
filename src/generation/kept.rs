@@ -747,15 +747,6 @@ impl super::Output<'_> {
                 .is_some_and(|r| r.profitable)
             && crate::lower::apart_vector::roles(self.data, d_nr).is_none_or(|v| v.is_empty())
             && super::apart_records::roles(self.data, &self.plan.apr, d_nr, false).is_empty()
-            && (self.switches.element_first_disabled || {
-                let ef = super::hoist::element_first(
-                    self.data,
-                    self.stores,
-                    d_nr,
-                    self.plan.value_records.views.get(&d_nr),
-                );
-                ef.pairs.is_empty() && ef.buf_place.is_empty()
-            })
             && (d_nr as usize) < self.data.definitions.len()
             && !self.data.def(d_nr).code().any_node(&mut |n| {
                 matches!(n, Value::Block(b) if (0..b.operators.len()).any(|i| {

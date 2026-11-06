@@ -8188,19 +8188,7 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 2** — each `(R-Phase)`'s ONE PLACE, left by @PLN211's moves (arc C′ removes them).
-
-### D-phase-4 (OPEN, @PLN211) — `(R-ElemFirst)`'s view-exit form stays in both writers
-- **Violates:** `R-Phase` (one place: no writer clause for a form the IR does not take)
-- **Where:** `generation::emit` (the element-first statement handling), `c::body::elem_first` —
-  both now find only the pairs the IR declines: a temp whose function also returns it inside
-  its record, which `element_first` pairs only with the view plan (`ValueRecords::views`).
-- **Effect:** the interpreter keeps the temp-store build and the copy for that form; on the
-  benches neither writer applies it (no bench pair needs the plan), in the cells it is
-  `164-element-place.loft` g1, g2, g4, g10, g16 (the `parse_circle` shape), g20.
-- **Removal:** waits for D-phase-5: once the IR spells a view leaf, the exit is a tuple element
-  naming the temp and the pass takes the form with no plan (`plans/211-rule-phases/c4-view-plan.md`
-  S3), and both writers' clauses go.
+**OPEN: 1** — `(R-Phase)`'s ONE PLACE, left by @PLN211's moves.
 
 ### D-phase-5 (OPEN, @PLN211) — `(R-ValueRecord)`'s view-leaf clause is the writers' alone
 - **Violates:** `R-Phase` (one place: a work-removing rule applied in the IR unless a stated
@@ -8211,5 +8199,8 @@ Two instruments check the assumptions, and the chapter is not complete without b
 - **Effect:** the interpreter returns the record through its buffer for those functions; the
   plan is computed by each writer.  On the benches 3 functions (`R-ValueRecord/view`), drawing's
   `parse_lock` and `parse_poly` among them.
-- **Removal:** a reference element in the IR's value-record tuple on all three backends
-  (`c4-view-plan.md` S1, S2), moved in arc C's order by its weight.
+- **Removal:** the IR's value-record tuple carries a reference element on all three backends
+  (`c4-view-plan.md` S1) and takes every view leaf it can spell; the leaves it declines stay in
+  the writers by the owner's ruling (`c4-view-plan.md` § S2): an IR spelling that would not
+  speed the interpreter is no reason to move a form.  Open while the C writer and the IR both
+  apply `(R-ValueRecord)`.
