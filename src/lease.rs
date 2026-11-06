@@ -1107,5 +1107,10 @@ pub fn copy_tail_nr(data: &Data, vec_def: u32) -> u32 {
     if vec_def == u32::MAX || vec_def as usize >= data.definitions() as usize {
         return u32::MAX;
     }
-    data.def_nr(&data.drop_cascade_key(vec_def, "OpCopyTail"))
+    // In the vector type's own source, where `declare_cascade` puts it (loft#2436).
+    let key = data.drop_cascade_key(vec_def, "OpCopyTail");
+    match data.source_nr(data.def(vec_def).source, &key) {
+        u32::MAX => data.def_nr(&key),
+        nr => nr,
+    }
 }
