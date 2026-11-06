@@ -152,6 +152,10 @@ build directory for a single-program diff.
 answering null — suspect the LANGUAGE first: reduce it to a minimal probe, run it on both
 backends and on installed main.  Most such failures in this port were language defects
 (loft#2337–#2346), each fixed on the branch with a suite cell rather than spelled around.
+Record with each such defect the rules its reduced repro crosses — the `@FR-` tag of every rule
+it meets, and any axis no rule names (pass order, a callee declared later) — in the issue, or in
+the commit for one fixed at once.  A three-rule defect is the class the rule-pair walk cannot
+reach, and that record is how this front end's share of them is counted.
 
 The syntax layer is `selfhost/src/syntax.loft` (the rules, one per production of
 [1a-grammar.md](1a-grammar.md)); gate S's runner is `selfhost/front/parse.loft`.

@@ -1699,6 +1699,18 @@ fn mid_deliver(e: el::El, vars: el_vars::Vars, n: ir::Node, buf: integer, row: i
   match n {
     NdReturn { inner } => match el_ir::unspan(inner) {
       NdVar { n: v } => if v != buf && !vars.vars[v].argument && (el_types::base(el_vars::tp(vars, v)) is TyVector) { ir::NdInsert { items: [el_ir::cl(e, "OpReplaceVector", [ir::NdVar { n: buf }, ir::NdVar { n: v }, ir::NdInt { n: row }]), ir::NdReturn { inner: ir::NdVar { n: buf } }] } } else { n },
+      // A fresh literal (`return [1]`) is copied into the buffer at its end — its own store
+      // freed — and the block answers the buffer (`materialize_vector_arms_into`).
+      NdBlock { block } => {
+        lb = literal_backing_store(block[0]);
+        bl = block[0];
+        if lb < 0 || lb == buf || len(bl.operators) == 0 {
+          return n;
+        }
+        b = ir::NdVar { n: buf };
+        bl.operators[-1] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, bl.operators[-1], ir::NdInt { n: row }]), el_ir::cl(e, "OpFreeRef", [ir::NdVar { n: lb }]), b] };
+        ir::NdReturn { inner: el_ir::respan(inner, ir::NdBlock { block: [bl] }) }
+      },
       _ => n
     },
     NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: mid_deliver(e, vars, inner, buf, row) },
@@ -1755,6 +1767,33 @@ fn stray_returns(ops: vector<ir::Node>, buf: integer) -> integer {
   r
 }
 
+// The store a vector literal or comprehension block is built in (its one `__vdb_N` dep), or -1.
+fn literal_backing_store(b: ir::Block) -> integer {
+  if b.name != "Vector" && b.name != "Vector comprehension" {
+    return -1;
+  }
+  ds = el_types::deps(b.result[0] ?? ir::TyVoid);
+  if len(ds) == 1 { ds[0] } else { -1 }
+}
+
+// The `return`s among `ops` that answer a fresh literal, at any depth.
+fn literal_returns(ops: vector<ir::Node>) -> integer {
+  r = 0;
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdReturn { inner } => {
+        match el_ir::unspan(inner) {
+          NdBlock { block } => { if literal_backing_store(block[0]) >= 0 { r += 1; } },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+    r += literal_returns(el_ir::children(op));
+  }
+  r
+}
+
 // The `return`s among `ops`, at any depth.
 fn returns_in(ops: vector<ir::Node>) -> integer {
   r = 0;
@@ -1805,6 +1844,21 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
           bl.operators[op#index] = mid_deliver(e, vars, op, tail_buf, row);
         }
         code = ir::NdBlock { block: [bl] };
+      }
+      // Every early exit a fresh literal and the tail one too: the buffer is renamed onto the
+      // tail literal's store, as without early exits, and each early literal is copied into it.
+      tail_store = match tail { NdBlock { block: tb } => literal_backing_store(tb[0]), _ => -1 };
+      mids = bl.operators[0..len(bl.operators) - 1];
+      if tail_buf < 0 && tail_store >= 0 && row >= 0 && returns_in(mids) == literal_returns(mids) && attr_nr(el::def(e, d), "__retbuf") >= 0 && starts_with(el_vars::name_of(vars, tail_store), "__vdb_") {
+        rename_onto(e, vars, rb, tail_store);
+        for op in bl.operators {
+          if op#index < len(bl.operators) - 1 {
+            bl.operators[op#index] = mid_deliver(e, vars, op, tail_store, row);
+          }
+        }
+        bl.result = [el_types::without_deps(el_types::base(result))];
+        bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: tail_store }]), bl.operators[0]] };
+        return ir::NdBlock { block: [bl] };
       }
       // The buffer still `__retbuf` and the tail a literal: every exit delivers into it, the
       // literal copied in at the end (`one_buffer_vec_copy`); the body answers the buffer, typed
@@ -1866,7 +1920,8 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
     return code;
   }
   lit = tail_syntax(e, vars.body);
-  literal = lit >= 0 && e.p.nodes[lit] is SVecLit;
+  // A comprehension is built in its own store as a literal is, and delivered alike.
+  literal = lit >= 0 && (e.p.nodes[lit] is SVecLit || e.p.nodes[lit] is SComprehension);
   bl = match code { NdBlock { block } => block[0], _ => return code };
   tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
   // A local built in two or more steps, counted on the first pass (`child_allocs` reads that
@@ -1924,7 +1979,7 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
     bl.result = [el_types::without_deps(el_types::base(result))];
   } else if literal {
     db = match tail {
-      NdBlock { block: tb } => if tb[0].name == "Vector" { el_types::deps(tb[0].result[0] ?? ir::TyVoid) } else { [] },
+      NdBlock { block: tb } => if tb[0].name == "Vector" || tb[0].name == "Vector comprehension" { el_types::deps(tb[0].result[0] ?? ir::TyVoid) } else { [] },
       _ => []
     };
     if len(db) != 1 || !starts_with(el_vars::name_of(vars, db[0]), "__vdb_") {
@@ -11166,6 +11221,19 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // delivery (`vector_return`) copies it into the buffer, and refuses a `return` anywhere
     // else in the body.
     if el_types::base(result) is TyVector && !(result is TyOptional) && (e.first_pass || vector_buffer(e, vars) >= 0) {
+      // A fresh literal is returned as it is; the tail's delivery copies it into the buffer.  The
+      // first pass builds no literal block yet: the syntax says what it is.
+      if e.first_pass && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension) {
+        return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+      }
+      match el_ir::unspan(v.code) {
+        NdBlock { block } => {
+          if literal_backing_store(block[0]) >= 0 {
+            return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+          }
+        },
+        _ => {}
+      }
       match el_ir::unspan(v.code) {
         NdVar { n } => {
           if (!vars.vars[n].argument || e.first_pass) && el_types::base(el_vars::tp(vars, n)) is TyVector {
@@ -13764,8 +13832,8 @@ fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer) -> Rang
   lc = el_convert::const_int(e, l.code);
   hc = el_convert::const_int(e, h.code);
   prelude: vector<ir::Node> = [];
-  lo_node = if lc != null { ir::NdInt { n: lc! } } else { l.code };
-  hi_node = if hc != null { ir::NdInt { n: hc! } } else { h.code };
+  lo_node = if lc != null { int_node(lc!) } else { l.code };
+  hi_node = if hc != null { int_node(hc!) } else { h.code };
   rs = -1;
   re = -1;
   if lc == null {
@@ -13793,7 +13861,9 @@ fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer) -> Rang
   }
   idx = loop_index(vars, id);
   i = ir::NdVar { n: idx };
-  plain = lc != null && lc! >= 0;
+  // `plain_init`: only an `i32` literal start (`Value::Int`) seeds the counter at `lo - 1`; a
+  // 64-bit literal takes the `next` counter, as a computed start does.
+  plain = lc != null && lc! >= 0 && lo_node is NdInt;
   cmp = if incl { "OpLtInt" } else { "OpLeInt" };
   ls: vector<ir::Node> = [];
   if incl && hc == null {
@@ -16282,6 +16352,12 @@ fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, acc: i
   }
   step = el_ir::v_if(is_null, el_ir::cl(e, "OpAppendText", [w, el_ir::cl(e, "OpConvTextFromNull", [])]), el_ir::v_block(render, ir::TyVoid, "concat operand"));
   list += [el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [w]), step, ir::NdNull)];
+}
+
+// A folded integer constant as the IR spells it: `Value::Int` where it fits 32 bits, else
+// `Value::Long`.
+fn int_node(n: integer) -> ir::Node {
+  if n >= -2147483648 && n <= 2147483647 { ir::NdInt { n: n } } else { ir::NdLong { n: n } }
 }
 
 // `IntegerSpec::signed32`, the type an integer literal answers.
