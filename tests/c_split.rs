@@ -81,7 +81,8 @@ fn check(name: &str, split: &[&str]) {
 
 /// The C `args` write for `prog`, the split switches cleared and `env` set.
 fn emitted(prog: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> String {
-    let out = prog.with_extension(format!("{}.c", args.len() * 10 + env.len()));
+    let out =
+        loft::file_access::with_extension(prog, &format!("{}.c", args.len() * 10 + env.len()));
     let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.args(["--native-c", "--no-warnings"])
         .args(args)
@@ -95,7 +96,7 @@ fn emitted(prog: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> Strin
     }
     let r = cmd.output().expect("loft runs");
     assert!(r.status.success(), "{args:?} {env:?}: {r:?}");
-    std::fs::read_to_string(&out).expect("the unit is written")
+    loft::file_access::read_to_string(&out).expect("the unit is written")
 }
 
 /// @PLN212 P2: a semantics build splits an over-budget function by default (the MSVC sweep's
@@ -108,7 +109,7 @@ fn emitted(prog: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> Strin
 #[test]
 fn a_semantics_build_splits_by_default_and_a_shipped_one_never() {
     let dir = std::env::temp_dir().join(format!("loft-c-split-tier-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    loft::file_access::create_dir_all(&dir).unwrap();
     // A `main` far over the default budget of runtime-call sites: each line appends to a text
     // and checks its length.
     let mut src = String::from("fn main() {\n    s = \"\";\n");
@@ -117,7 +118,7 @@ fn a_semantics_build_splits_by_default_and_a_shipped_one_never() {
     }
     src += "    println(\"{len(s)}\");\n}\n";
     let prog = dir.join("large.loft");
-    std::fs::write(&prog, src).unwrap();
+    loft::file_access::write(&prog, src).unwrap();
     assert!(
         emitted(&prog, &[], &[]).contains("n_main__fr__part"),
         "the default build splits"
@@ -134,7 +135,7 @@ fn a_semantics_build_splits_by_default_and_a_shipped_one_never() {
         !emitted(&prog, &[], &[("LOFT_NO_C_SPLIT", "1")]).contains("__part"),
         "LOFT_NO_C_SPLIT keeps the semantics build whole"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = loft::file_access::remove_dir_all(&dir);
 }
 
 #[test]
