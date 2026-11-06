@@ -139,10 +139,12 @@ on their own branches at the same time: no step waits on them, and none touches 
    working, so fetch again and re-survey on each branch's CURRENT head (and each sibling
    checkout's local one).  A survey or an announced sha from an hour ago is a floor, not the
    cut.  **Ask each branch's agent for its cut**: `ListAgents` names them, Remote Control and
-   cloud sessions included.  What the join and those messages bring up comes in too: a fix
-   the agent pushes in answer, a defect its own branch carried.  The gathering takes minutes,
-   not hours: once a cut is set, the NEW work an agent keeps building waits for the next PR,
-   and only FIXES for what this PR carries are still taken.
+   cloud sessions included.  An agent no message reaches (no Remote Control) is not asked:
+   its branch's pushed head is the cut, and only its finished, pushed fixes come in.  What the
+   join and those messages bring up comes in too: a fix the agent pushes in answer, a defect
+   its own branch carried.  The gathering takes minutes, not hours: once a cut is set, the NEW
+   work an agent keeps building waits for the next PR, and only FIXES for what this PR carries
+   are still taken.
 2. **Fix what the join broke, at once** — a conflict's compile error, a clippy finding, a
    derived artefact both sides changed (re-derive it, never pick a side).
 3. **Check each fix on its own**, with a targeted CI probe on the step it repairs
