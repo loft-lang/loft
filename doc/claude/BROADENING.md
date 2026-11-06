@@ -256,6 +256,12 @@ draining library code out of the compiler crate (@PLN3).
   C ([TANMATSU.md](TANMATSU.md), [WIDTH32.md](WIDTH32.md)), not as
   bare metal: the target runs an RTOS with a heap, which the store
   model needs.
+- **Don't target appliance firmware.**  The chip in a refrigerator
+  has its purpose, but deeply embedded control is not loft's goal;
+  the old "don't chase embedded MCUs" was right about that class and
+  too narrow about the rest.  Those chips are fast approaching the
+  Tanmatsu's class, so as they do, the 32-bit build (loft-32) gains
+  that audience without loft aiming at it.
 
 ---
 
