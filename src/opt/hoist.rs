@@ -8627,6 +8627,7 @@ mod store_free_sentinel {
         "OpTagVCJump",
         // Reach a store or another frame through the `const` channel.
         "OpDatabase",
+        "OpDatabaseNP",
         "OpDropFnRef",
         "OpFnRefDetachShared",
         "OpParallelBegin",

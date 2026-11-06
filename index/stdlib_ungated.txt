@@ -85,6 +85,7 @@ OpCoroutineReturn
 OpCoroutineYield
 OpCreateStack
 OpDatabase
+OpDatabaseNP
 OpDistinctStore
 OpDivFloat
 OpDivFloatNullable
@@ -218,6 +219,7 @@ OpNeRef
 OpNeSingle
 OpNeText
 OpNewRecord
+OpNewRecordNP
 OpNot
 OpNullRefSentinel
 OpNullReported
