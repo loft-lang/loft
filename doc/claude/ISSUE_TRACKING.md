@@ -667,6 +667,14 @@ scripts/claim.py check N           # who holds it
 - **A claim with no activity for 48 hours** may be taken over (`take N --take-over`), and the
   take-over is written on the issue.  `fixed-pending-merge` ends the race on its own: `take`
   refuses an issue whose fix has already landed on a branch.
+- **A fix agent's claim is its own stream** (its worktree branch), so the session that started
+  it cannot `release` it; once the agent has finished, that session takes it over
+  (`take N --take-over`) and then fixes, watches or releases it as its own.
+- **One stream keeps the list near green.**  Outside the PR gatherings, the stream the owner
+  names for it sweeps the open issues about every two hours: each one without a live claim is
+  taken and fixed, or handed to the agent whose branch or area it is.  An automated issue
+  (the advisory list, a `nightly-failure`) is first checked against what `main` and the open
+  PR already fix.
 
 A claim written in prose ("claimed by the … stream") is invisible to the script, the work queue
 and the hook.  Write it with the script.
