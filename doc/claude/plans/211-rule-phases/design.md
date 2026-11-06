@@ -361,6 +361,16 @@ the C's routing and seeding (`nn_facts` already passes a seed, `Ranges::default(
 (4) the C guarded copy.  The C census RISES (native 384 admissions, the C 0): a port, every new
 admission read by hand.  Effort M, toward L with the guarded copy.
 
+**Re-planned (2026-11-06), by the owner's test of a duplicate** (README § Goal): what counts is
+a rule twice inside ONE backend, or an interpreter-gaining rule left in a writer — not the same
+clause in the rustc and the C writer.  So D-fact-2 no longer waits on D-fact-1's handle or
+D-fact-3's registry: the C gains `(R-RangedCall)` on its own twin bits, the seed and the gain
+test shared from `opt/` (both writers read one copy).  Order: (2) the C falsifier — BUILT:
+`range_plain` writes `LOFT_PLAIN_{ADD,SUB,MUL,DIV,REM,NEG}(…, "R-Range:<fn>")`, the plain signed
+operator by default, checked under `-DLOFT_VERIFY` (overflow, a zero or `MIN / -1` divisor, the
+null sentinel) — a plant admitting an unproven add aborts at its site; then hand-price one
+hex routine's `__rg` form on the C (gcc and clang) before building (1), (3) and (4).
+
 **`(Fact-Oracle)` itself** — the interpreter checking a MUST `entry` fact on entry and a MAY
 `writes` summary as a superset of what the call did — is built with step 2, under
 `LOFT_FACT_VERIFY=1`, so a widened reach has a run-time falsifier on the interpreter as the C's

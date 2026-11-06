@@ -24,7 +24,9 @@ view-clause move (§ What arc C′ skips); then `(R-LoopRecord)` and `(R-Complet
 in [cw-plan.md](cw-plan.md)), and `(R-ValueRecord)`'s view clause moved (c4-view S1, S2);
 the forms of `(R-ValueRecord)` the IR declines stay in the writers, closed builds only, since
 spelling them in the IR would not speed the interpreter (owner ruling, [c4-view-plan.md](c4-view-plan.md)
-§ S2).  Next: c4-view S3 (both writers' element-first clauses deleted).  It
+§ S2); c4-view S3 deleted both writers' element-first clauses (D-phase-4 closed).  Next:
+the facts deviations, D-fact-2 first (the C has no `(R-RangedCall)`), then the README's
+remaining moves.  It
 was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
@@ -600,7 +602,7 @@ variant is no fusion but saves little where dispatch is the cost, and `(R-Transi
 
 ## Cross-arc dependencies
 
-- **#2351 / `formal/facts.md`** — its three deviations are removed inside this plan
+- **`formal/facts.md`** (was #2351, closed into this plan) — its three deviations are removed inside this plan
   (design.md § The facts deviations); a moved rule's callee facts come from the facts routine;
   D-fact-2 (interval entry facts) is `(R-RangedCall)`'s precondition to leave the rustc
   writer.  The two plans share B2's "decidable on the IR" question.
