@@ -677,6 +677,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "sha2",
+ "simd-adler32",
  "stdext",
  "tar",
  "ureq",
