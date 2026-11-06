@@ -2,8 +2,12 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Follow every /dev/cu.usbmodem* port that appears, appending each line with the PC's time to
 tanmatsu.log; reopen a port when it comes back (an app restart drops it).  Ends after an hour."""
-import glob, time, serial, sys
-log = open(sys.argv[1], "a", buffering=1)
+import sys
+if len(sys.argv) != 2 or sys.argv[1] in ("-h", "--help"):
+    print("usage: tlog.py <log file>")
+    sys.exit(0 if sys.argv[1:] in (["-h"], ["--help"]) else 2)
+import glob, time, serial
+log = open(sys.argv[1], "a", buffering=1, encoding="utf-8")
 open_ports, end = {}, time.time() + 3600
 while time.time() < end:
     for p in glob.glob("/dev/cu.usbmodem*"):

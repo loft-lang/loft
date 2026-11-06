@@ -16,6 +16,8 @@ bench/portal/local.py	--help
 bench/run_bench.sh	--help
 bench/stats.py	--help
 doc/claude/plans/211-rule-phases/probes/run.py	--help
+doc/claude/plans/218-tanmatsu-stage-engine/kit/mkdrivers.py	--help
+doc/claude/plans/218-tanmatsu-stage-engine/kit/tlog.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/grammar_gen.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/ownership_fuzz.py	--help
 doc/claude/presentations/par/build_par_slides.sh	--help

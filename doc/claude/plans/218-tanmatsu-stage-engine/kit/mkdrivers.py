@@ -5,10 +5,13 @@
 then every `fn test_…()` in order, printing `ok <name>` after each.  c_sweep compares the programs'
 output on the interpreter and as C."""
 import re, sys, pathlib
+if len(sys.argv) != 3 or sys.argv[1] in ("-h", "--help"):
+    print("usage: mkdrivers.py <game tests dir> <out dir>")
+    sys.exit(0 if sys.argv[1:] in (["-h"], ["--help"]) else 2)
 src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 out.mkdir(exist_ok=True)
 for f in sorted(p for p in src.glob("*.loft") if p.is_file()):
-    s = f.read_text()
+    s = f.read_text(encoding="utf-8")
     tests = re.findall(r"^fn (test_\w+)\(\)", s, re.M)
     if not tests:
         continue
@@ -16,5 +19,5 @@ for f in sorted(p for p in src.glob("*.loft") if p.is_file()):
     s = re.sub(r"^fn main\(\)", "fn file_main()", s, flags=re.M)
     calls = (["  file_main();"] if has_main else []) + [f'  {t}();\n  println("ok {t}");' for t in tests]
     s += "\nfn main() {\n" + "\n".join(calls) + "\n}\n"
-    (out / ("t_" + f.name)).write_text(s)
+    (out / ("t_" + f.name)).write_text(s, encoding="utf-8")
     print(f.name, len(tests))
