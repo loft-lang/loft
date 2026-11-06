@@ -58,6 +58,13 @@ pub(crate) struct FieldSinks {
     /// projection place the literal is written into: the literal is parsed again, built apart
     /// and copied in (`Parser::inplace_place_declined`).
     decline_place: bool,
+    /// `@FR-R-Demote` — the literal's destination variable, the fields whose value is that
+    /// variable whole, how many other field values mention it, and (pass 2) the field the
+    /// prelude already filled by moving the old record into it.
+    demote_dest: Option<u16>,
+    demote_candidates: Vec<String>,
+    demote_other: u32,
+    demote_field: Option<String>,
 }
 impl Parser {
     /// An abandoned construction's work-refs, marked skip-free so nothing frees what it never
@@ -5632,6 +5639,82 @@ impl Parser {
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// `@FR-R-Demote` — does a field's value read the literal's destination `dest` anywhere but
+    /// as the receiver of its own in-place build (`OpGetField(dest, pos, …)`, how a collection
+    /// field is filled where it stands)?  Only such a read sees the record the move empties.
+    fn reads_dest_beyond_own_field(&self, value: &Value, dest: u16, pos: u16) -> bool {
+        fn go(v: &Value, dest: u16, pos: i32, get_field: u32) -> bool {
+            if let Value::Call(d, a) = v.unspan()
+                && *d == get_field
+                && a.first().map(Value::unspan) == Some(&Value::Var(dest))
+                && a.get(1).map(Value::unspan) == Some(&Value::Int(pos))
+            {
+                return a[2..].iter().any(|x| go(x, dest, pos, get_field));
+            }
+            if v.names_var_here(dest) {
+                return true;
+            }
+            let mut hit = false;
+            v.for_each_child(&mut |c| hit |= go(c, dest, pos, get_field));
+            hit
+        }
+        go(value, dest, i32::from(pos), self.data.def_nr("OpGetField"))
+    }
+
+    /// `@FR-R-Demote` — the prelude of `h = T { …, f: h, … }`: where `h` holds a record, that
+    /// record's payload is moved into a fresh child record of `h`'s own store, which becomes
+    /// field `f`, and `h`'s record — its number kept — is left zeroed for the literal's other
+    /// fields; where `h` is absent, the literal's own prelude runs and `f` is left absent.  Built
+    /// of `OpPlaceRecord`, `OpMoveField`, `OpChildRec` and `OpFreeRecordIn`: each moves one
+    /// record's bytes, so the cost does not grow with what the record holds.  `None` — the
+    /// literal keeps its prelude — where `f` is not an out-of-line field of `T` itself.
+    fn demote_prelude(&mut self, td_nr: u32, h: u16, fname: &str, prelude: &[Value]) -> Option<Vec<Value>> {
+        let nr = self.data.attr(td_nr, fname);
+        if nr == usize::MAX || !self.data.field_is_out_of_line(td_nr, nr) {
+            return None;
+        }
+        let content = match self.data.attr_type(td_nr, nr).base() {
+            Type::Reference(d, _) => *d,
+            _ => return None,
+        };
+        if content != td_nr || self.data.def_type(td_nr) != DefType::Struct {
+            return None;
+        }
+        let tp = i32::from(self.data.def(td_nr).known_type());
+        let off = i32::from(self.field_position(td_nr, fname));
+        let view = Type::Reference(td_nr, crate::data::Deps::frame1(h));
+        let placed = self.create_unique("demote_old", &view);
+        self.vars.defined(placed);
+        self.vars.set_skip_free(placed);
+        let child = self.create_unique("demote_child", &view);
+        self.vars.defined(child);
+        self.vars.set_skip_free(child);
+        let place = self.cl("OpPlaceRecord", &[Value::Var(h), Value::Int(tp)]);
+        let out = self.cl("OpMoveField", &[Value::Var(h), Value::Var(placed), Value::Int(tp)]);
+        let field = self.cl("OpGetField", &[Value::Var(h), Value::Int(off), Value::Int(tp)]);
+        let claim = self.cl("OpChildRec", &[field, Value::Int(tp)]);
+        let back = self.cl("OpMoveField", &[Value::Var(placed), Value::Var(child), Value::Int(tp)]);
+        let free = self.cl("OpFreeRecordIn", &[Value::Var(placed), Value::Int(tp)]);
+        let demote = v_block(
+            vec![v_set(placed, place), out, v_set(child, claim), back, free],
+            Type::Void,
+            "demote",
+        );
+        let mut fresh = prelude.to_vec();
+        fresh.push(self.cl(
+            "OpSetInt4",
+            &[Value::Var(h), Value::Int(off), Value::Int(0)],
+        ));
+        let is_null = self.cl("OpRefIsNull", &[Value::Var(h)]);
+        let has_rec = self.cl("OpConvBoolFromRef", &[Value::Var(h)]);
+        let present = v_if(is_null, Value::Boolean(false), has_rec);
+        Some(vec![v_if(
+            present,
+            demote,
+            v_block(fresh, Type::Void, "demote_fresh"),
+        )])
+    }
+
     pub(crate) fn parse_object_field(
         &mut self,
         td_nr: u32,
@@ -5941,6 +6024,20 @@ impl Parser {
                 // codegen with the unresolved variable (an internal compiler error).
                 if !matches!(t.base(), Type::Never) && self.known_var_or_type(&value, &value_pos) {
                     t = Type::Never;
+                }
+                // `@FR-R-Demote` — pass 1 counts where the destination stands in the values;
+                // pass 2 leaves the field the prelude filled by the move.
+                if let Some(dest) = sinks.demote_dest {
+                    if matches!(value.unspan(), Value::Var(v) if *v == dest) {
+                        sinks.demote_candidates.push(field.clone());
+                    } else if self.reads_dest_beyond_own_field(&value, dest, pos) {
+                        sinks.demote_other += 1;
+                    }
+                }
+                if !self.first_pass && sinks.demote_field.as_deref() == Some(field.as_str()) {
+                    self.expected = saved_expected;
+                    self.amp_head = AmpHead::No;
+                    return true;
                 }
                 self.expected = saved_expected;
                 self.amp_head = AmpHead::No;
@@ -6837,6 +6934,36 @@ impl Parser {
         // `Value::Insert` targeting the captured DbRef.  `new_record` then allocates the element
         // INSIDE the shared store (`OpNewRecord`/`OpFinishRecord` against that DbRef) rather than
         // in a throwaway store that is immediately freed (the silent no-op this fixes).
+        // `@FR-R-Demote` — a literal rebound into its own local `h` with `h` as the WHOLE value of
+        // an out-of-line field, read nowhere else in the literal: the old record is moved into
+        // that field inside `h`'s own store, and the literal's other fields are written into `h`'s
+        // record, which keeps its number.  Pass 1 decides from the literal's field values; pass 2
+        // replaces the prelude and the field parse leaves the field alone.
+        if let Value::Var(v) = code
+            && hint_is_the_whole_value
+            && *v != u16::MAX
+            && !self.vars.is_compiler_generated(*v)
+        {
+            sinks.demote_dest = Some(*v);
+        }
+        if !self.first_pass
+            && crate::keys::demote_enabled()
+            && let Some(h) = in_place_var
+            && sinks.demote_dest == Some(h)
+            && !(self.vars.is_argument(h) && !self.is_hidden_param(h))
+            && !self
+                .demote_declined
+                .contains(&(self.context, literal_pos.line, literal_pos.pos))
+            && let Some(fname) = self
+                .demote_literals
+                .get(&(self.context, literal_pos.line, literal_pos.pos))
+                .cloned()
+            && let Some(prelude) = self.demote_prelude(td_nr, h, &fname, &list)
+        {
+            list = prelude;
+            sinks.demote_field = Some(fname);
+            crate::rewrite_census::fired("R-Demote", 1);
+        }
         let mut found_fields = HashSet::new();
         // #437 — everything pushed so far is the record-creation prelude
         // (`Set(x, Null)` + `OpDatabase`).  Vector-field headers are zeroed as one
@@ -6896,6 +7023,24 @@ impl Parser {
             }
         }
         self.lexer.token("}");
+        // `@FR-R-Demote` — pass 1 records the one candidate field; a collection field's value is
+        // not lowered yet there, so whether the literal reads its destination elsewhere is asked
+        // on pass 2, where the in-place receiver is told apart from a read.  A read found then
+        // undoes the move: the literal is parsed again with the rewrite declined.
+        let demote_key = (self.context, literal_pos.line, literal_pos.pos);
+        if self.first_pass && sinks.demote_candidates.len() == 1 {
+            let fname = sinks.demote_candidates.remove(0);
+            self.demote_literals.insert(demote_key, fname);
+        }
+        if !self.first_pass
+            && sinks.demote_field.is_some()
+            && (sinks.demote_other > 0 || sinks.demote_candidates.len() != 1)
+        {
+            self.demote_declined.insert(demote_key);
+            self.lexer.revert(link);
+            self.abandon_work_refs(work, work_p2);
+            return self.parse_object(td_nr, code);
+        }
         // Was the destination hint the right call?  Only now can it be asked: the hint is valid
         // for `m = S { … }`, where the literal IS the whole right-hand side, and a POSTFIX turns
         // it into a sub-expression — `m = S { … }.f(…)` built the receiver into the variable that

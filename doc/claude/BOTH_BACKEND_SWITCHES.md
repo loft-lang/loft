@@ -376,6 +376,10 @@ itself, as its dense twin's is, and the local owns the store.  It is the first b
 for a leak or a wrong value that appears only where a `τ?` local is bound from a literal.
 `LOFT_STRICT_STORES=1` is the falsifier.
 
+**`LOFT_NO_DEMOTE=1`** (`@FR-R-Demote`, default-ON, parse time, BOTH backends) copies the old
+record into the field again where `h = T { …, f: h }` or `o.g = T { …, f: o.g }` moves it there
+— the first bisect step for a wrong value or a leak in a list or tree built one node at a time.
+
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
 a plain local first-bound from a callee that returns the local it promoted onto its buffer
 (`fn mk() -> P { o = P { … }; …; o }`) adopts the store the callee minted — one mint and one

@@ -1012,6 +1012,16 @@ pub fn nullable_ret_buffer() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_NULLABLE_RETBUF"))
 }
 
+/// `LOFT_NO_DEMOTE=1` — `@FR-R-Demote`: a record literal rebound into its own local with that
+/// local as an out-of-line field (`h = Node { v: i, next: h }`) copies the old record into the
+/// field again, where the default moves it there in the local's own store (`Parser::parse_object`).
+/// The bisect step for a wrong answer or a leak in a list or tree built by rebinding.
+#[must_use]
+pub fn demote_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_DEMOTE"))
+}
+
 /// `LOFT_NO_NULLABLE_INPLACE=1` — `@FR-N-Road`: a struct literal bound to a NULLABLE local
 /// (`x: S? = S { … }`) is built on a work reference again, where the default builds it in
 /// the local as its dense twin does (`Parser::parse_object`).  The bisect step for a

@@ -507,6 +507,13 @@ pub struct Parser {
     /// road before the roads that mint a work reference run, so nothing is minted for a
     /// record the update never builds (loft-lang/plans#202 P2).
     pub(crate) update_literals: HashSet<(u32, u32, u32)>,
+    /// `@FR-R-Demote` — `(function, line, column)` of a literal's `{` whose one out-of-line field
+    /// is its destination variable, read nowhere else in the literal: pass 1 records the field's
+    /// name, and pass 2 moves the old record into that field instead of copying it.
+    pub(crate) demote_literals: HashMap<(u32, u32, u32), String>,
+    /// `@FR-R-Demote` — the literals pass 2 found reading their destination beyond the moved
+    /// field: parsed again without the move.
+    pub(crate) demote_declined: HashSet<(u32, u32, u32)>,
     /// `@FR-B-Scope` — the `(function, variable, after_end)` triples whose binding the
     /// statement being parsed STARTS: its first binding, or (`after_end`) a bind after the
     /// name's block ended.  Innermost last.  The variable holds nothing until that statement
@@ -1994,6 +2001,8 @@ impl Parser {
             first_bind_targets: Vec::new(),
             first_bind_at: HashMap::new(),
             update_literals: HashSet::new(),
+            demote_literals: HashMap::new(),
+            demote_declined: HashSet::new(),
             binding_starts: Vec::new(),
             stmt_if_pending: false,
             fit_candidate: None,

@@ -196,6 +196,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
 | `(R-DecodeView)` | counted; admitted on no bench program |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
+| `(R-Demote)` | counted; admitted on no bench program |
 | `(R-Destination)` | `R-Destination` c, native |
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
@@ -5448,6 +5449,25 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  A text field declines (a staged text may borrow the store the claim
                  mutates), as does a partial subscript (its key is the literal's
                  own) and a literal whose buffer is named outside it.
+  (R-Demote)     a struct LITERAL whose one out-of-line field (L-OutOfLine) is the
+                 WHOLE old value of the literal's own destination — `h = T { …, f: h,
+                 … }` for an owned local, `o.g = T { …, f: o.g, … }` for an out-of-line
+                 field place — is written by MOVING that old record into `f`, never by
+                 copying it: in the destination's own store a fresh child record takes
+                 the old record's bytes (its heap handles keep their claims), the
+                 destination's record — its number, so every link to it, kept — is
+                 left with nothing it owns, and the literal's other fields are written
+                 into it; where the destination is absent, the literal is built as
+                 ever with `f` absent.  The program sees exactly the value the copy
+                 would have built (B-OutOfLine, B-Copy: the old value is dead after the
+                 assignment), at the cost of one record instead of the old value's
+                 whole extent, so a list or a tree grown one node at a time costs
+                 linear time.  Declines — the copy stands — where the literal reads the
+                 destination anywhere but that one field (a view of the old record
+                 would read the emptied one), names it twice, is a variant of an enum,
+                 or writes a parameter the caller passed.  Decided in the parser (the
+                 local form when the literal is parsed, the place form at the
+                 out-of-line write); `LOFT_NO_DEMOTE=1` restores the copy.
   (R-Prefill)    the default prefill of a minted record — the declared defaults, the
                  null sentinels and the variant tag a partial literal leaves to the
                  type — is ONE block write of a per-type IMAGE computed once from the

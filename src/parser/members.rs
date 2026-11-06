@@ -301,11 +301,169 @@ impl Parser {
         }
     }
 
+    /// `@FR-R-Demote`, the PLACE clause — `o.f = T { …, g: o.f, … }`, where `f` and `g` are
+    /// out-of-line fields of `T`: the literal arrives built in a temporary store, the place read
+    /// once into `r` and `r` written whole into the literal's `g`.  Where `f` holds a record, that
+    /// record's payload is moved into a fresh child of the same store, which becomes its own `g`,
+    /// and the literal's other fields are written into the record — its number kept; where `f` is
+    /// absent, a fresh child takes them.  Nothing the place holds is copied.  `None` — the copy
+    /// stands — for any other shape: a literal that reads `r` again, or reads the place's root
+    /// anywhere else, or names its temporary other than as a value.
+    fn place_demote(&mut self, field: &Value, kt: i32, val: &Value) -> Option<Value> {
+        if self.first_pass || !crate::keys::demote_enabled() {
+            return None;
+        }
+        let Value::Block(bl) = val.unspan() else {
+            return None;
+        };
+        let ops: Vec<&Value> = bl.operators.iter().map(Value::unspan).collect();
+        let n = ops.len();
+        if n < 4 {
+            return None;
+        }
+        let Value::Set(r, read) = ops[0] else {
+            return None;
+        };
+        let r = *r;
+        let Value::Call(rd, rargs) = read.unspan() else {
+            return None;
+        };
+        if self.data.def(*rd).name() != "OpRefFromChildRec"
+            || rargs.first().map(Value::unspan) != Some(field.unspan())
+        {
+            return None;
+        }
+        // The literal's own prelude: an optional `Set(tmp, null)`, then `OpDatabase(tmp, kt)`.
+        let at_db = if matches!(ops[1], Value::Set(_, v) if matches!(v.unspan(), Value::Null)) {
+            2
+        } else {
+            1
+        };
+        let Value::Call(db, dargs) = ops[at_db] else {
+            return None;
+        };
+        let (Some(Value::Var(tmp)), Some(Value::Int(lit_tp))) =
+            (dargs.first().map(Value::unspan), dargs.get(1).map(Value::unspan))
+        else {
+            return None;
+        };
+        let tmp = *tmp;
+        if self.data.def(*db).name() != "OpDatabase"
+            || *lit_tp != kt
+            || (at_db == 2 && !matches!(ops[1], Value::Set(t, _) if *t == tmp))
+        {
+            return None;
+        }
+        if ops[n - 1] != &Value::Var(tmp) {
+            return None;
+        }
+        // The one write of `r`: `OpSetChildRec(OpGetField(tmp, off, _), r, _)`.
+        let set_child = self.data.def_nr("OpSetChildRec");
+        let get_field = self.data.def_nr("OpGetField");
+        let mut g_off: Option<i32> = None;
+        let mut writes: Vec<Value> = Vec::new();
+        for op in &ops[at_db + 1..n - 1] {
+            if let Value::Call(d, a) = op
+                && *d == set_child
+                && a.len() == 3
+                && a[1].unspan() == &Value::Var(r)
+                && let Value::Call(gf, ga) = a[0].unspan()
+                && *gf == get_field
+                && ga.first().map(Value::unspan) == Some(&Value::Var(tmp))
+                && let Some(Value::Int(off)) = ga.get(1).map(Value::unspan)
+                && g_off.is_none()
+            {
+                g_off = Some(*off);
+                continue;
+            }
+            writes.push((*op).clone());
+        }
+        let g_off = g_off?;
+        // The place's root: what the literal must not read, because the move empties the record
+        // the place names.
+        let mut roots: Vec<u16> = Vec::new();
+        field.walk(&mut |nd| {
+            if let Value::Var(v) = nd {
+                roots.push(*v);
+            }
+        });
+        let mut named_other = false;
+        for w in &writes {
+            if w.reads_var(r) || roots.iter().any(|v| w.reads_var(*v)) {
+                return None;
+            }
+            w.walk(&mut |nd| {
+                if nd.names_var_here(tmp) && !matches!(nd, Value::Var(_)) {
+                    named_other = true;
+                }
+            });
+        }
+        if named_other {
+            return None;
+        }
+        let view = match self.vars.tp(r).base() {
+            Type::Reference(d, _) => Type::Reference(*d, crate::data::Deps::none()),
+            _ => return None,
+        };
+        let swap = |w: &Value, to: u16| -> Value {
+            fn go(v: &mut Value, from: u16, to: u16) {
+                if let Value::Var(x) = v
+                    && *x == from
+                {
+                    *x = to;
+                    return;
+                }
+                v.for_each_child_mut(&mut |c| go(c, from, to));
+            }
+            let mut c = w.clone();
+            go(&mut c, tmp, to);
+            c
+        };
+        let placed = self.create_unique("demote_old", &view);
+        self.vars.defined(placed);
+        self.vars.set_skip_free(placed);
+        let child = self.create_unique("demote_child", &view);
+        self.vars.defined(child);
+        self.vars.set_skip_free(child);
+        let fresh = self.create_unique("demote_fresh", &view);
+        self.vars.defined(fresh);
+        self.vars.set_skip_free(fresh);
+        let k = Value::Int(kt);
+        let place = self.cl("OpPlaceRecord", &[Value::Var(r), k.clone()]);
+        let out = self.cl("OpMoveField", &[Value::Var(r), Value::Var(placed), k.clone()]);
+        let gfield = self.cl("OpGetField", &[Value::Var(r), Value::Int(g_off), k.clone()]);
+        let claim = self.cl("OpChildRec", &[gfield, k.clone()]);
+        let back = self.cl("OpMoveField", &[Value::Var(placed), Value::Var(child), k.clone()]);
+        let free = self.cl("OpFreeRecordIn", &[Value::Var(placed), k.clone()]);
+        let mut present_ops = vec![v_set(placed, place), out, v_set(child, claim), back, free];
+        present_ops.extend(writes.iter().map(|w| swap(w, r)));
+        let new_child = self.cl("OpChildRec", &[field.clone(), k]);
+        let mut absent_ops = vec![v_set(fresh, new_child)];
+        absent_ops.extend(writes.iter().map(|w| swap(w, fresh)));
+        let is_null = self.cl("OpRefIsNull", &[Value::Var(r)]);
+        crate::rewrite_census::fired("R-Demote/place", 1);
+        Some(v_block(
+            vec![
+                bl.operators[0].clone(),
+                v_if(
+                    is_null,
+                    v_block(absent_ops, Type::Void, "demote_place_fresh"),
+                    v_block(present_ops, Type::Void, "demote_place"),
+                ),
+            ],
+            Type::Void,
+            "demote_place_write",
+        ))
+    }
+
     /// `@FR-B-OutOfLine` — write `val` into the out-of-line field at `field` (content row
     /// `kt`): `OpSetChildRec`, which copies the value into the host's store (in place over a
     /// present child) or releases the child for a null.  A call's returned store is given up
     /// to the copy, as `copy_ref` gives it up to `OpCopyRecord`.
     pub(crate) fn out_of_line_set(&mut self, field: Value, kt: i32, val: &Value) -> Value {
+        if let Some(demoted) = self.place_demote(&field, kt, val) {
+            return demoted;
+        }
         let source = if self.is_null_source(val) {
             self.cl("OpNullRefSentinel", &[])
         } else {
