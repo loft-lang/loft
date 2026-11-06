@@ -1768,27 +1768,61 @@ impl State {
         self.code_add(dep_offset + step);
     }
 
-    /// @PLN198 (`@FR-R-TextBorrow`) — mark this function's text loop variables that BORROW
-    /// their element: `for p in words` whose rest reads `p` only as a text value and writes
-    /// no store.  The admission is the native generator's own
-    /// ([`crate::opt::text_borrow::borrowed_text_walks`]), asked without the walks only the
-    /// native generator lowers (a lazy split's pieces, a split table), so both backends
-    /// borrow the same walks of a real vector.  The element's bytes live in the vector's
-    /// store, which an admitted body never writes, so the `Str` stays valid for the
-    /// iteration.  `LOFT_NO_TEXT_BORROW=1` keeps the copy here as it does there.
+    /// `@FR-R-TextBorrow` — mark this function's text variables that BORROW their bytes
+    /// instead of copying them: the walk clause's loop variables, the `?` / `??` discharge
+    /// temps, and the store-read clause's locals (a parameter's text, a slice of one, a
+    /// literal, the frame's own format or call work text).  The decision is the writers'
+    /// own, asked as the C asks it (`opt::text_borrow`, `opt::store_text_borrow`, local
+    /// roots on), without the walks only a compiled writer lowers (a lazy split's pieces, a
+    /// split table) and without the tested clause, whose borrow needs a run-time test.  Each
+    /// admitted variable's every bind is a text the borrowed bytes outlive, so its slot holds
+    /// a `Str` (`Function::holds_str`) and a bind puts it as it is.  `LOFT_NO_TEXT_BORROW=1`
+    /// keeps the copy here as it does in the writers.
     fn mark_text_views(def_nr: u32, data: &mut Data) {
         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *OFF.get_or_init(|| std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0")) {
             return;
         }
-        let views = crate::opt::text_borrow::borrowed_text_walks(
+        let tables = std::collections::BTreeMap::new();
+        let mut views = crate::opt::text_borrow::borrowed_text_walks(
             data,
             def_nr,
             &std::collections::BTreeSet::new(),
-            &std::collections::BTreeMap::new(),
+            &tables,
         );
-        for v in views.keys() {
-            data.def_mut(def_nr).variables.mark_text_view(*v);
+        views.extend(crate::opt::hoist::borrowed_discharge_temps(data, def_nr, &tables));
+        let store =
+            crate::opt::store_text_borrow::borrowed_store_texts(data, def_nr, &views, true);
+        views.extend(store.borrows);
+        // The call clause stays a copy here, as on the C: its premise — the call's answer IS
+        // the work text it was handed — is the compiled writers' calling convention, and the
+        // interpreter's answer is another `Str`.  A work-text borrower is kept only when its
+        // every bind is a literal or a format block (`StoreTextBorrows::work`'s format clause).
+        let format_only = |v: u16| {
+            !data.def(def_nr).code().any_node(&mut |n| {
+                matches!(n, Value::Set(w, x) if *w == v && !matches!(x.unspan(),
+                    Value::Text(_)) && !matches!(x.unspan(),
+                    Value::Block(b) if b.name == "Formatted string"))
+            })
+        };
+        let marked: Vec<u16> = {
+            let vars = data.def(def_nr).variables();
+            views
+                .keys()
+                .copied()
+                .filter(|v| {
+                    !store.tested.contains_key(v)
+                        && (!store.work.contains(v) || format_only(*v))
+                        && !vars.is_argument(*v)
+                        && matches!(vars.tp(*v).base(), Type::Text(_))
+                })
+                .collect()
+        };
+        let slices = marked.iter().filter(|v| store.slices.contains(v)).count();
+        crate::rewrite_census::fired("R-TextBorrow", marked.len());
+        crate::rewrite_census::fired("R-SliceBorrow", slices);
+        for v in marked {
+            data.def_mut(def_nr).variables.mark_text_view(v);
         }
     }
 
@@ -1808,13 +1842,16 @@ impl State {
             self.code_add(advance);
             stack.grow(advance);
         }
-        // A text view (@PLN198) owns no `String`: nothing to start, and `set_var` puts the
-        // element's `Str` into the slot.
-        if !stack.function.is_text_view(v) {
-            let slot_offset = stack.position - pos;
-            stack.add_op("OpInitText", self);
-            self.code_add(slot_offset);
+        // A text view (`@FR-R-TextBorrow`) owns no `String`: nothing to start, and `set_var`
+        // puts the bound `Str` into the slot — the empty literal's too, since no init wrote
+        // the slot.
+        if stack.function.is_text_view(v) {
+            self.set_var(stack, v, value);
+            return;
         }
+        let slot_offset = stack.position - pos;
+        stack.add_op("OpInitText", self);
+        self.code_add(slot_offset);
         if let Value::Text(s) = value {
             if !s.is_empty() {
                 self.set_var(stack, v, value);
@@ -2541,7 +2578,10 @@ impl State {
             // @PLN25: a `text?` reassignment must CLEAR before the append, exactly like plain
             // `text` (set_var's OpAppendText appends in place) — peel the marker. Without this
             // `a: text? = "hi"; a = "x"` appended → "hix".
-            if matches!(stack.function.tp(v).base(), Type::Text(_)) {
+            // A text view (`@FR-R-TextBorrow`) holds a `Str`, which its put replaces whole.
+            if matches!(stack.function.tp(v).base(), Type::Text(_))
+                && !stack.function.is_text_view(v)
+            {
                 let var_pos = stack.position - pos;
                 stack.add_op("OpClearText", self);
                 self.code_add(var_pos);
@@ -6592,8 +6632,10 @@ impl State {
         // freeing that at scope exit aborted the interpreter (`free(): invalid
         // pointer`).  `gen_set_first_text` already skips the whole `set_var` for
         // this value; this is the reassignment path agreeing with it.
+        // A text view (`@FR-R-TextBorrow`) was not cleared: it takes the empty `Str` by put.
         if matches!(stack.function.tp(var).base(), Type::Text(_))
             && value == &Value::Text(String::new())
+            && !stack.function.is_text_view(var)
         {
             return;
         }

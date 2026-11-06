@@ -283,7 +283,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SharedCall)` | not counted — unbuilt: only its narrow case is built, counted as R-PureReuse/shared |
 | `(R-SingleUse)` | `R-SingleUse` parse |
 | `(R-SliceArg)` | `/range` ir |
-| `(R-SliceBorrow)` | `R-SliceBorrow` native |
+| `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
 | `(R-SliceInto)` | `R-SliceInto` c · `/transient` c |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
@@ -293,7 +293,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
 | `(R-Tabulate)` | `R-Tabulate` c |
 | `(R-TailSelf)` | `R-TailSelf` parse |
-| `(R-TextBorrow)` | `R-TextBorrow` c, native · `/tested` c, native |
+| `(R-TextBorrow)` | `R-TextBorrow` interp, c, native · `/tested` c, native |
 | `(R-TextClear)` | `R-TextClear` native |
 | `(R-TextLen)` | `R-TextLen` parse |
 | `(R-TextRun)` | counted; admitted on no bench program |
@@ -2863,7 +2863,8 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  place; and no fn-ref call, parallel arm or yield runs.  A writer
                  that names no store, or takes an operand of any other kind,
                  declines.
-                 LOCAL-ROOT CLAUSE (the C writer's): the `?` / `??` temp of such a
+                 LOCAL-ROOT CLAUSE (the C writer's and the interpreter's): the `?` /
+                 `??` temp of such a
                  read whose R is a frame LOCAL (`texts[si] ?? ""`, `f.names[i] ?? d`)
                  borrows on the stricter condition that over the same block NO store
                  writer runs at all — a frame-minted store counts as foreign here,
@@ -2911,7 +2912,10 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  format — under the same conditions on the local — and, holding no
                  store's bytes, is read in place by a store write
                  (`Output::text_value_unborrowed`).  A release emits no code on
-                 native, so an early exit's does not end the text.
+                 native, so an early exit's does not end the text.  The rustc
+                 writer's alone: its premise — the call's answer IS the work text
+                 it was handed — is that writer's calling convention, so the C and
+                 the interpreter keep the copy.
                  OPERAND CLAUSE: a text read `OpGetText(R, f)` that is an operand
                  of a text VALUE op — or a `text` argument of a call that runs no
                  store write (F-ParamText) and hands no store place to a `&`
@@ -2924,6 +2928,19 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  may write keeps the copy, and so does a call through a function
                  value, whose callee is unknown.
 ```
+
+**On the interpreter, in words.**  The interpreter applies the walk, discharge, store-read,
+local-root and format clauses from the same decision (`opt::text_borrow`,
+`opt::store_text_borrow`, asked as the C asks it), in `State::mark_text_views`: an admitted
+variable's slot holds a `Str` (`Function::holds_str`), every bind puts the bound `Str` whole —
+the empty literal's too, since a view is never cleared and appended to — and its release emits
+nothing.  The tested and call clauses keep the copy.  Every reader of a text slot's layout asks
+`holds_str`, including the release of a halted frame's texts (loft#2432).  On the probe
+(a record parameter's field bound to a local): 62 784 → 51 344 instructions an iteration,
+−18.2 %.  Switch `LOFT_NO_TEXT_BORROW` (both backends).  Cell
+`loft-suite/rules/rewrites/R-TextBorrow/a-borrowed-text-rebound-takes-each-bind-whole.loft`
+(r1–r5: an empty and a literal rebind, a one-arm rebind, a first bind to `""` kept across
+iterations, an early return, a break).
 
 **The call clause, in words.**  zttext's `slice_runs` binds `s = buf_slice_text(…)`, whose
 result is the work text the call fills, and sets it into a run: the bind copied the work text
