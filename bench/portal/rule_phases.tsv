@@ -23,7 +23,7 @@ R-Callee	c,native	20	0	0	0	62	164
 R-CharWalk	c,native	58	0	0	0	30	619
 R-Compact	ir	1	0	2	0	0	0
 R-Compact/prepend	ir	1	0	1	0	0	0
-R-CompleteWrite	ir	58	0	1808	0	0	0
+R-CompleteWrite	ir	58	0	1841	0	0	0
 R-Const	ir	2	0	3	0	0	0
 R-Const/fn	parse	2	3	0	0	0	0
 R-CopyView	ir	4	0	8	0	0	0
@@ -118,7 +118,7 @@ R-Range	c,native	58	0	0	0	3038	10970
 R-RangedCall	native	47	0	0	0	0	1083
 R-Rebind	ir	3	0	5	0	0	0
 R-RebindBuffer	native	1	0	0	0	0	1
-R-RecPtr	c,native	48	0	0	0	351	1504
+R-RecPtr	c,native	48	0	0	0	352	1504
 R-RecPtr/held	c	37	0	0	0	149	0
 R-RecPtr/index	native	7	0	0	0	0	47
 R-RecPtr/nested	native	25	0	0	0	0	190
@@ -156,7 +156,7 @@ R-TypedKeyed	c,native	6	0	0	0	26	58
 R-TypedKeyed/compound	c,native	3	0	0	0	12	18
 R-TypedKeyed/text	c,native	5	0	0	0	12	21
 R-TypedRead	c,native	12	0	0	0	16	204
-R-ValueLocal	parse,c,native	58	200	0	0	7	1066
+R-ValueLocal	parse,c,native	58	206	0	0	5	1054
 R-ValueRecord	parse,c,native	25	98	0	0	239	239
 R-ValueRecord/view	c,native	2	0	0	0	3	3
 R-VecCopy	ir	6	0	14	0	0	0

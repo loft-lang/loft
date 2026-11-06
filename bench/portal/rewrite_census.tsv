@@ -968,7 +968,7 @@
 16_consumer_shapes	-	c	R-Base/counter	15
 16_consumer_shapes	-	c	R-BoundedNest/kernel	1
 16_consumer_shapes	-	c	R-Callee	1
-16_consumer_shapes	-	c	R-CompleteWrite	26
+16_consumer_shapes	-	c	R-CompleteWrite	27
 16_consumer_shapes	-	c	R-Counter	114
 16_consumer_shapes	-	c	R-DischargeInto	1
 16_consumer_shapes	-	c	R-FieldAppend	1
@@ -1023,7 +1023,7 @@
 16_consumer_shapes	-	rust	R-BoundedNest/kernel	1
 16_consumer_shapes	-	rust	R-Callee	1
 16_consumer_shapes	-	rust	R-CharWalk	10
-16_consumer_shapes	-	rust	R-CompleteWrite	26
+16_consumer_shapes	-	rust	R-CompleteWrite	27
 16_consumer_shapes	-	rust	R-Counter	161
 16_consumer_shapes	-	rust	R-DischargeInto	1
 16_consumer_shapes	-	rust	R-FieldAppend	1
@@ -1085,7 +1085,7 @@
 17_consumer_moros_dryopea	-	c	R-Base/counter	2
 17_consumer_moros_dryopea	-	c	R-BoundedNest/kernel	1
 17_consumer_moros_dryopea	-	c	R-Compact	2
-17_consumer_moros_dryopea	-	c	R-CompleteWrite	43
+17_consumer_moros_dryopea	-	c	R-CompleteWrite	46
 17_consumer_moros_dryopea	-	c	R-Counter	134
 17_consumer_moros_dryopea	-	c	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	c	R-DischargeInto	1
@@ -1145,7 +1145,7 @@
 17_consumer_moros_dryopea	-	rust	R-BoundedNest/kernel	1
 17_consumer_moros_dryopea	-	rust	R-CharWalk	10
 17_consumer_moros_dryopea	-	rust	R-Compact	2
-17_consumer_moros_dryopea	-	rust	R-CompleteWrite	43
+17_consumer_moros_dryopea	-	rust	R-CompleteWrite	46
 17_consumer_moros_dryopea	-	rust	R-Counter	109
 17_consumer_moros_dryopea	-	rust	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	rust	R-DischargeInto	1
@@ -1928,7 +1928,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Base/
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-BoundedNest/kernel	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Callee	5
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CharWalk	1
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CompleteWrite	189
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CompleteWrite	190
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CopyView	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Counter	624
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-DischargeInto	1
@@ -1995,7 +1995,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Singl
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-StartStep	8
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-TextBorrow	6
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Transient	1
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueLocal	19
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueLocal	20
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueRecord	53
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueRecord/view	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Version	9
@@ -2014,7 +2014,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Bo
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-BoundedNest/kernel	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Callee	10
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CharWalk	10
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CompleteWrite	189
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CompleteWrite	190
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CopyView	2
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Counter	580
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-DischargeInto	1
@@ -2088,7 +2088,7 @@ drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-St
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-TextBorrow	34
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-TextClear	57
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-TypedKeyed	2
-drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ValueLocal	64
+drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ValueLocal	63
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ValueRecord	53
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ValueRecord/view	1
 drawing	aa86b6b47+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-View	67
@@ -2305,7 +2305,7 @@ glb	856d1c055	c	R-PushFill	6
 glb	856d1c055	c	R-PushFill/run	2
 glb	856d1c055	c	R-PushFill/run-header	2
 glb	856d1c055	c	R-Range	78
-glb	856d1c055	c	R-RecPtr	19
+glb	856d1c055	c	R-RecPtr	20
 glb	856d1c055	c	R-RecPtr/held	10
 glb	856d1c055	c	R-RecPtr/param	4
 glb	856d1c055	c	R-RecPtr/text	2
@@ -2370,7 +2370,7 @@ glb	856d1c055	rust	R-SingleUse	3
 glb	856d1c055	rust	R-SplitTable	1
 glb	856d1c055	rust	R-TextBorrow	19
 glb	856d1c055	rust	R-TextClear	43
-glb	856d1c055	rust	R-ValueLocal	52
+glb	856d1c055	rust	R-ValueLocal	51
 glb	856d1c055	rust	R-ValueRecord	18
 glb	856d1c055	rust	R-View	25
 glb	856d1c055	rust	R-WorkBuffer	1
@@ -2436,7 +2436,7 @@ graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-Scalar	28
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-SingleUse	5
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-StartStep	6
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-TextBorrow	4
-graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-ValueLocal	14
+graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-ValueLocal	15
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-ValueRecord	24
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-Version	1
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	c	R-View	14
@@ -2514,7 +2514,7 @@ graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-StartStep	6
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-TextBorrow	19
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-TextClear	41
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-TypedKeyed	2
-graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-ValueLocal	54
+graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-ValueLocal	53
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-ValueRecord	24
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-View	45
 graphics	aa86b6b47+glb@0.1.7+mesh3d@0.1.5	rust	R-WorkBuffer	4
@@ -4336,7 +4336,7 @@ mesh3d	856d1c055	c	R-Apart	5
 mesh3d	856d1c055	c	R-Base	11
 mesh3d	856d1c055	c	R-Base/counter	4
 mesh3d	856d1c055	c	R-BoundedNest/kernel	1
-mesh3d	856d1c055	c	R-CompleteWrite	49
+mesh3d	856d1c055	c	R-CompleteWrite	50
 mesh3d	856d1c055	c	R-Counter	142
 mesh3d	856d1c055	c	R-DischargeInto	1
 mesh3d	856d1c055	c	R-FieldAppend	2
@@ -4392,7 +4392,7 @@ mesh3d	856d1c055	rust	R-Apart	10
 mesh3d	856d1c055	rust	R-Base	23
 mesh3d	856d1c055	rust	R-BoundedNest/kernel	1
 mesh3d	856d1c055	rust	R-CharWalk	10
-mesh3d	856d1c055	rust	R-CompleteWrite	49
+mesh3d	856d1c055	rust	R-CompleteWrite	50
 mesh3d	856d1c055	rust	R-Counter	95
 mesh3d	856d1c055	rust	R-DischargeInto	1
 mesh3d	856d1c055	rust	R-FieldAppend	11
@@ -4434,7 +4434,7 @@ mesh3d	856d1c055	rust	R-SingleUse	16
 mesh3d	856d1c055	rust	R-SplitTable	1
 mesh3d	856d1c055	rust	R-TextBorrow	11
 mesh3d	856d1c055	rust	R-TextClear	32
-mesh3d	856d1c055	rust	R-ValueLocal	49
+mesh3d	856d1c055	rust	R-ValueLocal	48
 mesh3d	856d1c055	rust	R-ValueRecord	20
 mesh3d	856d1c055	rust	R-View	5
 mesh3d	856d1c055	rust	R-WorkBuffer	3
@@ -4935,7 +4935,7 @@ stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Scalar	32
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-SingleUse	22
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-StartStep	14
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-TextBorrow	4
-stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-ValueLocal	16
+stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-ValueLocal	17
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-ValueRecord	44
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-VecCopy	1
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	c	R-Version	9
@@ -5012,7 +5012,7 @@ stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-StartS
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-TextBorrow	21
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-TextClear	64
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-TypedKeyed	2
-stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-ValueLocal	69
+stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-ValueLocal	68
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-ValueRecord	44
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-VecCopy	1
 stage	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	rust	R-View	60
@@ -5070,7 +5070,7 @@ text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-Scalar	17
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-SingleUse	3
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-StartStep	6
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-TextBorrow	4
-text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-ValueLocal	17
+text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-ValueLocal	18
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-ValueRecord	26
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-Version	5
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	c	R-View	10
@@ -5147,7 +5147,7 @@ text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-StartStep	6
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-TextBorrow	24
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-TextClear	77
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-TypedKeyed	2
-text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-ValueLocal	71
+text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-ValueLocal	70
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-ValueRecord	26
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-View	48
 text2d	aa86b6b47+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	rust	R-WorkBuffer	7
@@ -5419,7 +5419,7 @@ zttext	1add14001	c	R-Base/counter	21
 zttext	1add14001	c	R-BoundedNest/kernel	1
 zttext	1add14001	c	R-CharWalk	5
 zttext	1add14001	c	R-Compact/prepend	1
-zttext	1add14001	c	R-CompleteWrite	132
+zttext	1add14001	c	R-CompleteWrite	159
 zttext	1add14001	c	R-Counter	375
 zttext	1add14001	c	R-DischargeInto	1
 zttext	1add14001	c	R-ExitVector	24
@@ -5496,7 +5496,7 @@ zttext	1add14001	rust	R-Base	118
 zttext	1add14001	rust	R-BoundedNest/kernel	1
 zttext	1add14001	rust	R-CharWalk	21
 zttext	1add14001	rust	R-Compact/prepend	1
-zttext	1add14001	rust	R-CompleteWrite	132
+zttext	1add14001	rust	R-CompleteWrite	159
 zttext	1add14001	rust	R-Counter	321
 zttext	1add14001	rust	R-DischargeInto	1
 zttext	1add14001	rust	R-ExitVector	24

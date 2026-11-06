@@ -165,11 +165,21 @@ pub(crate) fn group_covers_type(
                     && data.def(*d).name() == "OpCopyRecord"
                     && matches!(args.get(1).map(Value::unspan), Some(Value::Var(w)) if *w == target) =>
             {
-                let fresh_same_type = matches!(args.get(2).map(Value::unspan),
-                    Some(Value::Int(n)) if u16::try_from(*n).is_ok_and(|n|
-                        n & crate::keys::COPY_FRESH_DEST != 0
-                            && n & crate::keys::COPY_TP_MASK == tp));
-                return fresh_same_type || !stores.owns_heap(tp);
+                return whole_copy_covers(args, tp, stores);
+            }
+            // `@FR-R-ValueRecord`'s copy out of a NULLABLE carrier (`value_record`, `vr_copy`):
+            // `if <present> { the tuple's fields, set one by one } else <whole copy>` — the
+            // present arm covers when its own statements do, the absent arm by the whole-copy
+            // rule above, so either way every byte is written.  The test names no field of
+            // `target`.
+            Value::If(cond, then, els)
+                if !cond.any_node(&mut |n| matches!(n, Value::Var(u) if *u == target))
+                    && let Some(cargs) = call_named(els, data, "OpCopyRecord")
+                    && matches!(cargs.get(1).map(Value::unspan), Some(Value::Var(w)) if *w == target)
+                    && let Value::Block(b) = then.unspan() =>
+            {
+                return whole_copy_covers(cargs, tp, stores)
+                    && group_covers_type(&b.operators, 0, target, tp, data, stores, fresh);
             }
             // A record copy into one of the element's FIELDS writes that field whole: its
             // null arm writes the field's default (`CompleteWrites::fresh_fields`, the same
@@ -239,6 +249,7 @@ pub(crate) fn group_covers_type(
     };
     let covered = |f: &crate::database::Field| {
         whole(&written, f)
+            || leaves_written(stores, &written, f.position, f.content)
             || members.get(&f.position).is_some_and(|m| {
                 let sub = f.content as usize;
                 sub < stores.types.len()
@@ -264,6 +275,35 @@ pub(crate) fn group_covers_type(
         );
     }
     all
+}
+
+/// Does a whole-record copy (`OpCopyRecord(src, target, n)`) write every field of `tp`?  It
+/// does for an element that owns no heap; a heap-owning one only when the copy is flagged
+/// FRESH for this very type (the reason is at the whole-record arm of [`group_covers_type`]).
+fn whole_copy_covers(args: &[Value], tp: u16, stores: &Stores) -> bool {
+    let fresh_same_type = matches!(args.get(2).map(Value::unspan),
+        Some(Value::Int(n)) if u16::try_from(*n).is_ok_and(|n|
+            n & crate::keys::COPY_FRESH_DEST != 0
+                && n & crate::keys::COPY_TP_MASK == tp));
+    fresh_same_type || !stores.owns_heap(tp)
+}
+
+/// Is the INLINE record `tp` at byte `base` written whole by `w`'s flat writes — each of its
+/// fields written at `base + position` as wide as the field, or itself an inline record whose
+/// fields are?  The IR's value records spell a nested record's fields at their flat offsets
+/// (`OpSetFloat(e, 8, …)` for `pos.y`), which no top-level field position names.
+fn leaves_written(stores: &Stores, w: &HashMap<u16, u16>, base: u16, tp: u16) -> bool {
+    let Some(crate::database::Parts::Struct(fields)) =
+        stores.types.get(tp as usize).map(|t| &t.parts)
+    else {
+        return false;
+    };
+    !fields.is_empty()
+        && fields.iter().all(|f| {
+            let at = base.saturating_add(f.position);
+            w.get(&at).is_some_and(|n| *n >= stores.size(f.content))
+                || leaves_written(stores, w, at, f.content)
+        })
 }
 
 /// Record a write of `width` bytes at `pos`, keeping the widest write seen there.
