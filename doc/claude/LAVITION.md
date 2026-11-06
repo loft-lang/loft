@@ -53,8 +53,9 @@ for:
 3. **Flesh it out slowly** into the full game: more detail, more world, more art.
 
 The libraries follow from it: the game logic validated in step 1 must carry into step 2
-unchanged, so it may not depend on how the world is drawn.  The Tanmatsu work is the first
-run of this path ([ROADMAP.md](ROADMAP.md) § Games and the Tanmatsu).
+unchanged, so it may not depend on how the world is drawn: a game keeps its world in packages
+that draw nothing, and each machine draws it at the fidelity it can afford ([TANMATSU.md](TANMATSU.md)
+§ One world, drawn at more than one fidelity).  The Tanmatsu work is the first run of this path ([ROADMAP.md](ROADMAP.md) § Games and the Tanmatsu).
 
 ## Naming principle — brand in metadata, symbols stay descriptive
 
