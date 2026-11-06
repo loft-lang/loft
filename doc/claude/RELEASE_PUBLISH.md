@@ -288,7 +288,14 @@ exempt, because it is not a `loft package`, and the weekly `repro-build.yml` cov
   `tests/doc_hygiene.rs::the_release_records_the_c_toolchain_the_verifier_compares`.
 - **The Windows link:** `rust-lld` stamps a wall-clock TimeDateStamp and PDB GUID;
   `scripts/repro-flags.sh` passes `/Brepro` and `/DEBUG:NONE` on a Windows host.  A Windows
-  bundle ships no PDB.
+  bundle ships no PDB.  With `/Brepro` the TimeDateStamp is a hash of the image, so a stamp
+  that differs means other bytes differ too.  An occasional Windows rebuild orders two `.data`
+  objects differently from the others ([loft#2431](https://github.com/loft-lang/loft/issues/2431)).
+  The linker relinks identical inputs to identical bytes, so the variation is in the object
+  files rustc hands it.  `repro-build.yml` therefore has `rust-lld` record the `loft.exe`
+  link's inputs (`LLD_REPRODUCE`) and uploads that tarball when the bytes differ.  Diff it
+  against the tarball of a rebuild that matches: the crate whose objects differ is the one
+  to fix.
 - **Comparing with a GitHub artifact** needs the release's image: the Linux bundle is built
   in the manylinux container `release.yml` names, and a local build links against this
   machine's glibc and gcc, so its bytes differ.  `repro-build.yml` rebuilds in that image;
