@@ -73,6 +73,7 @@
 02_sum_loop	-	c	R-Range	2
 02_sum_loop	-	c	R-Rotate	9
 02_sum_loop	-	c	R-SingleUse	2
+02_sum_loop	-	c	R-SpecChain	1
 02_sum_loop	-	c	R-TextBorrow	14
 02_sum_loop	-	c	R-WorkPark	3
 02_sum_loop	-	c	R-Wrapper	9
@@ -186,6 +187,7 @@
 04_collatz	-	c	R-RangedCall	2
 04_collatz	-	c	R-Rotate	10
 04_collatz	-	c	R-SingleUse	2
+04_collatz	-	c	R-SpecChain	1
 04_collatz	-	c	R-StartStep	1
 04_collatz	-	c	R-TextBorrow	14
 04_collatz	-	c	R-WorkPark	3
@@ -689,6 +691,7 @@
 12_drawing	-	c	R-Scalar	27
 12_drawing	-	c	R-ScaleFold	2
 12_drawing	-	c	R-SingleUse	7
+12_drawing	-	c	R-SpecChain	33
 12_drawing	-	c	R-StartStep	2
 12_drawing	-	c	R-TextBorrow	14
 12_drawing	-	c	R-ValueRecord	2
@@ -782,6 +785,7 @@
 13_stdlib_text	-	c	R-RetAdopt	1
 13_stdlib_text	-	c	R-Rotate	23
 13_stdlib_text	-	c	R-SingleUse	3
+13_stdlib_text	-	c	R-SpecChain	1
 13_stdlib_text	-	c	R-SplitTable	1
 13_stdlib_text	-	c	R-TextBorrow	28
 13_stdlib_text	-	c	R-View	1
@@ -860,6 +864,7 @@
 14_stdlib_vector	-	c	R-Rotate	35
 14_stdlib_vector	-	c	R-SameRead	1
 14_stdlib_vector	-	c	R-SingleUse	8
+14_stdlib_vector	-	c	R-SpecChain	2
 14_stdlib_vector	-	c	R-TextBorrow	14
 14_stdlib_vector	-	c	R-View	2
 14_stdlib_vector	-	c	R-WorkBuffer	3
@@ -944,6 +949,7 @@
 15_stdlib_keyed	-	c	R-RefParam	18
 15_stdlib_keyed	-	c	R-Rotate	29
 15_stdlib_keyed	-	c	R-SingleUse	3
+15_stdlib_keyed	-	c	R-SpecChain	9
 15_stdlib_keyed	-	c	R-TextBorrow	18
 15_stdlib_keyed	-	c	R-TypedKeyed	32
 15_stdlib_keyed	-	c	R-TypedKeyed/text	2
@@ -1038,6 +1044,7 @@
 16_consumer_shapes	-	c	R-Rotate	53
 16_consumer_shapes	-	c	R-Scalar	1
 16_consumer_shapes	-	c	R-SingleUse	6
+16_consumer_shapes	-	c	R-SpecChain	9
 16_consumer_shapes	-	c	R-StartStep	1
 16_consumer_shapes	-	c	R-TextBorrow	14
 16_consumer_shapes	-	c	R-Transient	1
@@ -1163,6 +1170,7 @@
 17_consumer_moros_dryopea	-	c	R-Rotate	43
 17_consumer_moros_dryopea	-	c	R-Scalar	2
 17_consumer_moros_dryopea	-	c	R-SingleUse	16
+17_consumer_moros_dryopea	-	c	R-SpecChain	20
 17_consumer_moros_dryopea	-	c	R-StartStep	3
 17_consumer_moros_dryopea	-	c	R-TextBorrow	14
 17_consumer_moros_dryopea	-	c	R-TypedKeyed/compound	5
@@ -1288,6 +1296,7 @@
 18_consumer_crawler	-	c	R-Rotate	68
 18_consumer_crawler	-	c	R-Scalar	8
 18_consumer_crawler	-	c	R-SingleUse	11
+18_consumer_crawler	-	c	R-SpecChain	16
 18_consumer_crawler	-	c	R-TextBorrow	34
 18_consumer_crawler	-	c	R-TextLen	2
 18_consumer_crawler	-	c	R-TypedKeyed/compound	1
@@ -1390,6 +1399,7 @@
 19_stdlib_par	-	c	R-Rotate	28
 19_stdlib_par	-	c	R-Scalar	3
 19_stdlib_par	-	c	R-SingleUse	5
+19_stdlib_par	-	c	R-SpecChain	4
 19_stdlib_par	-	c	R-TextBorrow	16
 19_stdlib_par	-	c	R-View	3
 19_stdlib_par	-	c	R-WorkBuffer	2
@@ -1770,6 +1780,7 @@ arguments	bd4932067	c	R-RetAdopt	2
 arguments	bd4932067	c	R-Rotate	14
 arguments	bd4932067	c	R-SameRead	2
 arguments	bd4932067	c	R-SingleUse	4
+arguments	bd4932067	c	R-SpecChain	1
 arguments	bd4932067	c	R-SplitTable	2
 arguments	bd4932067	c	R-TextBorrow	28
 arguments	bd4932067	c	R-TextLen	1
@@ -1873,6 +1884,7 @@ assets	7108f3550+shapes@0.5.4	c	R-RetAdopt	2
 assets	7108f3550+shapes@0.5.4	c	R-Rotate	47
 assets	7108f3550+shapes@0.5.4	c	R-Scalar	26
 assets	7108f3550+shapes@0.5.4	c	R-SingleUse	2
+assets	7108f3550+shapes@0.5.4	c	R-SpecChain	8
 assets	7108f3550+shapes@0.5.4	c	R-TextBorrow	18
 assets	7108f3550+shapes@0.5.4	c	R-TextLen	1
 assets	7108f3550+shapes@0.5.4	c	R-TypedKeyed/text	6
@@ -2000,6 +2012,7 @@ cbor	bd4932067	c	R-Reuse	8
 cbor	bd4932067	c	R-Rotate	39
 cbor	bd4932067	c	R-SelfReplace	1
 cbor	bd4932067	c	R-SingleUse	7
+cbor	bd4932067	c	R-SpecChain	23
 cbor	bd4932067	c	R-TextBorrow	19
 cbor	bd4932067	c	R-TextBorrow/tested	2
 cbor	bd4932067	c	R-TextRun	1
@@ -2116,6 +2129,7 @@ crypto	bd4932067	c	R-RecPtr/param	2
 crypto	bd4932067	c	R-RefParam	39
 crypto	bd4932067	c	R-Rotate	22
 crypto	bd4932067	c	R-SingleUse	2
+crypto	bd4932067	c	R-SpecChain	6
 crypto	bd4932067	c	R-TextBorrow	14
 crypto	bd4932067	c	R-View	4
 crypto	bd4932067	c	R-WorkBuffer	3
@@ -2246,6 +2260,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-SameR
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Scalar	71
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-SingleUse	26
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-SliceBorrow	3
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-SpecChain	39
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-StartStep	8
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-TextBorrow	27
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Transient	1
@@ -2392,6 +2407,7 @@ fixstep	394317324	c	R-RefParam	47
 fixstep	394317324	c	R-Rotate	24
 fixstep	394317324	c	R-Scalar	6
 fixstep	394317324	c	R-SingleUse	2
+fixstep	394317324	c	R-SpecChain	8
 fixstep	394317324	c	R-TextBorrow	16
 fixstep	394317324	c	R-ValueLocal	3
 fixstep	394317324	c	R-ValueRecord	7
@@ -2478,6 +2494,7 @@ game_protocol	b4075f3fc	c	R-RefParam	15
 game_protocol	b4075f3fc	c	R-Reuse	1
 game_protocol	b4075f3fc	c	R-Rotate	11
 game_protocol	b4075f3fc	c	R-SingleUse	2
+game_protocol	b4075f3fc	c	R-SpecChain	8
 game_protocol	b4075f3fc	c	R-TextBorrow	16
 game_protocol	b4075f3fc	c	R-Transient	1
 game_protocol	b4075f3fc	c	R-View	2
@@ -2575,6 +2592,7 @@ glb	7108f3550	c	R-RepeatRun	16
 glb	7108f3550	c	R-Reuse	7
 glb	7108f3550	c	R-Rotate	30
 glb	7108f3550	c	R-SingleUse	3
+glb	7108f3550	c	R-SpecChain	11
 glb	7108f3550	c	R-TextBorrow	22
 glb	7108f3550	c	R-ValueLocal	14
 glb	7108f3550	c	R-ValueRecord	18
@@ -2699,6 +2717,7 @@ graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Reuse	6
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Rotate	89
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Scalar	42
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-SingleUse	5
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-SpecChain	30
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-StartStep	6
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-TextBorrow	19
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-ValueLocal	15
@@ -2834,6 +2853,7 @@ gridmesh	873da7f9a	c	R-Reuse	5
 gridmesh	873da7f9a	c	R-Rotate	31
 gridmesh	873da7f9a	c	R-SameRead	3
 gridmesh	873da7f9a	c	R-SingleUse	40
+gridmesh	873da7f9a	c	R-SpecChain	50
 gridmesh	873da7f9a	c	R-StartStep	2
 gridmesh	873da7f9a	c	R-TextBorrow	14
 gridmesh	873da7f9a	c	R-TypedKeyed	10
@@ -2952,6 +2972,7 @@ hex_body	3bdb69ef2	c	R-RetAdopt	1
 hex_body	3bdb69ef2	c	R-Reuse	4
 hex_body	3bdb69ef2	c	R-Rotate	28
 hex_body	3bdb69ef2	c	R-SingleUse	12
+hex_body	3bdb69ef2	c	R-SpecChain	9
 hex_body	3bdb69ef2	c	R-SplitTable	3
 hex_body	3bdb69ef2	c	R-StartStep	1
 hex_body	3bdb69ef2	c	R-TextBorrow	15
@@ -3061,6 +3082,7 @@ hex_draw	3bdb69ef2	c	R-Rotate	294
 hex_draw	3bdb69ef2	c	R-SameRead	1
 hex_draw	3bdb69ef2	c	R-Scalar	12
 hex_draw	3bdb69ef2	c	R-SingleUse	14
+hex_draw	3bdb69ef2	c	R-SpecChain	8
 hex_draw	3bdb69ef2	c	R-StartStep	109
 hex_draw	3bdb69ef2	c	R-TextBorrow	17
 hex_draw	3bdb69ef2	c	R-ValueLocal	20
@@ -3172,6 +3194,7 @@ hex_edge	3bdb69ef2	c	R-Rotate	134
 hex_edge	3bdb69ef2	c	R-SameRead	1
 hex_edge	3bdb69ef2	c	R-Scalar	32
 hex_edge	3bdb69ef2	c	R-SingleUse	6
+hex_edge	3bdb69ef2	c	R-SpecChain	9
 hex_edge	3bdb69ef2	c	R-StartStep	31
 hex_edge	3bdb69ef2	c	R-TextBorrow	17
 hex_edge	3bdb69ef2	c	R-View	2
@@ -3287,6 +3310,7 @@ hex_field	3bdb69ef2	c	R-Rotate	135
 hex_field	3bdb69ef2	c	R-SameRead	1
 hex_field	3bdb69ef2	c	R-Scalar	170
 hex_field	3bdb69ef2	c	R-SingleUse	5
+hex_field	3bdb69ef2	c	R-SpecChain	7
 hex_field	3bdb69ef2	c	R-StartStep	29
 hex_field	3bdb69ef2	c	R-TextBorrow	24
 hex_field	3bdb69ef2	c	R-TypedRead	15
@@ -3406,6 +3430,7 @@ hex_fit	3bdb69ef2	c	R-Rotate	471
 hex_fit	3bdb69ef2	c	R-SameRead	1
 hex_fit	3bdb69ef2	c	R-Scalar	24
 hex_fit	3bdb69ef2	c	R-SingleUse	22
+hex_fit	3bdb69ef2	c	R-SpecChain	4
 hex_fit	3bdb69ef2	c	R-StartStep	171
 hex_fit	3bdb69ef2	c	R-TextBorrow	20
 hex_fit	3bdb69ef2	c	R-ValueLocal	26
@@ -3536,6 +3561,7 @@ hex_form	3bdb69ef2	c	R-Rotate	176
 hex_form	3bdb69ef2	c	R-SameRead	1
 hex_form	3bdb69ef2	c	R-Scalar	24
 hex_form	3bdb69ef2	c	R-SingleUse	11
+hex_form	3bdb69ef2	c	R-SpecChain	14
 hex_form	3bdb69ef2	c	R-SplitTable	3
 hex_form	3bdb69ef2	c	R-StartStep	35
 hex_form	3bdb69ef2	c	R-TextBorrow	18
@@ -3644,6 +3670,7 @@ hex_grid	3bdb69ef2	c	R-RecPtr/param	2
 hex_grid	3bdb69ef2	c	R-RefParam	14
 hex_grid	3bdb69ef2	c	R-Rotate	13
 hex_grid	3bdb69ef2	c	R-SingleUse	8
+hex_grid	3bdb69ef2	c	R-SpecChain	5
 hex_grid	3bdb69ef2	c	R-TextBorrow	16
 hex_grid	3bdb69ef2	c	R-View	2
 hex_grid	3bdb69ef2	c	R-WorkPark	4
@@ -3730,6 +3757,7 @@ hex_place	3bdb69ef2	c	R-Rotate	182
 hex_place	3bdb69ef2	c	R-SameRead	1
 hex_place	3bdb69ef2	c	R-Scalar	36
 hex_place	3bdb69ef2	c	R-SingleUse	11
+hex_place	3bdb69ef2	c	R-SpecChain	4
 hex_place	3bdb69ef2	c	R-StartStep	51
 hex_place	3bdb69ef2	c	R-TextBorrow	17
 hex_place	3bdb69ef2	c	R-ValueLocal	12
@@ -3859,6 +3887,7 @@ hex_recover	3bdb69ef2	c	R-Rotate	226
 hex_recover	3bdb69ef2	c	R-SameRead	1
 hex_recover	3bdb69ef2	c	R-Scalar	12
 hex_recover	3bdb69ef2	c	R-SingleUse	12
+hex_recover	3bdb69ef2	c	R-SpecChain	13
 hex_recover	3bdb69ef2	c	R-StartStep	41
 hex_recover	3bdb69ef2	c	R-TextBorrow	24
 hex_recover	3bdb69ef2	c	R-TypedKeyed/text	1
@@ -3988,6 +4017,7 @@ hex_roof	3bdb69ef2	c	R-Rotate	218
 hex_roof	3bdb69ef2	c	R-SameRead	1
 hex_roof	3bdb69ef2	c	R-Scalar	178
 hex_roof	3bdb69ef2	c	R-SingleUse	17
+hex_roof	3bdb69ef2	c	R-SpecChain	4
 hex_roof	3bdb69ef2	c	R-StartStep	87
 hex_roof	3bdb69ef2	c	R-TextBorrow	17
 hex_roof	3bdb69ef2	c	R-View	2
@@ -4103,6 +4133,7 @@ hex_shape	3bdb69ef2	c	R-Rotate	258
 hex_shape	3bdb69ef2	c	R-SameRead	1
 hex_shape	3bdb69ef2	c	R-Scalar	24
 hex_shape	3bdb69ef2	c	R-SingleUse	14
+hex_shape	3bdb69ef2	c	R-SpecChain	4
 hex_shape	3bdb69ef2	c	R-StartStep	85
 hex_shape	3bdb69ef2	c	R-TextBorrow	17
 hex_shape	3bdb69ef2	c	R-ValueLocal	17
@@ -4226,6 +4257,7 @@ hex_terrain	3bdb69ef2	c	R-Reuse	1
 hex_terrain	3bdb69ef2	c	R-Rotate	67
 hex_terrain	3bdb69ef2	c	R-Scalar	27
 hex_terrain	3bdb69ef2	c	R-SingleUse	16
+hex_terrain	3bdb69ef2	c	R-SpecChain	6
 hex_terrain	3bdb69ef2	c	R-TailSelf	1
 hex_terrain	3bdb69ef2	c	R-TextBorrow	16
 hex_terrain	3bdb69ef2	c	R-ValueLocal	1
@@ -4339,6 +4371,7 @@ hex_way	3bdb69ef2	c	R-Rotate	156
 hex_way	3bdb69ef2	c	R-SameRead	1
 hex_way	3bdb69ef2	c	R-Scalar	24
 hex_way	3bdb69ef2	c	R-SingleUse	7
+hex_way	3bdb69ef2	c	R-SpecChain	4
 hex_way	3bdb69ef2	c	R-StartStep	41
 hex_way	3bdb69ef2	c	R-TextBorrow	17
 hex_way	3bdb69ef2	c	R-View	2
@@ -4444,6 +4477,7 @@ hex_world	3bdb69ef2	c	R-RefParam	34
 hex_world	3bdb69ef2	c	R-Reuse	2
 hex_world	3bdb69ef2	c	R-Rotate	22
 hex_world	3bdb69ef2	c	R-SingleUse	2
+hex_world	3bdb69ef2	c	R-SpecChain	4
 hex_world	3bdb69ef2	c	R-TextBorrow	16
 hex_world	3bdb69ef2	c	R-View	4
 hex_world	3bdb69ef2	c	R-WorkBuffer	2
@@ -4526,6 +4560,7 @@ html	dd260f04c	c	R-RecPtr/param	1
 html	dd260f04c	c	R-RefParam	8
 html	dd260f04c	c	R-Rotate	12
 html	dd260f04c	c	R-SingleUse	2
+html	dd260f04c	c	R-SpecChain	1
 html	dd260f04c	c	R-TextBorrow	16
 html	dd260f04c	c	R-Transient	1
 html	dd260f04c	c	R-WorkPark	11
@@ -4596,6 +4631,7 @@ markdown	dd260f04c	c	R-RetAdopt	2
 markdown	dd260f04c	c	R-Rotate	56
 markdown	dd260f04c	c	R-SingleUse	2
 markdown	dd260f04c	c	R-SliceBorrow	7
+markdown	dd260f04c	c	R-SpecChain	5
 markdown	dd260f04c	c	R-SplitTable	5
 markdown	dd260f04c	c	R-TextBorrow	50
 markdown	dd260f04c	c	R-View	1
@@ -4687,6 +4723,7 @@ mesh3d	7108f3550	c	R-RetAdopt	1
 mesh3d	7108f3550	c	R-Reuse	4
 mesh3d	7108f3550	c	R-Rotate	24
 mesh3d	7108f3550	c	R-SingleUse	16
+mesh3d	7108f3550	c	R-SpecChain	8
 mesh3d	7108f3550	c	R-TextBorrow	16
 mesh3d	7108f3550	c	R-ValueLocal	14
 mesh3d	7108f3550	c	R-ValueRecord	20
@@ -4810,6 +4847,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Reuse	11
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Rotate	39
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-SelfReplace	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-SingleUse	2
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-SpecChain	31
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-TextBorrow	16
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-TextBorrow/tested	2
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-TextRun	1
@@ -4915,6 +4953,7 @@ random	bd4932067	c	R-RecPtr/param	2
 random	bd4932067	c	R-RefParam	38
 random	bd4932067	c	R-Rotate	18
 random	bd4932067	c	R-SingleUse	2
+random	bd4932067	c	R-SpecChain	6
 random	bd4932067	c	R-TextBorrow	14
 random	bd4932067	c	R-Transient	1
 random	bd4932067	c	R-View	1
@@ -4992,6 +5031,7 @@ server	b4075f3fc	c	R-RefParam	10
 server	b4075f3fc	c	R-Reuse	1
 server	b4075f3fc	c	R-Rotate	16
 server	b4075f3fc	c	R-SingleUse	2
+server	b4075f3fc	c	R-SpecChain	1
 server	b4075f3fc	c	R-TextBorrow	16
 server	b4075f3fc	c	R-ValueRecord	16
 server	b4075f3fc	c	R-View	2
@@ -5074,6 +5114,7 @@ shapes	873da7f9a	c	R-RecPtr/param	2
 shapes	873da7f9a	c	R-RefParam	22
 shapes	873da7f9a	c	R-Rotate	14
 shapes	873da7f9a	c	R-SingleUse	2
+shapes	873da7f9a	c	R-SpecChain	5
 shapes	873da7f9a	c	R-StartStep	1
 shapes	873da7f9a	c	R-TextBorrow	16
 shapes	873da7f9a	c	R-ValueLocal	3
@@ -5150,6 +5191,7 @@ ssh	b4075f3fc	c	R-RecPtr/param	1
 ssh	b4075f3fc	c	R-RefParam	10
 ssh	b4075f3fc	c	R-Rotate	12
 ssh	b4075f3fc	c	R-SingleUse	2
+ssh	b4075f3fc	c	R-SpecChain	6
 ssh	b4075f3fc	c	R-TextBorrow	14
 ssh	b4075f3fc	c	R-Transient	1
 ssh	b4075f3fc	c	R-ValueRecord	2
@@ -5252,6 +5294,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Reuse	16
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Rotate	111
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Scalar	34
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-SingleUse	22
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-SpecChain	16
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-StartStep	14
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-TextBorrow	21
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-ValueLocal	17
@@ -5390,6 +5433,7 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Reuse	5
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Rotate	96
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Scalar	17
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-SingleUse	3
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-SpecChain	8
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-StartStep	6
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-TextBorrow	22
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-ValueLocal	18
@@ -5511,6 +5555,7 @@ time	394317324	c	R-RecPtr/param	1
 time	394317324	c	R-RefParam	20
 time	394317324	c	R-Rotate	22
 time	394317324	c	R-SingleUse	5
+time	394317324	c	R-SpecChain	2
 time	394317324	c	R-TextBorrow	22
 time	394317324	c	R-ValueRecord	34
 time	394317324	c	R-WorkPark	8
@@ -5607,6 +5652,7 @@ tween	873da7f9a	c	R-RefParam	44
 tween	873da7f9a	c	R-Reuse	1
 tween	873da7f9a	c	R-Rotate	22
 tween	873da7f9a	c	R-SingleUse	5
+tween	873da7f9a	c	R-SpecChain	4
 tween	873da7f9a	c	R-TextBorrow	16
 tween	873da7f9a	c	R-View	2
 tween	873da7f9a	c	R-WorkBuffer	2
@@ -5693,6 +5739,7 @@ web	b4075f3fc	c	R-RecPtr/param	1
 web	b4075f3fc	c	R-RefParam	10
 web	b4075f3fc	c	R-Rotate	17
 web	b4075f3fc	c	R-SingleUse	2
+web	b4075f3fc	c	R-SpecChain	5
 web	b4075f3fc	c	R-TextBorrow	18
 web	b4075f3fc	c	R-ValueRecord	4
 web	b4075f3fc	c	R-View	2
@@ -5806,6 +5853,7 @@ zttext	bd4932067	c	R-SameRead	2
 zttext	bd4932067	c	R-Scalar	3
 zttext	bd4932067	c	R-SelfReplace	17
 zttext	bd4932067	c	R-SingleUse	14
+zttext	bd4932067	c	R-SpecChain	7
 zttext	bd4932067	c	R-StartStep	7
 zttext	bd4932067	c	R-TextBorrow	21
 zttext	bd4932067	c	R-TextBorrow/tested	1

@@ -117,7 +117,13 @@ pub(crate) fn capture_adoption_owns_free(
     // kept suppressing whatever the local named LAST, so `s = S{…}; h = |i| { s.a + i };
     // s = build(h)` leaked the store `s` ends up holding, on both backends, once per
     // reassignment and once per pass of a loop (loft#1388).
+    // A struct-enum is captured as an inline COPY (`OpCopyRecord` into the record's field — the
+    // shared-reference encoding is a struct reference's alone), so no record adopts the store
+    // the local names and the frame's release stands; suppressed, the local's store leaked
+    // (`c: E = V { … }` then a closure reading `c`).
+    let copied = matches!(function.tp(v).base(), Type::Enum(_, true, _));
     !built_with.reassigned_after_build.contains(&v)
+        && !copied
         && ((function.is_captured(v) && !captured_only_by_confined(data, function, built_with, v))
             || backs_an_adopted_capture(data, function, built_with, v))
         && (crate::data::is_dbref(function.tp(v).base()) || fn_ref_half_captured(data, function, v))

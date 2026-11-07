@@ -289,6 +289,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SliceArg)` | counted; admitted on no bench program |
 | `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
 | `(R-SliceInto)` | counted; admitted on no bench program |
+| `(R-SpecChain)` | `R-SpecChain` c |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
 | `(R-StartStep)` | `R-StartStep` interp |

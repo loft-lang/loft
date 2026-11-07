@@ -6656,10 +6656,6 @@ impl Parser {
     fn variant_rebinds_local(&self, v_nr: u16, td_nr: u32) -> bool {
         crate::keys::variant_literal_in_place()
             && (!self.vars.is_argument(v_nr) || self.is_hidden_param(v_nr))
-            // A closure copies a struct-enum it captures, so the local keeps owning a store
-            // it built in place — which the capture's ownership never frees.  The capture
-            // may come later in the body; pass 1 recorded it (`closure_capture_builds`).
-            && !self.closure_capture_builds.contains_key(&(self.context, v_nr))
             && self.is_variant_of_local(v_nr, td_nr)
     }
 
