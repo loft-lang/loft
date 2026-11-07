@@ -35,6 +35,13 @@ local of the caller.
 nullable `t` reads as present, as it does after a bare `if t != null`; likewise the `else` of
 `if a == null || b == null`.  The warning that asked for the test no longer fires there.
 
+**Lists and trees of enum variants are built in place.**  `l = Cons { v, next: l }` moves the
+old list into the new cell instead of copying all of it, a `match cur { Cons { v, next } =>
+cur = next }` walk reads the list without copying the rest at every step, and a recursion
+that builds a tree (`Add { l: gen(…), r: gen(…) }`) builds every node in one store.  A list
+built and walked this way went from thousands of times slower than Rust to faster than it,
+and the expression-tree builder from nine times slower to faster; the answers are the same.
+
 ## 2026-11
 
 ### May need a change in your code

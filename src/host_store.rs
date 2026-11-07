@@ -246,14 +246,16 @@ fn lift_only_freed(ops: &[Value], lift: u16, at: usize, ids: &Ids) -> bool {
 }
 
 /// The non-null mentions of `x`: its reads and its non-null sets.
-fn uses(v: &Value, x: u16) -> usize {
-    let mut k = 0;
-    v.walk(&mut |n| match n {
-        Value::Var(y) if *y == x => k += 1,
-        Value::Set(y, r) if *y == x && !matches!(r.unspan(), Value::Null) => k += 1,
+fn uses(code: &Value, var: u16) -> usize {
+    let mut count = 0;
+    code.walk(&mut |node| match node {
+        Value::Var(seen) if *seen == var => count += 1,
+        Value::Set(seen, rhs) if *seen == var && !matches!(rhs.unspan(), Value::Null) => {
+            count += 1;
+        }
         _ => {}
     });
-    k
+    count
 }
 
 fn mentions(v: &Value, x: u16) -> bool {

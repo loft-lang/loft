@@ -5067,9 +5067,18 @@ line in `Output::output_function`'s prelude.
                  21_tree `build_rec` 3.14× → 1.92× Rust.  `LOFT_NO_HOST_STORE=1`,
                  `LOFT_TRACE_HOST_STORE=1`; guard
                  `loft-suite/rules/rewrites/R-HostStore/a-recursion-builds-its-result-in-the-field-it-is-written-to.loft`.
-                 NOT YET: a callee whose result literals are built in work stores of their
-                 own rather than in its buffer (`gen`, `simplify` of bench 22) — the callee
-                 half, and the release by record of a result the caller drops (§ @PLN219).
+                 LITERAL CLAUSE: a record literal's out-of-line field handed a call's answer —
+                 `Add { l: gen(…), r: gen(…) }`, `lift = gen(…)` then `OpSetChildRec` into
+                 the node's field, the lift named nowhere else but by its frees — where every
+                 answer of the callee is its buffer (its literal exits build there, (R-Place)'s
+                 callee clause): the call is handed `OpStoreBuf(node)`, the field adopts the
+                 answer by number, and the answer's store is freed only where it is not the
+                 node's (`OpFreeRefIfDistinct`, a fallback copy).  The recursion then builds
+                 the whole tree in the store its first caller names.  22_expr `expr_build`
+                 9.07× → 0.66× Rust; guard `…/R-HostStore/a-literal-adopts-its-childrens-results-built-in-its-store.loft`.
+                 NOT YET: a callee that DROPS a result built in the shared store (`simplify`
+                 of bench 22: `if is_num(a, 0) { return b; }`) — the release by record
+                 (§ @PLN219).
 
   (R-MoveChild)  a whole write into an out-of-line field whose value is a chain of child reads
                  rooted at the field's OWN child — `h.f = h.f.g`, `cur = cur.left` through a
@@ -5508,7 +5517,12 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  is built, so it needs no staging of its own.  A `reference<T>` field
                  is not such a place: its read is the record it points at, and an
                  assignment re-points it (H-RefSet), so a literal assigned to one is
-                 built in a record of its own.  The KEYED clause:
+                 built in a record of its own.  The VARIANT clause: a variant literal
+                 rebinding a whole local of its struct-enum, or the function's return
+                 buffer, is built there as a struct literal is (`OpDatabase` with the
+                 variant's type re-inits the local's store), where it was built on a
+                 work reference and copied over; a parameter the caller passed keeps
+                 the copy (`LOFT_NO_VARIANT_INPLACE=1`).  The KEYED clause:
                  `h[k] = R { … }` with a FULL subscript of pure keys is written into
                  the record the collection claims for it — the literal's values and
                  the statements computing them run first, in program order (a value
@@ -5534,8 +5548,15 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  whole extent, so a list or a tree grown one node at a time costs
                  linear time.  Declines — the copy stands — where the literal reads the
                  destination anywhere but that one field (a view of the old record
-                 would read the emptied one), names it twice, is a variant of an enum,
-                 or writes a parameter the caller passed.  Decided in the parser (the
+                 would read the emptied one), names it twice, or writes a parameter
+                 the caller passed.  VARIANT CLAUSE: `l = Cons { …, next: l }` for a
+                 struct-enum whose variant holds the enum itself out of line moves the
+                 same way — every record of the enum is the enum's size, so the old
+                 record, whatever its variant, moves whole into a child typed as the
+                 enum, and the variant's fields and tag are written into the zeroed
+                 record.  21_tree `enum_list` (with (R-CopyView)'s walk over its
+                 `match`): 5167× → 0.83× Rust; guard
+                 `loft-suite/rules/rewrites/R-Demote/a-variant-pushed-at-the-front-moves-the-old-record-whole.loft`.  Decided in the parser (the
                  local form when the literal is parsed, the place form at the
                  out-of-line write); `LOFT_NO_DEMOTE=1` restores the copy.  The move is
                  one op, `OpDemoteRec`: one child record claimed in the destination's store,
@@ -5582,7 +5603,9 @@ literals or CHAINS: once the tail's delivery is decided and the buffer is still 
 unpromoted `__retbuf` — or a buffer only chains name (`return no_mk()`, a tail `no_mk()`,
 which rename it after the chain's work ref; `Parser::chain_return_buffer_var`) — each
 mid-body `return S { … }` builds into it as the tail literal does, and so does a literal
-TAIL beside chain exits (switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`), where before it minted a
+TAIL beside chain exits, and an exit whose value is a branch every arm of which ends in a
+fresh literal (`if c { Add { … } } else { Mul { … } }`, each arm built into the buffer)
+(switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`), where before it minted a
 store per exit and the caller adopted whichever came back.  A chain exit answers what its
 callee wrote into the same buffer, and a chain always returns, so no literal exit meets a
 value another statement put there.  A callee with a promoted named local beside a literal
@@ -5723,19 +5746,23 @@ answered here rather than decided in the code.
                  parameter — R-ValueRecord may carry a small record parameter as a
                  tuple, where its copy already costs nothing and a view would need the
                  store the tuple removed; a struct-enum.
-                 WALK CLAUSE: a record local, nullable or not, whose every set is either such
-                 a bind from a variable or a STEP to a child of itself (`t = t.left`,
-                 `OpRefFromChildRec(OpGetField(t, …))`) is a view of what it walks, its owner
-                 witness and frees gone, where it is only read (a getter, a projection, a null
-                 test, its own step) and, for each bind, the statements up to the next bind
+                 WALK CLAUSE: a record local, nullable or not, a struct-enum too, whose every
+                 set is either such a bind from a variable or a STEP to a child of itself
+                 (`t = t.left`, `OpRefFromChildRec(OpGetField(t, …))`) is a view of what it
+                 walks, its owner witness and frees gone, where it is only read (a getter, a
+                 projection, a null test, its own step) — and so is a STEP LOCAL, a local
+                 whose every set is a step of the cursor and which is only read or handed
+                 back to it (`match cur { Cons { v, next } => cur = next }`: `next` is the
+                 step), its mentions all inside the cursor's live range — and, for each bind, the statements up to the next bind
                  neither rebind nor free that bind's source nor run an operation that can write
                  a record of its type — except one whose record operands are all OTHER owner
                  locals of the frame, which hold stores the source cannot live in.  A source
                  may be a parameter whose record holds out-of-line children (no value tuple
                  carries those).  Measured: 21_tree `lookup_copy` 1405× → 1.17× Rust and
                  `list_ops` 4.1× → 0.61× (with (R-NoThreads) and the one-op (R-Demote)).
-                 `LOFT_NO_COPY_VIEW_WALK=1`; guard
-                 `loft-suite/rules/rewrites/R-CopyView/a-cursor-that-only-walks-is-a-view.loft`.
+                 `LOFT_NO_COPY_VIEW_WALK=1`; guards
+                 `loft-suite/rules/rewrites/R-CopyView/a-cursor-that-only-walks-is-a-view.loft`,
+                 `…/a-match-walk-over-an-enum-list-is-a-view.loft`.
   (R-ValueLocal) a plain local bound from a call R-ValueRecord admits — the result a
                  no-heap record of at most eight scalars, nested or flat — carries the
                  record's fields as its TUPLE in the binding frame too, where every use

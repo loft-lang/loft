@@ -648,6 +648,15 @@ fn step_locals(
     Some(found)
 }
 
+/// A step local views what its cursor views, so it lives inside the cursor's live range: is
+/// every mention of each one there?
+fn steps_inside(code: &Value, range: &[&Value], steps: &[u16], frees: &[u32]) -> bool {
+    steps.iter().all(|&p| {
+        let inside: usize = range.iter().map(|s| non_free_mentions(s, p, frees)).sum();
+        inside == non_free_mentions(code, p, frees)
+    })
+}
+
 /// The fresh sources of walk cursor `t` — every non-null `Set(t, Var(a))` but one from a step
 /// local — or `None` when some set of `t` is neither such a bind nor a step.
 fn walk_sources(code: &Value, t: u16, data: &Data, step_locals: &[u16]) -> Option<Vec<u16>> {
@@ -905,12 +914,8 @@ fn walk_clause(code: &mut Value, data: &mut Data, d_nr: u32, frees: &[u32], trac
             }
             let range =
                 live_range(code, t, frees).ok_or("mentioned outside the block that binds it")?;
-            // A step local views what `t` views, so it lives inside `t`'s live range.
-            for &p in &steps {
-                let inside: usize = range.iter().map(|s| non_free_mentions(s, p, frees)).sum();
-                if inside != non_free_mentions(code, p, frees) {
-                    return Err("a local bound to its child is mentioned outside the walk");
-                }
+            if !steps_inside(code, &range, &steps, frees) {
+                return Err("a local bound to its child is mentioned outside the walk");
             }
             // Each bind is judged on its own segment — from it to the next bind of `t` — against
             // its own source: a second walk's source may be written while the first walk runs.
@@ -979,7 +984,10 @@ fn walk_clause(code: &mut Value, data: &mut Data, d_nr: u32, frees: &[u32], trac
     }
 }
 
-#[expect(clippy::too_many_arguments, reason = "the walk's admission, handed over whole")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the walk's admission, handed over whole"
+)]
 fn apply_walk(
     code: &mut Value,
     data: &mut Data,
