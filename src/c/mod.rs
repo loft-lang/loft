@@ -4440,8 +4440,12 @@ fn framed(
     );
     // `(R-CSplit)`: a body over the size budget goes out as a chain of parts.
     let fr = format!("{name}__fr");
-    let text = split::split(storage, &held(ret).clone(), &fr, params, body)
-        .unwrap_or_else(|| format!("{storage} {} {fr}({params}) {{\n{body}}}\n", held(ret)));
+    let whole = format!("{storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
+    let text = match split::split(storage, &held(ret).clone(), &fr, params, body) {
+        Some(parts) if split::everywhere() => parts,
+        Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),
+        None => whole,
+    };
     let _ = write!(cx.gen_bodies.borrow_mut(), "\n{text}");
     let args: Vec<String> = if params == "void" {
         Vec::new()

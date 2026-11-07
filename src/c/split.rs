@@ -28,6 +28,10 @@
 //! the C it was before the split existed.  `LOFT_C_SPLIT=<n>` sets the budget (`1` the
 //! default, `0` off); `LOFT_NO_C_SPLIT=1` turns it off over any setting; `LOFT_TRACE_C_SPLIT=1`
 //! names each function over the budget, its parts and its frame size, or why it stayed whole.
+//!
+//! By default the parts are compiled by MSVC alone: the function is written both ways, the
+//! parts under `#if defined(_MSC_VER)` and the whole body under `#else` ([`everywhere`]).  The
+//! statements are the same in both, so no answer can differ.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -48,6 +52,20 @@ pub(crate) fn budget() -> Option<usize> {
             Some(Ok(0)) => None,
             Some(Ok(n)) => Some(n),
         }
+    })
+}
+
+/// Whether the parts are written for every C compiler: only where a budget was asked for
+/// (`LOFT_C_SPLIT=<n>`, `n > 1`, the split cells and a bisect).  By default the parts are written
+/// for MSVC alone, under `#if defined(_MSC_VER)`, with the whole function in the `#else` arm:
+/// gcc and clang stay linear on a large function, and a split costs a hot function its
+/// registers — a frame struct, its reset and two indirect calls per call (cbor `decode` 12x).
+pub(crate) fn everywhere() -> bool {
+    *crate::env_once!(@value bool, {
+        std::env::var("LOFT_C_SPLIT")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .is_some_and(|n| n > 1)
     })
 }
 
