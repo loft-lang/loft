@@ -2599,9 +2599,13 @@ Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range
                  left by no `break` or `continue` past its own exit — is updated with the
                  processor's operator, one flag per loop gathering every event the checked sum
                  answers null for (`acc` null on entry, a null `e`, an overflow, the sentinel);
-                 after the loop's exit a set flag makes `acc` null.  The outermost loop that
-                 admits a sum takes it.  An update (R-Range) proves plain stays that rule's.
-                 C only.
+                 after the loop's exit a set flag makes `acc` null.  A READ of `acc` inside
+                 the loop is `flag ? null : acc`, the checked value there.  A sum staged
+                 through a temp (`t = acc + e; …; acc = t`, as (R-SameRead) writes it, `t`
+                 written nowhere else) gives `t` a flag of its own — the sum's plus the step's
+                 events — so `t` and `acc` each read their own checked value.  The `Nullable`
+                 twins take part (the same silent arithmetic).  The outermost loop that admits
+                 a sum takes it.  An update (R-Range) proves plain stays that rule's.  C only.
 ```
 
 **The sum, in words.**  The checked sum is null from its first event on — a null stays null
@@ -2609,7 +2613,8 @@ through every later `+` and `-`, and none reports — and nothing inside the loo
 but its own updates, so the value it carries after an event is never seen; at the exit, the one
 place the loop's value is read, the flag makes it the checked answer.  Measured (C ÷ Rust):
 stage `blur_region` 3.20× → 2.00× (with the hoist clause, from 4.98×), drawing `render_lock`
-2.72× → 2.49×, `resize` 3.19× → 2.99×.  A sum the range proof already writes plain kept the
+2.72× → 2.49×, `resize` 3.19× → 2.99×; with reads and staged temps zttext `locate` 3.82× →
+1.95× (one test per step instead — the chain rule's form — measured 4.14×).  A sum the range proof already writes plain kept the
 flag at first, and blocked a loop clang had vectorised (`byte_walk` 2.19× → 4.26×): those are
 left to (R-Range).  `LOFT_NO_STICKY_SUM=1`; guard
 `loft-suite/rules/rewrites/R-StickySum/a-loop-sum-runs-plain-and-is-null-from-its-first-event.loft`.
