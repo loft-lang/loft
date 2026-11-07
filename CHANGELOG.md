@@ -80,6 +80,11 @@ key.
 test a different value than the one the reader sees matched.  Change the value in the arm's
 body, after the tests, or match on a copy (`t = s; match t { … }`).
 
+**`exp(x)` and `pow(E, x)` answer what C and Rust answer.**  Both now run the platform's `exp`
+instead of a general `pow`, which is faster and as close or closer to the true value.  An answer
+can move in its last bit (`exp(-1.5)` was `0.22313016014842985`, is `0.22313016014842982`); a
+test comparing a printed exponential digit for digit may need its expected value updated.
+
 **A float exactly halfway between two shortest forms prints the even one.**  `"{v}"` writes the
 shortest digits that read back as the value; when two of that length are equally near, the one
 ending in an even digit is taken — the rounding `{v:.2}` and every parse already used.  It shows
