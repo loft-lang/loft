@@ -205,6 +205,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-ElementPath)` | not counted — executor: the interpreter's element read operator |
 | `(R-Escape)` | not counted — meta: the contract every rewrite keeps |
 | `(R-ExitVector)` | `R-ExitVector` ir · `/record` ir |
+| `(R-ExpPow)` | `R-ExpPow` parse |
 | `(R-FastTable)` | not counted — executor: the stack access mode fixed per run |
 | `(R-FaultFlag)` | `R-FaultFlag` native |
 | `(R-FieldAppend)` | `R-FieldAppend` c, native · `/bare` c, native |
@@ -7652,6 +7653,32 @@ the type's parts and a disagreement stops the run naming the type.  Swept over a
 `tests/scripts` and bench programs, eager and lazy: none.  Planted a stale cache (every key cached
 as text): without the verify the keyed bench panics deep in `allocation.rs`; with it, at the
 first lookup, `type 97 (hash<E[id]>) caches keys [5], its parts derive [0]`.
+
+### `E` raised to a power is the exponential function
+
+```
+  (R-ExpPow)     `pow(E, x)` — the operator `OpPowFloat` / `OpPowSingle` or the stdlib
+                 call `pow` / `t_5float_pow` / `t_6single_pow`, whose base is the
+                 constant `E` (`OpMathEFloat()`, cast down for `single`) or a literal
+                 with exactly its bits — IS `exp(x)`: computed by the platform's `exp`
+                 (math function 10 of `OpMathFuncFloat` / `OpMathFuncSingle`) instead
+                 of its general `pow`.  A null (NaN) operand answers null, `±0` answers
+                 1, `-inf` answers 0, `+inf` and an overflow answer `+inf` — as `pow`
+                 does.  The answer may move in its LAST bit, toward the reference's
+                 (Rust's `f64::exp`, C's `exp`): an owner's decision recorded here.
+                 The stdlib `exp` keeps its `pow(E, self)` body, so every spelling
+                 folds.  Any other base is left to `pow`.
+```
+
+**In words.** `pow(E, x)` and `exp(x)` name one function, but a general `pow` computes it as
+`exp(x · ln E)` with the rounding of the double `E` carried in, while `exp` is the dedicated
+routine every reference language calls: faster, and as close or closer to the true value.  A
+user should not have to know the dedicated spelling.  One IR rewrite on the closed program
+(`src/exp_pow.rs`, in `compile::close_program` after `(R-ZeroCount)`), so every backend runs
+it; switch `LOFT_NO_EXP_POW`; guard
+`loft-suite/rules/rewrites/R-ExpPow/e-raised-to-a-power-is-the-exponential.loft`.  Measured
+on fixstep `approach` (§ the ship lane, `(Perf-Weight)`), where `exp` was the only operator
+over 2.7× its Rust twin.
 
 ### A text predicate over a case fold is answered without building the fold
 
