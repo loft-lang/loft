@@ -26,8 +26,7 @@
 //! - `a & lit` with a non-negative literal, when `a` is NON-SENTINEL (the mask of a null
 //!   is null — `op_logical_and_int` propagates it — so the operand must be proven first;
 //!   the corpus cell that pins this holds a null read from past a vector's end);
-//! - `a & b`, `a | b`, `a ^ b` over two non-negative ranges; `a >> k` over a ranged `a`; `a << k`
-//!   over a non-negative `a` whose top still fits;
+//! - `a & b`, `a | b`, `a ^ b` over two non-negative ranges; `a >> k` over a ranged `a`;
 //! - `+`, `-`, `*`, negation over ranged operands whose result fits `(i64::MIN, i64::MAX]`;
 //! - `/` and `%` by a ranged divisor that excludes zero (the sentinel is minted by a zero
 //!   divisor and by `MIN / -1`, and a ranged dividend is never `MIN`);
@@ -399,21 +398,6 @@ pub fn op_range<F: RangeFacts + ?Sized>(
                     }
                     let x = a(0)?;
                     Some((x.0 >> k, x.1 >> k))
-                }
-                // `a << k` of a non-negative range whose top still fits: the shift through
-                // `u64` is then the exact product by 2^k (`rgba`'s `(c & 255) << 24`).
-                ("OpSLeftInt", 2) => {
-                    let Value::Int(k) = args[1].unspan() else {
-                        return None;
-                    };
-                    if !(0..63).contains(k) {
-                        return None;
-                    }
-                    let x = a(0)?;
-                    if x.0 < 0 {
-                        return None;
-                    }
-                    fits(i128::from(x.0) << k, i128::from(x.1) << k)
                 }
                 // The store layout's facts: a length word is `u32`, a byte is a byte, and a
                 // text has no more characters than bytes.
