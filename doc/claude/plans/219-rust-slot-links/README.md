@@ -278,9 +278,29 @@ its rewrite is built); the general change each form priced, by reach:
 |---|--:|--:|---|---|
 | sort | 6.70× | 1.45× | every held element access tested its index twice → one test (runtime); a counter stepped down once per trip of `for _ in 0..x` from `x` is ≥ 1 in the body → `(R-Range)` relational step + index clauses (`_nn` accessors) | **built: 1.44×** |
 | cbor decode | 12.3× | 1.88× | `(R-CSplit)` splits a hot recursive function for MSVC's sake on every compiler → split only under `_MSC_VER`; a parked text buffer taken on every call → take it on the path that writes it | **split built: 2.13×**; the park open |
-| hex_field doc_read | 8.70× | 2.01× | a float read per call through `fread` → `(R-TypedRead)` float clause; several zero-push loops → `(R-PushFill)` several-vector clause; `x.f = ctor(…)` minted + copied → `(R-Place)` guarded-mint clause | open |
+| hex_field doc_read | 8.70× | 2.01× | a float read per call through `fread` → `(R-TypedRead)` float clause; several zero-push loops → `(R-PushFill)` several-vector clause; `x.f = ctor(…)` minted + copied → `(R-Place)` guarded-mint clause | **float clause built: 3.84×**; the rest open |
 | graphics clear | 6.96× | 1.97× | the bulk fill stores one `memcpy` per element, which clang does not vectorise → typed-store fill (runtime, `loft_fill8`) | **built: 1.81×** (fill_circle 1.50×, fill_star 1.20×) |
 | drawing render_marks, resize | 7.09×, 6.38× | 2.09×, 2.33× | `(R-GuardedChain)`'s plain copy is identical to the checked one (the held read's index is emitted from a clone, so the admitted operators are never found) → fix the identity; an overflow-only accumulator; small scratch vectors as frame arrays | **identity built: 4.38×, 4.37×** (render_lock 3.49×); the rest open |
+
+Second round, built (C ÷ Rust): `(R-Range)` open-end counter clause — a counted loop's step plain
+whatever its end (sum_loop 4.01× → 2.96×, render_marks 4.38× → 3.36×, resize 4.32× → 3.33×,
+render_lock 3.49× → 2.77×); `(R-SpecChain)` — a checked integer chain in a loop runs plain with
+one fallback flag (sum_loop → 1.00×, index_read 3.01× → 1.00×, binary_read 3.29× → 1.90×).
+Priced by hand, open (scratch hand forms `hf2/`): `(R-Invariant)` hoist clause and the guarded
+copy an inlined callee never gets (blur_region 4.98× → 1.99×, render_stage 3.85× → 1.75×); a
+sticky-flag sum guarded by an element-size scan (the resample → ~2.1×); `(R-GuardedChain)`
+guard hoisted to the outermost loop its leaves are linear in (draw_quads 4.30× → 1.23×,
+write_text 3.03× → 0.78×); an accumulator clause for variable steps (draw_line 3.03× → 1.32×,
+draw_bezier 3.72× → 2.45×); a comparison clause for `(R-Range)` and the non-null proof asking
+the range proof at a call (blend_pixel 3.68× → 1.53×); `(R-RangedCall)` loop guard for nests
+whose counters start at a field (roof_cone, roof_match, field_union, stencil_rotate → 1.6–2.5×),
+the accumulator rule under a guarded copy's facts (edgeset_count 3.92× → 1.01×), a callee-step
+clause (hex_neighbor 4.22× → 1.06×), an entry guard (`day` 2.83× → 1.24×, terrain_surface_at
+3.56× → 2.45×); `(R-PushFill)` nested window (grid 4.02× → 0.76×); `(R-Range)` abs clause and
+loop-end divisor (fov_rays 3.39× → 1.69×); a text clause for `(R-AppendTwin)` and a text window
+(materialise 3.11× → 1.82×); the hash table's per-probe cost (lru_mixed 3.20× → 2.64×);
+`exp` as its own operator (approach 2.87× → 0.92× — changes the last bit of a float: an owner's
+decision).
 
 Not a cost, measured: the per-call frame (`loft_frame_push`/`pop`, `build_rec` step 2: 0 %) and
 inlining the reference accessors (`lru_mixed` step 3: 2.5 %).

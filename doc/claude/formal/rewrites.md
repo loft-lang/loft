@@ -2560,6 +2560,33 @@ narrowing arm before the `Loop` arm in `emit.rs`.  Cell
 Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
 `ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
 
+### A checked integer chain runs plain, falling back on any null
+
+```
+  (R-SpecChain)  an integer local assigned a CHAIN of the silent checked operators — `+`,
+                 `-`, `*` and `&`, `|`, `^` — of two operators or more, one of them not
+                 proven plain by (R-Range), is written as the processor's operators: each
+                 operand evaluated once into a temp in the checked chain's order, the
+                 overflow builtins (`LOFT_ADD_OVF`, …) and plain tests gathering into one flag
+                 every event the checked chain answers null for — a null operand (one the
+                 proofs do not show non-null), an overflow, an inner result equal to the
+                 sentinel — and, on the flag, the chain recomputed checked from the same
+                 temps.  A product by a literal keeps `loft_mul` (its bounds fold against the
+                 constant) and tests its null answer.  A chain inside (R-GuardedChain)'s copy
+                 is that rule's.  C only.
+```
+
+**In words.**  Each checked operator answers null for exactly the events the flag collects
+and otherwise the bits of the processor's operator, and none of them reports anything; so
+with no event the plain chain IS the checked answer, and with one the checked chain answers
+itself.  What moves is the dependency chain: a checked operator compiles to selects on the
+value it produces, and a loop carrying that value (`acc = ((acc ^ i) + (i & 7)) & M`) waits on
+them every trip.  Measured (C ÷ Rust): sum_loop 2.96× → 1.00×, index_read 3.01× → 1.00×,
+binary_read 3.29× → 1.89×, binary_map 1.78× → 0.84×.  The product clause: with the overflow
+builtin, `par_reduce`'s `h * 1103515245` cost a high multiply on its chain (1.90× → 2.58×); with
+it, 1.85×.  `LOFT_NO_SPEC_CHAIN=1`; guard
+`loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-chain-runs-plain-and-falls-back-on-any-null.loft`.
+
 ### A counted loop's index chains run plain behind a guard
 
 ```

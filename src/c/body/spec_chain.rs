@@ -17,7 +17,9 @@
 //! An operator `(R-Range)` proves cannot fault is written plain and tested for nothing.  A
 //! chain whose every operator is proven plain is left to that rule, a single operator over two
 //! operands to the checked template (nothing to gain), and a chain inside a guarded loop's copy
-//! to `(R-GuardedChain)`.  `LOFT_NO_SPEC_CHAIN=1`.
+//! to `(R-GuardedChain)`.  Only inside a loop, where a carried value waits on the chain: outside
+//! one there is no chain to shorten, and the longer statement would cost a small function its
+//! `inline` (`(R-Inline)` counts statements).  `LOFT_NO_SPEC_CHAIN=1`.
 
 use super::{FnWriter, as_int};
 use crate::data::Value;
@@ -53,6 +55,7 @@ impl FnWriter<'_> {
         if crate::env_once!(std::env::var("LOFT_NO_SPEC_CHAIN").is_ok_and(|v| v != "0"))
             || !self.plain_chains.is_empty()
             || self.gen_elem.is_some()
+            || self.loops.is_empty()
         {
             return Ok(false);
         }
@@ -94,10 +97,22 @@ impl FnWriter<'_> {
                     let (a, b) = (vals[*lhs].clone(), vals[*rhs].clone());
                     let r = self.temp(super::CType::Int);
                     let plain = |op: &str| format!("{r} = ({a}) {op} ({b});");
+                    // A product by a literal keeps `loft_mul`, whose bounds fold against the
+                    // constant (the overflow builtin is a high multiply on the chain); its null
+                    // answer — an overflow, a null operand, the sentinel — sets the flag.
+                    let literal = |v: &str| v.starts_with("INT64_C(");
+                    if *name == "OpMulInt" && !*proven && (literal(&a) || literal(&b)) {
+                        self.line(ind, &format!("{r} = loft_mul({a}, {b});"));
+                        self.line(ind, &format!("{bad} |= ({r} == LOFT_NULL);"));
+                        vals.push(r);
+                        continue;
+                    }
+                    let site = format!("\"R-Range:{}\"", self.cx.data.def(self.d).name());
+                    let proof = |mac: &str| format!("{r} = {mac}({a}, {b}, {site});");
                     let line = match (*name, *proven) {
-                        ("OpAddInt", true) => plain("+"),
-                        ("OpMinInt", true) => plain("-"),
-                        ("OpMulInt", true) => plain("*"),
+                        ("OpAddInt", true) => proof("LOFT_PLAIN_ADD"),
+                        ("OpMinInt", true) => proof("LOFT_PLAIN_SUB"),
+                        ("OpMulInt", true) => proof("LOFT_PLAIN_MUL"),
                         ("OpAddInt", false) => format!("{bad} |= LOFT_ADD_OVF({a}, {b}, &{r});"),
                         ("OpMinInt", false) => format!("{bad} |= LOFT_SUB_OVF({a}, {b}, &{r});"),
                         ("OpMulInt", false) => format!("{bad} |= LOFT_MUL_OVF({a}, {b}, &{r});"),
@@ -105,6 +120,9 @@ impl FnWriter<'_> {
                         ("OpLorInt", _) => plain("|"),
                         _ => plain("^"),
                     };
+                    if *proven {
+                        crate::rewrite_census::fired("R-Range", 1);
+                    }
                     self.line(ind, &line);
                     // An inner result equal to the sentinel reads as null to the operator above.
                     if i != root && !*proven {
@@ -127,6 +145,9 @@ impl FnWriter<'_> {
 
     /// The operators of the chain under `x` and how many of them no proof writes plain.
     fn chain_census(&mut self, x: &Value, ops: &mut usize, open: &mut usize) {
+        if self.invariant_of(x).is_some() {
+            return;
+        }
         if let Value::Call(d, args) = x.unspan()
             && args.len() == 2
             && let Some(name) = chain_name(self.cx.data.def(*d).name())
@@ -149,7 +170,10 @@ impl FnWriter<'_> {
         nodes: &mut Vec<Node>,
         ind: usize,
     ) -> Result<usize, String> {
-        if let Value::Call(d, args) = x.unspan()
+        // A subchain an enclosing loop memoises (`(R-Invariant)`) is a leaf: its value is the
+        // memo, which `expr` answers.
+        if self.invariant_of(x).is_none()
+            && let Value::Call(d, args) = x.unspan()
             && args.len() == 2
             && let Some(name) = chain_name(self.cx.data.def(*d).name())
         {
