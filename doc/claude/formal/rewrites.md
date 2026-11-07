@@ -802,6 +802,14 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  value, and nothing observable moves even where the loop runs no trip
                  (`LOFT_NO_MEMO_HOIST=1`).  stage `render_stage` 3.73× → 2.50×, `blur_region`
                  4.99× → 3.20× Rust.
+                 FIELD CLAUSE (@PLN219): the window's root may also be a vector FIELD of an
+                 owned local — set once in the function as `OpGetField(holder, …)`, `holder`
+                 owning its store — where the push loop names `holder` nowhere: the inner row
+                 of `[for y { [for x { … }] }]`, built in the element the outer comprehension
+                 just carved.  Nothing in the loop can reach the record to read its lagging
+                 length, and the window's own conditions keep every other store unwritten.
+                 14_stdlib_vector `grid` 4.00× → 0.86× Rust (C); guard
+                 `loft-suite/rules/rewrites/R-PushFill/a-nested-comprehension-pushes-each-row-through-a-window.loft`.
 ```
 
 ```

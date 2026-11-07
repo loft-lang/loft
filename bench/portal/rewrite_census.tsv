@@ -867,8 +867,6 @@
 14_stdlib_vector	-	c	R-NoLocks	1
 14_stdlib_vector	-	c	R-NoThreads	1
 14_stdlib_vector	-	c	R-NonSentinelParam	20
-14_stdlib_vector	-	c	R-Push	2
-14_stdlib_vector	-	c	R-Push/sole	2
 14_stdlib_vector	-	c	R-Range	74
 14_stdlib_vector	-	c	R-Range/index	17
 14_stdlib_vector	-	c	R-RangedCall	13
@@ -914,7 +912,7 @@
 14_stdlib_vector	-	rust	R-LoopSlot	28
 14_stdlib_vector	-	rust	R-Mint	15
 14_stdlib_vector	-	rust	R-Push	10
-14_stdlib_vector	-	rust	R-PushFill	8
+14_stdlib_vector	-	rust	R-PushFill	10
 14_stdlib_vector	-	rust	R-PushFill/record	3
 14_stdlib_vector	-	rust	R-PushRec	3
 14_stdlib_vector	-	rust	R-Range	82

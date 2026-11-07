@@ -470,6 +470,34 @@ pub(crate) fn push_loop_body(lp: &Block) -> Option<Vec<&Value>> {
     }
 }
 
+/// The owned local `root` is a field of, where `root`'s one assignment in the function is
+/// `OpGetField(Var(holder), …)` and `holder` owns its store (`owned_local`).
+fn field_of_owned(data: &Data, def_nr: u32, root: u16) -> Option<u16> {
+    let vars = data.def(def_nr).variables();
+    let code = data.def(def_nr).code();
+    let mut holder = None;
+    let mut sets = 0;
+    code.walk(&mut |n| {
+        if let Value::Set(t, rhs) = n
+            && *t == root
+            && !matches!(rhs.unspan(), Value::Null)
+        {
+            sets += 1;
+            holder = match rhs.unspan() {
+                Value::Call(d, a) if data.def(*d).name() == "OpGetField" => {
+                    a.first().and_then(|x| match x.unspan() {
+                        Value::Var(h) => Some(*h),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            };
+        }
+    });
+    let h = holder?;
+    (sets == 1 && h < vars.count() && owned_local(vars, h) && !vars.is_captured(root)).then_some(h)
+}
+
 /// `@FR-R-PushFill`'s window clause — may the counted push loop `lp`, which [`push_loop`]
 /// answered `p` for, run its pushes through a [`crate::vector::PushWindow`]: a held element
 /// base, a local length, and the record's own length written once when the loop ends?
@@ -507,14 +535,26 @@ pub fn push_window_ok(
     let vars = data.def(def_nr).variables();
     let root = p.path.0;
     let root_is_retbuf = retbuf_var(data, def_nr) == Some(root);
+    // The FIELD clause: a root set once as a field of an owned local — the inner vector of a
+    // record a comprehension just carved (`[for y { [for x { … }] }]`) — is that local's alone
+    // while the loop names neither the local nor anything else that can reach it.
+    let holder = field_of_owned(data, def_nr, root);
     if root >= vars.count()
-        || !(owned_local(vars, root) || root_is_retbuf || work_buffer_arg(data, def_nr, root))
+        || !(owned_local(vars, root)
+            || root_is_retbuf
+            || work_buffer_arg(data, def_nr, root)
+            || holder.is_some())
     {
         return Err("the pushed vector's root is not exclusive".to_string());
     }
     let Some(body) = push_loop_body(lp) else {
         return Err("not a counted push loop".to_string());
     };
+    if let Some(h) = holder
+        && body.iter().any(|s| s.reads_var(h))
+    {
+        return Err("the loop names the record holding the pushed vector".to_string());
+    }
     let mut parts: Vec<&Value> = Vec::new();
     for s in body {
         // A counted push contributes its VALUE operand alone, and the path's own
