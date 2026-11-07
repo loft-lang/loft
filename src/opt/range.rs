@@ -461,19 +461,7 @@ fn call_range<F: RangeFacts + ?Sized>(
         } else if super::non_sentinel::non_sentinel(data, nn, arg) {
             nn2.insert(p, true);
         }
-        // A record argument's guarded fields (`@FR-R-RangedCall`): the callee reads the same
-        // record, so a field the caller's guard bounds is bounded there — unless the callee
-        // rebinds the parameter or writes that field.
-        if let Value::Var(x) = arg.unspan() {
-            for off in field_reads(data, def.code(), p) {
-                if let Some(fr) = rv.field(*x, off) {
-                    rv2.fields.insert((p, off), fr);
-                }
-            }
-        }
     }
-    let mut fkey: Vec<((u16, i64), Range)> = rv2.fields.iter().map(|(k, r)| (*k, *r)).collect();
-    fkey.sort_unstable();
     let mut stmts = body
         .operators
         .iter()
@@ -482,10 +470,10 @@ fn call_range<F: RangeFacts + ?Sized>(
     if stmts.next().is_none() {
         return answer(&nn2, &rv2, tail, depth + 1);
     }
-    if !ranged_calls_enabled() || (rv2.vars.is_empty() && rv2.fields.is_empty()) {
+    if !ranged_calls_enabled() || rv2.vars.is_empty() {
         return None;
     }
-    let memo_key = (std::ptr::from_ref(def) as usize, elem, key, fkey);
+    let memo_key = (std::ptr::from_ref(def) as usize, elem, key);
     if let Some(hit) = CALL_MEMO.with(|m| m.borrow().get(&memo_key).copied()) {
         return hit;
     }
@@ -503,7 +491,6 @@ fn call_range<F: RangeFacts + ?Sized>(
     let callee_nn = super::non_sentinel::non_sentinel_vars(data, def.variables(), code);
     let seeded = Ranges {
         vars: rv2.vars,
-        fields: rv2.fields,
         ..Ranges::default()
     };
     let callee_rv = range_vars(
@@ -545,46 +532,6 @@ fn call_range<F: RangeFacts + ?Sized>(
     answer
 }
 
-/// The integer fields `code` reads off parameter `p` (`p.f`), when it never rebinds `p`,
-/// writes none of them and hands `p` to no loft function (which could write them); empty
-/// otherwise.
-fn field_reads(data: &Data, code: &Value, p: u16) -> Vec<i64> {
-    let mut reads: Vec<i64> = Vec::new();
-    let mut writes: Vec<i64> = Vec::new();
-    let mut rebound = false;
-    code.walk(&mut |n| match n {
-        Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == p => rebound = true,
-        Value::Call(d, args)
-            if (*d as usize) < data.definitions.len()
-                && !matches!(data.def(*d).code(), Value::Null)
-                && args
-                    .iter()
-                    .any(|a| matches!(a.unspan(), Value::Var(v) if *v == p)) =>
-        {
-            rebound = true;
-        }
-        Value::Call(d, args) if (*d as usize) < data.definitions.len() && args.len() >= 2 => {
-            if let [Value::Var(v), Value::Int(f)] = [args[0].unspan(), args[1].unspan()]
-                && *v == p
-            {
-                match data.def(*d).name() {
-                    "OpGetInt" => reads.push(i64::from(*f)),
-                    name if name.starts_with("OpSet") => writes.push(i64::from(*f)),
-                    _ => {}
-                }
-            }
-        }
-        _ => {}
-    });
-    if rebound {
-        return Vec::new();
-    }
-    reads.retain(|f| !writes.contains(f));
-    reads.sort_unstable();
-    reads.dedup();
-    reads
-}
-
 thread_local! {
     /// How many longer-body analyses `call_range` is nested in right now.
     static LONG_DEPTH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
@@ -594,7 +541,7 @@ thread_local! {
     /// for the wrong body, which can drop an overflow guard.  [`begin_generation`] clears it.
     #[allow(clippy::type_complexity)]
     static CALL_MEMO: std::cell::RefCell<
-        HashMap<(usize, Option<u16>, Vec<Option<Range>>, Vec<((u16, i64), Range)>), Option<Range>>,
+        HashMap<(usize, Option<u16>, Vec<Option<Range>>), Option<Range>>,
     > =
         std::cell::RefCell::new(HashMap::new());
 }
