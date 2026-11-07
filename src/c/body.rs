@@ -7598,11 +7598,16 @@ impl<'a> FnWriter<'a> {
         }
         let global = crate::opt::non_sentinel::proven_param_flags(data, d).unwrap_or_default();
         let facts = self.nn_facts();
+        let over = self.range_override.last().cloned();
+        let ranges = over.as_deref().unwrap_or(&facts.1);
         let mut bits = 0u64;
         for (i, a) in args.iter().enumerate().take(super::NN_PARAMS) {
+            // A value the range proof bounds is never the sentinel: `rgba(x & 255, …)`, whose
+            // `|` the non-null proof does not close over.
             if cand.get(i).copied().unwrap_or(false)
                 && !global.get(i).copied().unwrap_or(false)
-                && crate::opt::non_sentinel::non_sentinel(data, &facts.0, a)
+                && (crate::opt::non_sentinel::non_sentinel(data, &facts.0, a)
+                    || crate::opt::range::range(data, &facts.0, ranges, a, 0).is_some())
             {
                 bits |= 1 << i;
             }
