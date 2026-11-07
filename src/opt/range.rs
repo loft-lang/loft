@@ -65,6 +65,9 @@ pub struct Ranges {
     /// Each ranged ELEMENT of a tuple local, by variable and element index: every
     /// assignment of the local answers that element in range ([`elem_range`]).
     pub elems: HashMap<(u16, u16), Range>,
+    /// `@FR-R-Range`'s relational step clause: ranges that hold throughout one loop's BODY,
+    /// by the loop's scope — narrower than the variable's range over the whole function.
+    pub bodies: HashMap<u16, Vec<(u16, Range)>>,
 }
 
 /// What [`range`] reads its leaves from: a variable's range, and a guarded field's.  A plain
@@ -761,6 +764,7 @@ pub fn range_vars(
         vars: HashMap::new(),
         fields: seeds.fields.clone(),
         elems: HashMap::new(),
+        bodies: HashMap::new(),
     };
     // `@FR-R-RangedCall`'s seeds — a variable the caller vouches for (a ranged variant's
     // parameter) holds its seed only while nothing in the code can change it: the fixpoint
@@ -1075,6 +1079,14 @@ fn seed_accumulators(
             if steps == 0 || writes != steps + 1 {
                 continue;
             }
+            if let Some((lp_scope, x_hi)) = step_down_by_trips(data, rv, bl, k, n, e)
+                && steps == 1
+            {
+                rv.vars.insert(n, (seed.0.min(0), seed.1));
+                rv.bodies.entry(lp_scope).or_default().push((n, (1, x_hi)));
+                counters.insert(n);
+                continue;
+            }
             if let Some(r) = fits(i128::from(seed.0) - bound, i128::from(seed.1) + bound) {
                 rv.vars.insert(n, r);
                 counters.insert(n);
@@ -1082,6 +1094,121 @@ fn seed_accumulators(
         }
         false
     });
+}
+
+/// `@FR-R-Range`'s RELATIONAL STEP clause: `n = x` (statement `k` of `bl`), then — later in
+/// `bl` — `for _ in 0..x { … n -= 1 }`, the loop's end set from `x` itself, with the one step
+/// `n = n - 1` the LAST statement on every path that holds it and under no nested loop, and
+/// neither `x` nor the end written in the loop.  Trip `t` (from 0) starts with at most `t`
+/// steps taken, and runs only while `t < x`, so before the step `n >= x - t >= 1`, and after
+/// the loop `n >= 0`.  Answers the loop's scope (where `n` lies in `1 ..= x.hi`) and `x.hi`;
+/// `n`'s range over the function is then `min(0, x.lo) ..= x.hi`.
+fn step_down_by_trips(
+    data: &Data,
+    rv: &Ranges,
+    bl: &crate::data::Block,
+    k: usize,
+    n: u16,
+    seed: &Value,
+) -> Option<(u16, i64)> {
+    let Value::Var(x) = seed.unspan() else {
+        return None;
+    };
+    let x = *x;
+    let (x_lo, x_hi) = rv.vars.get(&x).copied()?;
+    if x_lo < 0 {
+        return None;
+    }
+    let writes =
+        |v: &Value, var: u16| v.any_node(&mut |m| matches!(m, Value::Set(t, _) if *t == var));
+    // The statements between the seed and the loop write neither `n` nor `x`.
+    let mut later = bl.operators[k + 1..].iter();
+    let fb = loop {
+        let op = later.next()?;
+        if writes(op, n) {
+            break op;
+        }
+        if writes(op, x) {
+            return None;
+        }
+    };
+    let Value::Block(fb) = fb.unspan() else {
+        return None;
+    };
+    // `_range_end = x; index = -1; loop { index = index + 1; if end <= index break; … }`
+    let mut lp = None;
+    let mut end_from_x = None;
+    let mut index_from = None;
+    for op in &fb.operators {
+        match op.unspan() {
+            Value::Set(e, v) if matches!(v.unspan(), Value::Var(y) if *y == x) => {
+                end_from_x = Some(*e)
+            }
+            Value::Set(i, v) if matches!(v.unspan(), Value::Int(-1)) => index_from = Some(*i),
+            Value::Loop(l) if lp.is_none() => lp = Some(l),
+            Value::Line(_) => {}
+            _ => return None,
+        }
+    }
+    let (lp, end) = (lp?, end_from_x?);
+    let rc = crate::loop_shape::range_counters(lp, data).ok()?;
+    if rc.next.is_some()
+        || rc.inclusive
+        || Some(rc.index) != index_from
+        || !matches!(rc.hi.unspan(), Value::Var(h) if *h == end)
+    {
+        return None;
+    }
+    let body = &lp.operators[1..];
+    if body
+        .iter()
+        .any(|op| writes(op, x) || writes(op, end) || writes(op, rc.index))
+    {
+        return None;
+    }
+    // The one step, the last statement on its path, under no nested loop.
+    let is_step = |v: &Value| {
+        matches!(v.unspan(), Value::Set(t, e) if *t == n
+            && matches!(e.unspan(), Value::Call(d, a) if data.def(*d).name() == "OpMinInt"
+                && a.len() == 2
+                && matches!(a[0].unspan(), Value::Var(y) if *y == n)
+                && matches!(a[1].unspan(), Value::Int(1))))
+    };
+    fn ends_with_step(v: &Value, n: u16, is_step: &dyn Fn(&Value) -> bool) -> bool {
+        let writes_n = |v: &Value| v.any_node(&mut |m| matches!(m, Value::Set(t, _) if *t == n));
+        match v.unspan() {
+            _ if is_step(v) => true,
+            _ if !writes_n(v) => true,
+            Value::Block(b) => {
+                let ops: Vec<&Value> = b
+                    .operators
+                    .iter()
+                    .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+                    .collect();
+                match ops.split_last() {
+                    Some((last, rest)) => {
+                        rest.iter().all(|o| !writes_n(o)) && ends_with_step(last, n, is_step)
+                    }
+                    None => true,
+                }
+            }
+            Value::If(c, t, f) => {
+                !writes_n(c) && ends_with_step(t, n, is_step) && ends_with_step(f, n, is_step)
+            }
+            _ => false,
+        }
+    }
+    let ops: Vec<&Value> = body
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+        .collect();
+    let (last, rest) = ops.split_last()?;
+    if rest.iter().any(|o| writes(o, n)) || !ends_with_step(last, n, &is_step) {
+        return None;
+    }
+    // Nothing after the loop in `fb`, and after `fb` in `bl`, steps `n` again: the caller
+    // counted every write (`writes == steps + 1`).
+    Some((lp.scope, x_hi))
 }
 
 /// Find the seed `Set` of a counter: every `Set(counter, e)` whose `e` is not the step

@@ -218,6 +218,26 @@ LOFT_COLD static void loft_proof_failed(const char *site) {
 #define LOFT_PROVED(cond, site) ((void) (0 && (cond)))
 #endif
 
+/* `@FR-R-Range`'s index clause: an element index the range proof shows non-negative.  The C
+ * compiler is told so, and folds the accessor's from-the-end wrap away; under LOFT_VERIFY the
+ * claim is checked at `site` instead. */
+#if defined(LOFT_VERIFY)
+static inline int64_t loft_nonneg(int64_t x, const char *site) {
+    if (x < 0) loft_proof_failed(site);
+    return x;
+}
+#else
+static inline int64_t loft_nonneg(int64_t x, const char *site) {
+    (void) site;
+#if defined(__GNUC__) || defined(__clang__)
+    if (x < 0) __builtin_unreachable();
+#elif defined(_MSC_VER)
+    __assume(x >= 0);
+#endif
+    return x;
+}
+#endif
+
 /* `@FR-R-Range`'s plain operators, where the range proof showed the checked operator cannot
  * fault: the plain SIGNED C operator, which the compiler may reason about (a counted loop's step
  * through a wrapping or checked form is a loop GCC does not count).  Under LOFT_VERIFY each

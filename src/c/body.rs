@@ -2559,13 +2559,11 @@ impl<'a> FnWriter<'a> {
                     )));
                 }
                 let i = self.expr(idx, ind)?;
+                let (i, nn) = self.index_arg(idx, as_int(i)?);
                 let proof = self.held_proof(v, &h);
                 let (at, tail) = at(name == "OpGetVector");
                 Ok(Some(E::new(
-                    format!(
-                        "({proof}, loft_vh_get{at}({h}, {size}, {}{tail}))",
-                        as_int(i)?
-                    ),
+                    format!("({proof}, loft_vh_get{at}{nn}({h}, {size}, {i}{tail}))"),
                     K::Ref,
                 )))
             }
@@ -2623,11 +2621,9 @@ impl<'a> FnWriter<'a> {
                 };
                 let proof = self.held_proof(&vec, &held);
                 let (at, tail) = at(report);
+                let (index, nn) = self.index_arg(&idx, as_int(index)?);
                 Ok(Some(E::new(
-                    format!(
-                        "({proof}, {f}{at}({held}, {size}, {}, {fld}{tail}))",
-                        as_int(index)?
-                    ),
+                    format!("({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}{tail}))"),
                     k,
                 )))
             }
@@ -2656,6 +2652,7 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(&size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
                 let index = as_int(self.expr(&idx, ind)?)?;
+                let (index, nn) = self.index_arg(&idx, index);
                 let proof = self.held_proof(&vec, &held);
                 let (at, tail) = at(report);
                 let addr = match self.counter_index(&idx, &held) {
@@ -2663,7 +2660,7 @@ impl<'a> FnWriter<'a> {
                         crate::rewrite_census::fired("R-Base/counter", 1);
                         format!("loft_vh_at_addr({held}, {size}, {i})")
                     }
-                    None => format!("loft_vh_addr{at}({held}, {size}, {index}{tail})"),
+                    None => format!("loft_vh_addr{at}{nn}({held}, {size}, {index}{tail})"),
                 };
                 let call = if let [_, _, min] = args {
                     let min = c_long(Self::literal(min, "minimum")?);
@@ -2697,10 +2694,10 @@ impl<'a> FnWriter<'a> {
                 };
                 let proof = self.held_proof(&vec, &held);
                 let (at, tail) = at(report);
+                let (index, nn) = self.index_arg(&idx, as_int(index)?);
                 Ok(Some(E::new(
                     format!(
-                        "({proof}, {f}{at}({held}, {size}, {}, {fld}, {value}{tail}))",
-                        as_int(index)?
+                        "({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}, {value}{tail}))"
                     ),
                     K::Void,
                 )))
@@ -4498,6 +4495,60 @@ impl<'a> FnWriter<'a> {
     /// that assumes the parameters apart from the return buffer runs when a test of their
     /// store numbers says so at its entry, the plain one otherwise.
     fn loop_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        // `@FR-R-Range`'s relational step clause: a range that holds throughout this loop's
+        // body (`Ranges::bodies`) narrows the facts its statements are written under.
+        let narrowed = self.body_facts(b.scope);
+        let pushed = narrowed.is_some();
+        if let Some(facts) = narrowed {
+            self.range_override.push(std::rc::Rc::new(facts));
+        }
+        let r = self.loop_stmt_facts(b, ind);
+        if pushed {
+            self.range_override.pop();
+        }
+        r
+    }
+
+    /// The facts the body of the loop `scope` is written under where `Ranges::bodies` narrows a
+    /// variable there; `None` where it narrows none.
+    fn body_facts(&mut self, scope: u16) -> Option<crate::opt::range::Ranges> {
+        if crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0")) {
+            return None;
+        }
+        let facts = self.nn_facts();
+        let body = facts.1.bodies.get(&scope)?;
+        let mut over = self
+            .range_override
+            .last()
+            .map_or_else(|| facts.1.clone(), |o| (**o).clone());
+        for (v, r) in body {
+            over.vars.insert(*v, *r);
+        }
+        Some(over)
+    }
+
+    /// `@FR-R-Range`'s INDEX clause: an element index the range proof shows non-negative is
+    /// handed to the accessor as such (`loft_nonneg`), so its from-the-end wrap folds away.
+    /// Answers the argument and the accessor suffix (`_nn`, the accessors that test the index
+    /// with one unsigned compare).
+    fn index_arg(&mut self, idx: &Value, code: String) -> (String, &'static str) {
+        if crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0")) {
+            return (code, "");
+        }
+        let facts = self.nn_facts();
+        let over = self.range_override.last().cloned();
+        let ranges = over.as_deref().unwrap_or(&facts.1);
+        match crate::opt::range::range(self.cx.data, &facts.0, ranges, idx, 0) {
+            Some((lo, _)) if lo >= 0 => {
+                crate::rewrite_census::fired("R-Range/index", 1);
+                let site = format!("\"R-Range:{}\"", self.cx.data.def(self.d).name());
+                (format!("loft_nonneg({code}, {site})"), "_nn")
+            }
+            _ => (code, ""),
+        }
+    }
+
+    fn loop_stmt_facts(&mut self, b: &Block, ind: usize) -> Result<(), String> {
         let mut kept: Vec<u16> = self
             .lr
             .recs
