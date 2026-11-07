@@ -1084,6 +1084,92 @@ fn seed_accumulators(
         };
         (step.unsigned_abs() < (1u64 << 31)).then_some(sign * step)
     }
+    /// The CALLEE-STEP clause: `n = t.k` right after `t = f(…, n, …)` in one block — only
+    /// other `_ = t.j` reads between, so `t` holds that call's result — where every result of `f` (each `return`, and the
+    /// tail) is a tuple whose element `k` is `f`'s parameter `p` (the argument `n` is passed
+    /// as) or `p ± c` with a literal `c`, and `f` never writes `p`.  The step moves `n` by at
+    /// most the largest `|c|`: the value read is the one `n` held at the call, moved once.
+    fn call_step(data: &Data, code: &Value, acc: u16, set: &Value) -> Option<i64> {
+        let Value::Set(_, expr) = set else {
+            return None;
+        };
+        let Value::TupleGet(t, k) = expr.unspan() else {
+            return None;
+        };
+        let (t, k) = (*t, usize::from(*k));
+        // The block holding the step, and the call just before it.
+        let mut call: Option<(u32, &[Value])> = None;
+        code.any_node(&mut |node| {
+            let Value::Block(bl) = node else { return false };
+            let Some(j) = bl
+                .operators
+                .iter()
+                .position(|op| std::ptr::eq(op.unspan(), set))
+            else {
+                return false;
+            };
+            for op in bl.operators[..j].iter().rev() {
+                match op.unspan() {
+                    Value::Set(y, e)
+                        if *y != t && matches!(e.unspan(), Value::TupleGet(x, _) if *x == t) => {}
+                    Value::Set(x, e) if *x == t => {
+                        if let Value::Call(f, args) = e.unspan() {
+                            call = Some((*f, args.as_slice()));
+                        }
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            true
+        });
+        let (f, args) = call?;
+        if (f as usize) >= data.definitions.len() {
+            return None;
+        }
+        let p = args
+            .iter()
+            .position(|a| matches!(a.unspan(), Value::Var(x) if *x == acc))?;
+        let p = u16::try_from(p).ok()?;
+        let body = &data.def(f).code;
+        if matches!(body, Value::Null) {
+            return None;
+        }
+        // Element `k` of one result: `p` or `p ± c`, answering `|c|`.
+        let elem = |r: &Value| -> Option<i64> {
+            let Value::Tuple(items) = r.unspan() else {
+                return None;
+            };
+            let item = items.get(k)?;
+            if matches!(item.unspan(), Value::Var(x) if *x == p) {
+                return Some(0);
+            }
+            literal_step(data, p, item).map(i64::abs)
+        };
+        let mut most = 0i64;
+        let mut ok = true;
+        body.any_node(&mut |m| {
+            match m {
+                Value::Set(x, _) | Value::TuplePut(x, _, _) if *x == p => ok = false,
+                Value::Return(r) => match elem(r) {
+                    Some(c) => most = most.max(c),
+                    None => ok = false,
+                },
+                _ => {}
+            }
+            !ok
+        });
+        // The tail: a `return`, or a result tuple.
+        let Value::Block(top) = body.unspan() else {
+            return None;
+        };
+        match top.operators.last().map(Value::unspan) {
+            Some(Value::Return(_)) => {}
+            Some(r) => most = most.max(elem(r)?),
+            None => return None,
+        }
+        ok.then_some(most)
+    }
     /// How many times one entry of `lp` can run its body, or `None` when nothing bounds it.
     /// A character walk over a text the body never writes makes at most `size(T)` trips, a
     /// `u32` word.  A counted loop steps its counter by one from its single seed until the
@@ -1107,10 +1193,12 @@ fn seed_accumulators(
     /// `None` where a step is not one this clause reads.  `mult` is the product of the trip
     /// bounds of the loops between the seed's block and `node` (1 outside any loop), `None`
     /// once one of them is unbounded: a step under such a loop declines.
+    #[allow(clippy::too_many_arguments)]
     fn movement(
         data: &Data,
         walks: &std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
         rv: &Ranges,
+        code: &Value,
         node: &Value,
         acc: u16,
         mult: Option<i128>,
@@ -1121,7 +1209,10 @@ fn seed_accumulators(
         const CAP: i128 = 1 << 96;
         match node.unspan() {
             Value::Set(target, expr) if *target == acc => {
-                let step = i128::from(literal_step(data, acc, expr)?.unsigned_abs());
+                let step = match literal_step(data, acc, expr) {
+                    Some(c) => i128::from(c.unsigned_abs()),
+                    None => i128::from(call_step(data, code, acc, node.unspan())?),
+                };
                 *steps += 1;
                 Some(step * mult?)
             }
@@ -1133,7 +1224,7 @@ fn seed_accumulators(
                     .filter(|m| *m <= CAP);
                 let mut total: i128 = 0;
                 for op in &lp.operators {
-                    total += movement(data, walks, rv, op, acc, inner, steps)?;
+                    total += movement(data, walks, rv, code, op, acc, inner, steps)?;
                 }
                 Some(total)
             }
@@ -1142,7 +1233,7 @@ fn seed_accumulators(
                 let mut ok = true;
                 node.for_each_child(&mut |child| {
                     if ok {
-                        match movement(data, walks, rv, child, acc, mult, steps) {
+                        match movement(data, walks, rv, code, child, acc, mult, steps) {
                             Some(m) => total += m,
                             None => ok = false,
                         }
@@ -1182,7 +1273,9 @@ fn seed_accumulators(
                 bl.operators[k + 1..]
                     .iter()
                     .try_fold(0i128, |total, later| {
-                        Some(total + movement(data, walks, rv, later, n, Some(1), &mut steps)?)
+                        Some(
+                            total + movement(data, walks, rv, code, later, n, Some(1), &mut steps)?,
+                        )
                     });
             let Some(bound) = bound else { continue };
             if steps == 0 || writes != steps + 1 {
