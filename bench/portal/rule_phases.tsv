@@ -39,6 +39,7 @@ R-DischargeInto	parse	61	104	0	0	0	0
 R-ElemFirst	ir	5	0	8	0	0	0
 R-ExitVector	ir	28	0	337	0	0	0
 R-ExitVector/record	ir	1	0	2	0	0	0
+R-ExpPow	parse	61	127	0	0	0	0
 R-FaultFlag	native	5	0	0	0	0	7
 R-FieldAppend	c,native	25	0	0	0	85	150
 R-FieldAppend/bare	c,native	61	0	0	0	442	785

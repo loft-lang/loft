@@ -6,6 +6,7 @@
 01_fibonacci	-	c	R-CompleteWrite	4
 01_fibonacci	-	c	R-Counter	3
 01_fibonacci	-	c	R-DischargeInto	1
+01_fibonacci	-	c	R-ExpPow	2
 01_fibonacci	-	c	R-FormatAppend	1
 01_fibonacci	-	c	R-Fuse	38
 01_fibonacci	-	c	R-Fuse/jump	26
@@ -31,6 +32,7 @@
 01_fibonacci	-	rust	R-CompleteWrite	4
 01_fibonacci	-	rust	R-Counter	1
 01_fibonacci	-	rust	R-DischargeInto	1
+01_fibonacci	-	rust	R-ExpPow	2
 01_fibonacci	-	rust	R-FieldAppend/bare	8
 01_fibonacci	-	rust	R-FormatAppend	1
 01_fibonacci	-	rust	R-Fuse	38
@@ -60,6 +62,7 @@
 02_sum_loop	-	c	R-CompleteWrite	4
 02_sum_loop	-	c	R-Counter	7
 02_sum_loop	-	c	R-DischargeInto	1
+02_sum_loop	-	c	R-ExpPow	2
 02_sum_loop	-	c	R-FormatAppend	1
 02_sum_loop	-	c	R-Fuse	38
 02_sum_loop	-	c	R-Fuse/jump	26
@@ -86,6 +89,7 @@
 02_sum_loop	-	rust	R-CompleteWrite	4
 02_sum_loop	-	rust	R-Counter	2
 02_sum_loop	-	rust	R-DischargeInto	1
+02_sum_loop	-	rust	R-ExpPow	2
 02_sum_loop	-	rust	R-FieldAppend/bare	8
 02_sum_loop	-	rust	R-FormatAppend	1
 02_sum_loop	-	rust	R-Fuse	38
@@ -115,6 +119,7 @@
 03_sieve	-	c	R-CompleteWrite	4
 03_sieve	-	c	R-Counter	18
 03_sieve	-	c	R-DischargeInto	1
+03_sieve	-	c	R-ExpPow	2
 03_sieve	-	c	R-FormatAppend	1
 03_sieve	-	c	R-Fuse	41
 03_sieve	-	c	R-Fuse/jump	29
@@ -143,6 +148,7 @@
 03_sieve	-	rust	R-CompleteWrite	4
 03_sieve	-	rust	R-Counter	11
 03_sieve	-	rust	R-DischargeInto	1
+03_sieve	-	rust	R-ExpPow	2
 03_sieve	-	rust	R-FieldAppend/bare	8
 03_sieve	-	rust	R-FormatAppend	1
 03_sieve	-	rust	R-Fuse	41
@@ -174,6 +180,7 @@
 04_collatz	-	c	R-CompleteWrite	4
 04_collatz	-	c	R-Counter	24
 04_collatz	-	c	R-DischargeInto	1
+04_collatz	-	c	R-ExpPow	2
 04_collatz	-	c	R-FormatAppend	1
 04_collatz	-	c	R-Fuse	40
 04_collatz	-	c	R-Fuse/jump	29
@@ -203,6 +210,7 @@
 04_collatz	-	rust	R-CompleteWrite	4
 04_collatz	-	rust	R-Counter	13
 04_collatz	-	rust	R-DischargeInto	1
+04_collatz	-	rust	R-ExpPow	2
 04_collatz	-	rust	R-FieldAppend/bare	8
 04_collatz	-	rust	R-FormatAppend	1
 04_collatz	-	rust	R-Fuse	40
@@ -234,6 +242,7 @@
 05_mandelbrot	-	c	R-CompleteWrite	4
 05_mandelbrot	-	c	R-Counter	19
 05_mandelbrot	-	c	R-DischargeInto	1
+05_mandelbrot	-	c	R-ExpPow	2
 05_mandelbrot	-	c	R-FormatAppend	1
 05_mandelbrot	-	c	R-Fuse	40
 05_mandelbrot	-	c	R-Fuse/jump	28
@@ -260,6 +269,7 @@
 05_mandelbrot	-	rust	R-CompleteWrite	4
 05_mandelbrot	-	rust	R-Counter	8
 05_mandelbrot	-	rust	R-DischargeInto	1
+05_mandelbrot	-	rust	R-ExpPow	2
 05_mandelbrot	-	rust	R-FieldAppend/bare	8
 05_mandelbrot	-	rust	R-FormatAppend	1
 05_mandelbrot	-	rust	R-Fuse	40
@@ -290,6 +300,7 @@
 06_newton_sqrt	-	c	R-CompleteWrite	4
 06_newton_sqrt	-	c	R-Counter	12
 06_newton_sqrt	-	c	R-DischargeInto	1
+06_newton_sqrt	-	c	R-ExpPow	2
 06_newton_sqrt	-	c	R-FormatAppend	1
 06_newton_sqrt	-	c	R-Fuse	39
 06_newton_sqrt	-	c	R-Fuse/jump	27
@@ -318,6 +329,7 @@
 06_newton_sqrt	-	rust	R-CompleteWrite	4
 06_newton_sqrt	-	rust	R-Counter	6
 06_newton_sqrt	-	rust	R-DischargeInto	1
+06_newton_sqrt	-	rust	R-ExpPow	2
 06_newton_sqrt	-	rust	R-FaultFlag	1
 06_newton_sqrt	-	rust	R-FieldAppend/bare	8
 06_newton_sqrt	-	rust	R-FormatAppend	1
@@ -351,6 +363,7 @@
 07_string_build	-	c	R-CompleteWrite	4
 07_string_build	-	c	R-Counter	7
 07_string_build	-	c	R-DischargeInto	1
+07_string_build	-	c	R-ExpPow	2
 07_string_build	-	c	R-FormatAppend	2
 07_string_build	-	c	R-Fuse	38
 07_string_build	-	c	R-Fuse/jump	26
@@ -376,6 +389,7 @@
 07_string_build	-	rust	R-CompleteWrite	4
 07_string_build	-	rust	R-Counter	2
 07_string_build	-	rust	R-DischargeInto	1
+07_string_build	-	rust	R-ExpPow	2
 07_string_build	-	rust	R-FieldAppend/bare	8
 07_string_build	-	rust	R-FormatAppend	2
 07_string_build	-	rust	R-Fuse	38
@@ -405,6 +419,7 @@
 08_word_count	-	c	R-CompleteWrite	6
 08_word_count	-	c	R-Counter	10
 08_word_count	-	c	R-DischargeInto	2
+08_word_count	-	c	R-ExpPow	2
 08_word_count	-	c	R-FieldAppend/bare	18
 08_word_count	-	c	R-FormatAppend	1
 08_word_count	-	c	R-Fuse	38
@@ -438,6 +453,7 @@
 08_word_count	-	rust	R-CompleteWrite	6
 08_word_count	-	rust	R-Counter	5
 08_word_count	-	rust	R-DischargeInto	2
+08_word_count	-	rust	R-ExpPow	2
 08_word_count	-	rust	R-FieldAppend/bare	26
 08_word_count	-	rust	R-FormatAppend	1
 08_word_count	-	rust	R-Fuse	38
@@ -473,6 +489,7 @@
 09_matrix_mul	-	c	R-CompleteWrite	6
 09_matrix_mul	-	c	R-Counter	14
 09_matrix_mul	-	c	R-DischargeInto	1
+09_matrix_mul	-	c	R-ExpPow	2
 09_matrix_mul	-	c	R-FormatAppend	1
 09_matrix_mul	-	c	R-Fuse	40
 09_matrix_mul	-	c	R-Fuse/jump	28
@@ -502,6 +519,7 @@
 09_matrix_mul	-	rust	R-CompleteWrite	6
 09_matrix_mul	-	rust	R-Counter	4
 09_matrix_mul	-	rust	R-DischargeInto	1
+09_matrix_mul	-	rust	R-ExpPow	2
 09_matrix_mul	-	rust	R-FieldAppend/bare	8
 09_matrix_mul	-	rust	R-FormatAppend	1
 09_matrix_mul	-	rust	R-Fuse	40
@@ -535,6 +553,7 @@
 10_sort	-	c	R-CompleteWrite	4
 10_sort	-	c	R-Counter	23
 10_sort	-	c	R-DischargeInto	1
+10_sort	-	c	R-ExpPow	2
 10_sort	-	c	R-FormatAppend	1
 10_sort	-	c	R-Fuse	46
 10_sort	-	c	R-Fuse/field	3
@@ -567,6 +586,7 @@
 10_sort	-	rust	R-CompleteWrite	4
 10_sort	-	rust	R-Counter	15
 10_sort	-	rust	R-DischargeInto	1
+10_sort	-	rust	R-ExpPow	2
 10_sort	-	rust	R-FieldAppend/bare	8
 10_sort	-	rust	R-FormatAppend	1
 10_sort	-	rust	R-Fuse	46
@@ -604,6 +624,7 @@
 11_par	-	c	R-CompleteWrite	6
 11_par	-	c	R-Counter	7
 11_par	-	c	R-DischargeInto	1
+11_par	-	c	R-ExpPow	2
 11_par	-	c	R-FormatAppend	1
 11_par	-	c	R-Fuse	38
 11_par	-	c	R-Fuse/jump	28
@@ -631,6 +652,7 @@
 11_par	-	rust	R-CompleteWrite	6
 11_par	-	rust	R-Counter	3
 11_par	-	rust	R-DischargeInto	1
+11_par	-	rust	R-ExpPow	2
 11_par	-	rust	R-FaultFlag	1
 11_par	-	rust	R-FieldAppend/bare	8
 11_par	-	rust	R-FormatAppend	1
@@ -668,6 +690,7 @@
 12_drawing	-	c	R-Counter	167
 12_drawing	-	c	R-DischargeInto	1
 12_drawing	-	c	R-ElemFirst	2
+12_drawing	-	c	R-ExpPow	2
 12_drawing	-	c	R-FieldAppend/bare	2
 12_drawing	-	c	R-FormatAppend	1
 12_drawing	-	c	R-ForwardWalk	3
@@ -723,6 +746,7 @@
 12_drawing	-	rust	R-Counter	108
 12_drawing	-	rust	R-DischargeInto	1
 12_drawing	-	rust	R-ElemFirst	2
+12_drawing	-	rust	R-ExpPow	2
 12_drawing	-	rust	R-FieldAppend/bare	8
 12_drawing	-	rust	R-FormatAppend	1
 12_drawing	-	rust	R-ForwardWalk	3
@@ -776,6 +800,7 @@
 13_stdlib_text	-	c	R-CompleteWrite	4
 13_stdlib_text	-	c	R-Counter	66
 13_stdlib_text	-	c	R-DischargeInto	1
+13_stdlib_text	-	c	R-ExpPow	2
 13_stdlib_text	-	c	R-FieldAppend/bare	5
 13_stdlib_text	-	c	R-FormatAppend	4
 13_stdlib_text	-	c	R-Fuse	74
@@ -812,6 +837,7 @@
 13_stdlib_text	-	rust	R-CompleteWrite	4
 13_stdlib_text	-	rust	R-Counter	36
 13_stdlib_text	-	rust	R-DischargeInto	1
+13_stdlib_text	-	rust	R-ExpPow	2
 13_stdlib_text	-	rust	R-FieldAppend/bare	12
 13_stdlib_text	-	rust	R-FormatAppend	4
 13_stdlib_text	-	rust	R-Fuse	74
@@ -847,6 +873,7 @@
 14_stdlib_vector	-	c	R-Counter	130
 14_stdlib_vector	-	c	R-DischargeInto	1
 14_stdlib_vector	-	c	R-ElemFirst	1
+14_stdlib_vector	-	c	R-ExpPow	2
 14_stdlib_vector	-	c	R-FieldAppend/bare	2
 14_stdlib_vector	-	c	R-FormatAppend	1
 14_stdlib_vector	-	c	R-ForwardWalk	1
@@ -891,6 +918,7 @@
 14_stdlib_vector	-	rust	R-Counter	73
 14_stdlib_vector	-	rust	R-DischargeInto	1
 14_stdlib_vector	-	rust	R-ElemFirst	1
+14_stdlib_vector	-	rust	R-ExpPow	2
 14_stdlib_vector	-	rust	R-FieldAppend/bare	10
 14_stdlib_vector	-	rust	R-FormatAppend	1
 14_stdlib_vector	-	rust	R-ForwardWalk	1
@@ -937,6 +965,7 @@
 15_stdlib_keyed	-	c	R-CompleteWrite	19
 15_stdlib_keyed	-	c	R-Counter	116
 15_stdlib_keyed	-	c	R-DischargeInto	2
+15_stdlib_keyed	-	c	R-ExpPow	2
 15_stdlib_keyed	-	c	R-FieldAppend/bare	1
 15_stdlib_keyed	-	c	R-FormatAppend	1
 15_stdlib_keyed	-	c	R-Fuse	86
@@ -977,6 +1006,7 @@
 15_stdlib_keyed	-	rust	R-CompleteWrite	19
 15_stdlib_keyed	-	rust	R-Counter	72
 15_stdlib_keyed	-	rust	R-DischargeInto	2
+15_stdlib_keyed	-	rust	R-ExpPow	2
 15_stdlib_keyed	-	rust	R-FieldAppend/bare	9
 15_stdlib_keyed	-	rust	R-FormatAppend	1
 15_stdlib_keyed	-	rust	R-Fuse	86
@@ -1020,6 +1050,7 @@
 16_consumer_shapes	-	c	R-CompleteWrite	27
 16_consumer_shapes	-	c	R-Counter	245
 16_consumer_shapes	-	c	R-DischargeInto	1
+16_consumer_shapes	-	c	R-ExpPow	2
 16_consumer_shapes	-	c	R-FieldAppend	1
 16_consumer_shapes	-	c	R-FlatCopy	1
 16_consumer_shapes	-	c	R-FormatAppend	1
@@ -1081,6 +1112,7 @@
 16_consumer_shapes	-	rust	R-CompleteWrite	27
 16_consumer_shapes	-	rust	R-Counter	152
 16_consumer_shapes	-	rust	R-DischargeInto	1
+16_consumer_shapes	-	rust	R-ExpPow	2
 16_consumer_shapes	-	rust	R-FieldAppend	1
 16_consumer_shapes	-	rust	R-FieldAppend/bare	8
 16_consumer_shapes	-	rust	R-FlatCopy	1
@@ -1146,6 +1178,7 @@
 17_consumer_moros_dryopea	-	c	R-DischargeInto	1
 17_consumer_moros_dryopea	-	c	R-ExitVector	2
 17_consumer_moros_dryopea	-	c	R-ExitVector/record	2
+17_consumer_moros_dryopea	-	c	R-ExpPow	2
 17_consumer_moros_dryopea	-	c	R-FieldAppend	11
 17_consumer_moros_dryopea	-	c	R-FieldAppend/bare	9
 17_consumer_moros_dryopea	-	c	R-FormatAppend	1
@@ -1212,6 +1245,7 @@
 17_consumer_moros_dryopea	-	rust	R-DischargeInto	1
 17_consumer_moros_dryopea	-	rust	R-ExitVector	2
 17_consumer_moros_dryopea	-	rust	R-ExitVector/record	2
+17_consumer_moros_dryopea	-	rust	R-ExpPow	2
 17_consumer_moros_dryopea	-	rust	R-FieldAppend	11
 17_consumer_moros_dryopea	-	rust	R-FieldAppend/bare	16
 17_consumer_moros_dryopea	-	rust	R-FormatAppend	1
@@ -1273,6 +1307,7 @@
 18_consumer_crawler	-	c	R-Counter	374
 18_consumer_crawler	-	c	R-DischargeInto	7
 18_consumer_crawler	-	c	R-ExitVector	1
+18_consumer_crawler	-	c	R-ExpPow	2
 18_consumer_crawler	-	c	R-FieldAppend	2
 18_consumer_crawler	-	c	R-FieldAppend/bare	31
 18_consumer_crawler	-	c	R-FileHold	1
@@ -1341,6 +1376,7 @@
 18_consumer_crawler	-	rust	R-Counter	210
 18_consumer_crawler	-	rust	R-DischargeInto	7
 18_consumer_crawler	-	rust	R-ExitVector	1
+18_consumer_crawler	-	rust	R-ExpPow	2
 18_consumer_crawler	-	rust	R-FieldAppend	2
 18_consumer_crawler	-	rust	R-FieldAppend/bare	41
 18_consumer_crawler	-	rust	R-FileHold	1
@@ -1398,6 +1434,7 @@
 19_stdlib_par	-	c	R-CompleteWrite	11
 19_stdlib_par	-	c	R-Counter	54
 19_stdlib_par	-	c	R-DischargeInto	1
+19_stdlib_par	-	c	R-ExpPow	2
 19_stdlib_par	-	c	R-FieldAppend/bare	1
 19_stdlib_par	-	c	R-FormatAppend	1
 19_stdlib_par	-	c	R-ForwardWalk	2
@@ -1434,6 +1471,7 @@
 19_stdlib_par	-	rust	R-CompleteWrite	11
 19_stdlib_par	-	rust	R-Counter	26
 19_stdlib_par	-	rust	R-DischargeInto	1
+19_stdlib_par	-	rust	R-ExpPow	2
 19_stdlib_par	-	rust	R-FaultFlag	1
 19_stdlib_par	-	rust	R-FieldAppend/bare	9
 19_stdlib_par	-	rust	R-FormatAppend	1
@@ -1475,6 +1513,7 @@
 20_interpreter	-	c	R-CompleteWrite	14
 20_interpreter	-	c	R-Counter	39
 20_interpreter	-	c	R-DischargeInto	1
+20_interpreter	-	c	R-ExpPow	2
 20_interpreter	-	c	R-FieldAppend/bare	120
 20_interpreter	-	c	R-FormatAppend	1
 20_interpreter	-	c	R-ForwardWalk	1
@@ -1519,6 +1558,7 @@
 20_interpreter	-	rust	R-CompleteWrite	14
 20_interpreter	-	rust	R-Counter	24
 20_interpreter	-	rust	R-DischargeInto	1
+20_interpreter	-	rust	R-ExpPow	2
 20_interpreter	-	rust	R-FieldAppend/bare	12
 20_interpreter	-	rust	R-FormatAppend	1
 20_interpreter	-	rust	R-ForwardWalk	1
@@ -1562,6 +1602,7 @@
 21_tree	-	c	R-Demote	4
 21_tree	-	c	R-Demote/place	1
 21_tree	-	c	R-DischargeInto	1
+21_tree	-	c	R-ExpPow	2
 21_tree	-	c	R-FormatAppend	1
 21_tree	-	c	R-Fuse	90
 21_tree	-	c	R-Fuse/jump	41
@@ -1603,6 +1644,7 @@
 21_tree	-	rust	R-Demote	4
 21_tree	-	rust	R-Demote/place	1
 21_tree	-	rust	R-DischargeInto	1
+21_tree	-	rust	R-ExpPow	2
 21_tree	-	rust	R-FieldAppend/bare	8
 21_tree	-	rust	R-FormatAppend	1
 21_tree	-	rust	R-Fuse	90
@@ -1643,6 +1685,7 @@
 22_expr	-	c	R-CompleteWrite	5
 22_expr	-	c	R-Counter	12
 22_expr	-	c	R-DischargeInto	1
+22_expr	-	c	R-ExpPow	2
 22_expr	-	c	R-FormatAppend	1
 22_expr	-	c	R-Fuse	54
 22_expr	-	c	R-Fuse/jump	29
@@ -1674,6 +1717,7 @@
 22_expr	-	rust	R-CompleteWrite	5
 22_expr	-	rust	R-Counter	4
 22_expr	-	rust	R-DischargeInto	1
+22_expr	-	rust	R-ExpPow	2
 22_expr	-	rust	R-FieldAppend/bare	8
 22_expr	-	rust	R-FormatAppend	1
 22_expr	-	rust	R-Fuse	54
@@ -1706,6 +1750,7 @@
 23_lru	-	c	R-CompleteWrite	6
 23_lru	-	c	R-Counter	13
 23_lru	-	c	R-DischargeInto	1
+23_lru	-	c	R-ExpPow	2
 23_lru	-	c	R-FormatAppend	1
 23_lru	-	c	R-Fuse	46
 23_lru	-	c	R-Fuse/jump	27
@@ -1738,6 +1783,7 @@
 23_lru	-	rust	R-CompleteWrite	6
 23_lru	-	rust	R-Counter	6
 23_lru	-	rust	R-DischargeInto	1
+23_lru	-	rust	R-ExpPow	2
 23_lru	-	rust	R-FieldAppend/bare	8
 23_lru	-	rust	R-FormatAppend	1
 23_lru	-	rust	R-Fuse	46
@@ -1775,6 +1821,7 @@ arguments	bd4932067	c	R-CharWalk	2
 arguments	bd4932067	c	R-CompleteWrite	10
 arguments	bd4932067	c	R-Counter	29
 arguments	bd4932067	c	R-DischargeInto	2
+arguments	bd4932067	c	R-ExpPow	2
 arguments	bd4932067	c	R-FieldAppend	3
 arguments	bd4932067	c	R-FieldAppend/bare	27
 arguments	bd4932067	c	R-FormatAppend	13
@@ -1826,6 +1873,7 @@ arguments	bd4932067	rust	R-CharWalk	11
 arguments	bd4932067	rust	R-CompleteWrite	10
 arguments	bd4932067	rust	R-Counter	17
 arguments	bd4932067	rust	R-DischargeInto	2
+arguments	bd4932067	rust	R-ExpPow	2
 arguments	bd4932067	rust	R-FieldAppend	3
 arguments	bd4932067	rust	R-FieldAppend/bare	57
 arguments	bd4932067	rust	R-FormatAppend	13
@@ -1874,6 +1922,7 @@ assets	7108f3550+shapes@0.5.4	c	R-Const/fn	1
 assets	7108f3550+shapes@0.5.4	c	R-Counter	210
 assets	7108f3550+shapes@0.5.4	c	R-DischargeInto	1
 assets	7108f3550+shapes@0.5.4	c	R-ExitVector	2
+assets	7108f3550+shapes@0.5.4	c	R-ExpPow	2
 assets	7108f3550+shapes@0.5.4	c	R-FieldAppend/bare	8
 assets	7108f3550+shapes@0.5.4	c	R-FormatAppend	4
 assets	7108f3550+shapes@0.5.4	c	R-ForwardWalk	6
@@ -1939,6 +1988,7 @@ assets	7108f3550+shapes@0.5.4	rust	R-Const/fn	1
 assets	7108f3550+shapes@0.5.4	rust	R-Counter	143
 assets	7108f3550+shapes@0.5.4	rust	R-DischargeInto	1
 assets	7108f3550+shapes@0.5.4	rust	R-ExitVector	2
+assets	7108f3550+shapes@0.5.4	rust	R-ExpPow	2
 assets	7108f3550+shapes@0.5.4	rust	R-FieldAppend/bare	25
 assets	7108f3550+shapes@0.5.4	rust	R-FormatAppend	4
 assets	7108f3550+shapes@0.5.4	rust	R-ForwardWalk	6
@@ -1999,6 +2049,7 @@ cbor	bd4932067	c	R-Counter	319
 cbor	bd4932067	c	R-Destination	9
 cbor	bd4932067	c	R-DischargeInto	1
 cbor	bd4932067	c	R-ExitVector	6
+cbor	bd4932067	c	R-ExpPow	2
 cbor	bd4932067	c	R-FieldAppend	15
 cbor	bd4932067	c	R-FieldAppend/bare	11
 cbor	bd4932067	c	R-FormatAppend	1
@@ -2069,6 +2120,7 @@ cbor	bd4932067	rust	R-Counter	224
 cbor	bd4932067	rust	R-Destination	15
 cbor	bd4932067	rust	R-DischargeInto	1
 cbor	bd4932067	rust	R-ExitVector	6
+cbor	bd4932067	rust	R-ExpPow	2
 cbor	bd4932067	rust	R-FieldAppend/bare	13
 cbor	bd4932067	rust	R-FormatAppend	1
 cbor	bd4932067	rust	R-ForwardResult	3
@@ -2131,6 +2183,7 @@ crypto	bd4932067	c	R-CompleteWrite	15
 crypto	bd4932067	c	R-Counter	84
 crypto	bd4932067	c	R-DischargeInto	1
 crypto	bd4932067	c	R-ExitVector	1
+crypto	bd4932067	c	R-ExpPow	2
 crypto	bd4932067	c	R-FieldAppend/bare	7
 crypto	bd4932067	c	R-FormatAppend	1
 crypto	bd4932067	c	R-ForwardWalk	3
@@ -2182,6 +2235,7 @@ crypto	bd4932067	rust	R-CompleteWrite	15
 crypto	bd4932067	rust	R-Counter	55
 crypto	bd4932067	rust	R-DischargeInto	1
 crypto	bd4932067	rust	R-ExitVector	1
+crypto	bd4932067	rust	R-ExpPow	2
 crypto	bd4932067	rust	R-FieldAppend/bare	15
 crypto	bd4932067	rust	R-FormatAppend	1
 crypto	bd4932067	rust	R-ForwardWalk	3
@@ -2235,6 +2289,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Count
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-DischargeInto	1
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ElemFirst	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ExitVector	3
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ExpPow	2
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-FieldAppend	23
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-FieldAppend/bare	27
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Fill	2
@@ -2330,6 +2385,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Co
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-DischargeInto	1
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ElemFirst	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ExitVector	3
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-ExpPow	2
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-FieldAppend	35
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-FieldAppend/bare	8
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Fill	12
@@ -2414,6 +2470,7 @@ fixstep	394317324	c	R-Callee	3
 fixstep	394317324	c	R-CompleteWrite	18
 fixstep	394317324	c	R-Counter	201
 fixstep	394317324	c	R-DischargeInto	1
+fixstep	394317324	c	R-ExpPow	3
 fixstep	394317324	c	R-FieldAppend/bare	4
 fixstep	394317324	c	R-FormatAppend	1
 fixstep	394317324	c	R-ForwardWalk	6
@@ -2464,6 +2521,7 @@ fixstep	394317324	rust	R-CharWalk	10
 fixstep	394317324	rust	R-CompleteWrite	18
 fixstep	394317324	rust	R-Counter	112
 fixstep	394317324	rust	R-DischargeInto	1
+fixstep	394317324	rust	R-ExpPow	3
 fixstep	394317324	rust	R-FieldAppend/bare	12
 fixstep	394317324	rust	R-FormatAppend	1
 fixstep	394317324	rust	R-ForwardWalk	6
@@ -2510,6 +2568,7 @@ game_protocol	b4075f3fc	c	R-BoundedNest/kernel	1
 game_protocol	b4075f3fc	c	R-CompleteWrite	13
 game_protocol	b4075f3fc	c	R-Counter	28
 game_protocol	b4075f3fc	c	R-DischargeInto	1
+game_protocol	b4075f3fc	c	R-ExpPow	2
 game_protocol	b4075f3fc	c	R-FieldAppend/bare	1
 game_protocol	b4075f3fc	c	R-FormatAppend	1
 game_protocol	b4075f3fc	c	R-ForwardWalk	2
@@ -2550,6 +2609,7 @@ game_protocol	b4075f3fc	rust	R-CharWalk	10
 game_protocol	b4075f3fc	rust	R-CompleteWrite	13
 game_protocol	b4075f3fc	rust	R-Counter	17
 game_protocol	b4075f3fc	rust	R-DischargeInto	1
+game_protocol	b4075f3fc	rust	R-ExpPow	2
 game_protocol	b4075f3fc	rust	R-FieldAppend/bare	9
 game_protocol	b4075f3fc	rust	R-FormatAppend	1
 game_protocol	b4075f3fc	rust	R-ForwardWalk	2
@@ -2591,6 +2651,7 @@ glb	7108f3550	c	R-BoundedNest/kernel	1
 glb	7108f3550	c	R-CompleteWrite	50
 glb	7108f3550	c	R-Counter	166
 glb	7108f3550	c	R-DischargeInto	1
+glb	7108f3550	c	R-ExpPow	2
 glb	7108f3550	c	R-FieldAppend	6
 glb	7108f3550	c	R-FieldAppend/bare	2
 glb	7108f3550	c	R-FirstClaim	1
@@ -2653,6 +2714,7 @@ glb	7108f3550	rust	R-CharWalk	10
 glb	7108f3550	rust	R-CompleteWrite	50
 glb	7108f3550	rust	R-Counter	78
 glb	7108f3550	rust	R-DischargeInto	1
+glb	7108f3550	rust	R-ExpPow	2
 glb	7108f3550	rust	R-FieldAppend	11
 glb	7108f3550	rust	R-FieldAppend/bare	10
 glb	7108f3550	rust	R-FirstClaim	1
@@ -2711,6 +2773,7 @@ graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-CopyView	2
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Counter	361
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-DischargeInto	1
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-ExitVector	2
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-ExpPow	2
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-FieldAppend/bare	10
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Fill	6
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Fill/guarded	4
@@ -2790,6 +2853,7 @@ graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-CopyView	2
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-Counter	262
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-DischargeInto	1
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-ExitVector	2
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-ExpPow	2
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-FieldAppend	11
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-FieldAppend/bare	18
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-Fill	9
@@ -2862,6 +2926,7 @@ gridmesh	873da7f9a	c	R-CompleteWrite	22
 gridmesh	873da7f9a	c	R-Counter	166
 gridmesh	873da7f9a	c	R-DischargeInto	1
 gridmesh	873da7f9a	c	R-ExitVector	3
+gridmesh	873da7f9a	c	R-ExpPow	2
 gridmesh	873da7f9a	c	R-FormatAppend	1
 gridmesh	873da7f9a	c	R-ForwardWalk	3
 gridmesh	873da7f9a	c	R-Fuse	200
@@ -2921,6 +2986,7 @@ gridmesh	873da7f9a	rust	R-CompleteWrite	22
 gridmesh	873da7f9a	rust	R-Counter	108
 gridmesh	873da7f9a	rust	R-DischargeInto	1
 gridmesh	873da7f9a	rust	R-ExitVector	3
+gridmesh	873da7f9a	rust	R-ExpPow	2
 gridmesh	873da7f9a	rust	R-FieldAppend/bare	8
 gridmesh	873da7f9a	rust	R-FlatCopy	1
 gridmesh	873da7f9a	rust	R-FormatAppend	1
@@ -2982,6 +3048,7 @@ hex_body	3bdb69ef2	c	R-CompleteWrite	15
 hex_body	3bdb69ef2	c	R-Counter	192
 hex_body	3bdb69ef2	c	R-DischargeInto	4
 hex_body	3bdb69ef2	c	R-ExitVector	1
+hex_body	3bdb69ef2	c	R-ExpPow	2
 hex_body	3bdb69ef2	c	R-FieldAppend/bare	21
 hex_body	3bdb69ef2	c	R-FormatAppend	1
 hex_body	3bdb69ef2	c	R-ForwardWalk	2
@@ -3044,6 +3111,7 @@ hex_body	3bdb69ef2	rust	R-CompleteWrite	15
 hex_body	3bdb69ef2	rust	R-Counter	112
 hex_body	3bdb69ef2	rust	R-DischargeInto	4
 hex_body	3bdb69ef2	rust	R-ExitVector	1
+hex_body	3bdb69ef2	rust	R-ExpPow	2
 hex_body	3bdb69ef2	rust	R-FieldAppend/bare	13
 hex_body	3bdb69ef2	rust	R-FormatAppend	1
 hex_body	3bdb69ef2	rust	R-ForwardWalk	2
@@ -3097,6 +3165,7 @@ hex_draw	3bdb69ef2	c	R-CompleteWrite	52
 hex_draw	3bdb69ef2	c	R-Counter	981
 hex_draw	3bdb69ef2	c	R-DischargeInto	5
 hex_draw	3bdb69ef2	c	R-ExitVector	39
+hex_draw	3bdb69ef2	c	R-ExpPow	2
 hex_draw	3bdb69ef2	c	R-FieldAppend/bare	1
 hex_draw	3bdb69ef2	c	R-FormatAppend	1
 hex_draw	3bdb69ef2	c	R-ForwardWalk	2
@@ -3155,6 +3224,7 @@ hex_draw	3bdb69ef2	rust	R-CompleteWrite	52
 hex_draw	3bdb69ef2	rust	R-Counter	776
 hex_draw	3bdb69ef2	rust	R-DischargeInto	5
 hex_draw	3bdb69ef2	rust	R-ExitVector	39
+hex_draw	3bdb69ef2	rust	R-ExpPow	2
 hex_draw	3bdb69ef2	rust	R-FieldAppend	1
 hex_draw	3bdb69ef2	rust	R-FieldAppend/bare	9
 hex_draw	3bdb69ef2	rust	R-FileHold	4
@@ -3213,6 +3283,7 @@ hex_edge	3bdb69ef2	c	R-CompleteWrite	10
 hex_edge	3bdb69ef2	c	R-Counter	429
 hex_edge	3bdb69ef2	c	R-DischargeInto	2
 hex_edge	3bdb69ef2	c	R-ExitVector	32
+hex_edge	3bdb69ef2	c	R-ExpPow	2
 hex_edge	3bdb69ef2	c	R-FieldAppend/bare	3
 hex_edge	3bdb69ef2	c	R-FormatAppend	1
 hex_edge	3bdb69ef2	c	R-ForwardWalk	2
@@ -3265,6 +3336,7 @@ hex_edge	3bdb69ef2	rust	R-CompleteWrite	10
 hex_edge	3bdb69ef2	rust	R-Counter	365
 hex_edge	3bdb69ef2	rust	R-DischargeInto	2
 hex_edge	3bdb69ef2	rust	R-ExitVector	32
+hex_edge	3bdb69ef2	rust	R-ExpPow	2
 hex_edge	3bdb69ef2	rust	R-FieldAppend	1
 hex_edge	3bdb69ef2	rust	R-FieldAppend/bare	11
 hex_edge	3bdb69ef2	rust	R-FileHold	4
@@ -3321,6 +3393,7 @@ hex_field	3bdb69ef2	c	R-CompleteWrite	13
 hex_field	3bdb69ef2	c	R-Counter	913
 hex_field	3bdb69ef2	c	R-DischargeInto	2
 hex_field	3bdb69ef2	c	R-ExitVector	10
+hex_field	3bdb69ef2	c	R-ExpPow	2
 hex_field	3bdb69ef2	c	R-FieldAppend	1
 hex_field	3bdb69ef2	c	R-FieldAppend/bare	4
 hex_field	3bdb69ef2	c	R-FileHold	5
@@ -3387,6 +3460,7 @@ hex_field	3bdb69ef2	rust	R-CompleteWrite	13
 hex_field	3bdb69ef2	rust	R-Counter	515
 hex_field	3bdb69ef2	rust	R-DischargeInto	2
 hex_field	3bdb69ef2	rust	R-ExitVector	10
+hex_field	3bdb69ef2	rust	R-ExpPow	2
 hex_field	3bdb69ef2	rust	R-FieldAppend	1
 hex_field	3bdb69ef2	rust	R-FieldAppend/bare	12
 hex_field	3bdb69ef2	rust	R-FileHold	4
@@ -3448,6 +3522,7 @@ hex_fit	3bdb69ef2	c	R-Counter	1312
 hex_fit	3bdb69ef2	c	R-CtorLiteral	4
 hex_fit	3bdb69ef2	c	R-DischargeInto	7
 hex_fit	3bdb69ef2	c	R-ExitVector	46
+hex_fit	3bdb69ef2	c	R-ExpPow	2
 hex_fit	3bdb69ef2	c	R-FieldAppend/bare	1
 hex_fit	3bdb69ef2	c	R-FormatAppend	1
 hex_fit	3bdb69ef2	c	R-ForwardWalk	2
@@ -3511,6 +3586,7 @@ hex_fit	3bdb69ef2	rust	R-Counter	1326
 hex_fit	3bdb69ef2	rust	R-CtorLiteral	4
 hex_fit	3bdb69ef2	rust	R-DischargeInto	7
 hex_fit	3bdb69ef2	rust	R-ExitVector	46
+hex_fit	3bdb69ef2	rust	R-ExpPow	2
 hex_fit	3bdb69ef2	rust	R-FaultFlag	2
 hex_fit	3bdb69ef2	rust	R-FieldAppend	1
 hex_fit	3bdb69ef2	rust	R-FieldAppend/bare	14
@@ -3581,6 +3657,7 @@ hex_form	3bdb69ef2	c	R-CompleteWrite	50
 hex_form	3bdb69ef2	c	R-Counter	646
 hex_form	3bdb69ef2	c	R-DischargeInto	5
 hex_form	3bdb69ef2	c	R-ExitVector	15
+hex_form	3bdb69ef2	c	R-ExpPow	2
 hex_form	3bdb69ef2	c	R-FieldAppend/bare	10
 hex_form	3bdb69ef2	c	R-FormatAppend	1
 hex_form	3bdb69ef2	c	R-ForwardWalk	5
@@ -3643,6 +3720,7 @@ hex_form	3bdb69ef2	rust	R-CompleteWrite	50
 hex_form	3bdb69ef2	rust	R-Counter	500
 hex_form	3bdb69ef2	rust	R-DischargeInto	5
 hex_form	3bdb69ef2	rust	R-ExitVector	15
+hex_form	3bdb69ef2	rust	R-ExpPow	2
 hex_form	3bdb69ef2	rust	R-FieldAppend	1
 hex_form	3bdb69ef2	rust	R-FieldAppend/bare	15
 hex_form	3bdb69ef2	rust	R-FileHold	4
@@ -3701,6 +3779,7 @@ hex_grid	3bdb69ef2	c	R-BoundedNest/kernel	1
 hex_grid	3bdb69ef2	c	R-CompleteWrite	7
 hex_grid	3bdb69ef2	c	R-Counter	46
 hex_grid	3bdb69ef2	c	R-DischargeInto	1
+hex_grid	3bdb69ef2	c	R-ExpPow	2
 hex_grid	3bdb69ef2	c	R-FieldAppend/bare	2
 hex_grid	3bdb69ef2	c	R-FirstClaim	1
 hex_grid	3bdb69ef2	c	R-FormatAppend	1
@@ -3741,6 +3820,7 @@ hex_grid	3bdb69ef2	rust	R-CharWalk	10
 hex_grid	3bdb69ef2	rust	R-CompleteWrite	7
 hex_grid	3bdb69ef2	rust	R-Counter	29
 hex_grid	3bdb69ef2	rust	R-DischargeInto	1
+hex_grid	3bdb69ef2	rust	R-ExpPow	2
 hex_grid	3bdb69ef2	rust	R-FieldAppend/bare	10
 hex_grid	3bdb69ef2	rust	R-FirstClaim	1
 hex_grid	3bdb69ef2	rust	R-FormatAppend	1
@@ -3782,6 +3862,7 @@ hex_place	3bdb69ef2	c	R-CompleteWrite	48
 hex_place	3bdb69ef2	c	R-Counter	577
 hex_place	3bdb69ef2	c	R-DischargeInto	5
 hex_place	3bdb69ef2	c	R-ExitVector	15
+hex_place	3bdb69ef2	c	R-ExpPow	2
 hex_place	3bdb69ef2	c	R-FieldAppend/bare	2
 hex_place	3bdb69ef2	c	R-FirstClaim	1
 hex_place	3bdb69ef2	c	R-FormatAppend	1
@@ -3839,6 +3920,7 @@ hex_place	3bdb69ef2	rust	R-CompleteWrite	48
 hex_place	3bdb69ef2	rust	R-Counter	463
 hex_place	3bdb69ef2	rust	R-DischargeInto	5
 hex_place	3bdb69ef2	rust	R-ExitVector	15
+hex_place	3bdb69ef2	rust	R-ExpPow	2
 hex_place	3bdb69ef2	rust	R-FieldAppend	1
 hex_place	3bdb69ef2	rust	R-FieldAppend/bare	10
 hex_place	3bdb69ef2	rust	R-FileHold	4
@@ -3901,6 +3983,7 @@ hex_recover	3bdb69ef2	c	R-Counter	840
 hex_recover	3bdb69ef2	c	R-CtorLiteral	3
 hex_recover	3bdb69ef2	c	R-DischargeInto	5
 hex_recover	3bdb69ef2	c	R-ExitVector	15
+hex_recover	3bdb69ef2	c	R-ExpPow	2
 hex_recover	3bdb69ef2	c	R-FieldAppend/bare	11
 hex_recover	3bdb69ef2	c	R-FormatAppend	1
 hex_recover	3bdb69ef2	c	R-FormatAppend/c	1
@@ -3975,6 +4058,7 @@ hex_recover	3bdb69ef2	rust	R-Counter	695
 hex_recover	3bdb69ef2	rust	R-CtorLiteral	3
 hex_recover	3bdb69ef2	rust	R-DischargeInto	5
 hex_recover	3bdb69ef2	rust	R-ExitVector	15
+hex_recover	3bdb69ef2	rust	R-ExpPow	2
 hex_recover	3bdb69ef2	rust	R-FaultFlag	2
 hex_recover	3bdb69ef2	rust	R-FieldAppend	1
 hex_recover	3bdb69ef2	rust	R-FieldAppend/bare	16
@@ -4042,6 +4126,7 @@ hex_roof	3bdb69ef2	c	R-CompleteWrite	15
 hex_roof	3bdb69ef2	c	R-Counter	994
 hex_roof	3bdb69ef2	c	R-DischargeInto	2
 hex_roof	3bdb69ef2	c	R-ExitVector	34
+hex_roof	3bdb69ef2	c	R-ExpPow	2
 hex_roof	3bdb69ef2	c	R-FieldAppend/bare	2
 hex_roof	3bdb69ef2	c	R-FirstClaim	1
 hex_roof	3bdb69ef2	c	R-FlatCopy	3
@@ -4100,6 +4185,7 @@ hex_roof	3bdb69ef2	rust	R-CompleteWrite	15
 hex_roof	3bdb69ef2	rust	R-Counter	598
 hex_roof	3bdb69ef2	rust	R-DischargeInto	2
 hex_roof	3bdb69ef2	rust	R-ExitVector	34
+hex_roof	3bdb69ef2	rust	R-ExpPow	2
 hex_roof	3bdb69ef2	rust	R-FieldAppend	1
 hex_roof	3bdb69ef2	rust	R-FieldAppend/bare	10
 hex_roof	3bdb69ef2	rust	R-FileHold	4
@@ -4158,6 +4244,7 @@ hex_shape	3bdb69ef2	c	R-CompleteWrite	80
 hex_shape	3bdb69ef2	c	R-Counter	765
 hex_shape	3bdb69ef2	c	R-DischargeInto	5
 hex_shape	3bdb69ef2	c	R-ExitVector	22
+hex_shape	3bdb69ef2	c	R-ExpPow	2
 hex_shape	3bdb69ef2	c	R-FieldAppend/bare	1
 hex_shape	3bdb69ef2	c	R-FormatAppend	1
 hex_shape	3bdb69ef2	c	R-ForwardWalk	2
@@ -4220,6 +4307,7 @@ hex_shape	3bdb69ef2	rust	R-CompleteWrite	80
 hex_shape	3bdb69ef2	rust	R-Counter	625
 hex_shape	3bdb69ef2	rust	R-DischargeInto	5
 hex_shape	3bdb69ef2	rust	R-ExitVector	22
+hex_shape	3bdb69ef2	rust	R-ExpPow	2
 hex_shape	3bdb69ef2	rust	R-FieldAppend	1
 hex_shape	3bdb69ef2	rust	R-FieldAppend/bare	9
 hex_shape	3bdb69ef2	rust	R-FileHold	4
@@ -4281,6 +4369,7 @@ hex_terrain	3bdb69ef2	c	R-CompleteWrite	36
 hex_terrain	3bdb69ef2	c	R-Counter	417
 hex_terrain	3bdb69ef2	c	R-DischargeInto	1
 hex_terrain	3bdb69ef2	c	R-ExitVector	10
+hex_terrain	3bdb69ef2	c	R-ExpPow	6
 hex_terrain	3bdb69ef2	c	R-FieldAppend/bare	12
 hex_terrain	3bdb69ef2	c	R-FormatAppend	1
 hex_terrain	3bdb69ef2	c	R-ForwardWalk	2
@@ -4344,6 +4433,7 @@ hex_terrain	3bdb69ef2	rust	R-CompleteWrite	36
 hex_terrain	3bdb69ef2	rust	R-Counter	245
 hex_terrain	3bdb69ef2	rust	R-DischargeInto	1
 hex_terrain	3bdb69ef2	rust	R-ExitVector	10
+hex_terrain	3bdb69ef2	rust	R-ExpPow	6
 hex_terrain	3bdb69ef2	rust	R-FieldAppend/bare	22
 hex_terrain	3bdb69ef2	rust	R-FormatAppend	1
 hex_terrain	3bdb69ef2	rust	R-ForwardWalk	2
@@ -4400,6 +4490,7 @@ hex_way	3bdb69ef2	c	R-CompleteWrite	9
 hex_way	3bdb69ef2	c	R-Counter	552
 hex_way	3bdb69ef2	c	R-DischargeInto	2
 hex_way	3bdb69ef2	c	R-ExitVector	34
+hex_way	3bdb69ef2	c	R-ExpPow	2
 hex_way	3bdb69ef2	c	R-FieldAppend/bare	2
 hex_way	3bdb69ef2	c	R-FirstClaim	1
 hex_way	3bdb69ef2	c	R-FormatAppend	1
@@ -4457,6 +4548,7 @@ hex_way	3bdb69ef2	rust	R-CompleteWrite	9
 hex_way	3bdb69ef2	rust	R-Counter	392
 hex_way	3bdb69ef2	rust	R-DischargeInto	2
 hex_way	3bdb69ef2	rust	R-ExitVector	34
+hex_way	3bdb69ef2	rust	R-ExpPow	2
 hex_way	3bdb69ef2	rust	R-FieldAppend	1
 hex_way	3bdb69ef2	rust	R-FieldAppend/bare	10
 hex_way	3bdb69ef2	rust	R-FileHold	4
@@ -4512,6 +4604,7 @@ hex_world	3bdb69ef2	c	R-CompleteWrite	12
 hex_world	3bdb69ef2	c	R-Counter	53
 hex_world	3bdb69ef2	c	R-DischargeInto	1
 hex_world	3bdb69ef2	c	R-ExitVector	1
+hex_world	3bdb69ef2	c	R-ExpPow	2
 hex_world	3bdb69ef2	c	R-FieldAppend	2
 hex_world	3bdb69ef2	c	R-FieldAppend/bare	1
 hex_world	3bdb69ef2	c	R-FlatCopy	2
@@ -4560,6 +4653,7 @@ hex_world	3bdb69ef2	rust	R-CompleteWrite	12
 hex_world	3bdb69ef2	rust	R-Counter	36
 hex_world	3bdb69ef2	rust	R-DischargeInto	1
 hex_world	3bdb69ef2	rust	R-ExitVector	1
+hex_world	3bdb69ef2	rust	R-ExpPow	2
 hex_world	3bdb69ef2	rust	R-FieldAppend	3
 hex_world	3bdb69ef2	rust	R-FieldAppend/bare	9
 hex_world	3bdb69ef2	rust	R-FileHold	2
@@ -4611,6 +4705,7 @@ html	dd260f04c	c	R-CharWalk	1
 html	dd260f04c	c	R-CompleteWrite	6
 html	dd260f04c	c	R-Counter	23
 html	dd260f04c	c	R-DischargeInto	1
+html	dd260f04c	c	R-ExpPow	2
 html	dd260f04c	c	R-FieldAppend/bare	8
 html	dd260f04c	c	R-FormatAppend	2
 html	dd260f04c	c	R-Fuse	37
@@ -4642,6 +4737,7 @@ html	dd260f04c	rust	R-CharWalk	11
 html	dd260f04c	rust	R-CompleteWrite	6
 html	dd260f04c	rust	R-Counter	15
 html	dd260f04c	rust	R-DischargeInto	1
+html	dd260f04c	rust	R-ExpPow	2
 html	dd260f04c	rust	R-FieldAppend/bare	10
 html	dd260f04c	rust	R-FormatAppend	2
 html	dd260f04c	rust	R-Fuse	37
@@ -4674,6 +4770,7 @@ markdown	dd260f04c	c	R-CompleteWrite	7
 markdown	dd260f04c	c	R-Counter	126
 markdown	dd260f04c	c	R-DischargeInto	1
 markdown	dd260f04c	c	R-ExitVector	5
+markdown	dd260f04c	c	R-ExpPow	2
 markdown	dd260f04c	c	R-FieldAppend/bare	22
 markdown	dd260f04c	c	R-FormatAppend	65
 markdown	dd260f04c	c	R-ForwardWalk	2
@@ -4716,6 +4813,7 @@ markdown	dd260f04c	rust	R-CompleteWrite	7
 markdown	dd260f04c	rust	R-Counter	67
 markdown	dd260f04c	rust	R-DischargeInto	1
 markdown	dd260f04c	rust	R-ExitVector	5
+markdown	dd260f04c	rust	R-ExpPow	2
 markdown	dd260f04c	rust	R-FieldAppend/bare	13
 markdown	dd260f04c	rust	R-FormatAppend	65
 markdown	dd260f04c	rust	R-ForwardWalk	2
@@ -4753,6 +4851,7 @@ mesh3d	7108f3550	c	R-BoundedNest/kernel	1
 mesh3d	7108f3550	c	R-CompleteWrite	50
 mesh3d	7108f3550	c	R-Counter	186
 mesh3d	7108f3550	c	R-DischargeInto	1
+mesh3d	7108f3550	c	R-ExpPow	2
 mesh3d	7108f3550	c	R-FieldAppend	2
 mesh3d	7108f3550	c	R-FieldAppend/bare	4
 mesh3d	7108f3550	c	R-FormatAppend	1
@@ -4815,6 +4914,7 @@ mesh3d	7108f3550	rust	R-CharWalk	10
 mesh3d	7108f3550	rust	R-CompleteWrite	50
 mesh3d	7108f3550	rust	R-Counter	99
 mesh3d	7108f3550	rust	R-DischargeInto	1
+mesh3d	7108f3550	rust	R-ExpPow	2
 mesh3d	7108f3550	rust	R-FieldAppend	11
 mesh3d	7108f3550	rust	R-FieldAppend/bare	12
 mesh3d	7108f3550	rust	R-FlatCopy	2
@@ -4875,6 +4975,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Destination	9
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-DischargeInto	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-ElemFirst	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-ExitVector	6
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-ExpPow	2
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-FieldAppend/bare	8
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-FormatAppend	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-ForwardResult	3
@@ -4947,6 +5048,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-Destination	30
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-DischargeInto	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-ElemFirst	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-ExitVector	6
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-ExpPow	2
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-FieldAppend/bare	20
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-FormatAppend	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-ForwardResult	3
@@ -5009,6 +5111,7 @@ random	bd4932067	c	R-BoundedNest/kernel	1
 random	bd4932067	c	R-CompleteWrite	12
 random	bd4932067	c	R-Counter	76
 random	bd4932067	c	R-DischargeInto	1
+random	bd4932067	c	R-ExpPow	2
 random	bd4932067	c	R-FormatAppend	1
 random	bd4932067	c	R-ForwardWalk	1
 random	bd4932067	c	R-Fuse	65
@@ -5044,6 +5147,7 @@ random	bd4932067	rust	R-CharWalk	10
 random	bd4932067	rust	R-CompleteWrite	12
 random	bd4932067	rust	R-Counter	43
 random	bd4932067	rust	R-DischargeInto	1
+random	bd4932067	rust	R-ExpPow	2
 random	bd4932067	rust	R-FieldAppend/bare	8
 random	bd4932067	rust	R-FormatAppend	1
 random	bd4932067	rust	R-ForwardWalk	1
@@ -5083,6 +5187,7 @@ server	b4075f3fc	c	R-BoundedNest/kernel	1
 server	b4075f3fc	c	R-CompleteWrite	29
 server	b4075f3fc	c	R-Counter	31
 server	b4075f3fc	c	R-DischargeInto	2
+server	b4075f3fc	c	R-ExpPow	2
 server	b4075f3fc	c	R-FieldAppend	14
 server	b4075f3fc	c	R-FieldAppend/bare	1
 server	b4075f3fc	c	R-FormatAppend	1
@@ -5122,6 +5227,7 @@ server	b4075f3fc	rust	R-CharWalk	10
 server	b4075f3fc	rust	R-CompleteWrite	29
 server	b4075f3fc	rust	R-Counter	16
 server	b4075f3fc	rust	R-DischargeInto	2
+server	b4075f3fc	rust	R-ExpPow	2
 server	b4075f3fc	rust	R-FieldAppend	14
 server	b4075f3fc	rust	R-FieldAppend/bare	24
 server	b4075f3fc	rust	R-FormatAppend	1
@@ -5161,6 +5267,7 @@ shapes	873da7f9a	c	R-CompleteWrite	16
 shapes	873da7f9a	c	R-Counter	40
 shapes	873da7f9a	c	R-DischargeInto	1
 shapes	873da7f9a	c	R-ElemFirst	1
+shapes	873da7f9a	c	R-ExpPow	2
 shapes	873da7f9a	c	R-FieldAppend/bare	2
 shapes	873da7f9a	c	R-FormatAppend	1
 shapes	873da7f9a	c	R-ForwardWalk	2
@@ -5208,6 +5315,7 @@ shapes	873da7f9a	rust	R-CompleteWrite	16
 shapes	873da7f9a	rust	R-Counter	24
 shapes	873da7f9a	rust	R-DischargeInto	1
 shapes	873da7f9a	rust	R-ElemFirst	1
+shapes	873da7f9a	rust	R-ExpPow	2
 shapes	873da7f9a	rust	R-FieldAppend/bare	9
 shapes	873da7f9a	rust	R-FormatAppend	1
 shapes	873da7f9a	rust	R-ForwardWalk	2
@@ -5252,6 +5360,7 @@ ssh	b4075f3fc	c	R-BoundedNest/kernel	1
 ssh	b4075f3fc	c	R-CompleteWrite	8
 ssh	b4075f3fc	c	R-Counter	21
 ssh	b4075f3fc	c	R-DischargeInto	1
+ssh	b4075f3fc	c	R-ExpPow	2
 ssh	b4075f3fc	c	R-FormatAppend	1
 ssh	b4075f3fc	c	R-ForwardWalk	1
 ssh	b4075f3fc	c	R-Fuse	42
@@ -5285,6 +5394,7 @@ ssh	b4075f3fc	rust	R-CharWalk	10
 ssh	b4075f3fc	rust	R-CompleteWrite	8
 ssh	b4075f3fc	rust	R-Counter	17
 ssh	b4075f3fc	rust	R-DischargeInto	1
+ssh	b4075f3fc	rust	R-ExpPow	2
 ssh	b4075f3fc	rust	R-FieldAppend/bare	8
 ssh	b4075f3fc	rust	R-FormatAppend	1
 ssh	b4075f3fc	rust	R-ForwardWalk	1
@@ -5325,6 +5435,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-CopyView	2
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Counter	446
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-DischargeInto	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-ExitVector	3
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-ExpPow	2
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-FieldAppend	4
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-FieldAppend/bare	6
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-FormatAppend	39
@@ -5402,6 +5513,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-CopyView	2
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-Counter	307
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-DischargeInto	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-ExitVector	3
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-ExpPow	2
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-FieldAppend	25
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-FieldAppend/bare	14
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-Fill	9
@@ -5477,6 +5589,7 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-CopyView	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Counter	398
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-DischargeInto	1
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-ExitVector	3
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-ExpPow	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-FieldAppend/bare	12
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-FormatAppend	37
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-ForwardWalk	12
@@ -5547,6 +5660,7 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-CopyView	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-Counter	282
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-DischargeInto	1
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-ExitVector	3
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-ExpPow	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-FieldAppend	11
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-FieldAppend/bare	19
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-Fill	9
@@ -5615,6 +5729,7 @@ time	394317324	c	R-CompleteWrite	42
 time	394317324	c	R-Counter	113
 time	394317324	c	R-DischargeInto	1
 time	394317324	c	R-ExitVector	1
+time	394317324	c	R-ExpPow	2
 time	394317324	c	R-FieldAppend/bare	1
 time	394317324	c	R-FormatAppend	1
 time	394317324	c	R-ForwardWalk	1
@@ -5655,6 +5770,7 @@ time	394317324	rust	R-CompleteWrite	42
 time	394317324	rust	R-Counter	58
 time	394317324	rust	R-DischargeInto	1
 time	394317324	rust	R-ExitVector	1
+time	394317324	rust	R-ExpPow	2
 time	394317324	rust	R-FieldAppend/bare	9
 time	394317324	rust	R-FormatAppend	1
 time	394317324	rust	R-ForwardWalk	1
@@ -5700,6 +5816,7 @@ tween	873da7f9a	c	R-Callee	1
 tween	873da7f9a	c	R-CompleteWrite	13
 tween	873da7f9a	c	R-Counter	111
 tween	873da7f9a	c	R-DischargeInto	1
+tween	873da7f9a	c	R-ExpPow	2
 tween	873da7f9a	c	R-FieldAppend/bare	2
 tween	873da7f9a	c	R-FirstClaim	1
 tween	873da7f9a	c	R-FlatCopy	2
@@ -5755,6 +5872,7 @@ tween	873da7f9a	rust	R-CharWalk	10
 tween	873da7f9a	rust	R-CompleteWrite	13
 tween	873da7f9a	rust	R-Counter	55
 tween	873da7f9a	rust	R-DischargeInto	1
+tween	873da7f9a	rust	R-ExpPow	2
 tween	873da7f9a	rust	R-FieldAppend	1
 tween	873da7f9a	rust	R-FieldAppend/bare	10
 tween	873da7f9a	rust	R-FirstClaim	1
@@ -5803,6 +5921,7 @@ web	b4075f3fc	c	R-CompleteWrite	12
 web	b4075f3fc	c	R-Counter	57
 web	b4075f3fc	c	R-DischargeInto	1
 web	b4075f3fc	c	R-ExitVector	1
+web	b4075f3fc	c	R-ExpPow	2
 web	b4075f3fc	c	R-FieldAppend/bare	1
 web	b4075f3fc	c	R-FormatAppend	1
 web	b4075f3fc	c	R-ForwardWalk	1
@@ -5844,6 +5963,7 @@ web	b4075f3fc	rust	R-CompleteWrite	12
 web	b4075f3fc	rust	R-Counter	39
 web	b4075f3fc	rust	R-DischargeInto	1
 web	b4075f3fc	rust	R-ExitVector	1
+web	b4075f3fc	rust	R-ExpPow	2
 web	b4075f3fc	rust	R-FieldAppend/bare	9
 web	b4075f3fc	rust	R-FoldCompare	1
 web	b4075f3fc	rust	R-FormatAppend	1
@@ -5888,6 +6008,7 @@ zttext	bd4932067	c	R-CompleteWrite	159
 zttext	bd4932067	c	R-Counter	492
 zttext	bd4932067	c	R-DischargeInto	1
 zttext	bd4932067	c	R-ExitVector	24
+zttext	bd4932067	c	R-ExpPow	2
 zttext	bd4932067	c	R-FieldAppend	1
 zttext	bd4932067	c	R-FieldAppend/bare	16
 zttext	bd4932067	c	R-FlatCopy	4
@@ -5971,6 +6092,7 @@ zttext	bd4932067	rust	R-CompleteWrite	159
 zttext	bd4932067	rust	R-Counter	331
 zttext	bd4932067	rust	R-DischargeInto	1
 zttext	bd4932067	rust	R-ExitVector	24
+zttext	bd4932067	rust	R-ExpPow	2
 zttext	bd4932067	rust	R-FieldAppend	1
 zttext	bd4932067	rust	R-FieldAppend/bare	20
 zttext	bd4932067	rust	R-FlatCopy	20
