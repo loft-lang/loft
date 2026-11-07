@@ -1022,6 +1022,18 @@ pub fn demote_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_DEMOTE"))
 }
 
+/// `LOFT_NO_VARIANT_INPLACE=1` — `@FR-R-InPlaceLiteral`'s variant clause: a variant literal
+/// rebound into a whole local of its struct-enum (`l = Cons { v: 1, next: Nil }`) is built on
+/// a work reference and copied over again, where the default builds it in the local as a
+/// struct literal is (`Parser::parse_object`) — which is also what lets `@FR-R-Demote`'s
+/// variant clause move `l = Cons { …, next: l }`.  The bisect step for a wrong answer or a
+/// leak in an enum local rebound by a variant literal.
+#[must_use]
+pub fn variant_literal_in_place() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VARIANT_INPLACE"))
+}
+
 /// `LOFT_NO_NULLABLE_INPLACE=1` — `@FR-N-Road`: a struct literal bound to a NULLABLE local
 /// (`x: S? = S { … }`) is built on a work reference again, where the default builds it in
 /// the local as its dense twin does (`Parser::parse_object`).  The bisect step for a

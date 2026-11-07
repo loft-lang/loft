@@ -595,14 +595,62 @@ fn is_self_step(rhs: &Value, t: u16, data: &Data) -> bool {
 fn walk_record(tp: &Type) -> Option<(u32, &[u16])> {
     match tp {
         Type::Optional(inner) => walk_record(inner),
-        Type::Reference(d, deps) => Some((*d, deps.as_slice())),
+        Type::Reference(d, deps) | Type::Enum(d, true, deps) => Some((*d, deps.as_slice())),
         _ => None,
     }
 }
 
-/// The fresh sources of walk cursor `t` — every non-null `Set(t, Var(a))` — or `None` when some
-/// set of `t` is neither such a bind nor a self step.
-fn walk_sources(code: &Value, t: u16, data: &Data) -> Option<Vec<u16>> {
+/// The STEP locals of walk cursor `t`: a local other than `t` whose every non-null set is a step
+/// of `t` (`OpRefFromChildRec(OpGetField(t, …))`) — the payload a `match cur { Cons { v, next }
+/// => cur = next }` binds.  A view of `t`'s child is a view of what `t` walks, so `t = p` is a
+/// step of `t` and `p` a view with it.  `None` when such a local is a parameter, captured, of
+/// another record, or not only read (`t = p` counts as a read).
+fn step_locals(
+    code: &Value,
+    t: u16,
+    rd: u32,
+    vars: &Function,
+    data: &Data,
+    frees: &[u32],
+) -> Option<Vec<u16>> {
+    let mut found: Vec<u16> = Vec::new();
+    let mut other = false;
+    code.walk(&mut |n| {
+        if let Value::Set(p, rhs) = n
+            && *p != t
+            && is_self_step(rhs, t, data)
+            && !found.contains(p)
+        {
+            found.push(*p);
+        }
+    });
+    for &p in &found {
+        if vars.is_argument(p)
+            || vars.is_captured(p)
+            || walk_record(vars.tp(p)).map(|(d, _)| d) != Some(rd)
+        {
+            return None;
+        }
+        code.walk(&mut |n| {
+            if let Value::Set(x, rhs) = n
+                && *x == p
+                && !matches!(rhs.unspan(), Value::Null)
+                && !is_self_step(rhs, t, data)
+            {
+                other = true;
+            }
+        });
+        let w = vars.owner_witness(p);
+        if other || !walk_only_read(code, p, w, Some(t), data, frees, false) {
+            return None;
+        }
+    }
+    Some(found)
+}
+
+/// The fresh sources of walk cursor `t` — every non-null `Set(t, Var(a))` but one from a step
+/// local — or `None` when some set of `t` is neither such a bind nor a step.
+fn walk_sources(code: &Value, t: u16, data: &Data, step_locals: &[u16]) -> Option<Vec<u16>> {
     let mut sources = Vec::new();
     let mut steps = 0;
     let mut ok = true;
@@ -612,6 +660,7 @@ fn walk_sources(code: &Value, t: u16, data: &Data) -> Option<Vec<u16>> {
             && !matches!(rhs.unspan(), Value::Null)
         {
             match rhs.unspan() {
+                Value::Var(a) if step_locals.contains(a) => steps += 1,
                 Value::Var(a) => sources.push(*a),
                 r if is_self_step(r, t, data) => steps += 1,
                 _ => ok = false,
@@ -622,20 +671,27 @@ fn walk_sources(code: &Value, t: u16, data: &Data) -> Option<Vec<u16>> {
 }
 
 /// Every mention of `t` reads it: a getter's or a projection's operand, a null test, its own
-/// step's operand, or one of its owner witness's tests (which the rewrite removes).
+/// step's operand, or one of its owner witness's tests (which the rewrite removes).  For a step
+/// local, `into` is its cursor, and `into = t` is a read of `t` too.
 fn walk_only_read(
     node: &Value,
     t: u16,
     w: Option<u16>,
+    into: Option<u16>,
     data: &Data,
     frees: &[u32],
     under: bool,
 ) -> bool {
     match node.unspan() {
         Value::Var(x) if *x == t => under,
+        Value::Set(x, rhs)
+            if Some(*x) == into && matches!(rhs.unspan(), Value::Var(y) if *y == t) =>
+        {
+            true
+        }
         Value::Set(x, rhs) if *x == t => {
             matches!(rhs.unspan(), Value::Var(_) | Value::Null)
-                || walk_only_read(rhs, t, w, data, frees, false)
+                || walk_only_read(rhs, t, w, into, data, frees, false)
         }
         Value::Set(x, _) if Some(*x) == w => true,
         Value::Call(op, args) => {
@@ -656,14 +712,14 @@ fn walk_only_read(
             let projection = matches!(name, "OpGetField" | "OpRefFromChildRec");
             args.iter().enumerate().all(|(i, a)| {
                 let read = i == 0 && (getter || test || projection);
-                walk_only_read(a, t, w, data, frees, read)
+                walk_only_read(a, t, w, into, data, frees, read)
             })
         }
         _ => {
             let mut ok = true;
             node.for_each_child(&mut |c| {
                 if ok {
-                    ok = walk_only_read(c, t, w, data, frees, false);
+                    ok = walk_only_read(c, t, w, into, data, frees, false);
                 }
             });
             ok
@@ -718,6 +774,8 @@ struct WalkCx<'a> {
     reach: &'a Reach<'a>,
     t: u16,
     w: Option<u16>,
+    /// The step locals (`step_locals`): views with `t`, their frees removed with its own.
+    steps: &'a [u16],
     frees: &'a [u32],
 }
 
@@ -728,6 +786,7 @@ fn walk_disturbs(s: &Value, cx: &WalkCx, sources: &[u16]) -> Option<&'static str
         reach,
         t,
         w,
+        steps,
         frees,
     } = *cx;
     let mut why = None;
@@ -739,7 +798,9 @@ fn walk_disturbs(s: &Value, cx: &WalkCx, sources: &[u16]) -> Option<&'static str
             let name = data.def(*op).name();
             // A step's child read, and the cursor's own witness and frees, which the rewrite
             // removes: none writes a record.
-            let mine = |a: &Value| matches!(a.unspan(), Value::Var(x) if *x == t || Some(*x) == w);
+            let mine = |a: &Value| {
+                matches!(a.unspan(), Value::Var(x) if *x == t || Some(*x) == w || steps.contains(x))
+            };
             if matches!(name, "OpRefFromChildRec" | "OpDistinctStore" | "OpRefAlias")
                 || (frees.contains(op) && args.first().is_some_and(mine))
             {
@@ -749,6 +810,7 @@ fn walk_disturbs(s: &Value, cx: &WalkCx, sources: &[u16]) -> Option<&'static str
             let foreign_owner = |a: &Value| match a.unspan() {
                 Value::Var(x) => {
                     *x != t
+                        && !steps.contains(x)
                         && !sources.contains(x)
                         && !vars.is_argument(*x)
                         && walk_record(vars.tp(*x)).is_some_and(|(_, deps)| deps.is_empty())
@@ -828,19 +890,28 @@ fn walk_clause(code: &mut Value, data: &mut Data, d_nr: u32, frees: &[u32], trac
     }
     for t in cands {
         let vars = data.def(d_nr).variables();
-        let verdict = (|| -> Result<(u32, Vec<u16>), &'static str> {
+        let verdict = (|| -> Result<(u32, Vec<u16>, Vec<u16>), &'static str> {
             if vars.is_argument(t) || vars.is_captured(t) {
                 return Err("a parameter or a captured local");
             }
             let (rd, _) = walk_record(vars.tp(t)).ok_or("not a record")?;
-            let sources = walk_sources(code, t, data)
+            let steps = step_locals(code, t, rd, vars, data, frees)
+                .ok_or("a local bound to its child is not only read")?;
+            let sources = walk_sources(code, t, data, &steps)
                 .ok_or("not a walk: a set that is not a bind or a self step")?;
             let w = vars.owner_witness(t);
-            if !walk_only_read(code, t, w, data, frees, false) {
+            if !walk_only_read(code, t, w, None, data, frees, false) {
                 return Err("written, returned, stored or handed on");
             }
             let range =
                 live_range(code, t, frees).ok_or("mentioned outside the block that binds it")?;
+            // A step local views what `t` views, so it lives inside `t`'s live range.
+            for &p in &steps {
+                let inside: usize = range.iter().map(|s| non_free_mentions(s, p, frees)).sum();
+                if inside != non_free_mentions(code, p, frees) {
+                    return Err("a local bound to its child is mentioned outside the walk");
+                }
+            }
             // Each bind is judged on its own segment — from it to the next bind of `t` — against
             // its own source: a second walk's source may be written while the first walk runs.
             let reach = Reach::new(data, rd);
@@ -874,17 +945,18 @@ fn walk_clause(code: &mut Value, data: &mut Data, d_nr: u32, frees: &[u32], trac
                     reach: &reach,
                     t,
                     w,
+                    steps: &steps,
                     frees,
                 };
                 if let Some(why) = seg.iter().find_map(|s| walk_disturbs(s, &cx, &[*src])) {
                     return Err(why);
                 }
             }
-            Ok((rd, sources))
+            Ok((rd, sources, steps))
         })();
         match verdict {
-            Ok((rd, sources)) => {
-                apply_walk(code, data, d_nr, frees, t, rd, &sources);
+            Ok((rd, sources, steps)) => {
+                apply_walk(code, data, d_nr, frees, t, rd, &sources, &steps);
                 crate::rewrite_census::fired("R-CopyView/walk", 1);
                 if trace {
                     eprintln!(
@@ -907,6 +979,7 @@ fn walk_clause(code: &mut Value, data: &mut Data, d_nr: u32, frees: &[u32], trac
     }
 }
 
+#[expect(clippy::too_many_arguments, reason = "the walk's admission, handed over whole")]
 fn apply_walk(
     code: &mut Value,
     data: &mut Data,
@@ -915,6 +988,7 @@ fn apply_walk(
     t: u16,
     rd: u32,
     sources: &[u16],
+    steps: &[u16],
 ) {
     let get_field = data.def_nr("OpGetField");
     let tp_nr = i32::from(data.def(rd).known_type());
@@ -933,21 +1007,25 @@ fn apply_walk(
         n.for_each_child_mut(&mut |c| binds(c, t, get_field, tp_nr));
     }
     binds(code, t, get_field, tp_nr);
-    let w = data.def(d_nr).variables().owner_witness(t);
-    if let Some(w) = w {
-        strip_mentions(code, w);
+    let views: Vec<u16> = std::iter::once(t).chain(steps.iter().copied()).collect();
+    for &v in &views {
+        if let Some(w) = data.def(d_nr).variables().owner_witness(v) {
+            strip_mentions(code, w);
+        }
     }
-    let dead: HashSet<u16> = std::iter::once(t).collect();
+    let dead: HashSet<u16> = views.iter().copied().collect();
     strip(code, &dead, frees);
     let vars = &mut data.definitions[d_nr as usize].variables;
     let deps = Deps::frame(sources.to_vec());
-    let tp = match vars.tp(t) {
-        Type::Optional(inner) => Type::Optional(Box::new(inner.with_deps(&deps))),
-        other => other.with_deps(&deps),
-    };
-    vars.set_type(t, tp);
-    vars.set_skip_free(t);
-    vars.clear_owner_witness(t);
+    for &v in &views {
+        let tp = match vars.tp(v) {
+            Type::Optional(inner) => Type::Optional(Box::new(inner.with_deps(&deps))),
+            other => other.with_deps(&deps),
+        };
+        vars.set_type(v, tp);
+        vars.set_skip_free(v);
+        vars.clear_owner_witness(v);
+    }
 }
 
 /// Remove every statement that is ABOUT the witness `w`: a set of it, a free of it, an `if`
