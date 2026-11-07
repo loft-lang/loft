@@ -1593,7 +1593,6 @@
 21_tree	-	rust	R-View	2
 21_tree	-	rust	R-Wrapper	9
 21_tree	-	rust	R-ZeroCount	8
-22_expr	-	c	H-SwapRebind	2
 22_expr	-	c	R-Base	1
 22_expr	-	c	R-BoundedNest/kernel	1
 22_expr	-	c	R-CharWalk	1
@@ -1606,7 +1605,7 @@
 22_expr	-	c	R-Fuse/tag	13
 22_expr	-	c	R-Fuse/text	34
 22_expr	-	c	R-Header	1
-22_expr	-	c	R-HostStore	4
+22_expr	-	c	R-HostStore	5
 22_expr	-	c	R-Inline	7
 22_expr	-	c	R-InlineLeaf	9
 22_expr	-	c	R-LoopSlot	4
@@ -1623,7 +1622,6 @@
 22_expr	-	c	R-WorkPark	11
 22_expr	-	c	R-Wrapper	9
 22_expr	-	c	R-ZeroCount	8
-22_expr	-	rust	H-SwapRebind	4
 22_expr	-	rust	R-Base	2
 22_expr	-	rust	R-BoundedNest/kernel	1
 22_expr	-	rust	R-CharWalk	11
@@ -1638,7 +1636,7 @@
 22_expr	-	rust	R-Fuse/text	34
 22_expr	-	rust	R-GuardFree	19
 22_expr	-	rust	R-Header	1
-22_expr	-	rust	R-HostStore	4
+22_expr	-	rust	R-HostStore	5
 22_expr	-	rust	R-InlineLeaf	9
 22_expr	-	rust	R-Leaf	113
 22_expr	-	rust	R-LeafChain	28

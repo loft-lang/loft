@@ -5076,9 +5076,28 @@ line in `Output::output_function`'s prelude.
                  node's (`OpFreeRefIfDistinct`, a fallback copy).  The recursion then builds
                  the whole tree in the store its first caller names.  22_expr `expr_build`
                  9.07× → 0.66× Rust; guard `…/R-HostStore/a-literal-adopts-its-childrens-results-built-in-its-store.loft`.
-                 NOT YET: a callee that DROPS a result built in the shared store (`simplify`
-                 of bench 22: `if is_num(a, 0) { return b; }`) — the release by record
-                 (§ @PLN219).
+                 RESULT CLAUSE: a function whose every answer is a literal it builds or the
+                 result of a call to itself — `simplify`: `a = simplify(l)`, `b =
+                 simplify(r)`, then `b`, `a`, a node over both or a fresh literal — and whose
+                 results are only read by a function answering a plain value, adopted by an
+                 answered literal's field, answered or freed, each bound at most once on any
+                 path and never in a loop, never handed to a call to itself: every call to
+                 itself and every literal is placed in the store of the first result bound
+                 before it on its path (`OpStoreBuf`), or with none in the caller's buffer
+                 where that names a store and no record (`OpStoreBufOnly` — a record a caller
+                 offers is never written); a field adopts a result by number and the local
+                 lets go of it (null), so each record has ONE owner — a field, the caller or
+                 one local; a result a path drops is released by record
+                 (`OpReleaseRecIfDistinct`: null, a store buffer and the answer release
+                 nothing, a record of another store goes with its store, a record of the
+                 answer's store is released with what it owns while the store lives on); a
+                 result is answered as it is — where the parser renamed the answered local
+                 onto the buffer, the local is split off and the copy into the buffer
+                 (`materialized_view_return`) becomes the answer of the local.  Each result's
+                 one bind adopts the callee's record (`deferred_first_bind`).  Decided on the
+                 function's own settled IR, its frame laid out again
+                 (`host_result::rewrite_program`).  22_expr `expr_simplify` 11.7× → 1.04× Rust;
+                 `LOFT_NO_HOST_RESULT=1`; guard `…/R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them.loft`.
 
   (R-MoveChild)  a whole write into an out-of-line field whose value is a chain of child reads
                  rooted at the field's OWN child — `h.f = h.f.g`, `cur = cur.left` through a

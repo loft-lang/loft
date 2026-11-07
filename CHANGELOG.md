@@ -42,6 +42,12 @@ that builds a tree (`Add { l: gen(…), r: gen(…) }`) builds every node in one
 built and walked this way went from thousands of times slower than Rust to faster than it,
 and the expression-tree builder from nine times slower to faster; the answers are the same.
 
+**A recursion that rewrites a tree keeps the parts it reuses.**  A function like `simplify`,
+which calls itself on both children and then returns one of the results, a new node over
+both, or a fresh value, now builds everything in one store: the parts it keeps are linked in
+place and the parts it drops are released one record at a time, where every node used to copy
+both subtrees.  The expression simplifier went from twelve times slower than Rust to even.
+
 ## 2026-11
 
 ### May need a change in your code

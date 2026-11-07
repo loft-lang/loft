@@ -11,8 +11,8 @@ Active.  The semantics of a link to an out-of-line field is settled and built (l
 C77 amended), and so is the parameter half (P, which absorbed P1): a `&` parameter of a type held
 out of line takes a field and writes it.  The bench programs that expose user-built structures
 (B) and the walk-or-write warning (W) are built, and the C routines over 3× Rust are priced by
-hand (§ The C to 2×): seven of its rewrites are built (six routines at or under 2× from the
-compiler).  Open: the rest of § The C to 2×, and § Also open.  Work lives on `tuxedo-quality`.
+hand (§ The C to 2×): its rewrites but the hash table's are built, and seven of the eight
+routines are at or under 2× their Rust twin from the compiler; `lru_mixed` is not.  Open: the rest of § The C to 2×, and § Also open.  Work lives on `tuxedo-quality`.
 
 ## Goal
 
@@ -237,7 +237,8 @@ conditions it must prove, and what it reaches beyond the bench.  The order is th
 
 **Built, and what the compiler now emits** (median of 7, C ÷ Rust, the same drivers and flags;
 each emitted unit checked for the hand form's shape — `loft_demote_rec`, `loft_move_child_rec` /
-`loft_slot_move`, `loft_child_rec_in_place`, `loft_store_buf` + `loft_adopt_child_rec`, no
+`loft_slot_move`, `loft_child_rec_in_place`, `loft_store_buf` + `loft_adopt_child_rec`,
+`loft_release_rec_if_distinct` for a dropped result, no
 `loft_bind_copy` of a walk cursor, `#define LOFT_NO_THREADS`):
 
 | rewrite | rule | switch | guard |
@@ -249,36 +250,23 @@ each emitted unit checked for the hand form's shape — `loft_demote_rec`, `loft
 | 3 | `(R-InPlaceLiteral)` out-of-line clause | `LOFT_NO_CHILD_LITERAL` | the same cell |
 | 5, write-back half | `(R-HostStore)` | `LOFT_NO_HOST_STORE` | `rewrites/R-HostStore/a-recursion-builds-its-result-in-the-field-it-is-written-to` |
 | 5, callee half (no drop) | `(R-HostStore)` literal clause, `(R-Place)` branch exits, `(R-InPlaceLiteral)` variant clause | `LOFT_NO_HOST_STORE`, `LOFT_NO_VARIANT_INPLACE` | `rewrites/R-HostStore/a-literal-adopts-its-childrens-results-built-in-its-store` |
+| 5, the release by record | `(R-HostStore)` result clause | `LOFT_NO_HOST_RESULT` | `rewrites/R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them` |
 | 4, variant clause | `(R-Demote)` variant clause | `LOFT_NO_DEMOTE` | `rewrites/R-Demote/a-variant-pushed-at-the-front-moves-the-old-record-whole` |
 | 1, `match` payload | `(R-CopyView)` walk clause, step locals | `LOFT_NO_COPY_VIEW_WALK` | `rewrites/R-CopyView/a-match-walk-over-an-enum-list-is-a-view` |
 
 | routine | before | now | hand form |
 |---|--:|--:|--:|
-| tree_delete | 3.73× | **0.65×** | 0.58× |
-| list_ops | 4.00× | **0.61×** | 0.57× |
-| lookup_copy | 1340× | **1.24×** | 1.23× |
-| build_rec | 3.16× | **1.92×** | 1.65× |
-| expr_build | 10.4× | **0.66×** | 1.46× |
-| expr_simplify | 13.3× | 11.5× | 0.91× |
-| lru_mixed | 3.53× | 3.39× | 3.05× |
+| tree_delete | 3.73× | **0.73×** | 0.58× |
+| list_ops | 4.00× | **0.80×** | 0.57× |
+| lookup_copy | 1340× | **0.97×** | 1.23× |
+| build_rec | 3.16× | **1.94×** | 1.65× |
+| expr_build | 10.4× | **0.68×** | 1.46× |
+| expr_simplify | 13.3× | **1.04×** | 0.91× |
+| lru_mixed | 3.53× | 3.21× | 3.05× |
 | enum_list | ~6000× | **0.83×** | 0.56× |
 
 **Still to build**, each with the hand form to compare against (`hand/compare.sh.txt`):
 
-- **5, the release by record** (`simplify`, 11.7×) — a callee that DROPS a result it built in
-  the shared store (`if is_num(a, 0) { return b; }`).  Today a dropped result's free is skipped
-  where its store is the answer's (`OpFreeRefIfDistinct`), which leaves its records claimed
-  there; freeing the store would free the host's tree.  The design, read off the hand form:
-  every record claimed in a shared store has ONE owner at each point — a field (adopted), the
-  caller (answered) or one binding local — and a local's exit with no transfer releases the
-  record by record.  The runtime can tell "is the answer" (same record) from "shares its
-  store", but not adopted from dropped, so an adoption nulls the local (a move); the exit op is
-  then: null → nothing; another store → free it, as today; the answer's record → nothing; else
-  → release by record.  Failure paths to hold: a dropped result freed as a store (F1), an
-  adopted one released (F2), an answered one released (F3), a callee answering its argument's
-  child (F4, `answers_only`), a local dropped on one path and adopted on another (F5), a buffer
-  that is a real record (F6, `(R-Rebind)`, records only).  All sites live in one function's
-  settled IR, which `host_store` rewrites.
 - **7** — `(R-TypedKeyed)`'s removal clause and the just-added lookup, then the hash table's own
   cost per operation (§ rewrite 7).
 

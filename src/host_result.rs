@@ -212,6 +212,10 @@ fn view_return_local(v: &Value, buf: u16, ops: &Ops) -> Option<u16> {
 
 /// Does `v` read nothing but plain values — a function answering no heap?
 fn plain_return(tp: &Type) -> bool {
+    // A nullable plain value is a plain value; a nullable heap value is not.
+    if let Type::Optional(inner) = tp {
+        return plain_return(inner);
+    }
     matches!(
         tp,
         Type::Boolean | Type::Integer(..) | Type::Float | Type::Single | Type::Character
@@ -224,8 +228,11 @@ fn admit(data: &Data, d_nr: u32, ops: &Ops) -> Result<Shape, &'static str> {
     let Some(buf_at) = def.hidden_return_buffer_attr() else {
         return Err(NO_SELF_CALL);
     };
-    let (Type::Enum(td, true, _) | Type::Reference(td, _)) = def.returned() else {
-        return Err(NO_SELF_CALL);
+    // `@FR-N-Shape` — a `-> τ?` delivers through its own synthetic enum: not admitted.
+    let td = match def.returned() {
+        Type::Enum(td, true, _) | Type::Reference(td, _) => *td,
+        Type::Optional(_) => return Err(NO_SELF_CALL),
+        _ => return Err(NO_SELF_CALL),
     };
     let code = def.code();
     // Every call to itself is a bind `l = f(…, w)` handed a work ref of its own.
@@ -377,7 +384,7 @@ fn admit(data: &Data, d_nr: u32, ops: &Ops) -> Result<Shape, &'static str> {
         results,
         minted,
         entry,
-        tp: data.def(*td).known_type(),
+        tp: data.def(td).known_type(),
     })
 }
 
