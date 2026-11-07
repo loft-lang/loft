@@ -19,6 +19,7 @@ mod loop_record;
 mod misc;
 mod par;
 mod peel;
+mod spec_chain;
 pub(super) mod transient;
 mod value;
 mod version;
@@ -5732,6 +5733,9 @@ impl<'a> FnWriter<'a> {
         let c = self.shapes[var as usize];
         if let Some(done) = self.rewritten_bind(var, x, ind) {
             return done;
+        }
+        if c == CType::Int && self.spec_chain(var, x, ind)? {
+            return Ok(());
         }
         if c == CType::Text && !self.text_held(var) {
             return Err("assigns a text parameter".into());

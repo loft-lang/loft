@@ -1,0 +1,208 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+//! `@FR-R-SpecChain` (@PLN219) in the C: an integer local assigned a CHAIN of the silent
+//! checked operators — `+ - *` and `& | ^` — is written as the processor's operators, the
+//! overflow builtins collecting every event the checked chain would answer null for into one
+//! flag: a null operand, an overflow, an inner result equal to the sentinel.  An unlikely test
+//! of that flag recomputes the chain checked from the same operand values.
+//!
+//! Every checked operator answers null for exactly those events and otherwise the bits of the
+//! processor's operator, and none of them reports anything; so where no event happened the
+//! plain chain answers what the checked one would, and where one did the checked chain itself
+//! answers.  The operands are evaluated once, in the checked chain's order.  What moves is the
+//! dependency chain: a checked operator compiles to selects on the value it answers, and a loop
+//! that carries the value (`acc = (acc ^ i) + (i & 7)`) waits on them every trip.
+//!
+//! An operator `(R-Range)` proves cannot fault is written plain and tested for nothing.  A
+//! chain whose every operator is proven plain is left to that rule, a single operator over two
+//! operands to the checked template (nothing to gain), and a chain inside a guarded loop's copy
+//! to `(R-GuardedChain)`.  `LOFT_NO_SPEC_CHAIN=1`.
+
+use super::{FnWriter, as_int};
+use crate::data::Value;
+
+/// One node of the chain, in post-order: a leaf (its temp, and whether it may be null) or an
+/// operator over two nodes (whether a proof writes it plain).
+enum Node {
+    Leaf(String, bool),
+    Op {
+        name: &'static str,
+        lhs: usize,
+        rhs: usize,
+        proven: bool,
+    },
+}
+
+fn chain_name(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "OpAddInt" => "OpAddInt",
+        "OpMinInt" => "OpMinInt",
+        "OpMulInt" => "OpMulInt",
+        "OpLandInt" => "OpLandInt",
+        "OpLorInt" => "OpLorInt",
+        "OpEorInt" => "OpEorInt",
+        _ => return None,
+    })
+}
+
+impl FnWriter<'_> {
+    /// `var = x` for an integer local and a chain of at least two operators not all proven
+    /// plain: written as the speculative plain chain.  Answers whether it wrote it.
+    pub(super) fn spec_chain(&mut self, var: u16, x: &Value, ind: usize) -> Result<bool, String> {
+        if crate::env_once!(std::env::var("LOFT_NO_SPEC_CHAIN").is_ok_and(|v| v != "0"))
+            || !self.plain_chains.is_empty()
+            || self.vr.is_some()
+            || self.gen_elem.is_some()
+        {
+            return Ok(false);
+        }
+        let Value::Call(d, args) = x.unspan() else {
+            return Ok(false);
+        };
+        let data = self.cx.data;
+        if (*d as usize) >= data.definitions.len()
+            || chain_name(data.def(*d).name()).is_none()
+            || args.len() != 2
+        {
+            return Ok(false);
+        }
+        // Count the operators and the ones a proof already writes plain.
+        let (mut ops, mut open) = (0usize, 0usize);
+        self.chain_census(x, &mut ops, &mut open);
+        if ops < 2 || open == 0 {
+            return Ok(false);
+        }
+        let mut nodes: Vec<Node> = Vec::new();
+        let root = self.chain_nodes(x, &mut nodes, ind)?;
+        let bad = self.temp(super::CType::Int);
+        self.line(ind, &format!("{bad} = 0;"));
+        for n in &nodes {
+            if let Node::Leaf(t, true) = n {
+                self.line(ind, &format!("{bad} |= ({t} == LOFT_NULL);"));
+            }
+        }
+        let mut vals: Vec<String> = Vec::with_capacity(nodes.len());
+        for (i, n) in nodes.iter().enumerate() {
+            match n {
+                Node::Leaf(t, _) => vals.push(t.clone()),
+                Node::Op {
+                    name,
+                    lhs,
+                    rhs,
+                    proven,
+                } => {
+                    let (a, b) = (vals[*lhs].clone(), vals[*rhs].clone());
+                    let r = self.temp(super::CType::Int);
+                    let plain = |op: &str| format!("{r} = ({a}) {op} ({b});");
+                    let line = match (*name, *proven) {
+                        ("OpAddInt", true) => plain("+"),
+                        ("OpMinInt", true) => plain("-"),
+                        ("OpMulInt", true) => plain("*"),
+                        ("OpAddInt", false) => format!("{bad} |= LOFT_ADD_OVF({a}, {b}, &{r});"),
+                        ("OpMinInt", false) => format!("{bad} |= LOFT_SUB_OVF({a}, {b}, &{r});"),
+                        ("OpMulInt", false) => format!("{bad} |= LOFT_MUL_OVF({a}, {b}, &{r});"),
+                        ("OpLandInt", _) => plain("&"),
+                        ("OpLorInt", _) => plain("|"),
+                        _ => plain("^"),
+                    };
+                    self.line(ind, &line);
+                    // An inner result equal to the sentinel reads as null to the operator above.
+                    if i != root && !*proven {
+                        self.line(ind, &format!("{bad} |= ({r} == LOFT_NULL);"));
+                    }
+                    vals.push(r);
+                }
+            }
+        }
+        let checked = Self::checked_chain(&nodes, root);
+        let name = self.var(var);
+        self.line(ind, &format!("if (LOFT_UNLIKELY({bad})) {{"));
+        self.line(ind + 1, &format!("{name} = {checked};"));
+        self.line(ind, "} else {");
+        self.line(ind + 1, &format!("{name} = {};", vals[root]));
+        self.line(ind, "}");
+        crate::rewrite_census::fired("R-SpecChain", 1);
+        Ok(true)
+    }
+
+    /// The operators of the chain under `x` and how many of them no proof writes plain.
+    fn chain_census(&mut self, x: &Value, ops: &mut usize, open: &mut usize) {
+        if let Value::Call(d, args) = x.unspan()
+            && args.len() == 2
+            && let Some(name) = chain_name(self.cx.data.def(*d).name())
+        {
+            *ops += 1;
+            let bitwise = matches!(name, "OpLandInt" | "OpLorInt" | "OpEorInt");
+            if bitwise || !self.range_proves(name, args) {
+                *open += 1;
+            }
+            self.chain_census(&args[0], ops, open);
+            self.chain_census(&args[1], ops, open);
+        }
+    }
+
+    /// Post-order nodes of the chain under `x`, each leaf evaluated into a temp in the checked
+    /// chain's order, marked when the proofs cannot show it never null; answers `x`'s node.
+    fn chain_nodes(&mut self, x: &Value, nodes: &mut Vec<Node>, ind: usize) -> Result<usize, String> {
+        if let Value::Call(d, args) = x.unspan()
+            && args.len() == 2
+            && let Some(name) = chain_name(self.cx.data.def(*d).name())
+        {
+            let proven = !matches!(name, "OpLandInt" | "OpLorInt" | "OpEorInt")
+                && self.range_proves(name, args);
+            let lhs = self.chain_nodes(&args[0], nodes, ind)?;
+            let rhs = self.chain_nodes(&args[1], nodes, ind)?;
+            nodes.push(Node::Op {
+                name,
+                lhs,
+                rhs,
+                proven,
+            });
+            return Ok(nodes.len() - 1);
+        }
+        let leaf = match x.unspan() {
+            Value::Int(k) => Node::Leaf(format!("INT64_C({k})"), false),
+            _ => {
+                let e = self.expr(x, ind)?;
+                let t = self.temp(super::CType::Int);
+                self.line(ind, &format!("{t} = {};", as_int(e)?));
+                let may_be_null = !self.never_null(x);
+                Node::Leaf(t, may_be_null)
+            }
+        };
+        nodes.push(leaf);
+        Ok(nodes.len() - 1)
+    }
+
+    /// Is `x` never null under this function's facts: ranged, or non-sentinel?
+    fn never_null(&mut self, x: &Value) -> bool {
+        let facts = self.nn_facts();
+        let over = self.range_override.last().cloned();
+        let ranges = over.as_deref().unwrap_or(&facts.1);
+        crate::opt::range::range(self.cx.data, &facts.0, ranges, x, 0).is_some()
+            || crate::opt::non_sentinel::non_sentinel(self.cx.data, &facts.0, x)
+    }
+
+    /// The chain as the checked operators write it, over the same leaves.
+    fn checked_chain(nodes: &[Node], at: usize) -> String {
+        match &nodes[at] {
+            Node::Leaf(t, _) => t.clone(),
+            Node::Op { name, lhs, rhs, .. } => {
+                let f = match *name {
+                    "OpAddInt" => "loft_add",
+                    "OpMinInt" => "loft_sub",
+                    "OpMulInt" => "loft_mul",
+                    "OpLandInt" => "loft_and",
+                    "OpLorInt" => "loft_or",
+                    _ => "loft_xor",
+                };
+                format!(
+                    "{f}({}, {})",
+                    Self::checked_chain(nodes, *lhs),
+                    Self::checked_chain(nodes, *rhs)
+                )
+            }
+        }
+    }
+}
