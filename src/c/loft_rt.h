@@ -2673,8 +2673,9 @@ LOFT_HOT_INLINE int loft_vh_fill_i64(loft_vh h, int64_t base, int64_t lo, int64_
                                      int64_t v) {
     int64_t f, n;
     if (!loft_fill_run(h, base, lo, hi, inclusive, &f, &n)) return 0;
-    uint8_t *p = h.base + (size_t) f * 8;
-    for (int64_t i = 0; i < n; i++) memcpy(p + (size_t) i * 8, &v, 8);
+    uint64_t bits;
+    memcpy(&bits, &v, 8);
+    loft_fill8(h.base + (size_t) f * 8, bits, (size_t) n);
     return 1;
 }
 
@@ -2682,8 +2683,9 @@ LOFT_HOT_INLINE int loft_vh_fill_f64(loft_vh h, int64_t base, int64_t lo, int64_
                                      double v) {
     int64_t f, n;
     if (!loft_fill_run(h, base, lo, hi, inclusive, &f, &n)) return 0;
-    uint8_t *p = h.base + (size_t) f * 8;
-    for (int64_t i = 0; i < n; i++) memcpy(p + (size_t) i * 8, &v, 8);
+    uint64_t bits;
+    memcpy(&bits, &v, 8);
+    loft_fill8(h.base + (size_t) f * 8, bits, (size_t) n);
     return 1;
 }
 
@@ -2691,8 +2693,9 @@ LOFT_HOT_INLINE int loft_vh_fill_f32(loft_vh h, int64_t base, int64_t lo, int64_
                                      float v) {
     int64_t f, n;
     if (!loft_fill_run(h, base, lo, hi, inclusive, &f, &n)) return 0;
-    uint8_t *p = h.base + (size_t) f * 4;
-    for (int64_t i = 0; i < n; i++) memcpy(p + (size_t) i * 4, &v, 4);
+    uint32_t bits;
+    memcpy(&bits, &v, 4);
+    loft_fill4(h.base + (size_t) f * 4, bits, (size_t) n);
     return 1;
 }
 
@@ -3998,7 +4001,7 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
     uint8_t *base = (uint8_t *) loft_at(s, r, 0);
     /* A scalar template of a machine width is stored into every slot: the doubling reads back
      * each block it wrote to copy it, a store loop only writes (a 1920x1080 canvas of integers:
-     * the doubling's memmove was 93 % of building it), and the compiler widens the loop. */
+     * the doubling's memmove was 93 % of building it); `loft_fill8` and its siblings write it. */
     if (T[ctp].kind == LOFT_T_SCALAR && (size == 8 || size == 4 || size == 2 || size == 1)) {
         uint8_t *dst = base + from + size;
         if (size == 1) {
@@ -4006,15 +4009,15 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
         } else if (size == 8) {
             uint64_t t;
             memcpy(&t, base + from, 8);
-            for (uint32_t i = 0; i < extra; i++) memcpy(dst + (size_t) i * 8, &t, 8);
+            loft_fill8(dst, t, extra);
         } else if (size == 4) {
             uint32_t t;
             memcpy(&t, base + from, 4);
-            for (uint32_t i = 0; i < extra; i++) memcpy(dst + (size_t) i * 4, &t, 4);
+            loft_fill4(dst, t, extra);
         } else {
             uint16_t t;
             memcpy(&t, base + from, 2);
-            for (uint32_t i = 0; i < extra; i++) memcpy(dst + (size_t) i * 2, &t, 2);
+            loft_fill2(dst, t, extra);
         }
         return;
     }

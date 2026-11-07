@@ -50,6 +50,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 /* `bool`, which a `#c` binding's signature may name (C99 spells it in this header). */
 #include <stdbool.h>
 
@@ -201,6 +202,45 @@ static inline int loft_mul_ovf_c99(int64_t a, int64_t b, int64_t *r) {
 #define LOFT_ADD_OVF(a, b, r) loft_add_ovf_c99(a, b, r)
 #define LOFT_SUB_OVF(a, b, r) loft_sub_ovf_c99(a, b, r)
 #define LOFT_MUL_OVF(a, b, r) loft_mul_ovf_c99(a, b, r)
+#endif
+
+/* ── Fills ────────────────────────────────────────────────────────────────────────────── */
+
+/* `n` copies of an 8-, 4- or 2-byte value written from `dst`, at any alignment
+ * (`@FR-R-Fill`, a vector grown by a run of one value).  Through a typed, unaligned, aliasing
+ * pointer where the compiler offers one: gcc and clang vectorise that loop, and leave a loop
+ * of one `memcpy` per element scalar (a 1280x720 clear ran four times as long).  Elsewhere a
+ * doubling `memcpy`: the first copy, then the written prefix copied onto what follows it. */
+#if !defined(LOFT_STRICT) && (defined(__GNUC__) || defined(__clang__))
+typedef uint64_t loft_u64u __attribute__((aligned(1), may_alias));
+typedef uint32_t loft_u32u __attribute__((aligned(1), may_alias));
+typedef uint16_t loft_u16u __attribute__((aligned(1), may_alias));
+static inline void loft_fill8(uint8_t *dst, uint64_t v, size_t n) {
+    loft_u64u *p = (loft_u64u *) (void *) dst;
+    for (size_t i = 0; i < n; i++) p[i] = v;
+}
+static inline void loft_fill4(uint8_t *dst, uint32_t v, size_t n) {
+    loft_u32u *p = (loft_u32u *) (void *) dst;
+    for (size_t i = 0; i < n; i++) p[i] = v;
+}
+static inline void loft_fill2(uint8_t *dst, uint16_t v, size_t n) {
+    loft_u16u *p = (loft_u16u *) (void *) dst;
+    for (size_t i = 0; i < n; i++) p[i] = v;
+}
+#else
+static void loft_fill_doubling(uint8_t *dst, const void *v, size_t w, size_t n) {
+    size_t total = w * n, done = w;
+    if (n == 0) return;
+    memcpy(dst, v, w);
+    while (done < total) {
+        size_t c = done < total - done ? done : total - done;
+        memcpy(dst + done, dst, c);
+        done += c;
+    }
+}
+static inline void loft_fill8(uint8_t *dst, uint64_t v, size_t n) { loft_fill_doubling(dst, &v, 8, n); }
+static inline void loft_fill4(uint8_t *dst, uint32_t v, size_t n) { loft_fill_doubling(dst, &v, 4, n); }
+static inline void loft_fill2(uint8_t *dst, uint16_t v, size_t n) { loft_fill_doubling(dst, &v, 2, n); }
 #endif
 
 /* ── Proof sites ──────────────────────────────────────────────────────────────────────── */
