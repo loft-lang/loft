@@ -674,13 +674,13 @@
 12_drawing	-	c	R-NoThreads	1
 12_drawing	-	c	R-NonSentinelParam	25
 12_drawing	-	c	R-Push	3
-12_drawing	-	c	R-Range	56
+12_drawing	-	c	R-Range	55
 12_drawing	-	c	R-Range/index	29
 12_drawing	-	c	R-RangedCall	3
 12_drawing	-	c	R-RecPtr	5
 12_drawing	-	c	R-RecPtr/held	2
 12_drawing	-	c	R-RecPtr/param	3
-12_drawing	-	c	R-RefParam	96
+12_drawing	-	c	R-RefParam	114
 12_drawing	-	c	R-RetAdopt	1
 12_drawing	-	c	R-Reuse	4
 12_drawing	-	c	R-Rotate	28
@@ -1027,7 +1027,7 @@
 16_consumer_shapes	-	c	R-Push/sole	2
 16_consumer_shapes	-	c	R-PushFill	3
 16_consumer_shapes	-	c	R-PushRec	6
-16_consumer_shapes	-	c	R-Range	365
+16_consumer_shapes	-	c	R-Range	367
 16_consumer_shapes	-	c	R-Range/index	2
 16_consumer_shapes	-	c	R-RangedCall	10
 16_consumer_shapes	-	c	R-RecPtr	59
@@ -1275,7 +1275,7 @@
 18_consumer_crawler	-	c	R-Push/sole	2
 18_consumer_crawler	-	c	R-PushFill	10
 18_consumer_crawler	-	c	R-PushFill/fill	1
-18_consumer_crawler	-	c	R-Range	278
+18_consumer_crawler	-	c	R-Range	275
 18_consumer_crawler	-	c	R-Range/index	25
 18_consumer_crawler	-	c	R-RangedCall	11
 18_consumer_crawler	-	c	R-RecPtr	3
@@ -1467,7 +1467,7 @@
 20_interpreter	-	c	R-PushFill/run-header	2
 20_interpreter	-	c	R-Range	1
 20_interpreter	-	c	R-RecPtr	2
-20_interpreter	-	c	R-RefParam	50
+20_interpreter	-	c	R-RefParam	51
 20_interpreter	-	c	R-Rotate	14
 20_interpreter	-	c	R-SingleUse	2
 20_interpreter	-	c	R-StartStep	2
@@ -1763,7 +1763,7 @@ arguments	bd4932067	c	R-RecPtr	22
 arguments	bd4932067	c	R-RecPtr/held	14
 arguments	bd4932067	c	R-RecPtr/param	2
 arguments	bd4932067	c	R-RecPtr/text	25
-arguments	bd4932067	c	R-RefParam	64
+arguments	bd4932067	c	R-RefParam	69
 arguments	bd4932067	c	R-RetAdopt	2
 arguments	bd4932067	c	R-Rotate	14
 arguments	bd4932067	c	R-SameRead	2
@@ -1866,7 +1866,7 @@ assets	7108f3550+shapes@0.5.4	c	R-RangedCall/guard	4
 assets	7108f3550+shapes@0.5.4	c	R-RecPtr	6
 assets	7108f3550+shapes@0.5.4	c	R-RecPtr/held	2
 assets	7108f3550+shapes@0.5.4	c	R-RecPtr/param	4
-assets	7108f3550+shapes@0.5.4	c	R-RefParam	190
+assets	7108f3550+shapes@0.5.4	c	R-RefParam	191
 assets	7108f3550+shapes@0.5.4	c	R-RetAdopt	2
 assets	7108f3550+shapes@0.5.4	c	R-Rotate	47
 assets	7108f3550+shapes@0.5.4	c	R-Scalar	26
@@ -1993,7 +1993,7 @@ cbor	bd4932067	c	R-RangedCall	7
 cbor	bd4932067	c	R-RecPtr	5
 cbor	bd4932067	c	R-RecPtr/held	1
 cbor	bd4932067	c	R-RecPtr/param	2
-cbor	bd4932067	c	R-RefParam	96
+cbor	bd4932067	c	R-RefParam	103
 cbor	bd4932067	c	R-Reuse	8
 cbor	bd4932067	c	R-Rotate	39
 cbor	bd4932067	c	R-SelfReplace	1
@@ -2229,13 +2229,13 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushF
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run-header	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushRec	14
-drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	279
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	263
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range/index	90
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RangedCall	25
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr	54
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr/held	17
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr/param	16
-drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RefParam	559
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RefParam	577
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RepeatRun	19
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RetAdopt	5
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Reuse	55
@@ -2568,7 +2568,7 @@ glb	7108f3550	c	R-RecPtr	21
 glb	7108f3550	c	R-RecPtr/held	10
 glb	7108f3550	c	R-RecPtr/param	4
 glb	7108f3550	c	R-RecPtr/text	2
-glb	7108f3550	c	R-RefParam	128
+glb	7108f3550	c	R-RefParam	131
 glb	7108f3550	c	R-RepeatRun	16
 glb	7108f3550	c	R-Reuse	7
 glb	7108f3550	c	R-Rotate	30
@@ -2683,7 +2683,7 @@ graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushFill/fill	1
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushFill/run	6
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushFill/run-header	6
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushRec	2
-graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Range	206
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Range	178
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Range/index	20
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-RangedCall	31
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-RangedCall/guard	10
@@ -2944,7 +2944,7 @@ hex_body	3bdb69ef2	c	R-Rebind	2
 hex_body	3bdb69ef2	c	R-RecPtr	2
 hex_body	3bdb69ef2	c	R-RecPtr/held	1
 hex_body	3bdb69ef2	c	R-RecPtr/param	2
-hex_body	3bdb69ef2	c	R-RefParam	183
+hex_body	3bdb69ef2	c	R-RefParam	185
 hex_body	3bdb69ef2	c	R-RepeatRun	1
 hex_body	3bdb69ef2	c	R-RetAdopt	1
 hex_body	3bdb69ef2	c	R-Reuse	4
@@ -3526,7 +3526,7 @@ hex_form	3bdb69ef2	c	R-RangedCall	14
 hex_form	3bdb69ef2	c	R-RecPtr	2
 hex_form	3bdb69ef2	c	R-RecPtr/held	1
 hex_form	3bdb69ef2	c	R-RecPtr/param	7
-hex_form	3bdb69ef2	c	R-RefParam	153
+hex_form	3bdb69ef2	c	R-RefParam	156
 hex_form	3bdb69ef2	c	R-RetAdopt	1
 hex_form	3bdb69ef2	c	R-Reuse	4
 hex_form	3bdb69ef2	c	R-Rotate	176
@@ -4671,7 +4671,7 @@ mesh3d	7108f3550	c	R-Push/sole	1
 mesh3d	7108f3550	c	R-PushFill	6
 mesh3d	7108f3550	c	R-PushFill/run	5
 mesh3d	7108f3550	c	R-PushFill/run-header	4
-mesh3d	7108f3550	c	R-Range	76
+mesh3d	7108f3550	c	R-Range	69
 mesh3d	7108f3550	c	R-Range/index	24
 mesh3d	7108f3550	c	R-RangedCall	5
 mesh3d	7108f3550	c	R-Rebind	1
@@ -4800,7 +4800,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RangedCall	26
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RecPtr	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RecPtr/held	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RecPtr/param	2
-pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RefParam	129
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RefParam	135
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RetAdopt	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-ReturnField	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Reuse	11
@@ -5236,7 +5236,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Push/sole	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushFill	7
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushFill/fill	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushRec	2
-stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range	140
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range	142
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range/index	21
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-RangedCall	12
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-RecPtr	13
@@ -5501,7 +5501,7 @@ time	394317324	c	R-NoLocks	1
 time	394317324	c	R-NoThreads	1
 time	394317324	c	R-NonSentinelParam	9
 time	394317324	c	R-NonSentinelParam/twin	7
-time	394317324	c	R-Range	28
+time	394317324	c	R-Range	25
 time	394317324	c	R-Range/index	4
 time	394317324	c	R-RecPtr	1
 time	394317324	c	R-RecPtr/param	1
@@ -5788,7 +5788,7 @@ zttext	bd4932067	c	R-PushFill/fill	1
 zttext	bd4932067	c	R-PushFill/run	4
 zttext	bd4932067	c	R-PushFill/run-header	3
 zttext	bd4932067	c	R-PushRec	6
-zttext	bd4932067	c	R-Range	130
+zttext	bd4932067	c	R-Range	132
 zttext	bd4932067	c	R-Range/index	1
 zttext	bd4932067	c	R-RangedCall	8
 zttext	bd4932067	c	R-Rebind	2

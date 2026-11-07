@@ -123,7 +123,7 @@ R-PushFill/run	c,native	24	0	0	0	64	24
 R-PushFill/run-header	c	18	0	0	0	44	0
 R-PushRec	c,native	22	0	0	0	75	168
 R-PushRec/apart	c,native	5	0	0	0	50	90
-R-Range	c,native	61	0	0	0	4946	10501
+R-Range	c,native	61	0	0	0	4894	10501
 R-Range/index	c	29	0	0	0	436	0
 R-RangedCall	c,native	42	0	0	0	520	826
 R-RangedCall/guard	c	9	0	0	0	30	0
@@ -135,7 +135,7 @@ R-RecPtr/index	native	7	0	0	0	0	46
 R-RecPtr/nested	native	25	0	0	0	0	189
 R-RecPtr/param	c	42	0	0	0	244	0
 R-RecPtr/text	c	4	0	0	0	38	0
-R-RefParam	c	54	0	0	0	4963	0
+R-RefParam	c	54	0	0	0	5027	0
 R-RefillBuffer	native	37	0	0	0	0	279
 R-RefillText	native	4	0	0	0	0	8
 R-Refresh	native	4	0	0	0	0	16
