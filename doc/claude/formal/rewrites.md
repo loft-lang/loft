@@ -7229,6 +7229,13 @@ falsifier).
                  reference; and when the source is a parameter, nothing in the body
                  receives a `&` parameter, which the caller may have passed the same vector
                  as.  Appending to the walked vector is refused by the compiler already.
+                 FIELD CLAUSE: the source may be one field of a record local or parameter,
+                 `for p in d.f`, under the body check of `(R-InRange)`'s field clause — `d`
+                 named only through its fields (another field `d.g` in any role), never
+                 assigned, handed whole to a call or captured, no vector local viewing `d`
+                 used — with the walk's own handle held to element reads.  A record
+                 parameter whose type holds scalars only (no vector, text or reference at
+                 any depth) is not one that may be `d`: it owns no vector to resize.
 ```
 
 **In words.** Site: `forward_walk::rewrite_program`, after the scope pass, re-laying out the
@@ -7248,6 +7255,14 @@ up hold no rewritten walk — emitted code placement).  `LOFT_NO_FORWARD_WALK=1`
 `tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft` (counted walks and the
 walks that must keep re-reading, both backends) and `tests/forward_walk.rs` (which walk is
 rewritten, read off the trace; the cells with the rewrite off).
+
+**The field clause.**  `get_cell`'s chunk scan, `for c in self.chunks`, re-read the length and
+tested the index below zero every element, and its counter ran checked under a fault flag (the
+range proof cannot bound a walk counter whose end it re-reads).  Admitted, the scan is the
+counted loop the local form gets: hex_world `get_cell` on the ship lane 3.23× → 1.73× (clang),
+2.84× → 2.03× (gcc-16).  It declined at first on the routine's hidden `Cell` result buffer, a
+record parameter; the scalar-only exemption, shared with `(R-InRange)`, is what admits it.
+Guard `loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft`.
 
 ### A record element its loop proves in range is read plainly
 
@@ -7275,7 +7290,8 @@ the hand-written form: −20 % cycles.  `LOFT_NO_IN_RANGE=1`, `LOFT_TRACE_IN_RAN
 reading `d.f[i]?`, when the body neither reassigns `d`, hands `d` whole to a call (which could
 change `d.f`), names `d.f` other than as the vector a read operator reads, nor uses a vector
 local that is a view into `d` (a write through it would name no `d` at all); a `&` parameter
-that could be `d` declines, one holding a text or a scalar (a result buffer) does not.  It
+that could be `d` declines, one holding a text or a scalar (a result buffer) does not, nor
+does a record parameter whose type holds scalars only.  It
 dropped the `?` in ten of zttext's walks over `d.pieces`.  Guard
 `tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r1, r2, r4, r5).
 

@@ -33,8 +33,9 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     ("n_w3", 2, 0, 1, 0),
     // The write-through walk and the read walk.
     ("n_w4", 2, 0, 0, 0),
-    // The chunk walk that appends holds no address; the two read walks do.
-    ("n_w5", 2, 2, 3, 0),
+    // The chunk walk that appends holds no address; the two read walks do.  All three walk
+    // `m.chunks`, a field no body resizes, so they are counted (the field clause).
+    ("n_w5", 2, 2, 0, 0),
     // A callee grows the walked vector: no address, the index still bounded.
     ("n_w6", 0, 0, 1, 0),
     // The walk that appends ELSEWHERE holds its address too (`@FR-R-Base`'s growth clause:

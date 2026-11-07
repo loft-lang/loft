@@ -258,6 +258,7 @@ fn rewrite_for(
                     lv,
                     read: Value::Null,
                     iter_scope: 0,
+                    field: None,
                 };
                 if vars.is_captured(v)
                     || lp.operators[first_body..]
@@ -296,7 +297,7 @@ fn rewrite_for(
 /// handed bare to a call or captured; the walked field is named only as the vector a read
 /// operator reads; a `&` parameter that could be `d` itself declines, and so does any vector
 /// local that is a view into `d`, since a write through it would name no `d` at all.
-fn field_decline(
+pub(crate) fn field_decline(
     data: &Data,
     vars: &crate::variables::Function,
     root: u16,
@@ -392,10 +393,21 @@ impl FieldWalk<'_> {
                         && *n != self.root
                         && self.vars.is_argument(*n)
                         && match self.vars.tp(*n).base() {
-                            crate::data::Type::RefVar(t) => matches!(
-                                t.base(),
-                                crate::data::Type::Reference(..) | crate::data::Type::Vector(..)
-                            ),
+                            // A record of scalars only owns no vector: it is not `d`, holds
+                            // no part of it, and no write through it resizes one (a hidden
+                            // `Cell` result buffer, `get_cell`).
+                            crate::data::Type::Reference(t, _)
+                                if crate::opt::loop_records::all_scalar_record(self.data, *t) =>
+                            {
+                                false
+                            }
+                            crate::data::Type::RefVar(t) => match t.base() {
+                                crate::data::Type::Reference(r, _) => {
+                                    !crate::opt::loop_records::all_scalar_record(self.data, *r)
+                                }
+                                crate::data::Type::Vector(..) => true,
+                                _ => false,
+                            },
                             // A record or vector passed plainly names the caller's record too:
                             // `drain(y, y)` empties `y.pieces` through `e` while `d.pieces` is
                             // walked (a-parameters-vector-holds-its-header-where-the-buffer-is-
