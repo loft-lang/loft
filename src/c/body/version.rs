@@ -557,23 +557,23 @@ impl FnWriter<'_> {
         // body sets it from (`{flag}_f<m>`, `{flag}_l<m>`).
         let mut guard: Vec<String> = Vec::new();
         let mut ends: Vec<(String, String)> = Vec::with_capacity(levels.len());
-        for (m, lv) in levels.iter().enumerate() {
-            let (f, l) = if m == 0 {
+        for (lvl, lv) in levels.iter().enumerate() {
+            let (first, last) = if lvl == 0 {
                 (format!("{flag}_f"), format!("{flag}_l"))
             } else {
-                let (f, l) = (format!("{flag}_f{m}"), format!("{flag}_l{m}"));
-                self.decls.push(format!("int64_t {f} = 0, {l} = 0;"));
-                (f, l)
+                let (first, last) = (format!("{flag}_f{lvl}"), format!("{flag}_l{lvl}"));
+                self.decls.push(format!("int64_t {first} = 0, {last} = 0;"));
+                (first, last)
             };
             guard.push(match &lv.first {
-                First::Index(ix) => format!("loft_vg_lin({}, 1, 1, &{f})", self.var(*ix)),
-                First::Next(n) => format!("(({f} = {}), 1)", self.var(*n)),
+                First::Index(ix) => format!("loft_vg_lin({}, 1, 1, &{first})", self.var(*ix)),
+                First::Next(nx) => format!("(({first} = {}), 1)", self.var(*nx)),
                 First::Seed(x, index_form) => {
-                    let e = as_int(self.expr(x, ind)?)?;
+                    let seed = as_int(self.expr(x, ind)?)?;
                     if *index_form {
-                        format!("loft_vg_lin({e}, 1, 1, &{f})")
+                        format!("loft_vg_lin({seed}, 1, 1, &{first})")
                     } else {
-                        format!("(({f} = {e}) != LOFT_NULL)")
+                        format!("(({first} = {seed}) != LOFT_NULL)")
                     }
                 }
             });
@@ -583,10 +583,10 @@ impl FnWriter<'_> {
             };
             let min = if levels.len() == 1 { MIN_TRIPS } else { 1 };
             guard.push(format!(
-                "loft_vg_span({f}, {end}, {}, {min}, &{l})",
+                "loft_vg_span({first}, {end}, {}, {min}, &{last})",
                 i32::from(lv.inclusive)
             ));
-            ends.push((f, l));
+            ends.push((first, last));
         }
         if let [(f0, l0), (f1, l1)] = ends.as_slice() {
             guard.push(format!("loft_vg_area({f0}, {l0}, {f1}, {l1}, {MIN_TRIPS})"));
@@ -595,7 +595,7 @@ impl FnWriter<'_> {
         // The corners of the box over the loops some argument moves with: a linear value takes
         // its extremes at them.  One loop: its two ends (`a`, `b`); two: four corners.
         let used: Vec<usize> = (0..levels.len())
-            .filter(|m| shapes.iter().any(|s| s.1 != 0 && s.2 == *m))
+            .filter(|lvl| shapes.iter().any(|sh| sh.1 != 0 && sh.2 == *lvl))
             .collect();
         let corners: Vec<(String, Vec<bool>)> = match used.len() {
             1 => vec![("a".into(), vec![false]), ("b".into(), vec![true])],
@@ -610,16 +610,19 @@ impl FnWriter<'_> {
         for (side, at) in &corners {
             let mut vals = Vec::with_capacity(leaves.len());
             for (k, part) in parts.iter().enumerate() {
-                let (_, c, m) = shapes[k];
-                if c == 0 {
+                let (_, coef, lvl) = shapes[k];
+                if coef == 0 {
                     vals.push(part.clone());
                 } else {
-                    let slot = used.iter().position(|u| *u == m).ok_or("an unused level")?;
-                    let (f, l) = &ends[m];
-                    let t = if at[slot] { l } else { f };
+                    let slot = used
+                        .iter()
+                        .position(|u| *u == lvl)
+                        .ok_or("an unused level")?;
+                    let (first, last) = &ends[lvl];
+                    let t = if at[slot] { last } else { first };
                     let v = format!("{flag}_{side}{k}");
                     self.decls.push(format!("int64_t {v} = 0;"));
-                    guard.push(format!("loft_vg_lin({part}, INT64_C({c}), {t}, &{v})"));
+                    guard.push(format!("loft_vg_lin({part}, INT64_C({coef}), {t}, &{v})"));
                     vals.push(v);
                 }
             }

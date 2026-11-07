@@ -1324,6 +1324,7 @@
 18_consumer_crawler	-	c	R-TypedKeyed/compound	1
 18_consumer_crawler	-	c	R-TypedRead	1
 18_consumer_crawler	-	c	R-Version	2
+18_consumer_crawler	-	c	R-Version/nest	1
 18_consumer_crawler	-	c	R-View	9
 18_consumer_crawler	-	c	R-WorkBuffer	1
 18_consumer_crawler	-	c	R-WorkBuffer/onward	2
@@ -2307,6 +2308,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Value
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueRecord	53
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueRecord/view	1
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Version	9
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Version/nest	9
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-View	17
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-WorkBuffer	25
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-WorkBuffer/onward	81
@@ -2767,6 +2769,7 @@ graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-TextBorrow	19
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-ValueLocal	15
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-ValueRecord	24
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Version	1
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Version/nest	1
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-View	14
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-WorkBuffer	4
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-WorkBuffer/onward	6
@@ -5380,6 +5383,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-ValueLocal	17
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-ValueRecord	44
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-VecCopy	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Version	10
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Version/nest	2
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-View	9
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-WorkBuffer	7
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-WorkBuffer/onward	13
@@ -5521,6 +5525,7 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-TextBorrow	22
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-ValueLocal	18
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-ValueRecord	26
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Version	5
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Version/nest	5
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-View	10
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-WorkBuffer	7
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-WorkBuffer/onward	34

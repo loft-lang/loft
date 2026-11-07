@@ -309,7 +309,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-ValueLocal)` | `R-ValueLocal` parse, c, native |
 | `(R-ValueRecord)` | `R-ValueRecord` parse, c, native · `/view` c, native |
 | `(R-VecCopy)` | `R-VecCopy` ir |
-| `(R-Version)` | `R-Version` c |
+| `(R-Version)` | `R-Version` c · `/nest` c |
 | `(R-View)` | `R-View` c, native |
 | `(R-ViewReturn)` | `R-ViewReturn` native |
 | `(R-WorkBuffer)` | `R-WorkBuffer` parse · `/onward` parse · `/result` parse |
@@ -6803,6 +6803,20 @@ loops).  With the checked operator or the checked element access kept in the fas
 form measured 2.1× / 2.9×.  Switch `LOFT_NO_VERSION`; `LOFT_TRACE_VERSION=1` names each leaf
 admitted or declined and each call versioned.  Sites: `opt::version::leaf`, `c::body::version`.
 Guard `tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft`.
+
+**The nest clause** (@PLN219).  A counted loop holding ONE innermost counted loop (no loop beside
+it or below it), whose seed and end are set in the outer body from values invariant over the
+outer loop, decides that inner loop's versioned calls once per entry of the OUTER loop.  Each
+argument is `X ± i` over one of the two counters, `X` invariant over both, so every tested
+expression is linear in the pair; a linear value over a box takes its extremes at the box's
+corners, so the precondition is asked at all four (one loop moved by no argument leaves the two
+ends).  The box holds at least eight points (`loft_vg_area`); an empty range refuses.  A box partly
+outside the leaf's bounds runs every inner entry through the written twin: deciding the inner
+flag again per entry where the box failed cost `draw_quads` 25 % in rows where it never ran.
+Measured (C): text2d `draw_quads` 2.70× → 1.48× Rust (hand form 1.35×), nothing else past noise
+across crawler, drawing, text2d, stage, graphics.  Census row `R-Version/nest`; guard
+`loft-suite/rules/rewrites/R-Version/an-inner-loops-calls-are-decided-once-per-outer-entry-at-the-boxs-corners.loft`.
+Site `FnWriter::version_level`, the corners in `FnWriter::version_site`.
 
 ### A short counted loop is written once per trip
 

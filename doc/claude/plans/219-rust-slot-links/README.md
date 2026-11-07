@@ -289,7 +289,9 @@ one fallback flag (sum_loop → 1.00×, index_read 3.01× → 1.00×, binary_rea
 `(R-Range)` callee-step clause — `(q, r) = f(q, r, …)` whose results move each by a literal
 (hex_neighbor 4.15× → 1.23×); `(R-GuardedChain)` version clause — a loop whose only calls are
 versioned sites runs a plain copy calling the fast twins (draw_quads 4.51× → 2.71×,
-render_stage 2.54× → 1.98×, composite 1.30× → 1.12×, crawler build_vis 1.48× → 1.26×).
+render_stage 2.54× → 1.98×, composite 1.30× → 1.12×, crawler build_vis 1.48× → 1.26×);
+`(R-Version)` nest clause — an inner loop's calls decided once per outer entry, at the corners
+of the counters' box (draw_quads 2.70× → 1.48×).
 Priced by hand, open (scratch hand forms `hf2/`): `(R-Invariant)` hoist clause and the guarded
 copy an inlined callee never gets (blur_region 4.98× → 1.99×, render_stage 3.85× → 1.75×); a
 sticky-flag sum guarded by an element-size scan (the resample → ~2.1×); `(R-GuardedChain)`

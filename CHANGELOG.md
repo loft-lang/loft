@@ -63,7 +63,8 @@ from four times slower than Rust to 1.2.
 functions like `get_pixel` and `set_pixel`, and whose index arithmetic is checked once before
 the loop, now runs a copy with no per-pixel checks when those checks hold for the whole loop.
 Drawing laid-out text went from four and a half times slower than Rust to 2.7, a sprite
-renderer from 2.5 to 2.0.
+renderer from 2.5 to 2.0.  In a loop over the rows and columns of a box, those checks are now
+made once for the whole box: drawing laid-out text runs at 1.5 times Rust.
 
 **A C compiler wrapper gets its own build.**  Setting `LOFT_CC` to a script that wraps `cc`
 (to add `-DLOFT_VERIFY`, say) could run the binary plain `cc` had built for the same program,
