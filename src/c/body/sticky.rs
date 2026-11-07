@@ -231,7 +231,7 @@ fn sum_only(data: &crate::data::Data, code: &Value, b: &Block, v: u16) -> Option
         temps: &mut Vec<u16>,
     ) -> bool {
         match n.unspan() {
-            Value::Set(t, rhs) if *t == v => {
+            Value::Set(var, rhs) if *var == v => {
                 if let Value::Var(tmp) = rhs.unspan() {
                     if *tmp != v && t_update(data, code, b, *tmp, v) {
                         if !temps.contains(tmp) {
@@ -242,11 +242,11 @@ fn sum_only(data: &crate::data::Data, code: &Value, b: &Block, v: u16) -> Option
                     }
                     return false;
                 }
-                let Value::Call(d, args) = rhs.unspan() else {
+                let Value::Call(def, args) = rhs.unspan() else {
                     return false;
                 };
                 if !matches!(
-                    data.def(*d).name(),
+                    data.def(*def).name(),
                     "OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable"
                 ) || args.len() != 2
                     || !matches!(args[0].unspan(), Value::Var(w) if *w == v)
@@ -260,19 +260,19 @@ fn sum_only(data: &crate::data::Data, code: &Value, b: &Block, v: u16) -> Option
             // A plain read is answered `flag ? null : acc` (`sticky_read`) — the checked
             // sum's value at that point.  A by-reference use would hand out the raw value.
             Value::Var(w) if *w == v => true,
-            Value::Call(d, args)
-                if data.def(*d).name().contains("CreateStack")
+            Value::Call(def, args)
+                if data.def(*def).name().contains("CreateStack")
                     && args
                         .iter()
-                        .any(|a| matches!(a.unspan(), Value::Var(w) if *w == v)) =>
+                        .any(|arg| matches!(arg.unspan(), Value::Var(w) if *w == v)) =>
             {
                 false
             }
             other if other.names_var_here(v) => false,
             other => {
                 let mut good = true;
-                other.for_each_child(&mut |c| {
-                    good = good && ok(data, code, b, c, v, updates, temps);
+                other.for_each_child(&mut |child| {
+                    good = good && ok(data, code, b, child, v, updates, temps);
                 });
                 good
             }
@@ -293,17 +293,17 @@ fn t_update(data: &crate::data::Data, code: &Value, b: &Block, t: u16, v: u16) -
     let mut in_loop = 0;
     let mut shaped = true;
     for op in &b.operators {
-        op.walk(&mut |n| {
-            if let Value::Set(x, rhs) = n
-                && *x == t
+        op.walk(&mut |node| {
+            if let Value::Set(var, rhs) = node
+                && *var == t
             {
                 in_loop += 1;
-                shaped &= matches!(rhs.unspan(), Value::Call(d, a)
-                    if matches!(data.def(*d).name(), "OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable")
-                        && a.len() == 2
-                        && matches!(a[0].unspan(), Value::Var(w) if *w == v)
-                        && !a[1].reads_var(v)
-                        && !a[1].reads_var(t));
+                shaped &= matches!(rhs.unspan(), Value::Call(def, args)
+                    if matches!(data.def(*def).name(), "OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable")
+                        && args.len() == 2
+                        && matches!(args[0].unspan(), Value::Var(w) if *w == v)
+                        && !args[1].reads_var(v)
+                        && !args[1].reads_var(t));
             }
         });
     }

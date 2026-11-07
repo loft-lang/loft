@@ -60,12 +60,12 @@ impl FnWriter<'_> {
         {
             return Ok(false);
         }
-        let Value::Call(d, args) = x.unspan() else {
+        let Value::Call(def, args) = x.unspan() else {
             return Ok(false);
         };
         let data = self.cx.data;
-        if (*d as usize) >= data.definitions.len()
-            || chain_name(data.def(*d).name()).is_none()
+        if (*def as usize) >= data.definitions.len()
+            || chain_name(data.def(*def).name()).is_none()
             || args.len() != 2
         {
             return Ok(false);
@@ -219,15 +219,14 @@ impl FnWriter<'_> {
             });
             return Ok(nodes.len() - 1);
         }
-        let leaf = match x.unspan() {
-            Value::Int(k) => Node::Leaf(format!("INT64_C({k})"), false),
-            _ => {
-                let e = self.expr(x, ind)?;
-                let t = self.temp(super::CType::Int);
-                self.line(ind, &format!("{t} = {};", as_int(e)?));
-                let may_be_null = !self.never_null(x);
-                Node::Leaf(t, may_be_null)
-            }
+        let leaf = if let Value::Int(k) = x.unspan() {
+            Node::Leaf(format!("INT64_C({k})"), false)
+        } else {
+            let e = self.expr(x, ind)?;
+            let t = self.temp(super::CType::Int);
+            self.line(ind, &format!("{t} = {};", as_int(e)?));
+            let may_be_null = !self.never_null(x);
+            Node::Leaf(t, may_be_null)
         };
         nodes.push(leaf);
         Ok(nodes.len() - 1)

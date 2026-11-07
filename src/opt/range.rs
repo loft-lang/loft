@@ -165,6 +165,21 @@ fn fits(lo: i128, hi: i128) -> Option<Range> {
     }
 }
 
+/// `abs(x)` over `x`'s range: `0 ..= max(|lo|, |hi|)`, from `|lo|` or `|hi|` where `x` keeps
+/// one sign.  `i64::MIN` lies outside every range, so the result always fits.
+fn abs_range(x: Range) -> Option<Range> {
+    let (lo, hi) = (i128::from(x.0), i128::from(x.1));
+    let top = lo.abs().max(hi.abs());
+    let bottom = if lo >= 0 {
+        lo
+    } else if hi <= 0 {
+        -hi
+    } else {
+        0
+    };
+    fits(bottom, top)
+}
+
 fn union(a: Range, b: Range) -> Range {
     (a.0.min(b.0), a.1.max(b.1))
 }
@@ -325,19 +340,7 @@ pub fn op_range<F: RangeFacts + ?Sized>(
                 }
                 // `abs(x)`: a ranged x is never null, and its magnitude is at most the larger
                 // end's — `i64::MIN` is outside every range, so it cannot overflow.
-                ("OpAbsInt", 1) => {
-                    let x = a(0)?;
-                    let (lo, hi) = (i128::from(x.0), i128::from(x.1));
-                    let top = lo.abs().max(hi.abs());
-                    let bottom = if lo >= 0 {
-                        lo
-                    } else if hi <= 0 {
-                        -hi
-                    } else {
-                        0
-                    };
-                    fits(bottom, top)
-                }
+                ("OpAbsInt", 1) => abs_range(a(0)?),
                 ("OpDivInt" | "OpDivIntNullable", 2) => {
                     let (x, y) = (a(0)?, a(1)?);
                     if y.0 <= 0 && y.1 >= 0 {
@@ -1093,28 +1096,29 @@ fn seed_accumulators(
         let Value::Set(_, expr) = set else {
             return None;
         };
-        let Value::TupleGet(t, k) = expr.unspan() else {
+        let Value::TupleGet(tup, at) = expr.unspan() else {
             return None;
         };
-        let (t, k) = (*t, usize::from(*k));
+        let (tup, at) = (*tup, usize::from(*at));
         // The block holding the step, and the call just before it.
         let mut call: Option<(u32, &[Value])> = None;
         code.any_node(&mut |node| {
             let Value::Block(bl) = node else { return false };
-            let Some(j) = bl
+            let Some(pos) = bl
                 .operators
                 .iter()
                 .position(|op| std::ptr::eq(op.unspan(), set))
             else {
                 return false;
             };
-            for op in bl.operators[..j].iter().rev() {
+            for op in bl.operators[..pos].iter().rev() {
                 match op.unspan() {
-                    Value::Set(y, e)
-                        if *y != t && matches!(e.unspan(), Value::TupleGet(x, _) if *x == t) => {}
-                    Value::Set(x, e) if *x == t => {
-                        if let Value::Call(f, args) = e.unspan() {
-                            call = Some((*f, args.as_slice()));
+                    Value::Set(other, read)
+                        if *other != tup
+                            && matches!(read.unspan(), Value::TupleGet(from, _) if *from == tup) => {}
+                    Value::Set(var, value) if *var == tup => {
+                        if let Value::Call(callee, args) = value.unspan() {
+                            call = Some((*callee, args.as_slice()));
                         }
                         break;
                     }
@@ -1123,36 +1127,36 @@ fn seed_accumulators(
             }
             true
         });
-        let (f, args) = call?;
-        if (f as usize) >= data.definitions.len() {
+        let (callee, args) = call?;
+        if (callee as usize) >= data.definitions.len() {
             return None;
         }
-        let p = args
+        let param = args
             .iter()
-            .position(|a| matches!(a.unspan(), Value::Var(x) if *x == acc))?;
-        let p = u16::try_from(p).ok()?;
-        let body = &data.def(f).code;
+            .position(|arg| matches!(arg.unspan(), Value::Var(var) if *var == acc))?;
+        let param = u16::try_from(param).ok()?;
+        let body = &data.def(callee).code;
         if matches!(body, Value::Null) {
             return None;
         }
         // Element `k` of one result: `p` or `p ± c`, answering `|c|`.
-        let elem = |r: &Value| -> Option<i64> {
-            let Value::Tuple(items) = r.unspan() else {
+        let elem = |result: &Value| -> Option<i64> {
+            let Value::Tuple(items) = result.unspan() else {
                 return None;
             };
-            let item = items.get(k)?;
-            if matches!(item.unspan(), Value::Var(x) if *x == p) {
+            let item = items.get(at)?;
+            if matches!(item.unspan(), Value::Var(var) if *var == param) {
                 return Some(0);
             }
-            literal_step(data, p, item).map(i64::abs)
+            literal_step(data, param, item).map(i64::abs)
         };
         let mut most = 0i64;
         let mut ok = true;
-        body.any_node(&mut |m| {
-            match m {
-                Value::Set(x, _) | Value::TuplePut(x, _, _) if *x == p => ok = false,
-                Value::Return(r) => match elem(r) {
-                    Some(c) => most = most.max(c),
+        body.any_node(&mut |node| {
+            match node {
+                Value::Set(var, _) | Value::TuplePut(var, _, _) if *var == param => ok = false,
+                Value::Return(result) => match elem(result) {
+                    Some(step) => most = most.max(step),
                     None => ok = false,
                 },
                 _ => {}
@@ -1165,7 +1169,7 @@ fn seed_accumulators(
         };
         match top.operators.last().map(Value::unspan) {
             Some(Value::Return(_)) => {}
-            Some(r) => most = most.max(elem(r)?),
+            Some(result) => most = most.max(elem(result)?),
             None => return None,
         }
         ok.then_some(most)
@@ -1343,11 +1347,13 @@ fn step_down_by_trips(
     let mut index_from = None;
     for op in &fb.operators {
         match op.unspan() {
-            Value::Set(e, v) if matches!(v.unspan(), Value::Var(y) if *y == x) => {
-                end_from_x = Some(*e)
+            Value::Set(var, value) if matches!(value.unspan(), Value::Var(from) if *from == x) => {
+                end_from_x = Some(*var)
             }
-            Value::Set(i, v) if matches!(v.unspan(), Value::Int(-1)) => index_from = Some(*i),
-            Value::Loop(l) if lp.is_none() => lp = Some(l),
+            Value::Set(var, value) if matches!(value.unspan(), Value::Int(-1)) => {
+                index_from = Some(*var)
+            }
+            Value::Loop(found) if lp.is_none() => lp = Some(found),
             Value::Line(_) => {}
             _ => return None,
         }
@@ -1370,14 +1376,15 @@ fn step_down_by_trips(
     }
     // The one step, the last statement on its path, under no nested loop.
     let is_step = |v: &Value| {
-        matches!(v.unspan(), Value::Set(t, e) if *t == n
-            && matches!(e.unspan(), Value::Call(d, a) if data.def(*d).name() == "OpMinInt"
-                && a.len() == 2
-                && matches!(a[0].unspan(), Value::Var(y) if *y == n)
-                && matches!(a[1].unspan(), Value::Int(1))))
+        matches!(v.unspan(), Value::Set(var, value) if *var == n
+            && matches!(value.unspan(), Value::Call(def, args) if data.def(*def).name() == "OpMinInt"
+                && args.len() == 2
+                && matches!(args[0].unspan(), Value::Var(from) if *from == n)
+                && matches!(args[1].unspan(), Value::Int(1))))
     };
     fn ends_with_step(v: &Value, n: u16, is_step: &dyn Fn(&Value) -> bool) -> bool {
-        let writes_n = |v: &Value| v.any_node(&mut |m| matches!(m, Value::Set(t, _) if *t == n));
+        let writes_n =
+            |v: &Value| v.any_node(&mut |node| matches!(node, Value::Set(var, _) if *var == n));
         match v.unspan() {
             _ if is_step(v) => true,
             _ if !writes_n(v) => true,
@@ -1394,8 +1401,10 @@ fn step_down_by_trips(
                     None => true,
                 }
             }
-            Value::If(c, t, f) => {
-                !writes_n(c) && ends_with_step(t, n, is_step) && ends_with_step(f, n, is_step)
+            Value::If(test, then, other) => {
+                !writes_n(test)
+                    && ends_with_step(then, n, is_step)
+                    && ends_with_step(other, n, is_step)
             }
             _ => false,
         }

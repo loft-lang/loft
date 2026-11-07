@@ -2610,37 +2610,37 @@ impl<'a> FnWriter<'a> {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
-                let Some(held) = self.held_vector(&vec) else {
+                let Some(held) = self.held_vector(vec) else {
                     return Ok(None);
                 };
-                let size = Self::literal(&size, "element size")?;
+                let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let index = self.expr(&idx, ind)?;
+                let index = self.expr(idx, ind)?;
                 if name == "OpGetInt" && self.version_raw(args) {
                     let index = as_int(index)?;
                     let code = version::version_access(name, &held, size, fld, &index, None);
                     return Ok(Some(E::new(code, K::Int)));
                 }
-                if let Some(i) = self.counter_index(&idx, &held) {
+                if let Some(i) = self.counter_index(idx, &held) {
                     let (f, k) = if name == "OpGetInt" {
                         ("loft_vh_at_int", K::Int)
                     } else {
                         ("loft_vh_at_float", K::Float)
                     };
-                    let proof = self.held_proof(&vec, &held);
+                    let proof = self.held_proof(vec, &held);
                     crate::rewrite_census::fired("R-Base/counter", 1);
                     return Ok(Some(E::new(
                         format!("({proof}, {f}({held}, {size}, {i}, {fld}))"),
                         k,
                     )));
                 }
-                if let Some(fits) = self.grid_index(&idx, &held) {
+                if let Some(fits) = self.grid_index(idx, &held) {
                     let (raw, checked, k) = if name == "OpGetInt" {
                         ("loft_vh_at_int", "loft_vh_get_int", K::Int)
                     } else {
                         ("loft_vh_at_float", "loft_vh_get_float", K::Float)
                     };
-                    let proof = self.held_proof(&vec, &held);
+                    let proof = self.held_proof(vec, &held);
                     let i = as_int(index)?;
                     let (at, tail) = at(report);
                     return Ok(Some(E::new(
@@ -2655,9 +2655,9 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_vh_get_float", K::Float)
                 };
-                let proof = self.held_proof(&vec, &held);
+                let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
-                let (index, nn) = self.index_arg(&idx, as_int(index)?);
+                let (index, nn) = self.index_arg(idx, as_int(index)?);
                 Ok(Some(E::new(
                     format!("({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}{tail}))"),
                     k,
@@ -2679,19 +2679,19 @@ impl<'a> FnWriter<'a> {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
-                let Some(held) = self.held_vector(&vec) else {
+                let Some(held) = self.held_vector(vec) else {
                     return Ok(None);
                 };
                 let Some((f, k)) = Self::pa_reader(name) else {
                     return Ok(None);
                 };
-                let size = Self::literal(&size, "element size")?;
+                let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let index = as_int(self.expr(&idx, ind)?)?;
-                let (index, nn) = self.index_arg(&idx, index);
-                let proof = self.held_proof(&vec, &held);
+                let index = as_int(self.expr(idx, ind)?)?;
+                let (index, nn) = self.index_arg(idx, index);
+                let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
-                let addr = match self.counter_index(&idx, &held) {
+                let addr = match self.counter_index(idx, &held) {
                     Some(i) => {
                         crate::rewrite_census::fired("R-Base/counter", 1);
                         format!("loft_vh_at_addr({held}, {size}, {i})")
@@ -2711,10 +2711,10 @@ impl<'a> FnWriter<'a> {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
-                let Some(held) = self.held_vector(&vec) else {
+                let Some(held) = self.held_vector(vec) else {
                     return Ok(None);
                 };
-                let size = Self::literal(&size, "element size")?;
+                let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
                 let (index, value) = self.two(name, &[idx, val], ind)?;
                 if name == "OpSetInt" && self.version_raw(args) {
@@ -2728,9 +2728,9 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_vh_set_float", as_float(value)?)
                 };
-                let proof = self.held_proof(&vec, &held);
+                let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
-                let (index, nn) = self.index_arg(&idx, as_int(index)?);
+                let (index, nn) = self.index_arg(idx, as_int(index)?);
                 Ok(Some(E::new(
                     format!(
                         "({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}, {value}{tail}))"
