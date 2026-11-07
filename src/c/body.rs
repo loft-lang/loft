@@ -20,6 +20,7 @@ mod misc;
 mod par;
 mod peel;
 mod spec_chain;
+mod sticky;
 pub(super) mod transient;
 mod value;
 mod version;
@@ -216,6 +217,11 @@ pub(crate) struct FnWriter<'a> {
     /// (`hoist::invariant_chains`), by the address of each node that spells one: the memo's
     /// local, and the chain its first use evaluates.
     invariants: Vec<std::collections::HashMap<usize, std::rc::Rc<(String, Value)>>>,
+    /// `@FR-R-Invariant`'s hoist clause: the memos evaluated at their loop's prelude, whose
+    /// uses read the memo with no first-use test.
+    hoisted_memos: std::collections::HashSet<String>,
+    /// `@FR-R-StickySum`: the sums enclosing loops took, each with its loop's flag.
+    sticky: Vec<(u16, String)>,
     /// `@FR-R-ValueRecord`'s facts for this function (`value::VrFn`), when the plan has any.
     vr: Option<Box<value::VrFn>>,
     /// `@FR-R-Transient`: this body's transient variables, when it is a twin or holds a site.
@@ -776,6 +782,8 @@ impl<'a> FnWriter<'a> {
             work_alias: None,
             scalars: Vec::new(),
             invariants: Vec::new(),
+            hoisted_memos: std::collections::HashSet::new(),
+            sticky: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
             hosts: crate::opt::hoist::placed_hosts(def.code(), cx.data),
@@ -1501,7 +1509,7 @@ impl<'a> FnWriter<'a> {
     /// before porting (a checked `a * b` and `a ^ b` in a 1 000-element loop): gcc's own code
     /// motion already hoisted them (the same 401M instructions with the memo), clang's did not
     /// (621M -> 541M, -13 %).
-    fn hold_invariants(&mut self, b: &Block, ind: usize) {
+    fn hold_invariants(&mut self, b: &Block, ind: usize) -> Result<(), String> {
         let mut frame = std::collections::HashMap::new();
         if !self.cx.switches.invariant_hoist_disabled && self.gen_elem.is_none() && !self.lean() {
             for ch in crate::opt::hoist::invariant_chains(b, self.cx.data, self.vars) {
@@ -1519,6 +1527,19 @@ impl<'a> FnWriter<'a> {
                     "int64_t {name} = LOFT_NULL;\n    int {name}_set = 0;"
                 ));
                 self.line(ind, &format!("{name}_set = 0;"));
+                // The hoist clause: a chain of the silent operators is evaluated here, where
+                // every variable it reads already holds the value the loop sees (none is
+                // written in the loop) — the same value its first use would compute, and no
+                // report either way, even where the loop runs no trip.
+                if !crate::env_once!(std::env::var("LOFT_NO_MEMO_HOIST").is_ok_and(|v| v != "0"))
+                    && silent_chain(&ch.chain, self.cx.data)
+                {
+                    let e = self.expr(&ch.chain, ind)?;
+                    self.line(ind, &format!("{name} = {};", as_int(e)?));
+                    self.line(ind, &format!("{name}_set = 1;"));
+                    self.hoisted_memos.insert(name.clone());
+                    crate::rewrite_census::fired("R-Invariant/hoist", 1);
+                }
                 let memo = std::rc::Rc::new((name, ch.chain));
                 for a in ch.nodes {
                     frame.insert(a, memo.clone());
@@ -1532,6 +1553,7 @@ impl<'a> FnWriter<'a> {
             names.len()
         });
         self.invariants.push(frame);
+        Ok(())
     }
 
     /// The memo an enclosing loop keeps for the chain node `v`, if any: the node's address
@@ -1552,11 +1574,13 @@ impl<'a> FnWriter<'a> {
     /// and the proof asserts the memo agrees — rustc's `LOFT_HOIST_VERIFY` falsifier.
     fn invariant_use(&mut self, memo: &(String, Value), ind: usize) -> Result<E, String> {
         let (name, chain) = memo;
-        self.line(ind, &format!("if (!{name}_set) {{"));
-        let e = self.expr(chain, ind + 1)?;
-        self.line(ind + 1, &format!("{name} = {};", as_int(e)?));
-        self.line(ind + 1, &format!("{name}_set = 1;"));
-        self.line(ind, "}");
+        if !self.hoisted_memos.contains(name) {
+            self.line(ind, &format!("if (!{name}_set) {{"));
+            let e = self.expr(chain, ind + 1)?;
+            self.line(ind + 1, &format!("{name} = {};", as_int(e)?));
+            self.line(ind + 1, &format!("{name}_set = 1;"));
+            self.line(ind, "}");
+        }
         self.line(ind, "#ifdef LOFT_VERIFY");
         let before = self.temps.len();
         let fresh = self.expr(chain, ind)?;
@@ -4639,7 +4663,7 @@ impl<'a> FnWriter<'a> {
             });
         }
         self.loop_calls.push(calls);
-        self.hold_invariants(b, ind);
+        self.hold_invariants(b, ind)?;
         let mints = self.hold_vectors(b, ind)?;
         self.hold_versions(b, ind)?;
         let in_range_at = self.in_range.len();
@@ -4903,16 +4927,21 @@ impl<'a> FnWriter<'a> {
         self.loops.push(l);
         if let Some(walk) = self.char_walks.get(&b.scope).cloned() {
             self.char_walk_loop(b, &walk, ind)?;
+            self.line(ind, &format!("cont_{l}:;"));
+            self.line(ind, "}");
+            self.line(ind, &format!("brk_{l}:;"));
         } else if let Some(plan) = self.peel_plan(b) {
             self.loops.pop();
             return self.peel_loop(b, &plan, ind);
         } else {
+            let sums = self.open_sticky_sums(b, ind);
             self.line(ind, "for (;;) {");
             self.block_stmt(b, ind + 1)?;
+            self.line(ind, &format!("cont_{l}:;"));
+            self.line(ind, "}");
+            self.line(ind, &format!("brk_{l}:;"));
+            self.close_sticky_sums(&sums, ind);
         }
-        self.line(ind, &format!("cont_{l}:;"));
-        self.line(ind, "}");
-        self.line(ind, &format!("brk_{l}:;"));
         self.loops.pop();
         Ok(())
     }
@@ -5733,6 +5762,9 @@ impl<'a> FnWriter<'a> {
         let c = self.shapes[var as usize];
         if let Some(done) = self.rewritten_bind(var, x, ind) {
             return done;
+        }
+        if c == CType::Int && self.sticky_update(var, x, ind)? {
+            return Ok(());
         }
         if c == CType::Int && self.spec_chain(var, x, ind)? {
             return Ok(());
@@ -11045,4 +11077,25 @@ fn mentions_outside(
         return;
     }
     v.for_each_child(&mut |c: &Value| mentions_outside(c, reach, sites, found));
+}
+
+/// `@FR-R-Invariant`'s hoist clause: is `v` a chain of the operators that report nothing — `+ -
+/// *` and negation (null on overflow), `& | ^` — over variables and literals?
+fn silent_chain(v: &Value, data: &crate::data::Data) -> bool {
+    match v.unspan() {
+        Value::Var(_) | Value::Int(_) | Value::Long(_) => true,
+        Value::Call(d, args) => {
+            matches!(
+                data.def(*d).name(),
+                "OpAddInt"
+                    | "OpMinInt"
+                    | "OpMulInt"
+                    | "OpMinSingleInt"
+                    | "OpLandInt"
+                    | "OpLorInt"
+                    | "OpEorInt"
+            ) && args.iter().all(|a| silent_chain(a, data))
+        }
+        _ => false,
+    }
 }

@@ -33,6 +33,8 @@ enum Node {
         lhs: usize,
         rhs: usize,
         proven: bool,
+        /// The range proof bounds the result: never the sentinel.
+        bounded: bool,
     },
 }
 
@@ -53,7 +55,6 @@ impl FnWriter<'_> {
     /// plain: written as the speculative plain chain.  Answers whether it wrote it.
     pub(super) fn spec_chain(&mut self, var: u16, x: &Value, ind: usize) -> Result<bool, String> {
         if crate::env_once!(std::env::var("LOFT_NO_SPEC_CHAIN").is_ok_and(|v| v != "0"))
-            || !self.plain_chains.is_empty()
             || self.gen_elem.is_some()
             || self.loops.is_empty()
         {
@@ -72,7 +73,11 @@ impl FnWriter<'_> {
         // Count the operators and the ones a proof already writes plain.
         let (mut ops, mut open) = (0usize, 0usize);
         self.chain_census(x, &mut ops, &mut open);
-        if ops < 2 || open == 0 {
+        // One operator is worth it only where the local carries itself: `acc = acc + e`.
+        let carried = args
+            .iter()
+            .any(|a| matches!(a.unspan(), Value::Var(w) if *w == var));
+        if (ops < 2 && !carried) || open == 0 || self.chain_admitted(x) {
             return Ok(false);
         }
         let mut nodes: Vec<Node> = Vec::new();
@@ -93,6 +98,7 @@ impl FnWriter<'_> {
                     lhs,
                     rhs,
                     proven,
+                    bounded,
                 } => {
                     let (a, b) = (vals[*lhs].clone(), vals[*rhs].clone());
                     let r = self.temp(super::CType::Int);
@@ -124,8 +130,9 @@ impl FnWriter<'_> {
                         crate::rewrite_census::fired("R-Range", 1);
                     }
                     self.line(ind, &line);
-                    // An inner result equal to the sentinel reads as null to the operator above.
-                    if i != root && !*proven {
+                    // An inner result equal to the sentinel reads as null to the operator above;
+                    // a result the range proof bounds never is.
+                    if i != root && !*proven && !*bounded {
                         self.line(ind, &format!("{bad} |= ({r} == LOFT_NULL);"));
                     }
                     vals.push(r);
@@ -141,6 +148,22 @@ impl FnWriter<'_> {
         self.line(ind, "}");
         crate::rewrite_census::fired("R-SpecChain", 1);
         Ok(true)
+    }
+
+    /// Does `(R-GuardedChain)` own an operator of the chain under `x` (its admitted operators,
+    /// by argument-slice address)?  Then the chain is that rule's.
+    fn chain_admitted(&self, x: &Value) -> bool {
+        if self.plain_chains.is_empty() {
+            return false;
+        }
+        let mut hit = false;
+        x.walk(&mut |n| {
+            if let Value::Call(_, args) = n {
+                let at = args.as_ptr() as usize;
+                hit |= self.plain_chains.iter().any(|(set, _)| set.contains(&at));
+            }
+        });
+        hit
     }
 
     /// The operators of the chain under `x` and how many of them no proof writes plain.
@@ -179,6 +202,12 @@ impl FnWriter<'_> {
         {
             let proven = !matches!(name, "OpLandInt" | "OpLorInt" | "OpEorInt")
                 && self.range_proves(name, args);
+            let bounded = matches!(name, "OpLandInt" | "OpLorInt" | "OpEorInt") && {
+                let facts = self.nn_facts();
+                let over = self.range_override.last().cloned();
+                let ranges = over.as_deref().unwrap_or(&facts.1);
+                crate::opt::range::range(self.cx.data, &facts.0, ranges, x, 0).is_some()
+            };
             let lhs = self.chain_nodes(&args[0], nodes, ind)?;
             let rhs = self.chain_nodes(&args[1], nodes, ind)?;
             nodes.push(Node::Op {
@@ -186,6 +215,7 @@ impl FnWriter<'_> {
                 lhs,
                 rhs,
                 proven,
+                bounded,
             });
             return Ok(nodes.len() - 1);
         }
@@ -204,7 +234,7 @@ impl FnWriter<'_> {
     }
 
     /// Is `x` never null under this function's facts: ranged, or non-sentinel?
-    fn never_null(&mut self, x: &Value) -> bool {
+    pub(super) fn never_null(&mut self, x: &Value) -> bool {
         let facts = self.nn_facts();
         let over = self.range_override.last().cloned();
         let ranges = over.as_deref().unwrap_or(&facts.1);
