@@ -13,6 +13,8 @@ out of line takes a field and writes it.  The bench programs that expose user-bu
 (B) and the walk-or-write warning (W) are built, and the C routines over 3× Rust are priced by
 hand (§ The C to 2×): its rewrites but the hash table's are built, and seven of the eight
 routines are at or under 2× their Rust twin from the compiler; `lru_mixed` is not.  Open: the rest of § The C to 2×, and § Also open.  Work lives on `tuxedo-quality`.
+Resume from [handoff-2026-11-07.md](handoff-2026-11-07.md): the judged lane is the C SHIP lane,
+and seven routines are over 2.7× on it.
 
 ## Goal
 
