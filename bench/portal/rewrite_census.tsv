@@ -295,7 +295,7 @@
 06_newton_sqrt	-	c	R-NoLocks	1
 06_newton_sqrt	-	c	R-NoThreads	1
 06_newton_sqrt	-	c	R-NonSentinelParam	7
-06_newton_sqrt	-	c	R-Range	2
+06_newton_sqrt	-	c	R-Range	4
 06_newton_sqrt	-	c	R-RangedCall	2
 06_newton_sqrt	-	c	R-Rotate	10
 06_newton_sqrt	-	c	R-SingleUse	2
@@ -536,7 +536,7 @@
 10_sort	-	c	R-NoLocks	1
 10_sort	-	c	R-NoThreads	1
 10_sort	-	c	R-NonSentinelParam	7
-10_sort	-	c	R-Range	18
+10_sort	-	c	R-Range	21
 10_sort	-	c	R-Range/index	7
 10_sort	-	c	R-RangedCall	2
 10_sort	-	c	R-RefParam	6
@@ -674,7 +674,7 @@
 12_drawing	-	c	R-NoThreads	1
 12_drawing	-	c	R-NonSentinelParam	25
 12_drawing	-	c	R-Push	3
-12_drawing	-	c	R-Range	55
+12_drawing	-	c	R-Range	56
 12_drawing	-	c	R-Range/index	29
 12_drawing	-	c	R-RangedCall	3
 12_drawing	-	c	R-RecPtr	5
@@ -774,7 +774,7 @@
 13_stdlib_text	-	c	R-NoLocks	1
 13_stdlib_text	-	c	R-NoThreads	1
 13_stdlib_text	-	c	R-NonSentinelParam	12
-13_stdlib_text	-	c	R-Range	38
+13_stdlib_text	-	c	R-Range	45
 13_stdlib_text	-	c	R-RangedCall	6
 13_stdlib_text	-	c	R-RefParam	10
 13_stdlib_text	-	c	R-RetAdopt	1
@@ -849,7 +849,7 @@
 14_stdlib_vector	-	c	R-NonSentinelParam	20
 14_stdlib_vector	-	c	R-Push	2
 14_stdlib_vector	-	c	R-Push/sole	2
-14_stdlib_vector	-	c	R-Range	55
+14_stdlib_vector	-	c	R-Range	65
 14_stdlib_vector	-	c	R-Range/index	19
 14_stdlib_vector	-	c	R-RangedCall	13
 14_stdlib_vector	-	c	R-RecPtr	5
@@ -936,7 +936,7 @@
 15_stdlib_keyed	-	c	R-NoLocks	1
 15_stdlib_keyed	-	c	R-NoThreads	1
 15_stdlib_keyed	-	c	R-NonSentinelParam	23
-15_stdlib_keyed	-	c	R-Range	97
+15_stdlib_keyed	-	c	R-Range	120
 15_stdlib_keyed	-	c	R-RangedCall	17
 15_stdlib_keyed	-	c	R-RecPtr	35
 15_stdlib_keyed	-	c	R-RefParam	18
@@ -1027,7 +1027,7 @@
 16_consumer_shapes	-	c	R-Push/sole	2
 16_consumer_shapes	-	c	R-PushFill	3
 16_consumer_shapes	-	c	R-PushRec	6
-16_consumer_shapes	-	c	R-Range	367
+16_consumer_shapes	-	c	R-Range	427
 16_consumer_shapes	-	c	R-Range/index	2
 16_consumer_shapes	-	c	R-RangedCall	10
 16_consumer_shapes	-	c	R-RecPtr	59
@@ -1148,7 +1148,7 @@
 17_consumer_moros_dryopea	-	c	R-NonSentinelParam/twin	4
 17_consumer_moros_dryopea	-	c	R-Peel	12
 17_consumer_moros_dryopea	-	c	R-PushRec	19
-17_consumer_moros_dryopea	-	c	R-Range	545
+17_consumer_moros_dryopea	-	c	R-Range	735
 17_consumer_moros_dryopea	-	c	R-Range/index	1
 17_consumer_moros_dryopea	-	c	R-RangedCall	10
 17_consumer_moros_dryopea	-	c	R-RecPtr	44
@@ -1275,7 +1275,7 @@
 18_consumer_crawler	-	c	R-Push/sole	2
 18_consumer_crawler	-	c	R-PushFill	10
 18_consumer_crawler	-	c	R-PushFill/fill	1
-18_consumer_crawler	-	c	R-Range	275
+18_consumer_crawler	-	c	R-Range	324
 18_consumer_crawler	-	c	R-Range/index	25
 18_consumer_crawler	-	c	R-RangedCall	11
 18_consumer_crawler	-	c	R-RecPtr	3
@@ -1381,7 +1381,7 @@
 19_stdlib_par	-	c	R-NoLocks	1
 19_stdlib_par	-	c	R-NonSentinelParam	12
 19_stdlib_par	-	c	R-PushFill	2
-19_stdlib_par	-	c	R-Range	33
+19_stdlib_par	-	c	R-Range	38
 19_stdlib_par	-	c	R-RecPtr	2
 19_stdlib_par	-	c	R-RecPtr/param	1
 19_stdlib_par	-	c	R-RefParam	12
@@ -1544,7 +1544,7 @@
 21_tree	-	c	R-NoLocks	1
 21_tree	-	c	R-NoThreads	1
 21_tree	-	c	R-NonSentinelParam	21
-21_tree	-	c	R-Range	69
+21_tree	-	c	R-Range	90
 21_tree	-	c	R-RangedCall	17
 21_tree	-	c	R-RecPtr	2
 21_tree	-	c	R-RefParam	30
@@ -1680,7 +1680,7 @@
 23_lru	-	c	R-NoLocks	1
 23_lru	-	c	R-NoThreads	1
 23_lru	-	c	R-NonSentinelParam	8
-23_lru	-	c	R-Range	9
+23_lru	-	c	R-Range	12
 23_lru	-	c	R-RangedCall	2
 23_lru	-	c	R-RefParam	12
 23_lru	-	c	R-Rotate	10
@@ -1859,7 +1859,7 @@ assets	7108f3550+shapes@0.5.4	c	R-PushFill	1
 assets	7108f3550+shapes@0.5.4	c	R-PushFill/run	2
 assets	7108f3550+shapes@0.5.4	c	R-PushFill/run-header	1
 assets	7108f3550+shapes@0.5.4	c	R-PushRec	2
-assets	7108f3550+shapes@0.5.4	c	R-Range	139
+assets	7108f3550+shapes@0.5.4	c	R-Range	162
 assets	7108f3550+shapes@0.5.4	c	R-Range/index	8
 assets	7108f3550+shapes@0.5.4	c	R-RangedCall	8
 assets	7108f3550+shapes@0.5.4	c	R-RangedCall/guard	4
@@ -1987,7 +1987,7 @@ cbor	bd4932067	c	R-Place	3
 cbor	bd4932067	c	R-PushFill	2
 cbor	bd4932067	c	R-PushRec	7
 cbor	bd4932067	c	R-PushRec/apart	20
-cbor	bd4932067	c	R-Range	288
+cbor	bd4932067	c	R-Range	313
 cbor	bd4932067	c	R-Range/index	15
 cbor	bd4932067	c	R-RangedCall	7
 cbor	bd4932067	c	R-RecPtr	5
@@ -2105,7 +2105,7 @@ crypto	bd4932067	c	R-Mint	2
 crypto	bd4932067	c	R-NoLocks	1
 crypto	bd4932067	c	R-NoThreads	1
 crypto	bd4932067	c	R-NonSentinelParam	10
-crypto	bd4932067	c	R-Range	50
+crypto	bd4932067	c	R-Range	58
 crypto	bd4932067	c	R-Range/index	2
 crypto	bd4932067	c	R-RangedCall	2
 crypto	bd4932067	c	R-RecPtr	1
@@ -2229,7 +2229,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushF
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run-header	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushRec	14
-drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	263
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	284
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range/index	90
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RangedCall	25
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr	54
@@ -2379,7 +2379,7 @@ fixstep	394317324	c	R-NonSentinelParam	15
 fixstep	394317324	c	R-PushFill	1
 fixstep	394317324	c	R-PushFill/run	4
 fixstep	394317324	c	R-PushFill/run-header	2
-fixstep	394317324	c	R-Range	48
+fixstep	394317324	c	R-Range	55
 fixstep	394317324	c	R-Range/index	2
 fixstep	394317324	c	R-RangedCall	4
 fixstep	394317324	c	R-RangedCall/guard	2
@@ -2561,7 +2561,7 @@ glb	7108f3550	c	R-Push/sole	4
 glb	7108f3550	c	R-PushFill	6
 glb	7108f3550	c	R-PushFill/run	2
 glb	7108f3550	c	R-PushFill/run-header	2
-glb	7108f3550	c	R-Range	105
+glb	7108f3550	c	R-Range	111
 glb	7108f3550	c	R-Range/index	1
 glb	7108f3550	c	R-RangedCall	5
 glb	7108f3550	c	R-RecPtr	21
@@ -2683,7 +2683,7 @@ graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushFill/fill	1
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushFill/run	6
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushFill/run-header	6
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushRec	2
-graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Range	178
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Range	266
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Range/index	20
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-RangedCall	31
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-RangedCall/guard	10
@@ -2822,7 +2822,7 @@ gridmesh	873da7f9a	c	R-Push	14
 gridmesh	873da7f9a	c	R-PushFill/hash	3
 gridmesh	873da7f9a	c	R-PushRec	1
 gridmesh	873da7f9a	c	R-PushRec/apart	4
-gridmesh	873da7f9a	c	R-Range	51
+gridmesh	873da7f9a	c	R-Range	52
 gridmesh	873da7f9a	c	R-Range/index	11
 gridmesh	873da7f9a	c	R-RecPtr	11
 gridmesh	873da7f9a	c	R-RecPtr/held	1
@@ -2937,7 +2937,7 @@ hex_body	3bdb69ef2	c	R-Peel	1
 hex_body	3bdb69ef2	c	R-PushFill	1
 hex_body	3bdb69ef2	c	R-PushFill/run	2
 hex_body	3bdb69ef2	c	R-PushFill/run-header	2
-hex_body	3bdb69ef2	c	R-Range	46
+hex_body	3bdb69ef2	c	R-Range	55
 hex_body	3bdb69ef2	c	R-Range/index	27
 hex_body	3bdb69ef2	c	R-RangedCall	20
 hex_body	3bdb69ef2	c	R-Rebind	2
@@ -3273,7 +3273,7 @@ hex_field	3bdb69ef2	c	R-PushFill	4
 hex_field	3bdb69ef2	c	R-PushFill/fill	2
 hex_field	3bdb69ef2	c	R-PushFill/run	4
 hex_field	3bdb69ef2	c	R-PushFill/run-header	1
-hex_field	3bdb69ef2	c	R-Range	296
+hex_field	3bdb69ef2	c	R-Range	311
 hex_field	3bdb69ef2	c	R-RangedCall	79
 hex_field	3bdb69ef2	c	R-RangedCall/guard	3
 hex_field	3bdb69ef2	c	R-RecPtr	2
@@ -3634,7 +3634,7 @@ hex_grid	3bdb69ef2	c	R-NoThreads	1
 hex_grid	3bdb69ef2	c	R-NonSentinelParam	7
 hex_grid	3bdb69ef2	c	R-PushFill/run	2
 hex_grid	3bdb69ef2	c	R-PushFill/run-header	2
-hex_grid	3bdb69ef2	c	R-Range	6
+hex_grid	3bdb69ef2	c	R-Range	8
 hex_grid	3bdb69ef2	c	R-RecPtr	1
 hex_grid	3bdb69ef2	c	R-RecPtr/held	1
 hex_grid	3bdb69ef2	c	R-RecPtr/param	2
@@ -4087,7 +4087,7 @@ hex_shape	3bdb69ef2	c	R-Push	32
 hex_shape	3bdb69ef2	c	R-PushFill	4
 hex_shape	3bdb69ef2	c	R-PushFill/fill	3
 hex_shape	3bdb69ef2	c	R-PushFill/run	1
-hex_shape	3bdb69ef2	c	R-Range	181
+hex_shape	3bdb69ef2	c	R-Range	185
 hex_shape	3bdb69ef2	c	R-Range/index	33
 hex_shape	3bdb69ef2	c	R-RangedCall	39
 hex_shape	3bdb69ef2	c	R-RangedCall/guard	2
@@ -4210,7 +4210,7 @@ hex_terrain	3bdb69ef2	c	R-PushFill	2
 hex_terrain	3bdb69ef2	c	R-PushFill/fill	3
 hex_terrain	3bdb69ef2	c	R-PushFill/run	5
 hex_terrain	3bdb69ef2	c	R-PushFill/run-header	1
-hex_terrain	3bdb69ef2	c	R-Range	168
+hex_terrain	3bdb69ef2	c	R-Range	183
 hex_terrain	3bdb69ef2	c	R-Range/index	16
 hex_terrain	3bdb69ef2	c	R-RangedCall	28
 hex_terrain	3bdb69ef2	c	R-RangedCall/guard	6
@@ -4326,7 +4326,7 @@ hex_way	3bdb69ef2	c	R-PushFill	2
 hex_way	3bdb69ef2	c	R-PushFill/fill	2
 hex_way	3bdb69ef2	c	R-PushFill/run	2
 hex_way	3bdb69ef2	c	R-PushFill/run-header	1
-hex_way	3bdb69ef2	c	R-Range	30
+hex_way	3bdb69ef2	c	R-Range	32
 hex_way	3bdb69ef2	c	R-RangedCall	2
 hex_way	3bdb69ef2	c	R-RecPtr	1
 hex_way	3bdb69ef2	c	R-RecPtr/held	1
@@ -4432,7 +4432,7 @@ hex_world	3bdb69ef2	c	R-NoThreads	1
 hex_world	3bdb69ef2	c	R-NonSentinelParam	6
 hex_world	3bdb69ef2	c	R-PushFill/run	1
 hex_world	3bdb69ef2	c	R-PushFill/run-header	1
-hex_world	3bdb69ef2	c	R-Range	88
+hex_world	3bdb69ef2	c	R-Range	101
 hex_world	3bdb69ef2	c	R-RangedCall	8
 hex_world	3bdb69ef2	c	R-RecPtr	7
 hex_world	3bdb69ef2	c	R-RecPtr/held	7
@@ -4671,7 +4671,7 @@ mesh3d	7108f3550	c	R-Push/sole	1
 mesh3d	7108f3550	c	R-PushFill	6
 mesh3d	7108f3550	c	R-PushFill/run	5
 mesh3d	7108f3550	c	R-PushFill/run-header	4
-mesh3d	7108f3550	c	R-Range	69
+mesh3d	7108f3550	c	R-Range	101
 mesh3d	7108f3550	c	R-Range/index	24
 mesh3d	7108f3550	c	R-RangedCall	5
 mesh3d	7108f3550	c	R-Rebind	1
@@ -4794,7 +4794,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PureReuse	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PushFill	2
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PushRec	8
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PushRec/apart	22
-pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Range	220
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Range	222
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Range/index	15
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RangedCall	26
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RecPtr	1
@@ -5063,7 +5063,7 @@ shapes	873da7f9a	c	R-NonSentinelParam	4
 shapes	873da7f9a	c	R-PushFill/run	1
 shapes	873da7f9a	c	R-PushFill/run-header	1
 shapes	873da7f9a	c	R-PushRec	1
-shapes	873da7f9a	c	R-Range	27
+shapes	873da7f9a	c	R-Range	33
 shapes	873da7f9a	c	R-Range/index	2
 shapes	873da7f9a	c	R-RecPtr	6
 shapes	873da7f9a	c	R-RecPtr/held	4
@@ -5236,7 +5236,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Push/sole	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushFill	7
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushFill/fill	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushRec	2
-stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range	142
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range	183
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range/index	21
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-RangedCall	12
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-RecPtr	13
@@ -5374,7 +5374,7 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-NonSentinelParam	38
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-NonSentinelParam/twin	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-PushFill	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-PushFill/fill	1
-text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Range	107
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Range	118
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Range/index	1
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-RangedCall	17
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-RecPtr	5
@@ -5501,7 +5501,7 @@ time	394317324	c	R-NoLocks	1
 time	394317324	c	R-NoThreads	1
 time	394317324	c	R-NonSentinelParam	9
 time	394317324	c	R-NonSentinelParam/twin	7
-time	394317324	c	R-Range	25
+time	394317324	c	R-Range	32
 time	394317324	c	R-Range/index	4
 time	394317324	c	R-RecPtr	1
 time	394317324	c	R-RecPtr/param	1
@@ -5683,7 +5683,7 @@ web	b4075f3fc	c	R-LoopSlot	9
 web	b4075f3fc	c	R-NoLocks	1
 web	b4075f3fc	c	R-NoThreads	1
 web	b4075f3fc	c	R-NonSentinelParam	9
-web	b4075f3fc	c	R-Range	25
+web	b4075f3fc	c	R-Range	30
 web	b4075f3fc	c	R-RangedCall	2
 web	b4075f3fc	c	R-RangedCall/guard	1
 web	b4075f3fc	c	R-RecPtr/param	1
@@ -5788,7 +5788,7 @@ zttext	bd4932067	c	R-PushFill/fill	1
 zttext	bd4932067	c	R-PushFill/run	4
 zttext	bd4932067	c	R-PushFill/run-header	3
 zttext	bd4932067	c	R-PushRec	6
-zttext	bd4932067	c	R-Range	132
+zttext	bd4932067	c	R-Range	157
 zttext	bd4932067	c	R-Range/index	1
 zttext	bd4932067	c	R-RangedCall	8
 zttext	bd4932067	c	R-Rebind	2

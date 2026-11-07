@@ -8226,6 +8226,20 @@ impl<'a> FnWriter<'a> {
         self.range_plain(form, name, args, ind)
     }
 
+    /// Does `(R-Range)` prove the integer operator `name` over `args` cannot fault — the test
+    /// [`Self::range_operator`] writes the plain operator on?
+    pub(super) fn range_proves(&mut self, name: &str, args: &[Value]) -> bool {
+        if crate::opt::range::plain_form(name, args.len()).is_none()
+            || crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"))
+        {
+            return false;
+        }
+        let facts = self.nn_facts();
+        let over = self.range_override.last().cloned();
+        let ranges = over.as_deref().unwrap_or(&facts.1);
+        crate::opt::range::op_range(self.cx.data, &facts.0, ranges, name, args, 0).is_some()
+    }
+
     /// This function's non-sentinel and range facts (`non_sentinel_vars`, `range_vars`), a
     /// `__nn` twin's seeded parameters included; computed once.
     fn nn_facts(

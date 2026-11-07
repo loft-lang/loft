@@ -332,7 +332,9 @@ impl FnWriter<'_> {
         args: &[Value],
         ind: usize,
     ) -> Result<Option<E>, String> {
-        if !chain_op(name, args.len()) {
+        // An operator `(R-Range)` proves plain outright is that rule's: plain in every copy,
+        // with no guard.
+        if !chain_op(name, args.len()) || self.range_proves(name, args) {
             return Ok(None);
         }
         let at = args.as_ptr() as usize;
