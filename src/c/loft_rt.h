@@ -2643,6 +2643,15 @@ static inline int loft_vg_span(int64_t first, int64_t end, int inclusive, int64_
     if (first > *last) return 0;
     return LOFT_SUB_OVF(*last, first, &d) || d >= min - 1;
 }
+/* @FR-R-Version's nest clause — a box of two counter ranges, each non-empty, holds at least
+ * `min` points. */
+static inline int loft_vg_area(int64_t f0, int64_t l0, int64_t f1, int64_t l1, int64_t min) {
+    int64_t a, b;
+    if (LOFT_SUB_OVF(l0, f0, &a) || LOFT_SUB_OVF(l1, f1, &b) || a >= min - 1 || b >= min - 1) {
+        return 1;
+    }
+    return (a + 1) * (b + 1) >= min;
+}
 /* An argument `x + c * t` at counter value `t`: 0 where it does not fit or is null, or where
  * `x` is null (a checked argument that answered null does not move with the counter). */
 static inline int loft_vg_lin(int64_t x, int64_t c, int64_t t, int64_t *out) {
