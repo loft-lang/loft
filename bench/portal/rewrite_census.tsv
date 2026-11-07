@@ -17,7 +17,7 @@
 01_fibonacci	-	c	R-NoLocks	1
 01_fibonacci	-	c	R-NoThreads	1
 01_fibonacci	-	c	R-NonSentinelParam	5
-01_fibonacci	-	c	R-Range	1
+01_fibonacci	-	c	R-Range	2
 01_fibonacci	-	c	R-Rotate	8
 01_fibonacci	-	c	R-SingleUse	2
 01_fibonacci	-	c	R-TextBorrow	14
@@ -43,7 +43,7 @@
 01_fibonacci	-	rust	R-LitDiv	1
 01_fibonacci	-	rust	R-LoopSlot	1
 01_fibonacci	-	rust	R-Mint	7
-01_fibonacci	-	rust	R-Range	2
+01_fibonacci	-	rust	R-Range	3
 01_fibonacci	-	rust	R-RetAdopt	3
 01_fibonacci	-	rust	R-Rotate	8
 01_fibonacci	-	rust	R-SingleUse	2
@@ -70,6 +70,7 @@
 02_sum_loop	-	c	R-NoLocks	1
 02_sum_loop	-	c	R-NoThreads	1
 02_sum_loop	-	c	R-NonSentinelParam	7
+02_sum_loop	-	c	R-Range	2
 02_sum_loop	-	c	R-Rotate	9
 02_sum_loop	-	c	R-SingleUse	2
 02_sum_loop	-	c	R-TextBorrow	14
@@ -95,7 +96,7 @@
 02_sum_loop	-	rust	R-LitDiv	1
 02_sum_loop	-	rust	R-LoopSlot	2
 02_sum_loop	-	rust	R-Mint	7
-02_sum_loop	-	rust	R-Range	1
+02_sum_loop	-	rust	R-Range	3
 02_sum_loop	-	rust	R-RetAdopt	3
 02_sum_loop	-	rust	R-Rotate	9
 02_sum_loop	-	rust	R-SingleUse	2
@@ -122,7 +123,7 @@
 03_sieve	-	c	R-NoLocks	1
 03_sieve	-	c	R-NoThreads	1
 03_sieve	-	c	R-NonSentinelParam	8
-03_sieve	-	c	R-Range	8
+03_sieve	-	c	R-Range	11
 03_sieve	-	c	R-RangedCall	4
 03_sieve	-	c	R-RangedCall/guard	1
 03_sieve	-	c	R-Rotate	10
@@ -151,7 +152,7 @@
 03_sieve	-	rust	R-LitDiv	2
 03_sieve	-	rust	R-LoopSlot	3
 03_sieve	-	rust	R-Mint	7
-03_sieve	-	rust	R-Range	8
+03_sieve	-	rust	R-Range	11
 03_sieve	-	rust	R-RangedCall	4
 03_sieve	-	rust	R-RetAdopt	3
 03_sieve	-	rust	R-Rotate	10
@@ -181,7 +182,7 @@
 04_collatz	-	c	R-NoThreads	1
 04_collatz	-	c	R-NonSentinelParam	7
 04_collatz	-	c	R-NonSentinelParam/twin	1
-04_collatz	-	c	R-Range	9
+04_collatz	-	c	R-Range	11
 04_collatz	-	c	R-RangedCall	2
 04_collatz	-	c	R-Rotate	10
 04_collatz	-	c	R-SingleUse	2
@@ -209,7 +210,7 @@
 04_collatz	-	rust	R-LitDiv	3
 04_collatz	-	rust	R-LoopSlot	3
 04_collatz	-	rust	R-Mint	7
-04_collatz	-	rust	R-Range	7
+04_collatz	-	rust	R-Range	9
 04_collatz	-	rust	R-RangedCall	2
 04_collatz	-	rust	R-RetAdopt	3
 04_collatz	-	rust	R-Rotate	10
@@ -238,7 +239,7 @@
 05_mandelbrot	-	c	R-NoLocks	1
 05_mandelbrot	-	c	R-NoThreads	1
 05_mandelbrot	-	c	R-NonSentinelParam	5
-05_mandelbrot	-	c	R-Range	2
+05_mandelbrot	-	c	R-Range	5
 05_mandelbrot	-	c	R-Rotate	11
 05_mandelbrot	-	c	R-SameRead	2
 05_mandelbrot	-	c	R-SingleUse	2
@@ -265,7 +266,7 @@
 05_mandelbrot	-	rust	R-LitDiv	1
 05_mandelbrot	-	rust	R-LoopSlot	4
 05_mandelbrot	-	rust	R-Mint	7
-05_mandelbrot	-	rust	R-Range	3
+05_mandelbrot	-	rust	R-Range	6
 05_mandelbrot	-	rust	R-RetAdopt	3
 05_mandelbrot	-	rust	R-Rotate	11
 05_mandelbrot	-	rust	R-SameRead	2
@@ -295,7 +296,7 @@
 06_newton_sqrt	-	c	R-NoLocks	1
 06_newton_sqrt	-	c	R-NoThreads	1
 06_newton_sqrt	-	c	R-NonSentinelParam	7
-06_newton_sqrt	-	c	R-Range	4
+06_newton_sqrt	-	c	R-Range	6
 06_newton_sqrt	-	c	R-RangedCall	2
 06_newton_sqrt	-	c	R-Rotate	10
 06_newton_sqrt	-	c	R-SingleUse	2
@@ -325,7 +326,7 @@
 06_newton_sqrt	-	rust	R-LitDiv	1
 06_newton_sqrt	-	rust	R-LoopSlot	3
 06_newton_sqrt	-	rust	R-Mint	7
-06_newton_sqrt	-	rust	R-Range	6
+06_newton_sqrt	-	rust	R-Range	9
 06_newton_sqrt	-	rust	R-RangedCall	2
 06_newton_sqrt	-	rust	R-RetAdopt	3
 06_newton_sqrt	-	rust	R-Rotate	10
@@ -353,6 +354,7 @@
 07_string_build	-	c	R-NoLocks	1
 07_string_build	-	c	R-NoThreads	1
 07_string_build	-	c	R-NonSentinelParam	7
+07_string_build	-	c	R-Range	2
 07_string_build	-	c	R-Rotate	9
 07_string_build	-	c	R-SingleUse	2
 07_string_build	-	c	R-TextBorrow	14
@@ -378,7 +380,7 @@
 07_string_build	-	rust	R-LitDiv	1
 07_string_build	-	rust	R-LoopSlot	2
 07_string_build	-	rust	R-Mint	7
-07_string_build	-	rust	R-Range	1
+07_string_build	-	rust	R-Range	3
 07_string_build	-	rust	R-RetAdopt	3
 07_string_build	-	rust	R-Rotate	9
 07_string_build	-	rust	R-SingleUse	2
@@ -409,7 +411,7 @@
 08_word_count	-	c	R-NoLocks	1
 08_word_count	-	c	R-NoThreads	1
 08_word_count	-	c	R-NonSentinelParam	7
-08_word_count	-	c	R-Range	3
+08_word_count	-	c	R-Range	5
 08_word_count	-	c	R-RangedCall	2
 08_word_count	-	c	R-RecPtr	2
 08_word_count	-	c	R-RefParam	4
@@ -442,7 +444,7 @@
 08_word_count	-	rust	R-LitDiv	2
 08_word_count	-	rust	R-LoopSlot	2
 08_word_count	-	rust	R-Mint	7
-08_word_count	-	rust	R-Range	4
+08_word_count	-	rust	R-Range	6
 08_word_count	-	rust	R-RangedCall	2
 08_word_count	-	rust	R-RecPtr	2
 08_word_count	-	rust	R-RetAdopt	3
@@ -474,7 +476,7 @@
 09_matrix_mul	-	c	R-NoLocks	1
 09_matrix_mul	-	c	R-NoThreads	1
 09_matrix_mul	-	c	R-NonSentinelParam	6
-09_matrix_mul	-	c	R-Range	3
+09_matrix_mul	-	c	R-Range	6
 09_matrix_mul	-	c	R-RefParam	8
 09_matrix_mul	-	c	R-Rotate	11
 09_matrix_mul	-	c	R-SingleUse	4
@@ -505,7 +507,7 @@
 09_matrix_mul	-	rust	R-Mint	7
 09_matrix_mul	-	rust	R-Push	2
 09_matrix_mul	-	rust	R-PushFill	2
-09_matrix_mul	-	rust	R-Range	4
+09_matrix_mul	-	rust	R-Range	7
 09_matrix_mul	-	rust	R-RetAdopt	3
 09_matrix_mul	-	rust	R-Rotate	11
 09_matrix_mul	-	rust	R-SingleUse	4
@@ -536,7 +538,7 @@
 10_sort	-	c	R-NoLocks	1
 10_sort	-	c	R-NoThreads	1
 10_sort	-	c	R-NonSentinelParam	7
-10_sort	-	c	R-Range	21
+10_sort	-	c	R-Range	25
 10_sort	-	c	R-Range/index	7
 10_sort	-	c	R-RangedCall	2
 10_sort	-	c	R-RefParam	6
@@ -572,7 +574,7 @@
 10_sort	-	rust	R-Mint	7
 10_sort	-	rust	R-Push	2
 10_sort	-	rust	R-PushFill	2
-10_sort	-	rust	R-Range	24
+10_sort	-	rust	R-Range	28
 10_sort	-	rust	R-RangedCall	2
 10_sort	-	rust	R-RetAdopt	3
 10_sort	-	rust	R-Rotate	12
@@ -601,7 +603,7 @@
 11_par	-	c	R-Mint	2
 11_par	-	c	R-NoLocks	1
 11_par	-	c	R-NonSentinelParam	3
-11_par	-	c	R-Range	2
+11_par	-	c	R-Range	3
 11_par	-	c	R-RecPtr	1
 11_par	-	c	R-RefParam	4
 11_par	-	c	R-Rotate	11
@@ -632,7 +634,7 @@
 11_par	-	rust	R-Mint	9
 11_par	-	rust	R-PushFill/record	1
 11_par	-	rust	R-PushRec	1
-11_par	-	rust	R-Range	3
+11_par	-	rust	R-Range	4
 11_par	-	rust	R-RecPtr	1
 11_par	-	rust	R-RetAdopt	3
 11_par	-	rust	R-Rotate	11
@@ -674,7 +676,7 @@
 12_drawing	-	c	R-NoThreads	1
 12_drawing	-	c	R-NonSentinelParam	25
 12_drawing	-	c	R-Push	3
-12_drawing	-	c	R-Range	56
+12_drawing	-	c	R-Range	73
 12_drawing	-	c	R-Range/index	29
 12_drawing	-	c	R-RangedCall	3
 12_drawing	-	c	R-RecPtr	5
@@ -730,7 +732,7 @@
 12_drawing	-	rust	R-Mint	11
 12_drawing	-	rust	R-Push	3
 12_drawing	-	rust	R-PushRec	1
-12_drawing	-	rust	R-Range	62
+12_drawing	-	rust	R-Range	83
 12_drawing	-	rust	R-RangedCall	3
 12_drawing	-	rust	R-RecPtr	7
 12_drawing	-	rust	R-RecPtr/nested	4
@@ -774,7 +776,7 @@
 13_stdlib_text	-	c	R-NoLocks	1
 13_stdlib_text	-	c	R-NoThreads	1
 13_stdlib_text	-	c	R-NonSentinelParam	12
-13_stdlib_text	-	c	R-Range	45
+13_stdlib_text	-	c	R-Range	62
 13_stdlib_text	-	c	R-RangedCall	6
 13_stdlib_text	-	c	R-RefParam	10
 13_stdlib_text	-	c	R-RetAdopt	1
@@ -808,7 +810,7 @@
 13_stdlib_text	-	rust	R-LitDiv	6
 13_stdlib_text	-	rust	R-LoopSlot	16
 13_stdlib_text	-	rust	R-Mint	11
-13_stdlib_text	-	rust	R-Range	39
+13_stdlib_text	-	rust	R-Range	56
 13_stdlib_text	-	rust	R-RangedCall	6
 13_stdlib_text	-	rust	R-RetAdopt	3
 13_stdlib_text	-	rust	R-Rotate	23
@@ -849,7 +851,7 @@
 14_stdlib_vector	-	c	R-NonSentinelParam	20
 14_stdlib_vector	-	c	R-Push	2
 14_stdlib_vector	-	c	R-Push/sole	2
-14_stdlib_vector	-	c	R-Range	65
+14_stdlib_vector	-	c	R-Range	91
 14_stdlib_vector	-	c	R-Range/index	19
 14_stdlib_vector	-	c	R-RangedCall	13
 14_stdlib_vector	-	c	R-RecPtr	5
@@ -895,7 +897,7 @@
 14_stdlib_vector	-	rust	R-PushFill	8
 14_stdlib_vector	-	rust	R-PushFill/record	3
 14_stdlib_vector	-	rust	R-PushRec	3
-14_stdlib_vector	-	rust	R-Range	56
+14_stdlib_vector	-	rust	R-Range	82
 14_stdlib_vector	-	rust	R-RangedCall	13
 14_stdlib_vector	-	rust	R-RecPtr	5
 14_stdlib_vector	-	rust	R-RefillBuffer	2
@@ -936,7 +938,7 @@
 15_stdlib_keyed	-	c	R-NoLocks	1
 15_stdlib_keyed	-	c	R-NoThreads	1
 15_stdlib_keyed	-	c	R-NonSentinelParam	23
-15_stdlib_keyed	-	c	R-Range	120
+15_stdlib_keyed	-	c	R-Range	150
 15_stdlib_keyed	-	c	R-RangedCall	17
 15_stdlib_keyed	-	c	R-RecPtr	35
 15_stdlib_keyed	-	c	R-RefParam	18
@@ -974,7 +976,7 @@
 15_stdlib_keyed	-	rust	R-LitDiv	28
 15_stdlib_keyed	-	rust	R-LoopSlot	22
 15_stdlib_keyed	-	rust	R-Mint	9
-15_stdlib_keyed	-	rust	R-Range	98
+15_stdlib_keyed	-	rust	R-Range	128
 15_stdlib_keyed	-	rust	R-RangedCall	17
 15_stdlib_keyed	-	rust	R-RecPtr	31
 15_stdlib_keyed	-	rust	R-RetAdopt	3
@@ -1027,7 +1029,7 @@
 16_consumer_shapes	-	c	R-Push/sole	2
 16_consumer_shapes	-	c	R-PushFill	3
 16_consumer_shapes	-	c	R-PushRec	6
-16_consumer_shapes	-	c	R-Range	427
+16_consumer_shapes	-	c	R-Range	449
 16_consumer_shapes	-	c	R-Range/index	2
 16_consumer_shapes	-	c	R-RangedCall	10
 16_consumer_shapes	-	c	R-RecPtr	59
@@ -1085,7 +1087,7 @@
 16_consumer_shapes	-	rust	R-PushFill	6
 16_consumer_shapes	-	rust	R-PushFill/record	3
 16_consumer_shapes	-	rust	R-PushRec	9
-16_consumer_shapes	-	rust	R-Range	264
+16_consumer_shapes	-	rust	R-Range	289
 16_consumer_shapes	-	rust	R-RangedCall	10
 16_consumer_shapes	-	rust	R-RecPtr	41
 16_consumer_shapes	-	rust	R-RecPtr/index	1
@@ -1148,7 +1150,7 @@
 17_consumer_moros_dryopea	-	c	R-NonSentinelParam/twin	4
 17_consumer_moros_dryopea	-	c	R-Peel	12
 17_consumer_moros_dryopea	-	c	R-PushRec	19
-17_consumer_moros_dryopea	-	c	R-Range	735
+17_consumer_moros_dryopea	-	c	R-Range	747
 17_consumer_moros_dryopea	-	c	R-Range/index	1
 17_consumer_moros_dryopea	-	c	R-RangedCall	10
 17_consumer_moros_dryopea	-	c	R-RecPtr	44
@@ -1212,7 +1214,7 @@
 17_consumer_moros_dryopea	-	rust	R-Mint	56
 17_consumer_moros_dryopea	-	rust	R-PushFill/record	1
 17_consumer_moros_dryopea	-	rust	R-PushRec	20
-17_consumer_moros_dryopea	-	rust	R-Range	451
+17_consumer_moros_dryopea	-	rust	R-Range	464
 17_consumer_moros_dryopea	-	rust	R-RangedCall	10
 17_consumer_moros_dryopea	-	rust	R-RecPtr	47
 17_consumer_moros_dryopea	-	rust	R-RecPtr/nested	14
@@ -1275,7 +1277,7 @@
 18_consumer_crawler	-	c	R-Push/sole	2
 18_consumer_crawler	-	c	R-PushFill	10
 18_consumer_crawler	-	c	R-PushFill/fill	1
-18_consumer_crawler	-	c	R-Range	324
+18_consumer_crawler	-	c	R-Range	353
 18_consumer_crawler	-	c	R-Range/index	25
 18_consumer_crawler	-	c	R-RangedCall	11
 18_consumer_crawler	-	c	R-RecPtr	3
@@ -1336,7 +1338,7 @@
 18_consumer_crawler	-	rust	R-Push	26
 18_consumer_crawler	-	rust	R-PushFill	16
 18_consumer_crawler	-	rust	R-PushFill/fill	1
-18_consumer_crawler	-	rust	R-Range	282
+18_consumer_crawler	-	rust	R-Range	331
 18_consumer_crawler	-	rust	R-RangedCall	11
 18_consumer_crawler	-	rust	R-RecPtr	13
 18_consumer_crawler	-	rust	R-RecPtr/nested	6
@@ -1381,7 +1383,7 @@
 19_stdlib_par	-	c	R-NoLocks	1
 19_stdlib_par	-	c	R-NonSentinelParam	12
 19_stdlib_par	-	c	R-PushFill	2
-19_stdlib_par	-	c	R-Range	38
+19_stdlib_par	-	c	R-Range	45
 19_stdlib_par	-	c	R-RecPtr	2
 19_stdlib_par	-	c	R-RecPtr/param	1
 19_stdlib_par	-	c	R-RefParam	12
@@ -1421,7 +1423,7 @@
 19_stdlib_par	-	rust	R-PushFill	6
 19_stdlib_par	-	rust	R-PushFill/record	1
 19_stdlib_par	-	rust	R-PushRec	1
-19_stdlib_par	-	rust	R-Range	36
+19_stdlib_par	-	rust	R-Range	43
 19_stdlib_par	-	rust	R-RecPtr	3
 19_stdlib_par	-	rust	R-RetAdopt	3
 19_stdlib_par	-	rust	R-Rotate	28
@@ -1465,7 +1467,7 @@
 20_interpreter	-	c	R-NonSentinelParam	11
 20_interpreter	-	c	R-PushFill/run	2
 20_interpreter	-	c	R-PushFill/run-header	2
-20_interpreter	-	c	R-Range	1
+20_interpreter	-	c	R-Range	6
 20_interpreter	-	c	R-RecPtr	2
 20_interpreter	-	c	R-RefParam	51
 20_interpreter	-	c	R-Rotate	14
@@ -1502,7 +1504,7 @@
 20_interpreter	-	rust	R-LeafChain	29
 20_interpreter	-	rust	R-LoopSlot	6
 20_interpreter	-	rust	R-Mint	7
-20_interpreter	-	rust	R-Range	2
+20_interpreter	-	rust	R-Range	7
 20_interpreter	-	rust	R-RefillBuffer	1
 20_interpreter	-	rust	R-RetAdopt	3
 20_interpreter	-	rust	R-Rotate	14
@@ -1544,7 +1546,7 @@
 21_tree	-	c	R-NoLocks	1
 21_tree	-	c	R-NoThreads	1
 21_tree	-	c	R-NonSentinelParam	21
-21_tree	-	c	R-Range	90
+21_tree	-	c	R-Range	107
 21_tree	-	c	R-RangedCall	17
 21_tree	-	c	R-RecPtr	2
 21_tree	-	c	R-RefParam	30
@@ -1585,7 +1587,7 @@
 21_tree	-	rust	R-LoopSlot	15
 21_tree	-	rust	R-Mint	7
 21_tree	-	rust	R-MoveChild	2
-21_tree	-	rust	R-Range	101
+21_tree	-	rust	R-Range	123
 21_tree	-	rust	R-RangedCall	17
 21_tree	-	rust	R-RecPtr	2
 21_tree	-	rust	R-RetAdopt	3
@@ -1619,7 +1621,7 @@
 22_expr	-	c	R-NoThreads	1
 22_expr	-	c	R-NonSentinelParam	10
 22_expr	-	c	R-NonSentinelParam/twin	4
-22_expr	-	c	R-Range	22
+22_expr	-	c	R-Range	26
 22_expr	-	c	R-RangedCall	5
 22_expr	-	c	R-RefParam	24
 22_expr	-	c	R-Rotate	11
@@ -1649,7 +1651,7 @@
 22_expr	-	rust	R-LitDiv	11
 22_expr	-	rust	R-LoopSlot	4
 22_expr	-	rust	R-Mint	7
-22_expr	-	rust	R-Range	23
+22_expr	-	rust	R-Range	27
 22_expr	-	rust	R-RangedCall	5
 22_expr	-	rust	R-RetAdopt	3
 22_expr	-	rust	R-Rotate	11
@@ -1680,7 +1682,7 @@
 23_lru	-	c	R-NoLocks	1
 23_lru	-	c	R-NoThreads	1
 23_lru	-	c	R-NonSentinelParam	8
-23_lru	-	c	R-Range	12
+23_lru	-	c	R-Range	14
 23_lru	-	c	R-RangedCall	2
 23_lru	-	c	R-RefParam	12
 23_lru	-	c	R-Rotate	10
@@ -1712,7 +1714,7 @@
 23_lru	-	rust	R-LitDiv	17
 23_lru	-	rust	R-LoopSlot	2
 23_lru	-	rust	R-Mint	7
-23_lru	-	rust	R-Range	18
+23_lru	-	rust	R-Range	21
 23_lru	-	rust	R-RangedCall	2
 23_lru	-	rust	R-RetAdopt	3
 23_lru	-	rust	R-Rotate	10
@@ -1757,7 +1759,7 @@ arguments	bd4932067	c	R-NoLocks	1
 arguments	bd4932067	c	R-NoThreads	1
 arguments	bd4932067	c	R-NonSentinelParam	7
 arguments	bd4932067	c	R-PushRec	2
-arguments	bd4932067	c	R-Range	27
+arguments	bd4932067	c	R-Range	29
 arguments	bd4932067	c	R-Range/index	1
 arguments	bd4932067	c	R-RecPtr	22
 arguments	bd4932067	c	R-RecPtr/held	14
@@ -1806,7 +1808,7 @@ arguments	bd4932067	rust	R-MaskRange	2
 arguments	bd4932067	rust	R-Mint	18
 arguments	bd4932067	rust	R-MoveLast/host	1
 arguments	bd4932067	rust	R-PushRec	2
-arguments	bd4932067	rust	R-Range	37
+arguments	bd4932067	rust	R-Range	38
 arguments	bd4932067	rust	R-RangedCall	3
 arguments	bd4932067	rust	R-RecPtr	35
 arguments	bd4932067	rust	R-RetAdopt	4
@@ -1859,7 +1861,7 @@ assets	7108f3550+shapes@0.5.4	c	R-PushFill	1
 assets	7108f3550+shapes@0.5.4	c	R-PushFill/run	2
 assets	7108f3550+shapes@0.5.4	c	R-PushFill/run-header	1
 assets	7108f3550+shapes@0.5.4	c	R-PushRec	2
-assets	7108f3550+shapes@0.5.4	c	R-Range	162
+assets	7108f3550+shapes@0.5.4	c	R-Range	176
 assets	7108f3550+shapes@0.5.4	c	R-Range/index	8
 assets	7108f3550+shapes@0.5.4	c	R-RangedCall	8
 assets	7108f3550+shapes@0.5.4	c	R-RangedCall/guard	4
@@ -1918,7 +1920,7 @@ assets	7108f3550+shapes@0.5.4	rust	R-Mint	22
 assets	7108f3550+shapes@0.5.4	rust	R-Push	13
 assets	7108f3550+shapes@0.5.4	rust	R-PushFill	14
 assets	7108f3550+shapes@0.5.4	rust	R-PushRec	2
-assets	7108f3550+shapes@0.5.4	rust	R-Range	161
+assets	7108f3550+shapes@0.5.4	rust	R-Range	183
 assets	7108f3550+shapes@0.5.4	rust	R-RangedCall	16
 assets	7108f3550+shapes@0.5.4	rust	R-RecPtr	31
 assets	7108f3550+shapes@0.5.4	rust	R-RecPtr/nested	1
@@ -1987,7 +1989,7 @@ cbor	bd4932067	c	R-Place	3
 cbor	bd4932067	c	R-PushFill	2
 cbor	bd4932067	c	R-PushRec	7
 cbor	bd4932067	c	R-PushRec/apart	20
-cbor	bd4932067	c	R-Range	313
+cbor	bd4932067	c	R-Range	336
 cbor	bd4932067	c	R-Range/index	15
 cbor	bd4932067	c	R-RangedCall	7
 cbor	bd4932067	c	R-RecPtr	5
@@ -2053,7 +2055,7 @@ cbor	bd4932067	rust	R-PushFill/record	1
 cbor	bd4932067	rust	R-PushFill/run	12
 cbor	bd4932067	rust	R-PushRec	9
 cbor	bd4932067	rust	R-PushRec/apart	22
-cbor	bd4932067	rust	R-Range	252
+cbor	bd4932067	rust	R-Range	274
 cbor	bd4932067	rust	R-RangedCall	12
 cbor	bd4932067	rust	R-RecPtr	6
 cbor	bd4932067	rust	R-RefillBuffer	2
@@ -2105,7 +2107,7 @@ crypto	bd4932067	c	R-Mint	2
 crypto	bd4932067	c	R-NoLocks	1
 crypto	bd4932067	c	R-NoThreads	1
 crypto	bd4932067	c	R-NonSentinelParam	10
-crypto	bd4932067	c	R-Range	58
+crypto	bd4932067	c	R-Range	62
 crypto	bd4932067	c	R-Range/index	2
 crypto	bd4932067	c	R-RangedCall	2
 crypto	bd4932067	c	R-RecPtr	1
@@ -2153,7 +2155,7 @@ crypto	bd4932067	rust	R-LoopSlot	15
 crypto	bd4932067	rust	R-Mint	9
 crypto	bd4932067	rust	R-Push	1
 crypto	bd4932067	rust	R-PushFill	1
-crypto	bd4932067	rust	R-Range	50
+crypto	bd4932067	rust	R-Range	53
 crypto	bd4932067	rust	R-RangedCall	2
 crypto	bd4932067	rust	R-RecPtr	2
 crypto	bd4932067	rust	R-RetAdopt	3
@@ -2229,7 +2231,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushF
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run-header	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushRec	14
-drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	284
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	365
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range/index	90
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RangedCall	25
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr	54
@@ -2319,7 +2321,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Pu
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-PushFill/record	9
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-PushRec	37
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-PushRec/apart	10
-drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Range	624
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Range	775
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RangedCall	14
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RecPtr	187
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RecPtr/index	23
@@ -2379,7 +2381,7 @@ fixstep	394317324	c	R-NonSentinelParam	15
 fixstep	394317324	c	R-PushFill	1
 fixstep	394317324	c	R-PushFill/run	4
 fixstep	394317324	c	R-PushFill/run-header	2
-fixstep	394317324	c	R-Range	55
+fixstep	394317324	c	R-Range	63
 fixstep	394317324	c	R-Range/index	2
 fixstep	394317324	c	R-RangedCall	4
 fixstep	394317324	c	R-RangedCall/guard	2
@@ -2428,7 +2430,7 @@ fixstep	394317324	rust	R-Push	2
 fixstep	394317324	rust	R-PushFill	2
 fixstep	394317324	rust	R-PushFill/record	2
 fixstep	394317324	rust	R-PushRec	2
-fixstep	394317324	rust	R-Range	58
+fixstep	394317324	rust	R-Range	62
 fixstep	394317324	rust	R-RangedCall	2
 fixstep	394317324	rust	R-RecPtr	40
 fixstep	394317324	rust	R-RefillBuffer	5
@@ -2468,7 +2470,7 @@ game_protocol	b4075f3fc	c	R-LoopSlot	4
 game_protocol	b4075f3fc	c	R-NoLocks	1
 game_protocol	b4075f3fc	c	R-NoThreads	1
 game_protocol	b4075f3fc	c	R-NonSentinelParam	5
-game_protocol	b4075f3fc	c	R-Range	7
+game_protocol	b4075f3fc	c	R-Range	9
 game_protocol	b4075f3fc	c	R-RecPtr	1
 game_protocol	b4075f3fc	c	R-RecPtr/held	1
 game_protocol	b4075f3fc	c	R-RecPtr/param	2
@@ -2507,7 +2509,7 @@ game_protocol	b4075f3fc	rust	R-LeafChain	29
 game_protocol	b4075f3fc	rust	R-LitDiv	1
 game_protocol	b4075f3fc	rust	R-LoopSlot	4
 game_protocol	b4075f3fc	rust	R-Mint	7
-game_protocol	b4075f3fc	rust	R-Range	8
+game_protocol	b4075f3fc	rust	R-Range	9
 game_protocol	b4075f3fc	rust	R-RecPtr	2
 game_protocol	b4075f3fc	rust	R-RefillBuffer	1
 game_protocol	b4075f3fc	rust	R-RefillText	1
@@ -2561,7 +2563,7 @@ glb	7108f3550	c	R-Push/sole	4
 glb	7108f3550	c	R-PushFill	6
 glb	7108f3550	c	R-PushFill/run	2
 glb	7108f3550	c	R-PushFill/run-header	2
-glb	7108f3550	c	R-Range	111
+glb	7108f3550	c	R-Range	119
 glb	7108f3550	c	R-Range/index	1
 glb	7108f3550	c	R-RangedCall	5
 glb	7108f3550	c	R-RecPtr	21
@@ -2616,7 +2618,7 @@ glb	7108f3550	rust	R-LoopSlot	23
 glb	7108f3550	rust	R-Mint	7
 glb	7108f3550	rust	R-Push	15
 glb	7108f3550	rust	R-PushFill	30
-glb	7108f3550	rust	R-Range	170
+glb	7108f3550	rust	R-Range	177
 glb	7108f3550	rust	R-RangedCall	3
 glb	7108f3550	rust	R-RecPtr	43
 glb	7108f3550	rust	R-RecPtr/nested	14
@@ -2683,7 +2685,7 @@ graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushFill/fill	1
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushFill/run	6
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushFill/run-header	6
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-PushRec	2
-graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Range	266
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Range	298
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Range/index	20
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-RangedCall	31
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-RangedCall/guard	10
@@ -2758,7 +2760,7 @@ graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-Push	29
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-PushFill	41
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-PushFill/fill	1
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-PushRec	2
-graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-Range	599
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-Range	690
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-RangedCall	26
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-RecPtr	66
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	rust	R-RecPtr/index	1
@@ -2822,7 +2824,7 @@ gridmesh	873da7f9a	c	R-Push	14
 gridmesh	873da7f9a	c	R-PushFill/hash	3
 gridmesh	873da7f9a	c	R-PushRec	1
 gridmesh	873da7f9a	c	R-PushRec/apart	4
-gridmesh	873da7f9a	c	R-Range	52
+gridmesh	873da7f9a	c	R-Range	59
 gridmesh	873da7f9a	c	R-Range/index	11
 gridmesh	873da7f9a	c	R-RecPtr	11
 gridmesh	873da7f9a	c	R-RecPtr/held	1
@@ -2881,7 +2883,7 @@ gridmesh	873da7f9a	rust	R-PushFill	8
 gridmesh	873da7f9a	rust	R-PushFill/hash	3
 gridmesh	873da7f9a	rust	R-PushRec	4
 gridmesh	873da7f9a	rust	R-PushRec/apart	16
-gridmesh	873da7f9a	rust	R-Range	50
+gridmesh	873da7f9a	rust	R-Range	59
 gridmesh	873da7f9a	rust	R-RecPtr	16
 gridmesh	873da7f9a	rust	R-RecPtr/nested	5
 gridmesh	873da7f9a	rust	R-RefillBuffer	1
@@ -2937,7 +2939,7 @@ hex_body	3bdb69ef2	c	R-Peel	1
 hex_body	3bdb69ef2	c	R-PushFill	1
 hex_body	3bdb69ef2	c	R-PushFill/run	2
 hex_body	3bdb69ef2	c	R-PushFill/run-header	2
-hex_body	3bdb69ef2	c	R-Range	55
+hex_body	3bdb69ef2	c	R-Range	68
 hex_body	3bdb69ef2	c	R-Range/index	27
 hex_body	3bdb69ef2	c	R-RangedCall	20
 hex_body	3bdb69ef2	c	R-Rebind	2
@@ -2994,7 +2996,7 @@ hex_body	3bdb69ef2	rust	R-LoopSlot	21
 hex_body	3bdb69ef2	rust	R-Mint	7
 hex_body	3bdb69ef2	rust	R-Push	2
 hex_body	3bdb69ef2	rust	R-PushFill	3
-hex_body	3bdb69ef2	rust	R-Range	84
+hex_body	3bdb69ef2	rust	R-Range	95
 hex_body	3bdb69ef2	rust	R-RangedCall	4
 hex_body	3bdb69ef2	rust	R-Rebind	2
 hex_body	3bdb69ef2	rust	R-RecPtr	3
@@ -3048,7 +3050,7 @@ hex_draw	3bdb69ef2	c	R-Peel	3
 hex_draw	3bdb69ef2	c	R-Push	5
 hex_draw	3bdb69ef2	c	R-PushFill	2
 hex_draw	3bdb69ef2	c	R-PushFill/fill	2
-hex_draw	3bdb69ef2	c	R-Range	51
+hex_draw	3bdb69ef2	c	R-Range	61
 hex_draw	3bdb69ef2	c	R-Range/index	8
 hex_draw	3bdb69ef2	c	R-RangedCall	1
 hex_draw	3bdb69ef2	c	R-RecPtr	1
@@ -3107,7 +3109,7 @@ hex_draw	3bdb69ef2	rust	R-Mint	7
 hex_draw	3bdb69ef2	rust	R-Push	89
 hex_draw	3bdb69ef2	rust	R-PushFill	26
 hex_draw	3bdb69ef2	rust	R-PushFill/fill	2
-hex_draw	3bdb69ef2	rust	R-Range	509
+hex_draw	3bdb69ef2	rust	R-Range	962
 hex_draw	3bdb69ef2	rust	R-RangedCall	33
 hex_draw	3bdb69ef2	rust	R-RecPtr	32
 hex_draw	3bdb69ef2	rust	R-RecPtr/nested	6
@@ -3160,7 +3162,7 @@ hex_edge	3bdb69ef2	c	R-PushFill	2
 hex_edge	3bdb69ef2	c	R-PushFill/fill	2
 hex_edge	3bdb69ef2	c	R-PushFill/run	3
 hex_edge	3bdb69ef2	c	R-PushFill/run-header	2
-hex_edge	3bdb69ef2	c	R-Range	37
+hex_edge	3bdb69ef2	c	R-Range	54
 hex_edge	3bdb69ef2	c	R-RangedCall	5
 hex_edge	3bdb69ef2	c	R-RecPtr	1
 hex_edge	3bdb69ef2	c	R-RecPtr/held	1
@@ -3213,7 +3215,7 @@ hex_edge	3bdb69ef2	rust	R-Mint	7
 hex_edge	3bdb69ef2	rust	R-Push	40
 hex_edge	3bdb69ef2	rust	R-PushFill	13
 hex_edge	3bdb69ef2	rust	R-PushFill/fill	2
-hex_edge	3bdb69ef2	rust	R-Range	268
+hex_edge	3bdb69ef2	rust	R-Range	472
 hex_edge	3bdb69ef2	rust	R-RangedCall	34
 hex_edge	3bdb69ef2	rust	R-RecPtr	32
 hex_edge	3bdb69ef2	rust	R-RecPtr/nested	6
@@ -3244,7 +3246,7 @@ hex_field	3bdb69ef2	c	R-DischargeInto	2
 hex_field	3bdb69ef2	c	R-ExitVector	10
 hex_field	3bdb69ef2	c	R-FieldAppend	1
 hex_field	3bdb69ef2	c	R-FieldAppend/bare	4
-hex_field	3bdb69ef2	c	R-FileHold	4
+hex_field	3bdb69ef2	c	R-FileHold	5
 hex_field	3bdb69ef2	c	R-FirstClaim	1
 hex_field	3bdb69ef2	c	R-FormatAppend	1
 hex_field	3bdb69ef2	c	R-ForwardWalk	2
@@ -3273,7 +3275,7 @@ hex_field	3bdb69ef2	c	R-PushFill	4
 hex_field	3bdb69ef2	c	R-PushFill/fill	2
 hex_field	3bdb69ef2	c	R-PushFill/run	4
 hex_field	3bdb69ef2	c	R-PushFill/run-header	1
-hex_field	3bdb69ef2	c	R-Range	311
+hex_field	3bdb69ef2	c	R-Range	375
 hex_field	3bdb69ef2	c	R-RangedCall	79
 hex_field	3bdb69ef2	c	R-RangedCall/guard	3
 hex_field	3bdb69ef2	c	R-RecPtr	2
@@ -3288,6 +3290,7 @@ hex_field	3bdb69ef2	c	R-SingleUse	5
 hex_field	3bdb69ef2	c	R-StartStep	29
 hex_field	3bdb69ef2	c	R-TextBorrow	24
 hex_field	3bdb69ef2	c	R-TypedRead	15
+hex_field	3bdb69ef2	c	R-TypedRead/float	1
 hex_field	3bdb69ef2	c	R-VecCopy	3
 hex_field	3bdb69ef2	c	R-View	2
 hex_field	3bdb69ef2	c	R-WorkBuffer	5
@@ -3332,7 +3335,7 @@ hex_field	3bdb69ef2	rust	R-Mint	7
 hex_field	3bdb69ef2	rust	R-Push	40
 hex_field	3bdb69ef2	rust	R-PushFill	13
 hex_field	3bdb69ef2	rust	R-PushFill/fill	2
-hex_field	3bdb69ef2	rust	R-Range	345
+hex_field	3bdb69ef2	rust	R-Range	522
 hex_field	3bdb69ef2	rust	R-RangedCall	49
 hex_field	3bdb69ef2	rust	R-RebindBuffer	1
 hex_field	3bdb69ef2	rust	R-RecPtr	32
@@ -3391,7 +3394,7 @@ hex_fit	3bdb69ef2	c	R-Peel	5
 hex_fit	3bdb69ef2	c	R-Push	2
 hex_fit	3bdb69ef2	c	R-PushFill	2
 hex_fit	3bdb69ef2	c	R-PushFill/fill	3
-hex_fit	3bdb69ef2	c	R-Range	96
+hex_fit	3bdb69ef2	c	R-Range	109
 hex_fit	3bdb69ef2	c	R-RangedCall	27
 hex_fit	3bdb69ef2	c	R-RangedCall/guard	1
 hex_fit	3bdb69ef2	c	R-RecPtr	1
@@ -3460,7 +3463,7 @@ hex_fit	3bdb69ef2	rust	R-Push	146
 hex_fit	3bdb69ef2	rust	R-PushFill	45
 hex_fit	3bdb69ef2	rust	R-PushFill/fill	3
 hex_fit	3bdb69ef2	rust	R-PushRec	3
-hex_fit	3bdb69ef2	rust	R-Range	1065
+hex_fit	3bdb69ef2	rust	R-Range	1721
 hex_fit	3bdb69ef2	rust	R-RangedCall	134
 hex_fit	3bdb69ef2	rust	R-RecPtr	34
 hex_fit	3bdb69ef2	rust	R-RecPtr/nested	6
@@ -3520,7 +3523,7 @@ hex_form	3bdb69ef2	c	R-Push	9
 hex_form	3bdb69ef2	c	R-PushFill	2
 hex_form	3bdb69ef2	c	R-PushFill/fill	2
 hex_form	3bdb69ef2	c	R-PushFill/run	1
-hex_form	3bdb69ef2	c	R-Range	98
+hex_form	3bdb69ef2	c	R-Range	117
 hex_form	3bdb69ef2	c	R-Range/index	20
 hex_form	3bdb69ef2	c	R-RangedCall	14
 hex_form	3bdb69ef2	c	R-RecPtr	2
@@ -3583,7 +3586,7 @@ hex_form	3bdb69ef2	rust	R-Mint	12
 hex_form	3bdb69ef2	rust	R-Push	83
 hex_form	3bdb69ef2	rust	R-PushFill	21
 hex_form	3bdb69ef2	rust	R-PushFill/fill	2
-hex_form	3bdb69ef2	rust	R-Range	409
+hex_form	3bdb69ef2	rust	R-Range	617
 hex_form	3bdb69ef2	rust	R-RangedCall	39
 hex_form	3bdb69ef2	rust	R-RecPtr	35
 hex_form	3bdb69ef2	rust	R-RecPtr/nested	6
@@ -3634,7 +3637,7 @@ hex_grid	3bdb69ef2	c	R-NoThreads	1
 hex_grid	3bdb69ef2	c	R-NonSentinelParam	7
 hex_grid	3bdb69ef2	c	R-PushFill/run	2
 hex_grid	3bdb69ef2	c	R-PushFill/run-header	2
-hex_grid	3bdb69ef2	c	R-Range	8
+hex_grid	3bdb69ef2	c	R-Range	12
 hex_grid	3bdb69ef2	c	R-RecPtr	1
 hex_grid	3bdb69ef2	c	R-RecPtr/held	1
 hex_grid	3bdb69ef2	c	R-RecPtr/param	2
@@ -3671,7 +3674,7 @@ hex_grid	3bdb69ef2	rust	R-LeafChain	35
 hex_grid	3bdb69ef2	rust	R-LitDiv	6
 hex_grid	3bdb69ef2	rust	R-LoopSlot	6
 hex_grid	3bdb69ef2	rust	R-Mint	7
-hex_grid	3bdb69ef2	rust	R-Range	26
+hex_grid	3bdb69ef2	rust	R-Range	28
 hex_grid	3bdb69ef2	rust	R-RecPtr	2
 hex_grid	3bdb69ef2	rust	R-RefillBuffer	2
 hex_grid	3bdb69ef2	rust	R-RetAdopt	3
@@ -3716,7 +3719,7 @@ hex_place	3bdb69ef2	c	R-Push	4
 hex_place	3bdb69ef2	c	R-PushFill	3
 hex_place	3bdb69ef2	c	R-PushFill/fill	2
 hex_place	3bdb69ef2	c	R-PushFill/run	1
-hex_place	3bdb69ef2	c	R-Range	33
+hex_place	3bdb69ef2	c	R-Range	49
 hex_place	3bdb69ef2	c	R-RangedCall	20
 hex_place	3bdb69ef2	c	R-RecPtr	1
 hex_place	3bdb69ef2	c	R-RecPtr/held	1
@@ -3776,7 +3779,7 @@ hex_place	3bdb69ef2	rust	R-Mint	7
 hex_place	3bdb69ef2	rust	R-Push	80
 hex_place	3bdb69ef2	rust	R-PushFill	17
 hex_place	3bdb69ef2	rust	R-PushFill/fill	2
-hex_place	3bdb69ef2	rust	R-Range	383
+hex_place	3bdb69ef2	rust	R-Range	628
 hex_place	3bdb69ef2	rust	R-RangedCall	42
 hex_place	3bdb69ef2	rust	R-RecPtr	32
 hex_place	3bdb69ef2	rust	R-RecPtr/nested	6
@@ -3843,7 +3846,7 @@ hex_recover	3bdb69ef2	c	R-PushFill/fill	2
 hex_recover	3bdb69ef2	c	R-PushFill/run	10
 hex_recover	3bdb69ef2	c	R-PushFill/run-header	8
 hex_recover	3bdb69ef2	c	R-PushRec	2
-hex_recover	3bdb69ef2	c	R-Range	122
+hex_recover	3bdb69ef2	c	R-Range	150
 hex_recover	3bdb69ef2	c	R-Range/index	28
 hex_recover	3bdb69ef2	c	R-RangedCall	14
 hex_recover	3bdb69ef2	c	R-RecPtr	3
@@ -3913,7 +3916,7 @@ hex_recover	3bdb69ef2	rust	R-Push	103
 hex_recover	3bdb69ef2	rust	R-PushFill	27
 hex_recover	3bdb69ef2	rust	R-PushFill/fill	2
 hex_recover	3bdb69ef2	rust	R-PushRec	5
-hex_recover	3bdb69ef2	rust	R-Range	530
+hex_recover	3bdb69ef2	rust	R-Range	769
 hex_recover	3bdb69ef2	rust	R-RangedCall	45
 hex_recover	3bdb69ef2	rust	R-RecPtr	32
 hex_recover	3bdb69ef2	rust	R-RecPtr/nested	6
@@ -3975,7 +3978,7 @@ hex_roof	3bdb69ef2	c	R-Push	3
 hex_roof	3bdb69ef2	c	R-PushFill	5
 hex_roof	3bdb69ef2	c	R-PushFill/fill	2
 hex_roof	3bdb69ef2	c	R-PushFill/run	1
-hex_roof	3bdb69ef2	c	R-Range	33
+hex_roof	3bdb69ef2	c	R-Range	92
 hex_roof	3bdb69ef2	c	R-RangedCall	5
 hex_roof	3bdb69ef2	c	R-RecPtr	1
 hex_roof	3bdb69ef2	c	R-RecPtr/held	1
@@ -4031,7 +4034,7 @@ hex_roof	3bdb69ef2	rust	R-Mint	7
 hex_roof	3bdb69ef2	rust	R-Push	47
 hex_roof	3bdb69ef2	rust	R-PushFill	22
 hex_roof	3bdb69ef2	rust	R-PushFill/fill	2
-hex_roof	3bdb69ef2	rust	R-Range	308
+hex_roof	3bdb69ef2	rust	R-Range	698
 hex_roof	3bdb69ef2	rust	R-RangedCall	33
 hex_roof	3bdb69ef2	rust	R-RecPtr	32
 hex_roof	3bdb69ef2	rust	R-RecPtr/nested	6
@@ -4087,7 +4090,7 @@ hex_shape	3bdb69ef2	c	R-Push	32
 hex_shape	3bdb69ef2	c	R-PushFill	4
 hex_shape	3bdb69ef2	c	R-PushFill/fill	3
 hex_shape	3bdb69ef2	c	R-PushFill/run	1
-hex_shape	3bdb69ef2	c	R-Range	185
+hex_shape	3bdb69ef2	c	R-Range	192
 hex_shape	3bdb69ef2	c	R-Range/index	33
 hex_shape	3bdb69ef2	c	R-RangedCall	39
 hex_shape	3bdb69ef2	c	R-RangedCall/guard	2
@@ -4149,7 +4152,7 @@ hex_shape	3bdb69ef2	rust	R-Mint	7
 hex_shape	3bdb69ef2	rust	R-Push	126
 hex_shape	3bdb69ef2	rust	R-PushFill	27
 hex_shape	3bdb69ef2	rust	R-PushFill/fill	3
-hex_shape	3bdb69ef2	rust	R-Range	753
+hex_shape	3bdb69ef2	rust	R-Range	1113
 hex_shape	3bdb69ef2	rust	R-RangedCall	128
 hex_shape	3bdb69ef2	rust	R-RecPtr	33
 hex_shape	3bdb69ef2	rust	R-RecPtr/nested	6
@@ -4210,7 +4213,7 @@ hex_terrain	3bdb69ef2	c	R-PushFill	2
 hex_terrain	3bdb69ef2	c	R-PushFill/fill	3
 hex_terrain	3bdb69ef2	c	R-PushFill/run	5
 hex_terrain	3bdb69ef2	c	R-PushFill/run-header	1
-hex_terrain	3bdb69ef2	c	R-Range	183
+hex_terrain	3bdb69ef2	c	R-Range	220
 hex_terrain	3bdb69ef2	c	R-Range/index	16
 hex_terrain	3bdb69ef2	c	R-RangedCall	28
 hex_terrain	3bdb69ef2	c	R-RangedCall/guard	6
@@ -4269,7 +4272,7 @@ hex_terrain	3bdb69ef2	rust	R-Mint	7
 hex_terrain	3bdb69ef2	rust	R-Push	20
 hex_terrain	3bdb69ef2	rust	R-PushFill	16
 hex_terrain	3bdb69ef2	rust	R-PushFill/fill	3
-hex_terrain	3bdb69ef2	rust	R-Range	267
+hex_terrain	3bdb69ef2	rust	R-Range	311
 hex_terrain	3bdb69ef2	rust	R-RangedCall	17
 hex_terrain	3bdb69ef2	rust	R-RecPtr	26
 hex_terrain	3bdb69ef2	rust	R-RecPtr/nested	4
@@ -4326,7 +4329,7 @@ hex_way	3bdb69ef2	c	R-PushFill	2
 hex_way	3bdb69ef2	c	R-PushFill/fill	2
 hex_way	3bdb69ef2	c	R-PushFill/run	2
 hex_way	3bdb69ef2	c	R-PushFill/run-header	1
-hex_way	3bdb69ef2	c	R-Range	32
+hex_way	3bdb69ef2	c	R-Range	53
 hex_way	3bdb69ef2	c	R-RangedCall	2
 hex_way	3bdb69ef2	c	R-RecPtr	1
 hex_way	3bdb69ef2	c	R-RecPtr/held	1
@@ -4380,7 +4383,7 @@ hex_way	3bdb69ef2	rust	R-Mint	7
 hex_way	3bdb69ef2	rust	R-Push	40
 hex_way	3bdb69ef2	rust	R-PushFill	13
 hex_way	3bdb69ef2	rust	R-PushFill/fill	2
-hex_way	3bdb69ef2	rust	R-Range	295
+hex_way	3bdb69ef2	rust	R-Range	559
 hex_way	3bdb69ef2	rust	R-RangedCall	33
 hex_way	3bdb69ef2	rust	R-RecPtr	32
 hex_way	3bdb69ef2	rust	R-RecPtr/nested	6
@@ -4432,7 +4435,7 @@ hex_world	3bdb69ef2	c	R-NoThreads	1
 hex_world	3bdb69ef2	c	R-NonSentinelParam	6
 hex_world	3bdb69ef2	c	R-PushFill/run	1
 hex_world	3bdb69ef2	c	R-PushFill/run-header	1
-hex_world	3bdb69ef2	c	R-Range	101
+hex_world	3bdb69ef2	c	R-Range	103
 hex_world	3bdb69ef2	c	R-RangedCall	8
 hex_world	3bdb69ef2	c	R-RecPtr	7
 hex_world	3bdb69ef2	c	R-RecPtr/held	7
@@ -4482,7 +4485,7 @@ hex_world	3bdb69ef2	rust	R-LoopSlot	13
 hex_world	3bdb69ef2	rust	R-Mint	9
 hex_world	3bdb69ef2	rust	R-PushFill/record	1
 hex_world	3bdb69ef2	rust	R-PushRec	1
-hex_world	3bdb69ef2	rust	R-Range	174
+hex_world	3bdb69ef2	rust	R-Range	175
 hex_world	3bdb69ef2	rust	R-RangedCall	11
 hex_world	3bdb69ef2	rust	R-RecPtr	16
 hex_world	3bdb69ef2	rust	R-RefillBuffer	6
@@ -4518,7 +4521,7 @@ html	dd260f04c	c	R-NoLocks	1
 html	dd260f04c	c	R-NoThreads	1
 html	dd260f04c	c	R-NonSentinelParam	7
 html	dd260f04c	c	R-Peel	1
-html	dd260f04c	c	R-Range	2
+html	dd260f04c	c	R-Range	6
 html	dd260f04c	c	R-RecPtr/param	1
 html	dd260f04c	c	R-RefParam	8
 html	dd260f04c	c	R-Rotate	12
@@ -4546,7 +4549,7 @@ html	dd260f04c	rust	R-Leaf	114
 html	dd260f04c	rust	R-LeafChain	30
 html	dd260f04c	rust	R-LoopSlot	5
 html	dd260f04c	rust	R-Mint	11
-html	dd260f04c	rust	R-Range	4
+html	dd260f04c	rust	R-Range	6
 html	dd260f04c	rust	R-RecPtr	1
 html	dd260f04c	rust	R-RetAdopt	3
 html	dd260f04c	rust	R-Rotate	12
@@ -4586,7 +4589,7 @@ markdown	dd260f04c	c	R-NoThreads	1
 markdown	dd260f04c	c	R-NonSentinelParam	12
 markdown	dd260f04c	c	R-Peel	6
 markdown	dd260f04c	c	R-PushRec	1
-markdown	dd260f04c	c	R-Range	16
+markdown	dd260f04c	c	R-Range	21
 markdown	dd260f04c	c	R-RecPtr/param	1
 markdown	dd260f04c	c	R-RefParam	20
 markdown	dd260f04c	c	R-RetAdopt	2
@@ -4622,7 +4625,7 @@ markdown	dd260f04c	rust	R-LoopBuffer	1
 markdown	dd260f04c	rust	R-LoopSlot	19
 markdown	dd260f04c	rust	R-Mint	19
 markdown	dd260f04c	rust	R-PushRec	1
-markdown	dd260f04c	rust	R-Range	28
+markdown	dd260f04c	rust	R-Range	33
 markdown	dd260f04c	rust	R-RecPtr	1
 markdown	dd260f04c	rust	R-RetAdopt	4
 markdown	dd260f04c	rust	R-Rotate	56
@@ -4671,7 +4674,7 @@ mesh3d	7108f3550	c	R-Push/sole	1
 mesh3d	7108f3550	c	R-PushFill	6
 mesh3d	7108f3550	c	R-PushFill/run	5
 mesh3d	7108f3550	c	R-PushFill/run-header	4
-mesh3d	7108f3550	c	R-Range	101
+mesh3d	7108f3550	c	R-Range	115
 mesh3d	7108f3550	c	R-Range/index	24
 mesh3d	7108f3550	c	R-RangedCall	5
 mesh3d	7108f3550	c	R-Rebind	1
@@ -4727,7 +4730,7 @@ mesh3d	7108f3550	rust	R-LoopSlot	17
 mesh3d	7108f3550	rust	R-Mint	7
 mesh3d	7108f3550	rust	R-Push	10
 mesh3d	7108f3550	rust	R-PushFill	29
-mesh3d	7108f3550	rust	R-Range	75
+mesh3d	7108f3550	rust	R-Range	84
 mesh3d	7108f3550	rust	R-RangedCall	3
 mesh3d	7108f3550	rust	R-Rebind	1
 mesh3d	7108f3550	rust	R-RecPtr	21
@@ -4794,7 +4797,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PureReuse	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PushFill	2
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PushRec	8
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PushRec/apart	22
-pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Range	222
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Range	245
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Range/index	15
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RangedCall	26
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RecPtr	1
@@ -4864,7 +4867,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-PushFill	18
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-PushFill/run	12
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-PushRec	14
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-PushRec/apart	40
-pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-Range	297
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-Range	340
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-RangedCall	11
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-RecPtr	2
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	rust	R-RefillBuffer	2
@@ -4907,7 +4910,7 @@ random	bd4932067	c	R-LoopSlot	10
 random	bd4932067	c	R-NoLocks	1
 random	bd4932067	c	R-NoThreads	1
 random	bd4932067	c	R-NonSentinelParam	12
-random	bd4932067	c	R-Range	11
+random	bd4932067	c	R-Range	20
 random	bd4932067	c	R-RecPtr/param	2
 random	bd4932067	c	R-RefParam	38
 random	bd4932067	c	R-Rotate	18
@@ -4944,7 +4947,7 @@ random	bd4932067	rust	R-LoopSlot	10
 random	bd4932067	rust	R-Mint	7
 random	bd4932067	rust	R-Push	1
 random	bd4932067	rust	R-PushFill	1
-random	bd4932067	rust	R-Range	9
+random	bd4932067	rust	R-Range	14
 random	bd4932067	rust	R-RecPtr	3
 random	bd4932067	rust	R-RefillBuffer	1
 random	bd4932067	rust	R-RetAdopt	3
@@ -4981,7 +4984,7 @@ server	b4075f3fc	c	R-Invariant	1
 server	b4075f3fc	c	R-LoopSlot	6
 server	b4075f3fc	c	R-NoThreads	1
 server	b4075f3fc	c	R-NonSentinelParam	6
-server	b4075f3fc	c	R-Range	10
+server	b4075f3fc	c	R-Range	12
 server	b4075f3fc	c	R-RecPtr	1
 server	b4075f3fc	c	R-RecPtr/held	1
 server	b4075f3fc	c	R-RecPtr/param	2
@@ -5019,7 +5022,7 @@ server	b4075f3fc	rust	R-LeafChain	36
 server	b4075f3fc	rust	R-LitDiv	1
 server	b4075f3fc	rust	R-LoopSlot	6
 server	b4075f3fc	rust	R-Mint	17
-server	b4075f3fc	rust	R-Range	15
+server	b4075f3fc	rust	R-Range	16
 server	b4075f3fc	rust	R-RecPtr	2
 server	b4075f3fc	rust	R-RetAdopt	3
 server	b4075f3fc	rust	R-Reuse	1
@@ -5063,7 +5066,7 @@ shapes	873da7f9a	c	R-NonSentinelParam	4
 shapes	873da7f9a	c	R-PushFill/run	1
 shapes	873da7f9a	c	R-PushFill/run-header	1
 shapes	873da7f9a	c	R-PushRec	1
-shapes	873da7f9a	c	R-Range	33
+shapes	873da7f9a	c	R-Range	35
 shapes	873da7f9a	c	R-Range/index	2
 shapes	873da7f9a	c	R-RecPtr	6
 shapes	873da7f9a	c	R-RecPtr/held	4
@@ -5108,7 +5111,7 @@ shapes	873da7f9a	rust	R-LitDiv	1
 shapes	873da7f9a	rust	R-LoopSlot	7
 shapes	873da7f9a	rust	R-Mint	11
 shapes	873da7f9a	rust	R-PushRec	2
-shapes	873da7f9a	rust	R-Range	27
+shapes	873da7f9a	rust	R-Range	28
 shapes	873da7f9a	rust	R-RecPtr	22
 shapes	873da7f9a	rust	R-RecPtr/index	1
 shapes	873da7f9a	rust	R-RefillBuffer	1
@@ -5142,7 +5145,7 @@ ssh	b4075f3fc	c	R-LoopSlot	5
 ssh	b4075f3fc	c	R-NoLocks	1
 ssh	b4075f3fc	c	R-NoThreads	1
 ssh	b4075f3fc	c	R-NonSentinelParam	6
-ssh	b4075f3fc	c	R-Range	7
+ssh	b4075f3fc	c	R-Range	9
 ssh	b4075f3fc	c	R-RecPtr/param	1
 ssh	b4075f3fc	c	R-RefParam	10
 ssh	b4075f3fc	c	R-Rotate	12
@@ -5177,7 +5180,7 @@ ssh	b4075f3fc	rust	R-LoopSlot	5
 ssh	b4075f3fc	rust	R-Mint	7
 ssh	b4075f3fc	rust	R-Push	1
 ssh	b4075f3fc	rust	R-PushFill	1
-ssh	b4075f3fc	rust	R-Range	9
+ssh	b4075f3fc	rust	R-Range	10
 ssh	b4075f3fc	rust	R-RecPtr	1
 ssh	b4075f3fc	rust	R-RetAdopt	3
 ssh	b4075f3fc	rust	R-Rotate	12
@@ -5236,7 +5239,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Push/sole	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushFill	7
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushFill/fill	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushRec	2
-stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range	183
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range	210
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range/index	21
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-RangedCall	12
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-RecPtr	13
@@ -5310,7 +5313,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-Push	38
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-PushFill	50
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-PushFill/fill	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-PushRec	11
-stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-Range	452
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-Range	565
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-RangedCall	6
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-RecPtr	243
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	rust	R-RecPtr/index	11
@@ -5374,7 +5377,7 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-NonSentinelParam	38
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-NonSentinelParam/twin	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-PushFill	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-PushFill/fill	1
-text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Range	118
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Range	135
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Range/index	1
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-RangedCall	17
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-RecPtr	5
@@ -5448,7 +5451,7 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-Mint	8
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-Push	33
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-PushFill	45
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-PushFill/fill	1
-text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-Range	320
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-Range	425
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-RangedCall	10
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-RecPtr	71
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	rust	R-RecPtr/index	1
@@ -5501,7 +5504,7 @@ time	394317324	c	R-NoLocks	1
 time	394317324	c	R-NoThreads	1
 time	394317324	c	R-NonSentinelParam	9
 time	394317324	c	R-NonSentinelParam/twin	7
-time	394317324	c	R-Range	32
+time	394317324	c	R-Range	36
 time	394317324	c	R-Range/index	4
 time	394317324	c	R-RecPtr	1
 time	394317324	c	R-RecPtr/param	1
@@ -5543,7 +5546,7 @@ time	394317324	rust	R-LoopSlot	15
 time	394317324	rust	R-Mint	7
 time	394317324	rust	R-Push	1
 time	394317324	rust	R-PushFill	1
-time	394317324	rust	R-Range	35
+time	394317324	rust	R-Range	39
 time	394317324	rust	R-RecPtr	1
 time	394317324	rust	R-RefillBuffer	1
 time	394317324	rust	R-RetAdopt	3
@@ -5595,7 +5598,7 @@ tween	873da7f9a	c	R-PushFill/run	2
 tween	873da7f9a	c	R-PushFill/run-header	2
 tween	873da7f9a	c	R-PushRec	2
 tween	873da7f9a	c	R-PushRec/apart	4
-tween	873da7f9a	c	R-Range	46
+tween	873da7f9a	c	R-Range	50
 tween	873da7f9a	c	R-Range/index	3
 tween	873da7f9a	c	R-RecPtr	1
 tween	873da7f9a	c	R-RecPtr/held	1
@@ -5643,7 +5646,7 @@ tween	873da7f9a	rust	R-Push	4
 tween	873da7f9a	rust	R-PushFill	2
 tween	873da7f9a	rust	R-PushRec	1
 tween	873da7f9a	rust	R-PushRec/apart	2
-tween	873da7f9a	rust	R-Range	40
+tween	873da7f9a	rust	R-Range	42
 tween	873da7f9a	rust	R-RecPtr	17
 tween	873da7f9a	rust	R-RecPtr/nested	1
 tween	873da7f9a	rust	R-RefillBuffer	4
@@ -5683,7 +5686,7 @@ web	b4075f3fc	c	R-LoopSlot	9
 web	b4075f3fc	c	R-NoLocks	1
 web	b4075f3fc	c	R-NoThreads	1
 web	b4075f3fc	c	R-NonSentinelParam	9
-web	b4075f3fc	c	R-Range	30
+web	b4075f3fc	c	R-Range	32
 web	b4075f3fc	c	R-RangedCall	2
 web	b4075f3fc	c	R-RangedCall/guard	1
 web	b4075f3fc	c	R-RecPtr/param	1
@@ -5722,7 +5725,7 @@ web	b4075f3fc	rust	R-Leaf	115
 web	b4075f3fc	rust	R-LeafChain	33
 web	b4075f3fc	rust	R-LoopSlot	9
 web	b4075f3fc	rust	R-Mint	7
-web	b4075f3fc	rust	R-Range	35
+web	b4075f3fc	rust	R-Range	37
 web	b4075f3fc	rust	R-RangedCall	2
 web	b4075f3fc	rust	R-RecPtr	2
 web	b4075f3fc	rust	R-RetAdopt	3
@@ -5788,7 +5791,7 @@ zttext	bd4932067	c	R-PushFill/fill	1
 zttext	bd4932067	c	R-PushFill/run	4
 zttext	bd4932067	c	R-PushFill/run-header	3
 zttext	bd4932067	c	R-PushRec	6
-zttext	bd4932067	c	R-Range	157
+zttext	bd4932067	c	R-Range	184
 zttext	bd4932067	c	R-Range/index	1
 zttext	bd4932067	c	R-RangedCall	8
 zttext	bd4932067	c	R-Rebind	2
@@ -5865,7 +5868,7 @@ zttext	bd4932067	rust	R-PushFill	23
 zttext	bd4932067	rust	R-PushFill/fill	1
 zttext	bd4932067	rust	R-PushFill/record	24
 zttext	bd4932067	rust	R-PushRec	37
-zttext	bd4932067	rust	R-Range	235
+zttext	bd4932067	rust	R-Range	277
 zttext	bd4932067	rust	R-RangedCall	8
 zttext	bd4932067	rust	R-Rebind	2
 zttext	bd4932067	rust	R-RecPtr	146

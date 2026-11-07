@@ -8220,7 +8220,8 @@ impl<'a> FnWriter<'a> {
         let facts = self.nn_facts();
         let over = self.range_override.last().cloned();
         let ranges = over.as_deref().unwrap_or(&facts.1);
-        if crate::opt::range::op_range(self.cx.data, &facts.0, ranges, name, args, 0).is_none() {
+        if crate::opt::range::op_range_at_site(self.cx.data, &facts.0, ranges, name, args).is_none()
+        {
             return Ok(None);
         }
         self.range_plain(form, name, args, ind)
@@ -8237,7 +8238,7 @@ impl<'a> FnWriter<'a> {
         let facts = self.nn_facts();
         let over = self.range_override.last().cloned();
         let ranges = over.as_deref().unwrap_or(&facts.1);
-        crate::opt::range::op_range(self.cx.data, &facts.0, ranges, name, args, 0).is_some()
+        crate::opt::range::op_range_at_site(self.cx.data, &facts.0, ranges, name, args).is_some()
     }
 
     /// This function's non-sentinel and range facts (`non_sentinel_vars`, `range_vars`), a

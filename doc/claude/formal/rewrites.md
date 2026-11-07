@@ -303,7 +303,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-TextRun)` | `R-TextRun` ir |
 | `(R-Transient)` | `R-Transient` c |
 | `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/text` c, native |
-| `(R-TypedRead)` | `R-TypedRead` c, native |
+| `(R-TypedRead)` | `R-TypedRead` c, native · `/float` c |
 | `(R-ValueLocal)` | `R-ValueLocal` parse, c, native |
 | `(R-ValueRecord)` | `R-ValueRecord` parse, c, native · `/view` c, native |
 | `(R-VecCopy)` | `R-VecCopy` ir |
@@ -2529,6 +2529,16 @@ loop `j >= 0`.  So `j` is `min(0, x.lo) ..= x.hi` over the function, and `1 ..= 
 the loop's BODY (`Ranges::bodies`, which the C emitter pushes as the facts the body is written
 under).  A read of `j` after the step in the same trip, a second step, a step under a nested
 loop or a written end declines.  Site `range::step_down_by_trips`.
+**The open-end counter clause** (@PLN219).  An exclusive counted loop over an end the proof
+cannot range still steps its counter only after the exit test saw it below that end, itself at
+most `i64::MAX`, so `counter + 1` cannot overflow: in the two-counter form (test, then step)
+from any start, in the single-counter form (step, then test) from a seed below `i64::MAX`.
+The STEP is written plain (`Ranges::steps`, answered by `range::op_range_at_site` where an
+emitter writes the operator); the counter itself is left unranged — ranged `lo ..= i64::MAX`
+it would leave `(R-RangedCall)`'s guard, whose run-time test bounds it far tighter (`sieve`
+0.84× → 2.23× that way).  Measured (C): sum_loop 4.01× → 2.96×, drawing render_marks
+4.38× → 3.36×, resize 4.32× → 3.33×, render_lock 3.49× → 2.77×.  `LOFT_NO_OPEN_END=1`;
+guard `loft-suite/rules/rewrites/R-Range/a-counted-loops-step-is-plain-whatever-its-end.loft`.
 **The index clause** (C).  A held element access whose index the proof shows non-negative is
 written with the `_nn` accessors (`loft_vh_get_int_at_nn`, …: one unsigned compare, no
 from-the-end wrap, the miss reported as before), the index wrapped in `loft_nonneg`, which

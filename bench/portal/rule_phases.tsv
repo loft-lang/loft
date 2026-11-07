@@ -42,7 +42,7 @@ R-ExitVector/record	ir	1	0	2	0	0	0
 R-FaultFlag	native	5	0	0	0	0	7
 R-FieldAppend	c,native	25	0	0	0	85	150
 R-FieldAppend/bare	c,native	61	0	0	0	445	785
-R-FileHold	c,native	12	0	0	0	5	43
+R-FileHold	c,native	12	0	0	0	6	43
 R-Fill	c,native	4	0	0	0	8	39
 R-Fill/guarded	c,native	4	0	0	0	4	24
 R-FirstClaim	interp	7	0	0	7	0	0
@@ -123,7 +123,7 @@ R-PushFill/run	c,native	24	0	0	0	64	24
 R-PushFill/run-header	c	18	0	0	0	44	0
 R-PushRec	c,native	22	0	0	0	75	168
 R-PushRec/apart	c,native	5	0	0	0	50	90
-R-Range	c,native	61	0	0	0	5636	10501
+R-Range	c,native	61	0	0	0	6482	14649
 R-Range/index	c	29	0	0	0	436	0
 R-RangedCall	c,native	42	0	0	0	520	826
 R-RangedCall/guard	c	9	0	0	0	30	0
@@ -164,6 +164,7 @@ R-TypedKeyed	c,native	7	0	0	0	46	62
 R-TypedKeyed/compound	c,native	3	0	0	0	18	18
 R-TypedKeyed/text	c,native	5	0	0	0	15	19
 R-TypedRead	c,native	12	0	0	0	16	204
+R-TypedRead/float	c	1	0	0	0	1	0
 R-ValueLocal	parse,c,native	61	206	0	0	5	1072
 R-ValueRecord	parse,c,native	25	98	0	0	239	239
 R-ValueRecord/view	c,native	2	0	0	0	3	3

@@ -68,6 +68,10 @@ pub struct Ranges {
     /// `@FR-R-Range`'s relational step clause: ranges that hold throughout one loop's BODY,
     /// by the loop's scope — narrower than the variable's range over the whole function.
     pub bodies: HashMap<u16, Vec<(u16, Range)>>,
+    /// `@FR-R-Range`'s open-end counter clause: the stepped counters of exclusive counted
+    /// loops whose `counter + 1` cannot overflow whatever the end — the step runs only after
+    /// the exit test saw the counter below the end, itself at most `i64::MAX`.
+    pub steps: std::collections::HashSet<u16>,
 }
 
 /// What [`range`] reads its leaves from: a variable's range, and a guarded field's.  A plain
@@ -78,6 +82,10 @@ pub trait RangeFacts {
     /// Element `i` of the tuple local `v`; a map that holds no tuple facts answers none.
     fn elem(&self, _v: u16, _i: u16) -> Option<Range> {
         None
+    }
+    /// Is `v` a counter whose `v + 1` the loop's exit test proves (`Ranges::steps`)?
+    fn safe_step(&self, _v: u16) -> bool {
+        false
     }
 }
 
@@ -99,6 +107,9 @@ impl RangeFacts for Ranges {
     }
     fn elem(&self, v: u16, i: u16) -> Option<Range> {
         self.elems.get(&(v, i)).copied()
+    }
+    fn safe_step(&self, v: u16) -> bool {
+        self.steps.contains(&v)
     }
 }
 
@@ -241,6 +252,29 @@ fn rem_range<F: RangeFacts + ?Sized>(
         return None;
     }
     Some((0, x.1.min(y.1 - 1)))
+}
+
+/// What an emitter asks at the integer op it is about to write: [`op_range`], or — the
+/// open-end counter clause — a counted loop's own step `c + 1`, which the loop's exit test
+/// proves cannot overflow ([`Ranges::steps`]) though `c` itself is left unranged: a counter
+/// ranged that wide would take it out of `(R-RangedCall)`'s guard.  Only the op is answered,
+/// never folded into the fixpoint's facts.
+#[must_use]
+pub fn op_range_at_site<F: RangeFacts + ?Sized>(
+    data: &Data,
+    nn: &HashMap<u16, bool>,
+    rv: &F,
+    name: &str,
+    args: &[Value],
+) -> Option<Range> {
+    if name == "OpAddInt"
+        && args.len() == 2
+        && let [Value::Var(c), Value::Int(1)] = [args[0].unspan(), args[1].unspan()]
+        && rv.safe_step(*c)
+    {
+        return Some((i64::MIN + 1, i64::MAX));
+    }
+    op_range(data, nn, rv, name, args, 0)
 }
 
 /// The range of the native op `name` over `args` — the operator rules alone, which is
@@ -765,6 +799,7 @@ pub fn range_vars(
         fields: seeds.fields.clone(),
         elems: HashMap::new(),
         bodies: HashMap::new(),
+        steps: std::collections::HashSet::new(),
     };
     // `@FR-R-RangedCall`'s seeds — a variable the caller vouches for (a ranged variant's
     // parameter) holds its seed only while nothing in the code can change it: the fixpoint
@@ -903,7 +938,20 @@ fn seed_counters(
         let mut seed: Option<Range> = None;
         let mut seeds = 0usize;
         v_seed(data, nn, rv, root, stepped, &mut seed, &mut seeds);
-        if seeds == 1
+        // An exclusive loop over an unranged end: the counter steps only after the test saw
+        // it below the end, so the step cannot overflow and the yielded value is below
+        // `i64::MAX` — the open-end clause.
+        let open_end = !rc.inclusive
+            && !crate::env_once!(std::env::var("LOFT_NO_OPEN_END").is_ok_and(|v| v != "0"))
+            && range(data, nn, rv, rc.hi, 0).is_none();
+        // The two-counter form tests before it steps, so any start that passed the test steps
+        // below the end; the single-counter form steps first, from a seed that must be below
+        // i64::MAX.
+        if seeds == 1 && open_end && (rc.next.is_some() || seed.is_some_and(|s| s.1 < i64::MAX)) {
+            // Only the step: a counter ranged this wide would take it out of
+            // `(R-RangedCall)`'s guard, whose run-time test bounds it far tighter.
+            rv.steps.insert(stepped);
+        } else if seeds == 1
             && let Some(s) = seed
             && let Some(h) = range(data, nn, rv, rc.hi, 0)
         {
