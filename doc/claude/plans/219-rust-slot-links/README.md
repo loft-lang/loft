@@ -270,7 +270,14 @@ each emitted unit checked for the hand form's shape — `loft_demote_rec`, `loft
 - **7** — `(R-TypedKeyed)`'s removal clause and the just-added lookup, then the hash table's own
   cost per operation (§ rewrite 7).
 
-**The routines over 2.7× (C ÷ Rust twin, core and library benches).**  Each was written by
+**Which lane these tables are.**  The judged number is the C SHIP lane (`cship`) ÷ the Rust
+twin, per routine, on every core and library bench (PERFORMANCE.md § What is judged).  The
+tables in this section were taken on the CHECKED lane (`c`, clang, Apple Silicon), which keeps
+every fault check the ship lane drops, so they overstate the judged gap — most where a routine is
+integer arithmetic under checks (graphics `blend_pixel` 3.88× checked, 1.18× ship).  The
+rewrites lower both lanes; the worklist is re-read on `cship` under clang and gcc.
+
+**The routines over 2.7× (checked C ÷ Rust twin, core and library benches).**  Each was written by
 hand first (forms and reports kept with the session's scratch, to be moved under `hand/` when
 its rewrite is built); the general change each form priced, by reach:
 

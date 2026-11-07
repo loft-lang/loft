@@ -21,6 +21,7 @@ drawing library's `bench/` (loft#1426); @PLN158 generalizes it into the per-libr
 read by the release checklist's `M-perf-pass`.
 
 ## Contents
+- [What is judged, and the run that checks it](#what-is-judged-and-the-run-that-checks-it)
 - [Where the numbers are](#where-the-numbers-are)
 - [How to optimise — the checklist](#how-to-optimise--the-checklist)
 - [Profiling a run](#profiling-a-run)
@@ -34,6 +35,35 @@ read by the release checklist's `M-perf-pass`.
 
 ---
 
+## What is judged, and the run that checks it
+
+The question every performance number here answers is `(Perf-Weight)`'s: how long a routine
+takes in the build a RELEASED program runs, against the same routine written by hand in Rust.
+
+| | |
+|---|---|
+| **judged** | the C backend's SHIP lane (`cship`) ÷ the Rust twin (`rustc -O`), per routine, under clang and under gcc, each compiler on its own.  `cship` is the program as `--ship` builds it: the release-pass probe, `-O3`, every fault check the generator may drop at a ship site dropped. |
+| **reported beside it** | the checked C lane (`c`): the same backend with every fault check kept.  Its excess over `cship` is what the guarantees cost — worked (range proofs, guarded copies, fault flags), never a defect of the bar. |
+| **not judged** | the Rust generator (`native`, being shelved) and the interpreter (§ How the interpreter executes). |
+| **population** | every routine of every CORE bench (`bench/NN_*/bench.loft`) and of every LIBRARY bench (the packages `bench/portal/libs.tsv` names, checked out by `bench/portal/checkout_libs.sh` under `$LOFT_PERF_LIBS`, default `../loft-bench-libs`).  The per-routine bar holds for all of them; the median is taken over the routines loft ships (stdlib and libraries) — the synthetic engine benches are measured and read, but kept out of it. |
+| **bars** | 3× per routine is the bug line, 2× the median; a stable release cuts at 5× ([formal/performance.md](formal/performance.md)). |
+
+The run — both C lanes, every core and library bench, one compiler:
+
+```bash
+make perf-portal ARGS="--lanes rust,c,cship"                # records this host's rows
+make perf-portal ARGS="--lanes rust,c,cship --cc gcc-16"    # the gcc half (a real gcc: on macOS `gcc` is clang)
+python3 bench/stats.py --lanes rust,c,cship --no-local \
+  $(python3 -c "import sys; sys.path.insert(0, 'bench/portal'); import portal; \
+                print(' '.join(portal.library_packages()))") \
+  --loft "$PWD/target/release/loft"                         # the same run, nothing recorded
+```
+
+Name the lanes: `stats.py` without `--lanes` measures `native,rust`, the Rust generator, which
+is not what is judged.  Compare only like with like — a checked-lane number is not a ship-lane
+number, and neither is a number from another host: the machine is part of every row, and the
+Rust twin itself runs at a different speed on each, which moves every ratio.
+
 ## Where the numbers are
 
 A number written into prose is stale the moment it is committed, so this doc carries none.
@@ -42,7 +72,7 @@ Ask the tool that measures:
 | question | command |
 |---|---|
 | where native stands against Rust, by mechanism class | `make perf-portal` → [PERF_PORTAL.md](PERF_PORTAL.md) (generated) |
-| native vs the Rust reference per routine, as statistics | `python3 bench/stats.py` ([bench/README.md](../../bench/README.md)) |
+| a lane vs the Rust reference per routine, as statistics | `python3 bench/stats.py --lanes rust,c,cship` (§ What is judged; [bench/README.md](../../bench/README.md)) |
 | what got slower or faster than on `main` | `make speed` (a report); `make speed-gate` is the one speed gate |
 | the classic benchmark suite, every lane | `bench/run_bench.sh` |
 | which fn, line or path burns the time | `make profile` — § Profiling a run |
