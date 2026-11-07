@@ -62,6 +62,7 @@ pub fn rewrite_program(data: &mut Data) {
             crate::rewrite_census::fired("R-HostStore", n);
         }
     }
+    crate::host_result::rewrite_program(data);
 }
 
 /// The function being rewritten, with its body as it was before the rewrite.

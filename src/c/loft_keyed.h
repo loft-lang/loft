@@ -1063,6 +1063,20 @@ static void loft_adopt_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, l
         loft_st_delete(loft_store_of(f), old);
     }
 }
+/* OpStoreBufOnly (Stores::store_buf_only): buf when it names a store and no record, else null. */
+static inline loft_ref loft_store_buf_only(loft_ref buf) {
+    if (buf.store_nr != 0xFFFF && buf.rec == 0 && (buf.pos & LOFT_STORE_BUF_BIT)) return buf;
+    return loft_ref_null();
+}
+/* OpReleaseRecIfDistinct (Stores::release_rec_if_distinct): a dropped result — its own store
+ * freed whole, a record of the answer's store released with what it owns. */
+static void loft_release_rec_if_distinct(const loft_tdesc *T, uint16_t tp, loft_ref r, loft_ref ans) {
+    if (r.store_nr == 0xFFFF || r.rec == 0) return;
+    if (r.store_nr != ans.store_nr) { loft_free_displaced(r, ans); return; }
+    if (r.rec == ans.rec) return;
+    loft_remove_claims(T, tp, r);
+    loft_st_delete(loft_store_of(r), r.rec);
+}
 
 /* OpMoveChildRec (Stores::move_child_rec): `f` takes the child `src_f` names (a field inside the
  * record f holds) by number; src_f is cleared and the replaced record released with what it owns. */

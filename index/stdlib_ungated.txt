@@ -259,6 +259,7 @@ OpRangeDefault
 OpRefAlias
 OpRefFromChildRec
 OpRefIsNull
+OpReleaseRecIfDistinct
 OpRemFloat
 OpRemFloatNullable
 OpRemInt
@@ -313,6 +314,7 @@ OpSortVector
 OpStaticCall
 OpStep
 OpStoreBuf
+OpStoreBufOnly
 OpStoreLive
 OpStoreTag
 OpTagVCJump
@@ -352,7 +354,7 @@ __iface_34#2_OpMin
 __iface_34#2_minus
 __iface_37#2_scale
 __iface_39#1_to_text
-__iface_535#1_children
+__iface_537#1_children
 i_7integer_n_sum
 n___ledger
 n___ledger_div

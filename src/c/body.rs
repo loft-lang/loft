@@ -10573,6 +10573,7 @@ const OP_REF: &[&str] = &[
     "OpRefFromChildRec",
     "OpSlotTag",
     "OpStoreBuf",
+    "OpStoreBufOnly",
     "OpChildRecInPlace",
     "OpChildRec",
     "OpCopyClosure",

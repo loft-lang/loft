@@ -1894,6 +1894,17 @@ fn OpStoreBuf(host: reference) -> reference;
 fn OpAdoptChildRec(field: reference, value: reference, tp: const u16);
 #rust"stores.adopt_child_rec(&@field, &@value, @tp);"
 #impure(parent_write)
+// `@FR-R-HostStore`'s result clause: `buf` when it is a store buffer, else null — the buffer a
+// function hands on when a caller may have offered a record of its own, which it never writes.
+fn OpStoreBufOnly(buf: reference) -> reference;
+#rust"stores.store_buf_only(&@buf)"
+#pure
+// `@FR-R-HostStore`'s result clause: `rec`, a result its function drops, released — its store
+// whole when that is not `answer`'s, else the record with what it owns, the store living on for
+// the answer; nothing for null or the answer itself.
+fn OpReleaseRecIfDistinct(rec: reference, answer: reference, tp: const u16);
+#rust"stores.release_rec_if_distinct(&@rec, &@answer, @tp);"
+#impure(parent_write)
 fn OpChildRecInPlace(field: reference, tp: const u16) -> reference[field];
 #rust"stores.child_rec_in_place(&@field, @tp)"
 #impure(parent_write)

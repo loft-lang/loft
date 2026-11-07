@@ -254,6 +254,8 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     move_child_rec::<false>,
     store_buf::<false>,
     adopt_child_rec::<false>,
+    store_buf_only::<false>,
+    release_rec_if_distinct::<false>,
     child_rec_in_place::<false>,
     copy_ref_or_null::<false>,
     bind_or_copy::<false>,
@@ -619,6 +621,8 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     move_child_rec::<true>,
     store_buf::<true>,
     adopt_child_rec::<true>,
+    store_buf_only::<true>,
+    release_rec_if_distinct::<true>,
     child_rec_in_place::<true>,
     copy_ref_or_null::<true>,
     bind_or_copy::<true>,
@@ -984,6 +988,8 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     move_child_rec_r,
     store_buf_r,
     adopt_child_rec_r,
+    store_buf_only_r,
+    release_rec_if_distinct_r,
     child_rec_in_place_r,
     copy_ref_or_null_r,
     bind_or_copy_r,
@@ -5706,6 +5712,34 @@ fn adopt_child_rec<const F: bool>(s: &mut State) {
 fn adopt_child_rec_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     adopt_child_rec::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn store_buf_only<const F: bool>(s: &mut State) {
+    let v_buf = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.store_buf_only(&v_buf);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn store_buf_only_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    store_buf_only::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn release_rec_if_distinct<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_answer = s.get_stack_m::<F, DbRef>();
+    let v_rec = s.get_stack_m::<F, DbRef>();
+    s.database.release_rec_if_distinct(&v_rec, &v_answer, v_tp);
+}
+
+fn release_rec_if_distinct_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    release_rec_if_distinct::<true>(s);
     s.regs_out()
 }
 

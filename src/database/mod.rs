@@ -3236,6 +3236,43 @@ impl Stores {
         crate::keys::store_buf(host)
     }
 
+    /// `OpStoreBufOnly` (`@FR-R-HostStore`'s result clause): `buf` when it names a store and
+    /// no record, else null — a record a caller offered is never written.
+    pub fn store_buf_only(&self, buf: &crate::keys::DbRef) -> crate::keys::DbRef {
+        if crate::keys::is_store_buf(buf) {
+            *buf
+        } else {
+            crate::keys::DbRef::NULL
+        }
+    }
+
+    /// `OpReleaseRecIfDistinct` (`@FR-R-HostStore`'s result clause) — `rec` is a result its
+    /// function drops.  In a store of its own it goes whole, as `OpFreeRefIfDistinct` frees it;
+    /// in the answer's store it is released with what it owns and the store lives on for the
+    /// answer.  Null, a store buffer and the answer itself release nothing.
+    pub fn release_rec_if_distinct(
+        &mut self,
+        rec: &crate::keys::DbRef,
+        answer: &crate::keys::DbRef,
+        tp: u16,
+    ) {
+        if rec.store_nr == u16::MAX
+            || rec.rec == 0
+            || (rec.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
+        if rec.store_nr != answer.store_nr {
+            self.free_displaced(rec, answer);
+            return;
+        }
+        if rec.rec == answer.rec {
+            return;
+        }
+        self.remove_claims(rec, tp);
+        self.store_mut(rec).delete(rec.rec);
+    }
+
     /// `OpDatabase` on a store buffer (`@FR-R-HostStore`): a `tp` record claimed in the
     /// buffer's store, its bytes the type's defaults.
     pub fn claim_in_store_buf(&mut self, buf: &crate::keys::DbRef, tp: u16) -> crate::keys::DbRef {

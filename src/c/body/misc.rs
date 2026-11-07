@@ -349,6 +349,27 @@ impl FnWriter<'_> {
                     K::Void,
                 ))
             }
+            ("OpStoreBufOnly", [b]) => {
+                let b = self.expr(b, ind)?;
+                Ok(E::new(
+                    format!("loft_store_buf_only({})", as_ref(b)?),
+                    K::Ref,
+                ))
+            }
+            ("OpReleaseRecIfDistinct", [r, a, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let tp = self.copyable(tp)?;
+                let (r, a) = self.two(name, &[r, a], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_release_rec_if_distinct(loft_types, {tp}, {}, {})",
+                        as_ref(r)?,
+                        as_ref(a)?
+                    ),
+                    K::Void,
+                ))
+            }
             ("OpMoveChildRec", [f, src, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "type")?)
                     .map_err(|_| "a type number out of range".to_string())?;
