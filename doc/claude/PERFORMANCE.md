@@ -51,16 +51,16 @@ takes in the build a RELEASED program runs, against the same routine written by 
 The run — both C lanes, every core and library bench, one compiler:
 
 ```bash
-make perf-portal ARGS="--lanes rust,c,cship"                # records this host's rows
-make perf-portal ARGS="--lanes rust,c,cship --cc gcc-16"    # the gcc half (a real gcc: on macOS `gcc` is clang)
+make perf-portal                                             # records this host's rows
+make perf-portal ARGS="--cc gcc-16"                          # the gcc half (a real gcc: on macOS `gcc` is clang)
 python3 bench/stats.py --lanes rust,c,cship --no-local \
   $(python3 -c "import sys; sys.path.insert(0, 'bench/portal'); import portal; \
                 print(' '.join(portal.library_packages()))") \
   --loft "$PWD/target/release/loft"                         # the same run, nothing recorded
 ```
 
-Name the lanes: `stats.py` without `--lanes` measures `native,rust`, the Rust generator, which
-is not what is judged.  Compare only like with like — a checked-lane number is not a ship-lane
+`stats.py`'s default lanes are these three; the Rust generator is measured only when named
+(`--lanes native,rust`).  Compare only like with like — a checked-lane number is not a ship-lane
 number, and neither is a number from another host: the machine is part of every row, and the
 Rust twin itself runs at a different speed on each, which moves every ratio.
 

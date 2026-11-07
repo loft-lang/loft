@@ -41,7 +41,7 @@ python3 bench/stats.py --tsv out.tsv         # keep the run, to diff against the
 python3 bench/stats.py --show-samples        # every sample under its row
 python3 bench/stats.py --routine check_request,cbor/decode   # one routine, or a set
 python3 bench/stats.py --lanes native,rust,ship   # add the SHIPPED-GAME speed per routine
-python3 bench/stats.py --lanes rust,c,cship    # the C99 backend against the Rust twin
+python3 bench/stats.py --lanes rust,c,cship    # the C99 backend against the Rust twin (the default)
 ```
 
 **The ship lane** builds each program once more, its libraries' loft code included, under
