@@ -123,9 +123,10 @@ impl FnWriter<'_> {
             return Ok(false);
         };
         let name = self.cx.data.def(*d).name();
+        // The `Nullable` twins are the same arithmetic, silent on a fault — as the C's are.
         let ovf = match name {
-            "OpAddInt" => "LOFT_ADD_OVF",
-            "OpMinInt" => "LOFT_SUB_OVF",
+            "OpAddInt" | "OpAddIntNullable" => "LOFT_ADD_OVF",
+            "OpMinInt" | "OpMinIntNullable" => "LOFT_SUB_OVF",
             _ => return Ok(false),
         };
         // An update `(R-Range)` proves cannot fault is that rule's: plain, no flag.
@@ -174,10 +175,11 @@ impl FnWriter<'_> {
                     && *t == v
                     && let Value::Call(d, args) = rhs.unspan()
                 {
-                    let name = if self.cx.data.def(*d).name() == "OpAddInt" {
-                        "OpAddInt"
-                    } else {
-                        "OpMinInt"
+                    let name = match self.cx.data.def(*d).name() {
+                        "OpAddInt" => "OpAddInt",
+                        "OpAddIntNullable" => "OpAddIntNullable",
+                        "OpMinIntNullable" => "OpMinIntNullable",
+                        _ => "OpMinInt",
                     };
                     updates.push((name, args.clone()));
                 }
@@ -243,8 +245,10 @@ fn sum_only(data: &crate::data::Data, code: &Value, b: &Block, v: u16) -> Option
                 let Value::Call(d, args) = rhs.unspan() else {
                     return false;
                 };
-                if !matches!(data.def(*d).name(), "OpAddInt" | "OpMinInt")
-                    || args.len() != 2
+                if !matches!(
+                    data.def(*d).name(),
+                    "OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable"
+                ) || args.len() != 2
                     || !matches!(args[0].unspan(), Value::Var(w) if *w == v)
                     || args[1].reads_var(v)
                 {
@@ -295,7 +299,7 @@ fn t_update(data: &crate::data::Data, code: &Value, b: &Block, t: u16, v: u16) -
             {
                 in_loop += 1;
                 shaped &= matches!(rhs.unspan(), Value::Call(d, a)
-                    if matches!(data.def(*d).name(), "OpAddInt" | "OpMinInt")
+                    if matches!(data.def(*d).name(), "OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable")
                         && a.len() == 2
                         && matches!(a[0].unspan(), Value::Var(w) if *w == v)
                         && !a[1].reads_var(v)
