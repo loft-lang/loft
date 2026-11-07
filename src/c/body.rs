@@ -222,6 +222,8 @@ pub(crate) struct FnWriter<'a> {
     hoisted_memos: std::collections::HashSet<String>,
     /// `@FR-R-StickySum`: the sums enclosing loops took, each with its loop's flag.
     sticky: Vec<(u16, String)>,
+    /// `@FR-R-StickySum`'s staged temps: `(t, acc)` for `t = acc ± e; …; acc = t`.
+    sticky_temps: Vec<(u16, u16)>,
     /// `@FR-R-ValueRecord`'s facts for this function (`value::VrFn`), when the plan has any.
     vr: Option<Box<value::VrFn>>,
     /// `@FR-R-Transient`: this body's transient variables, when it is a twin or holds a site.
@@ -784,6 +786,7 @@ impl<'a> FnWriter<'a> {
             invariants: Vec::new(),
             hoisted_memos: std::collections::HashSet::new(),
             sticky: Vec::new(),
+            sticky_temps: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
             hosts: crate::opt::hoist::placed_hosts(def.code(), cx.data),
@@ -6759,6 +6762,12 @@ impl<'a> FnWriter<'a> {
 
     /// A C expression for `v`'s value; the statements it needs are emitted first.
     fn expr(&mut self, v: &Value, ind: usize) -> Result<E, String> {
+        if !self.sticky.is_empty()
+            && let Value::Var(w) = v.unspan()
+            && let Some(read) = self.sticky_read(*w)
+        {
+            return Ok(E::new(read, K::Int));
+        }
         if self.invariants.iter().any(|f| !f.is_empty())
             && let Some(memo) = self.invariant_of(v)
         {
