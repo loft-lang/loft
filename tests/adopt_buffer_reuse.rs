@@ -348,7 +348,10 @@ fn the_store_census_drops() {
         // 2026-11-06: (R-ValueRecord) decided in the IR (@PLN211 c4-view S2) — the closed
         // interpreter mints 4 fewer pooled; the plain `--native-rust` run is an OPEN program,
         // which takes no value records at all now (NATIVE.md § Optimisation tiers), 4 and 22 more.
-        (228, 344, 108, 232),
+        // 2026-11-07: (R-InPlaceLiteral)'s variant clause builds a variant literal in the enum
+        // local it rebinds: 4 fewer pooled on each backend (`LOFT_NO_VARIANT_INPLACE=1` gives
+        // back 228 and 108).
+        (224, 344, 104, 232),
         "mints (interpret on, off, native on, off)"
     );
 }
