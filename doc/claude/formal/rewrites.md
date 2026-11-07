@@ -233,7 +233,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Inline)` | `R-Inline` c · `/helper` c |
 | `(R-InlineLeaf)` | `R-InlineLeaf` parse |
 | `(R-Inputs)` | `R-Inputs` c, native |
-| `(R-Invariant)` | `R-Invariant` c, native |
+| `(R-Invariant)` | `R-Invariant` c, native · `/hoist` c |
 | `(R-KeyList)` | not counted — executor: key descriptors derived once per type |
 | `(R-KeyedEntry)` | `R-KeyedEntry` ir · `/subscript` ir |
 | `(R-LazySplit)` | `R-LazySplit` c, native |
@@ -294,6 +294,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
 | `(R-StartStep)` | `R-StartStep` interp |
 | `(R-State)` | not counted — condition: the hoist state the header rules share; counted under them |
+| `(R-StickySum)` | `R-StickySum` c |
 | `(R-StreamWalk)` | `R-StreamWalk` native |
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
 | `(R-Tabulate)` | counted; admitted on no bench program |
@@ -794,6 +795,13 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  verdict's alone — a record view's address and a push header, which
                  hold the store's memory, keep declining a text set.  No scalar
                  hoists in such a loop (the write set does not type a text set).
+                 HOIST CLAUSE (C): where the C's checked operators report nothing on an
+                 overflow, a memoised chain is evaluated where its flag is reset — the
+                 loop's prelude, where every variable it reads already holds the value the
+                 loop sees — and its uses read the memo with no first-use test; the same
+                 value, and nothing observable moves even where the loop runs no trip
+                 (`LOFT_NO_MEMO_HOIST=1`).  stage `render_stage` 3.73× → 2.50×, `blur_region`
+                 4.99× → 3.20× Rust.
 ```
 
 ```
@@ -2573,9 +2581,30 @@ Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range
                  proofs do not show non-null), an overflow, an inner result equal to the
                  sentinel — and, on the flag, the chain recomputed checked from the same
                  temps.  A product by a literal keeps `loft_mul` (its bounds fold against the
-                 constant) and tests its null answer.  A chain inside (R-GuardedChain)'s copy
-                 is that rule's.  C only.
+                 constant) and tests its null answer.  An operator (R-GuardedChain) admitted
+                 is that rule's; a memoised subchain ((R-Invariant)) is a leaf.  Only inside a
+                 loop, and one operator only where the local carries itself (`acc = acc + e`).
+                 C only.
+
+  (R-StickySum)  a loop's integer SUM — a local every mention of which inside the loop is its
+                 own update `acc = acc + e` / `acc = acc - e` (`e` not reading `acc`), the loop
+                 left by no `break` or `continue` past its own exit — is updated with the
+                 processor's operator, one flag per loop gathering every event the checked sum
+                 answers null for (`acc` null on entry, a null `e`, an overflow, the sentinel);
+                 after the loop's exit a set flag makes `acc` null.  The outermost loop that
+                 admits a sum takes it.  An update (R-Range) proves plain stays that rule's.
+                 C only.
 ```
+
+**The sum, in words.**  The checked sum is null from its first event on — a null stays null
+through every later `+` and `-`, and none reports — and nothing inside the loop reads the sum
+but its own updates, so the value it carries after an event is never seen; at the exit, the one
+place the loop's value is read, the flag makes it the checked answer.  Measured (C ÷ Rust):
+stage `blur_region` 3.20× → 2.00× (with the hoist clause, from 4.98×), drawing `render_lock`
+2.72× → 2.49×, `resize` 3.19× → 2.99×.  A sum the range proof already writes plain kept the
+flag at first, and blocked a loop clang had vectorised (`byte_walk` 2.19× → 4.26×): those are
+left to (R-Range).  `LOFT_NO_STICKY_SUM=1`; guard
+`loft-suite/rules/rewrites/R-StickySum/a-loop-sum-runs-plain-and-is-null-from-its-first-event.loft`.
 
 **In words.**  Each checked operator answers null for exactly the events the flag collects
 and otherwise the bits of the processor's operator, and none of them reports anything; so

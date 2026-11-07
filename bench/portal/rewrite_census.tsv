@@ -20,6 +20,8 @@
 01_fibonacci	-	c	R-Range	2
 01_fibonacci	-	c	R-Rotate	8
 01_fibonacci	-	c	R-SingleUse	2
+01_fibonacci	-	c	R-SpecChain	2
+01_fibonacci	-	c	R-StickySum	1
 01_fibonacci	-	c	R-TextBorrow	14
 01_fibonacci	-	c	R-WorkPark	3
 01_fibonacci	-	c	R-Wrapper	9
@@ -57,7 +59,7 @@
 02_sum_loop	-	c	R-Base	1
 02_sum_loop	-	c	R-BoundedNest/kernel	1
 02_sum_loop	-	c	R-CompleteWrite	4
-02_sum_loop	-	c	R-Counter	6
+02_sum_loop	-	c	R-Counter	7
 02_sum_loop	-	c	R-DischargeInto	1
 02_sum_loop	-	c	R-FormatAppend	1
 02_sum_loop	-	c	R-Fuse	38
@@ -73,7 +75,8 @@
 02_sum_loop	-	c	R-Range	2
 02_sum_loop	-	c	R-Rotate	9
 02_sum_loop	-	c	R-SingleUse	2
-02_sum_loop	-	c	R-SpecChain	1
+02_sum_loop	-	c	R-SpecChain	3
+02_sum_loop	-	c	R-StickySum	1
 02_sum_loop	-	c	R-TextBorrow	14
 02_sum_loop	-	c	R-WorkPark	3
 02_sum_loop	-	c	R-Wrapper	9
@@ -111,7 +114,7 @@
 03_sieve	-	c	R-Base	1
 03_sieve	-	c	R-BoundedNest/kernel	1
 03_sieve	-	c	R-CompleteWrite	4
-03_sieve	-	c	R-Counter	17
+03_sieve	-	c	R-Counter	18
 03_sieve	-	c	R-DischargeInto	1
 03_sieve	-	c	R-FormatAppend	1
 03_sieve	-	c	R-Fuse	41
@@ -129,7 +132,9 @@
 03_sieve	-	c	R-RangedCall/guard	1
 03_sieve	-	c	R-Rotate	10
 03_sieve	-	c	R-SingleUse	2
+03_sieve	-	c	R-SpecChain	3
 03_sieve	-	c	R-StartStep	1
+03_sieve	-	c	R-StickySum	3
 03_sieve	-	c	R-TextBorrow	14
 03_sieve	-	c	R-WorkPark	3
 03_sieve	-	c	R-Wrapper	9
@@ -169,7 +174,7 @@
 04_collatz	-	c	R-Base	1
 04_collatz	-	c	R-BoundedNest/kernel	1
 04_collatz	-	c	R-CompleteWrite	4
-04_collatz	-	c	R-Counter	22
+04_collatz	-	c	R-Counter	24
 04_collatz	-	c	R-DischargeInto	1
 04_collatz	-	c	R-FormatAppend	1
 04_collatz	-	c	R-Fuse	40
@@ -187,8 +192,9 @@
 04_collatz	-	c	R-RangedCall	2
 04_collatz	-	c	R-Rotate	10
 04_collatz	-	c	R-SingleUse	2
-04_collatz	-	c	R-SpecChain	1
+04_collatz	-	c	R-SpecChain	3
 04_collatz	-	c	R-StartStep	1
+04_collatz	-	c	R-StickySum	1
 04_collatz	-	c	R-TextBorrow	14
 04_collatz	-	c	R-WorkPark	3
 04_collatz	-	c	R-Wrapper	9
@@ -228,7 +234,7 @@
 05_mandelbrot	-	c	R-Base	1
 05_mandelbrot	-	c	R-BoundedNest/kernel	1
 05_mandelbrot	-	c	R-CompleteWrite	4
-05_mandelbrot	-	c	R-Counter	16
+05_mandelbrot	-	c	R-Counter	19
 05_mandelbrot	-	c	R-DischargeInto	1
 05_mandelbrot	-	c	R-FormatAppend	1
 05_mandelbrot	-	c	R-Fuse	40
@@ -245,6 +251,8 @@
 05_mandelbrot	-	c	R-Rotate	11
 05_mandelbrot	-	c	R-SameRead	2
 05_mandelbrot	-	c	R-SingleUse	2
+05_mandelbrot	-	c	R-SpecChain	2
+05_mandelbrot	-	c	R-StickySum	2
 05_mandelbrot	-	c	R-TextBorrow	14
 05_mandelbrot	-	c	R-WorkPark	3
 05_mandelbrot	-	c	R-Wrapper	9
@@ -283,7 +291,7 @@
 06_newton_sqrt	-	c	R-Base	1
 06_newton_sqrt	-	c	R-BoundedNest/kernel	1
 06_newton_sqrt	-	c	R-CompleteWrite	4
-06_newton_sqrt	-	c	R-Counter	11
+06_newton_sqrt	-	c	R-Counter	12
 06_newton_sqrt	-	c	R-DischargeInto	1
 06_newton_sqrt	-	c	R-FormatAppend	1
 06_newton_sqrt	-	c	R-Fuse	39
@@ -302,6 +310,8 @@
 06_newton_sqrt	-	c	R-RangedCall	2
 06_newton_sqrt	-	c	R-Rotate	10
 06_newton_sqrt	-	c	R-SingleUse	2
+06_newton_sqrt	-	c	R-SpecChain	2
+06_newton_sqrt	-	c	R-StickySum	1
 06_newton_sqrt	-	c	R-TextBorrow	14
 06_newton_sqrt	-	c	R-WorkPark	3
 06_newton_sqrt	-	c	R-Wrapper	10
@@ -343,7 +353,7 @@
 07_string_build	-	c	R-Base	1
 07_string_build	-	c	R-BoundedNest/kernel	1
 07_string_build	-	c	R-CompleteWrite	4
-07_string_build	-	c	R-Counter	6
+07_string_build	-	c	R-Counter	7
 07_string_build	-	c	R-DischargeInto	1
 07_string_build	-	c	R-FormatAppend	2
 07_string_build	-	c	R-Fuse	38
@@ -359,6 +369,8 @@
 07_string_build	-	c	R-Range	2
 07_string_build	-	c	R-Rotate	9
 07_string_build	-	c	R-SingleUse	2
+07_string_build	-	c	R-SpecChain	2
+07_string_build	-	c	R-StickySum	1
 07_string_build	-	c	R-TextBorrow	14
 07_string_build	-	c	R-WorkPark	4
 07_string_build	-	c	R-Wrapper	9
@@ -396,7 +408,7 @@
 08_word_count	-	c	R-Base	3
 08_word_count	-	c	R-BoundedNest/kernel	1
 08_word_count	-	c	R-CompleteWrite	6
-08_word_count	-	c	R-Counter	9
+08_word_count	-	c	R-Counter	10
 08_word_count	-	c	R-DischargeInto	2
 08_word_count	-	c	R-FieldAppend/bare	18
 08_word_count	-	c	R-FormatAppend	1
@@ -419,6 +431,8 @@
 08_word_count	-	c	R-RefParam	4
 08_word_count	-	c	R-Rotate	9
 08_word_count	-	c	R-SingleUse	2
+08_word_count	-	c	R-SpecChain	2
+08_word_count	-	c	R-StickySum	1
 08_word_count	-	c	R-TextBorrow	17
 08_word_count	-	c	R-TypedKeyed/text	6
 08_word_count	-	c	R-WorkPark	3
@@ -463,7 +477,7 @@
 09_matrix_mul	-	c	R-Base	5
 09_matrix_mul	-	c	R-BoundedNest/kernel	1
 09_matrix_mul	-	c	R-CompleteWrite	6
-09_matrix_mul	-	c	R-Counter	13
+09_matrix_mul	-	c	R-Counter	14
 09_matrix_mul	-	c	R-DischargeInto	1
 09_matrix_mul	-	c	R-FormatAppend	1
 09_matrix_mul	-	c	R-Fuse	40
@@ -482,7 +496,9 @@
 09_matrix_mul	-	c	R-RefParam	8
 09_matrix_mul	-	c	R-Rotate	11
 09_matrix_mul	-	c	R-SingleUse	4
+09_matrix_mul	-	c	R-SpecChain	2
 09_matrix_mul	-	c	R-StartStep	1
+09_matrix_mul	-	c	R-StickySum	1
 09_matrix_mul	-	c	R-TextBorrow	14
 09_matrix_mul	-	c	R-WorkPark	3
 09_matrix_mul	-	c	R-Wrapper	11
@@ -524,7 +540,7 @@
 10_sort	-	c	R-Base	4
 10_sort	-	c	R-BoundedNest/kernel	1
 10_sort	-	c	R-CompleteWrite	4
-10_sort	-	c	R-Counter	21
+10_sort	-	c	R-Counter	23
 10_sort	-	c	R-DischargeInto	1
 10_sort	-	c	R-FormatAppend	1
 10_sort	-	c	R-Fuse	46
@@ -546,6 +562,8 @@
 10_sort	-	c	R-RefParam	6
 10_sort	-	c	R-Rotate	12
 10_sort	-	c	R-SingleUse	3
+10_sort	-	c	R-SpecChain	2
+10_sort	-	c	R-StickySum	1
 10_sort	-	c	R-TextBorrow	14
 10_sort	-	c	R-WorkBuffer	1
 10_sort	-	c	R-WorkPark	3
@@ -610,6 +628,8 @@
 11_par	-	c	R-RefParam	4
 11_par	-	c	R-Rotate	11
 11_par	-	c	R-SingleUse	2
+11_par	-	c	R-SpecChain	3
+11_par	-	c	R-StickySum	1
 11_par	-	c	R-TextBorrow	14
 11_par	-	c	R-WorkPark	3
 11_par	-	c	R-Wrapper	10
@@ -672,13 +692,14 @@
 12_drawing	-	c	R-InlineLeaf	72
 12_drawing	-	c	R-Inputs	4
 12_drawing	-	c	R-Invariant	14
+12_drawing	-	c	R-Invariant/hoist	14
 12_drawing	-	c	R-LoopSlot	20
 12_drawing	-	c	R-MaskRange	4
 12_drawing	-	c	R-NoLocks	1
 12_drawing	-	c	R-NoThreads	1
 12_drawing	-	c	R-NonSentinelParam	25
 12_drawing	-	c	R-Push	3
-12_drawing	-	c	R-Range	73
+12_drawing	-	c	R-Range	71
 12_drawing	-	c	R-Range/index	29
 12_drawing	-	c	R-RangedCall	3
 12_drawing	-	c	R-RecPtr	5
@@ -691,8 +712,9 @@
 12_drawing	-	c	R-Scalar	27
 12_drawing	-	c	R-ScaleFold	2
 12_drawing	-	c	R-SingleUse	7
-12_drawing	-	c	R-SpecChain	33
+12_drawing	-	c	R-SpecChain	42
 12_drawing	-	c	R-StartStep	2
+12_drawing	-	c	R-StickySum	1
 12_drawing	-	c	R-TextBorrow	14
 12_drawing	-	c	R-ValueRecord	2
 12_drawing	-	c	R-View	5
@@ -761,7 +783,7 @@
 13_stdlib_text	-	c	R-BoundedNest/kernel	1
 13_stdlib_text	-	c	R-CharWalk	2
 13_stdlib_text	-	c	R-CompleteWrite	4
-13_stdlib_text	-	c	R-Counter	63
+13_stdlib_text	-	c	R-Counter	66
 13_stdlib_text	-	c	R-DischargeInto	1
 13_stdlib_text	-	c	R-FieldAppend/bare	6
 13_stdlib_text	-	c	R-FormatAppend	4
@@ -785,8 +807,9 @@
 13_stdlib_text	-	c	R-RetAdopt	1
 13_stdlib_text	-	c	R-Rotate	23
 13_stdlib_text	-	c	R-SingleUse	3
-13_stdlib_text	-	c	R-SpecChain	1
+13_stdlib_text	-	c	R-SpecChain	10
 13_stdlib_text	-	c	R-SplitTable	1
+13_stdlib_text	-	c	R-StickySum	14
 13_stdlib_text	-	c	R-TextBorrow	28
 13_stdlib_text	-	c	R-View	1
 13_stdlib_text	-	c	R-WorkPark	16
@@ -830,7 +853,7 @@
 14_stdlib_vector	-	c	R-Base/counter	6
 14_stdlib_vector	-	c	R-BoundedNest/kernel	1
 14_stdlib_vector	-	c	R-CompleteWrite	15
-14_stdlib_vector	-	c	R-Counter	108
+14_stdlib_vector	-	c	R-Counter	130
 14_stdlib_vector	-	c	R-DischargeInto	1
 14_stdlib_vector	-	c	R-ElemFirst	1
 14_stdlib_vector	-	c	R-FieldAppend/bare	2
@@ -864,7 +887,8 @@
 14_stdlib_vector	-	c	R-Rotate	35
 14_stdlib_vector	-	c	R-SameRead	1
 14_stdlib_vector	-	c	R-SingleUse	8
-14_stdlib_vector	-	c	R-SpecChain	2
+14_stdlib_vector	-	c	R-SpecChain	4
+14_stdlib_vector	-	c	R-StickySum	16
 14_stdlib_vector	-	c	R-TextBorrow	14
 14_stdlib_vector	-	c	R-View	2
 14_stdlib_vector	-	c	R-WorkBuffer	3
@@ -922,7 +946,7 @@
 15_stdlib_keyed	-	c	R-Base/counter	2
 15_stdlib_keyed	-	c	R-BoundedNest/kernel	1
 15_stdlib_keyed	-	c	R-CompleteWrite	19
-15_stdlib_keyed	-	c	R-Counter	96
+15_stdlib_keyed	-	c	R-Counter	116
 15_stdlib_keyed	-	c	R-DischargeInto	2
 15_stdlib_keyed	-	c	R-FieldAppend/bare	1
 15_stdlib_keyed	-	c	R-FormatAppend	1
@@ -937,6 +961,7 @@
 15_stdlib_keyed	-	c	R-Inline	1
 15_stdlib_keyed	-	c	R-InlineLeaf	23
 15_stdlib_keyed	-	c	R-Invariant	1
+15_stdlib_keyed	-	c	R-Invariant/hoist	1
 15_stdlib_keyed	-	c	R-KeyedEntry	2
 15_stdlib_keyed	-	c	R-LoopSlot	22
 15_stdlib_keyed	-	c	R-Mint	2
@@ -949,7 +974,8 @@
 15_stdlib_keyed	-	c	R-RefParam	18
 15_stdlib_keyed	-	c	R-Rotate	29
 15_stdlib_keyed	-	c	R-SingleUse	3
-15_stdlib_keyed	-	c	R-SpecChain	9
+15_stdlib_keyed	-	c	R-SpecChain	5
+15_stdlib_keyed	-	c	R-StickySum	27
 15_stdlib_keyed	-	c	R-TextBorrow	18
 15_stdlib_keyed	-	c	R-TypedKeyed	32
 15_stdlib_keyed	-	c	R-TypedKeyed/text	2
@@ -1003,7 +1029,7 @@
 16_consumer_shapes	-	c	R-BoundedNest/kernel	1
 16_consumer_shapes	-	c	R-Callee	1
 16_consumer_shapes	-	c	R-CompleteWrite	27
-16_consumer_shapes	-	c	R-Counter	196
+16_consumer_shapes	-	c	R-Counter	245
 16_consumer_shapes	-	c	R-DischargeInto	1
 16_consumer_shapes	-	c	R-FieldAppend	1
 16_consumer_shapes	-	c	R-FlatCopy	1
@@ -1024,6 +1050,7 @@
 16_consumer_shapes	-	c	R-InlineLeaf	16
 16_consumer_shapes	-	c	R-Inputs	10
 16_consumer_shapes	-	c	R-Invariant	46
+16_consumer_shapes	-	c	R-Invariant/hoist	43
 16_consumer_shapes	-	c	R-KeyedEntry	1
 16_consumer_shapes	-	c	R-LoopSlot	45
 16_consumer_shapes	-	c	R-Mint	34
@@ -1035,7 +1062,7 @@
 16_consumer_shapes	-	c	R-Push/sole	2
 16_consumer_shapes	-	c	R-PushFill	3
 16_consumer_shapes	-	c	R-PushRec	6
-16_consumer_shapes	-	c	R-Range	449
+16_consumer_shapes	-	c	R-Range	409
 16_consumer_shapes	-	c	R-Range/index	2
 16_consumer_shapes	-	c	R-RangedCall	10
 16_consumer_shapes	-	c	R-RecPtr	59
@@ -1044,8 +1071,9 @@
 16_consumer_shapes	-	c	R-Rotate	53
 16_consumer_shapes	-	c	R-Scalar	1
 16_consumer_shapes	-	c	R-SingleUse	6
-16_consumer_shapes	-	c	R-SpecChain	9
+16_consumer_shapes	-	c	R-SpecChain	11
 16_consumer_shapes	-	c	R-StartStep	1
+16_consumer_shapes	-	c	R-StickySum	26
 16_consumer_shapes	-	c	R-TextBorrow	14
 16_consumer_shapes	-	c	R-Transient	1
 16_consumer_shapes	-	c	R-TypedKeyed/compound	12
@@ -1124,7 +1152,7 @@
 17_consumer_moros_dryopea	-	c	R-BoundedNest/kernel	1
 17_consumer_moros_dryopea	-	c	R-Compact	2
 17_consumer_moros_dryopea	-	c	R-CompleteWrite	46
-17_consumer_moros_dryopea	-	c	R-Counter	195
+17_consumer_moros_dryopea	-	c	R-Counter	206
 17_consumer_moros_dryopea	-	c	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	c	R-DischargeInto	1
 17_consumer_moros_dryopea	-	c	R-ExitVector	2
@@ -1148,6 +1176,7 @@
 17_consumer_moros_dryopea	-	c	R-Inline	28
 17_consumer_moros_dryopea	-	c	R-InlineLeaf	35
 17_consumer_moros_dryopea	-	c	R-Invariant	16
+17_consumer_moros_dryopea	-	c	R-Invariant/hoist	16
 17_consumer_moros_dryopea	-	c	R-KeyedEntry/subscript	3
 17_consumer_moros_dryopea	-	c	R-LiteralAppend	1
 17_consumer_moros_dryopea	-	c	R-LoopSlot	35
@@ -1157,7 +1186,7 @@
 17_consumer_moros_dryopea	-	c	R-NonSentinelParam/twin	4
 17_consumer_moros_dryopea	-	c	R-Peel	12
 17_consumer_moros_dryopea	-	c	R-PushRec	19
-17_consumer_moros_dryopea	-	c	R-Range	747
+17_consumer_moros_dryopea	-	c	R-Range	707
 17_consumer_moros_dryopea	-	c	R-Range/index	1
 17_consumer_moros_dryopea	-	c	R-RangedCall	10
 17_consumer_moros_dryopea	-	c	R-RecPtr	44
@@ -1170,8 +1199,9 @@
 17_consumer_moros_dryopea	-	c	R-Rotate	43
 17_consumer_moros_dryopea	-	c	R-Scalar	2
 17_consumer_moros_dryopea	-	c	R-SingleUse	16
-17_consumer_moros_dryopea	-	c	R-SpecChain	20
+17_consumer_moros_dryopea	-	c	R-SpecChain	39
 17_consumer_moros_dryopea	-	c	R-StartStep	3
+17_consumer_moros_dryopea	-	c	R-StickySum	27
 17_consumer_moros_dryopea	-	c	R-TextBorrow	14
 17_consumer_moros_dryopea	-	c	R-TypedKeyed/compound	5
 17_consumer_moros_dryopea	-	c	R-ValueLocal	9
@@ -1251,7 +1281,7 @@
 18_consumer_crawler	-	c	R-Callee	2
 18_consumer_crawler	-	c	R-CharWalk	3
 18_consumer_crawler	-	c	R-CompleteWrite	21
-18_consumer_crawler	-	c	R-Counter	351
+18_consumer_crawler	-	c	R-Counter	374
 18_consumer_crawler	-	c	R-DischargeInto	7
 18_consumer_crawler	-	c	R-ExitVector	1
 18_consumer_crawler	-	c	R-FieldAppend	2
@@ -1274,6 +1304,7 @@
 18_consumer_crawler	-	c	R-InlineLeaf	20
 18_consumer_crawler	-	c	R-Inputs	23
 18_consumer_crawler	-	c	R-Invariant	28
+18_consumer_crawler	-	c	R-Invariant/hoist	28
 18_consumer_crawler	-	c	R-KeyedEntry	1
 18_consumer_crawler	-	c	R-LoopSlot	55
 18_consumer_crawler	-	c	R-MaskRange	1
@@ -1285,7 +1316,7 @@
 18_consumer_crawler	-	c	R-Push/sole	2
 18_consumer_crawler	-	c	R-PushFill	10
 18_consumer_crawler	-	c	R-PushFill/fill	1
-18_consumer_crawler	-	c	R-Range	353
+18_consumer_crawler	-	c	R-Range	330
 18_consumer_crawler	-	c	R-Range/index	25
 18_consumer_crawler	-	c	R-RangedCall	11
 18_consumer_crawler	-	c	R-RecPtr	3
@@ -1296,7 +1327,8 @@
 18_consumer_crawler	-	c	R-Rotate	68
 18_consumer_crawler	-	c	R-Scalar	8
 18_consumer_crawler	-	c	R-SingleUse	11
-18_consumer_crawler	-	c	R-SpecChain	16
+18_consumer_crawler	-	c	R-SpecChain	34
+18_consumer_crawler	-	c	R-StickySum	18
 18_consumer_crawler	-	c	R-TextBorrow	34
 18_consumer_crawler	-	c	R-TextLen	2
 18_consumer_crawler	-	c	R-TypedKeyed/compound	1
@@ -1373,7 +1405,7 @@
 19_stdlib_par	-	c	R-Base/counter	2
 19_stdlib_par	-	c	R-BoundedNest/kernel	1
 19_stdlib_par	-	c	R-CompleteWrite	11
-19_stdlib_par	-	c	R-Counter	44
+19_stdlib_par	-	c	R-Counter	54
 19_stdlib_par	-	c	R-DischargeInto	1
 19_stdlib_par	-	c	R-FieldAppend/bare	1
 19_stdlib_par	-	c	R-FormatAppend	1
@@ -1399,7 +1431,8 @@
 19_stdlib_par	-	c	R-Rotate	28
 19_stdlib_par	-	c	R-Scalar	3
 19_stdlib_par	-	c	R-SingleUse	5
-19_stdlib_par	-	c	R-SpecChain	4
+19_stdlib_par	-	c	R-SpecChain	10
+19_stdlib_par	-	c	R-StickySum	11
 19_stdlib_par	-	c	R-TextBorrow	16
 19_stdlib_par	-	c	R-View	3
 19_stdlib_par	-	c	R-WorkBuffer	2
@@ -1482,7 +1515,9 @@
 20_interpreter	-	c	R-RefParam	51
 20_interpreter	-	c	R-Rotate	14
 20_interpreter	-	c	R-SingleUse	2
+20_interpreter	-	c	R-SpecChain	18
 20_interpreter	-	c	R-StartStep	2
+20_interpreter	-	c	R-StickySum	3
 20_interpreter	-	c	R-TextBorrow	14
 20_interpreter	-	c	R-WorkBuffer	4
 20_interpreter	-	c	R-WorkBuffer/onward	12
@@ -1534,7 +1569,7 @@
 21_tree	-	c	R-BoundedNest/kernel	1
 21_tree	-	c	R-CompleteWrite	6
 21_tree	-	c	R-CopyView/walk	4
-21_tree	-	c	R-Counter	85
+21_tree	-	c	R-Counter	94
 21_tree	-	c	R-Demote	4
 21_tree	-	c	R-Demote/place	1
 21_tree	-	c	R-DischargeInto	1
@@ -1551,17 +1586,20 @@
 21_tree	-	c	R-Inline	4
 21_tree	-	c	R-InlineLeaf	16
 21_tree	-	c	R-Invariant	14
+21_tree	-	c	R-Invariant/hoist	14
 21_tree	-	c	R-LoopSlot	15
 21_tree	-	c	R-MoveChild	2
 21_tree	-	c	R-NoLocks	1
 21_tree	-	c	R-NoThreads	1
 21_tree	-	c	R-NonSentinelParam	21
-21_tree	-	c	R-Range	107
+21_tree	-	c	R-Range	105
 21_tree	-	c	R-RangedCall	17
 21_tree	-	c	R-RecPtr	2
 21_tree	-	c	R-RefParam	30
 21_tree	-	c	R-Rotate	32
 21_tree	-	c	R-SingleUse	2
+21_tree	-	c	R-SpecChain	2
+21_tree	-	c	R-StickySum	14
 21_tree	-	c	R-TailSelf	1
 21_tree	-	c	R-TextBorrow	14
 21_tree	-	c	R-WorkPark	3
@@ -1636,6 +1674,8 @@
 22_expr	-	c	R-RefParam	24
 22_expr	-	c	R-Rotate	11
 22_expr	-	c	R-SingleUse	2
+22_expr	-	c	R-SpecChain	3
+22_expr	-	c	R-StickySum	4
 22_expr	-	c	R-TextBorrow	14
 22_expr	-	c	R-WorkPark	11
 22_expr	-	c	R-Wrapper	9
@@ -1676,7 +1716,7 @@
 23_lru	-	c	R-Base	1
 23_lru	-	c	R-BoundedNest/kernel	1
 23_lru	-	c	R-CompleteWrite	6
-23_lru	-	c	R-Counter	12
+23_lru	-	c	R-Counter	13
 23_lru	-	c	R-DischargeInto	1
 23_lru	-	c	R-FormatAppend	1
 23_lru	-	c	R-Fuse	46
@@ -1688,6 +1728,7 @@
 23_lru	-	c	R-Inline	3
 23_lru	-	c	R-InlineLeaf	9
 23_lru	-	c	R-Invariant	2
+23_lru	-	c	R-Invariant/hoist	2
 23_lru	-	c	R-LoopSlot	2
 23_lru	-	c	R-NoLocks	1
 23_lru	-	c	R-NoThreads	1
@@ -1697,6 +1738,8 @@
 23_lru	-	c	R-RefParam	12
 23_lru	-	c	R-Rotate	10
 23_lru	-	c	R-SingleUse	2
+23_lru	-	c	R-SpecChain	2
+23_lru	-	c	R-StickySum	2
 23_lru	-	c	R-TextBorrow	14
 23_lru	-	c	R-TypedKeyed	4
 23_lru	-	c	R-WorkPark	3
@@ -1743,7 +1786,7 @@ arguments	bd4932067	c	R-Base/counter	1
 arguments	bd4932067	c	R-BoundedNest/kernel	1
 arguments	bd4932067	c	R-CharWalk	2
 arguments	bd4932067	c	R-CompleteWrite	10
-arguments	bd4932067	c	R-Counter	28
+arguments	bd4932067	c	R-Counter	29
 arguments	bd4932067	c	R-DischargeInto	2
 arguments	bd4932067	c	R-FieldAppend	3
 arguments	bd4932067	c	R-FieldAppend/bare	27
@@ -1756,7 +1799,7 @@ arguments	bd4932067	c	R-Header	13
 arguments	bd4932067	c	R-Header/text	5
 arguments	bd4932067	c	R-InPlaceLiteral	1
 arguments	bd4932067	c	R-Inline	13
-arguments	bd4932067	c	R-Inline/helper	9
+arguments	bd4932067	c	R-Inline/helper	8
 arguments	bd4932067	c	R-InlineLeaf	12
 arguments	bd4932067	c	R-Inputs	21
 arguments	bd4932067	c	R-LazySplit	1
@@ -1780,8 +1823,9 @@ arguments	bd4932067	c	R-RetAdopt	2
 arguments	bd4932067	c	R-Rotate	14
 arguments	bd4932067	c	R-SameRead	2
 arguments	bd4932067	c	R-SingleUse	4
-arguments	bd4932067	c	R-SpecChain	1
+arguments	bd4932067	c	R-SpecChain	31
 arguments	bd4932067	c	R-SplitTable	2
+arguments	bd4932067	c	R-StickySum	6
 arguments	bd4932067	c	R-TextBorrow	28
 arguments	bd4932067	c	R-TextLen	1
 arguments	bd4932067	c	R-View	16
@@ -1860,6 +1904,7 @@ assets	7108f3550+shapes@0.5.4	c	R-Inline/helper	2
 assets	7108f3550+shapes@0.5.4	c	R-InlineLeaf	15
 assets	7108f3550+shapes@0.5.4	c	R-Inputs	9
 assets	7108f3550+shapes@0.5.4	c	R-Invariant	6
+assets	7108f3550+shapes@0.5.4	c	R-Invariant/hoist	6
 assets	7108f3550+shapes@0.5.4	c	R-LoopBuffer	1
 assets	7108f3550+shapes@0.5.4	c	R-LoopSlot	35
 assets	7108f3550+shapes@0.5.4	c	R-Mint	15
@@ -1872,7 +1917,7 @@ assets	7108f3550+shapes@0.5.4	c	R-PushFill	1
 assets	7108f3550+shapes@0.5.4	c	R-PushFill/run	2
 assets	7108f3550+shapes@0.5.4	c	R-PushFill/run-header	1
 assets	7108f3550+shapes@0.5.4	c	R-PushRec	2
-assets	7108f3550+shapes@0.5.4	c	R-Range	176
+assets	7108f3550+shapes@0.5.4	c	R-Range	174
 assets	7108f3550+shapes@0.5.4	c	R-Range/index	8
 assets	7108f3550+shapes@0.5.4	c	R-RangedCall	8
 assets	7108f3550+shapes@0.5.4	c	R-RangedCall/guard	4
@@ -1884,7 +1929,8 @@ assets	7108f3550+shapes@0.5.4	c	R-RetAdopt	2
 assets	7108f3550+shapes@0.5.4	c	R-Rotate	47
 assets	7108f3550+shapes@0.5.4	c	R-Scalar	26
 assets	7108f3550+shapes@0.5.4	c	R-SingleUse	2
-assets	7108f3550+shapes@0.5.4	c	R-SpecChain	8
+assets	7108f3550+shapes@0.5.4	c	R-SpecChain	18
+assets	7108f3550+shapes@0.5.4	c	R-StickySum	11
 assets	7108f3550+shapes@0.5.4	c	R-TextBorrow	18
 assets	7108f3550+shapes@0.5.4	c	R-TextLen	1
 assets	7108f3550+shapes@0.5.4	c	R-TypedKeyed/text	6
@@ -1962,7 +2008,7 @@ cbor	bd4932067	c	R-BoundAppend	1
 cbor	bd4932067	c	R-BoundedNest/kernel	1
 cbor	bd4932067	c	R-ByteCopy	4
 cbor	bd4932067	c	R-CompleteWrite	31
-cbor	bd4932067	c	R-Counter	315
+cbor	bd4932067	c	R-Counter	319
 cbor	bd4932067	c	R-Destination	9
 cbor	bd4932067	c	R-DischargeInto	1
 cbor	bd4932067	c	R-ExitVector	6
@@ -1987,6 +2033,7 @@ cbor	bd4932067	c	R-Inline/helper	2
 cbor	bd4932067	c	R-InlineLeaf	21
 cbor	bd4932067	c	R-Inputs	5
 cbor	bd4932067	c	R-Invariant	9
+cbor	bd4932067	c	R-Invariant/hoist	9
 cbor	bd4932067	c	R-LoopBuffer	1
 cbor	bd4932067	c	R-LoopSlot	31
 cbor	bd4932067	c	R-MaskRange	5
@@ -2001,7 +2048,7 @@ cbor	bd4932067	c	R-Place	3
 cbor	bd4932067	c	R-PushFill	2
 cbor	bd4932067	c	R-PushRec	7
 cbor	bd4932067	c	R-PushRec/apart	20
-cbor	bd4932067	c	R-Range	336
+cbor	bd4932067	c	R-Range	337
 cbor	bd4932067	c	R-Range/index	15
 cbor	bd4932067	c	R-RangedCall	7
 cbor	bd4932067	c	R-RecPtr	5
@@ -2012,7 +2059,8 @@ cbor	bd4932067	c	R-Reuse	8
 cbor	bd4932067	c	R-Rotate	39
 cbor	bd4932067	c	R-SelfReplace	1
 cbor	bd4932067	c	R-SingleUse	7
-cbor	bd4932067	c	R-SpecChain	23
+cbor	bd4932067	c	R-SpecChain	26
+cbor	bd4932067	c	R-StickySum	13
 cbor	bd4932067	c	R-TextBorrow	19
 cbor	bd4932067	c	R-TextBorrow/tested	2
 cbor	bd4932067	c	R-TextRun	1
@@ -2093,7 +2141,7 @@ crypto	bd4932067	c	R-Base	4
 crypto	bd4932067	c	R-Base/counter	3
 crypto	bd4932067	c	R-BoundedNest/kernel	1
 crypto	bd4932067	c	R-CompleteWrite	15
-crypto	bd4932067	c	R-Counter	82
+crypto	bd4932067	c	R-Counter	84
 crypto	bd4932067	c	R-DischargeInto	1
 crypto	bd4932067	c	R-ExitVector	1
 crypto	bd4932067	c	R-FieldAppend/bare	7
@@ -2114,13 +2162,14 @@ crypto	bd4932067	c	R-Inline/helper	1
 crypto	bd4932067	c	R-InlineLeaf	8
 crypto	bd4932067	c	R-Inputs	1
 crypto	bd4932067	c	R-Invariant	4
+crypto	bd4932067	c	R-Invariant/hoist	4
 crypto	bd4932067	c	R-LoopBuffer	1
 crypto	bd4932067	c	R-LoopSlot	15
 crypto	bd4932067	c	R-Mint	2
 crypto	bd4932067	c	R-NoLocks	1
 crypto	bd4932067	c	R-NoThreads	1
 crypto	bd4932067	c	R-NonSentinelParam	10
-crypto	bd4932067	c	R-Range	62
+crypto	bd4932067	c	R-Range	59
 crypto	bd4932067	c	R-Range/index	2
 crypto	bd4932067	c	R-RangedCall	2
 crypto	bd4932067	c	R-RecPtr	1
@@ -2129,7 +2178,8 @@ crypto	bd4932067	c	R-RecPtr/param	2
 crypto	bd4932067	c	R-RefParam	39
 crypto	bd4932067	c	R-Rotate	22
 crypto	bd4932067	c	R-SingleUse	2
-crypto	bd4932067	c	R-SpecChain	6
+crypto	bd4932067	c	R-SpecChain	11
+crypto	bd4932067	c	R-StickySum	7
 crypto	bd4932067	c	R-TextBorrow	14
 crypto	bd4932067	c	R-View	4
 crypto	bd4932067	c	R-WorkBuffer	3
@@ -2224,6 +2274,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Inlin
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-InlineLeaf	165
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Inputs	30
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Invariant	29
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Invariant/hoist	29
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-KeyedEntry	1
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LazySplit	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-LiteralWalk	2
@@ -2245,7 +2296,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushF
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run-header	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushRec	14
-drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	365
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	362
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range/index	90
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RangedCall	25
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr	54
@@ -2260,8 +2311,9 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-SameR
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Scalar	71
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-SingleUse	26
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-SliceBorrow	3
-drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-SpecChain	39
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-SpecChain	107
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-StartStep	8
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-StickySum	33
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-TextBorrow	27
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Transient	1
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-ValueLocal	20
@@ -2388,6 +2440,7 @@ fixstep	394317324	c	R-Inline/helper	4
 fixstep	394317324	c	R-InlineLeaf	19
 fixstep	394317324	c	R-Inputs	5
 fixstep	394317324	c	R-Invariant	1
+fixstep	394317324	c	R-Invariant/hoist	1
 fixstep	394317324	c	R-LoopSlot	17
 fixstep	394317324	c	R-Mint	4
 fixstep	394317324	c	R-NoLocks	1
@@ -2407,7 +2460,8 @@ fixstep	394317324	c	R-RefParam	47
 fixstep	394317324	c	R-Rotate	24
 fixstep	394317324	c	R-Scalar	6
 fixstep	394317324	c	R-SingleUse	2
-fixstep	394317324	c	R-SpecChain	8
+fixstep	394317324	c	R-SpecChain	12
+fixstep	394317324	c	R-StickySum	16
 fixstep	394317324	c	R-TextBorrow	16
 fixstep	394317324	c	R-ValueLocal	3
 fixstep	394317324	c	R-ValueRecord	7
@@ -2495,6 +2549,7 @@ game_protocol	b4075f3fc	c	R-Reuse	1
 game_protocol	b4075f3fc	c	R-Rotate	11
 game_protocol	b4075f3fc	c	R-SingleUse	2
 game_protocol	b4075f3fc	c	R-SpecChain	8
+game_protocol	b4075f3fc	c	R-StickySum	6
 game_protocol	b4075f3fc	c	R-TextBorrow	16
 game_protocol	b4075f3fc	c	R-Transient	1
 game_protocol	b4075f3fc	c	R-View	2
@@ -2570,6 +2625,7 @@ glb	7108f3550	c	R-Inline/helper	1
 glb	7108f3550	c	R-InlineLeaf	11
 glb	7108f3550	c	R-Inputs	1
 glb	7108f3550	c	R-Invariant	6
+glb	7108f3550	c	R-Invariant/hoist	6
 glb	7108f3550	c	R-LiteralWalk	2
 glb	7108f3550	c	R-LoopSlot	23
 glb	7108f3550	c	R-NoLocks	1
@@ -2580,7 +2636,7 @@ glb	7108f3550	c	R-Push/sole	4
 glb	7108f3550	c	R-PushFill	6
 glb	7108f3550	c	R-PushFill/run	2
 glb	7108f3550	c	R-PushFill/run-header	2
-glb	7108f3550	c	R-Range	119
+glb	7108f3550	c	R-Range	114
 glb	7108f3550	c	R-Range/index	1
 glb	7108f3550	c	R-RangedCall	5
 glb	7108f3550	c	R-RecPtr	21
@@ -2592,7 +2648,8 @@ glb	7108f3550	c	R-RepeatRun	16
 glb	7108f3550	c	R-Reuse	7
 glb	7108f3550	c	R-Rotate	30
 glb	7108f3550	c	R-SingleUse	3
-glb	7108f3550	c	R-SpecChain	11
+glb	7108f3550	c	R-SpecChain	37
+glb	7108f3550	c	R-StickySum	5
 glb	7108f3550	c	R-TextBorrow	22
 glb	7108f3550	c	R-ValueLocal	14
 glb	7108f3550	c	R-ValueRecord	18
@@ -2680,11 +2737,12 @@ graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-GuardedChain	23
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-GuardedChain/operators	122
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Header	30
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-InRange	1
-graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Inline	15
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Inline	14
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Inline/helper	13
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-InlineLeaf	34
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Inputs	39
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Invariant	17
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Invariant/hoist	17
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-KeyedEntry	1
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-LiteralWalk	2
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-LoopBuffer	2
@@ -2717,8 +2775,9 @@ graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Reuse	6
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Rotate	89
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-Scalar	42
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-SingleUse	5
-graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-SpecChain	30
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-SpecChain	23
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-StartStep	6
+graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-StickySum	29
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-TextBorrow	19
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-ValueLocal	15
 graphics	873da7f9a+glb@0.1.6+mesh3d@0.1.5	c	R-ValueRecord	24
@@ -2831,6 +2890,7 @@ gridmesh	873da7f9a	c	R-InPlaceLiteral	3
 gridmesh	873da7f9a	c	R-Inline	6
 gridmesh	873da7f9a	c	R-InlineLeaf	70
 gridmesh	873da7f9a	c	R-Invariant	5
+gridmesh	873da7f9a	c	R-Invariant/hoist	5
 gridmesh	873da7f9a	c	R-KeyedEntry	4
 gridmesh	873da7f9a	c	R-LoopBuffer	1
 gridmesh	873da7f9a	c	R-LoopSlot	24
@@ -2853,8 +2913,9 @@ gridmesh	873da7f9a	c	R-Reuse	5
 gridmesh	873da7f9a	c	R-Rotate	31
 gridmesh	873da7f9a	c	R-SameRead	3
 gridmesh	873da7f9a	c	R-SingleUse	40
-gridmesh	873da7f9a	c	R-SpecChain	50
+gridmesh	873da7f9a	c	R-SpecChain	52
 gridmesh	873da7f9a	c	R-StartStep	2
+gridmesh	873da7f9a	c	R-StickySum	11
 gridmesh	873da7f9a	c	R-TextBorrow	14
 gridmesh	873da7f9a	c	R-TypedKeyed	10
 gridmesh	873da7f9a	c	R-ValueRecord	4
@@ -2950,6 +3011,7 @@ hex_body	3bdb69ef2	c	R-Inline/helper	2
 hex_body	3bdb69ef2	c	R-InlineLeaf	30
 hex_body	3bdb69ef2	c	R-Inputs	2
 hex_body	3bdb69ef2	c	R-Invariant	2
+hex_body	3bdb69ef2	c	R-Invariant/hoist	2
 hex_body	3bdb69ef2	c	R-LoopSlot	21
 hex_body	3bdb69ef2	c	R-Mint	2
 hex_body	3bdb69ef2	c	R-NoLocks	1
@@ -2975,6 +3037,7 @@ hex_body	3bdb69ef2	c	R-SingleUse	12
 hex_body	3bdb69ef2	c	R-SpecChain	9
 hex_body	3bdb69ef2	c	R-SplitTable	3
 hex_body	3bdb69ef2	c	R-StartStep	1
+hex_body	3bdb69ef2	c	R-StickySum	11
 hex_body	3bdb69ef2	c	R-TextBorrow	15
 hex_body	3bdb69ef2	c	R-ValueLocal	1
 hex_body	3bdb69ef2	c	R-ValueRecord	7
@@ -3062,6 +3125,7 @@ hex_draw	3bdb69ef2	c	R-Inline/helper	7
 hex_draw	3bdb69ef2	c	R-InlineLeaf	173
 hex_draw	3bdb69ef2	c	R-Inputs	19
 hex_draw	3bdb69ef2	c	R-Invariant	2
+hex_draw	3bdb69ef2	c	R-Invariant/hoist	2
 hex_draw	3bdb69ef2	c	R-LoopBuffer	20
 hex_draw	3bdb69ef2	c	R-LoopSlot	276
 hex_draw	3bdb69ef2	c	R-NoLocks	1
@@ -3082,8 +3146,9 @@ hex_draw	3bdb69ef2	c	R-Rotate	294
 hex_draw	3bdb69ef2	c	R-SameRead	1
 hex_draw	3bdb69ef2	c	R-Scalar	12
 hex_draw	3bdb69ef2	c	R-SingleUse	14
-hex_draw	3bdb69ef2	c	R-SpecChain	8
+hex_draw	3bdb69ef2	c	R-SpecChain	12
 hex_draw	3bdb69ef2	c	R-StartStep	109
+hex_draw	3bdb69ef2	c	R-StickySum	4
 hex_draw	3bdb69ef2	c	R-TextBorrow	17
 hex_draw	3bdb69ef2	c	R-ValueLocal	20
 hex_draw	3bdb69ef2	c	R-ValueRecord	4
@@ -3194,8 +3259,9 @@ hex_edge	3bdb69ef2	c	R-Rotate	134
 hex_edge	3bdb69ef2	c	R-SameRead	1
 hex_edge	3bdb69ef2	c	R-Scalar	32
 hex_edge	3bdb69ef2	c	R-SingleUse	6
-hex_edge	3bdb69ef2	c	R-SpecChain	9
+hex_edge	3bdb69ef2	c	R-SpecChain	15
 hex_edge	3bdb69ef2	c	R-StartStep	31
+hex_edge	3bdb69ef2	c	R-StickySum	10
 hex_edge	3bdb69ef2	c	R-TextBorrow	17
 hex_edge	3bdb69ef2	c	R-View	2
 hex_edge	3bdb69ef2	c	R-WorkBuffer	5
@@ -3286,6 +3352,7 @@ hex_field	3bdb69ef2	c	R-Inline/helper	17
 hex_field	3bdb69ef2	c	R-InlineLeaf	76
 hex_field	3bdb69ef2	c	R-Inputs	92
 hex_field	3bdb69ef2	c	R-Invariant	30
+hex_field	3bdb69ef2	c	R-Invariant/hoist	29
 hex_field	3bdb69ef2	c	R-LoopBuffer	3
 hex_field	3bdb69ef2	c	R-LoopSlot	126
 hex_field	3bdb69ef2	c	R-NoLocks	1
@@ -3298,7 +3365,7 @@ hex_field	3bdb69ef2	c	R-PushFill	4
 hex_field	3bdb69ef2	c	R-PushFill/fill	2
 hex_field	3bdb69ef2	c	R-PushFill/run	4
 hex_field	3bdb69ef2	c	R-PushFill/run-header	1
-hex_field	3bdb69ef2	c	R-Range	375
+hex_field	3bdb69ef2	c	R-Range	369
 hex_field	3bdb69ef2	c	R-RangedCall	79
 hex_field	3bdb69ef2	c	R-RangedCall/guard	3
 hex_field	3bdb69ef2	c	R-RecPtr	2
@@ -3310,8 +3377,9 @@ hex_field	3bdb69ef2	c	R-Rotate	135
 hex_field	3bdb69ef2	c	R-SameRead	1
 hex_field	3bdb69ef2	c	R-Scalar	170
 hex_field	3bdb69ef2	c	R-SingleUse	5
-hex_field	3bdb69ef2	c	R-SpecChain	7
+hex_field	3bdb69ef2	c	R-SpecChain	15
 hex_field	3bdb69ef2	c	R-StartStep	29
+hex_field	3bdb69ef2	c	R-StickySum	23
 hex_field	3bdb69ef2	c	R-TextBorrow	24
 hex_field	3bdb69ef2	c	R-TypedRead	15
 hex_field	3bdb69ef2	c	R-TypedRead/float	1
@@ -3407,6 +3475,7 @@ hex_fit	3bdb69ef2	c	R-Inline/helper	12
 hex_fit	3bdb69ef2	c	R-InlineLeaf	283
 hex_fit	3bdb69ef2	c	R-Inputs	37
 hex_fit	3bdb69ef2	c	R-Invariant	7
+hex_fit	3bdb69ef2	c	R-Invariant/hoist	7
 hex_fit	3bdb69ef2	c	R-LiteralWalk	1
 hex_fit	3bdb69ef2	c	R-LoopBuffer	33
 hex_fit	3bdb69ef2	c	R-LoopRecord/refill	3
@@ -3430,8 +3499,9 @@ hex_fit	3bdb69ef2	c	R-Rotate	471
 hex_fit	3bdb69ef2	c	R-SameRead	1
 hex_fit	3bdb69ef2	c	R-Scalar	24
 hex_fit	3bdb69ef2	c	R-SingleUse	22
-hex_fit	3bdb69ef2	c	R-SpecChain	4
+hex_fit	3bdb69ef2	c	R-SpecChain	10
 hex_fit	3bdb69ef2	c	R-StartStep	171
+hex_fit	3bdb69ef2	c	R-StickySum	6
 hex_fit	3bdb69ef2	c	R-TextBorrow	20
 hex_fit	3bdb69ef2	c	R-ValueLocal	26
 hex_fit	3bdb69ef2	c	R-ValueRecord	12
@@ -3520,7 +3590,7 @@ hex_form	3bdb69ef2	c	R-BoundedNest/kernel	1
 hex_form	3bdb69ef2	c	R-Callee	1
 hex_form	3bdb69ef2	c	R-CharWalk	1
 hex_form	3bdb69ef2	c	R-CompleteWrite	50
-hex_form	3bdb69ef2	c	R-Counter	635
+hex_form	3bdb69ef2	c	R-Counter	646
 hex_form	3bdb69ef2	c	R-DischargeInto	5
 hex_form	3bdb69ef2	c	R-ExitVector	15
 hex_form	3bdb69ef2	c	R-FieldAppend/bare	10
@@ -3561,9 +3631,10 @@ hex_form	3bdb69ef2	c	R-Rotate	176
 hex_form	3bdb69ef2	c	R-SameRead	1
 hex_form	3bdb69ef2	c	R-Scalar	24
 hex_form	3bdb69ef2	c	R-SingleUse	11
-hex_form	3bdb69ef2	c	R-SpecChain	14
+hex_form	3bdb69ef2	c	R-SpecChain	20
 hex_form	3bdb69ef2	c	R-SplitTable	3
 hex_form	3bdb69ef2	c	R-StartStep	35
+hex_form	3bdb69ef2	c	R-StickySum	12
 hex_form	3bdb69ef2	c	R-TextBorrow	18
 hex_form	3bdb69ef2	c	R-ValueLocal	9
 hex_form	3bdb69ef2	c	R-ValueRecord	4
@@ -3670,7 +3741,8 @@ hex_grid	3bdb69ef2	c	R-RecPtr/param	2
 hex_grid	3bdb69ef2	c	R-RefParam	14
 hex_grid	3bdb69ef2	c	R-Rotate	13
 hex_grid	3bdb69ef2	c	R-SingleUse	8
-hex_grid	3bdb69ef2	c	R-SpecChain	5
+hex_grid	3bdb69ef2	c	R-SpecChain	8
+hex_grid	3bdb69ef2	c	R-StickySum	7
 hex_grid	3bdb69ef2	c	R-TextBorrow	16
 hex_grid	3bdb69ef2	c	R-View	2
 hex_grid	3bdb69ef2	c	R-WorkPark	4
@@ -3719,7 +3791,7 @@ hex_place	3bdb69ef2	c	R-Base/counter	2
 hex_place	3bdb69ef2	c	R-BoundedNest/kernel	1
 hex_place	3bdb69ef2	c	R-Callee	2
 hex_place	3bdb69ef2	c	R-CompleteWrite	48
-hex_place	3bdb69ef2	c	R-Counter	575
+hex_place	3bdb69ef2	c	R-Counter	577
 hex_place	3bdb69ef2	c	R-DischargeInto	5
 hex_place	3bdb69ef2	c	R-ExitVector	15
 hex_place	3bdb69ef2	c	R-FieldAppend/bare	2
@@ -3757,8 +3829,9 @@ hex_place	3bdb69ef2	c	R-Rotate	182
 hex_place	3bdb69ef2	c	R-SameRead	1
 hex_place	3bdb69ef2	c	R-Scalar	36
 hex_place	3bdb69ef2	c	R-SingleUse	11
-hex_place	3bdb69ef2	c	R-SpecChain	4
+hex_place	3bdb69ef2	c	R-SpecChain	8
 hex_place	3bdb69ef2	c	R-StartStep	51
+hex_place	3bdb69ef2	c	R-StickySum	9
 hex_place	3bdb69ef2	c	R-TextBorrow	17
 hex_place	3bdb69ef2	c	R-ValueLocal	12
 hex_place	3bdb69ef2	c	R-ValueRecord	6
@@ -3836,7 +3909,7 @@ hex_recover	3bdb69ef2	c	R-Base/counter	14
 hex_recover	3bdb69ef2	c	R-BoundedNest/kernel	1
 hex_recover	3bdb69ef2	c	R-Callee	1
 hex_recover	3bdb69ef2	c	R-CompleteWrite	79
-hex_recover	3bdb69ef2	c	R-Counter	838
+hex_recover	3bdb69ef2	c	R-Counter	840
 hex_recover	3bdb69ef2	c	R-CtorLiteral	3
 hex_recover	3bdb69ef2	c	R-DischargeInto	5
 hex_recover	3bdb69ef2	c	R-ExitVector	15
@@ -3858,6 +3931,7 @@ hex_recover	3bdb69ef2	c	R-Inline/helper	5
 hex_recover	3bdb69ef2	c	R-InlineLeaf	153
 hex_recover	3bdb69ef2	c	R-Inputs	17
 hex_recover	3bdb69ef2	c	R-Invariant	14
+hex_recover	3bdb69ef2	c	R-Invariant/hoist	14
 hex_recover	3bdb69ef2	c	R-LoopBuffer	23
 hex_recover	3bdb69ef2	c	R-LoopRecord/refill	3
 hex_recover	3bdb69ef2	c	R-LoopSlot	211
@@ -3887,8 +3961,9 @@ hex_recover	3bdb69ef2	c	R-Rotate	226
 hex_recover	3bdb69ef2	c	R-SameRead	1
 hex_recover	3bdb69ef2	c	R-Scalar	12
 hex_recover	3bdb69ef2	c	R-SingleUse	12
-hex_recover	3bdb69ef2	c	R-SpecChain	13
+hex_recover	3bdb69ef2	c	R-SpecChain	27
 hex_recover	3bdb69ef2	c	R-StartStep	41
+hex_recover	3bdb69ef2	c	R-StickySum	17
 hex_recover	3bdb69ef2	c	R-TextBorrow	24
 hex_recover	3bdb69ef2	c	R-TypedKeyed/text	1
 hex_recover	3bdb69ef2	c	R-ValueLocal	8
@@ -3976,7 +4051,7 @@ hex_roof	3bdb69ef2	c	R-Base/counter	2
 hex_roof	3bdb69ef2	c	R-BoundedNest/kernel	1
 hex_roof	3bdb69ef2	c	R-Callee	4
 hex_roof	3bdb69ef2	c	R-CompleteWrite	15
-hex_roof	3bdb69ef2	c	R-Counter	993
+hex_roof	3bdb69ef2	c	R-Counter	994
 hex_roof	3bdb69ef2	c	R-DischargeInto	2
 hex_roof	3bdb69ef2	c	R-ExitVector	34
 hex_roof	3bdb69ef2	c	R-FieldAppend/bare	2
@@ -3997,6 +4072,7 @@ hex_roof	3bdb69ef2	c	R-Inline/helper	13
 hex_roof	3bdb69ef2	c	R-InlineLeaf	106
 hex_roof	3bdb69ef2	c	R-Inputs	219
 hex_roof	3bdb69ef2	c	R-Invariant	1
+hex_roof	3bdb69ef2	c	R-Invariant/hoist	1
 hex_roof	3bdb69ef2	c	R-LoopBuffer	2
 hex_roof	3bdb69ef2	c	R-LoopSlot	202
 hex_roof	3bdb69ef2	c	R-NoLocks	1
@@ -4017,8 +4093,9 @@ hex_roof	3bdb69ef2	c	R-Rotate	218
 hex_roof	3bdb69ef2	c	R-SameRead	1
 hex_roof	3bdb69ef2	c	R-Scalar	178
 hex_roof	3bdb69ef2	c	R-SingleUse	17
-hex_roof	3bdb69ef2	c	R-SpecChain	4
+hex_roof	3bdb69ef2	c	R-SpecChain	16
 hex_roof	3bdb69ef2	c	R-StartStep	87
+hex_roof	3bdb69ef2	c	R-StickySum	5
 hex_roof	3bdb69ef2	c	R-TextBorrow	17
 hex_roof	3bdb69ef2	c	R-View	2
 hex_roof	3bdb69ef2	c	R-WorkBuffer	9
@@ -4109,6 +4186,7 @@ hex_shape	3bdb69ef2	c	R-Inline/helper	11
 hex_shape	3bdb69ef2	c	R-InlineLeaf	192
 hex_shape	3bdb69ef2	c	R-Inputs	44
 hex_shape	3bdb69ef2	c	R-Invariant	6
+hex_shape	3bdb69ef2	c	R-Invariant/hoist	6
 hex_shape	3bdb69ef2	c	R-LoopBuffer	30
 hex_shape	3bdb69ef2	c	R-LoopSlot	241
 hex_shape	3bdb69ef2	c	R-NoLocks	1
@@ -4133,8 +4211,9 @@ hex_shape	3bdb69ef2	c	R-Rotate	258
 hex_shape	3bdb69ef2	c	R-SameRead	1
 hex_shape	3bdb69ef2	c	R-Scalar	24
 hex_shape	3bdb69ef2	c	R-SingleUse	14
-hex_shape	3bdb69ef2	c	R-SpecChain	4
+hex_shape	3bdb69ef2	c	R-SpecChain	10
 hex_shape	3bdb69ef2	c	R-StartStep	85
+hex_shape	3bdb69ef2	c	R-StickySum	5
 hex_shape	3bdb69ef2	c	R-TextBorrow	17
 hex_shape	3bdb69ef2	c	R-ValueLocal	17
 hex_shape	3bdb69ef2	c	R-ValueRecord	10
@@ -4232,6 +4311,7 @@ hex_terrain	3bdb69ef2	c	R-Inline/helper	2
 hex_terrain	3bdb69ef2	c	R-InlineLeaf	83
 hex_terrain	3bdb69ef2	c	R-Inputs	2
 hex_terrain	3bdb69ef2	c	R-Invariant	23
+hex_terrain	3bdb69ef2	c	R-Invariant/hoist	23
 hex_terrain	3bdb69ef2	c	R-LoopBuffer	11
 hex_terrain	3bdb69ef2	c	R-LoopSlot	58
 hex_terrain	3bdb69ef2	c	R-NoLocks	1
@@ -4257,7 +4337,8 @@ hex_terrain	3bdb69ef2	c	R-Reuse	1
 hex_terrain	3bdb69ef2	c	R-Rotate	67
 hex_terrain	3bdb69ef2	c	R-Scalar	27
 hex_terrain	3bdb69ef2	c	R-SingleUse	16
-hex_terrain	3bdb69ef2	c	R-SpecChain	6
+hex_terrain	3bdb69ef2	c	R-SpecChain	11
+hex_terrain	3bdb69ef2	c	R-StickySum	14
 hex_terrain	3bdb69ef2	c	R-TailSelf	1
 hex_terrain	3bdb69ef2	c	R-TextBorrow	16
 hex_terrain	3bdb69ef2	c	R-ValueLocal	1
@@ -4350,6 +4431,7 @@ hex_way	3bdb69ef2	c	R-Inline/helper	14
 hex_way	3bdb69ef2	c	R-InlineLeaf	94
 hex_way	3bdb69ef2	c	R-Inputs	112
 hex_way	3bdb69ef2	c	R-Invariant	4
+hex_way	3bdb69ef2	c	R-Invariant/hoist	4
 hex_way	3bdb69ef2	c	R-LoopBuffer	2
 hex_way	3bdb69ef2	c	R-LoopSlot	144
 hex_way	3bdb69ef2	c	R-NoLocks	1
@@ -4371,8 +4453,9 @@ hex_way	3bdb69ef2	c	R-Rotate	156
 hex_way	3bdb69ef2	c	R-SameRead	1
 hex_way	3bdb69ef2	c	R-Scalar	24
 hex_way	3bdb69ef2	c	R-SingleUse	7
-hex_way	3bdb69ef2	c	R-SpecChain	4
+hex_way	3bdb69ef2	c	R-SpecChain	8
 hex_way	3bdb69ef2	c	R-StartStep	41
+hex_way	3bdb69ef2	c	R-StickySum	5
 hex_way	3bdb69ef2	c	R-TextBorrow	17
 hex_way	3bdb69ef2	c	R-View	2
 hex_way	3bdb69ef2	c	R-WorkBuffer	5
@@ -4461,6 +4544,7 @@ hex_world	3bdb69ef2	c	R-Inline/helper	1
 hex_world	3bdb69ef2	c	R-InlineLeaf	20
 hex_world	3bdb69ef2	c	R-Inputs	1
 hex_world	3bdb69ef2	c	R-Invariant	6
+hex_world	3bdb69ef2	c	R-Invariant/hoist	6
 hex_world	3bdb69ef2	c	R-LoopSlot	13
 hex_world	3bdb69ef2	c	R-Mint	2
 hex_world	3bdb69ef2	c	R-NoLocks	1
@@ -4477,7 +4561,8 @@ hex_world	3bdb69ef2	c	R-RefParam	34
 hex_world	3bdb69ef2	c	R-Reuse	2
 hex_world	3bdb69ef2	c	R-Rotate	22
 hex_world	3bdb69ef2	c	R-SingleUse	2
-hex_world	3bdb69ef2	c	R-SpecChain	4
+hex_world	3bdb69ef2	c	R-SpecChain	14
+hex_world	3bdb69ef2	c	R-StickySum	4
 hex_world	3bdb69ef2	c	R-TextBorrow	16
 hex_world	3bdb69ef2	c	R-View	4
 hex_world	3bdb69ef2	c	R-WorkBuffer	2
@@ -4560,7 +4645,8 @@ html	dd260f04c	c	R-RecPtr/param	1
 html	dd260f04c	c	R-RefParam	8
 html	dd260f04c	c	R-Rotate	12
 html	dd260f04c	c	R-SingleUse	2
-html	dd260f04c	c	R-SpecChain	1
+html	dd260f04c	c	R-SpecChain	4
+html	dd260f04c	c	R-StickySum	2
 html	dd260f04c	c	R-TextBorrow	16
 html	dd260f04c	c	R-Transient	1
 html	dd260f04c	c	R-WorkPark	11
@@ -4631,8 +4717,9 @@ markdown	dd260f04c	c	R-RetAdopt	2
 markdown	dd260f04c	c	R-Rotate	56
 markdown	dd260f04c	c	R-SingleUse	2
 markdown	dd260f04c	c	R-SliceBorrow	7
-markdown	dd260f04c	c	R-SpecChain	5
+markdown	dd260f04c	c	R-SpecChain	58
 markdown	dd260f04c	c	R-SplitTable	5
+markdown	dd260f04c	c	R-StickySum	9
 markdown	dd260f04c	c	R-TextBorrow	50
 markdown	dd260f04c	c	R-View	1
 markdown	dd260f04c	c	R-WorkPark	153
@@ -4699,6 +4786,7 @@ mesh3d	7108f3550	c	R-Inline/helper	2
 mesh3d	7108f3550	c	R-InlineLeaf	23
 mesh3d	7108f3550	c	R-Inputs	2
 mesh3d	7108f3550	c	R-Invariant	10
+mesh3d	7108f3550	c	R-Invariant/hoist	10
 mesh3d	7108f3550	c	R-LiteralWalk	2
 mesh3d	7108f3550	c	R-LoopSlot	17
 mesh3d	7108f3550	c	R-NoLocks	1
@@ -4710,7 +4798,7 @@ mesh3d	7108f3550	c	R-Push/sole	1
 mesh3d	7108f3550	c	R-PushFill	6
 mesh3d	7108f3550	c	R-PushFill/run	5
 mesh3d	7108f3550	c	R-PushFill/run-header	4
-mesh3d	7108f3550	c	R-Range	115
+mesh3d	7108f3550	c	R-Range	102
 mesh3d	7108f3550	c	R-Range/index	24
 mesh3d	7108f3550	c	R-RangedCall	5
 mesh3d	7108f3550	c	R-Rebind	1
@@ -4723,7 +4811,8 @@ mesh3d	7108f3550	c	R-RetAdopt	1
 mesh3d	7108f3550	c	R-Reuse	4
 mesh3d	7108f3550	c	R-Rotate	24
 mesh3d	7108f3550	c	R-SingleUse	16
-mesh3d	7108f3550	c	R-SpecChain	8
+mesh3d	7108f3550	c	R-SpecChain	14
+mesh3d	7108f3550	c	R-StickySum	9
 mesh3d	7108f3550	c	R-TextBorrow	16
 mesh3d	7108f3550	c	R-ValueLocal	14
 mesh3d	7108f3550	c	R-ValueRecord	20
@@ -4797,7 +4886,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-BoundAppend	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-BoundedNest/kernel	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-ByteCopy	4
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-CompleteWrite	41
-pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Counter	280
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Counter	283
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Destination	9
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-DischargeInto	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-ElemFirst	1
@@ -4823,6 +4912,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Inline/helper	2
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-InlineLeaf	8
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Inputs	5
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Invariant	8
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Invariant/hoist	8
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-LoopSlot	31
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-MoveLast	3
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-NoThreads	1
@@ -4834,7 +4924,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PureReuse	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PushFill	2
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PushRec	8
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-PushRec/apart	22
-pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Range	245
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Range	246
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Range/index	15
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RangedCall	26
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-RecPtr	1
@@ -4847,7 +4937,8 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Reuse	11
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-Rotate	39
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-SelfReplace	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-SingleUse	2
-pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-SpecChain	31
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-SpecChain	32
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-StickySum	9
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-TextBorrow	16
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-TextBorrow/tested	2
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.11	c	R-TextRun	1
@@ -4932,7 +5023,7 @@ random	bd4932067	c	R-Base	1
 random	bd4932067	c	R-Base/counter	1
 random	bd4932067	c	R-BoundedNest/kernel	1
 random	bd4932067	c	R-CompleteWrite	12
-random	bd4932067	c	R-Counter	70
+random	bd4932067	c	R-Counter	76
 random	bd4932067	c	R-DischargeInto	1
 random	bd4932067	c	R-FormatAppend	1
 random	bd4932067	c	R-ForwardWalk	1
@@ -4953,7 +5044,8 @@ random	bd4932067	c	R-RecPtr/param	2
 random	bd4932067	c	R-RefParam	38
 random	bd4932067	c	R-Rotate	18
 random	bd4932067	c	R-SingleUse	2
-random	bd4932067	c	R-SpecChain	6
+random	bd4932067	c	R-SpecChain	7
+random	bd4932067	c	R-StickySum	14
 random	bd4932067	c	R-TextBorrow	14
 random	bd4932067	c	R-Transient	1
 random	bd4932067	c	R-View	1
@@ -5005,7 +5097,7 @@ server	b4075f3fc	c	R-Base	1
 server	b4075f3fc	c	R-Base/counter	1
 server	b4075f3fc	c	R-BoundedNest/kernel	1
 server	b4075f3fc	c	R-CompleteWrite	29
-server	b4075f3fc	c	R-Counter	30
+server	b4075f3fc	c	R-Counter	31
 server	b4075f3fc	c	R-DischargeInto	2
 server	b4075f3fc	c	R-FieldAppend	14
 server	b4075f3fc	c	R-FieldAppend/bare	1
@@ -5020,6 +5112,7 @@ server	b4075f3fc	c	R-Inline/helper	1
 server	b4075f3fc	c	R-InlineLeaf	8
 server	b4075f3fc	c	R-Inputs	1
 server	b4075f3fc	c	R-Invariant	1
+server	b4075f3fc	c	R-Invariant/hoist	1
 server	b4075f3fc	c	R-LoopSlot	6
 server	b4075f3fc	c	R-NoThreads	1
 server	b4075f3fc	c	R-NonSentinelParam	6
@@ -5031,7 +5124,8 @@ server	b4075f3fc	c	R-RefParam	10
 server	b4075f3fc	c	R-Reuse	1
 server	b4075f3fc	c	R-Rotate	16
 server	b4075f3fc	c	R-SingleUse	2
-server	b4075f3fc	c	R-SpecChain	1
+server	b4075f3fc	c	R-SpecChain	6
+server	b4075f3fc	c	R-StickySum	4
 server	b4075f3fc	c	R-TextBorrow	16
 server	b4075f3fc	c	R-ValueRecord	16
 server	b4075f3fc	c	R-View	2
@@ -5098,6 +5192,7 @@ shapes	873da7f9a	c	R-Inline/helper	3
 shapes	873da7f9a	c	R-InlineLeaf	14
 shapes	873da7f9a	c	R-Inputs	2
 shapes	873da7f9a	c	R-Invariant	1
+shapes	873da7f9a	c	R-Invariant/hoist	1
 shapes	873da7f9a	c	R-LoopSlot	7
 shapes	873da7f9a	c	R-Mint	2
 shapes	873da7f9a	c	R-NoLocks	1
@@ -5114,8 +5209,9 @@ shapes	873da7f9a	c	R-RecPtr/param	2
 shapes	873da7f9a	c	R-RefParam	22
 shapes	873da7f9a	c	R-Rotate	14
 shapes	873da7f9a	c	R-SingleUse	2
-shapes	873da7f9a	c	R-SpecChain	5
+shapes	873da7f9a	c	R-SpecChain	12
 shapes	873da7f9a	c	R-StartStep	1
+shapes	873da7f9a	c	R-StickySum	3
 shapes	873da7f9a	c	R-TextBorrow	16
 shapes	873da7f9a	c	R-ValueLocal	3
 shapes	873da7f9a	c	R-ValueRecord	4
@@ -5172,7 +5268,7 @@ shapes	873da7f9a	rust	R-ZeroCount	8
 ssh	b4075f3fc	c	R-Base/counter	1
 ssh	b4075f3fc	c	R-BoundedNest/kernel	1
 ssh	b4075f3fc	c	R-CompleteWrite	8
-ssh	b4075f3fc	c	R-Counter	20
+ssh	b4075f3fc	c	R-Counter	21
 ssh	b4075f3fc	c	R-DischargeInto	1
 ssh	b4075f3fc	c	R-FormatAppend	1
 ssh	b4075f3fc	c	R-ForwardWalk	1
@@ -5191,7 +5287,8 @@ ssh	b4075f3fc	c	R-RecPtr/param	1
 ssh	b4075f3fc	c	R-RefParam	10
 ssh	b4075f3fc	c	R-Rotate	12
 ssh	b4075f3fc	c	R-SingleUse	2
-ssh	b4075f3fc	c	R-SpecChain	6
+ssh	b4075f3fc	c	R-SpecChain	8
+ssh	b4075f3fc	c	R-StickySum	2
 ssh	b4075f3fc	c	R-TextBorrow	14
 ssh	b4075f3fc	c	R-Transient	1
 ssh	b4075f3fc	c	R-ValueRecord	2
@@ -5266,6 +5363,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Inline/helper	23
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-InlineLeaf	80
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Inputs	51
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Invariant	24
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Invariant/hoist	24
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-KeyedEntry	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-LiteralWalk	2
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-LoopBuffer	4
@@ -5281,7 +5379,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Push/sole	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushFill	7
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushFill/fill	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushRec	2
-stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range	210
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range	208
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range/index	21
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-RangedCall	12
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-RecPtr	13
@@ -5294,8 +5392,9 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Reuse	16
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Rotate	111
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Scalar	34
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-SingleUse	22
-stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-SpecChain	16
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-SpecChain	22
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-StartStep	14
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-StickySum	21
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-TextBorrow	21
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-ValueLocal	17
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-ValueRecord	44
@@ -5391,7 +5490,7 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-CompleteWrite	82
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Const	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Const/fn	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-CopyView	2
-text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Counter	394
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Counter	398
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-DischargeInto	1
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-ExitVector	3
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-FieldAppend/bare	12
@@ -5410,6 +5509,7 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Inline/helper	3
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-InlineLeaf	36
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Inputs	8
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Invariant	9
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Invariant/hoist	9
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-KeyedEntry	1
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-LiteralWalk	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-LoopBuffer	2
@@ -5433,8 +5533,9 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Reuse	5
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Rotate	96
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Scalar	17
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-SingleUse	3
-text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-SpecChain	8
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-SpecChain	23
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-StartStep	6
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-StickySum	17
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-TextBorrow	22
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-ValueLocal	18
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-ValueRecord	26
@@ -5543,6 +5644,7 @@ time	394317324	c	R-Header/apart-param	9
 time	394317324	c	R-Inline	13
 time	394317324	c	R-InlineLeaf	16
 time	394317324	c	R-Invariant	1
+time	394317324	c	R-Invariant/hoist	1
 time	394317324	c	R-LoopSlot	15
 time	394317324	c	R-NoLocks	1
 time	394317324	c	R-NoThreads	1
@@ -5555,7 +5657,8 @@ time	394317324	c	R-RecPtr/param	1
 time	394317324	c	R-RefParam	20
 time	394317324	c	R-Rotate	22
 time	394317324	c	R-SingleUse	5
-time	394317324	c	R-SpecChain	2
+time	394317324	c	R-SpecChain	5
+time	394317324	c	R-StickySum	3
 time	394317324	c	R-TextBorrow	22
 time	394317324	c	R-ValueRecord	34
 time	394317324	c	R-WorkPark	8
@@ -5652,7 +5755,8 @@ tween	873da7f9a	c	R-RefParam	44
 tween	873da7f9a	c	R-Reuse	1
 tween	873da7f9a	c	R-Rotate	22
 tween	873da7f9a	c	R-SingleUse	5
-tween	873da7f9a	c	R-SpecChain	4
+tween	873da7f9a	c	R-SpecChain	8
+tween	873da7f9a	c	R-StickySum	1
 tween	873da7f9a	c	R-TextBorrow	16
 tween	873da7f9a	c	R-View	2
 tween	873da7f9a	c	R-WorkBuffer	2
@@ -5712,7 +5816,7 @@ web	b4075f3fc	c	R-Base	1
 web	b4075f3fc	c	R-Base/counter	1
 web	b4075f3fc	c	R-BoundedNest/kernel	1
 web	b4075f3fc	c	R-CompleteWrite	12
-web	b4075f3fc	c	R-Counter	51
+web	b4075f3fc	c	R-Counter	57
 web	b4075f3fc	c	R-DischargeInto	1
 web	b4075f3fc	c	R-ExitVector	1
 web	b4075f3fc	c	R-FieldAppend/bare	1
@@ -5728,18 +5832,20 @@ web	b4075f3fc	c	R-Header	1
 web	b4075f3fc	c	R-Inline	2
 web	b4075f3fc	c	R-InlineLeaf	8
 web	b4075f3fc	c	R-Invariant	4
+web	b4075f3fc	c	R-Invariant/hoist	4
 web	b4075f3fc	c	R-LoopSlot	9
 web	b4075f3fc	c	R-NoLocks	1
 web	b4075f3fc	c	R-NoThreads	1
 web	b4075f3fc	c	R-NonSentinelParam	9
-web	b4075f3fc	c	R-Range	32
+web	b4075f3fc	c	R-Range	31
 web	b4075f3fc	c	R-RangedCall	2
 web	b4075f3fc	c	R-RangedCall/guard	1
 web	b4075f3fc	c	R-RecPtr/param	1
 web	b4075f3fc	c	R-RefParam	10
 web	b4075f3fc	c	R-Rotate	17
 web	b4075f3fc	c	R-SingleUse	2
-web	b4075f3fc	c	R-SpecChain	5
+web	b4075f3fc	c	R-SpecChain	10
+web	b4075f3fc	c	R-StickySum	4
 web	b4075f3fc	c	R-TextBorrow	18
 web	b4075f3fc	c	R-ValueRecord	4
 web	b4075f3fc	c	R-View	2
@@ -5822,6 +5928,7 @@ zttext	bd4932067	c	R-Inline/helper	3
 zttext	bd4932067	c	R-InlineLeaf	33
 zttext	bd4932067	c	R-Inputs	5
 zttext	bd4932067	c	R-Invariant	6
+zttext	bd4932067	c	R-Invariant/hoist	6
 zttext	bd4932067	c	R-LoopBuffer	3
 zttext	bd4932067	c	R-LoopSlot	91
 zttext	bd4932067	c	R-Mint	56
@@ -5838,7 +5945,7 @@ zttext	bd4932067	c	R-PushFill/fill	1
 zttext	bd4932067	c	R-PushFill/run	4
 zttext	bd4932067	c	R-PushFill/run-header	3
 zttext	bd4932067	c	R-PushRec	6
-zttext	bd4932067	c	R-Range	184
+zttext	bd4932067	c	R-Range	181
 zttext	bd4932067	c	R-Range/index	1
 zttext	bd4932067	c	R-RangedCall	8
 zttext	bd4932067	c	R-Rebind	2
@@ -5853,8 +5960,9 @@ zttext	bd4932067	c	R-SameRead	2
 zttext	bd4932067	c	R-Scalar	3
 zttext	bd4932067	c	R-SelfReplace	17
 zttext	bd4932067	c	R-SingleUse	14
-zttext	bd4932067	c	R-SpecChain	7
+zttext	bd4932067	c	R-SpecChain	34
 zttext	bd4932067	c	R-StartStep	7
+zttext	bd4932067	c	R-StickySum	10
 zttext	bd4932067	c	R-TextBorrow	21
 zttext	bd4932067	c	R-TextBorrow/tested	1
 zttext	bd4932067	c	R-TextLen	1

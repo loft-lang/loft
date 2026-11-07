@@ -44,6 +44,7 @@ impl FnWriter<'_> {
             if self.shapes.get(v as usize) != Some(&CType::Int)
                 || self.sticky.iter().any(|(w, _)| *w == v)
                 || !sum_only(data, b, v)
+                || self.sum_ranged(b, v)
             {
                 continue;
             }
@@ -88,11 +89,16 @@ impl FnWriter<'_> {
         let Value::Call(d, args) = x.unspan() else {
             return Ok(false);
         };
-        let ovf = match self.cx.data.def(*d).name() {
+        let name = self.cx.data.def(*d).name();
+        let ovf = match name {
             "OpAddInt" => "LOFT_ADD_OVF",
             "OpMinInt" => "LOFT_SUB_OVF",
             _ => return Ok(false),
         };
+        // An update `(R-Range)` proves cannot fault is that rule's: plain, no flag.
+        if self.range_proves(name, args) {
+            return Ok(false);
+        }
         let e = self.expr(&args[1], ind)?;
         let t = self.temp(CType::Int);
         self.line(ind, &format!("{t} = {};", as_int(e)?));
@@ -103,6 +109,31 @@ impl FnWriter<'_> {
         self.line(ind, &format!("{flag} |= {ovf}({acc}, {t}, &{acc});"));
         self.line(ind, &format!("{flag} |= ({acc} == LOFT_NULL);"));
         Ok(true)
+    }
+}
+
+impl FnWriter<'_> {
+    /// Does `(R-Range)` prove every update of `v` in `b` plain?  Then the sum is that rule's.
+    fn sum_ranged(&mut self, b: &Block, v: u16) -> bool {
+        let mut updates: Vec<(&'static str, Vec<Value>)> = Vec::new();
+        for op in &b.operators {
+            op.walk(&mut |n| {
+                if let Value::Set(t, rhs) = n
+                    && *t == v
+                    && let Value::Call(d, args) = rhs.unspan()
+                {
+                    let name = if self.cx.data.def(*d).name() == "OpAddInt" {
+                        "OpAddInt"
+                    } else {
+                        "OpMinInt"
+                    };
+                    updates.push((name, args.clone()));
+                }
+            });
+        }
+        updates
+            .iter()
+            .all(|(name, args)| self.range_proves(name, args))
     }
 }
 

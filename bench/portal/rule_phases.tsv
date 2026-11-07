@@ -28,7 +28,7 @@ R-Const	ir	2	0	3	0	0	0
 R-Const/fn	parse	2	3	0	0	0	0
 R-CopyView	ir	4	0	8	0	0	0
 R-CopyView/walk	ir	1	0	4	0	0	0
-R-Counter	ir,c,native	61	0	1106	0	13977	9723
+R-Counter	ir,c,native	61	0	1106	0	14182	9723
 R-CtorLiteral	parse	3	11	0	0	0	0
 R-DecodeView	native	1	0	0	0	0	6
 R-DecodeView/structure	native	1	0	0	0	0	2
@@ -81,11 +81,12 @@ R-HostStore	ir	2	0	7	0	0	0
 R-InPlaceLiteral	parse	11	57	0	0	0	0
 R-InPlaceLiteral/child	parse	1	1	0	0	0	0
 R-InRange	parse	10	64	0	0	0	0
-R-Inline	c	61	0	0	0	609	0
-R-Inline/helper	c	35	0	0	0	217	0
+R-Inline	c	61	0	0	0	608	0
+R-Inline/helper	c	35	0	0	0	216	0
 R-InlineLeaf	parse	61	2523	0	0	0	0
 R-Inputs	c,native	36	0	0	0	907	7978
 R-Invariant	c,native	38	0	0	0	357	3761
+R-Invariant/hoist	c	34	0	0	0	353	0
 R-KeyedEntry	ir	9	0	13	0	0	0
 R-KeyedEntry/subscript	ir	1	0	3	0	0	0
 R-LazySplit	c,native	3	0	0	0	8	6
@@ -123,7 +124,7 @@ R-PushFill/run	c,native	24	0	0	0	64	24
 R-PushFill/run-header	c	18	0	0	0	44	0
 R-PushRec	c,native	22	0	0	0	75	168
 R-PushRec/apart	c,native	5	0	0	0	50	90
-R-Range	c,native	61	0	0	0	6482	14649
+R-Range	c,native	61	0	0	0	6339	14649
 R-Range/index	c	29	0	0	0	436	0
 R-RangedCall	c,native	42	0	0	0	520	826
 R-RangedCall/guard	c	9	0	0	0	30	0
@@ -150,9 +151,10 @@ R-ScaleFold	parse	1	2	0	0	0	0
 R-SelfReplace	parse	3	19	0	0	0	0
 R-SingleUse	parse	61	423	0	0	0	0
 R-SliceBorrow	interp,native	2	0	0	10	0	12
-R-SpecChain	c	48	0	0	0	480	0
+R-SpecChain	c	61	0	0	0	957	0
 R-SplitTable	c,native	61	0	0	0	14	92
 R-StartStep	interp	25	0	0	736	0	0
+R-StickySum	c	61	0	0	0	554	0
 R-StreamWalk	native	1	0	0	0	0	2
 R-TailSelf	parse	2	2	0	0	0	0
 R-TextBorrow	interp,c,native	61	0	0	834	253	980
