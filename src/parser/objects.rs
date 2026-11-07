@@ -6651,10 +6651,11 @@ impl Parser {
     /// variant clause: a variant literal writes every field the variant has and its tag, so
     /// rebinding the whole local to it is built in the local's store as a struct literal is —
     /// `OpDatabase` with the variant's type re-inits that store — rather than on a work
-    /// reference copied over.  `LOFT_NO_VARIANT_INPLACE=1` keeps the work reference.
+    /// reference copied over — and so is a return buffer (a hidden parameter), as a struct
+    /// literal returned is built there.  `LOFT_NO_VARIANT_INPLACE=1` keeps the work reference.
     fn variant_rebinds_local(&self, v_nr: u16, td_nr: u32) -> bool {
         crate::keys::variant_literal_in_place()
-            && !self.vars.is_argument(v_nr)
+            && (!self.vars.is_argument(v_nr) || self.is_hidden_param(v_nr))
             && self.is_variant_of_local(v_nr, td_nr)
     }
 
