@@ -1515,9 +1515,9 @@
 21_tree	-	c	R-Base	1
 21_tree	-	c	R-BoundedNest/kernel	1
 21_tree	-	c	R-CompleteWrite	6
-21_tree	-	c	R-CopyView/walk	3
+21_tree	-	c	R-CopyView/walk	4
 21_tree	-	c	R-Counter	85
-21_tree	-	c	R-Demote	2
+21_tree	-	c	R-Demote	4
 21_tree	-	c	R-Demote/place	1
 21_tree	-	c	R-DischargeInto	1
 21_tree	-	c	R-FormatAppend	1
@@ -1554,9 +1554,9 @@
 21_tree	-	rust	R-BoundedNest/kernel	1
 21_tree	-	rust	R-CharWalk	10
 21_tree	-	rust	R-CompleteWrite	6
-21_tree	-	rust	R-CopyView/walk	3
+21_tree	-	rust	R-CopyView/walk	4
 21_tree	-	rust	R-Counter	55
-21_tree	-	rust	R-Demote	2
+21_tree	-	rust	R-Demote	4
 21_tree	-	rust	R-Demote/place	1
 21_tree	-	rust	R-DischargeInto	1
 21_tree	-	rust	R-FieldAppend/bare	8
@@ -1597,7 +1597,7 @@
 22_expr	-	c	R-Base	1
 22_expr	-	c	R-BoundedNest/kernel	1
 22_expr	-	c	R-CharWalk	1
-22_expr	-	c	R-CompleteWrite	6
+22_expr	-	c	R-CompleteWrite	5
 22_expr	-	c	R-Counter	12
 22_expr	-	c	R-DischargeInto	1
 22_expr	-	c	R-FormatAppend	1
@@ -1606,6 +1606,7 @@
 22_expr	-	c	R-Fuse/tag	13
 22_expr	-	c	R-Fuse/text	34
 22_expr	-	c	R-Header	1
+22_expr	-	c	R-HostStore	4
 22_expr	-	c	R-Inline	7
 22_expr	-	c	R-InlineLeaf	9
 22_expr	-	c	R-LoopSlot	4
@@ -1626,7 +1627,7 @@
 22_expr	-	rust	R-Base	2
 22_expr	-	rust	R-BoundedNest/kernel	1
 22_expr	-	rust	R-CharWalk	11
-22_expr	-	rust	R-CompleteWrite	6
+22_expr	-	rust	R-CompleteWrite	5
 22_expr	-	rust	R-Counter	4
 22_expr	-	rust	R-DischargeInto	1
 22_expr	-	rust	R-FieldAppend/bare	8
@@ -1637,6 +1638,7 @@
 22_expr	-	rust	R-Fuse/text	34
 22_expr	-	rust	R-GuardFree	19
 22_expr	-	rust	R-Header	1
+22_expr	-	rust	R-HostStore	4
 22_expr	-	rust	R-InlineLeaf	9
 22_expr	-	rust	R-Leaf	113
 22_expr	-	rust	R-LeafChain	28
