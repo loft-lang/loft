@@ -48,6 +48,11 @@ both, or a fresh value, now builds everything in one store: the parts it keeps a
 place and the parts it drops are released one record at a time, where every node used to copy
 both subtrees.  The expression simplifier went from twelve times slower than Rust to even.
 
+**Sorting and scanning a vector by index got faster.**  Reading or writing an element no
+longer checks its index twice, and an index the compiler can prove is never negative skips
+the check for counting from the end.  An insertion sort went from almost seven times slower
+than Rust to under one and a half.
+
 ## 2026-11
 
 ### May need a change in your code

@@ -265,7 +265,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Push)` | `R-Push` c, native · `/sole` c |
 | `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c |
 | `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
-| `(R-Range)` | `R-Range` c, native |
+| `(R-Range)` | `R-Range` c, native · `/index` c |
 | `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
 | `(R-Rebind)` | `R-Rebind` ir |
 | `(R-RebindBuffer)` | `R-RebindBuffer` native |
@@ -2518,6 +2518,23 @@ parameter seed or `n` handed out by reference declines.  `LOFT_HOIST_VERIFY=1` c
 plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a18 (a16/a17
 the boundary pair across i64::MAX, a18 a step that really overflows), pins
 `tests/walk_accumulator.rs`.  Site: `range::seed_accumulators`.
+**The relational step clause** (@PLN219).  The accumulator clause bounds a step by the
+product of trip counts and so loses what the insertion sort knows: `j = i; for _ in 0..i { …
+j -= 1 }` steps at most once per trip of a loop that makes at most `i` trips.  Where the seed
+is a variable `x` whose range is non-negative, the loop's end is set from `x` itself, the one
+step `j = j - 1` is the LAST statement on every path that holds it and under no nested loop,
+and neither `x`, the end nor the loop's index is written in the loop, trip `t` starts with at
+most `t` steps taken and runs only while `t < x`: before the step `j >= x - t >= 1`, after the
+loop `j >= 0`.  So `j` is `min(0, x.lo) ..= x.hi` over the function, and `1 ..= x.hi` through
+the loop's BODY (`Ranges::bodies`, which the C emitter pushes as the facts the body is written
+under).  A read of `j` after the step in the same trip, a second step, a step under a nested
+loop or a written end declines.  Site `range::step_down_by_trips`.
+**The index clause** (C).  A held element access whose index the proof shows non-negative is
+written with the `_nn` accessors (`loft_vh_get_int_at_nn`, …: one unsigned compare, no
+from-the-end wrap, the miss reported as before), the index wrapped in `loft_nonneg`, which
+`-DLOFT_VERIFY` checks.  Measured: 10_sort `sort` 2.53× → 1.44× Rust (C), with the held
+accessors computing their index once (6.72× before both).  Guard
+`loft-suite/rules/rewrites/R-Range/a-counter-stepped-down-once-a-trip-indexes-without-the-wrap.loft`.
 **The while-counter clause.**  A loop shaped `while i < E { …; i += 1 }` — its first statement
 the test's break, `E` naming no `i`, its last the step `i = i + 1`, which is the loop's one
 write of `i` — bounds its counter without bounding `E`.  Every statement of the loop runs after

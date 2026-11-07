@@ -2465,7 +2465,7 @@ LOFT_HOT_INLINE loft_ref loft_vec_get(loft_ref v, uint32_t size, int64_t from) {
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r == 0) return e;
     int64_t len = (int64_t) loft_u32(s, r, 4);
-    int64_t f = from + (len & (from >> 63));
+    int64_t f = from < 0 ? from + len : from;
     if ((uint64_t) f >= (uint64_t) len) return e;
     e.store_nr = v.store_nr;
     e.rec = r;
@@ -2514,7 +2514,7 @@ static int loft_vh_same(loft_vh h, loft_ref v) {
 /* The element index `from` names (negative from the end), or -1 outside, as loft_vec_get.
  * Branch-free: a negative `from` adds the length (`from >> 63` is all ones), and one unsigned
  * compare tests both ends — the null index, the most negative one, stays outside. */
-#define LOFT_VH_WRAP(h, from) ((from) + ((h).len & ((from) >> 63)))
+#define LOFT_VH_WRAP(h, from) ((from) < 0 ? (from) + (h).len : (from))
 #define LOFT_VH_OUT(h, f) LOFT_UNLIKELY((uint64_t) (f) >= (uint64_t) (h).len)
 LOFT_HOT_INLINE int64_t loft_vh_index(loft_vh h, int64_t from) {
     int64_t f = LOFT_VH_WRAP(h, from);

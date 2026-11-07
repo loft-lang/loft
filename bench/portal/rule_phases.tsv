@@ -124,6 +124,7 @@ R-PushFill/run-header	c	18	0	0	0	44	0
 R-PushRec	c,native	22	0	0	0	75	168
 R-PushRec/apart	c,native	5	0	0	0	50	90
 R-Range	c,native	61	0	0	0	4946	10501
+R-Range/index	c	29	0	0	0	436	0
 R-RangedCall	c,native	42	0	0	0	520	826
 R-RangedCall/guard	c	9	0	0	0	30	0
 R-Rebind	ir	3	0	5	0	0	0

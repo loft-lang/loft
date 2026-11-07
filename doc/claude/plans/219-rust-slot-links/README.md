@@ -270,6 +270,18 @@ each emitted unit checked for the hand form's shape — `loft_demote_rec`, `loft
 - **7** — `(R-TypedKeyed)`'s removal clause and the just-added lookup, then the hash table's own
   cost per operation (§ rewrite 7).
 
+**The routines over 2.7× (C ÷ Rust twin, core and library benches).**  Each was written by
+hand first (forms and reports kept with the session's scratch, to be moved under `hand/` when
+its rewrite is built); the general change each form priced, by reach:
+
+| routine | base | hand | mechanism → general change | status |
+|---|--:|--:|---|---|
+| sort | 6.70× | 1.45× | every held element access tested its index twice → one test (runtime); a counter stepped down once per trip of `for _ in 0..x` from `x` is ≥ 1 in the body → `(R-Range)` relational step + index clauses (`_nn` accessors) | **built: 1.44×** |
+| cbor decode | 12.3× | 1.88× | `(R-CSplit)` splits a hot recursive function for MSVC's sake on every compiler → split only under `_MSC_VER`; a parked text buffer taken on every call → take it on the path that writes it | open |
+| hex_field doc_read | 8.70× | 2.01× | a float read per call through `fread` → `(R-TypedRead)` float clause; several zero-push loops → `(R-PushFill)` several-vector clause; `x.f = ctor(…)` minted + copied → `(R-Place)` guarded-mint clause | open |
+| graphics clear | 6.96× | 1.97× | the bulk fill stores one `memcpy` per element, which clang does not vectorise → typed-store fill (runtime) | open |
+| drawing render_marks, resize | 7.09×, 6.38× | 2.09×, 2.33× | `(R-GuardedChain)`'s plain copy is identical to the checked one (the held read's index is emitted from a clone, so the admitted operators are never found) → fix the identity; an overflow-only accumulator; small scratch vectors as frame arrays | open |
+
 Not a cost, measured: the per-call frame (`loft_frame_push`/`pop`, `build_rec` step 2: 0 %) and
 inlining the reference accessors (`lru_mixed` step 3: 2.5 %).
 
