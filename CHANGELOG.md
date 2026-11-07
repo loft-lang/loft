@@ -59,6 +59,12 @@ hex_neighbor(q, r, d)` inside a counted loop, where every answer of the helper m
 the overflow checks on the arithmetic that reads them.  The hex grid's neighbour walk went
 from four times slower than Rust to 1.2.
 
+**A loop that calls small accessors runs a plain copy.**  A loop whose only calls are to
+functions like `get_pixel` and `set_pixel`, and whose index arithmetic is checked once before
+the loop, now runs a copy with no per-pixel checks when those checks hold for the whole loop.
+Drawing laid-out text went from four and a half times slower than Rust to 2.7, a sprite
+renderer from 2.5 to 2.0.
+
 **A C compiler wrapper gets its own build.**  Setting `LOFT_CC` to a script that wraps `cc`
 (to add `-DLOFT_VERIFY`, say) could run the binary plain `cc` had built for the same program,
 because the wrapper reports the same version.  The compiler's path is now part of the build's

@@ -101,6 +101,10 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         "loft_guarded_chain_{}_{tag}.rs",
         std::process::id()
     ));
+    // The counts are the CHAIN's operators: `@FR-R-Range`'s open-end clause writes a counted
+    // loop's own step (`index + 1`) as `wrapping_add` too, which no guard decides.
+    let mut env = env.to_vec();
+    env.push(("LOFT_NO_OPEN_END", "1"));
     let status = loft(
         &[
             "--native-rust",
@@ -108,7 +112,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
             out.to_str().unwrap(),
             cells().to_str().unwrap(),
         ],
-        env,
+        &env,
     );
     assert!(
         fa::exists(&out),

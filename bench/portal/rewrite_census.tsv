@@ -1285,13 +1285,14 @@
 18_consumer_crawler	-	c	R-Fuse/text	43
 18_consumer_crawler	-	c	R-GuardedChain	12
 18_consumer_crawler	-	c	R-GuardedChain/operators	55
+18_consumer_crawler	-	c	R-GuardedChain/versions	2
 18_consumer_crawler	-	c	R-Header	41
 18_consumer_crawler	-	c	R-Header/grown	22
 18_consumer_crawler	-	c	R-Header/narrow	8
 18_consumer_crawler	-	c	R-Inline	10
 18_consumer_crawler	-	c	R-Inline/helper	6
 18_consumer_crawler	-	c	R-InlineLeaf	20
-18_consumer_crawler	-	c	R-Inputs	23
+18_consumer_crawler	-	c	R-Inputs	25
 18_consumer_crawler	-	c	R-Invariant	28
 18_consumer_crawler	-	c	R-Invariant/hoist	28
 18_consumer_crawler	-	c	R-KeyedEntry	1
@@ -1305,7 +1306,7 @@
 18_consumer_crawler	-	c	R-Push/sole	2
 18_consumer_crawler	-	c	R-PushFill	10
 18_consumer_crawler	-	c	R-PushFill/fill	1
-18_consumer_crawler	-	c	R-Range	286
+18_consumer_crawler	-	c	R-Range	288
 18_consumer_crawler	-	c	R-Range/index	18
 18_consumer_crawler	-	c	R-RangedCall	11
 18_consumer_crawler	-	c	R-RecPtr	3
@@ -2247,6 +2248,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Fuse/
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Fuse/text	31
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-GuardedChain	16
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-GuardedChain/operators	75
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-GuardedChain/versions	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Header	134
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Header/apart	42
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Header/apart-param	6
@@ -2257,7 +2259,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-InRan
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Inline	33
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Inline/helper	5
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-InlineLeaf	165
-drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Inputs	30
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Inputs	37
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Invariant	29
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Invariant/hoist	29
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-KeyedEntry	1
@@ -2281,7 +2283,7 @@ drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushF
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run-header	3
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushRec	14
-drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	359
+drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	410
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range/index	90
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RangedCall	25
 drawing	873da7f9a+glb@0.1.6+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr	54
@@ -5331,6 +5333,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Fuse/tag	34
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Fuse/text	37
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-GuardedChain	3
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-GuardedChain/operators	10
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-GuardedChain/versions	2
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Header	39
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Header/narrow	2
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-InPlaceLiteral	1
@@ -5338,7 +5341,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-InRange	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Inline	36
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Inline/helper	23
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-InlineLeaf	80
-stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Inputs	51
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Inputs	54
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Invariant	24
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Invariant/hoist	24
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-KeyedEntry	1
@@ -5356,7 +5359,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Push/sole	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushFill	7
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushFill/fill	1
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-PushRec	2
-stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range	204
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range	206
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Range/index	21
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-RangedCall	12
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-RecPtr	13
@@ -5369,7 +5372,7 @@ stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Reuse	16
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Rotate	111
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-Scalar	34
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-SingleUse	22
-stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-SpecChain	8
+stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-SpecChain	9
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-StartStep	14
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-StickySum	34
 stage	873da7f9a+glb@0.1.5+mesh3d@0.1.5	c	R-TextBorrow	21
@@ -5479,12 +5482,13 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Fuse/jump	287
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Fuse/text	55
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-GuardedChain	4
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-GuardedChain/operators	17
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-GuardedChain/versions	3
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Header	14
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-InRange	1
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Inline	10
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Inline/helper	3
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-InlineLeaf	36
-text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Inputs	8
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Inputs	13
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Invariant	9
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Invariant/hoist	9
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-KeyedEntry	1
@@ -5497,7 +5501,7 @@ text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-NonSentinelParam	38
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-NonSentinelParam/twin	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-PushFill	2
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-PushFill/fill	1
-text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Range	135
+text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Range	138
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-Range/index	1
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-RangedCall	17
 text2d	873da7f9a+glb@0.1.6+graphics@0.9.12+mesh3d@0.1.5	c	R-RecPtr	5

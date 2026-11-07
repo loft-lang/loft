@@ -222,7 +222,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Fuse)` | `R-Fuse` interp · `/field` interp · `/jump` interp · `/tag` interp · `/text` interp |
 | `(R-GroupPush)` | `R-GroupPush` native |
 | `(R-GuardFree)` | `R-GuardFree` native |
-| `(R-GuardedChain)` | `R-GuardedChain` c, native · `/operators` c, native |
+| `(R-GuardedChain)` | `R-GuardedChain` c, native · `/operators` c, native · `/versions` c |
 | `(R-HandOver)` | `/rotate` c, native |
 | `(R-Header)` | `R-Header` c, native · `/apart` c, native · `/apart-param` c, native · `/function` native · `/grown` c · `/grown-held` c · `/kept` native · `/kept-growth` c · `/kept-twin` c, native · `/narrow` c · `/rebind` c · `/text` c, native |
 | `(R-HostStore)` | `R-HostStore` ir |
@@ -2730,6 +2730,18 @@ arm in `ops::int_arith`, the loop hook in `emit.rs`; in the C, `FnWriter::chain_
 `loft_gc_*`.  The C writes an innermost loop twice only when its body calls no loft function:
 a doubled body with a call doubles what the C compiler inlines there, and crawler `vis` lost
 36 % instructions that way under GCC, so such a loop branches per operator instead.
+
+**The version clause** (@PLN219, C).  An innermost loop written once for its calls alone,
+where EVERY call of a loft function in it is a site `(R-Version)` decided a flag for, is
+written twice after all: under the chain guard AND every flag, a plain copy whose calls are
+the fast twins, untested; otherwise the loop as written (each operator and call branching on
+its own guard).  The fast copy doubles no inlined body — the once-written loop already calls
+both twins at every site — and the flags are decided before the loop, so the copy is chosen
+once per entry instead of tested per operator and call.  Measured (C): text2d `draw_quads`
+4.56× → 2.69× Rust (the hand form unswitched the same way: 2.69×).  Census row
+`R-GuardedChain/versions`; guard
+`loft-suite/rules/rewrites/R-GuardedChain/a-loop-calling-only-versioned-functions-runs-a-plain-copy-of-their-fast-twins.loft`.
+Site `FnWriter::version_unswitch`.
 
 ### A `for` statement runs fast under a fault flag, and as written when it faults
 
