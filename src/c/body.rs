@@ -2526,16 +2526,24 @@ impl<'a> FnWriter<'a> {
     fn held_access(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
         // The element read, and — `@FR-E-Report` — the site an unguarded one (`OpGetVector`,
         // not its `Nullable` twin) reports a missing element at, as `_at` and its arguments.
-        let elem = |v: &Value| -> Option<(Value, Value, Value, bool)> {
+        // The element read's parts are the IR nodes themselves, never copies: a rewrite keyed on
+        // a node's address (`@FR-R-GuardedChain`'s admitted operators in the index) must meet
+        // the node it admitted.
+        fn held_elem<'v>(
+            data: &crate::data::Data,
+            v: &'v Value,
+        ) -> Option<(&'v Value, &'v Value, &'v Value, bool)> {
             match v.unspan() {
                 Value::Call(d, a) if a.len() == 3 => {
-                    let n = self.cx.data.def(*d).name();
+                    let n = data.def(*d).name();
                     (n == "OpGetVector" || n == "OpGetVectorNullable")
-                        .then(|| (a[0].clone(), a[1].clone(), a[2].clone(), n == "OpGetVector"))
+                        .then(|| (&a[0], &a[1], &a[2], n == "OpGetVector"))
                 }
                 _ => None,
             }
-        };
+        }
+        let data = self.cx.data;
+        let elem = |v| held_elem(data, v);
         let here = self.site();
         let at = |report: bool| {
             if report {
@@ -2680,7 +2688,7 @@ impl<'a> FnWriter<'a> {
                 };
                 let size = Self::literal(&size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let (index, value) = self.two(name, &[&idx, val], ind)?;
+                let (index, value) = self.two(name, &[idx, val], ind)?;
                 if name == "OpSetInt" && self.version_raw(args) {
                     let (index, value) = (as_int(index)?, as_int(value)?);
                     let code =
