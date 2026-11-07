@@ -2423,6 +2423,7 @@ fn math_func_single<const F: bool>(s: &mut State) {
         7 => v_v1.floor(),
         8 => v_v1.round(),
         9 => v_v1.sqrt(),
+        10 => v_v1.exp(),
         _ => f32::NAN,
     };
     s.put_stack_m::<F, _>(new_value);
@@ -2706,6 +2707,7 @@ fn math_func_float<const F: bool>(s: &mut State) {
         7 => v_v1.floor(),
         8 => v_v1.round(),
         9 => v_v1.sqrt(),
+        10 => v_v1.exp(),
         _ => f64::NAN,
     };
     s.put_stack_m::<F, _>(new_value);

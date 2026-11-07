@@ -2154,6 +2154,13 @@ pub fn literal_host_enabled() -> bool {
 /// comparisons of a text's character count against the zero boundary keep counting
 /// characters, instead of reading the byte count — `@FR-R-ZeroCount`'s A/B, and the first
 /// bisect step for a wrong emptiness answer.
+/// `LOFT_NO_EXP_POW=1` (closed program, every backend): `pow(E, x)` stays the general power
+/// instead of folding into `exp(x)` (`@FR-R-ExpPow`).
+pub fn exp_pow_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_EXP_POW"))
+}
+
 pub fn zero_count_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_ZERO_COUNT"))

@@ -350,6 +350,7 @@ pub mod ctor_literal;
 pub mod discharge_into;
 pub mod exit_record;
 pub mod exit_vector;
+pub mod exp_pow;
 pub mod file_access;
 pub mod forward_result;
 pub mod forward_walk;

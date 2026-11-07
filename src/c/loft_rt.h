@@ -4815,6 +4815,7 @@ static double loft_math1(int id, double x) {
     case 7: return floor(x);
     case 8: return round(x);
     case 9: return sqrt(x);
+    case 10: return exp(x);
     default: return (double) NAN;
     }
 }
@@ -4831,6 +4832,7 @@ static float loft_math1s(int id, float x) {
     case 7: return floorf(x);
     case 8: return roundf(x);
     case 9: return sqrtf(x);
+    case 10: return expf(x);
     default: return (float) NAN;
     }
 }
