@@ -2535,6 +2535,16 @@ parameter seed or `n` handed out by reference declines.  `LOFT_HOIST_VERIFY=1` c
 plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a18 (a16/a17
 the boundary pair across i64::MAX, a18 a step that really overflows), pins
 `tests/walk_accumulator.rs`.  Site: `range::seed_accumulators`.
+**The callee-step clause** (@PLN219).  A step may also be a CALL: `(q, r) = f(q, r, d)`
+lowers to `t = f(q, r, d); q = t.0; r = t.1`, and `q = t.k` is a step of `|c|` when it follows
+the call in the same block (only other `_ = t.j` reads between, so `t` holds that call's
+result), `q` is the argument at parameter `p`, `f` never writes `p`, and every result of `f` —
+each `return` and the tail — is a tuple whose element `k` is `p` or `p ± c` with a literal `c`
+(`|c|` the largest).  The value read is the one `q` held at the call, moved once, so the
+accumulator clause's sum over the steps bounds it.  An element that is another parameter, a
+product, or a tuple read after another write of `q` declines.  Measured (C): `hex_grid`
+`hex_neighbor` 4.15× → 1.23× Rust.  Site `range::call_step`; guard
+`loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft`.
 **The relational step clause** (@PLN219).  The accumulator clause bounds a step by the
 product of trip counts and so loses what the insertion sort knows: `j = i; for _ in 0..i { …
 j -= 1 }` steps at most once per trip of a loop that makes at most `i` trips.  Where the seed

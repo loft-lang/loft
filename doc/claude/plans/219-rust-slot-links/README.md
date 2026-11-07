@@ -285,7 +285,9 @@ its rewrite is built); the general change each form priced, by reach:
 Second round, built (C ÷ Rust): `(R-Range)` open-end counter clause — a counted loop's step plain
 whatever its end (sum_loop 4.01× → 2.96×, render_marks 4.38× → 3.36×, resize 4.32× → 3.33×,
 render_lock 3.49× → 2.77×); `(R-SpecChain)` — a checked integer chain in a loop runs plain with
-one fallback flag (sum_loop → 1.00×, index_read 3.01× → 1.00×, binary_read 3.29× → 1.90×).
+one fallback flag (sum_loop → 1.00×, index_read 3.01× → 1.00×, binary_read 3.29× → 1.90×);
+`(R-Range)` callee-step clause — `(q, r) = f(q, r, …)` whose results move each by a literal
+(hex_neighbor 4.15× → 1.23×).
 Priced by hand, open (scratch hand forms `hf2/`): `(R-Invariant)` hoist clause and the guarded
 copy an inlined callee never gets (blur_region 4.98× → 1.99×, render_stage 3.85× → 1.75×); a
 sticky-flag sum guarded by an element-size scan (the resample → ~2.1×); `(R-GuardedChain)`
@@ -294,8 +296,7 @@ write_text 3.03× → 0.78×); an accumulator clause for variable steps (draw_li
 draw_bezier 3.72× → 2.45×); a comparison clause for `(R-Range)` and the non-null proof asking
 the range proof at a call (blend_pixel 3.68× → 1.53×); `(R-RangedCall)` loop guard for nests
 whose counters start at a field (roof_cone, roof_match, field_union, stencil_rotate → 1.6–2.5×),
-the accumulator rule under a guarded copy's facts (edgeset_count 3.92× → 1.01×), a callee-step
-clause (hex_neighbor 4.22× → 1.06×), an entry guard (`day` 2.83× → 1.24×, terrain_surface_at
+the accumulator rule under a guarded copy's facts (edgeset_count 3.92× → 1.01×), an entry guard (`day` 2.83× → 1.24×, terrain_surface_at
 3.56× → 2.45×); `(R-PushFill)` nested window (grid 4.02× → 0.76×); `(R-Range)` abs clause and
 loop-end divisor (fov_rays 3.39× → 1.69×); a text clause for `(R-AppendTwin)` and a text window
 (materialise 3.11× → 1.82×); the hash table's per-probe cost (lru_mixed 3.20× → 2.64×);

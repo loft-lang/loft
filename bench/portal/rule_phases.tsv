@@ -28,7 +28,7 @@ R-Const	ir	2	0	3	0	0	0
 R-Const/fn	parse	2	3	0	0	0	0
 R-CopyView	ir	4	0	8	0	0	0
 R-CopyView/walk	ir	1	0	4	0	0	0
-R-Counter	ir,c,native	61	0	1106	0	14182	9723
+R-Counter	ir,c,native	61	0	1106	0	14182	9724
 R-CtorLiteral	parse	3	11	0	0	0	0
 R-DecodeView	native	1	0	0	0	0	6
 R-DecodeView/structure	native	1	0	0	0	0	2
@@ -90,8 +90,8 @@ R-Invariant/hoist	c	34	0	0	0	353	0
 R-KeyedEntry	ir	9	0	13	0	0	0
 R-KeyedEntry/subscript	ir	1	0	3	0	0	0
 R-LazySplit	c,native	3	0	0	0	8	6
-R-Leaf	native	61	0	0	0	0	10146
-R-LeafChain	native	61	0	0	0	0	5611
+R-Leaf	native	61	0	0	0	0	10147
+R-LeafChain	native	61	0	0	0	0	5612
 R-LitDiv	native	55	0	0	0	0	2417
 R-LitHoist	native	1	0	0	0	0	1
 R-LiteralAppend	ir	1	0	1	0	0	0
@@ -124,9 +124,9 @@ R-PushFill/run	c,native	24	0	0	0	64	24
 R-PushFill/run-header	c	18	0	0	0	44	0
 R-PushRec	c,native	22	0	0	0	75	168
 R-PushRec/apart	c,native	5	0	0	0	50	90
-R-Range	c,native	61	0	0	0	5843	14681
+R-Range	c,native	61	0	0	0	5864	14704
 R-Range/index	c	29	0	0	0	421	0
-R-RangedCall	c,native	42	0	0	0	520	826
+R-RangedCall	c,native	43	0	0	0	521	829
 R-RangedCall/guard	c	9	0	0	0	30	0
 R-Rebind	ir	3	0	5	0	0	0
 R-RebindBuffer	native	1	0	0	0	0	1
@@ -137,7 +137,7 @@ R-RecPtr/nested	native	25	0	0	0	0	189
 R-RecPtr/param	c	42	0	0	0	244	0
 R-RecPtr/text	c	4	0	0	0	38	0
 R-RefParam	c	54	0	0	0	5027	0
-R-RefillBuffer	native	37	0	0	0	0	279
+R-RefillBuffer	native	37	0	0	0	0	280
 R-RefillText	native	4	0	0	0	0	8
 R-Refresh	native	4	0	0	0	0	16
 R-RepeatRun	ir	7	0	110	0	0	0

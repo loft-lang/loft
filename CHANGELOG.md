@@ -53,6 +53,17 @@ longer checks its index twice, and an index the compiler can prove is never nega
 the check for counting from the end.  An insertion sort went from almost seven times slower
 than Rust to under one and a half.
 
+**A walk that steps through a helper keeps its arithmetic plain.**  In `(q, r) =
+hex_neighbor(q, r, d)` inside a counted loop, where every answer of the helper moves `q` and
+`r` by at most a fixed amount, the compiler now knows how far they can have moved and drops
+the overflow checks on the arithmetic that reads them.  The hex grid's neighbour walk went
+from four times slower than Rust to 1.2.
+
+**A C compiler wrapper gets its own build.**  Setting `LOFT_CC` to a script that wraps `cc`
+(to add `-DLOFT_VERIFY`, say) could run the binary plain `cc` had built for the same program,
+because the wrapper reports the same version.  The compiler's path is now part of the build's
+key.
+
 ## 2026-11
 
 ### May need a change in your code

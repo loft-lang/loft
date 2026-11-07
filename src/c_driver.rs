@@ -240,13 +240,18 @@ pub(crate) enum Placement {
     Shipped { dynamic: bool },
 }
 
-/// The content key of one build: the C text, the compiler's identity, the flags, and each
-/// linked input's size and modification time (an archive is content-addressed by its name
-/// already; a raw shim source is not).
+/// The content key of one build: the C text, the compiler — the program named and its
+/// identity — the flags, and each linked input's size and modification time (an archive is
+/// content-addressed by its name already; a raw shim source is not).  The name is keyed beside
+/// the identity because a wrapper (`LOFT_CC=verify-cc`, adding `-DLOFT_VERIFY`) reports the
+/// banner of the compiler it wraps: keyed by the banner alone, it is served the binary the
+/// plain compiler built.
 fn build_key(c: &str, cc: &str, flags: &[String], links: &[String]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(c.as_bytes());
+    h.update(cc.as_bytes());
+    h.update([0]);
     h.update(cc_identity(cc).as_bytes());
     for f in flags {
         h.update(f.as_bytes());
@@ -737,6 +742,18 @@ pub(crate) fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A wrapper compiler reports the banner of the one it wraps; the key must still tell
+    /// them apart, or a `-DLOFT_VERIFY` wrapper runs the plain compiler's binary.
+    #[test]
+    fn build_key_tells_a_wrapper_from_the_compiler_it_wraps() {
+        let cc = cc_program();
+        let wrapper = format!("{cc}-verify-wrapper");
+        assert_ne!(
+            build_key("int main(void){return 0;}", &cc, &[], &[]),
+            build_key("int main(void){return 0;}", &wrapper, &[], &[])
+        );
+    }
 
     #[test]
     fn a_cl_compiler_takes_the_flags_in_its_own_spelling() {
