@@ -465,6 +465,37 @@ impl FnWriter<'_> {
         Ok(Some((flag, inputs)))
     }
 
+    /// `@FR-R-GuardedChain`'s version clause: the flags of loop `b` when every call of a loft
+    /// function in it is a site its prelude decided — the only calls a plain copy would write a
+    /// second time are then fast twins the written loop calls already.  `None` otherwise.
+    pub(super) fn version_unswitch(&self, b: &Block) -> Option<Vec<String>> {
+        let Some(Some(l)) = self.versions.last() else {
+            return None;
+        };
+        let data = self.cx.data;
+        let mut flags: Vec<String> = Vec::new();
+        let mut all = true;
+        for op in &b.operators {
+            op.walk(&mut |n| match n {
+                Value::Call(d, args)
+                    if (*d as usize) < data.definitions.len()
+                        && !matches!(data.def(*d).code(), Value::Null) =>
+                {
+                    match l.flags.get(&(args.as_ptr() as usize)) {
+                        Some((flag, _)) if !flags.contains(flag) => flags.push(flag.clone()),
+                        Some(_) => {}
+                        None => all = false,
+                    }
+                }
+                Value::CallRef(_, _) | Value::Yield(_) | Value::Parallel(_) | Value::Loop(_) => {
+                    all = false;
+                }
+                _ => {}
+            });
+        }
+        (all && !flags.is_empty()).then_some(flags)
+    }
+
     /// The call site: the flag its loop's prelude decided, when its held inputs are the ones
     /// the prelude read.
     pub(super) fn version_flag(&self, args: &[Value], inputs: &[String]) -> Option<String> {

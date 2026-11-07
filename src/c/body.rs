@@ -274,6 +274,9 @@ pub(crate) struct FnWriter<'a> {
     /// facts of an innermost counted one (`None` for any other loop).
     vf: Option<std::rc::Rc<crate::opt::version::Leaf>>,
     versions: Vec<Option<version::VLoop>>,
+    /// `@FR-R-GuardedChain`'s version clause: the `@FR-R-Version` flags the copy being written
+    /// runs under, so each of their calls is the fast twin's, untested.
+    versions_hold: Vec<String>,
     /// `@FR-R-Peel` — the constants the statements just before a loop gave its counters.
     peel_seeds: Vec<(u16, i64)>,
     /// `@FR-R-Base`'s counter clause: the vector whose length the statements just before a
@@ -768,6 +771,7 @@ impl<'a> FnWriter<'a> {
             plain_chains: Vec::new(),
             vf: None,
             versions: Vec::new(),
+            versions_hold: Vec::new(),
             peel_seeds: Vec::new(),
             range_lens: Vec::new(),
             in_range: Vec::new(),
@@ -4698,6 +4702,29 @@ impl<'a> FnWriter<'a> {
                 self.loop_core(b, ind_loop + 1)?;
                 self.line(ind_loop, "}");
             }
+            Some((guard, admitted, false)) if let Some(flags) = self.version_unswitch(b) => {
+                // Written once only for its calls, each a versioned site: the plain copy under
+                // the guard and every flag, calling the fast twins; the written loop otherwise.
+                let all = std::iter::once(guard.clone())
+                    .chain(flags.iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join(" && ");
+                self.line(ind_loop, &format!("if ({all}) {{"));
+                self.plain_chains.push((admitted.clone(), None));
+                let held = self.versions_hold.len();
+                self.versions_hold.extend(flags);
+                let r = self.loop_core(b, ind_loop + 1);
+                self.versions_hold.truncate(held);
+                self.plain_chains.pop();
+                r?;
+                self.line(ind_loop, "} else {");
+                self.plain_chains.push((admitted, Some(guard)));
+                let r = self.loop_core(b, ind_loop + 1);
+                self.plain_chains.pop();
+                r?;
+                self.line(ind_loop, "}");
+                crate::rewrite_census::fired("R-GuardedChain/versions", 1);
+            }
             Some((guard, admitted, false)) => {
                 // Loops inside: written once, each admitted operator branching on the guard.
                 self.plain_chains.push((admitted, Some(guard)));
@@ -7523,7 +7550,11 @@ impl<'a> FnWriter<'a> {
                 cx.request_twin(d, mask | super::VF_BIT);
                 let fast = super::twin_name(cx.data, d, mask | super::VF_BIT);
                 let xs = xs.join(", ");
-                format!("({flag} ? {fast}({xs}) : {name}({xs}))")
+                if self.versions_hold.contains(flag) {
+                    format!("{fast}({xs})")
+                } else {
+                    format!("({flag} ? {fast}({xs}) : {name}({xs}))")
+                }
             }
             _ => format!("{name}({})", xs.join(", ")),
         };
