@@ -4659,37 +4659,11 @@ impl<'a> FnWriter<'a> {
         self.loop_copy(b, ind)
     }
 
-    fn loop_copy(&mut self, b: &Block, ind: usize) -> Result<(), String> {
-        let held_file = self.open_file_hold(b, ind)?;
-        let mut calls = std::collections::BTreeSet::new();
-        for op in &b.operators {
-            op.walk(&mut |n| {
-                if let Value::Call(c, _) = n {
-                    calls.insert(*c);
-                }
-            });
-        }
-        self.loop_calls.push(calls);
-        self.hold_invariants(b, ind)?;
-        let mints = self.hold_vectors(b, ind)?;
-        self.hold_versions(b, ind)?;
-        let in_range_at = self.in_range.len();
-        let grid_at = self.grid_facts.len();
-        self.counters_in_range(b);
-        self.grid_counter_facts(b);
-        let window = self.open_window(b, ind)?;
-        if !window {
-            self.hash_reserve(b, ind)?;
-        }
-        self.hold_pushes(b, mints, ind)?;
-        let ap_windows = self.open_loop_windows(b, ind);
-        // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
-        // so both copies are its fallback.
-        let fill = self.fill_head(b, ind)?;
-        let ind_loop = if fill.is_some() { ind + 1 } else { ind };
-        if let Some(flag) = &fill {
-            self.line(ind, &format!("if (!{flag}) {{"));
-        }
+    /// `@FR-R-GuardedChain`: loop `b` as its chain guard writes it — an innermost loop twice
+    /// (the plain copy under the guard, the checked loop as the `else`), a loop written once
+    /// for its calls alone twice too when every call is a versioned site (the version clause),
+    /// any other guarded loop once with each admitted operator branching on the guard.
+    fn guarded_copies(&mut self, b: &Block, ind_loop: usize) -> Result<(), String> {
         match self.chain_guard(b, ind_loop)? {
             Some((guard, admitted, true)) => {
                 // An innermost loop: the guarded copy plain, the checked loop as the `else`.
@@ -4734,6 +4708,41 @@ impl<'a> FnWriter<'a> {
             }
             None => self.loop_core(b, ind_loop)?,
         }
+        Ok(())
+    }
+
+    fn loop_copy(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        let held_file = self.open_file_hold(b, ind)?;
+        let mut calls = std::collections::BTreeSet::new();
+        for op in &b.operators {
+            op.walk(&mut |n| {
+                if let Value::Call(c, _) = n {
+                    calls.insert(*c);
+                }
+            });
+        }
+        self.loop_calls.push(calls);
+        self.hold_invariants(b, ind)?;
+        let mints = self.hold_vectors(b, ind)?;
+        self.hold_versions(b, ind)?;
+        let in_range_at = self.in_range.len();
+        let grid_at = self.grid_facts.len();
+        self.counters_in_range(b);
+        self.grid_counter_facts(b);
+        let window = self.open_window(b, ind)?;
+        if !window {
+            self.hash_reserve(b, ind)?;
+        }
+        self.hold_pushes(b, mints, ind)?;
+        let ap_windows = self.open_loop_windows(b, ind);
+        // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
+        // so both copies are its fallback.
+        let fill = self.fill_head(b, ind)?;
+        let ind_loop = if fill.is_some() { ind + 1 } else { ind };
+        if let Some(flag) = &fill {
+            self.line(ind, &format!("if (!{flag}) {{"));
+        }
+        self.guarded_copies(b, ind_loop)?;
         if fill.is_some() {
             self.fill_tail(b, ind)?;
         }
