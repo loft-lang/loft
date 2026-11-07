@@ -52,7 +52,6 @@ impl FnWriter<'_> {
     pub(super) fn spec_chain(&mut self, var: u16, x: &Value, ind: usize) -> Result<bool, String> {
         if crate::env_once!(std::env::var("LOFT_NO_SPEC_CHAIN").is_ok_and(|v| v != "0"))
             || !self.plain_chains.is_empty()
-            || self.vr.is_some()
             || self.gen_elem.is_some()
         {
             return Ok(false);
@@ -144,7 +143,12 @@ impl FnWriter<'_> {
 
     /// Post-order nodes of the chain under `x`, each leaf evaluated into a temp in the checked
     /// chain's order, marked when the proofs cannot show it never null; answers `x`'s node.
-    fn chain_nodes(&mut self, x: &Value, nodes: &mut Vec<Node>, ind: usize) -> Result<usize, String> {
+    fn chain_nodes(
+        &mut self,
+        x: &Value,
+        nodes: &mut Vec<Node>,
+        ind: usize,
+    ) -> Result<usize, String> {
         if let Value::Call(d, args) = x.unspan()
             && args.len() == 2
             && let Some(name) = chain_name(self.cx.data.def(*d).name())
