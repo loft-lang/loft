@@ -3563,6 +3563,15 @@ generic one's, arm for arm, so the answer cannot differ; what moved is when it i
 **BUILT** (`src/generation/ops/file_ops.rs`, runtime `OpReadFileInt`, `LOFT_NO_TYPED_READ`;
 guard `loft-suite/rules/rewrites/R-TypedRead/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
 
+**The float clause** (C, @PLN219).  `OpReadFile(f, OpCreateStack(t), 8, float)` into a float
+local `t` is typed the same way: the eight bytes in the file's byte order, decoded as the
+generic read decodes a `float` (`loft_f64`), a short read leaving `t` and `#next` as they were.
+So `(R-FileHold)` admits a loop of float reads, which read through the held cursor
+(`loft_fcur_readf`).  A `single`, and a float into a slot that is not a float local, keep the
+generic read.  Measured: hex_field `doc_read` 8.64× → 3.84× Rust (C) — the per-value `fread`
+with its lock and `ferror` was half the routine.  Guard
+`loft-suite/rules/rewrites/R-TypedRead/a-float-read-is-decoded-at-its-site-through-a-held-cursor.loft`.
+
 ### A loop that alone sees its file holds the cursor
 
 ```

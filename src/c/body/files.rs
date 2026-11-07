@@ -188,6 +188,18 @@ impl FnWriter<'_> {
         (n == i64::from(width)).then_some((width, signed))
     }
 
+    /// `@FR-R-TypedRead`'s float clause: `OpReadFile(f, OpCreateStack(v), 8, float)` lands a
+    /// `float` whole in a float local — eight bytes, decoded as the record's read decodes them.
+    pub(super) fn held_float_shape(&self, args: &[Value]) -> bool {
+        let [_, v, n, tp] = args else { return false };
+        let Some(var) = self.stack_var(v) else {
+            return false;
+        };
+        self.shapes.get(var as usize) == Some(&CType::Float)
+            && matches!(n.unspan(), Value::Int(8))
+            && matches!(tp.unspan(), Value::Int(3))
+    }
+
     /// `@FR-R-FileHold` — before loop `b`: when it reads one `File` that nothing else in it can
     /// see (`lower::file_hold::held_file`) and no enclosing loop holds it, a `loft_fcur` takes
     /// the record's cursor here and gives it back on every exit (`release_holds`): the loop's
@@ -201,7 +213,8 @@ impl FnWriter<'_> {
         if !crate::keys::file_hold_enabled() || self.gen_elem.is_some() {
             return Ok(false);
         }
-        let typed = |args: &[Value]| self.held_read_shape(args).is_some();
+        let typed =
+            |args: &[Value]| self.held_read_shape(args).is_some() || self.held_float_shape(args);
         let Some(f) = crate::lower::file_hold::held_file(b, self.cx.data, self.d, &typed) else {
             return Ok(false);
         };
@@ -312,6 +325,19 @@ impl FnWriter<'_> {
                     i32::from(signed)
                 ),
             );
+            return Ok(E::new("(void) 0", K::Void));
+        }
+        if let Value::Var(fv) = f.unspan()
+            && let Some((_, c, _)) = self
+                .file_holds
+                .iter()
+                .find(|(held, _, _)| held == fv)
+                .cloned()
+            && self.held_float_shape(&[f.clone(), v.clone(), n.clone(), Value::Int(i32::from(tp))])
+        {
+            crate::rewrite_census::fired("R-TypedRead/float", 1);
+            let name = self.var(var);
+            self.line(ind, &format!("loft_fcur_readf(&{c}, &{c}p, &{name});"));
             return Ok(E::new("(void) 0", K::Void));
         }
         let (file, count) = self.two("OpReadFile", &[f, n], ind)?;
