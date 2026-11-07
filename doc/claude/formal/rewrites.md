@@ -2548,6 +2548,14 @@ it would leave `(R-RangedCall)`'s guard, whose run-time test bounds it far tight
 0.84× → 2.23× that way).  Measured (C): sum_loop 4.01× → 2.96×, drawing render_marks
 4.38× → 3.36×, resize 4.32× → 3.33×, render_lock 3.49× → 2.77×.  `LOFT_NO_OPEN_END=1`;
 guard `loft-suite/rules/rewrites/R-Range/a-counted-loops-step-is-plain-whatever-its-end.loft`.
+**The abs clause and the end clause** (@PLN219).  `abs(x)` of a ranged `x` lies in `0 ..=
+max(|lo|, |hi|)` (from `|lo|` or `|hi|` where `x` keeps one sign) — `i64::MIN` is outside every
+range, so it cannot overflow.  Inside `for k in s..x`, where the end was copied from a variable
+`x` the loop never writes, the body runs only while `k < x`, so there `x >= s + 1`
+(`Ranges::bodies`): `for k in 1..n { … / n }` divides by an `n >= 2`, plain.  With them,
+(R-GuardedChain) declines a loop whose admitted operators the static proof already covers —
+no guard computed per entry.  Measured: 16_consumer_shapes `fov_rays` 3.06× → 2.18× Rust (C).
+Guard `loft-suite/rules/rewrites/R-Range/abs-is-ranged-and-a-loop-end-is-above-its-counter-in-the-body.loft`.
 **The index clause** (C).  A held element access whose index the proof shows non-negative is
 written with the `_nn` accessors (`loft_vh_get_int_at_nn`, …: one unsigned compare, no
 from-the-end wrap, the miss reported as before), the index wrapped in `loft_nonneg`, which

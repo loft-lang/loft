@@ -323,6 +323,21 @@ pub fn op_range<F: RangeFacts + ?Sized>(
                     let x = a(0)?;
                     fits(-i128::from(x.1), -i128::from(x.0))
                 }
+                // `abs(x)`: a ranged x is never null, and its magnitude is at most the larger
+                // end's — `i64::MIN` is outside every range, so it cannot overflow.
+                ("OpAbsInt", 1) => {
+                    let x = a(0)?;
+                    let (lo, hi) = (i128::from(x.0), i128::from(x.1));
+                    let top = lo.abs().max(hi.abs());
+                    let bottom = if lo >= 0 {
+                        lo
+                    } else if hi <= 0 {
+                        -hi
+                    } else {
+                        0
+                    };
+                    fits(bottom, top)
+                }
                 ("OpDivInt" | "OpDivIntNullable", 2) => {
                     let (x, y) = (a(0)?, a(1)?);
                     if y.0 <= 0 && y.1 >= 0 {
@@ -974,8 +989,54 @@ fn seed_counters(
             }
             rv.vars.insert(rc.loop_var, (lo_var, hi_var.max(lo_var)));
         }
+        // The END clause: the body runs only while the counter is below the end, so an end
+        // copied from a variable `x` the loop never writes is above the loop variable's lowest
+        // value there — `for k in 1..n { … / n }` divides by an `n >= 2`.
+        if seeds == 1
+            && !rc.inclusive
+            && let Some(s) = seed
+            && let Value::Var(end) = rc.hi.unspan()
+            && let Some(x) = end_source(root, *end)
+            && let Some((x_lo, x_hi)) = rv.vars.get(&x).copied()
+            && !lp.operators.iter().any(|o| {
+                o.any_node(&mut |m| matches!(m, Value::Set(t, _) if *t == x || *t == *end))
+            })
+        {
+            let lo_var = if rc.next.is_some() {
+                s.0
+            } else {
+                s.0.saturating_add(1)
+            };
+            let floor = lo_var.saturating_add(1).max(x_lo);
+            if floor <= x_hi {
+                rv.bodies
+                    .entry(lp.scope)
+                    .or_default()
+                    .push((x, (floor, x_hi)));
+            }
+        }
     }
     v.for_each_child(&mut |c| seed_counters(data, root, c, nn, rv, counters));
+}
+
+/// The variable the compiler's end copy `end` (`_range_end = x`) was set from: its one `Set`
+/// must be a plain `Var`.
+fn end_source(root: &Value, end: u16) -> Option<u16> {
+    let mut from = None;
+    let mut sets = 0;
+    root.walk(&mut |n| {
+        if let Value::Set(t, rhs) = n
+            && *t == end
+        {
+            sets += 1;
+            from = if let Value::Var(x) = rhs.unspan() {
+                Some(*x)
+            } else {
+                None
+            };
+        }
+    });
+    if sets == 1 { from } else { None }
 }
 
 /// `@FR-R-Range`'s accumulator clause — the second self-stepping shape read off a loop,

@@ -13,7 +13,7 @@ R-AppendTwin	c,native	2	0	0	0	31	33
 R-AppendTwin/loop-window	c	2	0	0	0	2	0
 R-AppendTwin/mint	c	2	0	0	0	4	0
 R-Base	c,native	61	0	0	0	1002	5422
-R-Base/counter	c	44	0	0	0	234	0
+R-Base/counter	c	44	0	0	0	232	0
 R-Base/grid	c	2	0	0	0	102	0
 R-BoundAppend	parse	2	2	0	0	0	0
 R-BoundedNest	native	4	0	0	0	0	20
@@ -41,7 +41,7 @@ R-ExitVector	ir	28	0	337	0	0	0
 R-ExitVector/record	ir	1	0	2	0	0	0
 R-FaultFlag	native	5	0	0	0	0	7
 R-FieldAppend	c,native	25	0	0	0	85	150
-R-FieldAppend/bare	c,native	61	0	0	0	445	785
+R-FieldAppend/bare	c,native	61	0	0	0	442	785
 R-FileHold	c,native	12	0	0	0	6	43
 R-Fill	c,native	4	0	0	0	8	39
 R-Fill/guarded	c,native	4	0	0	0	4	24
@@ -62,8 +62,8 @@ R-Fuse/tag	interp	11	0	0	139	0	0
 R-Fuse/text	interp	61	0	0	2003	0	0
 R-GroupPush	native	7	0	0	0	0	59
 R-GuardFree	native	61	0	0	0	0	677
-R-GuardedChain	c,native	42	0	0	0	311	1064
-R-GuardedChain/operators	c,native	42	0	0	0	1137	3198
+R-GuardedChain	c,native	42	0	0	0	131	1064
+R-GuardedChain/operators	c,native	42	0	0	0	485	3198
 R-HandOver/rotate	c,native	1	0	0	0	2	2
 R-Header	c,native	61	0	0	0	1030	6246
 R-Header/apart	c,native	20	0	0	0	205	220
@@ -74,7 +74,7 @@ R-Header/grown-held	c	1	0	0	0	4	0
 R-Header/kept	native	30	0	0	0	0	2970
 R-Header/kept-growth	c	1	0	0	0	7	0
 R-Header/kept-twin	c,native	20	0	0	0	6	845
-R-Header/narrow	c	22	0	0	0	166	0
+R-Header/narrow	c	22	0	0	0	162	0
 R-Header/rebind	c	5	0	0	0	29	0
 R-Header/text	c,native	1	0	0	0	5	5
 R-HostStore	ir	2	0	7	0	0	0
@@ -92,7 +92,7 @@ R-KeyedEntry/subscript	ir	1	0	3	0	0	0
 R-LazySplit	c,native	3	0	0	0	8	6
 R-Leaf	native	61	0	0	0	0	10146
 R-LeafChain	native	61	0	0	0	0	5611
-R-LitDiv	native	55	0	0	0	0	2425
+R-LitDiv	native	55	0	0	0	0	2417
 R-LitHoist	native	1	0	0	0	0	1
 R-LiteralAppend	ir	1	0	1	0	0	0
 R-LiteralWalk	parse	8	14	0	0	0	0
@@ -124,13 +124,13 @@ R-PushFill/run	c,native	24	0	0	0	64	24
 R-PushFill/run-header	c	18	0	0	0	44	0
 R-PushRec	c,native	22	0	0	0	75	168
 R-PushRec/apart	c,native	5	0	0	0	50	90
-R-Range	c,native	61	0	0	0	6339	14649
-R-Range/index	c	29	0	0	0	436	0
+R-Range	c,native	61	0	0	0	5843	14681
+R-Range/index	c	29	0	0	0	421	0
 R-RangedCall	c,native	42	0	0	0	520	826
 R-RangedCall/guard	c	9	0	0	0	30	0
 R-Rebind	ir	3	0	5	0	0	0
 R-RebindBuffer	native	1	0	0	0	0	1
-R-RecPtr	c,native	49	0	0	0	411	1486
+R-RecPtr	c,native	49	0	0	0	383	1486
 R-RecPtr/held	c	37	0	0	0	158	0
 R-RecPtr/index	native	7	0	0	0	0	46
 R-RecPtr/nested	native	25	0	0	0	0	189
@@ -151,10 +151,10 @@ R-ScaleFold	parse	1	2	0	0	0	0
 R-SelfReplace	parse	3	19	0	0	0	0
 R-SingleUse	parse	61	423	0	0	0	0
 R-SliceBorrow	interp,native	2	0	0	10	0	12
-R-SpecChain	c	61	0	0	0	957	0
+R-SpecChain	c	61	0	0	0	981	0
 R-SplitTable	c,native	61	0	0	0	14	92
 R-StartStep	interp	25	0	0	736	0	0
-R-StickySum	c	61	0	0	0	554	0
+R-StickySum	c	61	0	0	0	551	0
 R-StreamWalk	native	1	0	0	0	0	2
 R-TailSelf	parse	2	2	0	0	0	0
 R-TextBorrow	interp,c,native	61	0	0	834	253	980
@@ -163,8 +163,8 @@ R-TextClear	native	61	0	0	0	0	2852
 R-TextLen	parse	4	5	0	0	0	0
 R-TextRun	ir	2	0	2	0	0	0
 R-Transient	c	7	0	0	0	9	0
-R-TypedKeyed	c,native	7	0	0	0	46	62
-R-TypedKeyed/compound	c,native	3	0	0	0	18	18
+R-TypedKeyed	c,native	7	0	0	0	40	62
+R-TypedKeyed/compound	c,native	3	0	0	0	12	18
 R-TypedKeyed/text	c,native	5	0	0	0	15	19
 R-TypedRead	c,native	12	0	0	0	16	204
 R-TypedRead/float	c	1	0	0	0	1	0

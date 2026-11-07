@@ -217,6 +217,29 @@ impl FnWriter<'_> {
         if chains.is_empty() || admitted.iter().filter(|a| !offsets.contains(a)).count() < 2 {
             return Ok(None);
         }
+        // An operator `(R-Range)` proves plain outright needs no guard: count only the others,
+        // so a loop whose chains the static proof already covers writes no guard at all.
+        let mut found: Vec<(u32, Vec<Value>)> = Vec::new();
+        for op in b.operators.iter().skip(1) {
+            op.walk(&mut |n| {
+                if let Value::Call(d, args) = n.unspan() {
+                    let at = args.as_ptr() as usize;
+                    if admitted.contains(&at) && !offsets.contains(&at) {
+                        found.push((*d, args.clone()));
+                    }
+                }
+            });
+        }
+        let mut open = 0usize;
+        for (d, args) in &found {
+            let name = data.def(*d).name();
+            if !self.range_proves(name, args) {
+                open += 1;
+            }
+        }
+        if open < 2 {
+            return Ok(None);
+        }
         // The nested loops' seeds and ends, bounded over the same leaves (no counters).
         let mut nested_bounds = Vec::new();
         for (n, seed) in &nested {
