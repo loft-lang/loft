@@ -264,7 +264,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Prefill)` | not counted — runtime: admitted per TYPE at its first mint |
 | `(R-PureReuse)` | `R-PureReuse` ir |
 | `(R-Push)` | `R-Push` c, native · `/sole` c |
-| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c · `/text` c |
+| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c · `/several` ir · `/text` c |
 | `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
 | `(R-Range)` | `R-Range` c, native · `/index` c |
 | `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
@@ -614,7 +614,14 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  vector's tail, decided and applied in the IR (`opt::fill_loop`, both
                  backends): `if 0 < n { the push; OpAppendCopy(v, n, tp) } else { the
                  loop }`, `n` the trip count read at entry — so an empty, negative or
-                 null-ended range runs the loop as written.  The trip count is the range's
+                 null-ended range runs the loop as written.  THE SEVERAL CLAUSE: a body
+                 that is ONE push of a simple invariant onto each of two or more vector
+                 variables (with each push's own reservation) and nothing else is one
+                 fill per vector — every push once, then each `OpAppendCopy` — where
+                 the vectors are distinct plain locals none of which is a view of
+                 another and no pushed value reads one; a byte push's encoded element
+                 is what `OpAppendCopy` copies.  A `lit ?? d` over a literal that is not
+                 the sentinel is the simple invariant `lit`.  The trip count is the range's
                  end less its start — the `next` counter's current value or `#index +
                  1` — plus one for an inclusive range, taken at loop entry.  The loop
                  is read in EITHER spelling — the statement `for i in a..b { v += [e] }`
@@ -955,6 +962,14 @@ Guard `tests/scripts/a-parameters-vector-holds-its-header-where-the-buffer-is-ap
 (h1–h7; h7 is the same record passed as both parameters and emptied through one, falsified
 by a plant that takes every writer as apart: `h7 179400` where the file says 220); pin
 `tests/apart_param.rs`.
+
+**The several clause, in words.**  hex_field's `edgeset_new` zeroes two parallel vectors —
+`m += [(0 as u8?) ?? 0]; sf += [(0 as i32?) ?? 0]` per slot — and the one-push fill could
+not take it: two paths, and a `??` value.  Each vector ends as one fill would leave it.
+`doc_read` on the ship lane: gcc-16 2.79× → 2.22×, clang 3.12× → 2.27×.  Census
+`R-PushFill/several`; switch `LOFT_NO_FILL_LOOP` (with the one-push form); site
+`fill_loop::several_fill`; guard
+`loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-one-invariant-into-each-of-several-vectors-is-a-fill-each.loft`.
 
 **The text clause, in words.**  `parse`'s reset loop of `arguments` (`while ri <
 self.results.len() { self.results[ri] = null; ri += 1 }`) read its length and resolved its

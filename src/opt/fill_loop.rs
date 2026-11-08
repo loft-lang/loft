@@ -235,8 +235,12 @@ fn several_fill(
     let trip = trip_count(ops, rc.hi, rc.next, rc.index, rc.inclusive);
     let mut copies: Vec<Value> = Vec::new();
     for (v, val) in &pushed {
-        let Type::Vector(elem, _) = vars.tp(*v) else {
-            return None;
+        let elem = match vars.tp(*v) {
+            Type::Vector(elem, _) => elem,
+            // `@FR-N-Shape`: a `vector<T>?` local is declined on purpose, as the one-push fill
+            // declines it — the fill would read a vector the push may first have to create.
+            Type::Optional(_) => return None,
+            _ => return None,
         };
         let views = crate::opt::body_writes::views(vars, *v);
         if vars.is_argument(*v)

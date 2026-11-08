@@ -56,7 +56,7 @@ R-FormatAppend	parse	61	345	0	0	0	0
 R-FormatAppend/c	c	3	0	0	0	5	0
 R-ForwardResult	ir	2	0	6	0	0	0
 R-ForwardWalk	parse	44	317	0	0	0	0
-R-Fuse	interp	61	0	0	13366	0	0
+R-Fuse	interp	61	0	0	13396	0	0
 R-Fuse/field	interp	42	0	0	767	0	0
 R-Fuse/jump	interp	61	0	0	9923	0	0
 R-Fuse/tag	interp	11	0	0	139	0	0
@@ -119,15 +119,16 @@ R-PureReuse	ir	1	0	1	0	0	0
 R-Push	c,native	36	0	0	0	163	1169
 R-Push/sole	c	12	0	0	0	24	0
 R-PushFill	c,native	35	0	0	0	107	623
-R-PushFill/fill	ir	17	0	35	0	0	0
+R-PushFill/fill	ir	17	0	45	0	0	0
 R-PushFill/hash	c,native	1	0	0	0	3	3
 R-PushFill/record	native	13	0	0	0	0	54
 R-PushFill/run	c,native	24	0	0	0	64	24
 R-PushFill/run-header	c	18	0	0	0	44	0
+R-PushFill/several	ir	10	0	10	0	0	0
 R-PushFill/text	c	2	0	0	0	9	0
 R-PushRec	c,native	23	0	0	0	75	180
 R-PushRec/apart	c,native	5	0	0	0	50	90
-R-Range	c,native	61	0	0	0	6038	15502
+R-Range	c,native	61	0	0	0	6086	15592
 R-Range/index	c	29	0	0	0	421	0
 R-RangedCall	c,native	43	0	0	0	524	831
 R-RangedCall/guard	c	9	0	0	0	32	0
