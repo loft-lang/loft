@@ -12504,6 +12504,9 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
   if w >= 0 && e.first_pass && unrenamed && !buffer_bound(e) && rename_candidate(e, vars, v.code, x) == w {
     rename_onto(e, vars, rb, w);
   }
+  if w < 0 && e.first_pass && unrenamed && !buffer_bound(e) && x is NdIf && call_arms(e, vars, x) && first_arm_ref(vars, x) >= 0 {
+    rename_onto(e, vars, rb, first_arm_ref(vars, x));
+  }
   a = if w >= 0 { attr_nr(el::def(e, d), el_vars::name_of(vars, w)) } else { -1 };
   // `MergeAttr` of a visible parameter: handed back as it is, the result borrowing it.  A tail
   // that goes through `ref_return` recomputes the borrows and keeps such a parameter only when
@@ -12585,8 +12588,36 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
       _ => {}
     }
   }
+  // A branch whose every arm answers a call's fresh record in that call's own work ref is
+  // handed back as it is; the first pass renamed the buffer onto the first arm's work ref.
+  if x is NdIf && call_arms(e, vars, x) {
+    return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+  }
   refuse_known(e, v.tp, "a `return` of a record that is not a literal: {tail_kind(e, vars, el_ir::v_block([v.code], v.tp, ""))}");
   ex(ir::NdNull, ir::TyNever)
+}
+
+// Does every arm of `n` (a block's tail, both arms of an `if`) end in a call handed a hidden
+// work ref of its own?
+fn call_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => call_arms(e, vars, inner),
+    NdIf { cond: _, t, f } => call_arms(e, vars, t) && call_arms(e, vars, f),
+    NdBlock { block } => len(block[0].operators) > 0 && call_arms(e, vars, block[0].operators[-1]!),
+    NdCall { def_nr, args } => !returns_argument_view(el::def(e, def_nr)) && hidden_ref_arg(vars, args) >= 0,
+    _ => false
+  }
+}
+
+// The hidden work ref of the call the first arm of `n` ends in, or -1.
+fn first_arm_ref(vars: el_vars::Vars, n: ir::Node) -> integer {
+  match n {
+    NdSpan { inner } => first_arm_ref(vars, inner),
+    NdIf { cond: _, t, f: _ } => first_arm_ref(vars, t),
+    NdBlock { block } => if len(block[0].operators) > 0 { first_arm_ref(vars, block[0].operators[-1]!) } else { -1 },
+    NdCall { def_nr: _, args } => hidden_ref_arg(vars, args),
+    _ => -1
+  }
 }
 
 // The `_build_val` route's test (`literal_reads_dest`): a plain local destination no `&` links
