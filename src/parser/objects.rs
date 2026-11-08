@@ -6010,26 +6010,24 @@ impl Parser {
                 if Self::seeds_lambda_hint(&td) || crate::parser::vectors::is_collection(&td_base) {
                     self.expected = td.clone();
                 }
-                // A COLLECTION member of a literal rebuilt into a whole local is written through
-                // its field after the re-init, so the #330 hoist below cannot reach it: watch
-                // for the author naming the local inside it (see `Parser::rebuild_watch`).
+                // A COLLECTION member of a literal rebuilt into a whole local — a struct literal
+                // of its type or a variant of its enum (`@FR-R-InPlaceLiteral`'s variant clause)
+                // — is written through its field after the re-init, so the #330 hoist below
+                // cannot reach it: watch for the author naming the local, or a view of it,
+                // inside it (see `Parser::rebuild_watch`).
                 let watch = match self_read_root {
                     Some((xv, off))
                         if primed
                             && off == crate::use_analysis::ANY_FIELD
                             && crate::parser::vectors::is_collection(&td_base)
-                            && matches!(self.vars.tp(xv).base(), Type::Reference(d, _) if *d == td_nr) =>
+                            && (matches!(self.vars.tp(xv).base(), Type::Reference(d, _) if *d == td_nr)
+                                || self.is_variant_of_local(xv, td_nr)) =>
                     {
                         Some(xv)
                     }
                     _ => None,
                 };
-                let outer_watch = watch.map(|xv| {
-                    (
-                        std::mem::replace(&mut self.rebuild_watch, xv),
-                        std::mem::replace(&mut self.rebuild_watch_hit, false),
-                    )
-                });
+                let outer_watch = watch.map(|xv| self.arm_rebuild_watch(xv));
                 let value_pos = *self.lexer.peek_pos();
                 let mut t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
                 if let Some((w, hit)) = outer_watch {
@@ -6657,6 +6655,19 @@ impl Parser {
         crate::keys::variant_literal_in_place()
             && (!self.vars.is_argument(v_nr) || self.is_hidden_param(v_nr))
             && self.is_variant_of_local(v_nr, td_nr)
+    }
+
+    /// Watch `dest` while a member of a literal rebuilt into it is parsed: `dest` itself and
+    /// every variable viewing its store — the set `reads_place` asks of a staged field, so the
+    /// two roads agree on what reads the destination (`@FR-R-InPlaceLiteral`).  Answers the
+    /// outer watch, which the caller puts back.
+    fn arm_rebuild_watch(&mut self, dest: u16) -> (Vec<u16>, bool) {
+        let mut watch: Vec<u16> = self.vars.store_viewers(dest).into_iter().collect();
+        watch.push(dest);
+        (
+            std::mem::replace(&mut self.rebuild_watch, watch),
+            std::mem::replace(&mut self.rebuild_watch_hit, false),
+        )
     }
 
     fn is_variant_of_local(&self, v_nr: u16, td_nr: u32) -> bool {
@@ -7333,12 +7344,7 @@ impl Parser {
                 // computed before the update stores, `(E-Asgn)`), but in place the bind and
                 // the earlier writes have already replaced it: watch for it, as a rebuilt
                 // literal's collection member does (`Parser::rebuild_watch`).
-                let outer_watch = (!fresh).then(|| {
-                    (
-                        std::mem::replace(&mut self.rebuild_watch, dest),
-                        std::mem::replace(&mut self.rebuild_watch_hit, false),
-                    )
-                });
+                let outer_watch = (!fresh).then(|| self.arm_rebuild_watch(dest));
                 self.parse_assign_op(
                     &mut target,
                     "=",
