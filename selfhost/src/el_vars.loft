@@ -142,11 +142,15 @@ pub struct Vars {
   // The element type the context gives the vector literal at node `lit_hint_node` (an
   // operator's right operand takes its left's), or -1.
   pub lit_hint_node: integer,
-  pub lit_hint: ir::TypeT
+  pub lit_hint: ir::TypeT,
+  // `Variable::viewed`, per variable: the borrows each earlier bind ended with on the second
+  // pass (`note_bind`).  The type keeps only the last bind's, but a read after
+  // `v = a[0]; if c { v = b[0]; }` may be either (`store_viewers`).
+  pub viewed: vector<vector<integer>>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, reversed: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], present_exprs: [], text_links: [], store_links: [], amp_vectors: [], amp_places: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, bind_rhs: false, rebuilt: [], lit_hint_node: -1, lit_hint: ir::TyVoid }
+  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, reversed: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], present_exprs: [], text_links: [], store_links: [], amp_vectors: [], amp_places: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, bind_rhs: false, rebuilt: [], lit_hint_node: -1, lit_hint: ir::TyVoid, viewed: [] }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -175,6 +179,7 @@ pub fn new_var(v: Vars, name: text, tp: ir::TypeT) -> integer {
   }
   v.vars += [fresh_variable(name, tp)];
   v.defined += [false];
+  v.viewed += [[]];
   nr
 }
 
@@ -411,6 +416,10 @@ pub fn take_over(v: Vars, kept: ir::Function) {
     y.uses = 0;
     v.vars += [y];
     v.defined += [false];
+  }
+  v.viewed = [];
+  for _ in v.vars {
+    v.viewed += [[]];
   }
   v.names = [];
   for n in kept.names {
@@ -670,6 +679,15 @@ pub fn depend(v: Vars, nr: integer, on: integer) {
 // The variable's type replaced.
 fn set_type(v: Vars, nr: integer, t: ir::TypeT) {
   v.vars[nr].type_def = [t];
+}
+
+// `Function::note_bind`: a bind of `nr` finished on the second pass, its borrows remembered.
+pub fn note_bind(v: Vars, nr: integer) {
+  for d in el_types::deps(tp(v, nr)) {
+    if d != 65535 && !v.viewed[nr]!.contains(d) {
+      v.viewed[nr] += [d];
+    }
+  }
 }
 
 // A stored table taken up again after the passes (the inverse of `stored`), its work-ref counter
