@@ -1,0 +1,9 @@
+enum Shape55d { Circle { radius: integer }, Square { side: integer } }
+
+fn pick(c: Shape55d) -> Shape55d {
+  if c is Circle { c } else { Square { side: 1 } }
+}
+
+fn main() {
+  println("{pick(Circle { radius: 5 })}");
+}
