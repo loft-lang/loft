@@ -267,7 +267,7 @@ fn synth_nullable_struct_fields(e: el::El) {
 
 // The struct an embedded `S?` field holds (`synth_nullable_target`: a plain struct of the
 // program, not a type variable's placeholder), or -1.
-fn nullable_record_of(e: el::El, t: ir::TypeT) -> integer {
+pub fn nullable_record_of(e: el::El, t: ir::TypeT) -> integer {
   match t {
     TyOptional { inner } => {
       match inner {
