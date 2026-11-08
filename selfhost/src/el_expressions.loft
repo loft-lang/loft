@@ -1346,7 +1346,6 @@ fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir
   if views_local(vars, v) {
     if e.first_pass {
       mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(ret)));
-      e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, mw) }];
       rename_onto(e, vars, rb, mw);
     }
     return code;
@@ -3279,6 +3278,7 @@ fn splice(l: vector<ir::Node>, items: vector<ir::Node>) -> vector<ir::Node> {
 
 // `Parser::expression`: one expression node.
 pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  vars.site = n;
   match e.p.nodes[n] {
     SInt { v } => ex(ir::NdInt { n: v }, ir::TyInteger { spec: i32_spec() }),
     SLong { v } => ex(ir::NdLong { n: v }, ir::TyInteger { spec: wide_spec() }),
@@ -10673,7 +10673,10 @@ fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   el_vars::set_var_type(vars, held, if owned { el_types::with_deps(el_types::without_deps(lhs), lent) } else { lhs });
   x.code = nullable_arith(e, x.code, true);
   subject = ir::NdVar { n: held };
-  dflt = if dbuf >= 0 { el_ir::v_block([el_ir::v_set(dbuf, d.code), ir::NdVar { n: dbuf }], el_types::without_deps(lhs), "join-arm-owner") } else { d.code };
+  // The arm is typed as the join (`materialise_owned_call(rhs, result_type)`): a held subject's
+  // borrows — a call subject's own buffer is no borrow of the join.
+  arm_tp = if owned { el_types::without_deps(lhs) } else { lhs };
+  dflt = if dbuf >= 0 { el_ir::v_block([el_ir::v_set(dbuf, d.code), ir::NdVar { n: dbuf }], arm_tp, "join-arm-owner") } else { d.code };
   test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [subject]), subject, dflt);
   rt = if owned { el_types::with_deps(el_types::without_deps(lhs), [held]) } else { lhs };
   ex(el_ir::v_block([el_ir::v_set(held, x.code), test], rt, "ncc"), rt)
@@ -12809,7 +12812,6 @@ fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, result
     if e.first_pass {
       if unrenamed && !buffer_bound(e) {
         mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
-        e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, mw) }];
         rename_onto(e, vars, rb, mw);
       }
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
@@ -12838,7 +12840,6 @@ fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, result
     if e.first_pass {
       if unrenamed && !buffer_bound(e) {
         mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
-        e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, mw) }];
         rename_onto(e, vars, rb, mw);
       }
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);

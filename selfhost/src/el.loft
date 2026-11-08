@@ -31,11 +31,13 @@ pub struct Capture {
   pub tp: ir::TypeT
 }
 
-// A work ref a first-pass return renamed the buffer onto that no second-pass site mints again
-// (`materialize_view_return`), by function and name: the second pass steps over its name.
+// A work ref the first pass made a parameter (the return buffer renamed onto it), by function
+// and name, with the site that minted it: the second pass steps over its name at any other site
+// (`Function::argument_of_another_site`, loft#848).
 pub struct StepOver {
   pub d: integer,
-  pub name: text
+  pub name: text,
+  pub site: integer
 }
 
 // An instance made before its template's second-pass body was read: filled after the pass.

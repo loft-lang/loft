@@ -33,6 +33,12 @@ pub struct LenLocal {
   pub vec: ir::Node
 }
 
+// A work ref and the syntax node it was minted at.
+pub struct RefSite {
+  pub nr: integer,
+  pub site: integer
+}
+
 pub struct LoopCounter {
   pub lv: integer,
   pub count: integer
@@ -68,9 +74,13 @@ pub struct Vars {
   pub work_ref: integer = 0,
   pub work_ref_p2: integer = 0,
   pub work_refs: vector<integer>,
-  // Work refs a pass-1 return renamed the buffer onto that no pass-2 site re-mints
-  // (`materialize_view_return`): stepped over by `work_ref` (`argument_of_another_site`).
-  pub step_over: vector<integer>,
+  // The work refs the first pass made parameters, each with the site that minted it: `work_ref`
+  // steps over one at any other site (`argument_of_another_site`).
+  pub step_over: vector<RefSite>,
+  // The work refs this pass minted, each with its site (`Variable::source`).
+  pub ref_sites: vector<RefSite>,
+  // The syntax node being elaborated: where a work ref is minted (`lexer.at()` in Rust).
+  pub site: integer = -1,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
   // The `x#count` counter a body asked of an open loop (`Function::loop_count_of`), by its loop
@@ -584,6 +594,8 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.work_ref = 0;
   v.work_ref_p2 = 0;
   v.work_refs = [];
+  v.ref_sites = [];
+  v.site = -1;
   v.active_loops = [];
   v.loop_counts = [];
   v.whiles = 0;
@@ -764,12 +776,39 @@ fn sorted_in(l: vector<integer>, nr: integer) -> vector<integer> {
 // A name that now denotes another site's return buffer is stepped over, not reused (loft#848).
 pub fn work_ref(v: Vars, t: ir::TypeT) -> integer {
   v.work_ref += 1;
-  while v.names["__ref_{v.work_ref}"] != null && v.step_over.contains(v.names["__ref_{v.work_ref}"]!.nr) {
+  while another_sites_parameter(v, "__ref_{v.work_ref}", t) {
     v.work_ref += 1;
   }
   nr = add_variable(v, "__ref_{v.work_ref}", t);
   v.work_refs = sorted_in(v.work_refs, nr);
+  v.ref_sites += [RefSite { nr: nr, site: v.site }];
   nr
+}
+
+// `retypes_argument` / `argument_of_another_site`: does the work ref `name` denote a parameter
+// this site must not be handed — one of another type, or one the first pass minted elsewhere?
+// The counter restarts each pass while the names persist, so the name the first pass left on
+// the return buffer can come up at another site on the second (loft#848).
+fn another_sites_parameter(v: Vars, name: text, t: ir::TypeT) -> boolean {
+  x = v.names[name];
+  if x == null || !v.vars[x!.nr].argument {
+    return false;
+  }
+  nr = x!.nr;
+  if el_types::without_deps(tp(v, nr)) != el_types::without_deps(t) {
+    return true;
+  }
+  for s in v.step_over {
+    if s.nr == nr {
+      return s.site != v.site;
+    }
+  }
+  false
+}
+
+// The first pass's work refs that ended as parameters, with their sites, for the second pass.
+pub fn minted_parameters(v: Vars) -> vector<RefSite> {
+  [for s in v.ref_sites if v.vars[s.nr].argument { s }]
 }
 
 // `Parser::ensure_rebind_witness`: the work-ref that witnesses parameter `p`'s entry store —
