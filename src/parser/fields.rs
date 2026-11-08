@@ -607,8 +607,12 @@ impl Parser {
                     // `change_var` does not re-type the receiver.
                     *code = Value::Null;
                 } else {
+                    let place = code.clone();
                     let recv = self.guard_variant_receiver(enum_d, &field, &t, code.clone());
-                    *code = self.get_field(found_d_nr, found_fnr, recv);
+                    *code = match self.variant_field_getter(enum_d, &field, &t, &place) {
+                        Some(getter) => getter,
+                        None => self.get_field(found_d_nr, found_fnr, recv),
+                    };
                     self.data.attr_used(found_d_nr, found_fnr);
                     self.check_visibility("field", found_d_nr, found_fnr);
                     self.produced = Some(self.attr_fact_of(found_d_nr, found_fnr));
@@ -1152,8 +1156,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     ///
     /// Returns the receiver UNCHANGED — no tag read, no cost — when the question does not
     /// arise:
-    /// * every variant declares the field (the common-prefix case C89 promises, correct
-    ///   today because the layout gives a shared name+type one slot);
+    /// * every variant declares the field — read at one offset when the variants agree on it,
+    ///   else through the tag-switching getter (`variant_field_getter`, loft#2441);
     /// * the enum is a synthetic `__nullable<S>`, whose payload access is @PLN25's null
     ///   model rather than a user-visible variant question (guarding it would make
     ///   `v[i].field` answer null);
@@ -1213,6 +1217,106 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         }
         let absent = self.cl("OpNullRefSentinel", &[]);
         v_if(cond, recv, absent)
+    }
+
+    /// The name of the block [`Self::variant_field_getter`] builds; an assignment recognises
+    /// its target by it.
+    pub(crate) const VARIANT_FIELD: &'static str = "variant field";
+
+    /// loft#2441, `@FR-C-Var` — `e.n` answers the `n` of the variant `e` HOLDS.
+    ///
+    /// Each variant is laid out on its own (`calc::calculate_positions` packs by size), so a
+    /// field every variant declares at one type can still sit at a different offset in each:
+    /// `KFire { n, s: text }` puts `n` at 8 and `KIce { m, n }` at 16.  One read at the first
+    /// declaring variant's offset answered `KIce.m` for a `KIce`, silently, on both backends.
+    /// Where the declaring variants disagree on the offset, the read is a getter that switches
+    /// on the tag — one read per offset, each at the offset of the variants that have it; a
+    /// variant declaring no such field reads the type's null, as the partial guard (loft#980)
+    /// answers.  `None` when every declaring variant agrees: the one read is right.
+    ///
+    /// The tag and the field are read from the same receiver, so it must be a place a second
+    /// read finds unchanged; any other receiver is refused, naming the cure (bind it first).
+    fn variant_field_getter(
+        &mut self,
+        enum_d: u32,
+        field: &str,
+        tp: &Type,
+        place: &Value,
+    ) -> Option<Value> {
+        if self.data.def(enum_d).name.starts_with("__nullable<") {
+            return None;
+        }
+        let (owning, total) = self.variants_declaring_field(enum_d, field, tp);
+        // (offset, the variants holding the field there, one of them to read through)
+        let mut groups: Vec<(u16, Vec<u32>)> = Vec::new();
+        for v in &owning {
+            let pos = self.field_position(*v, field);
+            match groups.iter_mut().find(|(p, _)| *p == pos) {
+                Some((_, vs)) => vs.push(*v),
+                None => groups.push((pos, vec![*v])),
+            }
+        }
+        if groups.len() < 2 {
+            return None;
+        }
+        // Code that already knows the variant — a match arm's root capture, or a place an `is`
+        // test proved — reads that variant's field directly, at its own offset.
+        let known = match place.unspan() {
+            Value::Var(v) => self.capture_variant.get(v).copied(),
+            _ => None,
+        }
+        .or_else(|| {
+            let at = place.unspan();
+            self.variant_proven
+                .iter()
+                .rev()
+                .find(|(p, _)| p.unspan() == at)
+                .and_then(|(_, disc)| {
+                    owning
+                        .iter()
+                        .copied()
+                        .find(|v| self.variant_disc(enum_d, true, *v, "") == *disc)
+                })
+        });
+        if let Some(v) = known.filter(|v| owning.contains(v)) {
+            let a = self.data.attr(v, field);
+            return Some(self.get_field(v, a, place.clone()));
+        }
+        if !place.is_place_read(&self.data) {
+            let display = self.data.def(enum_d).original_name().clone();
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{field}` sits at a different offset in each variant of `{display}` that declares \
+                 it, so reading it needs the value's tag, and this value is not a place the tag can \
+                 be read from without evaluating it twice — bind it to a local first"
+            );
+            return Some(Value::Null);
+        }
+        let read = |this: &mut Self, v: u32| {
+            let a = this.data.attr(v, field);
+            this.get_field(v, a, place.clone())
+        };
+        let mut chain = if owning.len() < total {
+            let absent = self.cl("OpNullRefSentinel", &[]);
+            let a = self.data.attr(owning[0], field);
+            self.get_field(owning[0], a, absent)
+        } else {
+            let (_, vs) = groups.pop().expect("two groups");
+            read(self, vs[0])
+        };
+        while let Some((_, vs)) = groups.pop() {
+            let tag = self.elem_tag_int(place.clone());
+            let mut cond = Value::Null;
+            for v in &vs {
+                let disc = self.variant_disc(enum_d, true, *v, "");
+                let test = self.cl("OpEqInt", &[tag.clone(), Value::Int(disc)]);
+                cond = if cond == Value::Null { test } else { v_if(cond, Value::Boolean(true), test) };
+            }
+            let arm = read(self, vs[0]);
+            chain = v_if(cond, arm, chain);
+        }
+        Some(v_block(vec![chain], tp.clone(), Self::VARIANT_FIELD))
     }
 
     /// The variants of `enum_d_nr` that declare `field` at the same TYPE as

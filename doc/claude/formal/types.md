@@ -67,7 +67,13 @@ eliminate it; indexing (`(N-Index)`) is one of the fallible operations that synt
   (C-Tuple)   (σ₁…σₙ) ⤳ (τ₁…τₙ)        ⟸   ∀i. σᵢ ⤳ τᵢ
   (C-Var)     Reference(S) ⤳ Enum(E)   ⟸   S ∈ variants(E)            (and plain
               Enum ⤳ Integer tag).  NB: the null INTRO `S ⤳ S?` is `(N-Intro)`; there is
-              NO implicit `S? ⤳ S` unwrap (that is `(N-Store)`-illegal — discharge via `??`)
+              NO implicit `S? ⤳ S` unwrap (that is `(N-Store)`-illegal — discharge via `??`).
+              A field read through `Enum(E)` answers the field of the variant the value
+              HOLDS: each variant lays its fields out on its own, so where the declaring
+              variants place it apart the read switches on the tag, and a variant that does
+              not declare it reads the type's null; a WRITE there is refused (loft#2441).
+              A value whose variant is known (its type, a match capture, an `is` test) reads
+              the variant's field directly.
   (C-Int)     Integer[a,b] ⤳ Integer[c,d]   ⟸   [a,b] ⊆ [c,d]         (see I-*)
   (C-Num)     Integer ⤳ float,  Integer ⤳ single,  single ⤳ float     (a numeric WIDENING;
               the value is converted, never reinterpreted — and through (C-Tuple) a tuple
