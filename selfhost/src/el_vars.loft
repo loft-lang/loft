@@ -40,6 +40,12 @@ pub struct CaptureAlias {
   pub nr: integer
 }
 
+// A place and the variant ordinal a test proved it holds.
+pub struct Proven {
+  pub place: ir::Node,
+  pub disc: integer
+}
+
 // A work ref and the syntax node it was minted at.
 pub struct RefSite {
   pub nr: integer,
@@ -93,6 +99,8 @@ pub struct Vars {
   pub capture_ok: boolean = false,
   pub is_bindings: vector<ir::Node>,
   pub is_aliases: vector<CaptureAlias>,
+  // `Parser::variant_proven`: the places an `is` test proved hold one variant, in the arm.
+  pub proven: vector<Proven>,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
   // The `x#count` counter a body asked of an open loop (`Function::loop_count_of`), by its loop
