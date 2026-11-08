@@ -1834,6 +1834,50 @@ fn literal_backing_store(b: ir::Block) -> integer {
 }
 
 // The `return`s among `ops` that answer a fresh literal, at any depth.
+// Does syntax node `n` hold, inside a loop, `name += f(…)` — a call's vector appended to local
+// `name`?
+fn appends_call_in_loop(e: el::El, n: integer, name: text, looped: boolean) -> boolean {
+  if n < 0 {
+    return false;
+  }
+  match e.p.nodes[n] {
+    SAssign { op, target, e: rhs } => {
+      if looped && op == "+=" && rhs != null && e.p.nodes[rhs!] is SCall {
+        match e.p.nodes[target] {
+          SName { name: tn, member } => { if member == "" && tn == name { return true; } },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  inner = looped || e.p.nodes[n] is SFor || e.p.nodes[n] is SWhile;
+  for c in el_length::children(e, n) {
+    if appends_call_in_loop(e, c, name, inner) {
+      return true;
+    }
+  }
+  false
+}
+
+// The `return`s among `ops` of a plain vector local — no parameter — at any depth.
+fn local_vector_returns(vars: el_vars::Vars, ops: vector<ir::Node>) -> integer {
+  r = 0;
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdReturn { inner } => {
+        match el_ir::unspan(inner) {
+          NdVar { n } => { if !vars.vars[n].argument && el_types::base(el_vars::tp(vars, n)) is TyVector { r += 1; } },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+    r += local_vector_returns(vars, el_ir::children(op));
+  }
+  r
+}
+
 fn literal_returns(ops: vector<ir::Node>) -> integer {
   r = 0;
   for op in ops {
@@ -1918,11 +1962,12 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
         }
         code = ir::NdBlock { block: [bl] };
       }
-      // Every early exit a fresh literal and the tail one too: the buffer is renamed onto the
-      // tail literal's store, as without early exits, and each early literal is copied into it.
+      // Every early exit a fresh literal or a vector local, and the tail a literal: the buffer is
+      // renamed onto the tail literal's store, as without early exits, and each early exit is
+      // copied into it (`deliver_mid_vector_returns`: a local by `OpReplaceVector`).
       tail_store = match tail { NdBlock { block: tb } => literal_backing_store(tb[0]), _ => -1 };
       mids = bl.operators[0..len(bl.operators) - 1];
-      if tail_buf < 0 && tail_store >= 0 && row >= 0 && returns_in(mids) == literal_returns(mids) && attr_nr(el::def(e, d), "__retbuf") >= 0 && starts_with(el_vars::name_of(vars, tail_store), "__vdb_") {
+      if tail_buf < 0 && tail_store >= 0 && row >= 0 && returns_in(mids) == literal_returns(mids) + local_vector_returns(vars, mids) && attr_nr(el::def(e, d), "__retbuf") >= 0 && starts_with(el_vars::name_of(vars, tail_store), "__vdb_") {
         rename_onto(e, vars, rb, tail_store);
         for op in bl.operators {
           if op#index < len(bl.operators) - 1 {
@@ -2015,9 +2060,11 @@ fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, re
     } else if !literal && local < 0 {
       // A vector local built in fewer than two steps takes the buffer (`Rename`): it becomes the
       // hidden parameter, its binds then refill the caller's vector.
+      // A local a loop appends a call's vector to keeps its store and is copied in at the tail
+      // (`classify_ret_promotion`'s `Bind`, `var_call_rebound_nested`).
       match tail {
         NdVar { n } => {
-          if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && el_vars::tp(vars, n) is TyVector {
+          if !vars.vars[n].argument && !starts_with(el_vars::name_of(vars, n), "_") && el_vars::tp(vars, n) is TyVector && !appends_call_in_loop(e, vars.body, el_vars::name_of(vars, n), false) {
             rename_onto(e, vars, rb, n);
           }
         },
@@ -12125,16 +12172,10 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // A `[`-led literal returned from a collection-typed function is read against the declared
     // result, its deps left out (`parse_return`, @P365): an empty `return []` is that vector.
     hinted = el_types::is_collection(el_types::base(result)) && e.p.nodes[x!] is SVecLit;
+    // `parent_tp` is `Null` there: the literal's element temp takes no context's type.
     if hinted {
       vars.expect_node = x!;
       vars.expect = el_types::without_deps(el_types::base(result));
-      match el_types::base(result) {
-        TyVector { inner } => {
-          vars.lit_hint_node = x!;
-          vars.lit_hint = inner;
-        },
-        _ => {}
-      }
     }
     v = if hinted && vec_lit_len(e, x!) == 0 && el_types::base(result) is TyVector {
       vt = el_types::without_deps(el_types::base(result));
@@ -12144,7 +12185,6 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     };
     if hinted {
       vars.expect_node = -1;
-      vars.lit_hint_node = -1;
     }
     if el_types::base(result) is TyReference {
       return record_return(e, vars, v, result);
