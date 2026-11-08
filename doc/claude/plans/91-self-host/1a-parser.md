@@ -130,6 +130,12 @@ copied:
 
 ### Rust accidents
 
+- A call answering a record `τ?` that borrows a parameter (`fn whole(s: S) -> S? { s }`) is
+  typed borrowing a VARIABLE argument but not a literal one: `whole(S { a: 7 })` is `ref(S)?`
+  with no dep on the literal's store, where the dense `-> S` names it.  Reproduced; probed
+  (both backends, `LOFT_POISON` + `LOFT_STRICT_STORES`, the result outliving the literal's
+  block, churn between): no fault — the record lives in the caller's return buffer.
+
 - A record literal with a vector-literal field written into a place (`xs[i].m = V { a: [1] }`)
   is built apart and copied in; the first pass's in-place attempt leaves an `_elm_N` the second
   never uses, still declared at the function head.  The port refuses this shape by name.
@@ -144,7 +150,7 @@ copied:
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | 461 of 1680 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
+| E image | 463 of 1680 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
 | E by rule | 60 of 379 formal rules carried for every suite cell, 94 for some, 225 for none; 254 of 1073 suite cells (14 rules have only cells the Rust front end refuses) | dispatch (5 of 28 cells: free overload sets carried; methods in a set, generic members, run-time variant dispatch refused by name), tuples (0 of 22), closures (1 of 47), calls (6 of 50), interfaces (2 of 38) |
 
 **Measuring by formal rule.**  The suite holds its cells under `rules/<chapter>/<rule>/`, so a
