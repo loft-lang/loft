@@ -208,6 +208,16 @@ pub fn new_var(v: Vars, name: text, tp: ir::TypeT) -> integer {
   nr
 }
 
+// `Function::copy_variable`: a second variable of the same name, type and flags, which no
+// spelling names — the per-field copy of a `#fields` body's binding.
+pub fn copy_variable(v: Vars, nr: integer) -> integer {
+  c = len(v.vars);
+  v.vars += [v.vars[nr]!];
+  v.defined += [v.defined[nr] ?? false];
+  v.viewed += [[]];
+  c
+}
+
 // A new variable's record: used once, no slot, no flags (`Variable::new`).
 pub fn fresh_variable(name: text, tp: ir::TypeT) -> ir::Variable {
   ir::Variable {
