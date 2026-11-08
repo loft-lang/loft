@@ -44,7 +44,9 @@ pub fn rewrite_program(data: &mut Data) {
         return;
     }
     for d_nr in 0..data.definitions() {
-        if data.def_type(d_nr) != DefType::Function {
+        if data.def_type(d_nr) != DefType::Function
+            || !calls(&data.definitions[d_nr as usize].code, ids.set_child)
+        {
             continue;
         }
         // The proof reads the callee's code, and a recursion's callee is this function: it is
@@ -64,6 +66,18 @@ pub fn rewrite_program(data: &mut Data) {
         }
     }
     crate::host_result::rewrite_program(data);
+}
+
+/// Whether `n` calls `op` anywhere.  Both clauses rewrite only at an `OpSetChildRec` (the
+/// write-back's adopt and the literal field's write), so a body without one is skipped before
+/// the snapshot below, which would otherwise copy every function's IR on every compile.
+fn calls(n: &Value, op: u32) -> bool {
+    if matches!(n.unspan(), Value::Call(f, _) if *f == op) {
+        return true;
+    }
+    let mut found = false;
+    n.for_each_child(&mut |c| found = found || calls(c, op));
+    found
 }
 
 /// The function being rewritten, with its body as it was before the rewrite.
