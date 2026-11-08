@@ -7678,6 +7678,49 @@ impl Parser {
 
     /// Recursively replace `Value::Var(0)` (the record placeholder used in field default
     /// expressions) with the actual record reference from the calling context.
+    /// The work-ref a struct-enum VARIANT default builds in, when it builds in one of its own:
+    /// `mode: Mode = Idle` (an `EnumUnitLit` block) and `hint: Ty = TyInt { n: 4 }` (an `Object`
+    /// block of the variant) each close on the work-ref they fill.  `None` for every other
+    /// default, an `Object` built in place through the record (`Var(0)`) included.
+    ///
+    /// The default is parsed once, in the struct, where each such default takes the NEXT
+    /// work-ref of the struct's own table — the first `Var(0)`, the second `Var(1)` — so at a
+    /// construction site that number names whatever local it is there.
+    pub(crate) fn variant_default_ref(val: &Value) -> Option<u16> {
+        let Value::Block(b) = val.unspan() else {
+            return None;
+        };
+        let Some(Value::Var(w)) = b.operators.last().map(Value::unspan) else {
+            return None;
+        };
+        match b.name {
+            "EnumUnitLit" => Some(*w),
+            "Object" if *w != 0 => Some(*w),
+            _ => None,
+        }
+    }
+
+    /// Re-home a variant default ([`Self::variant_default_ref`]) from its struct-table work-ref
+    /// `own` to `fresh`, a work-ref of the construction site, and point a `$` read (`Var(0)`)
+    /// at the `record`.  Re-homing only `Var(0)` left a second default building into local 1
+    /// — in `fn new_v(name: text, file: text) -> V { V { name: name, file: file } }`, the
+    /// parameter `file`: the interpreter crashed reading it after, the C refused the program
+    /// and rustc did not compile it.  The work-ref's `Set` is re-homed with its reads; left
+    /// alone it nulled local 2, the return buffer.
+    pub(crate) fn rehome_variant_default(val: Value, own: u16, fresh: u16, record: &Value) -> Value {
+        let mut val = val;
+        val.map_nodes(&mut |n| match n {
+            Value::Var(v) if *v == own => *n = Value::Var(fresh),
+            Value::Set(v, _) if *v == own => *v = fresh,
+            _ => {}
+        });
+        if own == 0 {
+            val
+        } else {
+            Self::replace_record_ref(val, record)
+        }
+    }
+
     pub(crate) fn replace_record_ref(mut val: Value, record: &Value) -> Value {
         val.map_nodes(&mut |n| {
             if matches!(n, Value::Var(0)) {
@@ -8240,10 +8283,11 @@ impl Parser {
                 if default == Value::Null {
                     default = to_default(&tp, &self.data);
                 }
-            } else if matches!(&default, Value::Block(b) if b.name == "EnumUnitLit") {
+            } else if let Some(own) = Self::variant_default_ref(&default) {
                 // @PLN22 Phase 1 — a mixed struct-enum unit-variant default
                 // (`mode: Mode = Idle`) is a SELF-CONTAINED allocation block whose
-                // `Var(0)` is its OWN work-ref, not the record placeholder.  Re-home
+                // closing `Var(w)` is its OWN work-ref (`Var(0)` for the struct's first
+                // such default only), not the record placeholder.  Re-home
                 // it to a FRESH work-ref in THIS construction context: leaving
                 // `Var(0)` for the `replace_record_ref(_, code)` below would rewrite
                 // it to the struct's own ref, so the default's `OpDatabase`
@@ -8254,7 +8298,7 @@ impl Parser {
                 // freed at scope end (NOT skip_free, unlike the `s = Idle`
                 // assignment case where the LHS owns the store directly).
                 let fresh = self.vars.work_refs(&tp, &mut self.lexer);
-                default = Self::replace_record_ref(default, &Value::Var(fresh));
+                default = Self::rehome_variant_default(default, own, fresh, code);
             } else {
                 default = Self::replace_record_ref(default, code);
             }
