@@ -3322,7 +3322,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SComprehension { at: _ } => comprehension_value(e, vars, n),
     SAs { at, e: ae, tp: at_tp, checked } => cast_expr(e, vars, ae, at_tp),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
-    SSizeof { kind, tp: st } => sizeof_expr(e, vars, kind, st),
+    SSizeof { kind, tp: st, e: se } => if kind == "sizeof" { sizeof_of(e, vars, st, se) } else { sizeof_expr(e, vars, kind, st) },
     STupleLit { elems } => tuple_lit(e, vars, elems),
     STupleGet { e: te, index } => tuple_get(e, vars, te, index),
     SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, caps, has_caps),
@@ -3702,10 +3702,7 @@ fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -> Ex
   ex(ir::NdNull, ir::TyUnknown { n: 0 })
 }
 
-// `Parser::parse_size` for `sizeof(<struct>)`: the packed size of the struct's store type, a
-// constant on the second pass.  A value, a type that is no plain declared struct (an alias with
-// a forced size, an enum, a collection, a tuple, a type variable) and `type_name` are refused
-// by name.
+// `type_name(T)` of a plain declared struct; anything else is refused by name.
 fn sizeof_expr(e: el::El, vars: el_vars::Vars, kind: text, st: integer?) -> Ex {
   int_t = ir::TyInteger { spec: i32_spec() };
   name = "";
@@ -3728,6 +3725,144 @@ fn sizeof_expr(e: el::El, vars: el_vars::Vars, kind: text, st: integer?) -> Ex {
     return ex(ir::NdNull, int_t);
   }
   ex(ir::NdInt { n: e.b.types[el::def(e, d).known_type]!.size }, int_t)
+}
+
+// `Parser::parse_size`: `sizeof(…)` is the packed size of a type, decided as Rust's lexer
+// decides it — a name that is a declared type (not a variant) is the type, any other type
+// spelling is the type, and anything else is a value: a struct enum's value its variant's size
+// (`variant_size`), a tuple's or a typed value's its type's.  A type variable (inside a generic,
+// sized per instance through `OpSizeofRef`) is refused by name.
+fn sizeof_of(e: el::El, vars: el_vars::Vars, st: integer?, se: integer?) -> Ex {
+  int_t = ir::TyInteger { spec: i32_spec() };
+  value = se;
+  if st != null {
+    plain_name = match e.p.nodes[st!] {
+      STy { name: nm, member, args, keys, limit, nullable } => if member == "" && len(args) == 0 && len(keys) == 0 && limit == null && !nullable { nm } else { "" },
+      _ => ""
+    };
+    d = if plain_name == "" { -1 } else { el::def_nr(e, plain_name) };
+    for tv in e.type_vars {
+      if tv.spelling == plain_name {
+        el::refuse(e, "a `sizeof` of a type variable");
+        return ex(ir::NdNull, int_t);
+      }
+    }
+    if plain_name == "" || (d >= 0 && el::def(e, d).def_type != el::DT_ENUM_VALUE) {
+      t = el_types::parse_type(e, st!);
+      if t == null {
+        return ex(ir::NdNull, int_t);
+      }
+      return sized(e, packed_size(e, t!, d), int_t);
+    }
+    value = st;
+  }
+  if value == null {
+    el::refuse(e, "a `sizeof` with nothing to size");
+    return ex(ir::NdNull, int_t);
+  }
+  x = match e.p.nodes[value!] { STy { name: nm } => name_expression(e, vars, nm, "", false), _ => expression(e, vars, value!) };
+  en = match el_types::base(x.tp) { TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
+  if en >= 0 {
+    if e.first_pass {
+      return ex(ir::NdNull, int_t);
+    }
+    return ex(variant_size(e, vars, x.code, en, packed_size(e, x.tp, -1)), int_t);
+  }
+  if !(el_types::base(x.tp) is TyTuple) && elm_def(e, x.tp) < 0 {
+    el::refuse(e, "a `sizeof` of a value of this type: {type_kind(x.tp)}");
+    return ex(ir::NdNull, int_t);
+  }
+  sized(e, packed_size(e, x.tp, -1), int_t)
+}
+
+fn sized(e: el::El, n: integer, int_t: ir::TypeT) -> Ex {
+  if e.first_pass {
+    return ex(ir::NdNull, int_t);
+  }
+  if n < 0 {
+    el::refuse(e, "a `sizeof` of a type this port lays out no size for");
+    return ex(ir::NdNull, int_t);
+  }
+  ex(ir::NdInt { n: n }, int_t)
+}
+
+// `Parser::variant_size`: a struct enum's value sized by the variant it holds — its tag read into
+// `_sizeof_disc_N`, then one test per variant, the absent value's size last.
+fn variant_size(e: el::El, vars: el_vars::Vars, value: ir::Node, en: integer, absent: integer) -> ir::Node {
+  int_t = ir::TyInteger { spec: i32_spec() };
+  d = el_vars::create_unique(vars, "sizeof_disc", int_t);
+  el_vars::set_defined(vars, d);
+  disc = el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [value, ir::NdInt { n: 0 }])]);
+  chain = ir::NdInt { n: absent };
+  variants = [for x in e.b.data.definitions if x.def_type == el::DT_ENUM_VALUE && x.parent == en { x#index }];
+  for c in rev(variants) {
+    nr = match el::def(e, c).attributes[0]!.value[0] ?? ir::NdNull { NdEnum { ord } => ord, _ => -1 };
+    if nr < 0 {
+      continue;
+    }
+    size = e.b.types[el::def(e, c).known_type]!.size;
+    chain = el_ir::v_if(el_ir::cl(e, "OpEqInt", [ir::NdVar { n: d }, ir::NdInt { n: nr }]), ir::NdInt { n: size }, chain);
+  }
+  el_ir::v_block([el_ir::v_set(d, disc), chain], int_t, "sizeof variant")
+}
+
+// `Parser::packed_size`: an alias's declared width, an integer's forced or range width, a
+// collection's handle, a tuple's record, else the size of the type's definition; -1 when the
+// layout is not known here.
+fn packed_size(e: el::El, t: ir::TypeT, alias: integer) -> integer {
+  if alias >= 0 && el::def(e, alias).forced_size > 0 {
+    return el::def(e, alias).forced_size;
+  }
+  match el_types::base(t) {
+    TyInteger { spec } => {
+      if spec.forced_size > 0 {
+        return spec.forced_size;
+      }
+      codes = spec.max - spec.min + 1;
+      return if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 };
+    },
+    TyVector { inner: _ } => { return collection_size(e, t); },
+    TySorted { n: _ } => { return collection_size(e, t); },
+    TyIndex { n: _ } => { return collection_size(e, t); },
+    TyHash { n: _ } => { return collection_size(e, t); },
+    TyRadix { n: _ } => { return collection_size(e, t); },
+    TyTrie { n: _ } => { return collection_size(e, t); },
+    TyTuple { elems } => {
+      d = el_types::tuple_def_of(e, elems);
+      kt = if d < 0 { el::NO_TYPE } else { el::def(e, d).known_type };
+      return if kt == el::NO_TYPE { -1 } else { e.b.types[kt]!.size };
+    },
+    _ => {}
+  }
+  d = elm_def(e, t);
+  kt = if d < 0 { el::NO_TYPE } else { el::def(e, d).known_type };
+  if kt == el::NO_TYPE { -1 } else { e.b.types[kt]!.size }
+}
+
+fn collection_size(e: el::El, t: ir::TypeT) -> integer {
+  own = type_def_nr(e, t);
+  if own >= 0 && el::def(e, own).forced_size > 0 {
+    return el::def(e, own).forced_size;
+  }
+  v = el::def_nr(e, "vector");
+  if v >= 0 && el::def(e, v).forced_size > 0 { el::def(e, v).forced_size } else { -1 }
+}
+
+// `Data::type_elm`: the definition a type's values are sized and stored by, or -1.
+fn elm_def(e: el::El, t: ir::TypeT) -> integer {
+  match el_types::base(t) {
+    TyInteger { spec: _ } => el::source_nr(e, el::STD_SOURCE, "integer"),
+    TyBoolean => el::source_nr(e, el::STD_SOURCE, "boolean"),
+    TyFloat => el::source_nr(e, el::STD_SOURCE, "float"),
+    TyText { dep: _ } => el::source_nr(e, el::STD_SOURCE, "text"),
+    TySingle => el::source_nr(e, el::STD_SOURCE, "single"),
+    TyCharacter => el::source_nr(e, el::STD_SOURCE, "character"),
+    TyEnum { n } => n,
+    TyReference { n } => if el_types::type_var(e, el_types::base(t)) >= 0 { -1 } else { n },
+    TyRoutine { n } => n,
+    TyVector { inner } => match inner { TyReference { n } => n, _ => type_def_nr(e, inner) },
+    _ => -1
+  }
 }
 
 // `Parser::parse_is_variant`: `x is V` compares the subject's ordinal with the variant's
