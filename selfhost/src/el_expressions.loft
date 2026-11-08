@@ -2865,6 +2865,55 @@ fn projection_op(nm: text) -> boolean {
   nm == "OpGetField" || nm == "OpGetVector" || nm == "OpVectorRef" || nm == "OpGetRecord" || nm == "OpRefFromChildRec"
 }
 
+// `literal_exits_into_buffer`'s precondition, read off the syntax: does a `return` in `i` hand
+// back a field or an element (a member read with no call, an index)?  That exit is copied into
+// a work ref of its own (`materialize_view_return`), so the buffer is no chain's and a literal
+// exit beside it keeps its own store.
+fn returns_projection(e: el::El, i: integer) -> boolean {
+  match e.p.nodes[i] {
+    SJump { kind, e: x } => {
+      if kind == "return" && x != null {
+        return match e.p.nodes[x!] { SMember { call } => !call, SIndex { range } => !range, _ => false };
+      }
+    },
+    _ => {}
+  }
+  for c in el_length::children(e, i) {
+    if returns_projection(e, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// Does the projection chain `n` read out of a loft function's fresh record — a call handed its
+// own hidden work ref, answering no view of its arguments?
+fn call_rooted(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  root = projection_root(e, n);
+  if root == null {
+    return false;
+  }
+  match el_ir::unspan(root!) {
+    NdCall { def_nr, args } => !returns_argument_view(el::def(e, def_nr)) && hidden_ref_arg(vars, args) >= 0,
+    _ => false
+  }
+}
+
+// The projection chain `n` with the node it starts from replaced by `by`.
+fn replace_projection_root(e: el::El, n: ir::Node, by: ir::Node) -> ir::Node {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if projection_op(el::def(e, def_nr).name) && len(args) > 0 {
+        na = args;
+        na[0] = replace_projection_root(e, args[0], by);
+        return ir::NdCall { def_nr: def_nr, args: na };
+      }
+      by
+    },
+    _ => by
+  }
+}
+
 // The projection chain with its root call replaced by the inline container `w`.
 fn bind_root(e: el::El, n: ir::Node, w: integer, rt: ir::TypeT) -> ir::Node {
   match n {
@@ -5543,7 +5592,7 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   ls: vector<ir::Node> = [];
   // The first pass makes each item through the record (`OpNewRecord`), scalars too: what
   // `child_allocs` counts there.
-  if e.first_pass && elm >= 0 {
+  if e.first_pass && elm >= 0 && local {
     vars.allocs += [rec];
   }
   for it in items {
@@ -12502,7 +12551,7 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
   }
   // A buffer a chain renamed onto its work ref (`chain_return_buffer_var`) is still the
   // caller's: a literal is built into it as into `__retbuf`.
-  if !e.first_pass && !unrenamed {
+  if !e.first_pass && !unrenamed && !returns_projection(e, vars.body) {
     cb = return_buffer(e, vars);
     if cb >= 0 && starts_with(el_vars::name_of(vars, cb), "__ref_") && !starts_with(el_vars::name_of(vars, cb), "__ref_p2_") {
       built = object_into_buffer(e, vars, x, cb, result);
@@ -12584,6 +12633,56 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
       return ex(ir::NdReturn { inner: x }, ir::TyNever);
     }
   }
+  // A record local made inside an open loop is no rename candidate (`declared_in_loop`): it is
+  // copied into the buffer (`materialize_return_into`), behind its null test.
+  // The buffer is bound by it (`RetPromotion::Bind`): no later exit renames it.
+  in_loop = match x { NdVar { n: lv } => !vars.vars[lv].argument && heap_def(el_vars::tp(vars, lv)) >= 0 && len(vars.active_loops) > 0 && lv >= vars.active_loops[0], _ => false };
+  if in_loop && unrenamed && e.first_pass {
+    ba0 = attr_nr(el::def(e, d), "__retbuf");
+    ret0 = el::def(e, d).returned[0];
+    if ba0 >= 0 && !el_types::deps(ret0).contains(ba0) {
+      e.b.data.definitions[d].returned = [el_types::with_deps(ret0, el_types::deps(ret0) + [ba0])];
+    }
+  }
+  if in_loop && unrenamed && !e.first_pass {
+    lcopy = copy_into_buffer(e, vars, x, match x { NdVar { n: lv } => lv, _ => -1 }, rb, result);
+    if lcopy != null {
+      return ex(ir::NdReturn { inner: lcopy! }, ir::TyNever);
+    }
+  }
+  // `MaterializeView` (#306) for a field or an element of a record the body owns — a local, or a
+  // call's fresh record held in `__ret_root_N` (`return_source`): copied into a work ref the
+  // first pass renames the buffer onto (`materialize_view_return`), behind the source's null
+  // test.
+  if w < 0 && x is NdCall && heap_def(el_types::base(result)) >= 0 && (proot >= 0 && !vars.vars[proot].argument || call_rooted(e, vars, x)) {
+    src = x;
+    pre: vector<ir::Node> = [];
+    if proot < 0 {
+      root_call = el_ir::unspan(projection_root(e, x) ?? ir::NdNull);
+      rr = el_vars::create_unique(vars, "_ret_root", el_types::without_deps(el_types::base(match root_call { NdCall { def_nr } => el::def(e, def_nr).returned[0] ?? ir::TyVoid, _ => ir::TyVoid })));
+      pre = [el_ir::v_set(rr, root_call)];
+      src = replace_projection_root(e, x, ir::NdVar { n: rr });
+    }
+    if e.first_pass {
+      if unrenamed && !buffer_bound(e) {
+        rename_onto(e, vars, rb, el_vars::work_ref(vars, el_types::without_deps(el_types::base(result))));
+      }
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
+    mb = return_buffer(e, vars);
+    td = heap_def(el_types::base(result));
+    if mb >= 0 && !unrenamed {
+      kt = ir::NdInt { n: el::def(e, td).known_type };
+      b = ir::NdVar { n: mb };
+      owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [mb]);
+      copy = el_ir::v_block([el_ir::v_set(mb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [src, b, kt]), b], owned, "materialized_view_return");
+      chosen = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [src]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
+      if len(pre) > 0 {
+        chosen = el_ir::v_block(pre + [chosen], owned, "return_source");
+      }
+      return ex(ir::NdReturn { inner: chosen }, ir::TyNever);
+    }
+  }
   // `RetPromotion::Bind`: no rename took this value (an earlier exit renamed or bound the buffer,
   // or the local cannot be the buffer), so it is delivered into the buffer — a call by handing
   // it the buffer in place of its own work ref, a named local by a copy.
@@ -12606,7 +12705,7 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
       onto_local = true;
     }
   }
-  if !unrenamed && onto_local {
+  if !unrenamed && (onto_local || returns_projection(e, vars.body)) {
     match x {
       NdBlock { block } => {
         if block[0].name == "Object" {
