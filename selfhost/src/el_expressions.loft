@@ -4907,9 +4907,9 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
       NdCall { args } => len(args) > 0 && !(el_ir::unspan(args[0]) is NdCall && calls(e, el_ir::unspan(args[0]), "OpGetVector")) && !calls(e, rd_place, "OpGetVector"),
       _ => false
     };
-    // A nullable scalar value into a `τ?` field is written as it is: its null is the slot's
-    // sentinel (`@FR-N-Store` holds — the slot can hold null), guarded by the slot's range.
-    if op == "=" && el_convert::plain_scalar(pb) && x.tp is TyOptional && field_place && el_convert::plain_scalar(el_types::base(x.tp)) {
+    // A nullable scalar value into a `τ?` field or element is written as it is: its null is the
+    // slot's sentinel (`@FR-N-Store` holds — the slot can hold null), guarded by the slot's range.
+    if op == "=" && el_convert::plain_scalar(pb) && x.tp is TyOptional && el_convert::plain_scalar(el_types::base(x.tp)) {
       nv0 = stored(e, vars, ex(x.code, el_types::base(x.tp)), pb);
       if nv0 != null {
         w0n = place_write(e, rd_place, el_convert::guard_range(e, nv0!, pt, x.tp, true));
@@ -4932,6 +4932,13 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
         if w0 != null {
           return ex(w0!, ir::TyVoid);
         }
+      }
+    }
+    // A text into a vector's text element replaces it (`OpSetTextReplace`).
+    if op == "=" && pb is TyText && !field_place && el_types::base(x.tp) is TyText {
+      wt = place_write(e, rd_place, x.code);
+      if wt != null {
+        return ex(wt!, ir::TyVoid);
       }
     }
     el::refuse(e, "an assignment to a nullable place: {if field_place { "a field" } else { "an element" }} of {type_kind(pb)} given {type_kind(x.tp)}{if op == "=" { "" } else { " by {op}" }}");
@@ -12636,7 +12643,7 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
   // A record local made inside an open loop is no rename candidate (`declared_in_loop`): it is
   // copied into the buffer (`materialize_return_into`), behind its null test.
   // The buffer is bound by it (`RetPromotion::Bind`): no later exit renames it.
-  in_loop = match x { NdVar { n: lv } => !vars.vars[lv].argument && heap_def(el_vars::tp(vars, lv)) >= 0 && len(vars.active_loops) > 0 && lv >= vars.active_loops[0], _ => false };
+  in_loop = match x { NdVar { n: lv } => !vars.vars[lv].argument && heap_def(el_vars::tp(vars, lv)) >= 0 && len(vars.active_loops) > 0 && lv >= vars.active_loops[0] && !views_local(vars, lv), _ => false };
   if in_loop && unrenamed && e.first_pass {
     ba0 = attr_nr(el::def(e, d), "__retbuf");
     ret0 = el::def(e, d).returned[0];
@@ -12648,6 +12655,24 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
     lcopy = copy_into_buffer(e, vars, x, match x { NdVar { n: lv } => lv, _ => -1 }, rb, result);
     if lcopy != null {
       return ex(ir::NdReturn { inner: lcopy! }, ir::TyNever);
+    }
+  }
+  // `MaterializeView` (#306) for a local viewing a store of this frame (a `for` variable over a
+  // field): copied into a work ref the first pass renames the buffer onto.
+  view_local = match x { NdVar { n: lv } => !vars.vars[lv].argument && heap_def(el_vars::tp(vars, lv)) >= 0 && views_local(vars, lv), _ => false };
+  if view_local && w < 0 {
+    if e.first_pass {
+      if unrenamed && !buffer_bound(e) {
+        rename_onto(e, vars, rb, el_vars::work_ref(vars, el_types::without_deps(el_types::base(result))));
+      }
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
+    vb = return_buffer(e, vars);
+    if vb >= 0 && !unrenamed {
+      vcopy = copy_into_buffer(e, vars, x, match x { NdVar { n: lv } => lv, _ => -1 }, vb, result);
+      if vcopy != null {
+        return ex(ir::NdReturn { inner: vcopy! }, ir::TyNever);
+      }
     }
   }
   // `MaterializeView` (#306) for a field or an element of a record the body owns — a local, or a
