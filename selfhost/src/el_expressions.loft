@@ -5471,15 +5471,14 @@ fn record_def(t: ir::TypeT) -> integer {
 // field)`, its value or fields, `OpFinishRecord`) — a keyed collection indexes it there.
 fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   place = el_ir::unspan(p.code);
-  rec = -1;
+  // The record holding the field — a local, or itself a field or an element of one — and the
+  // variable at its root, which the items' record borrows.
+  holder = ir::NdNull;
   pos = -1;
   match place {
     NdCall { def_nr, args } => {
       if el::def(e, def_nr).name == "OpGetField" && len(args) == 3 {
-        match el_ir::unspan(args[0]) {
-          NdVar { n: rv } => { rec = rv; },
-          _ => {}
-        }
+        holder = el_ir::unspan(args[0]);
         match el_ir::unspan(args[1] ?? ir::NdNull) {
           NdInt { n: off } => { pos = off; },
           _ => {}
@@ -5488,9 +5487,11 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     },
     _ => {}
   }
-  pd = if rec >= 0 { heap_def(el_vars::tp(vars, rec)) } else { -1 };
-  if !e.first_pass && (pd < 0 || el::def(e, pd).def_type != el::DT_STRUCT) {
-    el::refuse(e, "an append to a collection that is not a field of a record local");
+  rec = place_root(e, holder);
+  local = holder is NdVar;
+  pd = record_place_def(e, vars, holder);
+  if !e.first_pass && (rec < 0 || pd < 0 || el::def(e, pd).def_type != el::DT_STRUCT) {
+    el::refuse(e, "an append to a collection that is not a field of a record");
     return ex(ir::NdNull, ir::TyVoid);
   }
   // A field of a `for` variable's element (`c.hexes += [Ent { id: i, q: c.cx }]`): Rust stages
@@ -5536,7 +5537,7 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   if len(items) > 0 {
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [rec] });
   }
-  r = ir::NdVar { n: rec };
+  r = holder;
   at = ir::NdVar { n: elm };
   push = push_op(inner);
   ls: vector<ir::Node> = [];
@@ -5573,7 +5574,7 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       // `snapshot_read_destination`: an item reading the field it is appended to is built from
       // a snapshot of the field, its values staged first (`stage_append_fields`) — not carried.
       for op in fl! {
-        if reads_field(op, rec, pos) {
+        if if local { reads_field(op, rec, pos) } else { el_ir::reads_var(op, rec) } {
           el::refuse(e, "a field append whose item reads the field");
           return ex(ir::NdNull, ir::TyVoid);
         }
@@ -5627,6 +5628,35 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     vector_of(e, inner);
   }
   ex(ir::NdInsert { items: ls }, ir::TyVoid)
+}
+
+// The struct a record place is of: a local's, a field's (`OpGetField`'s known type), an element's
+// (`OpGetVector` of a vector local); -1 for any other place.
+fn record_place_def(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+  match n {
+    NdSpan { inner } => record_place_def(e, vars, inner),
+    NdVar { n: v } => heap_def(el_vars::tp(vars, v)),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpGetField" && len(args) == 3 {
+        kt = match el_ir::unspan(args[2]) { NdInt { n: k } => k, _ => -1 };
+        for d in e.b.data.definitions {
+          if kt >= 0 && d.def_type == el::DT_STRUCT && d.known_type == kt {
+            return d#index;
+          }
+        }
+        return -1;
+      }
+      if nm == "OpGetVector" && len(args) == 3 {
+        return match el_ir::unspan(args[0]) {
+          NdVar { n: v } => match el_types::base(el_vars::tp(vars, v)) { TyVector { inner } => heap_def(inner), _ => -1 },
+          _ => -1
+        };
+      }
+      -1
+    },
+    _ => -1
+  }
 }
 
 // The write twin of a place's read: `OpGet<T>(r, pos…)` becomes `OpSet<T>(r, pos…, value)`, a
@@ -10521,11 +10551,9 @@ fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   }
   // A local tested where it stands answers a plain `if`, which a bind types by its arms: the
   // literal's arm borrows nothing, so neither does the result.
+  // On both passes: a `return` of it renames the buffer onto its first arm on the first.
   if x.code is NdVar {
     vt = el_types::without_deps(lhs);
-    if e.first_pass {
-      return ex(ir::NdNull, vt);
-    }
     return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), vt);
   }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
@@ -12504,7 +12532,7 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
   if w >= 0 && e.first_pass && unrenamed && !buffer_bound(e) && rename_candidate(e, vars, v.code, x) == w {
     rename_onto(e, vars, rb, w);
   }
-  if w < 0 && e.first_pass && unrenamed && !buffer_bound(e) && x is NdIf && call_arms(e, vars, x) && first_arm_ref(vars, x) >= 0 {
+  if w < 0 && e.first_pass && unrenamed && !buffer_bound(e) && branch_value(x) && owned_arms(e, vars, x) && first_arm_ref(vars, x) >= 0 {
     rename_onto(e, vars, rb, first_arm_ref(vars, x));
   }
   a = if w >= 0 { attr_nr(el::def(e, d), el_vars::name_of(vars, w)) } else { -1 };
@@ -12588,33 +12616,46 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
       _ => {}
     }
   }
-  // A branch whose every arm answers a call's fresh record in that call's own work ref is
-  // handed back as it is; the first pass renamed the buffer onto the first arm's work ref.
-  if x is NdIf && call_arms(e, vars, x) {
+  // A branch whose every arm answers a record local of the body, or a call's fresh record in
+  // that call's own work ref, is handed back as it is; the first pass renamed the buffer onto
+  // the first arm's local or work ref.
+  if branch_value(x) && owned_arms(e, vars, x) {
     return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
   }
   refuse_known(e, v.tp, "a `return` of a record that is not a literal: {tail_kind(e, vars, el_ir::v_block([v.code], v.tp, ""))}");
   ex(ir::NdNull, ir::TyNever)
 }
 
-// Does every arm of `n` (a block's tail, both arms of an `if`) end in a call handed a hidden
-// work ref of its own?
-fn call_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+// An `if`, or a `match` (a block whose tail is its `if` chain).
+fn branch_value(x: ir::Node) -> boolean {
+  match x {
+    NdIf { cond: _ } => true,
+    NdBlock { block } => block[0].name.ends_with("match") && len(block[0].operators) > 0 && el_ir::unspan(block[0].operators[-1]!) is NdIf,
+    _ => false
+  }
+}
+
+// Does every arm of `n` (a block's tail, both arms of an `if`) end in a record local of the
+// body, or in a call handed a hidden work ref of its own?
+fn owned_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
   match n {
-    NdSpan { inner } => call_arms(e, vars, inner),
-    NdIf { cond: _, t, f } => call_arms(e, vars, t) && call_arms(e, vars, f),
-    NdBlock { block } => len(block[0].operators) > 0 && call_arms(e, vars, block[0].operators[-1]!),
+    NdSpan { inner } => owned_arms(e, vars, inner),
+    NdIf { cond: _, t, f } => owned_arms(e, vars, t) && owned_arms(e, vars, f),
+    NdBlock { block } => len(block[0].operators) > 0 && owned_arms(e, vars, block[0].operators[-1]!),
+    // A local the first pass renamed the buffer onto is a hidden parameter on the second.
+    NdVar { n: v } => (!vars.vars[v].argument || hidden_param(e, vars, v)) && heap_def(el_vars::tp(vars, v)) >= 0,
     NdCall { def_nr, args } => !returns_argument_view(el::def(e, def_nr)) && hidden_ref_arg(vars, args) >= 0,
     _ => false
   }
 }
 
-// The hidden work ref of the call the first arm of `n` ends in, or -1.
+// The local the first arm of `n` ends in, or the hidden work ref of its call; -1 for neither.
 fn first_arm_ref(vars: el_vars::Vars, n: ir::Node) -> integer {
   match n {
     NdSpan { inner } => first_arm_ref(vars, inner),
     NdIf { cond: _, t, f: _ } => first_arm_ref(vars, t),
     NdBlock { block } => if len(block[0].operators) > 0 { first_arm_ref(vars, block[0].operators[-1]!) } else { -1 },
+    NdVar { n: v } => v,
     NdCall { def_nr: _, args } => hidden_ref_arg(vars, args),
     _ => -1
   }
