@@ -237,6 +237,10 @@ pub(crate) const FILL_FIELD_GETTERS: [&str; 4] =
 pub(crate) fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
     match v.unspan() {
         Value::Var(x) => !banned.contains(x),
+        // `lit ?? d` over a literal that is not the sentinel — the `(0 as u8?) ?? 0` a narrow
+        // vector's zero is spelled with — is that literal: the block binds it to its own temp
+        // and the test never takes the default.
+        Value::Block(bl) if bl.name == "ncc" => literal_discharge(bl),
         Value::Int(_) | Value::Float(_) | Value::Boolean(_) | Value::Enum(_, _) => true,
         Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
             let name = data.def(*d).name();
@@ -263,6 +267,26 @@ pub(crate) fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
         }
         _ => false,
     }
+}
+
+/// `{ __ncc = lit; if <test of __ncc> { __ncc } else { d } }` with `lit` a literal that is not
+/// its type's sentinel, `d` a literal: the value is `lit`, read without a store or a counter.
+fn literal_discharge(bl: &Block) -> bool {
+    let [Value::Set(t, lit), Value::If(_, then, els)] = bl.operators.as_slice() else {
+        return false;
+    };
+    let lit_ok = match lit.unspan() {
+        Value::Int(_) | Value::Boolean(_) => true,
+        Value::Long(l) => *l != i64::MIN,
+        Value::Float(f) => !f.is_nan(),
+        _ => false,
+    };
+    lit_ok
+        && matches!(then.unspan(), Value::Var(x) if x == t)
+        && matches!(
+            els.unspan(),
+            Value::Int(_) | Value::Long(_) | Value::Float(_) | Value::Boolean(_)
+        )
 }
 
 /// @PLN157 § V-am (`@FR-R-PushFill`) — a counted loop that PUSHES: `k` scalar pushes to
