@@ -145,6 +145,22 @@ copied:
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
 | E image | 437 of 1680 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
+| E by rule | 59 of 379 formal rules carried for every suite cell, 92 for some, 228 for none; 245 of 1073 suite cells (14 rules have only cells the Rust front end refuses) | dispatch (0 of 28 cells), tuples (0 of 22), closures (1 of 47), calls (6 of 50), interfaces (2 of 38) |
+
+**Measuring by formal rule.**  The suite holds its cells under `rules/<chapter>/<rule>/`, so a
+gate run's verdicts file reads per rule: a rule is carried when every one of its cells agrees.
+It measures the front end only, and pessimistically — a cell crosses several rules, so a
+refusal from another chapter blocks a cell whose own rule is carried (dispatch blocks most
+interface and call cells).  The empty chapters are each ONE unported family: calls not by a
+bare name (dispatch), tuple members, lambdas that capture a local.
+
+```bash
+awk -F'\t' '$2 ~ /^loft-suite-91\/rules\// { split($2, p, "/"); r = p[3] "/" p[4]; n[r]++;
+  if ($1 == "agree") a[r]++; if ($1 == "noimage") x[r]++ }
+  END { for (r in n) { m = n[r] - x[r]; k = a[r] + 0;
+    print (m == 0 ? "n/a" : k == m ? "full" : k == 0 ? "none" : "part") "\t" k "/" m "\t" r } }' \
+  ~/workspace/.pln91-gate/verdicts-<sha>.txt | sort -k3
+```
 
 Elaboration is `selfhost/src/el*.loft`; gate E's runner is `selfhost/front/elab.loft` (`elab
 <image> <program>` over a `LOFT_EMIT_PARSED` image, or `elab <stdlib files>`), its oracle side
