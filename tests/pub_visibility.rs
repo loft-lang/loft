@@ -142,7 +142,7 @@ fn main() { u = units::spawn(\"orc\"); println(\"{u.hp}\"); }
     let (_, err, ok) = run("field-on", program);
     assert!(
         !ok && err.contains("field `hp` of `Unit` is not `pub` in `units`")
-            && err.contains("`units` declares it `pub hp`"),
+            && err.contains("declare it `pub hp` in `units`"),
         "{err}"
     );
 }
