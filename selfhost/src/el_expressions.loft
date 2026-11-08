@@ -3788,14 +3788,19 @@ fn capture_test(e: el::El, vars: el_vars::Vars, x: Ex, vd: integer, test: ir::No
       return ex(ir::NdNull, ir::TyBoolean);
     }
     ft = el::def(e, vd).attributes[a]!.typedef[0];
-    if !el_convert::plain_scalar(el_types::base(ft)) {
+    is_text = el_types::base(ft) is TyText;
+    if !el_convert::plain_scalar(el_types::base(ft)) && !is_text {
       refuse_known(e, ft, "an `is` capture of a field of this type: {type_kind(ft)}");
       return ex(ir::NdNull, ir::TyBoolean);
     }
     read = field_get(e, vd, a, stable);
     v = el_vars::create_unique(vars, "mv_{f}", ft);
     el_vars::set_defined(vars, v);
-    vars.vars[v].skip_free = true;
+    // A text payload is bound as its own copy of the characters (`record_text_payload_view`
+    // is the scope pass's note); a scalar owns nothing.
+    if !is_text {
+      vars.vars[v].skip_free = true;
+    }
     if read == null {
       el::refuse(e, "an `is` capture of a field this port reads no value of");
       return ex(ir::NdNull, ir::TyBoolean);
@@ -15758,12 +15763,12 @@ fn fields_for(e: el::El, vars: el_vars::Vars, h: ForHead, name: text) -> Ex {
     }
     return ex(ir::NdNull, ir::TyVoid);
   }
-  // Rust gives each field's block its own copy of a text payload binding (`_mv_…`), freed in
-  // that block: not carried.
+  // A text payload binding (`_mv_…`, an owned copy of the characters) is per field: each
+  // field's block gets its own variable, freed in that block, as a real loop's iteration would.
+  owned: vector<integer> = [];
   for t in set_targets(b.code) {
-    if el_vars::name_of(vars, t).starts_with("_mv_") && el_types::base(el_vars::tp(vars, t)) is TyText && len(el_types::deps(el_vars::tp(vars, t))) == 0 {
-      el::refuse(e, "a `#fields` walk whose body binds a text payload");
-      return ex(ir::NdNull, ir::TyVoid);
+    if !owned.contains(t) && el_vars::name_of(vars, t).starts_with("_mv_") && el_types::base(el_vars::tp(vars, t)) is TyText && len(el_types::deps(el_vars::tp(vars, t))) == 0 && !vars.vars[t].argument {
+      owned += [t];
     }
   }
   blocks: vector<ir::Node> = [];
@@ -15781,7 +15786,11 @@ fn fields_for(e: el::El, vars: el_vars::Vars, h: ForHead, name: text) -> Ex {
     }
     fv = object_ops(e, vars, vd, [el::def(e, vd).attributes[0]!.value[0] ?? ir::NdNull, read!]);
     sf = object_ops(e, vars, field_d, [ir::NdText { s: at.name }, ir::NdVar { n: fv.w }, ir::NdBoolean { b: nullable }]);
-    blocks += [ir::NdInsert { items: fv.ops }, ir::NdInsert { items: sf.ops }, el_ir::v_set(lv, ir::NdVar { n: sf.w }), b.code];
+    this_body = b.code;
+    for t in owned {
+      this_body = rename_var(this_body, t, el_vars::copy_variable(vars, t));
+    }
+    blocks += [ir::NdInsert { items: fv.ops }, ir::NdInsert { items: sf.ops }, el_ir::v_set(lv, ir::NdVar { n: sf.w }), this_body];
   }
   if len(blocks) == 0 {
     return ex(ir::NdNull, ir::TyVoid);
