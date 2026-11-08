@@ -268,10 +268,24 @@ static void loft_sip_kv(loft_sip *h, loft_kv k) {
     else if (k.kind == LOFT_KV_TEXT) loft_sip_str(h, k.s);
 }
 
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
+/* The last integer digest computed, per thread: a lookup that misses and the insert that follows
+ * it (`v = get(c, k); if v < 0 { put(c, k, …) }`, which finds `k` again and files a record under
+ * it) digest the same key under the same seed two or three times in a row.  The digest is a pure
+ * function of the pair, so the memo only answers what the computation would. */
+static LOFT_TLS uint64_t loft_dm_seed, loft_dm_key, loft_dm_hv;
+static LOFT_TLS int loft_dm_ok;
+
 /* keys::key_hash of the one integer key `[key]` under `seed`: the seed's word and the key's, then
  * the finish for sixteen bytes — what the general digest computes for `loft_kv_int(key)`,
  * unrolled (`@FR-R-TypedKeyed`'s digest). */
 LOFT_HOT_INLINE uint64_t loft_digest_i64(uint64_t seed, int64_t key) {
+    if (loft_dm_ok && loft_dm_key == (uint64_t) key && loft_dm_seed == seed) return loft_dm_hv;
+    loft_dm_seed = seed;
+    loft_dm_key = (uint64_t) key;
+    loft_dm_ok = 1;
     loft_sip h;
     uint8_t b[8];
     loft_sip_init(&h);
@@ -282,7 +296,8 @@ LOFT_HOT_INLINE uint64_t loft_digest_i64(uint64_t seed, int64_t key) {
     h.length = 16;
     h.tail = 0;
     h.ntail = 0;
-    return loft_sip_finish(&h);
+    loft_dm_hv = loft_sip_finish(&h);
+    return loft_dm_hv;
 }
 
 /* keys::ints_hash: the digest of `n` integer key parts — the seed's word and one per part, no

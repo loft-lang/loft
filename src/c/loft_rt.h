@@ -2220,12 +2220,12 @@ static void loft_remove_record(loft_store_t *s, uint32_t rec) {
     loft_st_delete(s, rec);
 }
 
-static int loft_record_removed(loft_ref x) {
+LOFT_HOT_INLINE int loft_record_removed(loft_ref x) {
     if (x.rec == 0 || x.store_nr == 0xFFFF || x.store_nr >= loft_nstores || !loft_stores[x.store_nr].live) return 0;
     return loft_st_is_removed(&loft_stores[x.store_nr], x.rec);
 }
 
-static loft_ref loft_get_dbref(loft_ref r, uint32_t fld) {
+LOFT_HOT_INLINE loft_ref loft_get_dbref(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(r);
     loft_ref x = {0};
@@ -2236,7 +2236,7 @@ static loft_ref loft_get_dbref(loft_ref r, uint32_t fld) {
     return x;
 }
 
-static void loft_set_dbref(loft_ref r, uint32_t fld, loft_ref x) {
+LOFT_HOT_INLINE void loft_set_dbref(loft_ref r, uint32_t fld, loft_ref x) {
     if (r.rec == 0) return;
     loft_store_t *s = loft_store_of(r);
     loft_set_u32(s, r.rec, r.pos + fld, x.store_nr);

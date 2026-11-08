@@ -232,6 +232,11 @@ pub(crate) struct FnWriter<'a> {
     /// until a statement other than a binding of one of their fields follows: the zero of the
     /// vector field that comes next is the mint's own empty vector, and is not written.
     room_minted: std::collections::HashMap<u16, u16>,
+    /// `@FR-R-SameRead`'s filed clause: the record the previous statement filed into a hash
+    /// with one integer key — the hash's path, its type and the record's variable — handed to
+    /// the next statement only (`filed_next`), whose lookup of that key may answer the record.
+    filed: Option<(crate::opt::writes::PathKey, u16, u16)>,
+    filed_next: Option<(crate::opt::writes::PathKey, u16, u16)>,
     /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
     widening: Option<usize>,
     /// A value staged into a C temporary, by the temporary's name, with its kind: what a
@@ -754,6 +759,8 @@ impl<'a> FnWriter<'a> {
             vr: value::VrFn::of(cx, d).map(Box::new),
             tr: None,
             room_minted: std::collections::HashMap::new(),
+            filed: None,
+            filed_next: None,
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
@@ -4405,6 +4412,61 @@ impl<'a> FnWriter<'a> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
         }
+        // `@FR-R-SameRead`'s filed clause: what the previous statement filed reaches this one
+        // only when it is a lookup's binding; every other statement forgets it (a line marker
+        // is no statement).
+        if matches!(v.unspan(), Value::Line(_)) {
+            return self.stmt_inner(v, ind);
+        }
+        let filed = self.filed.take();
+        if let Value::Set(_, rhs) = v.unspan()
+            && let Value::Call(g, _) = rhs.unspan()
+            && self.cx.data.def(*g).name() == "OpGetRecord"
+        {
+            self.filed_next = filed;
+        }
+        let r = self.stmt_inner(v, ind);
+        self.filed_next = None;
+        if r.is_ok() {
+            self.filed = self.filed_record(v);
+        }
+        r
+    }
+
+    /// `OpFinishRecord(parent, rec, tp, fld)` filing `rec` into field `fld` of `parent`, a hash
+    /// with one 8-byte integer key reached by a pure path: that path, the hash's type, `rec`.
+    fn filed_record(&self, v: &Value) -> Option<(crate::opt::writes::PathKey, u16, u16)> {
+        let Value::Call(d, args) = v.unspan() else {
+            return None;
+        };
+        if self.cx.data.def(*d).name() != "OpFinishRecord" {
+            return None;
+        }
+        let [parent, Value::Var(rec), tp, fld] = args.as_slice() else {
+            return None;
+        };
+        let (Value::Int(tp), Value::Int(fld)) = (tp.unspan(), fld.unspan()) else {
+            return None;
+        };
+        let (root, mut offs) = crate::opt::writes::vector_path(self.cx.data, parent)?;
+        let crate::database::Parts::Struct(fields) =
+            &self.cx.stores.types.get(usize::try_from(*tp).ok()?)?.parts
+        else {
+            return None;
+        };
+        let f = fields.get(usize::try_from(*fld).ok()?)?;
+        let ht = self.cx.stores.types.get(f.content as usize)?;
+        if !matches!(ht.parts, crate::database::Parts::Hash(..))
+            || ht.keys.len() != 1
+            || !matches!(ht.keys[0].type_nr, 1 | 2)
+        {
+            return None;
+        }
+        offs.push(i64::from(f.position));
+        Some(((root, offs), f.content, *rec))
+    }
+
+    fn stmt_inner(&mut self, v: &Value, ind: usize) -> Result<(), String> {
         if !self.lr.is_empty() && self.loop_record_stmt(v) {
             return Ok(());
         }

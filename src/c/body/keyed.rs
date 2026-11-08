@@ -1419,6 +1419,7 @@ impl FnWriter<'_> {
         vals: &[Value],
         ind: usize,
     ) -> Result<E, String> {
+        let data_v = data;
         let tp = u16::try_from(Self::literal(tp, "type")?)
             .map_err(|_| "a type number out of range".to_string())?;
         let (kind, _, size) = self.keyed_of(tp)?;
@@ -1473,8 +1474,26 @@ impl FnWriter<'_> {
             (None, Some(_)) => crate::rewrite_census::fired("R-TypedKeyed/text", 1),
             (None, None) => {}
         }
+        // `@FR-R-SameRead`'s filed clause: the previous statement filed `rec` into this hash, so
+        // where that insert landed (the store takes writes, neither handle is null) and `rec`'s
+        // key is the one looked up, `rec` IS the entry under it (`@FR-Col-Insert`: the latest
+        // insert wins); otherwise the lookup runs as written.
+        let filed = self.filed_next.clone().filter(|(path, htp, _)| {
+            *htp == tp
+                && vals.len() == 1
+                && matches!(vals[0].unspan(), Value::Var(_))
+                && crate::opt::writes::vector_path(self.cx.data, data_v).as_ref() == Some(path)
+        });
         let typed_find = ints
             .map(|ks| match ks.as_slice() {
+                [key] if let Some((_, _, rec)) = &filed => {
+                    crate::rewrite_census::fired("R-SameRead/filed", 1);
+                    let r = self.var(*rec);
+                    let kpos = self.cx.stores.types[tp as usize].keys[0].position;
+                    format!(
+                        "((!LOFT_WRITE_REFUSED(loft_store_of({data})) && {data}.rec != 0 && {r}.rec != 0 && loft_get_int({r}, {kpos}) == {key}) ? {r} : loft_h_find_i64({data}, {keys}, {key}))"
+                    )
+                }
                 [key] => format!("loft_h_find_i64({data}, {keys}, {key})"),
                 ks => format!(
                     "loft_h_find_ints({data}, {keys}, {n}, (int64_t[]){{ {} }})",
@@ -1590,6 +1609,39 @@ impl FnWriter<'_> {
         let raw = raw & !crate::database::CLEAR_KEYED_VIEW;
         let (kind, elem, size) = self.keyed_of(raw)?;
         let (keys, nk) = self.cx.keys_of(raw);
+        // `@FR-R-TypedKeyed`'s removal clause: `h[k] = null` removes `h`'s entry under `k`, and
+        // for a hash with ONE 8-byte integer key the walk that finds it is where the removal
+        // starts (`loft_hash_remove_i64`, one probe where the find and the removal by the
+        // record's digest took two).  The collection must be the lookup's own, on one pure
+        // path; a lazily bound collection keeps the lookup's fetch.
+        if kind == Keyed::Hash
+            && nk == 1
+            && !self.cx.lazy.get()
+            && let Value::Call(g, gargs) = rec.unspan()
+            && self.cx.data.def(*g).name() == "OpGetRecord"
+            && let [gdata, gtp, _, key] = gargs.as_slice()
+            && Self::literal(gtp, "type").ok() == Some(i64::from(raw))
+            && matches!(
+                self.cx.stores.types[raw as usize].keys.first().map(|k| k.type_nr),
+                Some(1 | 2)
+            )
+            && let Some(path) = crate::opt::writes::vector_path(self.cx.data, data)
+            && crate::opt::writes::vector_path(self.cx.data, gdata) == Some(path)
+        {
+            let (d, k) = self.two("OpHashRemove", &[data, key], ind)?;
+            self.cx.name_types();
+            self.cx.describe_type(elem);
+            crate::rewrite_census::fired("R-TypedKeyed/remove", 1);
+            return Ok(E::new(
+                format!(
+                    "loft_hash_remove_i64(loft_types, {elem}, {}, {}, {keys}, {nk}, {})",
+                    as_ref(d)?,
+                    as_int(k)?,
+                    u8::from(view)
+                ),
+                K::Void,
+            ));
+        }
         let (data, rec) = self.two("OpHashRemove", &[data, rec], ind)?;
         let (data, rec) = (as_ref(data)?, as_ref(rec)?);
         // What the element owns is released (`remove_owned`): its type is in the table.
