@@ -3197,7 +3197,7 @@ fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       if len(caps) == 0 {
-        return ex(ir::NdInt { n: d }, el_types::function_value_type(e, d));
+        return ex(ir::NdInt { n: d }, lambda_value_type(e, d));
       }
       return closure_value(e, vars, d, rec_nm, caps, body!);
     },
@@ -3219,7 +3219,7 @@ fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps:
       e.b.data.definitions[rd].attributes += [el::attribute(c.name, c.tp)];
     }
     e.b.data.definitions[d].closure_record = rd;
-    return ex(ir::NdNull, el_types::function_value_type(e, d));
+    return ex(ir::NdNull, lambda_value_type(e, d));
   }
   rd = el::def_nr(e, rec_nm);
   kt = if rd < 0 { el_schema::NO_TYPE } else { el::def(e, rd).known_type };
@@ -3252,8 +3252,26 @@ fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps:
 
 // The function type a lambda with a closure is read as: its parameters without the trailing
 // `__closure`.
-fn closure_fn_type(e: el::El, d: integer) -> ir::TypeT {
+// A lambda's value type: its function type with the result `published` (`published_ret_type`) —
+// a borrow of a hidden parameter (its return buffer) is no borrow the caller sees.  A borrow of
+// the closure is kept as it is (`tail_is_a_place` is not carried).
+fn lambda_value_type(e: el::El, d: integer) -> ir::TypeT {
   t = el_types::function_value_type(e, d);
+  match t {
+    TyFunction { args, result, dep, consts } => {
+      def = el::def(e, d);
+      kept = [for x in el_types::deps(result) if (def.attributes[x] == null || !def.attributes[x]!.hidden) { x }];
+      if len(kept) == len(el_types::deps(result)) {
+        return t;
+      }
+      ir::TyFunction { args: args, result: el_types::with_deps(el_types::without_deps(result), kept), dep: dep, consts: consts }
+    },
+    _ => t
+  }
+}
+
+fn closure_fn_type(e: el::El, d: integer) -> ir::TypeT {
+  t = lambda_value_type(e, d);
   match t {
     TyFunction { args, result, dep, consts } => {
       na = args;
