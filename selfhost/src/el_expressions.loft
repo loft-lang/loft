@@ -7424,6 +7424,12 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
     },
     _ => {}
   }
+  ed = match el_types::base(rt) { TyEnum { n, is_ref } => if is_ref && !el::def(e, n).name.starts_with("__nullable<") { n } else { -1 }, _ => -1 };
+  if ed >= 0 {
+    f = enum_field(e, vars, x, ed, name);
+    // `wrap_chain`: the step wrapped in the `.`'s position on the second pass.
+    return if e.first_pass || (f.code is NdNull) { f } else { ex(ir::NdSpan { pos: el::pos_at(e, at), inner: f.code }, f.tp) };
+  }
   if !literal_def(e, d) {
     kind = if d >= 0 { "definition type {el::def(e, d).def_type}" } else { type_kind(x.tp) };
     refuse_known(e, x.tp, "a field of something other than a plain struct: {kind}");
@@ -7463,6 +7469,101 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
     return ex(code, t);
   }
   chain_hold(e, vars, ex(code, t), more)
+}
+
+// `parse_field`'s struct-enum arm (`find_poly_enum_field`): `e.f` on a value held at its enum
+// reads the field of the variant the value holds.  It resolves to the first variant declaring
+// `f`; where only some declare it the receiver is guarded by the tag, an absent variant reading
+// the type's null (`guard_variant_receiver`, loft#980); where the declaring variants lay `f` out
+// at different offsets the read switches on the tag (`variant_field_getter`, loft#2441).  Code
+// that already knows the variant — a place an `is` test proved — reads it directly.  Only a
+// local or a parameter is carried as the receiver.
+fn enum_field(e: el::El, vars: el_vars::Vars, x: Ex, ed: integer, name: text) -> Ex {
+  owning: vector<integer> = [];
+  total = 0;
+  found = -1;
+  for a in el::def(e, ed).attributes {
+    v = el::variant_of(e, ed, a.name);
+    if v < 0 {
+      continue;
+    }
+    total += 1;
+    fa = attr_nr(el::def(e, v), name);
+    if fa >= 0 && found < 0 {
+      found = v;
+    }
+    if fa >= 0 && found >= 0 && el_types::without_deps(el::def(e, v).attributes[fa]!.typedef[0]) == el_types::without_deps(el::def(e, found).attributes[attr_nr(el::def(e, found), name)]!.typedef[0]) {
+      owning += [v];
+    }
+  }
+  if found < 0 {
+    el::refuse(e, "a field no variant of the enum declares");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  fa = attr_nr(el::def(e, found), name);
+  t = el::def(e, found).attributes[fa]!.typedef[0];
+  for on in el_types::deps(x.tp) {
+    t = el_types::with_deps(t, [on]);
+  }
+  place = el_ir::unspan(x.code);
+  match place {
+    NdVar { n } => { t = el_types::with_deps(t, [n]); },
+    _ => {
+      el::refuse(e, "a field of a struct enum read off something other than a local");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, t);
+  }
+  // The declaring variants by offset, in declaration order.
+  offsets: vector<integer> = [];
+  for v in owning {
+    o = field_position(e, v, name);
+    if !offsets.contains(o) {
+      offsets += [o];
+    }
+  }
+  partial = len(owning) < total;
+  if len(offsets) < 2 {
+    recv = if partial { el_ir::v_if(tag_in(e, place, owning), place, el_ir::cl(e, "OpNullRefSentinel", [])) } else { place };
+    return ex(field_get(e, found, fa, recv) ?? ir::NdNull, t);
+  }
+  // Where the offsets differ, a place an `is` test proved holds one variant reads that variant's field directly.
+  for pv in rev(vars.proven) {
+    if pv.place == place {
+      for v in owning {
+        if variant_ord(e, v) == pv.disc {
+          return ex(field_get(e, v, attr_nr(el::def(e, v), name), place) ?? ir::NdNull, t);
+        }
+      }
+    }
+  }
+  // The getter: one read per offset, the value's own; an absent variant reads the null.
+  chain = if partial { field_get(e, found, fa, el_ir::cl(e, "OpNullRefSentinel", [])) ?? ir::NdNull } else { ir::NdNull };
+  groups = len(offsets);
+  for oi in 0..groups {
+    o = offsets[groups - 1 - oi]!;
+    vs = [for v in owning if field_position(e, v, name) == o { v }];
+    arm = field_get(e, vs[0]!, attr_nr(el::def(e, vs[0]!), name), place) ?? ir::NdNull;
+    chain = if !partial && oi == 0 { arm } else { el_ir::v_if(tag_in(e, place, vs), arm, chain) };
+  }
+  ex(el_ir::v_block([chain], t, "variant field"), t)
+}
+
+// `tag(place) == d₁ || tag(place) == d₂ …` over the variants' ordinals.
+fn tag_in(e: el::El, place: ir::Node, vs: vector<integer>) -> ir::Node {
+  cond = ir::NdNull;
+  for v in vs {
+    test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [place, ir::NdInt { n: 0 }])]), ir::NdInt { n: variant_ord(e, v) }]);
+    cond = if cond is NdNull { test } else { el_ir::v_if(cond, ir::NdBoolean { b: true }, test) };
+  }
+  cond
+}
+
+// A struct-enum variant's ordinal: the value of its `enum` attribute.
+fn variant_ord(e: el::El, v: integer) -> integer {
+  match el::def(e, v).attributes[0]!.value[0] ?? ir::NdNull { NdEnum { ord } => ord, _ => -1 }
 }
 
 // A plain `.field` step (no call): the receiver of a further step is one when the chain goes on
@@ -12206,7 +12307,33 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   if jp != null && jp!.then {
     vars.present_exprs += [jp!.place];
   }
+  // `variant_proof_from_condition`: an `is` test proves its place holds the variant there.
+  vp = len(vars.proven);
+  match el_ir::unspan(c.code) {
+    NdCall { def_nr: eq, args: eargs } => {
+      if el::def(e, eq).name == "OpEqInt" && len(eargs) == 2 {
+        match el_ir::unspan(eargs[0]!) {
+          NdCall { def_nr: cv, args: cargs } => {
+            if el::def(e, cv).name == "OpConvIntFromEnum" && len(cargs) == 1 {
+              match el_ir::unspan(cargs[0]!) {
+                NdCall { def_nr: ge, args: gargs } => {
+                  disc = match el_ir::unspan(eargs[1]!) { NdInt { n } => n, _ => -1 };
+                  if el::def(e, ge).name == "OpGetEnum" && len(gargs) > 0 && disc >= 0 {
+                    vars.proven += [el_vars::Proven { place: el_ir::unspan(gargs[0]!), disc: disc }];
+                  }
+                },
+                _ => {}
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
   t = parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
+  vars.proven = vars.proven[0..vp];
   // The captures' bindings open the then-block; their names end with it.
   if len(bindings) > 0 {
     match t.code {

@@ -100,9 +100,6 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 
 ## Open
 
-- **A struct-enum field read (`e.n`)** waits on loft#2441: Rust reads it at the first declaring
-  variant's offset, wrong for a variant laid out differently.  Port it once that is settled (the
-  family `a field of something other than a plain struct: TyEnum`).
 - **Lift after #2439:** `el_vars::take_over` fills `viewed` with a loop; its best form is the
   comprehension `[for _ in v.vars { [] }]`, refused today.
 - **Diagnostics** are part of the port (same text, same position), measured after gate E on the
@@ -147,7 +144,7 @@ copied:
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | 453 of 1680 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
+| E image | 458 of 1680 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
 | E by rule | 60 of 379 formal rules carried for every suite cell, 94 for some, 225 for none; 254 of 1073 suite cells (14 rules have only cells the Rust front end refuses) | dispatch (5 of 28 cells: free overload sets carried; methods in a set, generic members, run-time variant dispatch refused by name), tuples (0 of 22), closures (1 of 47), calls (6 of 50), interfaces (2 of 38) |
 
 **Measuring by formal rule.**  The suite holds its cells under `rules/<chapter>/<rule>/`, so a
