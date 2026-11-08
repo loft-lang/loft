@@ -1142,13 +1142,26 @@ fn dest_args(e: el::El, vars: el_vars::Vars, v: ir::Node) -> ir::Node {
   }
 }
 
+// The standard library's text functions that write a hidden text destination by name
+// (`is_text_dest_def`'s list).
+const TEXT_DEST_NAMES = [
+  "t_4text_replace", "t_4text_to_lowercase", "t_4text_to_uppercase", "n_source_dir", "n_directory",
+  "n_user_directory", "n_program_directory", "n_os_temp_dir", "n_os_cache_dir",
+  "n_kernel_event_payload", "n_kernel_sync_payload", "n_kernel_client_event_payload",
+  "n_kernel_client_sync_payload", "n_kernel_default_host", "n_kernel_rebuild_artifact",
+  "n_json_errors", "t_9JsonValue_kind", "t_9JsonValue_to_json", "t_9JsonValue_to_json_pretty",
+  "n_ymd_days_ago", "n_store_memory", "n_store_lazy_error", "n_struct_to_json",
+  "n_struct_to_json_pretty", "n_parallel_buf_get_text", "t_9JsonValue_as_text", "n_env_variable",
+  "n_host_input", "n_text_from_bytes", "n_text_from_byte_range"
+];
+
 // `is_text_dest_def`, `is_cdylib_text_call`, `is_c_text_call` (a library bridge's bufferless
 // text function is not reached here).
 fn text_dest_call(e: el::El, d: integer) -> boolean {
   def = el::def(e, d);
   rt = el_types::base(def.returned[0]);
   nm = def.name;
-  named = nm == "t_4text_replace" || nm == "t_4text_to_lowercase" || nm == "t_4text_to_uppercase" || nm == "n_source_dir" || nm == "n_directory" || nm == "n_user_directory" || nm == "n_program_directory" || nm == "n_os_temp_dir" || nm == "n_os_cache_dir" || nm == "n_kernel_event_payload" || nm == "n_kernel_sync_payload" || nm == "n_kernel_client_event_payload" || nm == "n_kernel_client_sync_payload" || nm == "n_kernel_default_host" || nm == "n_kernel_rebuild_artifact" || nm == "n_json_errors" || nm == "t_9JsonValue_kind" || nm == "t_9JsonValue_to_json" || nm == "t_9JsonValue_to_json_pretty" || nm == "n_ymd_days_ago" || nm == "n_store_memory" || nm == "n_store_lazy_error" || nm == "n_struct_to_json" || nm == "n_struct_to_json_pretty" || nm == "n_parallel_buf_get_text" || nm == "t_9JsonValue_as_text" || nm == "n_env_variable" || nm == "n_host_input" || nm == "n_text_from_bytes" || nm == "n_text_from_byte_range";
+  named = TEXT_DEST_NAMES.contains(nm);
   if named && (def.native != "" || def.source == 0) {
     return true;
   }
