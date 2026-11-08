@@ -100,27 +100,6 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 
 ## Open
 
-- **A rule answering a `vector`, captured in a match that is a function's tail**, loses the
-  match's value on the interpreter and is refused by the C backend ("an integer expected, a Void
-  found") when the rule also takes a hidden work buffer.  Minimal shape: `[k: kw, (tv: tvars)?,
-  LParen] => 42` returns 0; the IR binds the match value nowhere and assigns the capture's
-  conditional free (`if OpDistinctStore(tv, __ref_1) if OpDistinctStore(tv, __ref_2)
-  OpFreeRef(tv)`, `get_free_vars.rs`'s witness-buffer arm) to `__ret_1`.  Hand-written twins
-  (the capture a plain local, its assignment inside a condition) are right, so the trigger is
-  the capture being a PATTERN binding (`pattern_binding`, an arm-scoped loop variable) that
-  adopts the callee's return buffer.  Repro: the scratch copy of the syntax layer before its
-  list rules answered `SList` nodes.  The grammar's list rules answer nodes, so it does not
-  block the parser; it is this branch's own defect (the sub-rule lowering is new) and is fixed
-  before the branch merges.  A second reproduction, in the interpreter's own source:
-  [`repro/eq-on-pos.loft`](repro/eq-on-pos.loft) — `eq.loft` with its store places as
-  `crt::Pos` — dropped in for `selfhost/src/eq.loft` (and `run.loft`'s `EqContent` passing two
-  `stack_pos(…)`), fails `selfhost` test `test_a_struct_is_built_read_and_freed` (`equal(3)` is
-  `310110`): `walk`'s tail is a `match` on `t.parts[0]!`, one arm compares two `crt::Pos` call
-  results (`___veq_1/2`, store records across the package), and the function has a hidden work
-  buffer; `__ret_13` takes `if OpDistinctStore(___veq_1, __ref_1) if OpDistinctStore(___veq_1,
-  __ref_11) OpFreeRef(___veq_1)` instead of the match's value.  Binding the arm's call to a local
-  first gives the right answer.  Small reproductions that held one of those axes apart (no work
-  buffer; a parameter subject; a local value struct, which is a stack tuple) all answer right.
 - **Lift after #2439:** `el_vars::take_over` fills `viewed` with a loop; its best form is the
   comprehension `[for _ in v.vars { [] }]`, refused today.
 - **Diagnostics** are part of the port (same text, same position), measured after gate E on the
