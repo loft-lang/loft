@@ -112,6 +112,8 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
   list rules answered `SList` nodes.  The grammar's list rules answer nodes, so it does not
   block the parser; it is this branch's own defect (the sub-rule lowering is new) and is fixed
   before the branch merges.
+- **Lift after #2439:** `el_vars::take_over` fills `viewed` with a loop; its best form is the
+  comprehension `[for _ in v.vars { [] }]`, refused today.
 - **Diagnostics** are part of the port (same text, same position), measured after gate E on the
   programs `tests/parse_errors.rs` and the suite's refusal cells carry.
 - **Scripts** (`src/script.rs`, a textual desugar before parsing) are not ported yet: gate S
@@ -134,7 +136,7 @@ language suite (`../loft-suite-91`).
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | 74 of 1649 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
+| E image | 401 of 1680 programs agree, 1 differs (fixed since, not re-measured — `handoff-2026-11-08.md`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
 
 Elaboration is `selfhost/src/el*.loft`; gate E's runner is `selfhost/front/elab.loft` (`elab
 <image> <program>` over a `LOFT_EMIT_PARSED` image, or `elab <stdlib files>`), its oracle side
