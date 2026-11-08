@@ -7963,6 +7963,9 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
   // `next(g)` advances a generator's handle (`OpCoroutineNext`, typed as its element) and
   // `exhausted(g)` asks whether it is done; a tuple element's advance is not carried.
+  if name == "reserve" {
+    return reserve_call(e, list, types);
+  }
   if len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
     step = match el_types::base(first) { TyIterator { step: st } => st, _ => ir::TyVoid };
     if name == "exhausted" {
@@ -8207,6 +8210,27 @@ fn size_call(e: el::El, list: vector<ir::Node>, t: ir::TypeT) -> Ex? {
     return ex(ir::NdNull, wide);
   }
   ex(el_ir::cl(e, op, list + [ir::NdInt { n: n }]), wide)
+}
+
+// `Parser::parse_reserve`, both spellings (`reserve(v, n)`, `v.reserve(n)`): room for `n`
+// elements, `OpReserveVector(v, n, <element size>)`, or a hash's buckets, `OpReserveHash(h, n,
+// <its type>)` — nothing on the first pass.  A malformed call is refused by name (Rust reports
+// it).
+fn reserve_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  coll = match types[0] ?? ir::TyVoid { TyRefVar { inner } => inner, _ => types[0] ?? ir::TyVoid };
+  // A hash reserves buckets for its schema type.
+  if coll is TyHash && len(list) == 2 && el_types::base(types[1] ?? ir::TyVoid) is TyInteger {
+    return ex(el_ir::cl(e, "OpReserveHash", [list[0]!, list[1]!, ir::NdInt { n: el_schema::keyed_type(e, coll) }]), ir::TyVoid);
+  }
+  stride = match coll { TyVector { inner } => elem_stride(e, inner), _ => -1 };
+  if len(list) != 2 || !(el_types::base(types[1] ?? ir::TyVoid) is TyInteger) || stride < 0 {
+    refuse_known(e, coll, "a `reserve` of this collection or with these arguments: {type_kind(coll)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(el_ir::cl(e, "OpReserveVector", [list[0]!, list[1]!, ir::NdInt { n: stride }]), ir::TyVoid)
 }
 
 // The constant argument a domain check reads, or null.
@@ -8458,6 +8482,9 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
   }
   if name == "remove" && len(list) == 2 && el_types::base(x.tp) is TyVector {
     return vector_remove(e, at, x, ex(list[1], types[1]));
+  }
+  if name == "reserve" {
+    return reserve_call(e, list, types);
   }
   d = find_fn(e, name, x.tp);
   if d < 0 {
