@@ -2428,6 +2428,9 @@ fn ends_in_return(code: ir::Node) -> boolean {
 // literal built in its own `__ref_p2_N` builds it into the hidden `__retbuf` instead.  The body is
 // typed as the declared result.  Null for any other tail.
 fn build_into_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  if !fully_written_by_literal(e, heap_def(el_vars::tp(vars, rb))) {
+    return null;
+  }
   match code {
     NdBlock { block } => {
       bl = block[0];
@@ -6086,6 +6089,39 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
         // it, and a variant literal built straight into the field's place.  Any other value
         // (a local, a call, a unit variant) is refused by name.
         sed = el_types::struct_enum_def(at);
+        // An `S?` field given an `S { … }` literal: the `Some` record built in a work-ref of its
+        // own and copied into the field (`parse_some_payload_object`).
+        // Given `null`, the slot is set absent; given any other `S`, it is written from it
+        // (`emit_nullable_slot_write`).
+        if sed >= 0 && is_nullable_wrapper(e, at) {
+          pos = ir::NdInt { n: field_position(e, d, fname) };
+          kt = ir::NdInt { n: el::def(e, sed).known_type };
+          slot_ref = el_ir::cl(e, "OpGetField", [r, pos, kt]);
+          list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }])];
+          if literal_of(e, fe!, nullable_payload(e, sed)) {
+            nb = nullable_some_literal(e, vars, v, sed, fe!);
+            if nb == null {
+              return null;
+            }
+            list += [el_ir::cl(e, "OpCopyRecord", [nb!, slot_ref, kt])];
+          } else {
+            x = expression(e, vars, fe!);
+            if x.tp is TyNull {
+              if !e.first_pass {
+                list += [nullable_set_null(e, sed, slot_ref)];
+              }
+            } else if struct_ref(e, el_types::base(x.tp)) == nullable_payload(e, sed) {
+              if !e.first_pass {
+                list += nullable_slot_write(e, vars, sed, slot_ref, x.code);
+              }
+            } else {
+              refuse_known(e, x.tp, "a nullable record field given {type_kind(x.tp)}");
+              return null;
+            }
+          }
+          found += [fname];
+          continue;
+        }
         if sed >= 0 {
           vd = -1;
           sub: vector<integer> = [];
@@ -6201,6 +6237,130 @@ fn linked_offsets(e: el::El, d: integer) -> vector<integer> {
   out
 }
 
+// `nullable_payload_struct`: the struct a `__nullable<S>` holds in its `Some`, or -1.
+fn nullable_payload(e: el::El, syn: integer) -> integer {
+  some_d = el::variant_of(e, syn, "Some");
+  if some_d < 0 {
+    return -1;
+  }
+  for a in el::def(e, some_d).attributes {
+    if a.name == "payload" {
+      return match a.typedef[0] ?? ir::TyVoid { TyReference { n } => n, _ => -1 };
+    }
+  }
+  -1
+}
+
+// Is syntax node `node` a plain literal `S { … }` of struct `sd` (no update base)?
+fn literal_of(e: el::El, node: integer, sd: integer) -> boolean {
+  match e.p.nodes[node] {
+    SStructLit { name: ln, member: lm, base: lb } => lm == "" && lb == null && sd >= 0 && el::def_nr(e, ln) == sd,
+    _ => false
+  }
+}
+
+// `build_nullable_set_null` (loft#896): the slot `to` set absent — a present payload's heap
+// claims released first (`OpClearKeyed`), then discriminant 0.
+fn nullable_set_null(e: el::El, syn: integer, to: ir::Node) -> ir::Node {
+  set_null = el_ir::cl(e, "OpSetEnum", [to, ir::NdInt { n: 0 }, ir::NdEnum { ord: 0, tp: el_schema::NO_TYPE }]);
+  kt = el::def(e, syn).known_type;
+  if e.first_pass || kt == el_schema::NO_TYPE {
+    return set_null;
+  }
+  el_ir::v_block([el_ir::cl(e, "OpClearKeyed", [to, ir::NdInt { n: kt }]), set_null], ir::TyVoid, "nullable_elem_set_null")
+}
+
+// `emit_nullable_slot_write` / `nullable_slot_write_from` (@PLN25): slot `slot_ref` written
+// from `value`, an `S` that may be the null sentinel — held in a work-ref, then, where it is
+// present, the slot's old payload released, the discriminant set present and the payload
+// copied in; where it is absent, the slot set absent.
+fn nullable_slot_write(e: el::El, vars: el_vars::Vars, syn: integer, slot_ref: ir::Node, value: ir::Node) -> vector<ir::Node> {
+  sd = nullable_payload(e, syn);
+  src = el_vars::work_ref(vars, ir::TyReference { n: sd, dep: [] });
+  kt = el::def(e, syn).known_type;
+  some_kt = el::def(e, el::variant_of(e, syn, "Some")).known_type;
+  present: vector<ir::Node> = [];
+  if kt != el_schema::NO_TYPE {
+    present += [el_ir::cl(e, "OpClearKeyed", [slot_ref, ir::NdInt { n: kt }])];
+  }
+  s_kt = ir::NdInt { n: el::def(e, sd).known_type };
+  present += [el_ir::cl(e, "OpSetEnum", [slot_ref, ir::NdInt { n: 0 }, ir::NdEnum { ord: 2, tp: el_schema::NO_TYPE }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: src }, el_ir::cl(e, "OpGetField", [slot_ref, ir::NdInt { n: el_schema::field_position(e, some_kt, "payload") }, s_kt]), s_kt])];
+  test = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: src }])]);
+  [el_ir::v_set(src, value), el_ir::v_if(test, ir::NdInsert { items: present }, nullable_set_null(e, syn, slot_ref))]
+}
+
+// `read_through_tag` (`emit_nullable_slot_read`, `@FR-L-Null-Tag`): a tagged `__nullable<S>`
+// slot read back as the `S?` its declaration promises — the payload where the discriminant
+// says present, else the reference null sentinel; the view keeps the slot's deps.  Any other
+// value is answered as it is.  The slot is read twice, so it must be a place; a value that is
+// not (a block that builds one) is refused by name.  Pass 1 answers the type only.
+fn read_through_tag(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
+  syn = match x.tp { TyEnum { n, is_ref } => if is_ref && is_nullable_wrapper(e, x.tp) { n } else { -1 }, _ => -1 };
+  if syn < 0 {
+    return x;
+  }
+  some_d = el::variant_of(e, syn, "Some");
+  sd = nullable_payload(e, syn);
+  rt = ir::TyOptional { inner: ir::TyReference { n: sd, dep: el_types::deps(x.tp) } };
+  some_kt = el::def(e, some_d).known_type;
+  s_kt = el::def(e, sd).known_type;
+  if e.first_pass || some_kt == el_schema::NO_TYPE || s_kt == el_schema::NO_TYPE {
+    return ex(x.code, rt);
+  }
+  pp = el_schema::field_position(e, some_kt, "payload");
+  if place_root(e, x.code) >= 0 {
+    return ex(nullable_pick(e, x.code, pp, s_kt), rt);
+  }
+  // Anything else is named first, in a work-ref that borrows the slot's store.
+  named = el_vars::work_ref(vars, x.tp);
+  vars.vars[named].skip_free = true;
+  el_vars::mark_inline(vars, named);
+  ex(el_ir::v_block([el_ir::v_set(named, x.code), nullable_pick(e, ir::NdVar { n: named }, pp, s_kt)], rt, "nullable_slot_read"), rt)
+}
+
+// `nullable_pick`: the payload of slot `slot` where its discriminant says present, else the
+// reference null sentinel.
+fn nullable_pick(e: el::El, slot: ir::Node, payload_pos: integer, s_kt: integer) -> ir::Node {
+  present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [slot, ir::NdInt { n: 0 }])]), ir::NdInt { n: 0 }])]);
+  payload = el_ir::cl(e, "OpGetField", [slot, ir::NdInt { n: payload_pos }, ir::NdInt { n: s_kt }]);
+  el_ir::v_if(present, payload, el_ir::cl(e, "OpNullRefSentinel", []))
+}
+
+// `parse_some_payload_object` (@PLN25 single-payload): a `__nullable<S>::Some` value from an
+// `S { … }` literal — the `Some` record allocated in a work-ref, its discriminant set present,
+// and the body written as a dense `S` straight into the inline `payload`.  Pass 1 builds
+// nothing and mints nothing.  Anything but a plain literal of `S` is refused by name.
+fn nullable_some_literal(e: el::El, vars: el_vars::Vars, v: integer, syn: integer, node: integer) -> ir::Node? {
+  some_d = el::variant_of(e, syn, "Some");
+  sd = nullable_payload(e, syn);
+  fields = match e.p.nodes[node] { SStructLit { fields: lf } => lf, _ => [] };
+  if e.first_pass {
+    return ir::NdInsert { items: [] };
+  }
+  some_kt = el::def(e, some_d).known_type;
+  w = el_vars::work_ref(vars, ir::TyEnum { n: syn, is_ref: true, dep: [] });
+  list = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: some_kt }]), el_ir::cl(e, "OpSetEnum", [ir::NdVar { n: w }, ir::NdInt { n: el_schema::field_position(e, some_kt, "enum") }, ir::NdEnum { ord: 2, tp: el_schema::NO_TYPE }])];
+  payload = el_ir::cl(e, "OpGetField", [ir::NdVar { n: w }, ir::NdInt { n: el_schema::field_position(e, some_kt, "payload") }, ir::NdInt { n: el::def(e, sd).known_type }]);
+  built = fields_at(e, vars, v, payload, sd, fields);
+  if built == null {
+    return null;
+  }
+  list += [ir::NdInsert { items: built! }, ir::NdVar { n: w }];
+  el_ir::v_block(list, ir::TyEnum { n: syn, is_ref: true, dep: [w] }, "NullableSome")
+}
+
+// `Data::is_nullable_wrapper`: the synthetic `__nullable<S>` an embedded `S?` slot is stored as.
+pub fn is_nullable_wrapper(e: el::El, t: ir::TypeT?) -> boolean {
+  if t == null {
+    return false;
+  }
+  match el_types::base(t!) {
+    TyEnum { n } => n >= 0 && starts_with(el::def(e, n).name, "__nullable<"),
+    TyReference { n } => n >= 0 && starts_with(el::def(e, n).name, "__nullable<"),
+    _ => false
+  }
+}
+
 // `object_init` for one omitted field at `base` bytes into the record `r`: a plain field its
 // type's default; a vector field its handle zeroed (twice: the prime, then the default's own
 // write); a struct field each of ITS fields' defaults, inline at its offset.
@@ -6209,6 +6369,11 @@ fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) 
   at = def.attributes[a]!;
   pos = base + field_position(e, d, at.name);
   ft = at.typedef[0];
+  // An omitted `S?` field (`__nullable<S>`, @PLN25 E2a.4) is absent: the record's zero-init is
+  // discriminant 0.
+  if is_nullable_wrapper(e, ft) {
+    return [];
+  }
   if el_types::is_collection(ft) {
     z = el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]);
     return [z, z];
@@ -6672,6 +6837,14 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
     SMember { at: ra, e: rre, name: rn, args: rargs, call: rc } => if is_field_step(e, re!) { member(e, vars, ra, rre, rn, rargs, rc, true) } else { expression(e, vars, re!) },
     _ => expression(e, vars, re!)
   };
+  // A field of an `S?` slot is read through its tag: absent reads as the null `S?`.
+  if is_nullable_wrapper(e, x.tp) {
+    rx = read_through_tag(e, vars, x);
+    if rx == null {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    x = rx!;
+  }
   d = -1;
   // A link to a record (`p: &P`) reaches its fields as the record does (`@FR-C-Ref`).
   rt = match x.tp {
@@ -6718,7 +6891,8 @@ fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: text,
   // A field of a record that may be null (`x: S?`) may be null too — unless a guard proved
   // the record present here (`(N-Guard)`).
   proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => vars.present_exprs.contains(bare(x.code)) };
-  if rt is TyOptional && !(t is TyOptional) && !proven {
+  // A tagged `S?` slot spells its own absence (`wrap_projection_nullable`).
+  if rt is TyOptional && !(t is TyOptional) && !proven && !is_nullable_wrapper(e, t) {
     t = ir::TyOptional { inner: t };
   }
   if e.first_pass {
@@ -10034,6 +10208,14 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   vars.dn4_coalesce = e.p.nodes[l] is SAs;
   x = expression(e, vars, l);
   vars.dn4_coalesce = outer;
+  // An `S?` slot's subject is the `S?` it holds (`read_through_tag`).
+  if is_nullable_wrapper(e, x.tp) {
+    rx = read_through_tag(e, vars, x);
+    if rx == null {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    x = rx!;
+  }
   if e.p.nodes[r] is SJump {
     el::refuse(e, "a `??` that returns, breaks or continues");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -10815,6 +10997,14 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
     if el_types::is_unknown(x.tp) {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
+    // An `S?` slot's default is its record's (`read_through_tag`).
+    if is_nullable_wrapper(e, x.tp) {
+      rx = read_through_tag(e, vars, x);
+      if rx == null {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      x = rx!;
+    }
     b = el_types::base(x.tp);
     // `build_default`'s record arm: a plain struct defaults to `S {}`, every field its default.
     match b {
@@ -10854,13 +11044,22 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
   if el_types::is_unknown(x.tp) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  // An `S?` slot is read as the `S?` it holds first (`handle_present`'s `read_through_tag`).
+  // On pass 1 the field still has its declared `S?` type: `fill_all` tags it at the pass's end.
+  slot = is_nullable_wrapper(e, x.tp) || e.first_pass && x.tp is TyOptional;
+  rx = read_through_tag(e, vars, x);
+  if rx == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  x = rx!;
   b = el_types::base(x.tp);
   // A plain struct local: the block answers the local as its read does — borrowing it, unless
   // the read is a bind's first (`parse_var`'s rule) — with `OpConvBoolFromRef` its test
-  // (`handle_present`'s record arm).  Any other record subject is refused by name.
+  // (`handle_present`'s record arm); a slot's read is held in an `_ncr_N`.  Any other record
+  // subject is refused by name.
   record = struct_ref(e, b) >= 0 && !starts_with(el::def(e, struct_ref(e, b)).name, "__tuple<");
   if record {
-    if !(el_ir::unspan(x.code) is NdVar) {
+    if !slot && !(el_ir::unspan(x.code) is NdVar) {
       el::refuse(e, "a `!` on a record that is not a local");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -11444,7 +11643,10 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
           ds += [x];
         }
       }
-      return ex(el_ir::v_if(c.code, t.code, f.code), ir::TyOptional { inner: el_types::with_deps(el_types::base(t.tp), ds) });
+      // The else arm was read against the then arm's `τ?` (`arm_expectation`): its tail is
+      // converted to it, so its block is typed `τ?`.
+      fc = if t.tp is TyOptional && !(f.tp is TyOptional) { block_typed(f.code, t.tp) } else { f.code };
+      return ex(el_ir::v_if(c.code, t.code, fc), ir::TyOptional { inner: el_types::with_deps(el_types::base(t.tp), ds) });
     }
   }
   if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) {
@@ -11745,6 +11947,7 @@ fn block_typed(n: ir::Node, t: ir::TypeT) -> ir::Node {
 
 fn arm_expectation(t: ir::TypeT) -> ir::TypeT {
   match t {
+    TyOptional { inner: TyInteger { spec: _ } } => ir::TyOptional { inner: ir::TyInteger { spec: i32_spec() } },
     TyInteger { spec } => if spec.forced_size == 0 { ir::TyInteger { spec: i32_spec() } } else { ir::TyUnknown { n: 0 } },
     _ => t
   }
@@ -12329,6 +12532,24 @@ fn chain_buffer(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>) -> intege
     }
   }
   -1
+}
+
+// `record_is_fully_written_by_a_literal`: a literal writes every byte of a `td` record — none
+// of its fields (any variant's, for an enum) is a `__nullable<…>`, whose absent spelling is the
+// zeroed bytes a fresh record has and an offered one may not.
+fn fully_written_by_literal(e: el::El, td: integer) -> boolean {
+  if td < 0 {
+    return false;
+  }
+  if el::def(e, td).def_type == el::DT_ENUM {
+    for c in e.b.data.definitions {
+      if c.def_type == el::DT_ENUM_VALUE && c.parent == td && has_nullable_field(e, c#index) {
+        return false;
+      }
+    }
+    return true;
+  }
+  !has_nullable_field(e, td)
 }
 
 fn has_nullable_field(e: el::El, td: integer) -> boolean {
