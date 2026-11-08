@@ -4871,13 +4871,19 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     gr = el_ir::unspan(p.code);
     match gr {
       NdCall { args } => {
-        if len(args) >= 2 && el_ir::unspan(args[0] ?? ir::NdNull) is NdVar {
-          return ex(el_ir::cl(e, "OpHashRemove", [el_ir::unspan(args[0] ?? ir::NdNull), gr, args[1] ?? ir::NdNull]), ir::TyVoid);
+        coll = el_ir::unspan(args[0] ?? ir::NdNull);
+        db_tp = args[1] ?? ir::NdNull;
+        if len(args) >= 2 && coll is NdVar {
+          return ex(el_ir::cl(e, "OpHashRemove", [coll, gr, db_tp]), ir::TyVoid);
+        }
+        removal = keyed_field_remove(e, vars, coll, db_tp, gr, pt);
+        if removal != null {
+          return ex(removal!, ir::TyVoid);
         }
       },
       _ => {}
     }
-    el::refuse(e, "a removal from a keyed field (its linked group)");
+    el::refuse(e, "a removal from a keyed field whose holder is no local or field");
     return ex(ir::NdNull, ir::TyVoid);
   }
   // `c[key] = record` on a keyed local: `OpSetKeyed(c, value, tp, n, key…)`, the record copied in
@@ -7709,6 +7715,128 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     return null_transparent(e, vars, c.code, types, ct, code);
   }
   ex(code, ct)
+}
+
+// `towards_set_hash_remove` for a keyed FIELD, `h.c[key] = null`: one removal, or — when the
+// field is a member of a linked group (`keyed_group_remove`, `@FR-Col-Group`) — the record
+// looked up once into a borrowed work ref, unlinked from every other member, then removed and
+// freed through the member it was spelled through.  Each unlink reads the record's key, so the
+// free comes last.  Null when the field's holder is not a type this port names.
+fn keyed_field_remove(e: el::El, vars: el_vars::Vars, coll: ir::Node, db_tp: ir::Node, get_rec: ir::Node, f_type: ir::TypeT) -> ir::Node? {
+  site = keyed_field_site(e, vars, coll);
+  if site == null {
+    return null;
+  }
+  members = keyed_group_members(e, site!.tp, site!.off);
+  if len(members) < 2 {
+    return el_ir::cl(e, "OpHashRemove", [coll, get_rec, db_tp]);
+  }
+  // The record is a borrow of the collection: never freed as a store of its own.  It is the
+  // record the key names, so the dense type the place resolved to (its `?` is the miss's).
+  found = el_vars::work_ref(vars, el_types::base(f_type));
+  el_vars::mark_inline(vars, found);
+  vars.vars[found].skip_free = true;
+  ops = [el_ir::v_set(found, get_rec)];
+  for m in members {
+    if m.off != site!.off {
+      ops += [el_ir::cl(e, "OpHashRemove", [keyed_field_at(coll, m.off), ir::NdVar { n: found }, ir::NdInt { n: m.content + CLEAR_KEYED_VIEW }])];
+    }
+  }
+  ops += [el_ir::cl(e, "OpHashRemove", [coll, ir::NdVar { n: found }, db_tp])];
+  ir::NdInsert { items: ops }
+}
+
+// `database::CLEAR_KEYED_VIEW`: an `OpHashRemove` that unlinks and never frees.
+CLEAR_KEYED_VIEW = 32768;
+
+// A keyed field's place: the schema type of its holder and its byte offset.
+struct FieldSite {
+  tp: integer,
+  off: integer
+}
+
+// One member of a linked group: its byte offset and its collection's schema type.
+struct GroupMember {
+  off: integer,
+  content: integer
+}
+
+// `Parser::keyed_field_site`: `OpGetField(base, off, …)`, the holder's type through `holder_type`.
+fn keyed_field_site(e: el::El, vars: el_vars::Vars, coll: ir::Node) -> FieldSite? {
+  match coll {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetField" {
+        return null;
+      }
+      off = match el_ir::unspan(args[1] ?? ir::NdNull) { NdInt { n } => n, _ => -1 };
+      tp = holder_type(e, vars, el_ir::unspan(args[0] ?? ir::NdNull));
+      if off < 0 || tp < 0 { null } else { FieldSite { tp: tp, off: off } }
+    },
+    _ => null
+  }
+}
+
+// `Parser::holder_type`: the schema type a field-access base evaluates to — a record local's
+// type, or the type a nested field read names as its third operand; -1 for any other base.
+fn holder_type(e: el::El, vars: el_vars::Vars, base: ir::Node) -> integer {
+  match base {
+    NdVar { n } => {
+      d = match el_types::base(el_vars::tp(vars, n)) {
+        TyReference { n: r } => r,
+        TyRefVar { inner } => match el_types::base(inner) { TyReference { n: r } => r, _ => -1 },
+        _ => -1
+      };
+      kt = if d < 0 { el::NO_TYPE } else { el::def(e, d).known_type };
+      if kt == el::NO_TYPE { -1 } else { kt }
+    },
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetField" {
+        return -1;
+      }
+      match el_ir::unspan(args[2] ?? ir::NdNull) {
+        NdInt { n } => if n >= 0 && n != el::NO_TYPE { n } else { -1 },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+// `Stores::keyed_group_members`: the field at `off` of struct `s` and the members its
+// `other_indexes` link it to (the view marker `NO_TYPE` skipped), in field order; empty for a
+// field of no group.
+fn keyed_group_members(e: el::El, s: integer, off: integer) -> vector<GroupMember> {
+  fields = el_schema::struct_fields(e, s);
+  me = -1;
+  for f in fields {
+    if me < 0 && f.position == off {
+      me = f#index;
+    }
+  }
+  if me < 0 || len(fields[me]!.other_indexes) == 0 {
+    return [];
+  }
+  nrs: vector<integer> = [me];
+  for o in fields[me]!.other_indexes {
+    if o != el::NO_TYPE && !nrs.contains(o) {
+      nrs += [o];
+    }
+  }
+  out: vector<GroupMember> = [];
+  for f in fields {
+    if nrs.contains(f#index) {
+      out += [GroupMember { off: f.position, content: f.content }];
+    }
+  }
+  out
+}
+
+// `Parser::keyed_field_at`: the same field read with another byte offset.
+fn keyed_field_at(coll: ir::Node, off: integer) -> ir::Node {
+  match coll {
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == 1 { ir::NdInt { n: off } } else { a } }] },
+    _ => coll
+  }
 }
 
 // The constant argument a domain check reads, or null.
@@ -13460,6 +13588,15 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       if !e.first_pass || !el_types::is_unknown(elem) {
         el::refuse(e, "a `for` destructuring something other than a tuple of its arity");
       }
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    var_tp = ir::TyReference { n: td, dep: [vec] };
+  } else if elem is TyTuple {
+    // P189b: a tuple element lives as inline bytes of the vector's record, so the loop
+    // variable is a reference to its `__tuple<…>` record, as a destructured one is.
+    td = el_types::tuple_def_of(e, match elem { TyTuple { elems } => elems, _ => [] });
+    if td < 0 {
+      el::refuse(e, "a `for` over a vector of tuples with no tuple record");
       return ex(ir::NdNull, ir::TyVoid);
     }
     var_tp = ir::TyReference { n: td, dep: [vec] };
