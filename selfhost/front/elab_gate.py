@@ -127,7 +127,8 @@ def main():
     which = []
     differs = []
     blocked = []
-    # `LOFT_ELAB_VERDICTS=<file>`: each program's verdict, one per line — what two runs diff.
+    # `LOFT_ELAB_VERDICTS=<file>`: each program's verdict, one per line — what two runs diff —
+    # a refused one followed by its refusals, so a grep names the programs a family blocks.
     verdicts = []
     with cf.ThreadPoolExecutor(o.jobs) as ex:
         futs = {ex.submit(one, loft, defs, elab, std, f, tmp, env, i): (part, f)
@@ -136,7 +137,9 @@ def main():
             part, f = futs[fut]
             verdict, detail = fut.result()
             per[part][verdict] += 1
-            verdicts.append(f"{verdict}\t{os.path.relpath(f, os.path.dirname(root))}")
+            rel = os.path.relpath(f, os.path.dirname(root))
+            refusals = " | ".join(sorted(set(detail))) if verdict == "refused" else ""
+            verdicts.append(f"{verdict}\t{rel}" + (f"\t{refusals}" if refusals else ""))
             if verdict == "refused":
                 reasons.update(set(detail))
                 fams = {d.split(": ", 1)[0] for d in detail}
