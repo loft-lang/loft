@@ -48,7 +48,7 @@ pub struct Vars {
   pub defined: vector<boolean>,
   // `Function::work_texts`: the `__work_N` text buffers this body minted, in order
   pub work_texts: vector<integer>,
-  pub work_text: integer,
+  pub work_text: integer = 0,
   // The record locals a struct literal has built in place on this pass.
   pub built: vector<integer>,
   // The record locals bound from a call that delivers into a hidden buffer: like a built one,
@@ -58,15 +58,15 @@ pub struct Vars {
   pub mid_params: vector<integer>,
   // The `SIndex` node an assignment is about to bind, whose vector slice it lowers itself
   // (`materialize_iterator`); -1 for none.
-  pub slice_node: integer,
+  pub slice_node: integer = -1,
   // `Function::unique`: the counters `create_unique` names `_<name>_<n>` locals by, one per
   // name, per pass
   pub unique: hash<UniqueCount[name]>,
   // `Function::work_vdb` and `work_references`: the `__vdb_N` vector stores this body minted
-  pub work_vdb: integer,
+  pub work_vdb: integer = 0,
   // `Function::work_ref` and its second-pass twin: the `__ref_N` / `__ref_p2_N` record buffers
-  pub work_ref: integer,
-  pub work_ref_p2: integer,
+  pub work_ref: integer = 0,
+  pub work_ref_p2: integer = 0,
   pub work_refs: vector<integer>,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
@@ -75,7 +75,7 @@ pub struct Vars {
   pub loop_counts: vector<LoopCounter>,
   // The `while` loops open: loops of their own in `#break`'s count, which `active_loops` (the
   // `for` loops) does not hold.
-  pub whiles: integer,
+  pub whiles: integer = 0,
   // The loop variables of the open `rev(…)` walks (`on`'s reverse bit, which `#remove` reads).
   pub reversed: vector<integer>,
   // `Iterator::value` of each open loop, beside `active_loops`: the vector a `for` walks, or
@@ -84,9 +84,9 @@ pub struct Vars {
   // The locals this pass assigned a vector's length (`n = len(v)`), with that vector
   pub len_locals: vector<LenLocal>,
   // Set when an index read was trusted through a length local (`Parser::length_local_read`)
-  pub len_read: boolean,
+  pub len_read: boolean = false,
   // The syntax node of the body being elaborated
-  pub body: integer,
+  pub body: integer = -1,
   // `Function::loop_binds`: how many loops have bound each spelling, per pass
   pub loop_binds: hash<LoopCount[name]>,
   // `Parser::divisor_nonzero`: the locals a condition proves non-zero where they are read
@@ -106,9 +106,9 @@ pub struct Vars {
   // Locals a `&` bound to a place in a store (`pi = &o.i`, `pe = &v[0]`, `is_amp_link`).
   pub amp_places: vector<integer>,
   // `Function::work_ctext`: the `__work_cN` text buffers a call hands a text-returning callee
-  pub work_ctext: integer,
+  pub work_ctext: integer = 0,
   // `Function::work_text_p2`: the `__work_p2_N` destinations a text-dest call is given
-  pub work_tp2: integer,
+  pub work_tp2: integer = 0,
   // `child_allocs` on the first pass's code, which keeps every loop body: per record made
   // through a local's field (one per appended literal), that local
   pub allocs: vector<integer>,
@@ -123,26 +123,26 @@ pub struct Vars {
   pub rebind_params: vector<integer>,
   pub rebind_origs: vector<integer>,
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
-  pub dn4_coalesce: boolean,
+  pub dn4_coalesce: boolean = false,
   // `Parser::lambda_counter`: the lambdas this body made, naming the next `__lambda_<fn>_<N>`
-  pub lambdas: integer,
+  pub lambdas: integer = 0,
   // `Parser::expected` for the one node a bind is about to read (`expect_node`): the type its
   // target holds, which an `if` there hands its arms (an untyped `[]` built in its place)
-  pub expect_node: integer,
-  pub expect: ir::TypeT,
+  pub expect_node: integer = -1,
+  pub expect: ir::TypeT = ir::TyVoid,
   // the local a `+` chain of vectors is bound to (`a = v + w` builds into it), or -1
-  pub concat_dest: integer,
+  pub concat_dest: integer = -1,
   // `parse_var`'s `into` arm: the syntax node of a local bind's right-hand side read first,
   // into the destination — a text read there keeps its own type (-1: none)
-  pub read_into: integer,
+  pub read_into: integer = -1,
   // Parsing the value of a plain local's `=` (`Parser::in_bind_rhs`).
-  pub bind_rhs: boolean,
+  pub bind_rhs: boolean = false,
   // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.
   pub rebuilt: vector<integer>,
   // The element type the context gives the vector literal at node `lit_hint_node` (an
   // operator's right operand takes its left's), or -1.
-  pub lit_hint_node: integer,
-  pub lit_hint: ir::TypeT,
+  pub lit_hint_node: integer = -1,
+  pub lit_hint: ir::TypeT = ir::TyVoid,
   // `Variable::viewed`, per variable: the borrows each earlier bind ended with on the second
   // pass (`note_bind`).  The type keeps only the last bind's, but a read after
   // `v = a[0]; if c { v = b[0]; }` may be either (`store_viewers`).
@@ -150,7 +150,7 @@ pub struct Vars {
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, reversed: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], present_exprs: [], text_links: [], store_links: [], amp_vectors: [], amp_places: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, bind_rhs: false, rebuilt: [], lit_hint_node: -1, lit_hint: ir::TyVoid, viewed: [] }
+  Vars { name: name, file: file }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
