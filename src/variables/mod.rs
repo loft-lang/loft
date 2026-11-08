@@ -6124,10 +6124,9 @@ impl Function {
     /// demote's move, `(R-Demote)`) writes into `b`.  An upper bound, like `store_viewers`: a
     /// bind that is dead by the rebind still counts, which costs a fresh store, never a value.
     pub fn viewed_by_an_earlier_bind(&self, v: u16) -> bool {
-        self.variables[v as usize]
-            .viewed
-            .iter()
-            .any(|&d| d != v && d != u16::MAX)
+        self.variables
+            .get(v as usize)
+            .is_some_and(|x| x.viewed.iter().any(|&d| d != v && d != u16::MAX))
     }
 
     /// Record that fn_ref variable `fn_ref` has its closure stored in `clos`.
