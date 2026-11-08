@@ -714,7 +714,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   el_vars::take_over(vars, el::def(e, e.context).variables);
   for so in e.step_over {
     if so.d == e.context && el_vars::var(vars, so.name) >= 0 {
-      vars.step_over += [el_vars::var(vars, so.name)];
+      vars.step_over += [el_vars::RefSite { nr: el_vars::var(vars, so.name), site: so.site }];
     }
   }
   if e.first_pass {
@@ -781,6 +781,11 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     }
     if !e.first_pass && len(e.type_vars) > 0 {
       e.bodies2 += [e.context];
+    }
+  }
+  if e.first_pass {
+    for s in el_vars::minted_parameters(vars) {
+      e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, s.nr), site: s.site }];
     }
   }
   e.b.data.definitions[e.context].variables = el_vars::stored(vars);
