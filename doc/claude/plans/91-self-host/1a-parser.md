@@ -133,6 +133,10 @@ copied:
 - A record literal with a vector-literal field written into a place (`xs[i].m = V { a: [1] }`)
   is built apart and copied in; the first pass's in-place attempt leaves an `_elm_N` the second
   never uses, still declared at the function head.  The port refuses this shape by name.
+- A literal of a droppable rebinding a local (`s = RbS { h: mk(…) }`) is tried in place, then
+  parsed again apart; the first attempt's work refs stay declared, unused (`abandon_work_refs`
+  reproduces that).  Where a field value reads the local (`h: mk(s.h.id)`), the attempt also
+  stages it, one more `__ref_N` the port does not mint: refused by name.
 
 ## Where it stands
 

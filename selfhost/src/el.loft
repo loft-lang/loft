@@ -31,6 +31,13 @@ pub struct Capture {
   pub tp: ir::TypeT
 }
 
+// A work ref a first-pass return renamed the buffer onto that no second-pass site mints again
+// (`materialize_view_return`), by function and name: the second pass steps over its name.
+pub struct StepOver {
+  pub d: integer,
+  pub name: text
+}
+
 // An instance made before its template's second-pass body was read: filled after the pass.
 pub struct StaleInstance {
   pub d: integer,
@@ -78,7 +85,8 @@ pub struct El {
   // the `__closure` parameter they are read through (-1 where there is none yet).
   pub captures: vector<Capture>,
   pub closure_rec: integer,
-  pub closure_var: integer
+  pub closure_var: integer,
+  pub step_over: vector<StepOver>
 }
 
 pub const STD_SOURCE = 0;
@@ -122,7 +130,8 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     stale: [],
     captures: [],
     closure_rec: -1,
-    closure_var: -1
+    closure_var: -1,
+    step_over: []
   }
 }
 

@@ -68,6 +68,9 @@ pub struct Vars {
   pub work_ref: integer = 0,
   pub work_ref_p2: integer = 0,
   pub work_refs: vector<integer>,
+  // Work refs a pass-1 return renamed the buffer onto that no pass-2 site re-mints
+  // (`materialize_view_return`): stepped over by `work_ref` (`argument_of_another_site`).
+  pub step_over: vector<integer>,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
   // The `x#count` counter a body asked of an open loop (`Function::loop_count_of`), by its loop
@@ -758,8 +761,12 @@ fn sorted_in(l: vector<integer>, nr: integer) -> vector<integer> {
 
 // `Function::work_refs`: the next `__ref_N` record buffer — a call's hidden return buffer — noted
 // among the work references the body's head sets to null.
+// A name that now denotes another site's return buffer is stepped over, not reused (loft#848).
 pub fn work_ref(v: Vars, t: ir::TypeT) -> integer {
   v.work_ref += 1;
+  while v.names["__ref_{v.work_ref}"] != null && v.step_over.contains(v.names["__ref_{v.work_ref}"]!.nr) {
+    v.work_ref += 1;
+  }
   nr = add_variable(v, "__ref_{v.work_ref}", t);
   v.work_refs = sorted_in(v.work_refs, nr);
   nr
