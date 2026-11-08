@@ -12381,6 +12381,19 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
     el::refuse(e, "a `return` of a local Rust's rename may take");
     return ex(ir::NdNull, ir::TyNever);
   }
+  // A field or an element of a visible parameter is handed back as that view (`MergeAttr`):
+  // the result borrows the parameter, nothing is delivered into the buffer.
+  proot = place_root(e, x);
+  if w < 0 && x is NdCall && proot >= 0 && vars.vars[proot].argument {
+    pa = attr_nr(el::def(e, d), el_vars::name_of(vars, proot));
+    if pa >= 0 && !el::def(e, d).attributes[pa].hidden {
+      ret = el::def(e, d).returned[0];
+      if !el_types::deps(ret).contains(pa) {
+        e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [pa])];
+      }
+      return ex(ir::NdReturn { inner: x }, ir::TyNever);
+    }
+  }
   // `RetPromotion::Bind`: no rename took this value (an earlier exit renamed or bound the buffer,
   // or the local cannot be the buffer), so it is delivered into the buffer — a call by handing
   // it the buffer in place of its own work ref, a named local by a copy.
