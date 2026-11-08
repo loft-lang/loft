@@ -44,7 +44,7 @@ impl Parser {
         }
         if plus {
             self.vars.in_use(vnr, true);
-            if vnr == self.rebuild_watch {
+            if self.rebuild_watch.contains(&vnr) {
                 self.rebuild_watch_hit = true;
             }
         } else if self.vars.uses(vnr) > 0 {

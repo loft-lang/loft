@@ -9472,6 +9472,11 @@ use a separate collection or add after the loop"
         let outer_read = self.length_local_read.replace(false);
         let tp = self.parse_assign_inner(code);
         self.last_place_discharge = outer_discharge;
+        if !self.first_pass
+            && let Value::Set(v, _) = code.unspan()
+        {
+            self.vars.note_bind(*v);
+        }
         if !self.first_pass && self.length_locals.0 == self.context {
             // `(N-Index)` — a length local's assignment names its vector now it is laid out.
             if !self.length_locals.1.is_empty()
