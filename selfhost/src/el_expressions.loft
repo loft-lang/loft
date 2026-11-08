@@ -4525,6 +4525,40 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
     }
     return ex(el_ir::cl(e, "OpClearVector", [el_ir::unspan(p.code)]), ir::TyVoid);
   }
+  // An `S?` slot (`__nullable<S>`): an `S { … }` literal is built as the `Some` and copied in;
+  // `null` sets it absent; any other `S` writes it (`nullable_elem_convert`).
+  // On pass 1 the slot still has its declared `S?` type (`fill_all` tags it at the pass's end),
+  // and pass 1 builds nothing: the value is read for its names alone.
+  if op == "=" && e.first_pass && p.tp is TyOptional && el_schema::nullable_record_of(e, p.tp) >= 0 && !calls(e, el_ir::unspan(p.code), "OpGetDbRef") {
+    if !(e.p.nodes[rhs] is SStructLit) {
+      expression(e, vars, rhs);
+    }
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if op == "=" && is_nullable_wrapper(e, p.tp) {
+    syn = el_types::struct_enum_def(p.tp);
+    place = el_ir::unspan(p.code);
+    if literal_of(e, rhs, nullable_payload(e, syn)) {
+      nb = nullable_some_literal(e, vars, syn, rhs);
+      if nb == null || e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      kt = ir::NdInt { n: el::def(e, syn).known_type };
+      return ex(el_ir::cl(e, "OpCopyRecord", [nb!, place, kt]), ir::TyVoid);
+    }
+    x = expression(e, vars, rhs);
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if x.tp is TyNull {
+      return ex(nullable_set_null(e, syn, place), ir::TyVoid);
+    }
+    if struct_ref(e, el_types::base(x.tp)) == nullable_payload(e, syn) {
+      return ex(el_ir::v_block(nullable_slot_write(e, vars, syn, place, x.code), ir::TyVoid, "nullable_elem_convert"), ir::TyVoid);
+    }
+    refuse_known(e, x.tp, "a nullable record slot assigned {type_kind(x.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   if op == "=" && e.p.nodes[rhs] is SStructLit && !(p.tp is TyOptional) && struct_ref(e, el_types::base(p.tp)) >= 0 {
     return literal_into_place(e, vars, el_ir::unspan(p.code), struct_ref(e, el_types::base(p.tp)), rhs);
   }
@@ -6100,7 +6134,7 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
           slot_ref = el_ir::cl(e, "OpGetField", [r, pos, kt]);
           list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }])];
           if literal_of(e, fe!, nullable_payload(e, sed)) {
-            nb = nullable_some_literal(e, vars, v, sed, fe!);
+            nb = nullable_some_literal(e, vars, sed, fe!);
             if nb == null {
               return null;
             }
@@ -6331,7 +6365,7 @@ fn nullable_pick(e: el::El, slot: ir::Node, payload_pos: integer, s_kt: integer)
 // `S { … }` literal — the `Some` record allocated in a work-ref, its discriminant set present,
 // and the body written as a dense `S` straight into the inline `payload`.  Pass 1 builds
 // nothing and mints nothing.  Anything but a plain literal of `S` is refused by name.
-fn nullable_some_literal(e: el::El, vars: el_vars::Vars, v: integer, syn: integer, node: integer) -> ir::Node? {
+fn nullable_some_literal(e: el::El, vars: el_vars::Vars, syn: integer, node: integer) -> ir::Node? {
   some_d = el::variant_of(e, syn, "Some");
   sd = nullable_payload(e, syn);
   fields = match e.p.nodes[node] { SStructLit { fields: lf } => lf, _ => [] };
@@ -6342,7 +6376,7 @@ fn nullable_some_literal(e: el::El, vars: el_vars::Vars, v: integer, syn: intege
   w = el_vars::work_ref(vars, ir::TyEnum { n: syn, is_ref: true, dep: [] });
   list = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: some_kt }]), el_ir::cl(e, "OpSetEnum", [ir::NdVar { n: w }, ir::NdInt { n: el_schema::field_position(e, some_kt, "enum") }, ir::NdEnum { ord: 2, tp: el_schema::NO_TYPE }])];
   payload = el_ir::cl(e, "OpGetField", [ir::NdVar { n: w }, ir::NdInt { n: el_schema::field_position(e, some_kt, "payload") }, ir::NdInt { n: el::def(e, sd).known_type }]);
-  built = fields_at(e, vars, v, payload, sd, fields);
+  built = fields_at(e, vars, w, payload, sd, fields);
   if built == null {
     return null;
   }
