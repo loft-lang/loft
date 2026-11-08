@@ -1,0 +1,63 @@
+# loft#2431 probe — NEVER merged; lives only on the `tuxedo-2431-probe` branch.
+# Rebuild the v2026.11.0 Windows release N times in parallel, each with rust-lld's
+# LLD_REPRODUCE record of the loft.exe link.  Row 1 always keeps its record (the matching
+# reference); every other row keeps it only when its bytes differ.  Diffing a differing
+# record's objects against row 1's names the crate whose output varies.
+name: repro probe 2431
+
+on:
+  push:
+    branches: [tuxedo-2431-probe]
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    # @windows-exempt: a throwaway probe of the Windows release's reproducibility
+    name: rebuild ${{ matrix.n }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Rebuild the release and compare
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOFT_REPRO_ROOT: 'C:\loft-repro'
+          LOFT_REPRO_OUT: ${{ runner.temp }}/repro-out
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/lld-repro"
+          export LLD_REPRODUCE="$RUNNER_TEMP\\lld-repro\\loft-link.tar"
+          bash scripts/repro-verify.sh --target x86_64-pc-windows-msvc --version 2026.11.0
+          code=$?
+          echo "verify exit $code"
+          case $code in
+            0) echo "::notice title=Reproducible::rebuild ${{ matrix.n }} identical" ;;
+            *) echo "::error title=Differs::rebuild ${{ matrix.n }} exit $code" ;;
+          esac
+          exit $code
+
+      - name: Keep lld's record (row 1 always, any row that differs)
+        if: always() && (matrix.n == 1 || failure())
+        uses: actions/upload-artifact@v4
+        with:
+          name: lld-link-${{ matrix.n }}
+          path: ${{ runner.temp }}/lld-repro
+          if-no-files-found: warn
+          retention-days: 5
+
+      - name: Keep the rebuilt binary when it differs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuilt-${{ matrix.n }}
+          path: ${{ runner.temp }}/repro-out
+          if-no-files-found: ignore
+          retention-days: 5
