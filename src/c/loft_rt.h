@@ -1127,6 +1127,36 @@ LOFT_HOT_INLINE void loft_push_code(loft_text *t, uint32_t c) {
     loft_push_code_slow(t, c);
 }
 
+/* `@FR-R-PushFill`'s text clause — a text a loop pushes characters to and names nowhere else
+ * holds its bytes, length and room in locals for the loop: a `char` store may alias the text's
+ * header, so pushing through it reloaded the length and the bytes at every character.  The
+ * length goes back around each growth and at the loop's end (`loft_tw_sync`).  The growth goes
+ * through a COPY, as `loft_win`'s does, so the window's address never reaches a call and the
+ * compiler keeps its fields in registers. */
+typedef struct { char *p; size_t len, cap; } loft_tw;
+LOFT_HOT_INLINE loft_tw loft_tw_of(const loft_text *t) {
+    loft_tw w = { t->p, t->len, t->cap };
+    return w;
+}
+LOFT_COLD static loft_tw loft_tw_grow(loft_tw w, loft_text *t, uint32_t c) {
+    t->len = w.len;
+    loft_push_code_slow(t, c);
+    w.p = t->p;
+    w.len = t->len;
+    w.cap = t->cap;
+    return w;
+}
+LOFT_HOT_INLINE void loft_tw_push(loft_tw *w, loft_text *t, uint32_t c) {
+    if (LOFT_LIKELY(c - 1u < 0x7Fu && w->len < w->cap)) {
+        w->p[w->len++] = (char) c;
+        return;
+    }
+    loft_tw g = *w;
+    g = loft_tw_grow(g, t, c);
+    *w = g;
+}
+LOFT_HOT_INLINE void loft_tw_sync(const loft_tw *w, loft_text *t) { t->len = w->len; }
+
 /* A function value: the definition it names (LOFT_NULL for the absent one) and the closure
  * record a capturing lambda reads.  A call goes through the emitted dispatcher of its
  * signature, `loft_call{n}`, which switches on `d` (State::fn_call_ref). */
@@ -1575,7 +1605,18 @@ static void loft_vector_store(loft_ref *var) {
     loft_database(var, 24);
 }
 
+#define LOFT_STORE_BUF_BIT 0x20000000u
 static void loft_database_typed(loft_ref *var, uint32_t bytes, uint16_t tp) {
+    /* `@FR-R-HostStore`: a buffer naming its caller's store — the record is claimed there,
+     * zeroed (the literal that follows writes every field). */
+    if (var->store_nr != 0xFFFF && var->rec == 0 && (var->pos & LOFT_STORE_BUF_BIT)) {
+        loft_store_t *s = &loft_stores[var->store_nr];
+        uint32_t rec = loft_claim(s, 1 + (bytes + 7) / 8);
+        var->rec = rec;
+        var->pos = 8;
+        memset(loft_at(s, rec, 8), 0, bytes);
+        return;
+    }
     loft_database(var, bytes);
     loft_stores[var->store_nr].known = tp;
     loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, tp);
@@ -2209,12 +2250,12 @@ static void loft_remove_record(loft_store_t *s, uint32_t rec) {
     loft_st_delete(s, rec);
 }
 
-static int loft_record_removed(loft_ref x) {
+LOFT_HOT_INLINE int loft_record_removed(loft_ref x) {
     if (x.rec == 0 || x.store_nr == 0xFFFF || x.store_nr >= loft_nstores || !loft_stores[x.store_nr].live) return 0;
     return loft_st_is_removed(&loft_stores[x.store_nr], x.rec);
 }
 
-static loft_ref loft_get_dbref(loft_ref r, uint32_t fld) {
+LOFT_HOT_INLINE loft_ref loft_get_dbref(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(r);
     loft_ref x = {0};
@@ -2225,7 +2266,7 @@ static loft_ref loft_get_dbref(loft_ref r, uint32_t fld) {
     return x;
 }
 
-static void loft_set_dbref(loft_ref r, uint32_t fld, loft_ref x) {
+LOFT_HOT_INLINE void loft_set_dbref(loft_ref r, uint32_t fld, loft_ref x) {
     if (r.rec == 0) return;
     loft_store_t *s = loft_store_of(r);
     loft_set_u32(s, r.rec, r.pos + fld, x.store_nr);
@@ -2500,10 +2541,14 @@ static int loft_vh_same(loft_vh h, loft_ref v) {
     return now.store_nr == h.store_nr && now.rec == h.rec && now.len == h.len && now.base == h.base;
 }
 
-/* The element index `from` names (negative from the end), or -1 outside, as loft_vec_get. */
+/* The element index `from` names (negative from the end), or -1 outside, as loft_vec_get.
+ * Branch-free: a negative `from` adds the length (`from >> 63` is all ones), and one unsigned
+ * compare tests both ends — the null index, the most negative one, stays outside. */
+#define LOFT_VH_WRAP(h, from) ((from) < 0 ? (from) + (h).len : (from))
+#define LOFT_VH_OUT(h, f) LOFT_UNLIKELY((uint64_t) (f) >= (uint64_t) (h).len)
 LOFT_HOT_INLINE int64_t loft_vh_index(loft_vh h, int64_t from) {
-    int64_t f = from < 0 ? from + h.len : from;
-    return f < 0 || f >= h.len ? -1 : f;
+    int64_t f = LOFT_VH_WRAP(h, from);
+    return LOFT_VH_OUT(h, f) ? -1 : f;
 }
 
 LOFT_HOT_INLINE loft_ref loft_vh_get(loft_vh h, uint32_t size, int64_t from) {
@@ -2628,6 +2673,15 @@ static inline int loft_vg_span(int64_t first, int64_t end, int inclusive, int64_
     if (first > *last) return 0;
     return LOFT_SUB_OVF(*last, first, &d) || d >= min - 1;
 }
+/* @FR-R-Version's nest clause — a box of two counter ranges, each non-empty, holds at least
+ * `min` points. */
+static inline int loft_vg_area(int64_t f0, int64_t l0, int64_t f1, int64_t l1, int64_t min) {
+    int64_t a, b;
+    if (LOFT_SUB_OVF(l0, f0, &a) || LOFT_SUB_OVF(l1, f1, &b) || a >= min - 1 || b >= min - 1) {
+        return 1;
+    }
+    return (a + 1) * (b + 1) >= min;
+}
 /* An argument `x + c * t` at counter value `t`: 0 where it does not fit or is null, or where
  * `x` is null (a checked argument that answered null does not move with the counter). */
 static inline int loft_vg_lin(int64_t x, int64_t c, int64_t t, int64_t *out) {
@@ -2658,8 +2712,9 @@ LOFT_HOT_INLINE int loft_vh_fill_i64(loft_vh h, int64_t base, int64_t lo, int64_
                                      int64_t v) {
     int64_t f, n;
     if (!loft_fill_run(h, base, lo, hi, inclusive, &f, &n)) return 0;
-    uint8_t *p = h.base + (size_t) f * 8;
-    for (int64_t i = 0; i < n; i++) memcpy(p + (size_t) i * 8, &v, 8);
+    uint64_t bits;
+    memcpy(&bits, &v, 8);
+    loft_fill8(h.base + (size_t) f * 8, bits, (size_t) n);
     return 1;
 }
 
@@ -2667,8 +2722,9 @@ LOFT_HOT_INLINE int loft_vh_fill_f64(loft_vh h, int64_t base, int64_t lo, int64_
                                      double v) {
     int64_t f, n;
     if (!loft_fill_run(h, base, lo, hi, inclusive, &f, &n)) return 0;
-    uint8_t *p = h.base + (size_t) f * 8;
-    for (int64_t i = 0; i < n; i++) memcpy(p + (size_t) i * 8, &v, 8);
+    uint64_t bits;
+    memcpy(&bits, &v, 8);
+    loft_fill8(h.base + (size_t) f * 8, bits, (size_t) n);
     return 1;
 }
 
@@ -2676,8 +2732,9 @@ LOFT_HOT_INLINE int loft_vh_fill_f32(loft_vh h, int64_t base, int64_t lo, int64_
                                      float v) {
     int64_t f, n;
     if (!loft_fill_run(h, base, lo, hi, inclusive, &f, &n)) return 0;
-    uint8_t *p = h.base + (size_t) f * 4;
-    for (int64_t i = 0; i < n; i++) memcpy(p + (size_t) i * 4, &v, 4);
+    uint32_t bits;
+    memcpy(&bits, &v, 4);
+    loft_fill4(h.base + (size_t) f * 4, bits, (size_t) n);
     return 1;
 }
 
@@ -3983,7 +4040,7 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
     uint8_t *base = (uint8_t *) loft_at(s, r, 0);
     /* A scalar template of a machine width is stored into every slot: the doubling reads back
      * each block it wrote to copy it, a store loop only writes (a 1920x1080 canvas of integers:
-     * the doubling's memmove was 93 % of building it), and the compiler widens the loop. */
+     * the doubling's memmove was 93 % of building it); `loft_fill8` and its siblings write it. */
     if (T[ctp].kind == LOFT_T_SCALAR && (size == 8 || size == 4 || size == 2 || size == 1)) {
         uint8_t *dst = base + from + size;
         if (size == 1) {
@@ -3991,15 +4048,15 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
         } else if (size == 8) {
             uint64_t t;
             memcpy(&t, base + from, 8);
-            for (uint32_t i = 0; i < extra; i++) memcpy(dst + (size_t) i * 8, &t, 8);
+            loft_fill8(dst, t, extra);
         } else if (size == 4) {
             uint32_t t;
             memcpy(&t, base + from, 4);
-            for (uint32_t i = 0; i < extra; i++) memcpy(dst + (size_t) i * 4, &t, 4);
+            loft_fill4(dst, t, extra);
         } else {
             uint16_t t;
             memcpy(&t, base + from, 2);
-            for (uint32_t i = 0; i < extra; i++) memcpy(dst + (size_t) i * 2, &t, 2);
+            loft_fill2(dst, t, extra);
         }
         return;
     }
@@ -4788,6 +4845,7 @@ static double loft_math1(int id, double x) {
     case 7: return floor(x);
     case 8: return round(x);
     case 9: return sqrt(x);
+    case 10: return exp(x);
     default: return (double) NAN;
     }
 }
@@ -4804,6 +4862,7 @@ static float loft_math1s(int id, float x) {
     case 7: return floorf(x);
     case 8: return roundf(x);
     case 9: return sqrtf(x);
+    case 10: return expf(x);
     default: return (float) NAN;
     }
 }
@@ -7099,35 +7158,154 @@ LOFT_HOT_INLINE loft_ref loft_vec_get_at(loft_ref v, uint32_t size, int64_t from
     return e;
 }
 LOFT_HOT_INLINE loft_ref loft_vh_get_at(loft_vh h, uint32_t size, int64_t from, const char *file, uint32_t line) {
-    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) {
+    int64_t f = LOFT_VH_WRAP(h, from);
+    if (LOFT_VH_OUT(h, f)) {
         loft_index_miss(from, h.len, file, line);
         return loft_ref_null_reported();
     }
-    return loft_vh_get(h, size, from);
+    loft_ref e = {0};
+    e.store_nr = h.store_nr;
+    e.rec = h.rec;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
 }
 LOFT_HOT_INLINE uint8_t *loft_vh_addr_at(loft_vh h, uint32_t size, int64_t from, const char *file, uint32_t line) {
-    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
-    return loft_vh_addr(h, size, from);
+    int64_t f = LOFT_VH_WRAP(h, from);
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(from, h.len, file, line);
+        return (uint8_t *) 0;
+    }
+    return h.base + (size_t) f * size;
 }
 LOFT_HOT_INLINE int64_t loft_vh_get_int_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, const char *file,
                                            uint32_t line) {
-    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
-    return loft_vh_get_int(h, size, from, fld);
+    int64_t f = LOFT_VH_WRAP(h, from);
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(from, h.len, file, line);
+        return LOFT_NULL;
+    }
+    int64_t v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
 }
 LOFT_HOT_INLINE double loft_vh_get_float_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, const char *file,
                                             uint32_t line) {
-    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
-    return loft_vh_get_float(h, size, from, fld);
+    int64_t f = LOFT_VH_WRAP(h, from);
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(from, h.len, file, line);
+        return (double) NAN;
+    }
+    double v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
 }
 LOFT_HOT_INLINE void loft_vh_set_int_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v,
                                         const char *file, uint32_t line) {
-    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
-    loft_vh_set_int(h, size, from, fld, v);
+    int64_t f = LOFT_VH_WRAP(h, from);
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(from, h.len, file, line);
+        return;
+    }
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 LOFT_HOT_INLINE void loft_vh_set_float_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, double v,
                                           const char *file, uint32_t line) {
-    if (LOFT_UNLIKELY(loft_vh_index(h, from) < 0)) loft_index_miss(from, h.len, file, line);
-    loft_vh_set_float(h, size, from, fld, v);
+    int64_t f = LOFT_VH_WRAP(h, from);
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(from, h.len, file, line);
+        return;
+    }
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+
+/* `@FR-R-Range`'s index clause: the held accessors for an index the range proof shows
+ * non-negative — one unsigned compare, no from-the-end wrap, the miss branched to directly (a
+ * helper answering -1 and a second test kept both branches).  A miss is reported and answers as
+ * the wrapping accessors do. */
+LOFT_HOT_INLINE loft_ref loft_vh_get_nn(loft_vh h, uint32_t size, int64_t f) {
+    if (LOFT_VH_OUT(h, f)) return loft_ref_null();
+    loft_ref e = {0};
+    e.store_nr = h.store_nr;
+    e.rec = h.rec;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
+}
+LOFT_HOT_INLINE loft_ref loft_vh_get_at_nn(loft_vh h, uint32_t size, int64_t f, const char *file, uint32_t line) {
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(f, h.len, file, line);
+        return loft_ref_null_reported();
+    }
+    loft_ref e = {0};
+    e.store_nr = h.store_nr;
+    e.rec = h.rec;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
+}
+LOFT_HOT_INLINE uint8_t *loft_vh_addr_nn(loft_vh h, uint32_t size, int64_t f) {
+    return LOFT_VH_OUT(h, f) ? (uint8_t *) 0 : h.base + (size_t) f * size;
+}
+LOFT_HOT_INLINE uint8_t *loft_vh_addr_at_nn(loft_vh h, uint32_t size, int64_t f, const char *file, uint32_t line) {
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(f, h.len, file, line);
+        return (uint8_t *) 0;
+    }
+    return h.base + (size_t) f * size;
+}
+LOFT_HOT_INLINE int64_t loft_vh_get_int_nn(loft_vh h, uint32_t size, int64_t f, uint32_t fld) {
+    if (LOFT_VH_OUT(h, f)) return LOFT_NULL;
+    int64_t v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE int64_t loft_vh_get_int_at_nn(loft_vh h, uint32_t size, int64_t f, uint32_t fld, const char *file,
+                                              uint32_t line) {
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(f, h.len, file, line);
+        return LOFT_NULL;
+    }
+    int64_t v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE double loft_vh_get_float_nn(loft_vh h, uint32_t size, int64_t f, uint32_t fld) {
+    if (LOFT_VH_OUT(h, f)) return (double) NAN;
+    double v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE double loft_vh_get_float_at_nn(loft_vh h, uint32_t size, int64_t f, uint32_t fld, const char *file,
+                                               uint32_t line) {
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(f, h.len, file, line);
+        return (double) NAN;
+    }
+    double v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE void loft_vh_set_int_nn(loft_vh h, uint32_t size, int64_t f, uint32_t fld, int64_t v) {
+    if (LOFT_VH_OUT(h, f)) return;
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+LOFT_HOT_INLINE void loft_vh_set_int_at_nn(loft_vh h, uint32_t size, int64_t f, uint32_t fld, int64_t v,
+                                           const char *file, uint32_t line) {
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(f, h.len, file, line);
+        return;
+    }
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+LOFT_HOT_INLINE void loft_vh_set_float_nn(loft_vh h, uint32_t size, int64_t f, uint32_t fld, double v) {
+    if (LOFT_VH_OUT(h, f)) return;
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+LOFT_HOT_INLINE void loft_vh_set_float_at_nn(loft_vh h, uint32_t size, int64_t f, uint32_t fld, double v,
+                                             const char *file, uint32_t line) {
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(f, h.len, file, line);
+        return;
+    }
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
 /* `t[i]` (`State::text_char_or_raise`): a byte index naming no byte of the text. */

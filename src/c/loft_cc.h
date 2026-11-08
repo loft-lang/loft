@@ -50,6 +50,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 /* `bool`, which a `#c` binding's signature may name (C99 spells it in this header). */
 #include <stdbool.h>
 
@@ -203,6 +204,68 @@ static inline int loft_mul_ovf_c99(int64_t a, int64_t b, int64_t *r) {
 #define LOFT_MUL_OVF(a, b, r) loft_mul_ovf_c99(a, b, r)
 #endif
 
+/* ── Fills ────────────────────────────────────────────────────────────────────────────── */
+
+/* `n` copies of an 8-, 4- or 2-byte value written from `dst`, at any alignment
+ * (`@FR-R-Fill`, a vector grown by a run of one value).  Through a typed, unaligned, aliasing
+ * pointer where the compiler offers one: gcc and clang vectorise that loop, and leave a loop
+ * of one `memcpy` per element scalar (a 1280x720 clear ran four times as long).  The elements
+ * before the first 64-byte boundary are written one by one, so the vector stores of the loop
+ * never straddle a cache line (clang: 1.4x the time on an 8-mod-16 start); and gcc, which
+ * vectorises the loop to one 16-byte store per trip, unrolls it (a 1920x1080 canvas fill: 3.7x
+ * -> 2.3x its Rust twin).  Elsewhere a doubling `memcpy`: the first copy, then the written
+ * prefix copied onto what follows it. */
+#if !defined(LOFT_STRICT) && (defined(__GNUC__) || defined(__clang__))
+typedef uint64_t loft_u64u __attribute__((aligned(1), may_alias));
+typedef uint32_t loft_u32u __attribute__((aligned(1), may_alias));
+typedef uint16_t loft_u16u __attribute__((aligned(1), may_alias));
+/* The elements of width 1 << `shift` from `dst` up to its next 64-byte boundary. */
+#define LOFT_FILL_HEAD(dst, shift) ((((size_t) 64 - ((uintptr_t) (dst) & 63)) & 63) >> (shift))
+#if defined(__clang__)
+#define LOFT_FILL_UNROLL
+#else
+#define LOFT_FILL_UNROLL _Pragma("GCC unroll 4")
+#endif
+static inline void loft_fill8(uint8_t *dst, uint64_t v, size_t n) {
+    loft_u64u *p = (loft_u64u *) (void *) dst;
+    size_t i = 0, head = LOFT_FILL_HEAD(dst, 3);
+    if (head > n) head = n;
+    for (; i < head; i++) p[i] = v;
+    LOFT_FILL_UNROLL
+    for (; i < n; i++) p[i] = v;
+}
+static inline void loft_fill4(uint8_t *dst, uint32_t v, size_t n) {
+    loft_u32u *p = (loft_u32u *) (void *) dst;
+    size_t i = 0, head = LOFT_FILL_HEAD(dst, 2);
+    if (head > n) head = n;
+    for (; i < head; i++) p[i] = v;
+    LOFT_FILL_UNROLL
+    for (; i < n; i++) p[i] = v;
+}
+static inline void loft_fill2(uint8_t *dst, uint16_t v, size_t n) {
+    loft_u16u *p = (loft_u16u *) (void *) dst;
+    size_t i = 0, head = LOFT_FILL_HEAD(dst, 1);
+    if (head > n) head = n;
+    for (; i < head; i++) p[i] = v;
+    LOFT_FILL_UNROLL
+    for (; i < n; i++) p[i] = v;
+}
+#else
+static void loft_fill_doubling(uint8_t *dst, const void *v, size_t w, size_t n) {
+    size_t total = w * n, done = w;
+    if (n == 0) return;
+    memcpy(dst, v, w);
+    while (done < total) {
+        size_t c = done < total - done ? done : total - done;
+        memcpy(dst + done, dst, c);
+        done += c;
+    }
+}
+static inline void loft_fill8(uint8_t *dst, uint64_t v, size_t n) { loft_fill_doubling(dst, &v, 8, n); }
+static inline void loft_fill4(uint8_t *dst, uint32_t v, size_t n) { loft_fill_doubling(dst, &v, 4, n); }
+static inline void loft_fill2(uint8_t *dst, uint16_t v, size_t n) { loft_fill_doubling(dst, &v, 2, n); }
+#endif
+
 /* ── Proof sites ──────────────────────────────────────────────────────────────────────── */
 
 /* A fact a rewrite proved, at `site`: nothing in the default modes, checked under LOFT_VERIFY. */
@@ -216,6 +279,26 @@ LOFT_COLD static void loft_proof_failed(const char *site) {
 /* The condition is never evaluated (`0 &&` short-circuits it), but what it names counts as read:
  * a parameter only a proof reads is no unused one. */
 #define LOFT_PROVED(cond, site) ((void) (0 && (cond)))
+#endif
+
+/* `@FR-R-Range`'s index clause: an element index the range proof shows non-negative.  The C
+ * compiler is told so, and folds the accessor's from-the-end wrap away; under LOFT_VERIFY the
+ * claim is checked at `site` instead. */
+#if defined(LOFT_VERIFY)
+static inline int64_t loft_nonneg(int64_t x, const char *site) {
+    if (x < 0) loft_proof_failed(site);
+    return x;
+}
+#else
+static inline int64_t loft_nonneg(int64_t x, const char *site) {
+    (void) site;
+#if defined(__GNUC__) || defined(__clang__)
+    if (x < 0) __builtin_unreachable();
+#elif defined(_MSC_VER)
+    __assume(x >= 0);
+#endif
+    return x;
+}
 #endif
 
 /* `@FR-R-Range`'s plain operators, where the range proof showed the checked operator cannot

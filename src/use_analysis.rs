@@ -257,8 +257,16 @@ impl AccessCx<'_> {
     }
 }
 
+/// An op that sets a field or element its first argument names: the `OpSet*` family, and the
+/// out-of-line field writes the rewrites lower `OpSetChildRec` to (@PLN219) — a write through
+/// a copy that one of them makes is as lost as the `OpSetChildRec` it replaced.
 fn is_setter(op: u32, data: &Data) -> bool {
-    data.def(op).name().starts_with("OpSet")
+    let name = data.def(op).name();
+    name.starts_with("OpSet")
+        || matches!(
+            name,
+            "OpAdoptChildRec" | "OpMoveChildRec" | "OpChildRecInPlace" | "OpDemoteRec"
+        )
 }
 
 fn bump_read(acc: &mut [(u16, u16)], v: u16) {

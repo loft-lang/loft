@@ -1245,6 +1245,35 @@ LOFT_HOT_INLINE void loft_fcur_read(loft_fcur *c, loft_fpos *p, int w, int sgn, 
     }
 }
 
+/* `@FR-R-TypedRead`'s float clause: an 8-byte `float` read as `loft_fcur_read` reads the bytes
+ * and decoded as the record's read decodes them (`loft_f64`); a short read leaves `*val` and the
+ * cursor as they were. */
+LOFT_COLD static loft_fpos loft_fcur_through_f(loft_fcur *c, double *val) {
+    uint8_t b[8];
+    uint8_t *d;
+    int64_t got = loft_read_file_in(c->f, 8, 0, 8, b, sizeof b, &d);
+    if (got == 8) *val = loft_f64((uint64_t) loft_fcur_decode(d, 8, 0, loft_file_le(c->f)));
+    if (d != b) free(d);
+    return loft_fcur_take(c);
+}
+
+LOFT_HOT_INLINE void loft_fcur_readf(loft_fcur *c, loft_fpos *p, double *val) {
+    if (p->nr < 0) {
+        *p = loft_fcur_through_f(c, val);
+        return;
+    }
+    p->last = p->next;
+    if (LOFT_UNLIKELY(p->next < p->at || p->next + 8 > p->end)) {
+        loft_fbuf sp = loft_fcur_fill(c, p->nr, p->next);
+        p->at = sp.at;
+        p->end = sp.end;
+    }
+    if (p->next >= p->at && p->next + 8 <= p->end) {
+        *val = loft_f64((uint64_t) loft_fcur_decode(c->buf + (p->next - p->at), 8, 0, p->le));
+        p->next += 8;
+    }
+}
+
 static void loft_fcur_release(loft_fcur *c, loft_fpos p) {
     if (p.nr < 0) return;
     loft_file_set_long(c->f, 8, p.last);

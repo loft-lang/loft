@@ -6429,6 +6429,18 @@ pub fn is_scalar(tp: &Type) -> bool {
     )
 }
 
+/// Is `def_nr` a record type with no heap in it — every field a fixed-width scalar (a constant
+/// and a routine field hold no store either)?  Such a record owns no vector, text or link, so
+/// nothing written through it resizes a collection or names another record: the fact
+/// `@FR-R-Callee`'s return-buffer half, § V-ad's discharge buffer and `@FR-R-ForwardWalk`'s
+/// field clause stand on.
+#[must_use]
+pub fn all_scalar_record(data: &Data, def_nr: u32) -> bool {
+    data.def(def_nr).attributes().iter().all(|a| {
+        a.constant || matches!(a.typedef.base(), Type::Routine(_)) || is_scalar(&a.typedef)
+    })
+}
+
 pub fn v_set(var: u16, value: Value) -> Value {
     Value::Set(var, Box::new(value))
 }
@@ -8177,6 +8189,32 @@ impl Data {
         holders
             .into_iter()
             .any(|h| (0..self.attributes(h)).any(|a| self.field_is_out_of_line(h, a)))
+    }
+
+    /// @PLN219 — the field address a whole write through slot parameter `var` MOVES from: `Some(X)`
+    /// for the value `OpRefFromChildRec(X)` with `X = OpGetField(var, pos, kt)` — a child of the
+    /// node the parameter names (`slot = slot.right`), which lies inside the record the write
+    /// replaces.  `None` for any other value, or under `LOFT_NO_MOVE_CHILD=1`.
+    #[must_use]
+    pub fn slot_self_step(&self, value: &Value, var: u16) -> Option<Value> {
+        if std::env::var("LOFT_NO_MOVE_CHILD").is_ok_and(|v| v != "0") {
+            return None;
+        }
+        let Value::Call(rf, a) = value.unspan() else {
+            return None;
+        };
+        if self.def(*rf).name() != "OpRefFromChildRec" {
+            return None;
+        }
+        let x = a.first()?;
+        let Value::Call(gf, ga) = x.unspan() else {
+            return None;
+        };
+        (self.def(*gf).name() == "OpGetField"
+            && ga.len() == 3
+            && matches!(ga[0].unspan(), Value::Var(v) if *v == var)
+            && matches!(ga[1].unspan(), Value::Int(_)))
+        .then(|| x.clone())
     }
 
     /// @PLN219 — the slot type a `&` parameter of type `tp` links, as its definition: `Some(d)`

@@ -19,6 +19,8 @@ mod loop_record;
 mod misc;
 mod par;
 mod peel;
+mod spec_chain;
+mod sticky;
 pub(super) mod transient;
 mod value;
 mod version;
@@ -215,6 +217,13 @@ pub(crate) struct FnWriter<'a> {
     /// (`hoist::invariant_chains`), by the address of each node that spells one: the memo's
     /// local, and the chain its first use evaluates.
     invariants: Vec<std::collections::HashMap<usize, std::rc::Rc<(String, Value)>>>,
+    /// `@FR-R-Invariant`'s hoist clause: the memos evaluated at their loop's prelude, whose
+    /// uses read the memo with no first-use test.
+    hoisted_memos: std::collections::HashSet<String>,
+    /// `@FR-R-StickySum`: the sums enclosing loops took, each with its loop's flag.
+    sticky: Vec<(u16, String)>,
+    /// `@FR-R-StickySum`'s staged temps: `(t, acc)` for `t = acc ± e; …; acc = t`.
+    sticky_temps: Vec<(u16, u16)>,
     /// `@FR-R-ValueRecord`'s facts for this function (`value::VrFn`), when the plan has any.
     vr: Option<Box<value::VrFn>>,
     /// `@FR-R-Transient`: this body's transient variables, when it is a twin or holds a site.
@@ -223,6 +232,11 @@ pub(crate) struct FnWriter<'a> {
     /// until a statement other than a binding of one of their fields follows: the zero of the
     /// vector field that comes next is the mint's own empty vector, and is not written.
     room_minted: std::collections::HashMap<u16, u16>,
+    /// `@FR-R-SameRead`'s filed clause: the record the previous statement filed into a hash
+    /// with one integer key — the hash's path, its type and the record's variable — handed to
+    /// the next statement only (`filed_next`), whose lookup of that key may answer the record.
+    filed: Option<(crate::opt::writes::PathKey, u16, u16)>,
+    filed_next: Option<(crate::opt::writes::PathKey, u16, u16)>,
     /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
     widening: Option<usize>,
     /// A value staged into a C temporary, by the temporary's name, with its kind: what a
@@ -251,6 +265,9 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-AppendTwin`'s loop clause: the buffers a loop around their append sites holds
     /// ONE window for, and that window's name, innermost loop last.
     ap_loop_windows: Vec<(u16, String)>,
+    /// `@FR-R-PushFill`'s text clause: the texts an enclosing loop holds a push window for —
+    /// the variable, its C place and the window.
+    text_windows: Vec<(u16, String, String)>,
     /// `@FR-R-Destination` — in a `__d` twin, the shape (its buffer is the caller's element,
     /// its scalar fields the locals `loft_ds<k>`); the call site's rewritten call, matched by
     /// callee and argument slice so its emission asks for the callee's twin.
@@ -265,6 +282,9 @@ pub(crate) struct FnWriter<'a> {
     /// facts of an innermost counted one (`None` for any other loop).
     vf: Option<std::rc::Rc<crate::opt::version::Leaf>>,
     versions: Vec<Option<version::VLoop>>,
+    /// `@FR-R-GuardedChain`'s version clause: the `@FR-R-Version` flags the copy being written
+    /// runs under, so each of their calls is the fast twin's, untested.
+    versions_hold: Vec<String>,
     /// `@FR-R-Peel` — the constants the statements just before a loop gave its counters.
     peel_seeds: Vec<(u16, i64)>,
     /// `@FR-R-Base`'s counter clause: the vector whose length the statements just before a
@@ -742,6 +762,8 @@ impl<'a> FnWriter<'a> {
             vr: value::VrFn::of(cx, d).map(Box::new),
             tr: None,
             room_minted: std::collections::HashMap::new(),
+            filed: None,
+            filed_next: None,
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
@@ -753,12 +775,14 @@ impl<'a> FnWriter<'a> {
             ap_site: None,
             ap_memo: std::collections::HashMap::new(),
             ap_loop_windows: Vec::new(),
+            text_windows: Vec::new(),
             ds: None,
             ds_site: None,
             nk_call: None,
             plain_chains: Vec::new(),
             vf: None,
             versions: Vec::new(),
+            versions_hold: Vec::new(),
             peel_seeds: Vec::new(),
             range_lens: Vec::new(),
             in_range: Vec::new(),
@@ -775,6 +799,9 @@ impl<'a> FnWriter<'a> {
             work_alias: None,
             scalars: Vec::new(),
             invariants: Vec::new(),
+            hoisted_memos: std::collections::HashSet::new(),
+            sticky: Vec::new(),
+            sticky_temps: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
             hosts: crate::opt::hoist::placed_hosts(def.code(), cx.data),
@@ -1500,7 +1527,7 @@ impl<'a> FnWriter<'a> {
     /// before porting (a checked `a * b` and `a ^ b` in a 1 000-element loop): gcc's own code
     /// motion already hoisted them (the same 401M instructions with the memo), clang's did not
     /// (621M -> 541M, -13 %).
-    fn hold_invariants(&mut self, b: &Block, ind: usize) {
+    fn hold_invariants(&mut self, b: &Block, ind: usize) -> Result<(), String> {
         let mut frame = std::collections::HashMap::new();
         if !self.cx.switches.invariant_hoist_disabled && self.gen_elem.is_none() && !self.lean() {
             for ch in crate::opt::hoist::invariant_chains(b, self.cx.data, self.vars) {
@@ -1518,6 +1545,19 @@ impl<'a> FnWriter<'a> {
                     "int64_t {name} = LOFT_NULL;\n    int {name}_set = 0;"
                 ));
                 self.line(ind, &format!("{name}_set = 0;"));
+                // The hoist clause: a chain of the silent operators is evaluated here, where
+                // every variable it reads already holds the value the loop sees (none is
+                // written in the loop) — the same value its first use would compute, and no
+                // report either way, even where the loop runs no trip.
+                if !crate::env_once!(std::env::var("LOFT_NO_MEMO_HOIST").is_ok_and(|v| v != "0"))
+                    && silent_chain(&ch.chain, self.cx.data)
+                {
+                    let e = self.expr(&ch.chain, ind)?;
+                    self.line(ind, &format!("{name} = {};", as_int(e)?));
+                    self.line(ind, &format!("{name}_set = 1;"));
+                    self.hoisted_memos.insert(name.clone());
+                    crate::rewrite_census::fired("R-Invariant/hoist", 1);
+                }
                 let memo = std::rc::Rc::new((name, ch.chain));
                 for a in ch.nodes {
                     frame.insert(a, memo.clone());
@@ -1531,6 +1571,7 @@ impl<'a> FnWriter<'a> {
             names.len()
         });
         self.invariants.push(frame);
+        Ok(())
     }
 
     /// The memo an enclosing loop keeps for the chain node `v`, if any: the node's address
@@ -1551,11 +1592,13 @@ impl<'a> FnWriter<'a> {
     /// and the proof asserts the memo agrees — rustc's `LOFT_HOIST_VERIFY` falsifier.
     fn invariant_use(&mut self, memo: &(String, Value), ind: usize) -> Result<E, String> {
         let (name, chain) = memo;
-        self.line(ind, &format!("if (!{name}_set) {{"));
-        let e = self.expr(chain, ind + 1)?;
-        self.line(ind + 1, &format!("{name} = {};", as_int(e)?));
-        self.line(ind + 1, &format!("{name}_set = 1;"));
-        self.line(ind, "}");
+        if !self.hoisted_memos.contains(name) {
+            self.line(ind, &format!("if (!{name}_set) {{"));
+            let e = self.expr(chain, ind + 1)?;
+            self.line(ind + 1, &format!("{name} = {};", as_int(e)?));
+            self.line(ind + 1, &format!("{name}_set = 1;"));
+            self.line(ind, "}");
+        }
         self.line(ind, "#ifdef LOFT_VERIFY");
         let before = self.temps.len();
         let fresh = self.expr(chain, ind)?;
@@ -2526,16 +2569,24 @@ impl<'a> FnWriter<'a> {
     fn held_access(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
         // The element read, and — `@FR-E-Report` — the site an unguarded one (`OpGetVector`,
         // not its `Nullable` twin) reports a missing element at, as `_at` and its arguments.
-        let elem = |v: &Value| -> Option<(Value, Value, Value, bool)> {
+        // The element read's parts are the IR nodes themselves, never copies: a rewrite keyed on
+        // a node's address (`@FR-R-GuardedChain`'s admitted operators in the index) must meet
+        // the node it admitted.
+        fn held_elem<'v>(
+            data: &crate::data::Data,
+            v: &'v Value,
+        ) -> Option<(&'v Value, &'v Value, &'v Value, bool)> {
             match v.unspan() {
                 Value::Call(d, a) if a.len() == 3 => {
-                    let n = self.cx.data.def(*d).name();
+                    let n = data.def(*d).name();
                     (n == "OpGetVector" || n == "OpGetVectorNullable")
-                        .then(|| (a[0].clone(), a[1].clone(), a[2].clone(), n == "OpGetVector"))
+                        .then(|| (&a[0], &a[1], &a[2], n == "OpGetVector"))
                 }
                 _ => None,
             }
-        };
+        }
+        let data = self.cx.data;
+        let elem = |v| held_elem(data, v);
         let here = self.site();
         let at = |report: bool| {
             if report {
@@ -2559,13 +2610,11 @@ impl<'a> FnWriter<'a> {
                     )));
                 }
                 let i = self.expr(idx, ind)?;
+                let (i, nn) = self.index_arg(idx, as_int(i)?);
                 let proof = self.held_proof(v, &h);
                 let (at, tail) = at(name == "OpGetVector");
                 Ok(Some(E::new(
-                    format!(
-                        "({proof}, loft_vh_get{at}({h}, {size}, {}{tail}))",
-                        as_int(i)?
-                    ),
+                    format!("({proof}, loft_vh_get{at}{nn}({h}, {size}, {i}{tail}))"),
                     K::Ref,
                 )))
             }
@@ -2576,37 +2625,37 @@ impl<'a> FnWriter<'a> {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
-                let Some(held) = self.held_vector(&vec) else {
+                let Some(held) = self.held_vector(vec) else {
                     return Ok(None);
                 };
-                let size = Self::literal(&size, "element size")?;
+                let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let index = self.expr(&idx, ind)?;
+                let index = self.expr(idx, ind)?;
                 if name == "OpGetInt" && self.version_raw(args) {
                     let index = as_int(index)?;
                     let code = version::version_access(name, &held, size, fld, &index, None);
                     return Ok(Some(E::new(code, K::Int)));
                 }
-                if let Some(i) = self.counter_index(&idx, &held) {
+                if let Some(i) = self.counter_index(idx, &held) {
                     let (f, k) = if name == "OpGetInt" {
                         ("loft_vh_at_int", K::Int)
                     } else {
                         ("loft_vh_at_float", K::Float)
                     };
-                    let proof = self.held_proof(&vec, &held);
+                    let proof = self.held_proof(vec, &held);
                     crate::rewrite_census::fired("R-Base/counter", 1);
                     return Ok(Some(E::new(
                         format!("({proof}, {f}({held}, {size}, {i}, {fld}))"),
                         k,
                     )));
                 }
-                if let Some(fits) = self.grid_index(&idx, &held) {
+                if let Some(fits) = self.grid_index(idx, &held) {
                     let (raw, checked, k) = if name == "OpGetInt" {
                         ("loft_vh_at_int", "loft_vh_get_int", K::Int)
                     } else {
                         ("loft_vh_at_float", "loft_vh_get_float", K::Float)
                     };
-                    let proof = self.held_proof(&vec, &held);
+                    let proof = self.held_proof(vec, &held);
                     let i = as_int(index)?;
                     let (at, tail) = at(report);
                     return Ok(Some(E::new(
@@ -2621,13 +2670,11 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_vh_get_float", K::Float)
                 };
-                let proof = self.held_proof(&vec, &held);
+                let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
+                let (index, nn) = self.index_arg(idx, as_int(index)?);
                 Ok(Some(E::new(
-                    format!(
-                        "({proof}, {f}{at}({held}, {size}, {}, {fld}{tail}))",
-                        as_int(index)?
-                    ),
+                    format!("({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}{tail}))"),
                     k,
                 )))
             }
@@ -2647,23 +2694,24 @@ impl<'a> FnWriter<'a> {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
-                let Some(held) = self.held_vector(&vec) else {
+                let Some(held) = self.held_vector(vec) else {
                     return Ok(None);
                 };
                 let Some((f, k)) = Self::pa_reader(name) else {
                     return Ok(None);
                 };
-                let size = Self::literal(&size, "element size")?;
+                let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let index = as_int(self.expr(&idx, ind)?)?;
-                let proof = self.held_proof(&vec, &held);
+                let index = as_int(self.expr(idx, ind)?)?;
+                let (index, nn) = self.index_arg(idx, index);
+                let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
-                let addr = match self.counter_index(&idx, &held) {
+                let addr = match self.counter_index(idx, &held) {
                     Some(i) => {
                         crate::rewrite_census::fired("R-Base/counter", 1);
                         format!("loft_vh_at_addr({held}, {size}, {i})")
                     }
-                    None => format!("loft_vh_addr{at}({held}, {size}, {index}{tail})"),
+                    None => format!("loft_vh_addr{at}{nn}({held}, {size}, {index}{tail})"),
                 };
                 let call = if let [_, _, min] = args {
                     let min = c_long(Self::literal(min, "minimum")?);
@@ -2678,12 +2726,12 @@ impl<'a> FnWriter<'a> {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
-                let Some(held) = self.held_vector(&vec) else {
+                let Some(held) = self.held_vector(vec) else {
                     return Ok(None);
                 };
-                let size = Self::literal(&size, "element size")?;
+                let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let (index, value) = self.two(name, &[&idx, val], ind)?;
+                let (index, value) = self.two(name, &[idx, val], ind)?;
                 if name == "OpSetInt" && self.version_raw(args) {
                     let (index, value) = (as_int(index)?, as_int(value)?);
                     let code =
@@ -2695,12 +2743,12 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_vh_set_float", as_float(value)?)
                 };
-                let proof = self.held_proof(&vec, &held);
+                let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
+                let (index, nn) = self.index_arg(idx, as_int(index)?);
                 Ok(Some(E::new(
                     format!(
-                        "({proof}, {f}{at}({held}, {size}, {}, {fld}, {value}{tail}))",
-                        as_int(index)?
+                        "({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}, {value}{tail}))"
                     ),
                     K::Void,
                 )))
@@ -4368,6 +4416,61 @@ impl<'a> FnWriter<'a> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
         }
+        // `@FR-R-SameRead`'s filed clause: what the previous statement filed reaches this one
+        // only when it is a lookup's binding; every other statement forgets it (a line marker
+        // is no statement).
+        if matches!(v.unspan(), Value::Line(_)) {
+            return self.stmt_inner(v, ind);
+        }
+        let filed = self.filed.take();
+        if let Value::Set(_, rhs) = v.unspan()
+            && let Value::Call(g, _) = rhs.unspan()
+            && self.cx.data.def(*g).name() == "OpGetRecord"
+        {
+            self.filed_next = filed;
+        }
+        let r = self.stmt_inner(v, ind);
+        self.filed_next = None;
+        if r.is_ok() {
+            self.filed = self.filed_record(v);
+        }
+        r
+    }
+
+    /// `OpFinishRecord(parent, rec, tp, fld)` filing `rec` into field `fld` of `parent`, a hash
+    /// with one 8-byte integer key reached by a pure path: that path, the hash's type, `rec`.
+    fn filed_record(&self, v: &Value) -> Option<(crate::opt::writes::PathKey, u16, u16)> {
+        let Value::Call(d, args) = v.unspan() else {
+            return None;
+        };
+        if self.cx.data.def(*d).name() != "OpFinishRecord" {
+            return None;
+        }
+        let [parent, Value::Var(rec), tp, fld] = args.as_slice() else {
+            return None;
+        };
+        let (Value::Int(tp), Value::Int(fld)) = (tp.unspan(), fld.unspan()) else {
+            return None;
+        };
+        let (root, mut offs) = crate::opt::writes::vector_path(self.cx.data, parent)?;
+        let crate::database::Parts::Struct(fields) =
+            &self.cx.stores.types.get(usize::try_from(*tp).ok()?)?.parts
+        else {
+            return None;
+        };
+        let f = fields.get(usize::try_from(*fld).ok()?)?;
+        let ht = self.cx.stores.types.get(f.content as usize)?;
+        if !matches!(ht.parts, crate::database::Parts::Hash(..))
+            || ht.keys.len() != 1
+            || !matches!(ht.keys[0].type_nr, 1 | 2)
+        {
+            return None;
+        }
+        offs.push(i64::from(f.position));
+        Some(((root, offs), f.content, *rec))
+    }
+
+    fn stmt_inner(&mut self, v: &Value, ind: usize) -> Result<(), String> {
         if !self.lr.is_empty() && self.loop_record_stmt(v) {
             return Ok(());
         }
@@ -4498,6 +4601,60 @@ impl<'a> FnWriter<'a> {
     /// that assumes the parameters apart from the return buffer runs when a test of their
     /// store numbers says so at its entry, the plain one otherwise.
     fn loop_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        // `@FR-R-Range`'s relational step clause: a range that holds throughout this loop's
+        // body (`Ranges::bodies`) narrows the facts its statements are written under.
+        let narrowed = self.body_facts(b.scope);
+        let pushed = narrowed.is_some();
+        if let Some(facts) = narrowed {
+            self.range_override.push(std::rc::Rc::new(facts));
+        }
+        let r = self.loop_stmt_facts(b, ind);
+        if pushed {
+            self.range_override.pop();
+        }
+        r
+    }
+
+    /// The facts the body of the loop `scope` is written under where `Ranges::bodies` narrows a
+    /// variable there; `None` where it narrows none.
+    fn body_facts(&mut self, scope: u16) -> Option<crate::opt::range::Ranges> {
+        if crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0")) {
+            return None;
+        }
+        let facts = self.nn_facts();
+        let body = facts.1.bodies.get(&scope)?;
+        let mut over = self
+            .range_override
+            .last()
+            .map_or_else(|| facts.1.clone(), |o| (**o).clone());
+        for (v, r) in body {
+            over.vars.insert(*v, *r);
+        }
+        Some(over)
+    }
+
+    /// `@FR-R-Range`'s INDEX clause: an element index the range proof shows non-negative is
+    /// handed to the accessor as such (`loft_nonneg`), so its from-the-end wrap folds away.
+    /// Answers the argument and the accessor suffix (`_nn`, the accessors that test the index
+    /// with one unsigned compare).
+    fn index_arg(&mut self, idx: &Value, code: String) -> (String, &'static str) {
+        if crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0")) {
+            return (code, "");
+        }
+        let facts = self.nn_facts();
+        let over = self.range_override.last().cloned();
+        let ranges = over.as_deref().unwrap_or(&facts.1);
+        match crate::opt::range::range(self.cx.data, &facts.0, ranges, idx, 0) {
+            Some((lo, _)) if lo >= 0 => {
+                crate::rewrite_census::fired("R-Range/index", 1);
+                let site = format!("\"R-Range:{}\"", self.cx.data.def(self.d).name());
+                (format!("loft_nonneg({code}, {site})"), "_nn")
+            }
+            _ => (code, ""),
+        }
+    }
+
+    fn loop_stmt_facts(&mut self, b: &Block, ind: usize) -> Result<(), String> {
         let mut kept: Vec<u16> = self
             .lr
             .recs
@@ -4568,37 +4725,11 @@ impl<'a> FnWriter<'a> {
         self.loop_copy(b, ind)
     }
 
-    fn loop_copy(&mut self, b: &Block, ind: usize) -> Result<(), String> {
-        let held_file = self.open_file_hold(b, ind)?;
-        let mut calls = std::collections::BTreeSet::new();
-        for op in &b.operators {
-            op.walk(&mut |n| {
-                if let Value::Call(c, _) = n {
-                    calls.insert(*c);
-                }
-            });
-        }
-        self.loop_calls.push(calls);
-        self.hold_invariants(b, ind);
-        let mints = self.hold_vectors(b, ind)?;
-        self.hold_versions(b, ind)?;
-        let in_range_at = self.in_range.len();
-        let grid_at = self.grid_facts.len();
-        self.counters_in_range(b);
-        self.grid_counter_facts(b);
-        let window = self.open_window(b, ind)?;
-        if !window {
-            self.hash_reserve(b, ind)?;
-        }
-        self.hold_pushes(b, mints, ind)?;
-        let ap_windows = self.open_loop_windows(b, ind);
-        // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
-        // so both copies are its fallback.
-        let fill = self.fill_head(b, ind)?;
-        let ind_loop = if fill.is_some() { ind + 1 } else { ind };
-        if let Some(flag) = &fill {
-            self.line(ind, &format!("if (!{flag}) {{"));
-        }
+    /// `@FR-R-GuardedChain`: loop `b` as its chain guard writes it — an innermost loop twice
+    /// (the plain copy under the guard, the checked loop as the `else`), a loop written once
+    /// for its calls alone twice too when every call is a versioned site (the version clause),
+    /// any other guarded loop once with each admitted operator branching on the guard.
+    fn guarded_copies(&mut self, b: &Block, ind_loop: usize) -> Result<(), String> {
         match self.chain_guard(b, ind_loop)? {
             Some((guard, admitted, true)) => {
                 // An innermost loop: the guarded copy plain, the checked loop as the `else`.
@@ -4611,6 +4742,29 @@ impl<'a> FnWriter<'a> {
                 self.loop_core(b, ind_loop + 1)?;
                 self.line(ind_loop, "}");
             }
+            Some((guard, admitted, false)) if let Some(flags) = self.version_unswitch(b) => {
+                // Written once only for its calls, each a versioned site: the plain copy under
+                // the guard and every flag, calling the fast twins; the written loop otherwise.
+                let all = std::iter::once(guard.clone())
+                    .chain(flags.iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join(" && ");
+                self.line(ind_loop, &format!("if ({all}) {{"));
+                self.plain_chains.push((admitted.clone(), None));
+                let held = self.versions_hold.len();
+                self.versions_hold.extend(flags);
+                let r = self.loop_core(b, ind_loop + 1);
+                self.versions_hold.truncate(held);
+                self.plain_chains.pop();
+                r?;
+                self.line(ind_loop, "} else {");
+                self.plain_chains.push((admitted, Some(guard)));
+                let r = self.loop_core(b, ind_loop + 1);
+                self.plain_chains.pop();
+                r?;
+                self.line(ind_loop, "}");
+                crate::rewrite_census::fired("R-GuardedChain/versions", 1);
+            }
             Some((guard, admitted, false)) => {
                 // Loops inside: written once, each admitted operator branching on the guard.
                 self.plain_chains.push((admitted, Some(guard)));
@@ -4620,6 +4774,42 @@ impl<'a> FnWriter<'a> {
             }
             None => self.loop_core(b, ind_loop)?,
         }
+        Ok(())
+    }
+
+    fn loop_copy(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        let held_file = self.open_file_hold(b, ind)?;
+        let mut calls = std::collections::BTreeSet::new();
+        for op in &b.operators {
+            op.walk(&mut |n| {
+                if let Value::Call(c, _) = n {
+                    calls.insert(*c);
+                }
+            });
+        }
+        self.loop_calls.push(calls);
+        self.hold_invariants(b, ind)?;
+        let mints = self.hold_vectors(b, ind)?;
+        self.hold_versions(b, ind)?;
+        let in_range_at = self.in_range.len();
+        let grid_at = self.grid_facts.len();
+        self.counters_in_range(b);
+        self.grid_counter_facts(b);
+        let window = self.open_window(b, ind)?;
+        if !window {
+            self.hash_reserve(b, ind)?;
+        }
+        self.hold_pushes(b, mints, ind)?;
+        let ap_windows = self.open_loop_windows(b, ind);
+        let text_windows = self.open_text_windows(b, ind);
+        // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
+        // so both copies are its fallback.
+        let fill = self.fill_head(b, ind)?;
+        let ind_loop = if fill.is_some() { ind + 1 } else { ind };
+        if let Some(flag) = &fill {
+            self.line(ind, &format!("if (!{flag}) {{"));
+        }
+        self.guarded_copies(b, ind_loop)?;
         if fill.is_some() {
             self.fill_tail(b, ind)?;
         }
@@ -4629,6 +4819,13 @@ impl<'a> FnWriter<'a> {
                 .pop()
                 .expect("the window this loop opened");
             self.line(ind, &format!("loft_win_sync({w});"));
+        }
+        for _ in 0..text_windows {
+            let (_, place, w) = self
+                .text_windows
+                .pop()
+                .expect("the window this loop opened");
+            self.line(ind, &format!("loft_tw_sync(&{w}, &{place});"));
         }
         self.in_range.truncate(in_range_at);
         self.grid_facts.truncate(grid_at);
@@ -4726,6 +4923,83 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("{w} = loft_win_of({xv}, {size});"));
             self.ap_loop_windows.push((x, w));
             crate::rewrite_census::fired("R-AppendTwin/loop-window", 1);
+            opened += 1;
+        }
+        opened
+    }
+
+    /// `@FR-R-PushFill`'s text clause — open ONE push window, before loop `b`, for each text the
+    /// loop names only as the destination of character pushes (`t += "{c}"`, `OpAppendCharacter`)
+    /// whose characters do not read it, and answer how many it opened; the caller syncs them
+    /// after the loop's end.  The window stands for the text's length between the pushes, so the
+    /// loop may name the text, or a view of it, nowhere else, and may leave only by its own end:
+    /// a `return`, or a `break` or `continue` past `b`, would skip the sync.  A text an enclosing
+    /// loop holds a window for keeps that one.  `LOFT_NO_TEXT_WINDOW=1`.
+    fn open_text_windows(&mut self, b: &Block, ind: usize) -> usize {
+        if self.gen_elem.is_some()
+            || self.tr.is_some()
+            || crate::env_once!(std::env::var("LOFT_NO_TEXT_WINDOW").is_ok_and(|v| v != "0"))
+        {
+            return 0;
+        }
+        let data = self.cx.data;
+        let vars = data.def(self.d).variables();
+        let mut leaves = false;
+        let mut stmts: Vec<&Value> = Vec::new();
+        for op in &b.operators {
+            loop_statements(op, 0, &mut stmts, &mut leaves);
+        }
+        if leaves {
+            return 0;
+        }
+        let mut sites: Vec<(u16, &Value)> = Vec::new();
+        let mut site_nodes: std::collections::HashSet<*const Value> =
+            std::collections::HashSet::new();
+        for st in &stmts {
+            if let Value::Call(d, args) = st.unspan()
+                && matches!(
+                    data.def(*d).name(),
+                    "OpAppendCharacter" | "OpAppendStackCharacter"
+                )
+                && let [dest, c] = args.as_slice()
+                && let Value::Var(x) = dest.unspan()
+            {
+                sites.push((*x, c));
+                site_nodes.insert(std::ptr::from_ref(*st));
+                site_nodes.insert(std::ptr::from_ref(st.unspan()));
+            }
+        }
+        let mut opened = 0;
+        let mut seen: Vec<u16> = Vec::new();
+        for (x, _) in sites.clone() {
+            if seen.contains(&x)
+                || self.text_windows.iter().any(|(v, _, _)| *v == x)
+                || self.ap_loop_windows.iter().any(|(v, _)| *v == x)
+            {
+                continue;
+            }
+            seen.push(x);
+            let reach = crate::opt::body_writes::views(vars, x);
+            let mut elsewhere = false;
+            for op in &b.operators {
+                mentions_outside(op, &reach, &site_nodes, &mut elsewhere);
+            }
+            for (y, c) in &sites {
+                if *y == x {
+                    mentions_outside(c, &reach, &std::collections::HashSet::new(), &mut elsewhere);
+                }
+            }
+            if elsewhere {
+                continue;
+            }
+            let Ok(place) = self.text_dest(&Value::Var(x)) else {
+                continue;
+            };
+            let w = format!("loft_tw{}", self.decls.len());
+            self.decls.push(format!("loft_tw {w};"));
+            self.line(ind, &format!("{w} = loft_tw_of(&{place});"));
+            self.text_windows.push((x, place, w));
+            crate::rewrite_census::fired("R-PushFill/text", 1);
             opened += 1;
         }
         opened
@@ -4843,16 +5117,21 @@ impl<'a> FnWriter<'a> {
         self.loops.push(l);
         if let Some(walk) = self.char_walks.get(&b.scope).cloned() {
             self.char_walk_loop(b, &walk, ind)?;
+            self.line(ind, &format!("cont_{l}:;"));
+            self.line(ind, "}");
+            self.line(ind, &format!("brk_{l}:;"));
         } else if let Some(plan) = self.peel_plan(b) {
             self.loops.pop();
             return self.peel_loop(b, &plan, ind);
         } else {
+            let sums = self.open_sticky_sums(b, ind);
             self.line(ind, "for (;;) {");
             self.block_stmt(b, ind + 1)?;
+            self.line(ind, &format!("cont_{l}:;"));
+            self.line(ind, "}");
+            self.line(ind, &format!("brk_{l}:;"));
+            self.close_sticky_sums(&sums, ind);
         }
-        self.line(ind, &format!("cont_{l}:;"));
-        self.line(ind, "}");
-        self.line(ind, &format!("brk_{l}:;"));
         self.loops.pop();
         Ok(())
     }
@@ -5286,6 +5565,19 @@ impl<'a> FnWriter<'a> {
         // @PLN219 `@FR-F-ParamRef` — a slot cell: the field write when it names a field (an
         // owned value given up there), the write-back otherwise.  A field-naming cell is the
         // same before and after, so the displaced-store release below finds nothing to free.
+        if let Some(d) = self.cx.data.slot_link_def(self.vars.tp(var))
+            && let Some(src) = self.cx.data.slot_self_step(x, var)
+        {
+            let tp = self.copyable(self.cx.data.def(d).known_type())?;
+            let e = self.expr(&src, ind)?;
+            let name = var_name(self.vars.name(var), var);
+            self.line(
+                ind,
+                &format!("loft_slot_move(loft_types, {tp}, {name}, {});", as_ref(e)?),
+            );
+            self.flush(ind);
+            return Ok(());
+        }
         if let Some(d) = self.cx.data.slot_link_def(self.vars.tp(var)) {
             let raw = format!("(*{})", var_name(self.vars.name(var), var));
             let tp = self.copyable(self.cx.data.def(d).known_type())?;
@@ -5660,6 +5952,12 @@ impl<'a> FnWriter<'a> {
         let c = self.shapes[var as usize];
         if let Some(done) = self.rewritten_bind(var, x, ind) {
             return done;
+        }
+        if c == CType::Int && self.sticky_update(var, x, ind)? {
+            return Ok(());
+        }
+        if c == CType::Int && self.spec_chain(var, x, ind)? {
+            return Ok(());
         }
         if c == CType::Text && !self.text_held(var) {
             return Err("assigns a text parameter".into());
@@ -6651,6 +6949,12 @@ impl<'a> FnWriter<'a> {
 
     /// A C expression for `v`'s value; the statements it needs are emitted first.
     fn expr(&mut self, v: &Value, ind: usize) -> Result<E, String> {
+        if !self.sticky.is_empty()
+            && let Value::Var(w) = v.unspan()
+            && let Some(read) = self.sticky_read(*w)
+        {
+            return Ok(E::new(read, K::Int));
+        }
         if self.invariants.iter().any(|f| !f.is_empty())
             && let Some(memo) = self.invariant_of(v)
         {
@@ -7406,7 +7710,11 @@ impl<'a> FnWriter<'a> {
                 cx.request_twin(d, mask | super::VF_BIT);
                 let fast = super::twin_name(cx.data, d, mask | super::VF_BIT);
                 let xs = xs.join(", ");
-                format!("({flag} ? {fast}({xs}) : {name}({xs}))")
+                if self.versions_hold.contains(flag) {
+                    format!("{fast}({xs})")
+                } else {
+                    format!("({flag} ? {fast}({xs}) : {name}({xs}))")
+                }
             }
             _ => format!("{name}({})", xs.join(", ")),
         };
@@ -8148,10 +8456,25 @@ impl<'a> FnWriter<'a> {
         let facts = self.nn_facts();
         let over = self.range_override.last().cloned();
         let ranges = over.as_deref().unwrap_or(&facts.1);
-        if crate::opt::range::op_range(self.cx.data, &facts.0, ranges, name, args, 0).is_none() {
+        if crate::opt::range::op_range_at_site(self.cx.data, &facts.0, ranges, name, args).is_none()
+        {
             return Ok(None);
         }
         self.range_plain(form, name, args, ind)
+    }
+
+    /// Does `(R-Range)` prove the integer operator `name` over `args` cannot fault — the test
+    /// [`Self::range_operator`] writes the plain operator on?
+    pub(super) fn range_proves(&mut self, name: &str, args: &[Value]) -> bool {
+        if crate::opt::range::plain_form(name, args.len()).is_none()
+            || crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"))
+        {
+            return false;
+        }
+        let facts = self.nn_facts();
+        let over = self.range_override.last().cloned();
+        let ranges = over.as_deref().unwrap_or(&facts.1);
+        crate::opt::range::op_range_at_site(self.cx.data, &facts.0, ranges, name, args).is_some()
     }
 
     /// This function's non-sentinel and range facts (`non_sentinel_vars`, `range_vars`), a
@@ -8300,10 +8623,23 @@ impl<'a> FnWriter<'a> {
         }
         let shift_k =
             || matches!(args.get(1).map(Value::unspan), Some(Value::Int(k)) if (0..64).contains(k));
+        // A `Nullable` `+ - *` whose operands the non-sentinel proof holds never meets its
+        // null: it is the plain operator, and wraps as the plain one does.
+        let proven = matches!(
+            name,
+            "OpAddIntNullable" | "OpMinIntNullable" | "OpMulIntNullable"
+        ) && {
+            let nn = self.nn_facts();
+            args.iter()
+                .all(|a| crate::opt::non_sentinel::non_sentinel(self.cx.data, &nn.0, a))
+        };
         let form = match (name, args.len()) {
             ("OpAddInt", 2) => "loft_wrap_add",
             ("OpMinInt", 2) => "loft_wrap_sub",
             ("OpMulInt", 2) => "loft_wrap_mul",
+            ("OpAddIntNullable", 2) if proven => "loft_wrap_add",
+            ("OpMinIntNullable", 2) if proven => "loft_wrap_sub",
+            ("OpMulIntNullable", 2) if proven => "loft_wrap_mul",
             ("OpDivInt", 2) => "loft_wrap_div",
             ("OpRemInt", 2) => "loft_wrap_rem",
             ("OpLandInt", 2) => "&",
@@ -9946,6 +10282,17 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpAppendCharacter" | "OpAppendStackCharacter", [dest, c]) => {
+                // `@FR-R-PushFill`'s text clause: a push into a text a loop holds a window for.
+                if let Value::Var(x) = dest.unspan()
+                    && let Some((_, place, w)) =
+                        self.text_windows.iter().find(|(v, _, _)| v == x).cloned()
+                {
+                    let c = self.expr(c, ind)?;
+                    return Ok(E::new(
+                        format!("loft_tw_push(&{w}, &{place}, {})", as_char(c)?),
+                        K::Void,
+                    ));
+                }
                 let dest = self.text_dest(dest)?;
                 let c = self.expr(c, ind)?;
                 Ok(E::new(
@@ -10559,6 +10906,9 @@ const OP_REF: &[&str] = &[
     "OpInsertVector",
     "OpRefFromChildRec",
     "OpSlotTag",
+    "OpStoreBuf",
+    "OpStoreBufOnly",
+    "OpChildRecInPlace",
     "OpChildRec",
     "OpCopyClosure",
     "OpCoroutineRetain",
@@ -10951,4 +11301,25 @@ fn mentions_outside(
         return;
     }
     v.for_each_child(&mut |c: &Value| mentions_outside(c, reach, sites, found));
+}
+
+/// `@FR-R-Invariant`'s hoist clause: is `v` a chain of the operators that report nothing — `+ -
+/// *` and negation (null on overflow), `& | ^` — over variables and literals?
+fn silent_chain(v: &Value, data: &crate::data::Data) -> bool {
+    match v.unspan() {
+        Value::Var(_) | Value::Int(_) | Value::Long(_) => true,
+        Value::Call(d, args) => {
+            matches!(
+                data.def(*d).name(),
+                "OpAddInt"
+                    | "OpMinInt"
+                    | "OpMulInt"
+                    | "OpMinSingleInt"
+                    | "OpLandInt"
+                    | "OpLorInt"
+                    | "OpEorInt"
+            ) && args.iter().all(|a| silent_chain(a, data))
+        }
+        _ => false,
+    }
 }

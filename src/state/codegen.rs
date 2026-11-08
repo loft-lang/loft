@@ -691,9 +691,9 @@ impl State {
                 // but answers the LINK's type, so the pushed value is a τ: sized as the link, a
                 // yielded `&integer` took 12 bytes off an 8-byte push and a `&text` 12 off a
                 // 16-byte one.
-                let t = match t {
-                    Type::RefVar(inner) => *inner,
-                    other => other,
+                let t = match t.base() {
+                    Type::RefVar(inner) => (**inner).clone(),
+                    _ => t,
                 };
                 let value_size = crate::variables::size(&t, &crate::data::Context::Argument);
                 stack.add_op("OpCoroutineYield", self);
@@ -6510,6 +6510,18 @@ impl State {
                 self.code_add(var_pos);
                 stack.add_op("OpGetStackRef", self);
                 self.code_add(0u16);
+            }
+            // @PLN219 — `slot = slot.f` through a slot cell MOVES the child (`OpMoveSlotRef`).
+            if let Some(d) = stack.data.slot_link_def(stack.function.tp(var))
+                && let Some(src) = stack.data.slot_self_step(value, var)
+            {
+                let var_pos = stack.var_pos(var);
+                stack.add_op("OpVarRef", self);
+                self.code_add(var_pos);
+                self.generate(&src, stack, false);
+                stack.add_op("OpMoveSlotRef", self);
+                self.code_add(stack.data.def(d).known_type());
+                return;
             }
             let var_pos = stack.var_pos(var);
             stack.add_op("OpVarRef", self);

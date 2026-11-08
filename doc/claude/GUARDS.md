@@ -578,6 +578,10 @@ Each is one rule; the measured incident behind it is in
   is layout-fragile, assert what the fix DETERMINES — the emitted IR (`OpFreeRef(_tuphold` must
   not appear, loft#1361) — **paired with a positive assertion that the construct is still BUILT**,
   since "must not contain" cannot tell *fixed* from *gone*.
+- **An overflow guard is vacuous when the wrap lands on the null sentinel.**  A wrongly plain
+  `i64::MAX - 3 + 4` wraps to `i64::MIN`, which IS loft's integer null, so an `== null`
+  assertion passes on the broken build.  Pick the overflow so the wrap misses the sentinel
+  (`+ 5` there), and run the `-DLOFT_VERIFY` build beside it, which aborts at the false proof.
 - **Identical calls differing by POSITION say a slot is unsound, not which mechanism.**  Turn the
   suspect OFF and measure the same repro on the same binary before believing any reading of the
   IR (loft#1441 was a definite-assignment hole, not a free).

@@ -835,6 +835,18 @@ impl Output<'_> {
                 // @PLN219 `@FR-F-ParamRef` — a whole write through a slot cell: the field write
                 // when the cell names a field (an owned value given up there), the write-back
                 // otherwise; a field-naming cell is unchanged, so nothing is displaced.
+                if let Some(d) = self.data.slot_link_def(variables.tp(var))
+                    && let Some(src) = self.data.slot_self_step(to, var)
+                {
+                    let kt = self.type_lit_u16(self.data.def(d).known_type());
+                    write!(w, "{{ let _slot_src = ")?;
+                    self.output_code_inner(w, &src)?;
+                    write!(
+                        w,
+                        "; unsafe {{ stores.slot_move(&mut *var_{name}, &_slot_src, {kt}); }} }}"
+                    )?;
+                    return Ok(());
+                }
                 if let Some(d) = self.data.slot_link_def(variables.tp(var)) {
                     let owned = matches!(
                         crate::use_analysis::ownership_of(self.data, self.def_nr, to),

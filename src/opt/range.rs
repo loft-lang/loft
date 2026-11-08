@@ -65,6 +65,13 @@ pub struct Ranges {
     /// Each ranged ELEMENT of a tuple local, by variable and element index: every
     /// assignment of the local answers that element in range ([`elem_range`]).
     pub elems: HashMap<(u16, u16), Range>,
+    /// `@FR-R-Range`'s relational step clause: ranges that hold throughout one loop's BODY,
+    /// by the loop's scope — narrower than the variable's range over the whole function.
+    pub bodies: HashMap<u16, Vec<(u16, Range)>>,
+    /// `@FR-R-Range`'s open-end counter clause: the stepped counters of exclusive counted
+    /// loops whose `counter + 1` cannot overflow whatever the end — the step runs only after
+    /// the exit test saw the counter below the end, itself at most `i64::MAX`.
+    pub steps: std::collections::HashSet<u16>,
 }
 
 /// What [`range`] reads its leaves from: a variable's range, and a guarded field's.  A plain
@@ -75,6 +82,10 @@ pub trait RangeFacts {
     /// Element `i` of the tuple local `v`; a map that holds no tuple facts answers none.
     fn elem(&self, _v: u16, _i: u16) -> Option<Range> {
         None
+    }
+    /// Is `v` a counter whose `v + 1` the loop's exit test proves (`Ranges::steps`)?
+    fn safe_step(&self, _v: u16) -> bool {
+        false
     }
 }
 
@@ -96,6 +107,9 @@ impl RangeFacts for Ranges {
     }
     fn elem(&self, v: u16, i: u16) -> Option<Range> {
         self.elems.get(&(v, i)).copied()
+    }
+    fn safe_step(&self, v: u16) -> bool {
+        self.steps.contains(&v)
     }
 }
 
@@ -149,6 +163,21 @@ fn fits(lo: i128, hi: i128) -> Option<Range> {
     } else {
         None
     }
+}
+
+/// `abs(x)` over `x`'s range: `0 ..= max(|lo|, |hi|)`, from `|lo|` or `|hi|` where `x` keeps
+/// one sign.  `i64::MIN` lies outside every range, so the result always fits.
+fn abs_range(x: Range) -> Option<Range> {
+    let (lo, hi) = (i128::from(x.0), i128::from(x.1));
+    let top = lo.abs().max(hi.abs());
+    let bottom = if lo >= 0 {
+        lo
+    } else if hi <= 0 {
+        -hi
+    } else {
+        0
+    };
+    fits(bottom, top)
 }
 
 fn union(a: Range, b: Range) -> Range {
@@ -240,6 +269,29 @@ fn rem_range<F: RangeFacts + ?Sized>(
     Some((0, x.1.min(y.1 - 1)))
 }
 
+/// What an emitter asks at the integer op it is about to write: [`op_range`], or — the
+/// open-end counter clause — a counted loop's own step `c + 1`, which the loop's exit test
+/// proves cannot overflow ([`Ranges::steps`]) though `c` itself is left unranged: a counter
+/// ranged that wide would take it out of `(R-RangedCall)`'s guard.  Only the op is answered,
+/// never folded into the fixpoint's facts.
+#[must_use]
+pub fn op_range_at_site<F: RangeFacts + ?Sized>(
+    data: &Data,
+    nn: &HashMap<u16, bool>,
+    rv: &F,
+    name: &str,
+    args: &[Value],
+) -> Option<Range> {
+    if name == "OpAddInt"
+        && args.len() == 2
+        && let [Value::Var(c), Value::Int(1)] = [args[0].unspan(), args[1].unspan()]
+        && rv.safe_step(*c)
+    {
+        return Some((i64::MIN + 1, i64::MAX));
+    }
+    op_range(data, nn, rv, name, args, 0)
+}
+
 /// The range of the native op `name` over `args` — the operator rules alone, which is
 /// what the emitter asks at the op it is about to write.  `None` for a user call: that is
 /// [`range`]'s business through the callee's one expression.
@@ -286,6 +338,9 @@ pub fn op_range<F: RangeFacts + ?Sized>(
                     let x = a(0)?;
                     fits(-i128::from(x.1), -i128::from(x.0))
                 }
+                // `abs(x)`: a ranged x is never null, and its magnitude is at most the larger
+                // end's — `i64::MIN` is outside every range, so it cannot overflow.
+                ("OpAbsInt", 1) => abs_range(a(0)?),
                 ("OpDivInt" | "OpDivIntNullable", 2) => {
                     let (x, y) = (a(0)?, a(1)?);
                     if y.0 <= 0 && y.1 >= 0 {
@@ -761,6 +816,8 @@ pub fn range_vars(
         vars: HashMap::new(),
         fields: seeds.fields.clone(),
         elems: HashMap::new(),
+        bodies: HashMap::new(),
+        steps: std::collections::HashSet::new(),
     };
     // `@FR-R-RangedCall`'s seeds — a variable the caller vouches for (a ranged variant's
     // parameter) holds its seed only while nothing in the code can change it: the fixpoint
@@ -899,7 +956,20 @@ fn seed_counters(
         let mut seed: Option<Range> = None;
         let mut seeds = 0usize;
         v_seed(data, nn, rv, root, stepped, &mut seed, &mut seeds);
-        if seeds == 1
+        // An exclusive loop over an unranged end: the counter steps only after the test saw
+        // it below the end, so the step cannot overflow and the yielded value is below
+        // `i64::MAX` — the open-end clause.
+        let open_end = !rc.inclusive
+            && !crate::env_once!(std::env::var("LOFT_NO_OPEN_END").is_ok_and(|v| v != "0"))
+            && range(data, nn, rv, rc.hi, 0).is_none();
+        // The two-counter form tests before it steps, so any start that passed the test steps
+        // below the end; the single-counter form steps first, from a seed that must be below
+        // i64::MAX.
+        if seeds == 1 && open_end && (rc.next.is_some() || seed.is_some_and(|s| s.1 < i64::MAX)) {
+            // Only the step: a counter ranged this wide would take it out of
+            // `(R-RangedCall)`'s guard, whose run-time test bounds it far tighter.
+            rv.steps.insert(stepped);
+        } else if seeds == 1
             && let Some(s) = seed
             && let Some(h) = range(data, nn, rv, rc.hi, 0)
         {
@@ -922,8 +992,54 @@ fn seed_counters(
             }
             rv.vars.insert(rc.loop_var, (lo_var, hi_var.max(lo_var)));
         }
+        // The END clause: the body runs only while the counter is below the end, so an end
+        // copied from a variable `x` the loop never writes is above the loop variable's lowest
+        // value there — `for k in 1..n { … / n }` divides by an `n >= 2`.
+        if seeds == 1
+            && !rc.inclusive
+            && let Some(s) = seed
+            && let Value::Var(end) = rc.hi.unspan()
+            && let Some(x) = end_source(root, *end)
+            && let Some((x_lo, x_hi)) = rv.vars.get(&x).copied()
+            && !lp.operators.iter().any(|o| {
+                o.any_node(&mut |m| matches!(m, Value::Set(t, _) if *t == x || *t == *end))
+            })
+        {
+            let lo_var = if rc.next.is_some() {
+                s.0
+            } else {
+                s.0.saturating_add(1)
+            };
+            let floor = lo_var.saturating_add(1).max(x_lo);
+            if floor <= x_hi {
+                rv.bodies
+                    .entry(lp.scope)
+                    .or_default()
+                    .push((x, (floor, x_hi)));
+            }
+        }
     }
     v.for_each_child(&mut |c| seed_counters(data, root, c, nn, rv, counters));
+}
+
+/// The variable the compiler's end copy `end` (`_range_end = x`) was set from: its one `Set`
+/// must be a plain `Var`.
+fn end_source(root: &Value, end: u16) -> Option<u16> {
+    let mut from = None;
+    let mut sets = 0;
+    root.walk(&mut |n| {
+        if let Value::Set(t, rhs) = n
+            && *t == end
+        {
+            sets += 1;
+            from = if let Value::Var(x) = rhs.unspan() {
+                Some(*x)
+            } else {
+                None
+            };
+        }
+    });
+    if sets == 1 { from } else { None }
 }
 
 /// `@FR-R-Range`'s accumulator clause — the second self-stepping shape read off a loop,
@@ -971,6 +1087,93 @@ fn seed_accumulators(
         };
         (step.unsigned_abs() < (1u64 << 31)).then_some(sign * step)
     }
+    /// The CALLEE-STEP clause: `n = t.k` right after `t = f(…, n, …)` in one block — only
+    /// other `_ = t.j` reads between, so `t` holds that call's result — where every result of `f` (each `return`, and the
+    /// tail) is a tuple whose element `k` is `f`'s parameter `p` (the argument `n` is passed
+    /// as) or `p ± c` with a literal `c`, and `f` never writes `p`.  The step moves `n` by at
+    /// most the largest `|c|`: the value read is the one `n` held at the call, moved once.
+    fn call_step(data: &Data, code: &Value, acc: u16, set: &Value) -> Option<i64> {
+        let Value::Set(_, expr) = set else {
+            return None;
+        };
+        let Value::TupleGet(tup, at) = expr.unspan() else {
+            return None;
+        };
+        let (tup, at) = (*tup, usize::from(*at));
+        // The block holding the step, and the call just before it.
+        let mut call: Option<(u32, &[Value])> = None;
+        code.any_node(&mut |node| {
+            let Value::Block(bl) = node else { return false };
+            let Some(pos) = bl
+                .operators
+                .iter()
+                .position(|op| std::ptr::eq(op.unspan(), set))
+            else {
+                return false;
+            };
+            for op in bl.operators[..pos].iter().rev() {
+                match op.unspan() {
+                    Value::Set(other, read)
+                        if *other != tup
+                            && matches!(read.unspan(), Value::TupleGet(from, _) if *from == tup) => {}
+                    Value::Set(var, value) if *var == tup => {
+                        if let Value::Call(callee, args) = value.unspan() {
+                            call = Some((*callee, args.as_slice()));
+                        }
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            true
+        });
+        let (callee, args) = call?;
+        if (callee as usize) >= data.definitions.len() {
+            return None;
+        }
+        let param = args
+            .iter()
+            .position(|arg| matches!(arg.unspan(), Value::Var(var) if *var == acc))?;
+        let param = u16::try_from(param).ok()?;
+        let body = &data.def(callee).code;
+        if matches!(body, Value::Null) {
+            return None;
+        }
+        // Element `k` of one result: `p` or `p ± c`, answering `|c|`.
+        let elem = |result: &Value| -> Option<i64> {
+            let Value::Tuple(items) = result.unspan() else {
+                return None;
+            };
+            let item = items.get(at)?;
+            if matches!(item.unspan(), Value::Var(var) if *var == param) {
+                return Some(0);
+            }
+            literal_step(data, param, item).map(i64::abs)
+        };
+        let mut most = 0i64;
+        let mut ok = true;
+        body.any_node(&mut |node| {
+            match node {
+                Value::Set(var, _) | Value::TuplePut(var, _, _) if *var == param => ok = false,
+                Value::Return(result) => match elem(result) {
+                    Some(step) => most = most.max(step),
+                    None => ok = false,
+                },
+                _ => {}
+            }
+            !ok
+        });
+        // The tail: a `return`, or a result tuple.
+        let Value::Block(top) = body.unspan() else {
+            return None;
+        };
+        match top.operators.last().map(Value::unspan) {
+            Some(Value::Return(_)) => {}
+            Some(result) => most = most.max(elem(result)?),
+            None => return None,
+        }
+        ok.then_some(most)
+    }
     /// How many times one entry of `lp` can run its body, or `None` when nothing bounds it.
     /// A character walk over a text the body never writes makes at most `size(T)` trips, a
     /// `u32` word.  A counted loop steps its counter by one from its single seed until the
@@ -994,10 +1197,12 @@ fn seed_accumulators(
     /// `None` where a step is not one this clause reads.  `mult` is the product of the trip
     /// bounds of the loops between the seed's block and `node` (1 outside any loop), `None`
     /// once one of them is unbounded: a step under such a loop declines.
+    #[allow(clippy::too_many_arguments)]
     fn movement(
         data: &Data,
         walks: &std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
         rv: &Ranges,
+        code: &Value,
         node: &Value,
         acc: u16,
         mult: Option<i128>,
@@ -1008,7 +1213,10 @@ fn seed_accumulators(
         const CAP: i128 = 1 << 96;
         match node.unspan() {
             Value::Set(target, expr) if *target == acc => {
-                let step = i128::from(literal_step(data, acc, expr)?.unsigned_abs());
+                let step = match literal_step(data, acc, expr) {
+                    Some(c) => i128::from(c.unsigned_abs()),
+                    None => i128::from(call_step(data, code, acc, node.unspan())?),
+                };
                 *steps += 1;
                 Some(step * mult?)
             }
@@ -1020,7 +1228,7 @@ fn seed_accumulators(
                     .filter(|m| *m <= CAP);
                 let mut total: i128 = 0;
                 for op in &lp.operators {
-                    total += movement(data, walks, rv, op, acc, inner, steps)?;
+                    total += movement(data, walks, rv, code, op, acc, inner, steps)?;
                 }
                 Some(total)
             }
@@ -1029,7 +1237,7 @@ fn seed_accumulators(
                 let mut ok = true;
                 node.for_each_child(&mut |child| {
                     if ok {
-                        match movement(data, walks, rv, child, acc, mult, steps) {
+                        match movement(data, walks, rv, code, child, acc, mult, steps) {
                             Some(m) => total += m,
                             None => ok = false,
                         }
@@ -1069,10 +1277,20 @@ fn seed_accumulators(
                 bl.operators[k + 1..]
                     .iter()
                     .try_fold(0i128, |total, later| {
-                        Some(total + movement(data, walks, rv, later, n, Some(1), &mut steps)?)
+                        Some(
+                            total + movement(data, walks, rv, code, later, n, Some(1), &mut steps)?,
+                        )
                     });
             let Some(bound) = bound else { continue };
             if steps == 0 || writes != steps + 1 {
+                continue;
+            }
+            if let Some((lp_scope, x_hi)) = step_down_by_trips(data, rv, bl, k, n, e)
+                && steps == 1
+            {
+                rv.vars.insert(n, (seed.0.min(0), seed.1));
+                rv.bodies.entry(lp_scope).or_default().push((n, (1, x_hi)));
+                counters.insert(n);
                 continue;
             }
             if let Some(r) = fits(i128::from(seed.0) - bound, i128::from(seed.1) + bound) {
@@ -1082,6 +1300,126 @@ fn seed_accumulators(
         }
         false
     });
+}
+
+/// `@FR-R-Range`'s RELATIONAL STEP clause: `n = x` (statement `k` of `bl`), then — later in
+/// `bl` — `for _ in 0..x { … n -= 1 }`, the loop's end set from `x` itself, with the one step
+/// `n = n - 1` the LAST statement on every path that holds it and under no nested loop, and
+/// neither `x` nor the end written in the loop.  Trip `t` (from 0) starts with at most `t`
+/// steps taken, and runs only while `t < x`, so before the step `n >= x - t >= 1`, and after
+/// the loop `n >= 0`.  Answers the loop's scope (where `n` lies in `1 ..= x.hi`) and `x.hi`;
+/// `n`'s range over the function is then `min(0, x.lo) ..= x.hi`.
+fn step_down_by_trips(
+    data: &Data,
+    rv: &Ranges,
+    bl: &crate::data::Block,
+    k: usize,
+    n: u16,
+    seed: &Value,
+) -> Option<(u16, i64)> {
+    let Value::Var(x) = seed.unspan() else {
+        return None;
+    };
+    let x = *x;
+    let (x_lo, x_hi) = rv.vars.get(&x).copied()?;
+    if x_lo < 0 {
+        return None;
+    }
+    let writes =
+        |v: &Value, var: u16| v.any_node(&mut |m| matches!(m, Value::Set(t, _) if *t == var));
+    // The statements between the seed and the loop write neither `n` nor `x`.
+    let mut later = bl.operators[k + 1..].iter();
+    let fb = loop {
+        let op = later.next()?;
+        if writes(op, n) {
+            break op;
+        }
+        if writes(op, x) {
+            return None;
+        }
+    };
+    let Value::Block(fb) = fb.unspan() else {
+        return None;
+    };
+    // `_range_end = x; index = -1; loop { index = index + 1; if end <= index break; … }`
+    let mut lp = None;
+    let mut end_from_x = None;
+    let mut index_from = None;
+    for op in &fb.operators {
+        match op.unspan() {
+            Value::Set(var, value) if matches!(value.unspan(), Value::Var(from) if *from == x) => {
+                end_from_x = Some(*var)
+            }
+            Value::Set(var, value) if matches!(value.unspan(), Value::Int(-1)) => {
+                index_from = Some(*var)
+            }
+            Value::Loop(found) if lp.is_none() => lp = Some(found),
+            Value::Line(_) => {}
+            _ => return None,
+        }
+    }
+    let (lp, end) = (lp?, end_from_x?);
+    let rc = crate::loop_shape::range_counters(lp, data).ok()?;
+    if rc.next.is_some()
+        || rc.inclusive
+        || Some(rc.index) != index_from
+        || !matches!(rc.hi.unspan(), Value::Var(h) if *h == end)
+    {
+        return None;
+    }
+    let body = &lp.operators[1..];
+    if body
+        .iter()
+        .any(|op| writes(op, x) || writes(op, end) || writes(op, rc.index))
+    {
+        return None;
+    }
+    // The one step, the last statement on its path, under no nested loop.
+    let is_step = |v: &Value| {
+        matches!(v.unspan(), Value::Set(var, value) if *var == n
+            && matches!(value.unspan(), Value::Call(def, args) if data.def(*def).name() == "OpMinInt"
+                && args.len() == 2
+                && matches!(args[0].unspan(), Value::Var(from) if *from == n)
+                && matches!(args[1].unspan(), Value::Int(1))))
+    };
+    fn ends_with_step(v: &Value, n: u16, is_step: &dyn Fn(&Value) -> bool) -> bool {
+        let writes_n =
+            |v: &Value| v.any_node(&mut |node| matches!(node, Value::Set(var, _) if *var == n));
+        match v.unspan() {
+            _ if is_step(v) => true,
+            _ if !writes_n(v) => true,
+            Value::Block(b) => {
+                let ops: Vec<&Value> = b
+                    .operators
+                    .iter()
+                    .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+                    .collect();
+                match ops.split_last() {
+                    Some((last, rest)) => {
+                        rest.iter().all(|o| !writes_n(o)) && ends_with_step(last, n, is_step)
+                    }
+                    None => true,
+                }
+            }
+            Value::If(test, then, other) => {
+                !writes_n(test)
+                    && ends_with_step(then, n, is_step)
+                    && ends_with_step(other, n, is_step)
+            }
+            _ => false,
+        }
+    }
+    let ops: Vec<&Value> = body
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+        .collect();
+    let (last, rest) = ops.split_last()?;
+    if rest.iter().any(|o| writes(o, n)) || !ends_with_step(last, n, &is_step) {
+        return None;
+    }
+    // Nothing after the loop in `fb`, and after `fb` in `bl`, steps `n` again: the caller
+    // counted every write (`writes == steps + 1`).
+    Some((lp.scope, x_hi))
 }
 
 /// Find the seed `Set` of a counter: every `Set(counter, e)` whose `e` is not the step

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# m.sh BIN [BIN…] — median ns/op of 7 runs, --n calibrated to ~300 ms per run; prints routine, ns/op, hash.
+for b in "$@"; do
+  one=$($b --n 2 | awk -F'\t' 'NR==2{print $4}')
+  n=$(( 300000000 / (one>0?one:1) )); [ $n -lt 2 ] && n=2
+  for i in 1 2 3 4 5 6 7; do $b --n $n | awk -F'\t' 'NR==2{print $1, $4, $7}'; done | sort -k2 -n | sed -n 4p | awk -v b="$(basename $b)" -v n=$n '{printf "%-22s %-14s %12s ns/op  hash %s  (n=%d)\n", b, $1, $2, $3, n}'
+done

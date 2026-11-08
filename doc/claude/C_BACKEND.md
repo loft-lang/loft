@@ -222,7 +222,10 @@ long test `main` can cost minutes.  `src/c/split.rs` therefore writes a function
 consecutive top-level statements, and the locals that live across parts share one frame
 struct.  A body the pass cannot read for certain stays whole: a `setjmp`, a preprocessor
 conditional, a block comment over lines, or a label it cannot place.  A split changes no
-answer.
+answer.  The parts are for MSVC: by default the function is written both ways, the parts under
+`#if defined(_MSC_VER)` and the whole body under `#else`, because on gcc and clang a split costs
+a hot function its registers — every call builds the frame struct and makes two indirect calls
+(a recursive decoder ran 12× its Rust twin split and 2× whole).
 
 - **Where it runs:** every semantics build — `--native-c`, `--native-debug`, `loft test`,
   `--emit-c`, the C sweep (`scripts/c_sweep.py`), and the non-`--ship` wasm and page builds.
@@ -230,8 +233,8 @@ answer.
   exactly what it would be without the pass (NATIVE.md § Optimisation tiers).  That covers a
   `--ship` run (`loft::c::ship_units`) and an ESP app (`emit_esp_program`), even under
   `LOFT_C_SPLIT`.
-- **Switches:** `LOFT_C_SPLIT=<n>` sets the budget (`1` keeps the default, `0` turns the
-  pass off), `LOFT_NO_C_SPLIT=1` turns it off over any setting (the bisect step), and
+- **Switches:** `LOFT_C_SPLIT=<n>` sets the budget and writes the parts for every compiler
+  (`1` keeps the default, MSVC-only parts; `0` turns the pass off), `LOFT_NO_C_SPLIT=1` turns it off over any setting (the bisect step), and
   `LOFT_TRACE_C_SPLIT=1` names each over-budget function, its parts and its frame size, or
   why it stayed whole.
 - **Guards:** `tests/c_split.rs` runs the split cells on both backends at budget 4, and

@@ -1,0 +1,295 @@
+// Benchmark 21: Linked records — a binary search tree and a linked list built of records that
+// hold records of their own type (the Rust twin: `Option<Box<…>>`).
+//
+// Four routines, each ONE OP per repetition, each on keys that differ by the repetition number
+// in VALUE, never in the amount of work, folded into `sink`:
+//   tree_insert  2,000 distinct keys inserted into a fresh search tree, then its height and an
+//                in-order checksum
+//   tree_query   4,000 lookups (half of them misses) in a 2,000-key tree built once, an in-order
+//                walk and the height
+//   tree_delete  a fresh 1,200-key tree, every third key deleted (a node with two children
+//                takes its successor's key), then an in-order checksum that also checks the order
+//   list_ops     2,000 pushes to the front of a list, 500 inserts after its head, a reversal into
+//                a second list, a walk of each, and the first popped empty
+// The `hash` column is one canonical op's result: every lane must print the same one.
+use std::hint::black_box;
+use std::time::Instant;
+
+struct Tree {
+    k: i64,
+    left: Option<Box<Tree>>,
+    right: Option<Box<Tree>>,
+}
+
+struct Node {
+    v: i64,
+    next: Option<Box<Node>>,
+}
+
+enum List {
+    Nil,
+    Cons(i64, Box<List>),
+}
+
+fn key(i: i64, salt: i64) -> i64 {
+    ((i * 1103515245 + 12345 + salt * 7919) % 2147483648) % 100000
+}
+
+fn leaf(k: i64) -> Box<Tree> {
+    Box::new(Tree { k, left: None, right: None })
+}
+
+fn insert(t: &mut Tree, k: i64) -> bool {
+    let mut cur = t;
+    loop {
+        if k == cur.k {
+            return false;
+        }
+        let side = if k < cur.k { &mut cur.left } else { &mut cur.right };
+        match side {
+            None => {
+                *side = Some(leaf(k));
+                return true;
+            }
+            Some(next) => cur = next,
+        }
+    }
+}
+
+fn find(t: &Tree, k: i64) -> bool {
+    let mut cur = Some(t);
+    while let Some(c) = cur {
+        if k == c.k {
+            return true;
+        }
+        cur = if k < c.k { c.left.as_deref() } else { c.right.as_deref() };
+    }
+    false
+}
+
+fn height(t: Option<&Tree>) -> i64 {
+    match t {
+        None => 0,
+        Some(t) => 1 + height(t.left.as_deref()).max(height(t.right.as_deref())),
+    }
+}
+
+/// In-order: a weighted sum, -1 when a key is out of order.
+fn walk(t: Option<&Tree>, prev: i64, acc: i64) -> (i64, i64) {
+    match t {
+        None => (prev, acc),
+        Some(t) => {
+            let (p, a) = walk(t.left.as_deref(), prev, acc);
+            if a < 0 || t.k <= p {
+                return (t.k, -1);
+            }
+            walk(t.right.as_deref(), t.k, (a * 31 + t.k) % 1000000007)
+        }
+    }
+}
+
+fn checksum(t: &Tree) -> i64 {
+    walk(Some(t), -1, 7).1
+}
+
+fn build(total: i64, salt: i64) -> Tree {
+    let mut t = Tree { k: key(0, salt), left: None, right: None };
+    for i in 1..total {
+        insert(&mut t, key(i, salt));
+    }
+    t
+}
+
+/// Remove the leftmost node of a non-empty subtree and answer its key.
+fn take_min(slot: &mut Option<Box<Tree>>) -> i64 {
+    let mut slot = slot;
+    while slot.as_ref().is_some_and(|n| n.left.is_some()) {
+        slot = &mut slot.as_mut().unwrap().left;
+    }
+    let mut node = slot.take().unwrap();
+    *slot = node.right.take();
+    node.k
+}
+
+/// Delete `k` below the root (the root itself is never asked for); true when found.
+fn remove_key(t: &mut Tree, k: i64) -> bool {
+    let mut slot = if k < t.k { &mut t.left } else { &mut t.right };
+    loop {
+        match slot {
+            None => return false,
+            Some(n) if n.k == k => break,
+            Some(n) => slot = if k < n.k { &mut n.left } else { &mut n.right },
+        }
+    }
+    let node = slot.as_mut().unwrap();
+    if node.left.is_some() && node.right.is_some() {
+        node.k = take_min(&mut node.right);
+    } else {
+        let mut gone = slot.take().unwrap();
+        *slot = if gone.left.is_some() { gone.left.take() } else { gone.right.take() };
+    }
+    true
+}
+
+fn tree_insert(total: i64, salt: i64) -> i64 {
+    let t = build(total, salt);
+    height(Some(&t)) * 1000003 + checksum(&t)
+}
+
+fn tree_query(t: &Tree, total: i64, salt: i64) -> i64 {
+    let mut hits = 0;
+    for i in 0..total * 2 {
+        if find(t, key(i, salt)) {
+            hits += 1;
+        }
+    }
+    hits * 1000003 + checksum(t) + height(Some(t))
+}
+
+fn tree_delete(total: i64, salt: i64) -> i64 {
+    let mut t = build(total, salt);
+    let mut gone = 0;
+    for i in 1..total {
+        if i % 3 == 0 && remove_key(&mut t, key(i, salt)) {
+            gone += 1;
+        }
+    }
+    gone * 1000003 + checksum(&t)
+}
+
+fn list_ops(total: i64, salt: i64) -> i64 {
+    let mut h = Box::new(Node { v: salt, next: None });
+    for i in 1..total {
+        h = Box::new(Node { v: key(i, salt), next: Some(h) });
+    }
+    for i in 0..total / 4 {
+        let rest = h.next.take();
+        h.next = Some(Box::new(Node { v: i, next: rest }));
+    }
+    let mut r: Option<Box<Node>> = None;
+    let mut sum = 0;
+    let mut cur = Some(&*h);
+    while let Some(c) = cur {
+        sum = (sum * 31 + c.v) % 1000000007;
+        r = Some(Box::new(Node { v: c.v, next: r }));
+        cur = c.next.as_deref();
+    }
+    let mut back = 0;
+    let mut cur = r.as_deref();
+    while let Some(c) = cur {
+        back = (back * 17 + c.v) % 1000000007;
+        cur = c.next.as_deref();
+    }
+    let mut n = 0;
+    let mut p = Some(h);
+    while let Some(mut node) = p {
+        n += 1;
+        p = node.next.take();
+    }
+    // `r` is dropped one node at a time as well, never by recursion.
+    let mut q = r;
+    while let Some(mut node) = q {
+        q = node.next.take();
+    }
+    (sum + back) % 1000000007 + n
+}
+
+/// Insert `k` by the textbook recursion: the subtree is moved in and handed back.
+fn insert_rec(t: Option<Box<Tree>>, k: i64) -> Option<Box<Tree>> {
+    match t {
+        None => Some(leaf(k)),
+        Some(mut n) => {
+            if k < n.k {
+                n.left = insert_rec(n.left.take(), k);
+            } else if k > n.k {
+                n.right = insert_rec(n.right.take(), k);
+            }
+            Some(n)
+        }
+    }
+}
+
+fn build_rec(total: i64, salt: i64) -> i64 {
+    let mut t: Option<Box<Tree>> = None;
+    for i in 0..total {
+        t = insert_rec(t, key(i, salt));
+    }
+    let t = t.unwrap();
+    height(Some(&t)) * 1000003 + checksum(&t)
+}
+
+/// Drop a list one cell at a time, never by recursion.
+fn drop_list(mut l: List) {
+    while let List::Cons(_, next) = l {
+        l = *next;
+    }
+}
+
+fn enum_list(total: i64, salt: i64) -> i64 {
+    let mut l = List::Nil;
+    for i in 0..total {
+        l = List::Cons(key(i, salt), Box::new(l));
+    }
+    let mut sum = 0;
+    let mut r = List::Nil;
+    let mut cur = &l;
+    while let List::Cons(v, next) = cur {
+        sum = (sum * 31 + v) % 1000000007;
+        r = List::Cons(*v, Box::new(r));
+        cur = next;
+    }
+    let mut back = 0;
+    let mut n = 0;
+    let mut cur = &r;
+    while let List::Cons(v, next) = cur {
+        back = (back * 17 + v) % 1000000007;
+        n += 1;
+        cur = next;
+    }
+    drop_list(l);
+    drop_list(r);
+    (sum + back) % 1000000007 + n
+}
+
+fn lookup_copy(t: &Tree, total: i64, salt: i64) -> i64 {
+    let mut hits = 0;
+    for i in 0..total * 2 {
+        if find(t, key(i, salt)) {
+            hits += 1;
+        }
+    }
+    hits * 1000003 + checksum(t) + height(Some(t))
+}
+
+/// `--n N`: how many ops the timed loop runs (the harness calibrates it per lane).
+fn arg_n(dflt: i64) -> i64 {
+    let args: Vec<String> = std::env::args().collect();
+    let mut n = dflt;
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--n" && i + 1 < args.len() {
+            n = args[i + 1].parse().unwrap_or(dflt);
+            i += 1;
+        }
+        i += 1;
+    }
+    n.max(2)
+}
+
+/// One measured routine, in the row format every lane prints (bench/README.md).
+fn row(name: &str, iters: i64, us: i64, items: i64, result: i64, sink: i64) {
+    let ns = us * 1000 / iters;
+    let per = (us * 1000) as f64 / (iters * items) as f64;
+    println!("routine\titers\tus\tns_op\tpx\tns_px\thash");
+    println!("{name}\t{iters}\t{us}\t{ns}\t{items}\t{per:.3}\t{result:x}");
+    println!("time: {}ms sink={}", us / 1000, black_box(sink));
+}
+
+fn main() {
+    let n = arg_n(10);
+    let q = build(2000, 0);
+    let t0 = Instant::now();
+    let mut sink: i64 = 0;
+    for r in 0..n { sink = sink.wrapping_add(lookup_copy(&q, black_box(2000), black_box(r & 1))); }
+    row("lookup_copy", n, t0.elapsed().as_micros() as i64, 4000, lookup_copy(&q, 2000, 0), sink);
+}

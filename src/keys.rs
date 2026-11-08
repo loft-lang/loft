@@ -1022,6 +1022,18 @@ pub fn demote_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_DEMOTE"))
 }
 
+/// `LOFT_NO_VARIANT_INPLACE=1` — `@FR-R-InPlaceLiteral`'s variant clause: a variant literal
+/// rebound into a whole local of its struct-enum (`l = Cons { v: 1, next: Nil }`) is built on
+/// a work reference and copied over again, where the default builds it in the local as a
+/// struct literal is (`Parser::parse_object`) — which is also what lets `@FR-R-Demote`'s
+/// variant clause move `l = Cons { …, next: l }`.  The bisect step for a wrong answer or a
+/// leak in an enum local rebound by a variant literal.
+#[must_use]
+pub fn variant_literal_in_place() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VARIANT_INPLACE"))
+}
+
 /// `LOFT_NO_NULLABLE_INPLACE=1` — `@FR-N-Road`: a struct literal bound to a NULLABLE local
 /// (`x: S? = S { … }`) is built on a work reference again, where the default builds it in
 /// the local as its dense twin does (`Parser::parse_object`).  The bisect step for a
@@ -1336,6 +1348,32 @@ pub const COPY_TP_MASK: u16 = 0x3FFF;
 /// parameter answers the child the field holds; a whole write is the field write.  A field
 /// position never reaches bit 30, and a null keeps its own `REPORTED_BIT` (bit 31).
 pub const SLOT_FIELD_BIT: u32 = 0x4000_0000;
+
+/// `@FR-R-HostStore` (@PLN219) — the `pos` bit of a return buffer that names a STORE and no
+/// record (`rec == 0`): `OpDatabase` on it claims the callee's result as a record of that store,
+/// where the caller's field adopts it by its number, instead of making a store of its own.
+pub const STORE_BUF_BIT: u32 = 0x2000_0000;
+
+/// `OpStoreBuf` — the buffer naming `host`'s store; null for a null host.
+#[inline]
+#[must_use]
+pub fn store_buf(host: &DbRef) -> DbRef {
+    if host.store_nr == u16::MAX {
+        return DbRef::NULL;
+    }
+    DbRef {
+        store_nr: host.store_nr,
+        rec: 0,
+        pos: STORE_BUF_BIT,
+    }
+}
+
+/// Is `r` a buffer naming a store and no record ([`STORE_BUF_BIT`])?
+#[inline]
+#[must_use]
+pub fn is_store_buf(r: &DbRef) -> bool {
+    r.store_nr != u16::MAX && r.rec == 0 && r.pos & STORE_BUF_BIT != 0
+}
 
 /// Does the cell content `r` name an out-of-line field ([`SLOT_FIELD_BIT`])?
 #[inline]
@@ -1791,6 +1829,13 @@ pub fn const_view_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_CONST_VIEW"))
 }
 
+/// `@FR-R-CopyView`'s walk clause; `LOFT_NO_COPY_VIEW_WALK=1` keeps a walk cursor's copy.
+#[must_use]
+pub fn copy_view_walk_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_COPY_VIEW_WALK"))
+}
+
 /// `@FR-R-CopyView` — a read-only copy of a record nothing can disturb is a view of it.
 /// `LOFT_NO_COPY_VIEW=1` keeps every copy (the first bisect step for a record local that reads
 /// a value its source took later, or a store freed under it).
@@ -2109,6 +2154,13 @@ pub fn literal_host_enabled() -> bool {
 /// comparisons of a text's character count against the zero boundary keep counting
 /// characters, instead of reading the byte count — `@FR-R-ZeroCount`'s A/B, and the first
 /// bisect step for a wrong emptiness answer.
+/// `LOFT_NO_EXP_POW=1` (closed program, every backend): `pow(E, x)` stays the general power
+/// instead of folding into `exp(x)` (`@FR-R-ExpPow`).
+pub fn exp_pow_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_EXP_POW"))
+}
+
 pub fn zero_count_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_ZERO_COUNT"))

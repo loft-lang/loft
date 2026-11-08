@@ -1,0 +1,113 @@
+--- base.c
++++ s2.c
+@@ -16732,6 +16732,14 @@
+ /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
+  * element record copied into a fresh record of the destination's store, its heap deep-copied, a
+  * null slot kept null. */
++
++static void loft_demote(loft_ref h, uint32_t size, uint32_t fpos) {
++    loft_store_t *s = loft_store_of(h);
++    uint32_t c = loft_claim(s, 1 + (size + 7) / 8);
++    loft_ref ch = { h.store_nr, c, 8, 0 };
++    loft_copy_bytes(ch, 0, h, 0, size);
++    loft_set_u32(s, h.rec, h.pos + fpos, c);
++}
+ static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+     int64_t n = loft_vec_len(o);
+     if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+@@ -32315,16 +32323,10 @@
+             goto brk_1;
+         }
+         v5_i = v4_i_index;
+-        loft_database_typed(&v17___ref_p2_1, 16, 106);
+-        loft_frame_site(170);
+-        t3 = v17___ref_p2_1;
+         t4 = n_key__nn2(v5_i, v1_salt);
+-        loft_set_int_at(t3, 8, t4, "DRIVER.loft", 170);
+-        t5 = loft_field(v17___ref_p2_1, 4);
+-        loft_set_child_rec(loft_types, 100, t5, v2_l, 0);
+-        t6 = (uint8_t) 2;
+-        loft_set_byte_at(v17___ref_p2_1, 0, t6, "DRIVER.loft", 170);
+-        loft_bind_copy(loft_types, 100, &v2_l, v17___ref_p2_1);
++        loft_demote(v2_l, 16, 4);
++        loft_set_int_at(v2_l, 8, t4, "DRIVER.loft", 170);
++        loft_set_byte_at(v2_l, 0, (uint8_t) 2, "DRIVER.loft", 170);
+     }
+     brk_1:;
+     v6_sum = INT64_C(0);
+@@ -32332,7 +32334,7 @@
+     t7 = (uint8_t) 1;
+     loft_set_byte_at(v18___ref_2, 0, t7, "DRIVER.loft", 172);
+     loft_bind_copy(loft_types, 100, &v7_r, v18___ref_2);
+-    loft_bind_copy(loft_types, 100, &v8_cur, v2_l);
++    v8_cur = v2_l;
+     v9_more = (uint8_t) (1);
+     for (;;) {
+         if (!(v9_more == 1)) {
+@@ -32344,18 +32346,14 @@
+         if (t9 == loft_w64(INT32_C(2))) {
+             v10__mv_v_1 = loft_get_int(v8_cur, 8);
+             t10 = loft_ref_from_child_rec(loft_field(v8_cur, 4));
+-            loft_bind_copy(loft_types, 100, &v11__mv_next_1, t10);
++            v11__mv_next_1 = t10;
+             t11 = loft_mul(v6_sum, INT64_C(31));
+             t12 = loft_add(t11, v10__mv_v_1);
+             v6_sum = loft_rem_at(t12, INT64_C(1000000007), "DRIVER.loft", 178);
+-            loft_database_typed(&v19___ref_p2_2, 16, 106);
+-            loft_set_int_at(v19___ref_p2_2, 8, v10__mv_v_1, "DRIVER.loft", 179);
+-            t13 = loft_field(v19___ref_p2_2, 4);
+-            loft_set_child_rec(loft_types, 100, t13, v7_r, 0);
+-            t14 = (uint8_t) 2;
+-            loft_set_byte_at(v19___ref_p2_2, 0, t14, "DRIVER.loft", 179);
+-            loft_bind_copy(loft_types, 100, &v7_r, v19___ref_p2_2);
+-            loft_bind_copy(loft_types, 100, &v8_cur, v11__mv_next_1);
++            loft_demote(v7_r, 16, 4);
++            loft_set_int_at(v7_r, 8, v10__mv_v_1, "DRIVER.loft", 179);
++            loft_set_byte_at(v7_r, 0, (uint8_t) 2, "DRIVER.loft", 179);
++            v8_cur = v11__mv_next_1;
+         } else {
+             t15 = loft_get_enum(v8_cur, 0);
+             t16 = (t15 == 255 ? LOFT_NULL : (int64_t) t15);
+@@ -32363,12 +32361,11 @@
+                 v9_more = (uint8_t) (0);
+             }
+         }
+-        loft_free_var(&v11__mv_next_1);
+     }
+     brk_2:;
+     v12_back = INT64_C(0);
+     v13_n = INT64_C(0);
+-    loft_bind_copy(loft_types, 100, &v8_cur, v7_r);
++    v8_cur = v7_r;
+     v9_more = (uint8_t) (1);
+     for (;;) {
+         if (!(v9_more == 1)) {
+@@ -32380,12 +32377,12 @@
+         if (t18 == loft_w64(INT32_C(2))) {
+             v14__mv_v_2 = loft_get_int(v8_cur, 8);
+             t19 = loft_ref_from_child_rec(loft_field(v8_cur, 4));
+-            loft_bind_copy(loft_types, 100, &v15__mv_next_2, t19);
++            v15__mv_next_2 = t19;
+             t20 = loft_mul(v12_back, INT64_C(17));
+             t21 = loft_add(t20, v14__mv_v_2);
+             v12_back = loft_rem_at(t21, INT64_C(1000000007), "DRIVER.loft", 192);
+             v13_n = loft_add(v13_n, INT64_C(1));
+-            loft_bind_copy(loft_types, 100, &v8_cur, v15__mv_next_2);
++            v8_cur = v15__mv_next_2;
+         } else {
+             t22 = loft_get_enum(v8_cur, 0);
+             t23 = (t22 == 255 ? LOFT_NULL : (int64_t) t22);
+@@ -32393,13 +32390,11 @@
+                 v9_more = (uint8_t) (0);
+             }
+         }
+-        loft_free_var(&v15__mv_next_2);
+     }
+     brk_3:;
+     t24 = loft_add(v6_sum, v12_back);
+     t25 = loft_rem_at(t24, INT64_C(1000000007), "DRIVER.loft", 199);
+     v20___ret_1 = loft_add(t25, v13_n);
+-    loft_free_var(&v8_cur);
+     loft_free_var(&v7_r);
+     loft_free_var(&v2_l);
+     loft_free_var(&v16___ref_1);

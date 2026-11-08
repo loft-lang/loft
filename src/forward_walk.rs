@@ -49,6 +49,7 @@ struct Ops {
     lt_int: u32,
     length_vector: u32,
     get_vector_nullable: u32,
+    get_field: u32,
 }
 
 /// One matched walk: the parts the rewrite keeps.
@@ -62,6 +63,9 @@ pub(crate) struct Walk {
     /// (`OpGetInt(…, 0)`) — rebuilt over the counter.
     pub(crate) read: Value,
     pub(crate) iter_scope: u16,
+    /// A walk over a field of a record, `for p in d.f`: the root `d` and the field's offset
+    /// (`src` is then the walk's own handle `vec_t`); `None` over a local or parameter.
+    pub(crate) field: Option<(u16, i32)>,
 }
 
 fn int(v: &Value) -> Option<i32> {
@@ -121,7 +125,14 @@ fn match_walk(ops: &Ops, block: &Block) -> Option<(Walk, usize)> {
     else {
         return None;
     };
-    let src = var(src)?;
+    // The source: a vector local or parameter, or one field of a record local or parameter.
+    let (src, field) = match src.unspan() {
+        Value::Var(n) => (*n, None),
+        Value::Call(d, a) if *d == ops.get_field && a.len() == 3 => {
+            (*vec_t, Some((var(&a[0])?, int(&a[1])?)))
+        }
+        _ => return None,
+    };
     if int(start)? != -1 || lp.name != "For loop" {
         return None;
     }
@@ -177,6 +188,7 @@ fn match_walk(ops: &Ops, block: &Block) -> Option<(Walk, usize)> {
             lv: *lv,
             read: (*read).clone(),
             iter_scope: nb.scope,
+            field,
         },
         first_body,
     ))
@@ -269,16 +281,22 @@ fn rewrite_in(
     let Some((w, first_body)) = match_walk(ops, block) else {
         return n;
     };
-    let decline = if vars.is_captured(w.src) {
+    let Some(Value::Loop(lp)) = block.operators.iter().find(|o| matches!(o, Value::Loop(_))) else {
+        return n;
+    };
+    let body = &lp.operators[first_body..];
+    let decline = if let Some((root, off)) = w.field {
+        // `for p in d.f`: the record must not reach anything that could resize its field —
+        // the check `(R-InRange)`'s field clause makes — and the walk's own handle is held to
+        // element reads, as a local source is.
+        match crate::in_range::field_decline(data, vars, root, off, w.idx, w.lv, body) {
+            Some(why) => Err(why),
+            None => body.iter().try_for_each(|o| check_body(data, vars, &w, o)),
+        }
+    } else if vars.is_captured(w.src) {
         Err("a closure captures the vector")
     } else {
-        let Some(Value::Loop(lp)) = block.operators.iter().find(|o| matches!(o, Value::Loop(_)))
-        else {
-            return n;
-        };
-        lp.operators[first_body..]
-            .iter()
-            .try_for_each(|o| check_body(data, vars, &w, o))
+        body.iter().try_for_each(|o| check_body(data, vars, &w, o))
     };
     if let Err(why) = decline {
         if trace() {
@@ -361,6 +379,7 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         lt_int: data.def_nr("OpLtInt"),
         length_vector: data.def_nr("OpLengthVector"),
         get_vector_nullable: data.def_nr("OpGetVectorNullable"),
+        get_field: data.def_nr("OpGetField"),
     };
     let mut total = 0;
     for d in 0..data.definitions() {

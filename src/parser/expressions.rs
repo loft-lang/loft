@@ -3985,6 +3985,28 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// The out-of-line field of node `d` at `pos` a `walk-or-write` write names, and the other
+    /// out-of-line fields it would drop — every one not written null since the link's last
+    /// write.  `None` when nothing is dropped.
+    fn dropped_siblings(&self, d: u32, pos: i32, nulled: &[i32]) -> Option<(String, Vec<String>)> {
+        let kt = self.data.def(d).known_type();
+        let mut written = String::new();
+        let mut dropped: Vec<String> = Vec::new();
+        for a in 0..self.data.attributes(d) {
+            if !self.data.field_is_out_of_line(d, a) {
+                continue;
+            }
+            let name = self.data.attr_name(d, a);
+            let at = i32::from(self.database.position(kt, &name));
+            if at == pos {
+                written = name;
+            } else if !nulled.contains(&at) {
+                dropped.push(name);
+            }
+        }
+        (!dropped.is_empty() && !written.is_empty()).then_some((written, dropped))
+    }
+
     /// @PLN219 `walk-or-write` — inside a loop, a whole write `cur = cur.f` through a field link
     /// or a slot parameter that drops a sibling subtree not known to be null: the author meant
     /// the step `cur = &cur.f`, which Rust's types would have told apart.  "Inside a loop" is a
@@ -3993,10 +4015,6 @@ use a separate collection or add after the loop"
     /// when that shape stands inside an outer loop that binds the link afresh); a node with no other
     /// out-of-line field (a list) drops nothing; `cur.g = null;` before the write says the
     /// drop is meant.  Every `=` to the link ends what was recorded for it.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one walk over the assignment shapes the lint reads; split it only as a move"
-    )]
     fn warn_walk_or_write(&mut self, op: &str, to: &Value, rhs: &Value) {
         if self.first_pass || op != "=" {
             return;
@@ -4054,24 +4072,9 @@ use a separate collection or add after the loop"
         if *base != v {
             return;
         }
-        let kt = self.data.def(d).known_type();
-        let mut written = String::new();
-        let mut dropped: Vec<String> = Vec::new();
-        for a in 0..self.data.attributes(d) {
-            if !self.data.field_is_out_of_line(d, a) {
-                continue;
-            }
-            let name = self.data.attr_name(d, a);
-            let at = i32::from(self.database.position(kt, &name));
-            if at == *pos {
-                written = name;
-            } else if !nulled.contains(&at) {
-                dropped.push(name);
-            }
-        }
-        if dropped.is_empty() || written.is_empty() {
+        let Some((written, dropped)) = self.dropped_siblings(d, *pos, &nulled) else {
             return;
-        }
+        };
         let link = self.vars.name(v).to_string();
         let gone = dropped
             .iter()

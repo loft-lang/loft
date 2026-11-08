@@ -10,7 +10,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 Active.  The semantics of a link to an out-of-line field is settled and built (loft#2433, loft#2434,
 C77 amended), and so is the parameter half (P, which absorbed P1): a `&` parameter of a type held
 out of line takes a field and writes it.  The bench programs that expose user-built structures
-(B) and the walk-or-write warning (W) are built.  Open: § Also open.  Work lives on `tuxedo-quality`.
+(B) and the walk-or-write warning (W) are built, and the C routines over 3× Rust are priced by
+hand (§ The C to 2×): its rewrites but the hash table's are built, and seven of the eight
+routines are at or under 2× their Rust twin from the compiler; `lru_mixed` is not.  Open: the rest of § The C to 2×, and § Also open.  Work lives on `tuxedo-quality`.
+Resume from [handoff-2026-11-07.md](handoff-2026-11-07.md): the judged lane is the C SHIP lane,
+and seven routines are over 2.7× on it.
 
 ## Goal
 
@@ -138,16 +142,192 @@ The O(1) unlink (§ Design, M) is no longer a phase: it is the portal's work onc
 row asks for it — hand form first, the op on all three backends behind `LOFT_NO_MOVE_CHILD`.
 Last measured, C against Rust: insert 1.83×, query 2.25×, delete 3.93×, list 4.14×.
 
+## The C to 2× — hand forms and the rewrites they price
+
+Every C routine over 3× its Rust twin was written by hand into the form the compiler should
+emit, one mechanism per step, and timed against the twin (`hand/RESULT.md`: the method, the
+step tables and the profiles; `hand/<routine>/` the forms as diffs of the emitted unit, kept to
+compare the built rewrites with — `bash hand/compare.sh.txt <routine>`).  Seven of eight land under 2×
+by hand; the eighth (`lru_mixed`) does not.
+
+| routine | base | by hand | mechanisms (§ below) |
+|---|--:|--:|---|
+| tree_delete | 3.65× | 0.65× | 2, 3 |
+| list_ops | 4.10× | 0.57× | 1, 4 |
+| lookup_copy | 1405× | 1.24× | 1 |
+| enum_list | 6798× | 0.58× | 1, 4 |
+| build_rec | 3.14× | 1.93× (1.76× with 6) | 5, 6 |
+| expr_build | 10.4× | 1.64× (1.43× with 6) | 5 |
+| expr_simplify | 13.4× | 1.17× (0.93× with 6) | 5 |
+| lru_mixed | 3.50× | 3.16× (2.95× with 6) | 7 |
+
+The rewrites, each general — none names a routine — with the formal rule it extends or adds, the
+conditions it must prove, and what it reaches beyond the bench.  The order is the price.
+
+1. **A copied cursor that only walks is a view** — `(R-CopyView)`, a WALK clause.  Today the rule
+   admits a local bound by B-Copy's copy and only READ, never rebound.  The clause admits rebinds
+   to a child read of the local itself (`cur = cur.left`, `cur = cur.next`) and, the same way, a
+   `match` payload bound from it that is only read or rebound into it (`Cons { v, next } =>
+   cur = next`): a child of a view of the source is a view of the source.  Conditions: the rule's
+   (1)–(3) over the whole loop — nothing in the live range writes, moves or frees the source's
+   records (B-Disturb's events), the source closes over parameters or over a local not written
+   there.  Price: `lookup_copy` 1405× → 1.24×, `list_ops` 4.0× → 2.3×, `enum_list`'s walks O(n²)
+   → O(n).  Reach: the read-only cursor nearly every first lookup is written with, and every walk
+   over a user's list or tree by `match`.
+2. **The unlink moves** — `OpMoveChildRec(field, src_field, tp)`, the move op (M) of § Design, a
+   new entry in `formal/rewrites.md` beside `(R-Demote)`.  `h.f = <a chain of out-of-line reads
+   rooted at h.f's own child>` — `cur = cur.left` through a field link, `slot = slot.right`
+   through a slot parameter (`loft_slot_move`) — detaches the child's record number, installs it
+   in the field and releases only the replaced record; `OpSetChildRec` copied the surviving
+   subtree into a fresh record, its claims too, then released the old one.  Condition: no view
+   of the replaced child is live across the write — `(B-OutOfLine)` keeps that view reading the
+   field's new value, which a move would not (the walk already knows those views).  Price:
+   `tree_delete` 3.76× → 2.03×.  Reach: every delete from a user's tree or list.  Switch
+   `LOFT_NO_MOVE_CHILD`.
+3. **A literal written into an out-of-line field is built there** — `(R-InPlaceLiteral)`, an
+   out-of-line clause.  Today the rule writes a literal into an inline field or an element and
+   declines an out-of-line field, so `cur = Tree { k: k, left: null, right: null }` through a
+   field link builds the literal in a fresh store, copies it in with `OpSetChildRec` and frees
+   the store.  The clause builds it in the field's child record (`OpChildRec`, then the field
+   writes); a present child is the existing in-place case.  Price: `tree_delete` 2.03× → 0.65×
+   (one store per insert was the larger half); `tree_insert` takes the same path.  Reach: every
+   insert into a user's tree, every `t.left = Tree { … }`.
+4. **`(R-Demote)` emitted directly, and for enum variants** — the rule already moves the old
+   record into a child; its emission goes through a temporary record (`loft_place_record`), two
+   `loft_move_field`s and `loft_free_record_in`.  Direct: claim the child in the same store, copy
+   the record's bytes (its handles move with them — same store, nothing re-claimed), write the
+   child's number into the field.  And a VARIANT clause: `l = Cons { v, next: l }` for a
+   struct-enum, where today a work store is built, the whole list copied into it and copied
+   back.  Price: `list_ops` 2.28× → 0.57×; `enum_list`'s build O(n²) → O(n).  Reach: every list
+   or stack a user grows at its front, struct or enum.
+5. **A record-valued recursion builds in its caller's store** — the destination store, the
+   `(O-Buffer)` question of § Also open answered: a new rule, `(R-HostStore)`, next to
+   `(R-Destination)` (which binds a buffer to an element slot) and `(R-RetAdopt)` (vectors).
+   A call whose record result becomes an out-of-line child — `t.left = insert_rec(t.left, k)`,
+   `Add { l: gen(…), r: gen(…) }`, `a = simplify(l)` then a node over it — is handed a buffer
+   naming the host's STORE with no record; the callee claims its result there, the caller ADOPTS
+   it by writing its number into the field, a result the caller drops is released record by
+   record (`OpSetChildRec`'s null branch, not a store free), and `return a` of such a result
+   hands its reference back instead of copying it into the buffer.  Today every record result
+   is a store of its own, and every composition copies the child subtree into the parent's
+   store.  Conditions: the callee returns its argument or a record it built in the buffer
+   (`write_back_call`'s `returns_borrowed_view` + the hidden buffer) — adopting by number any
+   other record of the store would make one record a child twice; the field write recognises
+   the argument handed back inline (one load and compare) rather than inside
+   `loft_set_child_rec`.  Price (both with 6): `expr_build` 8.7× → 1.43×, `expr_simplify` 11.6× → 0.93×,
+   `build_rec` 2.68× → 1.76×.  Reach: recursive construction of any user tree — the
+   @PLN91 self-host's `enum Node` (`NdIf { cond, t, f }`, `NdSet { inner }`) built by its
+   recursive-descent parser is exactly this shape.
+6. **No thread-locals in a program that starts no thread** — an emission switch, not an IR
+   rewrite: the C runtime keeps its store table and frame stack thread-local (`LOFT_TLS`), and on
+   macOS every such access is a call (`_tlv_get_addr`, 13 % of `build_rec`'s profile).  A
+   program with no `par`, no coroutine worker and no server thread emits `#define
+   LOFT_NO_THREADS` (the runtime's existing switch) before the runtime.  Price: −10 % to −21 % on
+   every routine here, macOS; Linux's thread-locals cost a register offset, so expect less
+   there (unmeasured).  Home: `C_BACKEND.md`, with the whole-program fact the emitter asks.
+7. **lru_mixed — the hash table, not a rewrite.**  Two general rewrites priced:
+   `(R-TypedKeyed)`'s REMOVAL clause — `h[k] = null` probes once by the key and deletes from that
+   bucket (`remove(find(k))` probed again by the record's digest): −12 %; and a lookup of the key
+   the previous statement added, with no write between, answers the record the insert filed —
+   a new clause of `(R-SameRead)`, across one statement: −6 %.  With 6 the routine is at 2.95×.
+   What is left is the table's own cost per operation — the bucket names a record and the key is
+   compared in it (two dependent loads where the twin's table holds the key), the insert
+   digests the record through the generic key walker (`loft_ref_digest`; a typed insert clause
+   of `(R-TypedKeyed)`), and every reference write marks its target for `(H-Removed)`
+   (`loft_st_note_referenced`, 9 %) and every read tests it.  No hand form of those was written;
+   each is a runtime change to price next, the key stored beside the tag in the bucket first.
+
+**Built, and what the compiler now emits** (median of 7, C ÷ Rust, the same drivers and flags;
+each emitted unit checked for the hand form's shape — `loft_demote_rec`, `loft_move_child_rec` /
+`loft_slot_move`, `loft_child_rec_in_place`, `loft_store_buf` + `loft_adopt_child_rec`,
+`loft_release_rec_if_distinct` for a dropped result, no
+`loft_bind_copy` of a walk cursor, `#define LOFT_NO_THREADS`):
+
+| rewrite | rule | switch | guard |
+|---|---|---|---|
+| 6 | `(R-NoThreads)` | `LOFT_NO_THREAD_FACT` | `tests/c_emit.rs` `a_unit_that_starts_no_thread_keeps_no_thread_locals` |
+| 4, direct | `(R-Demote)` as `OpDemoteRec` | `LOFT_NO_DIRECT_DEMOTE` | `rewrites/R-Demote/a-front-push-moves-the-old-node-and-keeps-what-it-owns` |
+| 1 | `(R-CopyView)` walk clause | `LOFT_NO_COPY_VIEW_WALK` | `rewrites/R-CopyView/a-cursor-that-only-walks-is-a-view` |
+| 2 | `(R-MoveChild)` | `LOFT_NO_MOVE_CHILD` | `binding/B-OutOfLine/an-unlink-moves-and-a-literal-is-built-in-its-child` |
+| 3 | `(R-InPlaceLiteral)` out-of-line clause | `LOFT_NO_CHILD_LITERAL` | the same cell |
+| 5, write-back half | `(R-HostStore)` | `LOFT_NO_HOST_STORE` | `rewrites/R-HostStore/a-recursion-builds-its-result-in-the-field-it-is-written-to` |
+| 5, callee half (no drop) | `(R-HostStore)` literal clause, `(R-Place)` branch exits, `(R-InPlaceLiteral)` variant clause | `LOFT_NO_HOST_STORE`, `LOFT_NO_VARIANT_INPLACE` | `rewrites/R-HostStore/a-literal-adopts-its-childrens-results-built-in-its-store` |
+| 5, the release by record | `(R-HostStore)` result clause | `LOFT_NO_HOST_RESULT` | `rewrites/R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them` |
+| 4, variant clause | `(R-Demote)` variant clause | `LOFT_NO_DEMOTE` | `rewrites/R-Demote/a-variant-pushed-at-the-front-moves-the-old-record-whole` |
+| 1, `match` payload | `(R-CopyView)` walk clause, step locals | `LOFT_NO_COPY_VIEW_WALK` | `rewrites/R-CopyView/a-match-walk-over-an-enum-list-is-a-view` |
+
+| routine | before | now | hand form |
+|---|--:|--:|--:|
+| tree_delete | 3.73× | **0.73×** | 0.58× |
+| list_ops | 4.00× | **0.80×** | 0.57× |
+| lookup_copy | 1340× | **0.97×** | 1.23× |
+| build_rec | 3.16× | **1.94×** | 1.65× |
+| expr_build | 10.4× | **0.68×** | 1.46× |
+| expr_simplify | 13.3× | **1.04×** | 0.91× |
+| lru_mixed | 3.53× | 3.21× | 3.05× |
+| enum_list | ~6000× | **0.83×** | 0.56× |
+
+**Still to build**, each with the hand form to compare against (`hand/compare.sh.txt`):
+
+- **7** — `(R-TypedKeyed)`'s removal clause and the just-added lookup, then the hash table's own
+  cost per operation (§ rewrite 7).
+
+**Which lane these tables are.**  The judged number is the C SHIP lane (`cship`) ÷ the Rust
+twin, per routine, on every core and library bench (PERFORMANCE.md § What is judged).  The
+tables in this section were taken on the CHECKED lane (`c`, clang, Apple Silicon), which keeps
+every fault check the ship lane drops, so they overstate the judged gap — most where a routine is
+integer arithmetic under checks (graphics `blend_pixel` 3.88× checked, 1.18× ship).  The
+rewrites lower both lanes; the worklist is re-read on `cship` under clang and gcc.
+
+**The routines over 2.7× (checked C ÷ Rust twin, core and library benches).**  Each was written by
+hand first (forms and reports kept with the session's scratch, to be moved under `hand/` when
+its rewrite is built); the general change each form priced, by reach:
+
+| routine | base | hand | mechanism → general change | status |
+|---|--:|--:|---|---|
+| sort | 6.70× | 1.45× | every held element access tested its index twice → one test (runtime); a counter stepped down once per trip of `for _ in 0..x` from `x` is ≥ 1 in the body → `(R-Range)` relational step + index clauses (`_nn` accessors) | **built: 1.44×** |
+| cbor decode | 12.3× | 1.88× | `(R-CSplit)` splits a hot recursive function for MSVC's sake on every compiler → split only under `_MSC_VER`; a parked text buffer taken on every call → take it on the path that writes it | **split built: 2.13×**; the park open |
+| hex_field doc_read | 8.70× | 2.01× | a float read per call through `fread` → `(R-TypedRead)` float clause; several zero-push loops → `(R-PushFill)` several-vector clause; `x.f = ctor(…)` minted + copied → `(R-Place)` guarded-mint clause | **float clause built: 3.84×**; the rest open |
+| graphics clear | 6.96× | 1.97× | the bulk fill stores one `memcpy` per element, which clang does not vectorise → typed-store fill (runtime, `loft_fill8`) | **built: 1.81×** (fill_circle 1.50×, fill_star 1.20×) |
+| drawing render_marks, resize | 7.09×, 6.38× | 2.09×, 2.33× | `(R-GuardedChain)`'s plain copy is identical to the checked one (the held read's index is emitted from a clone, so the admitted operators are never found) → fix the identity; an overflow-only accumulator; small scratch vectors as frame arrays | **identity built: 4.38×, 4.37×** (render_lock 3.49×); the rest open |
+
+Second round, built (C ÷ Rust): `(R-Range)` open-end counter clause — a counted loop's step plain
+whatever its end (sum_loop 4.01× → 2.96×, render_marks 4.38× → 3.36×, resize 4.32× → 3.33×,
+render_lock 3.49× → 2.77×); `(R-SpecChain)` — a checked integer chain in a loop runs plain with
+one fallback flag (sum_loop → 1.00×, index_read 3.01× → 1.00×, binary_read 3.29× → 1.90×);
+`(R-Range)` callee-step clause — `(q, r) = f(q, r, …)` whose results move each by a literal
+(hex_neighbor 4.15× → 1.23×); `(R-GuardedChain)` version clause — a loop whose only calls are
+versioned sites runs a plain copy calling the fast twins (draw_quads 4.51× → 2.71×,
+render_stage 2.54× → 1.98×, composite 1.30× → 1.12×, crawler build_vis 1.48× → 1.26×);
+`(R-Version)` nest clause — an inner loop's calls decided once per outer entry, at the corners
+of the counters' box (draw_quads 2.70× → 1.48×).
+Priced by hand, open (scratch hand forms `hf2/`): `(R-Invariant)` hoist clause and the guarded
+copy an inlined callee never gets (blur_region 4.98× → 1.99×, render_stage 3.85× → 1.75×); a
+sticky-flag sum guarded by an element-size scan (the resample → ~2.1×); `(R-GuardedChain)`
+guard hoisted to the outermost loop its leaves are linear in (draw_quads 4.30× → 1.23×,
+write_text 3.03× → 0.78×); an accumulator clause for variable steps (draw_line 3.03× → 1.32×,
+draw_bezier 3.72× → 2.45×); a comparison clause for `(R-Range)` and the non-null proof asking
+the range proof at a call (blend_pixel 3.68× → 1.53×); `(R-RangedCall)` loop guard for nests
+whose counters start at a field (roof_cone, roof_match, field_union, stencil_rotate → 1.6–2.5×),
+the accumulator rule under a guarded copy's facts (edgeset_count 3.92× → 1.01×), an entry guard (`day` 2.83× → 1.24×, terrain_surface_at
+3.56× → 2.45×); `(R-PushFill)` nested window (grid 4.02× → 0.76×); `(R-Range)` abs clause and
+loop-end divisor (fov_rays 3.39× → 1.69×); a text clause for `(R-AppendTwin)` and a text window
+(materialise 3.11× → 1.82×); the hash table's per-probe cost (lru_mixed 3.20× → 2.64×);
+`exp` as its own operator (approach 2.87× → 0.92× — changes the last bit of a float: an owner's
+decision).
+
+Not a cost, measured: the per-call frame (`loft_frame_push`/`pop`, `build_rec` step 2: 0 %) and
+inlining the reference accessors (`lru_mixed` step 3: 2.5 %).
+
 ## Also open from the same arc
 
 The natural-code list this plan grew out of, outside its core:
 
 - **R-Demote cells and census** — cells under `rules/rewrites/R-Demote/` (correctness and the
   efficiency scale); `scripts/rewrite_census.py --bless-unless-drop`.
-- **The read-only cursor `cur = t`** — the spelling nearly everyone writes for a lookup copies
-  the whole tree at the bind; exposed by B's `lookup_copy`.
+- **The read-only cursor `cur = t`** — priced: § The C to 2×, rewrite 1.
 - **Recursive construction `N { v, next: mk(n - 1) }`** and **enum lists `l = Cons { v, next:
-  l }`** — O(n²); exposed by B, made fast by the portal (`(O-Buffer)` is the design question).
+  l }`** — O(n²); priced: § The C to 2×, rewrites 4 and 5.
 - **list_ops at 3.91×** — the portal's, like every row B adds.
 - **`h[k]!` makes a copy a reference cannot keep** — `push_front(c, c.nodes[k]!)` is refused
   ("would outlive the record it names … `_ncr_1`") while the nullable warning names `!` as the

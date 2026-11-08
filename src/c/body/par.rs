@@ -339,6 +339,7 @@ impl FnWriter<'_> {
         record: Option<(u16, u32)>,
         ind: usize,
     ) -> Result<E, String> {
+        self.cx.threads.set(true);
         let cx = self.cx;
         let id = cx.par_sites.get();
         cx.par_sites.set(id + 1);

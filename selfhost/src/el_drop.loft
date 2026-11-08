@@ -25,7 +25,7 @@ pub fn synth_drop_cascades(e: el::El) {
   targets: vector<integer> = [];
   for d in e.b.data.definitions {
     t = d#index;
-    if el::def_nr(e, cascade_name(e, t)) >= 0 {
+    if el::source_nr(e, d.source, cascade_name(e, t)) >= 0 {
       continue;
     }
     wanted = false;
@@ -49,8 +49,13 @@ pub fn synth_drop_cascades(e: el::El) {
     }
   }
   made: vector<integer> = [];
+  // Each cascade is declared in its type's own source (`declare_cascade`, loft#2436), where
+  // every lookup of it finds it.
+  current = e.source;
   for t in targets {
+    e.source = el::def(e, t).source;
     c = el::add_def(e, cascade_name(e, t), el::def(e, t).position, el::DT_FUNCTION);
+    e.source = current;
     el::set_returned(e, c, ir::TyVoid);
     e.b.data.definitions[c].attributes += [el::attribute("self", self_type(e, t))];
     made += [c];

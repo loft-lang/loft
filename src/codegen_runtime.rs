@@ -643,6 +643,11 @@ fn op_database_inner(
 ) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     let db_tp = db_tp as u16;
+    // `@FR-R-HostStore` — a buffer naming its caller's store: the record is claimed there,
+    // prefilled or not (`OpDatabaseNP` mints a literal the next writes fill whole).
+    if crate::keys::is_store_buf(&db) {
+        return stores.claim_in_store_buf(&db, db_tp);
+    }
     // B2-runtime parity with the bytecode VM (`state/io.rs::database`): an
     // EnumValue record must be large enough for the parent enum's LARGEST
     // variant, and `Stores::claim` takes WORDS — word 0 holds the size header

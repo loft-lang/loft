@@ -1,0 +1,25 @@
+# step 3 — the written-back argument is recognised inline: `t.left = insert_rec(t.left, k)`
+# handing `t.left` back leaves the field as it is, decided by one load and compare at the call
+# site rather than inside the out-of-line `loft_set_child_rec`.
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+a = '''static void loft_adopt_child(const loft_tdesc *T, uint16_t tp, loft_ref f, loft_ref v) {
+    if (v.store_nr == f.store_nr && v.rec != 0 && v.rec != loft_u32(loft_store_of(f), f.rec, f.pos)) {
+        loft_set_u32(loft_store_of(f), f.rec, f.pos, v.rec);
+    } else {
+        loft_set_child_rec(T, tp, f, v, 0);
+    }
+}'''
+b = '''static inline void loft_adopt_child(const loft_tdesc *T, uint16_t tp, loft_ref f, loft_ref v) {
+    if (v.store_nr == f.store_nr && v.rec != 0) {
+        uint32_t cur = loft_u32(loft_store_of(f), f.rec, f.pos);
+        if (v.rec == cur && v.pos == 8) return;
+        loft_set_u32(loft_store_of(f), f.rec, f.pos, v.rec);
+    } else {
+        loft_set_child_rec(T, tp, f, v, 0);
+    }
+}'''
+assert s.count(a) == 1
+s = s.replace(a, b, 1)
+open(dst, 'w').write(s)

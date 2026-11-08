@@ -379,6 +379,9 @@ for a leak or a wrong value that appears only where a `τ?` local is bound from 
 **`LOFT_NO_DEMOTE=1`** (`@FR-R-Demote`, default-ON, parse time, BOTH backends) copies the old
 record into the field again where `h = T { …, f: h }` or `o.g = T { …, f: o.g }` moves it there
 — the first bisect step for a wrong value or a leak in a list or tree built one node at a time.
+**`LOFT_NO_VARIANT_INPLACE=1`** (`@FR-R-InPlaceLiteral`'s variant clause) builds a variant
+literal rebinding an enum local or a return buffer on a work reference again, and so also
+turns off `(R-Demote)`'s variant clause: the next bisect step for an enum list or tree.
 
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
 a plain local first-bound from a callee that returns the local it promoted onto its buffer

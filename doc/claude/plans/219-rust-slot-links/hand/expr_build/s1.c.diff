@@ -1,0 +1,109 @@
+--- base.c
++++ s1.c
+@@ -16732,6 +16732,25 @@
+ /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
+  * element record copied into a fresh record of the destination's store, its heap deep-copied, a
+  * null slot kept null. */
++
++static loft_ref loft_store_buf(loft_ref host) { loft_ref b = { host.store_nr, 0, 0, 0 }; return b; }
++/* hand: the result record of a call handed `buf`: claimed in buf's store when it names one, else
++ * a fresh store as `OpDatabase` makes; its bytes zeroed (every child absent). */
++static loft_ref loft_buf_record(loft_ref buf, uint32_t size, uint16_t tp) {
++    if (buf.store_nr != 0xFFFF && buf.rec == 0) {
++        loft_store_t *s = loft_store_of(buf);
++        loft_ref r = { buf.store_nr, loft_claim(s, 1 + (size + 7) / 8), 8, 0 };
++        memset(loft_at(s, r.rec, r.pos), 0, size);
++        return r;
++    }
++    loft_ref r = loft_ref_null();
++    loft_database_typed(&r, size, tp);
++    return r;
++}
++/* hand: a child built in the host's store is adopted by number. */
++static inline void loft_adopt_new(loft_ref f, loft_ref v) {
++    loft_set_u32(loft_store_of(f), f.rec, f.pos, v.rec);
++}
+ static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+     int64_t n = loft_vec_len(o);
+     if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+@@ -32205,7 +32224,6 @@
+ 
+ static loft_ref n_gen__fr(int64_t v0_d, int64_t v1_i, int64_t v2_salt, loft_ref v3___retbuf__in) {
+     LOFT_REF_IN(v3___retbuf);
+-    (void) v3___retbuf;
+     int64_t v4_h = LOFT_NULL;
+     loft_ref v5___ref_1 = { 0xFFFF, 0, 0, 0 };
+     loft_ref v6___ref_2 = { 0xFFFF, 0, 0, 0 };
+@@ -32261,7 +32279,7 @@
+     loft_frame_site(28);
+     v4_h = n_key(v1_i, v2_salt);
+     if (v0_d == loft_w64(INT32_C(0))) {
+-        loft_database_typed(&v9___ref_p2_1, 16, 101);
++        v9___ref_p2_1 = loft_buf_record(v3___retbuf, 16, 101);
+         t2 = loft_rem_at(v4_h, INT64_C(10), "DRIVER.loft", 29);
+         loft_set_int_at(v9___ref_p2_1, 8, t2, "DRIVER.loft", 29);
+         t3 = (uint8_t) 1;
+@@ -32279,53 +32297,49 @@
+     t5 = loft_div_at(v4_h, INT64_C(7), "DRIVER.loft", 30);
+     t6 = loft_rem_at(t5, INT64_C(2), "DRIVER.loft", 30);
+     if (t6 == loft_w64(INT32_C(0))) {
+-        loft_database_typed(&v10___ref_p2_2, 16, 102);
++        v10___ref_p2_2 = loft_buf_record(v3___retbuf, 16, 102);
+         loft_frame_site(31);
+         t7 = v12___lift_1;
+         t8 = loft_sub(v0_d, INT64_C(1));
+         t9 = loft_mul(INT64_C(2), v1_i);
+         t10 = loft_add(t9, INT64_C(1));
+-        v12___lift_1 = n_gen(t8, t10, v2_salt, v5___ref_1);
++        v12___lift_1 = n_gen(t8, t10, v2_salt, loft_store_buf(v10___ref_p2_2));
+         if (t7.store_nr != v12___lift_1.store_nr && t7.store_nr != v5___ref_1.store_nr) loft_free_ref(t7);
+         t11 = loft_field(v10___ref_p2_2, 4);
+-        loft_set_child_rec(loft_types, 100, t11, v12___lift_1, 1);
++        loft_adopt_new(t11, v12___lift_1);
+         loft_frame_site(31);
+         t12 = v13___lift_2;
+         t13 = loft_sub(v0_d, INT64_C(1));
+         t14 = loft_mul(INT64_C(2), v1_i);
+         t15 = loft_add(t14, INT64_C(2));
+-        v13___lift_2 = n_gen(t13, t15, v2_salt, v6___ref_2);
++        v13___lift_2 = n_gen(t13, t15, v2_salt, loft_store_buf(v10___ref_p2_2));
+         if (t12.store_nr != v13___lift_2.store_nr && t12.store_nr != v6___ref_2.store_nr) loft_free_ref(t12);
+         t16 = loft_field(v10___ref_p2_2, 8);
+-        loft_set_child_rec(loft_types, 100, t16, v13___lift_2, 1);
++        loft_adopt_new(t16, v13___lift_2);
+         t17 = (uint8_t) 2;
+         loft_set_byte_at(v10___ref_p2_2, 0, t17, "DRIVER.loft", 31);
+-        loft_free_var(&v13___lift_2);
+-        loft_free_var(&v12___lift_1);
+     } else {
+-        loft_database_typed(&v10___ref_p2_2, 16, 104);
++        v10___ref_p2_2 = loft_buf_record(v3___retbuf, 16, 104);
+         loft_frame_site(33);
+         t18 = v14___lift_3;
+         t19 = loft_sub(v0_d, INT64_C(1));
+         t20 = loft_mul(INT64_C(2), v1_i);
+         t21 = loft_add(t20, INT64_C(1));
+-        v14___lift_3 = n_gen(t19, t21, v2_salt, v7___ref_3);
++        v14___lift_3 = n_gen(t19, t21, v2_salt, loft_store_buf(v10___ref_p2_2));
+         if (t18.store_nr != v14___lift_3.store_nr && t18.store_nr != v7___ref_3.store_nr) loft_free_ref(t18);
+         t22 = loft_field(v10___ref_p2_2, 4);
+-        loft_set_child_rec(loft_types, 100, t22, v14___lift_3, 1);
++        loft_adopt_new(t22, v14___lift_3);
+         loft_frame_site(33);
+         t23 = v15___lift_4;
+         t24 = loft_sub(v0_d, INT64_C(1));
+         t25 = loft_mul(INT64_C(2), v1_i);
+         t26 = loft_add(t25, INT64_C(2));
+-        v15___lift_4 = n_gen(t24, t26, v2_salt, v8___ref_4);
++        v15___lift_4 = n_gen(t24, t26, v2_salt, loft_store_buf(v10___ref_p2_2));
+         if (t23.store_nr != v15___lift_4.store_nr && t23.store_nr != v8___ref_4.store_nr) loft_free_ref(t23);
+         t27 = loft_field(v10___ref_p2_2, 8);
+-        loft_set_child_rec(loft_types, 100, t27, v15___lift_4, 1);
++        loft_adopt_new(t27, v15___lift_4);
+         t28 = (uint8_t) 3;
+         loft_set_byte_at(v10___ref_p2_2, 0, t28, "DRIVER.loft", 33);
+-        loft_free_var(&v15___lift_4);
+-        loft_free_var(&v14___lift_3);
+     }
+     loft_free_var_distinct(&v5___ref_1, v10___ref_p2_2);
+     loft_free_var_distinct(&v6___ref_2, v10___ref_p2_2);

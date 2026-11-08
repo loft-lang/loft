@@ -1830,12 +1830,12 @@ fn main() {
     // `counted` keeps the deep window off, so the inner loop of `reopened` reopens its counted
     // window on every outer pass; by default the outer loop holds one deep window instead, and
     // `narrow`'s enum loop — native's repeat fill, which the C does not have — takes one too.
-    // `grid` opens none: (R-ElemFirst) builds each inner row in the outer element, so the row
-    // shares the outer vector's store and its loop takes a held push header instead.  That
-    // window was sound, so this is a speed follow-up, not a correction.
+    // `grid`'s inner row is the vector field of the element the outer comprehension just
+    // carved, a field of an owned local its loop never names — (R-PushFill)'s field clause —
+    // so it opens a window of its own in every mode that has windows.
     for (mode, off, deep_off, windows, slots) in [
-        ("windowed", "0", "0", 10, 1),
-        ("counted", "0", "1", 9, 1),
+        ("windowed", "0", "0", 11, 1),
+        ("counted", "0", "1", 10, 1),
         ("unwindowed", "1", "0", 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));
@@ -5419,6 +5419,114 @@ fn the_c_is_strict_c99_and_the_probe_wraps_where_the_checked_c_answers_null() {
     );
 }
 
+/// `@FR-R-Counter`'s probe clause — under the release-pass probe a local stepped by proven
+/// values (`cx += sx`, `err -= dy`, `s += step`) is proven itself (a greatest fixpoint: it is
+/// the sentinel only after an overflow, a fault, C120), so its `+`/`-` and the `Nullable`
+/// `2 * err` are the wrapping operators; and `(R-StickySum)` / `(R-SpecChain)` decline, the
+/// operators they guard being wrapping ones already.  The checked C keeps the sum's flag and
+/// answers null for the overflow.  Values hand-computed (a Python model of the walk): the two
+/// lines hash to 2656476 and 13472851; 3 · 2⁶² wraps to −2⁶².
+#[test]
+fn under_the_probe_a_locally_stepped_accumulator_wraps_and_the_checked_c_keeps_its_flag() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("probe_acc");
+    let file = dir.join("acc.loft");
+    fa::write(
+        &file,
+        "fn line(x0: integer, y0: integer, x1: integer, y1: integer) -> integer {\n\
+           dx = if x0 < x1 { x1 - x0 } else { x0 - x1 };\n\
+           dy = if y0 < y1 { y1 - y0 } else { y0 - y1 };\n\
+           sx = if x0 < x1 { 1 } else { -1 };\n\
+           sy = if y0 < y1 { 1 } else { -1 };\n\
+           err = dx - dy; cx = x0; cy = y0; h = 0;\n\
+           for _ in 0..dx + dy + 1 {\n\
+             h = (h * 31 + cx * 7 + cy) & 0xFFFFFF;\n\
+             if cx == x1 && cy == y1 { break; }\n\
+             e2 = 2 * err;\n\
+             if e2 > -dy { err -= dy; cx += sx; }\n\
+             if e2 < dx { err += dx; cy += sy; }\n\
+           }\n\
+           h\n\
+         }\n\
+         fn total(n: integer, step: integer) -> integer { s = 0; for _ in 0..n { s += step; } s }\n\
+         fn main() {\n\
+           println(\"{line(0, 0, 7, 3)} {line(5, 9, -2, 1)} {total(4, 3)} {total(3, 4611686018427387904)}\");\n\
+         }\n",
+    )
+    .expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let run = |probe: bool| -> (String, String) {
+        let c = dir.join(if probe { "ship.c" } else { "checked.c" });
+        let mut emit = loft::platform::process::harness_command(loft);
+        emit.arg("--emit-c").arg(&c).arg(&file);
+        if probe {
+            emit.env("LOFT_RELEASE_PASS_PROBE", "1");
+        } else {
+            emit.env_remove("LOFT_RELEASE_PASS_PROBE");
+        }
+        let emitted = emit.output().expect("run loft --emit-c");
+        assert!(
+            emitted.status.success(),
+            "the program is carried: {}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+        let exe = dir.join(if probe { "ship" } else { "checked" });
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O2"])
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "cc rejected the C:\n{}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the C program");
+        let text = fa::read_to_string(&c).expect("read the C");
+        (String::from_utf8_lossy(&out.stdout).into_owned(), text)
+    };
+    // The body of `name`'s frame-free form, a twin's (`n_line__rg__fr`) included.
+    let body = |c: &str, name: &str| -> String {
+        let at = c
+            .match_indices(&format!(" {name}"))
+            .map(|(i, _)| i + 1)
+            .find(|i| {
+                c[*i..].split('\n').next().is_some_and(|l| {
+                    l.ends_with('{') && l.split('(').next().is_some_and(|f| f.ends_with("__fr"))
+                })
+            })
+            .unwrap_or_else(|| panic!("{name} has no body"));
+        let rest = &c[at..];
+        rest[..rest.find("\n}\n").unwrap_or(rest.len())].to_string()
+    };
+    let (checked, cc) = run(false);
+    assert_eq!(checked, "2656476 13472851 12 null\n", "the checked C");
+    assert!(
+        body(&cc, "n_total").contains("LOFT_ADD_OVF"),
+        "the checked sum keeps its event flag"
+    );
+    let (ship, sc) = run(true);
+    assert_eq!(
+        ship, "2656476 13472851 12 -4611686018427387904\n",
+        "the probed C"
+    );
+    for f in ["n_line", "n_total"] {
+        let b = body(&sc, f);
+        assert!(
+            !b.contains("_OVF(") && !b.contains("loft_mul(") && !b.contains("loft_add("),
+            "{f} under the probe still checks an operator:\n{b}"
+        );
+    }
+}
+
 /// The C case mapping takes an ASCII run by its own rule (A-Z and a-z, no table search) and
 /// every other character through the table, the final-sigma rule included — so a text that
 /// crosses between the two answers what Rust's `str::to_lowercase` / `to_uppercase` answer.
@@ -7851,6 +7959,56 @@ fn main() {
         "66\n",
         "the interpreter"
     );
+}
+
+/// `@FR-R-NoThreads`: a unit that runs no `par` loop on threads and reaches no engine kernel is
+/// compiled with `LOFT_NO_THREADS` — its runtime tables are plain statics; one with a `par` loop
+/// is not.  `LOFT_NO_THREAD_FACT=1` keeps the thread-locals everywhere.  The answer is the same
+/// either way (hand-computed: 1+2+3+4 doubled = 20).
+#[test]
+fn a_unit_that_starts_no_thread_keeps_no_thread_locals() {
+    let plain =
+        "fn main() {\n  s = 0;\n  for x in [1, 2, 3, 4] { s += 2 * x; }\n  println(\"{s}\");\n}\n";
+    let par = "fn dbl(x: integer) -> integer { 2 * x }\nfn main() {\n  v = [1, 2, 3, 4];\n  s = 0;\n  for x in v par(d = dbl(x), 2) { s += d; }\n  println(\"{s}\");\n}\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("no-threads");
+    for (name, src, switch, fact) in [
+        ("plain", plain, "", true),
+        ("plain-off", plain, "LOFT_NO_THREAD_FACT", false),
+        ("par", par, "", false),
+    ] {
+        let file = dir.join(format!("{name}.loft"));
+        fa::write(&file, src).expect("write program");
+        let c = dir.join(format!("{name}.c"));
+        let mut emit = loft::platform::process::harness_command(loft);
+        if !switch.is_empty() {
+            emit.env(switch, "1");
+        }
+        let out = emit
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            out.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        let defined = text.lines().any(|l| l == "#define LOFT_NO_THREADS 1");
+        assert_eq!(defined, fact, "{name}: the fact");
+        let run = loft::platform::process::harness_command(loft)
+            .arg("--native-c")
+            .arg(&file)
+            .output()
+            .expect("run loft --native-c");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "20\n",
+            "{name}: the answer"
+        );
+    }
 }
 
 /// `@FR-R-NoLocks`: a unit that reaches no `#lock = …`, no `file_map` and no constant store is

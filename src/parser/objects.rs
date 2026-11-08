@@ -5679,19 +5679,63 @@ impl Parser {
             return None;
         }
         let content = match self.data.attr_type(td_nr, nr).base() {
-            Type::Reference(d, _) => *d,
+            Type::Reference(d, _) | Type::Enum(d, true, _) => *d,
             _ => return None,
         };
-        if content != td_nr || self.data.def_type(td_nr) != DefType::Struct {
+        // The VARIANT clause: `l = Cons { …, next: l }` for a struct-enum whose variant holds
+        // the enum itself out of line.  Every record of the enum is the enum's size whatever
+        // its variant, so the old record — any variant — moves whole into a child typed as
+        // the enum, and the literal's fields and tag are written into the zeroed record.
+        let own = match self.data.def_type(td_nr) {
+            DefType::Struct => content == td_nr,
+            DefType::EnumValue => {
+                content == self.data.def(td_nr).parent
+                    && matches!(self.vars.tp(h).base(), Type::Enum(d, true, _) if *d == content)
+            }
+            _ => false,
+        };
+        if !own {
             return None;
         }
-        let tp = i32::from(self.data.def(td_nr).known_type());
+        let tp = i32::from(self.data.def(content).known_type());
         let off = i32::from(self.field_position(td_nr, fname));
-        let view = Type::Reference(td_nr, crate::data::Deps::frame1(h));
-        let placed = self.create_unique("demote_old", &view);
+        let view = if content == td_nr {
+            Type::Reference(td_nr, crate::data::Deps::frame1(h))
+        } else {
+            Type::Enum(content, true, crate::data::Deps::frame1(h))
+        };
+        let demote = if direct_demote() {
+            let d = self.cl(
+                "OpDemoteRec",
+                &[Value::Var(h), Value::Int(off), Value::Int(tp)],
+            );
+            v_block(vec![d], Type::Void, "demote")
+        } else {
+            self.demote_five_ops(h, off, tp, &view)
+        };
+        let mut fresh = prelude.to_vec();
+        fresh.push(self.cl(
+            "OpSetInt4",
+            &[Value::Var(h), Value::Int(off), Value::Int(0)],
+        ));
+        let is_null = self.cl("OpRefIsNull", &[Value::Var(h)]);
+        let has_rec = self.cl("OpConvBoolFromRef", &[Value::Var(h)]);
+        let present = v_if(is_null, Value::Boolean(false), has_rec);
+        Some(vec![v_if(
+            present,
+            demote,
+            v_block(fresh, Type::Void, "demote_fresh"),
+        )])
+    }
+
+    /// The demote as five ops — `OpPlaceRecord`, `OpMoveField` out, `OpChildRec`, `OpMoveField`
+    /// back, `OpFreeRecordIn` — under `LOFT_NO_DIRECT_DEMOTE=1`, the switch `OpDemoteRec` is
+    /// measured against.
+    fn demote_five_ops(&mut self, h: u16, off: i32, tp: i32, view: &Type) -> Value {
+        let placed = self.create_unique("demote_old", view);
         self.vars.defined(placed);
         self.vars.set_skip_free(placed);
-        let child = self.create_unique("demote_child", &view);
+        let child = self.create_unique("demote_child", view);
         self.vars.defined(child);
         self.vars.set_skip_free(child);
         let place = self.cl("OpPlaceRecord", &[Value::Var(h), Value::Int(tp)]);
@@ -5709,24 +5753,11 @@ impl Parser {
             &[Value::Var(placed), Value::Var(child), Value::Int(tp)],
         );
         let free = self.cl("OpFreeRecordIn", &[Value::Var(placed), Value::Int(tp)]);
-        let demote = v_block(
+        v_block(
             vec![v_set(placed, place), out, v_set(child, claim), back, free],
             Type::Void,
             "demote",
-        );
-        let mut fresh = prelude.to_vec();
-        fresh.push(self.cl(
-            "OpSetInt4",
-            &[Value::Var(h), Value::Int(off), Value::Int(0)],
-        ));
-        let is_null = self.cl("OpRefIsNull", &[Value::Var(h)]);
-        let has_rec = self.cl("OpConvBoolFromRef", &[Value::Var(h)]);
-        let present = v_if(is_null, Value::Boolean(false), has_rec);
-        Some(vec![v_if(
-            present,
-            demote,
-            v_block(fresh, Type::Void, "demote_fresh"),
-        )])
+        )
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -6613,8 +6644,23 @@ impl Parser {
     /// field the variant has and its tag, so it is built there as a struct literal is — rather
     /// than in a work-ref copied in, which also costs the append its push header.
     fn variant_fills_element(&self, v_nr: u16, td_nr: u32) -> bool {
-        self.vars.is_inline_ref(v_nr)
-            && self.data.def_type(td_nr) == DefType::EnumValue
+        self.vars.is_inline_ref(v_nr) && self.is_variant_of_local(v_nr, td_nr)
+    }
+
+    /// Is `td_nr` a variant of the struct-enum local `v_nr` holds?  `@FR-R-InPlaceLiteral`'s
+    /// variant clause: a variant literal writes every field the variant has and its tag, so
+    /// rebinding the whole local to it is built in the local's store as a struct literal is —
+    /// `OpDatabase` with the variant's type re-inits that store — rather than on a work
+    /// reference copied over — and so is a return buffer (a hidden parameter), as a struct
+    /// literal returned is built there.  `LOFT_NO_VARIANT_INPLACE=1` keeps the work reference.
+    fn variant_rebinds_local(&self, v_nr: u16, td_nr: u32) -> bool {
+        crate::keys::variant_literal_in_place()
+            && (!self.vars.is_argument(v_nr) || self.is_hidden_param(v_nr))
+            && self.is_variant_of_local(v_nr, td_nr)
+    }
+
+    fn is_variant_of_local(&self, v_nr: u16, td_nr: u32) -> bool {
+        self.data.def_type(td_nr) == DefType::EnumValue
             && matches!(self.vars.tp(v_nr).base(), Type::Enum(d, true, _) if *d == self.data.def(td_nr).parent)
     }
 
@@ -6755,7 +6801,9 @@ impl Parser {
             };
             let type_matches =
                 var_tp.is_unknown() || matches!(dest_tp, Type::Reference(d, _) if *d == td_nr);
-            let type_matches = type_matches || self.variant_fills_element(*v_nr, td_nr);
+            let type_matches = type_matches
+                || self.variant_fills_element(*v_nr, td_nr)
+                || self.variant_rebinds_local(*v_nr, td_nr);
             // loft#660 — a vector-literal ELEMENT alias is never an in-place
             // allocation target.  Its storage is the slot `OpNewRecord` already
             // carved out of the container, so re-allocating it here (`OpDatabase`)
@@ -8689,4 +8737,10 @@ pub(crate) fn collection_groups_of(
     }
     groups.retain(|(_, m)| m.len() >= 2 && m.iter().any(|x| x.keyed));
     groups
+}
+
+/// `@FR-R-Demote` — the demote is the one op `OpDemoteRec`; `LOFT_NO_DIRECT_DEMOTE=1` keeps the
+/// five-op form it replaces.
+pub(crate) fn direct_demote() -> bool {
+    !crate::env_once!(std::env::var("LOFT_NO_DIRECT_DEMOTE").is_ok_and(|v| v != "0"))
 }

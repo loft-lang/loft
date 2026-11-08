@@ -1,0 +1,21 @@
+# step 1 — (R-CopyView) walk clause: a record local bound by B-Copy's copy and afterwards only
+# READ and rebound to a child read of ITSELF (`cur = cur.next`) is a VIEW of the source; no copy,
+# and no owner witness (the cursor owns nothing).
+import re, sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+for a, b in [
+    ('loft_bind_copy(loft_types, 103, &v10_cur, v2_h);', 'v10_cur = v2_h;'),
+    ('loft_bind_copy(loft_types, 103, &v10_cur, v9_r);', 'v10_cur = v9_r;'),
+    ('loft_bind_copy(loft_types, 103, &v13_p, v2_h);', 'v13_p = v2_h;'),
+]:
+    assert s.count(a) == 1, a
+    s = s.replace(a, b, 1)
+# the witness blocks and their binds go
+for w, v in (('v24___own_cur', 'v10_cur'), ('v25___own_p', 'v13_p')):
+    blk = re.compile(r'\n( *)if \(' + w + r'\.store_nr != ' + v + r'\.store_nr\) \{\n\s*loft_free_var\(&' + w + r'\);\n\s*' + w + r' = loft_ref_null\(\);\n\s*\}')
+    s, n = blk.subn('', s)
+    assert n >= 1, w
+    s, n = re.subn(r'\n *' + w + ' = ' + v + ';', '', s)
+    assert n >= 1, w
+open(dst, 'w').write(s)

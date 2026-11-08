@@ -1,0 +1,96 @@
+--- base.c
++++ s2.c
+@@ -16732,6 +16732,62 @@
+ /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
+  * element record copied into a fresh record of the destination's store, its heap deep-copied, a
+  * null slot kept null. */
++
++/* hand: hash::remove by an i64 key in one probe — the arena table; 0 (nothing done) for an inline
++ * one, which the caller then removes as before. */
++static int loft_h_take_i64(loft_ref c, const loft_key *keys, int64_t key, loft_ref *out, uint32_t *gone) {
++    if (c.store_nr == 0xFFFF || c.rec == 0) return 0;
++    loft_store_t *s = loft_store_of(c);
++    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
++    if (claim == 0 || loft_rec_words(s, claim) == 0 || loft_h_is_inline(s, claim)) return 0;
++    uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
++    if (length == 0) return 0;
++    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
++    uint64_t seed = loft_h_read_seed(s, claim);
++    uint64_t hv = loft_digest_i64(seed, key);
++    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count), kpos = keys[0].pos;
++    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
++    uint32_t hole = 0, val = 0;
++    loft_ref e = {0};
++    int found = 0;
++    for (uint32_t i = 0; i < count; i++) {
++        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
++        if (slot == 0) break;
++        if (!loft_h_tag_differs(s, claim, sb, index, tag)) {
++            int64_t have;
++            e.store_nr = c.store_nr;
++            loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
++            if (e.rec != 0) {
++                memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
++                if (have == key) { hole = index; val = slot; found = 1; break; }
++            }
++        }
++        if (++index >= count) index = 0;
++    }
++    if (!found) { *out = loft_ref_null(); *gone = 0; return 1; }
++    loft_forget_in_scratches(c, e);
++    int by_tag = sb == 8 && loft_is_pow2(count);
++    loft_set_u32(s, claim, LOFT_H_BUCKET0 + hole * sb, 0);
++    uint32_t idx = hole + 1 >= count ? 0 : hole + 1;
++    for (uint32_t i = 0; i < count; i++) {
++        uint32_t v = loft_u32(s, claim, LOFT_H_BUCKET0 + idx * sb);
++        if (v == 0) break;
++        uint32_t tg = sb == 8 ? loft_u32(s, claim, LOFT_H_BUCKET0 + idx * 8 + 4) : 0;
++        uint32_t ideal = by_tag ? tg & (count - 1) : loft_h_home(loft_ref_digest(loft_h_entry(&ents, s, v), keys, 1, seed), count);
++        uint32_t to_hole = hole >= ideal ? hole - ideal : hole + count - ideal;
++        uint32_t to_idx = idx >= ideal ? idx - ideal : idx + count - ideal;
++        if (to_hole < to_idx) {
++            loft_h_put_slot(s, claim, sb, hole, v, tg);
++            loft_set_u32(s, claim, LOFT_H_BUCKET0 + idx * sb, 0);
++            hole = idx;
++        }
++        idx = idx + 1 >= count ? 0 : idx + 1;
++    }
++    loft_set_u32(s, claim, LOFT_H_LEN_FLD, length - 1);
++    *out = e;
++    *gone = val;
++    return 1;
++}
+ static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+     int64_t n = loft_vec_len(o);
+     if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+@@ -32313,8 +32369,18 @@
+         n_unlink(v0_c, v4_t);
+         t7 = loft_field(v0_c, 8);
+         t8 = loft_field(v0_c, 8);
+-        t9 = loft_h_find_i64(t8, loft_keys104, v5_old);
+-        loft_hash_remove(loft_types, 100, t7, t9, loft_keys104, 1, 0);
++        {
++            loft_ref e9; uint32_t gone9;
++            if (loft_h_take_i64(t8, loft_keys104, v5_old, &e9, &gone9)) {
++                if (e9.rec != 0) {
++                    if (loft_hash_owns_entries(t7)) { loft_remove_claims(loft_types, 100, e9); loft_free_hash_entry(t7, e9, gone9); }
++                    else { loft_ref r9 = { e9.store_nr, e9.rec, 8, 0 }; loft_remove_claims(loft_types, 100, r9); loft_st_delete(loft_store_of(t7), e9.rec); }
++                }
++            } else {
++                t9 = loft_h_find_i64(t8, loft_keys104, v5_old);
++                loft_hash_remove(loft_types, 100, t7, t9, loft_keys104, 1, 0);
++            }
++        }
+     }
+     t10 = loft_hash_entry(loft_field(v0_c, 8), 40, 1);
+     loft_fill(t10, loft_dflt100, 40);
+@@ -32326,8 +32392,7 @@
+     t12 = loft_ref_null();
+     loft_set_dbref_at(v6__elm_1, 28, t12, "DRIVER.loft", 57);
+     (void) loft_hash_insert(loft_types, 100, loft_field(v0_c, 8), v6__elm_1, loft_keys104, 1, 0);
+-    t13 = loft_field(v0_c, 8);
+-    v7_m = loft_h_find_i64(t13, loft_keys104, v1_k);
++    v7_m = v6__elm_1;
+     loft_frame_site(59);
+     t14 = (uint8_t) (v7_m.store_nr == 0xFFFF);
+     if (!(t14 == 1)) {

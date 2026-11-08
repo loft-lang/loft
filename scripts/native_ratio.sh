@@ -20,7 +20,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # The shipped tier's rustc arguments, the list loft compiles in (src/native_release_args.txt).
-mapfile -t RELEASE_ARGS < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/src/native_release_args.txt")
+# A read loop rather than `mapfile`, which is bash 4: macOS ships bash 3.2.
+RELEASE_ARGS=()
+while IFS= read -r arg; do
+  RELEASE_ARGS+=("$arg")
+done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/src/native_release_args.txt")
 ORACLE="$ROOT/bench/ratio_oracle.tsv"
 LOFT="${LOFT_BIN:-$ROOT/target/release/loft}"
 LOFT_LIB="${LOFT_LIB_DIR:-$ROOT/target/release}"

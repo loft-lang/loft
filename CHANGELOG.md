@@ -35,6 +35,42 @@ local of the caller.
 nullable `t` reads as present, as it does after a bare `if t != null`; likewise the `else` of
 `if a == null || b == null`.  The warning that asked for the test no longer fires there.
 
+**Lists and trees of enum variants are built in place.**  `l = Cons { v, next: l }` moves the
+old list into the new cell instead of copying all of it, a `match cur { Cons { v, next } =>
+cur = next }` walk reads the list without copying the rest at every step, and a recursion
+that builds a tree (`Add { l: gen(…), r: gen(…) }`) builds every node in one store.  A list
+built and walked this way went from thousands of times slower than Rust to faster than it,
+and the expression-tree builder from nine times slower to faster; the answers are the same.
+
+**A recursion that rewrites a tree keeps the parts it reuses.**  A function like `simplify`,
+which calls itself on both children and then returns one of the results, a new node over
+both, or a fresh value, now builds everything in one store: the parts it keeps are linked in
+place and the parts it drops are released one record at a time, where every node used to copy
+both subtrees.  The expression simplifier went from twelve times slower than Rust to even.
+
+**Sorting and scanning a vector by index got faster.**  Reading or writing an element no
+longer checks its index twice, and an index the compiler can prove is never negative skips
+the check for counting from the end.  An insertion sort went from almost seven times slower
+than Rust to under one and a half.
+
+**A walk that steps through a helper keeps its arithmetic plain.**  In `(q, r) =
+hex_neighbor(q, r, d)` inside a counted loop, where every answer of the helper moves `q` and
+`r` by at most a fixed amount, the compiler now knows how far they can have moved and drops
+the overflow checks on the arithmetic that reads them.  The hex grid's neighbour walk went
+from four times slower than Rust to 1.2.
+
+**A loop that calls small accessors runs a plain copy.**  A loop whose only calls are to
+functions like `get_pixel` and `set_pixel`, and whose index arithmetic is checked once before
+the loop, now runs a copy with no per-pixel checks when those checks hold for the whole loop.
+Drawing laid-out text went from four and a half times slower than Rust to 2.7, a sprite
+renderer from 2.5 to 2.0.  In a loop over the rows and columns of a box, those checks are now
+made once for the whole box: drawing laid-out text runs at 1.5 times Rust.
+
+**A C compiler wrapper gets its own build.**  Setting `LOFT_CC` to a script that wraps `cc`
+(to add `-DLOFT_VERIFY`, say) could run the binary plain `cc` had built for the same program,
+because the wrapper reports the same version.  The compiler's path is now part of the build's
+key.
+
 ## 2026-11
 
 ### May need a change in your code
@@ -43,6 +79,11 @@ nullable `t` reads as present, as it does after a bare `if t != null`; likewise 
 => … }`, with `bump` changing `s`, is now a compile error: the arms after a failed guard would
 test a different value than the one the reader sees matched.  Change the value in the arm's
 body, after the tests, or match on a copy (`t = s; match t { … }`).
+
+**`exp(x)` and `pow(E, x)` answer what C and Rust answer.**  Both now run the platform's `exp`
+instead of a general `pow`, which is faster and as close or closer to the true value.  An answer
+can move in its last bit (`exp(-1.5)` was `0.22313016014842985`, is `0.22313016014842982`); a
+test comparing a printed exponential digit for digit may need its expected value updated.
 
 **A float exactly halfway between two shortest forms prints the even one.**  `"{v}"` writes the
 shortest digits that read back as the value; when two of that length are equally near, the one

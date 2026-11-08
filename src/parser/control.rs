@@ -4011,14 +4011,25 @@ impl Parser {
         for op in l.iter() {
             op.walk(&mut |n| {
                 if let Value::Return(inner) = n {
-                    match Self::tail_fresh_object_workref(inner) {
-                        Some(w) if w == buf_var => {}
-                        Some(w)
+                    let mut arms = Vec::new();
+                    if Self::exit_literal_workrefs(inner, &mut arms) {
+                        for w in arms {
+                            if w == buf_var {
+                                continue;
+                            }
                             if self.vars.is_compiler_generated(w)
-                                && self.vars.tp(w).base().heap_def_nr() == Some(td) =>
-                        {
-                            work_refs.push(w);
+                                && self.vars.tp(w).base().heap_def_nr() == Some(td)
+                            {
+                                if !work_refs.contains(&w) {
+                                    work_refs.push(w);
+                                }
+                            } else {
+                                all_literal = false;
+                            }
                         }
+                        return;
+                    }
+                    match inner.unspan() {
                         // A chain exit answers what its callee wrote into this same buffer.
                         _ if Self::returns_through_chain(inner, buf_var) => {}
                         _ if crate::keys::rebind_place_enabled()
@@ -4039,11 +4050,7 @@ impl Parser {
         }
         for op in l.iter_mut() {
             Self::for_each_return_mut(op, &mut |ret| {
-                if let Some(w) = Self::tail_fresh_object_workref(ret)
-                    && work_refs.contains(&w)
-                {
-                    self.build_into_return_buffer(std::slice::from_mut(ret), w, buf_var);
-                }
+                self.build_exit_arms(ret, &work_refs, buf_var);
             });
         }
         if crate::keys::trace_ret_promotion() {
@@ -4053,6 +4060,50 @@ impl Parser {
                 work_refs.len(),
                 self.vars.name(buf_var)
             );
+        }
+    }
+
+    /// The work refs of an exit whose value is a fresh literal — or a branch every arm of which
+    /// ends in one (`return if c { Add { … } } else { Mul { … } }`, the tail of a function whose
+    /// arms build different variants): each arm answers ONE literal, so each builds into the
+    /// buffer as a lone literal exit does.  `false` when some arm ends in anything else.
+    fn exit_literal_workrefs(inner: &Value, out: &mut Vec<u16>) -> bool {
+        if let Some(w) = Self::tail_fresh_object_workref(inner) {
+            out.push(w);
+            return true;
+        }
+        match inner.unspan() {
+            Value::If(_, t, e) => {
+                Self::exit_literal_workrefs(t, out) && Self::exit_literal_workrefs(e, out)
+            }
+            Value::Block(bl) if !Self::is_record_literal(bl) => bl
+                .operators
+                .last()
+                .is_some_and(|x| Self::exit_literal_workrefs(x, out)),
+            _ => false,
+        }
+    }
+
+    /// Build every literal arm of an admitted exit (`exit_literal_workrefs`) into `buf_var`.
+    fn build_exit_arms(&mut self, v: &mut Value, work_refs: &[u16], buf_var: u16) {
+        if let Some(w) = Self::tail_fresh_object_workref(v) {
+            if work_refs.contains(&w) {
+                self.build_into_return_buffer(std::slice::from_mut(v), w, buf_var);
+            }
+            return;
+        }
+        match v.unspan_mut() {
+            Value::Return(inner) => self.build_exit_arms(inner, work_refs, buf_var),
+            Value::If(_, t, e) => {
+                self.build_exit_arms(t, work_refs, buf_var);
+                self.build_exit_arms(e, work_refs, buf_var);
+            }
+            Value::Block(bl) if !Self::is_record_literal(bl) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.build_exit_arms(last, work_refs, buf_var);
+                }
+            }
+            _ => {}
         }
     }
 

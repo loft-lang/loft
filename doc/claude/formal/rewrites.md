@@ -190,13 +190,13 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Compact)` | `R-Compact` ir · `/prepend` ir |
 | `(R-CompleteWrite)` | `R-CompleteWrite` ir |
 | `(R-Const)` | `R-Const` ir · `/fn` parse |
-| `(R-CopyView)` | `R-CopyView` ir |
+| `(R-CopyView)` | `R-CopyView` ir · `/walk` ir |
 | `(R-Counter)` | `R-Counter` ir, c, native |
 | `(R-CtorLiteral)` | `R-CtorLiteral` parse |
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
-| `(R-DecodeView)` | counted; admitted on no bench program |
+| `(R-DecodeView)` | `R-DecodeView` native · `/structure` native |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
-| `(R-Demote)` | counted; admitted on no bench program |
+| `(R-Demote)` | `R-Demote` parse · `/place` parse |
 | `(R-Destination)` | `R-Destination` c, native |
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
@@ -205,6 +205,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-ElementPath)` | not counted — executor: the interpreter's element read operator |
 | `(R-Escape)` | not counted — meta: the contract every rewrite keeps |
 | `(R-ExitVector)` | `R-ExitVector` ir · `/record` ir |
+| `(R-ExpPow)` | `R-ExpPow` parse |
 | `(R-FastTable)` | not counted — executor: the stack access mode fixed per run |
 | `(R-FaultFlag)` | `R-FaultFlag` native |
 | `(R-FieldAppend)` | `R-FieldAppend` c, native · `/bare` c, native |
@@ -222,17 +223,18 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Fuse)` | `R-Fuse` interp · `/field` interp · `/jump` interp · `/tag` interp · `/text` interp |
 | `(R-GroupPush)` | `R-GroupPush` native |
 | `(R-GuardFree)` | `R-GuardFree` native |
-| `(R-GuardedChain)` | `R-GuardedChain` c, native · `/operators` c, native |
+| `(R-GuardedChain)` | `R-GuardedChain` c, native · `/operators` c, native · `/versions` c |
 | `(R-HandOver)` | `/rotate` c, native |
 | `(R-Header)` | `R-Header` c, native · `/apart` c, native · `/apart-param` c, native · `/function` native · `/grown` c · `/grown-held` c · `/kept` native · `/kept-growth` c · `/kept-twin` c, native · `/narrow` c · `/rebind` c · `/text` c, native |
+| `(R-HostStore)` | `R-HostStore` ir |
 | `(R-HotInline)` | not counted — executor: #hot operators inlined into the lean loop |
 | `(R-InPlace)` | not counted — condition: the write test the header hoists ask; counted under them |
-| `(R-InPlaceLiteral)` | `R-InPlaceLiteral` parse |
+| `(R-InPlaceLiteral)` | `R-InPlaceLiteral` parse · `/child` parse |
 | `(R-InRange)` | `R-InRange` parse |
 | `(R-Inline)` | `R-Inline` c · `/helper` c |
 | `(R-InlineLeaf)` | `R-InlineLeaf` parse |
 | `(R-Inputs)` | `R-Inputs` c, native |
-| `(R-Invariant)` | `R-Invariant` c, native |
+| `(R-Invariant)` | `R-Invariant` c, native · `/hoist` c |
 | `(R-KeyList)` | not counted — executor: key descriptors derived once per type |
 | `(R-KeyedEntry)` | `R-KeyedEntry` ir · `/subscript` ir |
 | `(R-LazySplit)` | `R-LazySplit` c, native |
@@ -248,8 +250,10 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-MaskRange)` | `R-MaskRange` parse |
 | `(R-Mint)` | `R-Mint` c, native |
 | `(R-MoveAppend)` | `R-MoveAppend` native |
+| `(R-MoveChild)` | `R-MoveChild` parse |
 | `(R-MoveLast)` | `R-MoveLast` ir · `/host` ir · `/local` ir |
 | `(R-NoLocks)` | `R-NoLocks` c |
+| `(R-NoThreads)` | `R-NoThreads` c |
 | `(R-NonSentinelParam)` | `R-NonSentinelParam` c · `/twin` c |
 | `(R-OpPriority)` | not counted — executor: opcode numbering by priority |
 | `(R-OperandSpan)` | not counted — executor: fixed-width operands bounds-checked once |
@@ -260,9 +264,9 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Prefill)` | not counted — runtime: admitted per TYPE at its first mint |
 | `(R-PureReuse)` | `R-PureReuse` ir |
 | `(R-Push)` | `R-Push` c, native · `/sole` c |
-| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c |
+| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c · `/several` ir · `/text` c |
 | `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
-| `(R-Range)` | `R-Range` c, native |
+| `(R-Range)` | `R-Range` c, native · `/index` c |
 | `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
 | `(R-Rebind)` | `R-Rebind` ir |
 | `(R-RebindBuffer)` | `R-RebindBuffer` native |
@@ -277,7 +281,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-ReturnField)` | `R-ReturnField` ir |
 | `(R-Reuse)` | `R-Reuse` ir |
 | `(R-Rotate)` | `R-Rotate` interp |
-| `(R-SameRead)` | `R-SameRead` parse |
+| `(R-SameRead)` | `R-SameRead` parse · `/filed` c |
 | `(R-Scalar)` | `R-Scalar` c, native |
 | `(R-ScaleFold)` | `R-ScaleFold` parse |
 | `(R-SelfReplace)` | `R-SelfReplace` parse |
@@ -285,11 +289,13 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SingleUse)` | `R-SingleUse` parse |
 | `(R-SliceArg)` | `/range` ir |
 | `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
-| `(R-SliceInto)` | `R-SliceInto` c · `/transient` c |
+| `(R-SliceInto)` | `R-SliceInto` c |
+| `(R-SpecChain)` | `R-SpecChain` c |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
 | `(R-StartStep)` | `R-StartStep` interp |
 | `(R-State)` | not counted — condition: the hoist state the header rules share; counted under them |
+| `(R-StickySum)` | `R-StickySum` c |
 | `(R-StreamWalk)` | `R-StreamWalk` native |
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
 | `(R-Tabulate)` | `R-Tabulate` c |
@@ -297,14 +303,14 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-TextBorrow)` | `R-TextBorrow` interp, c, native · `/tested` c, native |
 | `(R-TextClear)` | `R-TextClear` native |
 | `(R-TextLen)` | `R-TextLen` parse |
-| `(R-TextRun)` | counted; admitted on no bench program |
+| `(R-TextRun)` | `R-TextRun` ir |
 | `(R-Transient)` | `R-Transient` c |
-| `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/text` c, native |
-| `(R-TypedRead)` | `R-TypedRead` c, native |
+| `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/remove` c · `/text` c, native |
+| `(R-TypedRead)` | `R-TypedRead` c, native · `/float` c |
 | `(R-ValueLocal)` | `R-ValueLocal` parse, c, native |
 | `(R-ValueRecord)` | `R-ValueRecord` parse, c, native · `/view` c, native |
 | `(R-VecCopy)` | `R-VecCopy` ir |
-| `(R-Version)` | `R-Version` c |
+| `(R-Version)` | `R-Version` c · `/nest` c |
 | `(R-View)` | `R-View` c, native |
 | `(R-ViewReturn)` | `R-ViewReturn` native |
 | `(R-WorkBuffer)` | `R-WorkBuffer` parse · `/onward` parse · `/result` parse |
@@ -546,7 +552,17 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  when the loop's first two statements are that head and that bound
                  over ONE vector operand, nothing else in the loop assigns it,
                  every other assignment in the function is a literal, and its
-                 address is never taken.
+                 address is never taken.  THE PROBE CLAUSE: under the release-pass
+                 probe, where `+ - *` of proven operands wrap and an overflow is a
+                 fault (C120), the integer locals are proven as a GREATEST
+                 fixpoint — every integer local that is no parameter and does not
+                 escape is assumed, and one with an assignment the proof rejects
+                 under the assumption is dropped, until none drops — so a local
+                 stepped by proven values (`cx += sx`, `err -= dy`, `s += step`)
+                 is proven though its step names it; and a `Nullable` `+ - *`
+                 whose operands are proven is the plain operator and wraps.  Under
+                 the probe `(R-StickySum)` and `(R-SpecChain)` decline: the
+                 operators they guard are the wrapping ones already.
 
   (R-LitDiv)     a division or remainder by a LITERAL that is neither 0 nor -1 emits
                  as one sentinel test and the plain operator — `if x == MIN { MIN }
@@ -598,7 +614,14 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  vector's tail, decided and applied in the IR (`opt::fill_loop`, both
                  backends): `if 0 < n { the push; OpAppendCopy(v, n, tp) } else { the
                  loop }`, `n` the trip count read at entry — so an empty, negative or
-                 null-ended range runs the loop as written.  The trip count is the range's
+                 null-ended range runs the loop as written.  THE SEVERAL CLAUSE: a body
+                 that is ONE push of a simple invariant onto each of two or more vector
+                 variables (with each push's own reservation) and nothing else is one
+                 fill per vector — every push once, then each `OpAppendCopy` — where
+                 the vectors are distinct plain locals none of which is a view of
+                 another and no pushed value reads one; a byte push's encoded element
+                 is what `OpAppendCopy` copies.  A `lit ?? d` over a literal that is not
+                 the sentinel is the simple invariant `lit`.  The trip count is the range's
                  end less its start — the `next` counter's current value or `#index +
                  1` — plus one for an inclusive range, taken at loop entry.  The loop
                  is read in EITHER spelling — the statement `for i in a..b { v += [e] }`
@@ -690,6 +713,13 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  header or window for keeps its pushes, and a vector with no record,
                  a reference at position 0 or a locked store (the append does not ask
                  the lock, @FR-H-WriteLocked) runs the appends as they stand.
+                 THE TEXT CLAUSE (C): a loop that names a text local or `&text`
+                 parameter only as the destination of CHARACTER pushes
+                 (`t += "{c}"`, `OpAppendCharacter`) whose characters do not read it,
+                 and that leaves only by its own end, holds the text's bytes, length
+                 and room in a window for the loop: a push that fits is one store and
+                 a bump, the length is written back around each growth and at the
+                 loop's end.  A text an enclosing loop holds a window for keeps it.
 
   (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
                  `Nullable` twins included) over literals and variables — that a loop
@@ -790,6 +820,21 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  verdict's alone — a record view's address and a push header, which
                  hold the store's memory, keep declining a text set.  No scalar
                  hoists in such a loop (the write set does not type a text set).
+                 HOIST CLAUSE (C): where the C's checked operators report nothing on an
+                 overflow, a memoised chain is evaluated where its flag is reset — the
+                 loop's prelude, where every variable it reads already holds the value the
+                 loop sees — and its uses read the memo with no first-use test; the same
+                 value, and nothing observable moves even where the loop runs no trip
+                 (`LOFT_NO_MEMO_HOIST=1`).  stage `render_stage` 3.73× → 2.50×, `blur_region`
+                 4.99× → 3.20× Rust.
+                 FIELD CLAUSE (@PLN219): the window's root may also be a vector FIELD of an
+                 owned local — set once in the function as `OpGetField(holder, …)`, `holder`
+                 owning its store — where the push loop names `holder` nowhere: the inner row
+                 of `[for y { [for x { … }] }]`, built in the element the outer comprehension
+                 just carved.  Nothing in the loop can reach the record to read its lagging
+                 length, and the window's own conditions keep every other store unwritten.
+                 14_stdlib_vector `grid` 4.00× → 0.86× Rust (C); guard
+                 `loft-suite/rules/rewrites/R-PushFill/a-nested-comprehension-pushes-each-row-through-a-window.loft`.
 ```
 
 ```
@@ -918,6 +963,14 @@ Guard `tests/scripts/a-parameters-vector-holds-its-header-where-the-buffer-is-ap
 by a plant that takes every writer as apart: `h7 179400` where the file says 220); pin
 `tests/apart_param.rs`.
 
+**The several clause, in words.**  hex_field's `edgeset_new` zeroes two parallel vectors —
+`m += [(0 as u8?) ?? 0]; sf += [(0 as i32?) ?? 0]` per slot — and the one-push fill could
+not take it: two paths, and a `??` value.  Each vector ends as one fill would leave it.
+`doc_read` on the ship lane: gcc-16 2.79× → 2.22×, clang 3.12× → 2.27×.  Census
+`R-PushFill/several`; switch `LOFT_NO_FILL_LOOP` (with the one-push form); site
+`fill_loop::several_fill`; guard
+`loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-one-invariant-into-each-of-several-vectors-is-a-fill-each.loft`.
+
 **The text clause, in words.**  `parse`'s reset loop of `arguments` (`while ri <
 self.results.len() { self.results[ri] = null; ri += 1 }`) read its length and resolved its
 element per pass because a text write declined the gate, which is the right answer for an
@@ -999,6 +1052,26 @@ across the loop's calls (zttext's `materialise`, +11 % until it did).  Measured 
 `slope_path_with_undo` −11.0 %, zttext `materialise` −8.9 % and `seg` −4.4 %, stage
 `pack_instances` −4.1 %, `resolve_move` −2.5 %; over the 47 routines of the lanes it reaches
 most, geomean −0.6 %.
+
+**The text clause, in words.**  A `char` store may alias the text's own header, so a push
+through the text reloaded its length and its bytes at every character — gcc and clang alike.
+With the window they stay in registers; the length is unread between the pushes because the
+loop names the text nowhere else.  zttext on the ship lane (clang): `materialise` 2.84× →
+2.60×, `patch` 1.64× → 1.27× (gcc unchanged within the noise).  Switch `LOFT_NO_TEXT_WINDOW`;
+census `R-PushFill/text`; site `FnWriter::open_text_windows`, runtime `loft_tw_*`; guard
+`loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-characters-holds-its-text-in-a-window.loft`.
+
+**The probe clause, in words.**  By induction over the order the assignments run in, a local
+whose every assignment is a literal, a proven read or a closed operator over such values holds
+the sentinel only after an overflow — which the probe's contract already lets answer
+differently.  The least fixpoint cannot see it, because the step names the local; the checked
+build keeps the least one, where an overflow is an observable null.  Before it, the ship lane
+was MORE checked than its straight-line code: a sum stepped in a loop kept `(R-StickySum)`'s
+flag and a staged chain `(R-SpecChain)`'s checked fallback, both answering null for an overflow
+the probe wraps everywhere else.  Measured on graphics (ship ÷ Rust): `draw_line` 1.76× →
+1.32× (gcc-16), 2.23× → 1.42× (clang); `draw_bezier` 2.34× → 1.80×, 2.97× → 2.09×.  Switch
+`LOFT_NO_PROBE_FIXPOINT`; census `R-Counter/probe`; guard `tests/c_emit.rs`
+`under_the_probe_a_locally_stepped_accumulator_wraps_and_the_checked_c_keeps_its_flag`.
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
 it), with @PLN157 P4d's path key (`lay.px` is `(lay, [32])`) and the hoisted loop
@@ -2515,6 +2588,51 @@ parameter seed or `n` handed out by reference declines.  `LOFT_HOIST_VERIFY=1` c
 plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a18 (a16/a17
 the boundary pair across i64::MAX, a18 a step that really overflows), pins
 `tests/walk_accumulator.rs`.  Site: `range::seed_accumulators`.
+**The callee-step clause** (@PLN219).  A step may also be a CALL: `(q, r) = f(q, r, d)`
+lowers to `t = f(q, r, d); q = t.0; r = t.1`, and `q = t.k` is a step of `|c|` when it follows
+the call in the same block (only other `_ = t.j` reads between, so `t` holds that call's
+result), `q` is the argument at parameter `p`, `f` never writes `p`, and every result of `f` —
+each `return` and the tail — is a tuple whose element `k` is `p` or `p ± c` with a literal `c`
+(`|c|` the largest).  The value read is the one `q` held at the call, moved once, so the
+accumulator clause's sum over the steps bounds it.  An element that is another parameter, a
+product, or a tuple read after another write of `q` declines.  Measured (C): `hex_grid`
+`hex_neighbor` 4.15× → 1.23× Rust.  Site `range::call_step`; guard
+`loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft`.
+**The relational step clause** (@PLN219).  The accumulator clause bounds a step by the
+product of trip counts and so loses what the insertion sort knows: `j = i; for _ in 0..i { …
+j -= 1 }` steps at most once per trip of a loop that makes at most `i` trips.  Where the seed
+is a variable `x` whose range is non-negative, the loop's end is set from `x` itself, the one
+step `j = j - 1` is the LAST statement on every path that holds it and under no nested loop,
+and neither `x`, the end nor the loop's index is written in the loop, trip `t` starts with at
+most `t` steps taken and runs only while `t < x`: before the step `j >= x - t >= 1`, after the
+loop `j >= 0`.  So `j` is `min(0, x.lo) ..= x.hi` over the function, and `1 ..= x.hi` through
+the loop's BODY (`Ranges::bodies`, which the C emitter pushes as the facts the body is written
+under).  A read of `j` after the step in the same trip, a second step, a step under a nested
+loop or a written end declines.  Site `range::step_down_by_trips`.
+**The open-end counter clause** (@PLN219).  An exclusive counted loop over an end the proof
+cannot range still steps its counter only after the exit test saw it below that end, itself at
+most `i64::MAX`, so `counter + 1` cannot overflow: in the two-counter form (test, then step)
+from any start, in the single-counter form (step, then test) from a seed below `i64::MAX`.
+The STEP is written plain (`Ranges::steps`, answered by `range::op_range_at_site` where an
+emitter writes the operator); the counter itself is left unranged — ranged `lo ..= i64::MAX`
+it would leave `(R-RangedCall)`'s guard, whose run-time test bounds it far tighter (`sieve`
+0.84× → 2.23× that way).  Measured (C): sum_loop 4.01× → 2.96×, drawing render_marks
+4.38× → 3.36×, resize 4.32× → 3.33×, render_lock 3.49× → 2.77×.  `LOFT_NO_OPEN_END=1`;
+guard `loft-suite/rules/rewrites/R-Range/a-counted-loops-step-is-plain-whatever-its-end.loft`.
+**The abs clause and the end clause** (@PLN219).  `abs(x)` of a ranged `x` lies in `0 ..=
+max(|lo|, |hi|)` (from `|lo|` or `|hi|` where `x` keeps one sign) — `i64::MIN` is outside every
+range, so it cannot overflow.  Inside `for k in s..x`, where the end was copied from a variable
+`x` the loop never writes, the body runs only while `k < x`, so there `x >= s + 1`
+(`Ranges::bodies`): `for k in 1..n { … / n }` divides by an `n >= 2`, plain.  With them,
+(R-GuardedChain) declines a loop whose admitted operators the static proof already covers —
+no guard computed per entry.  Measured: 16_consumer_shapes `fov_rays` 3.06× → 2.18× Rust (C).
+Guard `loft-suite/rules/rewrites/R-Range/abs-is-ranged-and-a-loop-end-is-above-its-counter-in-the-body.loft`.
+**The index clause** (C).  A held element access whose index the proof shows non-negative is
+written with the `_nn` accessors (`loft_vh_get_int_at_nn`, …: one unsigned compare, no
+from-the-end wrap, the miss reported as before), the index wrapped in `loft_nonneg`, which
+`-DLOFT_VERIFY` checks.  Measured: 10_sort `sort` 2.53× → 1.44× Rust (C), with the held
+accessors computing their index once (6.72× before both).  Guard
+`loft-suite/rules/rewrites/R-Range/a-counter-stepped-down-once-a-trip-indexes-without-the-wrap.loft`.
 **The while-counter clause.**  A loop shaped `while i < E { …; i += 1 }` — its first statement
 the test's break, `E` naming no `i`, its last the step `i = i + 1`, which is the loop's one
 write of `i` — bounds its counter without bounding `E`.  Every statement of the loop runs after
@@ -2529,6 +2647,60 @@ narrowing arm before the `Loop` arm in `emit.rs`.  Cell
 `tests/scripts/a-while-counter-steps-plain-below-its-bound.loft`, pins `tests/while_counter.rs`.
 Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
 `ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
+
+### A checked integer chain runs plain, falling back on any null
+
+```
+  (R-SpecChain)  an integer local assigned a CHAIN of the silent checked operators — `+`,
+                 `-`, `*` and `&`, `|`, `^` — of two operators or more, one of them not
+                 proven plain by (R-Range), is written as the processor's operators: each
+                 operand evaluated once into a temp in the checked chain's order, the
+                 overflow builtins (`LOFT_ADD_OVF`, …) and plain tests gathering into one flag
+                 every event the checked chain answers null for — a null operand (one the
+                 proofs do not show non-null), an overflow, an inner result equal to the
+                 sentinel — and, on the flag, the chain recomputed checked from the same
+                 temps.  A product by a literal keeps `loft_mul` (its bounds fold against the
+                 constant) and tests its null answer.  An operator (R-GuardedChain) admitted
+                 is that rule's; a memoised subchain ((R-Invariant)) is a leaf.  Only inside a
+                 loop, and one operator only where the local carries itself (`acc = acc + e`).
+                 C only; not under the release-pass probe ((R-Counter)'s probe clause).
+
+  (R-StickySum)  a loop's integer SUM — a local every mention of which inside the loop is its
+                 own update `acc = acc + e` / `acc = acc - e` (`e` not reading `acc`), the loop
+                 left by no `break` or `continue` past its own exit — is updated with the
+                 processor's operator, one flag per loop gathering every event the checked sum
+                 answers null for (`acc` null on entry, a null `e`, an overflow, the sentinel);
+                 after the loop's exit a set flag makes `acc` null.  A READ of `acc` inside
+                 the loop is `flag ? null : acc`, the checked value there.  A sum staged
+                 through a temp (`t = acc + e; …; acc = t`, as (R-SameRead) writes it, `t`
+                 written nowhere else) gives `t` a flag of its own — the sum's plus the step's
+                 events — so `t` and `acc` each read their own checked value.  The `Nullable`
+                 twins take part (the same silent arithmetic).  The outermost loop that admits
+                 a sum takes it.  An update (R-Range) proves plain stays that rule's.  C only;
+                 not under the release-pass probe ((R-Counter)'s probe clause).
+```
+
+**The sum, in words.**  The checked sum is null from its first event on — a null stays null
+through every later `+` and `-`, and none reports — and nothing inside the loop reads the sum
+but its own updates, so the value it carries after an event is never seen; at the exit, the one
+place the loop's value is read, the flag makes it the checked answer.  Measured (C ÷ Rust):
+stage `blur_region` 3.20× → 2.00× (with the hoist clause, from 4.98×), drawing `render_lock`
+2.72× → 2.49×, `resize` 3.19× → 2.99×; with reads and staged temps zttext `locate` 3.82× →
+1.95× (one test per step instead — the chain rule's form — measured 4.14×).  A sum the range proof already writes plain kept the
+flag at first, and blocked a loop clang had vectorised (`byte_walk` 2.19× → 4.26×): those are
+left to (R-Range).  `LOFT_NO_STICKY_SUM=1`; guard
+`loft-suite/rules/rewrites/R-StickySum/a-loop-sum-runs-plain-and-is-null-from-its-first-event.loft`.
+
+**In words.**  Each checked operator answers null for exactly the events the flag collects
+and otherwise the bits of the processor's operator, and none of them reports anything; so
+with no event the plain chain IS the checked answer, and with one the checked chain answers
+itself.  What moves is the dependency chain: a checked operator compiles to selects on the
+value it produces, and a loop carrying that value (`acc = ((acc ^ i) + (i & 7)) & M`) waits on
+them every trip.  Measured (C ÷ Rust): sum_loop 2.96× → 1.00×, index_read 3.01× → 1.00×,
+binary_read 3.29× → 1.89×, binary_map 1.78× → 0.84×.  The product clause: with the overflow
+builtin, `par_reduce`'s `h * 1103515245` cost a high multiply on its chain (1.90× → 2.58×); with
+it, 1.85×.  `LOFT_NO_SPEC_CHAIN=1`; guard
+`loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-chain-runs-plain-and-falls-back-on-any-null.loft`.
 
 ### A counted loop's index chains run plain behind a guard
 
@@ -2612,6 +2784,18 @@ arm in `ops::int_arith`, the loop hook in `emit.rs`; in the C, `FnWriter::chain_
 `loft_gc_*`.  The C writes an innermost loop twice only when its body calls no loft function:
 a doubled body with a call doubles what the C compiler inlines there, and crawler `vis` lost
 36 % instructions that way under GCC, so such a loop branches per operator instead.
+
+**The version clause** (@PLN219, C).  An innermost loop written once for its calls alone,
+where EVERY call of a loft function in it is a site `(R-Version)` decided a flag for, is
+written twice after all: under the chain guard AND every flag, a plain copy whose calls are
+the fast twins, untested; otherwise the loop as written (each operator and call branching on
+its own guard).  The fast copy doubles no inlined body — the once-written loop already calls
+both twins at every site — and the flags are decided before the loop, so the copy is chosen
+once per entry instead of tested per operator and call.  Measured (C): text2d `draw_quads`
+4.56× → 2.69× Rust (the hand form unswitched the same way: 2.69×).  Census row
+`R-GuardedChain/versions`; guard
+`loft-suite/rules/rewrites/R-GuardedChain/a-loop-calling-only-versioned-functions-runs-a-plain-copy-of-their-fast-twins.loft`.
+Site `FnWriter::version_unswitch`.
 
 ### A `for` statement runs fast under a fault flag, and as written when it faults
 
@@ -3543,6 +3727,15 @@ generic one's, arm for arm, so the answer cannot differ; what moved is when it i
 **BUILT** (`src/generation/ops/file_ops.rs`, runtime `OpReadFileInt`, `LOFT_NO_TYPED_READ`;
 guard `loft-suite/rules/rewrites/R-TypedRead/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
 
+**The float clause** (C, @PLN219).  `OpReadFile(f, OpCreateStack(t), 8, float)` into a float
+local `t` is typed the same way: the eight bytes in the file's byte order, decoded as the
+generic read decodes a `float` (`loft_f64`), a short read leaving `t` and `#next` as they were.
+So `(R-FileHold)` admits a loop of float reads, which read through the held cursor
+(`loft_fcur_readf`).  A `single`, and a float into a slot that is not a float local, keep the
+generic read.  Measured: hex_field `doc_read` 8.64× → 3.84× Rust (C) — the per-value `fread`
+with its lock and `ferror` was half the routine.  Guard
+`loft-suite/rules/rewrites/R-TypedRead/a-float-read-is-decoded-at-its-site-through-a-held-cursor.loft`.
+
 ### A loop that alone sees its file holds the cursor
 
 ```
@@ -3763,6 +3956,12 @@ c21 keeps the vector form of it.
                   `long` parts are emitted as `OpGetHashInts(c, type, [k₁, …])`, hashed
                   as the general entry hashes their `Content::Long`s (`keys::ints_hash`)
                   and compared part by part (`hash::find_ints`).
+                  The REMOVAL clause (C): `c[k] = null` — `OpHashRemove(c, OpGetRecord(c,
+                  type, 1, k), type)`, the lookup on the removal's own collection by one
+                  pure path, a single integer key, no lazy source — removes from where
+                  the typed walk finds the key: one walk where finding the record and
+                  removing it by its digest took two.  A miss changes nothing; an inline
+                  table and a locked store take the general removal of the general find.
 ```
 
 **In words.** `(R-Escape)` is not needed here — nothing is removed or reshaped, the
@@ -3785,6 +3984,18 @@ under the switch).  Cells `tests/scripts/158-keyed-fast-paths.loft`; pin
 Sites: `OpGetRecordEmitter` (`src/generation/ops/key_ops.rs`), `Output::emit_long_key`,
 `codegen_runtime::OpGetHashLong`, `hash::find_long`.  The APPEND half is `(R-KeyedEntry)`
 below, for an element that owns no heap.
+
+**The removal clause.**  An LRU's eviction, `c.nodes[old] = null`, found the record by its key
+and then `loft_h_remove` found its bucket again by the record's digest.  Site
+`FnWriter::keyed_remove`, runtime `loft_hash_remove_i64` over `loft_h_remove_at` (the shift
+half of the general removal); census `R-TypedKeyed/remove`; the falsifier is
+`-DLOFT_KEYED_VERIFY`, under which every typed removal re-asks the general lookup and stops
+the run where the two disagree.  With `(R-SameRead)`'s filed clause, a memo of the last integer
+digest and inlined reference accessors, bench 23 `lru_mixed` on the ship lane: gcc-16 3.46× →
+2.63×, clang 3.19× → 2.52×.  Guard
+`loft-suite/rules/rewrites/R-TypedKeyed/a-keyed-removal-starts-where-the-key-is-found.loft`;
+the filed clause's (`FnWriter::filed_record`, census `R-SameRead/filed`)
+`loft-suite/rules/rewrites/R-SameRead/a-lookup-of-the-key-just-filed-is-the-record.loft`.
 
 ### A vector its caller walks once is never built
 
@@ -5049,6 +5260,79 @@ line in `Output::output_function`'s prelude.
                  the (H-WriteLocked) production clause (@C80) had cost them, 2.16× and
                  1.14×.  Switch `LOFT_NO_LOCK_FACT=1`.
 
+  (R-HostStore)  a write-back `t.f = g(t.f, …)` (`write_back_call`) whose callee answers, on
+                 every return, only its argument handed the field's child or its return
+                 buffer — and uses that buffer only as a buffer: minted by `OpDatabase`, its
+                 fields written, tested, a release's witness, answered — hands the callee a
+                 buffer naming `t`'s STORE and no record (`OpStoreBuf`, `keys::STORE_BUF_BIT`):
+                 the callee's `OpDatabase` claims its record there and the field ADOPTS it by
+                 its number (`OpAdoptChildRec`); the argument handed back is the child the field
+                 already holds.  Before, every such call minted a store, the write-back copied
+                 the record into `t`'s store and freed it.  A callee answering anything else —
+                 a child of its argument (`return t.right`) — keeps the copy: adopting such a
+                 record by number would make it a child twice.  Decided after every body is
+                 settled, on the callee's final IR (`host_store::rewrite_program`).  Measured:
+                 21_tree `build_rec` 3.14× → 1.92× Rust.  `LOFT_NO_HOST_STORE=1`,
+                 `LOFT_TRACE_HOST_STORE=1`; guard
+                 `loft-suite/rules/rewrites/R-HostStore/a-recursion-builds-its-result-in-the-field-it-is-written-to.loft`.
+                 LITERAL CLAUSE: a record literal's out-of-line field handed a call's answer —
+                 `Add { l: gen(…), r: gen(…) }`, `lift = gen(…)` then `OpSetChildRec` into
+                 the node's field, the lift named nowhere else but by its frees — where every
+                 answer of the callee is its buffer (its literal exits build there, (R-Place)'s
+                 callee clause): the call is handed `OpStoreBuf(node)`, the field adopts the
+                 answer by number, and the answer's store is freed only where it is not the
+                 node's (`OpFreeRefIfDistinct`, a fallback copy).  The recursion then builds
+                 the whole tree in the store its first caller names.  22_expr `expr_build`
+                 9.07× → 0.66× Rust; guard `…/R-HostStore/a-literal-adopts-its-childrens-results-built-in-its-store.loft`.
+                 RESULT CLAUSE: a function whose every answer is a literal it builds or the
+                 result of a call to itself — `simplify`: `a = simplify(l)`, `b =
+                 simplify(r)`, then `b`, `a`, a node over both or a fresh literal — and whose
+                 results are only read by a function answering a plain value, adopted by an
+                 answered literal's field, answered or freed, each bound at most once on any
+                 path and never in a loop, never handed to a call to itself: every call to
+                 itself and every literal is placed in the store of the first result bound
+                 before it on its path (`OpStoreBuf`), or with none in the caller's buffer
+                 where that names a store and no record (`OpStoreBufOnly` — a record a caller
+                 offers is never written); a field adopts a result by number and the local
+                 lets go of it (null), so each record has ONE owner — a field, the caller or
+                 one local; a result a path drops is released by record
+                 (`OpReleaseRecIfDistinct`: null, a store buffer and the answer release
+                 nothing, a record of another store goes with its store, a record of the
+                 answer's store is released with what it owns while the store lives on); a
+                 result is answered as it is — where the parser renamed the answered local
+                 onto the buffer, the local is split off and the copy into the buffer
+                 (`materialized_view_return`) becomes the answer of the local.  Each result's
+                 one bind adopts the callee's record (`deferred_first_bind`).  Decided on the
+                 function's own settled IR, its frame laid out again
+                 (`host_result::rewrite_program`).  22_expr `expr_simplify` 11.7× → 1.04× Rust;
+                 `LOFT_NO_HOST_RESULT=1`; guard `…/R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them.loft`.
+
+  (R-MoveChild)  a whole write into an out-of-line field whose value is a chain of child reads
+                 rooted at the field's OWN child — `h.f = h.f.g`, `cur = cur.left` through a
+                 field link, `slot = slot.right` through a slot parameter — installs that
+                 child's record by its number and releases only the record it replaces
+                 (`OpMoveChildRec`; `OpMoveSlotRef` for the parameter), where `OpSetChildRec`
+                 copied the surviving subtree into a fresh record, its claims too, and released
+                 the old one.  The value is the copy's: the moved subtree lay inside the
+                 replaced record, which nothing reads afterwards — a view of that record live
+                 across the write is copied at its bind, as for any write that may be null
+                 ((B-Disturb), `released_children` names the move).  A write-back to a whole
+                 variable through a slot parameter takes the child's view and releases the
+                 displaced store unless the child lies in it.  Measured: 21_tree `tree_delete`
+                 3.65× → 0.68× Rust, with the out-of-line clause of (R-InPlaceLiteral).
+                 `LOFT_NO_MOVE_CHILD=1`; guard
+                 `loft-suite/rules/binding/B-OutOfLine/an-unlink-moves-and-a-literal-is-built-in-its-child.loft`.
+
+  (R-NoThreads)  a C unit that runs no `par` loop on threads (`loft_par_run`) and reaches no
+                 engine kernel — the two ways loft code runs on a second thread — is
+                 compiled with `LOFT_NO_THREADS`: the runtime's store table, frame stack and
+                 pools are plain statics instead of thread-locals (`LOFT_TLS`).  Only one
+                 thread reads them, so nothing observable changes; what moves is the cost of
+                 every store access, which on macOS reaches a thread-local through a call
+                 (`_tlv_get_addr`, 13 % of a record-building recursion's profile).  Measured
+                 on Apple silicon, clang: 21_tree `build_rec` −14.5 %; every routine of
+                 @PLN219's hand pricing −10 % to −21 %.  Switch `LOFT_NO_THREAD_FACT=1`.
+
   (R-Inline)     a loft function the C writes in at most twelve statements is declared
                  `static inline`, its frame wrapper with it.  The hint changes no
                  observable behaviour; what it moves is the C compiler's inlining
@@ -5460,7 +5744,12 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  is built, so it needs no staging of its own.  A `reference<T>` field
                  is not such a place: its read is the record it points at, and an
                  assignment re-points it (H-RefSet), so a literal assigned to one is
-                 built in a record of its own.  The KEYED clause:
+                 built in a record of its own.  The VARIANT clause: a variant literal
+                 rebinding a whole local of its struct-enum, or the function's return
+                 buffer, is built there as a struct literal is (`OpDatabase` with the
+                 variant's type re-inits the local's store), where it was built on a
+                 work reference and copied over; a parameter the caller passed keeps
+                 the copy (`LOFT_NO_VARIANT_INPLACE=1`).  The KEYED clause:
                  `h[k] = R { … }` with a FULL subscript of pure keys is written into
                  the record the collection claims for it — the literal's values and
                  the statements computing them run first, in program order (a value
@@ -5486,10 +5775,22 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  whole extent, so a list or a tree grown one node at a time costs
                  linear time.  Declines — the copy stands — where the literal reads the
                  destination anywhere but that one field (a view of the old record
-                 would read the emptied one), names it twice, is a variant of an enum,
-                 or writes a parameter the caller passed.  Decided in the parser (the
+                 would read the emptied one), names it twice, or writes a parameter
+                 the caller passed.  VARIANT CLAUSE: `l = Cons { …, next: l }` for a
+                 struct-enum whose variant holds the enum itself out of line moves the
+                 same way — every record of the enum is the enum's size, so the old
+                 record, whatever its variant, moves whole into a child typed as the
+                 enum, and the variant's fields and tag are written into the zeroed
+                 record.  21_tree `enum_list` (with (R-CopyView)'s walk over its
+                 `match`): 5167× → 0.83× Rust; guard
+                 `loft-suite/rules/rewrites/R-Demote/a-variant-pushed-at-the-front-moves-the-old-record-whole.loft`.  Decided in the parser (the
                  local form when the literal is parsed, the place form at the
-                 out-of-line write); `LOFT_NO_DEMOTE=1` restores the copy.
+                 out-of-line write); `LOFT_NO_DEMOTE=1` restores the copy.  The move is
+                 one op, `OpDemoteRec`: one child record claimed in the destination's store,
+                 the old record's bytes copied into it, the destination's record zeroed and
+                 its field naming the child — no temporary record (measured on 21_tree
+                 `list_ops`, C: 323 → 162 µs together with (R-NoThreads));
+                 `LOFT_NO_DIRECT_DEMOTE=1` keeps the five-op form it replaces.
   (R-Prefill)    the default prefill of a minted record — the declared defaults, the
                  null sentinels and the variant tag a partial literal leaves to the
                  type — is ONE block write of a per-type IMAGE computed once from the
@@ -5497,6 +5798,15 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  not a fixed byte pattern keeps the walk for itself alone.  The image
                  is what the walk writes, so no value changes.
 ```
+                 OUT-OF-LINE CLAUSE: a literal written whole into an out-of-line field
+                 (`t.left = Tree { … }`, `cur = Tree { … }` through a field link) is built in
+                 the field's child — `OpChildRecInPlace`: the present child's owned heap
+                 released and its bytes reset to the type's defaults, its number kept (a view
+                 of it reads the new value, (B-OutOfLine)), or a fresh child where the field is
+                 absent — where it was built in a store of its own, copied in and the store
+                 freed.  Only for a literal whose field values read no record or collection
+                 and nest no literal: the child is reset before they run.  The disturbance
+                 walk treats it as the overwrite it is.  `LOFT_NO_CHILD_LITERAL=1`.
 
 **In words.** @PLN164's rewrite list (its README § *The rewrite list*), derived by
 reading the drawing library's natural `parse_poly` beside the version a programmer
@@ -5520,7 +5830,9 @@ literals or CHAINS: once the tail's delivery is decided and the buffer is still 
 unpromoted `__retbuf` — or a buffer only chains name (`return no_mk()`, a tail `no_mk()`,
 which rename it after the chain's work ref; `Parser::chain_return_buffer_var`) — each
 mid-body `return S { … }` builds into it as the tail literal does, and so does a literal
-TAIL beside chain exits (switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`), where before it minted a
+TAIL beside chain exits, and an exit whose value is a branch every arm of which ends in a
+fresh literal (`if c { Add { … } } else { Mul { … } }`, each arm built into the buffer)
+(switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`), where before it minted a
 store per exit and the caller adopted whichever came back.  A chain exit answers what its
 callee wrote into the same buffer, and a chain always returns, so no literal exit meets a
 value another statement put there.  A callee with a promoted named local beside a literal
@@ -5661,6 +5973,23 @@ answered here rather than decided in the code.
                  parameter — R-ValueRecord may carry a small record parameter as a
                  tuple, where its copy already costs nothing and a view would need the
                  store the tuple removed; a struct-enum.
+                 WALK CLAUSE: a record local, nullable or not, a struct-enum too, whose every
+                 set is either such a bind from a variable or a STEP to a child of itself
+                 (`t = t.left`, `OpRefFromChildRec(OpGetField(t, …))`) is a view of what it
+                 walks, its owner witness and frees gone, where it is only read (a getter, a
+                 projection, a null test, its own step) — and so is a STEP LOCAL, a local
+                 whose every set is a step of the cursor and which is only read or handed
+                 back to it (`match cur { Cons { v, next } => cur = next }`: `next` is the
+                 step), its mentions all inside the cursor's live range — and, for each bind, the statements up to the next bind
+                 neither rebind nor free that bind's source nor run an operation that can write
+                 a record of its type — except one whose record operands are all OTHER owner
+                 locals of the frame, which hold stores the source cannot live in.  A source
+                 may be a parameter whose record holds out-of-line children (no value tuple
+                 carries those).  Measured: 21_tree `lookup_copy` 1405× → 1.17× Rust and
+                 `list_ops` 4.1× → 0.61× (with (R-NoThreads) and the one-op (R-Demote)).
+                 `LOFT_NO_COPY_VIEW_WALK=1`; guards
+                 `loft-suite/rules/rewrites/R-CopyView/a-cursor-that-only-walks-is-a-view.loft`,
+                 `…/a-match-walk-over-an-enum-list-is-a-view.loft`.
   (R-ValueLocal) a plain local bound from a call R-ValueRecord admits — the result a
                  no-heap record of at most eight scalars, nested or flat — carries the
                  record's fields as its TUPLE in the binding frame too, where every use
@@ -6547,6 +6876,20 @@ form measured 2.1× / 2.9×.  Switch `LOFT_NO_VERSION`; `LOFT_TRACE_VERSION=1` n
 admitted or declined and each call versioned.  Sites: `opt::version::leaf`, `c::body::version`.
 Guard `tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft`.
 
+**The nest clause** (@PLN219).  A counted loop holding ONE innermost counted loop (no loop beside
+it or below it), whose seed and end are set in the outer body from values invariant over the
+outer loop, decides that inner loop's versioned calls once per entry of the OUTER loop.  Each
+argument is `X ± i` over one of the two counters, `X` invariant over both, so every tested
+expression is linear in the pair; a linear value over a box takes its extremes at the box's
+corners, so the precondition is asked at all four (one loop moved by no argument leaves the two
+ends).  The box holds at least eight points (`loft_vg_area`); an empty range refuses.  A box partly
+outside the leaf's bounds runs every inner entry through the written twin: deciding the inner
+flag again per entry where the box failed cost `draw_quads` 25 % in rows where it never ran.
+Measured (C): text2d `draw_quads` 2.70× → 1.48× Rust (hand form 1.35×), nothing else past noise
+across crawler, drawing, text2d, stage, graphics.  Census row `R-Version/nest`; guard
+`loft-suite/rules/rewrites/R-Version/an-inner-loops-calls-are-decided-once-per-outer-entry-at-the-boxs-corners.loft`.
+Site `FnWriter::version_level`, the corners in `FnWriter::version_site`.
+
 ### A short counted loop is written once per trip
 
 ```
@@ -6957,6 +7300,13 @@ falsifier).
                  reference; and when the source is a parameter, nothing in the body
                  receives a `&` parameter, which the caller may have passed the same vector
                  as.  Appending to the walked vector is refused by the compiler already.
+                 FIELD CLAUSE: the source may be one field of a record local or parameter,
+                 `for p in d.f`, under the body check of `(R-InRange)`'s field clause — `d`
+                 named only through its fields (another field `d.g` in any role), never
+                 assigned, handed whole to a call or captured, no vector local viewing `d`
+                 used — with the walk's own handle held to element reads.  A record
+                 parameter whose type holds scalars only (no vector, text or reference at
+                 any depth) is not one that may be `d`: it owns no vector to resize.
 ```
 
 **In words.** Site: `forward_walk::rewrite_program`, after the scope pass, re-laying out the
@@ -6976,6 +7326,14 @@ up hold no rewritten walk — emitted code placement).  `LOFT_NO_FORWARD_WALK=1`
 `tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft` (counted walks and the
 walks that must keep re-reading, both backends) and `tests/forward_walk.rs` (which walk is
 rewritten, read off the trace; the cells with the rewrite off).
+
+**The field clause.**  `get_cell`'s chunk scan, `for c in self.chunks`, re-read the length and
+tested the index below zero every element, and its counter ran checked under a fault flag (the
+range proof cannot bound a walk counter whose end it re-reads).  Admitted, the scan is the
+counted loop the local form gets: hex_world `get_cell` on the ship lane 3.23× → 1.73× (clang),
+2.84× → 2.03× (gcc-16).  It declined at first on the routine's hidden `Cell` result buffer, a
+record parameter; the scalar-only exemption, shared with `(R-InRange)`, is what admits it.
+Guard `loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft`.
 
 ### A record element its loop proves in range is read plainly
 
@@ -7003,7 +7361,8 @@ the hand-written form: −20 % cycles.  `LOFT_NO_IN_RANGE=1`, `LOFT_TRACE_IN_RAN
 reading `d.f[i]?`, when the body neither reassigns `d`, hands `d` whole to a call (which could
 change `d.f`), names `d.f` other than as the vector a read operator reads, nor uses a vector
 local that is a view into `d` (a write through it would name no `d` at all); a `&` parameter
-that could be `d` declines, one holding a text or a scalar (a result buffer) does not.  It
+that could be `d` declines, one holding a text or a scalar (a result buffer) does not, nor
+does a record parameter whose type holds scalars only.  It
 dropped the `?` in ten of zttext's walks over `d.pieces`.  Guard
 `tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r1, r2, r4, r5).
 
@@ -7224,6 +7583,13 @@ alone) and
                  computation reads may be the last statement that uses it: its value is
                  computed before the assignment.  The largest shared computation is bound;
                  a variable and a literal is not.
+  (R-SameRead) + THE FILED CLAUSE (C): `m = h[k]` as the statement right after an
+                 `OpFinishRecord` that filed record `e` into `h` — a hash with one
+                 integer key, reached by the same pure path, `k` a local — answers `e`
+                 where the insert landed (the store takes writes, neither handle is null)
+                 and `e`'s key is `k`: the latest insert wins (`@FR-Col-Insert`), so `e`
+                 IS the entry under `k`.  Otherwise the lookup runs as written — a
+                 discarded insert (`(H-WriteLocked-Whole)`) answers what was filed before.
 ```
 
 **In words.** Site: `same_read::bind_sequences`.
@@ -7381,6 +7747,32 @@ the type's parts and a disagreement stops the run naming the type.  Swept over a
 `tests/scripts` and bench programs, eager and lazy: none.  Planted a stale cache (every key cached
 as text): without the verify the keyed bench panics deep in `allocation.rs`; with it, at the
 first lookup, `type 97 (hash<E[id]>) caches keys [5], its parts derive [0]`.
+
+### `E` raised to a power is the exponential function
+
+```
+  (R-ExpPow)     `pow(E, x)` — the operator `OpPowFloat` / `OpPowSingle` or the stdlib
+                 call `pow` / `t_5float_pow` / `t_6single_pow`, whose base is the
+                 constant `E` (`OpMathEFloat()`, cast down for `single`) or a literal
+                 with exactly its bits — IS `exp(x)`: computed by the platform's `exp`
+                 (math function 10 of `OpMathFuncFloat` / `OpMathFuncSingle`) instead
+                 of its general `pow`.  A null (NaN) operand answers null, `±0` answers
+                 1, `-inf` answers 0, `+inf` and an overflow answer `+inf` — as `pow`
+                 does.  The answer may move in its LAST bit, toward the reference's
+                 (Rust's `f64::exp`, C's `exp`): an owner's decision recorded here.
+                 The stdlib `exp` keeps its `pow(E, self)` body, so every spelling
+                 folds.  Any other base is left to `pow`.
+```
+
+**In words.** `pow(E, x)` and `exp(x)` name one function, but a general `pow` computes it as
+`exp(x · ln E)` with the rounding of the double `E` carried in, while `exp` is the dedicated
+routine every reference language calls: faster, and as close or closer to the true value.  A
+user should not have to know the dedicated spelling.  One IR rewrite on the closed program
+(`src/exp_pow.rs`, in `compile::close_program` after `(R-ZeroCount)`), so every backend runs
+it; switch `LOFT_NO_EXP_POW`; guard
+`loft-suite/rules/rewrites/R-ExpPow/e-raised-to-a-power-is-the-exponential.loft`.  Measured
+on fixstep `approach` (§ the ship lane, `(Perf-Weight)`), where `exp` was the only operator
+over 2.7× its Rust twin.
 
 ### A text predicate over a case fold is answered without building the fold
 

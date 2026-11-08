@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>assets source</h1>
 <article>
-<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · version 0.5.1</p>
-<p class="lib-legend">7 file(s), 1289 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · version 0.5.2</p>
+<p class="lib-legend">7 file(s), 1293 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -40,15 +40,15 @@
 <tr><td><code>Scene</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L123">123</a></td><td>—</td><td><a href="#src-assets-loft-L163">163</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L59">59</a> <a href="#tests-scene-loft-L29">29</a> <a href="#tests-scene-loft-L38">38</a> <a href="#tests-worked-examples-loft-L21">21</a></td></tr>
 <tr><td><code>Placed</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L134">134</a></td><td>—</td><td><a href="#src-assets-loft-L164">164</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L59">59</a> <a href="#tests-scene-loft-L30">30</a> <a href="#tests-scene-loft-L32">32</a> <a href="#tests-scene-loft-L34">34</a> … (10 total)</td></tr>
 <tr><td><code>Pack</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L157">157</a></td><td>—</td><td><a href="#src-assets-loft-L173">173</a> <a href="#src-assets-loft-L174">174</a> <a href="#src-assets-loft-L213">213</a> <a href="#src-assets-loft-L230">230</a> <a href="#src-assets-loft-L244">244</a> <a href="#src-assets-loft-L257">257</a> … (12 total)</td></tr>
-<tr><td><code>new_pack</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L173">173</a></td><td>—</td><td><a href="#tests-pack-loft-L52">52</a> <a href="#tests-pack-loft-L57">57</a> <a href="#tests-pack-loft-L88">88</a> <a href="#tests-pack-loft-L113">113</a> <a href="#tests-pack-loft-L128">128</a> <a href="#tests-pack-loft-L142">142</a> … (21 total)</td></tr>
-<tr><td><code>meta_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L183">183</a></td><td>—</td><td><a href="#src-assets-loft-L215">215</a> <a href="#src-assets-loft-L231">231</a> <a href="#src-assets-loft-L232">232</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L165">165</a> … (8 total)</td></tr>
-<tr><td><code>blobs_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L186">186</a></td><td>—</td><td><a href="#src-assets-loft-L216">216</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L67">67</a> <a href="#tests-pack-loft-L97">97</a> <a href="#tests-pack-loft-L106">106</a> … (14 total)</td></tr>
-<tr><td><code>blob_put</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L196">196</a></td><td>—</td><td><a href="#src-assets-loft-L577">577</a> <a href="#tests-pack-loft-L31">31</a> <a href="#tests-pack-loft-L32">32</a> <a href="#tests-pack-loft-L33">33</a> <a href="#tests-pack-loft-L174">174</a> <a href="#tests-pack-loft-L175">175</a> … (8 total)</td></tr>
-<tr><td><code>pack_write</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L213">213</a></td><td><a href="#tests-worked-examples-loft-L29">PAK-001</a></td><td><a href="#tests-pack-loft-L55">55</a> <a href="#tests-pack-loft-L91">91</a> <a href="#tests-pack-loft-L116">116</a> <a href="#tests-pack-loft-L131">131</a> <a href="#tests-pack-loft-L162">162</a> <a href="#tests-worked-examples-loft-L38">38</a> … (7 total)</td></tr>
-<tr><td><code>pack_read</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L230">230</a></td><td>—</td><td><a href="#tests-pack-loft-L58">58</a> <a href="#tests-pack-loft-L143">143</a> <a href="#tests-worked-examples-loft-L40">40</a> <a href="#tests-worked-examples-loft-L60">60</a></td></tr>
+<tr><td><code>new_pack</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L173">173</a></td><td>—</td><td><a href="#tests-pack-loft-L52">52</a> <a href="#tests-pack-loft-L57">57</a> <a href="#tests-pack-loft-L91">91</a> <a href="#tests-pack-loft-L116">116</a> <a href="#tests-pack-loft-L131">131</a> <a href="#tests-pack-loft-L145">145</a> … (21 total)</td></tr>
+<tr><td><code>meta_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L183">183</a></td><td>—</td><td><a href="#src-assets-loft-L215">215</a> <a href="#src-assets-loft-L231">231</a> <a href="#src-assets-loft-L232">232</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L169">169</a> … (8 total)</td></tr>
+<tr><td><code>blobs_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L186">186</a></td><td>—</td><td><a href="#src-assets-loft-L216">216</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L67">67</a> <a href="#tests-pack-loft-L100">100</a> <a href="#tests-pack-loft-L109">109</a> … (14 total)</td></tr>
+<tr><td><code>blob_put</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L196">196</a></td><td>—</td><td><a href="#src-assets-loft-L577">577</a> <a href="#tests-pack-loft-L31">31</a> <a href="#tests-pack-loft-L32">32</a> <a href="#tests-pack-loft-L33">33</a> <a href="#tests-pack-loft-L178">178</a> <a href="#tests-pack-loft-L179">179</a> … (8 total)</td></tr>
+<tr><td><code>pack_write</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L213">213</a></td><td><a href="#tests-worked-examples-loft-L29">PAK-001</a></td><td><a href="#tests-pack-loft-L55">55</a> <a href="#tests-pack-loft-L94">94</a> <a href="#tests-pack-loft-L119">119</a> <a href="#tests-pack-loft-L134">134</a> <a href="#tests-pack-loft-L166">166</a> <a href="#tests-worked-examples-loft-L38">38</a> … (7 total)</td></tr>
+<tr><td><code>pack_read</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L230">230</a></td><td>—</td><td><a href="#tests-pack-loft-L58">58</a> <a href="#tests-pack-loft-L146">146</a> <a href="#tests-worked-examples-loft-L40">40</a> <a href="#tests-worked-examples-loft-L60">60</a></td></tr>
 <tr><td><code>anim_of</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L244">244</a></td><td><a href="#tests-worked-examples-loft-L69">PAK-003</a></td><td><a href="#tests-scene-loft-L46">46</a> <a href="#tests-scene-loft-L47">47</a> <a href="#tests-scene-loft-L50">50</a> <a href="#tests-scene-loft-L51">51</a> <a href="#tests-scene-loft-L52">52</a> <a href="#tests-worked-examples-loft-L75">75</a> … (8 total)</td></tr>
 <tr><td><code>keys_near</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L257">257</a></td><td>—</td><td><a href="#tests-scene-loft-L58">58</a> <a href="#tests-scene-loft-L65">65</a> <a href="#tests-scene-loft-L70">70</a> <a href="#tests-scene-loft-L71">71</a> <a href="#tests-scene-loft-L83">83</a> <a href="#tests-worked-examples-loft-L61">61</a></td></tr>
-<tr><td><code>prefetch</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L288">288</a></td><td><a href="#tests-worked-examples-loft-L49">PAK-002</a></td><td><a href="#tests-pack-loft-L97">97</a> <a href="#tests-pack-loft-L106">106</a> <a href="#tests-pack-loft-L120">120</a> <a href="#tests-pack-loft-L147">147</a> <a href="#tests-worked-examples-loft-L43">43</a> <a href="#tests-worked-examples-loft-L64">64</a> … (7 total)</td></tr>
+<tr><td><code>prefetch</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L288">288</a></td><td><a href="#tests-worked-examples-loft-L49">PAK-002</a></td><td><a href="#tests-pack-loft-L100">100</a> <a href="#tests-pack-loft-L109">109</a> <a href="#tests-pack-loft-L123">123</a> <a href="#tests-pack-loft-L150">150</a> <a href="#tests-worked-examples-loft-L43">43</a> <a href="#tests-worked-examples-loft-L64">64</a> … (7 total)</td></tr>
 <tr><td><code>PROXY_ALPHA_ON</code> <span class="search-kind">const</span></td><td><a href="#src-assets-loft-L314">314</a></td><td>—</td><td><a href="#src-assets-loft-L350">350</a> <a href="#src-assets-loft-L392">392</a> <a href="#src-assets-loft-L428">428</a></td></tr>
 <tr><td><code>PROXY_BANDS</code> <span class="search-kind">const</span></td><td><a href="#src-assets-loft-L323">323</a></td><td>—</td><td><a href="#src-assets-loft-L449">449</a></td></tr>
 <tr><td><code>opaque_texels</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L423">423</a></td><td>—</td><td><a href="#tests-proxy-loft-L78">78</a> <a href="#tests-proxy-loft-L96">96</a> <a href="#tests-proxy-loft-L114">114</a> <a href="#tests-proxy-loft-L129">129</a></td></tr>
@@ -823,119 +823,123 @@
 <span id="tests-pack-loft-L67">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-persistent-stores.html">store_load</a></span>(qb, <span class="fn-call">blobs_path</span>(base)), <span class="st">"bulk half read back"</span>);</span>
 <span id="tests-pack-loft-L68">  out = qb[<span class="st">"page/mobs"</span>];</span>
 <span id="tests-pack-loft-L69">  src = b[<span class="st">"page/mobs"</span>];</span>
-<span id="tests-pack-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out != <span class="kw">null</span> <span class="kw">and</span> src != <span class="kw">null</span>, <span class="st">"page pixels present"</span>);</span>
-<span id="tests-pack-loft-L71">  <span class="cm">// A keyed read answers `Blob?`, so the bytes are `vector&lt;u8&gt;?`.  Every `?? []` in</span></span>
-<span id="tests-pack-loft-L72">  <span class="cm">// this file sits behind a non-null assert on the line above it: the default is what</span></span>
-<span id="tests-pack-loft-L73">  <span class="cm">// an already-failed test would have read, never a comparison of two empty vectors.</span></span>
-<span id="tests-pack-loft-L74">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same_bytes</span>(out.bl_bytes ?? [], src.bl_bytes ?? []), <span class="st">"pixels byte-identical"</span>);</span>
-<span id="tests-pack-loft-L75">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out.bl_kind is <span class="en">Rgba</span>, <span class="st">"the kind came back too"</span>);</span>
-<span id="tests-pack-loft-L76">  <span class="cm">// Length alone cannot witness the bytes: two blobs of the same size differ here.</span></span>
-<span id="tests-pack-loft-L77">  items = qb[<span class="st">"page/items"</span>];</span>
-<span id="tests-pack-loft-L78">  clip = qb[<span class="st">"hit.ogg"</span>];</span>
-<span id="tests-pack-loft-L79">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(items != <span class="kw">null</span> <span class="kw">and</span> clip != <span class="kw">null</span>, <span class="st">"both fixture blobs are resident"</span>);</span>
-<span id="tests-pack-loft-L80">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">same_bytes</span>(items.bl_bytes ?? [], clip.bl_bytes ?? []),</span>
-<span id="tests-pack-loft-L81">         <span class="st">"the fixture's blobs are distinguishable at all"</span>);</span>
-<span id="tests-pack-loft-L82">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L83">}</span>
-<span id="tests-pack-loft-L84"></span>
-<span id="tests-pack-loft-L85"><span class="kw">fn</span> <span class="fn-call">test_one_key_reads_without_the_rest_of_the_pack</span>() {</span>
-<span id="tests-pack-loft-L86">  base = <span class="fn-call">base_for</span>(<span class="st">"paged"</span>);</span>
-<span id="tests-pack-loft-L87">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L88">  p = <span class="fn-call">new_pack</span>();</span>
-<span id="tests-pack-loft-L89">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L90">  <span class="fn-call">fixture</span>(p, b);</span>
-<span id="tests-pack-loft-L91">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
-<span id="tests-pack-loft-L92"></span>
-<span id="tests-pack-loft-L93">  <span class="cm">// The whole point of the bulk half: a reader starts EMPTY and ends holding only</span></span>
-<span id="tests-pack-loft-L94">  <span class="cm">// what it asked for.  A loader that pulled the file would pass a value check and</span></span>
-<span id="tests-pack-loft-L95">  <span class="cm">// fail this one.</span></span>
-<span id="tests-pack-loft-L96">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L97">  got = <span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"hit.ogg"</span>]);</span>
-<span id="tests-pack-loft-L98">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got == <span class="nm">1</span>, <span class="st">"the fetch cost one round trip"</span>);</span>
-<span id="tests-pack-loft-L99">  clip = res[<span class="st">"hit.ogg"</span>];</span>
-<span id="tests-pack-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(clip != <span class="kw">null</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(res[<span class="st">"hit.ogg"</span>].bl_bytes ?? []) == <span class="nm">2048</span>, <span class="st">"the clip arrived whole"</span>);</span>
-<span id="tests-pack-loft-L101">  n = <span class="nm">0</span>;</span>
-<span id="tests-pack-loft-L102">  <span class="kw">for</span> _r <span class="kw">in</span> res { n += <span class="nm">1</span>; }</span>
-<span id="tests-pack-loft-L103">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n == <span class="nm">1</span>, <span class="st">"only the requested key is resident, not the two pages"</span>);</span>
-<span id="tests-pack-loft-L104"></span>
-<span id="tests-pack-loft-L105">  <span class="cm">// Asking again costs nothing — which is what lets a frame assert zero.</span></span>
-<span id="tests-pack-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"hit.ogg"</span>]) == <span class="nm">0</span>, <span class="st">"a resident key is free"</span>);</span>
-<span id="tests-pack-loft-L107">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L108">}</span>
-<span id="tests-pack-loft-L109"></span>
-<span id="tests-pack-loft-L110"><span class="kw">fn</span> <span class="fn-call">test_a_key_the_pack_does_not_have_answers_false</span>() {</span>
-<span id="tests-pack-loft-L111">  base = <span class="fn-call">base_for</span>(<span class="st">"absent"</span>);</span>
-<span id="tests-pack-loft-L112">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L113">  p = <span class="fn-call">new_pack</span>();</span>
-<span id="tests-pack-loft-L114">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L115">  <span class="fn-call">fixture</span>(p, b);</span>
-<span id="tests-pack-loft-L116">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
-<span id="tests-pack-loft-L117"></span>
-<span id="tests-pack-loft-L118">  <span class="cm">// A paged reader that cannot say "absent" is one a caller has to guess about.</span></span>
-<span id="tests-pack-loft-L119">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L120">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"no-such-blob"</span>]) == <span class="nm">0</span>, <span class="st">"nothing was fetched"</span>);</span>
-<span id="tests-pack-loft-L121">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(res[<span class="st">"no-such-blob"</span>] == <span class="kw">null</span>, <span class="st">"and no empty record was invented"</span>);</span>
-<span id="tests-pack-loft-L122">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L123">}</span>
-<span id="tests-pack-loft-L124"></span>
-<span id="tests-pack-loft-L125"><span class="kw">fn</span> <span class="fn-call">test_one_base_drives_both_halves_as_a_url</span>() {</span>
-<span id="tests-pack-loft-L126">  base = <span class="fn-call">base_for</span>(<span class="st">"url"</span>);</span>
-<span id="tests-pack-loft-L127">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L128">  p = <span class="fn-call">new_pack</span>();</span>
-<span id="tests-pack-loft-L129">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L130">  <span class="fn-call">fixture</span>(p, b);</span>
-<span id="tests-pack-loft-L131">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
-<span id="tests-pack-loft-L132"></span>
-<span id="tests-pack-loft-L133">  <span class="cm">// The plan's whole premise: develop against a file, ship against a CDN, with ONE</span></span>
-<span id="tests-pack-loft-L134">  <span class="cm">// string changed.  `file://` is the scheme this suite can drive without a server,</span></span>
-<span id="tests-pack-loft-L135">  <span class="cm">// and it takes the same branch an `http(s)://` base does.</span></span>
-<span id="tests-pack-loft-L136">  <span class="cm">//</span></span>
-<span id="tests-pack-loft-L137">  <span class="cm">// ⚠ The two halves do NOT accept the same spellings underneath: the metadata half</span></span>
-<span id="tests-pack-loft-L138">  <span class="cm">// reads a `file://` URL and the paged half REFUSES it (a path or an http URL, and</span></span>
-<span id="tests-pack-loft-L139">  <span class="cm">// nothing else).  A test that only read the metadata would pass while a game's</span></span>
-<span id="tests-pack-loft-L140">  <span class="cm">// art silently loaded nothing.</span></span>
-<span id="tests-pack-loft-L141">  url = <span class="st">"file://{base}"</span>;</span>
-<span id="tests-pack-loft-L142">  q = <span class="fn-call">new_pack</span>();</span>
-<span id="tests-pack-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_read</span>(q, url), <span class="st">"the metadata half read through a URL"</span>);</span>
-<span id="tests-pack-loft-L144">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(q.pages[<span class="st">"mobs"</span>] != <span class="kw">null</span>, <span class="st">"and carries the same pages"</span>);</span>
-<span id="tests-pack-loft-L145"></span>
-<span id="tests-pack-loft-L146">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L147">  got = <span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(url), [<span class="st">"hit.ogg"</span>]);</span>
-<span id="tests-pack-loft-L148">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got == <span class="nm">1</span>, <span class="st">"the bulk half fetched through the SAME base, got {got}"</span>);</span>
-<span id="tests-pack-loft-L149">  clip = res[<span class="st">"hit.ogg"</span>];</span>
-<span id="tests-pack-loft-L150">  fix = b[<span class="st">"hit.ogg"</span>];</span>
-<span id="tests-pack-loft-L151">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(clip != <span class="kw">null</span> <span class="kw">and</span> fix != <span class="kw">null</span>, <span class="st">"a record, not a refusal"</span>);</span>
-<span id="tests-pack-loft-L152">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same_bytes</span>(clip.bl_bytes ?? [], fix.bl_bytes ?? []), <span class="st">"the same bytes as the path read"</span>);</span>
-<span id="tests-pack-loft-L153">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L154">}</span>
-<span id="tests-pack-loft-L155"></span>
-<span id="tests-pack-loft-L156"><span class="kw">fn</span> <span class="fn-call">test_the_two_halves_are_separate_files</span>() {</span>
-<span id="tests-pack-loft-L157">  base = <span class="fn-call">base_for</span>(<span class="st">"split"</span>);</span>
-<span id="tests-pack-loft-L158">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L159">  p = <span class="fn-call">new_pack</span>();</span>
-<span id="tests-pack-loft-L160">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L161">  <span class="fn-call">fixture</span>(p, b);</span>
-<span id="tests-pack-loft-L162">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
-<span id="tests-pack-loft-L163">  <span class="cm">// The split is the design, and it is observable: the metadata a boot load pays</span></span>
-<span id="tests-pack-loft-L164">  <span class="cm">// for is a different file from the art, so it can stay small beside it.</span></span>
-<span id="tests-pack-loft-L165">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="fn-call">meta_path</span>(base)).<span class="fn-call"><a href="stdlib-files-and-directories.html">exists</a></span>(), <span class="st">"metadata half on disk"</span>);</span>
-<span id="tests-pack-loft-L166">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="fn-call">blobs_path</span>(base)).<span class="fn-call"><a href="stdlib-files-and-directories.html">exists</a></span>(), <span class="st">"bulk half on disk"</span>);</span>
-<span id="tests-pack-loft-L167">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">meta_path</span>(base) != <span class="fn-call">blobs_path</span>(base), <span class="st">"two names, not one"</span>);</span>
-<span id="tests-pack-loft-L168">  <span class="fn-call">clean</span>(base);</span>
-<span id="tests-pack-loft-L169">}</span>
-<span id="tests-pack-loft-L170"></span>
-<span id="tests-pack-loft-L171"><span class="cm">// A second put under one key replaces the first: one blob, the newer bytes.</span></span>
-<span id="tests-pack-loft-L172"><span class="kw">fn</span> <span class="fn-call">test_a_blob_put_twice_under_one_key_is_one_blob</span>() {</span>
-<span id="tests-pack-loft-L173">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
-<span id="tests-pack-loft-L174">  <span class="fn-call">blob_put</span>(b, <span class="st">"page/a"</span>, <span class="en">Bytes</span>, [<span class="nm">1</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]);</span>
-<span id="tests-pack-loft-L175">  <span class="fn-call">blob_put</span>(b, <span class="st">"page/a"</span>, <span class="en">Png</span>, [<span class="nm">2</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, <span class="nm">3</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]);</span>
-<span id="tests-pack-loft-L176">  <span class="fn-call">blob_put</span>(b, <span class="st">"page/b"</span>, <span class="en">Bytes</span>, [<span class="nm">9</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]);</span>
-<span id="tests-pack-loft-L177">  n = <span class="nm">0</span>;</span>
-<span id="tests-pack-loft-L178">  <span class="kw">for</span> _x <span class="kw">in</span> b { n += <span class="nm">1</span>; }</span>
-<span id="tests-pack-loft-L179">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(b) == <span class="nm">2</span> &amp;&amp; n == <span class="nm">2</span>, <span class="st">"two keys, two blobs: len {len(b)}, walk {n}"</span>);</span>
-<span id="tests-pack-loft-L180">  got = b[<span class="st">"page/a"</span>].bl_bytes ?? [];</span>
-<span id="tests-pack-loft-L181">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(got) == <span class="nm">2</span> &amp;&amp; b[<span class="st">"page/a"</span>].bl_kind == <span class="en">Png</span>, <span class="st">"the newer blob"</span>);</span>
-<span id="tests-pack-loft-L182">}</span>
+<span id="tests-pack-loft-L70">  <span class="cm">// A keyed read answers `Blob?`.  One assert per name proves each present for the rest</span></span>
+<span id="tests-pack-loft-L71">  <span class="cm">// of the test (N-Guard), on every loft: a compound `a != null and b != null` narrows</span></span>
+<span id="tests-pack-loft-L72">  <span class="cm">// both only on a loft that reads a conjunction's facts, so a `?? []` after it is needed</span></span>
+<span id="tests-pack-loft-L73">  <span class="cm">// on one loft and redundant on the next.</span></span>
+<span id="tests-pack-loft-L74">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out != <span class="kw">null</span>, <span class="st">"page pixels read back"</span>);</span>
+<span id="tests-pack-loft-L75">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(src != <span class="kw">null</span>, <span class="st">"page pixels written"</span>);</span>
+<span id="tests-pack-loft-L76">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same_bytes</span>(out.bl_bytes, src.bl_bytes), <span class="st">"pixels byte-identical"</span>);</span>
+<span id="tests-pack-loft-L77">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out.bl_kind is <span class="en">Rgba</span>, <span class="st">"the kind came back too"</span>);</span>
+<span id="tests-pack-loft-L78">  <span class="cm">// Length alone cannot witness the bytes: two blobs of the same size differ here.</span></span>
+<span id="tests-pack-loft-L79">  items = qb[<span class="st">"page/items"</span>];</span>
+<span id="tests-pack-loft-L80">  clip = qb[<span class="st">"hit.ogg"</span>];</span>
+<span id="tests-pack-loft-L81">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(items != <span class="kw">null</span>, <span class="st">"the items blob is resident"</span>);</span>
+<span id="tests-pack-loft-L82">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(clip != <span class="kw">null</span>, <span class="st">"the clip blob is resident"</span>);</span>
+<span id="tests-pack-loft-L83">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">same_bytes</span>(items.bl_bytes, clip.bl_bytes),</span>
+<span id="tests-pack-loft-L84">         <span class="st">"the fixture's blobs are distinguishable at all"</span>);</span>
+<span id="tests-pack-loft-L85">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L86">}</span>
+<span id="tests-pack-loft-L87"></span>
+<span id="tests-pack-loft-L88"><span class="kw">fn</span> <span class="fn-call">test_one_key_reads_without_the_rest_of_the_pack</span>() {</span>
+<span id="tests-pack-loft-L89">  base = <span class="fn-call">base_for</span>(<span class="st">"paged"</span>);</span>
+<span id="tests-pack-loft-L90">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L91">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-pack-loft-L92">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L93">  <span class="fn-call">fixture</span>(p, b);</span>
+<span id="tests-pack-loft-L94">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
+<span id="tests-pack-loft-L95"></span>
+<span id="tests-pack-loft-L96">  <span class="cm">// The whole point of the bulk half: a reader starts EMPTY and ends holding only</span></span>
+<span id="tests-pack-loft-L97">  <span class="cm">// what it asked for.  A loader that pulled the file would pass a value check and</span></span>
+<span id="tests-pack-loft-L98">  <span class="cm">// fail this one.</span></span>
+<span id="tests-pack-loft-L99">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L100">  got = <span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"hit.ogg"</span>]);</span>
+<span id="tests-pack-loft-L101">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got == <span class="nm">1</span>, <span class="st">"the fetch cost one round trip"</span>);</span>
+<span id="tests-pack-loft-L102">  clip = res[<span class="st">"hit.ogg"</span>];</span>
+<span id="tests-pack-loft-L103">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(clip != <span class="kw">null</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(res[<span class="st">"hit.ogg"</span>].bl_bytes ?? []) == <span class="nm">2048</span>, <span class="st">"the clip arrived whole"</span>);</span>
+<span id="tests-pack-loft-L104">  n = <span class="nm">0</span>;</span>
+<span id="tests-pack-loft-L105">  <span class="kw">for</span> _r <span class="kw">in</span> res { n += <span class="nm">1</span>; }</span>
+<span id="tests-pack-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n == <span class="nm">1</span>, <span class="st">"only the requested key is resident, not the two pages"</span>);</span>
+<span id="tests-pack-loft-L107"></span>
+<span id="tests-pack-loft-L108">  <span class="cm">// Asking again costs nothing — which is what lets a frame assert zero.</span></span>
+<span id="tests-pack-loft-L109">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"hit.ogg"</span>]) == <span class="nm">0</span>, <span class="st">"a resident key is free"</span>);</span>
+<span id="tests-pack-loft-L110">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L111">}</span>
+<span id="tests-pack-loft-L112"></span>
+<span id="tests-pack-loft-L113"><span class="kw">fn</span> <span class="fn-call">test_a_key_the_pack_does_not_have_answers_false</span>() {</span>
+<span id="tests-pack-loft-L114">  base = <span class="fn-call">base_for</span>(<span class="st">"absent"</span>);</span>
+<span id="tests-pack-loft-L115">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L116">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-pack-loft-L117">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L118">  <span class="fn-call">fixture</span>(p, b);</span>
+<span id="tests-pack-loft-L119">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
+<span id="tests-pack-loft-L120"></span>
+<span id="tests-pack-loft-L121">  <span class="cm">// A paged reader that cannot say "absent" is one a caller has to guess about.</span></span>
+<span id="tests-pack-loft-L122">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L123">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"no-such-blob"</span>]) == <span class="nm">0</span>, <span class="st">"nothing was fetched"</span>);</span>
+<span id="tests-pack-loft-L124">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(res[<span class="st">"no-such-blob"</span>] == <span class="kw">null</span>, <span class="st">"and no empty record was invented"</span>);</span>
+<span id="tests-pack-loft-L125">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L126">}</span>
+<span id="tests-pack-loft-L127"></span>
+<span id="tests-pack-loft-L128"><span class="kw">fn</span> <span class="fn-call">test_one_base_drives_both_halves_as_a_url</span>() {</span>
+<span id="tests-pack-loft-L129">  base = <span class="fn-call">base_for</span>(<span class="st">"url"</span>);</span>
+<span id="tests-pack-loft-L130">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L131">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-pack-loft-L132">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L133">  <span class="fn-call">fixture</span>(p, b);</span>
+<span id="tests-pack-loft-L134">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
+<span id="tests-pack-loft-L135"></span>
+<span id="tests-pack-loft-L136">  <span class="cm">// The plan's whole premise: develop against a file, ship against a CDN, with ONE</span></span>
+<span id="tests-pack-loft-L137">  <span class="cm">// string changed.  `file://` is the scheme this suite can drive without a server,</span></span>
+<span id="tests-pack-loft-L138">  <span class="cm">// and it takes the same branch an `http(s)://` base does.</span></span>
+<span id="tests-pack-loft-L139">  <span class="cm">//</span></span>
+<span id="tests-pack-loft-L140">  <span class="cm">// ⚠ The two halves do NOT accept the same spellings underneath: the metadata half</span></span>
+<span id="tests-pack-loft-L141">  <span class="cm">// reads a `file://` URL and the paged half REFUSES it (a path or an http URL, and</span></span>
+<span id="tests-pack-loft-L142">  <span class="cm">// nothing else).  A test that only read the metadata would pass while a game's</span></span>
+<span id="tests-pack-loft-L143">  <span class="cm">// art silently loaded nothing.</span></span>
+<span id="tests-pack-loft-L144">  url = <span class="st">"file://{base}"</span>;</span>
+<span id="tests-pack-loft-L145">  q = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-pack-loft-L146">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_read</span>(q, url), <span class="st">"the metadata half read through a URL"</span>);</span>
+<span id="tests-pack-loft-L147">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(q.pages[<span class="st">"mobs"</span>] != <span class="kw">null</span>, <span class="st">"and carries the same pages"</span>);</span>
+<span id="tests-pack-loft-L148"></span>
+<span id="tests-pack-loft-L149">  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L150">  got = <span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(url), [<span class="st">"hit.ogg"</span>]);</span>
+<span id="tests-pack-loft-L151">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got == <span class="nm">1</span>, <span class="st">"the bulk half fetched through the SAME base, got {got}"</span>);</span>
+<span id="tests-pack-loft-L152">  clip = res[<span class="st">"hit.ogg"</span>];</span>
+<span id="tests-pack-loft-L153">  fix = b[<span class="st">"hit.ogg"</span>];</span>
+<span id="tests-pack-loft-L154">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(clip != <span class="kw">null</span>, <span class="st">"a record, not a refusal"</span>);</span>
+<span id="tests-pack-loft-L155">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fix != <span class="kw">null</span>, <span class="st">"the fixture blob is there"</span>);</span>
+<span id="tests-pack-loft-L156">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same_bytes</span>(clip.bl_bytes, fix.bl_bytes), <span class="st">"the same bytes as the path read"</span>);</span>
+<span id="tests-pack-loft-L157">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L158">}</span>
+<span id="tests-pack-loft-L159"></span>
+<span id="tests-pack-loft-L160"><span class="kw">fn</span> <span class="fn-call">test_the_two_halves_are_separate_files</span>() {</span>
+<span id="tests-pack-loft-L161">  base = <span class="fn-call">base_for</span>(<span class="st">"split"</span>);</span>
+<span id="tests-pack-loft-L162">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L163">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-pack-loft-L164">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L165">  <span class="fn-call">fixture</span>(p, b);</span>
+<span id="tests-pack-loft-L166">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, b, base), <span class="st">"written"</span>);</span>
+<span id="tests-pack-loft-L167">  <span class="cm">// The split is the design, and it is observable: the metadata a boot load pays</span></span>
+<span id="tests-pack-loft-L168">  <span class="cm">// for is a different file from the art, so it can stay small beside it.</span></span>
+<span id="tests-pack-loft-L169">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="fn-call">meta_path</span>(base)).<span class="fn-call"><a href="stdlib-files-and-directories.html">exists</a></span>(), <span class="st">"metadata half on disk"</span>);</span>
+<span id="tests-pack-loft-L170">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="fn-call">blobs_path</span>(base)).<span class="fn-call"><a href="stdlib-files-and-directories.html">exists</a></span>(), <span class="st">"bulk half on disk"</span>);</span>
+<span id="tests-pack-loft-L171">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">meta_path</span>(base) != <span class="fn-call">blobs_path</span>(base), <span class="st">"two names, not one"</span>);</span>
+<span id="tests-pack-loft-L172">  <span class="fn-call">clean</span>(base);</span>
+<span id="tests-pack-loft-L173">}</span>
+<span id="tests-pack-loft-L174"></span>
+<span id="tests-pack-loft-L175"><span class="cm">// A second put under one key replaces the first: one blob, the newer bytes.</span></span>
+<span id="tests-pack-loft-L176"><span class="kw">fn</span> <span class="fn-call">test_a_blob_put_twice_under_one_key_is_one_blob</span>() {</span>
+<span id="tests-pack-loft-L177">  b: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-pack-loft-L178">  <span class="fn-call">blob_put</span>(b, <span class="st">"page/a"</span>, <span class="en">Bytes</span>, [<span class="nm">1</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]);</span>
+<span id="tests-pack-loft-L179">  <span class="fn-call">blob_put</span>(b, <span class="st">"page/a"</span>, <span class="en">Png</span>, [<span class="nm">2</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, <span class="nm">3</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]);</span>
+<span id="tests-pack-loft-L180">  <span class="fn-call">blob_put</span>(b, <span class="st">"page/b"</span>, <span class="en">Bytes</span>, [<span class="nm">9</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]);</span>
+<span id="tests-pack-loft-L181">  n = <span class="nm">0</span>;</span>
+<span id="tests-pack-loft-L182">  <span class="kw">for</span> _x <span class="kw">in</span> b { n += <span class="nm">1</span>; }</span>
+<span id="tests-pack-loft-L183">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(b) == <span class="nm">2</span> &amp;&amp; n == <span class="nm">2</span>, <span class="st">"two keys, two blobs: len {len(b)}, walk {n}"</span>);</span>
+<span id="tests-pack-loft-L184">  got = b[<span class="st">"page/a"</span>].bl_bytes ?? [];</span>
+<span id="tests-pack-loft-L185">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(got) == <span class="nm">2</span> &amp;&amp; b[<span class="st">"page/a"</span>].bl_kind == <span class="en">Png</span>, <span class="st">"the newer blob"</span>);</span>
+<span id="tests-pack-loft-L186">}</span>
 </code></pre>
 <h2 id="tests-page-loft">tests/page.loft</h2>
 <pre class="src"><code><span id="tests-page-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

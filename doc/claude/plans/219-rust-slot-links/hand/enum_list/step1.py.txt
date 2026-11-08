@@ -1,0 +1,36 @@
+# step 1 — (R-Demote) for a struct-enum VARIANT literal: `l = Cons { v, next: l }` moves l's old
+# record into one fresh child of l's store and writes the variant's tag and other fields into
+# l's record; no work store, no copy of the list into it, no copy back.
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+RT = '''
+static void loft_demote(loft_ref h, uint32_t size, uint32_t fpos) {
+    loft_store_t *s = loft_store_of(h);
+    uint32_t c = loft_claim(s, 1 + (size + 7) / 8);
+    loft_ref ch = { h.store_nr, c, 8, 0 };
+    loft_copy_bytes(ch, 0, h, 0, size);
+    loft_set_u32(s, h.rec, h.pos + fpos, c);
+}
+'''
+anchor = 'static void loft_vec_add_array('
+s = s.replace(anchor, RT + anchor, 1)
+import re
+def demote(s, buf, dst, field_val_src):
+    """Replace the block from `loft_database_typed(&buf, …)` to `loft_bind_copy(…, &dst, buf);`
+    with the demote of `dst` and the two field writes."""
+    a = s.index(f'loft_database_typed(&{buf}, 16, 106);')
+    a = s.rindex('\n', 0, a) + 1
+    b_tok = f'loft_bind_copy(loft_types, 100, &{dst}, {buf});'
+    b = s.index(b_tok, a) + len(b_tok)
+    block = s[a:b]
+    ind = block[:len(block) - len(block.lstrip())]
+    m = re.search(r'loft_set_int_at\((\w+), 8, (\w+), ("[^"]*"), (\d+)\);', block)
+    pre = ''.join(l + '\n' for l in block.split('\n') if re.search(r'= n_key', l))
+    new = (pre + f'{ind}loft_demote({dst}, 16, 4);\n'
+           f'{ind}loft_set_int_at({dst}, 8, {m.group(2)}, {m.group(3)}, {m.group(4)});\n'
+           f'{ind}loft_set_byte_at({dst}, 0, (uint8_t) 2, {m.group(3)}, {m.group(4)});')
+    return s[:a] + new + s[b:]
+s = demote(s, 'v17___ref_p2_1', 'v2_l', None)
+s = demote(s, 'v19___ref_p2_2', 'v7_r', None)
+open(dst, 'w').write(s)

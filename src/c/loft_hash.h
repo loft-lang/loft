@@ -1039,6 +1039,9 @@ static uint32_t loft_h_inline_remove(loft_store_t *s, uint32_t claim, loft_ref r
     return seq;
 }
 
+static uint32_t loft_h_remove_at(loft_store_t *s, uint32_t claim, const loft_hents *pents, const loft_key *keys,
+                                 int nk, uint32_t hole, uint32_t gone);
+
 /* hash::remove: the entry `rec` leaves the table, the probe run behind it shifted back into the
  * hole (`@FR-Col-Remove`); the bucket value that named it answered, 0 when none did. */
 static uint32_t loft_h_remove(loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
@@ -1049,11 +1052,20 @@ static uint32_t loft_h_remove(loft_ref c, loft_ref rec, const loft_key *keys, in
     if (loft_h_is_inline(s, claim)) return loft_h_inline_remove(s, claim, rec);
     uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
     if (length == 0) return 0;
-    uint32_t count = loft_h_hdr(s, claim).count;
     loft_hents ents = loft_h_entries(s, claim, c.store_nr);
-    uint64_t seed = loft_h_read_seed(s, claim);
     uint32_t hole, gone;
     if (!loft_h_rec_pos(s, claim, &ents, rec, keys, nk, &hole, &gone)) return 0;
+    return loft_h_remove_at(s, claim, &ents, keys, nk, hole, gone);
+}
+
+/* hash::remove's second half: bucket `hole`, which holds `gone`, is emptied and the probe run
+ * behind it shifted back into the hole (`@FR-Col-Remove`); `gone` answered. */
+static uint32_t loft_h_remove_at(loft_store_t *s, uint32_t claim, const loft_hents *pents, const loft_key *keys,
+                                 int nk, uint32_t hole, uint32_t gone) {
+    loft_hents ents = *pents;
+    uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
+    uint32_t count = loft_h_hdr(s, claim).count;
+    uint64_t seed = loft_h_read_seed(s, claim);
     uint32_t sb = loft_h_slot_bytes(s, claim);
     int by_tag = sb == 8 && loft_is_pow2(count);
     loft_set_u32(s, claim, LOFT_H_BUCKET0 + hole * sb, 0);
@@ -1468,6 +1480,72 @@ static void loft_hash_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, lof
     if (e.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return;
     if (LOFT_WRITE_REFUSED(loft_store_of(c))) return;
     uint32_t slot = loft_hash_unlink(c, e, keys, nk);
+    if (view) return;
+    if (loft_hash_owns_entries(c)) {
+        loft_remove_claims(T, elem, e);
+        loft_free_hash_entry(c, e, slot);
+        return;
+    }
+    loft_ref rec = { e.store_nr, e.rec, 8, 0 };
+    loft_remove_claims(T, elem, rec);
+    loft_st_delete(loft_store_of(c), e.rec);
+}
+
+/* `@FR-R-TypedKeyed`'s removal clause: `h[k] = null` for a hash whose ONE key is an 8-byte integer
+ * — `loft_h_find_i64`'s walk from the key's home finds the entry's bucket and the removal starts
+ * there, one probe where finding the record and then removing it (`loft_h_rec_pos`, by the
+ * record's digest) took two.  Every outcome is `loft_hash_remove(…, loft_h_find_i64(…), …)`'s:
+ * a miss changes nothing, an inline table and a locked store take that route itself. */
+static void loft_hash_remove_i64(const loft_tdesc *T, uint16_t elem, loft_ref c, int64_t key, const loft_key *keys,
+                                 int nk, int view) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return;
+    loft_store_t *s = loft_store_of(c);
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(s, claim) == 0) return;
+    if (loft_h_is_inline(s, claim) || LOFT_WRITE_REFUSED(s) || loft_u32(s, claim, LOFT_H_LEN_FLD) == 0) {
+        loft_hash_remove(T, elem, c, loft_h_find_i64(c, keys, key), keys, nk, view);
+        return;
+    }
+    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
+    uint64_t hv = loft_digest_i64(loft_h_read_seed(s, claim), key);
+    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count), kpos = keys[0].pos;
+    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    loft_ref e = loft_ref_null();
+    uint32_t val = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
+        if (slot == 0) break;
+        if (!loft_h_tag_differs(s, claim, sb, index, tag)) {
+            loft_ref f = loft_ref_null();
+            int64_t have;
+            f.store_nr = c.store_nr;
+            loft_h_at_bucket(&ents, s, slot, index, &f.rec, &f.pos);
+            if (f.rec != 0) {
+                memcpy(&have, loft_at(s, f.rec, f.pos + kpos), 8);
+                if (have == key) {
+                    e = f;
+                    val = slot;
+                    break;
+                }
+            }
+        }
+        if (++index >= count) index = 0;
+    }
+#ifdef LOFT_KEYED_VERIFY
+    {
+        loft_ref want = loft_h_find_i64(c, keys, key);
+        if (want.rec != e.rec || (e.rec != 0 && want.pos != e.pos)) {
+            fflush(stdout);
+            fprintf(stderr, "LOFT_KEYED_VERIFY: the typed removal found %u+%u where the lookup finds %u+%u\n",
+                    (unsigned) e.rec, (unsigned) (e.rec ? e.pos : 0), (unsigned) want.rec,
+                    (unsigned) (want.rec ? want.pos : 0));
+            abort();
+        }
+    }
+#endif
+    if (e.rec == 0) return;
+    loft_forget_in_scratches(c, e);
+    uint32_t slot = loft_h_remove_at(s, claim, &ents, keys, nk, index, val);
     if (view) return;
     if (loft_hash_owns_entries(c)) {
         loft_remove_claims(T, elem, e);

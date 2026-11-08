@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """stats.py — the benchmark suite as STATISTICS: is each routine within its bar of Rust?
 
-    python3 bench/stats.py [--only 01,08] [--lanes native,rust[,ship][,c,cship]] [--samples 7]
+    python3 bench/stats.py [--only 01,08] [--lanes rust,c,cship[,native][,ship]] [--samples 7]
                            [--target-ms 400] [--bar 2.0] [--tsv out.tsv] [--no-pin]
                            [--package DIR[=NAME]]... [--routine [BENCH/]NAME[,…]]...
 
@@ -37,6 +37,8 @@ with numbers that can be compared from one pass to the next:
   * the HASHES must agree across the lanes that ran a routine.  A routine whose lanes
     disagree is not one algorithm and its times do not compare — always fatal.
 
+The default lanes, `rust,c,cship`, are the judged ones: the C ship lane against the Rust twin,
+the checked C beside it (doc/claude/PERFORMANCE.md § What is judged).
 Lanes: `native` (loft `--native-emit --lean`, rustc opt-level 3, one codegen unit — what
 `--ship` ships), `rust` (the reference, `rustc -O` unless `--ref-flags` says
 otherwise), `interp` (the loft interpreter), `python`, and `ship`: the program compiled whole,
@@ -747,7 +749,7 @@ def require_compiled_stdlib(loft):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--only", default="", help="comma-separated bench numbers or names")
-    ap.add_argument("--lanes", default="native,rust")
+    ap.add_argument("--lanes", default="rust,c,cship")
     ap.add_argument("--samples", type=int, default=7)
     ap.add_argument("--target-ms", type=float, default=400.0)
     ap.add_argument("--bar", type=float, default=2.0)

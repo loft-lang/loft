@@ -22,7 +22,6 @@
 use super::{FnWriter, as_int};
 use crate::c::{CType, Cx, c_name};
 use crate::data::{Block, Value};
-use crate::loop_shape::RangeCounters;
 use crate::opt::version::{Leaf, Lin};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -39,9 +38,30 @@ pub(crate) struct VLoop {
 /// rows measured +3-4 % (gcc) versioned without a floor, unchanged at eight.
 const MIN_TRIPS: i64 = 8;
 
-/// What a counter's facts say of one argument: its invariant part (`None` for none) and the
-/// counter's coefficient, -1, 0 or 1.
-type ArgShape<'v> = (Option<&'v Value>, i64);
+/// What a counter's facts say of one argument: its invariant part (`None` for none), the
+/// counter's coefficient, -1, 0 or 1, and which loop of the box that counter belongs to.
+type ArgShape<'v> = (Option<&'v Value>, i64, usize);
+
+/// One counted loop of the box a site's precondition is asked over: its counters, where its
+/// first value comes from, its end and whether that end is inclusive.
+struct Level<'v> {
+    counters: Vec<u16>,
+    first: First<'v>,
+    /// The end as C, or (`end_value`) the expression a nested loop's end is set from.
+    end: String,
+    end_value: Option<&'v Value>,
+    inclusive: bool,
+}
+
+/// A loop's first counter value, as its prelude can read it: the index-form counter's seed
+/// (its value at the prelude) plus one, the two-counter form's `next`, or — for a loop nested
+/// in the one whose prelude asks — the seed expression the enclosing body sets it from (`+ 1`
+/// for the index form).
+enum First<'v> {
+    Index(u16),
+    Next(u16),
+    Seed(&'v Value, bool),
+}
 
 impl Cx<'_> {
     /// `d`'s leaf plan, as its held-inputs twin's inputs name them; memoised.
@@ -173,12 +193,14 @@ impl FnWriter<'_> {
             || self.gen_elem.is_some()
             || self.lean()
             || self.vf.is_some()
-            || b.operators.iter().any(|op| {
-                op.any_node(&mut |n| {
-                    matches!(n, Value::Loop(_) | Value::Yield(_) | Value::Parallel(_))
-                })
-            })
+            || b.operators
+                .iter()
+                .any(|op| op.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_))))
         {
+            return Ok(None);
+        }
+        let inner = inner_loop(b);
+        if inner.is_err() {
             return Ok(None);
         }
         let Ok(rc) = crate::loop_shape::range_counters(b, self.cx.data) else {
@@ -212,8 +234,31 @@ impl FnWriter<'_> {
             Value::Long(k) if *k != i64::MIN => format!("INT64_C({k})"),
             _ => return Ok(None),
         };
+        let mut levels = vec![Level {
+            counters,
+            first: match rc.next {
+                Some(n) => First::Next(n),
+                None => First::Index(rc.index),
+            },
+            end,
+            end_value: None,
+            inclusive: rc.inclusive,
+        }];
+        // The NEST clause: a loop holding one innermost counted loop asks the precondition of
+        // that loop's calls over both counters at once, its seed and end invariant here.
+        let body: &[Value] = match inner {
+            Ok(None) => &b.operators,
+            Ok(Some(lp)) => match self.version_level(b, lp, &rebound, &levels[0].counters) {
+                Some(level) => {
+                    levels.push(level);
+                    &lp.operators
+                }
+                None => return Ok(None),
+            },
+            Err(()) => return Ok(None),
+        };
         let mut sites: Vec<(usize, u32, &[Value])> = Vec::new();
-        for op in &b.operators {
+        for op in body {
             op.walk(&mut |n| {
                 if let Value::Call(d, args) = n
                     && !super::super::is_operator(self.cx.data, *d)
@@ -224,14 +269,76 @@ impl FnWriter<'_> {
         }
         let mut flags = HashMap::new();
         for (at, d, args) in sites {
-            if self.cx.version_leaf(d).is_none() || flags.contains_key(&at) {
+            // A site an enclosing nest decided keeps that flag: asked again per entry of this
+            // loop as a fallback where the box failed, it cost draw_quads 25 % where it never
+            // ran (the row loop grows by the inlined preconditions).
+            if self.cx.version_leaf(d).is_none()
+                || flags.contains_key(&at)
+                || self.version_site_flag(at).is_some()
+            {
                 continue;
             }
-            if let Some(site) = self.version_site(&rc, &rebound, &end, d, args, ind)? {
+            if let Some(site) = self.version_site(&levels, &rebound, d, args, ind)? {
                 flags.insert(at, site);
             }
         }
         Ok((!flags.is_empty()).then_some(VLoop { flags }))
+    }
+
+    /// The inner level of a nest: loop `lp` inside `b`, counted, its counters stepped only by
+    /// its iterator, its seed and end set once in `b` from values invariant over `b`.
+    fn version_level<'v>(
+        &self,
+        b: &'v Block,
+        lp: &'v Block,
+        rebound: &HashSet<u16>,
+        outer: &[u16],
+    ) -> Option<Level<'v>> {
+        let data = self.cx.data;
+        let (rc, seed) = crate::opt::hoist::nested_counted_loops(b, data)
+            .into_iter()
+            .find(|(rc, _)| {
+                crate::loop_shape::range_counters(lp, data)
+                    .is_ok_and(|own| own.index == rc.index && own.loop_var == rc.loop_var)
+            })?;
+        let counters: Vec<u16> = [Some(rc.loop_var), Some(rc.index), rc.next]
+            .into_iter()
+            .flatten()
+            .collect();
+        let mut steps = 0usize;
+        for op in &lp.operators {
+            op.walk(&mut |n| {
+                if let Value::Set(x, _) = n
+                    && counters.contains(x)
+                {
+                    steps += 1;
+                }
+            });
+        }
+        let all: Vec<u16> = outer.iter().chain(&counters).copied().collect();
+        if steps > counters.len()
+            || !self.version_invariant(rebound, &all, seed)
+            || !self.version_invariant(rebound, &all, rc.hi)
+        {
+            return None;
+        }
+        Some(Level {
+            counters,
+            first: First::Seed(seed, rc.next.is_none()),
+            end: String::new(),
+            end_value: Some(rc.hi),
+            inclusive: rc.inclusive,
+        })
+    }
+
+    /// The flag an enclosing loop's prelude decided for the call whose argument slice is at
+    /// `at`, with the held inputs it read.
+    fn version_site_flag(&self, at: usize) -> Option<&(String, Vec<String>)> {
+        self.versions
+            .iter()
+            .rev()
+            .flatten()
+            .find_map(|l| l.flags.get(&at))
     }
 
     /// Is `x` invariant over the loop: literals, variables it neither assigns nor lets escape,
@@ -259,13 +366,32 @@ impl FnWriter<'_> {
         }
     }
 
+    /// Argument `x` over the box's loops: invariant over all of them, or `X ± i` over the
+    /// counters of one, `X` invariant over all — answered with that loop's position.
+    fn version_arg_levels<'v>(
+        &self,
+        rebound: &HashSet<u16>,
+        levels: &[Level],
+        all: &[u16],
+        x: &'v Value,
+    ) -> Option<ArgShape<'v>> {
+        if self.version_invariant(rebound, all, x) {
+            return Some((Some(x), 0, 0));
+        }
+        levels.iter().enumerate().find_map(|(m, lv)| {
+            let (inv, c) = self.version_arg(rebound, &lv.counters, x)?;
+            (c != 0 && inv.is_none_or(|y| self.version_invariant(rebound, all, y)))
+                .then_some((inv, c, m))
+        })
+    }
+
     /// Argument `x` over the counters: invariant, the counter, `X + i`, `i + X` or `X - i`.
     fn version_arg<'v>(
         &self,
         rebound: &HashSet<u16>,
         counters: &[u16],
         x: &'v Value,
-    ) -> Option<ArgShape<'v>> {
+    ) -> Option<(Option<&'v Value>, i64)> {
         let counter = |y: &Value| matches!(y.unspan(), Value::Var(v) if counters.contains(v));
         if counter(x) {
             return Some((None, 1));
@@ -302,9 +428,8 @@ impl FnWriter<'_> {
     )]
     fn version_site(
         &mut self,
-        rc: &RangeCounters,
+        levels: &[Level],
         rebound: &HashSet<u16>,
-        end: &str,
         d: u32,
         args: &[Value],
         ind: usize,
@@ -352,9 +477,9 @@ impl FnWriter<'_> {
         if inputs.len() != scalar_keys.len() + fi.headers.len() {
             return Ok(None);
         }
-        let counters: Vec<u16> = [Some(rc.loop_var), Some(rc.index), rc.next]
-            .into_iter()
-            .flatten()
+        let counters: Vec<u16> = levels
+            .iter()
+            .flat_map(|l| l.counters.iter().copied())
             .collect();
         let leaves = leaf.leaves();
         let mut shapes: Vec<ArgShape> = Vec::with_capacity(leaves.len());
@@ -363,7 +488,8 @@ impl FnWriter<'_> {
             let shape = match lf {
                 Lin::Param(v) => {
                     let Some(i) = pos(*v) else { return Ok(None) };
-                    let Some(s) = self.version_arg(rebound, &counters, &args[i]) else {
+                    let Some(s) = self.version_arg_levels(rebound, levels, &counters, &args[i])
+                    else {
                         return Ok(self.version_decline(d, "an argument not linear in the counter"));
                     };
                     if s.1 != 0 {
@@ -371,7 +497,7 @@ impl FnWriter<'_> {
                     }
                     s
                 }
-                _ => (None, 0),
+                _ => (None, 0, 0),
             };
             shapes.push(shape);
         }
@@ -426,28 +552,77 @@ impl FnWriter<'_> {
                 _ => return Err("a precondition leaf that is no parameter, input or length".into()),
             });
         }
-        let first = match rc.next {
-            Some(n) => format!("(({flag}_f = {}), 1)", self.var(n)),
-            None => format!("loft_vg_lin({}, 1, 1, &{flag}_f)", self.var(rc.index)),
+        // Each loop's first and last counter values: the outer loop's as its prelude reads
+        // them (`{flag}_f`, `{flag}_l`), a nested loop's from the seed and end its enclosing
+        // body sets it from (`{flag}_f<m>`, `{flag}_l<m>`).
+        let mut guard: Vec<String> = Vec::new();
+        let mut ends: Vec<(String, String)> = Vec::with_capacity(levels.len());
+        for (lvl, lv) in levels.iter().enumerate() {
+            let (first, last) = if lvl == 0 {
+                (format!("{flag}_f"), format!("{flag}_l"))
+            } else {
+                let (first, last) = (format!("{flag}_f{lvl}"), format!("{flag}_l{lvl}"));
+                self.decls.push(format!("int64_t {first} = 0, {last} = 0;"));
+                (first, last)
+            };
+            guard.push(match &lv.first {
+                First::Index(ix) => format!("loft_vg_lin({}, 1, 1, &{first})", self.var(*ix)),
+                First::Next(nx) => format!("(({first} = {}), 1)", self.var(*nx)),
+                First::Seed(x, index_form) => {
+                    let seed = as_int(self.expr(x, ind)?)?;
+                    if *index_form {
+                        format!("loft_vg_lin({seed}, 1, 1, &{first})")
+                    } else {
+                        format!("(({first} = {seed}) != LOFT_NULL)")
+                    }
+                }
+            });
+            let end = match lv.end_value {
+                Some(x) => as_int(self.expr(x, ind)?)?,
+                None => lv.end.clone(),
+            };
+            let min = if levels.len() == 1 { MIN_TRIPS } else { 1 };
+            guard.push(format!(
+                "loft_vg_span({first}, {end}, {}, {min}, &{last})",
+                i32::from(lv.inclusive)
+            ));
+            ends.push((first, last));
+        }
+        if let [(f0, l0), (f1, l1)] = ends.as_slice() {
+            guard.push(format!("loft_vg_area({f0}, {l0}, {f1}, {l1}, {MIN_TRIPS})"));
+            crate::rewrite_census::fired("R-Version/nest", 1);
+        }
+        // The corners of the box over the loops some argument moves with: a linear value takes
+        // its extremes at them.  One loop: its two ends (`a`, `b`); two: four corners.
+        let used: Vec<usize> = (0..levels.len())
+            .filter(|lvl| shapes.iter().any(|sh| sh.1 != 0 && sh.2 == *lvl))
+            .collect();
+        let corners: Vec<(String, Vec<bool>)> = match used.len() {
+            1 => vec![("a".into(), vec![false]), ("b".into(), vec![true])],
+            _ => vec![
+                ("a".into(), vec![false, false]),
+                ("b".into(), vec![true, true]),
+                ("c".into(), vec![false, true]),
+                ("d".into(), vec![true, false]),
+            ],
         };
-        let mut guard = vec![
-            first,
-            format!(
-                "loft_vg_span({flag}_f, {end}, {}, {MIN_TRIPS}, &{flag}_l)",
-                i32::from(rc.inclusive)
-            ),
-        ];
         let pre = self.cx.version_pre(d, &leaf);
-        for (side, at) in [("a", format!("{flag}_f")), ("b", format!("{flag}_l"))] {
+        for (side, at) in &corners {
             let mut vals = Vec::with_capacity(leaves.len());
             for (k, part) in parts.iter().enumerate() {
-                let c = shapes[k].1;
-                if c == 0 {
+                let (_, coef, lvl) = shapes[k];
+                if coef == 0 {
                     vals.push(part.clone());
                 } else {
+                    let slot = used
+                        .iter()
+                        .position(|u| *u == lvl)
+                        .ok_or("an unused level")?;
+                    let (first, last) = &ends[lvl];
+                    let t = if at[slot] { last } else { first };
                     let v = format!("{flag}_{side}{k}");
                     self.decls.push(format!("int64_t {v} = 0;"));
-                    guard.push(format!("loft_vg_lin({part}, INT64_C({c}), {at}, &{v})"));
+                    guard.push(format!("loft_vg_lin({part}, INT64_C({coef}), {t}, &{v})"));
                     vals.push(v);
                 }
             }
@@ -465,13 +640,38 @@ impl FnWriter<'_> {
         Ok(Some((flag, inputs)))
     }
 
+    /// `@FR-R-GuardedChain`'s version clause: the flags of loop `b` when every call of a loft
+    /// function in it is a site its prelude decided — the only calls a plain copy would write a
+    /// second time are then fast twins the written loop calls already.  `None` otherwise.
+    pub(super) fn version_unswitch(&self, b: &Block) -> Option<Vec<String>> {
+        let data = self.cx.data;
+        let mut flags: Vec<String> = Vec::new();
+        let mut all = true;
+        for op in &b.operators {
+            op.walk(&mut |n| match n {
+                Value::Call(d, args)
+                    if (*d as usize) < data.definitions.len()
+                        && !matches!(data.def(*d).code(), Value::Null) =>
+                {
+                    match self.version_site_flag(args.as_ptr() as usize) {
+                        Some((flag, _)) if !flags.contains(flag) => flags.push(flag.clone()),
+                        Some(_) => {}
+                        None => all = false,
+                    }
+                }
+                Value::CallRef(_, _) | Value::Yield(_) | Value::Parallel(_) | Value::Loop(_) => {
+                    all = false;
+                }
+                _ => {}
+            });
+        }
+        (all && !flags.is_empty()).then_some(flags)
+    }
+
     /// The call site: the flag its loop's prelude decided, when its held inputs are the ones
     /// the prelude read.
     pub(super) fn version_flag(&self, args: &[Value], inputs: &[String]) -> Option<String> {
-        let Some(Some(l)) = self.versions.last() else {
-            return None;
-        };
-        let (flag, read) = l.flags.get(&(args.as_ptr() as usize))?;
+        let (flag, read) = self.version_site_flag(args.as_ptr() as usize)?;
         (read.as_slice() == inputs).then(|| flag.clone())
     }
 
@@ -505,6 +705,33 @@ pub(super) fn version_access(
 }
 
 /// A C operand that names a value without computing it.
+/// The one loop directly inside `b` (no loop between), when it holds no loop itself:
+/// `Ok(None)` for a body with no loop, `Err` for two loops side by side or a deeper nest.
+fn inner_loop(b: &Block) -> Result<Option<&Block>, ()> {
+    fn direct<'a>(v: &'a Value, out: &mut Vec<&'a Block>) {
+        if let Value::Loop(lp) = v {
+            out.push(lp);
+        } else {
+            v.for_each_child(&mut |c| direct(c, out));
+        }
+    }
+    let mut found: Vec<&Block> = Vec::new();
+    for op in &b.operators {
+        direct(op, &mut found);
+    }
+    match found.as_slice() {
+        [] => Ok(None),
+        [lp] if !lp
+            .operators
+            .iter()
+            .any(|op| op.any_node(&mut |n| matches!(n, Value::Loop(_)))) =>
+        {
+            Ok(Some(lp))
+        }
+        _ => Err(()),
+    }
+}
+
 fn is_simple(s: &str) -> bool {
     s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }

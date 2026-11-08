@@ -91,7 +91,12 @@
  * clear keeps it, so a store cleared and refilled in a loop allocates nothing. */
 typedef struct { uint64_t *bits; uint32_t nwords; uint32_t live; uint32_t cap; } loft_bits;
 
-static int loft_bits_contains(const loft_bits *b, uint32_t pos) {
+/* A replay built from this header alone (tests/c_emit.rs) has no `loft_cc.h`. */
+#ifndef LOFT_HOT_INLINE
+#define LOFT_HOT_INLINE static inline
+#endif
+
+LOFT_HOT_INLINE int loft_bits_contains(const loft_bits *b, uint32_t pos) {
     uint32_t w = pos >> 6;
     return w < b->nwords && ((b->bits[w] >> (pos & 63)) & 1u);
 }
@@ -1310,11 +1315,11 @@ static void loft_st_release_foreign(loft_store_t *s) {
 #endif
 
 /* `Store::note_referenced` (`@FR-H-Removed`). */
-static void loft_st_note_referenced(loft_store_t *s, uint32_t rec) {
+LOFT_HOT_INLINE void loft_st_note_referenced(loft_store_t *s, uint32_t rec) {
     if (rec >= LOFT_ST_PRIMARY && rec < s->size) loft_bits_insert(&s->referenced, rec);
 }
 
-static int loft_st_is_removed(const loft_store_t *s, uint32_t rec) {
+LOFT_HOT_INLINE int loft_st_is_removed(const loft_store_t *s, uint32_t rec) {
     return loft_bits_contains(&s->removed, rec);
 }
 

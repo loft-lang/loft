@@ -1,0 +1,68 @@
+# step 1 — one destination store for a record-valued recursion, with adoption and release by
+# record: every result `simplify` builds is claimed in the store its caller names (the first
+# result's store when the caller names none); a result that is a child already in that store is
+# handed back as it is; a node adopts its simplified children by number; a child the rewrite
+# drops is released record by record (`loft_remove_claims` + delete) — never a store per node,
+# never a copy into the parent, never `return a` copied into the return buffer.
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src).read()
+RT = '''
+static loft_ref loft_store_buf(loft_ref host) { loft_ref b = { host.store_nr, 0, 0, 0 }; return b; }
+static loft_ref loft_buf_record(loft_ref buf, uint32_t size, uint16_t tp) {
+    if (buf.store_nr != 0xFFFF && buf.rec == 0) {
+        loft_store_t *s = loft_store_of(buf);
+        loft_ref r = { buf.store_nr, loft_claim(s, 1 + (size + 7) / 8), 8, 0 };
+        memset(loft_at(s, r.rec, r.pos), 0, size);
+        return r;
+    }
+    loft_ref r = loft_ref_null();
+    loft_database_typed(&r, size, tp);
+    return r;
+}
+/* hand: a record of the destination store the result does not keep, released with what it owns. */
+static void loft_release_rec(const loft_tdesc *T, uint16_t tp, loft_ref r) {
+    loft_remove_claims(T, tp, r);
+    loft_st_delete(loft_store_of(r), r.rec);
+}
+'''
+anchor = 'static void loft_vec_add_array('
+s = s.replace(anchor, RT + anchor, 1)
+a = s.index('static loft_ref n_simplify__fr(loft_ref v0_e__in, loft_ref v7_b__in) {')
+b = s.index('\n}\n', a) + 3
+HAND = '''static loft_ref n_simplify__fr(loft_ref v0_e__in, loft_ref v7_b__in) {
+    LOFT_REF_IN(v0_e);
+    LOFT_REF_IN(v7_b);
+    loft_ref n, a, b;
+    uint8_t tag = loft_get_enum(v0_e, 0);
+    if (tag == 1) {
+        n = loft_buf_record(v7_b, 16, 101);
+        loft_set_int_at(n, 8, loft_get_int(v0_e, 8), "", 63);
+        loft_set_byte_at(n, 0, (uint8_t) 1, "", 63);
+        return n;
+    }
+    a = n_simplify(loft_ref_from_child_rec(loft_field(v0_e, 4)), v7_b);
+    b = n_simplify(loft_ref_from_child_rec(loft_field(v0_e, 8)), loft_store_buf(a));
+    if (tag == 2) {
+        if (n_is_num(a, INT64_C(0)) == 1) { loft_release_rec(loft_types, 100, a); return b; }
+        if (n_is_num(b, INT64_C(0)) == 1) { loft_release_rec(loft_types, 100, b); return a; }
+    } else {
+        if (n_is_num(a, INT64_C(0)) == 1 || n_is_num(b, INT64_C(0)) == 1) {
+            loft_release_rec(loft_types, 100, a);
+            loft_release_rec(loft_types, 100, b);
+            n = loft_buf_record(loft_store_buf(a), 16, 101);
+            loft_set_byte_at(n, 0, (uint8_t) 1, "", 75);
+            return n;
+        }
+        if (n_is_num(a, INT64_C(1)) == 1) { loft_release_rec(loft_types, 100, a); return b; }
+        if (n_is_num(b, INT64_C(1)) == 1) { loft_release_rec(loft_types, 100, b); return a; }
+    }
+    n = loft_buf_record(loft_store_buf(a), 16, 100);
+    loft_set_u32(loft_store_of(n), n.rec, n.pos + 4, a.rec);
+    loft_set_u32(loft_store_of(n), n.rec, n.pos + 8, b.rec);
+    loft_set_byte_at(n, 0, tag, "", 70);
+    return n;
+}
+'''
+s = s[:a] + HAND + s[b:]
+open(dst, 'w').write(s)

@@ -124,7 +124,9 @@ fn fill_of(
     database: &mut Stores,
     ops: &Ops,
 ) -> Option<Value> {
-    let p = push_loop(lp, data)?;
+    let Some(p) = push_loop(lp, data) else {
+        return several_fill(lp, data, d, database, ops);
+    };
     p.fill?;
     if !p.path.1.is_empty() {
         return None;
@@ -140,28 +142,125 @@ fn fill_of(
         Type::Optional(_) => return None,
         _ => return None,
     };
-    // The element type `[c; n]`'s lowering names: the element, or the vector itself when the
-    // element is under four bytes (`Parser`'s `known_tp`).
-    let elem_tp = data.vector_element_type(elem, database)?;
-    let tp = if database.size(database.content(elem_tp)) < 4 {
-        database.vector(elem_tp)
-    } else {
-        elem_tp
-    };
-    let start = match p.next_var {
-        Some(next) => Value::Var(next),
-        None => Value::Call(ops.add_int, vec![Value::Var(p.index_var), Value::Int(1)]),
-    };
-    let mut trip = Value::Call(ops.min_int, vec![p.hi.clone(), start]);
-    if p.inclusive {
-        trip = Value::Call(ops.add_int, vec![trip, Value::Int(1)]);
-    }
+    let tp = copy_type(elem, data, database)?;
+    let trip = trip_count(ops, p.hi, p.next_var, p.index_var, p.inclusive);
     let mut stmts: Vec<Value> = push_loop_body(lp)?.into_iter().cloned().collect();
     stmts.push(Value::Call(
         ops.append_copy,
         vec![Value::Var(*v), trip.clone(), Value::Int(i32::from(tp))],
     ));
     // `0 < n`: loft spells `>` as the swapped `<`.
+    let test = Value::Call(ops.lt_int, vec![Value::Int(0), trip]);
+    Some(v_if(test, v_block(stmts, Type::Void, "fill"), Value::Null))
+}
+
+/// The element type `[c; n]`'s lowering names: the element, or the vector itself when the
+/// element is under four bytes (`Parser`'s `known_tp`).
+fn copy_type(elem: &Type, data: &Data, database: &mut Stores) -> Option<u16> {
+    let elem_tp = data.vector_element_type(elem, database)?;
+    Some(if database.size(database.content(elem_tp)) < 4 {
+        database.vector(elem_tp)
+    } else {
+        elem_tp
+    })
+}
+
+/// The range's trip count read at the loop's entry: its end less its start (the `next`
+/// counter, or `#index + 1`), plus one for an inclusive range.
+fn trip_count(ops: &Ops, hi: &Value, next: Option<u16>, index: u16, inclusive: bool) -> Value {
+    let start = match next {
+        Some(next) => Value::Var(next),
+        None => Value::Call(ops.add_int, vec![Value::Var(index), Value::Int(1)]),
+    };
+    let trip = Value::Call(ops.min_int, vec![hi.clone(), start]);
+    if inclusive {
+        Value::Call(ops.add_int, vec![trip, Value::Int(1)])
+    } else {
+        trip
+    }
+}
+
+/// THE SEVERAL CLAUSE: a counted loop whose whole body is ONE push of a simple invariant onto
+/// each of two or more vector variables (with each push's own reservation) — `for _ in 0..n
+/// { m += [0]; sf += [0] }` — is one fill per vector: every push once, then each vector's
+/// `OpAppendCopy` up to the trip count.  The vectors end as the loop leaves them, each its own
+/// value `n` times: they are distinct plain locals none of which is a view of another, no
+/// pushed value reads one, and nothing else in the body runs.  A byte push writes its encoded
+/// element, which `OpAppendCopy` copies as it is.
+fn several_fill(
+    lp: &crate::data::Block,
+    data: &Data,
+    d: u32,
+    database: &mut Stores,
+    ops: &Ops,
+) -> Option<Value> {
+    let body = push_loop_body(lp)?;
+    let rc = crate::loop_shape::range_counters(lp, data).ok()?;
+    let vars = data.def(d).variables();
+    let mut pushed: Vec<(u16, &Value)> = Vec::new();
+    let mut reserved: Vec<u16> = Vec::new();
+    for s in body
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+    {
+        let Value::Call(op, args) = s.unspan() else {
+            return None;
+        };
+        let name = data.def(*op).name();
+        if name == "OpPreAllocVector" {
+            let Value::Var(v) = args.first()?.unspan() else {
+                return None;
+            };
+            reserved.push(*v);
+            continue;
+        }
+        crate::opt::writes::FUSABLE_PUSHES
+            .iter()
+            .find(|(n, _, _)| *n == name)?;
+        let (vec_arg, _, val) = crate::opt::writes::push_operands(name, args)?;
+        let Value::Var(v) = vec_arg.unspan() else {
+            return None;
+        };
+        if pushed.iter().any(|(w, _)| w == v) {
+            return None;
+        }
+        pushed.push((*v, val));
+    }
+    if pushed.len() < 2 || reserved.iter().any(|r| !pushed.iter().any(|(v, _)| v == r)) {
+        return None;
+    }
+    let mut banned: Vec<u16> = vec![rc.loop_var, rc.index];
+    banned.extend(rc.next);
+    banned.extend(pushed.iter().map(|(v, _)| *v));
+    if !crate::opt::push_window::simple_invariant(rc.hi, data, &banned) {
+        return None;
+    }
+    let trip = trip_count(ops, rc.hi, rc.next, rc.index, rc.inclusive);
+    let mut copies: Vec<Value> = Vec::new();
+    for (v, val) in &pushed {
+        let elem = match vars.tp(*v) {
+            Type::Vector(elem, _) => elem,
+            // `@FR-N-Shape`: a `vector<T>?` local is declined on purpose, as the one-push fill
+            // declines it — the fill would read a vector the push may first have to create.
+            Type::Optional(_) => return None,
+            _ => return None,
+        };
+        let views = crate::opt::body_writes::views(vars, *v);
+        if vars.is_argument(*v)
+            || !crate::opt::push_window::simple_invariant(val, data, &banned)
+            || pushed.iter().any(|(w, _)| w != v && views.contains(w))
+        {
+            return None;
+        }
+        let tp = copy_type(elem, data, database)?;
+        copies.push(Value::Call(
+            ops.append_copy,
+            vec![Value::Var(*v), trip.clone(), Value::Int(i32::from(tp))],
+        ));
+    }
+    let mut stmts: Vec<Value> = body.into_iter().cloned().collect();
+    stmts.extend(copies);
+    crate::rewrite_census::fired("R-PushFill/several", 1);
     let test = Value::Call(ops.lt_int, vec![Value::Int(0), trip]);
     Some(v_if(test, v_block(stmts, Type::Void, "fill"), Value::Null))
 }

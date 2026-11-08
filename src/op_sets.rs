@@ -79,6 +79,12 @@ pub(crate) fn is_first_arg_write_name(n: &str) -> bool {
                 | "OpRemoveVector"
                 | "OpKeepVectorRange"
                 | "OpPrependVector"
+                // The out-of-line field writes the rewrites lower to (@PLN219): each writes
+                // the field its first argument names, as the `OpSetChildRec` it replaces does.
+                | "OpAdoptChildRec"
+                | "OpMoveChildRec"
+                | "OpChildRecInPlace"
+                | "OpDemoteRec"
         )
 }
 

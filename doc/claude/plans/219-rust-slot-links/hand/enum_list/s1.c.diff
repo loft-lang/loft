@@ -1,0 +1,54 @@
+--- base.c
++++ s1.c
+@@ -16732,6 +16732,14 @@
+ /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
+  * element record copied into a fresh record of the destination's store, its heap deep-copied, a
+  * null slot kept null. */
++
++static void loft_demote(loft_ref h, uint32_t size, uint32_t fpos) {
++    loft_store_t *s = loft_store_of(h);
++    uint32_t c = loft_claim(s, 1 + (size + 7) / 8);
++    loft_ref ch = { h.store_nr, c, 8, 0 };
++    loft_copy_bytes(ch, 0, h, 0, size);
++    loft_set_u32(s, h.rec, h.pos + fpos, c);
++}
+ static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+     int64_t n = loft_vec_len(o);
+     if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+@@ -32315,16 +32323,10 @@
+             goto brk_1;
+         }
+         v5_i = v4_i_index;
+-        loft_database_typed(&v17___ref_p2_1, 16, 106);
+-        loft_frame_site(170);
+-        t3 = v17___ref_p2_1;
+         t4 = n_key__nn2(v5_i, v1_salt);
+-        loft_set_int_at(t3, 8, t4, "DRIVER.loft", 170);
+-        t5 = loft_field(v17___ref_p2_1, 4);
+-        loft_set_child_rec(loft_types, 100, t5, v2_l, 0);
+-        t6 = (uint8_t) 2;
+-        loft_set_byte_at(v17___ref_p2_1, 0, t6, "DRIVER.loft", 170);
+-        loft_bind_copy(loft_types, 100, &v2_l, v17___ref_p2_1);
++        loft_demote(v2_l, 16, 4);
++        loft_set_int_at(v2_l, 8, t4, "DRIVER.loft", 170);
++        loft_set_byte_at(v2_l, 0, (uint8_t) 2, "DRIVER.loft", 170);
+     }
+     brk_1:;
+     v6_sum = INT64_C(0);
+@@ -32348,13 +32350,9 @@
+             t11 = loft_mul(v6_sum, INT64_C(31));
+             t12 = loft_add(t11, v10__mv_v_1);
+             v6_sum = loft_rem_at(t12, INT64_C(1000000007), "DRIVER.loft", 178);
+-            loft_database_typed(&v19___ref_p2_2, 16, 106);
+-            loft_set_int_at(v19___ref_p2_2, 8, v10__mv_v_1, "DRIVER.loft", 179);
+-            t13 = loft_field(v19___ref_p2_2, 4);
+-            loft_set_child_rec(loft_types, 100, t13, v7_r, 0);
+-            t14 = (uint8_t) 2;
+-            loft_set_byte_at(v19___ref_p2_2, 0, t14, "DRIVER.loft", 179);
+-            loft_bind_copy(loft_types, 100, &v7_r, v19___ref_p2_2);
++            loft_demote(v7_r, 16, 4);
++            loft_set_int_at(v7_r, 8, v10__mv_v_1, "DRIVER.loft", 179);
++            loft_set_byte_at(v7_r, 0, (uint8_t) 2, "DRIVER.loft", 179);
+             loft_bind_copy(loft_types, 100, &v8_cur, v11__mv_next_1);
+         } else {
+             t15 = loft_get_enum(v8_cur, 0);

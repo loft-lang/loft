@@ -80,6 +80,10 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // the inlining that may leave `len` as its operator.
     crate::zero_count::rewrite_program(data);
     laps.lap("zero_count");
+    // `@FR-R-ExpPow` — `pow(E, x)` is `exp(x)`, after the inlining that leaves the stdlib
+    // `exp` as its `pow` operator.
+    crate::exp_pow::rewrite_program(data);
+    laps.lap("exp_pow");
     // `@FR-R-CtorLiteral` — a constructor's call is its literal, after the leaf inlining
     // that leaves a constructor's scalar fields as operator expressions.
     crate::ctor_literal::rewrite_program(data, database);

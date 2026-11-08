@@ -59,15 +59,9 @@ pub const SCALAR_GETTERS: [&str; 14] = [
     "OpGetEnum",
 ];
 
-/// Is `def_nr` a record type with no heap in it — every field a fixed-width scalar (a
-/// constant and a routine field hold no store either)?  The record's store then hosts
-/// nothing a hoisted header could name: the fact `@FR-R-Callee`'s return-buffer half and
-/// § V-ad's discharge buffer both stand on.
-pub(crate) fn all_scalar_record(data: &Data, def_nr: u32) -> bool {
-    data.def(def_nr).attributes().iter().all(|a| {
-        a.constant || matches!(a.typedef.base(), Type::Routine(_)) || is_scalar(&a.typedef)
-    })
-}
+/// A record type with no heap in it: [`crate::data::all_scalar_record`], kept here under its
+/// old name for the callers in this layer.
+pub(crate) use crate::data::all_scalar_record;
 
 /// True for the types that cannot name a store. Anything else — a reference, a collection,
 /// text, a tuple, an iterator, an unresolved type — counts as one that can.

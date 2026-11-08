@@ -250,6 +250,13 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     move_field::<false>,
     move_vector::<false>,
     free_record_in::<false>,
+    demote_rec::<false>,
+    move_child_rec::<false>,
+    store_buf::<false>,
+    adopt_child_rec::<false>,
+    store_buf_only::<false>,
+    release_rec_if_distinct::<false>,
+    child_rec_in_place::<false>,
     copy_ref_or_null::<false>,
     bind_or_copy::<false>,
     index_group::<false>,
@@ -262,6 +269,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     get_stack_ref::<false>,
     set_stack_ref::<false>,
     get_slot_ref::<false>,
+    move_slot_ref::<false>,
     set_slot_ref::<false>,
     set_stack_fn_ref::<false>,
     get_stack_fn_ref::<false>,
@@ -609,6 +617,13 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     move_field::<true>,
     move_vector::<true>,
     free_record_in::<true>,
+    demote_rec::<true>,
+    move_child_rec::<true>,
+    store_buf::<true>,
+    adopt_child_rec::<true>,
+    store_buf_only::<true>,
+    release_rec_if_distinct::<true>,
+    child_rec_in_place::<true>,
     copy_ref_or_null::<true>,
     bind_or_copy::<true>,
     index_group::<true>,
@@ -621,6 +636,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     get_stack_ref::<true>,
     set_stack_ref::<true>,
     get_slot_ref::<true>,
+    move_slot_ref::<true>,
     set_slot_ref::<true>,
     set_stack_fn_ref::<true>,
     get_stack_fn_ref::<true>,
@@ -968,6 +984,13 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     move_field_r,
     move_vector_r,
     free_record_in_r,
+    demote_rec_r,
+    move_child_rec_r,
+    store_buf_r,
+    adopt_child_rec_r,
+    store_buf_only_r,
+    release_rec_if_distinct_r,
+    child_rec_in_place_r,
     copy_ref_or_null_r,
     bind_or_copy_r,
     index_group_r,
@@ -980,6 +1003,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     get_stack_ref_r,
     set_stack_ref_r,
     get_slot_ref_r,
+    move_slot_ref_r,
     set_slot_ref_r,
     set_stack_fn_ref_r,
     get_stack_fn_ref_r,
@@ -2399,6 +2423,7 @@ fn math_func_single<const F: bool>(s: &mut State) {
         7 => v_v1.floor(),
         8 => v_v1.round(),
         9 => v_v1.sqrt(),
+        10 => v_v1.exp(),
         _ => f32::NAN,
     };
     s.put_stack_m::<F, _>(new_value);
@@ -2682,6 +2707,7 @@ fn math_func_float<const F: bool>(s: &mut State) {
         7 => v_v1.floor(),
         8 => v_v1.round(),
         9 => v_v1.sqrt(),
+        10 => v_v1.exp(),
         _ => f64::NAN,
     };
     s.put_stack_m::<F, _>(new_value);
@@ -5634,6 +5660,107 @@ fn free_record_in_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
+fn demote_rec<const F: bool>(s: &mut State) {
+    let operands = s.operands(4);
+    let v_fld = operands.get::<u16>(0);
+    let v_tp = operands.get::<u16>(2);
+    let v_r = s.get_stack_m::<F, DbRef>();
+    s.database.demote_rec(&v_r, v_fld, v_tp);
+}
+
+fn demote_rec_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    demote_rec::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn move_child_rec<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_src = s.get_stack_m::<F, DbRef>();
+    let v_field = s.get_stack_m::<F, DbRef>();
+    s.database.move_child_rec(&v_field, &v_src, v_tp);
+}
+
+fn move_child_rec_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    move_child_rec::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn store_buf<const F: bool>(s: &mut State) {
+    let v_host = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.store_buf(&v_host);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn store_buf_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    store_buf::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn adopt_child_rec<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_value = s.get_stack_m::<F, DbRef>();
+    let v_field = s.get_stack_m::<F, DbRef>();
+    s.database.adopt_child_rec(&v_field, &v_value, v_tp);
+}
+
+fn adopt_child_rec_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    adopt_child_rec::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn store_buf_only<const F: bool>(s: &mut State) {
+    let v_buf = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.store_buf_only(&v_buf);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn store_buf_only_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    store_buf_only::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn release_rec_if_distinct<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_answer = s.get_stack_m::<F, DbRef>();
+    let v_rec = s.get_stack_m::<F, DbRef>();
+    s.database.release_rec_if_distinct(&v_rec, &v_answer, v_tp);
+}
+
+fn release_rec_if_distinct_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    release_rec_if_distinct::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn child_rec_in_place<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_field = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.child_rec_in_place(&v_field, v_tp);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn child_rec_in_place_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    child_rec_in_place::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
 fn copy_ref_or_null<const F: bool>(s: &mut State) {
     s.copy_ref_or_null();
 }
@@ -5873,6 +6000,17 @@ fn get_slot_ref<const F: bool>(s: &mut State) {
 fn get_slot_ref_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     get_slot_ref::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn move_slot_ref<const F: bool>(s: &mut State) {
+    s.move_slot_ref();
+}
+
+fn move_slot_ref_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    move_slot_ref::<true>(s);
     s.regs_out()
 }
 

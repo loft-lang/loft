@@ -439,7 +439,7 @@ fn OpRemSingleNullable(v1: single, v2: single) -> single;
 #rust"@v1 % @v2"
 fn OpMathFuncSingle(fn_id: const i8, v1: single) -> single;
 #cold
-#rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), _ => f32::NAN }}"
+#rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), 10 => @v1.exp(), _ => f32::NAN }}"
 /// Cosine. Use for circular motion: x = r * cos(angle).
 pub fn cos(self: single) -> single {
   OpMathFuncSingle(0, self)
@@ -604,7 +604,7 @@ fn OpMathEFloat() -> __fword;
 /// Euler's number, the base of natural logarithms (2.71828...).
 pub E = OpMathEFloat() as float;
 fn OpMathFuncFloat(fn_id: const i8, v1: __fword) -> __fword;
-#rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), _ => f64::NAN }}"
+#rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), 10 => @v1.exp(), _ => f64::NAN }}"
 /// Cosine. Use for circular motion: x = r * cos(angle).
 pub fn cos(self: f64) -> f64 {
   OpMathFuncFloat(0, self)
@@ -1867,6 +1867,47 @@ fn OpMoveVector(dest: vector, src: vector, tp: const u16);
 fn OpFreeRecordIn(rec: reference, tp: const u16);
 #rust"stores.free_record_in(&@rec, @tp);"
 #impure(parent_write)
+// `@FR-R-Demote`, emitted directly: the record at `r` moves into a fresh child record of its own
+// store, `r`'s record is left zeroed and its out-of-line field at `fld` names the child — what
+// `OpPlaceRecord`, two `OpMoveField`s, `OpChildRec` and `OpFreeRecordIn` leave, with no
+// temporary record.  A null `r` is left as it is.
+fn OpDemoteRec(r: reference, fld: const u16, tp: const u16);
+#rust"stores.demote_rec(&@r, @fld, @tp);"
+#impure(parent_write)
+// `@FR-B-OutOfLine`, the move: `field` takes the child record `src` names — a field inside the
+// record `field` holds — by its number: `src` is cleared, the replaced record released with
+// what it still owns.  The value `h.f = h.f.g` gives, without copying the subtree.
+fn OpMoveChildRec(field: reference, src: reference, tp: const u16);
+#rust"stores.move_child_rec(&@field, &@src, @tp);"
+#impure(parent_write)
+// `@FR-R-InPlaceLiteral` for an out-of-line field: the child record a literal is written into —
+// the present child, its owned heap released and its bytes reset to the type's defaults (its
+// number kept, as `OpSetChildRec` keeps it), or a fresh one where the field is absent.
+// `@FR-R-HostStore`: the return buffer naming `host`'s store and no record — the callee's
+// `OpDatabase` claims its result as a record there (`keys::STORE_BUF_BIT`).
+fn OpStoreBuf(host: reference) -> reference;
+#rust"stores.store_buf(&@host)"
+#pure
+// `@FR-R-HostStore`: the out-of-line `field` takes `value` — a record its callee claimed in the
+// field's store, or the child the field already holds — by its number; any other value is
+// written as `OpSetChildRec` writes it.
+fn OpAdoptChildRec(field: reference, value: reference, tp: const u16);
+#rust"stores.adopt_child_rec(&@field, &@value, @tp);"
+#impure(parent_write)
+// `@FR-R-HostStore`'s result clause: `buf` when it is a store buffer, else null — the buffer a
+// function hands on when a caller may have offered a record of its own, which it never writes.
+fn OpStoreBufOnly(buf: reference) -> reference;
+#rust"stores.store_buf_only(&@buf)"
+#pure
+// `@FR-R-HostStore`'s result clause: `rec`, a result its function drops, released — its store
+// whole when that is not `answer`'s, else the record with what it owns, the store living on for
+// the answer; nothing for null or the answer itself.
+fn OpReleaseRecIfDistinct(rec: reference, answer: reference, tp: const u16);
+#rust"stores.release_rec_if_distinct(&@rec, &@answer, @tp);"
+#impure(parent_write)
+fn OpChildRecInPlace(field: reference, tp: const u16) -> reference[field];
+#rust"stores.child_rec_in_place(&@field, @tp)"
+#impure(parent_write)
 // ABI-B caller path for `v = call()` (heap-param callee returning struct-OR-null):
 // pops the call result `src`; `pos` is the destination var's slot (already holding
 // a fresh OpDatabase record).  A null `src` (sentinel) frees that record and binds
@@ -2027,6 +2068,9 @@ fn OpSetStackRef(r: reference, v1: reference);
 // holds and is written as the field (`OpSetChildRec`, `tp` with its free-source bit); any
 // other cell is read and written as `OpGetStackRef` / `OpSetStackRef` do.
 fn OpGetSlotRef(r: reference, fld: const u16) -> reference;
+// The move twin of `OpSetSlotRef` (`slot = slot.right`): a field-naming cell takes the child `src`
+// (a field inside its node) by number (`OpMoveChildRec`); any other cell takes the child's view.
+fn OpMoveSlotRef(r: reference, src: reference, tp: const u16);
 fn OpSetSlotRef(r: reference, v1: reference, tp: const u16);
 // Write a fn-ref THROUGH a `&fn(…)` link.  The link's own slot holds a DbRef to the
 // caller's fn-ref slot, so this is the two-step `&text` already performs: read the link

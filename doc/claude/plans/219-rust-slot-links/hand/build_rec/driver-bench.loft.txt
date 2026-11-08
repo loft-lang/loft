@@ -1,0 +1,252 @@
+// Benchmark 21: Linked records — a binary search tree and a linked list built of records that
+// hold records of their own type OUT OF LINE (`formal/layout.md` L-OutOfLine).
+//
+// Four routines, each ONE OP per repetition, each on keys that differ by the repetition number
+// in VALUE, never in the amount of work, folded into `sink`:
+//   tree_insert  2,000 distinct keys inserted into a fresh search tree, then its height and an
+//                in-order checksum
+//   tree_query   4,000 lookups (half of them misses) in a 2,000-key tree built once, an in-order
+//                walk and the height
+//   tree_delete  a fresh 1,200-key tree, every third key deleted (a node with two children
+//                takes its successor's key), then an in-order checksum that also checks the order
+//   list_ops     2,000 pushes to the front of a list, 500 inserts after its head, a reversal into
+//                a second list, a walk of each, and the first popped empty
+//   build_rec    the 2,000-key tree of tree_insert built by the textbook recursion
+//                (`t.left = insert_rec(t.left, k)`), then its height and an in-order checksum
+//   enum_list    a 2,000-cell `Cons` list built at its front (`l = Cons { v, next: l }`), walked,
+//                reversed into a second list and walked again
+//   lookup_copy  tree_query's 4,000 lookups by the cursor nearly everyone writes first,
+//                `cur: Tree? = t; … cur = cur.left`
+// The `hash` column is one canonical op's result: every lane must print the same one.
+
+struct Tree { k: integer, left: Tree?, right: Tree? }
+struct Node { v: integer, next: Node? }
+enum List { Nil, Cons { v: integer, next: List } }
+
+/// A scrambled key: an LCG step of `i`, so the tree is one a random insertion order builds
+/// (height about 3 ln n), never the chain a progression of keys would build.
+fn key(i: integer, salt: integer) -> integer { ((i * 1103515245 + 12345 + salt * 7919) % 2147483648) % 100000 }
+
+/// Insert `k` below `t`; false when the key is present.  A `&` link walks to the empty field
+/// the key belongs in, and a whole write through it fills that field.
+fn insert(t: Tree, k: integer) -> boolean {
+  if k == t.k { return false; }
+  cur = &t.right;
+  if k < t.k { cur = &t.left; }
+  while cur != null {
+    if k == cur.k { return false; }
+    if k < cur.k { cur = &cur.left; } else { cur = &cur.right; }
+  }
+  cur = Tree { k: k, left: null, right: null };
+  true
+}
+
+fn find(t: Tree, k: integer) -> boolean {
+  cur = &t;
+  while true {
+    if k == cur.k { return true; }
+    if k < cur.k {
+      if cur.left == null { return false; }
+      cur = &cur.left;
+    } else {
+      if cur.right == null { return false; }
+      cur = &cur.right;
+    }
+  }
+  false
+}
+
+fn height(t: Tree?) -> integer {
+  if t == null { return 0; }
+  l = height(t.left);
+  r = height(t.right);
+  1 + if l > r { l } else { r }
+}
+
+/// In-order: a weighted sum, -1 when a key is out of order.
+fn walk(t: Tree?, prev: integer, acc: integer) -> (integer, integer) {
+  if t == null { return (prev, acc); }
+  (p, a) = walk(t.left, prev, acc);
+  if a < 0 || t.k <= p { return (t.k, -1); }
+  walk(t.right, t.k, (a * 31 + t.k) % 1000000007)
+}
+
+fn checksum(t: Tree) -> integer { (_, a) = walk(t, -1, 7); a }
+
+fn build(total: integer, salt: integer) -> Tree {
+  t = Tree { k: key(0, salt), left: null, right: null };
+  for i in 1..total { insert(t, key(i, salt)); }
+  t
+}
+
+/// Remove the leftmost node below a non-empty slot and answer its key.  The slot is a field
+/// of the caller's tree; `slot = &slot.left` walks it, a whole write unlinks the node.
+fn take_min(slot: &Tree?) -> integer {
+  while slot.left != null { slot = &slot.left; }
+  k = slot.k!;
+  slot = slot.right;
+  k
+}
+
+/// Delete `k` below the root `t` (the root itself is never asked for); true when found.  A `&`
+/// link walks to the field that holds the node; a node with two children takes its successor's
+/// key (`take_min`), any other node is replaced by its one child.
+fn remove_key(t: Tree, k: integer) -> boolean {
+  cur = &t.right;
+  if k < t.k { cur = &t.left; }
+  while cur != null && cur.k != k {
+    if k < cur.k { cur = &cur.left; } else { cur = &cur.right; }
+  }
+  if cur == null { return false; }
+  if cur.left != null && cur.right != null {
+    cur.k = take_min(cur.right);
+  } else if cur.left != null {
+    cur = cur.left;
+  } else {
+    cur = cur.right;
+  }
+  true
+}
+
+fn tree_insert(total: integer, salt: integer) -> integer {
+  t = build(total, salt);
+  height(t) * 1000003 + checksum(t)
+}
+
+fn tree_query(t: Tree, total: integer, salt: integer) -> integer {
+  hits = 0;
+  for i in 0..total * 2 {
+    if find(t, key(i, salt)) { hits += 1; }
+  }
+  hits * 1000003 + checksum(t) + height(t)
+}
+
+fn tree_delete(total: integer, salt: integer) -> integer {
+  t = build(total, salt);
+  gone = 0;
+  for i in 1..total {
+    if i % 3 == 0 && remove_key(t, key(i, salt)) { gone += 1; }
+  }
+  gone * 1000003 + checksum(t)
+}
+
+fn list_ops(total: integer, salt: integer) -> integer {
+  h = Node { v: salt, next: null };
+  for i in 1..total { h = Node { v: key(i, salt), next: h }; }
+  for i in 0..total / 4 { h.next = Node { v: i, next: h.next }; }
+  r: Node? = null;
+  cur: Node? = h;
+  sum = 0;
+  while cur != null { sum = (sum * 31 + cur.v) % 1000000007; r = Node { v: cur.v, next: r }; cur = cur.next; }
+  back = 0;
+  cur = r;
+  while cur != null { back = (back * 17 + cur.v) % 1000000007; cur = cur.next; }
+  p: Node? = h;
+  n = 0;
+  while p != null { n += 1; p = p.next; }
+  (sum + back) % 1000000007 + n
+}
+
+/// Insert `k` below `t` by the textbook recursion: the subtree comes back and is written into
+/// the field it came from.
+fn insert_rec(t: Tree?, k: integer) -> Tree? {
+  if t == null { return Tree { k: k, left: null, right: null }; }
+  if k < t.k {
+    t.left = insert_rec(t.left, k);
+  } else if k > t.k {
+    t.right = insert_rec(t.right, k);
+  }
+  t
+}
+
+fn build_rec(total: integer, salt: integer) -> integer {
+  t: Tree? = null;
+  for i in 0..total { t = insert_rec(t, key(i, salt)); }
+  height(t) * 1000003 + checksum(t!)
+}
+
+fn enum_list(total: integer, salt: integer) -> integer {
+  l = Nil;
+  for i in 0..total { l = Cons { v: key(i, salt), next: l }; }
+  sum = 0;
+  r = Nil;
+  cur = l;
+  more = true;
+  while more {
+    match cur {
+      Cons { v, next } => {
+        sum = (sum * 31 + v) % 1000000007;
+        r = Cons { v: v, next: r };
+        cur = next;
+      }
+      Nil => { more = false; }
+    }
+  }
+  back = 0;
+  n = 0;
+  cur = r;
+  more = true;
+  while more {
+    match cur {
+      Cons { v, next } => {
+        back = (back * 17 + v) % 1000000007;
+        n += 1;
+        cur = next;
+      }
+      Nil => { more = false; }
+    }
+  }
+  (sum + back) % 1000000007 + n
+}
+
+/// `find` by the cursor most programs write first: a plain local the walk rebinds.
+fn find_copy(t: Tree, k: integer) -> boolean {
+  cur: Tree? = t;
+  while cur != null {
+    if k == cur.k { return true; }
+    if k < cur.k { cur = cur.left; } else { cur = cur.right; }
+  }
+  false
+}
+
+fn lookup_copy(t: Tree, total: integer, salt: integer) -> integer {
+  hits = 0;
+  for i in 0..total * 2 {
+    if find_copy(t, key(i, salt)) { hits += 1; }
+  }
+  hits * 1000003 + checksum(t) + height(t)
+}
+
+/// `--n N`: how many ops the timed loop runs (the harness calibrates it per lane).
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+/// One measured routine, in the row format every lane prints (bench/README.md).
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer, sink: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+  println("time: {us / 1000}ms sink={sink}");
+}
+
+fn main() {
+  n = arg_n(10);
+  q = build(2000, 0);
+  t0 = ticks();
+  sink = 0;
+  for r in 0..n { sink += build_rec(2000, r & 1); }
+  row("build_rec", n, ticks() - t0, 2000, build_rec(2000, 0), sink);
+}

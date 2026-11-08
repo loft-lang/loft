@@ -3209,6 +3209,178 @@ impl Stores {
     /// wrapper whose scalars are read after) keeps its block and owns nothing of what moved.
     /// Across stores the handles cannot travel: the copy is deep and the source's heap is
     /// released, the same end state by the longer road.  Null-guarded like every record op.
+    /// `OpDemoteRec` — `@FR-R-Demote` in one step: `r`'s record bytes go into a fresh child
+    /// record of `r`'s store (its heap handles with them: the same store, nothing re-claimed),
+    /// `r`'s record is zeroed, and the out-of-line field at `fld` names the child.
+    pub fn demote_rec(&mut self, r: &crate::keys::DbRef, fld: u16, tp: u16) {
+        if r.store_nr == u16::MAX || r.rec == 0 || (r.store_nr as usize) >= self.allocations.len() {
+            return;
+        }
+        let size = u32::from(self.size(tp));
+        let words = self.child_rec_words(tp);
+        let c = self.allocations[r.store_nr as usize].claim(words);
+        let child = crate::keys::DbRef {
+            store_nr: r.store_nr,
+            rec: c,
+            pos: 8,
+        };
+        self.copy_block(r, &child, size);
+        self.allocations[r.store_nr as usize].zero_range(r.rec, r.pos, size);
+        self.store_mut(r)
+            .set_u32_raw(r.rec, r.pos + u32::from(fld), c);
+    }
+
+    /// `OpStoreBuf` ([`crate::keys::store_buf`]).
+    #[must_use]
+    pub fn store_buf(&self, host: &crate::keys::DbRef) -> crate::keys::DbRef {
+        crate::keys::store_buf(host)
+    }
+
+    /// `OpStoreBufOnly` (`@FR-R-HostStore`'s result clause): `buf` when it names a store and
+    /// no record, else null — a record a caller offered is never written.
+    pub fn store_buf_only(&self, buf: &crate::keys::DbRef) -> crate::keys::DbRef {
+        if crate::keys::is_store_buf(buf) {
+            *buf
+        } else {
+            crate::keys::DbRef::NULL
+        }
+    }
+
+    /// `OpReleaseRecIfDistinct` (`@FR-R-HostStore`'s result clause) — `rec` is a result its
+    /// function drops.  In a store of its own it goes whole, as `OpFreeRefIfDistinct` frees it;
+    /// in the answer's store it is released with what it owns and the store lives on for the
+    /// answer.  Null, a store buffer and the answer itself release nothing.
+    pub fn release_rec_if_distinct(
+        &mut self,
+        rec: &crate::keys::DbRef,
+        answer: &crate::keys::DbRef,
+        tp: u16,
+    ) {
+        if rec.store_nr == u16::MAX
+            || rec.rec == 0
+            || (rec.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
+        if rec.store_nr != answer.store_nr {
+            self.free_displaced(rec, answer);
+            return;
+        }
+        if rec.rec == answer.rec {
+            return;
+        }
+        self.remove_claims(rec, tp);
+        self.store_mut(rec).delete(rec.rec);
+    }
+
+    /// `OpDatabase` on a store buffer (`@FR-R-HostStore`): a `tp` record claimed in the
+    /// buffer's store, its bytes the type's defaults.
+    pub fn claim_in_store_buf(&mut self, buf: &crate::keys::DbRef, tp: u16) -> crate::keys::DbRef {
+        let words = self.child_rec_words(tp);
+        let rec = self.allocations[buf.store_nr as usize].claim(words);
+        let r = crate::keys::DbRef {
+            store_nr: buf.store_nr,
+            rec,
+            pos: 8,
+        };
+        self.set_default_value(tp, &r);
+        r
+    }
+
+    /// `OpAdoptChildRec` — `field` takes `value` by its number when `value` is a record of the
+    /// field's store (the callee claimed it in the buffer, or it is the child already held,
+    /// which is left as it is); any other value is `set_child_rec`'s copy.
+    pub fn adopt_child_rec(
+        &mut self,
+        field: &crate::keys::DbRef,
+        value: &crate::keys::DbRef,
+        tp: u16,
+    ) {
+        if field.store_nr == u16::MAX
+            || field.rec == 0
+            || value.store_nr != field.store_nr
+            || value.rec == 0
+            || value.pos != 8
+        {
+            self.set_child_rec(field, value, tp);
+            return;
+        }
+        let old = self.store(field).get_u32_raw(field.rec, field.pos);
+        if old == value.rec {
+            return;
+        }
+        self.store_mut(field)
+            .set_u32_raw(field.rec, field.pos, value.rec);
+        if old != 0 {
+            let o = crate::keys::DbRef {
+                store_nr: field.store_nr,
+                rec: old,
+                pos: 8,
+            };
+            self.remove_claims(&o, tp);
+            self.store_mut(field).delete(old);
+        }
+    }
+
+    /// `OpMoveChildRec` — `field` takes the child record the field `src` names by its number;
+    /// `src` lies inside the record `field` holds, and is cleared, so the release of that
+    /// record — what it still owns — leaves the moved subtree alone.
+    pub fn move_child_rec(
+        &mut self,
+        field: &crate::keys::DbRef,
+        src: &crate::keys::DbRef,
+        tp: u16,
+    ) {
+        if field.store_nr == u16::MAX || field.rec == 0 {
+            return;
+        }
+        let old = self.store(field).get_u32_raw(field.rec, field.pos);
+        let moved = if src.store_nr == u16::MAX || src.rec == 0 {
+            0
+        } else {
+            self.store(src).get_u32_raw(src.rec, src.pos)
+        };
+        if moved != 0 {
+            self.store_mut(src).set_u32_raw(src.rec, src.pos, 0);
+        }
+        self.store_mut(field)
+            .set_u32_raw(field.rec, field.pos, moved);
+        if old != 0 && old != moved {
+            let o = crate::keys::DbRef {
+                store_nr: field.store_nr,
+                rec: old,
+                pos: 8,
+            };
+            self.remove_claims(&o, tp);
+            self.store_mut(field).delete(old);
+        }
+    }
+
+    /// `OpChildRecInPlace` — the child record a literal is written into: the present child,
+    /// what it owns released and its bytes reset to `tp`'s defaults (its number kept), else a
+    /// fresh child where the field is absent.
+    pub fn child_rec_in_place(
+        &mut self,
+        field: &crate::keys::DbRef,
+        tp: u16,
+    ) -> crate::keys::DbRef {
+        if field.store_nr == u16::MAX || field.rec == 0 {
+            return crate::keys::DbRef::NULL;
+        }
+        let old = self.store(field).get_u32_raw(field.rec, field.pos);
+        if old == 0 {
+            return self.new_child_rec(field, tp);
+        }
+        let o = crate::keys::DbRef {
+            store_nr: field.store_nr,
+            rec: old,
+            pos: 8,
+        };
+        self.remove_claims(&o, tp);
+        self.set_default_value(tp, &o);
+        o
+    }
+
     pub fn move_field_out(&mut self, src: &crate::keys::DbRef, dst: &crate::keys::DbRef, tp: u16) {
         if src.store_nr == u16::MAX
             || src.rec == 0

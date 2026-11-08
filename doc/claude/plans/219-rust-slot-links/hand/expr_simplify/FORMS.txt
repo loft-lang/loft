@@ -1,0 +1,8 @@
+loft commit   94f610006
+driver        driver-bench.loft.txt / driver-bench.rs.txt — the bench with `main` cut to `expr_simplify`
+emit          loft --native-c --native-emit base.c driver-bench.loft --n 2 (the .txt copied to .loft), then the driver's
+              path in its strings rewritten to "DRIVER.loft" (the forms are diffs of that)
+compare       bash doc/claude/plans/219-rust-slot-links/hand/compare.sh.txt expr_simplify
+
+base  base.c
+edit  s1.c  from base.c

@@ -906,6 +906,12 @@ impl State {
         // all variants; the variant's own size may be smaller (unit variants).
         let size = self.database.enum_parent_size(db_tp);
         let mut db = self.get_var::<DbRef>(var);
+        // `@FR-R-HostStore` — a buffer naming its caller's store: the record is claimed there.
+        if crate::keys::is_store_buf(&db) {
+            let r = self.database.claim_in_store_buf(&db, db_tp);
+            *self.mut_var::<DbRef>(var) = r;
+            return;
+        }
         if crate::keys::trace_db() {
             eprintln!(
                 "[db] OpDatabase var={var} db_tp={db_tp} db=#{}@{},{} size={size}",

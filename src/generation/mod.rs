@@ -6753,7 +6753,7 @@ impl Output<'_> {
         }
         let nn = self.nn_facts();
         if let Some(over) = self.range_override.last().cloned() {
-            return range::op_range(self.data, &nn, &*over, name, args, 0);
+            return range::op_range_at_site(self.data, &nn, &*over, name, args);
         }
         let rv = if let Some(v) = self.range_cache.get(&self.def_nr) {
             v.clone()
@@ -6769,7 +6769,7 @@ impl Output<'_> {
             self.range_cache.insert(self.def_nr, map.clone());
             map
         };
-        range::op_range(self.data, &nn, &*rv, name, args, 0)
+        range::op_range_at_site(self.data, &nn, &*rv, name, args)
     }
 
     /// `@FR-R-Range`'s decline reason for the op `name` over `args`, under the same facts
