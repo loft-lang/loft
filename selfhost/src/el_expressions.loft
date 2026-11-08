@@ -7984,6 +7984,12 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   if d < 0 && set >= 0 {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  if d < 0 && name == "size" && len(types) == 1 {
+    sz = size_call(e, list, first);
+    if sz != null {
+      return sz!;
+    }
+  }
   if d < 0 {
     // A receiver already refused (untyped on the second pass) chose no method: not refused again.
     if e.first_pass || (el_types::is_unknown(first) && len(types) > 0) {
@@ -8157,6 +8163,50 @@ fn keyed_field_at(coll: ir::Node, off: integer) -> ir::Node {
     NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == 1 { ir::NdInt { n: off } } else { a } }] },
     _ => coll
   }
+}
+
+// `Parser::call`'s `size(x)` fallback, where no definition of `size` takes the argument: the
+// bytes `x` occupies — a vector's or a sorted collection's elements times their stride
+// (`OpSizeVector`), a record's size (`OpSizeStruct`), a scalar's width (`OpSizeScalar`: an
+// integer's stored width, else its stack width).  Null for any other argument.
+fn size_call(e: el::El, list: vector<ir::Node>, t: ir::TypeT) -> Ex? {
+  wide = ir::TyInteger { spec: wide_spec() };
+  op = "";
+  n = -1;
+  match t {
+    TyVector { inner } => { op = "OpSizeVector"; n = elem_stride(e, inner); },
+    TyReference { n: d } => {
+      kt = el::def(e, d).known_type;
+      if (el::def(e, d).def_type == el::DT_STRUCT || el::def(e, d).def_type == el::DT_ENUM_VALUE) && kt != el::NO_TYPE {
+        op = "OpSizeStruct";
+        n = e.b.types[kt]!.size;
+      }
+    },
+    TyInteger { spec } => { op = "OpSizeScalar"; n = byte_width(spec, false); },
+    TyFloat => { op = "OpSizeScalar"; n = 8; },
+    TyBoolean => { op = "OpSizeScalar"; n = 1; },
+    TyCharacter => { op = "OpSizeScalar"; n = 4; },
+    TySingle => { op = "OpSizeScalar"; n = 4; },
+    TyEnum { n: en, is_ref } => {
+      kt = el::def(e, en).known_type;
+      if kt != el::NO_TYPE {
+        op = if is_ref { "OpSizeStruct" } else { "OpSizeScalar" };
+        n = e.b.types[kt]!.size;
+      }
+    },
+    _ => {}
+  }
+  if op == "" {
+    return null;
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, wide);
+  }
+  if n < 0 {
+    el::refuse(e, "a `size` of a value this port sizes no element of");
+    return ex(ir::NdNull, wide);
+  }
+  ex(el_ir::cl(e, op, list + [ir::NdInt { n: n }]), wide)
 }
 
 // The constant argument a domain check reads, or null.
@@ -8761,8 +8811,20 @@ fn elem_stride(e: el::El, t: ir::TypeT) -> integer {
       if w == 1 || w == 2 || w == 4 { w } else { 8 }
     },
     TyFloat => 8,
+    // Any other scalar: its stored size (`vector_element_type`'s layout).
+    TyBoolean => scalar_stored_size(e, t),
+    TyCharacter => scalar_stored_size(e, t),
+    TySingle => scalar_stored_size(e, t),
+    TyText { dep: _ } => scalar_stored_size(e, t),
+    TyEnum { n: _, is_ref } => if is_ref { -1 } else { scalar_stored_size(e, t) },
     _ => -1
   }
+}
+
+fn scalar_stored_size(e: el::El, t: ir::TypeT) -> integer {
+  d = elm_def(e, t);
+  kt = if d < 0 { el::NO_TYPE } else { el::def(e, d).known_type };
+  if kt == el::NO_TYPE { -1 } else { e.b.types[kt]!.size }
 }
 
 // `Data::type_def_nr` for the scalar and record types: the definition a type is named by.
