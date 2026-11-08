@@ -118,13 +118,29 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 The corpus for every gate: `default/*.loft`, `tests/scripts/`, `tests/docs/`, `lib/`, and the
 language suite (`../loft-suite-91`).
 
+The port has two purposes: a front end on C with no rustc to bootstrap, and a second
+implementation that VALIDATES the Rust one.  So a gate E difference is triaged, never just
+copied:
+- the port is incomplete → port what Rust does (1b-interpreter.md rule 5);
+- Rust answers wrong (a silent wrong value, a refusal the formal rules say must work, a
+  backend that does not build) → fix Rust, with a falsified suite cell;
+- Rust carries an accident with no meaning (a variable minted and never used, an order that
+  falls out of the pass structure) → log it under § Rust accidents and reproduce it only
+  while gate E compares images byte for byte.
+
+### Rust accidents
+
+- A record literal with a vector-literal field written into a place (`xs[i].m = V { a: [1] }`)
+  is built apart and copied in; the first pass's in-place attempt leaves an `_elm_N` the second
+  never uses, still declared at the function head.  The port refuses this shape by name.
+
 ## Where it stands
 
 | Gate | Measured | Remaining |
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | 425 of 1680 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
+| E image | 436 of 1680 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
 
 Elaboration is `selfhost/src/el*.loft`; gate E's runner is `selfhost/front/elab.loft` (`elab
 <image> <program>` over a `LOFT_EMIT_PARSED` image, or `elab <stdlib files>`), its oracle side
