@@ -741,8 +741,14 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                 // Register the backed local at the block only when it is
                 // single-store (its lifetime == the store's).  A multi-store
                 // local (shared `z`) spans several sibling blocks, so it stays
-                // function-scoped; only its per-block stores move.
-                if data.def(d_nr).variables.tp(local).depend().len() == 1 {
+                // function-scoped; only its per-block stores move.  Single-store is
+                // `store_confinement`'s own test — the local's deps are exactly this
+                // store.  A RECOVERED backer (Route 2: its deps name another store) is
+                // multi-store there; counted single here by its dep COUNT, a local
+                // rebound in four sibling loops was registered at their common block,
+                // the rescan never split it, and `--native` declared it in the first
+                // loop only (E0425 in the elaborator's `finish_body`).
+                if data.def(d_nr).variables.tp(local).depend() == [vdb] {
                     cmap.insert(local, b);
                 }
             }
