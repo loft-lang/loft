@@ -265,6 +265,9 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-AppendTwin`'s loop clause: the buffers a loop around their append sites holds
     /// ONE window for, and that window's name, innermost loop last.
     ap_loop_windows: Vec<(u16, String)>,
+    /// `@FR-R-PushFill`'s text clause: the texts an enclosing loop holds a push window for —
+    /// the variable, its C place and the window.
+    text_windows: Vec<(u16, String, String)>,
     /// `@FR-R-Destination` — in a `__d` twin, the shape (its buffer is the caller's element,
     /// its scalar fields the locals `loft_ds<k>`); the call site's rewritten call, matched by
     /// callee and argument slice so its emission asks for the callee's twin.
@@ -772,6 +775,7 @@ impl<'a> FnWriter<'a> {
             ap_site: None,
             ap_memo: std::collections::HashMap::new(),
             ap_loop_windows: Vec::new(),
+            text_windows: Vec::new(),
             ds: None,
             ds_site: None,
             nk_call: None,
@@ -4797,6 +4801,7 @@ impl<'a> FnWriter<'a> {
         }
         self.hold_pushes(b, mints, ind)?;
         let ap_windows = self.open_loop_windows(b, ind);
+        let text_windows = self.open_text_windows(b, ind);
         // `@FR-R-Fill`: the fill is tried before a guard that writes a second copy of the loop,
         // so both copies are its fallback.
         let fill = self.fill_head(b, ind)?;
@@ -4814,6 +4819,10 @@ impl<'a> FnWriter<'a> {
                 .pop()
                 .expect("the window this loop opened");
             self.line(ind, &format!("loft_win_sync({w});"));
+        }
+        for _ in 0..text_windows {
+            let (_, place, w) = self.text_windows.pop().expect("the window this loop opened");
+            self.line(ind, &format!("loft_tw_sync(&{w}, &{place});"));
         }
         self.in_range.truncate(in_range_at);
         self.grid_facts.truncate(grid_at);
@@ -4911,6 +4920,80 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("{w} = loft_win_of({xv}, {size});"));
             self.ap_loop_windows.push((x, w));
             crate::rewrite_census::fired("R-AppendTwin/loop-window", 1);
+            opened += 1;
+        }
+        opened
+    }
+
+    /// `@FR-R-PushFill`'s text clause — open ONE push window, before loop `b`, for each text the
+    /// loop names only as the destination of character pushes (`t += "{c}"`, `OpAppendCharacter`)
+    /// whose characters do not read it, and answer how many it opened; the caller syncs them
+    /// after the loop's end.  The window stands for the text's length between the pushes, so the
+    /// loop may name the text, or a view of it, nowhere else, and may leave only by its own end:
+    /// a `return`, or a `break` or `continue` past `b`, would skip the sync.  A text an enclosing
+    /// loop holds a window for keeps that one.  `LOFT_NO_TEXT_WINDOW=1`.
+    fn open_text_windows(&mut self, b: &Block, ind: usize) -> usize {
+        if self.gen_elem.is_some()
+            || self.tr.is_some()
+            || crate::env_once!(std::env::var("LOFT_NO_TEXT_WINDOW").is_ok_and(|v| v != "0"))
+        {
+            return 0;
+        }
+        let data = self.cx.data;
+        let vars = data.def(self.d).variables();
+        let mut leaves = false;
+        let mut stmts: Vec<&Value> = Vec::new();
+        for op in &b.operators {
+            loop_statements(op, 0, &mut stmts, &mut leaves);
+        }
+        if leaves {
+            return 0;
+        }
+        let mut sites: Vec<(u16, &Value)> = Vec::new();
+        let mut site_nodes: std::collections::HashSet<*const Value> =
+            std::collections::HashSet::new();
+        for st in &stmts {
+            if let Value::Call(d, args) = st.unspan()
+                && matches!(data.def(*d).name(), "OpAppendCharacter" | "OpAppendStackCharacter")
+                && let [dest, c] = args.as_slice()
+                && let Value::Var(x) = dest.unspan()
+            {
+                sites.push((*x, c));
+                site_nodes.insert(std::ptr::from_ref(*st));
+                site_nodes.insert(std::ptr::from_ref(st.unspan()));
+            }
+        }
+        let mut opened = 0;
+        let mut seen: Vec<u16> = Vec::new();
+        for (x, _) in sites.clone() {
+            if seen.contains(&x)
+                || self.text_windows.iter().any(|(v, _, _)| *v == x)
+                || self.ap_loop_windows.iter().any(|(v, _)| *v == x)
+            {
+                continue;
+            }
+            seen.push(x);
+            let reach = crate::opt::body_writes::views(vars, x);
+            let mut elsewhere = false;
+            for op in &b.operators {
+                mentions_outside(op, &reach, &site_nodes, &mut elsewhere);
+            }
+            for (y, c) in &sites {
+                if *y == x {
+                    mentions_outside(c, &reach, &std::collections::HashSet::new(), &mut elsewhere);
+                }
+            }
+            if elsewhere {
+                continue;
+            }
+            let Ok(place) = self.text_dest(&Value::Var(x)) else {
+                continue;
+            };
+            let w = format!("loft_tw{}", self.decls.len());
+            self.decls.push(format!("loft_tw {w};"));
+            self.line(ind, &format!("{w} = loft_tw_of(&{place});"));
+            self.text_windows.push((x, place, w));
+            crate::rewrite_census::fired("R-PushFill/text", 1);
             opened += 1;
         }
         opened
@@ -10191,6 +10274,17 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpAppendCharacter" | "OpAppendStackCharacter", [dest, c]) => {
+                // `@FR-R-PushFill`'s text clause: a push into a text a loop holds a window for.
+                if let Value::Var(x) = dest.unspan()
+                    && let Some((_, place, w)) =
+                        self.text_windows.iter().find(|(v, _, _)| v == x).cloned()
+                {
+                    let c = self.expr(c, ind)?;
+                    return Ok(E::new(
+                        format!("loft_tw_push(&{w}, &{place}, {})", as_char(c)?),
+                        K::Void,
+                    ));
+                }
                 let dest = self.text_dest(dest)?;
                 let c = self.expr(c, ind)?;
                 Ok(E::new(

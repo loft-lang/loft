@@ -1127,6 +1127,36 @@ LOFT_HOT_INLINE void loft_push_code(loft_text *t, uint32_t c) {
     loft_push_code_slow(t, c);
 }
 
+/* `@FR-R-PushFill`'s text clause — a text a loop pushes characters to and names nowhere else
+ * holds its bytes, length and room in locals for the loop: a `char` store may alias the text's
+ * header, so pushing through it reloaded the length and the bytes at every character.  The
+ * length goes back around each growth and at the loop's end (`loft_tw_sync`).  The growth goes
+ * through a COPY, as `loft_win`'s does, so the window's address never reaches a call and the
+ * compiler keeps its fields in registers. */
+typedef struct { char *p; size_t len, cap; } loft_tw;
+LOFT_HOT_INLINE loft_tw loft_tw_of(const loft_text *t) {
+    loft_tw w = { t->p, t->len, t->cap };
+    return w;
+}
+LOFT_COLD static loft_tw loft_tw_grow(loft_tw w, loft_text *t, uint32_t c) {
+    t->len = w.len;
+    loft_push_code_slow(t, c);
+    w.p = t->p;
+    w.len = t->len;
+    w.cap = t->cap;
+    return w;
+}
+LOFT_HOT_INLINE void loft_tw_push(loft_tw *w, loft_text *t, uint32_t c) {
+    if (LOFT_LIKELY(c - 1u < 0x7Fu && w->len < w->cap)) {
+        w->p[w->len++] = (char) c;
+        return;
+    }
+    loft_tw g = *w;
+    g = loft_tw_grow(g, t, c);
+    *w = g;
+}
+LOFT_HOT_INLINE void loft_tw_sync(const loft_tw *w, loft_text *t) { t->len = w->len; }
+
 /* A function value: the definition it names (LOFT_NULL for the absent one) and the closure
  * record a capturing lambda reads.  A call goes through the emitted dispatcher of its
  * signature, `loft_call{n}`, which switches on `d` (State::fn_call_ref). */
