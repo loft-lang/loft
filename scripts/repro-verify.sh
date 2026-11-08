@@ -152,6 +152,8 @@ echo "   rustc $RUSTC_VER (from the bundle's BUILD-INFO)"
   || die "v$VERSION ships no source archive — nothing to rebuild from"
 unzip -q "$ROOT/src.zip" -d "$ROOT/srcroot" || die "cannot unpack the source archive"
 SRC="$ROOT/src"; mv "$ROOT/srcroot/loft-$VERSION" "$SRC" 2>/dev/null || mv "$ROOT/srcroot" "$SRC"
+# PROBE ONLY (loft#2431, never merged): build with another lean_build.sh.
+if [ -n "${PROBE_LEAN_BUILD:-}" ]; then cp "$PROBE_LEAN_BUILD" "$SRC/scripts/lean_build.sh"; echo "   probe: lean_build.sh from $PROBE_LEAN_BUILD"; fi
 
 # 3. The exact compiler, in a private root that leaves the caller's toolchain alone.
 #

@@ -1,8 +1,9 @@
 # loft#2431 probe — NEVER merged; lives only on the `tuxedo-2431-probe` branch.
-# Batch 3: the release binary of THIS tree, built the way make-release.sh builds it, on parallel
-# Windows runners.  Arm `plain` is today's build (the control: it must show the two outcomes the
-# link records named — the `type_info` vtable placed in codegen unit 04 or 06); arm `cgu1` adds
-# `-C codegen-units=1`.  Each job prints its loft.exe sha256 and build seconds.
+# Batch 4: v2026.11.0 rebuilt from its source with its recorded rustc (repro-verify.sh), in two
+# arms.  `control`: the release's own lean_build.sh — about one rebuild in ten differs.  `fix`:
+# lean_build.sh replaced by scripts/lean_build-2431.sh (the binary crate as one codegen unit) —
+# its binary differs from the published one by design; the verdict is how many DISTINCT hashes
+# each arm produces.
 name: repro probe 2431
 
 on:
@@ -13,7 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  rebuild:
     # @windows-exempt: a throwaway probe of the Windows release's reproducibility
     name: ${{ matrix.arm }} ${{ matrix.n }}
     runs-on: windows-latest
@@ -21,29 +22,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arm: [plain, cgu1]
-        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
-        exclude:
-          - { arm: plain, n: 17 }
-          - { arm: plain, n: 18 }
-          - { arm: plain, n: 19 }
-          - { arm: plain, n: 20 }
-          - { arm: plain, n: 21 }
-          - { arm: plain, n: 22 }
-          - { arm: plain, n: 23 }
-          - { arm: plain, n: 24 }
+        arm: [control, fix]
+        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
     steps:
       - uses: actions/checkout@v5
-      - name: Build the release binary
+      - name: Rebuild v2026.11.0
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOFT_REPRO_ROOT: 'C:\loft-repro'
         run: |
-          set -e
-          . scripts/repro-flags.sh
-          if [ "${{ matrix.arm }}" = cgu1 ]; then export RUSTFLAGS="$RUSTFLAGS -C codegen-units=1"; fi
-          echo "RUSTFLAGS=$RUSTFLAGS"
-          start=$(date +%s)
-          LOFT_BUILD_ID=probe-2431 CARGO_INCREMENTAL=0 cargo build -q --release --bin loft --target x86_64-pc-windows-msvc
-          end=$(date +%s)
-          sha=$(sha256sum target/x86_64-pc-windows-msvc/release/loft.exe | cut -d' ' -f1)
-          echo "PROBE-RESULT arm=${{ matrix.arm }} n=${{ matrix.n }} sha=$sha seconds=$((end - start))"
-          echo "::notice title=${{ matrix.arm }} ${{ matrix.n }}::$sha $((end - start))s"
+          set +e
+          if [ "${{ matrix.arm }}" = fix ]; then export PROBE_LEAN_BUILD="$PWD/scripts/lean_build-2431.sh"; fi
+          bash scripts/repro-verify.sh --target x86_64-pc-windows-msvc --version 2026.11.0 | tee verify.log
+          sha=$(sed -n 's/^ *rebuilt *\([0-9a-f]\{64\}\).*/\1/p' verify.log | head -1)
+          echo "PROBE-RESULT arm=${{ matrix.arm }} n=${{ matrix.n }} sha=$sha"
+          [ -n "$sha" ]
