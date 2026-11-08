@@ -284,7 +284,7 @@ fn admit(
     let viewers = if own_buffer {
         own_buffer_viewers(func, local)
     } else {
-        func.store_viewers(local)
+        func.store_viewers_now(local)
     };
     let mut param_idx: Option<usize> = None;
     for (i, arg) in args.iter().enumerate() {

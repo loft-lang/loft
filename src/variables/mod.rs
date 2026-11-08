@@ -4283,6 +4283,22 @@ impl Function {
 
     #[must_use]
     pub fn store_viewers(&self, root: u16) -> HashSet<u16> {
+        self.viewers_of(root, true)
+    }
+
+    /// [`Self::store_viewers`] for a pass that runs AFTER the scope pass (`(R-Rebind)`): by the
+    /// deps the variables carry now, without [`Variable::viewed`].  Those are the parse's view
+    /// of each bind, and the scope pass has since materialised every view it had to — a call
+    /// answering `Doc["d"]` delivers a copy into its buffer (`materialized_view_return`), so the
+    /// local it binds owns that copy.  Counted, they declined zttext's `delete_op` rebind
+    /// (`do_d = delete_range(d, 0, 0)`) for a view no run can have.  A bind that does leave a
+    /// view is the caller's own check (`rebind_place`: "a binding of the local views a place").
+    #[must_use]
+    pub fn store_viewers_now(&self, root: u16) -> HashSet<u16> {
+        self.viewers_of(root, false)
+    }
+
+    fn viewers_of(&self, root: u16, earlier_binds: bool) -> HashSet<u16> {
         let closure = |start: u16| -> HashSet<u16> {
             let mut seen: HashSet<u16> = HashSet::new();
             let mut stack = vec![start];
@@ -4292,6 +4308,7 @@ impl Function {
                 let earlier = self
                     .variables
                     .get(v as usize)
+                    .filter(|_| earlier_binds)
                     .map_or(&[][..], |x| &x.viewed[..]);
                 for d in self
                     .tp(v)
@@ -6096,17 +6113,17 @@ impl Function {
     /// construction, already building a closure.
     pub fn rebind_must_mint(&self, v: u16) -> bool {
         (v as usize) < self.variables.len()
-            && (self.is_captured(v) || self.viewed_by_an_earlier_bind(v))
+            && self.is_captured(v)
             && crate::data::is_dbref(self.tp(v).base())
     }
 
-    /// `@FR-R-InPlaceLiteral` — did an earlier bind of `v` on this pass leave it VIEWING
+    /// `@FR-R-InPlaceLiteral` `@FR-R-Demote` — did an earlier bind of `v` on this pass leave it VIEWING
     /// another variable's store ([`Variable::viewed`])?  The type keeps only the last bind's
     /// deps, so after `if c { r = b.tp; } else { r = fresh(); }` the slot reads as owning while
     /// on one path it still names `b`'s record: re-minting it in place (`r = T { … }`, and the
     /// demote's move, `(R-Demote)`) writes into `b`.  An upper bound, like `store_viewers`: a
     /// bind that is dead by the rebind still counts, which costs a fresh store, never a value.
-    fn viewed_by_an_earlier_bind(&self, v: u16) -> bool {
+    pub fn viewed_by_an_earlier_bind(&self, v: u16) -> bool {
         self.variables[v as usize]
             .viewed
             .iter()
