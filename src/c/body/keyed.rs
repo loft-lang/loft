@@ -1474,10 +1474,12 @@ impl FnWriter<'_> {
             (None, Some(_)) => crate::rewrite_census::fired("R-TypedKeyed/text", 1),
             (None, None) => {}
         }
-        // `@FR-R-SameRead`'s filed clause: the previous statement filed `rec` into this hash, so
-        // where that insert landed (the store takes writes, neither handle is null) and `rec`'s
-        // key is the one looked up, `rec` IS the entry under it (`@FR-Col-Insert`: the latest
-        // insert wins); otherwise the lookup runs as written.
+        // `@FR-R-SameRead`'s filed clause: the previous statement filed a record into this hash,
+        // so where that insert landed (the store takes writes, neither handle is null) and the
+        // entry it filed (`loft_h_filed`: an inline table moves a staged record into itself, so
+        // the record handed to the insert is not always the entry) holds the key looked up, that
+        // entry IS the one under the key (`@FR-Col-Insert`: the latest insert wins); otherwise
+        // the lookup runs as written.
         let filed = self.filed_next.clone().filter(|(path, htp, _)| {
             *htp == tp
                 && vals.len() == 1
@@ -1486,12 +1488,11 @@ impl FnWriter<'_> {
         });
         let typed_find = ints
             .map(|ks| match ks.as_slice() {
-                [key] if let Some((_, _, rec)) = &filed => {
+                [key] if filed.is_some() => {
                     crate::rewrite_census::fired("R-SameRead/filed", 1);
-                    let r = self.var(*rec);
                     let kpos = self.cx.stores.types[tp as usize].keys[0].position;
                     format!(
-                        "((!LOFT_WRITE_REFUSED(loft_store_of({data})) && {data}.rec != 0 && {r}.rec != 0 && loft_get_int({r}, {kpos}) == {key}) ? {r} : loft_h_find_i64({data}, {keys}, {key}))"
+                        "((!LOFT_WRITE_REFUSED(loft_store_of({data})) && {data}.rec != 0 && loft_h_filed.rec != 0 && loft_get_int(loft_h_filed, {kpos}) == {key}) ? loft_h_filed : loft_h_find_i64({data}, {keys}, {key}))"
                     )
                 }
                 [key] => format!("loft_h_find_i64({data}, {keys}, {key})"),

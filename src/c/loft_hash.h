@@ -671,14 +671,13 @@ static loft_hprobe loft_h_probe_for_insert(loft_ref c, loft_ref rec, const loft_
 }
 
 /* hash::add_at: file `rec` in the bucket a probe found free. */
-static void loft_h_add_at(loft_ref c, loft_ref rec, uint32_t bucket, uint32_t index, uint32_t tag, const loft_key *keys,
-                          int nk) {
+/* The add at the bucket a probe found free; answers where `rec` lives afterwards (an inline
+ * table moves a staged entry into itself). */
+static loft_ref loft_h_add_at(loft_ref c, loft_ref rec, uint32_t bucket, uint32_t index, uint32_t tag,
+                              const loft_key *keys, int nk) {
     loft_store_t *s = loft_store_of(c);
     uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (loft_h_is_inline(s, claim)) {
-        (void) loft_h_inline_add(c, claim, rec, keys, nk);
-        return;
-    }
+    if (loft_h_is_inline(s, claim)) return loft_h_inline_add(c, claim, rec, keys, nk);
     uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
 #ifdef LOFT_KEYED_VERIFY
     /* `add_at`'s check: the bucket the probe found free is the one the free-slot walk takes. */
@@ -696,11 +695,12 @@ static void loft_h_add_at(loft_ref c, loft_ref rec, uint32_t bucket, uint32_t in
     if (grown != 0) {
         loft_h_set(s, grown, index, rec, keys, nk);
         loft_set_u32(s, grown, LOFT_H_LEN_FLD, length + 1);
-        return;
+        return rec;
     }
     loft_set_u32(s, claim, bucket, index);
     if (loft_h_slot_bytes(s, claim) == 8) loft_set_u32(s, claim, bucket + 4, tag);
     loft_set_u32(s, claim, LOFT_H_LEN_FLD, length + 1);
+    return rec;
 }
 
 /* hash::replace_at: bucket `bucket` names `index` instead; what it named answered. */
@@ -1570,8 +1570,15 @@ static void loft_hash_displace(const loft_tdesc *T, uint16_t elem, loft_ref c, l
 /* Stores::insert_record on a hash (`@FR-Col-Insert`: latest insert wins): `rec` filed under its
  * key; the entry it displaced answered (released already unless `secondary`), or the null
  * reference. */
+/* Where the latest `loft_hash_insert` on this thread filed its record, null where it filed
+ * nothing: the entry itself.  An inline table copies a STAGED entry into itself and deletes the
+ * stage, so the record handed to the insert is not always the entry afterwards.  Read by
+ * `@FR-R-SameRead`'s filed clause, in the statement right after the insert. */
+static LOFT_TLS loft_ref loft_h_filed;
+
 static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref rec, const loft_key *keys,
                                  int nk, int secondary) {
+    loft_h_filed = loft_ref_null();
     if (c.store_nr == 0xFFFF || c.rec == 0 || rec.rec == 0) return loft_ref_null();
     loft_hprobe p = loft_h_probe_for_insert(c, rec, keys, nk);
 #ifdef LOFT_KEYED_VERIFY
@@ -1594,7 +1601,7 @@ static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c,
     }
 #endif
     if (p.kind == LOFT_H_FREE) {
-        loft_h_add_at(c, rec, p.bucket, p.index, p.tag, keys, nk);
+        loft_h_filed = loft_h_add_at(c, rec, p.bucket, p.index, p.tag, keys, nk);
         return loft_ref_null();
     }
     if (p.kind == LOFT_H_PRESENT) {
@@ -1605,6 +1612,7 @@ static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c,
             loft_remove_claims(T, elem, p.entry);
             loft_free_hash_entry(c, p.entry, gone);
         }
+        loft_h_filed = rec;
         return p.entry;
     }
     /* Stores::dedup_keyed: the entry under the key, displaced, then the add. */
@@ -1617,7 +1625,7 @@ static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c,
         loft_hash_displace(T, elem, c, existing, keys, nk, secondary);
         displaced = existing;
     }
-    (void) loft_h_add(c, rec, keys, nk);
+    loft_h_filed = loft_h_add(c, rec, keys, nk);
     return displaced;
 }
 
