@@ -10260,12 +10260,13 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
     // An argument that is a variable is borrowed itself; any other value lends what its own
-    // type borrows (a literal its store, `resolve_deps`).
+    // type borrows (a literal its store, `resolve_deps`) — except into a `τ?` result, whose
+    // borrows Rust keeps only for variables (1a-parser.md § Rust accidents).
     for i in el_types::deps(rp) {
       if i < len(list) {
         match el_ir::unspan(list[i]) {
           NdVar { n: av } => { if !ds.contains(av) { ds += [av]; } },
-          _ => {
+          _ => if !(ret is TyOptional) {
             for x in el_types::deps(types[i] ?? ir::TyVoid) {
               if !ds.contains(x) {
                 ds += [x];
@@ -12456,7 +12457,11 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   if other != null && t.tp is TyVoid && ends_in_halt(e, t.code) {
     t = ex(t.code, ir::TyNever);
   }
-  if t.tp is TyNull {
+  // A `null` then arm has no type of its own: the `else` is read first, against nothing, and
+  // the null arm then answers the else's null, typed as the else (`true_type = false_type`,
+  // `null_value`).  Without an `else`, or beside another `null`, it is refused by name.
+  null_then = t.tp is TyNull && other != null;
+  if t.tp is TyNull && !null_then {
     el::refuse(e, "an `if` arm that never finishes or is null");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -12481,9 +12486,32 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   f = if e.p.nodes[other!] is SIf {
     expression(e, vars, other!)
   } else {
-    parse_block(e, vars, other!, "else", if then_empty || t.tp is TyNever { ir::TyUnknown { n: 0 } } else { arm_expectation(t.tp) })
+    parse_block(e, vars, other!, "else", if then_empty || null_then || t.tp is TyNever { ir::TyUnknown { n: 0 } } else { arm_expectation(t.tp) })
   };
   truncate_nonzero(vars, dz);
+  if null_then {
+    nv = el_convert::null_of(e, f.tp);
+    if f.tp is TyNull || f.tp is TyNever || nv == null {
+      el::refuse(e, "an `if` arm that never finishes or is null");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    tc = t.code;
+    match tc {
+      NdBlock { block } => {
+        nb = block[0]!;
+        if len(nb.operators) > 0 {
+          nb.operators[-1] = nv!;
+        }
+        tc = ir::NdBlock { block: [nb] };
+      },
+      _ => { tc = nv!; }
+    }
+    // Both arms are typed as the else (`true_type = false_type`), whose dep on a store the arm
+    // itself mints is no borrow (`arm_join_type`, `outside_deps`).
+    et = el_types::with_deps(f.tp, outside_deps(f.code, el_types::deps(f.tp)));
+    t = ex(block_typed(tc, et), et);
+    f = ex(f.code, et);
+  }
   // `@FR-C-Never`: a then arm that never finishes answers nothing, so it takes the else's type
   // (`true_type = false_type`, its block re-typed).
   if t.tp is TyNever && !(f.tp is TyNever) && !(f.tp is TyNull) {

@@ -212,6 +212,11 @@ fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
   vars = el_vars::new_vars("__default", e.file);
   x = el_expressions::expression(e, vars, init);
   if el_types::is_unknown(x.tp) {
+    // An untyped `[]` (a collection field's empty default, Rust's `__dflt_<S>_<f>` builder) is
+    // not carried.
+    if !e.first_pass {
+      el::refuse(e, "a field default of this kind: an untyped value");
+    }
     return if e.first_pass { ir::NdNull } else { null };
   }
   plain_enum = match el_types::base(x.tp) { TyEnum { is_ref } => !is_ref, _ => false };
