@@ -160,7 +160,7 @@ fn keyed_content_known(e: el::El, t: ir::TypeT) -> boolean {
 // wrapper struct a vector local's store is (one field, `vector`), both at `pos`; `typed` gives
 // the wrapper its record type, as a construct does (the schema's own pass leaves it unknown,
 // and makes the `vector<T>` store type at once instead — `vector_store_type`).
-pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean) {
+pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean, narrow_early: boolean = true) {
   vt = ir::TyVector { inner: t, dep: [] };
   if el::def_nr(e, "vector<{nm}>") < 0 {
     vd = el::add_def(e, "vector<{nm}>", pos, el::DT_VECTOR);
@@ -176,9 +176,11 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
   }
   // A narrow integer's element and `vector<…>` store types are made with the definitions, ahead
   // of every struct the schema fills.
+  // `narrow_early: false` — `Data::vector_def` itself registers no store type: a `[]` read against
+  // a known element (`??`'s default) has them made when the literal is built, `main_vector` first.
   match t {
     TyInteger { spec } => {
-      if el_types::narrow_width(spec) > 0 {
+      if narrow_early && el_types::narrow_width(spec) > 0 {
         vector_type(e, content_type(e, t));
       }
     },

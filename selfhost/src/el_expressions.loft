@@ -10265,6 +10265,16 @@ fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   // `[]` is the subject's empty vector, built there.
   if is_empty_literal(d.code) && el_types::base(x.tp) is TyVector {
     vt = el_types::without_deps(el_types::base(x.tp));
+    // `parse_vector` reads the `[]` against the subject's element: a vector type the program has
+    // not made yet is made there, at the `]` (`vector_def`).
+    vin = match vt { TyVector { inner } => inner, _ => ir::TyVoid };
+    vnm = el_types::elem_name(e, vin);
+    if vnm != "" && el::def_nr(e, "main_vector<{vnm}>") < 0 {
+      match e.p.nodes[r] {
+        SVecLit { at } => { el_schema::make_vector_def(e, vin, vnm, el::pos_at(e, closing_bracket(e, at)), true, narrow_early: false); },
+        _ => {}
+      }
+    }
     // Built on the first pass too beside a native call: its buffer is a work ref registered
     // there, in source order.
     d = ex(if e.first_pass && !fresh_native_call(e, x.code) { ir::NdNull } else { empty_literal_to(e, vars, vt, borrows: view_borrows(e, vars, x)) }, vt);

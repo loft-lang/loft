@@ -33,7 +33,37 @@ pub fn check_stored_reference_homes(e: el::El) {
       el::refuse(e, "a stored reference to a record whose local is bound in a deeper block than its holder");
       return;
     }
+    if placed_in_caller_holder(e, d.variables, code) {
+      el::refuse(e, "a fresh record stored into a pointer field of a holder the caller handed in (its placement)");
+      return;
+    }
   }
+}
+
+// `stored_reference_homes`' places: a fresh record — a literal, a loft call's answer — stored
+// into a pointer field (`OpSetDbRef`) of a holder the caller handed in (a parameter, the return
+// buffer) outlives it, so the Rust front end builds it in the holder's store (`apply_places`,
+// `OpPlaceRecord`).  Not carried: such a program is refused by name.
+fn placed_in_caller_holder(e: el::El, vars: ir::Function, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpSetDbRef" && len(args) >= 3 {
+        h = root(e, args[0] ?? ir::NdNull);
+        holder = if h >= 0 { vars.variables[h] } else { null };
+        fresh = match el_ir::unspan(args[2] ?? ir::NdNull) { NdBlock { block } => block[0].name == "Object", NdCall { def_nr: c } => !starts_with(el::def(e, c).name, "Op"), _ => false };
+        if fresh && holder != null && holder!.argument {
+          return true;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if placed_in_caller_holder(e, vars, c) {
+      return true;
+    }
+  }
+  false
 }
 
 // The block depth of each variable's first bind.
