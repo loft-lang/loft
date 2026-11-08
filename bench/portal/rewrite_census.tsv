@@ -4810,6 +4810,7 @@ markdown	dd260f04c	c	R-NoLocks	1
 markdown	dd260f04c	c	R-NoThreads	1
 markdown	dd260f04c	c	R-NonSentinelParam	12
 markdown	dd260f04c	c	R-Peel	6
+markdown	dd260f04c	c	R-PushFill/text	2
 markdown	dd260f04c	c	R-PushRec	1
 markdown	dd260f04c	c	R-Range	21
 markdown	dd260f04c	c	R-RecPtr/param	1
@@ -6081,6 +6082,7 @@ zttext	c76d7f409	c	R-PushFill	14
 zttext	c76d7f409	c	R-PushFill/fill	1
 zttext	c76d7f409	c	R-PushFill/run	4
 zttext	c76d7f409	c	R-PushFill/run-header	3
+zttext	c76d7f409	c	R-PushFill/text	7
 zttext	c76d7f409	c	R-PushRec	6
 zttext	c76d7f409	c	R-Range	167
 zttext	c76d7f409	c	R-Range/index	2

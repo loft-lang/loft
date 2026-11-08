@@ -264,7 +264,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Prefill)` | not counted — runtime: admitted per TYPE at its first mint |
 | `(R-PureReuse)` | `R-PureReuse` ir |
 | `(R-Push)` | `R-Push` c, native · `/sole` c |
-| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c |
+| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/record` native · `/run` c, native · `/run-header` c · `/text` c |
 | `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
 | `(R-Range)` | `R-Range` c, native · `/index` c |
 | `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
@@ -706,6 +706,13 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  header or window for keeps its pushes, and a vector with no record,
                  a reference at position 0 or a locked store (the append does not ask
                  the lock, @FR-H-WriteLocked) runs the appends as they stand.
+                 THE TEXT CLAUSE (C): a loop that names a text local or `&text`
+                 parameter only as the destination of CHARACTER pushes
+                 (`t += "{c}"`, `OpAppendCharacter`) whose characters do not read it,
+                 and that leaves only by its own end, holds the text's bytes, length
+                 and room in a window for the loop: a push that fits is one store and
+                 a bump, the length is written back around each growth and at the
+                 loop's end.  A text an enclosing loop holds a window for keeps it.
 
   (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
                  `Nullable` twins included) over literals and variables — that a loop
@@ -1030,6 +1037,14 @@ across the loop's calls (zttext's `materialise`, +11 % until it did).  Measured 
 `slope_path_with_undo` −11.0 %, zttext `materialise` −8.9 % and `seg` −4.4 %, stage
 `pack_instances` −4.1 %, `resolve_move` −2.5 %; over the 47 routines of the lanes it reaches
 most, geomean −0.6 %.
+
+**The text clause, in words.**  A `char` store may alias the text's own header, so a push
+through the text reloaded its length and its bytes at every character — gcc and clang alike.
+With the window they stay in registers; the length is unread between the pushes because the
+loop names the text nowhere else.  zttext on the ship lane (clang): `materialise` 2.84× →
+2.60×, `patch` 1.64× → 1.27× (gcc unchanged within the noise).  Switch `LOFT_NO_TEXT_WINDOW`;
+census `R-PushFill/text`; site `FnWriter::open_text_windows`, runtime `loft_tw_*`; guard
+`loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-characters-holds-its-text-in-a-window.loft`.
 
 **The probe clause, in words.**  By induction over the order the assignments run in, a local
 whose every assignment is a literal, a proven read or a closed operator over such values holds
