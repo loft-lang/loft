@@ -4448,10 +4448,11 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     g = el_convert::guard_discharge(e, vars, x.code, slot);
     x.code = g ?? el_convert::guard_range(e, x.code, slot, el_convert::guard_source(vars, x.code, x.tp), slot is TyOptional);
   }
-  // A bare `null` written to a `τ?` record, collection or struct-enum local is stored as
-  // `convert_store` stores it: the reference sentinel (`@FR-L-Null`).
+  // A bare `null` written to a `τ?` local is stored as `convert_store` stores it: a record,
+  // collection or struct enum's reference sentinel, a scalar's or a text's own null
+  // (`@FR-L-Null`).
   cur_tp = el_vars::tp(vars, v);
-  if x.tp is TyNull && match cur_tp { TyOptional { inner } => !el_convert::sentinel_value(inner), _ => false } {
+  if x.tp is TyNull && cur_tp is TyOptional {
     c = el_convert::convert_store(e, vars, x.code, x.tp, cur_tp);
     if c != null {
       x.code = c!;
@@ -12570,7 +12571,7 @@ fn has_nullable_field(e: el::El, td: integer) -> boolean {
 // destination (`COPY_FRESH_DEST`); a call answering a fresh record
 // (`element_call_takes_record_buffer`) is handed the element as its return buffer, its answer
 // copied only when it lands elsewhere (`OpDistinctStore`), its store freed after when it gives it
-// away (`call_gives_away_its_store`).  Null, refused by name, for any other item.
+// away (`call_gives_away_its_store`).  Any other item is copied in.
 fn record_item_copy(e: el::El, vars: el_vars::Vars, elm: integer, rd: integer, x: Ex) -> vector<ir::Node>? {
   at = ir::NdVar { n: elm };
   kt = el::def(e, rd).known_type;
@@ -12598,8 +12599,26 @@ fn record_item_copy(e: el::El, vars: el_vars::Vars, elm: integer, rd: integer, x
     },
     _ => {}
   }
-  el::refuse(e, "a record item that is neither a local nor a call answering a fresh record");
-  null
+  // Any other item — a field, an element, a call that takes no buffer — is copied into the
+  // fresh element, its store freed after when it is a call that gives it away.
+  [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + (if gives_away_its_store(e, x.code) { 32768 } else { 0 }) + 16384 }])]
+}
+
+// `call_gives_away_its_store` (with `is_struct_returning_call`): on the second pass, a call of
+// a loft function that has a body and answers no view of its arguments — or a record literal's
+// block — hands its record's store over.
+fn gives_away_its_store(e: el::El, code: ir::Node) -> boolean {
+  if e.first_pass {
+    return false;
+  }
+  match el_ir::unspan(code) {
+    NdCall { def_nr } => {
+      cd = el::def(e, def_nr);
+      starts_with(cd.name, "n_") && !((cd.code[0] ?? ir::NdNull) is NdNull) && !returns_argument_view(cd)
+    },
+    NdBlock { block } => block[0].name == "Object",
+    _ => false
+  }
 }
 
 // `record_fields_placeable`: every field of record `rd` is one a literal may write straight into
@@ -15750,7 +15769,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   // the vector and the item copied into it as a fresh destination (`COPY_FRESH_DEST`).  A call
   // answering a fresh record (`element_call_takes_record_buffer`) is handed the element as its
   // return buffer, its answer copied only when it lands elsewhere (`OpDistinctStore`), its store
-  // freed after when it gives it away (`call_gives_away_its_store`).  Any other item is refused.
+  // freed after when it gives it away (`call_gives_away_its_store`).  Any other item is copied in.
   if len(recs) == 0 && len(xs) > 0 && push == "" && struct_ref(e, in_t) >= 0 {
     rd = struct_ref(e, in_t);
     el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
