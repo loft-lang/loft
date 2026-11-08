@@ -378,6 +378,27 @@ pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean
   // A local bound again is no longer what a guard proved of it.
   v.present = [for x in v.present if x != nr { x }];
   cur = tp(v, nr);
+  // `_` holds whatever it is given last.
+  if name_of(v, nr) == "_" && !el_types::is_unknown(t) {
+    set_type(v, nr, t);
+    return true;
+  }
+  // A fn-ref local takes the return deps of the function it is now bound to: the types are equal
+  // but for what the result borrows (`adopt_fnref_ret`).
+  match cur {
+    TyFunction { result: cr } => {
+      match t {
+        TyFunction { result: tr } => {
+          if el_types::is_equal(e, cr, tr) && el_types::deps(cr) != el_types::deps(tr) {
+            set_type(v, nr, t);
+            return true;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   if el_types::is_unknown(t) || el_types::is_equal(e, cur, t) {
     // `depend_all`: the local borrows what the value borrows.
     ds = el_types::deps(t);
