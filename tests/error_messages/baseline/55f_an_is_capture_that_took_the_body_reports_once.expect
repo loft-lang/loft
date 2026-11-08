@@ -1,0 +1,10 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: `{ ok }` after `is A` reads as a field-capture list, and `A` has no field `ok` — to make the braces the then-branch, put the test in parentheses: `if (… is A) { ok } else { … }`
+  --> <cases>/55f_an_is_capture_that_took_the_body_reports_once.loft:6:28
+  |
+6 |   s = if t is A { ok } else { 2 };
+  |                            ^
+
+error: aborting due to 1 previous error
