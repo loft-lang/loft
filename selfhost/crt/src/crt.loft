@@ -7,6 +7,19 @@
 // and its siblings, `default/01_code.loft`), so a format spec the IR carries is rendered by
 // the C runtime exactly as a C-backend program renders it.
 
+// A place in the C runtime's stores — store, record, and the byte position in that record (a
+// `DbRef`), held by value: what every store routine here takes as `s, r, p`.
+pub value struct Pos {
+  pub s: integer,
+  pub r: integer,
+  pub p: integer
+}
+
+// `at` moved `off` bytes into its record: a field's place.
+pub fn moved(at: Pos, off: integer) -> Pos {
+  Pos { s: at.s, r: at.r, p: at.p + off }
+}
+
 fn c_format_int(out: vector<u8>, val: integer, is_null: boolean, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) -> integer;
 #c "loft_crt_format_int" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 

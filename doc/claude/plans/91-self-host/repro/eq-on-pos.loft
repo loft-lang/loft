@@ -1,0 +1,271 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 1b — `OpEqContent` (`Stores::eq_content`, src/database/equality.rs) ported: two values of
+// type `tp` equal by content — a record field by field, a struct enum by its variant and that
+// variant's fields, a vector element by element, a hash in key order, a stored reference followed
+// once per pair, child records compared as a loop so a chain of any length takes no stack per
+// link.  Two absences are one value, and an absence differs from every present value (`@FR-E-Eq`).
+// The C backend emits a function per type instead; this reads the store through the C runtime's
+// own routines, as every other store operator here does.
+use ir;
+use crt;
+
+// Two places compared as values of type `tp`.
+struct Pair {
+  x: crt::Pos,
+  y: crt::Pos,
+  tp: integer,
+}
+
+struct EqState {
+  kids: vector<Pair>,
+  pairs: vector<Pair>,
+}
+
+// Does the type graph under `tp` hold a kind this port does not walk yet (an array, or a keyed
+// collection other than a hash)?  The lowering refuses such an equality by name.
+pub fn holds_unwalked(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
+  if tp <= 6 || seen.contains(tp) {
+    return false;
+  }
+  seen += [tp];
+  t = b.types[tp];
+  if t == null {
+    return true;
+  }
+  match t.parts[0]! {
+    PtStruct { fields } => fields_unwalked(b, fields, seen),
+    PtEnumValue { value: _, fields } => fields_unwalked(b, fields, seen),
+    PtEnum { values } => {
+      for v in values {
+        if holds_unwalked(b, v.nr, seen) {
+          return true;
+        }
+      }
+      false
+    }
+    PtVector { content } => holds_unwalked(b, content, seen),
+    PtHash { content, fields: _ } => holds_unwalked(b, content, seen),
+    PtChildRec { content } => holds_unwalked(b, content, seen),
+    PtArray { content: _ } => true,
+    PtSorted { content: _, keys: _ } => true,
+    PtOrdered { content: _, keys: _ } => true,
+    PtIndex { content: _, keys: _ } => true,
+    PtRadix { content: _, fields: _ } => true,
+    PtTrie { content: _, key: _ } => true,
+    _ => false,
+  }
+}
+
+fn fields_unwalked(b: ir::Bundle, fields: vector<ir::DbField>, seen: vector<integer>) -> boolean {
+  for f in fields {
+    if f.target != 65535 {
+      if holds_unwalked(b, f.target, seen) {
+        return true;
+      }
+    } else if holds_unwalked(b, f.content, seen) {
+      return true;
+    }
+  }
+  false
+}
+
+// Two integers equal as stored values: two nulls are one value.
+fn same(x: integer?, y: integer?) -> boolean {
+  if x == null || y == null {
+    return x == null && y == null;
+  }
+  x! == y!
+}
+
+fn same_float(x: float?, y: float?) -> boolean {
+  if x == null || y == null {
+    return x == null && y == null;
+  }
+  x! == y!
+}
+
+pub fn eq_content(b: ir::Bundle, x: crt::Pos, y: crt::Pos, tp: integer) -> boolean {
+  st = EqState { kids: [], pairs: [] };
+  if !walk(b, x, y, tp, st) {
+    return false;
+  }
+  while len(st.kids) > 0 {
+    last = len(st.kids) - 1;
+    k = st.kids[last]!;
+    st.kids.remove(last);
+    if !walk(b, k.x, k.y, k.tp, st) {
+      return false;
+    }
+  }
+  true
+}
+
+// The element `i` of `size` bytes of the vector at `at`.
+fn element(at: crt::Pos, size: integer, i: integer) -> crt::Pos {
+  e: vector<integer> = [0, 0, 0];
+  crt::vec_get(e, at.s, at.r, at.p, size, i);
+  crt::Pos { s: e[0] ?? 65535, r: e[1] ?? 0, p: e[2] ?? 0 }
+}
+
+// The place the stored reference at `at` names.
+fn followed(at: crt::Pos) -> crt::Pos {
+  e: vector<integer> = [0, 0, 0];
+  crt::place_ref(e, at.s, at.r, at.p);
+  crt::Pos { s: e[0] ?? 65535, r: e[1] ?? 0, p: e[2] ?? 0 }
+}
+
+// The `i`-th place of a flat `[s, r, p, s, r, p, …]` list (`crt::hash_refs`).
+fn listed(refs: vector<integer>, i: integer) -> crt::Pos {
+  crt::Pos { s: refs[3 * i] ?? 65535, r: refs[3 * i + 1] ?? 0, p: refs[3 * i + 2] ?? 0 }
+}
+
+// A `W_*` word at `at` (`crt::get_w`).
+fn word(w: integer, at: crt::Pos, start: integer) -> integer? {
+  crt::get_w(w, at.s, at.r, at.p, 0, start)
+}
+
+fn walk(b: ir::Bundle, x: crt::Pos, y: crt::Pos, tp: integer, st: EqState) -> boolean {
+  if x == y {
+    return true;
+  }
+  if x.r == 0 || y.r == 0 {
+    return x.r == 0 && y.r == 0;
+  }
+  if tp <= 6 {
+    return base(x, y, tp);
+  }
+  t = b.types[tp]!;
+  match t.parts[0]! {
+    PtStruct { fields } => fields_eq(b, x, y, fields, st),
+    PtEnumValue { value: _, fields } => fields_eq(b, x, y, fields, st),
+    PtEnum { values } => {
+      va = word(1, x, 0) ?? -1;
+      vb = word(1, y, 0) ?? -1;
+      if va != vb {
+        return false;
+      }
+      if va < 1 || va > len(values) {
+        return true;
+      }
+      match b.types[values[va - 1]!.nr]!.parts[0]! {
+        PtEnumValue { value: _, fields } => fields_eq(b, x, y, fields, st),
+        _ => true,
+      }
+    }
+    PtByte { start, nullable: _ } => same(word(1, x, start), word(1, y, start)),
+    PtShort { start, nullable: _ } => same(word(3, x, start), word(3, y, start)),
+    PtShortRaw { start, nullable: _ } => same(word(4, x, start), word(4, y, start)),
+    PtInt { start: _, nullable: _ } => same(word(0, x, 0), word(0, y, 0)),
+    PtDbRef => followed(x) == followed(y),
+    PtChildRec { content } => {
+      ca = word(8, x, 0) ?? 0;
+      cb = word(8, y, 0) ?? 0;
+      if ca == 0 || cb == 0 {
+        return ca == 0 && cb == 0;
+      }
+      st.kids += [Pair { x: crt::Pos { s: x.s, r: ca, p: 8 }, y: crt::Pos { s: y.s, r: cb, p: 8 }, tp: content }];
+      true
+    }
+    PtVector { content } => {
+      na = crt::vec_absent(x.s, x.r, x.p);
+      nb = crt::vec_absent(y.s, y.r, y.p);
+      if na || nb {
+        return na && nb;
+      }
+      n = crt::vec_len(x.s, x.r, x.p);
+      if n != crt::vec_len(y.s, y.r, y.p) {
+        return false;
+      }
+      size = b.types[content]!.size;
+      for i in 0..n {
+        if !walk(b, element(x, size, i), element(y, size, i), content, st) {
+          return false;
+        }
+      }
+      true
+    }
+    PtHash { content, fields: _ } => {
+      na = crt::vec_absent(x.s, x.r, x.p);
+      nb = crt::vec_absent(y.s, y.r, y.p);
+      if na || nb {
+        return na && nb;
+      }
+      xa = crt::hash_refs(x.s, x.r, x.p, tp);
+      xb = crt::hash_refs(y.s, y.r, y.p, tp);
+      if len(xa) != len(xb) {
+        return false;
+      }
+      for i in 0..len(xa) / 3 {
+        if !walk(b, listed(xa, i), listed(xb, i), content, st) {
+          return false;
+        }
+      }
+      true
+    }
+    _ => false,
+  }
+}
+
+// `eq_base`: the seven base types at a place — `integer`, a long, a single, a float, a boolean, a
+// text and a character.
+fn base(x: crt::Pos, y: crt::Pos, tp: integer) -> boolean {
+  if tp == 0 || tp == 1 {
+    same(crt::get_int(x.s, x.r, x.p, 0), crt::get_int(y.s, y.r, y.p, 0))
+  } else if tp == 2 || tp == 3 {
+    same_float(crt::get_float(x.s, x.r, x.p, 0, tp == 2), crt::get_float(y.s, y.r, y.p, 0, tp == 2))
+  } else if tp == 4 {
+    same(word(1, x, 0), word(1, y, 0))
+  } else if tp == 5 {
+    a = crt::get_text(x.s, x.r, x.p, 0);
+    c = crt::get_text(y.s, y.r, y.p, 0);
+    if a == null || c == null {
+      a == null && c == null
+    } else {
+      a! == c!
+    }
+  } else {
+    same(word(8, x, 0), word(8, y, 0))
+  }
+}
+
+// `eq_fields`: each field at its position — a hidden (`#`) field and a linked group's view member
+// skipped, a plain enum by its byte, a stored reference followed (`eq_reference`).
+fn fields_eq(b: ir::Bundle, x: crt::Pos, y: crt::Pos, fields: vector<ir::DbField>, st: EqState) -> boolean {
+  for f in fields {
+    if f.name.starts_with("#") || (f.other_indexes[0] ?? -1) == 65535 {
+      continue;
+    }
+    a = crt::moved(x, f.position);
+    c = crt::moved(y, f.position);
+    if f.name == "enum" {
+      if !same(word(1, a, 0), word(1, c, 0)) {
+        return false;
+      }
+    } else if f.target != 65535 {
+      if !reference(b, a, c, f.target, st) {
+        return false;
+      }
+    } else if !walk(b, a, c, f.content, st) {
+      return false;
+    }
+  }
+  true
+}
+
+// `eq_reference`: the records two stored references name, compared once per pair.
+fn reference(b: ir::Bundle, x: crt::Pos, y: crt::Pos, target: integer, st: EqState) -> boolean {
+  a = followed(x);
+  c = followed(y);
+  if a.r == 0 || c.r == 0 {
+    return a.r == 0 && c.r == 0;
+  }
+  for q in st.pairs {
+    if q.x == a && q.y == c && q.tp == target {
+      return true;
+    }
+  }
+  st.pairs += [Pair { x: a, y: c, tp: target }];
+  walk(b, a, c, target, st)
+}
