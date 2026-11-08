@@ -4726,6 +4726,23 @@ use a separate collection or add after the loop"
         mut var_nr: u16,
         skip_validate: bool,
     ) -> Type {
+        // loft#2441 — a field the variants lay out at different offsets is READ through the
+        // tag-switching getter (`variant_field_getter`); a write has no such route, so it is
+        // refused rather than landing in another field's bytes.
+        if let Value::Block(bl) = to.unspan()
+            && bl.name == Self::VARIANT_FIELD
+        {
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "this field sits at a different offset in each variant that declares it, so a \
+                     write through the enum cannot name one place — declare it FIRST in every \
+                     variant, so they lay it out at one offset, and the write is a plain field write"
+                );
+            }
+            return Type::Void;
+        }
         self.check_iter_safety(to, f_type, op);
         self.check_loop_source_write(to, op, f_type);
         // `@FR-H-RefHome`, `@FR-H-Removed` — a local vector a stored reference names into is
