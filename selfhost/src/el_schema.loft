@@ -40,6 +40,7 @@ pub fn fill_all(e: el::El) {
       register_enum(e, d#index);
     }
   }
+  synth_nullable_struct_fields(e);
   // A unit variant of a struct enum is a record too: its one field, `enum`, holds its ordinal.
   for d in e.b.data.definitions {
     if d.def_type == el::DT_ENUM_VALUE && len(d.attributes) == 0 && d.parent >= 0 && el::def(e, d.parent).returned[0] == ir::TyEnum { n: d.parent, is_ref: true, dep: [] } {
@@ -76,6 +77,19 @@ pub fn fill_all(e: el::El) {
   for d in e.b.data.definitions {
     if (d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE && len(d.attributes) > 0) && d.known_type == NO_TYPE {
       fill_database(e, d#index);
+      // @PLN25 E2: a struct's `__nullable<S>` variants are laid out right after it, so their
+      // type numbers follow `S` and precede any later struct that holds one.
+      if d.def_type == el::DT_STRUCT {
+        syn = el::source_nr(e, d.source, "__nullable<{d.name}>");
+        if syn >= 0 && el::def(e, syn).known_type != NO_TYPE {
+          for vn in ["Null", "Some"] {
+            v = el::variant_of(e, syn, vn);
+            if v >= 0 && el::def(e, v).known_type == NO_TYPE {
+              fill_database(e, v);
+            }
+          }
+        }
+      }
     }
   }
   // P191: each keyed local's store type — a `hash`, `index`, `spatial` or `trie`, through a `?` —
@@ -215,6 +229,103 @@ fn register_enum(e: el::El, d: integer) {
   e.b.data.definitions[d].known_type = num;
 }
 
+// `typedef::synth_nullable_struct_fields` (@PLN25 E2a.2, `@FR-L-Null-Which`): an embedded record
+// field `item: S?` becomes the tagged `__nullable<S>`, so absence is discriminant 0 and has
+// somewhere to live; a `reference<S>?` keeps the pointer's own null.  Then every enum still
+// without a store type is registered — the synthetic ones this made.
+fn synth_nullable_struct_fields(e: el::El) {
+  for host in e.b.data.definitions {
+    if host.synthetic != "" || !(host.def_type == el::DT_STRUCT || host.def_type == el::DT_ENUM_VALUE && len(host.attributes) > 0) {
+      continue;
+    }
+    for a in host.attributes {
+      if a.constant {
+        continue;
+      }
+      sd = nullable_record_of(e, a.typedef[0] ?? ir::TyVoid);
+      if sd < 0 {
+        continue;
+      }
+      // `@FR-L-OutOfLine`: a `S?` whose `S` holds the host is out of line, record 0 its null.
+      if holds_record(e, sd, host#index, []) {
+        el::refuse(e, "an out-of-line nullable record field");
+        return;
+      }
+      syn = nullable_enum_for(e, sd);
+      if el::def(e, syn).known_type == NO_TYPE {
+        register_enum(e, syn);
+      }
+      e.b.data.definitions[host#index].attributes[a#index].typedef = [ir::TyEnum { n: syn, is_ref: true, dep: [] }];
+    }
+  }
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_ENUM && d.known_type == NO_TYPE {
+      register_enum(e, d#index);
+    }
+  }
+}
+
+// The struct an embedded `S?` field holds (`synth_nullable_target`: a plain struct of the
+// program, not a type variable's placeholder), or -1.
+fn nullable_record_of(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => {
+      match inner {
+        TyReference { n, dep } => {
+          if !dep.contains(el_types::MARKER) && el::def(e, n).def_type == el::DT_STRUCT && el::def(e, n).synthetic == "" && el_types::type_var(e, inner) < 0 {
+            return n;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  -1
+}
+
+// `Data::nullable_enum_for`: the synthetic `__nullable<S>` — a struct enum of a unit `Null`
+// (discriminant 1) and a `Some` (2) holding `payload: S` inline — made once per struct.  The
+// enum is keyed on the struct's own source (two libraries may each have a `Chunk`); its
+// variants are added under the current one, at the position the lexer stands on: the file's end.
+pub fn nullable_enum_for(e: el::El, sd: integer) -> integer {
+  name = "__nullable<{el::def(e, sd).name}>";
+  src = el::def(e, sd).source;
+  have = el::source_nr(e, src, name);
+  if have >= 0 {
+    return have;
+  }
+  at = el::pos_at(e, len(e.p.src) - 1);
+  own = e.source;
+  e.source = src;
+  en = el::add_def(e, name, at, el::DT_ENUM);
+  e.source = own;
+  self_tp = ir::TyEnum { n: en, is_ref: true, dep: [] };
+  el::set_returned(e, en, self_tp);
+  enumerate = el::def_nr(e, "enumerate");
+  nv = el::add_def(e, "Null", at, el::DT_ENUM_VALUE);
+  e.b.data.definitions[nv].parent = en;
+  el::set_returned(e, nv, self_tp);
+  null_attr = el::attribute("Null", self_tp);
+  null_attr.constant = true;
+  null_attr.value = [ir::NdEnum { ord: 1, tp: NO_TYPE }];
+  e.b.data.definitions[en].attributes += [null_attr];
+  sv = el::add_def(e, "Some", at, el::DT_ENUM_VALUE);
+  e.b.data.definitions[sv].parent = en;
+  el::set_returned(e, sv, self_tp);
+  some_attr = el::attribute("Some", self_tp);
+  some_attr.constant = true;
+  some_attr.value = [ir::NdEnum { ord: 2, tp: NO_TYPE }];
+  e.b.data.definitions[en].attributes += [some_attr];
+  disc = el::attribute("enum", ir::TyEnum { n: enumerate, is_ref: false, dep: [] });
+  disc.value = [ir::NdEnum { ord: 2, tp: NO_TYPE }];
+  e.b.data.definitions[sv].attributes += [disc, el::attribute("payload", ir::TyReference { n: sd, dep: [] })];
+  e.b.data.definitions[en].synthetic = "@PLN25 nullable-enum for embedded struct field";
+  e.b.data.definitions[nv].synthetic = "@PLN25 nullable-enum Null variant";
+  e.b.data.definitions[sv].synthetic = "@PLN25 nullable-enum Some variant";
+  en
+}
+
 // `typedef::fill_database` for a plain struct: a schema type under the struct's name, each
 // stored attribute a field of its content type, in declaration order.
 fn fill_database(e: el::El, d: integer) {
@@ -223,6 +334,11 @@ fn fill_database(e: el::El, d: integer) {
   // a record of itself) is registered under a name no program type can take.
   own = match def.returned[0] ?? ir::TyVoid { TyReference { n } => n == d, _ => false };
   reg = if len(def.attributes) == 0 && own { "__typevar_{def.name}" } else { def.name };
+  // A `__nullable<S>` variant is registered under its enum's store name (`__nullable<S>::Some`):
+  // every such enum has a `Null` and a `Some`, each `Some` of another payload.
+  if def.def_type == el::DT_ENUM_VALUE && def.parent >= 0 && starts_with(el::def(e, def.parent).name, "__nullable<") && el::def(e, def.parent).synthetic != "" {
+    reg = "{e.b.types[el::def(e, def.parent).known_type].name}::{def.name}";
+  }
   if schema_type(e, reg) >= 0 {
     el::refuse(e, "a struct named like a type the schema already has");
     return;
@@ -258,22 +374,6 @@ fn fill_database(e: el::El, d: integer) {
   for a in def.attributes {
     if a.constant {
       continue;
-    }
-    // An embedded record field `S?` is the tagged `__nullable<S>` (`@FR-L-Null-Which`,
-    // `fill_all`'s rewrite): not carried.  A `reference<S>?` keeps the pointer's own null.
-    match a.typedef[0] {
-      TyOptional { inner } => {
-        match inner {
-          TyReference { n, dep } => {
-            if !dep.contains(el_types::MARKER) && el::def(e, n).def_type == el::DT_STRUCT && el::def(e, n).synthetic == "" && el_types::type_var(e, inner) < 0 {
-              el::refuse(e, "a nullable record field (a `__nullable<S>`)");
-              return;
-            }
-          },
-          _ => {}
-        }
-      },
-      _ => {}
     }
     // A struct-enum field one of whose variants holds this record is an out-of-line child
     // (`@FR-L-OutOfLine`, `field_is_out_of_line`): not carried.
