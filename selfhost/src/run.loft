@@ -90,6 +90,11 @@ fn abs_float(v: float?) -> float? {
   if v == null { null } else { v.abs() }
 }
 
+// The store place three integer stack slots from `at` hold: store, record, position.
+fn stack_pos(ints: vector<integer?>, at: integer) -> crt::Pos {
+  crt::Pos { s: ints[at] ?? NULL_STORE, r: ints[at + 1] ?? 0, p: ints[at + 2] ?? 0 }
+}
+
 // `t[from..till]`, which compiles to `OpGetTextSub(t, from, till)`: a negative bound counts
 // from the end, a `till` of `i32::MIN` (the op's one-character form, a value and not a null)
 // takes the character at `from`, and a null bound answers null (`@FR-N-Store`, loft#2306).
@@ -1205,7 +1210,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           crt::ser_write(ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0);
         } else {
           sp_int -= 6;
-          files::write(b, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, op.a);
+          files::write(b, stack_pos(ints, sp_int), stack_pos(ints, sp_int + 3), op.a);
         }
       }
       ReadFile => {
@@ -1218,7 +1223,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           }
         } else {
           sp_int -= 6;
-          files::read(b, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, ints[sp_int + 3] ?? NULL_STORE, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, rn, op.a);
+          files::read(b, stack_pos(ints, sp_int), stack_pos(ints, sp_int + 3), rn, op.a);
         }
       }
       FsOp => {
@@ -1852,7 +1857,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         at = text_at(stk, base, op);
         sp_int -= 3;
         piece = "";
-        show::render(b, op.b / 4, show::Pos { s: ints[sp_int] ?? NULL_STORE, r: ints[sp_int + 1] ?? 0, p: ints[sp_int + 2] ?? 0 }, op.b % 4, 0, piece);
+        show::render(b, op.b / 4, stack_pos(ints, sp_int), op.b % 4, 0, piece);
         crt::slot_text_append(stk, at, piece);
       }
       // `v += other`: the copies are claims of `v`'s store, so no owner changes; the claims are
