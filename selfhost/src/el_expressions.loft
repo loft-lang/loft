@@ -10158,13 +10158,18 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
   // `add_defaults`' general arm: a parameter the call leaves out takes its declared default,
   // or null where it is nullable and declares none.  A default that reads another parameter, a
   // call that needs hidden parameters of its own, a link and a hidden buffer stay refused.
-  if n > len(given) && !retbuf {
+  if n > len(given) && !retbuf && !def.attributes[len(given)]!.hidden {
     g2 = given;
     t2 = types;
     for a in def.attributes {
       if a#index >= len(given) {
         dv = a.value[0] ?? ir::NdNull;
         pt = a.typedef[0] ?? ir::TyUnknown { n: 0 };
+        // The hidden parameters trail the visible ones: the re-entry below fills them (a text
+        // buffer's "default ref", the record return buffer) as for any call.
+        if a.hidden {
+          break;
+        }
         if a.hidden || pt is TyRefVar || !default_in_place(e, dv, n) || (el_ir::is_null(dv) && !(pt is TyOptional)) {
           el::refuse(e, "a call with defaulted or hidden parameters: {def.name}");
           return null;

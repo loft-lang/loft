@@ -237,6 +237,44 @@ fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
   el_convert::convert(e, vars, x.code, x.tp, el_types::base(ft), false)
 }
 
+// `parse_arguments`' `= default` for a constant: a plain scalar, a literal text or `null`, read
+// with no frame and converted to the parameter's type.  A default that builds a value, reads
+// another parameter or calls (Rust hoists those into a `__dflt` function) is refused by name.
+fn param_default(e: el::El, init: integer, pt: ir::TypeT) -> ir::Node? {
+  vars = el_vars::new_vars("__default", e.file);
+  x = el_expressions::expression(e, vars, init);
+  if x.tp is TyNull {
+    return ir::NdNull;
+  }
+  plain_enum = match el_types::base(x.tp) { TyEnum { is_ref } => !is_ref, _ => false };
+  constant = match el_ir::unspan(x.code) {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    NdText { s: _ } => true,
+    NdEnum { ord: _ } => plain_enum,
+    _ => false
+  };
+  if !constant || len(vars.vars) > 0 {
+    el::refuse(e, "a parameter default other than a constant");
+    return null;
+  }
+  if e.first_pass {
+    return x.code;
+  }
+  // A text default is the text itself (`convert` of text to text is no conversion).
+  if el_types::base(x.tp) is TyText && el_types::base(pt) is TyText {
+    return x.code;
+  }
+  c = el_convert::convert(e, vars, x.code, x.tp, pt, false);
+  if c == null {
+    el::refuse(e, "a parameter default its parameter's type does not take");
+  }
+  c
+}
+
 // `Parser::parse_constant`, `const NAME = value;`: a definition of its own (`DefType::Constant`),
 // positioned where the parser stands on the `;`, typed by its value and holding the value's code,
 // which every use inlines.  The value is read with no frame of its own.  A declared type, and a
@@ -524,7 +562,9 @@ fn op_rename(tok: text) -> text {
 struct Argument {
   name: text,
   typedef: ir::TypeT,
-  constant: boolean
+  constant: boolean,
+  // the declared `= default`, converted to the parameter's type; NdNull for none
+  dflt: ir::Node = ir::NdNull
 }
 
 // A block whose one statement is a vector literal.
@@ -631,8 +671,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   for pn in params {
     match e.p.nodes[pn] {
       SParam { name: an, amp, fixed, tp, init, cap: pcap } => {
-        if init != null || pcap != null || tp == null {
-          kind = if init != null { "a default" } else if pcap != null { "a capability" } else { "no type" };
+        if pcap != null || tp == null {
+          kind = if pcap != null { "a capability" } else { "no type" };
           el::refuse(e, "a parameter with a default, a capability or no type: {kind}");
           return "";
         }
@@ -653,7 +693,15 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           el::refuse(e, "a method: {an}");
           return "";
         }
-        arguments += [Argument { name: an, typedef: t!, constant: fixed }];
+        dv = ir::NdNull;
+        if init != null {
+          d = param_default(e, init!, t!);
+          if d == null {
+            return "";
+          }
+          dv = d!;
+        }
+        arguments += [Argument { name: an, typedef: t!, constant: fixed, dflt: dv }];
       },
       _ => {}
     }
@@ -1063,6 +1111,7 @@ fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir
   for a in arguments {
     e.b.data.definitions[d].attributes += [el::attribute(a.name, a.typedef)];
     e.b.data.definitions[d].attributes[a#index].value_const = a.constant;
+    e.b.data.definitions[d].attributes[a#index].value = [a.dflt];
   }
   if tn >= 0 {
     m = el::attribute(name, ir::TyRoutine { n: d });
