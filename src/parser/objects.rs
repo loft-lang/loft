@@ -6839,7 +6839,14 @@ impl Parser {
             // captured local ROUTES to the fresh-buffer arm instead of falling between the
             // two — without it the field initialisers write into uninitialised storage,
             // which is the failure that branch's own comment describes.
-            if self.vars.owns_store(*v_nr) && type_matches && !self.vars.rebind_must_mint(*v_nr) {
+            // `@FR-R-InPlaceLiteral` — and only a local no earlier bind left viewing another store
+            // (`viewed_by_an_earlier_bind`): its type keeps the last bind's deps alone.
+            let viewed_before = self.vars.viewed_by_an_earlier_bind(*v_nr);
+            if self.vars.owns_store(*v_nr)
+                && type_matches
+                && !self.vars.rebind_must_mint(*v_nr)
+                && !viewed_before
+            {
                 // #330: remember the in-place target — a field initialiser
                 // that READS it must be hoisted ABOVE the OpDatabase re-init
                 // (see the hoist in parse_object_field and the splice after
@@ -6917,6 +6924,7 @@ impl Parser {
                 }
             } else if (!type_matches
                 || self.vars.rebind_must_mint(*v_nr)
+                || viewed_before
                 || (!self.vars.is_independent(*v_nr) && !self.vars.is_compiler_generated(*v_nr)))
                 && !self.first_pass
             {
