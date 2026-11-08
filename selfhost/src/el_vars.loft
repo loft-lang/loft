@@ -403,7 +403,125 @@ pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean
     },
     _ => {}
   }
+  declared = v.vars[nr].argument || v.annotated.contains(nr);
+  bt = el_types::base(t);
+  // `(N-Join)`: a local first bound to `null` and then to a scalar or a record is `τ?`.
+  if cur is TyNull && (null_scalar(bt) || is_dbref(bt)) {
+    set_type(v, nr, el_types::with_deps(ir::TyOptional { inner: bt }, el_types::deps(t)));
+    return true;
+  }
+  // `(N-Join)`: an inferred local bound to `τ` and then to `τ?` is `τ?` — over the wider of two
+  // integer widths.
+  if !declared && !(cur is TyOptional || cur is TyNull || cur is TyRefVar) {
+    match t {
+      TyOptional { inner } => {
+        if el_types::is_equal(e, inner, cur) {
+          wider = match cur { TyInteger { spec: cs } => match inner { TyInteger { spec: ns } => integer_bytes(ns) > integer_bytes(cs), _ => false }, _ => false };
+          set_type(v, nr, el_types::with_deps(ir::TyOptional { inner: if wider { inner } else { cur } }, el_types::deps(t)));
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  // `(C-Var)`: an inferred local bound to two variants of one struct enum is the enum.
+  if !declared {
+    j = variant_join(e, cur, t);
+    if j != null {
+      set_type(v, nr, el_types::with_deps(j!, el_types::deps(t)));
+      return true;
+    }
+  }
+  // A vector local given an iterator keeps its type: the iterator is collected into it.
+  if cur is TyVector && t is TyIterator {
+    return true;
+  }
+  // A link given a value of what it links to (or a nullable link a `null`).
+  shape = el_types::base(cur);
+  match cur {
+    TyRefVar { inner } => {
+      shape = el_types::base(inner);
+      if el_types::is_equal(e, inner, bt) || el_types::is_equal(e, el_types::base(inner), bt) || inner is TyOptional && t is TyNull {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  // A struct-enum local given one of its variants.
+  match shape {
+    TyEnum { n: pd, is_ref } => {
+      match bt {
+        TyReference { n: rd } => {
+          if is_ref && rd >= 0 && el::def(e, rd).parent == pd {
+            return true;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   false
+}
+
+// The scalars whose null is in-band (`is_null_scalar`).
+fn null_scalar(t: ir::TypeT) -> boolean {
+  t is TyInteger || t is TyText || t is TyBoolean || t is TyFloat || t is TySingle || t is TyCharacter
+}
+
+// `data::is_dbref`: a type held as a store reference.
+fn is_dbref(t: ir::TypeT) -> boolean {
+  match t {
+    TyEnum { is_ref } => is_ref,
+    _ => t is TyReference || t is TyVector || t is TySorted || t is TyIndex || t is TyHash || t is TyRadix || t is TyTrie
+  }
+}
+
+// `IntegerSpec::byte_width(true)` (`el_expressions::byte_width`): the bytes a nullable integer
+// of this spec is stored in.
+fn integer_bytes(s: ir::IntegerSpec) -> integer {
+  if s.forced_size > 0 {
+    return s.forced_size;
+  }
+  codes = s.max - s.min + 2;
+  if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 }
+}
+
+// `Function::variant_join` (`@FR-C-Var`): two different variants of one struct enum — or a
+// variant and the enum — joined to the enum, `?` when either is; null for any other pair.
+fn variant_join(e: el::El, cur: ir::TypeT, t: ir::TypeT) -> ir::TypeT? {
+  cb = el_types::base(cur);
+  tb = el_types::base(t);
+  ce = variant_enum(e, cb);
+  te = variant_enum(e, tb);
+  j: ir::TypeT? = null;
+  match cb {
+    TyReference { n: a, dep } => {
+      match tb {
+        TyReference { n: b } => { if a != b && ce >= 0 && te == ce { j = ir::TyEnum { n: ce, is_ref: true, dep: dep }; } },
+        TyEnum { n: f, is_ref } => { if is_ref && ce == f { j = ir::TyEnum { n: f, is_ref: true, dep: dep }; } },
+        _ => {}
+      }
+    },
+    TyEnum { n: en, is_ref } => {
+      if is_ref && te == en {
+        j = cb;
+      }
+    },
+    _ => {}
+  }
+  if j == null {
+    return null;
+  }
+  if cur is TyOptional || t is TyOptional { ir::TyOptional { inner: j! } } else { j! }
+}
+
+// The enum a variant record belongs to, or -1.
+fn variant_enum(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n } => if n >= 0 && el::def(e, n).def_type == el::DT_ENUM_VALUE && el::def(e, n).parent >= 0 { el::def(e, n).parent } else { -1 },
+    _ => -1
+  }
 }
 
 // `Function::append(other)`: this table takes over the one a definition kept from the pass
