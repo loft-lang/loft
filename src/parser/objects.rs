@@ -7705,7 +7705,12 @@ impl Parser {
     /// parameter `file`: the interpreter crashed reading it after, the C refused the program
     /// and rustc did not compile it.  The work-ref's `Set` is re-homed with its reads; left
     /// alone it nulled local 2, the return buffer.
-    pub(crate) fn rehome_variant_default(val: Value, own: u16, fresh: u16, record: &Value) -> Value {
+    pub(crate) fn rehome_variant_default(
+        val: Value,
+        own: u16,
+        fresh: u16,
+        record: &Value,
+    ) -> Value {
         let mut val = val;
         val.map_nodes(&mut |n| match n {
             Value::Var(v) if *v == own => *n = Value::Var(fresh),
