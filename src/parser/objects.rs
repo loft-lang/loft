@@ -7676,8 +7676,6 @@ impl Parser {
         enum_tp
     }
 
-    /// Recursively replace `Value::Var(0)` (the record placeholder used in field default
-    /// expressions) with the actual record reference from the calling context.
     /// The work-ref a struct-enum VARIANT default builds in, when it builds in one of its own:
     /// `mode: Mode = Idle` (an `EnumUnitLit` block) and `hint: Ty = TyInt { n: 4 }` (an `Object`
     /// block of the variant) each close on the work-ref they fill.  `None` for every other
@@ -7721,6 +7719,8 @@ impl Parser {
         }
     }
 
+    /// Recursively replace `Value::Var(0)` (the record placeholder used in field default
+    /// expressions) with the actual record reference from the calling context.
     pub(crate) fn replace_record_ref(mut val: Value, record: &Value) -> Value {
         val.map_nodes(&mut |n| {
             if matches!(n, Value::Var(0)) {
