@@ -397,13 +397,13 @@ impl FieldWalk<'_> {
                             // no part of it, and no write through it resizes one (a hidden
                             // `Cell` result buffer, `get_cell`).
                             crate::data::Type::Reference(t, _)
-                                if crate::opt::loop_records::all_scalar_record(self.data, *t) =>
+                                if crate::data::all_scalar_record(self.data, *t) =>
                             {
                                 false
                             }
                             crate::data::Type::RefVar(t) => match t.base() {
                                 crate::data::Type::Reference(r, _) => {
-                                    !crate::opt::loop_records::all_scalar_record(self.data, *r)
+                                    !crate::data::all_scalar_record(self.data, *r)
                                 }
                                 crate::data::Type::Vector(..) => true,
                                 _ => false,

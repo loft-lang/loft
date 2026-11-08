@@ -6429,6 +6429,18 @@ pub fn is_scalar(tp: &Type) -> bool {
     )
 }
 
+/// Is `def_nr` a record type with no heap in it — every field a fixed-width scalar (a constant
+/// and a routine field hold no store either)?  Such a record owns no vector, text or link, so
+/// nothing written through it resizes a collection or names another record: the fact
+/// `@FR-R-Callee`'s return-buffer half, § V-ad's discharge buffer and `@FR-R-ForwardWalk`'s
+/// field clause stand on.
+#[must_use]
+pub fn all_scalar_record(data: &Data, def_nr: u32) -> bool {
+    data.def(def_nr).attributes().iter().all(|a| {
+        a.constant || matches!(a.typedef.base(), Type::Routine(_)) || is_scalar(&a.typedef)
+    })
+}
+
 pub fn v_set(var: u16, value: Value) -> Value {
     Value::Set(var, Box::new(value))
 }
