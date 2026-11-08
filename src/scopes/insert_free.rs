@@ -179,6 +179,15 @@ fn is_scope_exit_cleanup(op: &Value, data: &Data) -> bool {
             matches!(rhs.unspan(), Value::Call(d, a) if a.is_empty()
                 && data.def(*d).name() == "OpNullRefSentinel")
         }
+        // The free of a local bound from a call that may answer in one of SEVERAL buffers
+        // (`get_free_vars`' witness-buffer arm): `if OpDistinctStore(v, b₁) { if
+        // OpDistinctStore(v, b₂) { OpFreeRef(v) } }`.  Read as the value, a `match` at a
+        // function's tail answered that `if` (false) instead of its arm.
+        Value::If(cond, then, els) => {
+            matches!(cond.unspan(), Value::Call(d, _) if data.def(*d).name() == "OpDistinctStore")
+                && matches!(els.unspan(), Value::Null)
+                && is_scope_exit_cleanup(then, data)
+        }
         _ => false,
     }
 }
