@@ -6117,7 +6117,7 @@ impl Census<'_> {
                     && args.len() >= 2
                     && !self.member_of_whole_tuple(&args[1])
                     && matches!(args[0].unspan(), Value::Var(v)
-                        if self.data.type_owns_droppable_anywhere(self.func.tp(*v).base())) =>
+                        if crate::lease::copy_observed(self.data, self.func.tp(*v).base())) =>
             {
                 let Some(Value::Var(dest)) = args.first().map(Value::unspan) else {
                     unreachable!("matched above")
@@ -6154,9 +6154,9 @@ impl Census<'_> {
                     if src != v
                         && !self.func.tp(*v).depend().contains(src)
                         && self.whole_tuple != Some(*src))
-                    && self
-                        .data
-                        .type_owns_droppable_anywhere(self.func.tp(*v).base()) =>
+                    && crate::lease::copy_observed(
+                        self.data,
+                        self.func.tp(*v).base()) =>
             {
                 let Value::Var(src) = rhs.unspan() else {
                     unreachable!("matched above")
@@ -6187,9 +6187,9 @@ impl Census<'_> {
             // `__ret_N` temp places its arms out of the function.
             Value::Set(v, rhs)
                 if matches!(rhs.unspan(), Value::If(..))
-                    && self
-                        .data
-                        .type_owns_droppable_anywhere(self.func.tp(*v).base()) =>
+                    && crate::lease::copy_observed(
+                        self.data,
+                        self.func.tp(*v).base()) =>
             {
                 let mut arms = Vec::new();
                 join_var_arms(rhs, &mut arms);
@@ -6209,9 +6209,9 @@ impl Census<'_> {
                             .depend()
                             .iter()
                             .any(|d| dest_deps.contains(d))
-                        || !self
-                            .data
-                            .type_owns_droppable_anywhere(self.func.tp(src).base())
+                        || !crate::lease::copy_observed(
+                            self.data,
+                            self.func.tp(src).base())
                     {
                         continue;
                     }
@@ -6226,9 +6226,9 @@ impl Census<'_> {
                 if let Some(base) = crate::lease::whole_tuple_source(self.func, node) {
                     let (root, through_member) = self.frame.resolve_view(base);
                     if self.whole_tuple != Some(root)
-                        && self
-                            .data
-                            .type_owns_droppable_anywhere(self.func.tp(base).base())
+                        && crate::lease::copy_observed(
+                            self.data,
+                            self.func.tp(base).base())
                     {
                         let (lease, liveness) = if through_member {
                             let refused = Lease::Refuse(Refusal::Container(root));
@@ -6262,7 +6262,7 @@ impl Census<'_> {
                     let func = self.func;
                     if let Type::Tuple(elms) = func.tp(v).base() {
                         for (item, elm) in items.iter().zip(elms) {
-                            if !self.data.type_owns_droppable_anywhere(elm)
+                            if !crate::lease::copy_observed(self.data, elm)
                                 || matches!(item.unspan(),
                                     Value::Block(b) if matches!(b.name, "tuple_member_copy" | "tuple_member_move"))
                             {
