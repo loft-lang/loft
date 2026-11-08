@@ -94,6 +94,9 @@ fn abs_float(v: float?) -> float? {
 // from the end, a `till` of `i32::MIN` (the op's one-character form, a value and not a null)
 // takes the character at `from`, and a null bound answers null (`@FR-N-Store`, loft#2306).
 fn sub_text(t: text?, from: integer?, till: integer?) -> text? {
+  if from == null || till == null {
+    return null;
+  }
   t[from..till]
 }
 
@@ -641,8 +644,8 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           }
           KText => {
             sp_text -= 1;
-            t = texts[sp_text];
-            put_int(ints, sp_int, bit(if t { true } else { false }));
+            tested = texts[sp_text];
+            put_int(ints, sp_int, bit(if tested { true } else { false }));
             sp_int += 1;
           }
           _ => {
@@ -678,8 +681,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
       TextFromBool => {
         sp_int -= 1;
         v = ints[sp_int];
-        t = if v == null { null } else { (v == 1) as text };
-        put_text(texts, sp_text, t);
+        put_text(texts, sp_text, if v == null { null } else { (v == 1) as text });
         sp_text += 1;
       }
       // A text-writing op's destination: a text slot of this frame, or through a `&text`.
@@ -1296,8 +1298,10 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
       // `OpMathFuncFloat`: loft's own function of that number.
       MathFunc => {
         f = floats[sp_float - 1];
-        if op.kind == KSingle {
-          g = f as single?;
+        // A null operand answers null: it stays where it is.
+        if f == null {
+        } else if op.kind == KSingle {
+          g = f as single;
           floats[sp_float - 1] = (match op.a {
             0 => g.cos(), 1 => g.sin(), 2 => g.tan(), 3 => g.acos(), 4 => g.asin(),
             5 => g.atan(), 6 => g.ceil(), 7 => g.floor(), 8 => g.round(), 9 => g.sqrt(),
@@ -1848,7 +1852,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         at = text_at(stk, base, op);
         sp_int -= 3;
         piece = "";
-        show::render(b, op.b / 4, ints[sp_int] ?? NULL_STORE, ints[sp_int + 1] ?? 0, ints[sp_int + 2] ?? 0, op.b % 4, 0, piece);
+        show::render(b, op.b / 4, show::Pos { s: ints[sp_int] ?? NULL_STORE, r: ints[sp_int + 1] ?? 0, p: ints[sp_int + 2] ?? 0 }, op.b % 4, 0, piece);
         crt::slot_text_append(stk, at, piece);
       }
       // `v += other`: the copies are claims of `v`'s store, so no owner changes; the claims are

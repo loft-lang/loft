@@ -1753,15 +1753,15 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     for arg in args {
       value(l, b, arg, KText);
     }
-    which = match name { "OpDelete" => 0, "OpMoveFile" => 1, "OpMkdir" => 2, "OpMkdirAll" => 3, _ => 4 };
-    emit(l, FsOp, KInt, which, 1 - len(args));
+    fs_op = match name { "OpDelete" => 0, "OpMoveFile" => 1, "OpMkdir" => 2, "OpMkdirAll" => 3, _ => 4 };
+    emit(l, FsOp, KInt, fs_op, 1 - len(args));
   } else if name == "OpSizeFile" || name == "OpSeekFile" || name == "OpTruncateFile" || name == "OpSyncFile" {
     value(l, b, args[0]!, KRef);
     if len(args) > 1 {
       value(l, b, args[1]!, KInt);
     }
-    which = match name { "OpSizeFile" => 0, "OpSeekFile" => 1, "OpTruncateFile" => 2, _ => 3 };
-    emit(l, FileOp, KInt, which, if which == 1 { -2 } else if which == 2 { -1 } else { 0 });
+    file_op = match name { "OpSizeFile" => 0, "OpSeekFile" => 1, "OpTruncateFile" => 2, _ => 3 };
+    emit(l, FileOp, KInt, file_op, if file_op == 1 { -2 } else if file_op == 2 { -1 } else { 0 });
   } else if name == "OpSetDbRef" {
     // A stored reference (`reference<T>`, @C91) written into a field: `a` the field.
     value(l, b, args[0]!, KRef);
@@ -1978,9 +1978,9 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     if helem != null {
       // `keyed_new` / `keyed_finish` (`src/c/body/keyed.rs`): an entry of the hash's table,
       // filled with the element's default image, then filed under its key.
-      et = b.types[helem]!;
+      entry = b.types[helem]!;
       if name == "OpNewRecord" {
-        emit(l, HashNew, KRef, helem, et.size * 2 + (if et.linked { 1 } else { 0 }));
+        emit(l, HashNew, KRef, helem, entry.size * 2 + (if entry.linked { 1 } else { 0 }));
       } else {
         value(l, b, args[1]!, KRef);
         emit(l, HashInsert, KRef, helem, vtp);
@@ -1998,8 +1998,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     // `OpGetRecord(data, tp, n, value…)` on a hash: the collection, then each key part as its
     // key's type converts it (`key_value`, `src/c/body/keyed.rs`), then the find.
     tp = literal(l, args[1]!);
-    kind = keyed_kind(b, tp);
-    if hash_element(b, tp) == null && kind == null {
+    kind = keyed_kind(b, tp) ?? 0;
+    if hash_element(b, tp) == null && kind == 0 {
       refuse(l, "a lookup in a keyed collection that is not a hash, a sorted or an index: {b.types[tp]!.name}");
       return true;
     }
@@ -2011,8 +2011,8 @@ fn store_call(l: Lowering, b: ir::Bundle, name: text, args: vector<ir::Node>) ->
     }
     value(l, b, args[0]!, KRef);
     key_parts(l, b, keys, args, 3);
-    if kind != null {
-      emit(l, KeyedFind, KRef, tp, kind! + 8 * n);
+    if kind != 0 {
+      emit(l, KeyedFind, KRef, tp, kind + 8 * n);
     } else {
       emit(l, HashFind, KRef, tp, n);
     }
