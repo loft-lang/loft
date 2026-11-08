@@ -1804,12 +1804,24 @@ fn stray_returns(ops: vector<ir::Node>, buf: integer) -> integer {
   r = 0;
   for op in ops {
     match el_ir::unspan(op) {
-      NdReturn { inner } => { if el_ir::unspan(inner) != ir::NdVar { n: buf } { r += 1; } },
+      NdReturn { inner } => { if el_ir::unspan(inner) != ir::NdVar { n: buf } && !delivered_into(inner, buf) { r += 1; } },
       _ => {}
     }
     r += stray_returns(el_ir::children(op), buf);
   }
   r
+}
+
+// A literal `mid_deliver` delivered into `buf`: its block ends copying itself in and answering
+// `buf` (`materialize_vector_arms_into`).
+fn delivered_into(n: ir::Node, buf: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdBlock { block } => match el_ir::last(block[0].operators) {
+      NdInsert { items } => len(items) > 0 && el_ir::unspan(items[-1] ?? ir::NdNull) == ir::NdVar { n: buf },
+      _ => false
+    },
+    _ => false
+  }
 }
 
 // The store a vector literal or comprehension block is built in (its one `__vdb_N` dep), or -1.
@@ -12110,7 +12122,30 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       }
       return ex(ir::NdReturn { inner: ir::NdNull }, ir::TyNever);
     }
-    v = expression(e, vars, x!);
+    // A `[`-led literal returned from a collection-typed function is read against the declared
+    // result, its deps left out (`parse_return`, @P365): an empty `return []` is that vector.
+    hinted = el_types::is_collection(el_types::base(result)) && e.p.nodes[x!] is SVecLit;
+    if hinted {
+      vars.expect_node = x!;
+      vars.expect = el_types::without_deps(el_types::base(result));
+      match el_types::base(result) {
+        TyVector { inner } => {
+          vars.lit_hint_node = x!;
+          vars.lit_hint = inner;
+        },
+        _ => {}
+      }
+    }
+    v = if hinted && vec_lit_len(e, x!) == 0 && el_types::base(result) is TyVector {
+      vt = el_types::without_deps(el_types::base(result));
+      ex(empty_literal_to(e, vars, vt), vt)
+    } else {
+      expression(e, vars, x!)
+    };
+    if hinted {
+      vars.expect_node = -1;
+      vars.lit_hint_node = -1;
+    }
     if el_types::base(result) is TyReference {
       return record_return(e, vars, v, result);
     }
@@ -12126,7 +12161,8 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // A vector local is returned as it is from a function with a return buffer; the tail's
     // delivery (`vector_return`) copies it into the buffer, and refuses a `return` anywhere
     // else in the body.
-    if el_types::base(result) is TyVector && !(result is TyOptional) && (e.first_pass || vector_buffer(e, vars) >= 0) {
+    renamed = match el_ir::unspan(v.code) { NdVar { n } => hidden_param(e, vars, n), _ => false };
+    if el_types::base(result) is TyVector && !(result is TyOptional) && (e.first_pass || vector_buffer(e, vars) >= 0 || renamed) {
       // A fresh literal is returned as it is; the tail's delivery copies it into the buffer.  The
       // first pass builds no literal block yet: the syntax says what it is.
       if e.first_pass && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension) {
@@ -12135,6 +12171,14 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       match el_ir::unspan(v.code) {
         NdBlock { block } => {
           if literal_backing_store(block[0]) >= 0 {
+            // The buffer renamed onto a local on the first pass: the literal is copied into it
+            // where it is returned (`parse_return`'s `clear + append + Return(buf)`).
+            rbuf = if e.first_pass { -1 } else { vector_buffer(e, vars) };
+            rrow = append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+            if rbuf >= 0 && rrow >= 0 && el_vars::name_of(vars, rbuf) != "__retbuf" {
+              b = ir::NdVar { n: rbuf };
+              return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, v.code, ir::NdInt { n: rrow }]), ir::NdReturn { inner: b }] }, ir::TyNever);
+            }
             return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
           }
         },
@@ -12143,6 +12187,10 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       match el_ir::unspan(v.code) {
         NdVar { n } => {
           if (!vars.vars[n].argument || e.first_pass) && el_types::base(el_vars::tp(vars, n)) is TyVector {
+            return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+          }
+          // The local the first pass renamed the buffer onto answers itself.
+          if hidden_param(e, vars, n) {
             return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
           }
           // A vector parameter is copied into the buffer where it is returned (`parse_return`'s
