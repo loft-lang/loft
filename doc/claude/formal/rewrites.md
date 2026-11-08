@@ -2696,10 +2696,10 @@ and otherwise the bits of the processor's operator, and none of them reports any
 with no event the plain chain IS the checked answer, and with one the checked chain answers
 itself.  What moves is the dependency chain: a checked operator compiles to selects on the
 value it produces, and a loop carrying that value (`acc = ((acc ^ i) + (i & 7)) & M`) waits on
-them every trip.  Measured (C ÷ Rust): sum_loop 2.96× → 1.00×, index_read 3.01× → 1.00×,
-binary_read 3.29× → 1.89×, binary_map 1.78× → 0.84×.  The product clause: with the overflow
-builtin, `par_reduce`'s `h * 1103515245` cost a high multiply on its chain (1.90× → 2.58×); with
-it, 1.85×.  `LOFT_NO_SPEC_CHAIN=1`; guard
+them every trip.  A product by a literal keeps `loft_mul` because the overflow builtin would put a
+high multiply on the chain; the measurements are in
+[rewrites-history.md § (R-SpecChain) measured](rewrites-history.md#r-specchain-measured).
+`LOFT_NO_SPEC_CHAIN=1`; guard
 `loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-chain-runs-plain-and-falls-back-on-any-null.loft`.
 
 ### A counted loop's index chains run plain behind a guard

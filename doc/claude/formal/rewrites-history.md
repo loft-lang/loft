@@ -728,3 +728,10 @@ where a reset measured nothing.  Bench (A/B, both clauses off against on): hex_r
 `R-LoopRecord/refill`.  Guard: `157-a-loop-record-keeps-its-vectors.loft` and
 `157-loop-record.loft` now run on the C too (both pass, and under `LOFT_NATIVE_LEAK_CHECK`) —
 a kept pass that does not empty its vectors fails r1 with 102280.
+
+## (R-SpecChain) measured
+
+@PLN219, 2026-11 (C ÷ Rust): sum_loop 2.96× → 1.00×, index_read 3.01× → 1.00×, binary_read
+3.29× → 1.89×, binary_map 1.78× → 0.84×.  The product clause: with the overflow builtin,
+`par_reduce`'s `h * 1103515245` cost a high multiply on its chain (1.90× → 2.58×); keeping
+`loft_mul` for a product by a literal, 1.85×.
