@@ -5147,11 +5147,26 @@ fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: integ
     el::refuse(e, "a record place given a value of another type: a literal");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // A vector field is written in place like any other (its handle zeroed, the value appended).
   for a in el::def(e, rd).attributes {
     at = a.typedef[0] ?? ir::TyVoid;
-    if !el_convert::plain_scalar(at) && !(at is TyText) {
+    if !el_convert::plain_scalar(at) && !(at is TyText) && !(el_types::base(at) is TyVector) && !(el_types::base(at) is TyReference && struct_ref(e, at) >= 0) {
       el::refuse(e, "a record literal written into a field or an element: a field that is no plain scalar");
       return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
+  // A vector LITERAL as a field's value makes Rust build the record apart and copy it in, its
+  // first pass leaving an unused `_elm_N` declared (1a-parser.md § Rust accidents): refused by
+  // name.
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { e: fe } => {
+        if fe != null && e.p.nodes[fe!] is SVecLit {
+          el::refuse(e, "a record literal written into a field or an element: a vector literal field");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+      },
+      _ => {}
     }
   }
   root = place_root(e, place);
