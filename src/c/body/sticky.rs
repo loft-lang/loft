@@ -24,7 +24,10 @@ impl FnWriter<'_> {
     /// The sums loop `b` takes, each with a fresh flag: their flags are set before the loop
     /// (`acc` null on entry already counts) and registered for the updates inside it.
     pub(super) fn open_sticky_sums(&mut self, b: &Block, ind: usize) -> Vec<(u16, String)> {
+        // Under the release-pass probe the sum's `+`/`-` is the wrapping operator already
+        // (`probe_operator`), an overflow a fault (C120): there is no event to gather.
         if crate::env_once!(std::env::var("LOFT_NO_STICKY_SUM").is_ok_and(|v| v != "0"))
+            || crate::env_once!(std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"))
             || self.gen_elem.is_some()
             || leaves_past(b)
         {

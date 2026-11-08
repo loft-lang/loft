@@ -8472,10 +8472,21 @@ impl<'a> FnWriter<'a> {
         }
         let shift_k =
             || matches!(args.get(1).map(Value::unspan), Some(Value::Int(k)) if (0..64).contains(k));
+        // A `Nullable` `+ - *` whose operands the non-sentinel proof holds never meets its
+        // null: it is the plain operator, and wraps as the plain one does.
+        let proven = matches!(name, "OpAddIntNullable" | "OpMinIntNullable" | "OpMulIntNullable")
+            && {
+                let nn = self.nn_facts();
+                args.iter()
+                    .all(|a| crate::opt::non_sentinel::non_sentinel(self.cx.data, &nn.0, a))
+            };
         let form = match (name, args.len()) {
             ("OpAddInt", 2) => "loft_wrap_add",
             ("OpMinInt", 2) => "loft_wrap_sub",
             ("OpMulInt", 2) => "loft_wrap_mul",
+            ("OpAddIntNullable", 2) if proven => "loft_wrap_add",
+            ("OpMinIntNullable", 2) if proven => "loft_wrap_sub",
+            ("OpMulIntNullable", 2) if proven => "loft_wrap_mul",
             ("OpDivInt", 2) => "loft_wrap_div",
             ("OpRemInt", 2) => "loft_wrap_rem",
             ("OpLandInt", 2) => "&",

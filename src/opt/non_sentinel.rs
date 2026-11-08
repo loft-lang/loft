@@ -547,9 +547,72 @@ pub fn non_sentinel_vars_seeded(
             }
         }
         if !changed {
-            return vars;
+            break;
         }
     }
+    if probe_closes()
+        && !crate::env_once!(std::env::var("LOFT_NO_PROBE_FIXPOINT").is_ok_and(|v| v != "0"))
+    {
+        greatest_integer_locals(data, function, code, &escaped, &mut vars);
+    }
+    vars
+}
+
+/// `@FR-R-Counter`'s probe clause — under the release-pass probe, the integer locals proven
+/// as a GREATEST fixpoint: every integer local that is no parameter and does not escape is
+/// assumed proven, and each round drops one with an assignment the proof does not accept
+/// under the current assumption, until nothing drops.  The least fixpoint above cannot prove a
+/// local that steps itself (`cx = cx + sx`): its own assignment names it.  Under the probe it
+/// holds: every value assigned to a remaining local is a literal, a proven read, or a wrapping
+/// `+ - *` (or another closed operator) of such values, so by induction over the order the
+/// assignments run in, a remaining local holds the sentinel only after an overflow — a fault,
+/// after which the probe's contract lets the values differ (C120).  The checked build keeps the
+/// least fixpoint, where an overflow is an observable null.  Facts already proven stay.
+/// `LOFT_NO_PROBE_FIXPOINT=1` keeps the least fixpoint under the probe too.
+fn greatest_integer_locals(
+    data: &Data,
+    function: &crate::variables::Function,
+    code: &Value,
+    escaped: &std::collections::HashSet<u16>,
+    vars: &mut HashMap<u16, bool>,
+) {
+    let mut sets: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    code.walk(&mut |n| {
+        if let Value::Set(nr, _) = n.unspan() {
+            sets.insert(*nr);
+        }
+    });
+    let mut assumed: Vec<u16> = sets
+        .into_iter()
+        .filter(|nr| {
+            !vars.get(nr).copied().unwrap_or(false)
+                && !escaped.contains(nr)
+                && !function.is_argument(*nr)
+                && matches!(function.tp(*nr).base(), crate::data::Type::Integer(_))
+        })
+        .collect();
+    if assumed.is_empty() {
+        return;
+    }
+    for nr in &assumed {
+        vars.insert(*nr, true);
+    }
+    loop {
+        let mut round: HashMap<u16, bool> = HashMap::new();
+        scan_sets(code, data, vars, &mut round);
+        let before = assumed.len();
+        assumed.retain(|nr| {
+            let keep = round.get(nr).copied().unwrap_or(true);
+            if !keep {
+                vars.remove(nr);
+            }
+            keep
+        });
+        if assumed.len() == before {
+            break;
+        }
+    }
+    crate::rewrite_census::fired("R-Counter/probe", assumed.len());
 }
 
 /// Seed every counted loop's index, next-counter and loop variable as non-sentinel when

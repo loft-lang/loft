@@ -287,9 +287,9 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SelfReplace)` | `R-SelfReplace` parse |
 | `(R-SharedCall)` | not counted — unbuilt: only its narrow case is built, counted as R-PureReuse/shared |
 | `(R-SingleUse)` | `R-SingleUse` parse |
-| `(R-SliceArg)` | counted; admitted on no bench program |
+| `(R-SliceArg)` | `/range` ir |
 | `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
-| `(R-SliceInto)` | counted; admitted on no bench program |
+| `(R-SliceInto)` | `R-SliceInto` c |
 | `(R-SpecChain)` | `R-SpecChain` c |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
@@ -298,7 +298,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-StickySum)` | `R-StickySum` c |
 | `(R-StreamWalk)` | `R-StreamWalk` native |
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
-| `(R-Tabulate)` | counted; admitted on no bench program |
+| `(R-Tabulate)` | `R-Tabulate` c |
 | `(R-TailSelf)` | `R-TailSelf` parse |
 | `(R-TextBorrow)` | `R-TextBorrow` interp, c, native · `/tested` c, native |
 | `(R-TextClear)` | `R-TextClear` native |
@@ -552,7 +552,17 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  when the loop's first two statements are that head and that bound
                  over ONE vector operand, nothing else in the loop assigns it,
                  every other assignment in the function is a literal, and its
-                 address is never taken.
+                 address is never taken.  THE PROBE CLAUSE: under the release-pass
+                 probe, where `+ - *` of proven operands wrap and an overflow is a
+                 fault (C120), the integer locals are proven as a GREATEST
+                 fixpoint — every integer local that is no parameter and does not
+                 escape is assumed, and one with an assignment the proof rejects
+                 under the assumption is dropped, until none drops — so a local
+                 stepped by proven values (`cx += sx`, `err -= dy`, `s += step`)
+                 is proven though its step names it; and a `Nullable` `+ - *`
+                 whose operands are proven is the plain operator and wraps.  Under
+                 the probe `(R-StickySum)` and `(R-SpecChain)` decline: the
+                 operators they guard are the wrapping ones already.
 
   (R-LitDiv)     a division or remainder by a LITERAL that is neither 0 nor -1 emits
                  as one sentinel test and the plain operator — `if x == MIN { MIN }
@@ -1020,6 +1030,18 @@ across the loop's calls (zttext's `materialise`, +11 % until it did).  Measured 
 `slope_path_with_undo` −11.0 %, zttext `materialise` −8.9 % and `seg` −4.4 %, stage
 `pack_instances` −4.1 %, `resolve_move` −2.5 %; over the 47 routines of the lanes it reaches
 most, geomean −0.6 %.
+
+**The probe clause, in words.**  By induction over the order the assignments run in, a local
+whose every assignment is a literal, a proven read or a closed operator over such values holds
+the sentinel only after an overflow — which the probe's contract already lets answer
+differently.  The least fixpoint cannot see it, because the step names the local; the checked
+build keeps the least one, where an overflow is an observable null.  Before it, the ship lane
+was MORE checked than its straight-line code: a sum stepped in a loop kept `(R-StickySum)`'s
+flag and a staged chain `(R-SpecChain)`'s checked fallback, both answering null for an overflow
+the probe wraps everywhere else.  Measured on graphics (ship ÷ Rust): `draw_line` 1.76× →
+1.32× (gcc-16), 2.23× → 1.42× (clang); `draw_bezier` 2.34× → 1.80×, 2.97× → 2.09×.  Switch
+`LOFT_NO_PROBE_FIXPOINT`; census `R-Counter/probe`; guard `tests/c_emit.rs`
+`under_the_probe_a_locally_stepped_accumulator_wraps_and_the_checked_c_keeps_its_flag`.
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
 it), with @PLN157 P4d's path key (`lay.px` is `(lay, [32])`) and the hoisted loop
@@ -2611,7 +2633,7 @@ Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range
                  constant) and tests its null answer.  An operator (R-GuardedChain) admitted
                  is that rule's; a memoised subchain ((R-Invariant)) is a leaf.  Only inside a
                  loop, and one operator only where the local carries itself (`acc = acc + e`).
-                 C only.
+                 C only; not under the release-pass probe ((R-Counter)'s probe clause).
 
   (R-StickySum)  a loop's integer SUM — a local every mention of which inside the loop is its
                  own update `acc = acc + e` / `acc = acc - e` (`e` not reading `acc`), the loop
@@ -2624,7 +2646,8 @@ Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range
                  written nowhere else) gives `t` a flag of its own — the sum's plus the step's
                  events — so `t` and `acc` each read their own checked value.  The `Nullable`
                  twins take part (the same silent arithmetic).  The outermost loop that admits
-                 a sum takes it.  An update (R-Range) proves plain stays that rule's.  C only.
+                 a sum takes it.  An update (R-Range) proves plain stays that rule's.  C only;
+                 not under the release-pass probe ((R-Counter)'s probe clause).
 ```
 
 **The sum, in words.**  The checked sum is null from its first event on — a null stays null

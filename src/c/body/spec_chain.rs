@@ -54,7 +54,10 @@ impl FnWriter<'_> {
     /// `var = x` for an integer local and a chain of at least two operators not all proven
     /// plain: written as the speculative plain chain.  Answers whether it wrote it.
     pub(super) fn spec_chain(&mut self, var: u16, x: &Value, ind: usize) -> Result<bool, String> {
+        // Under the release-pass probe every chain operator is the wrapping one already
+        // (`probe_operator`), an overflow a fault (C120): there is nothing to speculate on.
         if crate::env_once!(std::env::var("LOFT_NO_SPEC_CHAIN").is_ok_and(|v| v != "0"))
+            || crate::env_once!(std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"))
             || self.gen_elem.is_some()
             || self.loops.is_empty()
         {
