@@ -6096,8 +6096,21 @@ impl Function {
     /// construction, already building a closure.
     pub fn rebind_must_mint(&self, v: u16) -> bool {
         (v as usize) < self.variables.len()
-            && self.is_captured(v)
+            && (self.is_captured(v) || self.viewed_by_an_earlier_bind(v))
             && crate::data::is_dbref(self.tp(v).base())
+    }
+
+    /// `@FR-R-InPlaceLiteral` — did an earlier bind of `v` on this pass leave it VIEWING
+    /// another variable's store ([`Variable::viewed`])?  The type keeps only the last bind's
+    /// deps, so after `if c { r = b.tp; } else { r = fresh(); }` the slot reads as owning while
+    /// on one path it still names `b`'s record: re-minting it in place (`r = T { … }`, and the
+    /// demote's move, `(R-Demote)`) writes into `b`.  An upper bound, like `store_viewers`: a
+    /// bind that is dead by the rebind still counts, which costs a fresh store, never a value.
+    fn viewed_by_an_earlier_bind(&self, v: u16) -> bool {
+        self.variables[v as usize]
+            .viewed
+            .iter()
+            .any(|&d| d != v && d != u16::MAX)
     }
 
     /// Record that fn_ref variable `fn_ref` has its closure stored in `clos`.
