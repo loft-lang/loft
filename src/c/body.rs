@@ -4821,7 +4821,10 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("loft_win_sync({w});"));
         }
         for _ in 0..text_windows {
-            let (_, place, w) = self.text_windows.pop().expect("the window this loop opened");
+            let (_, place, w) = self
+                .text_windows
+                .pop()
+                .expect("the window this loop opened");
             self.line(ind, &format!("loft_tw_sync(&{w}, &{place});"));
         }
         self.in_range.truncate(in_range_at);
@@ -4954,7 +4957,10 @@ impl<'a> FnWriter<'a> {
             std::collections::HashSet::new();
         for st in &stmts {
             if let Value::Call(d, args) = st.unspan()
-                && matches!(data.def(*d).name(), "OpAppendCharacter" | "OpAppendStackCharacter")
+                && matches!(
+                    data.def(*d).name(),
+                    "OpAppendCharacter" | "OpAppendStackCharacter"
+                )
                 && let [dest, c] = args.as_slice()
                 && let Value::Var(x) = dest.unspan()
             {
@@ -8619,12 +8625,14 @@ impl<'a> FnWriter<'a> {
             || matches!(args.get(1).map(Value::unspan), Some(Value::Int(k)) if (0..64).contains(k));
         // A `Nullable` `+ - *` whose operands the non-sentinel proof holds never meets its
         // null: it is the plain operator, and wraps as the plain one does.
-        let proven = matches!(name, "OpAddIntNullable" | "OpMinIntNullable" | "OpMulIntNullable")
-            && {
-                let nn = self.nn_facts();
-                args.iter()
-                    .all(|a| crate::opt::non_sentinel::non_sentinel(self.cx.data, &nn.0, a))
-            };
+        let proven = matches!(
+            name,
+            "OpAddIntNullable" | "OpMinIntNullable" | "OpMulIntNullable"
+        ) && {
+            let nn = self.nn_facts();
+            args.iter()
+                .all(|a| crate::opt::non_sentinel::non_sentinel(self.cx.data, &nn.0, a))
+        };
         let form = match (name, args.len()) {
             ("OpAddInt", 2) => "loft_wrap_add",
             ("OpMinInt", 2) => "loft_wrap_sub",

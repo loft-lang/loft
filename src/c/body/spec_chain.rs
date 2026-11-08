@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 
 //! `@FR-R-SpecChain` (@PLN219) in the C: an integer local assigned a CHAIN of the silent
 //! checked operators — `+ - *` and `& | ^` — is written as the processor's operators, the

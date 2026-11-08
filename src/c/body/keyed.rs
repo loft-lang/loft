@@ -1622,7 +1622,10 @@ impl FnWriter<'_> {
             && let [gdata, gtp, _, key] = gargs.as_slice()
             && Self::literal(gtp, "type").ok() == Some(i64::from(raw))
             && matches!(
-                self.cx.stores.types[raw as usize].keys.first().map(|k| k.type_nr),
+                self.cx.stores.types[raw as usize]
+                    .keys
+                    .first()
+                    .map(|k| k.type_nr),
                 Some(1 | 2)
             )
             && let Some(path) = crate::opt::writes::vector_path(self.cx.data, data)

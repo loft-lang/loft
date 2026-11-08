@@ -5514,7 +5514,10 @@ fn under_the_probe_a_locally_stepped_accumulator_wraps_and_the_checked_c_keeps_i
         "the checked sum keeps its event flag"
     );
     let (ship, sc) = run(true);
-    assert_eq!(ship, "2656476 13472851 12 -4611686018427387904\n", "the probed C");
+    assert_eq!(
+        ship, "2656476 13472851 12 -4611686018427387904\n",
+        "the probed C"
+    );
     for f in ["n_line", "n_total"] {
         let b = body(&sc, f);
         assert!(

@@ -281,8 +281,7 @@ fn rewrite_in(
     let Some((w, first_body)) = match_walk(ops, block) else {
         return n;
     };
-    let Some(Value::Loop(lp)) = block.operators.iter().find(|o| matches!(o, Value::Loop(_)))
-    else {
+    let Some(Value::Loop(lp)) = block.operators.iter().find(|o| matches!(o, Value::Loop(_))) else {
         return n;
     };
     let body = &lp.operators[first_body..];

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
 
 //! `@FR-R-HostStore` (@PLN219) — a recursion that writes its result back into the field it came
 //! from builds that result in the field's own store.

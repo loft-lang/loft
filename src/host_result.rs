@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
 
 //! `@FR-R-HostStore`, the RESULT clause (@PLN219) — a recursion that answers the results of its
 //! own calls builds them all in one store, answers them as they are, links them into its nodes

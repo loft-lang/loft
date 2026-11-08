@@ -199,7 +199,10 @@ fn several_fill(
     let vars = data.def(d).variables();
     let mut pushed: Vec<(u16, &Value)> = Vec::new();
     let mut reserved: Vec<u16> = Vec::new();
-    for s in body.iter().filter(|o| !matches!(o.unspan(), Value::Line(_))) {
+    for s in body
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+    {
         let Value::Call(op, args) = s.unspan() else {
             return None;
         };

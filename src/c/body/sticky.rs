@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 
 //! `@FR-R-StickySum` (@PLN219) in the C: a loop's integer SUM — a local every WRITE of which
 //! inside the loop is its own update `acc = acc + e` or `acc = acc - e` (`e` not reading `acc`)
