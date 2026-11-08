@@ -717,27 +717,38 @@ fn closing_paren(e: el::El, open: integer) -> integer {
 
 // `drop_hook_nr`: the type's own `OpDrop`, or -1.
 pub fn hook(e: el::El, t: integer) -> integer {
+  hook_of(e, t, "OpDrop")
+}
+
+// The type's own hook `h` (`OpDrop`, `OpCopy` — `copy_hook_nr`), or -1.
+pub fn hook_of(e: el::El, t: integer, h: text) -> integer {
   nm = el::def(e, t).name;
-  el::def_nr(e, "t_{len(nm)}{nm}_OpDrop")
+  el::def_nr(e, "t_{len(nm)}{nm}_{h}")
 }
 
 // `owns_droppable_walk`: a value of definition `t` holds a droppable — its own hook, a field's,
 // a variant's — each definition visited once on a path.
 pub fn owns_droppable(e: el::El, t: integer, path: vector<integer>) -> boolean {
+  owns_hook(e, t, "OpDrop", path)
+}
+
+// `owns_droppable_walk` for any hook (`copy_reach`'s `leases` for `OpCopy`): a value of
+// definition `t` holds a type declaring hook `h` — its own, a field's, a variant's.
+pub fn owns_hook(e: el::El, t: integer, h: text, path: vector<integer>) -> boolean {
   if t < 0 || path.contains(t) {
     return false;
   }
   path += [t];
-  if hook(e, t) >= 0 {
+  if hook_of(e, t, h) >= 0 {
     return true;
   }
   for a in el::def(e, t).attributes {
-    if type_owns(e, a.typedef[0] ?? ir::TyVoid, path) {
+    if type_owns_hook(e, a.typedef[0] ?? ir::TyVoid, h, path) {
       return true;
     }
   }
   for x in e.b.data.definitions {
-    if x.def_type == el::DT_ENUM_VALUE && x.parent == t && owns_droppable(e, x#index, path) {
+    if x.def_type == el::DT_ENUM_VALUE && x.parent == t && owns_hook(e, x#index, h, path) {
       return true;
     }
   }
@@ -789,27 +800,32 @@ pub fn holds_generator(e: el::El, t: ir::TypeT, path: vector<integer>) -> boolea
 
 // `type_owns_droppable`.
 pub fn type_owns(e: el::El, t: ir::TypeT, path: vector<integer>) -> boolean {
+  type_owns_hook(e, t, "OpDrop", path)
+}
+
+// `type_owns` for any hook: a generator's frame is a droppable, and never a lease.
+pub fn type_owns_hook(e: el::El, t: ir::TypeT, h: text, path: vector<integer>) -> boolean {
   match t {
-    TyReference { n } => owns_droppable(e, n, path),
-    TyEnum { n, is_ref } => is_ref && owns_droppable(e, n, path),
-    TySorted { n } => owns_droppable(e, n, path),
-    TyIndex { n } => owns_droppable(e, n, path),
-    TyRadix { n } => owns_droppable(e, n, path),
-    TyTrie { n } => owns_droppable(e, n, path),
-    TyHash { n } => owns_droppable(e, n, path),
-    TyVector { inner } => type_owns(e, inner, path),
-    TyOptional { inner } => type_owns(e, inner, path),
-    TyRefVar { inner } => type_owns(e, inner, path),
-    TyRewritten { inner } => type_owns(e, inner, path),
+    TyReference { n } => owns_hook(e, n, h, path),
+    TyEnum { n, is_ref } => is_ref && owns_hook(e, n, h, path),
+    TySorted { n } => owns_hook(e, n, h, path),
+    TyIndex { n } => owns_hook(e, n, h, path),
+    TyRadix { n } => owns_hook(e, n, h, path),
+    TyTrie { n } => owns_hook(e, n, h, path),
+    TyHash { n } => owns_hook(e, n, h, path),
+    TyVector { inner } => type_owns_hook(e, inner, h, path),
+    TyOptional { inner } => type_owns_hook(e, inner, h, path),
+    TyRefVar { inner } => type_owns_hook(e, inner, h, path),
+    TyRewritten { inner } => type_owns_hook(e, inner, h, path),
     TyTuple { elems } => {
       for m in elems {
-        if type_owns(e, m, path) {
+        if type_owns_hook(e, m, h, path) {
           return true;
         }
       }
       false
     },
-    TyIterator { step: _ } => true,
+    TyIterator { step: _ } => h == "OpDrop",
     _ => false
   }
 }

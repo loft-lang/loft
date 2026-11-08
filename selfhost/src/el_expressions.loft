@@ -6326,7 +6326,10 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   // run (`ir_has_user_call`) would run after that release.  Such a literal is parsed again
   // built apart — in a `__ref_p2_N` of its own, then bound — and the first attempt's work
   // refs are abandoned (`abandon_work_refs`: kept, never freed).
-  if !e.first_pass && !el_vars::is_compiler_generated(vars, v) && struct_ref(e, el_types::base(vt)) == d && el_types::owns_droppable(e, d, []) && any_user_call(e, ops[2..]) {
+  // The local's type: a struct, or the struct enum a variant literal rebuilds it as.
+  root_d = match el_types::base(vt) { TyReference { n } => n, TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
+  literal_of_root = root_d >= 0 && (root_d == d || el::def(e, d).parent == root_d);
+  if !e.first_pass && !el_vars::is_compiler_generated(vars, v) && literal_of_root && el_types::owns_droppable(e, root_d, []) && any_user_call(e, ops[2..]) {
     if vars.vars[v].argument {
       el::refuse(e, "a literal of a droppable built apart for a parameter it rebinds");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -6340,7 +6343,8 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
       }
     }
     abandon_work_refs(vars, ref_mark, p2_mark);
-    o = object_fresh(e, vars, d, fields, ir::TyReference { n: d, dep: [] });
+    // Its own store is typed as the definition answers (`returned`): a variant's is its enum.
+    o = object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
     return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
   }
   // `self_read_root` of an in-place build into a local the program names: a field value that

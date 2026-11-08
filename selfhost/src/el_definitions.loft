@@ -1063,10 +1063,10 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
   if len(arguments) == 0 || arguments[0].name != "self" {
     return "n_{name}";
   }
-  // An operator method (`OpAdd`, the `OpCopy` hook) is its own port.  The `OpDrop` hook is a
-  // method as any other; the cascades a type holding a droppable takes are refused after the
-  // passes (`refuse_drop_cascades`).
-  if starts_with(name, "Op") && name != "OpDrop" {
+  // An operator method (`OpAdd`) is its own port.  The `OpDrop` and `OpCopy` hooks are methods
+  // as any other; the cascades a type holding a droppable takes are refused after the passes
+  // (`refuse_drop_cascades`).
+  if starts_with(name, "Op") && name != "OpDrop" && name != "OpCopy" {
     el::refuse(e, "a method named as an operator: {name}");
     return "";
   }
