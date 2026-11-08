@@ -1475,14 +1475,15 @@ fn buffer_field(e: el::El, n: ir::Node, buf: integer) -> integer? {
   null
 }
 
-// The variables a local's borrows reach.
+// The variables a local's borrows reach: through its current borrows and every earlier bind's
+// (`Variable::viewed`), since a rebind on one path leaves the other path's view live.
 fn dep_closure(vars: el_vars::Vars, start: integer) -> vector<integer> {
   seen: vector<integer> = [];
   stack = [start];
   while len(stack) > 0 {
     v = stack[-1];
     stack = stack[..-1];
-    for d in el_types::deps(el_vars::tp(vars, v)) {
+    for d in el_types::deps(el_vars::tp(vars, v)) + (vars.viewed[v] ?? []) {
       if d < el_vars::count(vars) && !seen.contains(d) {
         seen += [d];
         stack += [d];
@@ -3084,8 +3085,8 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SBool { b } => ex(ir::NdBoolean { b: b }, ir::TyBoolean),
     SNull => ex(ir::NdNull, ir::TyNull),
     SName { name, member } => name_expression(e, vars, name, member, n == vars.read_into),
-    SAssign { at, fixed, op, target, e: rhs } => assignment(e, vars, at, fixed, op, target, rhs),
-    SLet { fixed, name, amp, tfixed, tp, e: rhs } => declaration(e, vars, fixed || amp || tfixed, name, tp, rhs),
+    SAssign { at, fixed, op, target, e: rhs } => noted_bind(e, vars, assignment(e, vars, at, fixed, op, target, rhs)),
+    SLet { fixed, name, amp, tfixed, tp, e: rhs } => noted_bind(e, vars, declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)),
     SCall { at, f, args } => call_expression(e, vars, at, f, args),
     SString { parts } => string_expression(e, vars, parts),
     SIntrinsic { at, kind, args } => intrinsic(e, vars, at, kind, args),
@@ -3923,6 +3924,18 @@ fn copies_as(e: el::El, dst: integer, src: integer) -> boolean {
   s = el::def(e, src);
   t = el::def(e, dst);
   dst == src || (s.def_type == el::DT_ENUM_VALUE && s.parent == dst) || (t.def_type == el::DT_ENUM_VALUE && t.parent == src)
+}
+
+// `Parser::parse_assign`'s tail: a bind finished on the second pass leaves its local's borrows
+// in `viewed` (`Function::note_bind`).
+fn noted_bind(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
+  if !e.first_pass {
+    match el_ir::unspan(x.code) {
+      NdSet { var } => el_vars::note_bind(vars, var),
+      _ => {}
+    }
+  }
+  x
 }
 
 // `Parser::parse_assign` for a plain `name = value`: the left side names a local — created on
@@ -5639,7 +5652,9 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
       return ex(ir::NdInsert { items: list }, ir::TyVoid);
     }
   }
-  // A literal of a variant of the declared struct enum is built in a buffer of the enum's type.
+  // A literal of a variant of the declared struct enum is built in the local, which the
+  // declaration already typed as the enum (`variant_rebinds_local`); a parameter the caller
+  // passed is built in a buffer of the enum's type and bound.
   if e.p.nodes[rhs!] is SStructLit && el_types::struct_enum_def(declared!) >= 0 {
     sd = -1;
     fs: vector<integer> = [];
@@ -5653,6 +5668,10 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
       _ => {}
     }
     if sd >= 0 && el::def(e, sd).def_type == el::DT_ENUM_VALUE && el::def(e, sd).parent == el_types::struct_enum_def(declared!) {
+      if !vars.vars[v].argument || hidden_param(e, vars, v) {
+        o = object_into(e, vars, v, rhs!);
+        return ex(o.code, ir::TyVoid);
+      }
       o = object_fresh(e, vars, sd, fs, el_types::without_deps(el_types::base(declared!)));
       el_vars::drop_use(vars, v);
       return ex(el_ir::v_set(v, o.code), ir::TyVoid);
@@ -5743,9 +5762,12 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   vt = el_vars::tp(vars, v);
+  // `@FR-R-InPlaceLiteral`'s variant clause (`variant_rebinds_local`): a variant literal
+  // rebuilds a local of its struct enum in place, as a struct literal does a local of its struct.
   matches = match el_types::base(vt) {
     TyUnknown { n: _ } => true,
     TyReference { n: vd } => vd == d,
+    TyEnum { n: vd, is_ref } => is_ref && el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent == vd,
     _ => false
   };
   // A local built before is built again in place, as its first bind built it (`p = null`,
