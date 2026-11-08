@@ -33,6 +33,13 @@ pub struct LenLocal {
   pub vec: ir::Node
 }
 
+// A name an `is` capture rebound, and the variable it named before (-1: none).  Its own element
+// type: a `vector<VarName>` would be one record set with `names` (`@FR-Col-Group`).
+pub struct CaptureAlias {
+  pub name: text,
+  pub nr: integer
+}
+
 // A work ref and the syntax node it was minted at.
 pub struct RefSite {
   pub nr: integer,
@@ -81,6 +88,11 @@ pub struct Vars {
   pub ref_sites: vector<RefSite>,
   // The syntax node being elaborated: where a work ref is minted (`lexer.at()` in Rust).
   pub site: integer = -1,
+  // An `if` test is being read, whose `is` may capture fields (`Parser::is_capture_*`): the
+  // captures' bindings for the then-block, and each captured name with what it named before.
+  pub capture_ok: boolean = false,
+  pub is_bindings: vector<ir::Node>,
+  pub is_aliases: vector<CaptureAlias>,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
   // The `x#count` counter a body asked of an open loop (`Function::loop_count_of`), by its loop

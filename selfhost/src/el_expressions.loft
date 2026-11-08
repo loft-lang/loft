@@ -3325,7 +3325,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SSizeof { kind, tp: st } => sizeof_expr(e, vars, kind, st),
     STupleLit { elems } => tuple_lit(e, vars, elems),
     STupleGet { e: te, index } => tuple_get(e, vars, te, index),
-    SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, len(caps) > 0 || has_caps),
+    SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, caps, has_caps),
     SLambda { at: _ } => lambda_expr(e, vars, n),
     SDestructure { places, e: de } => destructure_assign(e, vars, places, de),
     _ => {
@@ -3733,15 +3733,19 @@ fn sizeof_expr(e: el::El, vars: el_vars::Vars, kind: text, st: integer?) -> Ex {
 // `Parser::parse_is_variant`: `x is V` compares the subject's ordinal with the variant's
 // (`OpEqInt(OpConvIntFromEnum(x), ord)`); a struct enum's, or a variant record's, is its `enum`
 // field (`OpGetEnum` at 0).  Captures and a nullable subject are refused by name.
-fn is_expr(e: el::El, vars: el_vars::Vars, ie: integer?, variant: text, captures: boolean) -> Ex {
+fn is_expr(e: el::El, vars: el_vars::Vars, ie: integer?, variant: text, caps: vector<text>, has_caps: boolean) -> Ex {
   if ie == null {
     el::refuse(e, "an `is` with no subject");
     return ex(ir::NdNull, ir::TyBoolean);
   }
+  // An `if`'s own test takes captures (`if x is V { f } { … }`); anywhere else they are refused.
+  capture_ok = vars.capture_ok;
+  vars.capture_ok = false;
+  captures = len(caps) > 0 || has_caps;
   x = expression(e, vars, ie!);
   sd = struct_enum_of(e, x.tp);
   en = if sd >= 0 { sd } else if el_convert::plain_enum(x.tp) { match x.tp { TyEnum { n } => n, _ => -1 } } else { -1 };
-  if en < 0 || captures {
+  if en < 0 || (captures && (sd < 0 || !capture_ok || len(caps) == 0)) {
     refuse_known(e, x.tp, "an `is` on this subject, or with captures: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyBoolean);
   }
@@ -3752,7 +3756,75 @@ fn is_expr(e: el::El, vars: el_vars::Vars, ie: integer?, variant: text, captures
   }
   ord = match el::def(e, en).attributes[a].value[0] { NdEnum { ord: o } => o, _ => 0 };
   subj = if sd >= 0 { el_ir::cl(e, "OpGetEnum", [x.code, ir::NdInt { n: 0 }]) } else { x.code };
-  ex(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [subj]), ir::NdInt { n: ord }]), ir::TyBoolean)
+  test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [subj]), ir::NdInt { n: ord }]);
+  if captures {
+    return capture_test(e, vars, x, el::variant_of(e, en, variant), test, caps);
+  }
+  ex(test, ir::TyBoolean)
+}
+
+// `parse_is_variant`'s field captures, `if x is V { f, g } { … }`: the subject held in
+// `_is_subj_N` unless it is a local, each named field read from it into `_mv_<f>_N` at the head
+// of the then-block (`Vars.is_bindings`, placed by `if_expr`), and each name meaning that local
+// until the block ends (`Vars.is_aliases`).  The test reads the subject again when it is a
+// repeatable place (a local or a field path), else the held copy.  A text, record or collection
+// payload (a view that needs an owner) is refused by name.
+fn capture_test(e: el::El, vars: el_vars::Vars, x: Ex, vd: integer, test: ir::Node, caps: vector<text>) -> Ex {
+  cond: vector<ir::Node> = [];
+  stable = el_ir::unspan(x.code);
+  if !(stable is NdVar) {
+    tmp = el_vars::create_unique(vars, "is_subj", x.tp);
+    el_vars::set_defined(vars, tmp);
+    cond += [el_ir::v_set(tmp, x.code)];
+    stable = ir::NdVar { n: tmp };
+  }
+  if !repeatable_place(e, el_ir::unspan(x.code)) {
+    test = match test { NdCall { def_nr: eq, args } => ir::NdCall { def_nr: eq, args: [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [stable, ir::NdInt { n: 0 }])]), args[1] ?? ir::NdNull] }, _ => test };
+  }
+  for f in caps {
+    a = attr_nr(el::def(e, vd), f);
+    if a < 1 {
+      el::refuse(e, "an `is` capture of a field the variant does not declare");
+      return ex(ir::NdNull, ir::TyBoolean);
+    }
+    ft = el::def(e, vd).attributes[a]!.typedef[0];
+    if !el_convert::plain_scalar(el_types::base(ft)) {
+      refuse_known(e, ft, "an `is` capture of a field of this type: {type_kind(ft)}");
+      return ex(ir::NdNull, ir::TyBoolean);
+    }
+    read = field_get(e, vd, a, stable);
+    v = el_vars::create_unique(vars, "mv_{f}", ft);
+    el_vars::set_defined(vars, v);
+    vars.vars[v].skip_free = true;
+    if read == null {
+      el::refuse(e, "an `is` capture of a field this port reads no value of");
+      return ex(ir::NdNull, ir::TyBoolean);
+    }
+    vars.is_bindings += [el_ir::v_set(v, read!)];
+    vars.is_aliases += [el_vars::CaptureAlias { name: f, nr: el_vars::var(vars, f) }];
+    el_vars::set_name(vars, f, v);
+  }
+  if len(cond) == 0 {
+    return ex(test, ir::TyBoolean);
+  }
+  ex(ir::NdInsert { items: cond + [test] }, ir::TyBoolean)
+}
+
+// `Parser::is_repeatable_place`: a local, or a field read of one, which a test may read twice.
+fn repeatable_place(e: el::El, n: ir::Node) -> boolean {
+  at = n;
+  while !(at is NdVar) {
+    match at {
+      NdCall { def_nr, args } => {
+        if el::def(e, def_nr).name != "OpGetField" || len(args) == 0 {
+          return false;
+        }
+        at = el_ir::unspan(args[0]!);
+      },
+      _ => { return false; }
+    }
+  }
+  true
 }
 
 // A type's variant name, for a refusal that says which operands it met.
@@ -7043,6 +7115,13 @@ fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> i
       }
       if el::def(e, fd).def_type == el::DT_STRUCT {
         k = ir::NdInt { n: el::def(e, fd).known_type };
+        return el_ir::cl(e, "OpCopyRecord", [val, el_ir::cl(e, "OpGetField", [r, pos, k]), k]);
+      }
+    },
+    // A struct enum's value is a record as well: copied into the field's bytes.
+    TyEnum { n: en, is_ref } => {
+      if is_ref {
+        k = ir::NdInt { n: el::def(e, en).known_type };
         return el_ir::cl(e, "OpCopyRecord", [val, el_ir::cl(e, "OpGetField", [r, pos, k]), k]);
       }
     },
@@ -11954,7 +12033,13 @@ fn has_operator_method(e: el::El, d: integer) -> boolean {
 // typed as its then arm.  A condition that is not a boolean, a then arm that never finishes or is
 // null, arms of different types and a value without an `else` are refused by name.
 fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: integer?, expected: ir::TypeT) -> Ex {
+  vars.capture_ok = true;
   c = expression(e, vars, cond);
+  vars.capture_ok = false;
+  bindings = vars.is_bindings;
+  aliases = vars.is_aliases;
+  vars.is_bindings = [];
+  vars.is_aliases = [];
   // A template's first pass types an operator over its variable as the variable (`call_op`);
   // the second resolves it to the bound's stub.
   if !(e.first_pass && generic_holder(e, c.tp) >= 0) {
@@ -11982,6 +12067,20 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     vars.present_exprs += [jp!.place];
   }
   t = parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
+  // The captures' bindings open the then-block; their names end with it.
+  if len(bindings) > 0 {
+    match t.code {
+      NdBlock { block } => {
+        bl = block[0]!;
+        bl.operators = bindings + bl.operators;
+        t.code = ir::NdBlock { block: [bl] };
+      },
+      _ => {}
+    }
+  }
+  for al in aliases {
+    el_vars::restore_name(vars, al.name, al.nr);
+  }
   truncate_nonzero(vars, dz);
   vars.present = vars.present[0..dp];
   vars.present_exprs = vars.present_exprs[0..dj];
@@ -13512,6 +13611,18 @@ fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   }
   if e.p.nodes[source] is SRange {
     return range_for(e, vars, h, source, rev: rev);
+  }
+  match e.p.nodes[source] {
+    SVarAttr { var: fv, attr: fa } => {
+      if fa == "fields" {
+        if rev || par != null || destructure || filter != null {
+          el::refuse(e, "a `#fields` walk reversed, `par`, destructured or filtered");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        return fields_for(e, vars, h, fv);
+      }
+    },
+    _ => {}
   }
   x = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   if e.p.nodes[source] is SVecLit {
@@ -15610,6 +15721,119 @@ fn range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer, rev: b
   }
   steps += [b.code];
   counted(e, cnt, ex(el_ir::v_block([init, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
+}
+
+// `Parser::parse_field_iteration`: `for f in s#fields` unrolled at compile time, one block per
+// field of a scalar or text type — a `FieldValue` variant holding the field's value, a
+// `StructField` with its name, that value and whether the field is declared nullable, the loop
+// variable set to it, then the body (read once, repeated).  A record, vector or keyed field has
+// no scalar payload and is skipped.  The walk is no loop: `break` and `#count` do not reach it.
+fn fields_for(e: el::El, vars: el_vars::Vars, h: ForHead, name: text) -> Ex {
+  sv = el_vars::var(vars, name);
+  sd = if sv < 0 { -1 } else { match el_types::base(el_vars::tp(vars, sv)) { TyReference { n } => n, _ => -1 } };
+  if sd < 0 {
+    if !e.first_pass {
+      el::refuse(e, "a `#fields` walk of something other than a struct local");
+    }
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  el_vars::in_use(vars, sv, true);
+  field_d = el::def_nr(e, "StructField");
+  fv_enum = el::def_nr(e, "FieldValue");
+  if field_d < 0 || fv_enum < 0 {
+    el::refuse(e, "a `#fields` walk without the standard library's reflection types");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  lv = loop_var(vars, h.src_id, h.id, ir::TyReference { n: field_d, dep: [] });
+  b = parse_block(e, vars, h.body, "fields", ir::TyVoid);
+  // Rust builds each field's two records on both passes, so their work refs number before
+  // anything only the second pass mints.
+  if e.first_pass {
+    for at in el::def(e, sd).attributes {
+      if field_value_variant(el_types::base(at.typedef[0])) != "" {
+        vd = el::variant_of(e, fv_enum, field_value_variant(el_types::base(at.typedef[0])));
+        el_vars::work_ref(vars, el::def(e, vd).returned[0] ?? ir::TyUnknown { n: vd });
+        el_vars::work_ref(vars, el::def(e, field_d).returned[0] ?? ir::TyUnknown { n: field_d });
+      }
+    }
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // Rust gives each field's block its own copy of a text payload binding (`_mv_…`), freed in
+  // that block: not carried.
+  for t in set_targets(b.code) {
+    if el_vars::name_of(vars, t).starts_with("_mv_") && el_types::base(el_vars::tp(vars, t)) is TyText && len(el_types::deps(el_vars::tp(vars, t))) == 0 {
+      el::refuse(e, "a `#fields` walk whose body binds a text payload");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
+  blocks: vector<ir::Node> = [];
+  for at in el::def(e, sd).attributes {
+    nullable = at.typedef[0] is TyOptional;
+    variant = field_value_variant(el_types::base(at.typedef[0]));
+    if variant == "" {
+      continue;
+    }
+    read = field_get(e, sd, at#index, ir::NdVar { n: sv });
+    vd = el::variant_of(e, fv_enum, variant);
+    if read == null || vd < 0 {
+      el::refuse(e, "a `#fields` walk over a field this port reads no value of");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    fv = object_ops(e, vars, vd, [el::def(e, vd).attributes[0]!.value[0] ?? ir::NdNull, read!]);
+    sf = object_ops(e, vars, field_d, [ir::NdText { s: at.name }, ir::NdVar { n: fv.w }, ir::NdBoolean { b: nullable }]);
+    blocks += [ir::NdInsert { items: fv.ops }, ir::NdInsert { items: sf.ops }, el_ir::v_set(lv, ir::NdVar { n: sf.w }), b.code];
+  }
+  if len(blocks) == 0 {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(el_ir::v_block(blocks, ir::TyVoid, "field_iter"), ir::TyVoid)
+}
+
+// The `FieldValue` variant a field of this (non-null) type is reported as, or "" for a type with
+// no scalar payload.
+fn field_value_variant(t: ir::TypeT) -> text {
+  match t {
+    TyBoolean => "FvBool",
+    TyInteger { spec } => if spec.max > 2147483647 { "FvLong" } else { "FvInt" },
+    TyFloat => "FvFloat",
+    TySingle => "FvSingle",
+    TyCharacter => "FvChar",
+    TyText { dep: _ } => "FvText",
+    _ => ""
+  }
+}
+
+// A record built into a fresh work ref, and the work ref.
+struct ObjectOps {
+  ops: vector<ir::Node>,
+  w: integer
+}
+
+// `Parser::build_object_ops`: definition `d`'s record made in a fresh work ref, its first fields
+// set from `values` in order.
+fn object_ops(e: el::El, vars: el_vars::Vars, d: integer, values: vector<ir::Node>) -> ObjectOps {
+  w = el_vars::work_ref(vars, el::def(e, d).returned[0] ?? ir::TyUnknown { n: d });
+  ops: vector<ir::Node> = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: el::def(e, d).known_type }])];
+  for v in values {
+    ops += [set_field(e, d, v#index, ir::NdVar { n: w }, v)];
+  }
+  ObjectOps { ops: ops, w: w }
+}
+
+// `Parser::collect_set_targets`: every variable a `Set` in the tree writes.
+fn set_targets(n: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  match n {
+    NdSet { var, inner } => { out += [var]; out += set_targets(inner); },
+    NdSpan { inner } => { out += set_targets(inner); },
+    NdBlock { block } => { for o in block[0]!.operators { out += set_targets(o); } },
+    NdLoop { block } => { for o in block[0]!.operators { out += set_targets(o); } },
+    NdInsert { items } => { for o in items { out += set_targets(o); } },
+    NdIf { cond, t, f } => { out += set_targets(cond); out += set_targets(t); out += set_targets(f); },
+    NdCall { args } => { for a in args { out += set_targets(a); } },
+    _ => {}
+  }
+  out
 }
 
 // `rev(lo..hi)` with constant bounds, `lo` zero or more and `hi` exclusive (`parse_in_range_body`
