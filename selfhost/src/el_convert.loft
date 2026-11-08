@@ -502,8 +502,33 @@ fn convert_value(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT,
   null
 }
 
-// `Parser::is_narrowing_int_store`: beside a narrowing, the full integer into a slot of a smaller
-// forced width.
+// `Parser::is_narrowing_int_store`, the one test every implicit integer store asks (`@FR-I-Sub`).
+pub fn narrowing_store(src: ir::TypeT, dst: ir::TypeT) -> boolean {
+  narrowing_int(src, dst) || store_narrows(src, dst)
+}
+
+// `Parser::can_convert` or `converts_implicitly` for the values a call passes: one of the
+// standard library's implicit `OpConv…` conversions takes `src` to `should` (`integer` into
+// `float`, a plain enum into its `enumerate`, …).
+pub fn converts(e: el::El, src: ir::TypeT, should: ir::TypeT) -> boolean {
+  check = if plain_enum(src) { ir::TyEnum { n: 0, is_ref: false, dep: [] } } else { src };
+  if !plain_scalar(src) && !plain_enum(src) {
+    return false;
+  }
+  for d in el::possible(e, "OpConv") {
+    def = el::def(e, d);
+    if ends_with(def.name, "FromNull") || len(def.attributes) != 1 {
+      continue;
+    }
+    at = def.attributes[0].typedef[0];
+    if (el_types::is_equal(e, at, check) || el_types::is_equal(e, at, src)) && el_types::is_equal(e, def.returned[0], should) {
+      return true;
+    }
+  }
+  false
+}
+
+// Beside a narrowing, the full integer into a slot of a smaller forced width.
 fn store_narrows(src: ir::TypeT, dst: ir::TypeT) -> boolean {
   match src {
     TyInteger { spec: s } => match dst {

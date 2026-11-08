@@ -12,6 +12,7 @@ use el;
 use el_vars;
 use el_types;
 use el_expressions;
+use el_dispatch;
 use el_schema;
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
@@ -675,12 +676,21 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       _ => {}
     }
   }
+  // `@FR-Disp-Key`: a definition of a name that is (or now becomes) an overload set is keyed by
+  // its full parameter spelling.
+  key = el_dispatch::definition_key(e, key, name, [for a in arguments { a.typedef }], el::pos_at(e, after));
+  if key == "" {
+    return "";
+  }
   if e.first_pass {
     if el::def_nr(e, key) >= 0 {
       el::refuse(e, "a function over an existing name");
       return "";
     }
     e.context = add_fn(e, key, name, arguments, el::pos_at(e, after));
+    if e.context >= 0 {
+      el_dispatch::join(e, name, e.context);
+    }
     if len(e.type_vars) > 0 && e.context >= 0 {
       e.b.data.definitions[e.context].def_type = el::DT_GENERIC;
     }
