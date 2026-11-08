@@ -995,7 +995,8 @@
 15_stdlib_keyed	-	c	R-SpecChain	3
 15_stdlib_keyed	-	c	R-StickySum	25
 15_stdlib_keyed	-	c	R-TextBorrow	18
-15_stdlib_keyed	-	c	R-TypedKeyed	26
+15_stdlib_keyed	-	c	R-TypedKeyed	23
+15_stdlib_keyed	-	c	R-TypedKeyed/remove	3
 15_stdlib_keyed	-	c	R-TypedKeyed/text	2
 15_stdlib_keyed	-	c	R-WorkPark	4
 15_stdlib_keyed	-	c	R-Wrapper	12
@@ -1770,10 +1771,12 @@
 23_lru	-	c	R-RangedCall	2
 23_lru	-	c	R-RefParam	12
 23_lru	-	c	R-Rotate	10
+23_lru	-	c	R-SameRead/filed	1
 23_lru	-	c	R-SingleUse	2
 23_lru	-	c	R-StickySum	3
 23_lru	-	c	R-TextBorrow	14
-23_lru	-	c	R-TypedKeyed	4
+23_lru	-	c	R-TypedKeyed	3
+23_lru	-	c	R-TypedKeyed/remove	1
 23_lru	-	c	R-WorkPark	3
 23_lru	-	c	R-Wrapper	10
 23_lru	-	c	R-ZeroCount	8

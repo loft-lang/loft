@@ -281,7 +281,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-ReturnField)` | `R-ReturnField` ir |
 | `(R-Reuse)` | `R-Reuse` ir |
 | `(R-Rotate)` | `R-Rotate` interp |
-| `(R-SameRead)` | `R-SameRead` parse |
+| `(R-SameRead)` | `R-SameRead` parse · `/filed` c |
 | `(R-Scalar)` | `R-Scalar` c, native |
 | `(R-ScaleFold)` | `R-ScaleFold` parse |
 | `(R-SelfReplace)` | `R-SelfReplace` parse |
@@ -305,7 +305,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-TextLen)` | `R-TextLen` parse |
 | `(R-TextRun)` | `R-TextRun` ir |
 | `(R-Transient)` | `R-Transient` c |
-| `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/text` c, native |
+| `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/remove` c · `/text` c, native |
 | `(R-TypedRead)` | `R-TypedRead` c, native · `/float` c |
 | `(R-ValueLocal)` | `R-ValueLocal` parse, c, native |
 | `(R-ValueRecord)` | `R-ValueRecord` parse, c, native · `/view` c, native |
@@ -3926,6 +3926,12 @@ c21 keeps the vector form of it.
                   `long` parts are emitted as `OpGetHashInts(c, type, [k₁, …])`, hashed
                   as the general entry hashes their `Content::Long`s (`keys::ints_hash`)
                   and compared part by part (`hash::find_ints`).
+                  The REMOVAL clause (C): `c[k] = null` — `OpHashRemove(c, OpGetRecord(c,
+                  type, 1, k), type)`, the lookup on the removal's own collection by one
+                  pure path, a single integer key, no lazy source — removes from where
+                  the typed walk finds the key: one walk where finding the record and
+                  removing it by its digest took two.  A miss changes nothing; an inline
+                  table and a locked store take the general removal of the general find.
 ```
 
 **In words.** `(R-Escape)` is not needed here — nothing is removed or reshaped, the
@@ -3948,6 +3954,18 @@ under the switch).  Cells `tests/scripts/158-keyed-fast-paths.loft`; pin
 Sites: `OpGetRecordEmitter` (`src/generation/ops/key_ops.rs`), `Output::emit_long_key`,
 `codegen_runtime::OpGetHashLong`, `hash::find_long`.  The APPEND half is `(R-KeyedEntry)`
 below, for an element that owns no heap.
+
+**The removal clause.**  An LRU's eviction, `c.nodes[old] = null`, found the record by its key
+and then `loft_h_remove` found its bucket again by the record's digest.  Site
+`FnWriter::keyed_remove`, runtime `loft_hash_remove_i64` over `loft_h_remove_at` (the shift
+half of the general removal); census `R-TypedKeyed/remove`; the falsifier is
+`-DLOFT_KEYED_VERIFY`, under which every typed removal re-asks the general lookup and stops
+the run where the two disagree.  With `(R-SameRead)`'s filed clause, a memo of the last integer
+digest and inlined reference accessors, bench 23 `lru_mixed` on the ship lane: gcc-16 3.46× →
+2.63×, clang 3.19× → 2.52×.  Guard
+`loft-suite/rules/rewrites/R-TypedKeyed/a-keyed-removal-starts-where-the-key-is-found.loft`;
+the filed clause's (`FnWriter::filed_record`, census `R-SameRead/filed`)
+`loft-suite/rules/rewrites/R-SameRead/a-lookup-of-the-key-just-filed-is-the-record.loft`.
 
 ### A vector its caller walks once is never built
 
@@ -7535,6 +7553,13 @@ alone) and
                  computation reads may be the last statement that uses it: its value is
                  computed before the assignment.  The largest shared computation is bound;
                  a variable and a literal is not.
+  (R-SameRead) + THE FILED CLAUSE (C): `m = h[k]` as the statement right after an
+                 `OpFinishRecord` that filed record `e` into `h` — a hash with one
+                 integer key, reached by the same pure path, `k` a local — answers `e`
+                 where the insert landed (the store takes writes, neither handle is null)
+                 and `e`'s key is `k`: the latest insert wins (`@FR-Col-Insert`), so `e`
+                 IS the entry under `k`.  Otherwise the lookup runs as written — a
+                 discarded insert (`(H-WriteLocked-Whole)`) answers what was filed before.
 ```
 
 **In words.** Site: `same_read::bind_sequences`.
