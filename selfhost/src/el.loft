@@ -184,6 +184,14 @@ pub fn source_nr(el: El, source: integer, name: text) -> integer {
   if e == null { -1 } else { e.nr }
 }
 
+// A definition moved to another key of its source (`def_names.remove` / `insert`).
+pub fn rename_def(el: El, d: integer, name: text) {
+  src = def(el, d).source;
+  el.names[key(src, def(el, d).name)] = null;
+  el.names += [DefName { key: key(src, name), nr: d }];
+  el.b.data.definitions[d].name = name;
+}
+
 // `Data::def_nr` (`get_or_std`): the current source's definition, else the standard library's.
 // `Data::variant_of`: the variant of enum `d` named `name`, or -1.
 pub fn variant_of(el: El, d: integer, name: text) -> integer {

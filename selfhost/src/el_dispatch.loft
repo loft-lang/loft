@@ -1,0 +1,337 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A name's OVERLOAD SET (src/parser/dispatch.rs, `Data::admit_overload_set` in src/data.rs; the
+// rules in doc/claude/formal/dispatch.md).  A second definition of a name with another parameter
+// spelling joins the first in a set (`@FR-Disp-Key`): each member is keyed by its full spelling,
+// `f_<LEN><spelling>_<name>`, and the name's `Dynamic` definition carries every member as a
+// constant `Routine` labelled by that spelling.  A call of the name reaches the unique most
+// specific member that takes its argument types (`@FR-Disp-Select`).
+//
+// Carried: free functions of this program over parameters of a spelled type.  Refused by name:
+// a generic member, a call inside a generic, a set decided at run time by an enum's variant.
+use ir;
+use el;
+use el_types;
+use el_convert;
+use el_expressions;
+
+// `Data::identity_spelling`: what tells one type from another in a definition key — the alias
+// or the range of an integer with its forced width, a struct or an enum by its name, a vector by
+// its element.  "" for a type this port spells no identity for.
+pub fn identity(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    // `Pt` and `Pt?` are two instantiations (@PLN165 B1).
+    TyOptional { inner } => {
+      sp = identity(e, inner);
+      if sp == "" { "" } else { "{sp}?" }
+    },
+    TyInteger { spec } => {
+      named = integer_name(spec);
+      if spec.forced_size > 0 { "{named}s{spec.forced_size}" } else { named }
+    },
+    TyFloat => "float",
+    TySingle => "single",
+    TyBoolean => "boolean",
+    TyCharacter => "character",
+    TyText { dep: _ } => "text",
+    TyReference { n } => if el_types::type_var(e, t) < 0 && (el::def(e, n).def_type == el::DT_STRUCT || el::def(e, n).def_type == el::DT_ENUM_VALUE) { declared(e, n) } else { "" },
+    TyEnum { n } => declared(e, n),
+    TyVector { inner } => {
+      sp = if el_types::is_unknown(inner) { "" } else { identity(e, inner) };
+      if sp == "" { "" } else { "vector<{sp}>" }
+    },
+    _ => ""
+  }
+}
+
+// `IntegerSpec::source_name`, else the explicit range (`Type::name`).
+fn integer_name(spec: ir::IntegerSpec) -> text {
+  if spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295) {
+    "integer"
+  } else if spec.min == 0 && spec.max == 256 {
+    "byte"
+  } else {
+    "integer({spec.min}, {spec.max})"
+  }
+}
+
+// `Data::declared_identity`: the bare name of the standard library's and the program's own
+// definitions; a library's would be `<library>::<name>`, which no program here reaches.
+fn declared(e: el::El, d: integer) -> text {
+  df = el::def(e, d);
+  if df.source == el::STD_SOURCE || df.source == e.source { df.name } else { "" }
+}
+
+// `Data::full_spelling`: every declared parameter's identity joined with `#` — the spelling a
+// member of a set is keyed and labelled by.  "" when a parameter has no identity here.
+pub fn full_spelling(e: el::El, types: vector<ir::TypeT>) -> text {
+  parts: vector<text> = [];
+  for t in types {
+    sp = identity(e, t);
+    if sp == "" {
+      return "";
+    }
+    parts += [sp];
+  }
+  parts.join("#")
+}
+
+// The declared parameter types of definition `d`, its hidden buffers left out (`visible_params`).
+fn visible_params(e: el::El, d: integer) -> vector<ir::TypeT> {
+  [for a in el::def(e, d).attributes if !a.hidden { a.typedef[0] }]
+}
+
+// `Data::mangle_free_overload`.
+fn member_key(spelling: text, name: text) -> text {
+  "f_{len(spelling)}{spelling}_{name}"
+}
+
+// The program's overload set named `name` — its `Dynamic` definition — or -1.
+pub fn own_set(e: el::El, name: text) -> integer {
+  set = el::source_nr(e, e.source, name);
+  if set >= 0 && el::def(e, set).def_type == el::DT_DYNAMIC { set } else { -1 }
+}
+
+// `Data::add_fn`'s `Disp-Key` arm: the key a free definition `key` of `name` is registered under.
+// The first pass makes the set when a definition of this program already holds `key` with another
+// spelling (`admit_overload_set`): the dispatcher is made, the incumbent moved to its own full key
+// and carried.  Either pass answers the member key `f_<LEN><spelling>_<name>` for a name that is
+// a set, and `key` itself for any other.  "" when the definition is refused.
+pub fn definition_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>, pos: ir::Position) -> text {
+  // The standard library never overloads a free name: its keys are the native registry's.
+  if !key.starts_with("n_") || e.default {
+    return key;
+  }
+  set = own_set(e, name);
+  incumbent = el::source_nr(e, e.source, key);
+  if set < 0 && (incumbent < 0 || !e.first_pass || el::def(e, incumbent).def_type != el::DT_FUNCTION) {
+    return key;
+  }
+  if len(e.type_vars) > 0 {
+    el::refuse(e, "a generic member of an overload set");
+    return "";
+  }
+  full = full_spelling(e, types);
+  if full == "" {
+    el::refuse(e, "an overload set member with a parameter of a type no key spells here");
+    return "";
+  }
+  if set >= 0 {
+    return member_key(full, name);
+  }
+  own_full = full_spelling(e, visible_params(e, incumbent));
+  if own_full == full {
+    // The same spelling twice: the redefinition the caller refuses.
+    return key;
+  }
+  if own_full == "" {
+    el::refuse(e, "an overload set member with a parameter of a type no key spells here");
+    return "";
+  }
+  set = el::add_def(e, name, pos, el::DT_DYNAMIC);
+  el::rename_def(e, incumbent, member_key(own_full, name));
+  carry(e, set, own_full, incumbent);
+  member_key(full, name)
+}
+
+// A new member `d` of `name`'s set, labelled by its spelling (`add_fn`'s `overload_label`).
+pub fn join(e: el::El, name: text, d: integer) {
+  set = own_set(e, name);
+  if set >= 0 && el::def(e, d).name.starts_with("f_") {
+    carry(e, set, full_spelling(e, visible_params(e, d)), d);
+  }
+}
+
+fn carry(e: el::El, set: integer, label: text, d: integer) {
+  m = el::attribute(label, ir::TyRoutine { n: d });
+  m.mutable = false;
+  m.constant = true;
+  e.b.data.definitions[set].attributes += [m];
+}
+
+// ── selection (src/parser/dispatch.rs) ──
+
+// `Rank`: how far an argument is from a parameter, per position; smaller is more specific.  A
+// concrete rank is its base step plus its nullability step, and carries `CONVERSION` when the
+// base step is a conversion.
+const EXACT = 0;
+const WIDENED = 1;
+const LOSSY = 2;
+const CONVERTED = 3;
+const CONVERSION = 64;
+
+// A member that takes a call, with its rank at each position.
+struct Ranked {
+  d: integer,
+  ranks: vector<integer>
+}
+
+// `Data::routed_types` (`F-Recv`'s argument clause): where any argument is nullable, every other
+// is read as nullable too, so a nullable argument anywhere reaches the `τ?` member.
+fn routed(types: vector<ir::TypeT>) -> vector<ir::TypeT> {
+  if len(types) == 0 {
+    return [ir::TyUnknown { n: 0 }];
+  }
+  any_nullable = false;
+  for t in types {
+    if t is TyOptional {
+      any_nullable = true;
+    }
+  }
+  if !any_nullable {
+    return types;
+  }
+  [for t in types { if t is TyOptional || t is TyNull { t } else { ir::TyOptional { inner: el_types::base(t) } } }]
+}
+
+// `Parser::dispatch_rank`: the rank of passing `arg` to a `param` slot, or -1 when it cannot.
+fn rank(e: el::El, arg: ir::TypeT, param: ir::TypeT) -> integer {
+  // A `null` fits a `τ?` slot as it is, a dense one only by `(N-Store)`'s lossy step.
+  if el_types::base(arg) is TyNull {
+    return if (param is TyOptional) { EXACT } else { LOSSY };
+  }
+  a = el_types::base(arg);
+  p = el_types::base(param);
+  ia = identity(e, a);
+  b = if ia != "" && ia == identity(e, p) {
+    EXACT
+  } else if a is TyInteger && p is TyInteger {
+    // `@FR-C-Int`: the wider integer takes the narrower; a store that narrows is no candidate.
+    if el_convert::narrowing_store(a, p) {
+      return -1;
+    }
+    WIDENED
+  } else if variant_of(e, a, p) {
+    WIDENED
+  } else if el_convert::converts(e, a, p) {
+    CONVERTED
+  } else {
+    return -1;
+  };
+  // The nullability step on top: `(N-Intro)` free, `(N-Store)` lossy.
+  arg_nullable = arg is TyOptional;
+  param_nullable = param is TyOptional;
+  step = if param_nullable && !arg_nullable { WIDENED } else if arg_nullable && !param_nullable { LOSSY } else { EXACT };
+  if b == CONVERTED { b + step + CONVERSION } else { b + step }
+}
+
+// `@FR-C-Var`: a variant satisfies its enum.
+fn variant_of(e: el::El, a: ir::TypeT, p: ir::TypeT) -> boolean {
+  v = match a { TyReference { n } => n, _ => -1 };
+  en = match p { TyEnum { n } => n, _ => -2 };
+  v >= 0 && el::def(e, v).def_type == el::DT_ENUM_VALUE && el::def(e, v).parent == en
+}
+
+// `rank_order`: a rank with its conversion bit masked off.
+fn order(r: integer) -> integer {
+  r % CONVERSION
+}
+
+// `Parser::definition_ranks`: the ranks of member `d` for the routed argument types, or null when
+// it does not take the call (`@FR-Disp-Applicable`) — a definition here declares no defaults, so
+// it takes exactly as many arguments as it declares.
+fn ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
+  params = visible_params(e, d);
+  if len(params) != len(args) {
+    return null;
+  }
+  r: vector<integer> = [];
+  for p in params {
+    k = rank(e, args[p#index] ?? ir::TyUnknown { n: 0 }, p);
+    if k < 0 {
+      return null;
+    }
+    r += [k];
+  }
+  r
+}
+
+// `strictly_better`: no worse at any position and better at one (`@FR-Disp-Specific`).
+fn better(b: Ranked, a: Ranked) -> boolean {
+  improved = false;
+  for x in a.ranks {
+    y = b.ranks[x#index] ?? 0;
+    if order(y) > order(x) {
+      return false;
+    }
+    if order(y) < order(x) {
+      improved = true;
+    }
+  }
+  improved
+}
+
+// `Parser::select_overload` over the program's set `set` for a call with these argument types:
+// the unique most specific member that takes them (`@FR-Disp-Select`), or -1.  On the first pass
+// an argument not typed yet decides nothing; on the second each undecided call is refused by
+// name — Rust answers it with a diagnostic, or with a dispatcher it builds at run time.
+pub fn select(e: el::El, set: integer, types: vector<ir::TypeT>) -> integer {
+  args = routed(types);
+  for t in args {
+    if !(el_types::base(t) is TyNull) && identity(e, t) == "" {
+      if !e.first_pass {
+        el::refuse(e, "a call of an overload set with an argument of this type: {el_expressions::type_kind(t)}");
+      }
+      return -1;
+    }
+  }
+  if len(e.type_vars) > 0 {
+    el::refuse(e, "a call of an overload set inside a generic");
+    return -1;
+  }
+  taking: vector<Ranked> = [];
+  for a in el::def(e, set).attributes {
+    match a.typedef[0] {
+      TyRoutine { n } => {
+        r = ranks(e, n, args);
+        if r != null {
+          taking += [Ranked { d: n, ranks: r! }];
+        }
+      },
+      _ => {}
+    }
+  }
+  // The minimal members: those no other taking member is strictly better than.
+  minimal: vector<integer> = [];
+  for a in taking {
+    beaten = false;
+    for b in taking {
+      if better(b, a) {
+        beaten = true;
+      }
+    }
+    if !beaten {
+      minimal += [a.d];
+    }
+  }
+  if len(minimal) != 1 {
+    if !e.first_pass {
+      el::refuse(e, if len(minimal) == 0 { "a call no member of an overload set takes" } else { "a call two members of an overload set take" });
+    }
+    return -1;
+  }
+  if !e.first_pass && decided_by_variant(e, set, args) {
+    el::refuse(e, "a call an overload set decides by an enum's variant at run time");
+    return -1;
+  }
+  minimal[0]
+}
+
+// `Parser::dynamic_positions` is not empty: an argument held at a struct enum where a member
+// names one of its variants — the run-time variant decides the call (`@FR-Disp-Dynamic`).
+fn decided_by_variant(e: el::El, set: integer, args: vector<ir::TypeT>) -> boolean {
+  for t in args {
+    en = match el_types::base(t) { TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
+    if en < 0 {
+      continue;
+    }
+    for a in el::def(e, set).attributes {
+      m = match a.typedef[0] { TyRoutine { n } => n, _ => -1 };
+      if m >= 0 && variant_of(e, visible_params(e, m)[t#index] ?? ir::TyVoid, ir::TyEnum { n: en, is_ref: true, dep: [] }) {
+        return true;
+      }
+    }
+  }
+  false
+}

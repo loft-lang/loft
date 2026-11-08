@@ -489,6 +489,17 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         el::refuse(e, "a forward type reference");
         return null;
       }
+      // `@FR-C-Var`: a variant TYPE is a record variant, the variant's own reference — not the
+      // enum its values have.  A plain enum's value names no type; Rust refuses it on pass 2.
+      if el::def(e, d).def_type == el::DT_ENUM_VALUE {
+        plain = match el::def(e, el::def(e, d).parent).returned[0] ?? ir::TyVoid { TyEnum { is_ref } => !is_ref, _ => false };
+        if plain {
+          el::refuse(e, "a value of a plain enum as a type");
+          return null;
+        }
+        r = ir::TyReference { n: d, dep: [] };
+        return if nullable { ir::TyOptional { inner: r } } else { r };
+      }
       t = el::def(e, d).returned[0] ?? ir::TyUnknown { n: d };
       // An integer alias with a `size(n)` (`u8`, `i32`) stamps that width onto the spec, so it
       // travels with the type into a collection's element and a narrow store's checks.

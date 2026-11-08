@@ -19,6 +19,7 @@ use frame;
 use el_length;
 use el_par;
 use el_definitions;
+use el_dispatch;
 use own;
 
 // An expression's IR and type.
@@ -7650,7 +7651,13 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     }
     return ex(el_ir::cl(e, "OpCoroutineNext", [list[0]] + ops), step);
   }
-  d = find_fn(e, name, first);
+  // `@FR-Disp-Select`: a name that is an overload set reaches the member its argument types
+  // select; any other name, the definition `find_fn` resolves.
+  set = el_dispatch::own_set(e, name);
+  d = if set >= 0 { el_dispatch::select(e, set, types) } else { find_fn(e, name, first) };
+  if d < 0 && set >= 0 {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   if d < 0 {
     // A receiver already refused (untyped on the second pass) chose no method: not refused again.
     if e.first_pass || (el_types::is_unknown(first) && len(types) > 0) {
@@ -8513,26 +8520,6 @@ fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
   }
 }
 
-// `Data::identity_spelling` for the bound types a key is made of here: a plain scalar, a text,
-// a struct; "" for any other, which no instance is looked up for.
-fn identity_spelling(e: el::El, t: ir::TypeT) -> text {
-  match t {
-    // `Pt` and `Pt?` are two instantiations (@PLN165 B1).
-    TyOptional { inner } => {
-      sp = identity_spelling(e, inner);
-      if sp == "" { "" } else { "{sp}?" }
-    },
-    TyInteger { spec } => if el_types::narrow_width(spec) == 0 && spec.forced_size == 0 { "integer" } else { "" },
-    TyFloat => "float",
-    TySingle => "single",
-    TyBoolean => "boolean",
-    TyCharacter => "character",
-    TyText { dep: _ } => "text",
-    TyReference { n } => if el_types::type_var(e, t) < 0 && el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
-    _ => ""
-  }
-}
-
 // The instance of generic `d` the argument types bind (`Data::mangle_instance`:
 // `i_<LEN><spelling>_<template>`, the bound types joined by `#`), or -1.
 fn generic_instance(e: el::El, d: integer, types: vector<ir::TypeT>) -> integer {
@@ -8561,7 +8548,7 @@ fn template_binding(e: el::El, d: integer, types: vector<ir::TypeT>) -> Binding?
 fn instance_name(e: el::El, d: integer, b: Binding) -> text {
   spelling = "";
   for t in b.types {
-    sp = identity_spelling(e, t);
+    sp = el_dispatch::identity(e, t);
     if sp == "" {
       return "";
     }
@@ -8893,7 +8880,7 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   // A nullable binding is carried for a plain scalar (`integer?`): its value is the scalar's
   // own slot with a sentinel (@FR-L-Null).
   nullable_scalar = match bound { TyOptional { inner } => scalar_type(inner) && !(inner is TyEnum), _ => false };
-  if !(scalar_type(bound) || bound is TyText || record) || el_types::base(bound) is TyEnum || (bound is TyOptional && !nullable_scalar) || identity_spelling(e, bound) == "" {
+  if !(scalar_type(bound) || bound is TyText || record) || el_types::base(bound) is TyEnum || (bound is TyOptional && !nullable_scalar) || el_dispatch::identity(e, bound) == "" {
     // A reference says which definition kind it names: a struct-enum variant, a tuple's or a
     // nullable's synthetic record, a type variable not yet bound.
     kind = match bound { TyReference { n } => "TyReference of a {def_kind(el::def(e, n))}", _ => type_kind(bound) };
