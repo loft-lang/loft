@@ -140,7 +140,7 @@ copied:
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | 436 of 1680 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
+| E image | 437 of 1680 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
 
 Elaboration is `selfhost/src/el*.loft`; gate E's runner is `selfhost/front/elab.loft` (`elab
 <image> <program>` over a `LOFT_EMIT_PARSED` image, or `elab <stdlib files>`), its oracle side
