@@ -1,0 +1,10 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: `{ c }` after `is Circle` reads as a field-capture list, and `Circle` has no field `c` — to make the braces the then-branch, put the test in parentheses: `if (… is Circle) { c } else { … }`
+  --> <cases>/55d_is_test_then_its_subject_needs_parentheses.loft:4:28
+  |
+4 |   if c is Circle { c } else { Square { side: 1 } }
+  |                            ^
+
+error: aborting due to 1 previous error

@@ -15418,16 +15418,39 @@ impl Parser {
             } else if !self.lexer.peek_token("{") {
                 let names: Vec<&str> = seen_fields.iter().map(String::as_str).collect();
                 let captured = names.join(", ");
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "`{{ {captured} }}` after `is {}` is the field-capture list, not the body — \
-                     a block has to follow it. Write `is {} {{ {captured} }} {{ … }}`, repeating \
-                     the name if the body is just that value, or use `match`, which takes \
-                     captures and IS an expression",
-                    self.data.def(variant_def_nr).name(),
-                    self.data.def(variant_def_nr).name(),
-                );
+                let variant = self.data.def(variant_def_nr).name().to_string();
+                // A name the variant has no field of was never meant as a capture: the braces
+                // were the then-branch (`if t is Opt { t } else { … }`), and the test wants
+                // parentheses to end before them.
+                let not_fields: Vec<&str> = names
+                    .iter()
+                    .copied()
+                    .filter(|n| {
+                        !self.data.def(variant_def_nr).attributes[1..]
+                            .iter()
+                            .any(|a| a.name == *n)
+                    })
+                    .collect();
+                if not_fields.is_empty() {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{{ {captured} }}` after `is {variant}` is the field-capture list, not \
+                         the body — a block has to follow it. Write `is {variant} {{ {captured} \
+                         }} {{ … }}`, repeating the name if the body is just that value, or use \
+                         `match`, which takes captures and IS an expression"
+                    );
+                } else {
+                    let missing = not_fields.join(", ");
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{{ {captured} }}` after `is {variant}` reads as a field-capture list, \
+                         and `{variant}` has no field `{missing}` — to make the braces the \
+                         then-branch, put the test in parentheses: `if (… is {variant}) {{ \
+                         {captured} }} else {{ … }}`"
+                    );
+                }
                 self.capture_took_body = Some(self.lexer.peek().position);
             }
             if condition.is_empty() {
