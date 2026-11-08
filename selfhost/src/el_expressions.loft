@@ -1345,7 +1345,9 @@ fn var_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir
   // (`materialize_view_return`); the second pass copies into that buffer.
   if views_local(vars, v) {
     if e.first_pass {
-      rename_onto(e, vars, rb, el_vars::work_ref(vars, el_types::without_deps(el_types::base(ret))));
+      mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(ret)));
+      e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, mw) }];
+      rename_onto(e, vars, rb, mw);
     }
     return code;
   }
@@ -6110,6 +6112,14 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
       el::refuse(e, "a literal of a droppable built apart for a parameter it rebinds");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
+    // A user call whose arguments read the local makes the abandoned attempt stage it first,
+    // one more `__ref_N` left declared (1a-parser.md § Rust accidents): refused by name.
+    for op in ops[2..] {
+      if user_call_reads(e, op, v) {
+        el::refuse(e, "a literal of a droppable rebinding a local a call in it reads (the abandoned attempt's staging)");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+    }
     abandon_work_refs(vars, ref_mark, p2_mark);
     o = object_fresh(e, vars, d, fields, ir::TyReference { n: d, dep: [] });
     return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
@@ -6165,6 +6175,28 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   }
   staged += ops;
   ex(ir::NdInsert { items: staged }, ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } })
+}
+
+// Is there, anywhere in `n`, a call of a loft function whose arguments read `v`?
+fn user_call_reads(e: el::El, n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      if !starts_with(el::def(e, def_nr).name, "Op") {
+        for a in args {
+          if el_ir::reads_var(a, v) {
+            return true;
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if user_call_reads(e, c, v) {
+      return true;
+    }
+  }
+  false
 }
 
 // `ir_has_user_call` over a list: a call of anything but an operator, a call through a
@@ -12630,7 +12662,7 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, dep + [a])];
     }
     if chain {
-      return ex(ir::NdReturn { inner: buffer_chain(x, w, result) }, ir::TyNever);
+      return ex(ir::NdReturn { inner: buffer_chain(x, w, el::def(e, d).returned[0] ?? result) }, ir::TyNever);
     }
     return ex(ir::NdReturn { inner: x }, ir::TyNever);
   }
@@ -12773,10 +12805,12 @@ fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, result
   }
   // `MaterializeView` (#306) for a local viewing a store of this frame (a `for` variable over a
   // field): copied into a work ref the first pass renames the buffer onto.
-  if lv >= 0 && views_local(vars, lv) && w < 0 {
+  if lv >= 0 && views_local(vars, lv) {
     if e.first_pass {
       if unrenamed && !buffer_bound(e) {
-        rename_onto(e, vars, rb, el_vars::work_ref(vars, el_types::without_deps(el_types::base(result))));
+        mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
+        e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, mw) }];
+        rename_onto(e, vars, rb, mw);
       }
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
@@ -12803,7 +12837,9 @@ fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, result
     }
     if e.first_pass {
       if unrenamed && !buffer_bound(e) {
-        rename_onto(e, vars, rb, el_vars::work_ref(vars, el_types::without_deps(el_types::base(result))));
+        mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
+        e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, mw) }];
+        rename_onto(e, vars, rb, mw);
       }
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
@@ -12893,8 +12929,10 @@ fn all_hoistable(e: el::El, l: vector<ir::Node>) -> boolean {
 
 // `chain_site_set_shape`: a call that delivers into buffer `w`, made to answer it —
 // `{ w = call; w }`.
+// A `τ?` result keeps the declared type, borrows and all (`chain_site_set_shape`'s `other`
+// arm); a record or a vector borrows `w`.
 fn buffer_chain(call: ir::Node, w: integer, result: ir::TypeT) -> ir::Node {
-  own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [w]);
+  own = if (result is TyOptional) { result } else { el_types::with_deps(el_types::without_deps(el_types::base(result)), [w]) };
   el_ir::v_block([el_ir::v_set(w, call), ir::NdVar { n: w }], own, "one_buffer_chain")
 }
 

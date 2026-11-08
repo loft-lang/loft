@@ -712,6 +712,11 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     rt = t!;
   }
   el_vars::take_over(vars, el::def(e, e.context).variables);
+  for so in e.step_over {
+    if so.d == e.context && el_vars::var(vars, so.name) >= 0 {
+      vars.step_over += [el_vars::var(vars, so.name)];
+    }
+  }
   if e.first_pass {
     el::set_returned(e, e.context, rt);
   }

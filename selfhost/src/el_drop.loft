@@ -7,9 +7,9 @@
 // function `t_<LEN><Type>_OpDropAll(self)` the scope pass calls where a value of it dies.  Its
 // body runs the type's own hook, then each vector field's elements (last field first) and each
 // droppable field (last first), every one through its own type's cascade or hook.  A vector type
-// of droppables walks its elements.  What the port does not carry — an enum's per-variant
-// cascade, a keyed collection or a shared vector of droppables, an iterator, a linked vector, an
-// owner slot — is refused by name.
+// of droppables walks its elements, an enum dispatches to its present variant's.  What the port
+// does not carry — a keyed collection or a shared vector of droppables, an iterator, a linked
+// vector, an owner slot — is refused by name.
 use ir;
 use el;
 use el_ir;
@@ -37,10 +37,8 @@ pub fn synth_drop_cascades(e: el::El) {
         wanted = len(cascade_fields(e, t)) > 0 || len(cascade_vectors(e, t)) > 0;
       }
     } else if d.def_type == el::DT_ENUM {
-      if el_types::owns_droppable(e, t, []) && d.returned[0] == ir::TyEnum { n: t, is_ref: true, dep: [] } {
-        el::refuse(e, "a drop cascade over an enum's variants");
-        return;
-      }
+      // An enum releases through whichever variant it holds.
+      wanted = len(cascade_variants(e, t)) > 0;
     } else if d.def_type == el::DT_VECTOR {
       wanted = collection_element(e, t) >= 0;
     }
@@ -90,9 +88,13 @@ fn target(e: el::El, t: integer) -> integer {
   if c >= 0 { c } else { el_types::hook(e, t) }
 }
 
-// `cascade_self_type`: the parameter a cascade takes.
+// `cascade_self_type`: the parameter a cascade takes — a struct enum as the enum, which carries
+// the discriminator.
 fn self_type(e: el::El, t: integer) -> ir::TypeT {
   d = el::def(e, t);
+  if d.def_type == el::DT_ENUM {
+    return ir::TyEnum { n: t, is_ref: true, dep: [] };
+  }
   if d.def_type == el::DT_VECTOR {
     return el_types::without_deps(d.returned[0] ?? ir::TyVoid);
   }
@@ -188,6 +190,29 @@ fn collection_element(e: el::El, t: integer) -> integer {
   }
 }
 
+// `cascade_variants`: the variants of enum `t` that own a droppable, in definition order.  A
+// variant with nothing to release gets no arm, so a unit-only enum makes no cascade.
+fn cascade_variants(e: el::El, t: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for v in e.b.data.definitions {
+    if v.def_type == el::DT_ENUM_VALUE && v.parent == t && v.known_type != el::NO_TYPE && variant_number(e, t, v#index) > 0 && (len(cascade_fields(e, v#index)) > 0 || len(cascade_vectors(e, v#index)) > 0) {
+      r += [v#index];
+    }
+  }
+  r
+}
+
+// The discriminator that selects variant `v` of enum `t`: its name's 1-based position among the
+// enum's attributes, as `fill_database` numbers it; 0 when it is not there.
+fn variant_number(e: el::El, t: integer, v: integer) -> integer {
+  for a in el::def(e, t).attributes {
+    if a.name == el::def(e, v).name {
+      return a#index + 1;
+    }
+  }
+  0
+}
+
 // `fill_drop_cascade`: cascade `c` of type `t`.
 fn fill(e: el::El, t: integer, c: integer) {
   vars = el_vars::new_vars(cascade_name(e, t), el::def(e, t).position.file);
@@ -196,6 +221,25 @@ fn fill(e: el::El, t: integer, c: integer) {
   el_vars::set_defined(vars, sv);
   me = ir::NdVar { n: sv };
   ops: vector<ir::Node> = [];
+  // `fill_enum_cascade`: the enum's own hook, then pure dispatch on the discriminator to the
+  // present variant's cascade, which takes `self` as that variant's record.
+  if el::def(e, t).def_type == el::DT_ENUM {
+    own = el_types::hook(e, t);
+    if own >= 0 {
+      ops += [ir::NdCall { def_nr: own, args: [me] }];
+    }
+    vs = cascade_variants(e, t);
+    disc_pos = el_schema::field_position(e, el::def(e, vs[0] ?? t).known_type, "enum");
+    disc = el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [me, ir::NdInt { n: disc_pos }])]);
+    for v in vs {
+      tg = target(e, v);
+      if tg >= 0 {
+        ops += [el_ir::v_if(el_ir::cl(e, "OpEqInt", [disc, ir::NdInt { n: variant_number(e, t, v) }]), ir::NdCall { def_nr: tg, args: [me] }, ir::NdNull)];
+      }
+    }
+    finish(e, c, vars, ops, "drop_cascade_enum");
+    return;
+  }
   if el::def(e, t).def_type == el::DT_VECTOR {
     ed = collection_element(e, t);
     tg = target(e, ed);
@@ -203,7 +247,7 @@ fn fill(e: el::El, t: integer, c: integer) {
       inner = match self_type(e, t) { TyVector { inner: i } => i, _ => ir::TyVoid };
       ops += [elements_loop(e, vars, me, 0, inner, tg)];
     }
-    finish(e, c, vars, ops);
+    finish(e, c, vars, ops, "drop_cascade");
     return;
   }
   own = el_types::hook(e, t);
@@ -238,7 +282,7 @@ fn fill(e: el::El, t: integer, c: integer) {
     live = el_ir::cl(e, "OpConvBoolFromRef", [field!]);
     ops += [el_ir::v_if(live, ir::NdCall { def_nr: tg, args: [field!] }, ir::NdNull)];
   }
-  finish(e, c, vars, ops);
+  finish(e, c, vars, ops, "drop_cascade");
 }
 
 // A vector type's element, answered as a value of its own.  The match binding taken in place
@@ -270,8 +314,8 @@ fn elements_loop(e: el::El, vars: el_vars::Vars, field: ir::Node, idx: integer, 
 }
 
 // `finish_drop_cascade`: the body, and the variables it made.
-fn finish(e: el::El, c: integer, vars: el_vars::Vars, ops: vector<ir::Node>) {
-  e.b.data.definitions[c].code = [el_ir::v_block(ops, ir::TyVoid, "drop_cascade")];
+fn finish(e: el::El, c: integer, vars: el_vars::Vars, ops: vector<ir::Node>, name: text) {
+  e.b.data.definitions[c].code = [el_ir::v_block(ops, ir::TyVoid, name)];
   e.b.data.definitions[c].variables = el_vars::stored(vars);
 }
 
