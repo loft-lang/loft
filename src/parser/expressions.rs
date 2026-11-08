@@ -5156,6 +5156,37 @@ use a separate collection or add after the loop"
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
         self.in_bind_rhs = prev_bind_rhs;
+        // A value that answers nothing has nothing to bind.  Admitted, `s = f()` of a function
+        // with no result left `s` a `void` local, and each later read misfired far from the
+        // cause: `s + 1` reported `Expect token ;`, `"{s + 1}"` five syntax errors.  Named here,
+        // and the local poisoned `never` as any failed binding is, so its reads add nothing.
+        // Asked on pass 1 as well: the misread `+` derails that pass, which then never reaches
+        // pass 2 — and a `void` result is known there (a later callee reads `unknown`).
+        if op == "="
+            && matches!(s_type, Type::Void)
+            && let Some(at) = rhs_at
+            && let Value::Var(v) = to.unspan()
+        {
+            let name = self.vars.name(*v).to_string();
+            // A call names its function, whose missing result is the usual cause.
+            let cure = match code.unspan() {
+                Value::Call(d, _) if !self.data.def(*d).name().starts_with("Op") => {
+                    let f = self.data.def(*d).original_name();
+                    format!(
+                        " — `{f}` declares no result: give it one (`-> T`), or call it as a \
+                         statement, `{f}(…);`"
+                    )
+                }
+                _ => String::new(),
+            };
+            diagnostic_at!(
+                self.lexer,
+                &at,
+                Level::Error,
+                "`{name} = …` binds nothing: the right-hand side answers no value{cure}"
+            );
+            s_type = Type::Never;
+        }
         // `@FR-B-Ref-StoredRef` (loft#2166) — the `&` a record place was handed, resolved as
         // the struct literal resolves it: a `reference<τ>` field (the pointer marker) holds
         // the link, so the write below stores the source's DbRef exactly as `d.r = p` does

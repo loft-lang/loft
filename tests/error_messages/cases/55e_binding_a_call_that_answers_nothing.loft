@@ -1,0 +1,6 @@
+fn tally55e() { }
+
+fn main() {
+  s = tally55e();
+  println("{s + 1}");
+}

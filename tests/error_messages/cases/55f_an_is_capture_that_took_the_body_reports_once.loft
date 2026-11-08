@@ -1,0 +1,8 @@
+enum T55f { A { v: integer }, B }
+
+fn main() {
+  t = T55f.B;
+  ok = 1;
+  s = if t is A { ok } else { 2 };
+  println("{s + 1}");
+}

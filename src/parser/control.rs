@@ -1036,8 +1036,11 @@ impl Parser {
             && at == self.lexer.peek().position
             && !self.lexer.peek_token("{")
         {
-            *val = v_block(Vec::new(), Type::Void, "empty block");
-            return Type::Void;
+            // `never`, so the join adopts the sibling arm's type (`C-Never`) and the value's
+            // consumers stay quiet (@P376): `void` here reported the one mistake again at every
+            // use of the `if`'s value.
+            *val = v_block(Vec::new(), Type::Never, "empty block");
+            return Type::Never;
         }
         self.lexer.token("{");
         if self.lexer.has_token("}") {
@@ -6399,7 +6402,11 @@ impl Parser {
                     let false_orig = false_type.clone();
                     self.convert_arm_tail(&mut false_code, &false_orig, &joined);
                     false_type = joined;
-                } else if let Value::Block(bl) = &mut true_code {
+                } else if let Value::Block(bl) = &mut true_code
+                    // The empty arm a capture list took the place of (`never`) holds nothing
+                    // to give the sibling's type.
+                    && !bl.operators.is_empty()
+                {
                     let p = bl.operators.len() - 1;
                     // A then arm of no type yet is a `null`, or on pass 1 an expression pass 1
                     // cannot type (`first_pass_null_arm`): only the null takes the sibling's null.
