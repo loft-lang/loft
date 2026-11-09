@@ -165,6 +165,11 @@ pub struct Vars {
   pub expect: ir::TypeT = ir::TyVoid,
   // `Parser::lambda_hint` for a call's argument: the `fn(…)` its parameter takes, for the one
   // short lambda (`|x| …`) at `lambda_node` (-1: none)
+  // `Parser::assign_target`: the local the statement being read assigns (-1: none) — a closure
+  // built in its right-hand side does not release that local's previous capture
+  pub assign_target: integer = -1,
+  // `Variable::captured`: the locals a closure built in this body reads (second pass)
+  pub captured: vector<integer>,
   pub lambda_node: integer = -1,
   pub lambda_hint: ir::TypeT = ir::TyVoid,
   // the local a `+` chain of vectors is bound to (`a = v + w` builds into it), or -1
@@ -196,6 +201,16 @@ pub fn name_of(v: Vars, nr: integer) -> text {
 
 pub fn count(v: Vars) -> integer {
   len(v.vars)
+}
+
+// `Function::rebind_must_mint`: a closure captured `nr`, which holds a store — a rebind mints a
+// fresh one rather than rebuilding the store the closure shares (loft#1447).
+pub fn rebind_must_mint(v: Vars, nr: integer) -> boolean {
+  if !v.captured.contains(nr) {
+    return false;
+  }
+  t = el_types::base(tp(v, nr));
+  t is TyReference || t is TyVector || t is TyHash || t is TySorted || t is TyIndex || t is TyRadix || t is TyTrie || (match t { TyEnum { is_ref } => is_ref, _ => false })
 }
 
 // `Function::var`: the variable `name` names, or -1 (`u16::MAX`).
@@ -623,6 +638,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.rebuilt = [];
   v.rebind_params = [];
   v.rebind_origs = [];
+  v.captured = [];
   v.unique = [];
   v.work_vdb = 0;
   v.work_ref = 0;
