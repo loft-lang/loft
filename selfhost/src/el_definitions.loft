@@ -20,8 +20,13 @@ pub fn elab_file(e: el::El, file: integer) {
   match e.p.nodes[file] {
     SFile { items } => {
       claim_declared_type_names(e, items);
+      use_region(e, items);
       for it in items {
+        before = len(e.b.data.definitions);
         top_item(e, it);
+        if item_public(e, it) {
+          publish(e, it, before);
+        }
       }
     },
     _ => {}
@@ -39,7 +44,7 @@ fn top_item(e: el::El, it: integer) {
         el::refuse(e, "a `#width {arg}` file");
       }
     },
-    SUse { at } => { el::refuse(e, "use"); },
+    SUse { at } => {},
     SCapability { at } => {},
     SAlias { at, name, tp, size } => { parse_typedef(e, at, name, tp, size); },
     SEnum { at, name, tvars, variants } => { parse_enum(e, at, name, tvars, variants); },
@@ -54,6 +59,320 @@ fn top_item(e: el::El, it: integer) {
     SStruct { at, value, name, tvars, fields } => { parse_struct(e, at, value, name, tvars, fields); },
     SConst { at, name, tp, value } => { parse_constant(e, at, name, tp, value); },
     _ => { el::refuse(e, "item"); }
+  }
+}
+
+// ── the use region (src/parser/mod.rs `parse_file`, src/parser/imports.rs) ──
+
+// `parse_file`'s use region: a library is loaded the first time a `use` names it — elaborated
+// under a source of its own, ahead of this file's definitions, as the Rust parser switches to
+// it and resumes this file afterwards — and every `use` queues the import it makes, applied
+// once the region is read (`apply_pending_imports`).
+fn use_region(e: el::El, items: vector<integer>) {
+  package = has_package_directive(e.p, items);
+  for it in items {
+    match e.p.nodes[it] {
+      SUse { at } => { use_decl(e, it, package); },
+      _ => {}
+    }
+  }
+  apply_pending_imports(e);
+}
+
+fn use_decl(e: el::El, it: integer, package: boolean) {
+  public = false;
+  own = false;
+  lib = "";
+  alias = "";
+  star = false;
+  names: vector<integer> = [];
+  match e.p.nodes[it] {
+    SUse { public: pb, own: ow, lib: lb, alias: al, star: st, names: ns } => {
+      public = pb;
+      own = ow;
+      lib = lb;
+      alias = al;
+      star = st;
+      names = ns;
+    },
+    _ => { return; }
+  }
+  if package {
+    el::refuse(e, "a `#package` file in a `use`");
+    return;
+  }
+  if own {
+    el::refuse(e, "a `use self::` of a package's own module");
+    return;
+  }
+  if package_root(e.file) != "" {
+    el::refuse(e, "a `use` inside a package (its manifest resolves it)");
+    return;
+  }
+  if !el::use_exists(e, lib) {
+    f = lib_path(e, lib);
+    if f == "" {
+      el::refuse(e, "a library found only by a manifest or the registry");
+      return;
+    }
+    load_library(e, lib, alias, f);
+    if !el::use_exists(e, lib) {
+      return;
+    }
+  }
+  src = el::get_source(e, lib);
+  if e.loading.contains(src) {
+    el::refuse(e, "a cyclic `use`");
+    return;
+  }
+  if alias != "" {
+    el::use_alias(e, alias, src);
+  }
+  imports: vector<el::ImportName> = [];
+  for n in names {
+    match e.p.nodes[n] {
+      SImport { name, alias: bind } => { imports += [el::ImportName { name: name, bind: if bind == "" { name } else { bind } }]; },
+      _ => {}
+    }
+  }
+  e.pending += [el::PendingImport { for_source: e.source, lib_source: src, star: star, names: imports, public: public }];
+}
+
+// The library `id` read from `f` and elaborated (this pass) under a new source, then this
+// file's state back.
+fn load_library(e: el::El, id: text, alias: text, f: text) {
+  src = file(f).content() ?? "";
+  p = syntax::prepare(lex(src));
+  tree = syntax::parse_file(p);
+  if tree == null {
+    el::refuse(e, "a library that does not parse");
+    return;
+  }
+  if has_package_directive(p, file_items(p, tree!)) {
+    el::refuse(e, "a `#package` file in a `use`");
+    return;
+  }
+  // A copy (a record update), not `keep_p = e.p`: a struct field's plain bind views its place,
+  // which the library's tree is about to overwrite (`@FR-B-View`).
+  keep_p = syntax::Syntax { ..e.p };
+  keep_file = e.file;
+  keep_lines = e.lines;
+  keep_source = e.source;
+  keep_line = e.line;
+  e.loading += [keep_source];
+  el::use_add(e, id);
+  if alias != "" {
+    el::use_alias(e, alias, e.source);
+  }
+  e.p = p;
+  e.file = f;
+  e.lines = [];
+  for ln in src.split('\n') {
+    e.lines += [ln];
+  }
+  e.line = 0;
+  elab_file(e, tree!);
+  name_only_types(e, e.source);
+  e.p = keep_p;
+  e.file = keep_file;
+  e.lines = keep_lines;
+  e.source = keep_source;
+  e.line = keep_line;
+  e.loading = [for l in e.loading if l != keep_source { l }];
+}
+
+fn file_items(p: syntax::Syntax, tree: integer) -> vector<integer> {
+  match p.nodes[tree] {
+    SFile { items } => items,
+    _ => []
+  }
+}
+
+// A `#package` directive among a file's items.
+fn has_package_directive(p: syntax::Syntax, items: vector<integer>) -> boolean {
+  for it in items {
+    match p.nodes[it] {
+      SDirective { name } => {
+        if name == "package" {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
+// `Data::passes_on`'s third case, refused: a type of library `lib` that is not `pub` but that a
+// `pub` definition's signature names (`api_surface::name_only_defs`) — its importer may name it.
+fn name_only_types(e: el::El, lib: integer) {
+  for d in e.b.data.definitions {
+    if d.source == lib && d.pub_visible {
+      for a in d.attributes {
+        if names_private_type(e, a.typedef[0] ?? ir::TyVoid, lib) {
+          el::refuse(e, "a library type named only by a `pub` signature");
+          return;
+        }
+      }
+      for t in d.returned {
+        if d.def_type == el::DT_FUNCTION && names_private_type(e, t, lib) {
+          el::refuse(e, "a library type named only by a `pub` signature");
+          return;
+        }
+      }
+    }
+  }
+}
+
+fn names_private_type(e: el::El, t: ir::TypeT, lib: integer) -> boolean {
+  match t {
+    TyReference { n } => private_type(e, n, lib),
+    TyEnum { n } => private_type(e, n, lib),
+    TyOptional { inner } => names_private_type(e, inner, lib),
+    TyVector { inner } => names_private_type(e, inner, lib),
+    _ => false
+  }
+}
+
+fn private_type(e: el::El, n: integer, lib: integer) -> boolean {
+  n >= 0 && n < len(e.b.data.definitions) && el::def(e, n).source == lib && !el::def(e, n).pub_visible && (el::def(e, n).def_type == el::DT_STRUCT || el::def(e, n).def_type == el::DT_ENUM || el::def(e, n).def_type == el::DT_TYPE)
+}
+
+// `Parser::apply_pending_imports`: the imports queued for this source.
+fn apply_pending_imports(e: el::El) {
+  cur = e.source;
+  now: vector<el::PendingImport> = [];
+  later: vector<el::PendingImport> = [];
+  for pi in e.pending {
+    if pi.for_source == cur {
+      now += [pi];
+    } else {
+      later += [pi];
+    }
+  }
+  e.pending = later;
+  if len(now) > 0 {
+    el::note_source_file(e, cur, e.file);
+  }
+  for pi in now {
+    el::import_operators(e, pi.lib_source, cur);
+    if pi.star {
+      el::import_all(e, pi.lib_source, cur, pi.public);
+    } else {
+      for n in pi.names {
+        if !el::import_name(e, pi.lib_source, cur, n.name, n.bind, pi.public) {
+          el::refuse(e, "an imported name the library does not pass on");
+        }
+      }
+    }
+  }
+}
+
+// The directory holding a `loft.toml` at or above `f`'s, or "".
+fn package_root(f: text) -> text {
+  d = script_dir(f);
+  while d != "" {
+    if exists("{d}/loft.toml") {
+      return d;
+    }
+    d = script_dir(d);
+  }
+  ""
+}
+
+// `packages::script_dir`: everything before the last `/`.
+fn script_dir(f: text) -> text {
+  i = len(f) - 1;
+  while i >= 0 && f[i] != '/' {
+    i -= 1;
+  }
+  if i < 0 { "" } else { f[..i] }
+}
+
+// `packages::tests_base_dir`: the directory above a `/tests/` in `dir`, or "".
+fn tests_base_dir(dir: text) -> text {
+  i = dir.find("/tests/");
+  if i == null { "" } else { dir[..i!] }
+}
+
+// `Parser::lib_path`'s probes a program outside a package reaches: the project's `lib/`, the
+// `lib/` beside the file and above its `tests/`, the directory named after the file, the file's
+// own directory, and the one above `tests/`.  "" where only a probe this port does not carry —
+// `LOFT_LIB`, an installed package, the registry — could answer.
+fn lib_path(e: el::El, id: text) -> text {
+  cur_dir = script_dir(e.file);
+  base_dir = tests_base_dir(cur_dir);
+  f = if exists("lib/{id}.loft") { "lib/{id}.loft" } else { "{id}.loft" };
+  if cur_dir != "" && !exists(f) {
+    f = "{cur_dir}/lib/{id}.loft";
+  }
+  if base_dir != "" && !exists(f) {
+    f = "{base_dir}/lib/{id}.loft";
+  }
+  if !exists(f) && len(e.file) >= 5 {
+    f = "{e.file[..len(e.file) - 5]}/{id}.loft";
+  }
+  // `--lib` directories (the gate passes a program's `@ARGS` ones as `LOFT_ELAB_LIB`), flat; a
+  // package there is resolved by its manifest.
+  for dir in (env_variable("LOFT_ELAB_LIB") ?? "").split(':') {
+    if dir != "" && !exists(f) {
+      if exists("{dir}/{id}.loft") {
+        f = "{dir}/{id}.loft";
+      } else if exists("{dir}/{id}/loft.toml") {
+        return "";
+      }
+    }
+  }
+  if !exists(f) && (len(env_variable("LOFT_LIB")) > 0 || exists("{env_variable("HOME")}/.loft/lib/{id}")) {
+    return "";
+  }
+  if cur_dir != "" && !exists(f) {
+    f = "{cur_dir}/{id}.loft";
+  }
+  if !exists(f) && exists("{env_variable("HOME")}/.loft/cache") {
+    return "";
+  }
+  if base_dir != "" && !exists(f) {
+    f = "{base_dir}/{id}.loft";
+  }
+  if exists(f) { f } else { "" }
+}
+
+// The item's `pub` mark.
+fn item_public(e: el::El, it: integer) -> boolean {
+  match e.p.nodes[it] {
+    SFn { public } => public,
+    SStruct { public } => public,
+    SEnum { public } => public,
+    SAlias { public } => public,
+    SConst { public } => public,
+    SInterface { public } => public,
+    SCapability { public } => public,
+    _ => false
+  }
+}
+
+// `parse_file`'s `@FR-F-Surface` step after a `pub` item: what it declared — every definition
+// it added that is no unresolved stub, and the stub of its name it adopted — is `pub`.
+fn publish(e: el::El, it: integer, before: integer) {
+  d = before;
+  while d < len(e.b.data.definitions) {
+    if el::def(e, d).def_type != el::DT_UNKNOWN {
+      e.b.data.definitions[d].pub_visible = true;
+    }
+    d += 1;
+  }
+  nm = match e.p.nodes[it] {
+    SStruct { name } => name,
+    SEnum { name } => name,
+    SAlias { name } => name,
+    _ => ""
+  };
+  if nm != "" {
+    t = el::source_nr(e, e.source, nm);
+    if t >= 0 && el::def(e, t).source == e.source && el::def(e, t).def_type != el::DT_UNKNOWN {
+      e.b.data.definitions[t].pub_visible = true;
+    }
   }
 }
 
@@ -1083,8 +1402,9 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
     el::refuse(e, "a method receiver that is a variant or a generic instance");
     return "";
   }
-  // The standard library's types come with the image, their members included.
-  if td.source != e.source {
+  // The standard library's types come with the image, their members included; a library's
+  // take the program's methods as its own types do.
+  if td.source != e.source && td.source == el::STD_SOURCE {
     el::refuse(e, "a method on a type the program does not declare");
     return "";
   }

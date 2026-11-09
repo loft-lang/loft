@@ -473,7 +473,13 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         t = ir::TyInteger { spec: spec };
         return if nullable { ir::TyOptional { inner: t } } else { t };
       }
-      if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
+      // `lib::Type`: the library's own definition of the name (`parse_type_inner`'s `::` arm).
+      qual = if member != "" && el::use_exists(e, name) { el::qualified_def(e, name, member) } else { -1 };
+      if member != "" && el::use_exists(e, name) && (qual < 0 || el::def(e, qual).def_type == el::DT_UNKNOWN) {
+        el::refuse(e, "a qualified type the library does not declare before its use");
+        return null;
+      }
+      if (member != "" && qual < 0) || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;
       }
@@ -484,7 +490,7 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
           return if nullable { ir::TyOptional { inner: h } } else { h };
         }
       }
-      d = el::def_nr(e, name);
+      d = if qual >= 0 { qual } else { el::def_nr(e, name) };
       if d < 0 {
         el::refuse(e, "a forward type reference");
         return null;

@@ -10004,8 +10004,12 @@ fn main() {
     let (mut scopes_ms, mut lints_ms) = (0.0, 0.0);
     // @PLN91 1a — `LOFT_EMIT_PARSED=<out.store>`: the image of the program as the PARSER left
     // it, before the scope pass and the program's close, the oracle the front end written in
-    // loft is diffed against before those passes are ported (1a-parser.md, gate E).
-    if let Some(out) = std::env::var_os("LOFT_EMIT_PARSED") {
+    // loft is diffed against before those passes are ported (1a-parser.md, gate E).  Only of a
+    // parse that succeeded: a program with an error goes on to report it and fail as it does
+    // without the switch, so no image of a half-parsed program stands in as the oracle.
+    if let Some(out) = std::env::var_os("LOFT_EMIT_PARSED")
+        && p.diagnostics.level() < Level::Error
+    {
         emit_parsed_image(&p, &out.to_string_lossy());
     }
     if p.diagnostics.level() < Level::Error {

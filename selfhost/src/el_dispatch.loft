@@ -101,10 +101,15 @@ fn integer_name(spec: ir::IntegerSpec) -> text {
 }
 
 // `Data::declared_identity`: the bare name of the standard library's and the program's own
-// definitions; a library's would be `<library>::<name>`, which no program here reaches.
+// definitions, `<library>::<name>` for a library's (a name is unique only within its source); a
+// name spelled from other types (`__tuple<…>`, an instance, a type variable's `T#4`) stays bare.
 fn declared(e: el::El, d: integer) -> text {
   df = el::def(e, d);
-  if df.source == el::STD_SOURCE || df.source == e.source { df.name } else { "" }
+  if df.source == el::STD_SOURCE || df.source == el::MAIN_SOURCE || df.name.contains("<") || df.name.contains("#") {
+    df.name
+  } else {
+    "{el::source_label(e, df.source)}::{df.name}"
+  }
 }
 
 // `Data::full_spelling`: every declared parameter's identity joined with `#` — the spelling a
@@ -454,7 +459,14 @@ fn better(b: Ranked, a: Ranked) -> boolean {
 // name — Rust answers it with a diagnostic.  Where an argument held at a struct enum meets a
 // member naming one of its variants, the call reaches the run-time dispatcher instead
 // (`dynamic_dispatcher`), made at `pos`, the call's position.
-pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos: ir::Position) -> integer {
+// The overload set `name` is in library `source` (a qualified call's), or -1.
+pub fn source_set(e: el::El, source: integer, name: text) -> integer {
+  set = el::source_nr(e, source, name);
+  if set >= 0 && el::def(e, set).def_type == el::DT_DYNAMIC { set } else { -1 }
+}
+
+// `only`: a qualified call's library, whose own members alone it reaches (-1: every member).
+pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos: ir::Position, only: integer = -1) -> integer {
   args = routed(types);
   for t in args {
     if !(el_types::base(t) is TyNull) && identity(e, t) == "" {
@@ -468,9 +480,13 @@ pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos
     el::refuse(e, "a call of an overload set inside a generic");
     return -1;
   }
-  one = select_static(e, set, args);
+  one = select_static(e, set, args, only);
   if !e.first_pass {
     decided = variant_positions(e, set, args);
+    if len(decided) > 0 && only >= 0 {
+      el::refuse(e, "a qualified call an enum's variant decides at run time");
+      return -1;
+    }
     if len(decided) > 0 {
       return dynamic_dispatcher(e, set, name, args, decided, pos);
     }
@@ -482,11 +498,14 @@ pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos
 }
 
 // `select_overload_from`: the unique minimal member taking `args`; -1 for none, -2 for two.
-fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>) -> integer {
+fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>, only: integer = -1) -> integer {
   taking: vector<Ranked> = [];
   for a in el::def(e, set).attributes {
     match a.typedef[0] {
       TyRoutine { n } => {
+        if only >= 0 && el::def(e, n).source != only {
+          continue;
+        }
         r = ranks(e, n, args);
         if r != null {
           taking += [Ranked { d: n, ranks: r! }];
