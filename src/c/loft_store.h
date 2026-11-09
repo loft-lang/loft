@@ -253,6 +253,11 @@ typedef struct {
      * every ordinary store. */
     loft_foreign foreign;
 #endif
+    /* `@FR-R-TableHandle`: the store's table generation — a new value whenever a table in it
+     * changes shape or its content is replaced (`loft_h_reshaped`).  A handle resolved under
+     * another value resolves again.  Never persisted.  Last: the
+     * fields the hot paths read keep their offsets. */
+    uint64_t hgen;
 } loft_store_t;
 
 /* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
@@ -263,6 +268,12 @@ typedef struct {
 static LOFT_TLS loft_store_t *loft_stores = 0;
 static LOFT_TLS uint32_t loft_nstores = 0;
 static LOFT_TLS uint64_t loft_stores_allocated = 0;
+
+/* `@FR-R-TableHandle`: store `s` takes a table generation no store has had.  Every path that
+ * changes a table's claim, size, slot width, entry kind, seed or entry directory calls it, and so
+ * does every path that replaces a store's content: a handle then sees the change at its next use. */
+static LOFT_TLS uint64_t loft_hgen_next = 0;
+static inline void loft_h_reshaped(loft_store_t *s) { s->hgen = ++loft_hgen_next; }
 
 /* ── The heap ceiling (store_budget.rs) ──────────────────────────────────────────────────
  * `loft_heap_total` is the bytes every store's buffer holds; `LOFT_MEMORY_LIMIT` sets
@@ -1220,6 +1231,7 @@ static uint32_t loft_st_resize(loft_store_t *s, uint32_t rec, uint32_t size) {
 
 /* `Store::init`: one free block spanning the store, which is its wilderness. */
 static void loft_st_init(loft_store_t *s) {
+    loft_h_reshaped(s);
     uint32_t sig = LOFT_ST_SIGNATURE, one = 1;
     s->read_only = 0;
     memcpy(s->buf, &sig, 4);
@@ -1492,6 +1504,7 @@ static int loft_st_holds_only_root(const loft_store_t *s) {
 /* `Store::claims_rebuild` with `fl_rebuild` before it (`resync_allocator`): the allocator's
  * state read back off the store's own words, as for an image adopted whole. */
 static void loft_st_resync(loft_store_t *s) {
+    loft_h_reshaped(s);
     loft_fl_rebuild(s);
     loft_bits_clear(&s->claims);
     uint32_t pos = LOFT_ST_PRIMARY;

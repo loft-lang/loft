@@ -164,6 +164,8 @@ static int loft_map_open_file(const char *path, intptr_t *file, uint8_t **buf, s
 static void loft_st_bind_mapped(loft_store_t *s, intptr_t f, uint8_t *b, size_t len, int fresh, int read_surface) {
     loft_map_resize_hook = loft_map_resize;
     loft_map_release_hook = loft_st_close_mapped;
+    /* The store holds the file's content from here, a read surface included. */
+    loft_h_reshaped(s);
     s->buf = b;
     s->size = (uint32_t) (len / 8);
     s->mapped = len;

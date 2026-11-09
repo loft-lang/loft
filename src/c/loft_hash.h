@@ -39,6 +39,15 @@
 #define LOFT_H_STAGE_MARK 0xFFFFFFF1u
 #define LOFT_H_GROWTH 2u
 
+/* A table header field written — the slot width and entry kind (`LOFT_H_STRIDE_FLD`), the seed,
+ * or the arena's entry directory — and the store given a new table generation
+ * (`@FR-R-TableHandle`): a handle resolved before sees the change at its next use.  The only
+ * writer of those fields (tests/table_handle.rs scans for another). */
+static void loft_h_set_header(loft_store_t *s, uint32_t claim, uint32_t field, uint32_t v) {
+    loft_set_u32(s, claim, field, v);
+    loft_h_reshaped(s);
+}
+
 /* The floor of log2 `v` (0 for 0 and 1): every table header decode asks it. */
 static uint32_t loft_ilog2(uint32_t v) {
 #if defined(__GNUC__) || defined(__clang__)
@@ -115,7 +124,7 @@ static void loft_ar_set_chunk_rec(loft_store_t *s, uint32_t table, uint32_t k, u
             for (uint32_t i = 0; i < old; i++) loft_set_u32(s, fresh, LOFT_AR_DIR0 + 4 * i, loft_u32(s, dir, LOFT_AR_DIR0 + 4 * i));
             loft_st_delete(s, dir);
         }
-        loft_set_u32(s, table, LOFT_AR_DIR_FLD, fresh);
+        loft_h_set_header(s, table, LOFT_AR_DIR_FLD, fresh);
     }
     loft_set_u32(s, loft_u32(s, table, LOFT_AR_DIR_FLD), LOFT_AR_DIR0 + 4 * k, rec);
 }
@@ -292,8 +301,8 @@ static uint64_t loft_h_read_seed(loft_store_t *s, uint32_t claim) {
 }
 
 static void loft_h_write_seed(loft_store_t *s, uint32_t claim, uint64_t seed) {
-    loft_set_u32(s, claim, LOFT_H_SEED_FLD, (uint32_t) seed);
-    loft_set_u32(s, claim, LOFT_H_SEED_FLD + 4, (uint32_t) (seed >> 32));
+    loft_h_set_header(s, claim, LOFT_H_SEED_FLD, (uint32_t) seed);
+    loft_h_set_header(s, claim, LOFT_H_SEED_FLD + 4, (uint32_t) (seed >> 32));
 }
 
 /* hash::Entries: where a slot's entry lives. */
@@ -369,7 +378,7 @@ static uint32_t loft_h_slot_value(loft_store_t *s, uint32_t claim, loft_ref rec,
 static uint32_t loft_h_arena_table(loft_store_t *s, uint32_t sb, uint32_t stride) {
     uint32_t claim = loft_st_claim(s, LOFT_H_RESERVED + 16 * sb / 8);
     loft_zero_fill(s, claim);
-    loft_set_u32(s, claim, LOFT_H_STRIDE_FLD, stride | (sb == 8 ? LOFT_H_TAGGED : 0));
+    loft_h_set_header(s, claim, LOFT_H_STRIDE_FLD, stride | (sb == 8 ? LOFT_H_TAGGED : 0));
     return claim;
 }
 
@@ -387,14 +396,14 @@ static void loft_h_zero_table(loft_store_t *s, uint32_t claim) {
 
 static uint32_t loft_h_inline_create(loft_store_t *s, uint32_t count, uint32_t stride, uint32_t owner) {
     uint32_t claim = loft_st_claim(s, loft_h_inline_words(count, stride));
-    loft_set_u32(s, claim, LOFT_H_SEED_FLD, 0);
-    loft_set_u32(s, claim, LOFT_H_SEED_FLD + 4, 0);
+    loft_h_set_header(s, claim, LOFT_H_SEED_FLD, 0);
+    loft_h_set_header(s, claim, LOFT_H_SEED_FLD + 4, 0);
     loft_set_u32(s, claim, LOFT_H_INLINE_LEN_FLD, 0);
     loft_set_u32(s, claim, LOFT_AR_FREE_FLD, 0);
     loft_set_u32(s, claim, LOFT_AR_OWNER_FLD, owner);
     loft_set_u32(s, claim, LOFT_AR_NEXT_FLD, 1);
     count = loft_h_inline_count(loft_rec_words(s, claim) - LOFT_H_RESERVED, stride);
-    loft_set_u32(s, claim, LOFT_H_STRIDE_FLD, loft_h_inline_flags(stride, count));
+    loft_h_set_header(s, claim, LOFT_H_STRIDE_FLD, loft_h_inline_flags(stride, count));
     loft_h_zero_table(s, claim);
     return claim;
 }
@@ -431,6 +440,8 @@ static loft_ref loft_h_alloc_entry(loft_ref c, uint32_t stride, uint32_t owner) 
 
 static void loft_h_install_table(loft_ref c, uint32_t old_claim, uint32_t new_claim) {
     loft_store_t *s = loft_store_of(c);
+    /* The place names another table from here (`@FR-R-TableHandle`). */
+    loft_h_reshaped(s);
     loft_set_u32(s, c.rec, c.pos, new_claim);
     if (old_claim != 0) loft_st_delete(s, old_claim);
 }
@@ -459,10 +470,10 @@ static void loft_h_rehash_into(loft_ref c, uint32_t from, uint32_t into, const l
     loft_h_write_seed(s, into, loft_h_read_seed(s, from));
     loft_hents ents = loft_h_entries(s, from, c.store_nr);
     uint32_t width = loft_u32(s, into, LOFT_H_STRIDE_FLD) & LOFT_H_TAGGED;
-    loft_set_u32(s, into, LOFT_AR_DIR_FLD, loft_u32(s, from, LOFT_AR_DIR_FLD));
+    loft_h_set_header(s, into, LOFT_AR_DIR_FLD, loft_u32(s, from, LOFT_AR_DIR_FLD));
     loft_set_u32(s, into, LOFT_AR_NEXT_FLD, loft_u32(s, from, LOFT_AR_NEXT_FLD));
     loft_set_u32(s, into, LOFT_AR_FREE_FLD, loft_u32(s, from, LOFT_AR_FREE_FLD));
-    loft_set_u32(s, into, LOFT_H_STRIDE_FLD, loft_h_stride(s, from) | width);
+    loft_h_set_header(s, into, LOFT_H_STRIDE_FLD, loft_h_stride(s, from) | width);
     uint32_t length = loft_u32(s, from, LOFT_H_LEN_FLD);
     uint32_t count = loft_h_hdr(s, from).count, from_sb = loft_h_slot_bytes(s, from);
     uint32_t into_count = loft_h_hdr(s, into).count, into_sb = loft_h_slot_bytes(s, into);
@@ -496,7 +507,7 @@ static uint32_t loft_h_grow_if_full(loft_ref c, uint32_t claim, uint32_t length,
     if (want > UINT32_MAX) return 0;
     uint32_t grown = loft_st_claim(s, (uint32_t) want);
     loft_zero_fill(s, grown);
-    loft_set_u32(s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
+    loft_h_set_header(s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
     loft_h_rehash_into(c, claim, grown, keys, nk);
     loft_h_install_table(c, claim, grown);
     return grown;
@@ -509,9 +520,9 @@ static uint32_t loft_h_inline_rebuild(loft_ref c, uint32_t claim, uint32_t want)
     uint32_t grown = loft_st_claim(s, loft_h_inline_words(want, h.stride));
     static const uint32_t kept[] = { LOFT_AR_OWNER_FLD, LOFT_H_SEED_FLD, LOFT_H_SEED_FLD + 4, LOFT_H_INLINE_LEN_FLD,
                                      LOFT_AR_NEXT_FLD };
-    for (int i = 0; i < 5; i++) loft_set_u32(s, grown, kept[i], loft_u32(s, claim, kept[i]));
+    for (int i = 0; i < 5; i++) loft_h_set_header(s, grown, kept[i], loft_u32(s, claim, kept[i]));
     uint32_t new_count = loft_h_inline_count(loft_rec_words(s, grown) - LOFT_H_RESERVED, h.stride);
-    loft_set_u32(s, grown, LOFT_H_STRIDE_FLD, loft_h_inline_flags(h.stride, new_count));
+    loft_h_set_header(s, grown, LOFT_H_STRIDE_FLD, loft_h_inline_flags(h.stride, new_count));
     loft_set_u32(s, grown, LOFT_AR_FREE_FLD, 0);
     loft_h_zero_table(s, grown);
     uint32_t mask = new_count - 1, old0 = loft_h_ent0(h.count), new0 = loft_h_ent0(new_count);
@@ -733,7 +744,7 @@ static void loft_h_reserve(loft_ref c, int64_t count, uint32_t stride, const lof
     if (loft_h_hdr(s, claim).count >= target) return;
     uint32_t grown = loft_st_claim(s, (uint32_t) words);
     loft_zero_fill(s, grown);
-    loft_set_u32(s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
+    loft_h_set_header(s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
     loft_h_rehash_into(c, claim, grown, keys, nk);
     loft_h_install_table(c, claim, grown);
 }
