@@ -3997,6 +3997,15 @@ digest and inlined reference accessors, bench 23 `lru_mixed` on the ship lane: g
 the filed clause's (`FnWriter::filed_record`, census `R-SameRead/filed`)
 `loft-suite/rules/rewrites/R-SameRead/a-lookup-of-the-key-just-filed-is-the-record.loft`.
 
+**The insert, in the C runtime.**  `loft_hash_insert` files a record under one integer key in
+ONE probe (`loft_h_insert_int_fast`) when the table is tagged, holds arena or record entries,
+is not due to grow, and the walk from the key's home meets an empty bucket before the key or
+the record itself.  It writes what the general path writes there (`loft_h_probe_for_insert`'s
+free bucket, then `loft_h_add_at` without a grow).  A duplicate, the record already filed, a
+grow, an inline table or a locked store take the general path.  The falsifier is
+`-DLOFT_KEYED_VERIFY`: after each one-probe insert the general lookup must find the record it
+filed, or the run stops naming both.
+
 ### A vector its caller walks once is never built
 
 ```
