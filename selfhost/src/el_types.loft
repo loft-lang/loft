@@ -344,7 +344,7 @@ pub fn is_collection(t: ir::TypeT) -> boolean {
 // that name answers.  What it does not carry yet is refused by name.
 pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
   match e.p.nodes[n] {
-    STy { name, member, args, elem_null, keys, deps, limit, not_null, assoc, nullable } => {
+    STy { at, name, member, args, elem_null, keys, deps, limit, not_null, assoc, nullable } => {
       if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
         // `sub_type_inner`'s vector arm: the element read as a type, no deps yet.
         inner = parse_type(e, args[0]);
@@ -491,9 +491,19 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         }
       }
       d = if qual >= 0 { qual } else { el::def_nr(e, name) };
+      // `parse_type_inner`'s forward reference: on the first pass a name no definition holds yet
+      // takes a stub of this source (`DefType::Unknown`), which its declaration adopts; until
+      // then the type is the stub's `Unknown`, which `copy_unknown_fields` resolves after the file.
+      if d < 0 && e.first_pass && member == "" && name != "spatial" {
+        d = el::add_def(e, name, el::pos_at(e, at + 1), el::DT_UNKNOWN);
+      }
       if d < 0 {
         el::refuse(e, "a forward type reference");
         return null;
+      }
+      if el::def(e, d).def_type == el::DT_UNKNOWN {
+        u = ir::TyUnknown { n: d };
+        return if nullable { ir::TyOptional { inner: u } } else { u };
       }
       // `@FR-C-Var`: a variant TYPE is a record variant, the variant's own reference — not the
       // enum its values have.  A plain enum's value names no type; Rust refuses it on pass 2.

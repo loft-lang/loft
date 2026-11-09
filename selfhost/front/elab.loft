@@ -73,6 +73,7 @@ fn program(image: text, f: text, std_image: text) {
   e.line = 0;
   el::reset_uses(e);
   el_definitions::elab_file(e, tree ?? 0);
+  el_definitions::resolve_adopted_stubs(e);
   el_definitions::reserve_late_return_buffers(e);
   e.first_pass = false;
   e.line = 0;

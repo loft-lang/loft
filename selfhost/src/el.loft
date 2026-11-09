@@ -130,7 +130,9 @@ pub struct El {
   pub source_files: vector<UseSource>,
   pub private: hash<PrivateImport[key]>,
   pub pending: vector<PendingImport>,
-  pub loading: vector<integer>
+  pub loading: vector<integer>,
+  // The forward references' stubs a declaration adopted this pass (`Data::adopted_stubs`).
+  pub adopted: vector<integer>
 }
 
 pub const STD_SOURCE = 0;
@@ -181,7 +183,8 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     source_files: [],
     private: [],
     pending: [],
-    loading: []
+    loading: [],
+    adopted: []
   }
 }
 
