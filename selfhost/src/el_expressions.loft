@@ -9486,6 +9486,12 @@ pub fn substitute(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
   match t {
     TyReference { n } => if n == h { bound } else { t },
     TyVector { inner, dep } => ir::TyVector { inner: substitute(inner, h, bound), dep: dep },
+    // `T?` at a nullable binding stays one `?` (`Type::optional`, `@FR-N-Idem`).
+    TyOptional { inner } => {
+      s = substitute(inner, h, bound);
+      if (s is TyOptional) { s } else { ir::TyOptional { inner: s } }
+    },
+    TyRefVar { inner } => ir::TyRefVar { inner: substitute(inner, h, bound) },
     _ => t
   }
 }
@@ -9618,6 +9624,8 @@ fn bare_over(t: ir::TypeT, h: integer) -> boolean {
   match t {
     TyReference { n } => true,
     TyVector { inner } => bare_over(inner, h),
+    TyOptional { inner } => bare_over(inner, h),
+    TyRefVar { inner } => bare_over(inner, h),
     _ => !type_mentions(t, h)
   }
 }
