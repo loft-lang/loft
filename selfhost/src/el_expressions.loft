@@ -3444,6 +3444,12 @@ fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 // (`fn_ref_with_closure`), answering `FnRef(lambda, ___clos_N)` typed as the function borrowing
 // that record.
 fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer) -> Ex {
+  // A closure answering a text is not carried: its value's type lists the hidden text buffers
+  // the lambda takes, and its captures and body borrow from the closure record.
+  if !e.first_pass && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyText {
+    el::refuse(e, "a closure answering a text");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   if e.first_pass {
     end = match e.p.nodes[body] { SBlock { end: be } => be, _ => 0 };
     rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
@@ -8077,11 +8083,6 @@ fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -
       // A closure-carrying value is called as any other: the record rides in the value.
       pts = fa;
       rt = result;
-      // A text answered through a function value takes a work text of its own — not carried.
-      if el_types::base(rt) is TyText {
-        el::refuse(e, "a text answered through a function value");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-      }
     },
     _ => {}
   }
@@ -8148,6 +8149,9 @@ fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -
     }
     rt = el_types::with_deps(rt, ds);
   }
+  // A text answered through a function value is written into hidden work texts the caller
+  // hands in (`fnref_text_buffer_vars`), minted on both passes so the numbering holds.
+  work_vars = fnref_text_buffer_vars(e, vars, len(pts), rt);
   if !e.first_pass && len(list) != len(pts) {
     el::refuse(e, "a call through a function value with too few arguments");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -8161,13 +8165,76 @@ fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -
       }
     }
   }
+  // `try_fn_ref_call` builds the call on the second pass only: the first leaves the value null,
+  // so a tail of such calls yields no text there (`arm_yields_text`).
+  if e.first_pass {
+    return ex(ir::NdNull, rt);
+  }
+  list += push_fnref_text_buffers(e, work_vars);
   ex(ir::NdCallRef { var: v, args: list }, rt)
+}
+
+// port: control.rs fnref_text_buffer_vars
+// The hidden `&text` work buffers a call through a function value of this signature carries: a
+// call cannot know which function the value holds, so it mints what the widest candidate wants
+// (`Data::fnref_text_buffers`), and the call trims the frame to what the target declares.
+fn fnref_text_buffer_vars(e: el::El, vars: el_vars::Vars, params: integer, ret: ir::TypeT) -> vector<integer> {
+  [for _i in 0..fnref_text_buffers(e, params, ret) { el_vars::work_text(vars) }]
+}
+
+// port: data.rs fnref_text_buffers
+// For a text result: the most hidden text buffers any text function of `params` visible
+// parameters takes, at least one.  None for any other result.
+fn fnref_text_buffers(e: el::El, params: integer, ret: ir::TypeT) -> integer {
+  if !(el_types::base(ret) is TyText) {
+    return 0;
+  }
+  most = 1;
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_FUNCTION || !(el_types::base(d.returned[0] ?? ir::TyVoid) is TyText) {
+      continue;
+    }
+    // `fnref_visible_params`: neither a hidden parameter nor the closure record.
+    visible = 0;
+    for a in d.attributes {
+      if !a.hidden && a.name != "__closure" {
+        visible += 1;
+      }
+    }
+    if visible == params && text_work_buffers(d) > most {
+      most = text_work_buffers(d);
+    }
+  }
+  most
+}
+
+// port: control.rs push_fnref_text_buffers
+// One cleared `OpCreateStack` argument per buffer, after the visible arguments (the callee's
+// order: visible parameters, then work buffers, then the closure the call reads from the value).
+fn push_fnref_text_buffers(e: el::El, work_vars: vector<integer>) -> vector<ir::Node> {
+  ref_def = el::def_nr(e, "reference");
+  [for wv in work_vars { el_ir::v_block([el_ir::v_set(wv, ir::NdText { s: "" }), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])], ir::TyReference { n: ref_def, dep: [wv] }, "cref_work_buf") }]
 }
 
 // A text argument that views a store, as a `__work_p2_N` copy of it ("text argument copy").
 fn text_argument_copy(e: el::El, vars: el_vars::Vars, arg: ir::Node) -> ir::Node {
   w = el_vars::work_text_p2(vars);
   el_ir::v_block([el_ir::v_set(w, ir::NdText { s: "" }), el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, arg]), ir::NdVar { n: w }], ir::TyText { dep: [w] }, "text argument copy")
+}
+
+// `argument_hint` of `callee_param_hint(d, i)`, for a short lambda: the `fn(…)` parameter `i` of
+// `d` declares types a `|…|` argument there.  A template's parameter (closed over its bindings,
+// `close_open`) is not carried: the lambda then meets its refusal by name.  Only the lambda half
+// of `argument_hint` is ported; any other argument reads as it does without a hint.
+fn hint_lambda(e: el::El, vars: el_vars::Vars, d: integer, i: integer, node: integer) {
+  if d < 0 || el::def(e, d).def_type != el::DT_FUNCTION || i >= len(el::def(e, d).attributes) {
+    return;
+  }
+  pt = el_types::base(el::def(e, d).attributes[i]!.typedef[0] ?? ir::TyVoid);
+  if pt is TyFunction {
+    vars.lambda_node = node;
+    vars.lambda_hint = pt;
+  }
 }
 
 // `Parser::parse_call` of a bare function name: the arguments read in order, then the
@@ -8191,7 +8258,13 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     _ => {}
   }
   if source < 0 && name != "" && el_vars::var(vars, name) >= 0 && el_types::base(el_vars::tp(vars, el_vars::var(vars, name))) is TyFunction {
-    return call_ref(e, vars, el_vars::var(vars, name), args);
+    r = call_ref(e, vars, el_vars::var(vars, name), args);
+    // `parse_call`'s position wrap takes a call through a function value as it takes a call
+    // (`Value::with_span` of a `CallRef`); a call with no arguments returns before it.
+    if !e.first_pass && len(args) > 0 && r.code is NdCallRef {
+      return ex(ir::NdSpan { pos: el::pos_at(e, after_paren(e, at)), inner: r.code }, r.tp);
+    }
+    return r;
   }
   if name == "" || (source < 0 && el_vars::var(vars, name) >= 0) {
     el::refuse(e, "a call that is not of a function by its bare name");
@@ -8199,9 +8272,6 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   }
   list: vector<ir::Node> = [];
   types: vector<ir::TypeT> = [];
-  // `free_call_hint`: the one free definition of the name types a short lambda argument with its
-  // parameter's `fn(…)` there.
-  hd = look(e, source, "n_{name}");
   for a in args {
     match e.p.nodes[a] {
       SArg { at: aat, name: an, e: ae } => {
@@ -8209,13 +8279,10 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
           el::refuse(e, "a named argument");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
-        if hd >= 0 && el::def(e, hd).def_type == el::DT_FUNCTION && a#index < len(el::def(e, hd).attributes) {
-          pt = el_types::base(el::def(e, hd).attributes[a#index]!.typedef[0] ?? ir::TyVoid);
-          if pt is TyFunction {
-            vars.lambda_node = ae!;
-            vars.lambda_hint = pt;
-          }
-        }
+        // `free_call_hint`, asked per argument with the types read so far: its parameter's
+        // `fn(…)` types a short lambda argument.  A qualified call asks the library alone.
+        hd = if source >= 0 { look(e, source, "n_{name}") } else { el_dispatch::free_call_hint(e, name, types) };
+        hint_lambda(e, vars, hd, a#index, ae!);
         if el_trace::on() {
           el_trace::state(e, vars, "arg", aat, ae!);
         }
@@ -8989,6 +9056,23 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
   x = expression(e, vars, re);
   list: vector<ir::Node> = [x.code];
   types: vector<ir::TypeT> = [x.tp];
+  // The method call's `hint_nr`: the definition whose parameters type the arguments before the
+  // call is selected — falling back to the receiver type's own slot.
+  hint_nr = -1;
+  if !el_types::is_unknown(x.tp) {
+    tn = type_def_nr(e, match x.tp { TyRefVar { inner } => inner, _ => x.tp });
+    slot = -1;
+    if tn >= 0 {
+      for at2 in el::def(e, tn).attributes {
+        if at2.name == name {
+          slot = match el_types::base(at2.typedef[0] ?? ir::TyVoid) { TyRoutine { n } => n, _ => -1 };
+        }
+      }
+    }
+    if slot >= 0 {
+      hint_nr = el_dispatch::method_hint(e, name, x.tp, slot);
+    }
+  }
   for a in args {
     match e.p.nodes[a] {
       SArg { at: aat, name: an, e: ae } => {
@@ -8999,7 +9083,9 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
         if el_trace::on() {
           el_trace::state(e, vars, "arg", aat, ae!);
         }
+        hint_lambda(e, vars, hint_nr, len(list), ae!);
         y = expression(e, vars, ae!);
+        vars.lambda_node = -1;
         list += [y.code];
         types += [y.tp];
       },
@@ -10861,7 +10947,7 @@ fn default_in_place(e: el::El, dv: ir::Node, n: integer) -> boolean {
 }
 
 // `Data::method_receives`: the method's first parameter takes this receiver's definition.
-fn receives(e: el::El, m: integer, tn: integer) -> boolean {
+pub fn receives(e: el::El, m: integer, tn: integer) -> boolean {
   d = el::def(e, m);
   if len(d.attributes) == 0 {
     return true;

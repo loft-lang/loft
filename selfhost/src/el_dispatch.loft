@@ -527,7 +527,8 @@ fn overload_routines(e: el::El, name: text) -> vector<integer> {
   out: vector<integer> = [];
   for a in el::def(e, set).attributes {
     match el_types::base(a.typedef[0] ?? ir::TyVoid) {
-      TyRoutine { n } => { out += [n]; },
+      // A member not declared yet (`receiver_shared_in_set`) is none here.
+      TyRoutine { n } => if n < len(e.b.data.definitions) { out += [n]; },
       _ => {}
     }
   }
@@ -571,28 +572,187 @@ fn dispatches_past_receiver(e: el::El, name: text, en: integer) -> boolean {
   false
 }
 
-// port: data.rs original_name (`source_name_of_key`) — the name a definition key was written as.
+// port: data.rs original_name (`source_name_of_key`) — the name a definition key was written as:
+// a method's or a free overload's rest, an instance key's template key read again.
 fn original_name(key: text) -> text {
-  if key.starts_with("n_") {
-    at = key.find("@");
-    return if at != null { key[2..at!] } else { key[2..len(key)] };
-  }
-  if key.starts_with("t_") || key.starts_with("f_") || key.starts_with("i_") {
-    body = key[2..len(key)];
+  k = key;
+  for _step in 0..len(key) {
+    if k.starts_with("n_") {
+      at = k.find("@");
+      return if at != null { k[2..at!] } else { k[2..] };
+    }
+    if !(k.starts_with("t_") || k.starts_with("f_") || k.starts_with("i_")) {
+      break;
+    }
+    body = k[2..];
     digits = 0;
     while digits < len(body) && body[digits] >= '0' && body[digits] <= '9' {
       digits += 1;
     }
-    if digits > 0 {
-      n = body[0..digits] as integer ?? 0;
-      rest = body[digits + n..len(body)];
-      if rest.starts_with("_") {
-        r = rest[1..len(rest)];
-        return if key.starts_with("i_") { original_name(r) } else { r };
+    if digits == 0 {
+      break;
+    }
+    rest = body[digits + (body[0..digits] as integer ?? 0)..];
+    if !rest.starts_with("_") {
+      break;
+    }
+    if !k.starts_with("i_") {
+      return rest[1..];
+    }
+    k = rest[1..];
+  }
+  if len(k) > 2 { k[2..] } else { k }
+}
+
+// ── argument hints (control.rs `free_call_hint`, fields.rs method hint) ──
+
+// port: control.rs free_call_hint
+// The definition that types a bare call's arguments before the call is selected: the one free
+// function of the name, else — from the first argument's type — the receiver's own method,
+// unless that receiver is shared by more than one member of the name's set.  -1 for none.
+pub fn free_call_hint(e: el::El, name: text, types: vector<ir::TypeT>) -> integer {
+  free = el::def_nr(e, "n_{name}");
+  if free >= 0 {
+    return free;
+  }
+  if len(types) == 0 || el_types::is_unknown(types[0]!) {
+    return -1;
+  }
+  method_hint(e, name, types[0]!, -1)
+}
+
+// port: fields.rs (the method call's `hint_nr`)
+// For `x.name(…)`: no hint where the receiver is shared in the set, the one method `candidates`
+// finds, else `fallback` (the receiver type's own slot).
+pub fn method_hint(e: el::El, name: text, receiver: ir::TypeT, fallback: integer) -> integer {
+  if receiver_shared_in_set(e, name, receiver) {
+    return -1;
+  }
+  cs = candidates(e, name, receiver);
+  if len(cs) == 1 && el::def(e, cs[0]!).name.starts_with("t_") {
+    return cs[0]!;
+  }
+  fallback
+}
+
+// port: data.rs candidates (source = the caller's scope)
+// The definitions a call of `name` on `tp` may reach, without asking for a refusal: the
+// receiver's method under its own nullability spelling first, a variant's or its enum's, a
+// bound holder's stubs, else the free function, else an operator taking exactly `tp`.
+pub fn candidates(e: el::El, name: text, tp0: ir::TypeT) -> vector<integer> {
+  fd = el::def_nr(e, "n_{name}");
+  free: vector<integer> = if fd >= 0 { [fd] } else { [] };
+  if el_types::is_unknown(tp0) {
+    return free;
+  }
+  tp = match tp0 { TyRefVar { inner } => inner, _ => tp0 };
+  tn = el_expressions::type_def_nr(e, tp);
+  if tn < 0 {
+    return free;
+  }
+  if el::def(e, tn).def_type == el::DT_ENUM_VALUE {
+    parent = el::def(e, tn).parent;
+    vb = el::def(e, tn).name;
+    declares_own = false;
+    for sp in [vb, "{vb}?"] {
+      if el::def_nr(e, "t_{len(sp)}{sp}_{name}") >= 0 {
+        declares_own = true;
       }
     }
+    if parent >= 0 && el::def(e, parent).def_type == el::DT_ENUM && !declares_own {
+      tn = parent;
+    }
   }
-  if len(key) > 2 { key[2..len(key)] } else { key }
+  td = el::def(e, tn);
+  if len(td.bounds) > 0 && el_types::type_var(e, ir::TyReference { n: tn, dep: [] }) >= 0 {
+    stubs: vector<integer> = [];
+    for a in 1..10 {
+      st = el::def_nr(e, el_expressions::bound_stub_name(td.name, name, a));
+      if st >= 0 {
+        stubs += [st];
+      }
+    }
+    return if len(stubs) > 0 { stubs } else { free };
+  }
+  // `key_type_name`: an instance keys on its template.
+  base = if td.instance_of >= 0 { el::def(e, td.instance_of).name } else { td.name };
+  sig = if tp is TyOptional { "{base}?" } else { base };
+  spellings = if sig == base { [base, "{base}?"] } else { [sig, base] };
+  for sp in spellings {
+    key = "t_{len(sp)}{sp}_{name}";
+    d = el::def_nr(e, key);
+    if d < 0 {
+      continue;
+    }
+    if el_expressions::receives(e, d, tn) {
+      return [d];
+    }
+    own = el::source_nr(e, td.source, key);
+    if own >= 0 && el_expressions::receives(e, own, tn) {
+      return [own];
+    }
+  }
+  if len(free) > 0 {
+    return free;
+  }
+  for op in el::possible(e, name) {
+    if len(el::def(e, op).attributes) > 0 && el_types::is_equal(e, el::def(e, op).attributes[0]!.typedef[0] ?? ir::TyVoid, tp) {
+      return [op];
+    }
+  }
+  []
+}
+
+// port: data.rs receiver_shared_in_set
+// Is the receiver taken by more than one member of the set of `name` it would choose among?
+fn receiver_shared_in_set(e: el::El, name: text, receiver: ir::TypeT) -> boolean {
+  main = el::def_nr(e, name);
+  rt = match el_types::base(receiver) { TyRefVar { inner } => el_types::base(inner), _ => el_types::base(receiver) };
+  if main < 0 || el::def(e, main).def_type != el::DT_DYNAMIC {
+    // `receiver_overload_source`: no set in scope — the receiver's own source's set.
+    tn = el_expressions::type_def_nr(e, rt);
+    if tn < 0 || el::def(e, tn).source == el::STD_SOURCE {
+      return false;
+    }
+    main = el::source_nr(e, el::def(e, tn).source, name);
+    if main < 0 || el::def(e, main).def_type != el::DT_DYNAMIC {
+      return false;
+    }
+  }
+  n = 0;
+  for a in el::def(e, main).attributes {
+    match el_types::base(a.typedef[0] ?? ir::TyVoid) {
+      TyRoutine { n: r } => {
+        // The standard library's image lists the members this program adds to one of its sets
+        // (an operator method joins `compare`); one not declared yet is no member here, as it is
+        // none of Rust's at this point of its parse.
+        if r >= len(e.b.data.definitions) {
+          continue;
+        }
+        ps = visible_params(e, r);
+        if len(ps) > 0 && param_fits(e, rt, ps[0]!) {
+          n += 1;
+        }
+      },
+      _ => {}
+    }
+  }
+  n > 1
+}
+
+// port: data.rs param_fits — the same type definition, or a variant and its enum either way; a
+// type variable or an unknown fits anything.
+fn param_fits(e: el::El, have: ir::TypeT, want: ir::TypeT) -> boolean {
+  if el_types::is_unknown(want) || el_definitions::mentions_type_var(e, want) || el_definitions::mentions_type_var(e, have) {
+    return true;
+  }
+  h = el_expressions::type_def_nr(e, have);
+  w = el_expressions::type_def_nr(e, want);
+  h == w || variant_of(e, h, w) || variant_of(e, w, h)
+}
+
+fn variant_of(e: el::El, v: integer, en: integer) -> boolean {
+  v >= 0 && el::def(e, v).def_type == el::DT_ENUM_VALUE && el::def(e, v).parent == en
 }
 
 // ── selection (src/parser/dispatch.rs) ──

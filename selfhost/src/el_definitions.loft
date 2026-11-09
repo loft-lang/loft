@@ -1203,6 +1203,10 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   }
   if e.first_pass {
     el::set_returned(e, e.context, rt);
+  } else if hint is TyFunction && !(rt is TyVoid) && !el_types::is_unknown(rt) {
+    // `parse_lambda_short_body`: on the second pass a short lambda's result is reset to the
+    // hint's, so its body is parsed against the bare result the first pass met.
+    el::set_returned(e, e.context, rt);
   }
   if body != null {
     for a in arguments {
@@ -1338,7 +1342,7 @@ fn add_capture_owner_slots(e: el::El, vars: el_vars::Vars, parent: integer) {
 }
 
 // Does `t` name a header variable of the function being read?
-fn mentions_type_var(e: el::El, t: ir::TypeT) -> boolean {
+pub fn mentions_type_var(e: el::El, t: ir::TypeT) -> boolean {
   for tv in e.type_vars {
     if el_expressions::type_mentions(t, tv.holder) {
       return true;
