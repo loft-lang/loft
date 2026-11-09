@@ -15107,7 +15107,16 @@ fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   arg = 4;
   match ct {
     TyIndex { n: _ } => { on += 1; arg = known; },
-    TySorted { n: _ } => { on += 2; arg = e.b.types[el::def(e, el_d).known_type]!.size; },
+    // A sorted field of a linked record is laid out `ordered` (its records by id): stepped by
+    // reference (`fill_iter`'s `Parts::Ordered` arm).
+    TySorted { n: _ } => {
+      if (e.b.types[known]!.parts[0] ?? ir::PtBase) is PtOrdered {
+        on += 3;
+      } else {
+        on += 2;
+        arg = e.b.types[el::def(e, el_d).known_type]!.size;
+      }
+    },
     _ => { on += 4; }
   }
   src = x.code;
