@@ -8237,6 +8237,32 @@ fn hint_lambda(e: el::El, vars: el_vars::Vars, d: integer, i: integer, node: int
   }
 }
 
+// `argument_hint`'s vector half (`seeds_vector_hint`, #432): a non-empty `[…]` argument is built
+// at the element type parameter `i` of the hinting definition `d` declares — known all through
+// and not a type variable.  Unknown where nothing seeds it.
+fn argument_element_hint(e: el::El, d: integer, i: integer, node: integer) -> ir::TypeT {
+  none = ir::TyUnknown { n: 0 };
+  if d < 0 || el::def(e, d).def_type != el::DT_FUNCTION || i >= len(el::def(e, d).attributes) {
+    return none;
+  }
+  if !(match e.p.nodes[node] { SVecLit { items } => len(items) > 0, _ => false }) {
+    return none;
+  }
+  match el::def(e, d).attributes[i]!.typedef[0] ?? ir::TyVoid {
+    TyVector { inner } => if el_types::is_unknown(inner) || el_definitions::mentions_type_var(e, inner) { none } else { inner },
+    _ => none
+  }
+}
+
+// An argument read under its hint: a seeded literal built at its element type, any other
+// expression as it reads.
+fn hinted_argument(e: el::El, vars: el_vars::Vars, node: integer, elem: ir::TypeT) -> Ex {
+  if el_types::is_unknown(elem) {
+    return expression(e, vars, node);
+  }
+  vector_value(e, vars, node, elem: elem).x
+}
+
 // `Parser::parse_call` of a bare function name: the arguments read in order, then the
 // definition the name and the first argument's type select (`call`, `Data::candidates`), each
 // argument converted to its parameter (`process_call_args`).  On the second pass the call is
@@ -8270,6 +8296,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     el::refuse(e, "a call that is not of a function by its bare name");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  built: vector<ir::TypeT> = [];
   list: vector<ir::Node> = [];
   types: vector<ir::TypeT> = [];
   for a in args {
@@ -8283,10 +8310,12 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
         // `fn(…)` types a short lambda argument.  A qualified call asks the library alone.
         hd = if source >= 0 { look(e, source, "n_{name}") } else { el_dispatch::free_call_hint(e, name, types) };
         hint_lambda(e, vars, hd, a#index, ae!);
+        eh = argument_element_hint(e, hd, a#index, ae!);
+        built += [eh];
         if el_trace::on() {
           el_trace::state(e, vars, "arg", aat, ae!);
         }
-        x = argument_view(e, vars, expression(e, vars, ae!));
+        x = argument_view(e, vars, hinted_argument(e, vars, ae!, eh));
         vars.lambda_node = -1;
         list += [x.code];
         types += [x.tp];
@@ -8363,7 +8392,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     el::refuse(e, "a call of an unknown function: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  if hinted_literal(e, d, args, 0) {
+  if hinted_literal(e, d, args, 0, built) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   r = call_args(e, vars, d, list, types);
@@ -9014,9 +9043,10 @@ fn null_transparent(e: el::El, vars: el_vars::Vars, call: ir::Node, types: vecto
 // `vector_hint` (#432): a bare non-empty `[…]` argument is built at its PARAMETER's element
 // type, so a `vector<u8>` parameter gets a byte-stride literal.  The arguments here are
 // elaborated before the callee is known, so a literal whose parameter's element is one a
-// literal does not infer — a narrow integer, a `single` — is refused by name.  `first` is the
-// parameter the first argument meets (1 past a method's receiver).
-fn hinted_literal(e: el::El, d: integer, args: vector<integer>, first: integer) -> boolean {
+// literal does not infer — a narrow integer, a `single` — is refused by name, unless the literal
+// was already built at that element type under the call's hint (`built`, per argument).
+// `first` is the parameter the first argument meets (1 past a method's receiver).
+fn hinted_literal(e: el::El, d: integer, args: vector<integer>, first: integer, built: vector<ir::TypeT>) -> boolean {
   for a in args {
     match e.p.nodes[a] {
       SArg { e: ae } => {
@@ -9031,7 +9061,9 @@ fn hinted_literal(e: el::El, d: integer, args: vector<integer>, first: integer) 
               }
               match pt {
                 TyVector { inner } => {
-                  if inner is TySingle || (inner is TyInteger && el_convert::narrowing_int(ir::TyInteger { spec: i32_spec() }, inner)) {
+                  hinted = built[a#index] ?? ir::TyUnknown { n: 0 };
+                  same = !el_types::is_unknown(hinted) && el_types::is_equal(e, hinted, inner);
+                  if !same && (inner is TySingle || (inner is TyInteger && el_convert::narrowing_int(ir::TyInteger { spec: i32_spec() }, inner))) {
                     el::refuse(e, "a vector literal argument built at its parameter's element type");
                     return true;
                   }
@@ -9059,6 +9091,7 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
   // The method call's `hint_nr`: the definition whose parameters type the arguments before the
   // call is selected — falling back to the receiver type's own slot.
   hint_nr = -1;
+  built: vector<ir::TypeT> = [];
   if !el_types::is_unknown(x.tp) {
     tn = type_def_nr(e, match x.tp { TyRefVar { inner } => inner, _ => x.tp });
     slot = -1;
@@ -9084,7 +9117,9 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
           el_trace::state(e, vars, "arg", aat, ae!);
         }
         hint_lambda(e, vars, hint_nr, len(list), ae!);
-        y = expression(e, vars, ae!);
+        eh = argument_element_hint(e, hint_nr, len(list), ae!);
+        built += [eh];
+        y = hinted_argument(e, vars, ae!, eh);
         vars.lambda_node = -1;
         list += [y.code];
         types += [y.tp];
@@ -9117,7 +9152,7 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
     }
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  if hinted_literal(e, d, args, 1) {
+  if hinted_literal(e, d, args, 1, built) {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   r = call_args(e, vars, d, list, types);
@@ -13019,6 +13054,27 @@ fn operator_member(e: el::El, form: text, lt: ir::TypeT, rt: ir::TypeT) -> integ
   operator_of(e, form, lt, 2)
 }
 
+// port: data.rs find_op_method
+// An operator member of the receiver by its key alone: `t_<LEN><spelling>_<form>` under the
+// receiver's own nullability spelling, then its dense one.  The key name is `key_type_name`'s —
+// a bound holder's is `<name>#g`, under which no member is keyed (its stubs carry their arity),
+// so a type variable reaches no operator member and its order forms take the bound's `<`.
+fn find_op_method(e: el::El, form: text, tp: ir::TypeT) -> integer {
+  tn = type_def_nr(e, tp);
+  if tn < 0 {
+    return -1;
+  }
+  td = el::def(e, tn);
+  holder = len(td.bounds) > 0 && el_types::type_var(e, ir::TyReference { n: tn, dep: [] }) >= 0;
+  base = if td.instance_of >= 0 { el::def(e, td.instance_of).name } else if holder { "{td.name}#g" } else { td.name };
+  sig = if tp is TyOptional { "{base}?" } else { base };
+  d = el::def_nr(e, "t_{len(sig)}{sig}_{form}");
+  if d >= 0 || sig == base {
+    return d;
+  }
+  el::def_nr(e, "t_{len(base)}{base}_{form}")
+}
+
 fn operator_of(e: el::El, form: text, lt: ir::TypeT, arity: integer) -> integer {
   if form == "" || el_types::is_unknown(lt) {
     return -1;
@@ -13027,7 +13083,7 @@ fn operator_of(e: el::El, form: text, lt: ir::TypeT, arity: integer) -> integer 
   if left < 0 {
     return -1;
   }
-  d = find_fn(e, form, el_types::unrewritten(lt));
+  d = find_op_method(e, form, el_types::unrewritten(lt));
   if d < 0 {
     return -1;
   }
@@ -17801,9 +17857,15 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
       el::refuse(e, "an empty vector literal of no declared type");
       return refused_build();
     }
-    // A vector local as the first item gives the element its type with the borrow its read
-    // carries (`vector<integer>["a"]`); any other item its type alone.
-    in_t = if el_types::base(xs[0].tp) is TyVector && el_ir::unspan(xs[0].code) is NdVar { xs[0].tp } else { el_types::without_deps(xs[0].tp) };
+    // port: vectors.rs parse_item (`in_t` unknown): a record element is a slot of the vector's
+    // own store, so its type names no borrow; any other element keeps the type its first item
+    // read, borrow included (`[f.path]` is `vector<text["f"]>`).  A bare local is typed as
+    // Rust's `parse_var` types it: a vector local by the borrow its read carries
+    // (`vector<integer>["a"]`), any other by its type alone — this port's read of a text local
+    // names the local itself, which Rust's does not.
+    t0 = el_types::unrewritten(xs[0].tp);
+    bare_local = el_ir::unspan(xs[0].code) is NdVar;
+    in_t = if bare_local { if (el_types::base(t0) is TyVector) { t0 } else { el_types::without_deps(t0) } } else { match el_types::base(t0) { TyReference { n: _ } => el_types::without_deps(t0), TyEnum { is_ref } => if is_ref { el_types::without_deps(t0) } else { t0 }, _ => t0 } };
     // `parse_item`'s variant join (`@FR-C-Var`): items that are variants of one struct enum
     // make the element that enum.
     pe = variant_parent(e, in_t);
@@ -19628,6 +19690,21 @@ fn rename(op: text) -> text {
   op
 }
 
+// port: generics.rs has_bound_for_method
+// Does a bound of the type variable `holder` (else of the function being read) declare `method`
+// with `arity` parameters?
+fn has_bound_for_method(e: el::El, method: text, holder: integer, arity: integer) -> boolean {
+  bounds = if holder >= 0 && len(el::def(e, holder).bounds) > 0 { el::def(e, holder).bounds } else if e.context >= 0 { el::def(e, e.context).bounds } else { [] };
+  for iface in bounds {
+    for c in e.b.data.definitions {
+      if c.parent == iface && el_definitions::interface_method_name(c.name) == method && len(c.attributes) == arity {
+        return true;
+      }
+    }
+  }
+  false
+}
+
 // `Parser::call_op_as`, the builtin-operator path: the first `Op<name>…` candidate whose
 // parameters take these arguments.
 pub fn call_op(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
@@ -19646,11 +19723,28 @@ pub fn call_op(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>,
       if e.first_pass {
         return ex(list[0] ?? ir::NdNull, ir::TyReference { n: tv, dep: [] });
       }
-      stub = el::def_nr(e, bound_stub_name(el::def(e, tv).name, "Op{rename(op)}", len(list)));
-      if stub >= 0 {
+      hn = el::def(e, tv).name;
+      stub = el::def_nr(e, bound_stub_name(hn, "Op{rename(op)}", len(list)));
+      if stub >= 0 && e.context >= 0 && has_bound_for_method(e, "Op{rename(op)}", tv, len(list)) {
         r = call_nr(e, vars, stub, list, types);
         if r != null {
           return r!;
+        }
+      }
+      // `!=` derives from the bound's `==`: `!(a == b)`.
+      eq = el::def_nr(e, bound_stub_name(hn, "OpEq", 2));
+      if op == "!=" && e.context >= 0 && eq >= 0 && has_bound_for_method(e, "OpEq", tv, 2) {
+        r = call_nr(e, vars, eq, list, types);
+        if r != null {
+          return ex(el_ir::cl(e, "OpNot", [r!.code]), ir::TyBoolean);
+        }
+      }
+      // loft#1151 — `<=` derives from the bound's `<`, the operands swapped: `!(b < a)`.
+      lt = el::def_nr(e, bound_stub_name(hn, "OpLt", 2));
+      if op == "<=" && e.context >= 0 && len(list) == 2 && lt >= 0 && has_bound_for_method(e, "OpLt", tv, 2) {
+        r = call_nr(e, vars, lt, [list[1]!, list[0]!], [types[1]!, types[0]!]);
+        if r != null {
+          return ex(el_ir::cl(e, "OpNot", [r!.code]), ir::TyBoolean);
         }
       }
       el::refuse(e, "an operator on a type variable its bounds do not declare: {op}");

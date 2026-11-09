@@ -1293,7 +1293,8 @@ pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos
   args = routed(types);
   for t in args {
     if !(el_types::base(t) is TyNull) && identity(e, t) == "" {
-      if !e.first_pass {
+      // An argument typed `Unknown` is one already refused where it was read.
+      if !e.first_pass && !el_types::is_unknown(t) {
         el::refuse(e, "a call of an overload set with an argument of this type: {el_expressions::type_kind(t)}");
       }
       return -1;
