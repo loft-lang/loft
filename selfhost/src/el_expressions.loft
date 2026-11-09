@@ -7987,9 +7987,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   // `@FR-Disp-Select`: a name that is an overload set reaches the member its argument types
   // select; any other name, the definition `find_fn` resolves.
   set = el_dispatch::own_set(e, name);
-  // A dispatcher a run-time decided call makes is placed where Rust's lexer then stands: past the
-  // token after the call's `)`.
-  d = if set >= 0 { el_dispatch::select(e, set, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1)) } else { find_fn(e, name, first) };
+  d = if set >= 0 { el_dispatch::select(e, set, types) } else { find_fn(e, name, first) };
   if d < 0 && set >= 0 {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
