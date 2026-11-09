@@ -847,6 +847,12 @@ pub fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: bool
   schema_type(e, "integer")
 }
 
+// `Stores::int`: the 4-byte integer row `int<min,nullable>` — what `get_type` answers for a
+// function value (its definition number, stored as an `i32`).
+pub fn int_store(e: el::El, min: integer, nullable: boolean) -> integer {
+  narrow_part(e, "int<{min},{nullable}>", ir::PtInt { start: min, nullable: nullable }, 4)
+}
+
 fn byte_name(m: integer, nullable: boolean) -> text {
   if m == 0 && !nullable { "byte" } else { "byte<{m},{nullable}>" }
 }
