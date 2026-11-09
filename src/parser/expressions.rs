@@ -4741,6 +4741,13 @@ use a separate collection or add after the loop"
                      variant, so they lay it out at one offset, and the write is a plain field write"
                 );
             }
+            // One mistake, one error: the value is still parsed (and dropped), so the
+            // statement ends where it does — left unread, `= 5` reported `Expect token ;`.
+            if self.preset_rhs.take().is_none() {
+                let mut dropped = Value::Null;
+                let _ = self.parse_operators(f_type, &mut dropped, &mut parent_tp, 0);
+            }
+            *code = Value::Null;
             return Type::Void;
         }
         self.check_iter_safety(to, f_type, op);
