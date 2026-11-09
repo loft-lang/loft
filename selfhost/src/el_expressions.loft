@@ -7991,7 +7991,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   set = el_dispatch::own_set(e, name);
   // A dispatcher a run-time decided call makes is placed where Rust's lexer then stands: past the
   // token after the call's `)`.
-  d = if set >= 0 { el_dispatch::select(e, set, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1)) } else { find_fn(e, name, first) };
+  d = if set >= 0 { el_dispatch::select(e, set, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1)) } else { find_fn(e, name, routed_receiver(first, types)) };
   if d < 0 && set >= 0 {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -8468,6 +8468,20 @@ fn take_range_operand(n: ir::Node, by: ir::Node) -> Taken {
   }
 }
 
+// `Data::routed_types`' receiver (`F-Recv`'s argument clause): where any argument is nullable the
+// receiver is asked as nullable too, so a nullable argument reaches the `τ?` method.
+fn routed_receiver(first: ir::TypeT, types: vector<ir::TypeT>) -> ir::TypeT {
+  if first is TyOptional || first is TyNull || el_types::is_unknown(first) {
+    return first;
+  }
+  for t in types {
+    if t is TyOptional {
+      return ir::TyOptional { inner: first };
+    }
+  }
+  first
+}
+
 // The constant argument a domain check reads, or null.
 // `Parser::const_f64`: a literal's value, or the value `const_eval` folds the expression to.
 fn const_float(e: el::El, n: ir::Node) -> float? {
@@ -8724,7 +8738,7 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
   // A method name that is an overload set reaches the member its argument types select, the
   // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
   mset = el_dispatch::own_set(e, name);
-  d = if mset >= 0 { el_dispatch::select(e, mset, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1)) } else { find_fn(e, name, x.tp) };
+  d = if mset >= 0 { el_dispatch::select(e, mset, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1)) } else { find_fn(e, name, routed_receiver(x.tp, types)) };
   if d < 0 && mset >= 0 {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
