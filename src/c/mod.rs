@@ -3022,12 +3022,13 @@ fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) 
         let mut out = text.to_string();
         for d in cx.hot_candidates.borrow().iter() {
             let marker = format!("static /*loft_hot:{d}*/");
-            let to = if hot.contains(d) {
-                "static inline"
+            let body = format!("static /*loft_hot_body:{d}*/");
+            let (to, body_to) = if hot.contains(d) {
+                ("static inline", "LOFT_HOT_INLINE")
             } else {
-                "static"
+                ("static", "static")
             };
-            out = out.replace(&marker, to);
+            out = out.replace(&marker, to).replace(&body, body_to);
         }
         out
     };
@@ -4427,6 +4428,22 @@ fn tabulated(cx: &Cx, d: u32, ret: CType, params: &str, body: String) -> String 
     )
 }
 
+/// The storage of a frame wrapper's body: `LOFT_HOT_INLINE` where the function is hinted
+/// `inline`, the hot-helper marker's body form where that is still undecided
+/// (`resolve_hot_helpers`), the function's own storage otherwise.
+fn always_inline_body(storage: &str) -> String {
+    if storage == "static inline" {
+        "LOFT_HOT_INLINE".to_string()
+    } else if let Some(d) = storage
+        .strip_prefix("static /*loft_hot:")
+        .and_then(|r| r.strip_suffix("*/"))
+    {
+        format!("static /*loft_hot_body:{d}*/")
+    } else {
+        storage.to_string()
+    }
+}
+
 fn framed(
     cx: &Cx,
     d: u32,
@@ -4437,15 +4454,27 @@ fn framed(
     storage: &str,
 ) -> String {
     let def = cx.data.def(d);
-    let _ = writeln!(
-        cx.gen_decls.borrow_mut(),
-        "{storage} {} {name}__fr({params});",
-        held(ret)
-    );
     // `(R-CSplit)`: a body over the size budget goes out as a chain of parts.
     let fr = format!("{name}__fr");
-    let whole = format!("{storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
-    let text = match split::split(storage, &held(ret).clone(), &fr, params, body) {
+    let parts = split::split(storage, &held(ret).clone(), &fr, params, body);
+    // `@FR-R-Inline`: a body hinted inline is ALWAYS inlined into its frame wrapper, so the
+    // wrapper and the body are one unit and the compiler decides once whether that unit goes
+    // into the caller.  Hinted alike, gcc could take the wrapper into a loop and leave the
+    // body out of line, every argument handed over a second time (stage `pack_instances`
+    // +25 % when a frame lost its fn-ref mark and the wrapper fell under gcc's budget).  A
+    // split body keeps the hint: its parts are not one unit.
+    let body_storage = if parts.is_some() {
+        storage.to_string()
+    } else {
+        always_inline_body(storage)
+    };
+    let _ = writeln!(
+        cx.gen_decls.borrow_mut(),
+        "{body_storage} {} {name}__fr({params});",
+        held(ret)
+    );
+    let whole = format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
+    let text = match parts {
         Some(parts) if split::everywhere() => parts,
         Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),
         None => whole,

@@ -6,7 +6,7 @@
 // interpreter (no fill: the oracle) and the C.
 //
 // @falsified-at: hand-measured (2026-11-10) — the long loop's head sabotaged to skip its
-// first element: l1 answers `4965` for `4970` and l2 `512 0` for `512 1` on `--native-c`.
+// first element: l1 answers `4965 0 0 5 0 1200` for `4970 0 5 5 0 1200` on `--native-c`.
 
 // l1 — integers (8 bytes): 1200 zeros, 3..997 set to 5 — 994 elements, 7952 bytes, from the
 // fourth element: 994 * 5 = 4970; the neighbours 2 and 997 stay 0.
