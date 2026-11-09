@@ -64,6 +64,17 @@ bar: their extra over ship is the cost of the guarantees, which is optimised, no
    `put` into the loop under `@FR-R-Inline` and the op fetch through a held header
    (`@FR-R-Header`'s rebind clause).
 
+## Set aside
+
+- **`lru_mixed`** (bench 23, 2.83× ship, 2.85× checked after the table handle and its removal
+  on the handle's facts).  The rest of its gap is bound to a rule or the store model, not a
+  missing optimisation: the tombstones `(H-Removed)` asks for (≈ 10 %), the chain of dependent
+  loads behind every link read, and the allocator's best-fit search that the tombstone split
+  causes.  Reopened by a change to `(H-Removed)` (generation-checked references), or by a
+  consumer that calls a one-lookup helper in a loop (a handle passed into the callee priced
+  −3.2 %).  Evidence: [`hosts-2026-11-09.md`](hosts-2026-11-09.md) § lru_mixed priced to the
+  end, and set aside.
+
 ## Measuring
 
 - Both compilers, both lanes: `python3 bench/stats.py --lanes rust,c,cship` and again with

@@ -4,7 +4,9 @@ Status: built (a8f1732df and after).  The C backend only; the interpreter and th
 are untouched.  As built, only a hash of LINKED elements takes a handle: an owned element lives
 in an inline table the handle does not cover, and a handle there only added its check (bench 15
 `hash_find` +7 %).  `lru_mixed` 497 → 469 µs pinned (−5.6 %), against the priced −7.7 %; the
-handle's address must not escape the inlined code (see `loft_hash.h`).
+handle's address must not escape the inlined code (see `loft_hash.h`).  The removal through a ready
+handle shifts the probe run on the handle's own facts (`loft_hh_shift_out`): `lru_mixed`
+3.02× → 2.83× ship.
 
 ## What it removes
 

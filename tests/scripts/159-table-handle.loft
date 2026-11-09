@@ -16,6 +16,9 @@
 // keyed-verify mode stops the run, and `LOFT_NO_TABLE_HANDLE=1` answers 250.  Removing only
 // `loft_h_install_table`'s bump, or only the seed writes', changes nothing: a growth installs a
 // new claim, which the slot check sees, and a table's creation also writes its slot width.
+// @falsified-at: hand-measured (2026-11-09) — `loft_hh_shift_out` with the backward shift
+// sabotaged (the hole emptied, nothing moved back): t7 answers `21 14 261` for `20 19 361` on
+// `--native-c` and the C sweep's keyed-verify mode reports a differ.
 
 struct E { k: integer, v: integer }
 struct Box { h: hash<E[k]>, tag: integer }
