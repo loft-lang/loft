@@ -3978,11 +3978,55 @@ fn syn_kind(e: el::El, n: integer) -> text {
   s[0..cut]
 }
 
+// A name that is no local, as a value (`parse_var`'s global arms): an enum's value, a constant,
+// a function; of library `source` for a qualified `lib::name`, else (-1) as a bare name resolves.
+fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) -> Ex {
+  // A plain enum's value: its ordinal under the enum's store type (the attribute's value).
+  d = look(e, source, name);
+  if d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent >= 0 {
+    pd = el::def(e, d).parent;
+    if (el::def(e, pd).returned[0]) == ir::TyEnum { n: pd, is_ref: false, dep: [] } {
+      a = attr_nr(el::def(e, pd), name);
+      if a >= 0 {
+        val = el::def(e, pd).attributes[a]!.value[0];
+        return ex(val, ir::TyEnum { n: pd, is_ref: false, dep: [] });
+      }
+    }
+    if (el::def(e, pd).returned[0]) == ir::TyEnum { n: pd, is_ref: true, dep: [] } {
+      return unit_variant(e, vars, pd, d);
+    }
+  }
+  kind = if d < 0 { "unknown" } else { "definition type {el::def(e, d).def_type}" };
+  // A constant: its value inlined (a scalar's or a text's).
+  if d >= 0 && el::def(e, d).def_type == el::DT_CONSTANT && len(el::def(e, d).code) > 0 {
+    ct = el::def(e, d).returned[0];
+    if el_convert::plain_scalar(ct) || ct is TyText {
+      return ex(el::def(e, d).code[0], ct);
+    }
+  }
+  // A function's name read as a value: its definition number, typed as the function
+  // (`fn_ref_arg_types`); a name bound as a value shadows it.
+  fd = look(e, source, "n_{name}");
+  if fd >= 0 && el::def(e, fd).def_type == el::DT_FUNCTION {
+    return ex(ir::NdInt { n: fd }, el_types::function_value_type(e, fd));
+  }
+  // A name declared below its use (a constant) is unknown on the first pass alone: untyped
+  // there, resolved — or refused — on the second.
+  if e.first_pass && d < 0 {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  el::refuse(e, "a name that is not a variable: {kind}");
+  ex(ir::NdNull, ir::TyUnknown { n: 0 })
+}
+
 // A name as a value: the variable it names (`Parser::parse_var`, the local case).
 fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, into: boolean) -> Ex {
   if member != "" {
-    el::refuse(e, "a qualified name");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    if !el::use_exists(e, name) {
+      el::refuse(e, "a qualified name");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return global_name(e, vars, el::get_source(e, name), member);
   }
   v = el_vars::var(vars, name);
   // A local the lambda being read captures: on the second pass its field of the closure record,
@@ -4005,46 +4049,9 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, int
     }
   }
   if v < 0 {
-    // A plain enum's value: its ordinal under the enum's store type (the attribute's value).
-    d = el::def_nr(e, name);
-    if d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent >= 0 {
-      pd = el::def(e, d).parent;
-      if (el::def(e, pd).returned[0]) == ir::TyEnum { n: pd, is_ref: false, dep: [] } {
-        a = attr_nr(el::def(e, pd), name);
-        if a >= 0 {
-          val = el::def(e, pd).attributes[a]!.value[0];
-          return ex(val, ir::TyEnum { n: pd, is_ref: false, dep: [] });
-        }
-      }
-      if (el::def(e, pd).returned[0]) == ir::TyEnum { n: pd, is_ref: true, dep: [] } {
-        return unit_variant(e, vars, pd, d);
-      }
-    }
-    d2 = el::def_nr(e, name);
-    kind = if d2 < 0 { "unknown" } else { "definition type {el::def(e, d2).def_type}" };
-    // A constant: its value inlined (a scalar's or a text's).
-    if d2 >= 0 && el::def(e, d2).def_type == el::DT_CONSTANT && len(el::def(e, d2).code) > 0 {
-      ct = el::def(e, d2).returned[0];
-      if el_convert::plain_scalar(ct) || ct is TyText {
-        return ex(el::def(e, d2).code[0], ct);
-      }
-    }
-    // A function's name read as a value: its definition number, typed as the function
-    // (`fn_ref_arg_types`); a name bound as a value shadows it.
-    fd = el::def_nr(e, "n_{name}");
-    if fd >= 0 && el::def(e, fd).def_type == el::DT_FUNCTION {
-      return ex(ir::NdInt { n: fd }, el_types::function_value_type(e, fd));
-    }
-    // A name declared below its use (a constant) is unknown on the first pass alone: untyped
-    // there, resolved — or refused — on the second.
-    if e.first_pass && d2 < 0 {
-      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-    }
-    el::refuse(e, "a name that is not a variable: {kind}");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    return global_name(e, vars, -1, name);
   }
-  el_vars::in_use(vars, v, true);
-  // A read of a heap local borrows the local (`depending`); a text keeps its own deps.  A link
+  el_vars::in_use(vars, v, true);  // A read of a heap local borrows the local (`depending`); a text keeps its own deps.  A link
   // to a scalar (`link = &a`) reads as the scalar it names (`@FR-B-Ref-Uniform`); a text link
   // into a store as the text there (`OpGetText(OpVarRef(t), 0)`), borrowing the link.
   t = el_vars::tp(vars, v);
@@ -6276,19 +6283,21 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
 // value its type converts and a literal rebinding a local of another type are refused by name.
 fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   name = "";
+  qual = "";
   fields: vector<integer> = [];
   match e.p.nodes[n] {
     SStructLit { name: sn, member, fields: fs, base } => {
-      if member != "" || base != null {
+      if (member != "" && !el::use_exists(e, sn)) || base != null {
         el::refuse(e, "a qualified struct literal or an update");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       name = sn;
+      qual = member;
       fields = fs;
     },
     _ => {}
   }
-  d = el::def_nr(e, name);
+  d = el::qualified_def(e, name, qual);
   if !literal_def(e, d) {
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -7178,11 +7187,11 @@ fn literal_def(e: el::El, d: integer) -> boolean {
 // second pass built in its own `__ref_p2_N` ("Object", answering the buffer and typed as a
 // record borrowing it); on the first its fields are read and it answers the record's type.
 fn object_expr(e: el::El, vars: el_vars::Vars, name: text, member: text, fields: vector<integer>, base: integer?) -> Ex {
-  if member != "" || base != null {
+  if (member != "" && !el::use_exists(e, name)) || base != null {
     el::refuse(e, "a qualified struct literal or an update");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  d = el::def_nr(e, name);
+  d = el::qualified_def(e, name, member);
   if !literal_def(e, d) {
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -7922,18 +7931,24 @@ fn text_argument_copy(e: el::El, vars: el_vars::Vars, arg: ir::Node) -> ir::Node
 // wrapped in its position: where the lexer stood after the token that follows `(`.
 fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, args: vector<integer>) -> Ex {
   name = "";
+  // A qualified `lib::f(…)` reaches the library's own definitions alone (`Parser::parse_var`'s
+  // `source`, `select_qualified_overload`); -1 for a bare call.
+  source = -1;
   match e.p.nodes[f ?? 0] {
     SName { name: n, member } => {
       if member == "" {
         name = n;
+      } else if el::use_exists(e, n) {
+        name = member;
+        source = el::get_source(e, n);
       }
     },
     _ => {}
   }
-  if name != "" && el_vars::var(vars, name) >= 0 && el_types::base(el_vars::tp(vars, el_vars::var(vars, name))) is TyFunction {
+  if source < 0 && name != "" && el_vars::var(vars, name) >= 0 && el_types::base(el_vars::tp(vars, el_vars::var(vars, name))) is TyFunction {
     return call_ref(e, vars, el_vars::var(vars, name), args);
   }
-  if name == "" || el_vars::var(vars, name) >= 0 {
+  if name == "" || (source < 0 && el_vars::var(vars, name) >= 0) {
     el::refuse(e, "a call that is not of a function by its bare name");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -7955,7 +7970,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   }
   // `parse_call_diagnostic` for the log calls: the message (or an empty one) with the call's
   // file and line, where the program declares no function of that name.
-  if name == "log_info" || name == "log_warn" || name == "log_error" || name == "log_fatal" {
+  if source < 0 && (name == "log_info" || name == "log_warn" || name == "log_error" || name == "log_fatal") {
     ld = el::def_nr(e, "n_{name}");
     if ld >= 0 && el::def(e, ld).source == 0 {
       if e.first_pass {
@@ -7969,10 +7984,10 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
   // `next(g)` advances a generator's handle (`OpCoroutineNext`, typed as its element) and
   // `exhausted(g)` asks whether it is done; a tuple element's advance is not carried.
-  if name == "reserve" {
+  if source < 0 && name == "reserve" {
     return reserve_call(e, list, types);
   }
-  if len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
+  if source < 0 && len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
     step = match el_types::base(first) { TyIterator { step: st } => st, _ => ir::TyVoid };
     if name == "exhausted" {
       return ex(el_ir::cl(e, "OpCoroutineExhausted", [list[0]]), ir::TyBoolean);
@@ -7988,14 +8003,14 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   }
   // `@FR-Disp-Select`: a name that is an overload set reaches the member its argument types
   // select; any other name, the definition `find_fn` resolves.
-  set = el_dispatch::own_set(e, name);
+  set = if source < 0 { el_dispatch::own_set(e, name) } else { el_dispatch::source_set(e, source, name) };
   // A dispatcher a run-time decided call makes is placed where Rust's lexer then stands: past the
   // token after the call's `)`.
-  d = if set >= 0 { el_dispatch::select(e, set, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1)) } else { find_fn(e, name, routed_receiver(first, types)) };
+  d = if set >= 0 { el_dispatch::select(e, set, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1), only: source) } else { find_fn(e, name, routed_receiver(first, types), source) };
   if d < 0 && set >= 0 {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  if d < 0 && name == "size" && len(types) == 1 {
+  if d < 0 && source < 0 && name == "size" && len(types) == 1 {
     sz = size_call(e, list, first);
     if sz != null {
       return sz!;
@@ -8006,7 +8021,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     if e.first_pass || (el_types::is_unknown(first) && len(types) > 0) {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
-    if len(types) == 1 {
+    if source < 0 && len(types) == 1 {
       b = by_receiver_type(e, name, list, first);
       if b != null {
         return b!;
@@ -8961,8 +8976,14 @@ pub fn after_paren(e: el::El, from: integer) -> integer {
 // other, then the free `n_<name>`.  A variant's type is its enum's; a bound holder answers its
 // one stub.  A generic instance, a variant's own method and the operator fallback are refused
 // by name.
-fn find_fn(e: el::El, name: text, receiver: ir::TypeT) -> integer {
-  free = el::def_nr(e, "n_{name}");
+// `Data::source_nr`: `name` of `source`, or for -1 (a bare name) the current source's or the
+// standard library's.
+fn look(e: el::El, source: integer, name: text) -> integer {
+  if source < 0 { el::def_nr(e, name) } else { el::source_nr(e, source, name) }
+}
+
+fn find_fn(e: el::El, name: text, receiver: ir::TypeT, source: integer = -1) -> integer {
+  free = look(e, source, "n_{name}");
   // A method dispatches on the REFERENT of a `&τ`, not on the link (`Data::candidates`, loft#824).
   first = match receiver { TyRefVar { inner } => inner, _ => receiver };
   if el_types::is_unknown(first) || first is TyNull {
@@ -8984,7 +9005,7 @@ fn find_fn(e: el::El, name: text, receiver: ir::TypeT) -> integer {
   // A variant dispatches on its enum, unless it declares the method under its own name.
   if td.def_type == el::DT_ENUM_VALUE {
     for sp in [td.name, "{td.name}?"] {
-      if el::def_nr(e, "t_{len(sp)}{sp}_{name}") >= 0 {
+      if look(e, source, "t_{len(sp)}{sp}_{name}") >= 0 {
         el::refuse(e, "a method a variant declares itself");
         return -1;
       }
@@ -9003,7 +9024,7 @@ fn find_fn(e: el::El, name: text, receiver: ir::TypeT) -> integer {
   if len(td.bounds) > 0 && el_types::type_var(e, ir::TyReference { n: tn, dep: [] }) >= 0 {
     stubs: vector<integer> = [];
     for a in 1..10 {
-      st = el::def_nr(e, bound_stub_name(td.name, name, a));
+      st = look(e, source, bound_stub_name(td.name, name, a));
       if st >= 0 {
         stubs += [st];
       }
@@ -9021,7 +9042,7 @@ fn find_fn(e: el::El, name: text, receiver: ir::TypeT) -> integer {
   optional = "{base}?";
   spellings = if first is TyOptional { [optional, base] } else { [base, optional] };
   for sp in spellings {
-    m = el::def_nr(e, "t_{len(sp)}{sp}_{name}");
+    m = look(e, source, "t_{len(sp)}{sp}_{name}");
     if m >= 0 {
       if receives(e, m, tn) {
         return m;
@@ -16606,6 +16627,13 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   }
   md = el::def_nr(e, "main_vector<{nm}>");
   vk = vector_store(e, t, nm);
+  // `Parser::vector_of`, on either pass: an element whose record already has its store type —
+  // a library's, laid out when that library's file ended — has its `vector<T>` store type made
+  // here, ahead of the `main_vector<T>` wrapper the schema lays out after the pass.
+  ek = match t { TyReference { n } => el::def(e, n).known_type, TyEnum { n } => el::def(e, n).known_type, _ => el_schema::NO_TYPE };
+  if vk < 0 && ek != el_schema::NO_TYPE {
+    vk = el_schema::vector_type(e, ek);
+  }
   if md < 0 || vk < 0 || el::def(e, md).known_type == el_schema::NO_TYPE {
     // Laid out by `fill_all` after the first pass.
     if !e.first_pass {

@@ -43,16 +43,36 @@ def build(loft, src, out, env):
     return exe
 
 
+def lib_dirs(text):
+    """The `--lib` directories of a program's `// @ARGS:` line, absolute."""
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    out = []
+    for line in text.splitlines():
+        if line.startswith("// @ARGS:"):
+            args = line[len("// @ARGS:"):].split()
+            for k, a in enumerate(args[:-1]):
+                if a == "--lib":
+                    out.append(os.path.normpath(os.path.join(root, args[k + 1])))
+    return out
+
+
 def one(loft, defs, elab, std, path, tmp, env, i):
     """(verdict, detail): `agree`, `noimage` (the Rust front end refuses it, or the program
     says it expects a refusal), `differ` (the
     first differing line) or `refused` (the reasons)."""
     img = os.path.join(tmp, f"p{i}.store")
     with open(path, encoding="utf-8", errors="replace") as fh:
-        if "@EXPECT_ERROR" in fh.read():
-            return "noimage", ""
+        text = fh.read()
+    if "@EXPECT_ERROR" in text:
+        return "noimage", ""
+    # The `--lib` directories the program's `@ARGS` line names, as the script runner passes them
+    # (relative to the repository root): to the Rust front end on its command line, to the
+    # elaborator as `LOFT_ELAB_LIB`.
+    libs = lib_dirs(text)
+    lib_args = [a for d in libs for a in ("--lib", d)]
+    env = dict(env, LOFT_ELAB_LIB=":".join(libs))
     try:
-        r = subprocess.run([loft, path], env=dict(env, LOFT_EMIT_PARSED=img),
+        r = subprocess.run([loft] + lib_args + [path], env=dict(env, LOFT_EMIT_PARSED=img),
                            capture_output=True, timeout=180)
         if r.returncode != 0 or not os.path.exists(img):
             return "noimage", ""
