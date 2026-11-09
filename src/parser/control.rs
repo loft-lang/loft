@@ -6926,7 +6926,7 @@ impl Parser {
                 // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
                 result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
                 self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-                if Self::match_result_unsettled(&result_type) {
+                if Self::arm_settles_match(&result_type, &arm_type) {
                     result_type = arm_type.clone();
                 } else if let Some(joined) =
                     self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
@@ -7602,7 +7602,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
             self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-            if Self::match_result_unsettled(&result_type) {
+            if Self::arm_settles_match(&result_type, &arm_type) {
                 result_type = arm_type.clone();
             } else if let Some(joined) =
                 self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
@@ -8116,6 +8116,19 @@ impl Parser {
     /// a diverging arm answers no value, and a `Void` result is either the initial value or a
     /// statement `match` whose arms yield nothing — the same "expect nothing" an `else if`
     /// chain passes down for a `Void` then arm.
+    /// Does this arm's type become the match's result?  Only where no arm has settled it
+    /// (`match_result_unsettled`), and never by a diverging arm over a type an earlier arm
+    /// gave: a `Never` arm converts to the result (`@FR-C-Never`), it does not decide it
+    /// (loft#2444).  An arm the first pass could not type yet (`Unknown`) or a `null` arm
+    /// keeps the result, so `bl = match c { V { b } => b[0], _ => { return; } }` types `bl`
+    /// by the first arm on both passes.  The `Void` a match starts from is no arm's type: a `Never` arm still
+    /// settles it, so a match whose every arm diverges is `Never`.
+    fn arm_settles_match(result_type: &Type, arm_type: &Type) -> bool {
+        Self::match_result_unsettled(result_type)
+            && !(matches!(arm_type.base(), Type::Never)
+                && matches!(result_type.base(), Type::Unknown(_) | Type::Null))
+    }
+
     fn match_result_unsettled(result_type: &Type) -> bool {
         // `Unknown`: an arm the first pass could not type yet — a bare variant two enums own
         // (@C157) — so the arms after it settle the match, as an `if`'s else arm settles it.
@@ -8174,7 +8187,7 @@ impl Parser {
         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
         *result_type = joined;
         self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-        if Self::match_result_unsettled(result_type) {
+        if Self::arm_settles_match(result_type, &arm_type) {
             *result_type = arm_type.clone();
         } else if let Some(joined) =
             self.join_null_tuple_arm(&result_type.clone(), &mut arm_code, &mut arm_type)
@@ -8458,7 +8471,7 @@ impl Parser {
         let arm_expected = self.match_arm_expected(result_type);
         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
         let block = v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match");
-        if Self::match_result_unsettled(result_type) {
+        if Self::arm_settles_match(result_type, &arm_type) {
             *result_type = arm_type.clone();
         }
         let and_all = |conds: Vec<Value>| {
@@ -12260,7 +12273,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-            if Self::match_result_unsettled(&result_type) {
+            if Self::arm_settles_match(&result_type, &arm_type) {
                 result_type = arm_type.clone();
             } else if let Some(joined) =
                 self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
@@ -13526,7 +13539,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-            if Self::match_result_unsettled(&result_type) {
+            if Self::arm_settles_match(&result_type, &arm_type) {
                 result_type = arm_type.clone();
             } else if let Some(joined) =
                 self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
@@ -14866,7 +14879,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
             self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-            if Self::match_result_unsettled(&result_type) {
+            if Self::arm_settles_match(&result_type, &arm_type) {
                 result_type = arm_type.clone();
             } else if let Some(joined) =
                 self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
