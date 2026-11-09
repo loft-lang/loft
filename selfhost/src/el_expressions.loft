@@ -9277,7 +9277,7 @@ fn re_resolve_stub(e: el::El, d: integer, h: integer, bound: ir::TypeT) -> integ
   -1
 }
 
-struct Binding { vars: vector<integer>, types: vector<ir::TypeT>, ok: boolean }
+pub struct Binding { vars: vector<integer>, types: vector<ir::TypeT>, ok: boolean }
 
 // Each type variable of `p` bound to the part of `a` it stands for, in the order the variables
 // first appear; a second meeting must agree, and a shape the two do not share fails the bind.
@@ -9325,7 +9325,7 @@ fn generic_instance(e: el::El, d: integer, types: vector<ir::TypeT>) -> integer 
 
 // What the template's variables bind to at a call with these argument types (`bind_template`),
 // or null where a variable is met by no argument or two meet it differently.
-fn template_binding(e: el::El, d: integer, types: vector<ir::TypeT>) -> Binding? {
+pub fn template_binding(e: el::El, d: integer, types: vector<ir::TypeT>) -> Binding? {
   b = Binding { vars: [], types: [], ok: true };
   for a in el::def(e, d).attributes {
     if a#index < len(types) {
