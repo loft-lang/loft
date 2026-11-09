@@ -64,6 +64,17 @@ python3 bench/stats.py --lanes rust,c,cship --no-local \
 number, and neither is a number from another host: the machine is part of every row, and the
 Rust twin itself runs at a different speed on each, which moves every ratio.
 
+Before a full run, `bash bench/portal/checkout_libs.sh --status` must show every library
+checkout on the branch `libs.tsv` names and 0 behind it.  The script never switches a branch
+itself, and a checkout left on another branch measures another version of the library: the
+rows look normal and are not comparable.
+
+Matching hashes vouch for the shapes the benches hold, not for a rewrite's correctness.  The
+population holds few routines that rebuild recursive structures (`21_tree`, `22_expr`, the
+`markdown` and `html` libraries' trees); a rewrite over such structures — an in-place literal
+rebuild, a rebind through a view — is checked by its language-suite cells and by the loft-in-loft
+elaborator (@PLN91), the workload that rebuilds tree nodes in place on every pass.
+
 ## Where the numbers are
 
 A number written into prose is stale the moment it is committed, so this doc carries none.
