@@ -209,46 +209,27 @@ static inline int loft_mul_ovf_c99(int64_t a, int64_t b, int64_t *r) {
 /* `n` copies of an 8-, 4- or 2-byte value written from `dst`, at any alignment
  * (`@FR-R-Fill`, a vector grown by a run of one value).  Through a typed, unaligned, aliasing
  * pointer where the compiler offers one: gcc and clang vectorise that loop, and leave a loop
- * of one `memcpy` per element scalar (a 1280x720 clear ran four times as long).  The elements
- * before the first 64-byte boundary are written one by one, so the vector stores of the loop
- * never straddle a cache line (clang: 1.4x the time on an 8-mod-16 start); and gcc, which
- * vectorises the loop to one 16-byte store per trip, unrolls it (a 1920x1080 canvas fill: 3.7x
- * -> 2.3x its Rust twin).  Elsewhere a doubling `memcpy`: the first copy, then the written
- * prefix copied onto what follows it. */
+ * of one `memcpy` per element scalar (a 1280x720 clear ran four times as long).  One plain
+ * loop, no head to a cache-line boundary and no unrolling: most fills are a row's span, a few
+ * to a few hundred elements, and there both cost more than they save (a polygon's spans 26 %
+ * under gcc, 28 % under clang; a whole-canvas fill gains at most 6 % from them, clang only).
+ * Elsewhere a doubling `memcpy`: the first copy, then the written prefix copied onto what
+ * follows it. */
 #if !defined(LOFT_STRICT) && (defined(__GNUC__) || defined(__clang__))
 typedef uint64_t loft_u64u __attribute__((aligned(1), may_alias));
 typedef uint32_t loft_u32u __attribute__((aligned(1), may_alias));
 typedef uint16_t loft_u16u __attribute__((aligned(1), may_alias));
-/* The elements of width 1 << `shift` from `dst` up to its next 64-byte boundary. */
-#define LOFT_FILL_HEAD(dst, shift) ((((size_t) 64 - ((uintptr_t) (dst) & 63)) & 63) >> (shift))
-#if defined(__clang__)
-#define LOFT_FILL_UNROLL
-#else
-#define LOFT_FILL_UNROLL _Pragma("GCC unroll 4")
-#endif
 static inline void loft_fill8(uint8_t *dst, uint64_t v, size_t n) {
     loft_u64u *p = (loft_u64u *) (void *) dst;
-    size_t i = 0, head = LOFT_FILL_HEAD(dst, 3);
-    if (head > n) head = n;
-    for (; i < head; i++) p[i] = v;
-    LOFT_FILL_UNROLL
-    for (; i < n; i++) p[i] = v;
+    for (size_t i = 0; i < n; i++) p[i] = v;
 }
 static inline void loft_fill4(uint8_t *dst, uint32_t v, size_t n) {
     loft_u32u *p = (loft_u32u *) (void *) dst;
-    size_t i = 0, head = LOFT_FILL_HEAD(dst, 2);
-    if (head > n) head = n;
-    for (; i < head; i++) p[i] = v;
-    LOFT_FILL_UNROLL
-    for (; i < n; i++) p[i] = v;
+    for (size_t i = 0; i < n; i++) p[i] = v;
 }
 static inline void loft_fill2(uint8_t *dst, uint16_t v, size_t n) {
     loft_u16u *p = (loft_u16u *) (void *) dst;
-    size_t i = 0, head = LOFT_FILL_HEAD(dst, 1);
-    if (head > n) head = n;
-    for (; i < head; i++) p[i] = v;
-    LOFT_FILL_UNROLL
-    for (; i < n; i++) p[i] = v;
+    for (size_t i = 0; i < n; i++) p[i] = v;
 }
 #else
 static void loft_fill_doubling(uint8_t *dst, const void *v, size_t w, size_t n) {
