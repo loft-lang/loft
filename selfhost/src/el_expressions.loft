@@ -3701,7 +3701,7 @@ fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     }
     // A struct literal member is the record it builds in a work ref of its own; the member is
     // typed as the bare record (`(T-Cons)` names no store).
-    if struct_literal_def(e, n) >= 0 && el_types::unrewritten(x.tp) is TyReference {
+    if (struct_literal_def(e, n) >= 0 || variant_literal(e, n)) && el_types::unrewritten(x.tp) is TyReference {
       items += [x.code];
       tps += [el_types::without_deps(el_types::unrewritten(x.tp))];
       continue;
@@ -6982,8 +6982,25 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
             _ => {}
           }
           if vd < 0 || el::def(e, vd).def_type != el::DT_ENUM_VALUE || el::def(e, vd).parent != sed {
-            el::refuse(e, "a struct-enum field given something other than a variant literal");
-            return null;
+            // Any other value: the field's tag zeroed, then a value of the enum copied into the
+            // inline record (`OpCopyRecord` under the enum's store type) — or, for `null`, the tag
+            // zeroed again, the enum's null.
+            x = expression(e, vars, fe!);
+            if el_types::is_unknown(x.tp) {
+              return null;
+            }
+            pos = ir::NdInt { n: field_position(e, d, fname) };
+            kt = ir::NdInt { n: el::def(e, sed).known_type };
+            if x.tp is TyNull {
+              list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }])];
+            } else if struct_enum_of(e, el_types::base(x.tp)) == sed {
+              list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpCopyRecord", [x.code, el_ir::cl(e, "OpGetField", [r, pos, kt]), kt])];
+            } else {
+              refuse_known(e, x.tp, "a struct-enum field given a value of this type: {type_kind(x.tp)}");
+              return null;
+            }
+            found += [fname];
+            continue;
           }
           pos = ir::NdInt { n: field_position(e, d, fname) };
           list += [el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdInt { n: 0 }])];
@@ -12147,6 +12164,50 @@ fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   ex(el_ir::v_block([el_ir::v_set(held, x.code), test], rt, "ncc"), rt)
 }
 
+// `build_null_coalesce` for a struct enum: a local is tested where it stands; a call is held in
+// `__ncc_N` — never freed, the result borrowing it — and the "ncc" block answers it where its tag
+// is not null (`enum_null_test`: no record, or ordinal 0) and the default where it is.  The
+// default is the enum or one of its variants; any other is refused by name.
+fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
+  lhs = el_types::base(x.tp);
+  en = match lhs { TyEnum { n } => n, _ => -1 };
+  db = el_types::base(d.tp);
+  fits = match db { TyEnum { n } => n == en, TyReference { n } => el::def(e, n).def_type == el::DT_ENUM_VALUE && el::def(e, n).parent == en, _ => false };
+  if !fits {
+    refuse_known(e, d.tp, "a `??` on a struct enum with a default of another type: {type_kind(d.tp)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if x.code is NdVar {
+    if e.first_pass {
+      return ex(ir::NdNull, el_types::without_deps(lhs));
+    }
+    t = enum_null_test(e, vars, x.code, lhs);
+    if t == null {
+      el::refuse(e, "a `??` on a struct enum this port has no null test for");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(el_ir::v_if(el_ir::cl(e, "OpNot", [t!]), x.code, d.code), el_types::without_deps(lhs));
+  }
+  if !match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), _ => false } {
+    el::refuse(e, "a struct-enum `??` on something other than a local or a loft call: {node_kind(e, x.code)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  held = el_vars::create_unique(vars, "_ncc", el_types::without_deps(lhs));
+  vars.vars[held].skip_free = true;
+  el_vars::register_work_ref(vars, held);
+  rt = el_types::with_deps(el_types::without_deps(lhs), [held]);
+  if e.first_pass {
+    return ex(ir::NdNull, rt);
+  }
+  h = ir::NdVar { n: held };
+  t = enum_null_test(e, vars, h, lhs);
+  if t == null {
+    el::refuse(e, "a `??` on a struct enum this port has no null test for");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(el_ir::cl(e, "OpNot", [t!]), h, d.code)], rt, "ncc"), rt)
+}
+
 // An `if` whose last else arm is a call answering a record in a hidden buffer.
 fn chain_ends_in_call(vars: el_vars::Vars, n: ir::Node) -> boolean {
   match n {
@@ -12296,6 +12357,9 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   }
   if lhs is TyReference {
     return record_coalesce(e, vars, x, d);
+  }
+  if match lhs { TyEnum { is_ref } => is_ref, _ => false } {
+    return enum_coalesce(e, vars, x, d);
   }
   // `coalesce_not_null`'s collection arm (`OpVectorIsNull`) over a vector local: the local where
   // it is present, the default where it is not — a bind sinks into that `if`'s arms
@@ -13650,7 +13714,9 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     jt = el_types::with_deps(t.tp, deps);
     joined = el_ir::v_if(c.code, arm_typed(t.code, td), arm_typed(f.code, fd));
-    if !e.first_pass && len(deps) > 0 {
+    // `own_joined_call_arms` gives the arms a home only where the join is a `Reference`: a
+    // struct-enum join (`Type::Enum`) keeps its call arms as they are.
+    if !e.first_pass && len(deps) > 0 && el_types::base(jt) is TyReference {
       joined = own_join_arm(e, vars, joined, jt);
     }
     return ex(joined, jt);
@@ -13674,6 +13740,17 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
       el::refuse(e, "a vector `if` an arm of which answers a variable");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
+    ds = el_types::deps(t.tp);
+    for x in el_types::deps(f.tp) {
+      if !ds.contains(x) {
+        ds += [x];
+      }
+    }
+    return ex(el_ir::v_if(c.code, t.code, f.code), el_types::with_deps(t.tp, ds));
+  }
+  // `merge_dependencies` (`joined_deps`) for a function value: the `if` borrows the closure
+  // records either arm's function carries.
+  if el_types::base(t.tp) is TyFunction {
     ds = el_types::deps(t.tp);
     for x in el_types::deps(f.tp) {
       if !ds.contains(x) {
@@ -16010,7 +16087,10 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         if b.tp is TyNull || (!e.first_pass && el_ir::is_null(b.code)) {
           null_arm = true;
         }
-        if unsettled(result) {
+        if !unsettled(result) && sibling_variants(e, b.tp, result) && !el_types::is_equal(e, el_types::base(b.tp), el_types::base(result)) {
+          // Two variants of one enum join to the enum, borrowing nothing (`@FR-C-Var`).
+          result = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: [] };
+        } else if unsettled(result) {
           // An arm's dep on a store it mints itself (a literal's work ref) is no borrow of the
           // join (`arm_join_type`).
           result = if el_types::base(b.tp) is TyReference { el_types::with_deps(b.tp, outside_deps(b.code, el_types::deps(b.tp))) } else { b.tp };
@@ -16110,7 +16190,9 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
     }
   }
   chain = ir::NdNull;
-  if !(rbase is TyVoid) && !(rbase is TyNull) {
+  // The result's null is the fallback only where no arm always matches (`has_wildcard`).
+  ends_wild = len(out) > 0 && out[len(out) - 1]!.cond == null;
+  if !ends_wild && !(rbase is TyVoid) && !(rbase is TyNull) {
     fb = el_convert::null_of(e, rbase);
     if fb == null {
       el::refuse(e, "a match whose result has no null: {type_kind(result)}");
@@ -16272,6 +16354,12 @@ fn own_match_arms(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
 
 // The struct enum a match subject of type `t` reads its variant from — the enum, or the enum a
 // variant record belongs to — or -1.
+// Are `a` and `b` both of one struct enum — each the enum or one of its variants?
+fn sibling_variants(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
+  ea = struct_enum_of(e, el_types::base(a));
+  ea >= 0 && ea == struct_enum_of(e, el_types::base(b))
+}
+
 fn struct_enum_of(e: el::El, t: ir::TypeT) -> integer {
   match t {
     TyEnum { n, is_ref } => if is_ref { n } else { -1 },
@@ -16896,6 +16984,12 @@ fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::TypeT)
     return lifted!;
   }
   if e.first_pass || el_types::is_unknown(expected) || x.tp is TyVoid || x.tp is TyNull || x.tp is TyNever {
+    return x;
+  }
+  // `@FR-C-Var` — an arm that is a variant of the enum the expected type is (or a sibling variant
+  // of it) is no conversion question: it keeps its own type, and the match joins the arms to
+  // their enum (`arm_joins_to_enum`).
+  if sibling_variants(e, x.tp, expected) {
     return x;
   }
   c = el_convert::convert_admitting(e, vars, x.code, x.tp, expected);
@@ -17792,6 +17886,18 @@ pub struct Built {
 }
 
 // The struct a plain struct literal names, or -1.
+// A literal of a struct enum's variant (`DIce { n: 8 }`): the record it builds, as a struct
+// literal's is.
+fn variant_literal(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SStructLit { name, member, base } => {
+      d = if member == "" && base == null { el::def_nr(e, name) } else { -1 };
+      d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE
+    },
+    _ => false
+  }
+}
+
 fn struct_literal_def(e: el::El, n: integer) -> integer {
   match e.p.nodes[n] {
     SStructLit { name, member, base } => {

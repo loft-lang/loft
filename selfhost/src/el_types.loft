@@ -652,7 +652,7 @@ pub fn tuple_spelling(elems: vector<ir::TypeT>, sep: text) -> text {
 // every file shares it, its members not-null, its one Tuple field group covering them all.
 // The existing definition where the shape has one; -1 for a member this port does not carry.
 pub fn tuple_def(e: el::El, elems: vector<ir::TypeT>, pos: ir::Position) -> integer {
-  sp = tuple_spelling(elems, ",");
+  sp = tuple_shape(e, elems);
   if sp == "" {
     return -1;
   }
@@ -668,25 +668,50 @@ pub fn tuple_def(e: el::El, elems: vector<ir::TypeT>, pos: ir::Position) -> inte
   size = 0;
   align = 1;
   for t in elems {
-    a = el::attribute("_{t#index}", t);
+    // `tuple_member_stored`: a member is stored without the borrow its value carried.
+    a = el::attribute("_{t#index}", without_deps(t));
     a.nullable = false;
     e.b.data.definitions[d].attributes += [a];
     idx += [t#index];
+    // `group_size`: each member at its alignment, then its size (`element_stack_size` /
+    // `element_stack_align`; a struct enum is one `DbRef`, 12 bytes at 4).
     w = tuple_member_width(t);
-    // Each member at its natural alignment (`LinkedFieldGroup::group_size`); `w` is never 0.
-    q = (size + w - 1) / w;
-    size = (q ?? 0) * w + w;
-    if w > align {
-      align = w;
+    ma = if is_struct_enum(t) { 4 } else { w };
+    ms = if is_struct_enum(t) { 12 } else { w };
+    rem = (size % ma) ?? 0;
+    if rem != 0 {
+      size += ma - rem;
+    }
+    size += ms;
+    if ma > align {
+      align = ma;
     }
   }
   e.b.data.definitions[d].field_groups += [ir::LinkedFieldGroup { kind: 0, instance: 0, field_indices: idx, alignment: align, size: size }];
   d
 }
 
+fn is_struct_enum(t: ir::TypeT) -> boolean {
+  match t { TyEnum { is_ref } => is_ref, _ => false }
+}
+
+// `Data::tuple_def`'s name parts: each member as `Type::name` writes it — the carried scalars and
+// texts as `tuple_member` spells them, a struct enum by its own name.  "" for any other member.
+fn tuple_shape(e: el::El, elems: vector<ir::TypeT>) -> text {
+  r = "";
+  for t in elems {
+    m = match t { TyEnum { n, is_ref } => if is_ref { el::def(e, n).name } else { "" }, _ => tuple_member(t) };
+    if m == "" {
+      return "";
+    }
+    r = if t#index == 0 { m } else { "{r},{m}" };
+  }
+  r
+}
+
 // The definition a tuple type is stored as, or -1 where none is made yet.
 pub fn tuple_def_of(e: el::El, elems: vector<ir::TypeT>) -> integer {
-  sp = tuple_spelling(elems, ",");
+  sp = tuple_shape(e, elems);
   if sp == "" { -1 } else { el::def_nr(e, "__tuple<{sp}>") }
 }
 

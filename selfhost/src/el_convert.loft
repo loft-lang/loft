@@ -630,6 +630,28 @@ pub fn convert_store(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::Ty
     },
     _ => {}
   }
+  // `@FR-C-Tuple` over `@FR-C-Var`: a tuple whose every member is the slot's own type or a variant
+  // of the slot's enum is stored as it is — no member needs converting code.  A member that would
+  // (a numeric widening) is not carried here.
+  match should {
+    TyTuple { elems: want } => {
+      have = match src { TyTuple { elems: h } => h, _ => [] };
+      if len(have) == len(want) && len(want) > 0 {
+        as_is = true;
+        for w in want {
+          hm = have[w#index]!;
+          variant = match w { TyEnum { n: en, is_ref } => is_ref && match el_types::base(hm) { TyReference { n: vd } => el::def(e, vd).def_type == el::DT_ENUM_VALUE && el::def(e, vd).parent == en, _ => false }, _ => false };
+          if !variant && !el_types::is_equal(e, hm, w) {
+            as_is = false;
+          }
+        }
+        if as_is {
+          return code;
+        }
+      }
+    },
+    _ => {}
+  }
   // `@FR-N-Store`: a nullable value into a non-null slot is reported (a warning, beside the
   // program) and stored as its base.
   match src {
