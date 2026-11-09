@@ -194,7 +194,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Counter)` | `R-Counter` ir, c, native |
 | `(R-CtorLiteral)` | `R-CtorLiteral` parse |
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
-| `(R-DecodeView)` | `R-DecodeView` native · `/structure` native |
+| `(R-DecodeView)` | counted; admitted on no bench program |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
 | `(R-Demote)` | `R-Demote` parse · `/place` parse |
 | `(R-Destination)` | `R-Destination` c, native |
@@ -222,7 +222,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-FrameHeadroom)` | not counted — executor: one capacity test per frame entry |
 | `(R-Fuse)` | `R-Fuse` interp · `/field` interp · `/jump` interp · `/tag` interp · `/text` interp |
 | `(R-GroupPush)` | `R-GroupPush` native |
-| `(R-GuardFree)` | `R-GuardFree` native |
+| `(R-GuardFree)` | `R-GuardFree` c, native |
 | `(R-GuardedChain)` | `R-GuardedChain` c, native · `/operators` c, native · `/versions` c |
 | `(R-HandOver)` | `/rotate` c, native |
 | `(R-Header)` | `R-Header` c, native · `/apart` c, native · `/apart-param` c, native · `/function` native · `/grown` c · `/grown-held` c · `/kept` native · `/kept-growth` c · `/kept-twin` c, native · `/narrow` c · `/rebind` c · `/text` c, native |
@@ -289,7 +289,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SingleUse)` | `R-SingleUse` parse |
 | `(R-SliceArg)` | `/range` ir |
 | `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
-| `(R-SliceInto)` | `R-SliceInto` c |
+| `(R-SliceInto)` | `R-SliceInto` c · `/transient` c |
 | `(R-SpecChain)` | `R-SpecChain` c |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
@@ -303,7 +303,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-TextBorrow)` | `R-TextBorrow` interp, c, native · `/tested` c, native |
 | `(R-TextClear)` | `R-TextClear` native |
 | `(R-TextLen)` | `R-TextLen` parse |
-| `(R-TextRun)` | `R-TextRun` ir |
+| `(R-TextRun)` | counted; admitted on no bench program |
 | `(R-Transient)` | `R-Transient` c |
 | `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/remove` c · `/text` c, native |
 | `(R-TypedRead)` | `R-TypedRead` c, native · `/float` c |
