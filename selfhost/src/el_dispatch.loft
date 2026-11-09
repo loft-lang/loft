@@ -596,13 +596,8 @@ const ORD_NONE = 2;
 // `T`) and the BOUND-SET order (a strict superset admits fewer) must agree; where one says fewer
 // and the other more, or either says neither, the pair is not ordered.
 fn generic_position_order(e: el::El, a: integer, b: integer, i: integer) -> integer {
-  // The vectors are held in locals: read straight off the call, the interpreter answered an
-  // element of the second one from a pooled result buffer a caller had already freed (loft#2443,
-  // the work-buffer half; `LOFT_NO_WORK_BUFFER=1` cures it).
-  params_a = visible_params(e, a);
-  params_b = visible_params(e, b);
-  pa = params_a[i];
-  pb = params_b[i];
+  pa = visible_params(e, a)[i];
+  pb = visible_params(e, b)[i];
   if pa == null || pb == null {
     return ORD_NONE;
   }

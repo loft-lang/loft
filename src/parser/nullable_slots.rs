@@ -339,6 +339,13 @@ impl Parser {
             return false;
         }
         self.vars.mark_inline_ref(named);
+        // A PROJECTION base (`f()[i]`, an element read) is a view into its container's store,
+        // never a delivered record: the name borrows it, and freeing it released the
+        // container — a double free of a vector the frame owns, and the caller's own store
+        // where the container was a buffer it lent (loft#2443; `Own::Borrowed`).
+        if self.data.op_sets().projections.contains(call_d) {
+            self.vars.set_skip_free(named);
+        }
         let mut slot_args = args.clone();
         slot_args[0] = Value::Var(named);
         let slot = Value::Call(get_d, slot_args);
