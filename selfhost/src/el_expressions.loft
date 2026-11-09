@@ -2971,10 +2971,12 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
         if se == null {
           continue;
         }
+        x = expression(e, vars, se ?? 0);
+        // `store_else` (below) ports `parse_store_else`; wiring it here exposes loft#2443 (a lazily
+        // minted buffer leaves `expression`'s record buffer null): held back until that is fixed.
         if orelse != null {
           el::refuse(e, "a store's `else` block");
         }
-        x = expression(e, vars, se ?? 0);
         t = x.tp;
         statement_proofs(e, vars, x.code);
         // `@FR-E-Uncomp-Seen`: a compound step into a dense narrow local (its guard's default a
@@ -5063,7 +5065,12 @@ fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, r
       NdCall { args } => len(args) > 0 && !(el_ir::unspan(args[0]) is NdCall && calls(e, el_ir::unspan(args[0]), "OpGetVector")) && !calls(e, cplace, "OpGetVector"),
       _ => false
     };
-    held = pt is TyOptional && cfield;
+    // The place is `τ?` because the FIELD is declared so — not because its receiver may be
+    // absent (a nullable pointer, `OpGetDbRef`, or a nullable local), where the field itself is
+    // dense and takes its dense default.
+    recv = match cplace { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
+    nullable_receiver = calls(e, recv, "OpGetDbRef") || match recv { NdVar { n } => el_vars::tp(vars, n) is TyOptional, _ => false };
+    held = pt is TyOptional && cfield && !nullable_receiver;
     g = el_convert::guard_compound(e, x.code, if held { pt } else { el_types::base(pt) }, held);
     cw = place_write(e, cplace, g);
     if cw == null {
@@ -8235,6 +8242,224 @@ fn reserve_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> 
     return ex(ir::NdNull, ir::TyVoid);
   }
   ex(el_ir::cl(e, "OpReserveVector", [list[0]!, list[1]!, ir::NdInt { n: stride }]), ir::TyVoid)
+}
+
+// `Parser::parse_store_else`, `place = value else { B }` (`@FR-H-Write-Else`): B runs exactly when
+// the write did not take.  The arm is read first, then the statement's steps are rewritten: a
+// write whose PLACE may be missing (an element past the end, a locked store) goes through
+// `_store_target_N`, taken over by the reported null where the place is absent or locked; a
+// narrow integer write whose VALUE may not fit is computed into `_store_value_N`, its range
+// guard reading that.  A statement that writes no place is refused by name (Rust reports it).
+fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: integer) -> ir::Node {
+  arm = parse_block(e, vars, orelse, "else", ir::TyVoid).code;
+  steps = match code { NdInsert { items } => items, _ => [code] };
+  // `store_shape`: the one place every write names, and the narrow write's range.
+  target = ir::NdNull;
+  has_target = false;
+  write_steps: vector<integer> = [];
+  write_args: vector<integer> = [];
+  for st in steps {
+    match el_ir::unspan(st) {
+      NdCall { def_nr, args } => {
+        arg = write_target_arg(el::def(e, def_nr).name);
+        if arg >= 0 && arg < len(args) {
+          t = el_ir::unspan(args[arg]!);
+          if has_target && t != target {
+            el::refuse(e, "a store `else` over writes to two places");
+            return code;
+          }
+          target = t;
+          has_target = true;
+          write_steps += [st#index];
+          write_args += [arg];
+        }
+      },
+      _ => {}
+    }
+  }
+  narrow_at = -1;
+  lo = 0;
+  hi = 0;
+  for st in steps {
+    r = range_default_bounds(st);
+    if narrow_at < 0 && r != null {
+      narrow_at = st#index;
+      lo = r!.lo;
+      hi = r!.hi;
+    }
+  }
+  if !has_target {
+    last = ir::NdNull;
+    for st in steps {
+      if !el_ir::is_line(st) {
+        last = el_ir::unspan(st);
+      }
+    }
+    if !(last is NdSet) && !(last is NdTuplePut) {
+      if !e.first_pass {
+        el::refuse(e, "a store `else` after a statement that writes no place");
+      }
+      return code;
+    }
+  }
+  if e.first_pass {
+    return code;
+  }
+  // The groups put in front of a step: (step, order, statements); the target's first.
+  pre_at: vector<integer> = [];
+  pre_ops: vector<vector<ir::Node>> = [];
+  absent = ir::NdNull;
+  if has_target {
+    tp = match target { NdVar { n } => el_vars::tp(vars, n), NdCall { def_nr } => el::def(e, def_nr).returned[0] ?? ir::TyVoid, _ => ir::TyVoid };
+    wt = el_vars::create_unique(vars, "store_target", tp);
+    el_vars::set_defined(vars, wt);
+    vars.vars[wt].skip_free = true;
+    src = borrow_source(target);
+    if src >= 0 {
+      el_vars::set_var_type(vars, wt, el_types::with_deps(tp, [src]));
+    }
+    for w in write_steps {
+      steps[w] = with_arg(steps[w]!, write_args[w#index]!, ir::NdVar { n: wt });
+    }
+    present = el_ir::cl(e, "OpConvBoolFromRef", [ir::NdVar { n: wt }]);
+    take_over = el_ir::v_if(el_ir::cl(e, "OpNot", [present]), ir::NdBoolean { b: true }, el_ir::cl(e, "n_get_store_lock", [ir::NdVar { n: wt }]));
+    rd = match el_types::base(tp) { TyReference { n } => n, TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
+    bound = if target is NdVar && rd >= 0 { el_ir::cl(e, "OpGetField", [target, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, rd).known_type }]) } else { target };
+    pre_at += [write_steps[0]!];
+    pre_ops += [[el_ir::v_set(wt, bound), el_ir::v_if(take_over, el_ir::v_set(wt, el_ir::cl(e, "OpNullReported", [])), ir::NdNull)]];
+    absent = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [ir::NdVar { n: wt }])]);
+  }
+  misfit = ir::NdNull;
+  if narrow_at >= 0 {
+    fv = el_vars::create_unique(vars, "store_value", ir::TyOptional { inner: ir::TyInteger { spec: wide_spec() } });
+    el_vars::set_defined(vars, fv);
+    tk = take_range_operand(steps[narrow_at]!, ir::NdVar { n: fv });
+    if tk.taken != null {
+      steps[narrow_at] = tk.node;
+      pre_at += [narrow_at];
+      pre_ops += [[el_ir::v_set(fv, tk.taken!)]];
+      below = el_ir::cl(e, "OpLtInt", [ir::NdVar { n: fv }, ir::NdLong { n: lo }]);
+      above = el_ir::cl(e, "OpLtInt", [ir::NdLong { n: hi }, ir::NdVar { n: fv }]);
+      missing = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: fv }])]);
+      misfit = el_ir::v_if(missing, ir::NdBoolean { b: true }, el_ir::v_if(below, ir::NdBoolean { b: true }, above));
+    }
+  }
+  // Each group goes in front of its step, the target's before the value's at one step.
+  out: vector<ir::Node> = [];
+  for st in steps {
+    for g in pre_at {
+      if g == st#index {
+        out += pre_ops[g#index] ?? [];
+      }
+    }
+    out += [st];
+  }
+  failed = if absent is NdNull { misfit } else if misfit is NdNull { absent } else { el_ir::v_if(absent, ir::NdBoolean { b: true }, misfit) };
+  if !(failed is NdNull) {
+    out += [el_ir::v_if(failed, arm, ir::NdNull)];
+  }
+  ir::NdInsert { items: out }
+}
+
+// `write_target_arg`: which argument of a write op names the place it writes, or -1.
+fn write_target_arg(name: text) -> integer {
+  if name == "OpCopyRecord" {
+    return 1;
+  }
+  if starts_with(name, "OpSet") && name != "OpSetStackRef" && name != "OpSetStackFnRef" && name != "OpSetKeyed" {
+    return 0;
+  }
+  -1
+}
+
+// `store_borrow_source`: the variable a place is read out of, or -1.
+fn borrow_source(n: ir::Node) -> integer {
+  at = el_ir::unspan(n);
+  while !(at is NdVar) {
+    match at {
+      NdCall { args } => {
+        if len(args) == 0 {
+          return -1;
+        }
+        at = el_ir::unspan(args[0]!);
+      },
+      _ => { return -1; }
+    }
+  }
+  match at { NdVar { n: v } => v, _ => -1 }
+}
+
+// A step with its write op's argument `i` replaced.
+fn with_arg(st: ir::Node, i: integer, by: ir::Node) -> ir::Node {
+  match st {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_arg(inner, i, by) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == i { by } else { a } }] },
+    _ => st
+  }
+}
+
+pub struct GuardRange {
+  pub lo: integer,
+  pub hi: integer
+}
+
+// `find_range_default`: the bounds of the first range guard (`OpRangeDefault(v, lo, hi, d)`) in
+// a step, or null.
+fn range_default_bounds(n: ir::Node) -> GuardRange? {
+  match n {
+    NdSpan { inner } => range_default_bounds(inner),
+    NdSet { inner } => range_default_bounds(inner),
+    NdCall { args } => {
+      if len(args) == 4 {
+        lo = match args[1]! { NdLong { n: l } => l, _ => null };
+        hi = match args[2]! { NdLong { n: h } => h, _ => null };
+        if lo != null && hi != null {
+          return GuardRange { lo: lo!, hi: hi! };
+        }
+      }
+      for a in args {
+        r = range_default_bounds(a);
+        if r != null {
+          return r;
+        }
+      }
+      null
+    },
+    _ => null
+  }
+}
+
+// A step with its first range guard's operand replaced, and that operand.
+struct Taken {
+  node: ir::Node,
+  taken: ir::Node?
+}
+
+// `take_range_default_operand`.
+fn take_range_operand(n: ir::Node, by: ir::Node) -> Taken {
+  match n {
+    NdSpan { pos, inner } => {
+      t = take_range_operand(inner, by);
+      Taken { node: ir::NdSpan { pos: pos, inner: t.node }, taken: t.taken }
+    },
+    NdSet { var, inner } => {
+      t = take_range_operand(inner, by);
+      Taken { node: ir::NdSet { var: var, inner: t.node }, taken: t.taken }
+    },
+    NdCall { def_nr, args } => {
+      if len(args) == 4 && args[1]! is NdLong && args[2]! is NdLong {
+        return Taken { node: ir::NdCall { def_nr: def_nr, args: [by] + args[1..] }, taken: args[0]! };
+      }
+      for a in args {
+        t = take_range_operand(a, by);
+        if t.taken != null {
+          return Taken { node: ir::NdCall { def_nr: def_nr, args: [for b in args { if b#index == a#index { t.node } else { b } }] }, taken: t.taken };
+        }
+      }
+      Taken { node: n, taken: null }
+    },
+    _ => Taken { node: n, taken: null }
+  }
 }
 
 // The constant argument a domain check reads, or null.
