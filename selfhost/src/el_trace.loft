@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `LOFT_STATE_TRACE=1` (src/parser/state_trace.rs): the scoped state at the points the Rust
+// front end prints it, in its line format, so a diff of the two traces names the first point and
+// channel where the elaborator's state differs from the parser's.  Each channel is the port's
+// mirror of a `Parser` field (`doc/claude/plans/91-self-host/parser-state.md`); one the port
+// carries only at one node prints only there.
+use ir;
+use el;
+use el_vars;
+use el_types;
+
+// Is the trace asked for?
+pub fn on() -> boolean {
+  len(env_variable("LOFT_STATE_TRACE")) > 0
+}
+
+// The line at `point`, token `at` the lexer's peek; `node` the syntax node read there, for the
+// channels the port keeps per node (`expected`).
+pub fn state(e: el::El, vars: el_vars::Vars, point: text, at: integer, node: integer) {
+  if e.source == el::STD_SOURCE {
+    return;
+  }
+  p = el::pos_at(e, at);
+  line = "state {if e.first_pass { 1 } else { 2 }} {p.line}:{p.pos} {point}";
+  exp: ir::TypeT = ir::TyUnknown { n: 0 };
+  if vars.lambda_node == node && node >= 0 {
+    exp = vars.lambda_hint;
+  } else if vars.expect_node == node && node >= 0 {
+    exp = vars.expect;
+  }
+  if !el_types::is_unknown(exp) {
+    line += " expected={shape(e, exp)}";
+  }
+  if vars.assign_target >= 0 {
+    nm = if vars.assign_target < len(vars.vars) { el_vars::name_of(vars, vars.assign_target) } else { "??" };
+    line += " assign_target={vars.assign_target}({nm})";
+  }
+  if vars.bind_rhs {
+    line += " in_bind_rhs";
+  }
+  if len(e.type_vars) > 0 {
+    line += " cur_type_vars={[for t in e.type_vars { t.spelling }].join(",")}";
+  }
+  eprintln(line);
+}
+
+// `Parser::trace_shape`: a type's shape and the definitions it names, no deps.
+fn shape(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyUnknown { n: _ } => "?",
+    TyNull => "null",
+    TyVoid => "void",
+    TyNever => "never",
+    TyInteger { spec: _ } => "int",
+    TyBoolean => "bool",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "char",
+    TyText { dep: _ } => "text",
+    TyOptional { inner } => "{shape(e, inner)}?",
+    TyRefVar { inner } => "&{shape(e, inner)}",
+    TyRewritten { inner } => shape(e, inner),
+    TyVector { inner } => "vector<{shape(e, inner)}>",
+    TyReference { n } => "ref({el::def(e, n).name})",
+    TyEnum { n } => "enum({el::def(e, n).name})",
+    TyHash { n } => "keyed({el::def(e, n).name})",
+    TySorted { n } => "keyed({el::def(e, n).name})",
+    TyIndex { n } => "keyed({el::def(e, n).name})",
+    TyRadix { n } => "keyed({el::def(e, n).name})",
+    TyTrie { n } => "keyed({el::def(e, n).name})",
+    TyFunction { args, result } => "fn({[for a in args { shape(e, a) }].join(",")})->{shape(e, result)}",
+    TyTuple { elems } => "({[for x in elems { shape(e, x) }].join(",")})",
+    TyIterator { step: _ } => "iter",
+    _ => "other"
+  }
+}

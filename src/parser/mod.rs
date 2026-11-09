@@ -1971,6 +1971,7 @@ mod packages;
 mod passes;
 mod places;
 mod sandbox;
+mod state_trace;
 mod store_check;
 pub(super) mod store_else;
 pub(super) mod store_text;

@@ -20,6 +20,7 @@ use el_length;
 use el_par;
 use el_definitions;
 use el_dispatch;
+use el_trace;
 use own;
 
 // An expression's IR and type.
@@ -2970,6 +2971,9 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
         }
         if se == null {
           continue;
+        }
+        if el_trace::on() {
+          el_trace::state(e, vars, "stmt", at, se!);
         }
         x = statement(e, vars, se ?? 0, orelse);
         t = x.tp;
@@ -7958,13 +7962,17 @@ fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>) -
   for a in args {
     an = "";
     ae: integer? = null;
+    aat = 0;
     match e.p.nodes[a] {
-      SArg { name: n, e: x } => { an = n; ae = x; },
+      SArg { at: sa, name: n, e: x } => { an = n; ae = x; aat = sa; },
       _ => { ae = a; }
     }
     if an != "" || ae == null {
       el::refuse(e, "a named argument to a function value");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if el_trace::on() {
+      el_trace::state(e, vars, "arg", aat, ae!);
     }
     x = expression(e, vars, ae!);
     given += [x];
@@ -8067,7 +8075,7 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   hd = look(e, source, "n_{name}");
   for a in args {
     match e.p.nodes[a] {
-      SArg { name: an, e: ae } => {
+      SArg { at: aat, name: an, e: ae } => {
         if an != "" || ae == null {
           el::refuse(e, "a named argument");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -8078,6 +8086,9 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
             vars.lambda_node = ae!;
             vars.lambda_hint = pt;
           }
+        }
+        if el_trace::on() {
+          el_trace::state(e, vars, "arg", aat, ae!);
         }
         x = argument_view(e, vars, expression(e, vars, ae!));
         vars.lambda_node = -1;
@@ -8851,10 +8862,13 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
   types: vector<ir::TypeT> = [x.tp];
   for a in args {
     match e.p.nodes[a] {
-      SArg { name: an, e: ae } => {
+      SArg { at: aat, name: an, e: ae } => {
         if an != "" || ae == null {
           el::refuse(e, "a named argument");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        if el_trace::on() {
+          el_trace::state(e, vars, "arg", aat, ae!);
         }
         y = expression(e, vars, ae!);
         list += [y.code];

@@ -1104,6 +1104,7 @@ impl Parser {
             if self.lexer.peek_token("}") {
                 break;
             }
+            self.state_trace("stmt");
             // @C67 — loft has no `try { … } catch { … }`, and was refusing it as a bare
             // "Expect token ;" that named neither the decision nor the spelling to use.  Said
             // by name, then both blocks are skipped so nothing cascades.  Only `try` directly
@@ -23126,6 +23127,7 @@ impl Parser {
             // Capture each argument's start so a later type-mismatch diagnostic
             // (in `process_call_args`) points the caret at the argument, not at
             // the cursor drifted to `)` / `,`.
+            self.state_trace("arg");
             arg_pos.push(*self.lexer.peek_pos());
             // loft#1883 — a record-backed `&(…)` parameter names its argument's record, so a
             // struct field of tuple type is read with its address.
@@ -25122,6 +25124,7 @@ impl Parser {
                 self.expected = h;
             }
             let mut p = Value::Null;
+            self.state_trace("arg");
             arg_pos.push(*self.lexer.peek_pos());
             let before = self.method_facts.0.clone();
             self.prepare_lambda_argument(method, list.len(), &before); // @PLN187
