@@ -179,6 +179,24 @@ fn t8() {
   println("t8 {r}");
 }
 
+// t9 — the owner's store freed and made again each round with a table of linked records: the
+// new store takes the same slot and the new table the same claim, with a fresh seed.  The slot
+// check passes; only the store's new table generation sends the handle (declared once for the
+// loop) to resolve again.  Per round: key `round` is present (i = 0), `round + 1` never is, and
+// the table holds `round + 2` keys — 20 + (2 + 3 + … + 21) = 250.
+fn t9() {
+  total = 0;
+  for round in 0..20 {
+    c = Chain { };
+    for i in 0..(round + 2) { add(c, i * 3 + round); }
+    if c.h[round] != null { total += 1; }
+    if c.h[round + 1] != null { total += 1000; }
+    total += len(c.h);
+  }
+  assert(total == 250, "t9 {total}");
+  println("t9 {total}");
+}
+
 fn main() {
-  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8();
+  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9();
 }
