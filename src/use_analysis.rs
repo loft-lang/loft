@@ -5647,6 +5647,7 @@ pub fn drop_copy_census(
                 refusals: Vec::new(),
                 sites: 0,
                 pending_site: None,
+                pending_fresh: false,
                 pending_tail: None,
                 lease_sites: Vec::new(),
                 quiet: false,
@@ -5918,6 +5919,9 @@ struct Census<'a> {
     /// the new structure it makes, and that structure's type definition.  Set by the arms whose
     /// copy is one statement the rewrite can follow; an arm that sets none keeps refusing.
     pending_site: Option<(Value, Value, u32)>,
+    /// The record copy at hand copies a value that is not a variable — a constructor's block, a
+    /// call — so a `Move` verdict there places a fresh value and owes no `OpCopy` (loft#2442).
+    pending_fresh: bool,
     /// The site an APPEND is about to be judged at: the node, the collection appended to, the
     /// appended source, and the collection's element definition.  The lease runs over the
     /// appended tail only.
@@ -6092,6 +6096,7 @@ impl Census<'_> {
                 } else {
                     self.pending_site = copied_record_def(self.data, &args[2])
                         .map(|d| (node.clone(), args[1].clone(), d));
+                    self.pending_fresh = !matches!(args[0].unspan(), Value::Var(_));
                     self.note_destination(&args[1]);
                     (
                         Some(self.frame.written_verdict(&args[0], placement)),
@@ -6360,6 +6365,45 @@ impl Census<'_> {
         // which the corpus agrees with, 0 refusals across 666 snapshot rows.
         let site = self.pending_site.take();
         let tail = self.pending_tail.take();
+        let fresh = std::mem::take(&mut self.pending_fresh);
+        // `@FR-H-Copy-Lease` with `@FR-B-Copy`: `(H-Move)` moves only a value that holds a lease
+        // (`@FR-H-Lease`: its type owns a droppable).  A type with `OpCopy` and no droppable holds
+        // none, so the positions that would move such a value — a bind of an owned local, its
+        // append, a literal's field — COPY it, and the copy runs the hook on the new structure
+        // (loft#2442).  Never refused: nothing is released twice.  A FRESH value — a record
+        // copied from a constructor or a call, not from a variable, or from the `__lift_N` the
+        // scope pass hoists an inline call into — is placed, not copied, and owes no hook.
+        let fresh = fresh
+            || from.is_empty()
+            || from.iter().all(|&v| self.func.name(v).starts_with("__lift_"));
+        if matches!(lease, Some(crate::lease::Lease::Move)) && !fresh {
+            let unleased =
+                |d: u32| crate::lease::leases_whole(self.data, d) && !self.data.owns_droppable(d);
+            if let Some((node, dst, src, ed)) = tail.clone()
+                && unleased(ed)
+            {
+                if let Value::Var(dv) = dst.unspan()
+                    && let Type::Vector(elm, _) = self.func.tp(*dv).base()
+                {
+                    let walk =
+                        crate::lease::copy_tail_nr(self.data, self.data.collection_def_nr(elm));
+                    let len = self.data.def_nr("OpLengthVector");
+                    if walk != u32::MAX && len != u32::MAX {
+                        self.lease_sites.push((
+                            node,
+                            Value::Call(walk, vec![dst.clone(), Value::Call(len, vec![src])]),
+                        ));
+                    }
+                }
+            } else if let Some((node, dst, d)) = site.clone()
+                && unleased(d)
+            {
+                let cascade = crate::lease::copy_cascade_nr(self.data, d);
+                if cascade != u32::MAX {
+                    self.lease_sites.push((node, Value::Call(cascade, vec![dst])));
+                }
+            }
+        }
         if let Some(crate::lease::Lease::Refuse(r)) = lease {
             // `(H-Copy-Lease)`: a copy of a type whose every droppable declares `OpCopy` is not
             // refused — the new structure takes its own lease.  Only at a site the rewrite can
@@ -8308,7 +8352,8 @@ fn drop_targets(data: &Data, code: &Value) -> HashSet<u16> {
 /// [`crate::keys::COPY_TP_MASK`] strips.  A release exists exactly when that type has a cascade
 /// or a hook of its own ([`Data::drop_cascade_nr`]).  The destination is no proof of it: a
 /// container that owns a droppable in one field takes a plain record into another through the
-/// same copy.
+/// same copy.  A type with `OpCopy` and no release is admitted too: its copy owes the hook
+/// (`@FR-H-Copy-Lease`, loft#2442), though it has nothing to release.
 fn copied_record_releases(data: &Data, tp: &Value) -> bool {
     let Value::Int(tp) = tp.unspan() else {
         return false;
@@ -8318,7 +8363,11 @@ fn copied_record_releases(data: &Data, tp: &Value) -> bool {
     };
     known != u16::MAX
         && (0..data.definitions())
-            .any(|d| data.def(d).known_type == known && data.drop_cascade_nr(d) != u32::MAX)
+            .any(|d| {
+                data.def(d).known_type == known
+                    && (data.drop_cascade_nr(d) != u32::MAX
+                        || crate::lease::copy_cascade_nr(data, d) != u32::MAX)
+            })
 }
 
 /// The root variable of a PLACE: the variable itself, or a projection's root.
@@ -10750,6 +10799,7 @@ pub fn lease_calls(data: &mut Data) {
                 refusals: Vec::new(),
                 sites: 0,
                 pending_site: None,
+                pending_fresh: false,
                 pending_tail: None,
                 lease_sites: Vec::new(),
                 quiet: true,

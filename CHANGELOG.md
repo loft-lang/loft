@@ -78,6 +78,11 @@ n { [] }]` was refused with "comprehension body must produce a value"; the body 
 type from the declared element, so it builds three empty rows.  The same holds for a nested
 comprehension and for an `if` whose one arm is `[]`.
 
+**A copy hook runs on every copy.**  A type that declares `OpCopy` without an `OpDrop` skipped
+its hook when a variable was copied — `b = a`, `v += [a]`, `S { h: a }`, a by-value parameter
+bound to a local — so the copy kept the original's values.  The hook now runs on each copy,
+and still not on a fresh value placed where it is built (`S { h: mk() }`).
+
 ## 2026-11
 
 ### May need a change in your code
