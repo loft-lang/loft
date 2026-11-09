@@ -3337,7 +3337,19 @@ impl Parser {
                 // @PLN85 P14 — a borrowed match-arm binding (or local) returned
                 // directly borrows a visible arg; copy it into __retbuf rather
                 // than rename it onto (and alias) the caller's buffer.
-                || (context == "return from block" && self.tail_borrows_arg(l)))
+                || (context == "return from block" && self.tail_borrows_arg(l))
+                // loft#2443 — a field of an inline call whose result borrows an
+                // argument (`def(e, h).bounds`): the deps name the argument, but the
+                // value is a view of the scope pass's lifted copy (`(F-Ret)`), which
+                // the frame frees.  The H9 projection test, as the explicit return asks.
+                || (context == "return from block"
+                    && l.last().is_some_and(|t| self.return_projects_into_local(t)))
+                // …and an EARLIER `return v` whose `v` views such a temporary
+                // (`own = def(e, h).bounds; if … { return own; }`) beside a tail that
+                // borrows an argument: published as a borrow of the argument, that exit
+                // handed back a store the frame frees.  Buffer-bound, every exit copies.
+                || (context == "return from block"
+                    && self.mid_return_views_frame_temp(&l[..l.len().saturating_sub(1)], l)))
             && self
                 .return_buffer()
                 .is_some_and(|(_, buf_var)| !ls.contains(&buf_var))
@@ -4356,6 +4368,11 @@ impl Parser {
             Type::Vector(Box::new(elm_ty.clone()), Deps::frame1(buf_var)),
             "fwd_copy_409",
         );
+        // A buffer-bound function delivers at EVERY return (`returned_uses_buffer`): an
+        // early `return own` beside this tail, `own` a view of a lifted call's record, was
+        // handed back raw while the frame freed that record (loft#2443).
+        let tail = l.len() - 1;
+        self.deliver_mid_vector_returns(&elm_ty, &mut l[..tail], buf_var);
         self.set_delivered_vector_return(elm_ty, buf_attr);
     }
 
@@ -18406,6 +18423,28 @@ impl Parser {
     /// `Var` with an empty dep list, so the rename fires, `e` becomes `__retbuf`, and
     /// `OpFreeRef(__lift_1)` two statements later frees what it now points at.
     /// @FR-O-Borrow — the borrow is real whether or not a dep records it.
+    /// Does a `return v` among `stmts` hand back a vector local DEFINED as a view into
+    /// something this frame frees ([`Self::var_defined_by_projection`] over the whole
+    /// `body`) — a field of an inline call's lifted record above all, whose deps name the
+    /// call's arguments rather than the temporary (loft#2443)?
+    fn mid_return_views_frame_temp(&self, stmts: &[Value], body: &[Value]) -> bool {
+        fn walk(p: &Parser, v: &Value, body: &[Value]) -> bool {
+            match v.unspan() {
+                Value::Return(inner) => matches!(inner.unspan(), Value::Var(r)
+                    if p.vars.exists(*r)
+                        && !p.vars.is_argument(*r)
+                        && matches!(p.vars.tp(*r).base(), Type::Vector(_, _))
+                        && p.var_defined_by_projection(body, *r)),
+                Value::If(_, t, f) => walk(p, t, body) || walk(p, f, body),
+                Value::Block(bl) => bl.operators.iter().any(|x| walk(p, x, body)),
+                Value::Insert(ops) => ops.iter().any(|x| walk(p, x, body)),
+                Value::Loop(bl) => bl.operators.iter().any(|x| walk(p, x, body)),
+                _ => false,
+            }
+        }
+        stmts.iter().any(|s| walk(self, s, body))
+    }
+
     fn var_defined_by_projection(&self, body: &[Value], v: u16) -> bool {
         // Every assignment counts, an arm's too: a `match` binds its arm's capture inside the
         // `If` that tests the arm, and any one of them borrowing makes the value a view on
@@ -20083,11 +20122,18 @@ impl Parser {
             // -shaped `__retbuf` and the store it abandoned leaked one per call.  A view
             // owns nothing to rename (@FR-O-Move), so it is not this arm's answer; it is
             // `tail_ret_view_local`'s, which delivers it by COPY instead.
+            // loft#2443 — and a view of an ARGUMENT owns nothing either: a local whose every
+            // dep is a parameter (`own = def(e, h).bounds; return own;`) is not fresh, so it
+            // is `tail_ret_view_local`'s, which copies it as the implicit tail `own` does.
+            // Answered here, its deps (`[e]`) were published as a borrow of `e` while the
+            // value viewed the scope pass's lifted copy of the call (`(F-Ret)`'s bind copy),
+            // which the frame frees on the way out: the caller read a freed vector.
             Value::Var(o)
                 if self.vars.exists(*o)
                     && !self.vars.is_argument(*o)
                     && !self.var_views_local(*o)
-                    && matches!(self.vars.tp(*o).ret_promo_base(), Type::Vector(_, d) if !d.is_empty()) =>
+                    && matches!(self.vars.tp(*o).ret_promo_base(), Type::Vector(_, d)
+                        if !d.is_empty() && !d.iter().all(|&x| x < self.vars.count() && self.vars.is_argument(x))) =>
             {
                 let Type::Vector(_, d) = self.vars.tp(*o).ret_promo_base() else {
                     unreachable!()
@@ -20694,6 +20740,10 @@ impl Parser {
             Type::Vector(Box::new(elm_ty.clone()), Deps::frame1(buf_var)),
             "borrow_tail_copy_104",
         );
+        // Every return delivers once the function is buffer-bound — the sibling of the
+        // forwarder leg's delivery (loft#2443).
+        let tail = l.len() - 1;
+        self.deliver_mid_vector_returns(&elm_ty, &mut l[..tail], buf_var);
         self.set_delivered_vector_return(elm_ty, buf_attr);
         true
     }
