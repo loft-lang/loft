@@ -225,6 +225,9 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     TyCharacter => "character",
     TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
     TyEnum { n, is_ref } => if is_ref && starts_with(el::def(e, n).name, "__nullable<") { "" } else { el::def(e, n).name },
+    // A nullable struct enum is named as its enum with the `?` (`Type::name`): its elements are
+    // the enum's records, null the zero tag.
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref && !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, _ => "" },
     // A vector of vectors: its element is named as the inner vector's own type.
     TyVector { inner } => if elem_name(e, inner) == "" { "" } else { "vector<{elem_name(e, inner)}>" },
     _ => ""

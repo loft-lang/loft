@@ -271,6 +271,7 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     e.b.data.definitions[vd].parent = match t {
       TyReference { n } => n,
       TyEnum { n } => n,
+      TyOptional { inner } => match inner { TyEnum { n } => n, TyReference { n } => n, _ => -1 },
       TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
       // `type_def_nr` of any vector is the library's `vector`.
       TyVector { inner: _ } => el::source_nr(e, 0, "vector"),
@@ -576,6 +577,8 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       if td < 0 || el::def(e, td).known_type == NO_TYPE { -1 } else { el::def(e, td).known_type }
     },
     TyEnum { n } => enum_content(e, n),
+    // A nullable struct enum's slot is the enum's record (its null the zero tag).
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, _ => -1 },
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),
@@ -618,6 +621,26 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       vd = el::def_nr(e, "vector<{nm}>");
       if vd >= 0 && e.b.types[vt].name == "vector<{nm}>" {
         e.b.data.definitions[vd].known_type = vt;
+      }
+      // `check_vector` names the definition after the element's own definition: a nullable struct
+      // enum's (`vector<DEnt?>`) is `vector<DEnt>`, made where missing — beside the `vector<DEnt?>`
+      // one, at its place — and given the store type.
+      match inner {
+        TyOptional { inner: oi } => match oi {
+          TyEnum { n: en, is_ref } => {
+            if is_ref && vd >= 0 {
+              cn = "vector<{el::def(e, en).name}>";
+              cd = el::def_nr(e, cn);
+              if cd < 0 {
+                cd = el::add_def(e, cn, el::def(e, vd).position, el::DT_VECTOR);
+                e.b.data.definitions[cd].parent = en;
+              }
+              e.b.data.definitions[cd].known_type = vt;
+            }
+          },
+          _ => {}
+        },
+        _ => {}
       }
       vt
     },

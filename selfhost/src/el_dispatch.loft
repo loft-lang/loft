@@ -301,11 +301,16 @@ fn carries(e: el::El, set: integer, d: integer) -> boolean {
   false
 }
 
-// A new member `d` of `name`'s set, labelled by its spelling (`add_fn`'s `overload_label`).
+// A new member `d` of `name`'s set, labelled by its spelling (`add_fn`'s `overload_label`) — or,
+// for a method keyed by its receiver alone (`join_as_method` → `admit_overload_set`), by that
+// receiver's spelling.
 pub fn join(e: el::El, name: text, d: integer) {
   set = own_set(e, name);
-  if set >= 0 && (el::def(e, d).name.starts_with("f_") || el::def(e, d).name.starts_with("t_")) && !carries(e, set, d) {
-    carry(e, set, full_spelling(e, visible_params(e, d)), d);
+  dn = el::def(e, d).name;
+  if set >= 0 && (dn.starts_with("f_") || dn.starts_with("t_")) && !carries(e, set, d) {
+    recv = if dn.starts_with("t_") { receiver_spelling(dn) } else { "" };
+    label = if recv != "" && dn == "t_{len(recv)}{recv}_{name}" { recv } else { full_spelling(e, visible_params(e, d)) };
+    carry(e, set, label, d);
   }
 }
 

@@ -17568,7 +17568,7 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   // `Parser::vector_of`, on either pass: an element whose record already has its store type —
   // a library's, laid out when that library's file ended — has its `vector<T>` store type made
   // here, ahead of the `main_vector<T>` wrapper the schema lays out after the pass.
-  ek = match t { TyReference { n } => el::def(e, n).known_type, TyEnum { n } => el::def(e, n).known_type, _ => el_schema::NO_TYPE };
+  ek = match t { TyReference { n } => el::def(e, n).known_type, TyEnum { n } => el::def(e, n).known_type, TyOptional { inner } => match inner { TyEnum { n } => el::def(e, n).known_type, _ => el_schema::NO_TYPE }, _ => el_schema::NO_TYPE };
   if vk < 0 && ek != el_schema::NO_TYPE {
     vk = el_schema::vector_type(e, ek);
   }
@@ -17679,6 +17679,8 @@ fn closing_bracket(e: el::El, lit: integer) -> integer {
 // A struct's record size, from its laid-out store type.
 pub fn record_size(e: el::El, t: ir::TypeT) -> integer {
   match t {
+    // A nullable struct enum is its enum's record.
+    TyOptional { inner } => if match inner { TyEnum { is_ref } => is_ref, _ => false } { record_size(e, inner) } else { -1 },
     TyEnum { n, is_ref } => {
       k = if is_ref { el::def(e, n).known_type } else { el_schema::NO_TYPE };
       if k == el_schema::NO_TYPE { -1 } else { e.b.types[k]!.size }
@@ -17728,6 +17730,8 @@ pub fn elem_size(t: ir::TypeT) -> integer {
     TyBoolean => 1,
     TyCharacter => 4,
     TyEnum { n: _, is_ref } => if is_ref { -2 } else { 1 },
+    // A nullable struct enum is its enum's record (null the zero tag).
+    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, _ => -1 },
     _ => -1
   }
 }
@@ -18246,8 +18250,13 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   } else if !append && !late_store && len(borrows) == 0 {
     ls += literal_store(e, vars, v, r);
   }
+  // A struct enum, nullable or not, is an element of its enum's record (null the zero tag).
+  senum = struct_enum_of(e, match in_t { TyOptional { inner } => inner, _ => in_t });
   if len(xs) > 0 {
     size = elem_size(in_t);
+    if size == -2 && senum >= 0 && len(recs) == 0 {
+      size = record_size(e, ir::TyEnum { n: senum, is_ref: true, dep: [] });
+    }
     if size == -2 && (len(recs) > 0 || struct_ref(e, in_t) >= 0 || in_t is TyTuple) {
       size = if !e.first_pass && linked_record(e, in_t) { 4 } else { record_size(e, in_t) };
     }
@@ -18355,6 +18364,19 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   // answering a fresh record (`element_call_takes_record_buffer`) is handed the element as its
   // return buffer, its answer copied only when it lands elsewhere (`OpDistinctStore`), its store
   // freed after when it gives it away (`call_gives_away_its_store`).  Any other item is copied in.
+  // `build_vector_list`'s record arm for a struct enum: the element made through the vector, the
+  // item's record copied into it (a call that gives its store away frees it after), finished.
+  if len(recs) == 0 && len(xs) > 0 && push == "" && senum >= 0 {
+    el_vars::set_var_type(vars, elm, ir::TyEnum { n: senum, is_ref: true, dep: [v] });
+    at = ir::NdVar { n: elm };
+    kt = el::def(e, senum).known_type;
+    for x in xs {
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      ls += [el_ir::cl(e, "OpCopyRecord", [x.code, at, ir::NdInt { n: kt + (if gives_away_its_store(e, x.code) { 32768 } else { 0 }) + 16384 }])];
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+    xs = [];
+  }
   if len(recs) == 0 && len(xs) > 0 && push == "" && struct_ref(e, in_t) >= 0 {
     rd = struct_ref(e, in_t);
     el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
