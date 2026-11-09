@@ -232,15 +232,14 @@ fn order(r: integer) -> integer {
 }
 
 // `Parser::definition_ranks`: the ranks of member `d` for the routed argument types, or null when
-// it does not take the call (`@FR-Disp-Applicable`) — a definition here declares no defaults, so
-// it takes exactly as many arguments as it declares.
+// it does not take the call (`@FR-Disp-Applicable`, `takes_arity`).
 fn ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
-  params = visible_params(e, d);
-  if len(params) != len(args) {
+  if !takes_arity(e, d, len(args)) {
     return null;
   }
+  params = visible_params(e, d);
   r: vector<integer> = [];
-  for p in params {
+  for p in params[0..len(args)] {
     k = rank(e, args[p#index] ?? ir::TyUnknown { n: 0 }, p);
     if k < 0 {
       return null;
@@ -248,6 +247,21 @@ fn ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
     r += [k];
   }
   r
+}
+
+// `Parser::takes_arity`: no more arguments than declared parameters, and a default on every
+// parameter past them.
+fn takes_arity(e: el::El, d: integer, given: integer) -> boolean {
+  declared = [for a in el::def(e, d).attributes if !a.hidden { a }];
+  if given > len(declared) {
+    return false;
+  }
+  for a in declared[given..] {
+    if el_ir::is_null(a.value[0] ?? ir::NdNull) {
+      return false;
+    }
+  }
+  true
 }
 
 // `strictly_better`: no worse at any position and better at one (`@FR-Disp-Specific`).
@@ -475,7 +489,11 @@ fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::Type
       cond = if cond is NdNull { test } else { el_ir::v_if(cond, test, ir::NdBoolean { b: false }) };
     }
     has_hidden = len([for a in el::def(e, leaves[k]!).attributes if a.hidden { a }]) > 0;
-    call = ir::NdCall { def_nr: leaves[k]!, args: [for v in dv { ir::NdVar { n: v } }] + if has_hidden { [for v in fwd { ir::NdVar { n: v } }] } else { [] } };
+    // A member's parameters past the supplied ones take their defaults (`specialisation_call`'s
+    // omitted), then its hidden ones the forwarded buffers.
+    visible = [for a in el::def(e, leaves[k]!).attributes if !a.hidden { a }];
+    omitted = [for a in visible[len(dv)..] { a.value[0] ?? ir::NdNull }];
+    call = ir::NdCall { def_nr: leaves[k]!, args: [for v in dv { ir::NdVar { n: v } }] + omitted + if has_hidden { [for v in fwd { ir::NdVar { n: v } }] } else { [] } };
     ls += [el_ir::v_if(cond, el_ir::v_block([ir::NdReturn { inner: call }], ir::TyVoid, "ret"), ir::NdNull)];
   }
   ls += [ir::NdReturn { inner: null_ret ?? ir::NdNull }];
