@@ -393,30 +393,153 @@ fn no_worse(a: integer, b: integer) -> boolean {
   order(a) <= order(b)
 }
 
-// `Parser::definition_ranks`: the ranks of member `d` for the routed argument types, or null when
-// it does not take the call (`@FR-Disp-Applicable`, `takes_arity`).
-fn ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
-  if !takes_arity(e, d, len(args)) {
-    return null;
+// port: dispatch.rs definition_ranks
+// How far each routed argument is from member `d`'s parameter, or null when `d` does not take the
+// call (`@FR-Disp-Applicable`): more arguments than parameters, a trailing parameter with no
+// default, or an argument its parameter cannot accept.
+fn definition_ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
+  if el::def(e, d).def_type == el::DT_GENERIC {
+    return template_ranks(e, d, args);
   }
-  // `template_ranks` (`@FR-D-Rank`): a template takes the call where its variables bind; a
-  // position naming a variable ranks `GENERIC`, any other as a concrete definition's does.
-  generic = el::def(e, d).def_type == el::DT_GENERIC;
-  if generic && el_expressions::template_binding(e, d, args) == null {
+  if !takes_arity(e, d, len(args)) {
     return null;
   }
   params = visible_params(e, d);
   r: vector<integer> = [];
   for p in params[0..len(args)] {
-    tv: vector<integer> = [];
-    collect_type_vars(e, p, tv);
-    k = if generic && len(tv) > 0 { GENERIC } else { rank(e, args[p#index] ?? ir::TyUnknown { n: 0 }, p) };
+    k = rank(e, args[p#index] ?? ir::TyUnknown { n: 0 }, p);
     if k < 0 {
       return null;
     }
     r += [k];
   }
   r
+}
+
+// port: dispatch.rs template_ranks
+// `@FR-D-Rank` for a template member: it takes the call where every variable binds and the bound
+// types satisfy the bounds.  A position whose parameter names a variable ranks `GENERIC` where the
+// argument takes the parameter AS BOUND without a conversion; any other ranks as a concrete
+// definition's does.  Changed: `bind_template` is `el_expressions::template_binding`, which
+// answers null where two positions bind one variable differently (Rust binds the first and the
+// second position then fails its rank, so the member is out either way).  `refused_templates` has
+// no twin (a refused header refuses the program here), nor has `open_instance_bindings` (an open
+// instance, `Box<T>` inside a template, is not carried by this port).
+fn template_ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
+  if !takes_arity(e, d, len(args)) {
+    return null;
+  }
+  b = el_expressions::template_binding(e, d, args);
+  if b == null {
+    return null;
+  }
+  // A binding to the caller's own variable is ranked like any other (`set_reselect`, on).
+  for t in b!.types {
+    if el_types::is_unknown(t) {
+      return null;
+    }
+  }
+  if !satisfies(e, d, b!) {
+    return null;
+  }
+  params = visible_params(e, d);
+  r: vector<integer> = [];
+  for p in params[0..len(args)] {
+    arg = args[p#index] ?? ir::TyUnknown { n: 0 };
+    tv: vector<integer> = [];
+    collect_placeholders(e, p, tv);
+    k = if len(tv) > 0 {
+      kb = rank(e, arg, substitute_all(p, b!));
+      if kb < 0 || kb >= CONVERSION { -1 } else { GENERIC }
+    } else {
+      rank(e, arg, p)
+    };
+    if k < 0 {
+      return null;
+    }
+    r += [k];
+  }
+  r
+}
+
+// port: bounds.rs satisfies
+// Do the bound types satisfy template `d`'s bounds?  Changed: only a variable with no bounds is
+// judged here.  One with bounds needs `infer_associated` and `satisfaction_messages` (the
+// interfaces family, not ported yet): refused by name.
+fn satisfies(e: el::El, d: integer, b: el_expressions::Binding) -> boolean {
+  for v in b.vars {
+    if len(var_bounds(e, d, v, v#index == 0)) > 0 {
+      el::refuse(e, "an overload set with a template member whose variable has bounds");
+      return false;
+    }
+  }
+  true
+}
+
+// port: bounds.rs var_bounds
+// The bounds of template `d`'s variable `holder`: the variable's own, recorded on its
+// placeholder, or for the first variable whose placeholder carries none, the template's list.
+fn var_bounds(e: el::El, d: integer, holder: integer, first: boolean) -> vector<integer> {
+  own = el::def(e, holder).bounds;
+  if len(own) > 0 || !first {
+    return own;
+  }
+  el::def(e, d).bounds
+}
+
+// port: none — `Type::substitute` once per binding, as `Parser::substitute_all` does.
+fn substitute_all(t: ir::TypeT, b: el_expressions::Binding) -> ir::TypeT {
+  r = t;
+  for h in b.vars {
+    r = el_expressions::substitute(r, h, b.types[h#index] ?? ir::TyUnknown { n: 0 });
+  }
+  r
+}
+
+// port: data.rs mentions_type_var (its placeholder half)
+// The type-variable placeholders `t` names anywhere, appended to `out`.  An open instance is not
+// carried by this port.
+fn collect_placeholders(e: el::El, t: ir::TypeT, out: vector<integer>) {
+  h = el_types::type_var(e, el_types::base(t));
+  if h >= 0 && !out.contains(h) {
+    out += [h];
+  }
+  for c in type_children(t) {
+    collect_placeholders(e, c, out);
+  }
+}
+
+// port: data.rs Type::for_each_child
+// A type's child types in order; none for a leaf (a definition-numbered head carries none).
+fn type_children(t: ir::TypeT) -> vector<ir::TypeT> {
+  out: vector<ir::TypeT> = [];
+  match t {
+    TyRefVar { inner } => { out += [inner]; },
+    TyVector { inner } => { out += [inner]; },
+    TyRewritten { inner } => { out += [inner]; },
+    TyOptional { inner } => { out += [inner]; },
+    TyIterator { step, inner } => { out += [step, inner]; },
+    TyFunction { args, result } => { out += args; out += [result]; },
+    TyTuple { elems } => { out += elems; },
+    _ => {}
+  }
+  out
+}
+
+// port: data.rs Type::zip_children (the shape test)
+// Do two types with children have the same former: the same variant, and for a function or a
+// tuple the same number of children?
+fn same_former(a: ir::TypeT, b: ir::TypeT) -> boolean {
+  match a {
+    TyRefVar { inner: _ } => b is TyRefVar,
+    TyVector { inner: _ } => b is TyVector,
+    TyRewritten { inner: _ } => b is TyRewritten,
+    TyOptional { inner: _ } => b is TyOptional,
+    TyIterator { step: _ } => b is TyIterator,
+    TyFunction { args } => match b { TyFunction { args: other } => len(args) == len(other), _ => false },
+    TyTuple { elems } => match b { TyTuple { elems: other } => len(elems) == len(other), _ => false },
+    _ => false
+  }
 }
 
 // `Parser::takes_arity`: no more arguments than declared parameters, and a default on every
@@ -434,23 +557,180 @@ fn takes_arity(e: el::El, d: integer, given: integer) -> boolean {
   true
 }
 
-// `strictly_better`: no worse at any position and better at one (`@FR-Disp-Specific`).
-fn better(b: Ranked, a: Ranked) -> boolean {
-  improved = false;
+// port: dispatch.rs strictly_better
+// Is member `b` strictly better than `a` for the call both were ranked on: no worse at any
+// position and better at one (`@FR-Disp-Specific`)?  Where both rank `GENERIC` at a position,
+// `generic_position_order` orders them; elsewhere the ranks' own order does.
+fn strictly_better(e: el::El, b: Ranked, a: Ranked) -> boolean {
+  better = false;
   for x in a.ranks {
     y = b.ranks[x#index] ?? 0;
-    // Two templates at one position are not ordered here (`generic_position_order`).
     if x == GENERIC && y == GENERIC {
+      o = generic_position_order(e, b.d, a.d, x#index);
+      if o == ORD_LESS {
+        better = true;
+      } else if o != ORD_EQUAL {
+        return false;
+      }
+    } else if no_worse(y, x) {
+      if order(y) != order(x) {
+        better = true;
+      }
+    } else {
       return false;
-    }
-    if !no_worse(y, x) {
-      return false;
-    }
-    if order(y) < order(x) {
-      improved = true;
     }
   }
-  improved
+  better
+}
+
+// `std::cmp::Ordering`, and `None` for a pair neither side contains.
+const ORD_LESS = -1;
+const ORD_EQUAL = 0;
+const ORD_GREATER = 1;
+const ORD_NONE = 2;
+
+// port: dispatch.rs generic_position_order
+// `D-Specific` between two templates at position `i` where both rank `GENERIC`: LESS when `a`'s
+// parameter admits strictly fewer types than `b`'s, GREATER the reverse, EQUAL when they admit the
+// same, NONE when neither contains the other.  The PATTERN order (`vector<T>` admits fewer than
+// `T`) and the BOUND-SET order (a strict superset admits fewer) must agree; where one says fewer
+// and the other more, or either says neither, the pair is not ordered.
+fn generic_position_order(e: el::El, a: integer, b: integer, i: integer) -> integer {
+  // The vectors are held in locals: an element read straight off the returned vector was read
+  // after the vector was released (loft#2443, the lazy work buffer).
+  params_a = visible_params(e, a);
+  params_b = visible_params(e, b);
+  pa = params_a[i];
+  pb = params_b[i];
+  if pa == null || pb == null {
+    return ORD_NONE;
+  }
+  va: vector<integer> = [];
+  ia: vector<text> = [];
+  a_in_b = pattern_instance(e, pb!, pa!, va, ia);
+  vb: vector<integer> = [];
+  ib: vector<text> = [];
+  b_in_a = pattern_instance(e, pa!, pb!, vb, ib);
+  pattern = if a_in_b && b_in_a { ORD_EQUAL } else if a_in_b { ORD_LESS } else if b_in_a { ORD_GREATER } else { ORD_NONE };
+  if pattern == ORD_NONE {
+    return ORD_NONE;
+  }
+  ba: vector<text> = [];
+  position_bounds(e, pa!, ba);
+  bb: vector<text> = [];
+  position_bounds(e, pb!, bb);
+  a_sup = superset(ba, bb);
+  b_sup = superset(bb, ba);
+  bounds = if a_sup && b_sup { ORD_EQUAL } else if a_sup { ORD_LESS } else if b_sup { ORD_GREATER } else { ORD_NONE };
+  if bounds == ORD_NONE {
+    return ORD_NONE;
+  }
+  if pattern == ORD_EQUAL {
+    bounds
+  } else if bounds == ORD_EQUAL || bounds == pattern {
+    pattern
+  } else {
+    ORD_NONE
+  }
+}
+
+// port: none — `BTreeSet::is_superset`.
+fn superset(a: vector<text>, b: vector<text>) -> boolean {
+  for x in b {
+    if !a.contains(x) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: dispatch.rs pattern_instance
+// Is `specific` a substitution instance of `general`: does some assignment of `general`'s type
+// variables make it `specific`?  A variable in `specific` is an opaque atom; a variable of
+// `general` met twice must meet the same type twice.  Changed: Rust's `binds` pairs are two
+// vectors, `vars` and their identity spellings `ids`.
+fn pattern_instance(e: el::El, general: ir::TypeT, specific: ir::TypeT, vars: vector<integer>, ids: vector<text>) -> boolean {
+  // `(@FR-N-Shape)`: `T?` admits only a nullable spelling, the two peeled together.
+  match general {
+    TyOptional { inner: g } => {
+      return match specific {
+        TyOptional { inner: sp } => pattern_instance(e, g, sp, vars, ids),
+        _ => false
+      };
+    },
+    _ => {}
+  }
+  h = el_types::type_var(e, general);
+  if h >= 0 {
+    id = atom_identity(e, specific);
+    if id == "" {
+      return false;
+    }
+    for v in vars {
+      if v == h {
+        return (ids[v#index] ?? "") == id;
+      }
+    }
+    vars += [h];
+    ids += [id];
+    return true;
+  }
+  gc = type_children(general);
+  sc = type_children(specific);
+  if len(gc) == 0 || len(sc) == 0 {
+    gid = atom_identity(e, general);
+    return (len(gc) == 0) == (len(sc) == 0) && gid != "" && gid == atom_identity(e, specific);
+  }
+  if !same_former(general, specific) {
+    return false;
+  }
+  for g in gc {
+    if !pattern_instance(e, g, sc[g#index] ?? ir::TyVoid, vars, ids) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: data.rs key_identity
+// `identity` with a type variable spelled by its placeholder's name, as Rust spells any declared
+// type: the opaque atom `pattern_instance` compares.  Changed: `identity` answers "" for a
+// variable, which this port uses to mean "no key".
+fn atom_identity(e: el::El, t: ir::TypeT) -> text {
+  h = el_types::type_var(e, t);
+  if h >= 0 {
+    return el::def(e, h).name;
+  }
+  match t {
+    TyOptional { inner } => {
+      sp = atom_identity(e, inner);
+      if sp == "" { "" } else { "{sp}?" }
+    },
+    TyVector { inner } => {
+      sp = atom_identity(e, inner);
+      if sp == "" { "" } else { "vector<{sp}>" }
+    },
+    _ => identity(e, t)
+  }
+}
+
+// port: dispatch.rs position_bounds
+// The interfaces bounding the type variables a parameter type mentions, by name, appended to
+// `out`.  Changed: Rust reads `type_var_bound_keys`; the elaborator keeps a variable's bounds on
+// its placeholder, which is the same set.
+fn position_bounds(e: el::El, t: ir::TypeT, out: vector<text>) {
+  h = el_types::type_var(e, el_types::base(t));
+  if h >= 0 {
+    for b in el::def(e, h).bounds {
+      nm = el::def(e, b).name;
+      if !out.contains(nm) {
+        out += [nm];
+      }
+    }
+  }
+  for c in type_children(t) {
+    position_bounds(e, c, out);
+  }
 }
 
 // `Parser::select_overload` over the program's set `set` for a call with these argument types:
@@ -506,7 +786,7 @@ fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>, only: integer
         if only >= 0 && el::def(e, n).source != only {
           continue;
         }
-        r = ranks(e, n, args);
+        r = definition_ranks(e, n, args);
         if r != null {
           taking += [Ranked { d: n, ranks: r! }];
         }
@@ -519,7 +799,7 @@ fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>, only: integer
   for a in taking {
     beaten = false;
     for b in taking {
-      if better(b, a) {
+      if strictly_better(e, b, a) {
         beaten = true;
       }
     }

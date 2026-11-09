@@ -9465,7 +9465,7 @@ fn re_resolve_stub(e: el::El, d: integer, h: integer, bound: ir::TypeT) -> integ
   -1
 }
 
-pub struct Binding { vars: vector<integer>, types: vector<ir::TypeT>, ok: boolean }
+pub struct Binding { pub vars: vector<integer>, pub types: vector<ir::TypeT>, pub ok: boolean }
 
 // Each type variable of `p` bound to the part of `a` it stands for, in the order the variables
 // first appear; a second meeting must agree, and a shape the two do not share fails the bind.
