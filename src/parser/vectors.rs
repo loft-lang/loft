@@ -4022,21 +4022,25 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let body_expected = if nullable_hint {
             in_t.clone()
         } else {
-            // NOT the declared element type, although LOFT.md's rule (*the expected type
-            // wherever there is one*) would have it be — seeded, a nested comprehension into
-            // a `vector<vector<integer>>` resolves (today it is refused), but the hint also
-            // types the `[]` arm of `w.ns[i] ?? []` in a body building into a FIELD, and that
-            // arm's fresh vector inside the buffer route is a use-after-free
-            // (`1195-a-comprehension-reads-its-destination-field`, measured).  That route
-            // owes the fix before the hint can be handed down.
             // @PLN25 storage-vs-access-nullability — INFERRED comprehensions stay DENSE
             // (the struct-literal PEEK is retired). A nullable element comes only from a
             // DECLARED `vector<?S>` (the first arm above).
             Type::Unknown(0)
         };
+        // `@FR-T-Chk-Vec`: each element is checked against the declared `τ`, so a literal in
+        // the body that needs a type (`[]`, a nested comprehension) reads it from `τ`
+        // (loft#2439).  Handed as the literal HINT, not as the block's expected type: typed by
+        // its expected type the block answers the bare `τ`, and a body that views its
+        // destination (`w.ns[i] ?? []` built into the field `w.ns`) lost the dep that says so
+        // — the element was then freed as though the body owned it, and `w`'s store with it.
+        let saved_expected = self.expected.clone();
+        if declared && !nullable_hint {
+            self.seed_leaving_value_hint(in_t);
+        }
         let body_pos = *self.lexer.peek_pos();
         let mut body = Value::Null;
         let body_type = self.parse_block("for", &mut body, &body_expected);
+        self.expected = saved_expected;
         self.restore_loop_spelling(spelling);
         Self::prepend_destructure(&mut body, destructure_setup, &body_type);
         // @PLN187 — the comprehension is a vector of what its body yields.

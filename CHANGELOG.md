@@ -71,6 +71,13 @@ made once for the whole box: drawing laid-out text runs at 1.5 times Rust.
 because the wrapper reports the same version.  The compiler's path is now part of the build's
 key.
 
+### Bug fixes
+
+**An empty vector as a comprehension's element.**  `rows: vector<vector<integer>> = [for _ in
+n { [] }]` was refused with "comprehension body must produce a value"; the body now takes its
+type from the declared element, so it builds three empty rows.  The same holds for a nested
+comprehension and for an `if` whose one arm is `[]`.
+
 ## 2026-11
 
 ### May need a change in your code
