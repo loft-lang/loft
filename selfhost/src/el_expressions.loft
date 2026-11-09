@@ -3595,7 +3595,9 @@ fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
       tps += [el_types::without_deps(el_types::unrewritten(x.tp))];
       continue;
     }
-    if !(is_scalar(x.tp) || x.tp is TyText) {
+    // A nullable plain scalar is held as it is: its null is the scalar's own sentinel.
+    nullable_scalar = match x.tp { TyOptional { inner } => is_scalar(inner), _ => false };
+    if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar) {
       el::refuse(e, "a tuple with a member of this type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -11782,7 +11784,8 @@ fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
     return ex(el_ir::v_if(present, x.code, d.code), el_types::with_deps(vt, el_types::deps(lhs)));
   }
-  if !el_convert::plain_scalar(lhs) {
+  // A plain enum's value is a scalar here: its null is the zero ordinal (`OpConvBoolFromEnum`).
+  if !el_convert::plain_scalar(lhs) && !el_convert::plain_enum(lhs) {
     el::refuse(e, "a `??` on this type: {type_kind(lhs)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -15201,8 +15204,27 @@ fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
     },
     _ => {}
   }
-  // A bare narrowing cast directly left of `??` is checked: the `??` is its fallback.
+  // A plain enum's value to its integer (`OpConvIntFromEnum`), an integer to an enum's value
+  // (`OpCastEnumFromInt`, under the enum's store type), and — directly left of `??` — a text to
+  // the value its variant name spells (`OpCastEnumFromText`).
+  if el_convert::plain_enum(el_types::base(x.tp)) && el_types::base(to) is TyInteger && !(to is TyOptional) {
+    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpConvIntFromEnum", [x.code]) }, to);
+  }
+  if el_convert::plain_enum(to) && (el_types::base(x.tp) is TyInteger || (coalesced && el_types::base(x.tp) is TyText)) {
+    en = match to { TyEnum { n } => n, _ => -1 };
+    op = if el_types::base(x.tp) is TyText { "OpCastEnumFromText" } else { "OpCastEnumFromInt" };
+    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, op, [x.code, ir::NdInt { n: el::def(e, en).known_type }]) }, to);
+  }
+  // A text parse directly left of `??` (`s as integer ?? -1`): the parse, typed as the target,
+  // whose null the `??` tests — a bare one is Rust's `text-parse-may-fail` error.
   xb = el_types::base(x.tp);
+  if coalesced && xb is TyText && el_convert::plain_scalar(to) {
+    c = el_convert::cast(e, x.code, xb, to);
+    if c != null {
+      return ex(if e.first_pass { ir::NdNull } else { c! }, to);
+    }
+  }
+  // A bare narrowing cast directly left of `??` is checked: the `??` is its fallback.
   if coalesced && !e.first_pass && el_convert::plain_scalar(xb) && el_convert::narrowing_int(xb, to) && !el_convert::value_fits(e, vars, x.code, to) {
     return dn4_cast(e, vars, ex(x.code, xb), to);
   }
