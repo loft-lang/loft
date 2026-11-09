@@ -11931,14 +11931,7 @@ fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: integer?) 
       },
       _ => {}
     }
-    // A text defaults to `""` (`build_default`'s text arm): `x?` is `x ?? ""`.  An element of a
-    // record's text-vector field borrows the record, which this port's element read does not
-    // record: refused by name.
-    field_elem = match e.p.nodes[pe!] { SIndex { e: ie } => ie != null && e.p.nodes[ie!] is SMember, _ => false };
-    if b is TyText && field_elem {
-      el::refuse(e, "a `?` on a text element");
-      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-    }
+    // A text defaults to `""` (`build_default`'s text arm): `x?` is `x ?? ""`.
     if b is TyText {
       return coalesce_with(e, vars, x, ex(ir::NdText { s: "" }, ir::TyText { dep: [] }));
     }
