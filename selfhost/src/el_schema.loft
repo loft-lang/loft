@@ -698,6 +698,7 @@ pub fn key_descriptors(e: el::El, t: integer) -> vector<ir::Key> {
     },
     PtTrie { content, key } => { c = content; ks = [ir::KeyField { nr: key, asc: true }]; },
     PtSorted { content, keys } => { c = content; ks = keys; },
+    PtOrdered { content, keys } => { c = content; ks = keys; },
     PtIndex { content, keys } => { c = content; ks = keys; },
     _ => {}
   }
@@ -743,6 +744,25 @@ fn immutable(e: el::El, d: integer, name: text) {
       e.b.data.definitions[d].attributes[a#index].mutable = false;
     }
   }
+}
+
+// The key fields a keyed type's name lists (`T[a,-b]`), numbered in its element `c` now that the
+// element's fields are laid out.
+fn named_keys(e: el::El, c: integer, name: text) -> vector<ir::KeyField> {
+  r: vector<ir::KeyField> = [];
+  open = name.find("[");
+  if open == null {
+    return r;
+  }
+  inner = name[open! + 1..len(name) - 2];
+  for k in inner.split(',') {
+    asc = !starts_with(k, "-");
+    f = field_nr(e, c, if asc { k } else { k[1..] });
+    if f >= 0 {
+      r += [ir::KeyField { nr: f, asc: asc }];
+    }
+  }
+  r
 }
 
 // `Stores::sorted` / `Stores::index` (`create_key`): named by the element and its directed keys.
@@ -929,6 +949,15 @@ pub fn schema_type(e: el::El, name: text) -> integer {
   for t in e.b.types {
     if t.name == name {
       return t#index;
+    }
+  }
+  // `rename_type` keeps the old name: a `sorted<…>` laid out as `ordered<…>` is still found by it.
+  if starts_with(name, "sorted<") {
+    on = "ordered<{name[7..]}";
+    for t in e.b.types {
+      if t.name == on && (t.parts[0] ?? ir::PtBase) is PtOrdered {
+        return t#index;
+      }
     }
   }
   if starts_with(name, "vector<") {
@@ -1152,9 +1181,12 @@ fn finish(e: el::El) {
             e.b.types[f.content].name = "array<{e.b.types[content]!.name}>";
           }
         },
-        PtSorted { content } => {
+        // `sorted` → `ordered`: the same keys over records laid out by id (`@C145`).
+        PtSorted { content, keys } => {
           if linked.contains(content) {
-            el::refuse(e, "a sorted field of a linked record (laid out by id)");
+            e.b.types[content].linked = true;
+            e.b.types[f.content].parts = [ir::PtOrdered { content: content, keys: if len(keys) > 0 { keys } else { named_keys(e, content, e.b.types[f.content]!.name) } }];
+            e.b.types[f.content].name = "ordered{e.b.types[f.content]!.name[len("sorted")..]}";
           }
         },
         _ => {}
@@ -1173,7 +1205,7 @@ fn finish(e: el::El) {
   }
   // `determine_keys`, once every record is laid out: each keyed type's key descriptors.
   for t in e.b.types {
-    if t.parts[0] is PtHash || t.parts[0] is PtSorted || t.parts[0] is PtIndex || t.parts[0] is PtRadix || t.parts[0] is PtTrie {
+    if t.parts[0] is PtHash || t.parts[0] is PtSorted || t.parts[0] is PtOrdered || t.parts[0] is PtIndex || t.parts[0] is PtRadix || t.parts[0] is PtTrie {
       e.b.types[t#index].keys = key_descriptors(e, t#index);
     }
   }
