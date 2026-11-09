@@ -1031,7 +1031,7 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
 // The plain path: no type variables, no operator form, no annotation, no `both`.
 // A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
 // the definition's key, or "" where the declaration was refused before one was known.
-pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer>, ret: integer?, body: integer?, is_op: boolean = false, tvars: vector<integer> = [], ret_const: boolean = false, annots: vector<integer> = []) -> text {
+pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer>, ret: integer?, body: integer?, is_op: boolean = false, tvars: vector<integer> = [], ret_const: boolean = false, annots: vector<integer> = [], short_names: vector<text> = [], hint: ir::TypeT = ir::TyVoid) -> text {
   // A capability (`fs#read`) and a `-> const` result are checks at the call and the return; the
   // definition's image is the plain one, so both are read past.  An `operator` form is the
   // method of its name, marked (`operator_form`) so the form it backs reaches it.
@@ -1059,6 +1059,27 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   }
   vars = el_vars::new_vars(name, e.file);
   arguments: vector<Argument> = [];
+  // A short lambda's parameters: each typed as the hint's argument at its place, `const` where
+  // the hint's is.
+  hint_args: vector<ir::TypeT> = [];
+  hint_consts = 0;
+  hint_ret: ir::TypeT = ir::TyVoid;
+  match hint {
+    TyFunction { args: ha, result: hr, consts: hc } => {
+      hint_args = ha;
+      hint_consts = hc;
+      hint_ret = hr;
+    },
+    _ => {}
+  }
+  for sn in short_names {
+    ht = hint_args[sn#index];
+    if ht == null || el_types::is_unknown(ht!) {
+      el::refuse(e, "a short lambda parameter its hint does not type");
+      return "";
+    }
+    arguments += [Argument { name: sn, typedef: ht!, constant: ((hint_consts >> sn#index) & 1) == 1, dflt: ir::NdNull }];
+  }
   for pn in params {
     match e.p.nodes[pn] {
       SParam { name: an, amp, fixed, tp, init, cap: pcap } => {
@@ -1103,7 +1124,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   }
   // Where the Rust lexer stands after `)`: on the `->`, the body's `{` or the `;`.
   after = at;
-  rt: ir::TypeT = ir::TyVoid;
+  // A short lambda answers the hint's result, unless that names nothing (loft#945).
+  rt: ir::TypeT = if !(hint is TyFunction) || el_types::is_unknown(hint_ret) { ir::TyVoid } else { hint_ret };
   if ret != null {
     // `-> T` (or `-> const T`, a function or a tuple type): the lexer stood on the `->`, which a
     // `const` stands between.

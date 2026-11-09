@@ -163,6 +163,10 @@ pub struct Vars {
   // target holds, which an `if` there hands its arms (an untyped `[]` built in its place)
   pub expect_node: integer = -1,
   pub expect: ir::TypeT = ir::TyVoid,
+  // `Parser::lambda_hint` for a call's argument: the `fn(…)` its parameter takes, for the one
+  // short lambda (`|x| …`) at `lambda_node` (-1: none)
+  pub lambda_node: integer = -1,
+  pub lambda_hint: ir::TypeT = ir::TyVoid,
   // the local a `+` chain of vectors is bound to (`a = v + w` builds into it), or -1
   pub concat_dest: integer = -1,
   // `parse_var`'s `into` arm: the syntax node of a local bind's right-hand side read first,

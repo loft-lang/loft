@@ -3339,16 +3339,26 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 // lambda's (a capture is refused where it is read); the `|x|` spelling is refused by name.
 fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   match e.p.nodes[n] {
-    SLambda { at, params, ret, body, short } => {
+    SLambda { at, params, ret, body, short, names } => {
+      // `parse_lambda_short`: `|x, y| …` takes its parameter types — and its result — from the
+      // `fn(…)` the position expects (`lambda_hint`): a call's parameter or a typed bind.
+      hint: ir::TypeT = ir::TyVoid;
       if short {
-        el::refuse(e, "a short lambda (`|…|`), its parameter types inferred");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        if vars.lambda_node == n {
+          hint = vars.lambda_hint;
+        } else if vars.expect_node == n {
+          hint = el_types::base(vars.expect);
+        }
+        if !(hint is TyFunction) {
+          el::refuse(e, "a short lambda (`|…|`) with no `fn(…)` its position expects");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
       }
       if e.context < 0 || body == null {
         el::refuse(e, "a lambda outside a function or with no body");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
-      own: vector<text> = [];
+      own: vector<text> = names;
       for pn in params {
         match e.p.nodes[pn] {
           SParam { name: pname } => { own += [pname]; },
@@ -3386,7 +3396,7 @@ fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       e.captures = caps;
       e.closure_rec = if len(caps) > 0 && !e.first_pass { el::def_nr(e, rec_nm) } else { -1 };
       e.closure_var = -1;
-      key = el_definitions::parse_function(e, at, nm, params, ret, body);
+      key = el_definitions::parse_function(e, at, nm, params, ret, body, short_names: if short { names } else { [] }, hint: hint);
       e.captures = saved_caps;
       e.closure_rec = saved_rec;
       e.closure_var = saved_var;
@@ -7963,6 +7973,9 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   }
   list: vector<ir::Node> = [];
   types: vector<ir::TypeT> = [];
+  // `free_call_hint`: the one free definition of the name types a short lambda argument with its
+  // parameter's `fn(…)` there.
+  hd = look(e, source, "n_{name}");
   for a in args {
     match e.p.nodes[a] {
       SArg { name: an, e: ae } => {
@@ -7970,7 +7983,15 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
           el::refuse(e, "a named argument");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
+        if hd >= 0 && el::def(e, hd).def_type == el::DT_FUNCTION && a#index < len(el::def(e, hd).attributes) {
+          pt = el_types::base(el::def(e, hd).attributes[a#index]!.typedef[0] ?? ir::TyVoid);
+          if pt is TyFunction {
+            vars.lambda_node = ae!;
+            vars.lambda_hint = pt;
+          }
+        }
         x = argument_view(e, vars, expression(e, vars, ae!));
+        vars.lambda_node = -1;
         list += [x.code];
         types += [x.tp];
       },
@@ -9492,6 +9513,7 @@ pub fn substitute(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
       if (s is TyOptional) { s } else { ir::TyOptional { inner: s } }
     },
     TyRefVar { inner } => ir::TyRefVar { inner: substitute(inner, h, bound) },
+    TyFunction { args, result, dep, consts } => ir::TyFunction { args: [for a in args { substitute(a, h, bound) }], result: substitute(result, h, bound), dep: dep, consts: consts },
     _ => t
   }
 }
@@ -9626,6 +9648,14 @@ fn bare_over(t: ir::TypeT, h: integer) -> boolean {
     TyVector { inner } => bare_over(inner, h),
     TyOptional { inner } => bare_over(inner, h),
     TyRefVar { inner } => bare_over(inner, h),
+    TyFunction { args, result } => {
+      for a in args {
+        if !bare_over(a, h) {
+          return false;
+        }
+      }
+      bare_over(result, h)
+    },
     _ => !type_mentions(t, h)
   }
 }
@@ -9824,7 +9854,14 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
     // A vector backing's wrapper over the variable (`main_vector<T>`) is re-derived per
     // instance (`instance_vector_wrapper`): not carried.
     wrapper = match el_types::base(t) { TyReference { n } => el::def(e, n).name.starts_with("main_vector<") && type_mentions(el::def(e, n).attributes[0]!.typedef[0] ?? ir::TyVoid, h), _ => false };
-    if !bare_over(t, h) || t is TyFunction || wrapper {
+    // A parameter of function type (`f: fn(T) -> T`) is substituted as any other; a local of one
+    // is not carried.
+    // `retarget_parametric_type_rows` asks `get_type` of each variable over the type variable —
+    // a function type's answer is the `int<0,false>` row, made here if it is new.
+    if t is TyFunction && type_mentions(t, h) && !e.first_pass {
+      el_schema::int_store(e, 0, false);
+    }
+    if !bare_over(t, h) || (t is TyFunction && !v.argument) || wrapper {
       el::refuse(e, "a generic local over the type variable in another shape or of a function type");
       return false;
     }
