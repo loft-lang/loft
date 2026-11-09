@@ -7987,6 +7987,9 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
   if source < 0 && name == "reserve" {
     return reserve_call(e, list, types);
   }
+  if source < 0 && name == "sort" && sorts_itself(types) {
+    return sort_call(e, list, types);
+  }
   if source < 0 && len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
     step = match el_types::base(first) { TyIterator { step: st } => st, _ => ir::TyVoid };
     if name == "exhausted" {
@@ -8750,6 +8753,9 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
   if name == "reserve" {
     return reserve_call(e, list, types);
   }
+  if name == "sort" && sorts_itself(types) {
+    return sort_call(e, list, types);
+  }
   // A method name that is an overload set reaches the member its argument types select, the
   // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
   mset = el_dispatch::own_set(e, name);
@@ -8794,6 +8800,34 @@ fn chain_lifts(e: el::El, t: ir::TypeT) -> boolean {
     TyRewritten { inner: _ } => false,
     _ => !(el_types::base(t) is TyFunction) && !(el_types::base(t) is TyTuple) && !is_nullable_wrapper(e, t)
   }
+}
+
+// `sort_is_special` / `sorts_itself`: one vector argument whose (non-nullable) elements the
+// runtime compares itself — an integer of any width, a float, a single, a text.  Any other
+// element is the standard library's `sort<T: Ordered>` to sort, through its body.
+fn sorts_itself(types: vector<ir::TypeT>) -> boolean {
+  if len(types) != 1 {
+    return false;
+  }
+  match el_types::base(types[0] ?? ir::TyVoid) {
+    TyVector { inner } => inner is TyInteger || inner is TyFloat || inner is TySingle || inner is TyText,
+    _ => false
+  }
+}
+
+// `parse_sort`: `OpSortVector(v, elem)`, sorting in place by the elements' store type; nothing on
+// the first pass.
+fn sort_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  inner = match el_types::base(types[0] ?? ir::TyVoid) { TyVector { inner: vi } => vi, _ => ir::TyUnknown { n: 0 } };
+  et = el_schema::content_type(e, inner);
+  if et < 0 {
+    el::refuse(e, "a `sort` of a vector of this element type: {type_kind(inner)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(el_ir::cl(e, "OpSortVector", [list[0], ir::NdInt { n: et }]), ir::TyVoid)
 }
 
 // `vector_operations`' `remove`: `v.remove(i)` is `OpRemoveVector(v, elem, i)`, answering whether
@@ -9341,7 +9375,12 @@ fn generic_instance(e: el::El, d: integer, types: vector<ir::TypeT>) -> integer 
     return -1;
   }
   nm = instance_name(e, d, b!);
-  if nm == "" { -1 } else { el::def_nr(e, nm) }
+  if nm == "" {
+    return -1;
+  }
+  // `@FR-G-Mono`: one instance per instantiation program-wide — another module's included.
+  found = el::def_nr(e, nm);
+  if found >= 0 { found } else { el::any_source_nr(e, nm) }
 }
 
 // What the template's variables bind to at a call with these argument types (`bind_template`),
@@ -9366,6 +9405,12 @@ fn instance_name(e: el::El, d: integer, b: Binding) -> text {
       return "";
     }
     spelling = if t#index == 0 { sp } else { "{spelling}#{sp}" };
+  }
+  // `instance_key`: a library's template names its library (`@<library>`) — a template's name
+  // is unique only within its source, the instance lookup program-wide.
+  src = el::def(e, d).source;
+  if src != el::STD_SOURCE && src != el::MAIN_SOURCE {
+    spelling = "{spelling}@{el::source_label(e, src)}";
   }
   "i_{len(spelling)}{spelling}_{el::def(e, d).name}"
 }
@@ -9724,7 +9769,7 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   el_schema::vector_type(e, el::def(e, type_def_nr(e, el_types::base(bound))).known_type);
   // `stale_monomorphs`: a template whose second-pass body is not read yet (declared below the
   // call) is filled once the pass is through (`rebuild_stale_monomorphs`).
-  if !e.bodies2.contains(g) {
+  if !has_body(e, g) {
     e.stale += [el::StaleInstance { d: d, g: g, holder: h, bound: bound }];
   } else if !fill_instance(e, d, g, h, bound) {
     return -1;
@@ -9734,9 +9779,15 @@ fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
 
 // `rebuild_stale_monomorphs`, after the second pass: each instance made before its template's
 // second-pass body was read is filled from that body.
+// Template `g`'s second-pass body is read: this run read it, or it came with the standard
+// library's image (the warm start's templates carry their bodies).
+fn has_body(e: el::El, g: integer) -> boolean {
+  e.bodies2.contains(g) || (!e.default && el::def(e, g).source == el::STD_SOURCE)
+}
+
 pub fn rebuild_stale(e: el::El) {
   for st in e.stale {
-    if !e.bodies2.contains(st.g) {
+    if !has_body(e, st.g) {
       el::refuse(e, "a generic instance whose template has no second-pass body");
     } else {
       fill_instance(e, st.d, st.g, st.holder, st.bound);
