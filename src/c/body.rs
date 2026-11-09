@@ -21,6 +21,7 @@ mod par;
 mod peel;
 mod spec_chain;
 mod sticky;
+mod table_handle;
 pub(super) mod transient;
 mod value;
 mod version;
@@ -237,6 +238,10 @@ pub(crate) struct FnWriter<'a> {
     /// the next statement only (`filed_next`), whose lookup of that key may answer the record.
     filed: Option<(crate::opt::writes::PathKey, u16, u16)>,
     filed_next: Option<(crate::opt::writes::PathKey, u16, u16)>,
+    /// `(R-TableHandle)`: the hash places whose keyed operations share a handle
+    /// (`table_handle::places`), and the handle each has been declared as.
+    table_places: std::collections::HashSet<crate::opt::writes::PathKey>,
+    table_names: std::collections::HashMap<crate::opt::writes::PathKey, String>,
     /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
     widening: Option<usize>,
     /// A value staged into a C temporary, by the temporary's name, with its kind: what a
@@ -764,6 +769,8 @@ impl<'a> FnWriter<'a> {
             room_minted: std::collections::HashMap::new(),
             filed: None,
             filed_next: None,
+            table_places: table_handle::places(cx, def.code()),
+            table_names: std::collections::HashMap::new(),
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
@@ -10160,7 +10167,15 @@ impl<'a> FnWriter<'a> {
                     Coll::Keyed(tp) => {
                         let rec = self.expr(rec, ind)?;
                         let rec = as_ref(rec)?;
-                        return self.keyed_finish(&v, &rec, tp);
+                        let hh = match (Self::literal(ptp, "type"), Self::literal(fld, "field")) {
+                            (Ok(p), Ok(f)) => u16::try_from(p)
+                                .ok()
+                                .zip(u16::try_from(f).ok())
+                                .and_then(|(p, f)| table_handle::finish_place(self.cx, data, p, f))
+                                .and_then(|path| self.table_handle_at(path)),
+                            _ => None,
+                        };
+                        return self.keyed_finish(&v, &rec, tp, hh.as_deref());
                     }
                     Coll::Group(parent, members) => {
                         let rec = self.expr(rec, ind)?;

@@ -107,7 +107,14 @@ impl FnWriter<'_> {
 
     /// `OpFinishRecord` in a keyed collection: the record goes to its key's place
     /// (`@FR-Col-Insert`: an equal key's element is replaced).
-    pub(super) fn keyed_finish(&mut self, c: &str, rec: &str, tp: u16) -> Result<E, String> {
+    /// `hh`: the table handle the place shares (`(R-TableHandle)`), if any.
+    pub(super) fn keyed_finish(
+        &mut self,
+        c: &str,
+        rec: &str,
+        tp: u16,
+        hh: Option<&str>,
+    ) -> Result<E, String> {
         let (kind, elem, size) = self.keyed_of(tp)?;
         let (keys, n) = self.cx.keys_of(tp);
         Ok(E::new(
@@ -117,9 +124,14 @@ impl FnWriter<'_> {
                     // A displaced entry releases what it owns: its type is in the table.
                     self.cx.name_types();
                     self.cx.describe_type(elem);
-                    format!(
-                        "(void) loft_hash_insert(loft_types, {elem}, {c}, {rec}, {keys}, {n}, 0)"
-                    )
+                    match hh {
+                        Some(h) => format!(
+                            "(void) loft_hh_insert(&{h}, loft_types, {elem}, {c}, {rec}, {keys}, {n}, 0)"
+                        ),
+                        None => format!(
+                            "(void) loft_hash_insert(loft_types, {elem}, {c}, {rec}, {keys}, {n}, 0)"
+                        ),
+                    }
                 }
                 Keyed::Index | Keyed::Ordered => {
                     // A displaced record releases what it owns: its type is in the table.
@@ -339,9 +351,13 @@ impl FnWriter<'_> {
                 )))
             }
             ("t_4hash_len", [h]) => {
+                let hh = self.table_handle(h);
                 let h = self.expr(h, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_hash_len({})", as_ref(h)?),
+                    match hh {
+                        Some(hh) => format!("loft_hh_len(&{hh}, {})", as_ref(h)?),
+                        None => format!("loft_hash_len({})", as_ref(h)?),
+                    },
                     K::Int,
                 )))
             }
@@ -1015,9 +1031,13 @@ impl FnWriter<'_> {
                 )))
             }
             ("OpLengthHash", [h]) => {
+                let hh = self.table_handle(h);
                 let h = self.expr(h, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_hash_len({})", as_ref(h)?),
+                    match hh {
+                        Some(hh) => format!("loft_hh_len(&{hh}, {})", as_ref(h)?),
+                        None => format!("loft_hash_len({})", as_ref(h)?),
+                    },
                     K::Int,
                 )))
             }
@@ -1486,6 +1506,18 @@ impl FnWriter<'_> {
                 && matches!(vals[0].unspan(), Value::Var(_))
                 && crate::opt::writes::vector_path(self.cx.data, data_v).as_ref() == Some(path)
         });
+        // `(R-TableHandle)`: the one-integer lookup goes through the place's handle — not the
+        // filed clause's fallback below, a cold path that would only add the handle's code to
+        // the hot function.
+        let hh = if ints.as_ref().is_some_and(|ks| ks.len() == 1) {
+            self.table_handle(data_v)
+        } else {
+            None
+        };
+        let find_i64 = |key: &str| match &hh {
+            Some(h) => format!("loft_hh_find_i64(&{h}, {data}, {keys}, {key})"),
+            None => format!("loft_h_find_i64({data}, {keys}, {key})"),
+        };
         let typed_find = ints
             .map(|ks| match ks.as_slice() {
                 [key] if filed.is_some() => {
@@ -1495,7 +1527,7 @@ impl FnWriter<'_> {
                         "((!LOFT_WRITE_REFUSED(loft_store_of({data})) && {data}.rec != 0 && loft_h_filed.rec != 0 && loft_get_int(loft_h_filed, {kpos}) == {key}) ? loft_h_filed : loft_h_find_i64({data}, {keys}, {key}))"
                     )
                 }
-                [key] => format!("loft_h_find_i64({data}, {keys}, {key})"),
+                [key] => find_i64(key),
                 ks => format!(
                     "loft_h_find_ints({data}, {keys}, {n}, (int64_t[]){{ {} }})",
                     ks.join(", ")
@@ -1632,17 +1664,21 @@ impl FnWriter<'_> {
             && let Some(path) = crate::opt::writes::vector_path(self.cx.data, data)
             && crate::opt::writes::vector_path(self.cx.data, gdata) == Some(path)
         {
+            let hh = self.table_handle(data);
             let (d, k) = self.two("OpHashRemove", &[data, key], ind)?;
             self.cx.name_types();
             self.cx.describe_type(elem);
             crate::rewrite_census::fired("R-TypedKeyed/remove", 1);
+            let (d, k, view) = (as_ref(d)?, as_int(k)?, u8::from(view));
             return Ok(E::new(
-                format!(
-                    "loft_hash_remove_i64(loft_types, {elem}, {}, {}, {keys}, {nk}, {})",
-                    as_ref(d)?,
-                    as_int(k)?,
-                    u8::from(view)
-                ),
+                match hh {
+                    Some(h) => format!(
+                        "loft_hh_remove_i64(&{h}, loft_types, {elem}, {d}, {k}, {keys}, {nk}, {view})"
+                    ),
+                    None => format!(
+                        "loft_hash_remove_i64(loft_types, {elem}, {d}, {k}, {keys}, {nk}, {view})"
+                    ),
+                },
                 K::Void,
             ));
         }

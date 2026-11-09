@@ -1,0 +1,157 @@
+// `@FR-R-TableHandle` — the C's keyed operations on one hash place share a table handle, checked
+// at every use: the same place, the store's table generation unchanged, the collection slot
+// still naming the claim; any other use resolves it again.  So every cell here makes two or more
+// keyed operations on one place, or one in a loop (where the handle is declared), and changes
+// the table between them along one path the design lists (bench/portal/analysis/table-handle.md
+// § How it fails): a growth, removals only, the field emptied by a callee, the owner rebound,
+// the owner's store freed and made again in a loop.  Every value is hand-computed; the cells run
+// on the interpreter and the C, and `LOFT_KEYED_VERIFY=1` (every live handle compared with a
+// fresh resolve) and `LOFT_NO_TABLE_HANDLE=1` must answer the same.
+
+struct E { k: integer, v: integer }
+struct Box { h: hash<E[k]>, tag: integer }
+
+// t1 — a growth between uses: inserts in a loop take the table from empty through several
+// doublings while the same handle keeps answering lookups.
+fn t1() {
+  b = Box { tag: 1 };
+  hits = 0;
+  for i in 0..300 {
+    b.h += [E { k: i * 7, v: i }];
+    if b.h[i * 7] != null { hits += 1; }
+    if b.h[i * 7 + 1] != null { hits += 100; }
+  }
+  // sum of v over k = 7*i for i in 0..300 = 0+1+…+299
+  s = 0;
+  for i in 0..300 { s += b.h[i * 7].v ?? -1; }
+  r = "{hits} {len(b.h)} {s}";
+  assert(r == "300 300 44850", "t1 {r}");
+  println("t1 {r}");
+}
+
+// t2 — removals only: the handle stays live across them (no table changes shape).
+fn t2() {
+  b = Box { tag: 2 };
+  for i in 0..64 { b.h += [E { k: i, v: i * i }]; }
+  for i in 0..64 {
+    if i % 2 == 1 { b.h[i] = null; }
+  }
+  s = 0;
+  n = 0;
+  for i in 0..64 {
+    e = b.h[i];
+    if e != null { s += e.v; n += 1; }
+  }
+  // even i in 0..64: sum of i*i = 4 * (0+1+…+31 squared) = 4 * 10416 = 41664
+  r = "{n} {len(b.h)} {s}";
+  assert(r == "32 32 41664", "t2 {r}");
+  println("t2 {r}");
+}
+
+fn empty_it(b: Box) {
+  b.h = [];
+}
+
+// t3 — a callee replaces the field between two uses of the caller's handle.
+fn t3() {
+  b = Box { tag: 3 };
+  for i in 0..20 { b.h += [E { k: i, v: 1 }]; }
+  before = len(b.h);
+  had = b.h[5] != null;
+  empty_it(b);
+  after = len(b.h);
+  gone = b.h[5] == null;
+  b.h += [E { k: 5, v: 9 }];
+  r = "{before} {had} {after} {gone} {b.h[5].v ?? -1} {len(b.h)}";
+  assert(r == "20 true 0 true 9 1", "t3 {r}");
+  println("t3 {r}");
+}
+
+// t4 — the owner rebound between uses: the same variable names another record, another table.
+fn t4() {
+  b = Box { tag: 4 };
+  for i in 0..10 { b.h += [E { k: i, v: i }]; }
+  first = len(b.h);
+  b = Box { tag: 5 };
+  b.h += [E { k: 3, v: 33 }];
+  r = "{first} {len(b.h)} {b.h[3].v ?? -1} {b.h[4] == null} {b.tag}";
+  assert(r == "10 1 33 true 5", "t4 {r}");
+  println("t4 {r}");
+}
+
+// t5 — the owner's store freed and made again each round: the handle declared once for the
+// function sees a new store (possibly in the same slot, the table at the same claim) every round.
+fn t5() {
+  total = 0;
+  for round in 0..40 {
+    b = Box { tag: round };
+    for i in 0..(round + 1) { b.h += [E { k: i, v: round }]; }
+    if b.h[round] != null { total += b.h[round].v ?? 0; }
+    if b.h[round + 1] != null { total += 1000; }
+    total += len(b.h);
+  }
+  // per round: v of key `round` is `round`, length round + 1:
+  //   sum(round) + sum(round + 1) over 0..40 = 780 + 820 = 1600
+  assert(total == 1600, "t5 {total}");
+  println("t5 {total}");
+}
+
+// t6 — a lookup, the length, a removal and an insert in one function (the eviction shape).
+fn evict_put(b: Box, k: integer, v: integer) {
+  if b.h[k] != null { return; }
+  if len(b.h) >= 8 {
+    old = k - 8;
+    b.h[old] = null;
+  }
+  b.h += [E { k: k, v: v }];
+}
+
+fn t6() {
+  b = Box { tag: 6 };
+  for i in 0..100 { evict_put(b, i, i * 3); }
+  s = 0;
+  for i in 0..100 { s += b.h[i].v ?? 0; }
+  // keys 92..99 remain: 3 * (92+…+99) = 3 * 764 = 2292
+  r = "{len(b.h)} {s}";
+  assert(r == "8 2292", "t6 {r}");
+  println("t6 {r}");
+}
+
+// t7 — records a link can name (filed as records of their own, through the handle's one-probe
+// insert), links into the removed ones reading null afterwards (`@FR-H-Removed`).  Linked the
+// way bench 23 links its nodes: a parameter stored in the holder's field, a field copied.
+struct N { k: integer, prev: reference<N>? }
+struct Chain { h: hash<N[k]>, last: reference<N>? }
+
+fn push(c: Chain, n: N) {
+  n.prev = c.last;
+  c.last = &n;
+}
+
+// The insert and its lookup in one function, as bench 23's `put`: the place's handle covers both.
+fn add(c: Chain, k: integer) {
+  if c.h[k] != null { return; }
+  c.h += [N { k: k }];
+  m = c.h[k];
+  if m != null { push(c, m); }
+}
+
+fn t7() {
+  c = Chain { };
+  for i in 0..30 { add(c, i); }
+  for i in 0..10 { c.h[i] = null; }
+  linked = 0;
+  s = 0;
+  for i in 10..30 {
+    m = c.h[i];
+    if m != null && m.prev != null { linked += 1; s += m.prev.k; }
+  }
+  // keys 10..29 remain; 10's prev (9) is removed and reads null; 11..29 link to 10..28
+  r = "{len(c.h)} {linked} {s}";
+  assert(r == "20 19 361", "t7 {r}");
+  println("t7 {r}");
+}
+
+fn main() {
+  t1(); t2(); t3(); t4(); t5(); t6(); t7();
+}
