@@ -1362,7 +1362,7 @@ fn bounds_key(names: vector<text>) -> text {
 }
 
 // The bound-set key of a placeholder's own bounds (`placeholder_bounds_key`).
-fn placeholder_key(e: el::El, d: ir::Definition) -> text {
+pub fn placeholder_key(e: el::El, d: ir::Definition) -> text {
   names: vector<text> = [];
   for b in d.bounds {
     names += [el::def(e, b).name];

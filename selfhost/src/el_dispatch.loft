@@ -18,6 +18,7 @@ use el_vars;
 use el_types;
 use el_convert;
 use el_expressions;
+use el_definitions;
 
 // `Data::identity_spelling`: what tells one type from another in a definition key — the alias
 // or the range of an integer with its forced width, a struct or an enum by its name, a vector by
@@ -74,7 +75,13 @@ fn labelled(e: el::El, t: ir::TypeT, holders: vector<integer>) -> text {
         k = x#index;
       }
     }
-    return if k < 0 { "" } else { "${k}" };
+    if k < 0 {
+      return "";
+    }
+    // `full_spelling`'s label: a bounded variable carries its bound set (`$0:Ordered`), so
+    // `f<T: A>` and `f<T: B>` are two keys.
+    key = el_definitions::placeholder_key(e, el::def(e, h));
+    return if key == "" { "${k}" } else { "${k}:{key}" };
   }
   match t {
     TyOptional { inner } => {
@@ -115,17 +122,13 @@ fn declared(e: el::El, d: integer) -> text {
 // `Data::full_spelling`: every declared parameter's identity joined with `#` — the spelling a
 // member of a set is keyed and labelled by.  "" when a parameter has no identity here.
 pub fn full_spelling(e: el::El, types: vector<ir::TypeT>) -> text {
+  // port: data.rs full_spelling
   // A template's type variables are written as their position among the variables in order of
-  // first appearance (`$0`), so `f<T>(v: T)` and `f<U>(v: U)` are one key.  A bounded variable
-  // (`$0:Ordered`) is not carried here.
+  // first appearance, with the bound set (`$0`, `$0:Ordered`), so `f<T>(v: T)` and `f<U>(v: U)`
+  // are one key and `f<T: A>` and `f<T: B>` two.
   holders: vector<integer> = [];
   for t in types {
     collect_type_vars(e, t, holders);
-  }
-  for h in holders {
-    if len(el::def(e, h).bounds) > 0 {
-      return "";
-    }
   }
   parts: vector<text> = [];
   for t in types {
