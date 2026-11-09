@@ -215,9 +215,25 @@ impl Parser {
     /// - the destination is an element slot, which never owns a store (loft#664's marker):
     ///   adopting re-points the slot's handle and leaves the element itself empty;
     /// - the write is a `+=`: adopting REPLACES what the destination already held.
+    ///
+    /// And a fourth (`@FR-I-Comp`, loft#2446): the operand READS the destination — itself or a
+    /// local viewing its store (`out = out[0..n] + [g]`, `out = src[0..len(out)] + [g]`).  The
+    /// destination then names the operand's per-site buffer, which the next run of the same
+    /// site resets before the operand reads, so in a loop the read saw the vector being built
+    /// and only the last pass's elements survived.  A copy reads what the destination held when
+    /// the statement began.
     fn concat_may_adopt(&self, code: &Value, tp: &Type, orig_var: u16) -> bool {
         let appending = orig_var == self.assign_target && !self.assign_replaces;
-        !self.vars.is_inline_ref(orig_var) && !appending && self.value_is_fresh(code, tp)
+        let reads_destination = code.reads_var(orig_var)
+            || self
+                .vars
+                .store_viewers(orig_var)
+                .into_iter()
+                .any(|w| code.reads_var(w));
+        !self.vars.is_inline_ref(orig_var)
+            && !appending
+            && !reads_destination
+            && self.value_is_fresh(code, tp)
     }
 
     /// The chain of [`Self::parse_append_vector`] continued in the FIELD its first operand was
