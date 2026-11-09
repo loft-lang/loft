@@ -445,6 +445,16 @@ pub fn qualified_def(el: El, name: text, member: text) -> integer {
   source_nr(el, get_source(el, name), member)
 }
 
+// `Data::any_source_nr`: the first definition named `name` in any source, or -1.
+pub fn any_source_nr(el: El, name: text) -> integer {
+  for d in el.b.data.definitions {
+    if d.name == name && source_nr(el, d.source, name) == d#index {
+      return d#index;
+    }
+  }
+  -1
+}
+
 // `Data::def_nr` (`get_or_std`): the current source's definition, else the standard library's.
 // `Data::variant_of`: the variant of enum `d` named `name`, or -1.
 pub fn variant_of(el: El, d: integer, name: text) -> integer {
