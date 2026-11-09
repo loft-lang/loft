@@ -7260,6 +7260,9 @@ fn field_position(e: el::El, d: integer, name: text) -> integer {
 fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) -> ir::Node {
   def = el::def(e, d);
   at = def.attributes[a]!;
+  if e.first_pass && el_types::is_unknown(at.typedef[0] ?? ir::TyVoid) {
+    return ir::NdNull;
+  }
   pos = ir::NdInt { n: field_position(e, d, at.name) };
   // `set_field_check`'s record arm: a struct field takes a copy of the value; a pointer field
   // (`reference<T>`) the reference itself.
@@ -7691,6 +7694,10 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
   def = el::def(e, d);
   pos = ir::NdInt { n: field_position(e, d, def.attributes[a]!.name) };
   ft = el_types::base(def.attributes[a]!.typedef[0]);
+  // A field typed by a forward reference is resolved after the file: untyped on the first pass.
+  if e.first_pass && el_types::is_unknown(ft) {
+    return ir::NdNull;
+  }
   if keyed_kind(ft) {
     return el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: if e.first_pass { 0 } else { el_schema::keyed_type(e, ft) } }]);
   }
@@ -10555,6 +10562,11 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
       conv += [empty_literal_to(e, vars, el_types::base(pt))];
       continue;
     }
+    // A parameter typed by a forward reference is resolved after the file (pass 1 only).
+    if e.first_pass && el_types::is_unknown(pt) {
+      conv += [arg];
+      continue;
+    }
     c = el_convert::convert_store(e, vars, arg, at, pt);
     if c != null {
       conv += [c!];
@@ -13169,7 +13181,8 @@ fn text_arm_deps(e: el::El, vars: el_vars::Vars, arm: ir::Node) -> vector<intege
     },
     NdVar { n } => if el_types::base(el_vars::tp(vars, n)) is TyText { [n] } else { [] },
     NdCall { def_nr, args } => {
-      if el::def(e, def_nr).name == "OpGetTextSub" && len(args) > 0 {
+      // A slice of a text local, or a text field of a record local (`c.t` borrows `c`).
+      if (el::def(e, def_nr).name == "OpGetTextSub" || el::def(e, def_nr).name == "OpGetText") && len(args) > 0 {
         match el_ir::unspan(args[0]) {
           NdVar { n } => [n],
           _ => []
@@ -13357,7 +13370,10 @@ fn text_arm_into(c: integer, arm: ir::Node) -> ir::Node? {
           ops += [op];
         }
       }
-      ops += [el_ir::respan(last, el_ir::v_set(c, el_ir::unspan(last)))];
+      // A block at the tail (a format string's) takes the write at its own tail, as
+      // `push_text_arms_into` recurses into it.
+      inner = if el_ir::unspan(last) is NdBlock { text_arm_into(c, el_ir::unspan(last)) } else { null };
+      ops += [el_ir::respan(last, inner ?? el_ir::v_set(c, el_ir::unspan(last)))];
       bl.operators = ops;
       bl.result = [ir::TyVoid];
       ir::NdBlock { block: [bl] }

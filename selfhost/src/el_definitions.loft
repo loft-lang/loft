@@ -62,6 +62,72 @@ fn top_item(e: el::El, it: integer) {
   }
 }
 
+// `Data::resolve_adopted_stubs`, between the passes: every forward reference's stub a
+// declaration adopted names the type it became in each attribute and in each function's variable
+// table (pass 1 stored `Unknown(stub)` there; a function's result is pass 2's to recompute).
+pub fn resolve_adopted_stubs(e: el::El) {
+  for st in e.adopted {
+    target = el::def(e, st).returned[0] ?? ir::TyUnknown { n: st };
+    if el::def(e, st).def_type == el::DT_TYPE_TEMPLATE || target is TyUnknown {
+      continue;
+    }
+    for d in 0..len(e.b.data.definitions) {
+      for a in 0..len(el::def(e, d).attributes) {
+        r = rewrite_unknown(el::def(e, d).attributes[a]!.typedef[0] ?? ir::TyVoid, st, target);
+        if r != null {
+          e.b.data.definitions[d].attributes[a].typedef = [r!];
+        }
+      }
+      for v in 0..len(el::def(e, d).variables.variables) {
+        r = rewrite_unknown(el::def(e, d).variables.variables[v]!.type_def[0] ?? ir::TyVoid, st, target);
+        if r != null {
+          e.b.data.definitions[d].variables.variables[v].type_def = [r!];
+        }
+      }
+    }
+  }
+  e.adopted = [];
+}
+
+// `Function::rewrite_unknown`: `t` with `Unknown(stub)` replaced by `target` at any depth of a
+// vector, a link, a `?` or a tuple; null where `t` does not name the stub.
+fn rewrite_unknown(t: ir::TypeT, stub: integer, target: ir::TypeT) -> ir::TypeT? {
+  match t {
+    TyUnknown { n } => if n == stub { target } else { null },
+    TyVector { inner, dep } => {
+      r = rewrite_unknown(inner, stub, target);
+      if r == null { null } else { ir::TyVector { inner: r!, dep: dep } }
+    },
+    TyRefVar { inner } => {
+      r = rewrite_unknown(inner, stub, target);
+      if r == null { null } else { ir::TyRefVar { inner: r! } }
+    },
+    TyRewritten { inner } => {
+      r = rewrite_unknown(inner, stub, target);
+      if r == null { null } else { ir::TyRewritten { inner: r! } }
+    },
+    TyOptional { inner } => {
+      r = rewrite_unknown(inner, stub, target);
+      if r == null { null } else if (r! is TyOptional) { r } else { ir::TyOptional { inner: r! } }
+    },
+    TyTuple { elems } => {
+      changed = false;
+      out: vector<ir::TypeT> = [];
+      for x in elems {
+        r = rewrite_unknown(x, stub, target);
+        if r != null {
+          changed = true;
+          out += [r!];
+        } else {
+          out += [x];
+        }
+      }
+      if changed { ir::TyTuple { elems: out } } else { null }
+    },
+    _ => null
+  }
+}
+
 // ── the use region (src/parser/mod.rs `parse_file`, src/parser/imports.rs) ──
 
 // `parse_file`'s use region: a library is loaded the first time a `use` names it — elaborated
@@ -414,6 +480,7 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
     if d >= 0 && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source == e.source {
       e.b.data.definitions[d].def_type = el::DT_STRUCT;
       e.b.data.definitions[d].position = el::pos_at(e, nt + 1);
+      e.adopted += [d];
     } else if d >= 0 {
       el::refuse(e, "a struct over an existing name");
       return;
@@ -691,6 +758,11 @@ fn parse_enum(e: el::El, at: integer, name: text, tvars: vector<integer>, varian
   d = el::def_nr(e, name);
   if d < 0 {
     d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_ENUM);
+  } else if e.first_pass && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source == e.source {
+    // A forward reference's stub is adopted (`note_stub_adopted`).
+    e.b.data.definitions[d].def_type = el::DT_ENUM;
+    e.b.data.definitions[d].position = el::pos_at(e, nt + 1);
+    e.adopted += [d];
   } else if e.first_pass {
     el::refuse(e, "an enum over an existing name");
     return;

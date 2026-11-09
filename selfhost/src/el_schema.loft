@@ -32,6 +32,28 @@ pub const NO_TYPE = 65535;
 // `typedef::fill_all`, the part a plain struct reaches: every struct the file declared that has
 // no type number yet is registered, in definition order, then the schema is finished.
 pub fn fill_all(e: el::El) {
+  // `actual_types_deferred`: the forward references this file made resolve to what their stubs
+  // became; a stub nothing adopted is the undefined type Rust reports.
+  for d in 0..len(e.b.data.definitions) {
+    df = el::def(e, d);
+    if df.source == e.source {
+      if df.def_type == el::DT_UNKNOWN && e.first_pass && !e.default {
+        el::refuse(e, "an undefined type, or one declared in another file of a cycle");
+      }
+      if df.def_type == el::DT_FUNCTION || df.def_type == el::DT_STRUCT || (df.def_type == el::DT_ENUM_VALUE && len(df.attributes) > 0) {
+        copy_unknown_fields(e, d);
+      }
+    }
+  }
+  // A struct whose fields reach it again — `Tree { left: Tree? }`, `A { b: B }` with
+  // `B { a: A? }` — is laid out with that field out of line, a child (`@FR-L-OutOfLine`): not
+  // carried.  Refused before any layout, as `fill_all` stops before laying out a cycle.
+  for d in 0..len(e.b.data.definitions) {
+    if el::def(e, d).source == e.source && (el::def(e, d).def_type == el::DT_STRUCT || el::def(e, d).def_type == el::DT_ENUM) && reaches(e, d, d, []) {
+      el::refuse(e, "a type whose fields contain it again (an out-of-line child)");
+      return;
+    }
+  }
   // `actual_types_deferred` before it: each enum the file declared, in definition order, a
   // schema enum of its name whose values its variants are, each variant valued its position
   // (`register_enum_db`, `stamp_enum_variants`).
@@ -108,6 +130,87 @@ pub fn fill_all(e: el::El) {
   }
   record_reference_targets(e);
   finish(e);
+}
+
+// Does a field held inline in `from` (a record, `τ?` of one, a struct enum's variant) lead
+// back to `target`?  `seen`: the definitions already walked.
+fn reaches(e: el::El, from: integer, target: integer, seen: vector<integer>) -> boolean {
+  holders: vector<integer> = [from];
+  if el::def(e, from).def_type == el::DT_ENUM {
+    holders = [for v in 0..len(e.b.data.definitions) if el::def(e, v).def_type == el::DT_ENUM_VALUE && el::def(e, v).parent == from { v }];
+  }
+  for h in holders {
+    for a in el::def(e, h).attributes {
+      n = match el_types::base(a.typedef[0] ?? ir::TyVoid) {
+        TyReference { n: r, dep } => if len(dep) == 0 { r } else { -1 },
+        TyEnum { n: r, is_ref } => if is_ref { r } else { -1 },
+        _ => -1
+      };
+      if n < 0 || (el::def(e, n).def_type != el::DT_STRUCT && el::def(e, n).def_type != el::DT_ENUM && el::def(e, n).def_type != el::DT_ENUM_VALUE) {
+        continue;
+      }
+      if n == target {
+        return true;
+      }
+      if !seen.contains(n) {
+        seen += [n];
+        if reaches(e, n, target, seen) {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+// `typedef::copy_unknown_fields` (and `actual_types_deferred`'s return arm): each attribute
+// typed by a forward reference's stub — bare, `S?` or `vector<S>` — takes the type the stub's
+// definition now answers; a function's result likewise.  An instance keeps its template's.
+fn copy_unknown_fields(e: el::El, d: integer) {
+  if el::def(e, d).instance_of >= 0 {
+    return;
+  }
+  for a in 0..len(el::def(e, d).attributes) {
+    r = resolved_stub(e, el::def(e, d).attributes[a]!.typedef[0] ?? ir::TyVoid);
+    if r != null {
+      e.b.data.definitions[d].attributes[a].typedef = [r!];
+    }
+  }
+  if el::def(e, d).def_type == el::DT_FUNCTION {
+    match el::def(e, d).returned[0] ?? ir::TyVoid {
+      TyUnknown { n } => {
+        if n != 0 && n != d && el::def(e, n).def_type != el::DT_TYPE_TEMPLATE && el::def(e, n).def_type != el::DT_UNKNOWN {
+          el::set_returned(e, d, el::def(e, n).returned[0] ?? ir::TyUnknown { n: n });
+        }
+      },
+      _ => {}
+    }
+  }
+}
+
+// `t` with a stub `Unknown(n)` (bare, under a `?` or as a vector's element) replaced by what
+// definition `n` answers once adopted; null where `t` names no adopted stub.
+fn resolved_stub(e: el::El, t: ir::TypeT) -> ir::TypeT? {
+  match t {
+    TyUnknown { n } => {
+      if n == 0 || el::def(e, n).def_type == el::DT_UNKNOWN || el::def(e, n).def_type == el::DT_TYPE_TEMPLATE {
+        return null;
+      }
+      el::def(e, n).returned[0]
+    },
+    TyOptional { inner } => {
+      r = resolved_stub(e, inner);
+      if r == null {
+        return null;
+      }
+      if (r! is TyOptional) { r } else { ir::TyOptional { inner: r! } }
+    },
+    TyVector { inner, dep } => {
+      r = resolved_stub(e, inner);
+      if r == null { null } else { ir::TyVector { inner: r!, dep: dep } }
+    },
+    _ => null
+  }
 }
 
 // `Stores::dbref_shapes`: the owned `dbref` and the borrowed `dbref_borrow` rows, registered
