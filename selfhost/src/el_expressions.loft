@@ -10405,6 +10405,13 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
         if a.hidden {
           break;
         }
+        // A `&text` parameter with no default (a dispatcher's forwarded work buffer) takes a
+        // fresh "default ref" of the caller's, as a hidden one does.
+        if pt == ir::TyRefVar { inner: ir::TyText { dep: [] } } && el_ir::is_null(dv) {
+          g2 += [default_text_ref(e, vars)];
+          t2 += [pt];
+          continue;
+        }
         if a.hidden || pt is TyRefVar || !default_in_place(e, dv, n) || (el_ir::is_null(dv) && !(pt is TyOptional)) {
           el::refuse(e, "a call with defaulted or hidden parameters: {def.name}");
           return null;
