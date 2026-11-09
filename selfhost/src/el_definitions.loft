@@ -31,8 +31,13 @@ pub fn elab_file(e: el::El, file: integer) {
     },
     _ => {}
   }
-  // The end of `parse_file`: the definitions this pass declared take their store types.
+  // The end of `parse_file`: the definitions this pass declared take their store types, then
+  // the variant dispatch (`enum_fn`).  The standard library's image already holds what its own
+  // parse made there.
   el_schema::fill_all(e);
+  if !e.default {
+    el_dispatch::enum_fn(e);
+  }
 }
 
 fn top_item(e: el::El, it: integer) {
@@ -1552,8 +1557,11 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
     return "";
   }
   td = el::def(e, tn);
-  if td.def_type == el::DT_ENUM_VALUE || td.instance_of >= 0 {
-    el::refuse(e, "a method receiver that is a variant or a generic instance");
+  // port: data.rs key_type_name — a variant keys on its own name, as any type does.  An
+  // instance keys on its template, and its member slot is the template's (`method_family`):
+  // not carried, refused by name.
+  if td.instance_of >= 0 {
+    el::refuse(e, "a method receiver that is a generic instance");
     return "";
   }
   // The standard library's types come with the image, their members included; a library's

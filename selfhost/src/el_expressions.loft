@@ -3325,7 +3325,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SComprehension { at: _ } => comprehension_value(e, vars, n),
     SAs { at, e: ae, tp: at_tp, checked } => cast_expr(e, vars, ae, at_tp),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
-    SSizeof { kind, tp: st, e: se } => if kind == "sizeof" { sizeof_of(e, vars, st, se) } else { sizeof_expr(e, vars, kind, st) },
+    SSizeof { kind, tp: st, e: se } => if kind == "sizeof" { sizeof_of(e, vars, st, se) } else if kind == "type_name" { type_name_of(e, vars, st) } else { sizeof_expr(e, vars, kind, st) },
     STupleLit { elems } => tuple_lit(e, vars, elems),
     STupleGet { e: te, index } => tuple_get(e, vars, te, index),
     SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, caps, has_caps),
@@ -3807,6 +3807,133 @@ fn sizeof_expr(e: el::El, vars: el_vars::Vars, kind: text, st: integer?) -> Ex {
     return ex(ir::NdNull, int_t);
   }
   ex(ir::NdInt { n: e.b.types[el::def(e, d).known_type]!.size }, int_t)
+}
+
+// port: control.rs parse_type_name
+// `type_name(…)` names a type the way its reader writes it (`Data::display_type_name`): a name
+// that is a declared type (not a variant) and any other type spelling is the type; a plain name
+// that is none is a value, which is not evaluated — its type is named.  A type variable (named
+// per instance) is refused by name.
+fn type_name_of(e: el::El, vars: el_vars::Vars, st: integer?) -> Ex {
+  text_t = ir::TyText { dep: [] };
+  if st == null {
+    el::refuse(e, "a `type_name` with nothing to name");
+    return ex(ir::NdNull, text_t);
+  }
+  plain_name = match e.p.nodes[st!] {
+    STy { name: nm, member, args, keys, limit, nullable } => if member == "" && len(args) == 0 && len(keys) == 0 && limit == null && !nullable { nm } else { "" },
+    _ => ""
+  };
+  for tv in e.type_vars {
+    if tv.spelling == plain_name {
+      el::refuse(e, "a `type_name` of a type variable");
+      return ex(ir::NdNull, text_t);
+    }
+  }
+  d = if plain_name == "" { -1 } else { el::def_nr(e, plain_name) };
+  t: ir::TypeT = ir::TyUnknown { n: 0 };
+  if plain_name == "" || (d >= 0 && el::def(e, d).def_type != el::DT_ENUM_VALUE) {
+    pt = el_types::parse_type(e, st!);
+    if pt == null {
+      return ex(ir::NdNull, text_t);
+    }
+    t = pt!;
+  } else {
+    t = name_expression(e, vars, plain_name, "", false).tp;
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, text_t);
+  }
+  ex(ir::NdText { s: display_type_name(e, t) }, text_t)
+}
+
+// port: data.rs display_type_name (`type_name_with`, named)
+// A type as its reader writes it: an integer by its source spelling, an instance of a generic
+// struct as its template applied to its arguments, any other type by its name.
+pub fn display_type_name(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyOptional { inner } => "{display_type_name(e, inner)}?",
+    TyUnknown { n: _ } => "unknown",
+    TyNull => "null",
+    TyVoid => "void",
+    TyNever => "never",
+    TyInteger { spec } => integer_spec_name(e, spec),
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyText { dep: _ } => "text",
+    TyKeys => "keys",
+    TyEnum { n } => instance_display(e, n),
+    TyReference { n } => instance_display(e, n),
+    TyRefVar { inner } => "&{display_type_name(e, inner)}",
+    TyVector { inner } => "vector<{display_type_name(e, inner)}>",
+    TySorted { n } => "sorted<{el::def(e, n).name}>",
+    TyIndex { n } => "index<{el::def(e, n).name}>",
+    TyHash { n } => "hash<{el::def(e, n).name}>",
+    TyRoutine { n: _ } => "fn",
+    TyFunction { args, result } => "fn({join([for a in args { display_type_name(e, a) }], ", ")}) -> {display_type_name(e, result)}",
+    TyIterator { step } => "iterator<{display_type_name(e, step)}>",
+    TyRewritten { inner } => display_type_name(e, inner),
+    TyRadix { n } => "spatial<{el::def(e, n).name}>",
+    TyTrie { n, key } => "trie<{el::def(e, n).name}[{key}]>",
+    TyTuple { elems } => "({join([for x in elems { display_type_name(e, x) }], ", ")})"
+  }
+}
+
+fn instance_display(e: el::El, n: integer) -> text {
+  d = el::def(e, n);
+  if d.instance_of < 0 {
+    return d.name;
+  }
+  "{el::def(e, d.instance_of).name}<{join([for a in d.instance_args { display_type_name(e, a) }], ", ")}>"
+}
+
+// port: data.rs integer_spec_name
+// An integer's source spelling: `integer` / `byte` for the templates (`IntegerSpec::
+// source_name`), a width alias by its range, else an alias some source declares, else the range.
+fn integer_spec_name(e: el::El, s: ir::IntegerSpec) -> text {
+  if s.forced_size == 0 {
+    if s.min == -2147483647 && (s.max == 2147483647 || s.max == 4294967295) {
+      return "integer";
+    }
+    if s.min == 0 && s.max == 256 {
+      return "byte";
+    }
+    a = integer_alias_any_source(e, s);
+    return if a != "" { a } else { "integer limit({s.min}, {s.max})" };
+  }
+  if s.min == 0 && s.max == 255 { return "u8"; }
+  if s.min == -128 && s.max == 127 { return "i8"; }
+  if s.min == 0 && s.max == 65535 { return "u16"; }
+  if s.min == -32768 && s.max == 32767 { return "i16"; }
+  if s.min == 0 && s.max == 4294967294 { return "u32"; }
+  if s.min == -2147483647 && s.max == 2147483647 { return "i32"; }
+  a = integer_alias_any_source(e, s);
+  if a != "" { a } else { "integer limit({s.min}, {s.max})" }
+}
+
+// port: data.rs integer_alias_any_source (all sources)
+// The first type alias of exactly this range and width, the standard library's first; "" for
+// none.
+fn integer_alias_any_source(e: el::El, s: ir::IntegerSpec) -> text {
+  for pass in [true, false] {
+    for d in e.b.data.definitions {
+      if d.def_type != el::DT_TYPE || (pass && d.source != el::STD_SOURCE) {
+        continue;
+      }
+      match el_types::base(d.returned[0] ?? ir::TyVoid) {
+        TyInteger { spec } => {
+          w = if spec.forced_size > 0 { spec.forced_size } else { d.forced_size };
+          if spec.min == s.min && spec.max == s.max && w == s.forced_size {
+            return d.name;
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  ""
 }
 
 // `Parser::parse_size`: `sizeof(…)` is the packed size of a type, decided as Rust's lexer
@@ -9171,14 +9298,17 @@ pub fn find_fn(e: el::El, name: text, receiver: ir::TypeT, source: integer = -1)
     return free;
   }
   td = el::def(e, tn);
-  // A variant dispatches on its enum, unless it declares the method under its own name.
+  // port: data.rs candidates — a variant dispatches on its enum, unless it declares the method
+  // under its own name; then the lookup below stays on the variant.
+  declares_own = false;
   if td.def_type == el::DT_ENUM_VALUE {
     for sp in [td.name, "{td.name}?"] {
       if look(e, source, "t_{len(sp)}{sp}_{name}") >= 0 {
-        el::refuse(e, "a method a variant declares itself");
-        return -1;
+        declares_own = true;
       }
     }
+  }
+  if td.def_type == el::DT_ENUM_VALUE && !declares_own {
     if td.parent >= 0 && el::def(e, td.parent).def_type == el::DT_ENUM {
       tn = td.parent;
       td = el::def(e, tn);

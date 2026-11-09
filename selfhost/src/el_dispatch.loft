@@ -304,6 +304,297 @@ fn carry(e: el::El, set: integer, label: text, d: integer) {
   e.b.data.definitions[set].attributes += [m];
 }
 
+// ── variant dispatch (src/parser/definitions.rs `enum_fn`, @F20) ──
+
+// port: definitions.rs enum_fn
+// After the first pass over a file: definitions of one name on an enum and on its variants are
+// made one overload set (`join_enum_lattice_sets`); a variant method whose enum answers the name
+// nowhere is a member of the dispatcher @F20 builds over the enum — not carried, refused by
+// name; and a set that dispatches past its receiver takes the enum's member slot.
+pub fn enum_fn(e: el::El) {
+  if !e.first_pass {
+    return;
+  }
+  join_enum_lattice_sets(e);
+  members: vector<ir::NameNr> = [];
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_FUNCTION || len(d.attributes) == 0 {
+      continue;
+    }
+    recv = receiver_def_nr(e, d#index);
+    if recv < 0 {
+      continue;
+    }
+    en = match el::def(e, recv).returned[0] ?? ir::TyVoid { TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
+    name = original_name(d.name);
+    if en < 0 || enum_answers(e, name, en) || has_attribute(el::def(e, en), name) {
+      continue;
+    }
+    if overload_set_owns_dispatch(e, name, en) {
+      past = dispatches_past_receiver(e, name, en);
+      free_member = false;
+      for r in overload_routines(e, name) {
+        if el::def(e, r).name.starts_with("f_") {
+          free_member = true;
+        }
+      }
+      if past && !free_member && !holds(members, en, name) {
+        members += [ir::NameNr { name: name, nr: en }];
+      }
+      continue;
+    }
+    el::refuse(e, "a variant method its enum answers nowhere (the @F20 dispatcher)");
+  }
+  for m in members {
+    set = el::def_nr(e, m.name);
+    if set < 0 || has_attribute(el::def(e, m.nr), m.name) {
+      continue;
+    }
+    a = el::attribute(m.name, ir::TyRoutine { n: set });
+    a.mutable = false;
+    a.constant = true;
+    e.b.data.definitions[m.nr].attributes += [a];
+  }
+}
+
+// port: definitions.rs join_enum_lattice_sets
+// The program's definitions whose first parameter is an enum or one of its variants, grouped by
+// name and enum: a group with a variant member and an enum-level one — or whose set dispatches
+// past its receiver — is admitted as one overload set, unless the name is already something
+// other than this source's set.
+fn join_enum_lattice_sets(e: el::El) {
+  groups: vector<LatticeGroup> = [];
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_FUNCTION || d.source != e.source || d.synthetic != "" {
+      continue;
+    }
+    first = -1;
+    for a in d.attributes {
+      if first < 0 && !a.hidden {
+        first = a#index;
+      }
+    }
+    if first < 0 {
+      continue;
+    }
+    t = el_types::base(d.attributes[first]!.typedef[0] ?? ir::TyVoid);
+    en = -1;
+    at_enum = false;
+    match t {
+      TyEnum { n, is_ref } => if is_ref { en = n; at_enum = true; },
+      TyReference { n } => if el::def(e, n).def_type == el::DT_ENUM_VALUE { en = el::def(e, n).parent; },
+      _ => {}
+    }
+    if en < 0 {
+      continue;
+    }
+    name = original_name(d.name);
+    g = -1;
+    for x in groups {
+      if x.name == name && x.en == en {
+        g = x#index;
+      }
+    }
+    if g < 0 {
+      groups += [LatticeGroup { name: name, en: en, at_enum: false, at_variant: false, members: [] }];
+      g = len(groups) - 1;
+    }
+    if at_enum {
+      groups[g].at_enum = true;
+    } else {
+      groups[g].at_variant = true;
+    }
+    groups[g].members += [d#index];
+  }
+  // Rust walks the groups in key order: by name, then by enum.
+  for x in sorted_groups(groups) {
+    if !(x.at_variant && (x.at_enum || dispatches_past_receiver(e, x.name, x.en))) {
+      continue;
+    }
+    main = el::def_nr(e, x.name);
+    if main >= 0 && (el::def(e, main).def_type != el::DT_DYNAMIC || el::def(e, main).source != e.source) {
+      continue;
+    }
+    // The lexer stands at the end of the file here: a set made now is placed there.
+    for m in x.members {
+      admit_overload_set(e, x.name, m, el::pos_at(e, len(e.p.src)));
+    }
+  }
+}
+
+struct LatticeGroup {
+  name: text,
+  en: integer,
+  at_enum: boolean,
+  at_variant: boolean,
+  members: vector<integer>,
+}
+
+fn sorted_groups(groups: vector<LatticeGroup>) -> vector<LatticeGroup> {
+  out: vector<LatticeGroup> = [];
+  for g in groups {
+    at = len(out);
+    for o in out {
+      if at == len(out) && (g.name < o.name || (g.name == o.name && g.en < o.en)) {
+        at = o#index;
+      }
+    }
+    out = out[0..at] + [g] + out[at..len(out)];
+  }
+  out
+}
+
+// port: data.rs admit_overload_set
+// Member `incumbent` carried in the set `name` (made here when there is none), labelled by its
+// receiver spelling when it is that receiver's own method, else by its full spelling.  A free
+// incumbent moves to its full key, which this port reaches only through `definition_key`:
+// refused by name here.
+fn admit_overload_set(e: el::El, name: text, incumbent: integer, pos: ir::Position) {
+  set = el::def_nr(e, name);
+  if set < 0 {
+    set = el::add_def(e, name, pos, el::DT_DYNAMIC);
+  }
+  if carries(e, set, incumbent) {
+    return;
+  }
+  inc = el::def(e, incumbent);
+  if !inc.name.starts_with("t_") {
+    el::refuse(e, "a free definition joined into an enum's overload set");
+    return;
+  }
+  recv = type_spelling(e, inc.attributes[0]!.typedef[0] ?? ir::TyVoid);
+  label = if inc.name == "t_{len(recv)}{recv}_{name}" { recv } else { full_spelling(e, visible_params(e, incumbent)) };
+  carry(e, set, label, incumbent);
+}
+
+// port: data.rs type_spelling — the key name of a type, `?` for a nullable one; "" for none.
+fn type_spelling(e: el::El, t: ir::TypeT) -> text {
+  tn = el_expressions::type_def_nr(e, t);
+  if tn < 0 {
+    return "";
+  }
+  base = el::def(e, tn).name;
+  if t is TyOptional { "{base}?" } else { base }
+}
+
+// port: data.rs receiver_def_nr — the definition a first parameter of reference type names.
+fn receiver_def_nr(e: el::El, d: integer) -> integer {
+  if len(el::def(e, d).attributes) == 0 {
+    return -1;
+  }
+  match el_types::base(el::def(e, d).attributes[0]!.typedef[0] ?? ir::TyVoid) {
+    TyReference { n } => n,
+    _ => -1
+  }
+}
+
+// port: data.rs find_fn(u16::MAX, name, Enum(en)) != u32::MAX — the enum's own method under either
+// receiver spelling, else the free function of the name.
+fn enum_answers(e: el::El, name: text, en: integer) -> boolean {
+  base = el::def(e, en).name;
+  for sp in [base, "{base}?"] {
+    if el::def_nr(e, "t_{len(sp)}{sp}_{name}") >= 0 {
+      return true;
+    }
+  }
+  el::def_nr(e, "n_{name}") >= 0
+}
+
+fn has_attribute(d: ir::Definition, name: text) -> boolean {
+  for a in d.attributes {
+    if a.name == name {
+      return true;
+    }
+  }
+  false
+}
+
+fn holds(members: vector<ir::NameNr>, en: integer, name: text) -> boolean {
+  for m in members {
+    if m.nr == en && m.name == name {
+      return true;
+    }
+  }
+  false
+}
+
+// port: data.rs overload_routines — the members a set named `name` carries.
+fn overload_routines(e: el::El, name: text) -> vector<integer> {
+  set = el::def_nr(e, name);
+  if set < 0 || el::def(e, set).def_type != el::DT_DYNAMIC {
+    return [];
+  }
+  out: vector<integer> = [];
+  for a in el::def(e, set).attributes {
+    match el_types::base(a.typedef[0] ?? ir::TyVoid) {
+      TyRoutine { n } => { out += [n]; },
+      _ => {}
+    }
+  }
+  out
+}
+
+// port: data.rs overload_set_owns_dispatch
+fn overload_set_owns_dispatch(e: el::El, name: text, en: integer) -> boolean {
+  for r in overload_routines(e, name) {
+    if el::def(e, r).name.starts_with("f_") {
+      return true;
+    }
+    ps = visible_params(e, r);
+    if len(ps) > 0 && match el_types::base(ps[0]!) { TyEnum { n } => n == en, _ => false } {
+      return true;
+    }
+  }
+  dispatches_past_receiver(e, name, en)
+}
+
+// port: data.rs dispatches_past_receiver — two members on one variant of `en` that differ after
+// the receiver.
+fn dispatches_past_receiver(e: el::El, name: text, en: integer) -> boolean {
+  seen_v: vector<integer> = [];
+  seen_r: vector<text> = [];
+  for r in overload_routines(e, name) {
+    ps = visible_params(e, r);
+    v = match el_types::base(ps[0] ?? ir::TyVoid) { TyReference { n } => n, _ => -1 };
+    if v < 0 || el::def(e, v).def_type != el::DT_ENUM_VALUE || el::def(e, v).parent != en {
+      continue;
+    }
+    rest = full_spelling(e, [for p in ps[1..len(ps)] { el_types::base(p) }]);
+    for s in seen_v {
+      if s == v && seen_r[s#index] != rest {
+        return true;
+      }
+    }
+    seen_v += [v];
+    seen_r += [rest];
+  }
+  false
+}
+
+// port: data.rs original_name (`source_name_of_key`) — the name a definition key was written as.
+fn original_name(key: text) -> text {
+  if key.starts_with("n_") {
+    at = key.find("@");
+    return if at != null { key[2..at!] } else { key[2..len(key)] };
+  }
+  if key.starts_with("t_") || key.starts_with("f_") || key.starts_with("i_") {
+    body = key[2..len(key)];
+    digits = 0;
+    while digits < len(body) && body[digits] >= '0' && body[digits] <= '9' {
+      digits += 1;
+    }
+    if digits > 0 {
+      n = body[0..digits] as integer ?? 0;
+      rest = body[digits + n..len(body)];
+      if rest.starts_with("_") {
+        r = rest[1..len(rest)];
+        return if key.starts_with("i_") { original_name(r) } else { r };
+      }
+    }
+  }
+  if len(key) > 2 { key[2..len(key)] } else { key }
+}
+
 // ── selection (src/parser/dispatch.rs) ──
 
 // `Rank`: how far an argument is from a parameter, per position; smaller is more specific.  A
