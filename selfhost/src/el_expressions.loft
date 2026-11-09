@@ -158,8 +158,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   // `block_result` converts the tail to `result`, the declared return as this pass met it —
   // on the second pass the borrows the first gathered, by number (a promoted local's by its
-  // attribute), so a text body is typed by every return pass 1 saw, not by its tail alone.
-  if !e.first_pass && el_types::base(result) is TyText && len(el_types::deps(result)) > 0 {
+  // attribute), so a text body is typed by every return pass 1 saw, not by its tail alone.  A
+  // template's result names no buffer (`text_return` gives a template none), so its body is
+  // typed plain `text`, which each instance inherits.
+  if !e.first_pass && el_types::base(result) is TyText {
     match code {
       NdBlock { block } => {
         bl = block[0];
@@ -10037,6 +10039,8 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
     code = retarget(code, nt.callee, nt.inst);
   }
   e.b.data.definitions[d].code = [code];
+  // `fill_monomorph_body`'s tail: the text-return promotion the template took none of.
+  promote_monomorph_text_return(e, d);
   // `derive_monomorph_return_deps`: a text or record result every return of which is a bare
   // parameter borrows that parameter, by its attribute number (`-> text["x"]`, `-> P["x"]`).
   rt = el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid);
@@ -10069,7 +10073,9 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
       return true;
     }
   }
-  if (textual && rt is TyText) || (record && rt is TyReference) {
+  // Only where no dep was derived: a promoted answer already names its buffer, so this reads
+  // no table or body the promotion rewrote.
+  if len(el_types::deps(rt)) == 0 && ((textual && rt is TyText) || (record && rt is TyReference)) {
     tail = el_ir::unspan(el_ir::last(match code { NdBlock { block } => block[0].operators, _ => [] }));
     root = view_root(e, f, tail);
     roots: vector<integer> = if root >= 0 { [root] } else if record { answer_borrows(e, f, code, [d, g]) } else { [] };
@@ -10092,7 +10098,152 @@ fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT
       e.b.data.definitions[d].returned = [el_types::with_deps(el::def(e, d).returned[0] ?? ir::TyVoid, attrs)];
     }
   }
+  // `instantiate_template` asks the promotion again once the deps are derived, only where the
+  // first asking promoted nothing: a second hidden buffer would move the signature.
+  if text_work_buffers(el::def(e, d)) == 0 {
+    promote_monomorph_text_return(e, d);
+  }
   true
+}
+
+// port: control.rs rewrite_text_returns_into
+// Every `return x` inside `n` written into the buffer first.
+pub fn into_buffer(n: ir::Node, tv: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: into_buffer(inner, tv) },
+    NdReturn { inner: _ } => ir::NdInsert { items: [el_ir::v_set(tv, peel_return(n)), ir::NdReturn { inner: ir::NdVar { n: tv } }] },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: into_buffer(t, tv), f: into_buffer(f, tv) },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for o in b.operators { into_buffer(o, tv) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = [for o in b.operators { into_buffer(o, tv) }];
+      ir::NdLoop { block: [b] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { into_buffer(o, tv) }] },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: into_buffer(create, tv), next: into_buffer(next, tv), init: into_buffer(init, tv) },
+    NdDrop { inner } => ir::NdDrop { inner: into_buffer(inner, tv) },
+    _ => n
+  }
+}
+
+// port: control.rs promote_monomorph_text_return
+// A text instance's answer delivered through a hidden `&text` buffer, decided per instance once
+// its types are known (a template takes none of `block_result`'s promotion).  A tail this frame
+// owns or forwards — `tret_bind_ok`, a built local, a forwarded argument's borrow — or an early
+// `return` that orphans (`early_text_return_orphans`) is bound to a fresh `___tret_N`; else a
+// text `if` / `match` tail writes each arm into a fresh `___acc_N` (`monomorph_if_acc_ok`).
+// Unlike `promote_text_return_def` the block keeps its type on the `___tret_N` path, as Rust's
+// does: only the `___acc_N` path stamps it.
+pub fn promote_monomorph_text_return(e: el::El, d: integer) {
+  ret = el::def(e, d).returned[0] ?? ir::TyVoid;
+  if !(el_types::base(ret) is TyText) {
+    return;
+  }
+  code = el::def(e, d).code[0] ?? ir::NdNull;
+  bl = match code {
+    NdBlock { block } => block[0],
+    _ => {
+      return;
+    }
+  };
+  l = bl.operators;
+  n = len(l);
+  if n == 0 {
+    return;
+  }
+  vars = el_vars::load(el::def(e, d).variables);
+  ctx = e.context;
+  e.context = d;
+  tail = l[n - 1]!;
+  v = text_verdict(e, vars, tail, l);
+  tail_promotable = tret_bind_ok(e, vars, tail, l) || v == "BuiltLocal" || v == "ForwardArg";
+  early_promotable = false;
+  for op in l[0..n - 1] {
+    if early_text_return_orphans(e, vars, op, l) {
+      early_promotable = true;
+    }
+  }
+  if tail_promotable || early_promotable {
+    tv = el_vars::create_unique(vars, "__tret", ir::TyText { dep: [] });
+    ops = [for o in l[0..n - 1] { into_buffer(o, tv) }];
+    if el_ir::unspan(tail) is NdReturn {
+      ops += [el_ir::v_set(tv, peel_return(tail)), ir::NdReturn { inner: ir::NdVar { n: tv } }];
+    } else {
+      ops += [el_ir::v_set(tv, tail), ir::NdVar { n: tv }];
+    }
+    bl.operators = ops;
+    text_return(e, vars, ir::TyText { dep: [tv] });
+  } else if monomorph_if_acc_ok(ret, l, bl.result[0] ?? ir::TyVoid) {
+    av = el_vars::create_unique(vars, "__acc", if ret is TyOptional { ir::TyOptional { inner: ir::TyText { dep: [] } } } else { ir::TyText { dep: [] } });
+    is_ret = el_ir::unspan(tail) is NdReturn;
+    if is_ret {
+      tail = peel_return(tail);
+    }
+    tail = push_text_arms(e, tail, av);
+    bl.operators = l[0..n - 1] + [el_ir::v_set(av, ir::NdText { s: "" }), tail, if is_ret { ir::NdReturn { inner: ir::NdVar { n: av } } } else { ir::NdVar { n: av } }];
+    text_return(e, vars, ir::TyText { dep: [av] });
+    bl.result = [ir::TyText { dep: [av] }];
+  } else {
+    e.context = ctx;
+    return;
+  }
+  e.context = ctx;
+  e.b.data.definitions[d].code = [ir::NdBlock { block: [bl] }];
+  e.b.data.definitions[d].variables = el_vars::stored(vars);
+}
+
+// port: control.rs early_text_return_orphans
+// Does an early `return` inside `op` hand back text this frame owns, or a forwarded argument's
+// borrow, or a text `if` / `match`?
+fn early_text_return_orphans(e: el::El, vars: el_vars::Vars, op: ir::Node, block: vector<ir::Node>) -> boolean {
+  match op {
+    NdSpan { inner } => early_text_return_orphans(e, vars, inner, block),
+    NdReturn { inner } => {
+      v = text_verdict(e, vars, inner, block);
+      (v != "Plain" && v != "Argument") || if_tail_yields_text(inner)
+    },
+    NdIf { cond: _, t, f } => early_text_return_orphans(e, vars, t, block) || early_text_return_orphans(e, vars, f, block),
+    NdBlock { block: bb } => {
+      for o in bb[0].operators {
+        if early_text_return_orphans(e, vars, o, block) {
+          return true;
+        }
+      }
+      false
+    },
+    NdInsert { items } => {
+      for o in items {
+        if early_text_return_orphans(e, vars, o, block) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// port: control.rs monomorph_if_acc_ok
+// `block_result`'s `do_if_acc` gate asked of an instance: a text result, a nullable block only
+// for a nullable result, and a tail `if` / `match` whose every arm answers.
+fn monomorph_if_acc_ok(ret: ir::TypeT, l: vector<ir::Node>, block_result: ir::TypeT) -> boolean {
+  el_types::base(ret) is TyText && (ret is TyOptional || !(block_result is TyOptional)) && len(l) > 0 && if_tail_yields_text(l[-1]!)
+}
+
+// port: data.rs text_work_buffers
+// The hidden `&text` buffers a definition takes.
+fn text_work_buffers(d: ir::Definition) -> integer {
+  c = 0;
+  for a in d.attributes {
+    if a.hidden && match a.typedef[0] ?? ir::TyVoid { TyRefVar { inner } => inner is TyText, _ => false } {
+      c += 1;
+    }
+  }
+  c
 }
 
 // `use_analysis::return_ownership`'s `Borrowed { base }` for one return leaf: the parameter a
