@@ -6159,9 +6159,7 @@ impl Census<'_> {
                     if src != v
                         && !self.func.tp(*v).depend().contains(src)
                         && self.whole_tuple != Some(*src))
-                    && crate::lease::copy_observed(
-                        self.data,
-                        self.func.tp(*v).base()) =>
+                    && crate::lease::copy_observed(self.data, self.func.tp(*v).base()) =>
             {
                 let Value::Var(src) = rhs.unspan() else {
                     unreachable!("matched above")
@@ -6192,9 +6190,7 @@ impl Census<'_> {
             // `__ret_N` temp places its arms out of the function.
             Value::Set(v, rhs)
                 if matches!(rhs.unspan(), Value::If(..))
-                    && crate::lease::copy_observed(
-                        self.data,
-                        self.func.tp(*v).base()) =>
+                    && crate::lease::copy_observed(self.data, self.func.tp(*v).base()) =>
             {
                 let mut arms = Vec::new();
                 join_var_arms(rhs, &mut arms);
@@ -6214,9 +6210,7 @@ impl Census<'_> {
                             .depend()
                             .iter()
                             .any(|d| dest_deps.contains(d))
-                        || !crate::lease::copy_observed(
-                            self.data,
-                            self.func.tp(src).base())
+                        || !crate::lease::copy_observed(self.data, self.func.tp(src).base())
                     {
                         continue;
                     }
@@ -6231,9 +6225,7 @@ impl Census<'_> {
                 if let Some(base) = crate::lease::whole_tuple_source(self.func, node) {
                     let (root, through_member) = self.frame.resolve_view(base);
                     if self.whole_tuple != Some(root)
-                        && crate::lease::copy_observed(
-                            self.data,
-                            self.func.tp(base).base())
+                        && crate::lease::copy_observed(self.data, self.func.tp(base).base())
                     {
                         let (lease, liveness) = if through_member {
                             let refused = Lease::Refuse(Refusal::Container(root));

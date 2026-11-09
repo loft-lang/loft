@@ -1311,7 +1311,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             for v in &vs {
                 let disc = self.variant_disc(enum_d, true, *v, "");
                 let test = self.cl("OpEqInt", &[tag.clone(), Value::Int(disc)]);
-                cond = if cond == Value::Null { test } else { v_if(cond, Value::Boolean(true), test) };
+                cond = if cond == Value::Null {
+                    test
+                } else {
+                    v_if(cond, Value::Boolean(true), test)
+                };
             }
             let arm = read(self, vs[0]);
             chain = v_if(cond, arm, chain);
