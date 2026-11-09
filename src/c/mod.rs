@@ -315,6 +315,9 @@ pub(crate) struct Cx<'a> {
     /// `LOFT_NO_VALUE_RECORD=1` and for a program whose plan holds a form the C does not
     /// write (`Cx::value_records`).
     vr: std::cell::OnceCell<std::rc::Rc<crate::opt::value_records::layout::ValueRecords>>,
+    /// `@FR-R-GuardFree`'s verdicts, shared with the Rust generator: which frames need the
+    /// fn-ref buffer mark (`framed`).
+    pub(crate) guard_free: std::cell::RefCell<crate::opt::frame_calls::GuardFree>,
     /// `vr_ptr_params`'s answers, per function.
     vr_ptr: std::cell::RefCell<std::collections::HashMap<u32, std::rc::Rc<Vec<usize>>>>,
     apr: std::cell::OnceCell<std::rc::Rc<crate::lower::apart_records::RecPlan>>,
@@ -453,6 +456,7 @@ impl<'a> Cx<'a> {
             lazy_fetchers: std::cell::Cell::new(0),
             twins: std::cell::RefCell::new(Vec::new()),
             switches: crate::lower::switches::Switches::from_env(),
+            guard_free: std::cell::RefCell::default(),
             hoist_memo: std::cell::RefCell::new(HoistMemo::default()),
             vr: std::cell::OnceCell::new(),
             vr_ptr: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -4473,12 +4477,17 @@ fn framed(
     let push = format!("{push}    LOFT_HOLD_MARK(hm);\n");
     // What calls through function values handed back and no bind adopted is the frame's, freed
     // as it returns — unless it answers a heap value, which may be one of them: those go up to
-    // the caller (`FnRefBufGuard`'s `hands_up`).
+    // the caller (`FnRefBufGuard`'s `hands_up`).  A frame from which nothing that registers
+    // one is reachable never holds an entry, and takes no mark (`@FR-R-GuardFree`).
     let hands_up = matches!(
         def.returned().base(),
         Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
     );
-    let (push, release) = if hands_up {
+    let guard_free = !hands_up
+        && !cx.switches.guard_free_disabled
+        && cx.guard_free.borrow_mut().is_guard_free(cx.data, d);
+    crate::rewrite_census::fired("R-GuardFree", usize::from(guard_free));
+    let (push, release) = if hands_up || guard_free {
         (push, String::new())
     } else {
         (

@@ -4802,8 +4802,10 @@ panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
                  is reachable — over the closure of its call graph, cycles INCLUDED:
                  no fn-ref call, no `parallel`, no `yield`, no `OpFreeRefOrHandUp`,
                  no callee without a loft body that is a user's native function or
-                 takes a fn-ref — constructs no `FnRefBufGuard`, in every tier.  The
-                 depth count stays: it is the recursion cap both backends share.
+                 takes a fn-ref — carries no fn-ref buffer guard: native constructs
+                 no `FnRefBufGuard`, in every tier, and the C takes no `loft_nfnrefs`
+                 mark and runs no `loft_fnref_release`.  The depth count stays: it is
+                 the recursion cap both backends share.
 ```
 
 **In words.**  @PLN158 round 3, C1.  A `--native` frame entered with a `FnRefBufGuard`
@@ -4826,8 +4828,10 @@ against the machine's stack would fault at a machine-dependent depth — the dis
 `LOFT_TRACE_GUARD_FREE` (each frame that keeps its guard, naming the registrant); scored on
 the LEAK channel — cells `tests/scripts/158-guard-free.loft` g1–g9 under
 `LOFT_NATIVE_LEAK_CHECK=1` / `LOFT_STRICT_STORES=1` (falsified by answering `true` for every
-frame: g5's three delivered buffers leak), pins `tests/guard_free.rs`.  Sites: `Output::registers_buffers`, `Output::is_guard_free`, the guard
-line in `Output::output_function`'s prelude.
+frame: g5's three delivered buffers leak), pins `tests/guard_free.rs`.  The C registers only in its dispatch arms (`loft_fnref_buf`,
+`loft_fnref_mint`), a subset of native's registrants, so the one verdict serves both writers.
+Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the guard line in
+`Output::output_function`'s prelude, and the C's `framed`.
 
 ### A fast path inlines; its cold half is outlined
 
