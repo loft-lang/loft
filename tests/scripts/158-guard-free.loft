@@ -20,6 +20,16 @@
 // `LOFT_NO_GUARD_FREE=1` are clean.  g4, g6 and g8 stay clean under the sabotage (a bound
 // result is freed by its bind, a hand-up lands in a frame that still holds it), and every
 // VALUE agrees throughout, which is why the leak channel is the one this rule is scored on.
+//
+// On `--native-c` these cells cannot fail: the C frees g5's buffers itself, so its mark
+// releases nothing here (counted in the emitted C).  The C's guard does work in five language
+// suite cells, which are its falsification set: `O-Move/1327` (2600 stores),
+// `O-Complete/1332` (4), `O-Complete/1333` (11), `O-Latest/1324` (2) and `R-FnRefValue`'s
+// tuple dispatch (1).
+// @falsified-at: hand-measured (2026-11-09) — the C's verdict sabotaged to answer guard-free
+// for every frame that answers no heap value: `LOFT_NATIVE_LEAK_CHECK=1` on `--native-c`
+// reports exactly those counts as stores not freed at program exit; the build as shipped is
+// clean on all five, on `--native-c` and `--interpret`.
 
 struct Big { xs: vector<integer>, tag: text }
 
