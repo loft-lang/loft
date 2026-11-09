@@ -1,0 +1,18 @@
+# Where the elaborator mirrors a Rust front-end field under another name
+# (`scripts/parser_state.py`; a field of the same name in `El` / `Vars` needs no entry).
+# <Rust struct>.<field>	<port field, or - where the port needs none>	<note>
+Parser.data	El.b	the definitions and the schema, as the image's `Bundle`
+Parser.vars	Vars	the function being read: one `Vars` per body, handed down explicitly
+Parser.lexer	El.p	the token stream; positions through `el::pos_at` (the lexer's peek)
+Parser.expected	Vars.expect	partial: a bind's target (`expect_node`), a vector literal (`lit_hint`), a short lambda's `fn(…)` (`lambda_hint`) — each read only at its one node
+Parser.cur_type_vars	El.type_vars	
+Parser.captured_names	El.captures	
+Parser.capture_context	El.captures	partial: the enclosing locals a lambda may capture, typed
+Parser.in_bind_rhs	Vars.bind_rhs	
+Parser.is_capture_bindings	Vars.is_bindings	
+Parser.is_capture_aliases	Vars.is_aliases	
+Parser.stale_monomorphs	El.stale	
+Parser.todo_files	El.loading	the recursion over `use`d files stands in for the suspended-file stack
+Parser.pending_imports	El.pending	
+Parser.lambda_counters	Vars.lambdas	per body rather than per program
+Parser.closure_param	El.closure_var	
