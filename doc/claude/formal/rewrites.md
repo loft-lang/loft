@@ -4006,6 +4006,44 @@ grow, an inline table or a locked store take the general path.  The falsifier is
 `-DLOFT_KEYED_VERIFY`: after each one-probe insert the general lookup must find the record it
 filed, or the run stops naming both.
 
+### Several keyed operations on one hash share one decoded table
+
+```
+  (R-TableHandle) the keyed operations of one function on one hash place P — a variable,
+                  or a field chain over one, of a hash with ONE 8-byte integer key —
+                  share a table handle when two or more of them name P, or one sits in
+                  a loop: the lookup, the length, the typed removal and the insert.  The
+                  handle holds P's decoded table (claim, slot count, seed, entries) and
+                  answers only while P is the place it was resolved for, P's store has
+                  the table generation it was resolved under, and P's collection slot
+                  names the claim it was resolved from; any other use resolves it again,
+                  and a table it does not cover (absent, inline, untagged) takes the
+                  general operation.  Every runtime path that changes a table's claim,
+                  size, slot width, entry kind, seed or entry directory, or replaces a
+                  store's content, gives that store a new table generation.
+```
+
+**In words.**  Every keyed operation re-derived its table from the record before it probed —
+the collection slot, the claim, the header, the seed, the entry directory — and bench 23's
+`put` makes four on `c.nodes`.  The handle is checked, not proved: it is never wrong, only
+stale, so the writer's one decision (which operations share a handle) is about speed, and no
+statement between two uses has to be shown to leave the table alone.  What the check rests on
+is the generation: a table emptied and made again can take the freed claim number with a new
+seed, and a store freed and made again takes the same slot and the same layout, so the slot
+check alone passes a stale handle.  `loft_h_set_header` is the only writer of the header
+fields, and it, `loft_h_install_table`, store creation and in-place clear (`loft_st_init`),
+`loft_st_resync`, binding a store to a file and `loft_swap_in` give the store a new generation.
+The handle's address never leaves the inlined code (helpers are handed copies): escaped, the
+compiler reloads every field after each call and the handle costs more than it saves.  Switch
+`LOFT_NO_TABLE_HANDLE`; census `R-TableHandle` (one per handle declared); the falsifier is
+`-DLOFT_KEYED_VERIFY`, under which every live handle is compared with a fresh resolve.  Cell
+`tests/scripts/159-table-handle.loft` (t9 falsified: with no generation a stale handle hashes
+the new table's keys with the old seed, 233 for 250); guards `tests/table_handle.rs` (no raw
+header write, every store-content replacement classified; the writer's sharing pinned).  Sites:
+`src/c/body/table_handle.rs` (`places`, `FnWriter::table_handle`), the four emission sites in
+`src/c/body/keyed.rs`, `loft_hh` in `src/c/loft_hash.h`, `loft_h_reshaped` in
+`src/c/loft_store.h`.  Design: `bench/portal/analysis/table-handle.md`.
+
 ### A vector its caller walks once is never built
 
 ```

@@ -432,7 +432,11 @@ correctly — glibc and wasi-libc do (both sweeps).
 **Keyed collections.**  A persisted image carries a collection's layout, so the layouts are
 loft's.  A hash is `src/hash.rs` ported (`loft_hash.h`): the seeded table, inline and arena
 entries, a linked type's borrowed records, and its `Stores` routines — the one-probe insert and
-replace, `remove_owned`, `reserve_hash`, the copy and the release.  An index is `src/btree.rs`
+replace, `remove_owned`, `reserve_hash`, the copy and the release.  A function that makes two or more
+keyed operations on one hash place, or one in a loop, holds a table handle (`@FR-R-TableHandle`,
+`loft_hh`): the decoded table, checked at every use against the place, the store's table
+generation and the claim, and resolved again when stale; `LOFT_NO_TABLE_HANDLE=1` emits the
+plain calls.  An index is `src/btree.rs`
 ported (`loft_btree.h`): the node arena, the key parts and text prefixes, the walk's
 record cursors.  A sorted is a vector kept in key order (`sorted_new`, `sorted_finish`), and an
 `ordered` and an `array` a vector of record numbers (`ordered_finish`), each with the release

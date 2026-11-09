@@ -7,6 +7,13 @@
 // the owner's store freed and made again in a loop.  Every value is hand-computed; the cells run
 // on the interpreter and the C, and `LOFT_KEYED_VERIFY=1` (every live handle compared with a
 // fresh resolve) and `LOFT_NO_TABLE_HANDLE=1` must answer the same.
+//
+// @falsified-at: hand-measured (2026-11-09) — `loft_h_reshaped` sabotaged to do nothing (no
+// table generation anywhere): t9 answers `233` for `250` on `--native-c` (a stale handle
+// hashes the new table's keys with the old table's seed and misses them), the C sweep's
+// keyed-verify mode stops the run, and `LOFT_NO_TABLE_HANDLE=1` answers 250.  Removing only
+// `loft_h_install_table`'s bump, or only the seed writes', changes nothing: a growth installs a
+// new claim, which the slot check sees, and a table's creation also writes its slot width.
 
 struct E { k: integer, v: integer }
 struct Box { h: hash<E[k]>, tag: integer }
