@@ -4011,7 +4011,8 @@ filed, or the run stops naming both.
 
 ```
   (R-TableHandle) the keyed operations of one function on one hash place P — a variable,
-                  or a field chain over one, of a hash with ONE 8-byte integer key —
+                  or a field chain over one, of a hash with ONE 8-byte integer key whose
+                  elements a link can name (records of their own, a tagged table) —
                   share a table handle when two or more of them name P, or one sits in
                   a loop: the lookup, the length, the typed removal and the insert.  The
                   handle holds P's decoded table (claim, slot count, seed, entries) and
@@ -4026,7 +4027,9 @@ filed, or the run stops naming both.
 
 **In words.**  Every keyed operation re-derived its table from the record before it probed —
 the collection slot, the claim, the header, the seed, the entry directory — and bench 23's
-`put` makes four on `c.nodes`.  The handle is checked, not proved: it is never wrong, only
+`put` makes four on `c.nodes`.  Only a hash of linked elements takes a handle: an element the
+table owns lives inline, a table the handle does not cover, and a handle there only adds its
+check to the general operation.  The handle is checked, not proved: it is never wrong, only
 stale, so the writer's one decision (which operations share a handle) is about speed, and no
 statement between two uses has to be shown to leave the table alone.  What the check rests on
 is the generation: a table emptied and made again can take the freed claim number with a new

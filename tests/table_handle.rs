@@ -206,20 +206,24 @@ fn the_keyed_operations_on_one_place_share_one_handle() {
         add.contains("loft_hh_find_i64(&hh") && add.contains("loft_hh_insert(&hh"),
         "{add}"
     );
-    // the eviction shape: the lookup, the length and the removal
-    let evict = emitted(&c, "n_evict_put");
+    // the table emptied and refilled between uses: lookups and the insert on one handle
+    let refill = emitted(&c, "n_refill");
     assert_eq!(
-        evict.matches("loft_hh hh").count(),
+        refill.matches("loft_hh hh").count(),
         1,
-        "evict_put: one handle\n{evict}"
+        "refill: one handle\n{refill}"
     );
-    for op in [
-        "loft_hh_find_i64(&hh",
-        "loft_hh_len(&hh",
-        "loft_hh_remove_i64(&hh",
-    ] {
-        assert!(evict.contains(op), "evict_put lacks {op}\n{evict}");
-    }
+    assert!(
+        refill.matches("loft_hh_find_i64(&hh").count() >= 2,
+        "{refill}"
+    );
+    // owned elements live in an inline table the handle does not cover: the plain calls
+    let evict = emitted(&c, "n_evict_put");
+    assert!(
+        !evict.contains("loft_hh "),
+        "evict_put's elements are owned: no handle\n{evict}"
+    );
+    assert!(evict.contains("loft_hash_remove_i64("), "{evict}");
     // a function with no keyed operation declares none
     assert!(
         !emitted(&c, "n_push").contains("loft_hh "),
@@ -236,7 +240,7 @@ fn the_switch_restores_the_plain_calls() {
         "LOFT_NO_TABLE_HANDLE=1 declares no handle"
     );
     assert!(
-        emitted(&c, "n_evict_put").contains("loft_hash_remove_i64("),
-        "the switch emits the typed removal as before"
+        emitted(&c, "n_add").contains("loft_hash_insert("),
+        "the switch emits the plain insert as before"
     );
 }

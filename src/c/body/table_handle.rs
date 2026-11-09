@@ -17,10 +17,12 @@ use crate::data::Value;
 use crate::opt::writes::{PathKey, vector_path};
 use std::collections::{HashMap, HashSet};
 
-/// Is `tp` a hash whose one key is an 8-byte integer — the tables the handle's lookup,
-/// removal and one-probe insert cover?
+/// Is `tp` a hash whose one key is an 8-byte integer and whose elements a link can name — the
+/// tables the handle covers?  A linked element is a record of its own, so its table is a tagged
+/// record table from the start.  An element the table owns lives inline, and a handle on an
+/// inline table only adds its check to the general operation (bench 15 `hash_find` +7 %).
 fn int_hash(cx: &Cx, tp: u16) -> bool {
-    matches!(cx.keyed(tp), Some((Keyed::Hash, _)))
+    matches!(cx.keyed(tp), Some((Keyed::Hash, elem)) if cx.stores.is_linked(elem))
         && cx
             .stores
             .types

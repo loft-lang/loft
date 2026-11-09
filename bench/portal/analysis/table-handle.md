@@ -1,7 +1,10 @@
 # The table handle (`R-TableHandle`) — design
 
-Status: designed, not built.  The C backend only; the interpreter and the Rust writer are
-untouched.
+Status: built (a8f1732df and after).  The C backend only; the interpreter and the Rust writer
+are untouched.  As built, only a hash of LINKED elements takes a handle: an owned element lives
+in an inline table the handle does not cover, and a handle there only added its check (bench 15
+`hash_find` +7 %).  `lru_mixed` 497 → 469 µs pinned (−5.6 %), against the priced −7.7 %; the
+handle's address must not escape the inlined code (see `loft_hash.h`).
 
 ## What it removes
 

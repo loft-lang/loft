@@ -6,7 +6,9 @@
 // § How it fails): a growth, removals only, the field emptied by a callee, the owner rebound,
 // the owner's store freed and made again in a loop.  Every value is hand-computed; the cells run
 // on the interpreter and the C, and `LOFT_KEYED_VERIFY=1` (every live handle compared with a
-// fresh resolve) and `LOFT_NO_TABLE_HANDLE=1` must answer the same.
+// fresh resolve) and `LOFT_NO_TABLE_HANDLE=1` must answer the same.  Only a hash of linked
+// elements takes a handle (t7–t9); t1–t6 hold owned elements in inline tables and pin the plain
+// calls' answers beside them.
 //
 // @falsified-at: hand-measured (2026-11-09) — `loft_h_reshaped` sabotaged to do nothing (no
 // table generation anywhere): t9 answers `233` for `250` on `--native-c` (a stale handle

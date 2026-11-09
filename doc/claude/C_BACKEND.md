@@ -433,7 +433,7 @@ correctly — glibc and wasi-libc do (both sweeps).
 loft's.  A hash is `src/hash.rs` ported (`loft_hash.h`): the seeded table, inline and arena
 entries, a linked type's borrowed records, and its `Stores` routines — the one-probe insert and
 replace, `remove_owned`, `reserve_hash`, the copy and the release.  A function that makes two or more
-keyed operations on one hash place, or one in a loop, holds a table handle (`@FR-R-TableHandle`,
+keyed operations on one hash place of linked elements, or one in a loop, holds a table handle (`@FR-R-TableHandle`,
 `loft_hh`): the decoded table, checked at every use against the place, the store's table
 generation and the claim, and resolved again when stale; `LOFT_NO_TABLE_HANDLE=1` emits the
 plain calls.  An index is `src/btree.rs`
