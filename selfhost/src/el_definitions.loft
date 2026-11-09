@@ -1475,7 +1475,7 @@ fn keyed(t: ir::TypeT) -> boolean {
 
 // `Parser::interface_method_name`: the method an interface child stands for —
 // `__iface_<interface>#<arity>_<method>`, or the legacy `t_4Self_<method>`.
-fn interface_method_name(name: text) -> text {
+pub fn interface_method_name(name: text) -> text {
   if name.starts_with("__iface_") {
     rest = name[8..];
     u = rest.find("_");

@@ -466,17 +466,110 @@ fn template_ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<inte
 }
 
 // port: bounds.rs satisfies
-// Do the bound types satisfy template `d`'s bounds?  Changed: only a variable with no bounds is
-// judged here.  One with bounds needs `infer_associated` and `satisfaction_messages` (the
-// interfaces family, not ported yet): refused by name.
+// Do the bound types satisfy template `d`'s bounds: every interface a variable is bounded by,
+// asked of the concrete type the variable binds (`satisfaction_messages`, empty)?  A binding
+// with no concrete type definition is not checked, as Rust's `continue` leaves it.  Changed:
+// `infer_associated` is not ported — an interface with a companion type is refused by name in
+// `satisfaction_failures`.
 fn satisfies(e: el::El, d: integer, b: el_expressions::Binding) -> boolean {
   for v in b.vars {
-    if len(var_bounds(e, d, v, v#index == 0)) > 0 {
-      el::refuse(e, "an overload set with a template member whose variable has bounds");
-      return false;
+    concrete = el_expressions::type_def_nr(e, b.types[v#index] ?? ir::TyVoid);
+    if concrete < 0 {
+      continue;
+    }
+    for iface in var_bounds(e, d, v, v#index == 0) {
+      if len(satisfaction_failures(e, iface, concrete)) > 0 {
+        return false;
+      }
     }
   }
   true
+}
+
+// port: bounds.rs satisfaction_failures
+// The members of interface `iface` the type `concrete` does not provide (`@FR-G-Sat`: the
+// methods VISIBLE for the type decide, each against its signature with `Self` replaced by the
+// type), one message each.  Changed: only the plain-method path is carried.  An operator member
+// (`is_operator_alias`, `operator_meets_member`, `backs_operator`), a companion type, a member
+// found at another arity (`possible_with_signature`), a template implementor
+// (`overload_with_params`), and a parameter list or result that differs where `params_fit` /
+// `return_fits` would have to decide, are refused by name.
+fn satisfaction_failures(e: el::El, iface: integer, concrete: integer) -> vector<text> {
+  out: vector<text> = [];
+  cdef = el::def(e, concrete);
+  concrete_type = cdef.returned[0] ?? ir::TyVoid;
+  self_nr = el::def_nr(e, "Self");
+  for c in e.b.data.definitions {
+    if c.parent != iface {
+      continue;
+    }
+    if c.def_type != el::DT_FUNCTION {
+      el::refuse(e, "an interface bound that declares an associated type");
+      out += ["an associated type"];
+      return out;
+    }
+    method = el_definitions::interface_method_name(c.name);
+    if method.starts_with("Op") || c.operator_form {
+      el::refuse(e, "an interface bound with an operator member");
+      out += [method];
+      return out;
+    }
+    // A variant's own type first, its enum's methods the fallback (`(G-Sat)`).
+    found = -1;
+    if cdef.def_type == el::DT_ENUM_VALUE {
+      found = el_expressions::find_fn(e, method, ir::TyReference { n: concrete, dep: [] });
+    }
+    if found < 0 {
+      found = el_expressions::find_fn(e, method, concrete_type);
+    }
+    // @PLN25 E2 — a synth `__nullable<S>` satisfies through `S`'s methods.
+    if found < 0 && cdef.name.starts_with("__nullable<") && cdef.name.ends_with(">") {
+      s = el::def_nr(e, cdef.name[11..len(cdef.name) - 1]);
+      if s >= 0 {
+        found = el_expressions::find_fn(e, method, el::def(e, s).returned[0] ?? ir::TyVoid);
+      }
+    }
+    if found < 0 {
+      out += ["missing {method}"];
+      continue;
+    }
+    if len(visible_params(e, found)) != len(visible_params(e, c#index)) {
+      el::refuse(e, "an interface bound met by a member of another arity");
+      out += [method];
+      return out;
+    }
+    if el::def(e, found).def_type == el::DT_GENERIC {
+      el::refuse(e, "an interface bound met by a template member");
+      out += [method];
+      return out;
+    }
+    // `bound_params_at` + `params_fit`: the member's parameter list with `Self` replaced.
+    have = visible_params(e, found);
+    for p in visible_params(e, c#index) {
+      w = if self_nr >= 0 { el_expressions::substitute(p, self_nr, concrete_type) } else { p };
+      if identity(e, el_types::base(w)) != identity(e, el_types::base(have[p#index] ?? ir::TyVoid)) {
+        el::refuse(e, "an interface bound met by a member whose parameters differ");
+        out += [method];
+        return out;
+      }
+    }
+    // `return_type_mismatch`: the result is part of the signature.
+    rw = c.returned[0] ?? ir::TyVoid;
+    want = if self_nr >= 0 { el_expressions::substitute(rw, self_nr, concrete_type) } else { rw };
+    got = el::def(e, found).returned[0] ?? ir::TyVoid;
+    if !(el_types::base(want) is TyVoid) && identity(e, el_types::base(want)) != identity(e, el_types::base(got)) {
+      wn = match el_types::base(want) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
+      gn = match el_types::base(got) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
+      if wn >= 0 && gn >= 0 {
+        out += ["{method} answers another type"];
+        continue;
+      }
+      el::refuse(e, "an interface bound met by a member whose result differs");
+      out += [method];
+      return out;
+    }
+  }
+  out
 }
 
 // port: bounds.rs var_bounds
