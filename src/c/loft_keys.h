@@ -202,6 +202,13 @@ static uint64_t loft_sip_le(const uint8_t *buf, uint32_t len) {
     return out;
 }
 
+/* A little-endian word of eight bytes, as `loft_sip_le` builds one: the compilers read it with
+ * one load, where the byte loop above stays a loop. */
+LOFT_HOT_INLINE uint64_t loft_sip_le8(const uint8_t *b) {
+    return (uint64_t) b[0] | (uint64_t) b[1] << 8 | (uint64_t) b[2] << 16 | (uint64_t) b[3] << 24 |
+           (uint64_t) b[4] << 32 | (uint64_t) b[5] << 40 | (uint64_t) b[6] << 48 | (uint64_t) b[7] << 56;
+}
+
 LOFT_HOT_INLINE void loft_sip_word(loft_sip *h, uint64_t mi) {
     h->v3 ^= mi;
     loft_sip_round(h);
@@ -225,7 +232,7 @@ static void loft_sip_write(loft_sip *h, const uint8_t *msg, size_t length) {
     size_t left = len & 7;
     size_t i = needed;
     while (i < len - left) {
-        loft_sip_word(h, loft_sip_le(msg + i, 7) | (uint64_t) msg[i + 7] << 56);
+        loft_sip_word(h, loft_sip_le8(msg + i));
         i += 8;
     }
     h->tail = loft_sip_le(msg + i, (uint32_t) left);
@@ -290,9 +297,9 @@ LOFT_HOT_INLINE uint64_t loft_digest_i64(uint64_t seed, int64_t key) {
     uint8_t b[8];
     loft_sip_init(&h);
     memcpy(b, &seed, 8);
-    loft_sip_word(&h, loft_sip_le(b, 7) | (uint64_t) b[7] << 56);
+    loft_sip_word(&h, loft_sip_le8(b));
     memcpy(b, &key, 8);
-    loft_sip_word(&h, loft_sip_le(b, 7) | (uint64_t) b[7] << 56);
+    loft_sip_word(&h, loft_sip_le8(b));
     h.length = 16;
     h.tail = 0;
     h.ntail = 0;
@@ -307,21 +314,15 @@ LOFT_HOT_INLINE uint64_t loft_digest_ints(uint64_t seed, const int64_t *ks, int 
     uint8_t b[8];
     loft_sip_init(&h);
     memcpy(b, &seed, 8);
-    loft_sip_word(&h, loft_sip_le(b, 7) | (uint64_t) b[7] << 56);
+    loft_sip_word(&h, loft_sip_le8(b));
     for (int i = 0; i < n; i++) {
         memcpy(b, &ks[i], 8);
-        loft_sip_word(&h, loft_sip_le(b, 7) | (uint64_t) b[7] << 56);
+        loft_sip_word(&h, loft_sip_le8(b));
     }
     h.length = (uint64_t) (n + 1) * 8;
     h.tail = 0;
     h.ntail = 0;
     return loft_sip_finish(&h);
-}
-
-/* A little-endian word of eight bytes, as `loft_sip_le` builds one. */
-LOFT_HOT_INLINE uint64_t loft_sip_le8(const uint8_t *b) {
-    return (uint64_t) b[0] | (uint64_t) b[1] << 8 | (uint64_t) b[2] << 16 | (uint64_t) b[3] << 24 |
-           (uint64_t) b[4] << 32 | (uint64_t) b[5] << 40 | (uint64_t) b[6] << 48 | (uint64_t) b[7] << 56;
 }
 
 /* keys::str_hash: the digest of ONE text key — the seed's word, the text's bytes and the 0xFF

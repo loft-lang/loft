@@ -39,10 +39,15 @@
 #define LOFT_H_STAGE_MARK 0xFFFFFFF1u
 #define LOFT_H_GROWTH 2u
 
+/* The floor of log2 `v` (0 for 0 and 1): every table header decode asks it. */
 static uint32_t loft_ilog2(uint32_t v) {
+#if defined(__GNUC__) || defined(__clang__)
+    return v ? 31u - (uint32_t) __builtin_clz(v) : 0;
+#else
     uint32_t r = 0;
     while (v >>= 1) r++;
     return r;
+#endif
 }
 
 static uint64_t loft_next_pow2(uint64_t v) {
@@ -788,6 +793,26 @@ static loft_ref LOFT_H_TYPED(loft_h_find_i64)(loft_ref c, const loft_key *keys, 
     uint64_t hv = loft_digest_i64(loft_h_read_seed(s, claim), key);
     uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count), kpos = keys[0].pos;
     loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    if (sb == 8 && !ents.inl && loft_is_pow2(count)) {
+        /* A tagged table of arena or record entries: the slots read in place, the probe masked.
+         * Nothing is written during the walk, so the slot pointer stays valid. */
+        const uint8_t *b = loft_at(s, claim, LOFT_H_BUCKET0);
+        uint32_t mask = count - 1;
+        for (uint32_t i = 0; i < count; i++, index = (index + 1) & mask) {
+            uint32_t slot, t;
+            memcpy(&slot, b + (size_t) index * 8, 4);
+            if (slot == 0) break;
+            memcpy(&t, b + (size_t) index * 8 + 4, 4);
+            if (t != tag) continue;
+            loft_ref e = { c.store_nr, 0, 0, 0 };
+            int64_t have;
+            loft_h_at(&ents, s, slot, &e.rec, &e.pos);
+            if (e.rec == 0) continue;
+            memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
+            if (have == key) return e;
+        }
+        return loft_ref_null();
+    }
     for (uint32_t i = 0; i < count; i++) {
         uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
@@ -1576,10 +1601,69 @@ static void loft_hash_displace(const loft_tdesc *T, uint16_t elem, loft_ref c, l
  * `@FR-R-SameRead`'s filed clause, in the statement right after the insert. */
 static LOFT_TLS loft_ref loft_h_filed;
 
+/* `loft_hash_insert`'s common case, in one probe: a tagged table of arena or record entries, one
+ * integer key, the table not due to grow, and the key absent.  Filed exactly as the general path
+ * files it (`loft_h_probe_for_insert`'s free bucket, then `loft_h_add_at` without a grow); 1 when
+ * filed, 0 when the general path must decide (a duplicate, the record already filed, a grow). */
+static int loft_h_insert_int_fast(loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
+    if (nk != 1 || rec.store_nr != c.store_nr) return 0;
+    int kt = keys[0].type < 0 ? -keys[0].type : keys[0].type;
+    if (kt != 1 && kt != 2) return 0;
+    loft_store_t *s = loft_store_of(c);
+    if (LOFT_WRITE_REFUSED(s)) return 0;
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(s, claim) <= LOFT_H_RESERVED || loft_h_is_inline(s, claim)) return 0;
+    uint32_t count = loft_h_hdr(s, claim).count, length = loft_u32(s, claim, LOFT_H_LEN_FLD);
+    if (loft_h_slot_bytes(s, claim) != 8 || !loft_is_pow2(count) || loft_h_is_full(length, count)) return 0;
+    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    uint32_t own = loft_h_slot_value(s, claim, rec, ents.stride), kpos = keys[0].pos, mask = count - 1;
+    int64_t key;
+    memcpy(&key, loft_at(s, rec.rec, rec.pos + kpos), 8);
+    uint64_t hv = loft_digest_i64(loft_h_read_seed(s, claim), key);
+    uint32_t tag = (uint32_t) hv, at = tag & mask;
+    uint8_t *b = loft_at(s, claim, LOFT_H_BUCKET0);
+    for (uint32_t i = 0; i < count; i++, at = (at + 1) & mask) {
+        uint32_t slot, t;
+        memcpy(&slot, b + (size_t) at * 8, 4);
+        if (slot == 0) {
+            memcpy(b + (size_t) at * 8, &own, 4);
+            memcpy(b + (size_t) at * 8 + 4, &tag, 4);
+            loft_set_u32(s, claim, LOFT_H_LEN_FLD, length + 1);
+            return 1;
+        }
+        if (slot == own) return 0;
+        memcpy(&t, b + (size_t) at * 8 + 4, 4);
+        if (t != tag) continue;
+        loft_ref e = { c.store_nr, 0, 0, 0 };
+        int64_t have;
+        loft_h_at(&ents, s, slot, &e.rec, &e.pos);
+        if (e.rec == 0) continue;
+        memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
+        if (have == key) return 0;
+    }
+    return 0;
+}
+
 static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref rec, const loft_key *keys,
                                  int nk, int secondary) {
     loft_h_filed = loft_ref_null();
     if (c.store_nr == 0xFFFF || c.rec == 0 || rec.rec == 0) return loft_ref_null();
+    if (loft_h_insert_int_fast(c, rec, keys, nk)) {
+#ifdef LOFT_KEYED_VERIFY
+        /* The one-probe insert's check: the key now finds the record it filed. */
+        loft_kv vk = loft_key_get(loft_store_of(rec), rec.rec, rec.pos, &keys[0]);
+        loft_ref found = loft_h_find(c, keys, &vk, 1);
+        if (found.rec != rec.rec || found.pos != rec.pos) {
+            fflush(stdout);
+            fprintf(stderr, "LOFT_KEYED_VERIFY: the one-probe insert filed %u+%u where the lookup finds %u+%u\n",
+                    (unsigned) rec.rec, (unsigned) rec.pos, (unsigned) found.rec, (unsigned) found.pos);
+            abort();
+        }
+#endif
+        /* The one-probe insert takes no inline table, so the record it filed is the entry. */
+        loft_h_filed = rec;
+        return loft_ref_null();
+    }
     loft_hprobe p = loft_h_probe_for_insert(c, rec, keys, nk);
 #ifdef LOFT_KEYED_VERIFY
     /* `Stores::verify_probe`: the probe's duplicate is the one the lookup `dedup_keyed` runs

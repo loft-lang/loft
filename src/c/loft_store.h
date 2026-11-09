@@ -95,15 +95,21 @@ typedef struct { uint64_t *bits; uint32_t nwords; uint32_t live; uint32_t cap; }
 #ifndef LOFT_HOT_INLINE
 #define LOFT_HOT_INLINE static inline
 #endif
+#ifndef LOFT_UNLIKELY
+#define LOFT_UNLIKELY(x) (x)
+#endif
+#ifndef LOFT_COLD
+#define LOFT_COLD
+#endif
 
 LOFT_HOT_INLINE int loft_bits_contains(const loft_bits *b, uint32_t pos) {
     uint32_t w = pos >> 6;
     return w < b->nwords && ((b->bits[w] >> (pos & 63)) & 1u);
 }
 
-static int loft_bits_insert(loft_bits *b, uint32_t pos) {
-    uint32_t w = pos >> 6;
-    if (w >= b->nwords) {
+/* The set grown to hold word `w`: rare, kept out of the inline insert below. */
+LOFT_COLD static void loft_bits_extend(loft_bits *b, uint32_t w) {
+    {
         uint32_t n = w + 1;
         if (n > b->cap) {
             uint32_t cap = b->cap * 2 > n ? b->cap * 2 : n;
@@ -115,6 +121,13 @@ static int loft_bits_insert(loft_bits *b, uint32_t pos) {
         memset(b->bits + b->nwords, 0, (size_t) (n - b->nwords) * 8);
         b->nwords = n;
     }
+}
+
+/* `pos` into the set; 1 when it was not there.  Inline: the store's bookkeeping sets a bit at
+ * every claim, delete and stored reference. */
+LOFT_HOT_INLINE int loft_bits_insert(loft_bits *b, uint32_t pos) {
+    uint32_t w = pos >> 6;
+    if (LOFT_UNLIKELY(w >= b->nwords)) loft_bits_extend(b, w);
     uint64_t mask = (uint64_t) 1 << (pos & 63);
     int fresh = (b->bits[w] & mask) == 0;
     b->bits[w] |= mask;
@@ -1316,7 +1329,8 @@ static void loft_st_release_foreign(loft_store_t *s) {
 
 /* `Store::note_referenced` (`@FR-H-Removed`). */
 LOFT_HOT_INLINE void loft_st_note_referenced(loft_store_t *s, uint32_t rec) {
-    if (rec >= LOFT_ST_PRIMARY && rec < s->size) loft_bits_insert(&s->referenced, rec);
+    if (rec >= LOFT_ST_PRIMARY && rec < s->size && !loft_bits_contains(&s->referenced, rec))
+        loft_bits_insert(&s->referenced, rec);
 }
 
 LOFT_HOT_INLINE int loft_st_is_removed(const loft_store_t *s, uint32_t rec) {
