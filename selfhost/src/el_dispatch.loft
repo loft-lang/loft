@@ -179,8 +179,36 @@ fn method_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>, pos: i
     if !carries(e, set, incumbent) {
       carry(e, set, receiver_spelling(key), incumbent);
     }
+    // `@FR-F-Recv` / `@FR-Disp-Applicable`: the receiver's nullability twin is the same
+    // receiver's other spelling — the set decides between them only if it carries both.
+    join_twin(e, set, name, receiver_spelling(key));
   }
   "t_{len(full)}{full}_{name}"
+}
+
+// The method of `name` on the nullability twin of receiver spelling `sp` (`RP` ↔ `RP?`), carried
+// in `set` under its own receiver spelling when this source declares one.
+fn join_twin(e: el::El, set: integer, name: text, sp: text) {
+  tw = if sp.ends_with("?") { sp[..-1] } else { "{sp}?" };
+  twin = el::source_nr(e, e.source, "t_{len(tw)}{tw}_{name}");
+  if twin >= 0 && !carries(e, set, twin) {
+    carry(e, set, tw, twin);
+  }
+}
+
+// `add_fn`'s other order: a method whose receiver's nullability twin is already a member of
+// this source's set joins it under its own receiver key.
+pub fn join_method_twin(e: el::El, name: text, d: integer) {
+  set = own_set(e, name);
+  if set < 0 {
+    return;
+  }
+  sp = receiver_spelling(el::def(e, d).name);
+  tw = if sp.ends_with("?") { sp[..-1] } else { "{sp}?" };
+  twin = el::source_nr(e, e.source, "t_{len(tw)}{tw}_{name}");
+  if twin >= 0 && carries(e, set, twin) && !carries(e, set, d) {
+    carry(e, set, sp, d);
+  }
 }
 
 // The receiver spelling a method key `t_<LEN><spelling>_<name>` carries.

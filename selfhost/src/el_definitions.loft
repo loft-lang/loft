@@ -743,6 +743,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     e.context = add_fn(e, key, name, arguments, el::pos_at(e, after));
     if e.context >= 0 {
       el_dispatch::join(e, name, e.context);
+      if key.starts_with("t_") {
+        el_dispatch::join_method_twin(e, name, e.context);
+      }
     }
     if len(e.type_vars) > 0 && e.context >= 0 {
       e.b.data.definitions[e.context].def_type = el::DT_GENERIC;
@@ -1095,16 +1098,27 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
 // name (a field, the nullable twin of a method) is refused by name.
 fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
   tn = -1;
+  // The receiver's slot this definition takes over, as the nullability twin's dense half.
+  take_slot = -1;
   if len(arguments) > 0 && arguments[0].name == "self" {
     t = arguments[0].typedef;
     tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
     if tn >= 0 {
       for a in el::def(e, tn).attributes {
         if a.name == name {
+          slot = match a.typedef[0] ?? ir::TyVoid { TyRoutine { n } => n, _ => -1 };
           // An overload of the slot's method (`Disp-Key`): the slot keeps the incumbent, the
           // set carries both.
-          slot = match a.typedef[0] ?? ir::TyVoid { TyRoutine { n } => n, _ => -1 };
           if el_dispatch::own_set(e, name) >= 0 && slot >= 0 && el::def(e, slot).name != key {
+            tn = -1;
+            break;
+          }
+          // `@FR-F-Recv`: `m(τ)` and `m(τ?)` are one method's two receiver spellings, two keys
+          // sharing the type's slot — which the DENSE one owns, in either declaration order.
+          slot_nullable = slot >= 0 && (el::def(e, slot).attributes[0]!.typedef[0] ?? ir::TyVoid) is TyOptional;
+          new_nullable = t is TyOptional;
+          if slot >= 0 && slot_nullable != new_nullable {
+            take_slot = if new_nullable { -1 } else { a#index };
             tn = -1;
             break;
           }
@@ -1112,9 +1126,16 @@ fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir
           return -1;
         }
       }
+      if take_slot >= 0 {
+        tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+      }
     }
   }
   d = el::add_def(e, key, pos, el::DT_FUNCTION);
+  if take_slot >= 0 {
+    e.b.data.definitions[tn].attributes[take_slot].typedef = [ir::TyRoutine { n: d }];
+    tn = -1;
+  }
   for a in arguments {
     e.b.data.definitions[d].attributes += [el::attribute(a.name, a.typedef)];
     e.b.data.definitions[d].attributes[a#index].value_const = a.constant;
