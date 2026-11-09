@@ -3033,9 +3033,14 @@ impl Parser {
                 && let Some(Value::Return(inner)) = l.last().map(Value::unspan)
             {
                 // loft#1101 — a viewing local is not fresh-owned, but it still has to be
-                // DELIVERED; `tail_ret_view_local` supplies the candidate that copies.
-                self.fresh_owned_vector_deps(inner)
-                    .or_else(|| self.tail_ret_view_local(l, inner))
+                // DELIVERED; `tail_ret_view_local` supplies the candidate that copies.  Asked
+                // FIRST: a local defined as a field of an inline call's result has deps naming
+                // the call's ARGUMENTS (`own = def(e, h).bounds` is `["e"]`), which the owner
+                // test reads as a borrow of `e` to record — but it views the lifted copy the
+                // frame frees, so it is copied (loft#2443).  A view of an argument itself
+                // (`e = v[i]; return e`) is no such local and keeps its borrow (O-Move).
+                self.tail_ret_view_local(l, inner)
+                    .or_else(|| self.fresh_owned_vector_deps(inner))
             } else {
                 None
             };
@@ -20126,18 +20131,11 @@ impl Parser {
             // -shaped `__retbuf` and the store it abandoned leaked one per call.  A view
             // owns nothing to rename (@FR-O-Move), so it is not this arm's answer; it is
             // `tail_ret_view_local`'s, which delivers it by COPY instead.
-            // loft#2443 — and a view of an ARGUMENT owns nothing either: a local whose every
-            // dep is a parameter (`own = def(e, h).bounds; return own;`) is not fresh, so it
-            // is `tail_ret_view_local`'s, which copies it as the implicit tail `own` does.
-            // Answered here, its deps (`[e]`) were published as a borrow of `e` while the
-            // value viewed the scope pass's lifted copy of the call (`(F-Ret)`'s bind copy),
-            // which the frame frees on the way out: the caller read a freed vector.
             Value::Var(o)
                 if self.vars.exists(*o)
                     && !self.vars.is_argument(*o)
                     && !self.var_views_local(*o)
-                    && matches!(self.vars.tp(*o).ret_promo_base(), Type::Vector(_, d)
-                        if !d.is_empty() && !d.iter().all(|&x| x < self.vars.count() && self.vars.is_argument(x))) =>
+                    && matches!(self.vars.tp(*o).ret_promo_base(), Type::Vector(_, d) if !d.is_empty()) =>
             {
                 let Type::Vector(_, d) = self.vars.tp(*o).ret_promo_base() else {
                     unreachable!()
