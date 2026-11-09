@@ -152,6 +152,33 @@ fn t7() {
   println("t7 {r}");
 }
 
+fn reset_chain(c: Chain) {
+  c.h = [];
+  c.last = null;
+}
+
+// t8 — the table emptied and made again between two uses of one handle: the new table can take
+// the freed claim number, so the collection slot names the same claim while the seed is new.
+// Only the generation (the new table's seed write) tells the handle; without it the lookup
+// hashes with the old seed and misses the key it just filed.
+fn refill(c: Chain) -> integer {
+  a = 0;
+  if c.h[1] != null { a += 1; }
+  reset_chain(c);
+  c.h += [N { k: 7 }];
+  if c.h[7] != null { a += 10; }
+  if c.h[1] == null { a += 100; }
+  a
+}
+
+fn t8() {
+  c = Chain { };
+  for i in 0..5 { add(c, i); }
+  r = refill(c);
+  assert(r == 111, "t8 {r}");
+  println("t8 {r}");
+}
+
 fn main() {
-  t1(); t2(); t3(); t4(); t5(); t6(); t7();
+  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8();
 }
