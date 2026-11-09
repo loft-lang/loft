@@ -643,16 +643,22 @@ fn fresh_retarget(node: &mut Value, src: u16, dest: &Value, co: &ConstructOps) {
 pub(super) fn construct_replace_rewrite(
     code: &mut Value,
     co: &ConstructOps,
+    vars: &Function,
     skip: &mut HashSet<u16>,
 ) {
     if let Value::Block(b) = code {
-        replace_rewrite_block(b, co, skip);
+        replace_rewrite_block(b, co, vars, skip);
     }
-    code.for_each_child_mut(&mut |c| construct_replace_rewrite(c, co, skip));
+    code.for_each_child_mut(&mut |c| construct_replace_rewrite(c, co, vars, skip));
 }
 
 /// Run the whole-vector-replacement rewrite over a SINGLE block's operators.
-fn replace_rewrite_block(b: &mut Block, co: &ConstructOps, skip: &mut HashSet<u16>) {
+fn replace_rewrite_block(
+    b: &mut Block,
+    co: &ConstructOps,
+    vars: &Function,
+    skip: &mut HashSet<u16>,
+) {
     let mut failed: HashSet<usize> = HashSet::default();
     loop {
         // Find the earliest `copy 2` (`OpAppendVector(a.field, Var(rhs))`) preceded by the clear +
@@ -679,7 +685,7 @@ fn replace_rewrite_block(b: &mut Block, co: &ConstructOps, skip: &mut HashSet<u1
         let Some((c2, field, rhs, base)) = hit else {
             break;
         };
-        if !try_replace_one(b, c2, &field, rhs, base, co, skip) {
+        if !try_replace_one(b, c2, &field, rhs, base, co, vars, skip) {
             failed.insert(c2);
         }
     }
@@ -687,6 +693,7 @@ fn replace_rewrite_block(b: &mut Block, co: &ConstructOps, skip: &mut HashSet<u1
 
 /// One `a.field = base` replacement at `copy 2` index `c2`. Rewrites `b.operators` + records the
 /// moved-out temp/wrapper in `skip` iff every guard holds; else returns `false` unchanged.
+#[allow(clippy::too_many_arguments)]
 fn try_replace_one(
     b: &mut Block,
     c2: usize,
@@ -694,6 +701,7 @@ fn try_replace_one(
     rhs: u16,
     base: u16,
     co: &ConstructOps,
+    vars: &Function,
     skip: &mut HashSet<u16>,
 ) -> bool {
     let Some(a) = get_field_base(field, co) else {
@@ -755,7 +763,17 @@ fn try_replace_one(
     // `s.v = s.v[1..]` builds the source by slicing `s.v` — moving the `OpClearVector` ahead of that
     // read would empty `s.v` before the slice copies it). Guard the build region [bs..c2) (excluding
     // the chain: copy1 / clear / copy2 legitimately reference `a`).
-    if (bs..c2).any(|i| !chain.contains(&i) && refs_var(&b.operators[i], a)) {
+    // `@FR-R-MoveLast` (the build-into clause) — a VIEW of `a`'s store is `a` under another
+    // name: `l = bl.operators; ops = [for o in l { … }]; bl.operators = ops` walks `l` after
+    // the moved clear has emptied it, and the field keeps only what was appended after the
+    // walk (loft#2445).  So the region names neither `a` nor any local whose deps reach its
+    // store (`store_viewers`).
+    let viewers: Vec<u16> = vars.store_viewers(a).into_iter().collect();
+    if (bs..c2).any(|i| {
+        !chain.contains(&i)
+            && (refs_var(&b.operators[i], a)
+                || viewers.iter().any(|w| refs_var(&b.operators[i], *w)))
+    }) {
         return false;
     }
     // `@FR-R-MoveLast` — nor may the region BIND `a`: the build lands in the `a.field` that exists

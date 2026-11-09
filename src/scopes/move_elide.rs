@@ -347,7 +347,7 @@ pub(super) fn move_elide(data: &mut Data) {
         // B1.3d — the `a.field = base` whole-vector replacement (the `__p154_rhs` idiom): a DOUBLE
         // copy (`base → __p154_rhs → a.field`, with an `OpClearVector`). Its source is a temp, so it
         // is NOT a MovePlan — this rewrite is STRUCTURAL and must run regardless of `con_sources`.
-        construct_replace_rewrite(&mut code, &co, &mut skip);
+        construct_replace_rewrite(&mut code, &co, &data.def(d_nr).variables, &mut skip);
 
         data.definitions[d_nr as usize].code = code;
         for &s in &skip {

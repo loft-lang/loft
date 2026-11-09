@@ -5620,6 +5620,15 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  owes the vector's own.  A view of the LITERAL does not — it names
                  the literal's own field under the move and under the copy alike,
                  so a cursor matched after the move (`match cur { … }`) is admitted.
+                 THE BUILD-INTO CLAUSE: `a.f = y` for a vector field, where `y` owns
+                 its store and is dead after the assignment, may build `y` IN `a.f` —
+                 `a.f` cleared where `y`'s build begins, no copy at the assignment —
+                 only where nothing in that build names `a.f`'s container: not `a`
+                 itself (`s.v = s.v[1..]` slices the field it is about to replace), not
+                 a local whose deps reach `a`'s store (`l = a.f; y = [for x in l
+                 { … }]` walks the field after the clear emptied it), and no rebind of
+                 `a` (the build would land in the record `a` named before it).  Any of
+                 them keeps the build apart and the copy at the assignment.
   (R-ExitVector) a LOCAL VECTOR whose wrapper is minted once and that reaches the
                  function's exit only inside the literal built into the return
                  buffer — `xs: vector<T> = []; …; return Out { xs: xs, … }` — has its
