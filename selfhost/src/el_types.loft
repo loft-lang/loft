@@ -698,7 +698,7 @@ pub fn carried_step(t: ir::TypeT) -> boolean {
 }
 
 // The `)` closing the `(` at token `open`.
-fn closing_paren(e: el::El, open: integer) -> integer {
+pub fn closing_paren(e: el::El, open: integer) -> integer {
   depth = 0;
   i = open;
   while i < len(e.p.src) {
