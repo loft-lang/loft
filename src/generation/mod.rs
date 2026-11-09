@@ -12100,8 +12100,9 @@ extern crate loft;"
                 // a buffer is reachable, cycles included (`fib`): the guard's drop would find
                 // nothing above its mark, every time.  The depth count stays: it is the
                 // recursion cap both backends share.
-                let guard_free =
-                    leaf || (!self.switches.guard_free_disabled && self.guard_free.is_guard_free(self.data, def_nr));
+                let guard_free = leaf
+                    || (!self.switches.guard_free_disabled
+                        && self.guard_free.is_guard_free(self.data, def_nr));
                 crate::rewrite_census::fired("R-GuardFree", usize::from(guard_free && !leaf));
                 let fnref_guard = if guard_free {
                     String::new()

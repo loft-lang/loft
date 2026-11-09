@@ -1258,3 +1258,86 @@ fn emit_image_refuses_without_leaving_a_file() {
     let _ = fa::remove_file(&script);
     let _ = fa::remove_file(&good);
 }
+
+/// A warm load writes the code the cold run wrote.  The scope pass runs on every load, and
+/// its rewrites must act only on the functions that load checks: a function decoded from
+/// the image already holds them, and running one again is not a no-op.  The empty vector of
+/// `r ?? []` has a literal buffer an owner takes over (`@FR-O-Owner`); a warm run detached
+/// it a second time, one statement more in both writers, so the same program was a different
+/// source from run to run (the rewrite census reads it as an emitter that is not
+/// deterministic, and every native cache keyed on the source misses).
+#[test]
+fn a_warm_load_emits_the_code_of_the_cold_run() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_arce_emit_{pid}.loft"));
+    fa::write(
+        &script,
+        "fn dec(s: text) -> vector<integer>? {\n\
+         \x20 if len(s) == 0 { return null; }\n\
+         \x20 v: vector<integer> = [];\n\
+         \x20 for c in 0..len(s) { v += [c * 7]; }\n\
+         \x20 v\n\
+         }\n\
+         fn to_v(s: text) -> vector<integer> {\n\
+         \x20 r = dec(s);\n\
+         \x20 r ?? []\n\
+         }\n\
+         fn main() { a = to_v(\"abc\"); b = to_v(\"\"); println(\"{len(a)} {a[2]?} {len(b)}\"); }\n",
+    )
+    .expect("write script");
+    let cache_dir = tmp.join(format!("loft_arce_emit_cache_{pid}"));
+    let _ = fa::remove_dir_all(&cache_dir);
+    let emit = |label: &str, cache: bool| -> String {
+        let out_file = tmp.join(format!("loft_arce_emit_{pid}_{label}.c"));
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
+        cmd.arg("--emit-c")
+            .arg(&out_file)
+            .arg(&script)
+            .current_dir(workspace_root())
+            .env_remove("LOFT_STDLIB_CACHE");
+        if cache {
+            cmd.env_remove("LOFT_NO_CACHE")
+                .env("XDG_CACHE_HOME", &cache_dir);
+        } else {
+            cmd.env("LOFT_NO_CACHE", "1");
+        }
+        let out = cmd.output().expect("failed to invoke loft binary");
+        assert!(
+            out.status.success(),
+            "{label} emission failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let c = fa::read_to_string(&out_file).expect("read the emitted C");
+        let _ = fa::remove_file(&out_file);
+        c
+    };
+    let parsed = emit("parsed", false);
+    let cold = emit("cold", true);
+    let warm = emit("warm", true);
+    assert!(
+        parsed == cold,
+        "the cold run's C differs from a run without the cache"
+    );
+    if let Some((at, (c, w))) = cold
+        .lines()
+        .zip(warm.lines())
+        .enumerate()
+        .find(|(_, (c, w))| c != w)
+    {
+        panic!(
+            "the warm load's C differs from line {}: cold `{c}`, warm `{w}`",
+            at + 1
+        );
+    }
+    assert_eq!(
+        cold.lines().count(),
+        warm.lines().count(),
+        "the warm load's C has other lines"
+    );
+    let (ok, out) = run(&script, Some(&cache_dir));
+    assert!(ok, "warm run failed: {out}");
+    assert_eq!(out.trim(), "3 14 0", "warm output");
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
+}

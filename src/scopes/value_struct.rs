@@ -19,7 +19,7 @@ use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
 /// ownership, it is not asserted). Only fires on a `Set(local, borrowed-view)`; a fresh
 /// construction (`Owned` rhs) or a method-call arg is not rewritten (copy-elision / zero-copy
 /// hot path fall out).
-pub(super) fn value_struct_copy(data: &mut Data) {
+pub(super) fn value_struct_copy(data: &mut Data, fresh: &[u32]) {
     // No value structs in the program → the pass is a no-op (and the read-only-elision oracles
     // below need not run for any function).
     if data.value_structs.is_empty() {
@@ -36,7 +36,7 @@ pub(super) fn value_struct_copy(data: &mut Data) {
         copy_record: op_copy_record,
         conv_bool_from_ref: op_conv_bool_from_ref,
     };
-    for d_nr in 0..data.definitions() {
+    for &d_nr in fresh {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }

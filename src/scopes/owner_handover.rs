@@ -190,11 +190,11 @@ fn insert_handovers(code: &mut Value, holds: &HashMap<u16, Vec<Hold>>, data: &Da
 
 /// loft#2363 over every function holding one capture in two records' owner slots.  Runs after
 /// the scope pass, which placed every record's release.
-pub(super) fn hand_over_owned_captures(data: &mut Data) {
+pub(super) fn hand_over_owned_captures(data: &mut Data, fresh: &[u32]) {
     if crate::env_once!(std::env::var_os("LOFT_NO_OWNER_HANDOVER").is_some()) {
         return;
     }
-    for d_nr in 0..data.definitions() {
+    for &d_nr in fresh {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }

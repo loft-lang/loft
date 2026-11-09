@@ -173,7 +173,9 @@ fn c_wrapper<'a>(c: &'a str, name: &str) -> &'a str {
             *at += l.len() + 1;
             Some((here, l))
         })
-        .find(|(_, l)| l.starts_with("static ") && l.contains(&format!(" {name}(")) && l.ends_with(") {"))
+        .find(|(_, l)| {
+            l.starts_with("static ") && l.contains(&format!(" {name}(")) && l.ends_with(") {")
+        })
         .map(|(at, _)| at)
         .unwrap_or_else(|| panic!("{name}'s C wrapper was not emitted"));
     let rest = &c[start..];
@@ -187,7 +189,10 @@ const C_FREE: [&str; 2] = ["n_fib", "n_count_down"];
 #[test]
 fn the_c_backend_takes_the_mark_only_where_a_registrant_is_reachable() {
     let c = emit_c("c", &[]);
-    for name in C_FREE.iter().chain(["n_ladder", "n_even_big", "n_odd_big"].iter()) {
+    for name in C_FREE
+        .iter()
+        .chain(["n_ladder", "n_even_big", "n_odd_big"].iter())
+    {
         assert!(
             !c_wrapper(&c, name).contains(C_MARK),
             "{name}: no registrant is reachable, so the C frame takes no fn-ref mark"

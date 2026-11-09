@@ -18,14 +18,14 @@ use crate::variables::Function;
 /// length-set / append / free, and `v`'s defining `Set`). The result is the IR a
 /// direct `s.f[i]` program compiles — which already aliases with no copy — so it
 /// needs no borrow-dep/skip_free surgery. Runs before the scope/free passes.
-pub(super) fn elide_borrows(data: &mut Data) {
+pub(super) fn elide_borrows(data: &mut Data, fresh: &[u32]) {
     let op_database = data.def_nr("OpDatabase");
     let op_append = data.def_nr("OpAppendVector");
     let op_set_int4 = data.def_nr("OpSetInt4");
     let op_set_int = data.def_nr("OpSetInt");
     let op_free = data.def_nr("OpFreeRef");
 
-    for d_nr in 0..data.definitions() {
+    for &d_nr in fresh {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }
@@ -182,7 +182,7 @@ pub(super) struct MoveOps {
 /// built after the source) still needs a build-order reorder and stays a copy. Design:
 /// `doc/claude/plans/90-copy-diagnostics/phase-b-design.md`.
 #[expect(clippy::too_many_lines, reason = "inherited")]
-pub(super) fn move_elide(data: &mut Data) {
+pub(super) fn move_elide(data: &mut Data, fresh: &[u32]) {
     if !crate::keys::move_elide_enabled() {
         return;
     }
@@ -210,7 +210,7 @@ pub(super) fn move_elide(data: &mut Data) {
             .filter(|d| *d != u32::MAX)
             .collect(),
     };
-    for d_nr in 0..data.definitions() {
+    for &d_nr in fresh {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }

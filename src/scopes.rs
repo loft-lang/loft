@@ -604,6 +604,16 @@ struct Scopes<'s> {
 /// allocation (the Phase-4 Goal-E watermark guard).  Never panics in normal builds.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+    // The functions this call checks: every rewrite below acts on theirs alone.  A function
+    // the pass already settled (`variables.done`: an earlier load's, or one decoded from the
+    // program cache's image) holds every rewrite's result, and a second run is not a no-op —
+    // a buffer detached twice reads as another statement, so a warm load emitted other code
+    // than the cold run that took the image.
+    let fresh: Vec<u32> = (0..data.definitions())
+        .filter(|&d| {
+            matches!(data.def(d).def_type, DefType::Function) && !data.def(d).variables.done
+        })
+        .collect();
     // `@FR-R-PureReuse` — on the parser's bodies, before any of this pass's own rewrites.
     crate::pure_reuse::rewrite_program(data, database);
     // `@FR-R-BoundAppend` — a bound call result appended whole, appended where it is made.
@@ -630,16 +640,16 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // which is the dogfood-found dangling-dep hazard. The copy mechanism stays the
     // substrate; the opt-out forces the always-correct copy (the A-B lever).
     if crate::env_once!(std::env::var_os("LOFT_NO_BORROW_ELIDE").is_none()) {
-        elide_borrows(data);
+        elide_borrows(data, &fresh);
     }
     // @PLN90 phase B (B1.3) — last-use MOVE-elision: build a dead-after owned source directly
     // into its destination slot instead of copy-then-free. Gated on `LOFT_MOVE_ELIDE`; a no-op
     // off (byte-identical). Runs AFTER borrow elision — the two cover disjoint verdicts (borrow
     // vs owned copy), so ordering is safe, but move-elision assumes the copy still stands.
-    move_elide(data);
+    move_elide(data, &fresh);
     // @PLN101 — insert value-struct copies (BEFORE the ownership scan, so the emitted
     // OpDatabase makes each copied local classify Owned on its own).
-    value_struct_copy(data);
+    value_struct_copy(data, &fresh);
     // Plan-57 store-identity gate (Phase 2.5): emit the verifying store ops only
     // when LOFT_STORE_TAG is set.  Counter is global so ids are unique across
     // functions (a cross-function wrong-store free mismatches).
@@ -666,12 +676,6 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     let disturbed =
         crate::keys::callee_disturb_enabled().then(|| disturbed_params_map(data, Some(database)));
     let disturbed = disturbed.as_ref();
-    // The functions this call checks: `text_replace::admit` decides only theirs.
-    let fresh: Vec<u32> = (0..data.definitions())
-        .filter(|&d| {
-            matches!(data.def(d).def_type, DefType::Function) && !data.def(d).variables.done
-        })
-        .collect();
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) || data.def(d_nr).variables.done {
             continue;
@@ -926,17 +930,17 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // `@FR-O-Owner` — a literal buffer whose store a local owner takes over is detached, now
     // that the deps say who owns and the frees say who releases.
     if crate::keys::buffer_detach_enabled() {
-        buffer_detach::detach_owned_buffers(data);
+        buffer_detach::detach_owned_buffers(data, &fresh);
     }
     // `@FR-R-HostStore` — a recursion's result written back into the field it came from is
     // built in the field's store: decided on every callee's settled IR.
-    crate::host_store::rewrite_program(data);
+    crate::host_store::rewrite_program(data, &fresh);
     // loft#2357, `@FR-L-CapKeep` — a capture whose local the loop re-assigns is released by the
     // last of its names to let go, decided by store identity at each let-go point.
-    rebound_captures::release_rebound_captures(data);
+    rebound_captures::release_rebound_captures(data, &fresh);
     // loft#2363, `@FR-L-CapOne` — a record that owns a capture through its owner slot passes
     // that ownership to another record holding the same store when it is released first.
-    owner_handover::hand_over_owned_captures(data);
+    owner_handover::hand_over_owned_captures(data, &fresh);
     crate::ownership_cfg::oracle_free_checks(data);
     // #682 — record which closure captures the record ADOPTS, now that every dep
     // rewrite above has settled.  Must run after the loop, not inside it: the
@@ -944,7 +948,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // final once the call-result rewrites (`make_independent`) have run.
     mark_borrowed_captures(data, database);
     // `(H-Copy-Lease)` — every copy of a type that declares `OpCopy` runs it on the new structure.
-    crate::use_analysis::lease_calls(data);
+    crate::use_analysis::lease_calls(data, &fresh);
     // `@FR-H-TextReplace` — an assignment to a text field releases the text it replaces only
     // where no borrow of that text can be live; every other site writes without releasing.
     text_replace::admit(data, &fresh);

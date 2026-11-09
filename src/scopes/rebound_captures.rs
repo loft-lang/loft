@@ -496,12 +496,12 @@ fn wrap_outside_loops(code: &mut Value, wrap: &mut dyn FnMut(&Value) -> Option<V
 
 /// loft#2357's three let-go points, over every function whose closures capture a local the
 /// loop re-assigns.  Runs after the scope pass, which placed every other release.
-pub(super) fn release_rebound_captures(data: &mut Data) {
+pub(super) fn release_rebound_captures(data: &mut Data, fresh: &[u32]) {
     // The A/B switch for a bisect: the scope pass's releases as they stood without this pass.
     if crate::env_once!(std::env::var_os("LOFT_NO_REBOUND_CAPTURES").is_some()) {
         return;
     }
-    for d_nr in 0..data.definitions() {
+    for &d_nr in fresh {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }

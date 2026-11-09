@@ -10799,16 +10799,16 @@ mod ref_param_publish_tests {
 /// so both backends run it.  A move, the scope pass's `__disp_` snapshot and an elided copy have
 /// no copy verdict and run nothing.
 ///
-/// Runs at the end of the scope pass, once per load.  Idempotent: a copy already followed by its
-/// call is left alone, so a later load's pass changes nothing.
-pub fn lease_calls(data: &mut Data) {
+/// Runs at the end of the scope pass, over `fresh`, the functions that pass is checking.  Also
+/// idempotent: a copy already followed by its call is left alone.
+pub fn lease_calls(data: &mut Data, fresh: &[u32]) {
     if !(0..data.definitions())
         .any(|d| data.def(d).def_type == DefType::Function && data.def(d).name.ends_with("_OpCopy"))
     {
         return;
     }
     let copy_d = data.def_nr("OpCopyRecord");
-    for d_nr in 0..data.definitions() {
+    for &d_nr in fresh {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }

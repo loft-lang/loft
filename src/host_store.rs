@@ -26,8 +26,8 @@
 
 use crate::data::{Data, DefType, Value};
 
-/// Rewrite every admitted write-back in the program.
-pub fn rewrite_program(data: &mut Data) {
+/// Rewrite every admitted write-back in `fresh`, the functions the scope pass is checking.
+pub fn rewrite_program(data: &mut Data, fresh: &[u32]) {
     if std::env::var("LOFT_NO_HOST_STORE").is_ok_and(|v| v != "0") {
         return;
     }
@@ -43,7 +43,7 @@ pub fn rewrite_program(data: &mut Data) {
     if [ids.adopt, ids.store_buf].contains(&u32::MAX) {
         return;
     }
-    for d_nr in 0..data.definitions() {
+    for &d_nr in fresh {
         if data.def_type(d_nr) != DefType::Function
             || !calls(&data.definitions[d_nr as usize].code, ids.set_child)
         {
