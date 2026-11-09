@@ -367,36 +367,41 @@ fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::Type
   for p in positions {
     enums += [match el_types::base(args[p] ?? ir::TyVoid) { TyEnum { n } => n, _ => -1 }];
   }
-  // Every tuple of variants at the positions, the first position varying slowest: tuple `k`
-  // takes, at position `j`, variant `(k / <the later positions' counts>) % <its count>`.
-  choices: vector<vector<integer>> = [];
-  total = 1;
+  // Every tuple of variants at the positions, the first position varying slowest, kept flat:
+  // tuple `k`'s variant at position `j` is `tuples[k * len(positions) + j]`.
+  counts: vector<integer> = [];
+  variants: vector<integer> = [];
   for en in enums {
-    vs: vector<integer> = [];
+    n = 0;
     for x in e.b.data.definitions {
       if x.def_type == el::DT_ENUM_VALUE && x.parent == en {
-        vs += [x#index];
+        variants += [x#index];
+        n += 1;
       }
     }
-    choices += [vs];
-    total *= len(vs);
+    counts += [n];
   }
-  tuples: vector<vector<integer>> = [];
-  for k in 0..total {
-    tp: vector<integer> = [];
-    rest = total;
-    for c in choices {
-      rest = (rest / len(c))!;
-      tp += [c[((k / rest)! % len(c))!]!];
-    }
-    tuples += [tp];
+  total = 1;
+  for c in counts {
+    total *= c;
   }
+  tuples: vector<integer> = [];
   leaves: vector<integer> = [];
-  for tp in tuples {
-    leaf_args = args;
+  for k in 0..total {
+    rest = total;
+    first = 0;
+    chosen: vector<integer> = [];
     for p in positions {
-      leaf_args[p] = ir::TyReference { n: tp[p#index]!, dep: [] };
+      c = counts[p#index]!;
+      rest = (rest / c)!;
+      v = variants[first + ((k / rest)! % c)!]!;
+      first += c;
+      tuples += [v];
+      chosen += [v];
     }
+    // The tuple's argument types: each decided position as its variant.  Built whole — an
+    // element write into a copy of `args` was lost here (handoff 2026-11-08 c, not reduced).
+    leaf_args = [for t in args { if positions.contains(t#index) { variant_arg(positions, chosen, t#index) } else { t } }];
     m = select_static(e, set, leaf_args);
     if m < 0 {
       el::refuse(e, "a call an overload set decides by variant with a variant tuple no member, or two, takes");
@@ -444,21 +449,31 @@ fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::Type
     dv += [v];
   }
   ls: vector<ir::Node> = [];
-  for tp in tuples {
+  for k in 0..len(leaves) {
     cond = ir::NdNull;
     for p in positions {
-      v = tp[p#index]!;
+      v = tuples[k * len(positions) + p#index]!;
       ord = match el::def(e, v).attributes[0]!.value[0] ?? ir::NdNull { NdEnum { ord } => ord, _ => 0 };
       test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [ir::NdVar { n: dv[p]! }, ir::NdInt { n: 0 }])]), ir::NdInt { n: ord }]);
       cond = if cond is NdNull { test } else { el_ir::v_if(cond, test, ir::NdBoolean { b: false }) };
     }
-    call = ir::NdCall { def_nr: leaves[tp#index]!, args: [for v in dv { ir::NdVar { n: v } }] };
+    call = ir::NdCall { def_nr: leaves[k]!, args: [for v in dv { ir::NdVar { n: v } }] };
     ls += [el_ir::v_if(cond, el_ir::v_block([ir::NdReturn { inner: call }], ir::TyVoid, "ret"), ir::NdNull)];
   }
   ls += [ir::NdReturn { inner: null_ret ?? ir::NdNull }];
   e.b.data.definitions[c].code = [el_ir::v_block(ls, ret, "dynamic_fn")];
   e.b.data.definitions[c].variables = el_vars::stored(vars);
   c
+}
+
+// The variant `chosen` holds for argument `i`, as that argument's type.
+fn variant_arg(positions: vector<integer>, chosen: vector<integer>, i: integer) -> ir::TypeT {
+  for p in positions {
+    if p == i {
+      return ir::TyReference { n: chosen[p#index] ?? -1, dep: [] };
+    }
+  }
+  ir::TyVoid
 }
 
 // Definition `d`'s `i`th declared (not hidden) attribute.
