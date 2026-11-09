@@ -1709,7 +1709,7 @@ impl Output<'_> {
             let target = copy_target("_dst", first_bind);
             // `@FR-H-SwapRebind` — the copy arm as one runtime call that exchanges the result's
             // store into the destination without resetting it first, when it can.
-            let copy = if crate::keys::swap_rebind_enabled() {
+            let mut copy = if crate::keys::swap_rebind_enabled() {
                 crate::rewrite_census::fired("H-SwapRebind", 1);
                 format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp_with_free});")
             } else {
@@ -1718,6 +1718,27 @@ impl Output<'_> {
                      OpCopyRecord(cell,_src, var_{name}, {tp_with_free});"
                 )
             };
+            // The interpreter's `release_caller_hidden_arg`: a hidden result buffer this frame
+            // keeps across calls (`__ref_N`, minted once and cleared per call) held the record
+            // the copy just took, and the source-free bit released its store — so the buffer is
+            // released if still live and reset, or the next call cleared and refilled a store
+            // number another value had since been given (loft#2443, `va = arm(k)` in a loop).
+            if let Value::Call(_, args) = to.unspan() {
+                use std::fmt::Write as _;
+                for a in args {
+                    if let Value::Var(av) = a.unspan()
+                        && *av != var
+                        && variables.is_caller_hidden_buf(*av)
+                        && !variables.is_argument(*av)
+                    {
+                        let buf = sanitize(variables.name(*av));
+                        let _ = write!(
+                            copy,
+                            " if var_{buf}.store_nr != u16::MAX {{ OpFreeRef(cell, var_{buf}, \"{buf}(released)\"); }} var_{buf} = DbRef::NULL;"
+                        );
+                    }
+                }
+            }
             // `@FR-R-RebindBuffer` — a fresh result in a store of its own is adopted, and the
             // store it displaces is handed (by the reassignment around this arm) to the call's
             // hidden buffer local for its next execution, instead of an exchange into it.
