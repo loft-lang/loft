@@ -2971,12 +2971,7 @@ pub fn parse_block(e: el::El, vars: el_vars::Vars, n: integer, context: text, re
         if se == null {
           continue;
         }
-        x = expression(e, vars, se ?? 0);
-        // `store_else` (below) ports `parse_store_else`; wiring it here exposes loft#2443 (a lazily
-        // minted buffer leaves `expression`'s record buffer null): held back until that is fixed.
-        if orelse != null {
-          el::refuse(e, "a store's `else` block");
-        }
+        x = statement(e, vars, se ?? 0, orelse);
         t = x.tp;
         statement_proofs(e, vars, x.code);
         // `@FR-E-Uncomp-Seen`: a compound step into a dense narrow local (its guard's default a
@@ -8242,6 +8237,15 @@ fn reserve_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> 
     return ex(ir::NdNull, ir::TyVoid);
   }
   ex(el_ir::cl(e, "OpReserveVector", [list[0]!, list[1]!, ir::NdInt { n: stride }]), ir::TyVoid)
+}
+
+// One statement's expression, and its store `else` arm when it has one (`parse_store_else`).
+fn statement(e: el::El, vars: el_vars::Vars, se: integer, orelse: integer?) -> Ex {
+  x = expression(e, vars, se);
+  if orelse == null {
+    return x;
+  }
+  ex(store_else(e, vars, x.code, orelse!), x.tp)
 }
 
 // `Parser::parse_store_else`, `place = value else { B }` (`@FR-H-Write-Else`): B runs exactly when
