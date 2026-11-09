@@ -8,13 +8,11 @@
 // constant `Routine` labelled by that spelling.  A call of the name reaches the unique most
 // specific member that takes its argument types (`@FR-Disp-Select`).
 //
-// Carried: free functions of this program over parameters of a spelled type, and a call decided
-// at run time by an enum's variant (`Disp-Dynamic`: a synthesized dispatcher).  Refused by name:
-// a generic member, a call inside a generic, a nullable or hidden-parameter run-time dispatch.
+// Carried: free functions of this program over parameters of a spelled type.  Refused by name:
+// a generic member, a call inside a generic, a call decided at run time by an enum's variant.
 use ir;
 use el;
 use el_ir;
-use el_vars;
 use el_types;
 use el_convert;
 use el_expressions;
@@ -268,10 +266,8 @@ fn better(b: Ranked, a: Ranked) -> boolean {
 // `Parser::select_overload` over the program's set `set` for a call with these argument types:
 // the unique most specific member that takes them (`@FR-Disp-Select`), or -1.  On the first pass
 // an argument not typed yet decides nothing; on the second each undecided call is refused by
-// name — Rust answers it with a diagnostic.  Where an argument held at a struct enum meets a
-// member naming one of its variants, the call reaches the run-time dispatcher instead
-// (`dynamic_dispatcher`), made at `pos`, the call's position.
-pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos: ir::Position) -> integer {
+// name — Rust answers it with a diagnostic, or with a dispatcher it builds at run time.
+pub fn select(e: el::El, set: integer, types: vector<ir::TypeT>) -> integer {
   args = routed(types);
   for t in args {
     if !(el_types::base(t) is TyNull) && identity(e, t) == "" {
@@ -287,8 +283,11 @@ pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos
   }
   one = select_static(e, set, args);
   dynamic = !e.first_pass && len(variant_positions(e, set, args)) > 0;
+  // The run-time dispatcher (`dynamic_dispatcher`, commit dce128188) is held back: in context its
+  // variant tuples came out empty (handoff 2026-11-08 c).
   if dynamic {
-    return dynamic_dispatcher(e, set, name, args, pos);
+    el::refuse(e, "a call an overload set decides by an enum's variant at run time");
+    return -1;
   }
   if one < 0 && !e.first_pass {
     el::refuse(e, if one == -1 { "a call no member of an overload set takes" } else { "a call two members of an overload set take" });
@@ -349,144 +348,3 @@ fn variant_positions(e: el::El, set: integer, args: vector<ir::TypeT>) -> vector
   out
 }
 
-// `Parser::dynamic_dispatcher` / `build_specialisation`: the function `n_<name>__dyn_<spelling>`
-// a call whose run-time variants decide it reaches — one parameter per argument (an enum held
-// position as its enum), and for every tuple of variants at those positions a tag test that
-// returns the member `Disp-Select` picks for the tuple's types; the result type's null last.
-// Made once per spelling, on the second pass.  A tuple no member or two members take, members of
-// different result types, or a member with hidden parameters is refused by name.
-fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::TypeT>, pos: ir::Position) -> integer {
-  spelling = full_spelling(e, args);
-  key = "n_{name}__dyn_{spelling}";
-  existing = el::source_nr(e, e.source, key);
-  if existing >= 0 {
-    return existing;
-  }
-  positions = variant_positions(e, set, args);
-  enums: vector<integer> = [];
-  for p in positions {
-    enums += [match el_types::base(args[p] ?? ir::TyVoid) { TyEnum { n } => n, _ => -1 }];
-  }
-  // Every tuple of variants at the positions, the first position varying slowest, kept flat:
-  // tuple `k`'s variant at position `j` is `tuples[k * len(positions) + j]`.
-  counts: vector<integer> = [];
-  variants: vector<integer> = [];
-  for en in enums {
-    n = 0;
-    for x in e.b.data.definitions {
-      if x.def_type == el::DT_ENUM_VALUE && x.parent == en {
-        variants += [x#index];
-        n += 1;
-      }
-    }
-    counts += [n];
-  }
-  total = 1;
-  for c in counts {
-    total *= c;
-  }
-  tuples: vector<integer> = [];
-  leaves: vector<integer> = [];
-  for k in 0..total {
-    rest = total;
-    first = 0;
-    chosen: vector<integer> = [];
-    for p in positions {
-      c = counts[p#index]!;
-      rest = (rest / c)!;
-      v = variants[first + ((k / rest)! % c)!]!;
-      first += c;
-      tuples += [v];
-      chosen += [v];
-    }
-    // The tuple's argument types: each decided position as its variant.  Built whole — an
-    // element write into a copy of `args` was lost here (handoff 2026-11-08 c, not reduced).
-    leaf_args = [for t in args { if positions.contains(t#index) { variant_arg(positions, chosen, t#index) } else { t } }];
-    m = select_static(e, set, leaf_args);
-    if m < 0 {
-      el::refuse(e, "a call an overload set decides by variant with a variant tuple no member, or two, takes");
-      return -1;
-    }
-    if len([for a in el::def(e, m).attributes if a.hidden { a }]) > 0 {
-      el::refuse(e, "a call decided by variant reaching a member with hidden parameters");
-      return -1;
-    }
-    leaves += [m];
-  }
-  ret = el::def(e, leaves[0]!).returned[0] ?? ir::TyVoid;
-  for m in leaves {
-    if identity(e, el::def(e, m).returned[0] ?? ir::TyVoid) != identity(e, ret) {
-      el::refuse(e, "a call decided by variant whose members answer different types");
-      return -1;
-    }
-  }
-  null_ret = el_convert::null_of(e, ret);
-  if null_ret == null && !(ret is TyVoid) {
-    el::refuse(e, "a call decided by variant answering a type with no null");
-    return -1;
-  }
-  // A position decided by variant is declared as its enum; any other as the argument's type.
-  declared = [for t in args { if positions.contains(t#index) { el_types::without_deps(el_types::base(t)) } else { t } }];
-  c = el::add_def(e, key, pos, el::DT_FUNCTION);
-  for t in declared {
-    at = el::attribute("d{t#index}", t);
-    all_const = true;
-    for m in leaves {
-      if !(visible_attr(e, m, t#index) ?? el::attribute("", ir::TyVoid)).value_const {
-        all_const = false;
-      }
-    }
-    at.value_const = all_const;
-    e.b.data.definitions[c].attributes += [at];
-  }
-  el::set_returned(e, c, ret);
-  e.b.data.definitions[c].synthetic = "dynamic_dispatcher";
-  vars = el_vars::new_vars(key, pos.file);
-  dv: vector<integer> = [];
-  for t in declared {
-    v = el_vars::add_variable(vars, "d{t#index}", t);
-    el_vars::become_argument(vars, v);
-    dv += [v];
-  }
-  ls: vector<ir::Node> = [];
-  for k in 0..len(leaves) {
-    cond = ir::NdNull;
-    for p in positions {
-      v = tuples[k * len(positions) + p#index]!;
-      ord = match el::def(e, v).attributes[0]!.value[0] ?? ir::NdNull { NdEnum { ord } => ord, _ => 0 };
-      test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [ir::NdVar { n: dv[p]! }, ir::NdInt { n: 0 }])]), ir::NdInt { n: ord }]);
-      cond = if cond is NdNull { test } else { el_ir::v_if(cond, test, ir::NdBoolean { b: false }) };
-    }
-    call = ir::NdCall { def_nr: leaves[k]!, args: [for v in dv { ir::NdVar { n: v } }] };
-    ls += [el_ir::v_if(cond, el_ir::v_block([ir::NdReturn { inner: call }], ir::TyVoid, "ret"), ir::NdNull)];
-  }
-  ls += [ir::NdReturn { inner: null_ret ?? ir::NdNull }];
-  e.b.data.definitions[c].code = [el_ir::v_block(ls, ret, "dynamic_fn")];
-  e.b.data.definitions[c].variables = el_vars::stored(vars);
-  c
-}
-
-// The variant `chosen` holds for argument `i`, as that argument's type.
-fn variant_arg(positions: vector<integer>, chosen: vector<integer>, i: integer) -> ir::TypeT {
-  for p in positions {
-    if p == i {
-      return ir::TyReference { n: chosen[p#index] ?? -1, dep: [] };
-    }
-  }
-  ir::TyVoid
-}
-
-// Definition `d`'s `i`th declared (not hidden) attribute.
-fn visible_attr(e: el::El, d: integer, i: integer) -> ir::Attribute? {
-  n = 0;
-  for a in el::def(e, d).attributes {
-    if a.hidden {
-      continue;
-    }
-    if n == i {
-      return a;
-    }
-    n += 1;
-  }
-  null
-}
