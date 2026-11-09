@@ -18430,11 +18430,15 @@ impl Parser {
     fn mid_return_views_frame_temp(&self, stmts: &[Value], body: &[Value]) -> bool {
         fn walk(p: &Parser, v: &Value, body: &[Value]) -> bool {
             match v.unspan() {
-                Value::Return(inner) => matches!(inner.unspan(), Value::Var(r)
-                    if p.vars.exists(*r)
-                        && !p.vars.is_argument(*r)
-                        && matches!(p.vars.tp(*r).base(), Type::Vector(_, _))
-                        && p.var_defined_by_projection(body, *r)),
+                Value::Return(inner) => match inner.unspan() {
+                    Value::Var(r) => {
+                        p.vars.exists(*r)
+                            && !p.vars.is_argument(*r)
+                            && matches!(p.vars.tp(*r).base(), Type::Vector(_, _))
+                            && p.var_defined_by_projection(body, *r)
+                    }
+                    _ => false,
+                },
                 Value::If(_, t, f) => walk(p, t, body) || walk(p, f, body),
                 Value::Block(bl) => bl.operators.iter().any(|x| walk(p, x, body)),
                 Value::Insert(ops) => ops.iter().any(|x| walk(p, x, body)),

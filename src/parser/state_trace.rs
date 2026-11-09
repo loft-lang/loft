@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent)
 
 //! @PLN91 — `LOFT_STATE_TRACE=1`: the parser's SCOPED state at fixed points, on stderr.
 //!

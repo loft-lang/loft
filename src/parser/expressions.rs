@@ -5180,7 +5180,7 @@ use a separate collection or add after the loop"
         // Asked on pass 1 as well: the misread `+` derails that pass, which then never reaches
         // pass 2 — and a `void` result is known there (a later callee reads `unknown`).
         if op == "="
-            && matches!(s_type, Type::Void)
+            && matches!(s_type.base(), Type::Void)
             && let Some(at) = rhs_at
             && let Value::Var(v) = to.unspan()
         {
