@@ -48,6 +48,47 @@ pub fn identity(e: el::El, t: ir::TypeT) -> text {
   }
 }
 
+// The type variables `t` names, appended to `out` in order of first appearance.
+fn collect_type_vars(e: el::El, t: ir::TypeT, out: vector<integer>) {
+  h = el_types::type_var(e, t);
+  if h >= 0 {
+    if !out.contains(h) {
+      out += [h];
+    }
+    return;
+  }
+  match t {
+    TyOptional { inner } => collect_type_vars(e, inner, out),
+    TyVector { inner } => collect_type_vars(e, inner, out),
+    _ => {}
+  }
+}
+
+// `identity_with_vars`: `identity`, a type variable written as its `$<k>` label.
+fn labelled(e: el::El, t: ir::TypeT, holders: vector<integer>) -> text {
+  h = el_types::type_var(e, t);
+  if h >= 0 {
+    k = -1;
+    for x in holders {
+      if x == h {
+        k = x#index;
+      }
+    }
+    return if k < 0 { "" } else { "${k}" };
+  }
+  match t {
+    TyOptional { inner } => {
+      sp = labelled(e, inner, holders);
+      if sp == "" { "" } else { "{sp}?" }
+    },
+    TyVector { inner } => {
+      sp = labelled(e, inner, holders);
+      if sp == "" { "" } else { "vector<{sp}>" }
+    },
+    _ => identity(e, t)
+  }
+}
+
 // `IntegerSpec::source_name`, else the explicit range (`Type::name`).
 fn integer_name(spec: ir::IntegerSpec) -> text {
   if spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295) {
@@ -69,9 +110,21 @@ fn declared(e: el::El, d: integer) -> text {
 // `Data::full_spelling`: every declared parameter's identity joined with `#` — the spelling a
 // member of a set is keyed and labelled by.  "" when a parameter has no identity here.
 pub fn full_spelling(e: el::El, types: vector<ir::TypeT>) -> text {
+  // A template's type variables are written as their position among the variables in order of
+  // first appearance (`$0`), so `f<T>(v: T)` and `f<U>(v: U)` are one key.  A bounded variable
+  // (`$0:Ordered`) is not carried here.
+  holders: vector<integer> = [];
+  for t in types {
+    collect_type_vars(e, t, holders);
+  }
+  for h in holders {
+    if len(el::def(e, h).bounds) > 0 {
+      return "";
+    }
+  }
   parts: vector<text> = [];
   for t in types {
-    sp = identity(e, t);
+    sp = labelled(e, t, holders);
     if sp == "" {
       return "";
     }
@@ -114,12 +167,10 @@ pub fn definition_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>
   }
   set = own_set(e, name);
   incumbent = el::source_nr(e, e.source, key);
-  if set < 0 && (incumbent < 0 || !e.first_pass || el::def(e, incumbent).def_type != el::DT_FUNCTION) {
+  // `incumbent_joins`: a function or a template (`@FR-D-Rank`'s generic member).
+  joins = incumbent >= 0 && (el::def(e, incumbent).def_type == el::DT_FUNCTION || el::def(e, incumbent).def_type == el::DT_GENERIC);
+  if set < 0 && (!joins || !e.first_pass) {
     return key;
-  }
-  if len(e.type_vars) > 0 {
-    el::refuse(e, "a generic member of an overload set");
-    return "";
   }
   full = full_spelling(e, types);
   if full == "" {
@@ -255,6 +306,9 @@ const WIDENED = 1;
 const LOSSY = 2;
 const CONVERTED = 3;
 const CONVERSION = 64;
+// A template's position that names a type variable: worse than every non-converting rank, and
+// not ordered against a conversion (`rank_no_worse`).
+const GENERIC = 128;
 
 // A member that takes a call, with its rank at each position.
 struct Ranked {
@@ -318,9 +372,20 @@ fn variant_of(e: el::El, a: ir::TypeT, p: ir::TypeT) -> boolean {
   v >= 0 && el::def(e, v).def_type == el::DT_ENUM_VALUE && el::def(e, v).parent == en
 }
 
-// `rank_order`: a rank with its conversion bit masked off.
+// `rank_order`: a rank with its conversion bit masked off; `GENERIC` above every concrete rank.
 fn order(r: integer) -> integer {
-  r % CONVERSION
+  if r == GENERIC { 255 } else { r % CONVERSION }
+}
+
+// `rank_no_worse`: is `a` no worse than `b` at one position?  A generic position and a converting
+// one are not ordered.
+fn no_worse(a: integer, b: integer) -> boolean {
+  conv_a = a != GENERIC && a >= CONVERSION;
+  conv_b = b != GENERIC && b >= CONVERSION;
+  if (a == GENERIC && conv_b) || (b == GENERIC && conv_a) {
+    return false;
+  }
+  order(a) <= order(b)
 }
 
 // `Parser::definition_ranks`: the ranks of member `d` for the routed argument types, or null when
@@ -329,10 +394,18 @@ fn ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
   if !takes_arity(e, d, len(args)) {
     return null;
   }
+  // `template_ranks` (`@FR-D-Rank`): a template takes the call where its variables bind; a
+  // position naming a variable ranks `GENERIC`, any other as a concrete definition's does.
+  generic = el::def(e, d).def_type == el::DT_GENERIC;
+  if generic && el_expressions::template_binding(e, d, args) == null {
+    return null;
+  }
   params = visible_params(e, d);
   r: vector<integer> = [];
   for p in params[0..len(args)] {
-    k = rank(e, args[p#index] ?? ir::TyUnknown { n: 0 }, p);
+    tv: vector<integer> = [];
+    collect_type_vars(e, p, tv);
+    k = if generic && len(tv) > 0 { GENERIC } else { rank(e, args[p#index] ?? ir::TyUnknown { n: 0 }, p) };
     if k < 0 {
       return null;
     }
@@ -361,7 +434,11 @@ fn better(b: Ranked, a: Ranked) -> boolean {
   improved = false;
   for x in a.ranks {
     y = b.ranks[x#index] ?? 0;
-    if order(y) > order(x) {
+    // Two templates at one position are not ordered here (`generic_position_order`).
+    if x == GENERIC && y == GENERIC {
+      return false;
+    }
+    if !no_worse(y, x) {
       return false;
     }
     if order(y) < order(x) {
