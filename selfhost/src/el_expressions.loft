@@ -8721,7 +8721,13 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
   if name == "reserve" {
     return reserve_call(e, list, types);
   }
-  d = find_fn(e, name, x.tp);
+  // A method name that is an overload set reaches the member its argument types select, the
+  // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
+  mset = el_dispatch::own_set(e, name);
+  d = if mset >= 0 { el_dispatch::select(e, mset, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1)) } else { find_fn(e, name, x.tp) };
+  if d < 0 && mset >= 0 {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   if d < 0 {
     if !e.first_pass {
       el::refuse(e, "a method call: {name}");

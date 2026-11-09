@@ -102,8 +102,14 @@ pub fn own_set(e: el::El, name: text) -> integer {
 // and carried.  Either pass answers the member key `f_<LEN><spelling>_<name>` for a name that is
 // a set, and `key` itself for any other.  "" when the definition is refused.
 pub fn definition_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>, pos: ir::Position) -> text {
-  // The standard library never overloads a free name: its keys are the native registry's.
-  if !key.starts_with("n_") || e.default {
+  // The standard library never overloads a name: its keys are the native registry's.
+  if e.default {
+    return key;
+  }
+  if key.starts_with("t_") {
+    return method_key(e, key, name, types, pos);
+  }
+  if !key.starts_with("n_") {
     return key;
   }
   set = own_set(e, name);
@@ -138,10 +144,68 @@ pub fn definition_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>
   member_key(full, name)
 }
 
+// `add_fn`'s `Disp-Key` arm for a `self` METHOD: a second method of the name on one receiver
+// with another full spelling is an overload — keyed `t_<LEN><full>_<name>` (`mangle_method`
+// of the full spelling), while the incumbent keeps its receiver key and its slot on the type,
+// carried in the set under its receiver spelling.  `key` itself for the incumbent, a lone
+// method, or the same spelling twice (the redefinition the caller refuses).
+fn method_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>, pos: ir::Position) -> text {
+  incumbent = el::source_nr(e, e.source, key);
+  if incumbent < 0 || el::def(e, incumbent).def_type != el::DT_FUNCTION {
+    return key;
+  }
+  full = full_spelling(e, types);
+  own_full = full_spelling(e, visible_params(e, incumbent));
+  if full == own_full {
+    return key;
+  }
+  if len(e.type_vars) > 0 {
+    el::refuse(e, "a generic member of an overload set");
+    return "";
+  }
+  if full == "" || own_full == "" {
+    el::refuse(e, "an overload set member with a parameter of a type no key spells here");
+    return "";
+  }
+  if e.first_pass {
+    set = el::source_nr(e, e.source, name);
+    if set >= 0 && el::def(e, set).def_type != el::DT_DYNAMIC {
+      el::refuse(e, "a method overload beside a definition of its name that is no set");
+      return "";
+    }
+    if set < 0 {
+      set = el::add_def(e, name, pos, el::DT_DYNAMIC);
+    }
+    if !carries(e, set, incumbent) {
+      carry(e, set, receiver_spelling(key), incumbent);
+    }
+  }
+  "t_{len(full)}{full}_{name}"
+}
+
+// The receiver spelling a method key `t_<LEN><spelling>_<name>` carries.
+fn receiver_spelling(key: text) -> text {
+  digits = 0;
+  while digits + 2 < len(key) && key[digits + 2] >= '0' && key[digits + 2] <= '9' {
+    digits += 1;
+  }
+  n = key[2..2 + digits] as integer ?? 0;
+  key[2 + digits..2 + digits + n]
+}
+
+fn carries(e: el::El, set: integer, d: integer) -> boolean {
+  for a in el::def(e, set).attributes {
+    if (a.typedef[0] ?? ir::TyVoid) == ir::TyRoutine { n: d } {
+      return true;
+    }
+  }
+  false
+}
+
 // A new member `d` of `name`'s set, labelled by its spelling (`add_fn`'s `overload_label`).
 pub fn join(e: el::El, name: text, d: integer) {
   set = own_set(e, name);
-  if set >= 0 && el::def(e, d).name.starts_with("f_") {
+  if set >= 0 && (el::def(e, d).name.starts_with("f_") || el::def(e, d).name.starts_with("t_")) && !carries(e, set, d) {
     carry(e, set, full_spelling(e, visible_params(e, d)), d);
   }
 }

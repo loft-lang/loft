@@ -737,7 +737,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   }
   if e.first_pass {
     if el::def_nr(e, key) >= 0 {
-      el::refuse(e, "a function over an existing name");
+      el::refuse(e, "a function over an existing name: {name}");
       return "";
     }
     e.context = add_fn(e, key, name, arguments, el::pos_at(e, after));
@@ -1101,6 +1101,13 @@ fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir
     if tn >= 0 {
       for a in el::def(e, tn).attributes {
         if a.name == name {
+          // An overload of the slot's method (`Disp-Key`): the slot keeps the incumbent, the
+          // set carries both.
+          slot = match a.typedef[0] ?? ir::TyVoid { TyRoutine { n } => n, _ => -1 };
+          if el_dispatch::own_set(e, name) >= 0 && slot >= 0 && el::def(e, slot).name != key {
+            tn = -1;
+            break;
+          }
           el::refuse(e, "a method whose name its receiver already carries: {name}");
           return -1;
         }
