@@ -103,14 +103,15 @@ fn defaults(n: integer) -> integer {
   s
 }
 
-// A parameter rebound to a vector of its own: the callee's store is freed through the view
-// that names it (the IR frees `p`, its wrapper owns the store), the caller's stays.
-// rebind([x, x]) = len 3 * 10 + 7 = 37; the caller's vector keeps len 2 and sum 2x.
-// rebound_param(5) = 37 * 1000 + 200 + 10 = 37210.
+// A parameter read and then rebound to a vector of its own: the callee's store is freed
+// through the view that names it (the IR frees `p`, its wrapper owns the store), the caller's
+// stays.  rebind([x, x]) = len 3 * 10 + 7 + the caller's len 2 * 100 = 237; the caller's
+// vector keeps len 2 and sum 2x.  rebound_param(5) = 237 * 1000 + 200 + 10 = 237210.
 fn rebind(p: vector<integer>) -> integer {
+  before = len(p);
   p = [7, 8];
   p += [9];
-  len(p) * 10 + p[0]
+  len(p) * 10 + p[0] + before * 100
 }
 
 fn rebound_param(x: integer) -> integer {
@@ -203,7 +204,7 @@ fn trips(n: integer, seed: integer) -> vector<Trip> {
 // retbuf_filled(1) = 100 + 30 = 130.
 fn retbuf_filled(n: integer) -> integer {
   v = trips(n, 3);
-  len(v) * 100 + v[n - 1].legs[0].a
+  len(v) * 100 + v[n - 1].legs[0].a!
 }
 
 // `v.remove(i)` (`OpRemoveVector`) of a plain element, of one owning a text (released first), and

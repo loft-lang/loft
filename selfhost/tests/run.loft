@@ -246,7 +246,7 @@ fn test_vectors_build_walk_index_and_clear() {
   assert(ran_clean(v, "n_defaults", 5) == 65, "defaults(5): omitted nullable fields read null");
   // The IR frees the callee's store through `p`, a view of its wrapper: a free acts on what the
   // FRAME owns, so nothing is left for the sweep, and the caller's vector is untouched.
-  assert(ran_clean(v, "n_rebound_param", 5) == 37210, "rebound_param(5)");
+  assert(ran_clean(v, "n_rebound_param", 5) == 237210, "rebound_param(5)");
 }
 
 // `OpFormatDatabase` (1b-s3.md § Rendering a value): 14 cells in `kernels/shown.loft`, each
