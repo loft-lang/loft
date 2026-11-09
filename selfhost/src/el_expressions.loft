@@ -160,8 +160,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // on the second pass the borrows the first gathered, by number (a promoted local's by its
   // attribute), so a text body is typed by every return pass 1 saw, not by its tail alone.  A
   // template's result names no buffer (`text_return` gives a template none), so its body is
-  // typed plain `text`, which each instance inherits.
-  if !e.first_pass && el_types::base(result) is TyText {
+  // typed plain `text`, which each instance inherits.  A nullable result over the base the tail
+  // answers types the body the same way (`-> QEnt?` is `ref(QEnt)?` though no arm is null); a
+  // heap result otherwise keeps the type its return path gave the tail.
+  nullable_over_tail = match result { TyOptional { inner } => el_types::is_equal(e, el_types::without_deps(inner), el_types::without_deps(b.tp)) && !(b.tp is TyOptional), _ => false };
+  if !e.first_pass && (el_types::base(result) is TyText || nullable_over_tail) {
     match code {
       NdBlock { block } => {
         bl = block[0];
@@ -2485,6 +2488,25 @@ fn tail_syntax(e: el::El, body: integer) -> integer {
 }
 
 // Is a body's last statement `return <vector literal or comprehension>`?
+// Is `node` the expression the function body ends in (its last statement, with no `else`)?
+fn is_body_tail(e: el::El, vars: el_vars::Vars, node: integer) -> boolean {
+  if node < 0 || vars.body < 0 {
+    return false;
+  }
+  match e.p.nodes[vars.body] {
+    SBlock { stmts } => {
+      if len(stmts) == 0 {
+        return false;
+      }
+      match e.p.nodes[stmts[-1]] {
+        SStmt { e: se, orelse } => se != null && orelse == null && se! == node,
+        _ => stmts[-1] == node
+      }
+    },
+    _ => false
+  }
+}
+
 fn trailing_literal_return(e: el::El, body: integer) -> boolean {
   if body < 0 {
     return false;
@@ -3306,7 +3328,7 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SStructLit { name, member, fields, base } => object_expr(e, vars, name, member, fields, base),
     SFor { at: _ } => for_expr(e, vars, n),
     SWhile { cond, body } => while_expr(e, vars, cond, body),
-    SMatch { subject, arms } => match_expr(e, vars, subject, arms),
+    SMatch { subject, arms } => match_expr(e, vars, subject, arms, node: n),
     SBlock { at: _ } => parse_block(e, vars, n, "block", ir::TyUnknown { n: 0 }),
     SPostfix { at, op, e: pe } => postfix(e, vars, at, op, pe),
     SVarAttr { var, attr, arg, tp } => var_attr(e, vars, var, attr, arg, tp),
@@ -3683,6 +3705,19 @@ fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
       items += [x.code];
       tps += [el_types::without_deps(el_types::unrewritten(x.tp))];
       continue;
+    }
+    // `tuple_member_owned_copy`: a struct-enum parameter is held as it is — a view of the
+    // argument, no copy (its type has no copy hook to lease).
+    match x.tp {
+      TyEnum { n: en, is_ref } => {
+        pv = match el_ir::unspan(x.code) { NdVar { n: v0 } => v0, _ => -1 };
+        if is_ref && pv >= 0 && vars.vars[pv].argument {
+          items += [x.code];
+          tps += [ir::TyEnum { n: en, is_ref: true, dep: [pv] }];
+          continue;
+        }
+      },
+      _ => {}
     }
     // A nullable plain scalar is held as it is: its null is the scalar's own sentinel.
     nullable_scalar = match x.tp { TyOptional { inner } => is_scalar(inner), _ => false };
@@ -15853,7 +15888,7 @@ pub struct MArm {
 // subject's — its body read against the type the arms settled on; then the chain of `if`s from
 // the last arm back, ending in a wildcard arm's code or the result's null.  A guard, a binding, a
 // field pattern and any other subject are refused by name.
-fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>) -> Ex {
+fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
   x = expression(e, vars, subject);
   st = x.tp;
   match st {
@@ -15863,8 +15898,9 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   scalar_subject = el_convert::plain_scalar(st) || st is TyText;
   enum_subject = el_convert::plain_enum(st);
   // A struct enum, or one of its variants, is matched on its record: the ordinal its `enum`
-  // field holds, read in place where the subject is a local.
-  sd = struct_enum_of(e, st);
+  // field holds, read in place where the subject is a local.  A nullable one is matched the
+  // same way: its null reaches the wildcard arm.
+  sd = struct_enum_of(e, match st { TyOptional { inner } => inner, _ => st });
   if sd >= 0 && !(el_ir::unspan(x.code) is NdVar) {
     el::refuse(e, "a match on a struct enum that is not a local");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -15875,6 +15911,9 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   }
   if st is TyVector {
     return vector_match(e, vars, x, arms);
+  }
+  if st is TyTuple {
+    return tuple_match(e, vars, x, arms, node);
   }
   if !scalar_subject && !enum_subject && sd < 0 {
     if !el_types::is_unknown(st) {
@@ -16016,14 +16055,31 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
     }
     return ex(el_ir::v_block([fc], result, "scalar_match"), result);
   }
-  if e.first_pass || (!scalar_subject && !enum_subject && sd < 0) {
-    return ex(ir::NdNull, result);
-  }
+  // `(M-Exhaust)` for a `boolean`: both values named and no `_` — the last arm is the fallback.
   if st is TyBoolean && named_true && named_false && !any_wild && len(out) > 0 {
     out[len(out) - 1].cond = null;
   }
-  if el_types::base(result) is TyText {
-    el::refuse(e, "a match answering a text");
+  // A text answer is built on the first pass too, as Rust builds every match: at a function's
+  // tail its arms take the per-arm accumulator there (`if_tail_yields_text`), which the second
+  // pass follows.
+  if e.first_pass && el_types::base(result) is TyText && (scalar_subject || enum_subject || sd >= 0) && len(out) > 0 {
+    fc = ir::NdNull;
+    for a in rev(out) {
+      fc = if a.cond == null { a.code } else { el_ir::v_if(a.cond!, a.code, fc) };
+    }
+    if sd >= 0 {
+      return ex(fc, result);
+    }
+    return ex(el_ir::v_block([el_ir::v_set(v, x.code), fc], result, if scalar_subject { "scalar_match" } else { "match" }), result);
+  }
+  if e.first_pass || (!scalar_subject && !enum_subject && sd < 0) {
+    return ex(ir::NdNull, result);
+  }
+  // A text answer is carried at the function's tail, where its arms write the per-arm
+  // accumulator; anywhere else (a bind, an argument) Rust writes each arm into the destination —
+  // not carried yet.
+  if el_types::base(result) is TyText && !is_body_tail(e, vars, node) {
+    el::refuse(e, "a match answering a text outside a function's tail");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   // `type_null_arms`: an arm that answers a written `null` answers the result's null.
@@ -16086,6 +16142,123 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
     return own_match_arms(e, vars, ex(chain, result));
   }
   own_match_arms(e, vars, ex(el_ir::v_block([el_ir::v_set(v, x.code), chain], result, "match"), result))
+}
+
+// port: control.rs parse_tuple_match
+// A match on a tuple: the subject held in `_match_tuple_N`, each arm `_` or a tuple pattern whose
+// members are and-ed conditions on the subject's members — `_` asks nothing, a variant of a
+// struct-enum member tests its ordinal (`variant_arm` over `TupleGet`) — chained from the last
+// arm back, ending in a wildcard arm's code or the result's null.  A guard, alternatives, a
+// binding and any other member pattern are refused by name.
+fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, node: integer) -> Ex {
+  elems = match el_types::base(x.tp) { TyTuple { elems: es } => es, _ => [] };
+  tmp = el_vars::create_unique(vars, "match_tuple", x.tp);
+  el_vars::set_defined(vars, tmp);
+  result = ir::TyVoid;
+  out: vector<MArm> = [];
+  wild_seen = false;
+  for an in arms {
+    match e.p.nodes[an] {
+      SArm { pats, guard, body } => {
+        if guard != null {
+          el::refuse(e, "a tuple match arm with a guard");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        if len(pats) != 1 {
+          el::refuse(e, "a tuple match arm with alternatives");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        cond: ir::Node? = null;
+        match e.p.nodes[pats[0]!] {
+          PWild => {},
+          PTuple { elems: pes } => {
+            if len(pes) != len(elems) {
+              el::refuse(e, "a tuple pattern of another length");
+              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            }
+            for pe in pes {
+              if e.p.nodes[pe] is PWild {
+                continue;
+              }
+              et = elems[pe#index]!;
+              sd = struct_enum_of(e, et);
+              if sd < 0 {
+                el::refuse(e, "a tuple pattern member on a member of this type: {type_kind(et)}");
+                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+              }
+              mc = member_cond(e, vars, pe, sd, ir::NdTupleGet { var: tmp, idx: pe#index });
+              if mc.refused {
+                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+              }
+              if mc.cond != null {
+                cond = if cond == null { mc.cond } else { el_ir::v_if(cond!, mc.cond!, ir::NdBoolean { b: false }) };
+              }
+            }
+          },
+          _ => {
+            el::refuse(e, "a tuple match arm of this pattern: {syn_kind(e, pats[0]!)}");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+        }
+        expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { arm_expectation(result) };
+        b = arm_body(e, vars, body, expected);
+        if unsettled(result) {
+          result = b.tp;
+        }
+        out += [MArm { cond: cond, code: b.code, tp: b.tp }];
+        if cond == null {
+          wild_seen = true;
+          break;
+        }
+      },
+      _ => {}
+    }
+  }
+  // Built on both passes, as Rust's is: a text answer at a function's tail takes the per-arm
+  // accumulator on the first pass already (`if_tail_yields_text` sees through `tuple_match`).
+  rbase = el_types::base(result);
+  // As `match_expr`: a text answer is carried at the function's tail only.
+  if rbase is TyText && !is_body_tail(e, vars, node) {
+    el::refuse(e, "a match answering a text outside a function's tail");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if !e.first_pass && !(rbase is TyVoid) && !(rbase is TyNull) && !scalar(rbase) && !(rbase is TyText) {
+    el::refuse(e, "a tuple match answering this type: {type_kind(result)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  chain = ir::NdNull;
+  if !wild_seen && !(rbase is TyVoid) && !(rbase is TyNull) {
+    fb = el_convert::null_of(e, rbase);
+    if fb == null {
+      el::refuse(e, "a tuple match whose result has no null: {type_kind(result)}");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    chain = fb!;
+  }
+  for a in rev(out) {
+    chain = if a.cond == null { a.code } else { el_ir::v_if(a.cond!, a.code, chain) };
+  }
+  ex(el_ir::v_block([el_ir::v_set(tmp, x.code), chain], result, "tuple_match"), result)
+}
+
+pub struct MemberCond {
+  pub cond: ir::Node?,
+  pub refused: boolean
+}
+
+// One tuple-pattern member's test (`variant_arm` over the member), handed back as a value of the
+// caller's own: a field read off the reused result inside the arm loop would be a view of a record
+// the next member's call releases (loft#2447).
+fn member_cond(e: el::El, vars: el_vars::Vars, pe: integer, sd: integer, subj: ir::Node) -> MemberCond {
+  va = variant_arm(e, vars, [pe], sd, subj);
+  if va == null {
+    return MemberCond { cond: null, refused: true };
+  }
+  if len(va!.binds) > 0 {
+    el::refuse(e, "a binding in a tuple pattern");
+    return MemberCond { cond: null, refused: true };
+  }
+  MemberCond { cond: va!.cond, refused: false }
 }
 
 // `own_joined_call_arms` (loft#1019) for a `match`: where the merged record borrows, an arm whose

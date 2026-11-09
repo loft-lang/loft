@@ -45,8 +45,20 @@ pub fn identity(e: el::El, t: ir::TypeT) -> text {
       sp = if el_types::is_unknown(inner) { "" } else { identity(e, inner) };
       if sp == "" { "" } else { "vector<{sp}>" }
     },
+    // A keyed collection: the element's declared name and the key list as Rust's `{:?}` writes
+    // it (`identity_spelling`).
+    TyHash { n, names } => "hash<{declared(e, n)},[{join([for k in names { "\"{k.name}\"" }], ", ")}]>",
+    TyRadix { n, names } => "spatial<{declared(e, n)},[{join([for k in names { "\"{k.name}\"" }], ", ")}]>",
+    TySorted { n, keys } => "sorted<{declared(e, n)},[{sort_keys(keys)}]>",
+    TyIndex { n, keys } => "index<{declared(e, n)},[{sort_keys(keys)}]>",
+    TyTrie { n, key } => "trie<{declared(e, n)}[{key}]>",
     _ => ""
   }
+}
+
+// A sort key list as Rust's `{:?}` of `Vec<(String, bool)>` writes it: `("x", true), …`.
+fn sort_keys(keys: vector<ir::SortKey>) -> text {
+  join([for k in keys { "(\"{k.name}\", {k.asc})" }], ", ")
 }
 
 // The type variables `t` names, appended to `out` in order of first appearance.
@@ -1306,13 +1318,15 @@ pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos
   }
   one = select_static(e, set, args, only);
   if !e.first_pass {
-    decided = variant_positions(e, set, args);
+    // `dynamic_positions(…, nullable: fallback.is_some())`: a nullable position decides by
+    // variant only where the static types select a member, its null leaf.
+    decided = variant_positions(e, set, args, one >= 0);
     if len(decided) > 0 && only >= 0 {
       el::refuse(e, "a qualified call an enum's variant decides at run time");
       return -1;
     }
     if len(decided) > 0 {
-      return dynamic_dispatcher(e, set, name, args, decided, pos);
+      return dynamic_dispatcher(e, set, name, args, decided, pos, one);
     }
   }
   if one < 0 && !e.first_pass {
@@ -1354,13 +1368,14 @@ fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>, only: integer
   if len(minimal) == 0 { -1 } else if len(minimal) > 1 { -2 } else { minimal[0]! }
 }
 
-// `Parser::dynamic_positions`: each argument held at a struct enum where some member names one
-// of that enum's variants at that position — the positions whose run-time variant decides the
-// call (`@FR-Disp-Dynamic`).  A nullable position is left out (no fallback is carried).
-fn variant_positions(e: el::El, set: integer, args: vector<ir::TypeT>) -> vector<integer> {
+// port: dispatch.rs dynamic_positions
+// Each argument held at a struct enum where some member names one of that enum's variants at that
+// position — the positions whose run-time variant decides the call (`@FR-Disp-Dynamic`).  A
+// nullable position counts only with a fallback (`nullable`), the member its null reaches.
+fn variant_positions(e: el::El, set: integer, args: vector<ir::TypeT>, nullable: boolean) -> vector<integer> {
   out: vector<integer> = [];
   for t in args {
-    if t is TyOptional {
+    if t is TyOptional && !nullable {
       continue;
     }
     en = match el_types::base(t) { TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
@@ -1383,7 +1398,7 @@ fn variant_positions(e: el::El, set: integer, args: vector<ir::TypeT>) -> vector
 // returns the member `Disp-Select` picks for the tuple's types; the result type's null last.
 // Made once per spelling, on the second pass.  A tuple no member or two members take, members of
 // different result types, or a member with hidden parameters is refused by name.
-fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::TypeT>, positions: vector<integer>, pos: ir::Position) -> integer {
+fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::TypeT>, positions: vector<integer>, pos: ir::Position, fallback: integer = -1) -> integer {
   spelling = full_spelling(e, args);
   key = "n_{name}__dyn_{spelling}";
   existing = el::source_nr(e, e.source, key);
@@ -1436,25 +1451,48 @@ fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::Type
     }
     leaves += [m];
   }
+  // `null_leaf`: where a decided position may hold null, the member the static types select
+  // takes it, after every tag test.
+  null_leaf = -1;
+  for p in positions {
+    if (args[p] ?? ir::TyVoid) is TyOptional {
+      null_leaf = fallback;
+    }
+  }
+  every = if null_leaf >= 0 { leaves + [null_leaf] } else { leaves };
   ret = el::def(e, leaves[0]!).returned[0] ?? ir::TyVoid;
-  for m in leaves {
+  for m in every {
     if identity(e, el::def(e, m).returned[0] ?? ir::TyVoid) != identity(e, ret) {
       el::refuse(e, "a call decided by variant whose members answer different types");
       return -1;
     }
   }
   null_ret = el_convert::null_of(e, ret);
-  if null_ret == null && !(ret is TyVoid) {
+  if null_leaf < 0 && null_ret == null && !(ret is TyVoid) {
     el::refuse(e, "a call decided by variant answering a type with no null");
     return -1;
   }
-  // A position decided by variant is declared as its enum; any other as the argument's type.
-  declared = [for t in args { if positions.contains(t#index) { el_types::without_deps(el_types::base(t)) } else { t } }];
+  // A position decided by variant is declared as its enum; any other as the argument's type.  A
+  // nullable one beside a null leaf is `?` exactly where that leaf's parameter is.
+  declared: vector<ir::TypeT> = [];
+  for t in args {
+    dynamic = positions.contains(t#index);
+    if null_leaf >= 0 && (t is TyOptional) {
+      b = el_types::without_deps(el_types::base(t));
+      fa = visible_attr(e, null_leaf, t#index);
+      wants_null = fa != null && (fa!.typedef[0] ?? ir::TyVoid) is TyOptional;
+      declared += [if wants_null { ir::TyOptional { inner: b } } else { b }];
+    } else if dynamic {
+      declared += [el_types::without_deps(el_types::base(t))];
+    } else {
+      declared += [t];
+    }
+  }
   c = el::add_def(e, key, pos, el::DT_FUNCTION);
   for t in declared {
     at = el::attribute("d{t#index}", t);
     all_const = true;
-    for m in leaves {
+    for m in every {
       if !(visible_attr(e, m, t#index) ?? el::attribute("", ir::TyVoid)).value_const {
         all_const = false;
       }
@@ -1466,7 +1504,7 @@ fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::Type
   // that has any: the dispatcher takes them as `__fwd_<k>` and hands them on to each member
   // that has hidden parameters of its own.
   hidden: vector<ir::Attribute> = [];
-  for m in leaves {
+  for m in every {
     if len(hidden) == 0 {
       hidden = [for a in el::def(e, m).attributes if a.hidden { a }];
     }
@@ -1508,7 +1546,14 @@ fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::Type
     call = ir::NdCall { def_nr: leaves[k]!, args: [for v in dv { ir::NdVar { n: v } }] + omitted + if has_hidden { [for v in fwd { ir::NdVar { n: v } }] } else { [] } };
     ls += [el_ir::v_if(cond, el_ir::v_block([ir::NdReturn { inner: call }], ir::TyVoid, "ret"), ir::NdNull)];
   }
-  ls += [ir::NdReturn { inner: null_ret ?? ir::NdNull }];
+  if null_leaf >= 0 {
+    has_hidden = len([for a in el::def(e, null_leaf).attributes if a.hidden { a }]) > 0;
+    visible = [for a in el::def(e, null_leaf).attributes if !a.hidden { a }];
+    omitted = [for a in visible[len(dv)..] { a.value[0] ?? ir::NdNull }];
+    ls += [ir::NdReturn { inner: ir::NdCall { def_nr: null_leaf, args: [for v in dv { ir::NdVar { n: v } }] + omitted + if has_hidden { [for v in fwd { ir::NdVar { n: v } }] } else { [] } } }];
+  } else {
+    ls += [ir::NdReturn { inner: null_ret ?? ir::NdNull }];
+  }
   e.b.data.definitions[c].code = [el_ir::v_block(ls, ret, "dynamic_fn")];
   e.b.data.definitions[c].variables = el_vars::stored(vars);
   c
