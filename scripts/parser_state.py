@@ -129,7 +129,7 @@ def main():
         for k, (port, _) in mapping.items():
             if port not in ("-", "") and "." in port:
                 s, f = port.split(".", 1)
-                if s in ports and f.split("/")[0] not in ports[s]:
+                if s in ports and f.partition("/")[0] not in ports[s]:
                     bad.append(f"{k} -> {port}")
         for b in bad:
             print(f"stale: {b}")
