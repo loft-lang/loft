@@ -1345,17 +1345,33 @@ impl State {
                     prev_free.resize(allocs.len(), true);
                 }
                 for (s_nr, s) in allocs.iter().enumerate() {
+                    if config.trace_store.is_some_and(|t| usize::from(t) != s_nr) {
+                        continue;
+                    }
                     let was_free = prev_free.get(s_nr).copied().unwrap_or(true);
                     if was_free && !s.free {
-                        writeln!(log, "    [alloc #{s_nr} at pc={code} op={op_base}]")?;
+                        let in_fn = if cur_d_nr == u32::MAX {
+                            "?"
+                        } else {
+                            data.def(cur_d_nr).name()
+                        };
+                        writeln!(
+                            log,
+                            "    [alloc #{s_nr} at pc={code} op={op_base} fn={in_fn}]"
+                        )?;
                         alloc_pcs.insert(s_nr as u16, (code, op_name.clone()));
                     } else if !was_free && s.free {
                         let origin = alloc_pcs
                             .get(&(s_nr as u16))
                             .map_or_else(|| "<unknown>".to_string(), |(p, n)| format!("{n}@{p}"));
+                        let in_fn = if cur_d_nr == u32::MAX {
+                            "?"
+                        } else {
+                            data.def(cur_d_nr).name()
+                        };
                         writeln!(
                             log,
-                            "    [free  #{s_nr} at pc={code} op={op_base} (allocated at {origin})]"
+                            "    [free  #{s_nr} at pc={code} op={op_base} fn={in_fn} (allocated at {origin})]"
                         )?;
                     }
                     if let Some(slot) = prev_free.get_mut(s_nr) {
