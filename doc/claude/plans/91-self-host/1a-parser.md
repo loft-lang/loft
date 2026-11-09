@@ -42,6 +42,45 @@ them.
 and the same diagnostics.  The syntax tree is the one structure the Rust parser does not
 have, and it is internal: nothing outside the front end sees it.
 
+## The porting method — transcribe, do not re-derive
+
+Above the syntax tree the elaborator is a TRANSCRIPTION of `src/parser/`, not a design of its
+own: one loft function per Rust function, with the Rust name, its parameters in the same order,
+its calls in the same order, and the same state (each `Parser` / `Function` field it reads is
+the `El` / `Vars` field `scripts/parser_state.py` maps it to).
+
+- **The tree stands in for the lexer.**  Where Rust peeks at or consumes a token, the loft
+  reads the node that token starts.  Where Rust parses a span again — the second pass, or a
+  lexer revert after an attempt (a literal tried in place, then built apart) — the loft calls
+  the same function again on the same node.  The variables and work references the attempt
+  leaves behind then fall out of the same control flow; they are not minted by hand.
+- **Each transcribed function names its original** in its doc comment, one line:
+  `// port: dispatch.rs dispatch_rank`.  A loft helper with no Rust original says so
+  (`// port: none — <what Rust does inline instead>`).  `grep -c '// port: ' selfhost/src/el*.loft`
+  counts what is transcribed.
+- **A form loft cannot write** (a `&mut` into a collection, an early `?` out of a nested
+  borrow) keeps the name and the call order, and the comment says what changed.
+- **A gate E difference is located by function, not by image:** the state trace
+  (`LOFT_STATE_TRACE`, `selfhost/front/state_diff.py`) prints function entry and exit keyed by
+  the source position on both sides, and the first function whose exit differs is the one to
+  read.  One function against one function is one debug round.
+
+**Why.**  A re-derived elaborator agrees with Rust only in the final image.  When it does not,
+the difference has no address: it takes several debug rounds to find the function, and an
+effect of Rust's control flow (an unused `_elm_N`, a re-parse) is copied by a special case at
+each site that shows it.  Porting Rust's own rule removes those special cases (the work-ref
+step-over: `retypes_argument` and `argument_of_another_site` replaced three materialise-site
+records).
+
+**Rust's intricacy is the specification.**  The port does not start from a cleaner design and
+add Rust's special cases back as gate E finds them; that is the rewrite trap, where every case
+costs a debug round.  It copies them with the function that holds them.  Nor is Rust
+simplified first to make the port easier: the Rust front end changes only to fix a defect.
+
+**What gets transcribed.**  Every function a family still lacks.  Code that already agrees is
+left as it is: a re-derived function is replaced by its transcription only when a difference
+traces back to it.
+
 ## Syntax decisions that read semantics — each becomes a general node
 
 The Rust parser takes a few SYNTACTIC decisions from semantic facts.  A survey of
@@ -196,4 +235,8 @@ The syntax layer is `selfhost/src/syntax.loft` (the rules, one per production of
 
 1. Elaboration, pass by pass, in the Rust parser's order — definitions first, then the
    bodies; gate E per definition so a partial port is measured.
-2. The script desugar, then diagnostics.
+2. The transcription, family by family ([§ The porting method](#the-porting-method--transcribe-do-not-re-derive)):
+   dispatch first (`src/parser/dispatch.rs` → `selfhost/src/el_dispatch.loft`, gated by the
+   suite's `rules/dispatch/` cells), then calls, closures, tuples and interfaces.  The
+   function-level state trace comes with the first family.
+3. The script desugar, then diagnostics.
