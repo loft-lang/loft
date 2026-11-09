@@ -408,10 +408,6 @@ fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::Type
       el::refuse(e, "a call an overload set decides by variant with a variant tuple no member, or two, takes");
       return -1;
     }
-    if len([for a in el::def(e, m).attributes if a.hidden { a }]) > 0 {
-      el::refuse(e, "a call decided by variant reaching a member with hidden parameters");
-      return -1;
-    }
     leaves += [m];
   }
   ret = el::def(e, leaves[0]!).returned[0] ?? ir::TyVoid;
@@ -440,6 +436,20 @@ fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::Type
     at.value_const = all_const;
     e.b.data.definitions[c].attributes += [at];
   }
+  // The members' hidden parameters (a result buffer, a text's work buffer), of the first member
+  // that has any: the dispatcher takes them as `__fwd_<k>` and hands them on to each member
+  // that has hidden parameters of its own.
+  hidden: vector<ir::Attribute> = [];
+  for m in leaves {
+    if len(hidden) == 0 {
+      hidden = [for a in el::def(e, m).attributes if a.hidden { a }];
+    }
+  }
+  for h in hidden {
+    fw = el::attribute("__fwd_{h#index}", h.typedef[0] ?? ir::TyVoid);
+    fw.value = h.value;
+    e.b.data.definitions[c].attributes += [fw];
+  }
   el::set_returned(e, c, ret);
   e.b.data.definitions[c].synthetic = "dynamic_dispatcher";
   vars = el_vars::new_vars(key, pos.file);
@@ -448,6 +458,12 @@ fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::Type
     v = el_vars::add_variable(vars, "d{t#index}", t);
     el_vars::become_argument(vars, v);
     dv += [v];
+  }
+  fwd: vector<integer> = [];
+  for h in hidden {
+    v = el_vars::add_variable(vars, "__fwd_{h#index}", h.typedef[0] ?? ir::TyVoid);
+    el_vars::become_argument(vars, v);
+    fwd += [v];
   }
   ls: vector<ir::Node> = [];
   for k in 0..len(leaves) {
@@ -458,7 +474,8 @@ fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::Type
       test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [ir::NdVar { n: dv[p]! }, ir::NdInt { n: 0 }])]), ir::NdInt { n: ord }]);
       cond = if cond is NdNull { test } else { el_ir::v_if(cond, test, ir::NdBoolean { b: false }) };
     }
-    call = ir::NdCall { def_nr: leaves[k]!, args: [for v in dv { ir::NdVar { n: v } }] };
+    has_hidden = len([for a in el::def(e, leaves[k]!).attributes if a.hidden { a }]) > 0;
+    call = ir::NdCall { def_nr: leaves[k]!, args: [for v in dv { ir::NdVar { n: v } }] + if has_hidden { [for v in fwd { ir::NdVar { n: v } }] } else { [] } };
     ls += [el_ir::v_if(cond, el_ir::v_block([ir::NdReturn { inner: call }], ir::TyVoid, "ret"), ir::NdNull)];
   }
   ls += [ir::NdReturn { inner: null_ret ?? ir::NdNull }];
