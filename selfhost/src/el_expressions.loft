@@ -14124,6 +14124,11 @@ fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::TypeT, p
     TyRefVar { inner } => inner,
     _ => pt
   };
+  // A "default ref" (`add_defaults`' fresh stack text) already is the link.
+  is_default_ref = match arg { NdBlock { block } => (block[0]!).name == "default ref", _ => false };
+  if is_default_ref {
+    return arg;
+  }
   v = match arg {
     NdVar { n } => n,
     _ => -1
