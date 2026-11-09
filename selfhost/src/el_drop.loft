@@ -83,7 +83,17 @@ pub fn synth_copy_cascades(e: el::El) {
 }
 
 fn synth_cascades(e: el::El, h: Hook) {
-  if !any_hook(e, h) {
+  // A closure record that shares a captured store releases it in its drop cascade, whatever
+  // hooks the program declares.
+  captures = false;
+  if !h.forward {
+    for d in e.b.data.definitions {
+      if len(cascade_captures(e, d#index)) > 0 {
+        captures = true;
+      }
+    }
+  }
+  if !any_hook(e, h) && !captures {
     return;
   }
   targets: vector<integer> = [];
@@ -98,7 +108,11 @@ fn synth_cascades(e: el::El, h: Hook) {
         if !refused_shapes(e, t, h) {
           return;
         }
-        wanted = len(cascade_fields(e, t, h)) > 0 || len(cascade_vectors(e, t, h)) > 0;
+        if starts_with(d.name, "__closure_") && len(cascade_fields(e, t, h)) > 0 {
+          el::refuse(e, "a closure capture of a type with a drop hook");
+          return;
+        }
+        wanted = len(cascade_fields(e, t, h)) > 0 || len(cascade_vectors(e, t, h)) > 0 || (!h.forward && len(cascade_captures(e, t)) > 0);
       }
     } else if d.def_type == el::DT_ENUM {
       // An enum releases through whichever variant it holds.
@@ -350,7 +364,35 @@ fn fill(e: el::El, t: integer, c: integer, h: Hook) {
     live = el_ir::cl(e, "OpConvBoolFromRef", [field!]);
     ops += [el_ir::v_if(live, ir::NdCall { def_nr: tg, args: [field!] }, ir::NdNull)];
   }
+  // `push_closure_releases`: last, a closure record releases each store it shares.
+  if !h.forward {
+    for a in cascade_captures(e, t) {
+      slot = el_ir::cl(e, "OpGetDbRef", [me, ir::NdInt { n: el_schema::field_position(e, el::def(e, t).known_type, el::def(e, t).attributes[a]!.name) }]);
+      ops += [el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [slot]), el_ir::v_block([el_ir::cl(e, "OpFreeRef", [slot])], ir::TyVoid, "release"), ir::NdNull)];
+    }
+  }
   finish(e, c, vars, ops, "drop_cascade");
+}
+
+// `cascade_captures_held`: a closure record's slots that share a store — each laid-out
+// `Reference` carrying the share marker.
+fn cascade_captures(e: el::El, t: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  d = el::def(e, t);
+  if d.def_type != el::DT_STRUCT || !starts_with(d.name, "__closure_") || d.known_type == el::NO_TYPE {
+    return r;
+  }
+  for a in d.attributes {
+    match el_types::base(a.typedef[0] ?? ir::TyVoid) {
+      TyReference { n: _, dep } => {
+        if len(dep) > 0 && el_schema::field_position(e, d.known_type, a.name) != el::NO_TYPE {
+          r += [a#index];
+        }
+      },
+      _ => {}
+    }
+  }
+  r
 }
 
 // A vector type's element, answered as a value of its own.  The match binding taken in place

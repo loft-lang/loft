@@ -1248,7 +1248,22 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       e.closure_var = cv;
     }
     code = el_expressions::parse_code(e, vars, body ?? 0);
+    // A body answering a function value is typed as the declared function type: the closure
+    // slot its value names is the result's dep (`callee_frame1`), not the block's.
+    if el_types::base(rt) is TyFunction {
+      match code {
+        NdBlock { block } => {
+          bl = block[0];
+          bl.result = [el_types::without_deps(rt)];
+          code = ir::NdBlock { block: [bl] };
+        },
+        _ => {}
+      }
+    }
     e.b.data.definitions[e.context].code = [code];
+    if e.first_pass {
+      add_capture_owner_slots(e, vars, e.context);
+    }
     // `@FR-R-Const` (`literal_body_constant`, pass 1): a plain function of no parameters whose
     // whole body is one vector literal of constants, answering a plain vector through its
     // buffer, gets a constant twin `__const_<name>` with its result — what a read of a call of
@@ -1270,6 +1285,51 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   e.b.data.definitions[e.context].variables = el_vars::stored(vars);
   e.context = -1;
   key
+}
+
+// `add_capture_owner_slots` (`@FR-L-CapOwn`, `@FR-O-Witness`), at a function's pass-1 body end:
+// each closure record of a lambda it made gets, beside every record capture of a LOCAL, a hidden
+// owner slot `<name>__own` of the same shared record type — what the scope pass hands the
+// local's owner witness to at the build.
+fn add_capture_owner_slots(e: el::El, vars: el_vars::Vars, parent: integer) {
+  outer = el::def(e, parent).name;
+  bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
+  for k in 0..vars.lambdas {
+    rec = el::def_nr(e, "__closure_{bare}_{k}");
+    if rec < 0 {
+      continue;
+    }
+    slots: vector<el::Capture> = [];
+    for a in el::def(e, rec).attributes {
+      if a.hidden || starts_with(a.name, "__") {
+        continue;
+      }
+      match a.typedef[0] ?? ir::TyVoid {
+        TyReference { n: d, dep } => {
+          v = el_vars::var(vars, a.name);
+          local_record = v >= 0 && !vars.vars[v].argument && el_types::base(el_vars::tp(vars, v)) is TyReference;
+          if len(dep) > 0 && el::def(e, d).def_type == el::DT_STRUCT && !starts_with(el::def(e, d).name, "__") && local_record {
+            slots += [el::Capture { name: a.name, tp: ir::TyReference { n: d, dep: [el_types::MARKER] } }];
+          }
+        },
+        _ => {}
+      }
+    }
+    for sl in slots {
+      own = "{sl.name}__own";
+      exists = false;
+      for a in el::def(e, rec).attributes {
+        if a.name == own {
+          exists = true;
+        }
+      }
+      if !exists {
+        o = el::attribute(own, sl.tp);
+        o.hidden = true;
+        e.b.data.definitions[rec].attributes += [o];
+      }
+    }
+  }
 }
 
 // Does `t` name a header variable of the function being read?

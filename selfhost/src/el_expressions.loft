@@ -3372,11 +3372,28 @@ fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       for c in captured_names(e, vars, body!, own) {
         cv = el_vars::var(vars, c);
         ct = el_vars::tp(vars, cv);
-        if !(el_convert::plain_scalar(ct) || el_types::base(ct) is TyText) || ct is TyOptional || el_convert::plain_enum(ct) {
+        // A record or a vector is shared through a pointer field of the record (`@FR-L-CapHeap`).
+        heap = !(ct is TyOptional) && (record_type(e, ct) || ct is TyVector);
+        if !heap && (!(el_convert::plain_scalar(ct) || el_types::base(ct) is TyText) || ct is TyOptional || el_convert::plain_enum(ct)) {
           el::refuse(e, "a lambda that captures a local of its function: of this type {type_kind(ct)}");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
         caps += [el::Capture { name: c, tp: el_types::without_deps(ct) }];
+      }
+      // A lambda answering a record or a collection beside a shared capture takes a late return
+      // buffer and may answer a view of the capture (`materialized_view_return`); a closure built
+      // in a function answering a function type gives that result its frame's dep
+      // (`Deps::callee_frame1`): neither carried.
+      shares = false;
+      for c in caps {
+        if record_type(e, c.tp) || c.tp is TyVector {
+          shares = true;
+        }
+      }
+      answer = if ret != null { el_types::parse_type(e, ret!) } else { match hint { TyFunction { result } => result, _ => ir::TyVoid } };
+      if shares && answer != null && !el_types::is_unknown(answer!) && !scalar_type(answer!) && !(el_types::base(answer!) is TyText) && !(answer! is TyVoid) {
+        el::refuse(e, "a lambda answering a record or a collection beside a shared capture");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       if len(caps) > 0 && (writes_a_name(e, body!, caps) || holds_lambda(e, body!)) {
         el::refuse(e, "a lambda that captures a local of its function: written by it, or around another lambda");
@@ -3426,7 +3443,7 @@ fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps:
     rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
     e.b.data.definitions[rd].returned = [ir::TyReference { n: rd, dep: [] }];
     for c in caps {
-      e.b.data.definitions[rd].attributes += [el::attribute(c.name, c.tp)];
+      e.b.data.definitions[rd].attributes += [el::attribute(c.name, closure_attr_type(e, c.tp))];
     }
     e.b.data.definitions[d].closure_record = rd;
     return ex(ir::NdNull, lambda_value_type(e, d));
@@ -3441,10 +3458,29 @@ fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps:
   w = el_vars::create_unique(vars, "__clos", rt);
   el_vars::set_defined(vars, w);
   el_vars::register_work_ref(vars, w);
-  ops: vector<ir::Node> = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: kt }])];
+  ops: vector<ir::Node> = [];
+  // A record capture a previous build of this closure shared is released first, where it is not
+  // the record this build shares (`OpFreeRefIfDistinct`).
+  for c in caps {
+    if record_type(e, c.tp) && el_vars::var(vars, c.name) != vars.assign_target {
+      cv = el_vars::var(vars, c.name);
+      built = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: w }]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [ir::NdVar { n: w }]));
+      held = el_ir::cl(e, "OpGetDbRef", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, c.name) }]);
+      ops += [el_ir::v_if(built, el_ir::cl(e, "OpFreeRefIfDistinct", [held, ir::NdVar { n: cv }]), ir::NdNull)];
+    }
+  }
+  ops += [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: kt }])];
   for c in caps {
     a = attr_nr(el::def(e, rd), c.name);
     cv = el_vars::var(vars, c.name);
+    if cv >= 0 && !vars.captured.contains(cv) {
+      vars.captured += [cv];
+    }
+    if record_type(e, c.tp) || c.tp is TyVector {
+      el_vars::in_use(vars, cv, true);
+      ops += [el_ir::cl(e, "OpSetDbRef", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, c.name) }, ir::NdVar { n: cv }])];
+      continue;
+    }
     rd_node = field_get(e, rd, a, ir::NdVar { n: w });
     // A text field of the fresh record is set, not replaced (`OpSetText`).
     wr = if rd_node == null { null } else if c.tp is TyText { el_ir::cl(e, "OpSetText", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, c.name) }, ir::NdVar { n: cv }]) } else { place_write(e, rd_node!, ir::NdVar { n: cv }) };
@@ -3457,7 +3493,38 @@ fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps:
   }
   ops += [ir::NdFnRef { def_nr: d, var: w, t: [] }];
   ft = el_types::with_deps(closure_fn_type(e, d), [w]);
+  // A closure built in a function answering a function: that result names this frame's closure
+  // slot (`Deps::callee_frame1(w)`, 32768 + w) and answers the lambda's own result.
+  match el::def(e, e.context).returned[0] ?? ir::TyVoid {
+    TyFunction { args, result: _, dep: _, consts } => {
+      lr = match closure_fn_type(e, d) { TyFunction { result: r } => r, _ => ir::TyVoid };
+      el::set_returned(e, e.context, ir::TyFunction { args: args, result: lr, dep: [CALLEE_FRAME + w], consts: consts });
+    },
+    _ => {}
+  }
   ex(el_ir::v_block(ops, ft, "fn_ref_with_closure"), ft)
+}
+
+// `Deps::callee_frame1`'s tag: a dep naming a slot of the callee's frame, not the caller's.
+CALLEE_FRAME = 32768;
+
+// `closure_attr_type`: a record capture is held as a shared pointer to it (`Reference` with the
+// share marker), a vector's as a pointer typed by its element's definition; any other capture
+// is the value itself.
+fn closure_attr_type(e: el::El, t: ir::TypeT) -> ir::TypeT {
+  match el_types::base(t) {
+    TyReference { n } => ir::TyReference { n: n, dep: [el_types::MARKER] },
+    TyVector { inner } => ir::TyReference { n: type_def_nr(e, inner), dep: [el_types::MARKER] },
+    _ => t
+  }
+}
+
+// A record (struct) type, not a struct enum, a variant or a vector wrapper.
+fn record_type(e: el::El, t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT,
+    _ => false
+  }
 }
 
 // The function type a lambda with a closure is read as: its parameters without the trailing
@@ -4056,6 +4123,10 @@ fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, int
           el::refuse(e, "a captured local with no field in its closure record");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
+        // A shared record or vector reads as the captured value's own type.
+        if record_type(e, c.tp) || c.tp is TyVector {
+          return ex(got!, c.tp);
+        }
         return ex(got!, el::def(e, e.closure_rec).attributes[a]!.typedef[0]);
       }
     }
@@ -4624,6 +4695,15 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     el::refuse(e, "a struct literal receiving a call, bound to a local it reads");
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // A local a closure shares is rebound to a fresh record, not rebuilt in place (loft#1447): the
+  // literal built apart (`Object`), the local adopting its store.
+  if e.p.nodes[rhs!] is SStructLit && el_vars::rebind_must_mint(vars, v) {
+    x = expression(e, vars, rhs!);
+    if !e.first_pass && !el_vars::change_var_type(e, vars, v, el_types::without_deps(el_types::unrewritten(x.tp))) {
+      el::refuse(e, "a local that changes type");
+    }
+    return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+  }
   if e.p.nodes[rhs!] is SStructLit {
     // Built in place in the local (`parse_object`): the statement is the build itself, with
     // no `Set` around it.
@@ -4666,7 +4746,16 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   vars.expect = el_vars::tp(vars, v);
   outer_bind = vars.bind_rhs;
   vars.bind_rhs = op == "=";
+  outer_target = vars.assign_target;
+  vars.assign_target = v;
   x = expression(e, vars, rhs!);
+  vars.assign_target = outer_target;
+  // A call's vector bound to a local a closure shares rotates the call's buffer afterwards
+  // (`OpPutRef`, loft#1447's collection half): not carried.
+  if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyVector && el_vars::rebind_must_mint(vars, v) && match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), _ => false } {
+    el::refuse(e, "a vector local a closure shares, rebound from a call");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   vars.bind_rhs = outer_bind;
   vars.expect_node = -1;
   vars.read_into = outer_into;
@@ -10716,7 +10805,9 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
   }
   // A generator answers its coroutine's handle, typed as its iterator; a function value that
   // carries no closure is a value as a scalar is.
-  plain_fn = el_types::base(ret) is TyFunction && len(el_types::deps(ret)) == 0;
+  // A closure a function answers names a slot of the callee's frame (`callee_frame1`), which the
+  // caller takes over with the value: its type stays the callee's.
+  plain_fn = el_types::base(ret) is TyFunction && len([for x in el_types::deps(ret) if x < CALLEE_FRAME { x }]) == 0;
   // A tuple of plain scalars travels as a value; one holding a text or a heap member is boxed
   // (`boxed_tuple_return`) — not carried.
   plain_tuple = match ret { TyTuple { elems } => len([for t in elems if !el_convert::plain_scalar(t) { t }]) == 0, _ => false };
@@ -17034,6 +17125,10 @@ fn read_op(t: ir::TypeT) -> text {
 // `at_close`: the definitions are made at the literal's `]` although the element is declared —
 // a `vector<T>?` local, whose declared type is no vector hint to the literal.
 fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, at_close: boolean = false) -> Ex {
+  if el_vars::rebind_must_mint(vars, v) {
+    el::refuse(e, "a vector literal rebinding a local a closure shares");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   vector_build(e, vars, v, n, declared, at_close: at_close).x
 }
 
