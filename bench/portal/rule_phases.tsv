@@ -162,6 +162,7 @@ R-SplitTable	c,native	61	0	0	0	14	92
 R-StartStep	interp	25	0	0	740	0	0
 R-StickySum	c	61	0	0	0	877	0
 R-StreamWalk	native	1	0	0	0	0	2
+R-TableHandle	c	3	0	0	0	18	0
 R-Tabulate	c	2	0	0	0	4	0
 R-TailSelf	parse	2	2	0	0	0	0
 R-TextBorrow	interp,c,native	61	0	0	838	256	978

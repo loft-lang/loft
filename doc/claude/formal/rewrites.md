@@ -298,6 +298,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-StickySum)` | `R-StickySum` c |
 | `(R-StreamWalk)` | `R-StreamWalk` native |
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
+| `(R-TableHandle)` | `R-TableHandle` c |
 | `(R-Tabulate)` | `R-Tabulate` c |
 | `(R-TailSelf)` | `R-TailSelf` parse |
 | `(R-TextBorrow)` | `R-TextBorrow` interp, c, native · `/tested` c, native |

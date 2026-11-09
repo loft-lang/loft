@@ -1009,6 +1009,7 @@
 15_stdlib_keyed	-	c	R-SingleUse	3
 15_stdlib_keyed	-	c	R-SpecChain	3
 15_stdlib_keyed	-	c	R-StickySum	25
+15_stdlib_keyed	-	c	R-TableHandle	10
 15_stdlib_keyed	-	c	R-TextBorrow	18
 15_stdlib_keyed	-	c	R-TypedKeyed	23
 15_stdlib_keyed	-	c	R-TypedKeyed/remove	3
@@ -1797,6 +1798,7 @@
 23_lru	-	c	R-SameRead/filed	1
 23_lru	-	c	R-SingleUse	2
 23_lru	-	c	R-StickySum	3
+23_lru	-	c	R-TableHandle	1
 23_lru	-	c	R-TextBorrow	14
 23_lru	-	c	R-TypedKeyed	3
 23_lru	-	c	R-TypedKeyed/remove	1
@@ -3022,6 +3024,7 @@ gridmesh	0bde9ed2c	c	R-SingleUse	40
 gridmesh	0bde9ed2c	c	R-SpecChain	50
 gridmesh	0bde9ed2c	c	R-StartStep	2
 gridmesh	0bde9ed2c	c	R-StickySum	12
+gridmesh	0bde9ed2c	c	R-TableHandle	7
 gridmesh	0bde9ed2c	c	R-TextBorrow	14
 gridmesh	0bde9ed2c	c	R-TypedKeyed	10
 gridmesh	0bde9ed2c	c	R-ValueRecord	4
