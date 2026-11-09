@@ -5389,7 +5389,12 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  @PLN219's hand pricing −10 % to −21 %.  Switch `LOFT_NO_THREAD_FACT=1`.
 
   (R-Inline)     a loft function the C writes in at most twelve statements is declared
-                 `static inline`, its frame wrapper with it.  The hint changes no
+                 `static inline`, its frame wrapper with it, and its body is ALWAYS
+                 inlined into that wrapper (`LOFT_HOT_INLINE`): wrapper and body are one
+                 unit, which the compiler takes into a caller or not as a whole.  Hinted
+                 alike, gcc could take the wrapper into a loop and call the body out of
+                 line, every argument handed over twice (stage `pack_instances` +25 %).  The
+                 hint changes no
                  observable behaviour; what it moves is the C compiler's inlining
                  budget, so a small helper a hot loop calls — a push through an
                  overwrite-or-append helper, an accessor — is taken into its caller,
