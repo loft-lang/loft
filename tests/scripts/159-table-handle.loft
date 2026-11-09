@@ -206,6 +206,24 @@ fn t9() {
   println("t9 {total}");
 }
 
+// t10 — keyed lookups in a loop inside a GENERATOR: its resume body is assembled from the
+// frame, where a handle declared for the function would never be written, so a generator takes
+// none (the C failed to compile with `hh1` undeclared before it declined).  0+2+4+6+8+10 = 30.
+fn doubled_present(n: integer) -> iterator<integer> {
+  c = Chain { };
+  for i in 0..n { add(c, i); }
+  for i in 0..n {
+    if c.h[i] != null { yield i * 2; }
+  }
+}
+
+fn t10() {
+  s = 0;
+  for x in doubled_present(6) { s += x; }
+  assert(s == 30, "t10 {s}");
+  println("t10 {s}");
+}
+
 fn main() {
-  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9();
+  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9(); t10();
 }

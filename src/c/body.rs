@@ -769,7 +769,13 @@ impl<'a> FnWriter<'a> {
             room_minted: std::collections::HashMap::new(),
             filed: None,
             filed_next: None,
-            table_places: table_handle::places(cx, def.code()),
+            // A generator's resume body is assembled from its frame fields: a handle declared
+            // in `decls` would never be written there (`generator.rs`), so it takes none.
+            table_places: if matches!(def.returned().base(), crate::data::Type::Iterator(..)) {
+                std::collections::HashSet::new()
+            } else {
+                table_handle::places(cx, def.code())
+            },
             table_names: std::collections::HashMap::new(),
             widening: None,
             raw: std::collections::HashMap::new(),

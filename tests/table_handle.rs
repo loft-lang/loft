@@ -224,6 +224,15 @@ fn the_keyed_operations_on_one_place_share_one_handle() {
         "evict_put's elements are owned: no handle\n{evict}"
     );
     assert!(evict.contains("loft_hash_remove_i64("), "{evict}");
+    // a generator's resume body is assembled from its frame: it takes no handle
+    let resume = &c[c
+        .find("(void *frp, void *out) {\n    loft_gen")
+        .expect("a generator resume body")..];
+    let resume = &resume[..resume.find("\n}\n").unwrap_or(resume.len())];
+    assert!(
+        resume.contains("loft_h_find_i64(") && !resume.contains("loft_hh_"),
+        "the generator's keyed lookups keep the plain calls\n{resume}"
+    );
     // a function with no keyed operation declares none
     assert!(
         !emitted(&c, "n_push").contains("loft_hh "),
