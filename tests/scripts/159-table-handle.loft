@@ -224,6 +224,33 @@ fn t10() {
   println("t10 {s}");
 }
 
+// t11 — removals through a handle shift the probe run behind each hole back (`@FR-Col-Remove`):
+// 200 linked records filed, every third removed in a loop on one handle, then every key looked
+// up.  A shift that leaves an entry past a hole makes a lookup miss it.  Kept: i in 0..200 with
+// i % 3 != 0, 133 keys; the sum of their keys 7 * (19900 - 3 * 2211) = 92869; the 67 removed
+// read null; filed again, the table holds 200.
+fn t11() {
+  c = Chain { };
+  for i in 0..200 { c.h += [N { k: i * 7 }]; }
+  for i in 0..200 {
+    if i % 3 == 0 { c.h[i * 7] = null; }
+  }
+  found = 0;
+  s = 0;
+  gone = 0;
+  for i in 0..200 {
+    m = c.h[i * 7];
+    if m != null { found += 1; s += m.k; } else { gone += 1; }
+  }
+  kept = len(c.h);
+  for i in 0..200 {
+    if i % 3 == 0 { c.h += [N { k: i * 7 }]; }
+  }
+  r = "{found} {gone} {s} {kept} {len(c.h)}";
+  assert(r == "133 67 92869 133 200", "t11 {r}");
+  println("t11 {r}");
+}
+
 fn main() {
-  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9(); t10();
+  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9(); t10(); t11();
 }

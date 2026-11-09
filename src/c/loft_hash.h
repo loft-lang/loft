@@ -1532,14 +1532,10 @@ static void loft_hash_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, lof
  * there, one probe where finding the record and then removing it (`loft_h_rec_pos`, by the
  * record's digest) took two.  Every outcome is `loft_hash_remove(…, loft_h_find_i64(…), …)`'s:
  * a miss changes nothing, an inline table and a locked store take that route itself. */
-/* The typed removal's second half: entry `e`, found in bucket `index` holding `val`, leaves the
- * table and is released (`@FR-Col-Remove`).  Shared by `loft_hash_remove_i64` and the table
- * handle's removal. */
-LOFT_HOT_INLINE void loft_h_remove_found(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_store_t *s, uint32_t claim,
-                                const loft_hents *ents, const loft_key *keys, int nk, int view, loft_ref e,
-                                uint32_t index, uint32_t val) {
-    loft_forget_in_scratches(c, e);
-    uint32_t slot = loft_h_remove_at(s, claim, ents, keys, nk, index, val);
+/* Entry `e`, whose bucket value was `slot`, has left the table: release it (`@FR-Col-Remove`).
+ * Shared by the general removal and the table handle's. */
+LOFT_HOT_INLINE void loft_h_release_removed(const loft_tdesc *T, uint16_t elem, loft_ref c, int view, loft_ref e,
+                                            uint32_t slot) {
     if (view) return;
     if (loft_hash_owns_entries(c)) {
         loft_remove_claims(T, elem, e);
@@ -1549,6 +1545,16 @@ LOFT_HOT_INLINE void loft_h_remove_found(const loft_tdesc *T, uint16_t elem, lof
     loft_ref rec = { e.store_nr, e.rec, 8, 0 };
     loft_remove_claims(T, elem, rec);
     loft_st_delete(loft_store_of(c), e.rec);
+}
+
+/* The typed removal's second half: entry `e`, found in bucket `index` holding `val`, leaves the
+ * table and is released (`@FR-Col-Remove`). */
+LOFT_HOT_INLINE void loft_h_remove_found(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_store_t *s, uint32_t claim,
+                                const loft_hents *ents, const loft_key *keys, int nk, int view, loft_ref e,
+                                uint32_t index, uint32_t val) {
+    loft_forget_in_scratches(c, e);
+    uint32_t slot = loft_h_remove_at(s, claim, ents, keys, nk, index, val);
+    loft_h_release_removed(T, elem, c, view, e, slot);
 }
 
 static void loft_hash_remove_i64(const loft_tdesc *T, uint16_t elem, loft_ref c, int64_t key, const loft_key *keys,
@@ -1899,6 +1905,30 @@ LOFT_HOT_INLINE int64_t loft_hh_len(loft_hh *h, loft_ref c) {
     return loft_u32(&loft_stores[c.store_nr], h->claim, LOFT_H_LEN_FLD);
 }
 
+/* `loft_h_remove_at` on a ready handle's table (`@FR-Col-Remove`): bucket `hole` is emptied and
+ * the probe run behind it shifted back by tag.  The handle is `ok` only for a tagged
+ * power-of-two table, so every slot carries its tag and its home is `tag & mask`: the count,
+ * seed and slot width the general removal decodes again are the handle's. */
+LOFT_HOT_INLINE void loft_hh_shift_out(const loft_hh *h, loft_store_t *s, uint32_t hole) {
+    uint8_t *b = loft_at(s, h->claim, LOFT_H_BUCKET0);
+    uint32_t m = h->mask, zero = 0;
+    memcpy(b + (size_t) hole * 8, &zero, 4);
+    for (uint32_t i = 0, idx = (hole + 1) & m; i < h->count; i++, idx = (idx + 1) & m) {
+        uint32_t val, tag;
+        memcpy(&val, b + (size_t) idx * 8, 4);
+        if (val == 0) break;
+        memcpy(&tag, b + (size_t) idx * 8 + 4, 4);
+        uint32_t home = tag & m;
+        if (((hole - home) & m) < ((idx - home) & m)) {
+            memcpy(b + (size_t) hole * 8, &val, 4);
+            memcpy(b + (size_t) hole * 8 + 4, &tag, 4);
+            memcpy(b + (size_t) idx * 8, &zero, 4);
+            hole = idx;
+        }
+    }
+    loft_set_u32(s, h->claim, LOFT_H_LEN_FLD, loft_u32(s, h->claim, LOFT_H_LEN_FLD) - 1);
+}
+
 /* `loft_hash_remove_i64` through handle `h`.  A removal changes no table's shape, so the handle
  * stays live after it. */
 LOFT_HOT_INLINE void loft_hh_remove_i64(loft_hh *h, const loft_tdesc *T, uint16_t elem, loft_ref c, int64_t key,
@@ -1918,8 +1948,9 @@ LOFT_HOT_INLINE void loft_hh_remove_i64(loft_hh *h, const loft_tdesc *T, uint16_
     loft_hh_verify_found("removal", c, keys, key, e);
 #endif
     if (e.rec == 0) return;
-    loft_hents ents = h->ents;
-    loft_h_remove_found(T, elem, c, s, h->claim, &ents, keys, nk, view, e, index, val);
+    loft_forget_in_scratches(c, e);
+    loft_hh_shift_out(h, s, index);
+    loft_h_release_removed(T, elem, c, view, e, val);
 }
 
 /* `loft_hash_insert` through handle `h`: the one-probe insert on the handle's table, the general
