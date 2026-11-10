@@ -17003,10 +17003,14 @@ fn pattern_bind(vars: el_vars::Vars, name: text, tp: ir::TypeT, names: vector<el
 
 // `parse_slice_pattern` for plain names, `_` and one `..` / `..rest` over `sv`.
 fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
-  // A repetition group (`( V )*`, `( V )+`) over a struct enum: `parse_slice_repetition`.
+  // A repetition group (`( V )*`, `( V )+`) over a struct enum: `parse_slice_repetition`; an
+  // optional group or a multi-element alternation: `parse_multi_element_alternation`.
   for el0 in elems {
     if rep_group(e, el0) >= 0 && el_types::struct_enum_def(elm) >= 0 {
       return slice_rep(e, vars, sv, elm, elems, names);
+    }
+    if alt_group(e, el0) >= 0 && el_types::struct_enum_def(elm) >= 0 {
+      return slice_alt(e, vars, sv, elm, elems, names);
     }
   }
   // Each fixed element: a name ("_" for none) or, over a struct enum, a variant pattern (its
@@ -17096,6 +17100,287 @@ fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
     }
   }
   SliceArm { binds: binds, cond: cond, shape: SliceShape { min: fixed, exact: !has_rest } }
+}
+
+// The `PGroup` a slice element is when it is an optional group `( … )?` or an alternation of
+// sequences `( A B | C )` (`SliceGroupKind::Alt`), or -1.
+fn alt_group(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    PGroup { seqs, quant } => if quant == "?" || (quant == "" && len(seqs) > 1 && seq_width(e, seqs) > 1) { n } else { -1 },
+    _ => -1
+  }
+}
+
+// The widest of the sequences of a group.
+fn seq_width(e: el::El, seqs: vector<integer>) -> integer {
+  w = 0;
+  for q in seqs {
+    match e.p.nodes[q] { PSeq { items } => { if len(items) > w { w = len(items); } }, _ => {} }
+  }
+  w
+}
+
+// One capture of an alternation branch: `name` bound to the variant `vd`'s field `fa` (of type
+// `ft`) at the branch's position `pos`, or to the whole element where `fa` is -1.
+struct AltCap { name: text, pos: integer, vd: integer, fa: integer, ft: ir::TypeT }
+
+// One branch of an alternation: its variants' ordinals, position by position, and its captures.
+struct AltBranch { discs: vector<integer>, caps: vector<AltCap> }
+
+// `parse_multi_element_alternation` over a vector (no cursor): the branches of the group, a `?`
+// adding the empty one, each a sequence of variants with their captures.  Whole slice, a branch's
+// test is its length (exact, or room before a `..rest`) and its leading tags, the arm's the OR of
+// them; after fixed head elements or before a fixed tail (an optional group only), the first
+// branch whose tags match at the group's position is taken and the length must fit what follows.
+// A capture reads at its branch's position under that branch's test, `τ?` where a branch does not
+// bind it; a rest starts at the taken branch's end (`_alt_pos_N`).  A group capture and the
+// single-element alternation are refused by name.
+fn slice_alt(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
+  sed = el_types::struct_enum_def(elm);
+  es = element_stride(e, elm);
+  gi = 0;
+  while gi < len(elems) && alt_group(e, elems[gi] ?? -1) < 0 {
+    gi += 1;
+  }
+  head_len = gi;
+  g = elems[gi] ?? -1;
+  seqs: vector<integer> = [];
+  quant = "";
+  match e.p.nodes[g] { PGroup { seqs: gs, quant: gq } => { seqs = gs; quant = gq; }, _ => {} }
+  optional = quant == "?";
+  // The branches.
+  branches: vector<AltBranch> = [];
+  for q in seqs {
+    items: vector<integer> = [];
+    match e.p.nodes[q] { PSeq { items: qi } => { items = qi; }, _ => {} }
+    br = AltBranch { discs: [], caps: [] };
+    for it in items {
+      cap = "";
+      pn = it;
+      match e.p.nodes[it] { PCap { name, pat } => { cap = name; pn = pat ?? -1; }, _ => {} }
+      vname = "";
+      vfields: vector<integer> = [];
+      match e.p.nodes[pn] {
+        PName { name, member, fields } => { if member == "" { vname = name; vfields = fields; } },
+        _ => {}
+      }
+      a = if vname == "" { -1 } else { attr_nr(el::def(e, sed), vname) };
+      if a < 0 {
+        el::refuse(e, "an alternation element other than a variant");
+        return null;
+      }
+      disc = match el::def(e, sed).attributes[a].value[0] { NdEnum { ord: o } => o, _ => 0 };
+      vd = el::variant_of(e, sed, vname);
+      pos = len(br.discs);
+      br.discs += [disc];
+      if cap != "" {
+        br.caps += [AltCap { name: cap, pos: pos, vd: vd, fa: -1, ft: elm }];
+      }
+      for f in vfields {
+        match e.p.nodes[f] {
+          PFieldPat { name: fname, pat } => {
+            if pat != null {
+              el::refuse(e, "a field pattern with a sub-pattern");
+              return null;
+            }
+            fa = if vd < 0 { -1 } else { attr_nr(el::def(e, vd), fname) };
+            if fa < 0 {
+              el::refuse(e, "a field the variant does not declare");
+              return null;
+            }
+            br.caps += [AltCap { name: fname, pos: pos, vd: vd, fa: fa, ft: el::def(e, vd).attributes[fa]!.typedef[0] }];
+          },
+          _ => {}
+        }
+      }
+    }
+    branches += [br];
+  }
+  if optional {
+    branches += [AltBranch { discs: [], caps: [] }];
+  }
+  if !optional && head_len > 0 {
+    el::refuse(e, "a multi-element alternation after fixed elements of a slice");
+    return null;
+  }
+  // What follows the group: a rest, or (after an optional group) a fixed tail read from the end.
+  rest = "";
+  has_rest = false;
+  tail: vector<integer> = [];
+  for el0 in elems[gi + 1..] {
+    match e.p.nodes[el0] {
+      PRest { name } => { has_rest = true; rest = name; },
+      _ => {
+        if has_rest || !optional {
+          el::refuse(e, "a slice element after an alternation group of this form");
+          return null;
+        }
+        tail += [el0];
+      }
+    }
+  }
+  tail_len = len(tail);
+  subj = ir::NdVar { n: sv };
+  ln = el_ir::cl(e, "OpLengthVector", [subj]);
+  binds: vector<ir::Node> = [];
+  head_conds: vector<ir::Node> = [];
+  tail_conds: vector<ir::Node> = [];
+  named_t = el_types::with_deps(elm, el_types::deps(el_vars::tp(vars, sv)));
+  // The fixed head and tail elements: a name bound, a variant tested and bound.
+  slots: vector<integer> = [for x in elems[0..gi] { x }];
+  slots += tail;
+  for h in slots {
+    pos = if h#index < head_len { ir::NdInt { n: h#index } } else { ir::NdInt { n: h#index - head_len - tail_len } };
+    at = el_ir::cl(e, "OpGetVector", [subj, ir::NdInt { n: es }, pos]);
+    nm = rename_of(e, h);
+    if e.p.nodes[h] is PWild {
+      continue;
+    } else if nm != "" {
+      bv = pattern_bind(vars, nm, named_t, names);
+      binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
+    } else if e.p.nodes[h] is PName {
+      va = slice_variant(e, vars, h, sed, slice_elem(e, elm, at), names);
+      if va == null {
+        return null;
+      }
+      if h#index < head_len {
+        if va!.cond != null {
+          head_conds += [va!.cond!];
+        }
+        binds += va!.binds;
+      } else {
+        // A tail element is read as a one-variant alternation (`parse_slice_alternation_element`):
+        // its test joins the group's fit, and each capture reads under it, null where it fails.
+        if va!.cond != null {
+          tail_conds += [va!.cond!];
+        }
+        for bd in va!.binds {
+          match bd {
+            NdSet { var, inner } => {
+              nv = el_convert::null_of(e, el_types::base(el_vars::tp(vars, var)));
+              binds += [el_ir::v_set(var, if va!.cond == null || nv == null { inner } else { el_ir::v_if(va!.cond!, inner, nv!) })];
+            },
+            _ => { binds += [bd]; }
+          }
+        }
+      }
+    } else {
+      el::refuse(e, "a slice element beside an alternation group of this form: {syn_kind(e, h)}");
+      return null;
+    }
+  }
+  mid = head_len > 0 || tail_len > 0;
+  // Each branch's test.
+  bconds: vector<ir::Node> = [];
+  for sb in branches {
+    w = len(sb.discs);
+    c = if mid {
+      el_ir::cl(e, "OpLeInt", [ir::NdInt { n: head_len + w }, ln])
+    } else if has_rest {
+      el_ir::cl(e, "OpLeInt", [ir::NdInt { n: w }, ln])
+    } else {
+      el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: w }])
+    };
+    for d in sb.discs {
+      c = el_ir::v_if(c, rep_tag(e, elm, sv, ir::NdInt { n: head_len + d#index }, d), ir::NdBoolean { b: false });
+    }
+    bconds += [c];
+  }
+  cond = ir::NdNull;
+  if mid {
+    // The taken branch's length requirement: exactly head + width + tail, or room before a rest.
+    fits: ir::Node = ir::NdBoolean { b: false };
+    k = len(branches) - 1;
+    while k >= 0 {
+      need = head_len + len(branches[k]!.discs) + tail_len;
+      ok = if has_rest { el_ir::cl(e, "OpLeInt", [ir::NdInt { n: need }, ln]) } else { el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: need }]) };
+      fits = el_ir::v_if(bconds[k]!, ok, fits);
+      k -= 1;
+    }
+    for tc in tail_conds {
+      fits = el_ir::v_if(fits, tc, ir::NdBoolean { b: false });
+    }
+    cond = fits;
+  } else {
+    cond = bconds[0]!;
+    for bc in bconds[1..] {
+      cond = el_ir::v_if(cond, ir::NdBoolean { b: true }, bc);
+    }
+  }
+  for hc in head_conds {
+    cond = el_ir::v_if(cond, hc, ir::NdBoolean { b: false });
+  }
+  // The captures: the union of the branches' names, each read under its branch's test.
+  seen: vector<text> = [];
+  for sb in branches {
+    for c in sb.caps {
+      if !seen.contains(c.name) {
+        seen += [c.name];
+      }
+    }
+  }
+  for nm in seen {
+    ft = ir::TyVoid;
+    in_all = true;
+    for sb in branches {
+      found = false;
+      for c in sb.caps {
+        if c.name == nm {
+          found = true;
+          ft = c.ft;
+        }
+      }
+      if !found {
+        in_all = false;
+      }
+    }
+    vt = if in_all { ft } else { ir::TyOptional { inner: ft } };
+    absent = el_convert::null_of(e, el_types::base(vt));
+    if absent == null {
+      el::refuse(e, "an alternation capture of this type: {type_kind(vt)}");
+      return null;
+    }
+    acc = absent!;
+    k = len(branches) - 1;
+    while k >= 0 {
+      for c in branches[k]!.caps {
+        if c.name == nm {
+          at = slice_elem(e, elm, el_ir::cl(e, "OpGetVector", [subj, ir::NdInt { n: es }, ir::NdInt { n: head_len + c.pos }]));
+          read = if c.fa < 0 { at } else { field_get(e, c.vd, c.fa, at) ?? ir::NdNull };
+          acc = el_ir::v_if(bconds[k]!, read, acc);
+        }
+      }
+      k -= 1;
+    }
+    mv = el_vars::create_unique(vars, "mv_{nm}", vt);
+    el_vars::set_defined(vars, mv);
+    if !(el_types::base(ft) is TyText) {
+      vars.vars[mv].skip_free = true;
+    }
+    binds += [el_ir::v_set(mv, acc)];
+    names += [el_vars::VarName { name: nm, nr: el_vars::var(vars, nm) }];
+    el_vars::set_name(vars, nm, mv);
+  }
+  if rest != "" {
+    pv = el_vars::create_unique(vars, "alt_pos", ir::TyInteger { spec: i32_spec() });
+    el_vars::set_defined(vars, pv);
+    acc: ir::Node = ir::NdInt { n: 0 };
+    k = len(branches) - 1;
+    while k >= 0 {
+      acc = el_ir::v_if(bconds[k]!, ir::NdInt { n: head_len + len(branches[k]!.discs) }, acc);
+      k -= 1;
+    }
+    binds += [el_ir::v_set(pv, acc)];
+    rv = pattern_bind(vars, rest, ir::TyVector { inner: elm, dep: [] }, names);
+    if !e.first_pass {
+      m = slice_vector(e, vars, sv, elm, rv, ir::NdVar { n: pv }, ln, 1, null);
+      if m == null {
+        return null;
+      }
+      binds += [m!];
+    }
+  }
+  SliceArm { binds: binds, cond: cond, shape: SliceShape { min: head_len + tail_len, exact: false } }
 }
 
 // `elem_tag_int(read_slice_elem(…)) == d`: the element of `sv` at `pos` holds variant `d`.
