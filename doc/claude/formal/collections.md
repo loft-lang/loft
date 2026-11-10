@@ -331,6 +331,10 @@ down (loft#1437).
                     table, never of its seed — so two tables built alike walk alike, a copy
                     walks as its source, and a run repeats on both backends.  It is not
                     insertion order: an insert after a removal may take the removed slot.
+                    A hash that holds a store RECORD as an entry — a linked type's entries
+                    (Col-Inline's `linked` fact), or one handed in already built — has no
+                    arena index for it, and walks in KEY order instead (Col-Order): a record
+                    number follows the allocator, which no two backends share.
                     Every other kind already walks without a sort, and keeps its Col-Order
                     order.  The walk reads the same snapshot as the ordered one, so what the
                     body may do to c is what an ordered walk allows.  A range or a text is

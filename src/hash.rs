@@ -2112,6 +2112,24 @@ pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
     out
 }
 
+/// Does table `hash_ref` hold an entry that is a store RECORD rather than an arena index — a
+/// linked type's entry, or one handed in already built ([`SLOT_RECORD`])?  Such an entry's slot
+/// value is a record number, which follows the allocator, so `@FR-Col-Unordered` walks the
+/// table in key order instead.
+#[must_use]
+pub fn holds_records(hash_ref: &DbRef, stores: &[Store]) -> bool {
+    let store = keys::store(hash_ref, stores);
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
+    if claim == 0 || is_inline(store, claim) {
+        return false;
+    }
+    if stride(store, claim) == 0 {
+        return true;
+    }
+    let sb = slot_bytes(store, claim);
+    (0..elms(store, claim)).any(|i| store.get_u32_raw(claim, BUCKET0 + i * sb) & SLOT_RECORD != 0)
+}
+
 /// `@FR-Col-Unordered` (@C151) — every live entry in SLOT order: ascending by the number its bucket
 /// holds, the arena index the entry was handed out at (a record number, `SLOT_RECORD`, for an
 /// entry the table borrows; those follow the arena's, in record order).

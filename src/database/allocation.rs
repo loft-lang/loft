@@ -2523,10 +2523,16 @@ impl Stores {
     /// `for e in h par(...)` — the parallel queue preserves input order, but has no use for
     /// key order.  Slot order is fixed by the inserts and removes alone
     /// ([`crate::hash::records_by_slot`]), so these walks repeat from run to run.
-    pub fn build_hash_unsorted_vec(&mut self, hash_ref: &DbRef, _tp: u16) -> DbRef {
+    pub fn build_hash_unsorted_vec(&mut self, hash_ref: &DbRef, tp: u16) -> DbRef {
         // An absent holder has no scratch — see `build_hash_sorted_vec`.
         if hash_ref.rec == 0 {
             return DbRef::NULL;
+        }
+        // A table holding store records (a linked type's entries) has no arena order: its
+        // slot values are record numbers, which follow the allocator, so it walks in key order
+        // (`@FR-Col-Unordered`).
+        if crate::hash::holds_records(hash_ref, &self.allocations) {
+            return self.build_hash_sorted_vec(hash_ref, tp);
         }
         let recs = crate::hash::records_by_slot(hash_ref, &self.allocations);
         self.build_ref_scratch(hash_ref, &recs)
