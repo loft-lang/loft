@@ -1574,7 +1574,7 @@ impl Stores {
         let store = &self.allocations[store_nr as usize];
         // A store nothing minted into (a native `null_named` handed to `OpDatabase`) has no
         // root to walk, and its type word was never written.
-        if !store.has_root() {
+        if !store.has_root_record() {
             return;
         }
         let tp = store.get_u32_raw(1, 4) as usize;
