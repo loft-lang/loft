@@ -202,6 +202,11 @@ jobs:
           name: revalidate-loft-build
           path: loft-src/target/release
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op while this job runs on ubuntu-latest; it is here for a Windows leg.
+      - if: runner.os == 'Windows'
+        uses: ./loft-src/.github/actions/windows-gcc
+
       # The SAME stable the build job installed: a library's `--native` suite compiles against
       # the uploaded rlib with whatever `rustc` is on the path, and the runner image's own
       # rustc can be one release behind rustup's stable — every leg then reads "found crate
