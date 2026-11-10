@@ -218,7 +218,12 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                    fall-through is where each test failed;
                  · the right operand of `t && b` runs only where t holds, and of `t || b`
                    only where it fails: b reads with what `if t`'s then side, or its else
-                   side, proves.  `i < len(v) && v[i] > 0` needs no discharge.
+                   side, proves.  `i < len(v) && v[i] > 0` needs no discharge;
+                 · a match arm's guard, `pat if t => body`: the body runs only where t holds
+                   (matching.md (P-Guard)), so it reads with what t proves there —
+                   `NLong { n: v } if v != null => take(v)` needs no discharge.  The guard
+                   alone proves it, not a multi-pattern arm's field tests, which hold for one
+                   of its patterns; the next arm reads with nothing the guard proved.
                A test of one name proves it: `v != null`, a truthy `v`, or `v == null` /
                `!v` on the side where it fails.  `t₁ && t₂` proves, where it holds, what
                each tᵢ proves where it holds, and `t₁ || t₂`, where it fails, what each

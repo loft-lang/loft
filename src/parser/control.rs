@@ -464,6 +464,12 @@ fn guard_cannot_fall_through(data: &crate::data::Data, ops: &[Value]) -> bool {
     is_block_divergent(ops) || ops.iter().any(|v| is_halt_call(data, v))
 }
 
+/// Where the parser's fact stacks stood before a condition's facts were assumed
+/// ([`Parser::assume_condition`]); [`Parser::forget_facts`] truncates them back to it.
+#[must_use]
+#[derive(Clone, Copy)]
+pub(crate) struct FactMark([usize; 6]);
+
 /// Collected match arm data for enum/struct-enum match expressions.
 struct EnumArm {
     /// Discriminants for this arm — Vec allows or-patterns (multiple variants per arm).
@@ -5715,6 +5721,79 @@ impl Parser {
         None
     }
 
+    /// `@FR-N-Guard` — assume what `test` proves on its `side` (true: where it holds, false:
+    /// where it fails) for the code parsed next: a name proven present, a projection, a divisor
+    /// proven non-zero, a sign, a variant (where it holds only — the other side knows only
+    /// which variant it is NOT) and an index proven in bounds.  The mark it answers is what
+    /// [`Self::forget_facts`] takes back, at the end of the code that runs on that side.
+    pub(crate) fn assume_condition(&mut self, test: &Value, side: bool) -> FactMark {
+        let mark = self.fact_mark();
+        for (v, s) in self.narrowings_from_condition(test) {
+            if s == side {
+                self.narrowed_non_null.push(v);
+            }
+        }
+        if let Some((e, s)) = self.projection_narrowing_from_condition(test)
+            && s == side
+        {
+            self.narrowed_non_null_exprs.push(e);
+        }
+        if let Some((v, s)) = self.divisor_proof_from_condition(test)
+            && s == side
+        {
+            self.divisor_nonzero.push(v);
+        }
+        if let Some((v, sg, s)) = self.math_sign_proof_from_condition(test)
+            && s == side
+        {
+            self.math_sign_proven.push((v, sg));
+        }
+        if side && let Some(pair) = self.variant_proof_from_condition(test) {
+            self.variant_proven.push(pair);
+        }
+        let caps = std::collections::HashMap::new();
+        let pairs = if side {
+            crate::parser::operators::collect_guard_pairs(test, &self.data, &caps)
+        } else {
+            crate::parser::operators::collect_guard_pairs_negated(test, &self.data, &caps)
+        };
+        self.index_bounded.extend(pairs);
+        mark
+    }
+
+    /// A match arm's guard holds wherever its body runs (`@FR-P-Guard`: a false guard fails
+    /// the arm), so the body reads with what the guard proves, as the right operand of `&&`
+    /// does (`@FR-N-Guard`).  No guard assumes nothing.
+    pub(crate) fn assume_guard(&mut self, guard: Option<&Value>) -> FactMark {
+        match guard {
+            Some(g) => self.assume_condition(g, true),
+            None => self.fact_mark(),
+        }
+    }
+
+    /// Where every fact stack stands now.
+    fn fact_mark(&self) -> FactMark {
+        FactMark([
+            self.narrowed_non_null.len(),
+            self.narrowed_non_null_exprs.len(),
+            self.divisor_nonzero.len(),
+            self.math_sign_proven.len(),
+            self.variant_proven.len(),
+            self.index_bounded.len(),
+        ])
+    }
+
+    /// Take back every fact assumed since `mark`.
+    pub(crate) fn forget_facts(&mut self, mark: FactMark) {
+        let FactMark([present, projections, divisors, signs, variants, indices]) = mark;
+        self.narrowed_non_null.truncate(present);
+        self.narrowed_non_null_exprs.truncate(projections);
+        self.divisor_nonzero.truncate(divisors);
+        self.math_sign_proven.truncate(signs);
+        self.variant_proven.truncate(variants);
+        self.index_bounded.truncate(indices);
+    }
+
     /// Deliver an indirect call THROUGH a `&fn(…)` link.
     ///
     /// `Value::CallRef` names a VARIABLE, and `State::fn_call_ref` reads the 20-byte fn-ref pair
@@ -6105,50 +6184,8 @@ impl Parser {
         // the arms below, and an `else if` chain's own conditions, are past the pair.
         self.fit_in_condition = false;
         self.convert_condition_at(&mut test, &tp, Some(&cond_at));
-        // @PLN25 DN3: a non-null proof from the condition narrows the proven var inside the
-        // matching branch (then for `!= null`/truthy, else for `== null`).
-        let narrow = self.narrowings_from_condition(&test);
-        let narrow_base = self.narrowed_non_null.len();
-        for &(v, p) in &narrow {
-            if p {
-                self.narrowed_non_null.push(v);
-            }
-        }
-        // …and the PROJECTION twin, pushed and truncated on the same discipline.
-        let proj_narrow = self.projection_narrowing_from_condition(&test);
-        let proj_base = self.narrowed_non_null_exprs.len();
-        if let Some((ref e, true)) = proj_narrow {
-            self.narrowed_non_null_exprs.push(e.clone());
-        }
-        // @PLN25 DN3 fault-op: `if v != 0` proves the divisor `v` non-zero in the THEN branch
-        // (and `if v == 0 … else` in the ELSE branch), so `a / v` / `a % v` there is provably fit
-        // (types non-null). The THEN proof is pushed now; the ELSE proof is pushed below.
-        let divisor = self.divisor_proof_from_condition(&test);
-        let divisor_base = self.divisor_nonzero.len();
-        if let Some((v, true)) = divisor {
-            self.divisor_nonzero.push(v);
-        }
-        // `if v is Variant { … }` proves the variant in the THEN branch (THEN-only: the else
-        // side knows only which variant it is NOT), so a cast `v as Variant` there is checked.
-        let variant_base = self.variant_proven.len();
-        if let Some(pair) = self.variant_proof_from_condition(&test) {
-            self.variant_proven.push(pair);
-        }
-        // …and the MATH twin, the third family, on the same discipline.
-        let math_sign = self.math_sign_proof_from_condition(&test);
-        let math_base = self.math_sign_proven.len();
-        if let Some((v, sg, true)) = math_sign {
-            self.math_sign_proven.push((v, sg));
-        }
-        // @PLN25 DN3 fault-op (index): `if idx < len(vec) { … }` proves `vec[idx]` in-bounds in the
-        // THEN branch (skip-pattern 5) — reuse the warning walk's guard-pair extractor. THEN-only
-        // (the else side has idx >= len, no fit). The len-capture form (`n = len(v); if idx < n`)
-        // needs the capture map, deferred — pass an empty map, so inline `len(vec)` guards match.
-        let empty_caps = std::collections::HashMap::new();
-        let index_base = self.index_bounded.len();
-        let index_pairs =
-            crate::parser::operators::collect_guard_pairs(&test, &self.data, &empty_caps);
-        self.index_bounded.extend(index_pairs);
+        // `@FR-N-Guard`: the THEN branch reads with what the condition proves where it holds.
+        let then_facts = self.assume_condition(&test, true);
         let is_aliases: Vec<(String, Option<u16>)> = std::mem::take(&mut self.is_capture_aliases);
         let is_bindings: Vec<Value> = std::mem::take(&mut self.is_capture_bindings);
         let mut true_code = Value::Null;
@@ -6179,29 +6216,10 @@ impl Parser {
                 self.vars.remove_name(name);
             }
         }
-        // @PLN25 DN3: leave the then-branch — drop its narrowing; the ELSE gets the `== null`
-        // proof (the var is non-null on the else side of `if v == null { … } else { … }`).
-        self.narrowed_non_null.truncate(narrow_base);
-        self.narrowed_non_null_exprs.truncate(proj_base);
-        // Leaving the THEN branch, drop its `!= 0` divisor proof; an `== 0` condition instead
-        // proves the divisor non-zero on the ELSE side, pushed just below with the else narrowing.
-        self.divisor_nonzero.truncate(divisor_base);
-        self.math_sign_proven.truncate(math_base);
-        self.variant_proven.truncate(variant_base);
-        // Leaving the THEN branch — drop its `idx < len(vec)` in-bounds proofs (THEN-only).
-        self.index_bounded.truncate(index_base);
-        for &(v, _) in narrow.iter().filter(|&&(_, p)| !p) {
-            self.narrowed_non_null.push(v);
-        }
-        if let Some((ref e, false)) = proj_narrow {
-            self.narrowed_non_null_exprs.push(e.clone());
-        }
-        if let Some((v, false)) = divisor {
-            self.divisor_nonzero.push(v);
-        }
-        if let Some((v, sg, false)) = math_sign {
-            self.math_sign_proven.push((v, sg));
-        }
+        // …and the ELSE branch with what it proves where it fails (`if v == null { … } else {
+        // v.f }`, `if b == 0 { … } else { a / b }`, `if i >= len(v) { … } else { v[i] }`).
+        self.forget_facts(then_facts);
+        let else_facts = self.assume_condition(&test, false);
         let mut false_type = Type::Void;
         // Read before the else arm is parsed, as the then arm's is (`peek_literal_null_block`).
         let mut false_is_null_literal = false;
@@ -6472,16 +6490,8 @@ impl Parser {
             }
         }
         self.vars.restore_write_state(&write_state);
-        // @PLN25 DN3: both branches parsed — drop any narrowing back to the enclosing level
-        // (the proof holds only inside the if/else, not after it).
-        self.narrowed_non_null.truncate(narrow_base);
-        self.narrowed_non_null_exprs.truncate(proj_base);
-        self.divisor_nonzero.truncate(divisor_base);
-        self.math_sign_proven.truncate(math_base);
-        // Belt-and-suspenders: `index_bounded` was already restored after the THEN block (it is
-        // THEN-only, no else-push), so this is a no-op today — kept for parity with the two
-        // narrowings above and to stay correct if an else-side in-bounds proof is added later.
-        self.index_bounded.truncate(index_base);
+        // Both branches parsed: the proof holds only inside the if/else, not after it.
+        self.forget_facts(else_facts);
         // @PLN25 DN1: a branch that yields a bare `null` makes the if-expression NULLABLE — its
         // result widens to `Optional(τ)` where τ is the non-null SCALAR sibling's type. The bare
         // null is otherwise coerced to the sibling's typed-null sentinel and the if types as a
@@ -7496,6 +7506,9 @@ impl Parser {
             // parse optional guard clause after pattern + field bindings.
             // Field-bound variables are in scope for the guard expression.
             let guard_opt = self.parse_optional_guard();
+            // The guard alone, before the field conditions join it: it holds whichever
+            // pattern matched, so it is what the body may assume.
+            let user_guard = guard_opt.clone();
             // @FR-P-Guard × @FR-P-Multi, @C162 — a guard on a multi-pattern arm is asked of each
             // listed pattern that matches, in order: each extra pattern's branch below carries a
             // clone of it, run after that branch's own bindings, so a guard that rejects the
@@ -7570,7 +7583,9 @@ impl Parser {
             // false dead-assignment warnings in sibling arms.
             let mut arm_body = Value::Null;
             let arm_expected = self.match_arm_expected(&result_type);
+            let facts = self.assume_guard(user_guard.as_ref());
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
+            self.forget_facts(facts);
             // @PLN85 match_return (LOFT_JOIN_OWN): if this arm yields a borrowed-view
             // vector field binding DIRECTLY (`Filled { items } => { items }`), wrap it in
             // an owned copy `{ o = []; o += items; o }` so the value ESCAPES OWNED — the
@@ -8183,7 +8198,9 @@ impl Parser {
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;
         let arm_expected = self.match_arm_expected(result_type);
+        let facts = self.assume_guard(guard_opt.as_ref());
         let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
+        self.forget_facts(facts);
         // loft#978 — see the arm sites above: the wildcard is an arm like any other.
         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
         *result_type = joined;
@@ -8470,7 +8487,9 @@ impl Parser {
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;
         let arm_expected = self.match_arm_expected(result_type);
+        let facts = self.assume_guard(user_guard.as_ref());
         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
+        self.forget_facts(facts);
         let block = v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match");
         if Self::arm_settles_match(result_type, &arm_type) {
             *result_type = arm_type.clone();
@@ -12318,24 +12337,7 @@ impl Parser {
                 }
             }
 
-            // parse optional guard clause.
-            let mut guard_opt = if self.lexer.has_token("if") {
-                let at = *self.lexer.pos();
-                let mut guard_code = Value::Null;
-                let guard_type = self.expression(&mut guard_code);
-                self.record_guard(&guard_code, at);
-                if !self.first_pass && guard_type != Type::Boolean {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "guard must be boolean, got {}",
-                        guard_type.source_name(&self.data)
-                    );
-                }
-                Some(guard_code)
-            } else {
-                None
-            };
+            let mut guard_opt = self.parse_optional_guard();
 
             // Only mark exhaustive if wildcard has no guard.
             if is_wildcard && guard_opt.is_none() {
@@ -12345,7 +12347,9 @@ impl Parser {
             self.expect_match_arm_arrow();
             let mut arm_code = Value::Null;
             let arm_expected = self.match_arm_expected(&result_type);
+            let facts = self.assume_guard(guard_opt.as_ref());
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
+            self.forget_facts(facts);
             // A `null`-first arm must NOT pin the result to `Null` — promote to
             // the first CONCRETE arm's type (else `match c { false => null, true
             // => S{…} }` resolves to `Null`, `build_scalar_chain` can't type the

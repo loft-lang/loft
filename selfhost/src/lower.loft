@@ -1162,7 +1162,8 @@ fn value(l: Lowering, b: ir::Bundle, n: ir::Node, k: Kind) {
 fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
   match n {
     NdInt { n: v } => emit(l, PushInt, KInt, v, 0),
-    NdLong { n: v } => emit(l, PushInt, KInt, v, 0),
+    // A long holding the minimum is loft's null: it lowers as the null push it is.
+    NdLong { n: v } => if v == null { emit(l, PushNull, KInt, 0, 0) } else { emit(l, PushInt, KInt, v, 0) },
     NdBoolean { b: v } => emit(l, PushInt, KInt, if v { 1 } else { 0 }, 0),
     NdEnum { ord, tp: _ } => emit(l, PushInt, KInt, ord, 0),
     NdFloat { f } => {
@@ -1303,7 +1304,7 @@ pub fn unspan(n: ir::Node) -> ir::Node {
 fn literal(l: Lowering, n: ir::Node) -> integer {
   match unspan(n) {
     NdInt { n: v } => v,
-    NdLong { n: v } => v,
+    NdLong { n: v } if v != null => v,
     _ => {
       refuse(l, "a store operand that is not a literal: {n}");
       0
