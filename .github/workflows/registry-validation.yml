@@ -221,6 +221,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op while this job runs on ubuntu-latest; it is here for a Windows leg.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       # `mold` is loft's pinned linker.  `libasound2-dev` provides the ALSA
       # headers `alsa-sys` (a transitive native dep of the `graphics` package's
       # `rodio`) builds against — without them the graphics leg fails at native
