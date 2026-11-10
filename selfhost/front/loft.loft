@@ -6,6 +6,10 @@
 // lowering and the interpreter (`lower`, `run`) — and no Rust image.  It runs little yet: what a
 // stage does not carry is refused by name, and the run stops there.
 //
+// `loft --test <default dir> <program.loft>…` runs each program's `test_…` functions
+// (`lil_test`); `loft --slots <default dir> <program.loft>` prints each function's frame as
+// `loft introspect --show-slots` does.
+//
 // `loft --std-defs <default dir>` prints the standard library's definitions as the loft front
 // end elaborated them (`report::defs_report`), for the comparison with Rust's image.
 use el;
@@ -14,6 +18,7 @@ use report;
 use scope;
 use lower;
 use run;
+use lil_test;
 
 fn main() {
   a = arguments();
@@ -22,6 +27,42 @@ fn main() {
     print(report::defs_report(e.b, 0));
     for r in e.refused {
       println("refused: {r}");
+    }
+    return;
+  }
+  // `loft --test <default dir> <program.loft>…`: every `test_…` function of each program run;
+  // a line for each failure, then the count.
+  if len(a) >= 3 && a[0] == "--test" {
+    passed = 0;
+    failed = 0;
+    for f in a[2..] {
+      r = lil_test::run_file(a[1] ?? "", f);
+      for w in r.failed {
+        println(w);
+      }
+      passed += r.passed;
+      failed += len(r.failed);
+    }
+    println("{passed} passed, {failed} failed");
+    if failed > 0 {
+      exit(1);
+    }
+    return;
+  }
+  // `loft --slots <default dir> <program.loft>`: each of the program's functions' variables,
+  // their scope, frame slot and live interval, as `loft introspect --show-slots` prints them.
+  if len(a) == 3 && a[0] == "--slots" {
+    e = frontend::standard_library(a[1] ?? "");
+    std_refused = len(e.refused);
+    if !frontend::program(e, a[2] ?? "") || len(e.refused) > std_refused {
+      fail(e.refused[std_refused..]);
+    }
+    sr = scope::scope_bundle(e.b);
+    for r in sr {
+      println("refused: {r}");
+    }
+    for r in scope::slots_report(e.b) {
+      println(r);
     }
     return;
   }
