@@ -285,8 +285,8 @@ fn param_dead_at_disturbance(
             seeds,
         )
     };
-    let (plain, _) = walk(&[]);
-    let (seeded, reached) = walk(&[(param, place.0, place.1)]);
+    let (plain, _, _) = walk(&[]);
+    let (seeded, reached, _) = walk(&[(param, place.0, place.1)]);
     reached.contains(&param)
         && !seeded.contains_key(&param)
         && seeded.keys().all(|v| plain.contains_key(v))
@@ -337,7 +337,9 @@ fn def_reshape_refusals(
         disturbed,
         Some(database),
         def.position.line,
-    ) {
+    )
+    .0
+    {
         // @FR-H-View-Drop — two populations, one walk.  An `&` link asked for a reference and
         // must get one or the program is refused.  A PLAIN view of a member that owns a
         // droppable is refused for a different reason, and one the author cannot escape by

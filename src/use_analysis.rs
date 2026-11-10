@@ -7078,8 +7078,10 @@ impl GroupAppends<'_> {
                      this block appends to both, so one record set ends up holding everything \
                      they were given"
                 );
+                // A warning: the two batches land in one record set, which the author did
+                // not mean, and nothing else says so — `lost-write`'s reason to gate.
                 diags.add_at_coded(
-                    crate::diagnostics::Level::Advice,
+                    crate::diagnostics::Level::Warning,
                     Some("linked-group-double-fill"),
                     &msg,
                     file,

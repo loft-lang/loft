@@ -293,6 +293,45 @@ pub fn note_reassigned_view(
     );
 }
 
+/// One view written back into the place it views after that place was written —
+/// `view-written-back`.  `row` is `(view, container, function)`, deduped as a copied view's is.
+struct WriteBackNote {
+    row: (String, String, String),
+    written_at: u32,
+    file: String,
+    line: u32,
+}
+
+thread_local! {
+    /// Recorded by the scope pass's view walk (`ViewWalk::track_write_backs`), handed to the
+    /// author's diagnostics by [`drain_materialised_views`].
+    static WRITTEN_BACK: RefCell<Vec<WriteBackNote>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Note that `var`, a view of a place inside `container`, is written back into that place at
+/// `at` after line `written_at` wrote it: the write-back copies the place onto itself
+/// (`@FR-B-View` — a view re-reads its place; `@FR-B-Disturb` — an overwrite does not end it).
+pub fn note_written_back_view(
+    var: &str,
+    container: &str,
+    function: &str,
+    written_at: u32,
+    at: (&str, u32),
+) {
+    let row = (var.to_string(), container.to_string(), function.to_string());
+    WRITTEN_BACK.with(|m| {
+        let mut m = m.borrow_mut();
+        if !m.iter().any(|n| n.row == row && n.line == at.1) {
+            m.push(WriteBackNote {
+                row,
+                written_at,
+                file: at.0.to_string(),
+                line: at.1,
+            });
+        }
+    });
+}
+
 /// Tell the author which views lost their alias, and why: one `advice[view-copied]` per row,
 /// at the statement that disturbed the container.  Drains.
 ///
@@ -303,6 +342,54 @@ pub fn note_reassigned_view(
 /// program correct; this is what keeps it honest.
 pub fn drain_materialised_views(diags: &mut crate::diagnostics::Diagnostics) {
     let rows = MATERIALISED.with(|m| std::mem::take(&mut *m.borrow_mut()));
+    drain_view_notes(rows, diags);
+}
+
+/// Tell the author which views are written back into a place written since they were bound:
+/// one `warning[view-written-back]` per write-back.  Drains.
+///
+/// Called on the program path and the test path alike: a library's CI is a test run, and this
+/// gates — ignoring it leaves the place holding the value the author meant to undo, and
+/// nothing says so (DIAGNOSTICS.md § Diagnostic tiers).
+pub fn drain_written_back_views(diags: &mut crate::diagnostics::Diagnostics) {
+    let backs = WRITTEN_BACK.with(|m| std::mem::take(&mut *m.borrow_mut()));
+    for WriteBackNote {
+        row,
+        written_at,
+        file,
+        line,
+    } in backs
+    {
+        let name = crate::variables::author_spelling(&row.0);
+        let container = &row.1;
+        diags.add_at_coded(
+            crate::diagnostics::Level::Warning,
+            Some("view-written-back"),
+            &format!(
+                "'{name}' is a view of the place it is written back into, and line {written_at} \
+                 wrote that place after '{name}' was bound — the write-back copies the new \
+                 value onto itself, so the place keeps it."
+            ),
+            &file,
+            line,
+            0,
+        );
+        diags.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("bind `{name}` as a copy: `{name} = T {{ ..<place> }}`"),
+            condition: Some(format!(
+                "`{name}` is meant to keep the value the place in `{container}` held when it \
+                 was bound"
+            )),
+            edit: None,
+            concept: "copy",
+            concept_ref: "@F106",
+        });
+    }
+}
+
+/// The `advice[view-copied]` rows, rendered.
+fn drain_view_notes(rows: Vec<ViewNote>, diags: &mut crate::diagnostics::Diagnostics) {
     for ViewNote { row, file, line } in rows {
         diags.add_at_coded(
             crate::diagnostics::Level::Advice,
@@ -343,6 +430,7 @@ pub fn drain_materialised_views(diags: &mut crate::diagnostics::Diagnostics) {
 /// among them, so a scope pass that noted them again would say each twice.
 pub fn clear_materialised_views() {
     MATERIALISED.with(|m| m.borrow_mut().clear());
+    WRITTEN_BACK.with(|m| m.borrow_mut().clear());
 }
 
 /// The sentence a row earns, by the cause its first field's suffix names.

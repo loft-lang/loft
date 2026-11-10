@@ -7885,7 +7885,7 @@ impl Parser {
             diagnostic_at!(
                 self.lexer,
                 at,
-                Level::Advice,
+                Level::Warning,
                 code = "linked-group-double-fill",
                 "{others} {route} to `{holder}`'s records, not {own} — this literal fills \
                  {fills}, so one record set ends up holding everything they were given"

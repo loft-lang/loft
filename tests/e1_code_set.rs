@@ -52,6 +52,14 @@ const CODES: &[(&str, &str)] = &[
          fn main() { h = H { b: B { n: 3 }, t: 1 }; w = h.b; h = H { b: B { n: 4 }, t: 2 }; \
          w.n = 5; print(\"{w.n} {h.b.n}\"); }",
     ),
+    // `@FR-B-View` — a view written back into its own place after the place was written: the
+    // write-back copies the new value onto itself.
+    (
+        "view-written-back",
+        "struct B { n: integer }\nstruct H { b: B, t: integer }\n\
+         fn main() { h = H { b: B { n: 3 }, t: 1 }; keep = h.b; h.b = B { n: 4 }; h.b = keep; \
+         print(\"{h.b.n}\"); }",
+    ),
     (
         "api-copies-collection",
         "struct S { v: vector<integer> }\npub fn items(s: S) -> vector<integer> { s.v }\n\

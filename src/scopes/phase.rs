@@ -145,8 +145,20 @@ pub(super) fn run_scan_phase(
     // Computed BEFORE the struct takes its `&mut` on the store: the walk reads the store to
     // convert a field NUMBER into the byte OFFSET a view carries, and the two borrows cannot
     // overlap inside one initialiser.
-    let views_to_materialise =
+    let (views_to_materialise, write_backs) =
         collect_views_to_materialise(orig_code, orig_vars, data, database, disturbed);
+    // `view-written-back` — told where the walk saw it, as a copied view is.
+    for w in write_backs {
+        let def = data.def(d_nr);
+        let at = def.position();
+        crate::copy_manifest::note_written_back_view(
+            orig_vars.name(w.view),
+            orig_vars.name(w.container),
+            &def.original_name(),
+            w.written_at,
+            (at.file.as_str(), if w.line == 0 { at.line } else { w.line }),
+        );
+    }
     let mut scopes = Scopes {
         database,
         d_nr,

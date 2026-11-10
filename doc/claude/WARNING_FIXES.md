@@ -83,6 +83,8 @@ one of the index constructions above, or `v[nr]!.name`.
 | `tail-call-not-jumped` | Pass a part of a parameter instead of a value made for the call (`v.ops[-1]`, not `last(v.ops)`), or write the recursion as a `while` loop.  To keep an ordinary call on purpose — a one-step re-entry — bind its value first: `r = f(…); r`.  The warning stands on the call that blocks the jump. |
 | `text-slice-char-bound` | Slice by bytes: `size(t)` for the byte length, `t[i..]` for the rest.  `t[..-1]` drops a final ONE-BYTE character such as `\r`; a bound inside a multi-byte character moves to that character's end, so it does not drop a final `€`. |
 | `shadowed-by-method` | If the method does the same work, delete your function and call the method; otherwise rename it, or call it qualified as `lib::f(…)`. |
+| `linked-group-double-fill` | Fill the group through one member: the other route sees the same records.  If the fields were meant to be two separate collections, give each its own element type. |
+| `view-written-back` | Bind the saved value as a copy, `keep = Lib { ..st.lib }`, so it keeps what the place held at the bind; the write-back then restores it.  If the view was meant to follow the place, drop the write-back: it copies the place onto itself. |
 | `avoidable-copy` (advice) | Move the line that reads the source again above the copy, or drop that line when its value is never read.  When neither holds the copy is necessary and nothing is reported. |
 
 ## Where the caret stands

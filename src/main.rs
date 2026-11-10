@@ -10034,6 +10034,7 @@ fn main() {
             // @PLN130 F2 — the views the scope pass copied out of a container that changed
             // under them.  The copy keeps the program correct; this keeps it honest.
             loft::copy_manifest::drain_materialised_views(&mut p.diagnostics);
+            loft::copy_manifest::drain_written_back_views(&mut p.diagnostics);
             loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
             lints_ms = t.elapsed().as_secs_f64() * 1000.0;
         }
