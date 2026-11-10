@@ -361,6 +361,14 @@ are `(R-Version)` refusing a leaf that calls a leaf (three) and copies where the
 moves (six).  D2 takes the first: its provable part with the select form, priced on `boundary_loops`, is 11.18 →
 9.29 ms (gcc) and 18.24 → 9.28 ms (clang) against the twin's 6.05.
 
+*D2, class 1 — two spellings built 2026-11-10* ([d2-upper-bound.md](d2-upper-bound.md)): the
+counter of `0..n` with `n` a length local (one answer, `length_locals::own_length_locals`,
+read by `(R-InRange)` in the IR and `(R-Base)`'s counter clause in the C; `boundary_loops`
+11.18 → 9.24 ms gcc, 18.26 → 12.37 ms clang; drawing's polygon routines 3–11 %), and the
+guard `e < len(v)` (`opt::below_len`, `(R-Base)`'s guard clause; pluginabi `request` −3 % on
+both compilers).  Open spellings: the stepped `while` counter (the lower bound), `i % n`, the
+equal-length vectors of `boundary_loops`.
+
 **D2 … — one generalised clause per phase,** in order of the time the class carries.  Each is
 priced by hand first (the hand form of the routine where the class is heaviest, same answer,
 instructions per op), then built as a clause of its rule under the rule's switch, then judged:

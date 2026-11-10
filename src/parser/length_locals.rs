@@ -89,9 +89,18 @@ pub(crate) fn own_length_locals(data: &Data, d: u32, vars: &Function) -> Vec<(u1
 /// parameter?  `length_locals` answers for the writes through `v` and through what it views;
 /// a declared parameter can name the same vector as another parameter or as a field of one
 /// (`f(a, a)`, `f(s.items, s)`), and a write through that other name shortens `v` unseen.
-fn own_vector(attrs: &[crate::data::Attribute], vars: &Function, v: u16) -> bool {
-    let user_param =
-        |x: u16| vars.is_argument(x) && !attrs.get(x as usize).is_some_and(|a| a.work_buffer);
+/// A parameter's attribute is the one at its place among the parameters, which is its
+/// variable number only when no local is numbered between two parameters.
+pub(crate) fn own_vector(attrs: &[crate::data::Attribute], vars: &Function, v: u16) -> bool {
+    let params = vars.arguments();
+    let user_param = |x: u16| {
+        vars.is_argument(x)
+            && !params
+                .iter()
+                .position(|p| *p == x)
+                .and_then(|at| attrs.get(at))
+                .is_some_and(|a| a.work_buffer)
+    };
     let mut seen = vec![v];
     let mut i = 0;
     while i < seen.len() {

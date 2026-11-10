@@ -1,0 +1,88 @@
+<!--
+Copyright (c) 2026 Jurjen Stellingwerff
+SPDX-License-Identifier: LGPL-3.0-or-later
+-->
+
+# @PLN211 D2 — an index proven below its vector's length (class 1)
+
+Class 1 of [d1-classes.md](d1-classes.md): `(R-Range)`'s INDEX clause proves an index
+non-negative, never below the length, so every read of `v[e]` pays the bounds test (and the
+from-the-end wrap where the lower bound is unproved).  Each spelling of the upper bound is a
+clause of an existing rule, one phase at a time.
+
+| spelling | rule, clause | state |
+|---|---|---|
+| a counter of `0..n`, `n` a length local of `v` | `(R-Base)` counter clause (C), `(R-InRange)` (IR) | built 9ca584382 |
+| a guard: `if e < len(v)` / `while e < n` | `(R-Base)` guard clause (C), fact in `opt` | built (below) |
+| a stepped `while` counter (`i += 4`, `pos -= 1` under `pos > 0`) | `(R-Range)` while-counter clause | open: the LOWER bound (forms_upto; turns a guarded `_lt` access into no test) |
+| `i % n`, `n = len(v)` | `(R-Range)` rem clause + the guard fact | open |
+| `eb`, `comp` of `boundary_loops`: equal lengths by construction | — | open, no rule yet |
+
+## The guard clause
+
+**Invariant.**  At a read or write of `v[e]`, `0 <= e < len(v)` holds when (1) a test
+`e < len(v)` passed on every path to it, (2) nothing evaluated between that test and the access
+can resize `v` or assign a variable `e` names, and (3) `(R-Range)` proves `e >= 0`.  Then the
+access names an element and takes no test: `loft_vh_at_int` / `loft_vh_put_int` and siblings,
+each proving the index again under `LOFT_VERIFY`.
+
+**Where the test comes from.**
+- `if c { … }`: the facts of `c` hold in the then-arm.  A value `if` is the same node
+  (`x = if i + 1 < n { v[i + 1] ?? 0 } else { 0 }`).
+- `while c { … }` (a loop whose first statement is `if !c break`): the facts of `c` hold from
+  the second statement on, in every turn — the next turn tests again.
+- `a && b` arrives as `if a { b } else { false }`: both sides' facts.
+- A fact is `e < L` with `L` either `len(v)` or a local `n` that holds `len(v)`
+  (`length_locals::own_length_locals`, the frame's own vector).  `e` is a variable or an
+  integer expression over variables and constants, matched structurally at the access.
+
+**What ends a fact (the kill).**  `forward_walk::check_body` for `v` and each variable of `e`:
+an assignment of either, `v` handed to an operator that may resize it, a call through a
+reference, a yield or a par.  Element writes do not resize.  Applied in evaluation order —
+after each argument that is not a bare variable, after each call, after each statement — and
+over the WHOLE body of a loop nested inside the guarded region before that loop is entered,
+since a later turn runs the kill before the read.  `v` must be the frame's own vector
+(`own_vector`): a parameter can share its vector with another name.
+
+**Not covered.**  The else side (`if e >= len(v) { … } else { v[e] }`) and the early exit
+(`if e >= len(v) { return }` then `v[e]`); a field vector (`d.f`); a guard on a different but
+equal expression (`i + 1 < n` guarding `v[1 + i]`).  Each is a later widening if a routine
+needs it.
+
+**Site plan.**  `src/opt/below_len.rs`: one pass over a function's IR answering the set of
+index nodes (by address) a guard proves below their vector's length — shared, so another
+writer can read it.  The C writer reads it where it reads `counter_index` (the held element
+read and write paths in `src/c/body.rs`), together with `index_arg`'s lower bound.  Switch
+`LOFT_NO_GUARD_BOUND`; census row `R-Base/guard`.
+
+**Sites it reaches** (D1): crypto `b64_decode` under pluginabi `request` (`while i < n`,
+`if i + k < n`; the lower bound is unproved, so the `_lt` form).  Not random `indices`
+(`k < len(out) && j < len(out)`): its `out` is a hidden return buffer.  Priced by hand before
+it was built (below).
+
+## Hand prices (2026-11-10, gcc 15.3 / clang 22.1.8, min of five interleaved runs)
+
+pluginabi `request` (`b64_decode`'s four guarded reads; µs per op, hash `16387f10`):
+
+| form | gcc | clang |
+|---|--:|--:|
+| as emitted | 1544.5 | 1494.3 |
+| lower bound only (`_nn`) | 1532.7 | 1497.6 |
+| upper bound only (wrap and a sign test) | 1495.7 | 1453.1 |
+| both (no test) | 1503.3 | 1456.0 |
+| **built** (`_lt`) | **1496.1** | **1453.1** |
+
+The upper bound is the whole prize and needs no lower bound, so the clause has two forms: no
+test where `(R-Range)` proves `e >= 0`, the `_lt` accessors where it does not.
+
+random `indices` (two reads, two writes under `k < len(out) && j < len(out)`; hash
+`39dc7552`): the unchecked writes halve gcc (4382 → 2164 µs; clang 4329 → 4325), but the
+counters show why: 12.5 M fewer branch misses, at `get`'s own sign branch before its divide,
+which gcc then if-converts.  That is the compiler's luck, not the removed tests' price.  The
+clause does not reach this site anyway: `out` there is the hidden return buffer, which it does
+not admit.
+
+Found on the way: `own_vector` read a parameter's attribute by its variable number, which is
+its place among the parameters only when no local is numbered between two of them; a promoted
+work buffer keeps its local's number, so work buffers were never admitted.  Fixed (the place
+in `vars.arguments()`).

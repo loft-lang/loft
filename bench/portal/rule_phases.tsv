@@ -15,6 +15,7 @@ R-AppendTwin/mint	c	2	0	0	0	4	0
 R-Base	c,native	61	0	0	0	1004	5558
 R-Base/counter	c	44	0	0	0	308	0
 R-Base/grid	c	2	0	0	0	102	0
+R-Base/guard	c	56	0	0	0	88	0
 R-Base/length-local	c	3	0	0	0	8	0
 R-BoundAppend	parse	2	2	0	0	0	0
 R-BoundedNest	native	4	0	0	0	0	20

@@ -310,6 +310,9 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-Base`'s counter clause, length-local form: the locals that hold a local vector's
     /// length for the rest of the function (`(N-Index)`'s `length_locals`), as (local, vector).
     length_locals: Option<std::rc::Rc<Vec<(u16, u16)>>>,
+    /// `@FR-R-Base`'s guard clause: the index nodes a passed test keeps below their vector's
+    /// length (`opt::below_len`), by address.
+    guarded: Option<std::rc::Rc<std::collections::HashSet<usize>>>,
     /// `@FR-R-Transient`'s work clause: the `&text` parameter a `__wr` twin answers (its result
     /// is the caller's buffer), and the call a transient body sends to such a twin.
     work_ret: Option<u16>,
@@ -808,6 +811,7 @@ impl<'a> FnWriter<'a> {
             range_ends: Vec::new(),
             set_once: None,
             length_locals: None,
+            guarded: None,
             work_ret: None,
             wr_call: None,
             chain_guards: 0,
@@ -2627,7 +2631,20 @@ impl<'a> FnWriter<'a> {
                     )));
                 }
                 let i = self.expr(idx, ind)?;
-                let (i, nn) = self.index_arg(idx, as_int(i)?);
+                let guard = self.guard_index(idx);
+                if guard == Some(true) {
+                    let i = as_int(i)?;
+                    let proof = self.held_proof(v, &h);
+                    return Ok(Some(E::new(
+                        format!("({proof}, loft_vh_at_ref({h}, {size}, {i}))"),
+                        K::Ref,
+                    )));
+                }
+                let (i, nn) = if guard.is_some() {
+                    (as_int(i)?, "_lt")
+                } else {
+                    self.index_arg(idx, as_int(i)?)
+                };
                 let proof = self.held_proof(v, &h);
                 let (at, tail) = at(name == "OpGetVector");
                 Ok(Some(E::new(
@@ -2666,6 +2683,21 @@ impl<'a> FnWriter<'a> {
                         k,
                     )));
                 }
+                let guard = self.guard_index(idx);
+                if guard == Some(true) {
+                    let f = if name == "OpGetInt" {
+                        "loft_vh_at_int"
+                    } else {
+                        "loft_vh_at_float"
+                    };
+                    let k = if name == "OpGetInt" { K::Int } else { K::Float };
+                    let i = as_int(index)?;
+                    let proof = self.held_proof(vec, &held);
+                    return Ok(Some(E::new(
+                        format!("({proof}, {f}({held}, {size}, {i}, {fld}))"),
+                        k,
+                    )));
+                }
                 if let Some(fits) = self.grid_index(idx, &held) {
                     let (raw, checked, k) = if name == "OpGetInt" {
                         ("loft_vh_at_int", "loft_vh_get_int", K::Int)
@@ -2689,7 +2721,11 @@ impl<'a> FnWriter<'a> {
                 };
                 let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
-                let (index, nn) = self.index_arg(idx, as_int(index)?);
+                let (index, nn) = if guard.is_some() {
+                    (as_int(index)?, "_lt")
+                } else {
+                    self.index_arg(idx, as_int(index)?)
+                };
                 Ok(Some(E::new(
                     format!("({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}{tail}))"),
                     k,
@@ -2720,13 +2756,24 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
                 let index = as_int(self.expr(idx, ind)?)?;
-                let (index, nn) = self.index_arg(idx, index);
+                let guard = if self.counter_index(idx, &held).is_some() {
+                    None
+                } else {
+                    self.guard_index(idx)
+                };
+                let (index, nn) = match guard {
+                    Some(_) => (index, "_lt"),
+                    None => self.index_arg(idx, index),
+                };
                 let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
                 let addr = match self.counter_index(idx, &held) {
                     Some(i) => {
                         crate::rewrite_census::fired("R-Base/counter", 1);
                         format!("loft_vh_at_addr({held}, {size}, {i})")
+                    }
+                    None if guard == Some(true) => {
+                        format!("loft_vh_at_addr({held}, {size}, {index})")
                     }
                     None => format!("loft_vh_addr{at}{nn}({held}, {size}, {index}{tail})"),
                 };
@@ -2760,9 +2807,27 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_vh_set_float", as_float(value)?)
                 };
+                let guard = self.guard_index(idx);
+                if guard == Some(true) {
+                    let put = if name == "OpSetInt" {
+                        "loft_vh_put_int"
+                    } else {
+                        "loft_vh_put_float"
+                    };
+                    let index = as_int(index)?;
+                    let proof = self.held_proof(vec, &held);
+                    return Ok(Some(E::new(
+                        format!("({proof}, {put}({held}, {size}, {index}, {fld}, {value}))"),
+                        K::Void,
+                    )));
+                }
                 let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
-                let (index, nn) = self.index_arg(idx, as_int(index)?);
+                let (index, nn) = if guard.is_some() {
+                    (as_int(index)?, "_lt")
+                } else {
+                    self.index_arg(idx, as_int(index)?)
+                };
                 Ok(Some(E::new(
                     format!(
                         "({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}, {value}{tail}))"
@@ -3490,6 +3555,36 @@ impl<'a> FnWriter<'a> {
         ));
         self.length_locals = Some(l.clone());
         l
+    }
+
+    /// `@FR-R-Base`'s guard clause: does a passed test keep the access at index `idx` below the
+    /// vector's length (`opt::below_len`, which also checks that nothing since resized the
+    /// vector or moved the index)?  `Some(true)` when `(R-Range)` also proves it non-negative —
+    /// the access names an element and takes no test (`loft_vh_at_*`); `Some(false)` when its sign
+    /// is unproved — the from-the-end wrap and a sign test remain (the `_lt` accessors); `None`
+    /// otherwise.  `LOFT_NO_GUARD_BOUND=1` answers `None`.
+    fn guard_index(&mut self, idx: &Value) -> Option<bool> {
+        let set = if let Some(s) = &self.guarded {
+            s.clone()
+        } else {
+            let s = std::rc::Rc::new(crate::opt::below_len::guarded_indices(self.cx.data, self.d));
+            self.guarded = Some(s.clone());
+            s
+        };
+        if !set.contains(&(std::ptr::from_ref(idx) as usize)) {
+            return None;
+        }
+        crate::rewrite_census::fired("R-Base/guard", 1);
+        if crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0")) {
+            return Some(false);
+        }
+        let facts = self.nn_facts();
+        let over = self.range_override.last().cloned();
+        let ranges = over.as_deref().unwrap_or(&facts.1);
+        Some(matches!(
+            crate::opt::range::range(self.cx.data, &facts.0, ranges, idx, 0),
+            Some((lo, _)) if lo >= 0
+        ))
     }
 
     /// The variables the function sets in more than one place (`grid_bind` trusts the others).

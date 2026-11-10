@@ -178,7 +178,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Alias)` | `/versioned` c, native |
 | `(R-Apart)` | `R-Apart` c, native · `/records` c, native · `/records/boundary` c · `/vector` c, native |
 | `(R-AppendTwin)` | `R-AppendTwin` c, native · `/loop-window` c · `/mint` c |
-| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/length-local` c |
+| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c |
 | `(R-BoundAppend)` | `R-BoundAppend` parse |
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
@@ -1258,6 +1258,25 @@ write through that other name shortens `v` where `length_locals` cannot see it. 
 `FnWriter::length_locals`, `peel::range_lens`.  Census row `R-Base/length-local`.  Guard
 `tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft` (a2 falsified without the
 write test, a6/a7 without the own-vector test).
+
+**The guard clause.**  An index a passed test keeps below the length: inside `if e < len(v)`
+(its then-arm), after a `while e < n` loop's test (the rest of each turn), or either side of
+`a && b`, with `n` a length local of `v` as above and `e` a variable or `+`, `-`, `*` over
+variables and constants, matched structurally at the access.  The fact holds at `v[e]` while
+nothing evaluated since the test can resize `v` or assign a variable of `e` —
+`forward_walk::check_body`, applied in evaluation order and over a nested loop's whole body
+before the loop (a later turn runs a kill before an earlier read) — and `v` is the frame's own
+vector.  With `e >= 0` proved by `(R-Range)` the access takes no test (`loft_vh_at_*`,
+`loft_vh_put_*`); with its sign unproved the from-the-end wrap and a sign test remain and only
+the end test goes (the `_lt` accessors: an index below `-len` still names no element).  Each
+proves the end bound again under `LOFT_VERIFY`.  crypto `b64_decode` under pluginabi `request`
+(`while i < n`, `if i + k < n`, all four reads `_lt`): 1545.6 → 1496.1 µs (gcc), 1495.6 →
+1453.1 µs (clang).  Switch `LOFT_NO_GUARD_BOUND`.  Sites: `opt::below_len::guarded_indices` (the
+fact, shared), `FnWriter::guard_index`.  Census row `R-Base/guard`.  Guard
+`tests/scripts/an-index-a-passed-test-keeps-below-the-length-is-read-in-range.loft` (g6
+falsified with the kill struck: a wrong sum on `--native-c`, and the verify build stops on "a
+guarded index").  Not yet: the else side, an early exit (`if e >= len(v) { return }`), a field
+vector, a hidden return buffer (a caller may hand a call its own destination).
 
 ### A record local declared in a loop keeps its store
 

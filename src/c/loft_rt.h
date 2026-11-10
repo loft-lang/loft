@@ -2609,6 +2609,13 @@ LOFT_HOT_INLINE int64_t loft_vh_at_int(loft_vh h, uint32_t size, int64_t f, uint
 }
 
 LOFT_HOT_INLINE void loft_vh_put_int(loft_vh h, uint32_t size, int64_t f, uint32_t fld, int64_t v) {
+    LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put int");
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+
+/* @FR-R-Base's guard clause — a float element's write at an index proven in [0, len). */
+LOFT_HOT_INLINE void loft_vh_put_float(loft_vh h, uint32_t size, int64_t f, uint32_t fld, double v) {
+    LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put float");
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
@@ -7309,6 +7316,111 @@ LOFT_HOT_INLINE void loft_vh_set_float_at_nn(loft_vh h, uint32_t size, int64_t f
                                              const char *file, uint32_t line) {
     if (LOFT_VH_OUT(h, f)) {
         loft_index_miss(f, h.len, file, line);
+        return;
+    }
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+
+/* `@FR-R-Base`'s guard clause: the held accessors for an index a passed test keeps below the
+ * length, its sign unproved — the from-the-end wrap, then one sign test (an index below
+ * `-len` names no element); the end test is the guard's, proved again under `LOFT_VERIFY`.  A
+ * miss answers and reports as the wrapping accessors do. */
+#define LOFT_VH_LT(h, from, f) \
+    int64_t f = LOFT_VH_WRAP(h, from); \
+    LOFT_PROVED(f < (h).len, "a guarded index")
+LOFT_HOT_INLINE loft_ref loft_vh_get_lt(loft_vh h, uint32_t size, int64_t from) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return loft_ref_null();
+    loft_ref e = {0};
+    e.store_nr = h.store_nr;
+    e.rec = h.rec;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
+}
+LOFT_HOT_INLINE loft_ref loft_vh_get_at_lt(loft_vh h, uint32_t size, int64_t from, const char *file, uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return loft_ref_null_reported();
+    }
+    loft_ref e = {0};
+    e.store_nr = h.store_nr;
+    e.rec = h.rec;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
+}
+LOFT_HOT_INLINE uint8_t *loft_vh_addr_lt(loft_vh h, uint32_t size, int64_t from) {
+    LOFT_VH_LT(h, from, f);
+    return LOFT_UNLIKELY(f < 0) ? (uint8_t *) 0 : h.base + (size_t) f * size;
+}
+LOFT_HOT_INLINE uint8_t *loft_vh_addr_at_lt(loft_vh h, uint32_t size, int64_t from, const char *file, uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return (uint8_t *) 0;
+    }
+    return h.base + (size_t) f * size;
+}
+LOFT_HOT_INLINE int64_t loft_vh_get_int_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return LOFT_NULL;
+    int64_t v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE int64_t loft_vh_get_int_at_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, const char *file,
+                                              uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return LOFT_NULL;
+    }
+    int64_t v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE double loft_vh_get_float_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return (double) NAN;
+    double v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE double loft_vh_get_float_at_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, const char *file,
+                                               uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return (double) NAN;
+    }
+    double v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE void loft_vh_set_int_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return;
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+LOFT_HOT_INLINE void loft_vh_set_int_at_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v,
+                                           const char *file, uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return;
+    }
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+LOFT_HOT_INLINE void loft_vh_set_float_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, double v) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return;
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+LOFT_HOT_INLINE void loft_vh_set_float_at_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, double v,
+                                             const char *file, uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
         return;
     }
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
