@@ -1468,6 +1468,47 @@ impl Parser {
         out
     }
 
+    /// `a ⊕= b` writes what `a ⊕ b` answers, so a composed value that may be null (`s /= n`,
+    /// `@FR-N-Div`) is stored as `s = s / n` stores it: an inferred local widens to `τ?`
+    /// (`@FR-N-Join`), and any other slot — a declared local, a parameter, a field, an element
+    /// — is asked `@FR-N-Store`'s question.  Without it the step put a null into an `integer`
+    /// with nothing said.  A slot already `τ?`, and a link (which steps the place it names),
+    /// hold the null; a declared narrow slot never holds it: the step's range guard gives it
+    /// the type's default (`@FR-E-Uncomp-NN`, `guard_compound_range`).
+    fn compound_null_store(&mut self, to: &Value, f_type: &Type, composed: &Type) {
+        let Type::Optional(inner) = composed else {
+            return;
+        };
+        if matches!(f_type, Type::Optional(_) | Type::RefVar(_)) || f_type.is_unknown() {
+            return;
+        }
+        if let Value::Var(v) = to.unspan()
+            && *v < self.vars.count()
+        {
+            let v = *v;
+            if !self.vars.is_annotated(v) && !self.vars.is_argument(v) {
+                self.change_var_type(v, composed);
+                return;
+            }
+            if !self.first_pass && !Self::nstore_narrow(f_type, false) {
+                let what = format!(
+                    "{} `{}`",
+                    if self.vars.is_argument(v) {
+                        "the parameter"
+                    } else {
+                        "the local"
+                    },
+                    self.vars.name(v)
+                );
+                self.nstore_unwrap_report(inner, f_type, &what, None, false);
+            }
+            return;
+        }
+        if !self.first_pass && !Self::nstore_narrow(f_type, false) {
+            self.nstore_unwrap_report(inner, f_type, "the assignment target", None, false);
+        }
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn towards_set(
         &mut self,
@@ -2208,6 +2249,9 @@ impl Parser {
         let (mut code, composed) = self.compute_op_code(op, to, val, f_type, src_tp);
         if op != "=" && !self.first_pass {
             self.check_compound_result(op, f_type, src_tp, &composed);
+        }
+        if op != "=" {
+            self.compound_null_store(to, f_type, &composed);
         }
         // loft#1009 — a COMPOUND assignment into a bounded integer slot had no range check
         // of any kind, so `l: u8 = 250; l += 10;` answered 260 and `b: u8 = 5; b -= 10;`

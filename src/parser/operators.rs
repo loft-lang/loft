@@ -1798,6 +1798,44 @@ impl Parser {
     /// source), and `a -= 1` over `OpMin(self: V, o: integer)` looked for `OpMin(V, V)`
     /// (loft#1819).  Answers the composed value and its type; the caller judges the type
     /// against the place.
+    /// `@FR-N-Div` and its float twin `@FR-N-Domain` — does `left ⊕ divisor` answer `τ?`
+    /// because ⊕ is `/` or `%` and a zero divisor yields the reserved null?  A divisor
+    /// provably non-zero (a non-zero constant, a name a guard proved) keeps `τ`.  Captured
+    /// before `call_op` consumes the divisor's code.
+    pub(crate) fn div_is_nullable(&self, operator: &str, left: &Type, divisor: &Value) -> bool {
+        (operator == "/" || operator == "%")
+            && (matches!(left.base(), Type::Integer(_))
+                || (crate::keys::ndomain_enabled()
+                    && matches!(left.base(), Type::Float | Type::Single)))
+            && !self.divisor_provably_nonzero(divisor)
+    }
+
+    /// The type an arithmetic operator's result takes, given what `call_op` typed it: `τ?`
+    /// for a partial `/` or `%` ([`Self::div_is_nullable`]), and for a nullable operand
+    /// riding into a value-preserving scalar op (`@FR-N-Prop` — the null already flows
+    /// through at run time).  A binary operator and a compound step (`a ⊕= b`) both ask it.
+    fn nullable_result(
+        operator: &str,
+        div_nullable: bool,
+        operand_nullable: bool,
+        tp: Type,
+    ) -> Type {
+        if div_nullable && crate::keys::pln25_dn1_enabled() {
+            return Type::optional(tp);
+        }
+        if operand_nullable
+            && !matches!(tp, Type::Optional(_))
+            && matches!(tp.base(), Type::Integer(_) | Type::Float | Type::Single)
+            && matches!(
+                operator,
+                "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
+            )
+        {
+            return Type::optional(tp);
+        }
+        tp
+    }
+
     pub(crate) fn compute_op_code(
         &mut self,
         op: &str,
@@ -1861,8 +1899,15 @@ impl Parser {
             )
             && Self::width32_int(f_type)
             && Self::width32_int(src_tp);
+        // `a ⊕= b` answers what `a ⊕ b` answers: a divisor not provably non-zero, or a
+        // nullable operand, makes the composed value `τ?` (`@FR-N-Div`, `@FR-N-Prop`), so the
+        // write is asked `@FR-N-Store`'s question and an inferred local widens (`@FR-N-Join`).
+        let div_nullable = self.div_is_nullable(op, f_type, val);
+        let operand_nullable = crate::keys::nprop_enabled()
+            && (matches!(f_type, Type::Optional(_)) || matches!(src_tp, Type::Optional(_)));
         let mut code = Value::Null;
         let tp = self.call_op_as(&mut code, name, spelled, &operands, &types);
+        let tp = Self::nullable_result(op, div_nullable, operand_nullable, tp);
         if regime32 && let Type::Integer(spec) = tp.base() {
             let narrow = Type::Integer(crate::narrow::IntegerSpec {
                 not_null: spec.not_null,
@@ -6549,11 +6594,7 @@ impl Parser {
             // `divisor_provably_nonzero` elision keeps `x / 2.0` non-null. Integer stays default-on.
             // @FR-N-Div and its float twin @FR-N-Domain: `/` and `%` type `τ?` because a zero
             // divisor yields the reserved null; a divisor provably non-zero keeps `τ`.
-            let div_nullable = (operator == "/" || operator == "%")
-                && (matches!(ctp.base(), Type::Integer(_))
-                    || (crate::keys::ndomain_enabled()
-                        && matches!(ctp.base(), Type::Float | Type::Single)))
-                && !self.divisor_provably_nonzero(&second_code);
+            let div_nullable = self.div_is_nullable(operator, ctp, &second_code);
             // @PLN102 (N-Prop) Phase 2 — capture operand nullability BEFORE `call_op` consumes
             // the operand types. A nullable operand PROPAGATES through a value-preserving scalar
             // op: the runtime already carries the null sentinel / NaN through (`n+5`, `5-n`,
@@ -6616,20 +6657,7 @@ impl Parser {
                     narrow
                 };
             }
-            if div_nullable && crate::keys::pln25_dn1_enabled() {
-                *ctp = Type::optional(ctp.clone());
-            } else if operand_nullable
-                && !matches!(*ctp, Type::Optional(_))
-                && matches!(ctp.base(), Type::Integer(_) | Type::Float | Type::Single)
-                && matches!(
-                    operator,
-                    "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
-                )
-            {
-                // @PLN102 (N-Prop): a nullable operand rode into a value-preserving scalar op —
-                // the result is nullable too (the null value already flows through at runtime).
-                *ctp = Type::optional(ctp.clone());
-            }
+            *ctp = Self::nullable_result(operator, div_nullable, operand_nullable, ctp.clone());
             // Plan-07 phase 1, step 1.B.1 — wrap binary fault-prone
             // arithmetic ops in `Value::Span` so runtime errors
             // (div-by-zero, narrow overflow, signed-overflow panic
