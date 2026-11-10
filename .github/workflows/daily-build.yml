@@ -70,6 +70,9 @@ jobs:
           # which needs the release tags.
           fetch-tags: true
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      - uses: ./.github/actions/windows-gcc
+
       # A dispatch naming one triple builds only that leg; `all` (the default, and what a
       # PR or a push always does) builds every leg.
       - name: Should this leg run?
