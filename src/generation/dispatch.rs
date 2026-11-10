@@ -1709,34 +1709,50 @@ impl Output<'_> {
             let target = copy_target("_dst", first_bind);
             // `@FR-H-SwapRebind` — the copy arm as one runtime call that exchanges the result's
             // store into the destination without resetting it first, when it can.
-            let mut copy = if crate::keys::swap_rebind_enabled() {
-                crate::rewrite_census::fired("H-SwapRebind", 1);
-                format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp_with_free});")
-            } else {
-                format!(
-                    "var_{name} = OpDatabase(cell, {target}, {tp_lit}); \
-                     OpCopyRecord(cell,_src, var_{name}, {tp_with_free});"
-                )
+            let copy_with = |tp: &str| {
+                if crate::keys::swap_rebind_enabled() {
+                    format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp});")
+                } else {
+                    format!(
+                        "var_{name} = OpDatabase(cell, {target}, {tp_lit}); \
+                         OpCopyRecord(cell,_src, var_{name}, {tp});"
+                    )
+                }
             };
-            // The interpreter's `release_caller_hidden_arg`: a hidden result buffer this frame
-            // keeps across calls (`__ref_N`, minted once and cleared per call) held the record
-            // the copy just took, and the source-free bit released its store — so the buffer is
-            // released if still live and reset, or the next call cleared and refilled a store
-            // number another value had since been given (loft#2443, `va = arm(k)` in a loop).
+            if crate::keys::swap_rebind_enabled() {
+                crate::rewrite_census::fired("H-SwapRebind", 1);
+            }
+            let mut copy = copy_with(&tp_with_free);
+            // `@FR-O-Buffer` — a result delivered INTO a hidden result buffer this frame keeps
+            // across calls (`__ref_N`, minted once, cleared and refilled per call) is copied out
+            // WITHOUT the source-free bit: the store is the buffer's, and the next call refills
+            // it.  Released by the copy, the buffer kept the store number of a freed store, and
+            // the next call refilled a store another value had since been given (loft#2443,
+            // `va = arm(k)` in a loop).  A result in any other store is consumed as before.  The
+            // C backend draws the same line (`t != c && t != __ref_1` before its free).
             if let Value::Call(_, args) = to.unspan() {
-                use std::fmt::Write as _;
-                for a in args {
-                    if let Value::Var(av) = a.unspan()
-                        && *av != var
-                        && variables.is_caller_hidden_buf(*av)
-                        && !variables.is_argument(*av)
-                    {
-                        let buf = sanitize(variables.name(*av));
-                        let _ = write!(
-                            copy,
-                            " if var_{buf}.store_nr != u16::MAX {{ OpFreeRef(cell, var_{buf}, \"{buf}(released)\"); }} var_{buf} = DbRef::NULL;"
-                        );
-                    }
+                let held: Vec<String> = args
+                    .iter()
+                    .filter_map(|a| match a.unspan() {
+                        Value::Var(av)
+                            if *av != var
+                                && variables.is_caller_hidden_buf(*av)
+                                && !variables.is_argument(*av) =>
+                        {
+                            let buf = sanitize(variables.name(*av));
+                            Some(format!(
+                                "(var_{buf}.store_nr != u16::MAX && var_{buf}.store_nr == _src.store_nr)"
+                            ))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if !held.is_empty() && tp_with_free != tp_lit {
+                    copy = format!(
+                        "if {} {{ {} }} else {{ {copy} }}",
+                        held.join(" || "),
+                        copy_with(&tp_lit)
+                    );
                 }
             }
             // `@FR-R-RebindBuffer` — a fresh result in a store of its own is adopted, and the
