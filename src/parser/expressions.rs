@@ -5172,6 +5172,7 @@ use a separate collection or add after the loop"
         // when the value carries no span of its own (a local read).  A preset value was parsed
         // elsewhere and has none here.
         let mut rhs_at: Option<crate::lexer::Position> = None;
+        let errors_before_rhs = self.lexer.diagnostics().error_count();
         let mut s_type = if let Some((value, tp)) = self.preset_rhs.take() {
             *code = value;
             tp
@@ -5180,6 +5181,9 @@ use a separate collection or add after the loop"
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
         self.in_bind_rhs = prev_bind_rhs;
+        // A right-hand side that reported its own error answers `void` because it failed:
+        // that error is the one mistake, so the bind below adds none.
+        let rhs_failed = self.lexer.diagnostics().error_count() > errors_before_rhs;
         // A value that answers nothing has nothing to bind.  Admitted, `s = f()` of a function
         // with no result left `s` a `void` local, and each later read misfired far from the
         // cause: `s + 1` reported `Expect token ;`, `"{s + 1}"` five syntax errors.  Named here,
@@ -5187,6 +5191,7 @@ use a separate collection or add after the loop"
         // Asked on pass 1 as well: the misread `+` derails that pass, which then never reaches
         // pass 2 — and a `void` result is known there (a later callee reads `unknown`).
         if op == "="
+            && !rhs_failed
             && matches!(s_type.base(), Type::Void)
             && let Some(at) = rhs_at
             && let Value::Var(v) = to.unspan()
