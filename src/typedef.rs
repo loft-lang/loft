@@ -342,10 +342,26 @@ pub fn actual_types_deferred(
                 copy_unknown_fields(data, d);
                 // A return naming a generic struct declared below is not the bare template:
                 // `between_passes` makes it the instance its arguments name (@PLN165 D7).
-                if let Type::Unknown(was) = data.def(d).returned
+                // A `?` on the return is transparent, as on a field above: `S?` names the
+                // same forward reference as `S`, so it is peeled, resolved and put back —
+                // left as `Optional(Unknown(stub))`, every `-> S?` of a type declared below
+                // refused its own body (`expected unknown?, got S?`).
+                let (ret, optional) = match data.def(d).returned.clone() {
+                    Type::Optional(inner) => (*inner, true),
+                    other => (other, false),
+                };
+                if let Type::Unknown(was) = ret
+                    && (!optional || was != 0)
                     && data.def_type(was) != DefType::TypeTemplate
                 {
-                    data.set_returned(d, data.def(was).returned.clone());
+                    let resolved = data.def(was).returned.clone();
+                    if optional {
+                        // Only the stub inside the `?` is replaced: `set_returned`'s
+                        // "still unknown" check reads the wrapper as already set.
+                        data.definitions[d as usize].returned = Type::optional(resolved);
+                    } else {
+                        data.set_returned(d, resolved);
+                    }
                 }
             }
             DefType::Struct => {
