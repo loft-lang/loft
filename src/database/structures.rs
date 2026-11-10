@@ -1690,8 +1690,13 @@ impl Stores {
         // `@FR-L-OutOfLine` I1 — a child lives in its host's store, so under strict stores the
         // number must name a live record there: a copy that carried it into another store, or
         // a read after the child's release, is caught here instead of reading foreign bytes.
+        // The store's ROOT is a live record of it too: `(R-HostStore)` builds a node in its
+        // first result's store and adopts that result — the root — as the node's child.
         assert!(
-            rec == 0 || !crate::keys::strict_stores() || store.is_claimed_record(rec),
+            rec == 0
+                || !crate::keys::strict_stores()
+                || store.is_claimed_record(rec)
+                || (rec == crate::store::PRIMARY && store.has_root_record()),
             "strict stores: the child-record field at #{}.{}+{} names record {rec}, which \
              is not a live record of store #{} — the child was released, or its number \
              left its host's store",

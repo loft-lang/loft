@@ -5633,7 +5633,13 @@ impl Function {
     /// produce a store, and that a retbuf-attr local carry an entry-buffer witness.
     #[must_use]
     pub fn owns_displaced_store(&self, v: u16, value: &Value, data: &Data) -> bool {
-        self.owns_its_binding(v, value, data)
+        // A bare `null` is a pass's LET-GO, never a user's write (`a = null` reaches the IR as
+        // `OpNullRefSentinel()`): the local hands its record on — `(R-HostStore)` writes it
+        // after `OpAdoptChildRec` gave the record to a field — and displaces nothing it owns.
+        // The C and Rust emitters free only on a store-producing right-hand side, so this is
+        // the interpreter agreeing with them (`@FR-O-NoDiverge`).
+        !matches!(value.unspan(), Value::Null)
+            && self.owns_its_binding(v, value, data)
             // loft#1522 — and the store is not one a construction work-ref still NAMES.  The
             // proxy answers "owned" for such a local because the adoption leaves its dep list
             // empty, so without this the rebind released the buffer's store out from under it;
