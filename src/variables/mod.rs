@@ -4266,6 +4266,8 @@ impl Function {
         let deps = inner.depend();
         deps.is_empty()
             || deps.iter().any(|&d| {
+                // @FR-O-Proxy asks free — does the place the link names own the store a
+                // write through the link displaces?
                 matches!(self.tp(d).base(), Type::RefVar(_))
                     || (!self.is_argument(d) && self.proxy_says_owned(d))
             })
