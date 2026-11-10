@@ -9151,8 +9151,8 @@ fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, name: t
         }
         hint_lambda(e, vars, hint_nr, len(list), ae!);
         eh = argument_element_hint(e, hint_nr, len(list), ae!);
-        built += [eh];
         y = hinted_argument(e, vars, ae!, eh);
+        built += [eh];
         vars.lambda_node = -1;
         list += [y.code];
         types += [y.tp];
@@ -12032,6 +12032,82 @@ fn truncate_nonzero(vars: el_vars::Vars, n: integer) {
   vars.nonzero = r;
 }
 
+// `Parser::fact_mark`: where each stack of proven facts stands, for `forget_facts` to return to.
+struct FactMark { nonzero: integer, present: integer, present_exprs: integer, proven: integer }
+
+// `Parser::assume_condition` (`@FR-N-Guard`): what `test` proves on its `side` (true: where it
+// holds, false: where it fails), assumed for the code elaborated next — a divisor non-zero, a
+// local and a projection present, and where it holds, an `is` test's variant.
+fn assume_condition(e: el::El, vars: el_vars::Vars, test: ir::Node, side: boolean) -> FactMark {
+  mark = FactMark { nonzero: len(vars.nonzero), present: len(vars.present), present_exprs: len(vars.present_exprs), proven: len(vars.proven) };
+  dv = divisor_proof(e, test);
+  if dv.then == side {
+    push_nonzero(vars, dv.v);
+  }
+  pp = presence_proof(e, test);
+  if pp.then == side {
+    push_present(vars, pp.v);
+  }
+  jp = projection_proof(e, test);
+  if jp != null && jp!.then == side {
+    vars.present_exprs += [jp!.place];
+  }
+  if side {
+    vp = variant_proof(e, test);
+    if vp != null {
+      vars.proven += [vp!];
+    }
+  }
+  mark
+}
+
+// `variant_proof_from_condition`: an `is` test, `OpEqInt(OpConvIntFromEnum(OpGetEnum(p, …)), d)`,
+// proves its place `p` holds the variant `d` where it holds; null for any other test.
+fn variant_proof(e: el::El, test: ir::Node) -> el_vars::Proven? {
+  match el_ir::unspan(test) {
+    NdCall { def_nr: eq, args: eargs } => {
+      if el::def(e, eq).name != "OpEqInt" || len(eargs) != 2 {
+        return null;
+      }
+      disc = match el_ir::unspan(eargs[1]!) { NdInt { n } => n, _ => -1 };
+      match el_ir::unspan(eargs[0]!) {
+        NdCall { def_nr: cv, args: cargs } => {
+          if el::def(e, cv).name != "OpConvIntFromEnum" || len(cargs) != 1 {
+            return null;
+          }
+          match el_ir::unspan(cargs[0]!) {
+            NdCall { def_nr: ge, args: gargs } => {
+              if el::def(e, ge).name == "OpGetEnum" && len(gargs) > 0 && disc >= 0 {
+                return el_vars::Proven { place: el_ir::unspan(gargs[0]!), disc: disc };
+              }
+            },
+            _ => {}
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  null
+}
+
+// `Parser::assume_guard`: a match arm's guard holds wherever its body runs (`@FR-P-Guard`).
+fn assume_guard(e: el::El, vars: el_vars::Vars, guard: ir::Node?) -> FactMark {
+  if guard == null {
+    return FactMark { nonzero: len(vars.nonzero), present: len(vars.present), present_exprs: len(vars.present_exprs), proven: len(vars.proven) };
+  }
+  assume_condition(e, vars, guard!, true)
+}
+
+// `Parser::forget_facts`: every fact assumed since `m` taken back.
+fn forget_facts(vars: el_vars::Vars, m: FactMark) {
+  truncate_nonzero(vars, m.nonzero);
+  vars.present = vars.present[0..m.present];
+  vars.present_exprs = vars.present_exprs[0..m.present_exprs];
+  vars.proven = vars.proven[0..m.proven];
+}
+
 // `handle_null_coalesce` / `build_null_coalesce_default` for a plain scalar subject: the subject
 // read as its base, the default converted to the result (the base; the full integer where an
 // integer default does not fit a narrower one), and the subject's null test (`coalesce_not_null`:
@@ -13384,49 +13460,10 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     c = cc!;
   }
-  proof = divisor_proof(e, c.code);
-  dz = len(vars.nonzero);
-  if proof.then {
-    push_nonzero(vars, proof.v);
-  }
+  // `@FR-N-Guard`: the then-block reads with what the condition proves where it holds.
+  facts = assume_condition(e, vars, c.code, true);
   pp = presence_proof(e, c.code);
-  dp = len(vars.present);
-  if pp.then {
-    push_present(vars, pp.v);
-  }
-  // `projection_narrowing_from_condition`: a tested field path, present in one arm.
-  jp = projection_proof(e, c.code);
-  dj = len(vars.present_exprs);
-  if jp != null && jp!.then {
-    vars.present_exprs += [jp!.place];
-  }
-  // `variant_proof_from_condition`: an `is` test proves its place holds the variant there.
-  vp = len(vars.proven);
-  match el_ir::unspan(c.code) {
-    NdCall { def_nr: eq, args: eargs } => {
-      if el::def(e, eq).name == "OpEqInt" && len(eargs) == 2 {
-        match el_ir::unspan(eargs[0]!) {
-          NdCall { def_nr: cv, args: cargs } => {
-            if el::def(e, cv).name == "OpConvIntFromEnum" && len(cargs) == 1 {
-              match el_ir::unspan(cargs[0]!) {
-                NdCall { def_nr: ge, args: gargs } => {
-                  disc = match el_ir::unspan(eargs[1]!) { NdInt { n } => n, _ => -1 };
-                  if el::def(e, ge).name == "OpGetEnum" && len(gargs) > 0 && disc >= 0 {
-                    vars.proven += [el_vars::Proven { place: el_ir::unspan(gargs[0]!), disc: disc }];
-                  }
-                },
-                _ => {}
-              }
-            }
-          },
-          _ => {}
-        }
-      }
-    },
-    _ => {}
-  }
   t = parse_block(e, vars, then, "if", ir::TyUnknown { n: 0 });
-  vars.proven = vars.proven[0..vp];
   // The captures' bindings open the then-block; their names end with it.
   if len(bindings) > 0 {
     match t.code {
@@ -13441,9 +13478,7 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   for al in aliases {
     el_vars::restore_name(vars, al.name, al.nr);
   }
-  truncate_nonzero(vars, dz);
-  vars.present = vars.present[0..dp];
-  vars.present_exprs = vars.present_exprs[0..dj];
+  forget_facts(vars, facts);
   // An untyped `[]` arm where the bind's target names the vector is built in its place.
   if el_types::base(expected) is TyVector && syntax_tail_empty(e, then) {
     t = empty_arm(e, vars, t, expected, ir::TyVoid);
@@ -13474,15 +13509,8 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     return ex(el_ir::v_if(c.code, t.code, ir::NdNull), t.tp);
   }
-  if !proof.then {
-    push_nonzero(vars, proof.v);
-  }
-  if !pp.then {
-    push_present(vars, pp.v);
-  }
-  if jp != null && !jp!.then {
-    vars.present_exprs += [jp!.place];
-  }
+  // …and the else with what it proves where it fails.
+  facts = assume_condition(e, vars, c.code, false);
   // An untyped `[]` then arm gives the `else` nothing to be read against (`true_type`
   // unknown, as a `null` arm's).
   then_empty = syntax_tail_empty(e, then) && !(el_types::base(expected) is TyVector);
@@ -13491,7 +13519,6 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
   } else {
     parse_block(e, vars, other!, "else", if then_empty || null_then || t.tp is TyNever { ir::TyUnknown { n: 0 } } else { arm_expectation(t.tp) })
   };
-  truncate_nonzero(vars, dz);
   if null_then {
     nv = el_convert::null_of(e, f.tp);
     if f.tp is TyNull || f.tp is TyNever || nv == null {
@@ -13532,8 +13559,7 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     t = ex(block_typed(tc, f.tp), f.tp);
   }
-  vars.present = vars.present[0..dp];
-  vars.present_exprs = vars.present_exprs[0..dj];
+  forget_facts(vars, facts);
   // `@FR-Col-Cons` (loft#2407): an arm answering an untyped `[]` beside a vector arm is that
   // vector's empty literal, built once the other arm is read.
   if then_empty && el_types::base(f.tp) is TyVector {
@@ -15976,7 +16002,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
     return vector_match(e, vars, x, arms);
   }
   if st is TyTuple {
-    return tuple_match(e, vars, x, arms, node, at_bind);
+    return tuple_match(e, vars, x, arms, at_bind);
   }
   if !scalar_subject && !enum_subject && sd < 0 {
     if !el_types::is_unknown(st) {
@@ -16228,7 +16254,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
 // struct-enum member tests its ordinal (`variant_arm` over `TupleGet`) — chained from the last
 // arm back, ending in a wildcard arm's code or the result's null.  A guard, alternatives, a
 // binding and any other member pattern are refused by name.
-fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, node: integer, at_bind: boolean) -> Ex {
+fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, at_bind: boolean) -> Ex {
   elems = match el_types::base(x.tp) { TyTuple { elems: es } => es, _ => [] };
   tmp = el_vars::create_unique(vars, "match_tuple", x.tp);
   el_vars::set_defined(vars, tmp);
@@ -16411,7 +16437,9 @@ fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: vector
           ug = g.code;
         }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { arm_expectation(result) };
+        facts = assume_guard(e, vars, ug);
         b = arm_body(e, vars, body, expected);
+        forget_facts(vars, facts);
         if unsettled(result) {
           result = b.tp;
         }
@@ -19440,7 +19468,11 @@ fn constant(i: ir::Node) -> boolean {
 // boolean on both passes.  An operand of another type is refused by name.
 fn logical(e: el::El, vars: el_vars::Vars, is_or: boolean, l: integer, r: integer) -> Ex {
   a = expression(e, vars, l);
+  // `@FR-N-Guard`: the right operand runs where the left one decided it — `a && b` where `a`
+  // holds, `a || b` where it fails — and reads with what that side proves.
+  facts = assume_condition(e, vars, a.code, !is_or);
   b = expression(e, vars, r);
+  forget_facts(vars, facts);
   for x in [a, b] {
     if !e.first_pass && !el_types::is_unknown(x.tp) && !(el_types::base(x.tp) is TyBoolean) {
       el::refuse(e, "a `&&` or `||` operand that is not a boolean: {type_kind(x.tp)}");
