@@ -4333,9 +4333,14 @@ impl Parser {
             Type::Reference(td, Deps::frame1(buf_var)),
             "fwd_copy_409_ref",
         );
-        // The deps belong to the storage and the kind and the `?` to the value: the result
-        // is delivered through the buffer, and stays the struct-enum or the nullable the
-        // signature declared (`set_delivered_vector_return` says the same of a vector).
+        self.set_delivered_reference_return(td, buf_attr);
+    }
+
+    /// The signature of a function whose record answer is delivered through its return
+    /// buffer on every path: the deps belong to the storage and the kind and the `?` to the
+    /// value, so the result is the buffer and stays the struct-enum or the nullable the
+    /// signature declared (`set_delivered_vector_return` says the same of a vector).
+    fn set_delivered_reference_return(&mut self, td: u32, buf_attr: u16) {
         let dep = Deps::attrs(vec![buf_attr]);
         let declared = self.data.def(self.context).returned();
         let delivered = match declared.base() {
@@ -21876,6 +21881,11 @@ impl Parser {
         | Type::Trie(_, _, cur) = dep_base
         {
             let mut dep = cur.clone();
+            // Set where a `Bind` copies this site's WHOLE record tail into the buffer: every path
+            // of it then answers the buffer (or null), so none of its candidates is a return
+            // source any longer — the loft#1482 sentence, for the candidates the copy reaches
+            // without being the one bound (loft#2467).
+            let mut tail_copied = false;
             // #306: a returned local can itself hold a view — its TYPE deps name
             // the vars it borrows from (`chosen = table[idx]; chosen` gives
             // `chosen: Reference(M, [table])`).  Walk deps transitively and merge
@@ -22058,6 +22068,7 @@ impl Parser {
                             match ret.clone() {
                                 Type::Reference(td, _) | Type::Enum(td, true, _) => {
                                     self.materialize_return_into(td, tail, buf_var);
+                                    tail_copied = true;
                                 }
                                 // The CONDITIONAL delivery the note above names as what
                                 // would close it.  A tail that is a branch with a `null` arm
@@ -22140,6 +22151,7 @@ impl Parser {
                                         // local's own store was answered while the buffer the
                                         // rename gave another local was freed undropped.
                                         self.materialize_return_into(*td, tail, buf_var);
+                                        tail_copied = true;
                                     }
                                 }
                                 _ => {}
@@ -22281,13 +22293,17 @@ impl Parser {
             .into_iter()
             .filter(|(_, name)| {
                 let var = self.vars.var(name);
-                // NOT in the tail-source `expanded` set AND not borrowed by a
-                // MID-BODY `return` either.  `expanded` is built from the TAIL
+                // NOT in the tail-source `expanded` set — which justifies nothing once the
+                // tail was copied whole into the buffer (`tail_copied`): `fn base(t) -> T {
+                // match t { Opt { inner } => inner, _ => t } }` binds `inner`, and the copy
+                // takes the `t` arm with it, so a declared `t` read every answer as a view and
+                // a caller's branch of two such calls owned neither (loft#2467) — AND not
+                // borrowed by a MID-BODY `return` either.  `expanded` is built from the TAIL
                 // return sources, so it misses a param a mid-body `return` borrows
                 // (`fn f(t) -> M { if c { return t[i] ?? d; } d }` — the `t` view is
                 // genuine, not a stale copy-return artifact; 150-i306 native
                 // corruption when it was wrongly pruned).
-                !expanded.contains(&var) && !self.body_return_borrows(body, var)
+                (tail_copied || !expanded.contains(&var)) && !self.body_return_borrows(body, var)
             })
             .map(|(a, _)| a)
             .collect();

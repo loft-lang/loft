@@ -854,8 +854,14 @@ impl Parser {
     /// owned too, the consumer's own free claims the store, and a buffer here would
     /// free it a second time.
     pub(crate) fn own_joined_call_arms(&mut self, code: &mut Value, result_tp: &Type) {
+        // A struct-`Enum` is the same heap record as a struct (`Type::heap_def_nr`): asked of
+        // `Reference` alone, a join of an enum-returning call and a view of an enum field left
+        // the call's minted store with no owner (loft#2467's family).
         if self.first_pass
-            || !matches!(result_tp.base(), Type::Reference(_, _))
+            || !matches!(
+                result_tp.base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
             || result_tp.depend().is_empty()
         {
             return;
@@ -4802,10 +4808,13 @@ impl Parser {
         // that point, and a default left owner-less on the absent path leaks its store.
         let record_view = self.owned_record_subject(lhs_type, code)
             && Self::frame_view_of(&result_type, 0).is_some();
+        // A struct-`Enum` result is the same heap record (`own_joined_call_arms` says why).
         if !self.first_pass
             && (record_view
-                || (matches!(result_type.base(), Type::Reference(_, _))
-                    && !result_type.depend().is_empty()))
+                || (matches!(
+                    result_type.base(),
+                    Type::Reference(_, _) | Type::Enum(_, true, _)
+                ) && !result_type.depend().is_empty()))
             && let Some(owned) = self.materialise_owned_call(&rhs, &result_type)
         {
             rhs = owned;

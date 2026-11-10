@@ -4533,6 +4533,23 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             ));
         }
         Self::push_filter_step(&mut lp, if_step);
+        // A body that is one call (`[for a in xs { f(a) }]`) is bound as that call, so the slot
+        // takes the single bind's lowering — the dep strip and the copy-or-adopt that make it
+        // own the answer and release it after the element copy, as `v += [f(a)]`'s temp does.
+        // Wrapped in its braces' block, the slot inherited the call's declared borrow and freed
+        // nothing, so an answer the callee MINTED on one of its paths leaked per element
+        // (`@FR-F-Ret`, `@FR-O-Complete`; loft#2467's family).  A heap RECORD element only: a
+        // scalar or a collection slot has no copy-or-adopt to reach.
+        let body = match body.unspan() {
+            Value::Block(bl)
+                if matches!(in_t.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
+                    && bl.operators.len() == 1
+                    && matches!(bl.operators[0].unspan(), Value::Call(_, _)) =>
+            {
+                bl.operators[0].clone()
+            }
+            _ => body,
+        };
         lp.push(v_set(comp_var, body));
         lp.push(v_set(
             elm,

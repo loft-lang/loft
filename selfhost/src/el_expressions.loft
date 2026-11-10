@@ -14050,9 +14050,9 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
     }
     jt = el_types::with_deps(t.tp, deps);
     joined = el_ir::v_if(c.code, arm_typed(t.code, td), arm_typed(f.code, fd));
-    // `own_joined_call_arms` gives the arms a home only where the join is a `Reference`: a
-    // struct-enum join (`Type::Enum`) keeps its call arms as they are.
-    if !e.first_pass && len(deps) > 0 && el_types::base(jt) is TyReference {
+    // `own_joined_call_arms`: a join of heap records — a struct or a struct-enum — that borrows
+    // gives its owning call arms a home.
+    if !e.first_pass && len(deps) > 0 && el_types::is_heap_record(el_types::base(jt)) {
       joined = own_join_arm(e, vars, joined, jt);
     }
     return ex(joined, jt);
@@ -16489,7 +16489,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
           }
           result = el_types::with_deps(result, joined);
         }
-        if el_types::base(result) is TyReference && el_types::base(b.tp) is TyReference {
+        if el_types::is_heap_record(el_types::base(result)) && el_types::is_heap_record(el_types::base(b.tp)) {
           joined = el_types::deps(result);
           for x2 in outside_deps(b.code, el_types::deps(b.tp)) {
             if !joined.contains(x2) {
@@ -16745,7 +16745,7 @@ fn member_cond(e: el::El, vars: el_vars::Vars, pe: integer, sd: integer, subj: i
 // `own_joined_call_arms` (loft#1019) for a `match`: where the merged record borrows, an arm whose
 // value is a call answering a fresh record is given a home in this frame (`own_join_arm`).
 fn own_match_arms(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
-  if e.first_pass || !(el_types::base(x.tp) is TyReference) || len(el_types::deps(x.tp)) == 0 {
+  if e.first_pass || !el_types::is_heap_record(el_types::base(x.tp)) || len(el_types::deps(x.tp)) == 0 {
     return x;
   }
   ex(own_join_arm(e, vars, x.code, x.tp), x.tp)
