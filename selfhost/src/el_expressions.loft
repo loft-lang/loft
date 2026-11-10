@@ -17003,6 +17003,12 @@ fn pattern_bind(vars: el_vars::Vars, name: text, tp: ir::TypeT, names: vector<el
 
 // `parse_slice_pattern` for plain names, `_` and one `..` / `..rest` over `sv`.
 fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
+  // A repetition group (`( V )*`, `( V )+`) over a struct enum: `parse_slice_repetition`.
+  for el0 in elems {
+    if rep_group(e, el0) >= 0 && el_types::struct_enum_def(elm) >= 0 {
+      return slice_rep(e, vars, sv, elm, elems, names);
+    }
+  }
   // Each fixed element: a name ("_" for none) or, over a struct enum, a variant pattern (its
   // syntax node in `head_pat` / `tail_pat`, -1 for a name).
   head: vector<text> = [];
@@ -17092,6 +17098,226 @@ fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
   SliceArm { binds: binds, cond: cond, shape: SliceShape { min: fixed, exact: !has_rest } }
 }
 
+// `elem_tag_int(read_slice_elem(…)) == d`: the element of `sv` at `pos` holds variant `d`.
+fn rep_tag(e: el::El, elm: ir::TypeT, sv: integer, pos: ir::Node, d: integer) -> ir::Node {
+  at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: element_stride(e, elm) }, pos]);
+  el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [slice_elem(e, elm, at), ir::NdInt { n: 0 }])]), ir::NdInt { n: d }])
+}
+
+// The `PGroup` a slice element is when it is a `*` or `+` repetition — through a group capture
+// `g:( … )*` — or -1.
+fn rep_group(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    PCap { pat } => if pat == null { -1 } else { rep_group(e, pat!) },
+    PGroup { quant } => if quant == "*" || quant == "+" { n } else { -1 },
+    _ => -1
+  }
+}
+
+// `parse_slice_repetition` over a vector (no cursor): the run `( [x:] V [{ f, … }] )*` (or `+`,
+// with an optional separator `(Sep)`) from the head's end, a `_rep_end_N` local stepping over the
+// elements that are `V`; the arm matches where the run reaches the fixed tail (or, with a
+// `..rest` after the tail, where the tail fits after it).  The tail is read from the end, or
+// forward from the run's end when a rest follows; a variant there is tested and bound, a name
+// bound.  Once the arm commits, a capture collects the run's elements, a `{ f }` the run's
+// fields, and the rest what follows the tail — each a fresh vector.  A fixed head before the
+// run, an alternation or a `?` group, a literal and a cursor subject are refused by name.
+fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
+  sed = el_types::struct_enum_def(elm);
+  es = element_stride(e, elm);
+  int_t = ir::TyInteger { spec: i32_spec() };
+  if rep_group(e, elems[0] ?? -1) < 0 {
+    el::refuse(e, "a repetition after fixed elements of a slice");
+    return null;
+  }
+  first = elems[0] ?? -1;
+  group_cap = match e.p.nodes[first] { PCap { name } => name, _ => "" };
+  g = rep_group(e, first);
+  seqs: vector<integer> = [];
+  quant = "";
+  sep: integer? = null;
+  match e.p.nodes[g] {
+    PGroup { seqs: gs, quant: gq, sep: gsep } => { seqs = gs; quant = gq; sep = gsep; },
+    _ => {}
+  }
+  items: vector<integer> = [];
+  if len(seqs) == 1 {
+    match e.p.nodes[seqs[0] ?? -1] { PSeq { items: seq_items } => { items = seq_items; }, _ => {} }
+  }
+  if len(seqs) != 1 || len(items) != 1 {
+    el::refuse(e, "a repetition of an alternation or of more than one element");
+    return null;
+  }
+  // The repeated variant, its optional capture name and its field captures.
+  body = items[0] ?? -1;
+  cap_names: vector<text> = [];
+  match e.p.nodes[body] {
+    PCap { name, pat } => { cap_names += [name]; body = pat ?? -1; },
+    _ => {}
+  }
+  if group_cap != "" {
+    cap_names += [group_cap];
+  }
+  vname = "";
+  vfields: vector<integer> = [];
+  match e.p.nodes[body] {
+    PName { name, member, fields } => {
+      if member != "" {
+        el::refuse(e, "a qualified variant in a repetition");
+        return null;
+      }
+      vname = name;
+      vfields = fields;
+    },
+    _ => {}
+  }
+  a = if vname == "" { -1 } else { attr_nr(el::def(e, sed), vname) };
+  if a < 0 {
+    el::refuse(e, "a repetition of something other than a variant");
+    return null;
+  }
+  disc = match el::def(e, sed).attributes[a].value[0] { NdEnum { ord: o } => o, _ => 0 };
+  vd = el::variant_of(e, sed, vname);
+  sep_disc = -1;
+  if sep != null {
+    sn = match e.p.nodes[sep!] { PName { name, member, fields } => if member == "" && len(fields) == 0 { name } else { "" }, _ => "" };
+    sa = if sn == "" { -1 } else { attr_nr(el::def(e, sed), sn) };
+    if sa < 0 {
+      el::refuse(e, "a repetition separator other than a variant");
+      return null;
+    }
+    sep_disc = match el::def(e, sed).attributes[sa].value[0] { NdEnum { ord: o } => o, _ => 0 };
+  }
+  // The tail after the run, and a rest after it.
+  tail: vector<integer> = [];
+  rest = "";
+  has_rest = false;
+  for el0 in elems[1..] {
+    match e.p.nodes[el0] {
+      PRest { name } => { has_rest = true; rest = name; },
+      _ => {
+        if has_rest {
+          el::refuse(e, "a slice element after a rest that follows a repetition");
+          return null;
+        }
+        tail += [el0];
+      }
+    }
+  }
+  tail_len = len(tail);
+  forward = has_rest;
+  subj = ir::NdVar { n: sv };
+  ln = el_ir::cl(e, "OpLengthVector", [subj]);
+  end_v = el_vars::create_unique(vars, "rep_end", int_t);
+  el_vars::set_defined(vars, end_v);
+  end = ir::NdVar { n: end_v };
+  tail_conds: vector<ir::Node> = [];
+  binds: vector<ir::Node> = [];
+  named_t = el_types::with_deps(elm, el_types::deps(el_vars::tp(vars, sv)));
+  for t in tail {
+    pos = if forward { el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: t#index }]) } else { ir::NdInt { n: t#index - tail_len } };
+    at = el_ir::cl(e, "OpGetVector", [subj, ir::NdInt { n: es }, pos]);
+    nm = rename_of(e, t);
+    if e.p.nodes[t] is PWild {
+      continue;
+    } else if nm != "" {
+      bv = pattern_bind(vars, nm, named_t, names);
+      binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
+    } else if e.p.nodes[t] is PName {
+      va = slice_variant(e, vars, t, sed, slice_elem(e, elm, at), names);
+      if va == null {
+        return null;
+      }
+      if va!.cond != null {
+        tail_conds += [va!.cond!];
+      }
+      binds += va!.binds;
+    } else {
+      el::refuse(e, "a slice element after a repetition of this form: {syn_kind(e, t)}");
+      return null;
+    }
+  }
+  run: vector<ir::Node> = [el_ir::v_set(end_v, ir::NdInt { n: 0 })];
+  if sep_disc >= 0 {
+    first_v = el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, ln]), el_ir::v_if(rep_tag(e, elm, sv, ir::NdInt { n: 0 }, disc), el_ir::v_set(end_v, ir::NdInt { n: 1 }), ir::NdNull), ir::NdNull);
+    next = el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: 1 }]);
+    run += [first_v, el_ir::v_loop([
+      el_ir::v_if(el_ir::cl(e, "OpLeInt", [ln, next]), ir::NdBreak { n: 0 }, ir::NdNull),
+      el_ir::v_if(rep_tag(e, elm, sv, end, sep_disc), ir::NdNull, ir::NdBreak { n: 0 }),
+      el_ir::v_if(rep_tag(e, elm, sv, next, disc), ir::NdNull, ir::NdBreak { n: 0 }),
+      el_ir::v_set(end_v, el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: 2 }]))
+    ], "rep sep run")];
+  } else {
+    run += [el_ir::v_loop([
+      el_ir::v_if(el_ir::cl(e, "OpLeInt", [ln, end]), ir::NdBreak { n: 0 }, ir::NdNull),
+      el_ir::v_if(rep_tag(e, elm, sv, end, disc), ir::NdNull, ir::NdBreak { n: 0 }),
+      el_ir::v_set(end_v, el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: 1 }]))
+    ], "rep run")];
+  }
+  base = if forward && tail_len > 0 {
+    el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: tail_len }]), ln])
+  } else if has_rest {
+    el_ir::cl(e, "OpLeInt", [ir::NdInt { n: 0 }, ln])
+  } else {
+    el_ir::cl(e, "OpEqInt", [end, el_ir::cl(e, "OpMinInt", [ln, ir::NdInt { n: tail_len }])])
+  };
+  test = if quant == "+" { el_ir::v_if(base, el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, end]), ir::NdBoolean { b: false }) } else { base };
+  for tc in tail_conds {
+    test = el_ir::v_if(test, tc, ir::NdBoolean { b: false });
+  }
+  run += [test];
+  cond = el_ir::v_block(run, ir::TyBoolean, "rep cond");
+  step = if sep_disc >= 0 { 2 } else { 1 };
+  // The captures, then the field projections, then the rest: bound once the arm commits.
+  for cn in cap_names {
+    cv = pattern_bind(vars, cn, ir::TyVector { inner: elm, dep: [] }, names);
+    if !e.first_pass {
+      m = slice_vector(e, vars, sv, elm, cv, ir::NdInt { n: 0 }, end, step, null);
+      if m == null {
+        return null;
+      }
+      binds += [m!];
+    }
+  }
+  for f in vfields {
+    match e.p.nodes[f] {
+      PFieldPat { name: fname, pat } => {
+        if pat != null {
+          el::refuse(e, "a field pattern with a sub-pattern");
+          return null;
+        }
+        fa = if vd < 0 { -1 } else { attr_nr(el::def(e, vd), fname) };
+        if fa < 0 {
+          el::refuse(e, "a field the variant does not declare");
+          return null;
+        }
+        ft = el::def(e, vd).attributes[fa]!.typedef[0];
+        pv = pattern_bind(vars, fname, ir::TyVector { inner: ft, dep: [] }, names);
+        if !e.first_pass {
+          m = slice_vector(e, vars, sv, elm, pv, ir::NdInt { n: 0 }, end, step, SliceProj { vd: vd, fa: fa, ft: ft });
+          if m == null {
+            return null;
+          }
+          binds += [m!];
+        }
+      },
+      _ => {}
+    }
+  }
+  if rest != "" {
+    rv = pattern_bind(vars, rest, ir::TyVector { inner: elm, dep: [] }, names);
+    if !e.first_pass {
+      after = if forward && tail_len > 0 { el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: tail_len }]) } else { end };
+      m = slice_vector(e, vars, sv, elm, rv, after, ln, 1, null);
+      if m == null {
+        return null;
+      }
+      binds += [m!];
+    }
+  }
+  SliceArm { binds: binds, cond: cond, shape: SliceShape { min: tail_len, exact: false } }
+}
+
 // An element of the slice subject read at `at` (`OpGetVector(…)`): a struct enum's record in its
 // slot (`OpGetField(…, 0, T)`), a scalar or a text read at 0.
 fn slice_elem(e: el::El, elm: ir::TypeT, at: ir::Node) -> ir::Node {
@@ -17116,37 +17342,61 @@ fn slice_variant(e: el::El, vars: el_vars::Vars, pat: integer, sed: integer, x: 
   va
 }
 
-// `materialize_named_rest` + `materialize_iterator`'s element loop: the rest `rv` a fresh vector
-// in a store of its own, each element from `lo` up to `len - tail` read off `sv` and appended.
+// `materialize_named_rest`: the rest `rv` of a slice, the elements from `lo` up to `len - tail`.
 fn named_rest(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, rv: integer, lo: integer, tail: integer) -> ir::Node? {
+  hi = el_ir::cl(e, "OpMinInt", [el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: sv }]), ir::NdInt { n: tail }]);
+  slice_vector(e, vars, sv, elm, rv, ir::NdInt { n: lo }, hi, 1, null)
+}
+
+// A run's field projection (`( V { f } )*`): the variant `vd`'s field `fa`, of type `ft`.
+struct SliceProj { vd: integer, fa: integer, ft: ir::TypeT }
+
+// `materialize_named_rest` / `materialize_field_projection` with `materialize_iterator`'s element
+// loop: `rv` a fresh vector in a store of its own, each element of `sv` from `lo` up to `hi`
+// (`step` apart — 2 skips a separated run's separators) appended — the element itself, or with
+// `proj` its field.
+fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, rv: integer, lo: ir::Node, hi: ir::Node, step: integer, proj: SliceProj?) -> ir::Node? {
   int_t = ir::TyInteger { spec: i32_spec() };
-  vt = ir::TyVector { inner: elm, dep: [] };
+  vt_inner = if proj == null { elm } else { proj!.ft };
+  vt = ir::TyVector { inner: vt_inner, dep: [] };
   el_vars::set_var_type(vars, rv, vt);
-  lo_v = el_vars::create_unique(vars, "rest_lo", int_t);
-  hi_v = el_vars::create_unique(vars, "rest_hi", int_t);
-  idx = el_vars::create_unique(vars, "rest_idx", int_t);
+  prefix = if proj == null { "rest" } else { "proj" };
+  lo_v = el_vars::create_unique(vars, "{prefix}_lo", int_t);
+  hi_v = el_vars::create_unique(vars, "{prefix}_hi", int_t);
+  idx = el_vars::create_unique(vars, "{prefix}_idx", int_t);
   init = ir::NdInsert { items: [
-    el_ir::v_set(lo_v, ir::NdInt { n: lo }),
-    el_ir::v_set(hi_v, el_ir::cl(e, "OpMinInt", [el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: sv }]), ir::NdInt { n: tail }])),
+    el_ir::v_set(lo_v, lo),
+    el_ir::v_set(hi_v, hi),
     el_ir::v_set(idx, el_ir::cl(e, "OpConvIntFromNull", []))
   ] };
   i = ir::NdVar { n: idx };
-  advance = el_ir::v_set(idx, el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [i])]), ir::NdVar { n: lo_v }, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])));
+  advance = el_ir::v_set(idx, el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [i])]), ir::NdVar { n: lo_v }, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: step }])));
   brk = el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: hi_v }, i]), ir::NdBreak { n: 0 }, ir::NdNull);
   at = el_ir::v_block([advance, brk, i], int_t, "Iter range");
   sed = el_types::struct_enum_def(elm);
   es = if sed >= 0 { element_stride(e, elm) } else { elem_size(elm) };
-  read = el_ir::v_block([slice_elem(e, elm, el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at]))], elm, "Vector Index");
-  nm = el_types::elem_name(e, elm);
-  rows = vector_rows(e, elm, 0, true);
+  read = ir::NdNull;
+  if proj == null {
+    read = el_ir::v_block([slice_elem(e, elm, el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at]))], elm, "Vector Index");
+  } else {
+    fr = field_get(e, proj!.vd, proj!.fa, slice_elem(e, elm, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at])));
+    if fr == null || !el_convert::plain_scalar(proj!.ft) {
+      el::refuse(e, "a projected repetition field of this type: {type_kind(proj!.ft)}");
+      return null;
+    }
+    read = el_ir::v_block([fr!], proj!.ft, "Field projection");
+  }
+  nm = el_types::elem_name(e, vt_inner);
+  rows = vector_rows(e, vt_inner, 0, true);
   if nm == "" || rows == null {
-    el::refuse(e, "a slice pattern rest of this element type: {type_kind(elm)}");
+    el::refuse(e, "a slice pattern rest of this element type: {type_kind(vt_inner)}");
     return null;
   }
   r = rows!;
   ev = el_vars::create_unique(vars, "elm", ir::TyReference { n: el::def_nr(e, nm), dep: [rv] });
   // A record element is a view of the subject's element (`Vector Index`'s dep on the vector).
-  fv = el_vars::create_unique(vars, "slice_elm", if el_types::struct_enum_def(elm) >= 0 { el_types::with_deps(elm, [sv]) } else { elm });
+  record = proj == null && sed >= 0;
+  fv = el_vars::create_unique(vars, "slice_elm", if record { el_types::with_deps(elm, [sv]) } else { vt_inner });
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   el_vars::depend(vars, rv, db);
   el_vars::set_var_type(vars, ev, ir::TyReference { n: el::def_nr(e, nm), dep: [db] });
@@ -17155,11 +17405,11 @@ fn named_rest(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, rv: i
     el_ir::v_set(fv, read),
     el_ir::v_set(ev, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: rv }, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])),
     // A record element is copied into the new slot (`OpCopyRecord`), a scalar written there.
-    if sed >= 0 {
+    if record {
       place = element_place_type(e, elm);
       el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: fv }, el_ir::cl(e, "OpGetField", [w, ir::NdInt { n: 0 }, ir::NdInt { n: place }]), ir::NdInt { n: place }])
     } else {
-      el_ir::cl(e, tuple_set_op(elm), [w, ir::NdInt { n: 0 }, ir::NdVar { n: fv }])
+      el_ir::cl(e, tuple_set_op(vt_inner), [w, ir::NdInt { n: 0 }, ir::NdVar { n: fv }])
     },
     el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: rv }, w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])
   ];
@@ -17169,7 +17419,7 @@ fn named_rest(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, rv: i
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     init
   ];
-  if elm is TyText {
+  if vt_inner is TyText {
     ops += [el_ir::v_set(fv, ir::NdText { s: "" })];
   }
   ops += [el_ir::v_loop(body, "Slice materialise")];
