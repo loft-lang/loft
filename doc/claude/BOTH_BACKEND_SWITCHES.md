@@ -491,7 +491,10 @@ clause, so each arm test of a slice `match` reads the subject again, and
 repeat across a fresh record's fill is read again each time; **`LOFT_NO_SELF_REPLACE=1`**
 keeps the delivery of a buffer's own view into that buffer at every exit
 (`@FR-R-SelfReplace`, trace `LOFT_TRACE_SELF_REPLACE=1`); **`LOFT_NO_IN_RANGE=1`** keeps the discharge of a
-record element its loop proves in range (`@FR-R-InRange`); **`LOFT_NO_SINGLE_USE=1`** also keeps
+record element its loop proves in range (`@FR-R-InRange`), and **`LOFT_NO_LENGTH_LOCAL=1`** alone
+its length-local form — a range end `n` bound by `n = len(v)` earlier than the statement before
+the loop — together with `@FR-R-Base`'s counter clause reading the same local in the C writer;
+**`LOFT_NO_SINGLE_USE=1`** also keeps
 a comprehension's element temporary (`@FR-R-SingleUse`'s statement clause);
 **`LOFT_NO_DISCHARGE_INTO=1`** keeps the temporary of a text discharge that assigns a local
 (`@FR-R-DischargeInto`).  The `LOFT_TRACE_*` of the same name lists what each rewrote, per

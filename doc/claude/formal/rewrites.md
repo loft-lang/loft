@@ -178,7 +178,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Alias)` | `/versioned` c, native |
 | `(R-Apart)` | `R-Apart` c, native · `/records` c, native · `/records/boundary` c · `/vector` c, native |
 | `(R-AppendTwin)` | `R-AppendTwin` c, native · `/loop-window` c · `/mint` c |
-| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c |
+| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/length-local` c |
 | `(R-BoundAppend)` | `R-BoundAppend` parse |
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
@@ -230,7 +230,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-HotInline)` | not counted — executor: #hot operators inlined into the lean loop |
 | `(R-InPlace)` | not counted — condition: the write test the header hoists ask; counted under them |
 | `(R-InPlaceLiteral)` | `R-InPlaceLiteral` parse · `/child` parse |
-| `(R-InRange)` | `R-InRange` parse |
+| `(R-InRange)` | `R-InRange` parse · `/length-local` parse |
 | `(R-Inline)` | `R-Inline` c · `/helper` c |
 | `(R-InlineLeaf)` | `R-InlineLeaf` parse |
 | `(R-Inputs)` | `R-Inputs` c, native |
@@ -1242,6 +1242,22 @@ since nothing ties the counter to that vector's length.  zttext `locate` with th
 of `(R-InRange)` and the held-element clause of `(R-RecPtr)`: 3.61× → 1.15× (clang), 1.26×
 (gcc).  Switch `LOFT_NO_COUNTER_IN_RANGE`.  Site: `FnWriter::counters_in_range`.  Guard
 `tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r9, falsified on the verify build's proof).
+
+**The length-local form.**  The end may also be a copy of a local `n` that holds `len(v)` for
+the rest of the function: `n = len(v)` its one assignment, and nothing that can run after it —
+the rest of each enclosing statement list, and for a loop around it the whole loop — writing
+`v` or a variable viewing it (`(N-Index)`'s `length_locals`, the parser's own answer; a call's
+writes are its callee's, a function value's call is a write).  Then `v`'s length at the loop is
+`n`, and the clause holds as above.  `v` must be the frame's own vector: a local, or a
+`@FR-R-WorkBuffer` parameter, viewing no declared parameter.  A declared parameter can name the
+same vector as another parameter or as a field of one (`f(a, a)`, `f(s.items, s)`), and a
+write through that other name shortens `v` where `length_locals` cannot see it.  hex_form
+`boundary_loops` (`ne = len(ea)` taken before the loop nest): 11.18 → 9.24 ms (gcc), 18.26 →
+12.37 ms (clang), twin 6.05 ms.  Switch `LOFT_NO_LENGTH_LOCAL`.  Sites:
+`length_locals::own_length_locals` (the one answer, read by `(R-InRange)` too),
+`FnWriter::length_locals`, `peel::range_lens`.  Census row `R-Base/length-local`.  Guard
+`tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft` (a2 falsified without the
+write test, a6/a7 without the own-vector test).
 
 ### A record local declared in a loop keeps its store
 
@@ -7451,6 +7467,20 @@ that could be `d` declines, one holding a text or a scalar (a result buffer) doe
 does a record parameter whose type holds scalars only.  It
 dropped the `?` in ten of zttext's walks over `d.pieces`.  Guard
 `tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r1, r2, r4, r5).
+
+**The length-local form.**  The range end may be a local `n` bound by `n = len(v)` as the
+statement right before the loop, or anywhere before it when `n` holds the length of a vector of
+the frame's own for the rest of the function — the same locals `(R-Base)`'s counter clause
+reads (`length_locals::own_length_locals`: `n` assigned once, nothing after it writing `v`,
+and `v` a local or a work buffer viewing no declared parameter).  The body check is the one
+above.  drawing's `polygon_generic` (`pg_ec = len(pg_table)` taken before the row loop): the
+element's `?` and its minted default are gone, fill_circle 14.47 → 12.84 µs (clang), 18.97 →
+18.18 (gcc); wide_line 4.60 → 4.20 (clang), 4.31 → 4.19 (gcc).  The counter clause needs this
+form beside it on a vector of records: its proven read alone leaves the discharge testing a
+loop-invariant record number, which clang unswitches (those routines 4–6 % slower).  Switch
+`LOFT_NO_LENGTH_LOCAL`.  Site: `in_range::length_local_alias`.  Census row
+`R-InRange/length-local`.  Guard `tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft`
+(a8–a10; a10 falsified on `--interpret` with the own-vector test struck).
 
 ### A computed range start is one counter, stepped at the test
 

@@ -295,7 +295,7 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-Base`'s counter clause: the vector whose length the statements just before a
     /// loop gave its range end (`end = len(v)`), and per enclosing such loop the counters
     /// proven inside the held vector (counter, header).
-    range_lens: Vec<(u16, Value)>,
+    range_lens: Vec<(u16, Value, bool)>,
     in_range: Vec<(u16, String)>,
     /// `n = len(v)` as the statement right before the `for` block being written (`v` by `n`).
     len_alias: Option<(u16, Value)>,
@@ -307,6 +307,9 @@ pub(crate) struct FnWriter<'a> {
     /// The values the statements just before a loop gave its range ends (`end = x`).
     range_ends: Vec<(u16, Value)>,
     set_once: Option<std::rc::Rc<std::collections::HashSet<u16>>>,
+    /// `@FR-R-Base`'s counter clause, length-local form: the locals that hold a local vector's
+    /// length for the rest of the function (`(N-Index)`'s `length_locals`), as (local, vector).
+    length_locals: Option<std::rc::Rc<Vec<(u16, u16)>>>,
     /// `@FR-R-Transient`'s work clause: the `&text` parameter a `__wr` twin answers (its result
     /// is the caller's buffer), and the call a transient body sends to such a twin.
     work_ret: Option<u16>,
@@ -804,6 +807,7 @@ impl<'a> FnWriter<'a> {
             grid_binds: Vec::new(),
             range_ends: Vec::new(),
             set_once: None,
+            length_locals: None,
             work_ret: None,
             wr_call: None,
             chain_guards: 0,
@@ -2962,7 +2966,13 @@ impl<'a> FnWriter<'a> {
                 self.grid_bind(*var, x);
             }
             self.peel_seeds = peel::seeds(ops, i);
-            self.range_lens = peel::range_lens(self.cx.data, ops, i, self.len_alias.as_ref());
+            let locals = if matches!(ops[i].unspan(), Value::Loop(_)) {
+                self.length_locals()
+            } else {
+                std::rc::Rc::default()
+            };
+            self.range_lens =
+                peel::range_lens(self.cx.data, ops, i, self.len_alias.as_ref(), &locals);
             self.range_ends = peel::range_ends(ops, i);
             // `n = len(v)` right before a `for` block: the block's range end `n` is `len(v)`.
             // Set afresh at every `for` block, so it never outlives the statement it reads.
@@ -3420,11 +3430,11 @@ impl<'a> FnWriter<'a> {
         let Value::Var(end) = rc.hi.unspan() else {
             return;
         };
-        let Some(vec) = self
+        let Some((vec, local)) = self
             .range_lens
             .iter()
-            .find(|(e, _)| e == end)
-            .map(|(_, v)| v.clone())
+            .find(|(e, _, _)| e == end)
+            .map(|(_, v, l)| (v.clone(), *l))
         else {
             return;
         };
@@ -3459,8 +3469,27 @@ impl<'a> FnWriter<'a> {
         if assigned {
             return;
         }
+        if local {
+            crate::rewrite_census::fired("R-Base/length-local", 1);
+        }
         self.in_range.push((rc.index, h.clone()));
         self.in_range.push((rc.loop_var, h));
+    }
+
+    /// The locals of this function that hold the length of a vector of its own from their one
+    /// assignment on (`length_locals::own_length_locals`, shared with `@FR-R-InRange`), read
+    /// here by `@FR-R-Base`'s counter clause for a range end copied from such a local.
+    fn length_locals(&mut self) -> std::rc::Rc<Vec<(u16, u16)>> {
+        if let Some(l) = &self.length_locals {
+            return l.clone();
+        }
+        let l = std::rc::Rc::new(crate::parser::length_locals::own_length_locals(
+            self.cx.data,
+            self.d,
+            self.vars,
+        ));
+        self.length_locals = Some(l.clone());
+        l
     }
 
     /// The variables the function sets in more than one place (`grid_bind` trusts the others).

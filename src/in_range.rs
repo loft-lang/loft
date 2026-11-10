@@ -10,7 +10,10 @@
 //! only when the element is a record — an index outside the vector; an in-range element of a
 //! vector of records IS a record.  Inside `for i in 0..len(v)` whose body can neither resize `v`
 //! nor assign `i` (the check `@FR-R-ForwardWalk` makes, `forward_walk::check_body`), every `i` is
-//! in range, so the discharge block is the read alone.
+//! in range, so the discharge block is the read alone.  The range end may also be a local `n`
+//! bound by `n = len(v)` as the statement before the loop, or anywhere before it when `n` holds
+//! the length of a vector of the frame's own for the rest of the function (the length-local
+//! form, `parser::length_locals::own_length_locals`, which the C writer's `@FR-R-Base` reads too).
 //!
 //! Not for a scalar element: `v[i]?` also discharges an element whose VALUE is null (a non-null
 //! scalar type can hold the sentinel, @C80), which no loop bound rules out.
@@ -87,7 +90,7 @@ fn len_bind(ops: &Ops, stmt: &Value) -> Option<(u16, Src)> {
     Some((*n, src(ops, &largs[0])?))
 }
 
-/// `for i in 0..len(v)`, or `for i in 0..n` right after `n = len(v)` (`alias`).
+/// `for i in 0..len(v)`, or `for i in 0..n` where `n` is `len(v)` (`alias`).
 fn match_range(
     ops: &Ops,
     block: &Block,
@@ -183,15 +186,34 @@ fn strip(ops: &Ops, node: &mut Value, v: Src, idx: u16, lv: u16, n: &mut usize) 
     node.for_each_child_mut(&mut |c| strip(ops, c, v, idx, lv, n));
 }
 
+/// The length local a `for i in 0..n` block's end `n` is, as an alias: `n` holds `len(v)` for
+/// the rest of the function (`own`), so it is `v`'s length where the loop starts.
+fn length_local_alias(stmt: &Value, own: &[(u16, u16)]) -> Option<(u16, Src)> {
+    let Value::Block(fb) = stmt.unspan() else {
+        return None;
+    };
+    if fb.name != "For block" {
+        return None;
+    }
+    let Value::Set(_, end) = plain(&fb.operators).first()? else {
+        return None;
+    };
+    let n = var(end)?;
+    own.iter()
+        .find(|(m, _)| *m == n)
+        .map(|(n, v)| (*n, Src::Var(*v)))
+}
+
 fn rewrite_in(
     data: &Data,
     ops: &Ops,
     vars: &crate::variables::Function,
+    own: &[(u16, u16)],
     node: &mut Value,
     fname: &str,
 ) -> usize {
     let mut n = 0;
-    node.for_each_child_mut(&mut |c| n += rewrite_in(data, ops, vars, c, fname));
+    node.for_each_child_mut(&mut |c| n += rewrite_in(data, ops, vars, own, c, fname));
     let block = match node {
         Value::Block(b) => b,
         // A wrapped block was reached as this node's child, just above.
@@ -199,21 +221,24 @@ fn rewrite_in(
         _ => return n,
     };
     // `n = len(v)` and, as the very next statement, `for i in 0..n`: nothing between them can
-    // shrink `v`, so `n` is its length where the loop starts.
-    for k in 1..block.operators.len() {
+    // shrink `v`, so `n` is its length where the loop starts.  Or `n` is a length local.
+    for k in 0..block.operators.len() {
         // The statement before, past the line marks.
-        let Some(prev) = block.operators[..k]
+        let prev = block.operators[..k]
             .iter()
             .rev()
             .find(|o| !matches!(o.unspan(), Value::Line(_)))
-        else {
-            continue;
-        };
-        let Some(alias) = len_bind(ops, prev) else {
+            .and_then(|prev| len_bind(ops, prev));
+        let local = length_local_alias(&block.operators[k], own);
+        let Some(alias) = local.or(prev) else {
             continue;
         };
         if let Value::Block(fb) = block.operators[k].unspan_mut() {
-            n += rewrite_for(data, ops, vars, fb, Some(alias), fname);
+            let dropped = rewrite_for(data, ops, vars, fb, Some(alias), fname);
+            if local.is_some() {
+                crate::rewrite_census::fired("R-InRange/length-local", dropped);
+            }
+            n += dropped;
         }
     }
     n + rewrite_for(data, ops, vars, block, None, fname)
@@ -477,9 +502,14 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             continue;
         }
         let fname = def.name().to_string();
+        let own = crate::parser::length_locals::own_length_locals(
+            data,
+            d,
+            &data.definitions[d as usize].variables,
+        );
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
         let vars = data.definitions[d as usize].variables.clone();
-        let n = rewrite_in(data, &ops, &vars, &mut code, &fname);
+        let n = rewrite_in(data, &ops, &vars, &own, &mut code, &fname);
         data.definitions[d as usize].code = code;
         if n > 0 {
             data.definitions[d as usize].variables.reset_intervals();

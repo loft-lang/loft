@@ -1963,7 +1963,7 @@ mod generic_writes;
 mod generics;
 mod hints;
 mod imports;
-mod length_locals;
+pub(crate) mod length_locals;
 mod members;
 mod monomorph;
 mod nullable_slots;

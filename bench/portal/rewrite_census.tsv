@@ -2318,11 +2318,12 @@ crypto	c76d7f409	rust	R-ZeroCount	8
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Alias/versioned	2
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Apart/vector	2
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Base	132
-drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Base/counter	27
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Base/counter	28
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Base/length-local	1
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-BoundedNest/kernel	1
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Callee	5
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CharWalk	1
-drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CompleteWrite	250
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CompleteWrite	249
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Const/fn	1
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-CopyView	2
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Counter	1047
@@ -2352,7 +2353,8 @@ drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Heade
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Header/narrow	21
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Header/rebind	6
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-InPlaceLiteral	8
-drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-InRange	3
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-InRange	4
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-InRange/length-local	1
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Inline	34
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Inline/helper	5
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-InlineLeaf	187
@@ -2381,7 +2383,7 @@ drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushF
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushFill/run-header	3
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-PushRec	14
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range	416
-drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range/index	90
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-Range/index	89
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RangedCall	25
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr	54
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	c	R-RecPtr/held	17
@@ -2421,7 +2423,7 @@ drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Bo
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-BoundedNest/kernel	1
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Callee	12
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CharWalk	12
-drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CompleteWrite	250
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CompleteWrite	249
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Const/fn	1
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-CopyView	2
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Counter	814
@@ -2451,7 +2453,8 @@ drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-He
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Header/kept	91
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Header/kept-twin	34
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-InPlaceLiteral	8
-drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-InRange	3
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-InRange	4
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-InRange/length-local	1
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-InlineLeaf	187
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Inputs	235
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Invariant	180
@@ -2479,7 +2482,7 @@ drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Pu
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-Range	916
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RangedCall	14
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RecPtr	241
-drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RecPtr/index	23
+drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RecPtr/index	21
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RecPtr/nested	19
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RefillBuffer	47
 drawing	0bde9ed2c+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	rust	R-RefillText	5
@@ -3718,7 +3721,8 @@ hex_fit	7db0174ab	rust	R-Wrapper	145
 hex_fit	7db0174ab	rust	R-ZeroCount	8
 hex_form	7db0174ab	c	R-Alias/versioned	1
 hex_form	7db0174ab	c	R-Base	18
-hex_form	7db0174ab	c	R-Base/counter	6
+hex_form	7db0174ab	c	R-Base/counter	10
+hex_form	7db0174ab	c	R-Base/length-local	2
 hex_form	7db0174ab	c	R-BoundedNest/kernel	1
 hex_form	7db0174ab	c	R-Callee	1
 hex_form	7db0174ab	c	R-CharWalk	1
@@ -3755,7 +3759,7 @@ hex_form	7db0174ab	c	R-PushFill/fill	3
 hex_form	7db0174ab	c	R-PushFill/run	1
 hex_form	7db0174ab	c	R-PushFill/several	1
 hex_form	7db0174ab	c	R-Range	117
-hex_form	7db0174ab	c	R-Range/index	20
+hex_form	7db0174ab	c	R-Range/index	16
 hex_form	7db0174ab	c	R-RangedCall	14
 hex_form	7db0174ab	c	R-RecPtr	2
 hex_form	7db0174ab	c	R-RecPtr/held	1
@@ -4051,7 +4055,8 @@ hex_place	7db0174ab	rust	R-Wrapper	64
 hex_place	7db0174ab	rust	R-ZeroCount	8
 hex_recover	7db0174ab	c	R-Alias/versioned	6
 hex_recover	7db0174ab	c	R-Base	46
-hex_recover	7db0174ab	c	R-Base/counter	14
+hex_recover	7db0174ab	c	R-Base/counter	20
+hex_recover	7db0174ab	c	R-Base/length-local	5
 hex_recover	7db0174ab	c	R-BoundedNest/kernel	1
 hex_recover	7db0174ab	c	R-Callee	1
 hex_recover	7db0174ab	c	R-CompleteWrite	79
@@ -4098,7 +4103,7 @@ hex_recover	7db0174ab	c	R-PushFill/run-header	8
 hex_recover	7db0174ab	c	R-PushFill/several	1
 hex_recover	7db0174ab	c	R-PushRec	2
 hex_recover	7db0174ab	c	R-Range	154
-hex_recover	7db0174ab	c	R-Range/index	28
+hex_recover	7db0174ab	c	R-Range/index	22
 hex_recover	7db0174ab	c	R-RangedCall	14
 hex_recover	7db0174ab	c	R-RecPtr	3
 hex_recover	7db0174ab	c	R-RecPtr/held	1
@@ -6122,7 +6127,7 @@ zttext	c76d7f409	c	R-Base/counter	22
 zttext	c76d7f409	c	R-BoundedNest/kernel	1
 zttext	c76d7f409	c	R-CharWalk	5
 zttext	c76d7f409	c	R-Compact/prepend	1
-zttext	c76d7f409	c	R-CompleteWrite	159
+zttext	c76d7f409	c	R-CompleteWrite	158
 zttext	c76d7f409	c	R-Counter	504
 zttext	c76d7f409	c	R-DischargeInto	1
 zttext	c76d7f409	c	R-ExitVector	24
@@ -6146,7 +6151,8 @@ zttext	c76d7f409	c	R-Header	44
 zttext	c76d7f409	c	R-Header/apart	4
 zttext	c76d7f409	c	R-Header/apart-param	4
 zttext	c76d7f409	c	R-InPlaceLiteral	11
-zttext	c76d7f409	c	R-InRange	43
+zttext	c76d7f409	c	R-InRange	44
+zttext	c76d7f409	c	R-InRange/length-local	1
 zttext	c76d7f409	c	R-Inline	14
 zttext	c76d7f409	c	R-Inline/helper	3
 zttext	c76d7f409	c	R-InlineLeaf	33
@@ -6208,7 +6214,7 @@ zttext	c76d7f409	rust	R-Base	115
 zttext	c76d7f409	rust	R-BoundedNest/kernel	1
 zttext	c76d7f409	rust	R-CharWalk	21
 zttext	c76d7f409	rust	R-Compact/prepend	1
-zttext	c76d7f409	rust	R-CompleteWrite	159
+zttext	c76d7f409	rust	R-CompleteWrite	158
 zttext	c76d7f409	rust	R-Counter	338
 zttext	c76d7f409	rust	R-DischargeInto	1
 zttext	c76d7f409	rust	R-ExitVector	24
@@ -6234,7 +6240,8 @@ zttext	c76d7f409	rust	R-Header/apart-param	6
 zttext	c76d7f409	rust	R-Header/kept	49
 zttext	c76d7f409	rust	R-Header/kept-twin	33
 zttext	c76d7f409	rust	R-InPlaceLiteral	11
-zttext	c76d7f409	rust	R-InRange	43
+zttext	c76d7f409	rust	R-InRange	44
+zttext	c76d7f409	rust	R-InRange/length-local	1
 zttext	c76d7f409	rust	R-InlineLeaf	33
 zttext	c76d7f409	rust	R-Inputs	6
 zttext	c76d7f409	rust	R-Invariant	26

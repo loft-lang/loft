@@ -52,27 +52,36 @@ pub(super) fn seeds(ops: &[Value], i: usize) -> Vec<(u16, i64)> {
 }
 
 /// The range ends the (at most two) statements before `ops[i]` set to a vector's length
-/// (`end = len(v)`), when `ops[i]` is a loop: `@FR-R-Base`'s counter clause reads them.
+/// (`end = len(v)`, or `end = n` for a length local `n`, marked `true`), when `ops[i]` is a
+/// loop: `@FR-R-Base`'s counter clause reads them.
 pub(super) fn range_lens(
     data: &crate::data::Data,
     ops: &[Value],
     i: usize,
     alias: Option<&(u16, Value)>,
-) -> Vec<(u16, Value)> {
+    locals: &[(u16, u16)],
+) -> Vec<(u16, Value, bool)> {
     if !matches!(ops[i].unspan(), Value::Loop(_)) {
         return Vec::new();
     }
     let mut out = Vec::new();
     for op in ops[i.saturating_sub(2)..i].iter().rev() {
-        if let Some(bind) = len_bind(data, op) {
-            out.push(bind);
+        if let Some((end, v)) = len_bind(data, op) {
+            out.push((end, v, false));
         } else if let Value::Set(end, x) = op.unspan()
             && let (Value::Var(n), Some((an, v))) = (x.unspan(), alias)
             && n == an
         {
             // `end = n` where the statement before the `for` block was `n = len(v)`; the
             // loop body may not assign `n` (`counters_in_range` checks).
-            out.push((*end, v.clone()));
+            out.push((*end, v.clone(), false));
+        } else if let Value::Set(end, x) = op.unspan()
+            && let Value::Var(n) = x.unspan()
+            && let Some((_, v)) = locals.iter().find(|(m, _)| m == n)
+        {
+            // `end = n` where `n` holds `len(v)` for the rest of the function (`length_locals`):
+            // assigned once, and nothing that can run after it writes `v`.
+            out.push((*end, Value::Var(*v), true));
         }
     }
     out

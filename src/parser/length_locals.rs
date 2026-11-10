@@ -66,10 +66,66 @@ pub(crate) fn settle(code: &Value, data: &Data, found: &[(u16, u16)]) -> Option<
         .then_some((*n, key))
 }
 
-/// Is `op` a `len` on a collection — the free `len` or a `t_<N><Type>_len` method?
+/// `@FR-R-Base`'s and `@FR-R-InRange`'s length-local form: the `(local, vector)` pairs of
+/// function `d` whose local holds the length of a vector of the frame's own (`own_vector`),
+/// named as the variable itself — so a loop over `0..n` walks `0..len(v)`.  One answer for the
+/// IR pass and the C writer.  `LOFT_NO_LENGTH_LOCAL=1` answers none.
+pub(crate) fn own_length_locals(data: &Data, d: u32, vars: &Function) -> Vec<(u16, u16)> {
+    if crate::env_once!(std::env::var("LOFT_NO_LENGTH_LOCAL").is_ok_and(|v| v != "0")) {
+        return Vec::new();
+    }
+    let def = data.def(d);
+    let code = def.code();
+    length_locals(code, data, vars)
+        .into_iter()
+        .filter(|(n, v)| {
+            own_vector(def.attributes(), vars, *v) && holds_var_length(code, data, *n, *v)
+        })
+        .collect()
+}
+
+/// Is `v` a vector of the frame's own — a local, or a `@FR-R-WorkBuffer` parameter (a local
+/// promoted to a scratch store the caller supplies) — viewing, through its deps, no other
+/// parameter?  `length_locals` answers for the writes through `v` and through what it views;
+/// a declared parameter can name the same vector as another parameter or as a field of one
+/// (`f(a, a)`, `f(s.items, s)`), and a write through that other name shortens `v` unseen.
+fn own_vector(attrs: &[crate::data::Attribute], vars: &Function, v: u16) -> bool {
+    let user_param =
+        |x: u16| vars.is_argument(x) && !attrs.get(x as usize).is_some_and(|a| a.work_buffer);
+    let mut seen = vec![v];
+    let mut i = 0;
+    while i < seen.len() {
+        let x = seen[i];
+        if user_param(x) {
+            return false;
+        }
+        for d in vars.tp(x).depend() {
+            if !seen.contains(&d) {
+                seen.push(d);
+            }
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Is `n`'s one assignment in `code` the length of the variable `v` ITSELF (`n = len(v)`), not
+/// of a field reached through it?  `length_locals` keys a field's length by its record, and a
+/// reader holding the vector needs the vector.
+pub(crate) fn holds_var_length(code: &Value, data: &Data, n: u16, v: u16) -> bool {
+    code.any_node(&mut |node| {
+        matches!(node, Value::Set(m, rhs) if *m == n
+            && matches!(rhs.unspan(), Value::Call(op, args) if args.len() == 1
+                && is_len_call(data, *op)
+                && matches!(vec_key(&args[0], data), Some(VecKey::Var(x)) if x == v)))
+    })
+}
+
+/// Is `op` a `len` on a collection — the free `len`, a `t_<N><Type>_len` method, or the
+/// `OpLengthVector` the method lowers to (the spelling a writer meets in the finished IR)?
 pub(crate) fn is_len_call(data: &Data, op: u32) -> bool {
     let n = data.def(op).name.as_str();
-    n == "n_len" || (n.starts_with("t_") && n.ends_with("_len"))
+    n == "n_len" || n == "OpLengthVector" || (n.starts_with("t_") && n.ends_with("_len"))
 }
 
 /// The variable a write to the keyed vector goes through.
