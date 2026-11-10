@@ -4371,6 +4371,57 @@ use a separate collection or add after the loop"
         clippy::too_many_lines,
         reason = "the assignment's bracketing steps around its inner parse, one per concern"
     )]
+    /// `@FR-E-Left` — `place = value` reduces the PLACE first.  A record value is lowered
+    /// with its place after it (`OpCopyRecord(value, place)`), and the in-place literal
+    /// re-derives the place once per field, so a value that writes a variable the place reads
+    /// (`v[j] = It { n: bump(j) }`, `bump(i: &integer)`) moved the place mid-assignment: the
+    /// fields landed in two elements.  Such a variable is read into a temporary before the
+    /// statement and the place reads the temporary; every other assignment is untouched.
+    fn fix_place_before_value(&mut self, code: &mut Value, to: &Value) {
+        if !matches!(to.unspan(), Value::Call(..)) || self.first_pass {
+            return;
+        }
+        let mut read: Vec<u16> = Vec::new();
+        to.any_node(&mut |n| {
+            if let Value::Var(x) = n.unspan()
+                && !read.contains(x)
+            {
+                read.push(*x);
+            }
+            false
+        });
+        let create_stack = self.data.def_nr("OpCreateStack");
+        let written = |x: u16, code: &Value| {
+            code.any_node(&mut |n| match n.unspan() {
+                Value::Set(y, _) => *y == x,
+                Value::Call(d, a) => {
+                    *d == create_stack
+                        && matches!(a.first().map(Value::unspan), Some(Value::Var(y)) if *y == x)
+                }
+                _ => false,
+            })
+        };
+        let mut fixed = to.clone();
+        let mut prefix = Vec::new();
+        for x in read {
+            if !matches!(self.vars.tp(x).base(), Type::Integer(_) | Type::Character)
+                || !written(x, code)
+            {
+                continue;
+            }
+            let tp = self.vars.tp(x).clone();
+            let t = self.create_unique("__place_ix", &tp);
+            super::closures::replace_var(&mut fixed, x, &Value::Var(t));
+            prefix.push(Value::Set(t, Box::new(Value::Var(x))));
+        }
+        if prefix.is_empty() {
+            return;
+        }
+        replace_subtree(code, to, &fixed);
+        prefix.push(std::mem::replace(code, Value::Null));
+        *code = Value::Insert(prefix);
+    }
+
     pub(crate) fn parse_assign_op(
         &mut self,
         code: &mut Value,
@@ -4446,6 +4497,9 @@ use a separate collection or add after the loop"
         let place_fact = std::mem::take(&mut self.operand_fact);
         let outer_snapshot = self.tuple_self_snapshot.take();
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
+        if op == "=" {
+            self.fix_place_before_value(code, to);
+        }
         self.prefix_tuple_snapshot(code, outer_snapshot);
         let value_fact = std::mem::take(&mut self.operand_fact);
         self.check_assignment(op, to, &place_fact, &value_fact);
@@ -13446,4 +13500,13 @@ mod tests {
         }
         assert!(inline_ref_set_in(&w, 7), "deeply nested Set must be found");
     }
+}
+
+/// Every occurrence of the subtree `from` in `code` becomes `with`.
+fn replace_subtree(code: &mut Value, from: &Value, with: &Value) {
+    if code.unspan() == from.unspan() {
+        *code = with.clone();
+        return;
+    }
+    code.for_each_child_mut(&mut |c| replace_subtree(c, from, with));
 }

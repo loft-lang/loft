@@ -417,6 +417,34 @@ fn collect_move_dest(
 }
 
 /// Does `node` mention variable `v` anywhere inside it?
+/// The variables `node` reads, in order, each once.
+fn vars_of(node: &Value, out: &mut Vec<u16>) {
+    if let Value::Var(x) = node.unspan()
+        && !out.contains(x)
+    {
+        out.push(*x);
+    }
+    node.for_each_child(&mut |c| vars_of(c, out));
+}
+
+/// Does `node` read `v` or assign it?  [`mentions_var`] sees only the reads: a `Set` names its
+/// variable outside its children.
+fn touches_var(node: &Value, v: u16) -> bool {
+    if matches!(node.unspan(), Value::Set(x, _) if *x == v) {
+        return true;
+    }
+    if mentions_var(node, v) {
+        return true;
+    }
+    let mut found = false;
+    node.for_each_child(&mut |c| {
+        if !found && touches_var(c, v) {
+            found = true;
+        }
+    });
+    found
+}
+
 fn mentions_var(node: &Value, v: u16) -> bool {
     if matches!(node.unspan(), Value::Var(x) if *x == v) {
         return true;
@@ -477,9 +505,15 @@ pub(super) fn collect_move_disturbed(
                 continue;
             };
             let Some(slot) = dest.get(s) else { continue };
-            let Some(base) = base_var_of(slot, mo) else {
+            if base_var_of(slot, mo).is_none() {
                 continue;
-            };
+            }
+            // Every variable the destination READS — its container and each index (`u[m]`): a
+            // statement between the build and the copy that reads or writes one moves the
+            // place the retargeted build lands in (`@FR-E-Left`: the place is the one the
+            // assignment names when it runs, not the one at the source's build).
+            let mut slot_vars = Vec::new();
+            vars_of(slot, &mut slot_vars);
             // Where `s` is first defined in THIS list; absent (built in another block) is
             // treated as "from the top", which is the conservative reading.
             let def_idx = ops
@@ -501,7 +535,7 @@ pub(super) fn collect_move_disturbed(
                 // are not a disturbance — that is what keeps `o.f = T { x: o.g }` elidable.
                 let writes_source = matches!(between.unspan(), Value::Call(_, a)
                     if matches!(a.first().map(Value::unspan), Some(Value::Var(v)) if *v == *s));
-                if !writes_source && mentions_var(between, base) {
+                if !writes_source && slot_vars.iter().any(|&v| touches_var(between, v)) {
                     out.insert(*s);
                     break;
                 }
