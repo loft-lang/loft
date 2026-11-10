@@ -333,7 +333,8 @@ jobs:
       # stopped compiling (loft#1835).  And the guide step's LOFT_DENY_WARNINGS denied
       # nothing, because only `--tests` read it, so a guide could carry warnings and
       # still pass.  So this step runs `loft --check` over both directories, which now
-      # fails on any warning when warnings are denied.  It compiles but does not run:
+      # fails on any warning when warnings are denied, and through the C backend
+      # (`--native-c`): a bare `--check` compiles the loft only.  It compiles but does not run:
       # most examples are servers, clients or windows that need a peer.  A package's
       # `.allow_warnings` opts out here as it does in the steps above.
       - name: Examples and guides compile — ${{ matrix.package }}
@@ -350,7 +351,7 @@ jobs:
           fi
           rc=0
           for f in "${programs[@]}"; do
-            if LOFT_TIMEOUT=240 LOFT_ERRORS=compact loft --check "$f" > "$RUNNER_TEMP/check.out" 2>&1; then
+            if LOFT_TIMEOUT=240 LOFT_ERRORS=compact loft --check --native-c "$f" > "$RUNNER_TEMP/check.out" 2>&1; then
               echo "ok   $f"
             else
               rc=1

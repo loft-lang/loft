@@ -10661,10 +10661,11 @@ fn main() {
         }
     }
 
-    // --check: parse + compile only, report errors and exit.
-    // When combined with --native, fall through to the native pipeline
-    // which will compile but not run the binary.
-    if check_only && !native_mode && native_emit.is_none() {
+    // --check: parse + compile only, report errors and exit.  Only a native backend the
+    // command line NAMES (`--native`, `--native-c`, …) goes on to the native pipeline, which
+    // compiles but does not run the binary: native being the default run mode is no request
+    // for it, and taking it for one made every plain `--check` a full rustc build.
+    if check_only && (!native_mode || !native_requested) && native_emit.is_none() {
         println!("ok");
         return;
     }
