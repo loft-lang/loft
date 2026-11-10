@@ -34,6 +34,10 @@ jobs:
         with:
           fetch-depth: 0
           filter: tree:0
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on this Linux job; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
       - name: Label closed-by issues as fixed-pending-merge
         env:
           GH_TOKEN: ${{ github.token }}
@@ -80,8 +84,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # Only the parser is needed — it reads the push payload, not history.
-          sparse-checkout: scripts/contract_labels.py
+          sparse-checkout: |
+            scripts/contract_labels.py
+            .github/actions/windows-gcc
           sparse-checkout-cone-mode: false
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on this Linux job; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
       - name: "Label from Contract: trailers"
         env:
           GH_TOKEN: ${{ github.token }}
