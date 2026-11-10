@@ -12381,6 +12381,23 @@ fn variant_proof(e: el::El, test: ir::Node) -> el_vars::Proven? {
   null
 }
 
+// `Parser::assume_range` (`@FR-N-Guard`): a `for` over `lo..n`, `lo` a constant, runs its body only
+// where `lo <= k < n` — with `lo >= 0` the end `n` (a plain local) is non-zero there, with
+// `lo >= 1` the counter `k` is too.  A write to the end inside the body ends its proof.
+fn assume_range(vars: el_vars::Vars, lo: integer?, end_var: integer, counter: integer) -> FactMark {
+  mark = fact_mark(vars);
+  if lo == null {
+    return mark;
+  }
+  if lo! >= 0 {
+    push_nonzero(vars, end_var);
+  }
+  if lo! >= 1 {
+    push_nonzero(vars, counter);
+  }
+  mark
+}
+
 // `Parser::assume_guard`: a match arm's guard holds wherever its body runs (`@FR-P-Guard`).
 fn assume_guard(e: el::El, vars: el_vars::Vars, guard: ir::Node?) -> FactMark {
   if guard == null {
@@ -18251,6 +18268,10 @@ fn walkable_scalar(t: ir::TypeT) -> boolean {
 // literal, `_next_N`'s first value.  `constant`: both bounds fold; `empty`: to an exclusive
 // range whose start is not below its end.
 struct RangeWalk {
+  // `last_range_from` / `last_range_till`: the start where it is a constant (else null) and the
+  // end where it is a plain local of an exclusive range (else -1) — what `assume_range` reads.
+  lo: integer?,
+  end_var: integer,
   prelude: vector<ir::Node>,
   steps: vector<ir::Node>,
   counter: ir::Node,
@@ -18342,7 +18363,8 @@ fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer) -> Rang
     ls += [el_ir::v_set(idx, n_v), el_ir::v_set(nx, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }]))];
   }
   ls += [i];
-  RangeWalk { prelude: prelude, steps: ls, counter: counter, next_init: if next_init == null { [] } else { [next_init!] }, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc! }
+  end_var = match el_ir::unspan(h.code) { NdVar { n } => if incl { -1 } else { n }, _ => -1 };
+  RangeWalk { lo: lc, end_var: end_var, prelude: prelude, steps: ls, counter: counter, next_init: if next_init == null { [] } else { [next_init!] }, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc! }
 }
 
 // The statements that start a range walk: the hoisted bounds, `_next_N`'s first value, the index.
@@ -18364,7 +18386,9 @@ fn range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer, rev: b
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
   fc = loop_filter(e, vars, h.filter);
+  facts = assume_range(vars, rw.lo, rw.end_var, lv);
   b = parse_block(e, vars, h.body, "for", ir::TyVoid);
+  forget_facts(vars, facts);
   cnt = el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
   if e.first_pass {
@@ -18527,7 +18551,9 @@ fn rev_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer) ->
   vars.active_values += [ir::NdNull];
   vars.reversed += [lv];
   fc = loop_filter(e, vars, h.filter);
+  facts = assume_range(vars, lo, -1, lv);
   b = parse_block(e, vars, h.body, "for", ir::TyVoid);
+  forget_facts(vars, facts);
   cnt = el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
   if e.first_pass {
