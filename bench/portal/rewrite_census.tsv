@@ -1009,7 +1009,7 @@
 15_stdlib_keyed	-	c	R-SingleUse	3
 15_stdlib_keyed	-	c	R-SpecChain	3
 15_stdlib_keyed	-	c	R-StickySum	25
-15_stdlib_keyed	-	c	R-TableHandle	10
+15_stdlib_keyed	-	c	R-TableHandle	2
 15_stdlib_keyed	-	c	R-TextBorrow	18
 15_stdlib_keyed	-	c	R-TypedKeyed	23
 15_stdlib_keyed	-	c	R-TypedKeyed/remove	3
