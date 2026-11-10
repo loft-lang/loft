@@ -102,6 +102,11 @@ jobs:
         with:
           path: loft-src
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op while this job runs on ubuntu-latest; it is here for a Windows leg.
+      - if: runner.os == 'Windows'
+        uses: ./loft-src/.github/actions/windows-gcc
+
       - name: Install mold
         run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
