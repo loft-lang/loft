@@ -4366,11 +4366,6 @@ use a separate collection or add after the loop"
         );
     }
 
-    #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the assignment's bracketing steps around its inner parse, one per concern"
-    )]
     /// `@FR-E-Left` — `place = value` reduces the PLACE first.  A record value is lowered
     /// with its place after it (`OpCopyRecord(value, place)`), and the in-place literal
     /// re-derives the place once per field, so a value that writes a variable the place reads
@@ -4422,6 +4417,11 @@ use a separate collection or add after the loop"
         *code = Value::Insert(prefix);
     }
 
+    #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the assignment's bracketing steps around its inner parse, one per concern"
+    )]
     pub(crate) fn parse_assign_op(
         &mut self,
         code: &mut Value,
@@ -13474,6 +13474,15 @@ impl BufferExits<'_> {
     }
 }
 
+/// Every occurrence of the subtree `from` in `code` becomes `with`.
+fn replace_subtree(code: &mut Value, from: &Value, with: &Value) {
+    if code.unspan() == from.unspan() {
+        *code = with.clone();
+        return;
+    }
+    code.for_each_child_mut(&mut |c| replace_subtree(c, from, with));
+}
+
 #[cfg(test)]
 mod tests {
     use super::inline_ref_set_in;
@@ -13505,13 +13514,4 @@ mod tests {
         }
         assert!(inline_ref_set_in(&w, 7), "deeply nested Set must be found");
     }
-}
-
-/// Every occurrence of the subtree `from` in `code` becomes `with`.
-fn replace_subtree(code: &mut Value, from: &Value, with: &Value) {
-    if code.unspan() == from.unspan() {
-        *code = with.clone();
-        return;
-    }
-    code.for_each_child_mut(&mut |c| replace_subtree(c, from, with));
 }
