@@ -17119,18 +17119,47 @@ fn rep_group(e: el::El, n: integer) -> integer {
 // elements that are `V`; the arm matches where the run reaches the fixed tail (or, with a
 // `..rest` after the tail, where the tail fits after it).  The tail is read from the end, or
 // forward from the run's end when a rest follows; a variant there is tested and bound, a name
-// bound.  Once the arm commits, a capture collects the run's elements, a `{ f }` the run's
-// fields, and the rest what follows the tail — each a fresh vector.  A fixed head before the
-// run, an alternation or a `?` group, a literal and a cursor subject are refused by name.
+// bound — and a fixed head before the run likewise, at its own positions.  Once the arm commits,
+// a capture collects the run's elements, a `{ f }` the run's fields, and the rest what follows
+// the tail — each a fresh vector.  An alternation or a `?` group, a literal and a cursor subject
+// are refused by name.
 fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
   sed = el_types::struct_enum_def(elm);
   es = element_stride(e, elm);
   int_t = ir::TyInteger { spec: i32_spec() };
-  if rep_group(e, elems[0] ?? -1) < 0 {
-    el::refuse(e, "a repetition after fixed elements of a slice");
-    return null;
+  // The fixed head before the run: its elements at their own positions, their tests ANDed
+  // after the run's (`elem_conds`), their bindings ahead of the run's captures.
+  gi = 0;
+  while gi < len(elems) && rep_group(e, elems[gi] ?? -1) < 0 {
+    gi += 1;
   }
-  first = elems[0] ?? -1;
+  head_len = gi;
+  head_conds: vector<ir::Node> = [];
+  binds: vector<ir::Node> = [];
+  named_t = el_types::with_deps(elm, el_types::deps(el_vars::tp(vars, sv)));
+  for h in elems[0..gi] {
+    at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: h#index }]);
+    nm = rename_of(e, h);
+    if e.p.nodes[h] is PWild {
+      continue;
+    } else if nm != "" {
+      bv = pattern_bind(vars, nm, named_t, names);
+      binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
+    } else if e.p.nodes[h] is PName {
+      va = slice_variant(e, vars, h, sed, slice_elem(e, elm, at), names);
+      if va == null {
+        return null;
+      }
+      if va!.cond != null {
+        head_conds += [va!.cond!];
+      }
+      binds += va!.binds;
+    } else {
+      el::refuse(e, "a slice element before a repetition of this form: {syn_kind(e, h)}");
+      return null;
+    }
+  }
+  first = elems[gi] ?? -1;
   group_cap = match e.p.nodes[first] { PCap { name } => name, _ => "" };
   g = rep_group(e, first);
   seqs: vector<integer> = [];
@@ -17192,7 +17221,7 @@ fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
   tail: vector<integer> = [];
   rest = "";
   has_rest = false;
-  for el0 in elems[1..] {
+  for el0 in elems[gi + 1..] {
     match e.p.nodes[el0] {
       PRest { name } => { has_rest = true; rest = name; },
       _ => {
@@ -17212,8 +17241,6 @@ fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
   el_vars::set_defined(vars, end_v);
   end = ir::NdVar { n: end_v };
   tail_conds: vector<ir::Node> = [];
-  binds: vector<ir::Node> = [];
-  named_t = el_types::with_deps(elm, el_types::deps(el_vars::tp(vars, sv)));
   for t in tail {
     pos = if forward { el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: t#index }]) } else { ir::NdInt { n: t#index - tail_len } };
     at = el_ir::cl(e, "OpGetVector", [subj, ir::NdInt { n: es }, pos]);
@@ -17237,9 +17264,9 @@ fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
       return null;
     }
   }
-  run: vector<ir::Node> = [el_ir::v_set(end_v, ir::NdInt { n: 0 })];
+  run: vector<ir::Node> = [el_ir::v_set(end_v, ir::NdInt { n: head_len })];
   if sep_disc >= 0 {
-    first_v = el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, ln]), el_ir::v_if(rep_tag(e, elm, sv, ir::NdInt { n: 0 }, disc), el_ir::v_set(end_v, ir::NdInt { n: 1 }), ir::NdNull), ir::NdNull);
+    first_v = el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: head_len }, ln]), el_ir::v_if(rep_tag(e, elm, sv, ir::NdInt { n: head_len }, disc), el_ir::v_set(end_v, ir::NdInt { n: head_len + 1 }), ir::NdNull), ir::NdNull);
     next = el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: 1 }]);
     run += [first_v, el_ir::v_loop([
       el_ir::v_if(el_ir::cl(e, "OpLeInt", [ln, next]), ir::NdBreak { n: 0 }, ir::NdNull),
@@ -17257,22 +17284,25 @@ fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
   base = if forward && tail_len > 0 {
     el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpAddInt", [end, ir::NdInt { n: tail_len }]), ln])
   } else if has_rest {
-    el_ir::cl(e, "OpLeInt", [ir::NdInt { n: 0 }, ln])
+    el_ir::cl(e, "OpLeInt", [ir::NdInt { n: head_len }, ln])
   } else {
     el_ir::cl(e, "OpEqInt", [end, el_ir::cl(e, "OpMinInt", [ln, ir::NdInt { n: tail_len }])])
   };
-  test = if quant == "+" { el_ir::v_if(base, el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, end]), ir::NdBoolean { b: false }) } else { base };
+  test = if quant == "+" { el_ir::v_if(base, el_ir::cl(e, "OpLtInt", [ir::NdInt { n: head_len }, end]), ir::NdBoolean { b: false }) } else { base };
   for tc in tail_conds {
     test = el_ir::v_if(test, tc, ir::NdBoolean { b: false });
   }
   run += [test];
   cond = el_ir::v_block(run, ir::TyBoolean, "rep cond");
+  for hc in head_conds {
+    cond = el_ir::v_if(cond, hc, ir::NdBoolean { b: false });
+  }
   step = if sep_disc >= 0 { 2 } else { 1 };
   // The captures, then the field projections, then the rest: bound once the arm commits.
   for cn in cap_names {
     cv = pattern_bind(vars, cn, ir::TyVector { inner: elm, dep: [] }, names);
     if !e.first_pass {
-      m = slice_vector(e, vars, sv, elm, cv, ir::NdInt { n: 0 }, end, step, null);
+      m = slice_vector(e, vars, sv, elm, cv, ir::NdInt { n: head_len }, end, step, null);
       if m == null {
         return null;
       }
@@ -17294,7 +17324,7 @@ fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
         ft = el::def(e, vd).attributes[fa]!.typedef[0];
         pv = pattern_bind(vars, fname, ir::TyVector { inner: ft, dep: [] }, names);
         if !e.first_pass {
-          m = slice_vector(e, vars, sv, elm, pv, ir::NdInt { n: 0 }, end, step, SliceProj { vd: vd, fa: fa, ft: ft });
+          m = slice_vector(e, vars, sv, elm, pv, ir::NdInt { n: head_len }, end, step, SliceProj { vd: vd, fa: fa, ft: ft });
           if m == null {
             return null;
           }
@@ -17315,7 +17345,7 @@ fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
       binds += [m!];
     }
   }
-  SliceArm { binds: binds, cond: cond, shape: SliceShape { min: tail_len, exact: false } }
+  SliceArm { binds: binds, cond: cond, shape: SliceShape { min: head_len + tail_len, exact: false } }
 }
 
 // An element of the slice subject read at `at` (`OpGetVector(…)`): a struct enum's record in its
@@ -17380,7 +17410,7 @@ fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, rv:
     read = el_ir::v_block([slice_elem(e, elm, el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at]))], elm, "Vector Index");
   } else {
     fr = field_get(e, proj!.vd, proj!.fa, slice_elem(e, elm, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at])));
-    if fr == null || !el_convert::plain_scalar(proj!.ft) {
+    if fr == null || !(el_convert::plain_scalar(proj!.ft) || proj!.ft is TyText) {
       el::refuse(e, "a projected repetition field of this type: {type_kind(proj!.ft)}");
       return null;
     }
