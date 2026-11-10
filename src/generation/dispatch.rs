@@ -836,6 +836,7 @@ impl Output<'_> {
                 // when the cell names a field (an owned value given up there), the write-back
                 // otherwise; a field-naming cell is unchanged, so nothing is displaced.
                 if let Some(d) = self.data.slot_link_def(variables.tp(var))
+                    && variables.link_target_owns(var)
                     && let Some(src) = self.data.slot_self_step(to, var)
                 {
                     let kt = self.type_lit_u16(self.data.def(d).known_type());
@@ -863,7 +864,9 @@ impl Output<'_> {
                         w,
                         "; unsafe {{ let _old_disp = *var_{name}; stores.slot_write(&mut *var_{name}, &_slot_v, {kt});"
                     )?;
-                    write!(w, " OpFreeRefIfDistinct(cell, _old_disp, *var_{name});")?;
+                    if variables.link_target_owns(var) {
+                        write!(w, " OpFreeRefIfDistinct(cell, _old_disp, *var_{name});")?;
+                    }
                     write!(w, " }} }}")?;
                     return Ok(());
                 }
@@ -919,6 +922,7 @@ impl Output<'_> {
                     // `@FR-F-ParamRef` — a RECORD written back from a borrowed value displaces
                     // the caller's store too: released unless the new value lives in it.
                     || matches!(inner_slot, Type::Reference(_, _) | Type::Enum(_, true, _));
+                let amp_owned_writeback = amp_owned_writeback && variables.link_target_owns(var);
                 let needs_text_coerce = matches!(inner_slot, Type::Text(_));
                 // A `&boolean` slot holds the tri-state STORAGE byte (`u8`: 0/1/255,
                 // null-capable) while an expression like `!b` produces a two-state
@@ -1270,6 +1274,14 @@ impl Output<'_> {
             && to != &Value::Null
         {
             let name = sanitize(variables.name(var));
+            // A link to a borrowed place writes through and releases nothing: the store it
+            // displaces is its owner's (`Function::link_target_owns`).
+            if !variables.link_target_owns(var) {
+                write!(w, "unsafe {{ *var_{name} = ")?;
+                self.output_code_inner(w, to)?;
+                write!(w, "; }}")?;
+                return Ok(());
+            }
             write!(w, "unsafe {{ let _old_disp = *var_{name}; *var_{name} = ")?;
             self.output_code_inner(w, to)?;
             write!(w, "; OpFreeRefIfDistinct(cell, _old_disp, *var_{name}); }}")?;

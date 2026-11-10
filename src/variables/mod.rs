@@ -4248,6 +4248,29 @@ impl Function {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].argument
     }
 
+    /// `@FR-B-Ref-Write` × `@FR-O-Owner` — does a whole write through the `&` variable `var`
+    /// replace a place that OWNS its store, so the store it displaces is released?  A `&`
+    /// parameter names its caller's place, which owns.  A local link writes the variable it
+    /// names (`B-OutOfLine`), and only an owner's store is its to release: a link whose every
+    /// target borrows — a by-value parameter (`cur = &n` on `n: N`, `@FR-F-ParamRebind`), a
+    /// view (`v = h.next; c = &v`) — leaves the store it showed with its owner.  Every
+    /// backend's write-back asks this.
+    #[must_use]
+    pub fn link_target_owns(&self, var: u16) -> bool {
+        if self.is_argument(var) {
+            return true;
+        }
+        let Type::RefVar(inner) = self.tp(var).base() else {
+            return true;
+        };
+        let deps = inner.depend();
+        deps.is_empty()
+            || deps.iter().any(|&d| {
+                matches!(self.tp(d).base(), Type::RefVar(_))
+                    || (!self.is_argument(d) && self.proxy_says_owned(d))
+            })
+    }
+
     /// The variables that may VIEW a store `root` lives in — every variable a read of which
     /// can see a write through `root`, or be moved by a growth of it.
     ///

@@ -6529,7 +6529,8 @@ impl State {
             // caller's store as an owned one does: the store is released unless the new value
             // lives in it.  `slot = slot.right` keeps the store (a view of its own child); the
             // write that ends a drain, `slot = slot.right` reading null, releases it.
-            let amp_displaces = amp_owned_writeback || tp.heap_def_nr().is_some();
+            let amp_displaces = (amp_owned_writeback || tp.heap_def_nr().is_some())
+                && stack.function.link_target_owns(var);
             if amp_displaces {
                 // stash OLD = *o (by value — survives the SetStackRef below)
                 let var_pos = stack.var_pos(var);
@@ -6540,6 +6541,7 @@ impl State {
             }
             // @PLN219 — `slot = slot.f` through a slot cell MOVES the child (`OpMoveSlotRef`).
             if let Some(d) = stack.data.slot_link_def(stack.function.tp(var))
+                && stack.function.link_target_owns(var)
                 && let Some(src) = stack.data.slot_self_step(value, var)
             {
                 let var_pos = stack.var_pos(var);

@@ -5570,8 +5570,9 @@ impl<'a> FnWriter<'a> {
         // `@FR-F-ParamRef` — a RECORD written back from a borrowed value displaces the caller's
         // store as an owned one does: released unless the new value lives in it (a drain's last
         // `slot = slot.right` reads null).
-        let displaces =
-            owned || matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _));
+        let displaces = (owned
+            || matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)))
+            && self.vars.link_target_owns(var);
         let e = self.expr(x, ind)?;
         let r = self.temp(CType::Ref);
         self.line(ind, &format!("{r} = {};", as_ref(e)?));
@@ -5579,6 +5580,7 @@ impl<'a> FnWriter<'a> {
         // owned value given up there), the write-back otherwise.  A field-naming cell is the
         // same before and after, so the displaced-store release below finds nothing to free.
         if let Some(d) = self.cx.data.slot_link_def(self.vars.tp(var))
+            && self.vars.link_target_owns(var)
             && let Some(src) = self.cx.data.slot_self_step(x, var)
         {
             let tp = self.copyable(self.cx.data.def(d).known_type())?;
