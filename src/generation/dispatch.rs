@@ -1747,12 +1747,13 @@ impl Output<'_> {
                         _ => None,
                     })
                     .collect();
+                // One copy site, its free bit chosen at run time: two copies of the arm doubled
+                // the exchange's code for one decision (`tests/swap_rebind.rs` pins one site).
                 if !held.is_empty() && tp_with_free != tp_lit {
-                    copy = format!(
-                        "if {} {{ {} }} else {{ {copy} }}",
-                        held.join(" || "),
-                        copy_with(&tp_lit)
-                    );
+                    copy = copy_with(&format!(
+                        "(if {} {{ {tp_lit} }} else {{ {tp_with_free} }})",
+                        held.join(" || ")
+                    ));
                 }
             }
             // `@FR-R-RebindBuffer` — a fresh result in a store of its own is adopted, and the
