@@ -134,6 +134,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2
+      # — the compiler release.yml's Windows leg builds with, so the rebuild matches it.
+      - uses: ./.github/actions/windows-gcc
+
       # rustup and gh are preinstalled on every runner but not in the manylinux image the
       # Linux row runs in.  rustup comes with no toolchain: the script installs the
       # RELEASE's rustc itself, so a toolchain here would only be the wrong compiler.
