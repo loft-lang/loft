@@ -5148,9 +5148,12 @@ use a separate collection or add after the loop"
         // (`(L-Ref)`), where an inline record field is read as `OpGetField`.  The field's
         // declared type carried the pointer marker; the type a READ of it answers does not.
         let stored_ref_place = record_place && self.is_stored_ref_read(to);
+        // `@FR-B-Ref-AnnotationOnly` — `=` binds a `&` only into a VARIABLE (`a = &b`); a
+        // field or element place that is no record (`n.k = &x`, `n.t = &s`, `v[0].k = &x`) is
+        // no bind site, and the `&` is the parse error the literal spelling already gets.
         self.amp_head = if record_place {
             AmpHead::StoredRefField
-        } else if op == "=" {
+        } else if op == "=" && var_nr != u16::MAX {
             AmpHead::AssignRhs
         } else {
             AmpHead::No
