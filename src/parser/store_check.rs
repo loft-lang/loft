@@ -745,12 +745,10 @@ impl Parser {
         what: &str,
         nm: &str,
     ) -> Option<(String, Option<Position>)> {
-        // Declaring the slot nullable is a cure only where the slot is the author's to declare:
-        // not a parameter, which belongs to the function called — its caller decides.
-        let declare = if what.starts_with("parameter") {
-            String::new()
-        } else {
+        let declare = if may_declare_nullable(what, nm) {
             format!(", or declare {what} `{nm}?`")
+        } else {
+            String::new()
         };
         if self.has_null_arm(code) {
             let text = format!(
@@ -998,11 +996,17 @@ impl Parser {
         // null, a guard / `match` / `?? <value>` where it can, a `τ?` slot where null is a real
         // answer.  `?` comes last and conditional: it is right only when the type's default IS
         // the answer, and as the first suggestion it taught hiding a null that is a bug.
-        let generic = format!(
-            "write `!` when it cannot be null here; handle null with a guard or `match`, or give \
-             `?? <value>`; or declare {what} `{nm}?` (`?` takes the type's default — only when \
-             that default is the answer)"
-        );
+        let generic = if may_declare_nullable(what, &nm) {
+            format!(
+                "write `!` when it cannot be null here; handle null with a guard or `match`, or \
+                 give `?? <value>`; or declare {what} `{nm}?` (`?` takes the type's default — \
+                 only when that default is the answer)"
+            )
+        } else {
+            "write `!` when it cannot be null here; handle null with a guard or `match`, or \
+             give `?? <value>`"
+                .to_string()
+        };
         let cure = cure.map_or(generic, str::to_string);
         if crate::keys::nstore_softens(narrow) {
             let msg = diagnostic_format(
@@ -1108,4 +1112,13 @@ impl Parser {
     pub(crate) fn is_heap_handle(tp: &Type) -> bool {
         crate::data::is_dbref(tp.base())
     }
+}
+
+/// May a `τ?` slot be offered as the cure for storing a nullable into `what` of type `nm`?  Only
+/// where the slot is the author's to declare and `τ?` is a type it may have: not a parameter,
+/// which belongs to the function called (its caller decides); not the yielded value, whose
+/// `iterator<τ?>` is refused (`@FR-G-Yield`); and not a tuple, whose `(…)?` is refused
+/// (`@FR-T-Absent`).
+fn may_declare_nullable(what: &str, nm: &str) -> bool {
+    !what.starts_with("parameter") && what != "the yielded value" && !nm.starts_with('(')
 }
