@@ -1425,8 +1425,12 @@ impl Parser {
                 I32.clone()
             }
         } else if let Some(nr) = self.lexer.has_long() {
-            // `@FR-W-Lit` — a literal past i32 in a regime file is refused with its cure.
-            if self.data.width32() && !self.first_pass {
+            // `@FR-W-Lit` — a literal past i32 in a regime file is refused with its cure, unless
+            // it stands where a 64-bit integer is EXPECTED (`y: i64 = 3000000000`, an `i64`
+            // field, element or parameter): "the literal still checks at an expected width".
+            let wide = |t: &Type| matches!(t.base(), Type::Integer(s) if s.is_wide());
+            let refused = self.data.width32() && !wide(&self.expected);
+            if refused && !self.first_pass {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -1453,7 +1457,13 @@ impl Parser {
                 });
             }
             *val = Value::Long(nr as i64);
-            crate::data::I64.clone()
+            // A refused literal is the regime's i32 on pass 1 as well, so pass 1's guess cannot
+            // give an untyped local the i64 a later pass would then expect and accept.
+            if refused && self.first_pass {
+                Type::Integer(crate::narrow::IntegerSpec::i32())
+            } else {
+                crate::data::I64.clone()
+            }
         } else if let Some(nr) = self.lexer.has_wide() {
             *val = Value::Long(nr as i64);
             Type::Integer(crate::narrow::IntegerSpec::i64())
@@ -6662,7 +6672,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // signature. Saved and restored rather than cleared, because an element is
             // parsed INSIDE whatever push the literal itself arrived under.
             let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-            if Self::seeds_lambda_hint(in_t) {
+            // `@FR-W-Lit` — and a wide integer element in a regime file: a literal past i32
+            // checks at the element's width.
+            if Self::seeds_lambda_hint(in_t)
+                || (self.data.width32()
+                    && matches!(in_t.base(), Type::Integer(s) if s.is_wide()))
+            {
                 self.expected = in_t.base().clone();
             }
             let item_pos = *self.lexer.peek_pos();

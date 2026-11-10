@@ -6007,7 +6007,13 @@ impl Parser {
                 // value builds (`(T-Chk-Vec)`): an `if`'s then arm `[]` asks this channel for its
                 // element, as it does under a declared local or a field assignment, which push it.
                 let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-                if Self::seeds_lambda_hint(&td) || crate::parser::vectors::is_collection(&td_base) {
+                // `@FR-W-Lit` — a wide integer field in a regime file: a literal past i32 for it
+                // checks at the field's width.
+                if Self::seeds_lambda_hint(&td)
+                    || crate::parser::vectors::is_collection(&td_base)
+                    || (self.data.width32()
+                        && matches!(td_base, Type::Integer(s) if s.is_wide()))
+                {
                     self.expected = td.clone();
                 }
                 // A COLLECTION member of a literal rebuilt into a whole local — a struct literal

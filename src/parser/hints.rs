@@ -354,6 +354,10 @@ impl Parser {
             || self.seeds_instance_hint(&expected)
             || self.seeds_collection_hint(&expected)
             || self.interpolation_target(&expected) != u32::MAX
+            // `@FR-W-Lit` — a wide integer parameter in a regime file: a literal past i32
+            // handed to it checks at the parameter's width.
+            || (self.data.width32()
+                && matches!(expected.base(), Type::Integer(s) if s.is_wide()))
         {
             Some(expected)
         } else {
