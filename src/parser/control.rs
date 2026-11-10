@@ -5771,6 +5771,33 @@ impl Parser {
         }
     }
 
+    /// `@FR-N-Guard` — what a `for` over a range proves in its body.  `for k in lo..n`, `lo` a
+    /// constant, runs the body only where `lo <= k < n`: with `lo >= 0` the end `n` is at least
+    /// 1, and with `lo >= 1` the counter `k` is too — `lo..=n` included — so each is a divisor
+    /// proven non-zero (`@FR-N-Div`).  The proof ends where the body writes the end, as a
+    /// guard's does.  `bounds` is the range's start and exclusive end as the range recorded
+    /// them (`last_range_from`, `last_range_till`); an inclusive computed end records none.
+    pub(crate) fn assume_range(
+        &mut self,
+        bounds: &(Option<Value>, Option<Value>),
+        counter: u16,
+    ) -> FactMark {
+        let mark = self.fact_mark();
+        let Some(lo) = bounds.0.as_ref().and_then(|f| self.const_int(f)) else {
+            return mark;
+        };
+        if lo >= 0
+            && let Some(Value::Var(n)) = bounds.1.as_ref().map(Value::unspan)
+            && !self.divisor_nonzero.contains(n)
+        {
+            self.divisor_nonzero.push(*n);
+        }
+        if lo >= 1 && counter != u16::MAX && !self.divisor_nonzero.contains(&counter) {
+            self.divisor_nonzero.push(counter);
+        }
+        mark
+    }
+
     /// Where every fact stack stands now.
     fn fact_mark(&self) -> FactMark {
         FactMark([

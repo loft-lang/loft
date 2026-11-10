@@ -4344,7 +4344,10 @@ use #count instead"
             // `{ for …; CNull }`) hands its statements the expectation it inherited, and the
             // tail after the loop still needs it.
             let block_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
+            self.last_range_from = None;
+            self.last_range_till = None;
             let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+            let range_bounds = (self.last_range_from.take(), self.last_range_till.take());
             let iterable_fact = std::mem::take(&mut self.operand_fact);
             self.expected = block_expected;
             self.in_control_head = outer_head;
@@ -4779,7 +4782,9 @@ use #count instead"
             let loop_write_state = self.vars.save_and_clear_write_state();
             self.vars.clear_write_state();
             let spelling = self.loop_spelling.take();
+            let facts = self.assume_range(&range_bounds, for_var);
             self.parse_block("for", &mut block, &Type::Void);
+            self.forget_facts(facts);
             if id == "_"
                 && let Some(prev) = outer_discard
             {
