@@ -8326,7 +8326,8 @@ fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, arg
     return r;
   }
   if name == "" || (source < 0 && el_vars::var(vars, name) >= 0) {
-    el::refuse(e, "a call that is not of a function by its bare name");
+    kind = if name == "" { syn_kind(e, f ?? 0) } else { "a local of type {type_kind(el_vars::tp(vars, el_vars::var(vars, name)))}" };
+    el::refuse(e, "a call that is not of a function by its bare name: {kind}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   built: vector<ir::TypeT> = [];
@@ -13710,6 +13711,17 @@ fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: 
       return ex(el_ir::v_if(c.code, borrowing_arm(t.code, td), borrowing_arm(f.code, fd)), el_types::with_deps(t.tp, deps));
     }
   }
+  // A join of function values borrows what either arm's closure does (`merge_dependencies`); each
+  // arm keeps its own type.
+  if !e.first_pass && el_types::base(t.tp) is TyFunction && el_types::base(f.tp) is TyFunction {
+    deps = el_types::deps(t.tp);
+    for x in el_types::deps(f.tp) {
+      if !deps.contains(x) {
+        deps += [x];
+      }
+    }
+    return ex(el_ir::v_if(c.code, t.code, f.code), el_types::with_deps(t.tp, deps));
+  }
   // `arm_join_type` with `joined_deps` (loft#978): a record arm's dep on a store the arm itself
   // mints (a literal's `__ref_p2_N`) is its ownership marker, not a borrow — the arm block is
   // typed without it, and the `if` borrows what either arm still names.
@@ -16036,7 +16048,8 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
-        if guard != null {
+        // A guard on a variant arm (bindings ahead of it) is not carried here.
+        if guard != null && sd >= 0 {
           el::refuse(e, "a match arm with a guard");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
@@ -16070,9 +16083,24 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         }
         if wild {
           cond = null;
+        }
+        // `if <pattern> <guard> else false`; a guarded arm covers nothing, a guarded `_` is its
+        // guard alone.
+        ug: ir::Node? = null;
+        if guard != null {
+          g = expression(e, vars, guard!);
+          if !e.first_pass && !(g.tp is TyBoolean) {
+            el::refuse(e, "a match guard that is not a boolean: {type_kind(g.tp)}");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          ug = g.code;
+          cond = if cond == null { g.code } else { el_ir::v_if(cond!, g.code, ir::NdBoolean { b: false }) };
+          wild = false;
+        }
+        if wild {
           any_wild = true;
         }
-        if len(pats) == 1 {
+        if len(pats) == 1 && guard == null {
           match e.p.nodes[pats[0] ?? 0] {
             PLit { e: le } => {
               match e.p.nodes[le ?? 0] {
@@ -16086,7 +16114,9 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
           }
         }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { arm_expectation(result) };
+        facts = assume_guard(e, vars, ug);
         b = arm_body(e, vars, body, expected);
+        forget_facts(vars, facts);
         // The bindings' spellings name what they named before the arm.
         for al in rev(aliases) {
           el_vars::restore_name(vars, al.name, al.nr);
@@ -16119,7 +16149,20 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
           }
           result = el_types::with_deps(result, tj);
         }
-        // `merge_dependencies`: a record result borrows what any arm's record does.
+        // `merge_dependencies`: a record result borrows what any arm's record does, a function
+        // result what any arm's closure does.
+        if el_types::base(result) is TyFunction && el_types::base(b.tp) is TyFunction {
+          joined = el_types::deps(result);
+          // An arm answering a function local borrows that local (`parse_var`'s `depending`).
+          ad = el_types::deps(b.tp);
+          match tail_of(b.code) { NdVar { n: av } => { if !ad.contains(av) { ad += [av]; } }, _ => {} }
+          for x2 in ad {
+            if !joined.contains(x2) {
+              joined += [x2];
+            }
+          }
+          result = el_types::with_deps(result, joined);
+        }
         if el_types::base(result) is TyReference && el_types::base(b.tp) is TyReference {
           joined = el_types::deps(result);
           for x2 in outside_deps(b.code, el_types::deps(b.tp)) {
@@ -16212,10 +16255,18 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
     }
   }
   chain = ir::NdNull;
-  // The result's null is the fallback only where no arm always matches (`has_wildcard`).
+  // A bare function name answered beside a closure is widened to the full fn-ref shape (a
+  // scalar subject's chain; an enum's keeps the bare name).
+  if rbase is TyFunction && scalar_subject {
+    for a in out {
+      out[a#index].code = widen_bare_fn_ref(a.code, rbase);
+    }
+  }
+  // The result's null is the fallback only where no arm always matches (`has_wildcard`); a
+  // function type's is the empty fn-ref.
   ends_wild = len(out) > 0 && out[len(out) - 1]!.cond == null;
   if !ends_wild && !(rbase is TyVoid) && !(rbase is TyNull) {
-    fb = el_convert::null_of(e, rbase);
+    fb = match_fallback(e, rbase);
     if fb == null {
       el::refuse(e, "a match whose result has no null: {type_kind(result)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -16390,6 +16441,42 @@ fn struct_enum_of(e: el::El, t: ir::TypeT) -> integer {
   }
 }
 
+// A block's last operator, spans peeled (the value an arm answers).
+fn tail_of(n: ir::Node) -> ir::Node {
+  u = el_ir::unspan(n);
+  match u {
+    NdBlock { block } => if len(block[0].operators) > 0 { tail_of(block[0].operators[-1]!) } else { u },
+    _ => u
+  }
+}
+
+// The value a match no arm takes answers: the result's null — a function type's is the empty
+// fn-ref `FnRef(0, ??)`.
+fn match_fallback(e: el::El, rbase: ir::TypeT) -> ir::Node? {
+  if rbase is TyFunction {
+    return ir::NdFnRef { def_nr: 0, var: el::NO_TYPE, t: [rbase] };
+  }
+  el_convert::null_of(e, rbase)
+}
+
+// `widen_bare_fn_ref`: a bare function value (its definition number) where a function type is
+// joined takes the full fn-ref shape with no closure (`FnRef(d, ??)`); a block's tail likewise.
+fn widen_bare_fn_ref(n: ir::Node, ft: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: widen_bare_fn_ref(inner, ft) },
+    NdBlock { block } => {
+      bl = block[0];
+      k = len(bl.operators);
+      if k > 0 {
+        bl.operators[k - 1] = widen_bare_fn_ref(bl.operators[-1]!, ft);
+      }
+      ir::NdBlock { block: [bl] }
+    },
+    NdInt { n: d } => ir::NdFnRef { def_nr: d, var: el::NO_TYPE, t: [ft] },
+    _ => n
+  }
+}
+
 // One arm of a plain struct's match: its test (null where it always matches) and its code.
 struct SMArm { guard: ir::Node?, code: ir::Node }
 
@@ -16484,8 +16571,13 @@ fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: vector
   }
   chain = ir::NdNull;
   rbase = el_types::base(result);
+  if rbase is TyFunction {
+    for a in out {
+      out[a#index].code = widen_bare_fn_ref(a.code, rbase);
+    }
+  }
   if !(rbase is TyVoid) && !(rbase is TyNull) && (out[-1] ?? SMArm { guard: null, code: ir::NdNull }).guard != null {
-    fb = el_convert::null_of(e, rbase);
+    fb = match_fallback(e, rbase);
     if fb == null {
       el::refuse(e, "a match whose result has no null: {type_kind(result)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
