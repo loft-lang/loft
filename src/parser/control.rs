@@ -13325,7 +13325,17 @@ impl Parser {
         code: &mut Value,
     ) -> Type {
         let elm_tp = subject_type.content();
-        let v = self.create_unique("match_subj", subject_type);
+        // A subject that is already a VARIABLE is matched as itself.  Through a `_match_subj`
+        // alias, every capture was a view of a compiler temporary (`OpGetVector(_match_subj,
+        // …)`), and a removal or growth of the variable in the arm never shook it
+        // (`@FR-B-View` × `@FR-P-Cap-View`): `[first, ..] => { u.remove(0); first.x }` read
+        // the element that moved into slot 0.  A computed subject still gets its temporary,
+        // so it is evaluated once.
+        let subject_var = match subject.unspan() {
+            Value::Var(x) if !matches!(self.vars.tp(*x), Type::RefVar(_)) => Some(*x),
+            _ => None,
+        };
+        let v = subject_var.unwrap_or_else(|| self.create_unique("match_subj", subject_type));
         self.vars.defined(v);
         let elm_size = Value::Int(self.element_store_size(&elm_tp));
         // @PLN35 P-Cap-View — a heap element view's borrow-dep must name the SUBJECT's
@@ -13639,7 +13649,11 @@ impl Parser {
             self.null_value(&result_type)
         };
         let chain = chain_pattern_arms(arms, fallback, &result_type);
-        let mut block_ops = vec![v_set(v, subject)];
+        let mut block_ops = if subject_var.is_some() {
+            Vec::new()
+        } else {
+            vec![v_set(v, subject)]
+        };
         block_ops.append(&mut prechain);
         block_ops.push(chain);
         // The tuple and vector chains never widened for a `null` arm, scalars included.

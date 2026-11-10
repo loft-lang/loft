@@ -1473,7 +1473,12 @@ impl Scopes<'_> {
             // with nothing to strip still has a mark to lift and emitters to steer, so both
             // must pass.  A binding whose deps name something ELSE is declined: that one is
             // not a view of what was disturbed.
-            && function.tp(v).depend().iter().all(|d| *d == container)
+            // A dep may also name what the container itself VIEWS: a capture read out of a
+            // `match` subject's temp (`_match_subj_N = o.items`) borrows `o`, the subject's
+            // source, which is the container one view out (`@FR-P-Cap-View`).
+            && function.tp(v).depend().iter().all(|d| {
+                *d == container || function.tp(container).depend().contains(d)
+            })
         {
             let vname = function.name(v).to_string();
             let deps: Vec<u16> = function.tp(v).depend().clone();
