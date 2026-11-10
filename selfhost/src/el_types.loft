@@ -732,6 +732,8 @@ pub fn carried_step(t: ir::TypeT) -> boolean {
     },
     TyText { dep: _ } => true,
     TyReference { n: _ } => true,
+    // A struct enum's value is a record as any other: the yielded element is its `DbRef`.
+    TyEnum { n: _, is_ref } => is_ref,
     TyInteger { spec } => narrow_width(spec) == 0 && spec.forced_size == 0,
     TyFloat => true,
     TySingle => true,

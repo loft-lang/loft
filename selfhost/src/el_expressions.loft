@@ -2488,25 +2488,6 @@ fn tail_syntax(e: el::El, body: integer) -> integer {
 }
 
 // Is a body's last statement `return <vector literal or comprehension>`?
-// Is `node` the expression the function body ends in (its last statement, with no `else`)?
-fn is_body_tail(e: el::El, vars: el_vars::Vars, node: integer) -> boolean {
-  if node < 0 || vars.body < 0 {
-    return false;
-  }
-  match e.p.nodes[vars.body] {
-    SBlock { stmts } => {
-      if len(stmts) == 0 {
-        return false;
-      }
-      match e.p.nodes[stmts[-1]] {
-        SStmt { e: se, orelse } => se != null && orelse == null && se! == node,
-        _ => stmts[-1] == node
-      }
-    },
-    _ => false
-  }
-}
-
 fn trailing_literal_return(e: el::El, body: integer) -> boolean {
   if body < 0 {
     return false;
@@ -11070,7 +11051,10 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
   // A hidden vector buffer (`add_defaults`' vector arm): a fresh `__ref_N` the result is
   // delivered into.  A pooled work buffer (`work_buffer`) is not carried.
   last_t = if n > 0 { def.attributes[-1].typedef[0] ?? ir::TyVoid } else { ir::TyVoid };
-  retbuf = n == len(given) + 1 && (def.attributes[-1].hidden) && (last_t is TyReference || el_types::struct_enum_def(last_t) >= 0 || (last_t is TyVector && !(def.attributes[-1].work_buffer)));
+  // `add_defaults` hands a fresh work ref to a left-out record, struct-enum or vector parameter
+  // with no default that is hidden or compiler-named (`__…`, a dispatcher's forwarded buffer).
+  promoted = n > 0 && (def.attributes[-1].hidden || (starts_with(def.attributes[-1].name, "__") && el_ir::is_null(def.attributes[-1].value[0] ?? ir::NdNull)));
+  retbuf = n == len(given) + 1 && promoted && (last_t is TyReference || el_types::struct_enum_def(last_t) >= 0 || (last_t is TyVector && !(def.attributes[-1].work_buffer)));
   // `add_defaults`' `&text` arm: each trailing hidden text buffer is a fresh `__work_cN` of
   // the caller's, set empty and handed as a stack reference ("default ref").
   bufs = !retbuf && n > len(given);
@@ -15966,6 +15950,8 @@ pub struct MArm {
 // the last arm back, ending in a wildcard arm's code or the result's null.  A guard, a binding, a
 // field pattern and any other subject are refused by name.
 fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
+  // A bind's right-hand side (`r = match …`): Rust writes each arm into the destination.
+  at_bind = node >= 0 && vars.expect_node == node;
   x = expression(e, vars, subject);
   st = x.tp;
   match st {
@@ -15990,7 +15976,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
     return vector_match(e, vars, x, arms);
   }
   if st is TyTuple {
-    return tuple_match(e, vars, x, arms, node);
+    return tuple_match(e, vars, x, arms, node, at_bind);
   }
   if !scalar_subject && !enum_subject && sd < 0 {
     if !el_types::is_unknown(st) {
@@ -16097,6 +16083,16 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         } else if b.tp is TyOptional && !(result is TyOptional) {
           result = ir::TyOptional { inner: result };
         }
+        // `merge_dependencies` (`joined_deps`): a text result borrows what any arm's text does.
+        if el_types::base(result) is TyText && el_types::base(b.tp) is TyText {
+          tj = el_types::deps(result);
+          for x2 in el_types::deps(b.tp) {
+            if !tj.contains(x2) {
+              tj += [x2];
+            }
+          }
+          result = el_types::with_deps(result, tj);
+        }
         // `merge_dependencies`: a record result borrows what any arm's record does.
         if el_types::base(result) is TyReference && el_types::base(b.tp) is TyReference {
           joined = el_types::deps(result);
@@ -16155,11 +16151,11 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   if e.first_pass || (!scalar_subject && !enum_subject && sd < 0) {
     return ex(ir::NdNull, result);
   }
-  // A text answer is carried at the function's tail, where its arms write the per-arm
-  // accumulator; anywhere else (a bind, an argument) Rust writes each arm into the destination —
-  // not carried yet.
-  if el_types::base(result) is TyText && !is_body_tail(e, vars, node) {
-    el::refuse(e, "a match answering a text outside a function's tail");
+  // A text answer is a value like any other — at a tail its arms take the per-arm accumulator, as
+  // an operand it is read as it stands — except bound to a local, where Rust writes each arm into
+  // the destination: not carried yet.
+  if el_types::base(result) is TyText && at_bind {
+    el::refuse(e, "a match answering a text bound to a local");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   // `type_null_arms`: an arm that answers a written `null` answers the result's null.
@@ -16232,7 +16228,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
 // struct-enum member tests its ordinal (`variant_arm` over `TupleGet`) — chained from the last
 // arm back, ending in a wildcard arm's code or the result's null.  A guard, alternatives, a
 // binding and any other member pattern are refused by name.
-fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, node: integer) -> Ex {
+fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, node: integer, at_bind: boolean) -> Ex {
   elems = match el_types::base(x.tp) { TyTuple { elems: es } => es, _ => [] };
   tmp = el_vars::create_unique(vars, "match_tuple", x.tp);
   el_vars::set_defined(vars, tmp);
@@ -16299,9 +16295,9 @@ fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, nod
   // Built on both passes, as Rust's is: a text answer at a function's tail takes the per-arm
   // accumulator on the first pass already (`if_tail_yields_text` sees through `tuple_match`).
   rbase = el_types::base(result);
-  // As `match_expr`: a text answer is carried at the function's tail only.
-  if rbase is TyText && !is_body_tail(e, vars, node) {
-    el::refuse(e, "a match answering a text outside a function's tail");
+  // As `match_expr`: a text answer bound to a local is not carried.
+  if rbase is TyText && at_bind {
+    el::refuse(e, "a match answering a text bound to a local");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if !e.first_pass && !(rbase is TyVoid) && !(rbase is TyNull) && !scalar(rbase) && !(rbase is TyText) {
@@ -16997,8 +16993,9 @@ fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::TypeT)
     refuse_known(e, x.tp, "a match arm of another type: {type_kind(x.tp)} for {type_kind(expected)}");
     return x;
   }
-  // A record arm keeps its own borrows, which the match merges (`merge_dependencies`).
-  at = if el_types::base(expected) is TyReference && el_types::base(x.tp) is TyReference { el_types::with_deps(expected, el_types::deps(x.tp)) } else { expected };
+  // A record or text arm keeps its own borrows, which the match merges (`merge_dependencies`).
+  keeps = (el_types::base(expected) is TyReference && el_types::base(x.tp) is TyReference) || (el_types::base(expected) is TyText && el_types::base(x.tp) is TyText);
+  at = if keeps { el_types::with_deps(expected, el_types::deps(x.tp)) } else { expected };
   ex(c!, if x.tp is TyOptional { ir::TyOptional { inner: at } } else { at })
 }
 
