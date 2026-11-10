@@ -1355,9 +1355,20 @@ impl State {
                         } else {
                             data.def(cur_d_nr).name()
                         };
+                        // The two callers above it: a store a helper returns is leaked by
+                        // whoever called the helper, not by the helper.
+                        let via: Vec<&str> = self
+                            .call_stack
+                            .iter()
+                            .rev()
+                            .skip(1)
+                            .take(2)
+                            .map(|f| data.def(f.d_nr).name())
+                            .collect();
                         writeln!(
                             log,
-                            "    [alloc #{s_nr} at pc={code} op={op_base} fn={in_fn}]"
+                            "    [alloc #{s_nr} at pc={code} op={op_base} fn={in_fn} via={}]",
+                            via.join("<")
                         )?;
                         alloc_pcs.insert(s_nr as u16, (code, op_name.clone()));
                     } else if !was_free && s.free {
@@ -1393,8 +1404,12 @@ impl State {
                 self.write_stack_snapshot(log, config.snapshot_window)?;
             }
 
-            step += 1;
-            assert!(step < 10_000_000, "Too many operations");
+            // The cap bounds the LOG, so it counts the operations written to it: a trace that logs
+            // no opcodes (`store_life:<N>`) runs as long as the program does.
+            if trace_this {
+                step += 1;
+                assert!(step < 10_000_000, "Too many operations");
+            }
             if self.code_pos == u32::MAX {
                 // TODO Validate that all databases & String values are also cleared.
                 // @PLAN53 cluster 2 / S4: the entry frame base is the STEPPED
