@@ -289,7 +289,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SingleUse)` | `R-SingleUse` parse |
 | `(R-SliceArg)` | `/range` ir |
 | `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
-| `(R-SliceInto)` | `R-SliceInto` c · `/transient` c |
+| `(R-SliceInto)` | `R-SliceInto` ir · `/transient` c |
 | `(R-SpecChain)` | `R-SpecChain` c |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
@@ -3413,28 +3413,37 @@ then copied again.  `text_from_byte_range` is the native a decoder could have wr
                  OpSliceView(T, src, lo, hi, row); T }, tp)` — a scalar vector slice used
                  as a value, converted to a temporary T of its own
                  (`Parser::materialise_slice_leaves`) and appended to a place P (a literal's
-                 field, `x += v[a..b]`) — is the bounds' statements and one
+                 field, `x.f += v[a..b]`) — is the bounds' statements and one
                  `OpSliceVector(P, src, lo, hi, row)`: `[lo, hi)` clamped, appended onto P as
                  one block.  Nothing but T's own mint, bind, zero, clear and the one slice may
-                 name T or its store; anything else declines.  T is never minted, and its
-                 scope-exit release sees the null it starts as.
+                 name T or its store, and outside the block T is never named and its store
+                 only declared null and freed; P reads only variables and constant field
+                 offsets, none of them assigned by a bound statement, since P is now evaluated
+                 after the bounds; the append's element type is the slice's.  Anything else
+                 declines.  T is never minted, and its scope-exit release sees the null it
+                 starts as.
 ```
 
 **In words.**  The append was the only reader of T, and `loft_vec_slice` appends exactly what
 the temporary's fill and the append did together — the same clamped span, read before anything
 is written, safe when P is the source (`v += v[a..b]`: the span lies below the length).  A
 foreign source is COPIED, as the append copied the view's bytes before: P's store holds more
-than this vector, so `@FR-Const-Foreign`'s view does not apply to it.  C only (an emitter form;
-rustc's writer still fills a temporary); the interpreter runs the IR and is the reference.
-cbor's `CBytes { value: bytes[a..b] }`: pluginabi `check_request` −10 %, `req_state_b64` −4 % on
-the C ship lane.  Switch `LOFT_NO_SLICE_INTO`; cells
-`tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft`.  Sites: `slice_fill` /
-`slice_into` / `append_vector_op` in `src/c/body.rs`.
+than this vector, so `@FR-Const-Foreign`'s view does not apply to it.  It is the form the parser
+gives a LOCAL place (`p += v[a..b]`, `(Slice-Value)`'s block copy), extended to every place.
+Decided and applied in the scope pass, after `(R-SliceArg)`'s range clause and on the same
+slice-block test (`slice_text::admit`), so every backend runs it: on the interpreter the
+`slice_into` probe (@PLN211) runs 10 292 → 7 536 instructions a pass, −26.8 %; cbor's
+`CBytes { value: bytes[a..b] }`: pluginabi `check_request` −10 %, `req_state_b64` −4 % on the C
+ship lane; rustc's writer, which filled a temporary, now slices into the field too.  Switch
+`LOFT_NO_SLICE_INTO`, trace `LOFT_TRACE_SLICE_INTO`; cells
+`tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft`.  Site: `slice_into::rewrite`
+(the scope pass).
 
 ```
   (R-SliceInto)'s transient clause
                  the same slice appended to a vector field of a value built outside the
-                 store (`(R-Transient)`, a twin's `CBytes { value: bytes[a..b] }`) is the
+                 store (`(R-Transient)`, a twin's `CBytes { value: bytes[a..b] }`), which the
+                 IR form above has made `OpSliceVector(field, src, lo, hi, row)`, is the
                  bounds' statements and `loft_ta_vec_copy_range(field, src, lo, hi, size)`:
                  `[lo, hi)` clamped as `loft_vec_slice` clamps it, copied into the field's
                  own buffer, with no temporary store.  The element size of the slice must be
@@ -3449,8 +3458,9 @@ the range clause above (2.22× → 1.42× and 2.6× → 1.6× its twin).  No adm
 transient vector field yet (`(R-Transient)` declines an `OpGetField` of one), so no value shows
 the copy; the cell `c10` of `tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft`
 runs it beside the text its site reads, under the sweeps' poison and ASan modes.  Switch
-`LOFT_NO_SLICE_INTO` (both clauses).  Site: the `OpAppendVector` arm of the transient writer
-(`src/c/body/transient.rs`), `loft_ta_vec_copy_range` (`src/c/loft_rt.h`).
+`LOFT_NO_SLICE_INTO` (both clauses: with the IR form off, the transient writer sees the slice
+block, which it copies through a temporary).  Site: the `OpSliceVector` arm of the transient
+writer (`src/c/body/transient.rs`), `loft_ta_vec_copy_range` (`src/c/loft_rt.h`).
 
 ### A slice of a parameter is read where it lies
 

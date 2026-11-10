@@ -26,8 +26,8 @@ the forms of `(R-ValueRecord)` the IR declines stay in the writers, closed build
 spelling them in the IR would not speed the interpreter (owner ruling, [c4-view-plan.md](c4-view-plan.md)
 § S2); c4-view S3 deleted both writers' element-first clauses (D-phase-4 closed).  D-fact-2
 gave the C `(R-RangedCall)` (its gain test now counts the operators a variant saves), and
-`(R-TextBorrow)` moved to the interpreter (§ Arc C's moves).  Next: `(R-SliceInto)` and
-`(R-RetAdopt)` measured on their beside builds; `(R-RefillText)` stays.  It
+`(R-TextBorrow)` moved to the interpreter and `(R-SliceInto)` into the IR (§ Arc C's moves).
+Next: `(R-RetAdopt)` measured on its beside build; `(R-RefillText)` stays.  It
 was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
@@ -604,6 +604,30 @@ runtime, codegen: 2 526 passed; a 17-cell probe matrix under `LOFT_POISON` and
 put out: r1 = 663) and `tests/scripts/2432-…`.  On the interpreter: 62 784 → 51 344
 instructions a pass of the probe, −18.2 %.
 
+**`(R-SliceInto)` — moved.**  `src/slice_into.rs`, in the scope pass after `(R-SliceArg)`'s range
+clause and on its slice-block test (`slice_text::admit` / `split` / `outside_mentions`, now one
+home for both rules; the C's `slice_fill` was a second copy of it).  `OpAppendVector(P, <slice
+block>, tp)` becomes the bounds' statements and `OpSliceVector(P, src, lo, hi, row)` — the form
+the parser already gives a local place.  The bounds now run before P is read, so P is admitted
+only as variables and constant field offsets that no bound statement assigns (the C writer
+evaluated P first and took any expression; no corpus site needed more).  Switch
+`LOFT_NO_SLICE_INTO` (the C's, now every backend's), trace `LOFT_TRACE_SLICE_INTO`.  The C
+writer's clause (`slice_fill`, `slice_into`) is deleted; the transient writer's clause reads the
+IR form through an `OpSliceVector` arm.  Evidence: with both on, the C writer admitted nothing;
+the C of the 3 036 corpus and bench programs, old binary against the IR clause, differs in 8,
+each read: one pair of parentheses the writer's raw place wrapped, and the cell's new cases;
+the switch A/B (2 931 programs) 0 defects; the C sweep (2 967 programs) 2 597 match, the two known
+differs, and the eight changed programs clean under `--poison`; `find_problems --subject` c and
+codegen with rustc native: 917 passed; the cell on the interpreter, the C and
+rustc, the switch on and off, under `LOFT_POISON` and `LOFT_STRICT_STORES`, four new cases (the
+field its own source, a field with elements, a bound with an effect, `i32` elements), falsified
+by a lower bound of 0 in the IR form (8 of 12 fail on both backends).  Census: `R-SliceInto`
+applied by `ir`; the C rows count sites, not emitted copies (cbor and pluginabi 3 → 1), and
+rustc gains it (0 → 1); `(R-CompleteWrite)` loses the temporary's own group (−1 each), whose
+store no longer exists; on rustc three `R-Header` sites become `R-Header/function`: with the
+temporary's store gone the decoder holds its source's header for the whole function.  On the
+interpreter: 10 292 → 7 536 instructions a pass of the probe, −26.8 %.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -653,7 +677,7 @@ function before and not after.
 | `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** (the hand form skips the slice's bound normalisation); moved: 7 779 → 5 385, **−30.8 %** | **MOVED** (`slice_text::rewrite`, arc C's first) |
 | `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %**; moved: 7 311 → 6 106, **−16.5 %** | **MOVED** (`opt::loop_buffer`, arc C's sixth) |
 | `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %**; moved: 3 058 → 1 613, **−47.3 %** | **MOVED** (`opt::loop_record`, arc C's seventh) |
-| `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector` | MOVE, as that parser path widened to field places; measured on arc C's beside build |
+| `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector`; moved, the switch off against on, `slice_into`: 10 292 → 7 536, **−26.8 %** | **MOVED** (`slice_into::rewrite`, the scope pass) |
 | `(R-ValueRecord)` view clause | yes — `opt::value_records`' view leaves, decided on the IR already (by each writer) | a value-record tuple element that is a REFERENCE to a place — new to the IR's tuple | — (not in B1) | no probe yet; S0's count: `R-ValueRecord/view` 3 bench functions, drawing's `parse_lock` / `parse_poly` among them | MOVE — c4-view-plan.md S1–S3; carries `(R-ElemFirst)`'s view-exit form with it (D-phase-4, D-phase-5) |
 | `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)) | owed: measured on arc C's beside build |
 
@@ -721,7 +745,7 @@ both STAY.
 **Arc C's order**, by measured gain and weight: `(R-SliceArg)`'s range clause first (the
 protocol's proof, −56.9 %), then `(R-Wrapper)` (40.9, −66.5 %), `(R-PushFill)`'s fill form (17.2,
 −71.5 %), `(R-KeyedEntry)` (4.2, −89 %), `(R-ElemFirst)`, `(R-LoopBuffer)`, `(R-LoopRecord)`;
-then `(R-CompleteWrite)` and `(R-TextBorrow)` as interpreter clauses; `(R-SliceInto)`,
+then `(R-CompleteWrite)` and `(R-TextBorrow)` as interpreter clauses; `(R-SliceInto)` (moved),
 `(R-RetAdopt)` and `(R-RefillText)` measured on their beside builds.  The ports to the C
 (`(R-GuardFree)`, `(R-FnHeader)`, `(R-SliceBorrow)`) are their own track.
 

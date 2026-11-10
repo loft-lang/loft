@@ -880,6 +880,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-SliceArg`'s range clause — `text_from_bytes(v[lo..hi])` reads the span in place:
         // decided on the same settled IR, so neither backend builds the slice.
         crate::slice_text::rewrite(data, d_nr);
+        // `@FR-R-SliceInto` — a slice value appended to a place is sliced into it: decided on
+        // the same settled IR, so no backend fills a temporary store to append it.
+        crate::slice_into::rewrite(data, d_nr);
         // `@FR-R-Wrapper` — a stdlib one-op wrapper's call is its op: decided last, so every
         // rewrite above sees the IR it saw before, and both backends skip the call.
         crate::wrapper_inline::rewrite(data, d_nr);

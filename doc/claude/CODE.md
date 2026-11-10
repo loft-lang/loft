@@ -184,7 +184,7 @@ paths with `==`, `starts_with`, `ends_with` and `has_component`, never as text.
   per file in `src/` and `tests/` against `src/platform_census.baseline`, which only falls
   (`LOFT_BLESS_PLATFORM_CENSUS=1 cargo test --lib platform_census`).
 - **A Windows run on Linux:** `LOFT_POISON_HOST=windows` puts a program on an emulated Windows
-  host ([BOTH_BACKEND_SWITCHES.md § Falsifier: the emulated Windows host](BOTH_BACKEND_SWITCHES.md#falsifier-the-emulated-windows-host)).
+  host ([WINDOWS.md § Falsifier: the emulated Windows host](WINDOWS.md#falsifier-the-emulated-windows-host)).
 
 ## Processes
 

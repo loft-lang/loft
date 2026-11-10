@@ -385,6 +385,7 @@ pub mod self_replace;
 pub mod shared_call;
 pub mod single_use;
 pub mod siphash;
+pub mod slice_into;
 pub mod slice_text;
 pub mod slot_alias;
 pub mod store_records;

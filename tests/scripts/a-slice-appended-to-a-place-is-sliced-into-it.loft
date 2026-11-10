@@ -1,18 +1,19 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// `(R-SliceInto)` on the C — a scalar vector slice used as a VALUE converts to a temporary
-// vector in a store of its own (`Parser::materialise_slice_leaves`), filled by one slice op;
-// appended to a place (`R { f: v[a..b] }`, `x += v[a..b]`) the C now appends the slice straight
-// onto the place (`loft_vec_slice`, which appends `[lo, hi)` clamped as one block) and mints no
-// store (cbor's `CBytes { value: bytes[a..b] }`: pluginabi `check_request` −8 %).  What can go
-// wrong is the clamping, an append onto a place that already holds elements, a place that IS
-// the source, and a foreign (file-mapped) source.  Values hand-computed; value AND length.
+// `@FR-R-SliceInto` — a scalar vector slice used as a VALUE converts to a temporary vector in a
+// store of its own (`Parser::materialise_slice_leaves`), filled by one slice op; appended to a
+// place (`R { f: v[a..b] }`, `x.f += v[a..b]`) the scope pass makes it one `OpSliceVector` onto
+// the place (`Stores::vector_slice` / `loft_vec_slice`: `[lo, hi)` clamped, one block) after the
+// slice's bounds, and no store is minted — on every backend.  What can go wrong is the clamping,
+// an append onto a place that already holds elements, a place that IS the source, a foreign
+// (file-mapped) source, a bound with an effect (the bounds now run before the place is read),
+// and an element wider than a byte.  Values hand-computed; value AND length.
 //
-// @falsified-at: none — the clause has no earlier C build to catch, so the receipt is a planted
-//   defect (2026-10-30) in the generated C: the rewritten slices given a lower bound of 0 fail
-//   s1 ("5 35" for "3 30"), s2, s3, s4, s1b and s7.  s5 and s6 append a slice to a local, which
-//   lowers without a temporary and so pins that the rule leaves those paths alone.
+// @falsified-at: hand-measured (2026-11-10) — the IR pass's slice given a lower bound of 0:
+//   s1 ("5 35" for "3 30"), s2, s3, s4, s1b, s7, s8 and s10 fail on the interpreter and on
+//   `--native-c`.  s5 and s6 append a slice to a local, which the parser already lowers to one
+//   slice op, and so pin that the rule leaves those paths alone; s9 and s11 start at 0.
 //   CHANNEL: an assertion.
 
 struct Chunk { bytes: vector<u8>, tag: integer }
@@ -87,4 +88,42 @@ fn test_a_foreign_source() {
   got = "{len(c.bytes)} {total(c.bytes)}";
   delete(fp);
   assert(got == "3 21", "s7 {got}");
+}
+
+// s8: a field place IS the source: 1 4 … 28 (145), then 13 16 19 (48) read before the append
+fn test_a_field_is_its_own_source() {
+  c = Chunk { bytes: src(), tag: 8 };
+  c.bytes += c.bytes[4..7];
+  assert(len(c.bytes) == 13 && total(c.bytes) == 193 && (c.bytes[12] ?? 0) == 19 as u8, "s8 {len(c.bytes)} {total(c.bytes)}");
+}
+
+// s9: appended onto a field that already holds elements: 99, then 1 4 7
+fn test_onto_a_field_with_elements() {
+  v = src();
+  c = Chunk { bytes: [99 as u8], tag: 9 };
+  c.bytes += v[0..3];
+  assert(len(c.bytes) == 4 && total(c.bytes) == 111 && (c.bytes[0] ?? 0) == 99 as u8, "s9 {len(c.bytes)} {total(c.bytes)}");
+}
+
+// s10: a bound with an effect runs once, before the append: lo 2, hi 3 + 3 = 6, so 7 10 13 16
+struct Counter { n: integer }
+fn bump(k: Counter) -> integer { k.n += 1; k.n }
+fn test_a_bound_with_an_effect() {
+  v = src();
+  k = Counter { n: 1 };
+  c = Chunk { bytes: [], tag: 10 };
+  c.bytes += v[bump(k)..bump(k) + 3];
+  assert(len(c.bytes) == 4 && total(c.bytes) == 46 && k.n == 3, "s10 {len(c.bytes)} {total(c.bytes)} {k.n}");
+}
+
+// s11: four-byte elements into a field: -50 50 150 (0..3 of -50 50 150 250 350 450)
+struct Wide { xs: vector<i32> }
+fn wide(v: const vector<i32>, a: integer, b: integer) -> Wide { Wide { xs: v[a..b] } }
+fn test_wider_elements() {
+  v: vector<i32> = [];
+  for i in 0..6 { v += [(i * 100 - 50) as i32]; }
+  w = wide(v, 0, 3);
+  s = 0;
+  for x in w.xs { s += x as integer; }
+  assert(len(w.xs) == 3 && s == 150 && (w.xs[0] ?? 0 as i32) as integer == -50, "s11 {len(w.xs)} {s}");
 }
