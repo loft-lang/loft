@@ -6675,8 +6675,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // `@FR-W-Lit` — and a wide integer element in a regime file: a literal past i32
             // checks at the element's width.
             if Self::seeds_lambda_hint(in_t)
-                || (self.data.width32()
-                    && matches!(in_t.base(), Type::Integer(s) if s.is_wide()))
+                || (self.data.width32() && matches!(in_t.base(), Type::Integer(s) if s.is_wide()))
             {
                 self.expected = in_t.base().clone();
             }
