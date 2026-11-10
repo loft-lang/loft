@@ -6594,8 +6594,16 @@ impl Parser {
     /// Returns the new OWNED arm type when it rewrote (for cross-arm unification), else
     /// `None`. No-op unless the tail is a `skip_free`, non-empty-dep vector binding.
     #[allow(clippy::question_mark)]
-    fn jo_copy_borrowed_arm_yield(&mut self, arm_body: &mut Value) -> Option<Type> {
-        if !crate::keys::join_own_enabled() {
+    fn jo_copy_borrowed_arm_yield(
+        &mut self,
+        arm_body: &mut Value,
+        arm_type: &Type,
+    ) -> Option<Type> {
+        // An arm that yields nothing yields no view, whatever its code reads last:
+        // `P { f } => { other = f; }` and `P { f } => other = f` assign the capture, and on
+        // pass 1 the bind's lowering leaves `f` where the yield would be.  Taken for a yield,
+        // the arm became a `vector` and a statement `match` a value, demanding a `;` after it.
+        if !crate::keys::join_own_enabled() || matches!(arm_type.base(), Type::Void | Type::Never) {
             return None;
         }
         let v = match arm_body.unspan() {
@@ -7592,7 +7600,7 @@ impl Parser {
             // `deliver3` structure. The existing promotion then builds the separate-buffer
             // ABI the caller adopts + frees the argument. No-op for non-matching arms.
             // Updating `arm_type` keeps cross-arm unification reading the OWNED type.
-            if let Some(owned) = self.jo_copy_borrowed_arm_yield(&mut arm_body) {
+            if let Some(owned) = self.jo_copy_borrowed_arm_yield(&mut arm_body, &arm_type) {
                 arm_type = owned;
             }
 
