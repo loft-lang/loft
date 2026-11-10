@@ -63,6 +63,12 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       # The guards that moved to the language suite (@PLN193) still cite their patches here.
       - uses: ./.github/actions/checkout-suite
 

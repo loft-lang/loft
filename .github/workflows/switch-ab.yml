@@ -101,6 +101,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: loft-src
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./loft-src/.github/actions/windows-gcc
+
       - name: Checkout the language suite (its programs are in the A/B too)
         if: steps.sel.outputs.run == 'true'
         uses: ./loft-src/.github/actions/checkout-suite

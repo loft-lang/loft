@@ -1251,6 +1251,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
@@ -1337,6 +1343,12 @@ jobs:
       LOFT_NATIVE_CABI: "0"
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       # The system libraries the `test` job installs, so a test does not fail here for a
@@ -1384,6 +1396,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       # The language suite beside the tree (@PLN193): the index enumerates it, so a decision
       # or a rule whose only guard is a suite cell is seen as guarded here as it is on a box
       # with the checkout.
@@ -1451,6 +1469,12 @@ jobs:
       LOFT_NATIVE_BACKEND: c
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       - uses: ./.github/actions/checkout-suite
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -1517,6 +1541,12 @@ jobs:
         shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       - uses: ./.github/actions/checkout-suite
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -1551,6 +1581,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       # The scan walks the language suite's programs too (@PLN193).
       - uses: ./.github/actions/checkout-suite
       - name: Install Rust stable
@@ -1586,6 +1622,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
@@ -1711,6 +1753,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
@@ -1936,6 +1984,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       - name: Install Rust stable with clippy
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -2024,6 +2077,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable

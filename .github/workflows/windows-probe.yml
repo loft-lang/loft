@@ -50,6 +50,7 @@ jobs:
       - uses: actions/checkout@v5
       # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
       - uses: ./.github/actions/windows-gcc
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Restore cargo cache
