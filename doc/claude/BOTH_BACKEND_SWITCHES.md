@@ -620,6 +620,13 @@ form a local place takes at parse time.  It also turns off the C's transient cla
 reads that form.  The first bisect step for a wrong or missing span in a vector field.
 `LOFT_TRACE_SLICE_INTO=1` names each site taken and each kept with why.
 
+**`LOFT_NO_RETBUF_ADOPT=1`** (`@FR-R-RetAdopt`, default-ON, every backend: the interpreter's
+generator and both compiled writers apply `opt::ret_adopt`'s one decision) makes a
+vector-returning function keep its delivery copies — with it on, a shape-A result local ADOPTS
+the hidden return buffer: built where it must end up, the exits deliver nothing, the backing
+reused across calls.  The bisect step for a wrong vector return, a leak at a vector-returning
+call, or values accumulating across calls.  `LOFT_TRACE_ADOPT=1` names the declining gate.
+
 ## Layout: out-of-line fields
 
 **A field whose type would contain its host is a child record (@C159, `@FR-L-OutOfLine`,

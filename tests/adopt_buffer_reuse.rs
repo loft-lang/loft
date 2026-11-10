@@ -351,7 +351,10 @@ fn the_store_census_drops() {
         // 2026-11-07: (R-InPlaceLiteral)'s variant clause builds a variant literal in the enum
         // local it rebinds: 4 fewer pooled on each backend (`LOFT_NO_VARIANT_INPLACE=1` gives
         // back 228 and 108).
-        (224, 344, 104, 232),
+        // 2026-11-10: `(R-RetAdopt)` on the interpreter (@PLN211) — an adopted result local's
+        // witness store is never minted: 3 fewer on and off the pool there, native unchanged
+        // (`LOFT_NO_RETBUF_ADOPT=1` gives back 224/344).
+        (221, 341, 104, 232),
         "mints (interpret on, off, native on, off)"
     );
 }

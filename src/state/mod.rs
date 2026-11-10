@@ -532,6 +532,11 @@ pub struct State {
     /// store-span check, which would otherwise take the unwritten slot for a missed
     /// recording.  Reset with `walk_steps`, per function.
     pub(crate) fused_away: Vec<u16>,
+    /// Codegen only: `@FR-R-RetAdopt`'s decision for the function being generated
+    /// (`opt::ret_adopt::ret_adopt`, the one both compiled writers apply): its result local
+    /// IS the hidden return buffer, its witness store is never minted, and the delivery copy
+    /// at its exits has nothing to move.  Set per function in `def_code`.
+    pub(crate) adopt: Option<crate::opt::ret_adopt::RetAdopt>,
     /// @P294: cached byte-capacity of the value-stack store (`stack_cur`).
     /// The stack store is allocated once and never re-`claim`s, so its
     /// buffer only grows through `ensure_stack`; this cache lets the hot
@@ -993,6 +998,7 @@ impl State {
             fast_stack: fast_stack_allowed(),
             walk_steps: None,
             fused_away: Vec::new(),
+            adopt: None,
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
@@ -9226,6 +9232,7 @@ impl State {
             fast_stack: fast_stack_allowed(),
             walk_steps: None,
             fused_away: Vec::new(),
+            adopt: None,
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,

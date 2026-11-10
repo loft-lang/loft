@@ -277,7 +277,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Refresh)` | `R-Refresh` native |
 | `(R-RegisterTable)` | not counted — executor: position and stack top passed in registers |
 | `(R-RepeatRun)` | `R-RepeatRun` ir |
-| `(R-RetAdopt)` | `R-RetAdopt` c, native |
+| `(R-RetAdopt)` | `R-RetAdopt` interp, c, native |
 | `(R-ReturnField)` | `R-ReturnField` ir |
 | `(R-Reuse)` | `R-Reuse` ir |
 | `(R-Rotate)` | `R-Rotate` interp |
@@ -4223,11 +4223,18 @@ twice, at the scoping that carries the rule: blanking every `OpClearVector(buf)`
 (the entry clear included) corrupts the fronds probe — the reused buffer accumulates
 across calls — and collapsing the delivery BLOCK whole drops its scope-exit frees
 (2 stores leaked in the V-j corpus, caught by `LOFT_NATIVE_LEAK_CHECK`).  Switch
-`LOFT_NO_RETBUF_ADOPT`; `LOFT_TRACE_ADOPT=1` names the gate that declined.  Sites:
-`hoist::ret_adopt`, the init arm in `Output::output_set`, the witness skip in
-`OpDatabaseEmitter`, the scoped pair blanking in `TextDispatchEmitter`, the
-`in_adopt_delivery` scope in `Output::output_block`, the placement re-target in the
-§ V-j hook.
+`LOFT_NO_RETBUF_ADOPT`; `LOFT_TRACE_ADOPT=1` names the gate that declined.  The decision is
+`opt::ret_adopt::ret_adopt`, made once; each backend applies it at its own emission.  Rustc:
+the init arm in `Output::output_set`, the witness skip in `OpDatabaseEmitter`, the scoped pair
+blanking in `TextDispatchEmitter`, the `in_adopt_delivery` scope in `Output::output_block`, the
+placement re-target in the § V-j hook.  The C: `FnWriter::adopted_init`, the witness arm of
+`OpDatabase`, `delivery_block`.  The interpreter: `State::retbuf_adopt` in `def_code`,
+`adopted_bind`, the witness skip in `generate_call`, `adopted_delivery` in `generate_block` —
+an interpreter clause rather than an IR spelling, because the compiled writers build twins
+(`__ap`, `__d`) of the same body that must NOT adopt: their buffer is the caller's vector.
+On the interpreter drawing's `fronds` runs 7.5 % faster with it, mesh3d's `mesh_to_floats`
+2.6 %; where the scope pass already promoted the result local onto the buffer there is
+nothing for it to do.
 
 ### A returned local bound from a call is built in the return buffer
 

@@ -10,6 +10,14 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(R-RetAdopt)` runs on the interpreter (@PLN211 arc C)
+
+- A vector-returning function whose result local adopts the hidden return buffer now does so on
+  the interpreter as well: the local is built in the caller's buffer and the exit's copy goes.
+  The interpreter's generator applies `opt::ret_adopt`'s decision, the one both compiled writers
+  apply.  Drawing's `fronds` runs 7.5 % faster interpreted.  `LOFT_NO_RETBUF_ADOPT` turns it off
+  on every backend.
+
 ### `(R-SliceInto)` runs in the IR (@PLN211 arc C)
 
 - A scalar slice appended to a place — a literal's field `R { f: v[a..b] }`, `x.f += v[a..b]` —

@@ -26,8 +26,8 @@ the forms of `(R-ValueRecord)` the IR declines stay in the writers, closed build
 spelling them in the IR would not speed the interpreter (owner ruling, [c4-view-plan.md](c4-view-plan.md)
 § S2); c4-view S3 deleted both writers' element-first clauses (D-phase-4 closed).  D-fact-2
 gave the C `(R-RangedCall)` (its gain test now counts the operators a variant saves), and
-`(R-TextBorrow)` moved to the interpreter and `(R-SliceInto)` into the IR (§ Arc C's moves).
-Next: `(R-RetAdopt)` measured on its beside build; `(R-RefillText)` stays.  It
+`(R-TextBorrow)` and `(R-RetAdopt)` moved to the interpreter and `(R-SliceInto)` into the IR
+(§ Arc C's moves); `(R-RefillText)` stays.  It
 was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
@@ -628,6 +628,29 @@ store no longer exists; on rustc three `R-Header` sites become `R-Header/functio
 temporary's store gone the decoder holds its source's header for the whole function.  On the
 interpreter: 10 292 → 7 536 instructions a pass of the probe, −26.8 %.
 
+**`(R-RetAdopt)` — moved to the interpreter.**  An interpreter clause, not an IR spelling, as
+`(R-TextBorrow)` moved: the decision already lived once in `opt::ret_adopt`, and only the
+compiled writers applied it.  An IR spelling would also reach the twins those writers build of
+the same body (`__ap`, `__d`), whose return buffer is the CALLER's vector and which must not
+adopt it.  `State::retbuf_adopt` (`src/state/codegen.rs`) takes the decision once per function
+in `def_code`; `adopted_bind` writes the result's bind as the buffer (minted when the caller
+offered none, cleared otherwise) and then the bind to its vector field; `generate_call` skips
+the witness's mint and zero; `adopted_delivery` skips the delivery's clear and append.  It reads
+nodes through `IrNode`, so warm runs (the body in the program store) take it too.  Switch
+`LOFT_NO_RETBUF_ADOPT`, now every backend's.  The plan's probe never reached the rule — the scope
+pass promotes its result local onto the buffer — so it was priced on the libraries where it
+fires, the interpreter with a throwaway prototype on and off: 46 routines, every hash equal;
+drawing `fronds` −7.3 %, mesh3d `mesh_to_floats` −2.6 %, nothing else past 2 %.  Built: `fronds`
+935–944 → 865–874 µs, cold and warm.  Evidence: the switch A/B (2 931 programs) 0 defects; the C sweep (2 967 programs, the interpreter its oracle) 2 597 match, the two known differs;
+the drop gate's interpreter cells clean;
+the six adoption cells on the interpreter and the C, the switch on and off, under `LOFT_POISON`
+and `LOFT_STRICT_STORES`; falsified by keeping the delivery's clear (`157-retbuf-adopt`'s `main`
+fails on the interpreter).  A first plant, dropping the reuse arm's clear, changed nothing: the
+function's entry clear already empties an offered buffer.  `find_problems --subject` codegen
+and runtime: 2 329 passed, the one pin that moved being `adopt_buffer_reuse`'s store census
+(3 interpreter mints fewer on and off the pool, the switch giving the old pair back).  Census:
+`R-RetAdopt` applied by `interp` too.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -679,7 +702,7 @@ function before and not after.
 | `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %**; moved: 3 058 → 1 613, **−47.3 %** | **MOVED** (`opt::loop_record`, arc C's seventh) |
 | `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector`; moved, the switch off against on, `slice_into`: 10 292 → 7 536, **−26.8 %** | **MOVED** (`slice_into::rewrite`, the scope pass) |
 | `(R-ValueRecord)` view clause | yes — `opt::value_records`' view leaves, decided on the IR already (by each writer) | a value-record tuple element that is a REFERENCE to a place — new to the IR's tuple | — (not in B1) | no probe yet; S0's count: `R-ValueRecord/view` 3 bench functions, drawing's `parse_lock` / `parse_poly` among them | MOVE — c4-view-plan.md S1–S3; carries `(R-ElemFirst)`'s view-exit form with it (D-phase-4, D-phase-5) |
-| `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)) | owed: measured on arc C's beside build |
+| `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)); the probe's shape is promoted by the scope pass, so it was priced where the rule fires: drawing `fronds` −7.5 %, mesh3d `mesh_to_floats` −2.6 % on the interpreter | **MOVED to the interpreter** (`State::retbuf_adopt`: an IR spelling would reach the compiled writers' twins) |
 
 **Wave 2 — the rules that need one new piece.**
 
@@ -746,7 +769,7 @@ both STAY.
 protocol's proof, −56.9 %), then `(R-Wrapper)` (40.9, −66.5 %), `(R-PushFill)`'s fill form (17.2,
 −71.5 %), `(R-KeyedEntry)` (4.2, −89 %), `(R-ElemFirst)`, `(R-LoopBuffer)`, `(R-LoopRecord)`;
 then `(R-CompleteWrite)` and `(R-TextBorrow)` as interpreter clauses; `(R-SliceInto)` (moved),
-`(R-RetAdopt)` and `(R-RefillText)` measured on their beside builds.  The ports to the C
+`(R-RetAdopt)` (moved, an interpreter clause) and `(R-RefillText)` (stays).  The ports to the C
 (`(R-GuardFree)`, `(R-FnHeader)`, `(R-SliceBorrow)`) are their own track.
 
 ## Documentation

@@ -166,6 +166,7 @@ impl State {
         // that borrow their element, which every emitter below and every reader of the frame
         // asks about (`Function::holds_str`).
         Self::mark_text_views(def_nr, data);
+        self.adopt = Self::retbuf_adopt(def_nr, data);
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
         self.fused_away.clear();
         // `@FR-R-FrameHeadroom` — this function's height starts from nothing.
@@ -644,7 +645,9 @@ impl State {
             ValueType::Set => {
                 let v = node.set_var();
                 let from = self.code_pos;
-                self.generate_set(stack, v, node.set_inner());
+                if !self.adopted_bind(stack, v, node.set_inner()) {
+                    self.generate_set(stack, v, node.set_inner());
+                }
                 self.record_store_span(from, v);
                 Type::Void
             }
@@ -1775,6 +1778,111 @@ impl State {
         stack.add_op("OpInitCreateStack", self);
         self.code_add(step);
         self.code_add(dep_offset + step);
+    }
+
+    /// `@FR-R-RetAdopt` — the interpreter's clause of `opt::ret_adopt`'s decision, the one both
+    /// compiled writers apply: the result local adopts the hidden return buffer.  Taken only
+    /// where the local is bound from its witness's vector field, so the three places that apply
+    /// it — the bind ([`Self::adopted_bind`]), the witness's mint and zero (`generate_call`) and
+    /// the delivery ([`Self::adopted_delivery`]) — all find their statement.  A function the
+    /// analysis cannot read (its body only in the program store) is left as it is.
+    /// `LOFT_NO_RETBUF_ADOPT=1` keeps the delivery copies.
+    fn retbuf_adopt(def_nr: u32, data: &Data) -> Option<crate::opt::ret_adopt::RetAdopt> {
+        if std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0") {
+            return None;
+        }
+        let a = crate::opt::ret_adopt::ret_adopt(data, def_nr)?;
+        let gf = data.def_nr("OpGetField");
+        let bound = data.def(def_nr).code().any_node(&mut |n| {
+            matches!(n, Value::Set(v, x) if *v == a.v
+                && matches!(x.unspan(), Value::Call(f, args) if *f == gf
+                    && matches!(args.as_slice(), [w, Value::Int(_), Value::Int(_)]
+                        if matches!(w.unspan(), Value::Var(w) if *w == a.vdb))))
+        });
+        if !bound {
+            return None;
+        }
+        crate::rewrite_census::fired("R-RetAdopt", 1);
+        Some(a)
+    }
+
+    /// `@FR-R-RetAdopt` — the adopted local's bind: it IS the return buffer.  A caller that
+    /// offered none gets one minted as the witness would have been, so ownership travels the
+    /// same route; an offered one is emptied, as the delivery's clear did.  Then the local is
+    /// bound to the buffer's vector field as it was bound to the witness's.  `false` for any
+    /// other assignment.
+    fn adopted_bind(&mut self, stack: &mut Stack, v: u16, value: IrNode) -> bool {
+        let Some(a) = self.adopt else {
+            return false;
+        };
+        if v != a.v || value.kind() != ValueType::Call {
+            return false;
+        }
+        let Value::Call(gf, mut args) = value.to_owned_value() else {
+            return false;
+        };
+        if !matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == a.vdb) {
+            return false;
+        }
+        args[0] = Value::Var(a.buf);
+        let op = |name: &str| stack.data.def_nr(name);
+        let (database, set4, clear, is_null) = (
+            op("OpDatabase"),
+            op("OpSetInt4"),
+            op("OpClearVector"),
+            op("OpRefIsNull"),
+        );
+        let buf = || Value::Var(a.buf);
+        let mint = crate::data::v_block(
+            vec![
+                Value::Call(database, vec![buf(), Value::Int(a.db_tp)]),
+                Value::Call(set4, vec![buf(), Value::Int(0), Value::Int(0)]),
+            ],
+            Type::Void,
+            "adopted buffer",
+        );
+        let reuse = crate::data::v_if(
+            Value::Call(is_null, vec![buf()]),
+            mint,
+            Value::Call(clear, vec![buf()]),
+        );
+        self.generate(&reuse, stack, false);
+        let bind = Value::Call(gf, args);
+        self.generate_set(stack, v, IrNode::Native(&bind));
+        true
+    }
+
+    /// `@FR-R-RetAdopt` — the statements of `ops` that deliver the adopted local into the
+    /// buffer it already is: every append of it (the analysis admits one only inside a
+    /// delivery block), and the clear just before one.  The function's entry clear stays: it is
+    /// the buffer's reuse contract across calls.
+    fn adopted_delivery(&self, stack: &Stack, ops: &crate::ir_node::IrNodeList) -> Vec<usize> {
+        let Some(a) = self.adopt else {
+            return Vec::new();
+        };
+        let named = |n: &IrNode, name: &str, arity: usize| {
+            n.kind() == ValueType::Call
+                && stack.data.def(n.call_to()).name() == name
+                && n.call_args().len() >= arity
+                && {
+                    let first = n.call_args().get(0);
+                    first.kind() == ValueType::Var && first.var_nr() == a.buf
+                }
+        };
+        let mut out = Vec::new();
+        for k in 0..ops.len() {
+            let op = ops.get(k);
+            if named(&op, "OpAppendVector", 2) && {
+                let src = op.call_args().get(1);
+                src.kind() == ValueType::Var && src.var_nr() == a.v
+            } {
+                if k > 0 && named(&ops.get(k - 1), "OpClearVector", 1) {
+                    out.push(k - 1);
+                }
+                out.push(k);
+            }
+        }
+        out
     }
 
     /// `@FR-R-TextBorrow` — mark this function's text variables that BORROW their bytes
@@ -4194,6 +4302,13 @@ impl State {
         // to native once (compile-time clones / store read_value) and run the
         // existing body unchanged.  Makes the Call path store-capable.
         let params_owned: Vec<Value> = parameters.iter().map(|p| p.to_owned_value()).collect();
+        // `@FR-R-RetAdopt`: the adopted result's witness is never minted, nor zeroed.
+        if let Some(a) = self.adopt
+            && matches!(params_owned.first().map(Value::unspan), Some(Value::Var(w)) if *w == a.vdb)
+            && matches!(stack.data.def(op).name(), "OpDatabase" | "OpSetInt4")
+        {
+            return Type::Void;
+        }
         let parameters = &params_owned[..];
         // @FR-G-Mono — a generic never survives the parser: a call names an INSTANCE.  A
         // template has no code, and a call to one ran nothing and ended the program with no
@@ -5548,7 +5663,11 @@ impl State {
         let mut return_expr = 0;
         let mut has_return = false;
         let free_ops = stack.data.op_sets();
-        for v in ops.iter() {
+        let delivery = self.adopted_delivery(stack, &ops);
+        for (k, v) in ops.iter().enumerate() {
+            if delivery.contains(&k) {
+                continue;
+            }
             let s_pos = self.stack_pos;
             if v.kind() == ValueType::Return {
                 has_return = true;
