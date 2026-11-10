@@ -4517,6 +4517,57 @@ fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   ] }, ir::TyVoid)
 }
 
+// `jo_copy_borrowed_arm_yield` (@PLN85 match_return): an enum arm that YIELDS a borrowed vector
+// capture (`Filled { items } => items`) yields an owned copy instead — `_mvcopy_N` in a store of
+// its own, cleared and appended to — so the value escapes owned.  An arm that yields nothing
+// yields no view; only the single-yield shape is rewritten.  Null where the arm is not one.
+fn jo_arm_copy(e: el::El, vars: el_vars::Vars, b: Ex) -> Ex? {
+  if b.tp is TyVoid || b.tp is TyNever {
+    return null;
+  }
+  v = match el_ir::unspan(b.code) {
+    NdVar { n } => n,
+    NdBlock { block } => match el_ir::unspan(block[0].operators[-1] ?? ir::NdNull) { NdVar { n } => n, _ => -1 },
+    _ => -1
+  };
+  // `is_marked_vector_borrow`: a vector binding with a borrow that frees nothing of its own.
+  if v < 0 || !vars.vars[v].skip_free || !(el_types::base(el_vars::tp(vars, v)) is TyVector) || len(el_types::deps(el_vars::tp(vars, v))) == 0 {
+    return null;
+  }
+  elm = match el_types::base(el_vars::tp(vars, v)) { TyVector { inner } => inner, _ => ir::TyVoid };
+  o = el_vars::create_unique(vars, "mvcopy", ir::TyVector { inner: elm, dep: [] });
+  el_vars::set_defined(vars, o);
+  ops: vector<ir::Node> = [];
+  rec = 0;
+  if !e.first_pass {
+    nm = el_types::elem_name(e, elm);
+    rows = vector_rows(e, elm, 0, true);
+    rec = match el_types::base(elm) {
+      TyReference { n } => el::def(e, n).known_type,
+      _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) }
+    };
+    if nm == "" || rows == null || rec < 0 {
+      el::refuse(e, "an owned copy of a yielded vector capture of this element type: {type_kind(elm)}");
+      return null;
+    }
+    r = rows!;
+    db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+    el_vars::depend(vars, o, db);
+    ops += [
+      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+      el_ir::v_set(o, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+    ];
+  }
+  ops += [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: o }]), el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: o }, ir::NdVar { n: v }, ir::NdInt { n: rec }]), ir::NdVar { n: o }];
+  owned_t = ir::TyVector { inner: elm, dep: [o] };
+  single = match el_ir::unspan(b.code) { NdVar { n: _ } => true, NdBlock { block } => len(block[0].operators) == 1, _ => false };
+  if !single {
+    return null;
+  }
+  ex(el_ir::v_block(ops, owned_t, "jo_arm_copy"), owned_t)
+}
+
 // `vec_arm_copies`: 1 where the `if` at `code` can take the bind into its arms and one arm
 // copies a local, 0 where it can but none copies, -1 where an arm is neither a whole-vector
 // local nor a value the bind takes as it is (a vector literal, a pass-1 placeholder).
@@ -16356,6 +16407,17 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         facts = assume_guard(e, vars, ug);
         b = arm_body(e, vars, body, expected);
         forget_facts(vars, facts);
+        if sd >= 0 {
+          owned = jo_arm_copy(e, vars, b);
+          if owned != null {
+            b = owned!;
+          }
+        }
+        // An untyped `[]` arm is read against the match's vector type (`parse_vector` with the
+        // arm's expectation): built as an empty vector of its element, in a store of its own.
+        if body != null && el_types::base(expected) is TyVector && syntax_tail_empty(e, body!) {
+          b = empty_arm(e, vars, b, expected, ir::TyVoid);
+        }
         // The bindings' spellings name what they named before the arm.
         for al in rev(aliases) {
           el_vars::restore_name(vars, al.name, al.nr);
@@ -19442,6 +19504,8 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
 // The block at syntax node `n` ends in a `[]` with no items (`block_tail_empty_literal`).
 fn syntax_tail_empty(e: el::El, n: integer) -> boolean {
   match e.p.nodes[n] {
+    // A match arm's body may be the literal itself (`_ => []`).
+    SVecLit { items } => len(items) == 0,
     SBlock { stmts } => {
       if len(stmts) == 0 {
         return false;
