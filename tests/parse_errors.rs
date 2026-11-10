@@ -521,6 +521,16 @@ fn qq_coalesce_default_that_is_a_comparison_names_the_precedence() {
         .error("`??` default of type `boolean` is not assignable to `integer` — `??` binds looser than a comparison, `&&` and `||`, so the default here is the whole test after it; parenthesise the coalesce: `(x ?? d) == y` at qq_coalesce_default_that_is_a_comparison_names_the_precedence:1:53");
 }
 
+// A syntax error that stops the parse before a type's declaration is the one error: the type
+// named above it, declared below, is not reported undefined as well — that report, with a cure
+// aimed at the imports, sent the reader to the wrong file (`typedef::files_with_errors`).
+#[test]
+fn a_type_declared_below_a_syntax_error_is_not_reported_undefined() {
+    code!("fn f() -> integer { w: Later? = null; if w == null { 1 } else { 2 } }\nfn g( { }\nstruct Later { a: integer }")
+        .error("Expect attribute at a_type_declared_below_a_syntax_error_is_not_reported_undefined:2:8")
+        .error("Syntax error: unexpected '{' at a_type_declared_below_a_syntax_error_is_not_reported_undefined:2:8");
+}
+
 #[test]
 fn qq_coalesce_crosstype_default_mismatch() {
     code!("fn test() { n: integer? = null; b = n ?? \"x\"; }")
