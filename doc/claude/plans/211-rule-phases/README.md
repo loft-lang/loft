@@ -355,6 +355,12 @@ per-routine profile names the rule.  A routine no existing rule could serve is l
 the emitted code of the routine it names — a class is a decline reason seen at the hot site,
 not a guess from the profile alone.  Effort S.
 
+*Done 2026-11-10:* [d1-classes.md](d1-classes.md) — the 33 routines over 2× in eleven classes.
+The widest is `(R-Range)`'s INDEX clause proving only the lower bound (nine routines); the next
+are `(R-Version)` refusing a leaf that calls a leaf (three) and copies where the twin borrows or
+moves (six).  D2 takes the first: its provable part with the select form, priced on `boundary_loops`, is 11.18 →
+9.29 ms (gcc) and 18.24 → 9.28 ms (clang) against the twin's 6.05.
+
 **D2 … — one generalised clause per phase,** in order of the time the class carries.  Each is
 priced by hand first (the hand form of the routine where the class is heaviest, same answer,
 instructions per op), then built as a clause of its rule under the rule's switch, then judged:
