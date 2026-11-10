@@ -13332,7 +13332,14 @@ impl Parser {
         // the element that moved into slot 0.  A computed subject still gets its temporary,
         // so it is evaluated once.
         let subject_var = match subject.unspan() {
-            Value::Var(x) if !matches!(self.vars.tp(*x), Type::RefVar(_)) => Some(*x),
+            // An author's variable only: a compiler buffer (an iterator subject drained into
+            // one) is filled by statements of its own around the match.
+            Value::Var(x)
+                if !matches!(self.vars.tp(*x), Type::RefVar(_))
+                    && !self.vars.is_compiler_generated(*x) =>
+            {
+                Some(*x)
+            }
             _ => None,
         };
         let v = subject_var.unwrap_or_else(|| self.create_unique("match_subj", subject_type));
