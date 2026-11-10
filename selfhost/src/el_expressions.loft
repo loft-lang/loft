@@ -9589,6 +9589,14 @@ fn look(e: el::El, source: integer, name: text) -> integer {
 }
 
 pub fn find_fn(e: el::El, name: text, receiver: ir::TypeT, source: integer = -1) -> integer {
+  // A standard-library operator called by its name (`OpAbsInt(x)`) is registered under it
+  // (`Data::add_op`).
+  if len(name) >= 3 && starts_with(name, "Op") && "{name[2]}" >= "A" && "{name[2]}" <= "Z" {
+    op = look(e, source, name);
+    if op >= 0 {
+      return op;
+    }
+  }
   free = look(e, source, "n_{name}");
   // A method dispatches on the REFERENT of a `&τ`, not on the link (`Data::candidates`, loft#824).
   first = match receiver { TyRefVar { inner } => inner, _ => receiver };

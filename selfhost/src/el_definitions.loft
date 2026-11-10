@@ -1040,10 +1040,6 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   // A capability (`fs#read`) and a `-> const` result are checks at the call and the return; the
   // definition's image is the plain one, so both are read past.  An `operator` form is the
   // method of its name, marked (`operator_form`) so the form it backs reaches it.
-  if len(annots) > 0 {
-    el::refuse(e, "a function with annotations");
-    return "";
-  }
   // `parse_type_var_header` (@F25): each header variable bound to its placeholder before the
   // parameters are read, so `parse_type` resolves its spelling.
   for tv in tvars {
@@ -1123,7 +1119,10 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       _ => {}
     }
   }
-  key = fn_key(e, name, arguments);
+  // A standard-library operator (`OpAddInt`) is registered under its own name (`Data::add_op`),
+  // not keyed as a function: the operator table (`possible`) finds it by that name.
+  std_op = e.default && op_name(name);
+  key = if std_op { name } else { fn_key(e, name, arguments) };
   if key == "" {
     return "";
   }
@@ -1149,11 +1148,15 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   }
   // `@FR-Disp-Key`: a definition of a name that is (or now becomes) an overload set is keyed by
   // its full parameter spelling.
-  key = el_dispatch::definition_key(e, key, name, [for a in arguments { a.typedef }], el::pos_at(e, after));
+  if !std_op {
+    key = el_dispatch::definition_key(e, key, name, [for a in arguments { a.typedef }], el::pos_at(e, after));
+  }
   if key == "" {
     return "";
   }
-  if e.first_pass {
+  if std_op {
+    e.context = if e.first_pass { add_op(e, name, arguments, el::pos_at(e, after)) } else { el::def_nr(e, name) };
+  } else if e.first_pass {
     if el::def_nr(e, key) >= 0 {
       el::refuse(e, "a function over an existing name: {name}");
       return "";
@@ -1292,8 +1295,72 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     }
   }
   e.b.data.definitions[e.context].variables = el_vars::stored(vars);
+  if len(annots) > 0 && !apply_annotations(e, e.context, annots) {
+    e.context = -1;
+    return "";
+  }
   e.context = -1;
   key
+}
+
+// `Parser::parse_function`'s annotation loop, on the definition the declaration above made:
+// `#rust` / `#iterator` the standard library's templates for its own operators, `#native` the
+// symbol a native crate answers (the function's own name where none is given), `#c` a C
+// binding, `#hot` / `#cold` an operator's dispatch class, `#null_safe`, `#builtin`,
+// `#superseded`, `#pure` and `#impure(category)` (`purity_code`: 0 none, 1 pure, 2 + the
+// category).  The templates and `#builtin` are the standard library's alone; anything else is
+// refused by name.  False where refused.
+fn apply_annotations(e: el::El, d: integer, annots: vector<integer>) -> boolean {
+  for a in annots {
+    match e.p.nodes[a] {
+      SAnnot { name, args } => {
+        if (name == "rust" || name == "iterator" || name == "builtin") && !e.default {
+          el::refuse(e, "a `#{name}` outside the standard library");
+          return false;
+        }
+        if name == "rust" {
+          e.b.data.definitions[d].rust = args[0] ?? "";
+        } else if name == "iterator" {
+          e.b.data.definitions[d].rust = "{args[0] ?? ""}#{args[1] ?? ""}";
+        } else if name == "native" {
+          e.b.data.definitions[d].native = if len(args) > 0 { args[0] ?? "" } else { el::def(e, d).name };
+        } else if name == "c" {
+          e.b.data.definitions[d].c_symbol = args[0] ?? "";
+          e.b.data.definitions[d].c_sig = args[1] ?? "";
+        } else if name == "hot" {
+          e.b.data.definitions[d].op_hot = true;
+        } else if name == "cold" {
+          e.b.data.definitions[d].op_cold = true;
+        } else if name == "null_safe" {
+          e.b.data.definitions[d].null_safe = true;
+        } else if name == "builtin" {
+          e.b.data.definitions[d].builtin = true;
+        } else if name == "superseded" {
+          e.b.data.definitions[d].superseded = args[0] ?? "";
+        } else if name == "pure" {
+          e.b.data.definitions[d].purity = 1;
+        } else if name == "impure" {
+          cats = ["host_io", "prng", "io", "parent_write", "par_call"];
+          ci = -1;
+          for c in cats {
+            if c == (args[0] ?? "") {
+              ci = c#index;
+            }
+          }
+          if ci < 0 {
+            el::refuse(e, "an `#impure` category of this name: {args[0] ?? ""}");
+            return false;
+          }
+          e.b.data.definitions[d].purity = 2 + ci;
+        } else {
+          el::refuse(e, "a function annotation of this name: #{name}");
+          return false;
+        }
+      },
+      _ => {}
+    }
+  }
+  true
 }
 
 // `add_capture_owner_slots` (`@FR-L-CapOwn`, `@FR-O-Witness`), at a function's pass-1 body end:
@@ -1582,6 +1649,25 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
 // A method also takes a constant `Routine` member of its name on the receiver type — the
 // membership `x.name(…)` resolves through.  A receiver that already carries a member of that
 // name (a field, the nullable twin of a method) is refused by name.
+// `is_op`: a name `Op` followed by a capital — an operator's.
+fn op_name(name: text) -> boolean {
+  len(name) >= 3 && starts_with(name, "Op") && "{name[2]}" >= "A" && "{name[2]}" <= "Z"
+}
+
+// `Data::add_op`: a standard-library operator, its parameters as declared (`const` ones not
+// mutable).  `el::possible` finds it by its name.
+fn add_op(e: el::El, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
+  d = el::add_def(e, name, pos, el::DT_FUNCTION);
+  for a in arguments {
+    at = el::attribute(a.name, a.typedef);
+    at.mutable = !a.constant;
+    at.constant = a.constant;
+    at.value = [a.dflt];
+    e.b.data.definitions[d].attributes += [at];
+  }
+  d
+}
+
 fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
   tn = -1;
   // The receiver's slot this definition takes over, as the nullability twin's dense half.

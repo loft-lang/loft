@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the scope pass in loft (`src/scopes/`), its first slice: what a function of scalar
+// values needs to run.  Each block gets its scope number in the order the scan phase enters them
+// (`enter_scope`: the body 1, then each nested block as it is reached), and a body that answers a
+// value answers it through a `return` (`returns.rs`).  A local the frame must hold, and anything
+// that would need a free, is refused by name: slot allocation and the frees are the next slices.
+
+use ir;
+
+// The scope pass over every function the bundle holds code for; the refusals, one per reason.
+pub fn scope_bundle(b: ir::Bundle) -> vector<text> {
+  refused: vector<text> = [];
+  for d in b.data.definitions {
+    if d.def_type != 1 || len(d.code) == 0 {
+      continue;
+    }
+    // The program's own functions (source 1); the library's are reached only through a call.
+    for v in d.variables.variables {
+      if d.source == 1 && !v.argument && v.stack_pos == 65535 && !refused.contains("a local the frame holds (no slot allocation yet)") {
+        refused += ["a local the frame holds (no slot allocation yet)"];
+      }
+    }
+    n = Numbering { next: 1 };
+    code = number(d.code[0]!, n);
+    if !((d.returned[0] ?? ir::TyVoid) is TyVoid) {
+      code = tail_return(code);
+    }
+    b.data.definitions[d#index].code = [code];
+  }
+  refused
+}
+
+struct Numbering { next: integer }
+
+// Each block numbered as the scan phase enters it, in source order.
+fn number(n: ir::Node, k: Numbering) -> ir::Node {
+  match n {
+    NdBlock { block } => {
+      bl = block[0];
+      bl.scope = k.next;
+      k.next += 1;
+      bl.operators = [for x in bl.operators { number(x, k) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      bl.scope = k.next;
+      k.next += 1;
+      bl.operators = [for x in bl.operators { number(x, k) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: number(cond, k), t: number(t, k), f: number(f, k) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: number(inner, k) },
+    NdReturn { inner } => ir::NdReturn { inner: number(inner, k) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: number(inner, k) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { number(a, k) }] },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { number(x, k) }] },
+    _ => n
+  }
+}
+
+// The body's last operator answered through a `return`, where it is a value and not one already.
+fn tail_return(body: ir::Node) -> ir::Node {
+  match body {
+    NdBlock { block } => {
+      bl = block[0];
+      k = len(bl.operators);
+      if k == 0 {
+        return body;
+      }
+      last = bl.operators[k - 1]!;
+      inner = match last { NdSpan { inner } => inner, _ => last };
+      if !(inner is NdReturn) {
+        bl.operators[k - 1] = match last {
+          NdSpan { pos, inner: li } => ir::NdSpan { pos: pos, inner: ir::NdReturn { inner: li } },
+          _ => ir::NdReturn { inner: last }
+        };
+      }
+      ir::NdBlock { block: [bl] }
+    },
+    _ => body
+  }
+}
