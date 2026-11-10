@@ -1709,15 +1709,53 @@ impl Output<'_> {
             let target = copy_target("_dst", first_bind);
             // `@FR-H-SwapRebind` — the copy arm as one runtime call that exchanges the result's
             // store into the destination without resetting it first, when it can.
-            let copy = if crate::keys::swap_rebind_enabled() {
-                crate::rewrite_census::fired("H-SwapRebind", 1);
-                format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp_with_free});")
-            } else {
-                format!(
-                    "var_{name} = OpDatabase(cell, {target}, {tp_lit}); \
-                     OpCopyRecord(cell,_src, var_{name}, {tp_with_free});"
-                )
+            let copy_with = |tp: &str| {
+                if crate::keys::swap_rebind_enabled() {
+                    format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp});")
+                } else {
+                    format!(
+                        "var_{name} = OpDatabase(cell, {target}, {tp_lit}); \
+                         OpCopyRecord(cell,_src, var_{name}, {tp});"
+                    )
+                }
             };
+            if crate::keys::swap_rebind_enabled() {
+                crate::rewrite_census::fired("H-SwapRebind", 1);
+            }
+            let mut copy = copy_with(&tp_with_free);
+            // `@FR-O-Buffer` — a result delivered INTO a hidden result buffer this frame keeps
+            // across calls (`__ref_N`, minted once, cleared and refilled per call) is copied out
+            // WITHOUT the source-free bit: the store is the buffer's, and the next call refills
+            // it.  Released by the copy, the buffer kept the store number of a freed store, and
+            // the next call refilled a store another value had since been given (loft#2443,
+            // `va = arm(k)` in a loop).  A result in any other store is consumed as before.  The
+            // C backend draws the same line (`t != c && t != __ref_1` before its free).
+            if let Value::Call(_, args) = to.unspan() {
+                let held: Vec<String> = args
+                    .iter()
+                    .filter_map(|a| match a.unspan() {
+                        Value::Var(av)
+                            if *av != var
+                                && variables.is_caller_hidden_buf(*av)
+                                && !variables.is_argument(*av) =>
+                        {
+                            let buf = sanitize(variables.name(*av));
+                            Some(format!(
+                                "(var_{buf}.store_nr != u16::MAX && var_{buf}.store_nr == _src.store_nr)"
+                            ))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                // One copy site, its free bit chosen at run time: two copies of the arm doubled
+                // the exchange's code for one decision (`tests/swap_rebind.rs` pins one site).
+                if !held.is_empty() && tp_with_free != tp_lit {
+                    copy = copy_with(&format!(
+                        "(if {} {{ {tp_lit} }} else {{ {tp_with_free} }})",
+                        held.join(" || ")
+                    ));
+                }
+            }
             // `@FR-R-RebindBuffer` — a fresh result in a store of its own is adopted, and the
             // store it displaces is handed (by the reassignment around this arm) to the call's
             // hidden buffer local for its next execution, instead of an exchange into it.

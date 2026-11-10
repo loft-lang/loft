@@ -139,6 +139,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       # Nightly + rust-src: `-Z build-std` is the only way to get a std
       # compiled with +atomics, which is what makes the wasm threadable.
       - name: Install Rust nightly (rust-src)

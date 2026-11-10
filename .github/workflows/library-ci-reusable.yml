@@ -75,6 +75,12 @@ jobs:
           # library floored on the day a feature landed (`loft = ">=2026.10.20261005"`) passes.
           fetch-tags: true
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # The `if` is on the step, not only inside it: a `loft-ref` older than the action has
+      # no `windows-gcc`, and only a step that is skipped is never looked up.
+      - if: runner.os == 'Windows'
+        uses: ./loft-src/.github/actions/windows-gcc
+
       # ⚠⚠ THE KEY MUST CARRY LOFT'S COMMIT, NOT ITS BRANCH NAME.
       #
       # It used to be `loft-ref` + `hashFiles(Cargo.lock)`.  `loft-ref` is a BRANCH

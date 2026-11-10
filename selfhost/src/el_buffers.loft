@@ -421,16 +421,32 @@ fn allowed_operand(e: el::El, name: text, d: integer, i: integer) -> boolean {
   callee_admits(e, d, i)
 }
 
+// The vector operators that read or write their first operand in place.
+const IN_PLACE_AT_0 = [
+  "OpPreAllocVector", "OpReserveVector", "OpLengthVector", "OpSizeVector", "OpVectorIsNull",
+  "OpClearVector", "OpRemoveVector", "OpKeepVectorRange", "OpPrependVector", "OpAppendTextBytes",
+  "OpAppendVector", "OpReplaceVector"
+];
+
 fn in_place_at_0(nm: text) -> boolean {
-  starts_with(nm, "OpPush") || nm == "OpPreAllocVector" || nm == "OpReserveVector" || nm == "OpLengthVector" || nm == "OpSizeVector" || nm == "OpVectorIsNull" || nm == "OpClearVector" || nm == "OpRemoveVector" || nm == "OpKeepVectorRange" || nm == "OpPrependVector" || nm == "OpAppendTextBytes" || nm == "OpAppendVector" || nm == "OpReplaceVector" || element_place(nm)
+  starts_with(nm, "OpPush") || element_place(nm) || IN_PLACE_AT_0.contains(nm)
 }
 
 fn element_place(nm: text) -> boolean {
   nm == "OpGetVector" || nm == "OpGetVectorNullable" || nm == "OpInsertVector" || nm == "OpVectorRef" || nm == "OpVectorRefNullable"
 }
 
+// The field reads that answer a scalar.
+const SCALAR_ACCESSORS = [
+  "OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetCharacter", "OpGetSingle",
+  "OpGetFloat", "OpGetByte", "OpGetByteNullable", "OpGetEnum", "OpGetBoolean", "OpGetShort",
+  "OpGetShortRaw", "OpGetShortSpare", "OpGetShortFull", "OpSetInt", "OpSetInt4", "OpSetInt4Raw",
+  "OpSetCharacter", "OpSetSingle", "OpSetFloat", "OpSetByte", "OpSetByteNullable", "OpSetShort",
+  "OpSetShortRaw", "OpSetEnum", "OpSetBoolean"
+];
+
 fn scalar_accessor(nm: text) -> boolean {
-  nm == "OpGetInt" || nm == "OpGetInt4" || nm == "OpGetInt4Raw" || nm == "OpGetInt4Full" || nm == "OpGetCharacter" || nm == "OpGetSingle" || nm == "OpGetFloat" || nm == "OpGetByte" || nm == "OpGetByteNullable" || nm == "OpGetEnum" || nm == "OpGetBoolean" || nm == "OpGetShort" || nm == "OpGetShortRaw" || nm == "OpGetShortSpare" || nm == "OpGetShortFull" || nm == "OpSetInt" || nm == "OpSetInt4" || nm == "OpSetInt4Raw" || nm == "OpSetCharacter" || nm == "OpSetSingle" || nm == "OpSetFloat" || nm == "OpSetByte" || nm == "OpSetByteNullable" || nm == "OpSetShort" || nm == "OpSetShortRaw" || nm == "OpSetEnum" || nm == "OpSetBoolean"
+  SCALAR_ACCESSORS.contains(nm)
 }
 
 // `ir_shape::one_op_wrapper`: a standard-library wrapper whose body is one op call over its

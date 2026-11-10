@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
-index cc9aadd20..e4d4bb833 100644
+index 2164e6852..037d70673 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -13125,8 +13125,7 @@ impl Data {
+@@ -13356,8 +13356,7 @@ impl Data {
              // A pass-1 forward stub (a library parsed after its user, as in a mutual-use
              // pair) is not the item yet and carries no `pub`: judging it would refuse a
              // `pub struct` the second pass finds published.
@@ -12,7 +12,7 @@ index cc9aadd20..e4d4bb833 100644
              {
                  return None;
              }
-@@ -13153,9 +13152,7 @@ impl Data {
+@@ -13384,9 +13383,7 @@ impl Data {
                  });
              }
              // `@FR-F-Package` — a mate of a `#package` file reads its items as `pub`.
@@ -22,4 +22,4 @@ index cc9aadd20..e4d4bb833 100644
 +            if true {
                  return Some(format!(
                      "`{name}` is not `pub` in `{lib}`, so {spelling} cannot reach it: a \
-                      library's surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, \
+                      library's surface is its `pub` items.\n  fix: declare it `pub` in `{lib}`, \

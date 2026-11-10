@@ -107,7 +107,14 @@ impl FnWriter<'_> {
 
     /// `OpFinishRecord` in a keyed collection: the record goes to its key's place
     /// (`@FR-Col-Insert`: an equal key's element is replaced).
-    pub(super) fn keyed_finish(&mut self, c: &str, rec: &str, tp: u16) -> Result<E, String> {
+    /// `hh`: the table handle the place shares (`(R-TableHandle)`), if any.
+    pub(super) fn keyed_finish(
+        &mut self,
+        c: &str,
+        rec: &str,
+        tp: u16,
+        hh: Option<&str>,
+    ) -> Result<E, String> {
         let (kind, elem, size) = self.keyed_of(tp)?;
         let (keys, n) = self.cx.keys_of(tp);
         Ok(E::new(
@@ -117,9 +124,14 @@ impl FnWriter<'_> {
                     // A displaced entry releases what it owns: its type is in the table.
                     self.cx.name_types();
                     self.cx.describe_type(elem);
-                    format!(
-                        "(void) loft_hash_insert(loft_types, {elem}, {c}, {rec}, {keys}, {n}, 0)"
-                    )
+                    match hh {
+                        Some(h) => format!(
+                            "(void) loft_hh_insert(&{h}, loft_types, {elem}, {c}, {rec}, {keys}, {n}, 0)"
+                        ),
+                        None => format!(
+                            "(void) loft_hash_insert(loft_types, {elem}, {c}, {rec}, {keys}, {n}, 0)"
+                        ),
+                    }
                 }
                 Keyed::Index | Keyed::Ordered => {
                     // A displaced record releases what it owns: its type is in the table.
@@ -339,9 +351,13 @@ impl FnWriter<'_> {
                 )))
             }
             ("t_4hash_len", [h]) => {
+                let hh = self.table_handle(h);
                 let h = self.expr(h, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_hash_len({})", as_ref(h)?),
+                    match hh {
+                        Some(hh) => format!("loft_hh_len(&{hh}, {})", as_ref(h)?),
+                        None => format!("loft_hash_len({})", as_ref(h)?),
+                    },
                     K::Int,
                 )))
             }
@@ -1015,9 +1031,13 @@ impl FnWriter<'_> {
                 )))
             }
             ("OpLengthHash", [h]) => {
+                let hh = self.table_handle(h);
                 let h = self.expr(h, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_hash_len({})", as_ref(h)?),
+                    match hh {
+                        Some(hh) => format!("loft_hh_len(&{hh}, {})", as_ref(h)?),
+                        None => format!("loft_hash_len({})", as_ref(h)?),
+                    },
                     K::Int,
                 )))
             }
@@ -1442,59 +1462,41 @@ impl FnWriter<'_> {
         let n = values.len();
         let kv = value_array(&values);
         let (keys, nk) = self.cx.keys_of(tp);
-        // `@FR-R-TypedKeyed`: a hash with ONE 8-byte integer key, looked up by that integer,
-        // takes the typed entry — the same digest, home bucket, walk and equality, in place.
-        // Two to four such keys take the compound entry (the same clause's compound form).
-        let ints: Option<Vec<&str>> = (kind == Keyed::Hash
-            && n == nk
-            && (1..=4).contains(&n)
-            && types.iter().take(n).all(|t| matches!(t, 1 | 2)))
-        .then(|| {
-            values
-                .iter()
-                .map(|v| {
-                    v.strip_prefix("loft_kv_int(")
-                        .and_then(|v| v.strip_suffix(')'))
-                })
-                .collect()
-        })
-        .flatten();
-        // One text key takes the text entry (the same clause's text form).
-        let text_find = (kind == Keyed::Hash && n == 1 && nk == 1 && types[0] == 6)
-            .then(|| {
-                values[0]
-                    .strip_prefix("loft_kv_text(")
-                    .and_then(|v| v.strip_suffix(')'))
-                    .map(|key| format!("loft_h_find_text({data}, {keys}, {key})"))
-            })
-            .flatten();
-        match (&ints, &text_find) {
-            (Some(ks), _) if ks.len() == 1 => crate::rewrite_census::fired("R-TypedKeyed", 1),
-            (Some(_), _) => crate::rewrite_census::fired("R-TypedKeyed/compound", 1),
-            (None, Some(_)) => crate::rewrite_census::fired("R-TypedKeyed/text", 1),
-            (None, None) => {}
-        }
-        // `@FR-R-SameRead`'s filed clause: the previous statement filed `rec` into this hash, so
-        // where that insert landed (the store takes writes, neither handle is null) and `rec`'s
-        // key is the one looked up, `rec` IS the entry under it (`@FR-Col-Insert`: the latest
-        // insert wins); otherwise the lookup runs as written.
+        let (ints, text_find) = typed_lookup_keys(kind, &types, &values, nk, &data, &keys);
+        // `@FR-R-SameRead`'s filed clause: the previous statement filed a record into this hash,
+        // so where that insert landed (the store takes writes, neither handle is null) and the
+        // entry it filed (`loft_h_filed`: an inline table moves a staged record into itself, so
+        // the record handed to the insert is not always the entry) holds the key looked up, that
+        // entry IS the one under the key (`@FR-Col-Insert`: the latest insert wins); otherwise
+        // the lookup runs as written.
         let filed = self.filed_next.clone().filter(|(path, htp, _)| {
             *htp == tp
                 && vals.len() == 1
                 && matches!(vals[0].unspan(), Value::Var(_))
                 && crate::opt::writes::vector_path(self.cx.data, data_v).as_ref() == Some(path)
         });
+        // `(R-TableHandle)`: the one-integer lookup goes through the place's handle — not the
+        // filed clause's fallback below, a cold path that would only add the handle's code to
+        // the hot function.
+        let hh = if ints.as_ref().is_some_and(|ks| ks.len() == 1) {
+            self.table_handle(data_v)
+        } else {
+            None
+        };
+        let find_i64 = |key: &str| match &hh {
+            Some(h) => format!("loft_hh_find_i64(&{h}, {data}, {keys}, {key})"),
+            None => format!("loft_h_find_i64({data}, {keys}, {key})"),
+        };
         let typed_find = ints
             .map(|ks| match ks.as_slice() {
-                [key] if let Some((_, _, rec)) = &filed => {
+                [key] if filed.is_some() => {
                     crate::rewrite_census::fired("R-SameRead/filed", 1);
-                    let r = self.var(*rec);
                     let kpos = self.cx.stores.types[tp as usize].keys[0].position;
                     format!(
-                        "((!LOFT_WRITE_REFUSED(loft_store_of({data})) && {data}.rec != 0 && {r}.rec != 0 && loft_get_int({r}, {kpos}) == {key}) ? {r} : loft_h_find_i64({data}, {keys}, {key}))"
+                        "((!LOFT_WRITE_REFUSED(loft_store_of({data})) && {data}.rec != 0 && loft_h_filed.rec != 0 && loft_get_int(loft_h_filed, {kpos}) == {key}) ? loft_h_filed : loft_h_find_i64({data}, {keys}, {key}))"
                     )
                 }
-                [key] => format!("loft_h_find_i64({data}, {keys}, {key})"),
+                [key] => find_i64(key),
                 ks => format!(
                     "loft_h_find_ints({data}, {keys}, {n}, (int64_t[]){{ {} }})",
                     ks.join(", ")
@@ -1631,17 +1633,21 @@ impl FnWriter<'_> {
             && let Some(path) = crate::opt::writes::vector_path(self.cx.data, data)
             && crate::opt::writes::vector_path(self.cx.data, gdata) == Some(path)
         {
+            let hh = self.table_handle(data);
             let (d, k) = self.two("OpHashRemove", &[data, key], ind)?;
             self.cx.name_types();
             self.cx.describe_type(elem);
             crate::rewrite_census::fired("R-TypedKeyed/remove", 1);
+            let (d, k, view) = (as_ref(d)?, as_int(k)?, u8::from(view));
             return Ok(E::new(
-                format!(
-                    "loft_hash_remove_i64(loft_types, {elem}, {}, {}, {keys}, {nk}, {})",
-                    as_ref(d)?,
-                    as_int(k)?,
-                    u8::from(view)
-                ),
+                match hh {
+                    Some(h) => format!(
+                        "loft_hh_remove_i64(&{h}, loft_types, {elem}, {d}, {k}, {keys}, {nk}, {view})"
+                    ),
+                    None => format!(
+                        "loft_hash_remove_i64(loft_types, {elem}, {d}, {k}, {keys}, {nk}, {view})"
+                    ),
+                },
                 K::Void,
             ));
         }
@@ -1764,4 +1770,49 @@ impl crate::c::Cx<'_> {
             })
             .unwrap_or_default()
     }
+}
+
+/// `@FR-R-TypedKeyed`'s lookup forms for `OpGetRecord`: a hash with ONE 8-byte integer key,
+/// looked up by that integer, takes the typed entry — the same digest, home bucket, walk and
+/// equality, in place; two to four such keys take the compound entry, and one text key the text
+/// entry.  Answers the integer key expressions, and the text entry's call.
+fn typed_lookup_keys(
+    kind: Keyed,
+    types: &[i8],
+    values: &[String],
+    nk: usize,
+    data: &str,
+    keys: &str,
+) -> (Option<Vec<String>>, Option<String>) {
+    let n = values.len();
+    let ints: Option<Vec<String>> = (kind == Keyed::Hash
+        && n == nk
+        && (1..=4).contains(&n)
+        && types.iter().take(n).all(|t| matches!(t, 1 | 2)))
+    .then(|| {
+        values
+            .iter()
+            .map(|v| {
+                v.strip_prefix("loft_kv_int(")
+                    .and_then(|v| v.strip_suffix(')'))
+                    .map(str::to_string)
+            })
+            .collect()
+    })
+    .flatten();
+    let text_find = (kind == Keyed::Hash && n == 1 && nk == 1 && types[0] == 6)
+        .then(|| {
+            values[0]
+                .strip_prefix("loft_kv_text(")
+                .and_then(|v| v.strip_suffix(')'))
+                .map(|key| format!("loft_h_find_text({data}, {keys}, {key})"))
+        })
+        .flatten();
+    match (&ints, &text_find) {
+        (Some(ks), _) if ks.len() == 1 => crate::rewrite_census::fired("R-TypedKeyed", 1),
+        (Some(_), _) => crate::rewrite_census::fired("R-TypedKeyed/compound", 1),
+        (None, Some(_)) => crate::rewrite_census::fired("R-TypedKeyed/text", 1),
+        (None, None) => {}
+    }
+    (ints, text_find)
 }

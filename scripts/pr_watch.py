@@ -72,16 +72,20 @@ def check_runs(rp, sha):
 
 
 def required_checks(rp):
-    """The check names a merge into main waits for (empty when the rules cannot be read)."""
+    """The check names a merge into main waits for: a ruleset's and the classic branch
+    protection's, which a repository can use either or both of (empty when neither reads)."""
+    names = set()
     r = subprocess.run(["gh", "api", f"repos/{rp}/rules/branches/main"],
                        capture_output=True, text=True, encoding="utf-8")
-    if r.returncode != 0:
-        return set()
-    names = set()
-    for rule in json.loads(r.stdout or "[]"):
-        if rule.get("type") == "required_status_checks":
-            for c in rule.get("parameters", {}).get("required_status_checks", []):
-                names.add(c.get("context", ""))
+    if r.returncode == 0:
+        for rule in json.loads(r.stdout or "[]"):
+            if rule.get("type") == "required_status_checks":
+                for c in rule.get("parameters", {}).get("required_status_checks", []):
+                    names.add(c.get("context", ""))
+    r = subprocess.run(["gh", "api", f"repos/{rp}/branches/main/protection/required_status_checks"],
+                       capture_output=True, text=True, encoding="utf-8")
+    if r.returncode == 0:
+        names.update(json.loads(r.stdout or "{}").get("contexts", []))
     return names
 
 

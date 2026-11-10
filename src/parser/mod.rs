@@ -401,13 +401,16 @@ pub struct Parser {
     /// zeroes before any field value runs.  Taken (and cleared) by the literal it is meant
     /// for, so a literal nested inside keeps its own road.
     pub(crate) inplace_place_declined: bool,
-    /// The local a literal is being rebuilt into, while one of its COLLECTION members is
-    /// parsed, or `u16::MAX`.  Such a member is written through its field after the record is
-    /// re-initialised, so a read of the local inside it would read the cleared record
-    /// (`(E-Asgn)`: the right-hand side is computed before the store).  `var_usages` sets
-    /// [`Self::rebuild_watch_hit`] when the author names it, and the literal is then built
-    /// apart and bound instead (loft#1574).
-    pub(crate) rebuild_watch: u16,
+    /// The local a literal is being rebuilt into, and every variable viewing its store
+    /// ([`crate::variables::Function::store_viewers`]), while one of its COLLECTION members is
+    /// parsed; empty otherwise.  Such a member is written through its field after the record
+    /// is re-initialised, so a read of the local inside it — by its name or through a view,
+    /// `bl = block[0]` of a `match` on it — would read the cleared record (`(E-Asgn)`: the
+    /// right-hand side is computed before the store; `@FR-R-InPlaceLiteral`: a field may read
+    /// the old value through a view of the same place).  `var_usages` sets
+    /// [`Self::rebuild_watch_hit`] when the author names one, and the literal is then built
+    /// apart and bound instead (loft#1574).  Armed by `Parser::arm_rebuild_watch`.
+    pub(crate) rebuild_watch: Vec<u16>,
     pub(crate) rebuild_watch_hit: bool,
     /// True while parsing the LHS of a tuple destructuring — `(a, b) = expr`.
     /// The names there are BINDINGS, exactly like the `x` in `x = expr`, so a
@@ -1968,6 +1971,7 @@ mod packages;
 mod passes;
 mod places;
 mod sandbox;
+mod state_trace;
 mod store_check;
 pub(super) mod store_else;
 pub(super) mod store_text;
@@ -2072,7 +2076,7 @@ impl Parser {
             prefix_operand: false,
             inplace_hint_declined: false,
             inplace_place_declined: false,
-            rebuild_watch: u16::MAX,
+            rebuild_watch: Vec::new(),
             rebuild_watch_hit: false,
             in_tuple_lhs: false,
             preset_rhs: None,

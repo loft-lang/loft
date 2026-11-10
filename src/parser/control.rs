@@ -1036,8 +1036,11 @@ impl Parser {
             && at == self.lexer.peek().position
             && !self.lexer.peek_token("{")
         {
-            *val = v_block(Vec::new(), Type::Void, "empty block");
-            return Type::Void;
+            // `never`, so the join adopts the sibling arm's type (`C-Never`) and the value's
+            // consumers stay quiet: `void` here reported the one mistake again at every
+            // use of the `if`'s value.
+            *val = v_block(Vec::new(), Type::Never, "empty block");
+            return Type::Never;
         }
         self.lexer.token("{");
         if self.lexer.has_token("}") {
@@ -1101,6 +1104,7 @@ impl Parser {
             if self.lexer.peek_token("}") {
                 break;
             }
+            self.state_trace("stmt");
             // @C67 — loft has no `try { … } catch { … }`, and was refusing it as a bare
             // "Expect token ;" that named neither the decision nor the spelling to use.  Said
             // by name, then both blocks are skipped so nothing cascades.  Only `try` directly
@@ -3029,9 +3033,14 @@ impl Parser {
                 && let Some(Value::Return(inner)) = l.last().map(Value::unspan)
             {
                 // loft#1101 — a viewing local is not fresh-owned, but it still has to be
-                // DELIVERED; `tail_ret_view_local` supplies the candidate that copies.
-                self.fresh_owned_vector_deps(inner)
-                    .or_else(|| self.tail_ret_view_local(l, inner))
+                // DELIVERED; `tail_ret_view_local` supplies the candidate that copies.  Asked
+                // FIRST: a local defined as a field of an inline call's result has deps naming
+                // the call's ARGUMENTS (`own = def(e, h).bounds` is `["e"]`), which the owner
+                // test reads as a borrow of `e` to record — but it views the lifted copy the
+                // frame frees, so it is copied (loft#2443).  A view of an argument itself
+                // (`e = v[i]; return e`) is no such local and keeps its borrow (O-Move).
+                self.tail_ret_view_local(l, inner)
+                    .or_else(|| self.fresh_owned_vector_deps(inner))
             } else {
                 None
             };
@@ -3333,7 +3342,19 @@ impl Parser {
                 // @PLN85 P14 — a borrowed match-arm binding (or local) returned
                 // directly borrows a visible arg; copy it into __retbuf rather
                 // than rename it onto (and alias) the caller's buffer.
-                || (context == "return from block" && self.tail_borrows_arg(l)))
+                || (context == "return from block" && self.tail_borrows_arg(l))
+                // loft#2443 — a field of an inline call whose result borrows an
+                // argument (`def(e, h).bounds`): the deps name the argument, but the
+                // value is a view of the scope pass's lifted copy (`(F-Ret)`), which
+                // the frame frees.  The H9 projection test, as the explicit return asks.
+                || (context == "return from block"
+                    && l.last().is_some_and(|t| self.return_projects_into_local(t)))
+                // …and an EARLIER `return v` whose `v` views such a temporary
+                // (`own = def(e, h).bounds; if … { return own; }`) beside a tail that
+                // borrows an argument: published as a borrow of the argument, that exit
+                // handed back a store the frame frees.  Buffer-bound, every exit copies.
+                || (context == "return from block"
+                    && self.mid_return_views_frame_temp(&l[..l.len().saturating_sub(1)], l)))
             && self
                 .return_buffer()
                 .is_some_and(|(_, buf_var)| !ls.contains(&buf_var))
@@ -4352,6 +4373,11 @@ impl Parser {
             Type::Vector(Box::new(elm_ty.clone()), Deps::frame1(buf_var)),
             "fwd_copy_409",
         );
+        // A buffer-bound function delivers at EVERY return (`returned_uses_buffer`): an
+        // early `return own` beside this tail, `own` a view of a lifted call's record, was
+        // handed back raw while the frame freed that record (loft#2443).
+        let tail = l.len() - 1;
+        self.deliver_mid_vector_returns(&elm_ty, &mut l[..tail], buf_var);
         self.set_delivered_vector_return(elm_ty, buf_attr);
     }
 
@@ -6399,7 +6425,11 @@ impl Parser {
                     let false_orig = false_type.clone();
                     self.convert_arm_tail(&mut false_code, &false_orig, &joined);
                     false_type = joined;
-                } else if let Value::Block(bl) = &mut true_code {
+                } else if let Value::Block(bl) = &mut true_code
+                    // The empty arm a capture list took the place of (`never`) holds nothing
+                    // to give the sibling's type.
+                    && !bl.operators.is_empty()
+                {
                     let p = bl.operators.len() - 1;
                     // A then arm of no type yet is a `null`, or on pass 1 an expression pass 1
                     // cannot type (`first_pass_null_arm`): only the null takes the sibling's null.
@@ -6896,7 +6926,7 @@ impl Parser {
                 // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
                 result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
                 self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-                if Self::match_result_unsettled(&result_type) {
+                if Self::arm_settles_match(&result_type, &arm_type) {
                     result_type = arm_type.clone();
                 } else if let Some(joined) =
                     self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
@@ -7572,7 +7602,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
             self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-            if Self::match_result_unsettled(&result_type) {
+            if Self::arm_settles_match(&result_type, &arm_type) {
                 result_type = arm_type.clone();
             } else if let Some(joined) =
                 self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
@@ -8086,6 +8116,19 @@ impl Parser {
     /// a diverging arm answers no value, and a `Void` result is either the initial value or a
     /// statement `match` whose arms yield nothing — the same "expect nothing" an `else if`
     /// chain passes down for a `Void` then arm.
+    /// Does this arm's type become the match's result?  Only where no arm has settled it
+    /// (`match_result_unsettled`), and never by a diverging arm over a type an earlier arm
+    /// gave: a `Never` arm converts to the result (`@FR-C-Never`), it does not decide it
+    /// (loft#2444).  An arm the first pass could not type yet (`Unknown`) or a `null` arm
+    /// keeps the result, so `bl = match c { V { b } => b[0], _ => { return; } }` types `bl`
+    /// by the first arm on both passes.  The `Void` a match starts from is no arm's type: a `Never` arm still
+    /// settles it, so a match whose every arm diverges is `Never`.
+    fn arm_settles_match(result_type: &Type, arm_type: &Type) -> bool {
+        Self::match_result_unsettled(result_type)
+            && !(matches!(arm_type.base(), Type::Never)
+                && matches!(result_type.base(), Type::Unknown(_) | Type::Null))
+    }
+
     fn match_result_unsettled(result_type: &Type) -> bool {
         // `Unknown`: an arm the first pass could not type yet — a bare variant two enums own
         // (@C157) — so the arms after it settle the match, as an `if`'s else arm settles it.
@@ -8144,7 +8187,7 @@ impl Parser {
         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
         *result_type = joined;
         self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-        if Self::match_result_unsettled(result_type) {
+        if Self::arm_settles_match(result_type, &arm_type) {
             *result_type = arm_type.clone();
         } else if let Some(joined) =
             self.join_null_tuple_arm(&result_type.clone(), &mut arm_code, &mut arm_type)
@@ -8428,7 +8471,7 @@ impl Parser {
         let arm_expected = self.match_arm_expected(result_type);
         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
         let block = v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match");
-        if Self::match_result_unsettled(result_type) {
+        if Self::arm_settles_match(result_type, &arm_type) {
             *result_type = arm_type.clone();
         }
         let and_all = |conds: Vec<Value>| {
@@ -12230,7 +12273,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-            if Self::match_result_unsettled(&result_type) {
+            if Self::arm_settles_match(&result_type, &arm_type) {
                 result_type = arm_type.clone();
             } else if let Some(joined) =
                 self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
@@ -13496,7 +13539,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-            if Self::match_result_unsettled(&result_type) {
+            if Self::arm_settles_match(&result_type, &arm_type) {
                 result_type = arm_type.clone();
             } else if let Some(joined) =
                 self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
@@ -14836,7 +14879,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
             self.match_void_arm |= matches!(arm_type.base(), Type::Void);
-            if Self::match_result_unsettled(&result_type) {
+            if Self::arm_settles_match(&result_type, &arm_type) {
                 result_type = arm_type.clone();
             } else if let Some(joined) =
                 self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
@@ -15418,16 +15461,39 @@ impl Parser {
             } else if !self.lexer.peek_token("{") {
                 let names: Vec<&str> = seen_fields.iter().map(String::as_str).collect();
                 let captured = names.join(", ");
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "`{{ {captured} }}` after `is {}` is the field-capture list, not the body — \
-                     a block has to follow it. Write `is {} {{ {captured} }} {{ … }}`, repeating \
-                     the name if the body is just that value, or use `match`, which takes \
-                     captures and IS an expression",
-                    self.data.def(variant_def_nr).name(),
-                    self.data.def(variant_def_nr).name(),
-                );
+                let variant = self.data.def(variant_def_nr).name().to_string();
+                // A name the variant has no field of was never meant as a capture: the braces
+                // were the then-branch (`if t is Opt { t } else { … }`), and the test wants
+                // parentheses to end before them.
+                let not_fields: Vec<&str> = names
+                    .iter()
+                    .copied()
+                    .filter(|n| {
+                        !self.data.def(variant_def_nr).attributes[1..]
+                            .iter()
+                            .any(|a| a.name == *n)
+                    })
+                    .collect();
+                if not_fields.is_empty() {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{{ {captured} }}` after `is {variant}` is the field-capture list, not \
+                         the body — a block has to follow it. Write `is {variant} {{ {captured} \
+                         }} {{ … }}`, repeating the name if the body is just that value, or use \
+                         `match`, which takes captures and IS an expression"
+                    );
+                } else {
+                    let missing = not_fields.join(", ");
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{{ {captured} }}` after `is {variant}` reads as a field-capture list, \
+                         and `{variant}` has no field `{missing}` — to make the braces the \
+                         then-branch, put the test in parentheses: `if (… is {variant}) {{ \
+                         {captured} }} else {{ … }}`"
+                    );
+                }
                 self.capture_took_body = Some(self.lexer.peek().position);
             }
             if condition.is_empty() {
@@ -18375,6 +18441,32 @@ impl Parser {
     /// `Var` with an empty dep list, so the rename fires, `e` becomes `__retbuf`, and
     /// `OpFreeRef(__lift_1)` two statements later frees what it now points at.
     /// @FR-O-Borrow — the borrow is real whether or not a dep records it.
+    /// Does a `return v` among `stmts` hand back a vector local DEFINED as a view into
+    /// something this frame frees ([`Self::var_defined_by_projection`] over the whole
+    /// `body`) — a field of an inline call's lifted record above all, whose deps name the
+    /// call's arguments rather than the temporary (loft#2443)?
+    fn mid_return_views_frame_temp(&self, stmts: &[Value], body: &[Value]) -> bool {
+        fn walk(p: &Parser, v: &Value, body: &[Value]) -> bool {
+            match v.unspan() {
+                Value::Return(inner) => match inner.unspan() {
+                    Value::Var(r) => {
+                        p.vars.exists(*r)
+                            && !p.vars.is_argument(*r)
+                            && matches!(p.vars.tp(*r).base(), Type::Vector(_, _))
+                            && p.var_defined_by_projection(body, *r)
+                    }
+                    _ => false,
+                },
+                Value::If(_, t, f) => walk(p, t, body) || walk(p, f, body),
+                Value::Block(bl) => bl.operators.iter().any(|x| walk(p, x, body)),
+                Value::Insert(ops) => ops.iter().any(|x| walk(p, x, body)),
+                Value::Loop(bl) => bl.operators.iter().any(|x| walk(p, x, body)),
+                _ => false,
+            }
+        }
+        stmts.iter().any(|s| walk(self, s, body))
+    }
+
     fn var_defined_by_projection(&self, body: &[Value], v: u16) -> bool {
         // Every assignment counts, an arm's too: a `match` binds its arm's capture inside the
         // `If` that tests the arm, and any one of them borrowing makes the value a view on
@@ -20663,6 +20755,10 @@ impl Parser {
             Type::Vector(Box::new(elm_ty.clone()), Deps::frame1(buf_var)),
             "borrow_tail_copy_104",
         );
+        // Every return delivers once the function is buffer-bound — the sibling of the
+        // forwarder leg's delivery (loft#2443).
+        let tail = l.len() - 1;
+        self.deliver_mid_vector_returns(&elm_ty, &mut l[..tail], buf_var);
         self.set_delivered_vector_return(elm_ty, buf_attr);
         true
     }
@@ -23096,6 +23192,7 @@ impl Parser {
             // Capture each argument's start so a later type-mismatch diagnostic
             // (in `process_call_args`) points the caret at the argument, not at
             // the cursor drifted to `)` / `,`.
+            self.state_trace("arg");
             arg_pos.push(*self.lexer.peek_pos());
             // loft#1883 — a record-backed `&(…)` parameter names its argument's record, so a
             // struct field of tuple type is read with its address.
@@ -25092,6 +25189,7 @@ impl Parser {
                 self.expected = h;
             }
             let mut p = Value::Null;
+            self.state_trace("arg");
             arg_pos.push(*self.lexer.peek_pos());
             let before = self.method_facts.0.clone();
             self.prepare_lambda_argument(method, list.len(), &before); // @PLN187

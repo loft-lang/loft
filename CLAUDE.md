@@ -202,6 +202,9 @@ it must work), before changing a shipped surface's semantics, and whenever the t
 disagree.  An edge the rules cannot express means the RULE wants extending, and an "OPEN: 0" line
 is a claim to re-measure ([formal/README.md § When to reach for this doc](doc/claude/formal/README.md)).
 
+**Load the `engineering-rigor` skill the moment a situation is not diagnosed in ONE pass** —
+before the second round of probes, not after several (owner).
+
 **Matrix-first for any non-trivial bug (esp. crash / silent corruption) — the urge to fix is the
 signal you haven't earned it:**
 1. Don't fix on the first read — a clean one-line story is a hypothesis.

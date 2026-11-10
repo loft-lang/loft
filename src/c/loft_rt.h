@@ -3382,6 +3382,9 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
     uint64_t serial = a->serial;
     a->serial = b->serial;
     b->serial = serial;
+    /* Each slot holds the other's content: a handle on either resolves again. */
+    loft_h_reshaped(a);
+    loft_h_reshaped(b);
 #ifdef LOFT_PARSE
     loft_perrs_swap(src.store_nr, dst.store_nr);
 #endif

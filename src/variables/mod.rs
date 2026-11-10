@@ -223,6 +223,14 @@ pub struct Variable {
     /// what carries over between the passes.
     blind_capture: bool,
     scope: u16,
+    /// The deps each earlier bind of this variable ENDED with on pass 2 ([`Function::note_bind`])
+    /// — each store a bind left it viewing.  The type keeps only the LAST bind's deps (a rebind
+    /// replaces them), but a read after `v = a[0]; if c { v = b[0]; }` may be either, so the
+    /// question "which variables may view this store here?" ([`Function::store_viewers`],
+    /// `@FR-O-Complete`: per binding, per path) reads this beside the current deps.  Taken at
+    /// the END of a bind, not at each retype: one statement's deps pass through states its
+    /// end replaces (`b = d.buf` views `d`, then materialises into a copy of its own).
+    viewed: Vec<u16>,
     stack_pos: u16,
     uses: u16,
     uses_at_write: u16,
@@ -1091,6 +1099,7 @@ impl Function {
                 copy_bound: r.copy_bound,
                 value_const: r.value_const,
                 scope: r.scope,
+                viewed: Vec::new(),
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
                 uses_at_write: 0,
@@ -3114,6 +3123,7 @@ impl Function {
             type_def: type_def.clone(),
             source: (0, 0),
             scope: u16::MAX,
+            viewed: Vec::new(),
             stack_pos: u16::MAX,
             uses: 1,
             uses_at_write: 0,
@@ -3165,6 +3175,7 @@ impl Function {
             type_def: self.variables[var as usize].type_def.clone(),
             source: self.variables[var as usize].source,
             scope: u16::MAX,
+            viewed: Vec::new(),
             stack_pos: u16::MAX,
             // The copy carries the ORIGINAL's use count, never a fresh `1`.  The parser
             // counted every use of the name — both scopes' — on the one variable, and a
@@ -3237,6 +3248,7 @@ impl Function {
             type_def: type_def.clone(),
             source: lexer.at(),
             scope: u16::MAX,
+            viewed: Vec::new(),
             stack_pos: u16::MAX,
             uses: 1,
             uses_at_write: 0,
@@ -3290,6 +3302,7 @@ impl Function {
             type_def: type_def.clone(),
             source: (0, 0),
             scope,
+            viewed: Vec::new(),
             stack_pos: u16::MAX,
             uses: 1,
             uses_at_write: 0,
@@ -4244,7 +4257,9 @@ impl Function {
     /// collection before the statements that follow read it.  Two shapes hold such a view:
     ///
     /// - a local whose deps CLOSE over a store `root` lives in — through any number of views,
-    ///   so a loop variable (`p` → the iterated copy → `v`) counts as well as a direct `p = v[0]`;
+    ///   so a loop variable (`p` → the iterated copy → `v`) counts as well as a direct `p = v[0]`,
+    ///   and through the deps of EVERY bind it had on this pass, not only the last
+    ///   ([`Variable::viewed`]): after `p = v[0]; if c { p = w[0]; }` it may view either;
     /// - where one of those stores is a CALLER's, every heap-typed parameter, and the locals
     ///   that view one.  A caller may pass an element in beside its container
     ///   (`sw(v, v[0])`), and nothing in this frame can tell.
@@ -4253,13 +4268,54 @@ impl Function {
     /// sees the written or moved place), while one that is included costs its reader a stack
     /// temp or a declined rewrite.  A local that owns its store (its deps are empty) and is not
     /// a parameter is never in the set.  Neither is a `text`, which a bind copies (`B-Copy`).
+    /// A user assignment to `var_nr` has finished on pass 2: remember the deps it ended with
+    /// ([`Variable::viewed`]), which a later rebind on one path only leaves live on the other.
+    pub fn note_bind(&mut self, var_nr: u16) {
+        let Some(v) = self.variables.get_mut(var_nr as usize) else {
+            return;
+        };
+        for d in v.type_def.depend() {
+            if d != u16::MAX && !v.viewed.contains(&d) {
+                v.viewed.push(d);
+            }
+        }
+    }
+
     #[must_use]
     pub fn store_viewers(&self, root: u16) -> HashSet<u16> {
+        self.viewers_of(root, true)
+    }
+
+    /// [`Self::store_viewers`] for a pass that runs AFTER the scope pass (`(R-Rebind)`): by the
+    /// deps the variables carry now, without [`Variable::viewed`].  Those are the parse's view
+    /// of each bind, and the scope pass has since materialised every view it had to — a call
+    /// answering `Doc["d"]` delivers a copy into its buffer (`materialized_view_return`), so the
+    /// local it binds owns that copy.  Counted, they declined zttext's `delete_op` rebind
+    /// (`do_d = delete_range(d, 0, 0)`) for a view no run can have.  A bind that does leave a
+    /// view is the caller's own check (`rebind_place`: "a binding of the local views a place").
+    #[must_use]
+    pub fn store_viewers_now(&self, root: u16) -> HashSet<u16> {
+        self.viewers_of(root, false)
+    }
+
+    fn viewers_of(&self, root: u16, earlier_binds: bool) -> HashSet<u16> {
         let closure = |start: u16| -> HashSet<u16> {
             let mut seen: HashSet<u16> = HashSet::new();
             let mut stack = vec![start];
             while let Some(v) = stack.pop() {
-                for d in self.tp(v).depend() {
+                // The current deps and every earlier bind's (`Variable::viewed`): a rebind on
+                // one path leaves the other path's view live at the read.
+                let earlier = self
+                    .variables
+                    .get(v as usize)
+                    .filter(|_| earlier_binds)
+                    .map_or(&[][..], |x| &x.viewed[..]);
+                for d in self
+                    .tp(v)
+                    .depend()
+                    .into_iter()
+                    .chain(earlier.iter().copied())
+                {
                     if d < self.count() && seen.insert(d) {
                         stack.push(d);
                     }
@@ -6059,6 +6115,18 @@ impl Function {
         (v as usize) < self.variables.len()
             && self.is_captured(v)
             && crate::data::is_dbref(self.tp(v).base())
+    }
+
+    /// `@FR-R-InPlaceLiteral` `@FR-R-Demote` — did an earlier bind of `v` on this pass leave it VIEWING
+    /// another variable's store ([`Variable::viewed`])?  The type keeps only the last bind's
+    /// deps, so after `if c { r = b.tp; } else { r = fresh(); }` the slot reads as owning while
+    /// on one path it still names `b`'s record: re-minting it in place (`r = T { … }`, and the
+    /// demote's move, `(R-Demote)`) writes into `b`.  An upper bound, like `store_viewers`: a
+    /// bind that is dead by the rebind still counts, which costs a fresh store, never a value.
+    pub fn viewed_by_an_earlier_bind(&self, v: u16) -> bool {
+        self.variables
+            .get(v as usize)
+            .is_some_and(|x| x.viewed.iter().any(|&d| d != v && d != u16::MAX))
     }
 
     /// Record that fn_ref variable `fn_ref` has its closure stored in `clos`.

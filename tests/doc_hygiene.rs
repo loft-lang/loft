@@ -1882,6 +1882,33 @@ fn the_release_records_the_c_toolchain_the_verifier_compares() {
     );
 }
 
+/// loft#2431 — a release bundle's binary crate is ONE codegen unit.  Split into sixteen, the unit
+/// holding the MSVC `type_info` vtable reference varied from build to build and about one
+/// Windows rebuild in seven differed from the release (5 of 32; 0 of 32 as one unit).  The
+/// bundle is built by `make-release.sh` through `lean_build.sh --bin loft`, and the verifier
+/// rebuilds with the release's own copy of that script, so the rule lives in that one file.
+/// @falsified-at: hand-measured — `codegen-units=16` in lean_build.sh fails the first assert;
+///   restored, it passes.
+#[test]
+fn the_release_binary_crate_is_one_codegen_unit() {
+    let lb = fa::read_to_string("scripts/lean_build.sh").expect("read lean_build.sh");
+    let mk = fa::read_to_string("scripts/make-release.sh").expect("read make-release.sh");
+    let vf = fa::read_to_string("scripts/repro-verify.sh").expect("read repro-verify.sh");
+    assert!(
+        lb.lines()
+            .any(|l| l.trim() == "exec cargo rustc \"${features[@]}\" \"$@\" -- -C codegen-units=1"),
+        "scripts/lean_build.sh must build the bundle's `--bin loft` as one codegen unit (loft#2431)"
+    );
+    assert!(
+        mk.contains("scripts/lean_build.sh --bin loft --target"),
+        "make-release.sh must build the bundle's binary through lean_build.sh --bin loft"
+    );
+    assert!(
+        vf.contains("\"$SRC/scripts/lean_build.sh\" --bin loft"),
+        "repro-verify.sh must rebuild with the release's own lean_build.sh --bin loft"
+    );
+}
+
 /// @PLN199 G2c — a release bundle's binary is named by what it was built from, so the copy a
 /// user unpacks runs the library artifacts the release built with it.  The mark spans three
 /// files: `repro-flags.sh` exports it (sourced by the release and by its verifier, which must

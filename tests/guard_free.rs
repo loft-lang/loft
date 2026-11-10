@@ -6,7 +6,8 @@
 //! depth), hands a capture back through a join tail, or is a generator keeps its guard;
 //! `LOFT_NO_GUARD_FREE=1` restores the guard on every non-leaf frame.  The guard
 //! (`tests/scripts/158-guard-free.loft`) scores the rule on the leak channel; this pins
-//! what is emitted, in both tiers.
+//! what is emitted, in both tiers, and the C backend's form of the guard (the frame's
+//! `loft_nfnrefs` mark and its `loft_fnref_release`).
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
@@ -128,6 +129,90 @@ fn the_switch_restores_every_guard() {
         assert!(
             body(&rust, name).contains(GUARD),
             "{name}: LOFT_NO_GUARD_FREE=1 constructs the guard on every non-leaf frame"
+        );
+    }
+}
+
+/// The C backend's guard: the mark a frame takes on entry and releases above on return.  A
+/// frame that answers a heap value never takes it (what it holds goes up to its caller).
+const C_MARK: &str = "size_t fm = loft_nfnrefs;";
+
+fn emit_c(tag: &str, env: &[(&str, &str)]) -> String {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
+    let out = std::env::temp_dir().join(format!("loft_guard_free_{}_{tag}.c", std::process::id()));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    cmd.arg("--native-c")
+        .arg("--native-emit")
+        .arg(&out)
+        .arg(&src)
+        .env("LOFT_TIMEOUT", "120")
+        .env_remove("LOFT_NO_GUARD_FREE");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let status = cmd.output().expect("spawn loft --native-c --native-emit");
+    assert!(
+        fa::exists(&out),
+        "no C emitted (exit {:?}): {}",
+        status.status,
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let c = fa::read_to_string(&out).expect("read the emitted C");
+    let _ = fa::remove_file(&out);
+    c
+}
+
+/// The C wrapper of one function: its definition line (`… name(…) {`, not the prototype)
+/// up to the closing brace at the start of a line.
+fn c_wrapper<'a>(c: &'a str, name: &str) -> &'a str {
+    let start = c
+        .lines()
+        .scan(0usize, |at, l| {
+            let here = *at;
+            *at += l.len() + 1;
+            Some((here, l))
+        })
+        .find(|(_, l)| {
+            l.starts_with("static ") && l.contains(&format!(" {name}(")) && l.ends_with(") {")
+        })
+        .map(|(at, _)| at)
+        .unwrap_or_else(|| panic!("{name}'s C wrapper was not emitted"));
+    let rest = &c[start..];
+    let end = rest.find("\n}\n").map_or(rest.len(), |i| i + 3);
+    &rest[..end]
+}
+
+/// The scalar-answering functions no registrant reaches: no mark on C.
+const C_FREE: [&str; 2] = ["n_fib", "n_count_down"];
+
+#[test]
+fn the_c_backend_takes_the_mark_only_where_a_registrant_is_reachable() {
+    let c = emit_c("c", &[]);
+    for name in C_FREE
+        .iter()
+        .chain(["n_ladder", "n_even_big", "n_odd_big"].iter())
+    {
+        assert!(
+            !c_wrapper(&c, name).contains(C_MARK),
+            "{name}: no registrant is reachable, so the C frame takes no fn-ref mark"
+        );
+    }
+    for name in KEPT {
+        assert!(
+            c_wrapper(&c, name).contains(C_MARK),
+            "{name}: a registrant is reachable, so the C frame keeps its fn-ref mark"
+        );
+    }
+}
+
+#[test]
+fn the_switch_restores_the_c_mark() {
+    let c = emit_c("c_switch", &[("LOFT_NO_GUARD_FREE", "1")]);
+    for name in C_FREE {
+        assert!(
+            c_wrapper(&c, name).contains(C_MARK),
+            "{name}: LOFT_NO_GUARD_FREE=1 takes the mark on every scalar-answering C frame"
         );
     }
 }

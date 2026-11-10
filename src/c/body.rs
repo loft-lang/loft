@@ -21,6 +21,7 @@ mod par;
 mod peel;
 mod spec_chain;
 mod sticky;
+mod table_handle;
 pub(super) mod transient;
 mod value;
 mod version;
@@ -237,6 +238,10 @@ pub(crate) struct FnWriter<'a> {
     /// the next statement only (`filed_next`), whose lookup of that key may answer the record.
     filed: Option<(crate::opt::writes::PathKey, u16, u16)>,
     filed_next: Option<(crate::opt::writes::PathKey, u16, u16)>,
+    /// `(R-TableHandle)`: the hash places whose keyed operations share a handle
+    /// (`table_handle::places`), and the handle each has been declared as.
+    table_places: std::collections::HashSet<crate::opt::writes::PathKey>,
+    table_names: std::collections::HashMap<crate::opt::writes::PathKey, String>,
     /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
     widening: Option<usize>,
     /// A value staged into a C temporary, by the temporary's name, with its kind: what a
@@ -764,6 +769,14 @@ impl<'a> FnWriter<'a> {
             room_minted: std::collections::HashMap::new(),
             filed: None,
             filed_next: None,
+            // A generator's resume body is assembled from its frame fields: a handle declared
+            // in `decls` would never be written there (`generator.rs`), so it takes none.
+            table_places: if matches!(def.returned().base(), crate::data::Type::Iterator(..)) {
+                std::collections::HashSet::new()
+            } else {
+                table_handle::places(cx, def.code())
+            },
+            table_names: std::collections::HashMap::new(),
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
@@ -10155,21 +10168,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(t, K::Ref))
             }
             ("OpFinishRecord", [data, rec, ptp, fld]) => {
-                let (v, _, coll) = self.record_collection(data, ptp, fld, ind)?;
-                match coll {
-                    Coll::Keyed(tp) => {
-                        let rec = self.expr(rec, ind)?;
-                        let rec = as_ref(rec)?;
-                        return self.keyed_finish(&v, &rec, tp);
-                    }
-                    Coll::Group(parent, members) => {
-                        let rec = self.expr(rec, ind)?;
-                        let rec = as_ref(rec)?;
-                        return self.group_finish(&parent, &rec, &members);
-                    }
-                    Coll::Vector => {}
-                }
-                Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
+                self.finish_record(data, rec, ptp, fld, ind)
             }
             ("OpClearVector", [v]) if self.in_delivery > 0 && self.adopted_buffer(v) => {
                 Ok(E::new("((void) 0)", K::Void))
@@ -10223,6 +10222,42 @@ impl<'a> FnWriter<'a> {
             }
             _ => self.collection_operator(name, args, ind),
         }
+    }
+
+    /// `OpFinishRecord(data, rec, ptp, fld)`: `rec` filed into its collection — a keyed one
+    /// through the place's table handle where `(R-TableHandle)` admitted it, a group into each
+    /// member, a plain vector closed.
+    fn finish_record(
+        &mut self,
+        data: &Value,
+        rec: &Value,
+        ptp: &Value,
+        fld: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let (v, _, coll) = self.record_collection(data, ptp, fld, ind)?;
+        match coll {
+            Coll::Keyed(tp) => {
+                let rec = self.expr(rec, ind)?;
+                let rec = as_ref(rec)?;
+                let hh = match (Self::literal(ptp, "type"), Self::literal(fld, "field")) {
+                    (Ok(p), Ok(f)) => u16::try_from(p)
+                        .ok()
+                        .zip(u16::try_from(f).ok())
+                        .and_then(|(p, f)| table_handle::finish_place(self.cx, data, p, f))
+                        .and_then(|path| self.table_handle_at(path)),
+                    _ => None,
+                };
+                return self.keyed_finish(&v, &rec, tp, hh.as_deref());
+            }
+            Coll::Group(parent, members) => {
+                let rec = self.expr(rec, ind)?;
+                let rec = as_ref(rec)?;
+                return self.group_finish(&parent, &rec, &members);
+            }
+            Coll::Vector => {}
+        }
+        Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
     }
 
     /// `v[i]`: the element's reference, an unguarded read (`OpGetVector`) reporting an index

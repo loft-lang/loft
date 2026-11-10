@@ -315,6 +315,9 @@ pub(crate) struct Cx<'a> {
     /// `LOFT_NO_VALUE_RECORD=1` and for a program whose plan holds a form the C does not
     /// write (`Cx::value_records`).
     vr: std::cell::OnceCell<std::rc::Rc<crate::opt::value_records::layout::ValueRecords>>,
+    /// `@FR-R-GuardFree`'s verdicts, shared with the Rust generator: which frames need the
+    /// fn-ref buffer mark (`framed`).
+    pub(crate) guard_free: std::cell::RefCell<crate::opt::frame_calls::GuardFree>,
     /// `vr_ptr_params`'s answers, per function.
     vr_ptr: std::cell::RefCell<std::collections::HashMap<u32, std::rc::Rc<Vec<usize>>>>,
     apr: std::cell::OnceCell<std::rc::Rc<crate::lower::apart_records::RecPlan>>,
@@ -453,6 +456,7 @@ impl<'a> Cx<'a> {
             lazy_fetchers: std::cell::Cell::new(0),
             twins: std::cell::RefCell::new(Vec::new()),
             switches: crate::lower::switches::Switches::from_env(),
+            guard_free: std::cell::RefCell::default(),
             hoist_memo: std::cell::RefCell::new(HoistMemo::default()),
             vr: std::cell::OnceCell::new(),
             vr_ptr: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -3018,12 +3022,13 @@ fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) 
         let mut out = text.to_string();
         for d in cx.hot_candidates.borrow().iter() {
             let marker = format!("static /*loft_hot:{d}*/");
-            let to = if hot.contains(d) {
-                "static inline"
+            let body = format!("static /*loft_hot_body:{d}*/");
+            let (to, body_to) = if hot.contains(d) {
+                ("static inline", "LOFT_HOT_INLINE")
             } else {
-                "static"
+                ("static", "static")
             };
-            out = out.replace(&marker, to);
+            out = out.replace(&marker, to).replace(&body, body_to);
         }
         out
     };
@@ -4423,6 +4428,22 @@ fn tabulated(cx: &Cx, d: u32, ret: CType, params: &str, body: String) -> String 
     )
 }
 
+/// The storage of a frame wrapper's body: `LOFT_HOT_INLINE` where the function is hinted
+/// `inline`, the hot-helper marker's body form where that is still undecided
+/// (`resolve_hot_helpers`), the function's own storage otherwise.
+fn always_inline_body(storage: &str) -> String {
+    if storage == "static inline" {
+        "LOFT_HOT_INLINE".to_string()
+    } else if let Some(d) = storage
+        .strip_prefix("static /*loft_hot:")
+        .and_then(|r| r.strip_suffix("*/"))
+    {
+        format!("static /*loft_hot_body:{d}*/")
+    } else {
+        storage.to_string()
+    }
+}
+
 fn framed(
     cx: &Cx,
     d: u32,
@@ -4433,15 +4454,27 @@ fn framed(
     storage: &str,
 ) -> String {
     let def = cx.data.def(d);
-    let _ = writeln!(
-        cx.gen_decls.borrow_mut(),
-        "{storage} {} {name}__fr({params});",
-        held(ret)
-    );
     // `(R-CSplit)`: a body over the size budget goes out as a chain of parts.
     let fr = format!("{name}__fr");
-    let whole = format!("{storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
-    let text = match split::split(storage, &held(ret).clone(), &fr, params, body) {
+    let parts = split::split(storage, &held(ret).clone(), &fr, params, body);
+    // `@FR-R-Inline`: a body hinted inline is ALWAYS inlined into its frame wrapper, so the
+    // wrapper and the body are one unit and the compiler decides once whether that unit goes
+    // into the caller.  Hinted alike, gcc could take the wrapper into a loop and leave the
+    // body out of line, every argument handed over a second time (stage `pack_instances`
+    // +25 % when a frame lost its fn-ref mark and the wrapper fell under gcc's budget).  A
+    // split body keeps the hint: its parts are not one unit.
+    let body_storage = if parts.is_some() {
+        storage.to_string()
+    } else {
+        always_inline_body(storage)
+    };
+    let _ = writeln!(
+        cx.gen_decls.borrow_mut(),
+        "{body_storage} {} {name}__fr({params});",
+        held(ret)
+    );
+    let whole = format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
+    let text = match parts {
         Some(parts) if split::everywhere() => parts,
         Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),
         None => whole,
@@ -4473,12 +4506,17 @@ fn framed(
     let push = format!("{push}    LOFT_HOLD_MARK(hm);\n");
     // What calls through function values handed back and no bind adopted is the frame's, freed
     // as it returns — unless it answers a heap value, which may be one of them: those go up to
-    // the caller (`FnRefBufGuard`'s `hands_up`).
+    // the caller (`FnRefBufGuard`'s `hands_up`).  A frame from which nothing that registers
+    // one is reachable never holds an entry, and takes no mark (`@FR-R-GuardFree`).
     let hands_up = matches!(
         def.returned().base(),
         Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
     );
-    let (push, release) = if hands_up {
+    let guard_free = !hands_up
+        && !cx.switches.guard_free_disabled
+        && cx.guard_free.borrow_mut().is_guard_free(cx.data, d);
+    crate::rewrite_census::fired("R-GuardFree", usize::from(guard_free));
+    let (push, release) = if hands_up || guard_free {
         (push, String::new())
     } else {
         (

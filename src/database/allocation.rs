@@ -1551,8 +1551,9 @@ impl Stores {
 
     /// The store `db` names is being freed or re-initialised: release every `File` its records
     /// hold, reached from its root (1@8) through the type that root's header names.  A raw
-    /// mint names no type (`@FR-H-Claim`), and a store minted while no file was ever opened
-    /// has nothing to release, so neither is walked.
+    /// mint names no type (`@FR-H-Claim`), a store minted while no file was ever opened has
+    /// nothing to release, and a store with no root (record 1 still free) has nothing to
+    /// walk, so none of them is walked.
     ///
     /// A one-field vector WRAPPER holds its vector handle in either half of its one payload
     /// word: byte 8, where its type puts the field, or byte 12, where the interpreter's
@@ -1571,6 +1572,11 @@ impl Stores {
             return;
         }
         let store = &self.allocations[store_nr as usize];
+        // A store nothing minted into (a native `null_named` handed to `OpDatabase`) has no
+        // root to walk, and its type word was never written.
+        if !store.has_root_record() {
+            return;
+        }
         let tp = store.get_u32_raw(1, 4) as usize;
         if tp >= self.types.len() {
             return;

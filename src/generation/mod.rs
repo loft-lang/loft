@@ -886,10 +886,8 @@ pub struct Output<'a> {
     leaf_cache: HashMap<u32, bool>,
     /// Per-definition verdict of [`Output::is_frameless_chain`].
     chain_cache: HashMap<u32, bool>,
-    /// Per-definition verdict of [`Output::is_guard_free`], and of its per-body half
-    /// ([`Output::registers_buffers`]).
-    guard_free_cache: HashMap<u32, bool>,
-    registers_cache: HashMap<u32, bool>,
+    /// `@FR-R-GuardFree`'s verdicts, shared with the C writer (`opt::frame_calls::GuardFree`).
+    guard_free: crate::opt::frame_calls::GuardFree,
     /// `LOFT_NATIVE_CHECKPOINTS=count|time` — emit a per-OPERATOR checkpoint into the
     /// generated Rust, so a native run attributes its own time without `perf`, without
     /// symbols, and identically under wasm.  This is a SUPPLEMENTARY instrument: the
@@ -1942,8 +1940,7 @@ impl<'a> Output<'a> {
             range_suspended: 0,
             leaf_cache: HashMap::new(),
             chain_cache: HashMap::new(),
-            guard_free_cache: HashMap::new(),
-            registers_cache: HashMap::new(),
+            guard_free: crate::opt::frame_calls::GuardFree::default(),
             checkpoints: CkptMode::from_env(),
             ckpt_filter: ckpt_filter_from_env(),
             ckpt_sites: Vec::new(),
@@ -6925,40 +6922,6 @@ impl Output<'_> {
         chain
     }
 
-    /// Does this definition's OWN body register a store against the running frame's
-    /// fn-ref buffer list, or run something whose registrations are not visible here?  The
-    /// three pushers are the fn-ref dispatch (`cr_fnref_buf`, `cr_fnref_minted`, both under
-    /// a `CallRef`) and the op `OpFreeRefOrHandUp`; a `parallel` body and a `yield` are
-    /// opaque and count as registering, and so is a callee with NO loft body that is not the
-    /// standard library's (a user's native function) or that takes a fn-ref (it may call
-    /// back into user code).  A `#rust`-bodied stdlib function is the body's own work,
-    /// as `is_elidable_leaf` reads an op.
-    fn registers_buffers(&mut self, def_nr: u32) -> bool {
-        if let Some(&v) = self.registers_cache.get(&def_nr) {
-            return v;
-        }
-        let data = self.data;
-        let registers = data.def(def_nr).code().any_node(&mut |v| match v {
-            Value::Call(d, _) => {
-                let callee = data.def(*d);
-                let name = callee.name();
-                let user_fn = name.starts_with("n_") || name.starts_with("t_");
-                let opaque = user_fn
-                    && !matches!(callee.code(), Value::Block(_))
-                    && (!crate::file_access::is_stdlib_source(callee.position.file.as_str())
-                        || callee
-                            .attributes()
-                            .iter()
-                            .any(|a| matches!(a.typedef.base(), Type::Function(..))));
-                name == "OpFreeRefOrHandUp" || opaque
-            }
-            Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
-            _ => false,
-        });
-        self.registers_cache.insert(def_nr, registers);
-        registers
-    }
-
     /// Does `def` call through a function value that can reach a function taking a work
     /// buffer — an arm of one of its dispatches (`fnref::dispatch_arms`, the list the arm
     /// emitter walks)?  A frame whose function values reach none declares no lender; a
@@ -6993,52 +6956,6 @@ impl Output<'_> {
             (0..self.data.definitions.len() as u32)
                 .any(|d| self.data.def(d).attributes().iter().any(|a| a.work_buffer))
         })
-    }
-
-    /// Is NOTHING that registers a fn-ref buffer reachable from this definition — over the
-    /// closure of its call graph, cycles included?  Then no entry can ever stand above the
-    /// mark its buffer guard would take, its drop is empty every time, and the frame carries
-    /// no guard.  Unlike [`Output::is_frameless_chain`] a cycle does not block: the guard
-    /// never depended on acyclicity, only the depth count does.
-    /// Decides `@FR-R-GuardFree`.
-    fn is_guard_free(&mut self, def_nr: u32) -> bool {
-        if let Some(&v) = self.guard_free_cache.get(&def_nr) {
-            return v;
-        }
-        let data = self.data;
-        let mut seen: HashSet<u32> = HashSet::new();
-        let mut todo: Vec<u32> = vec![def_nr];
-        let mut free = true;
-        while let Some(d) = todo.pop() {
-            if !seen.insert(d) {
-                continue;
-            }
-            if self.registers_buffers(d) {
-                if std::env::var("LOFT_TRACE_GUARD_FREE").is_ok() {
-                    eprintln!(
-                        "[guard-free] {}: keeps its guard — `{}` registers",
-                        data.def(def_nr).name(),
-                        data.def(d).name()
-                    );
-                }
-                free = false;
-                break;
-            }
-            data.def(d).code().any_node(&mut |v| {
-                if let Value::Call(c, _) = v {
-                    // Every loft-bodied callee, whatever its key: a generic INSTANCE
-                    // (`i_1P_n_once`) is a call like any other, and skipping it judged a
-                    // frame guard-free above an instance that registers buffers, which
-                    // left the stores it handed up to nobody.
-                    if matches!(data.def(*c).code(), Value::Block(_)) && !seen.contains(c) {
-                        todo.push(*c);
-                    }
-                }
-                false
-            });
-        }
-        self.guard_free_cache.insert(def_nr, free);
-        free
     }
 
     /// @PLN18 08-S2 — build the live-dispatch entry check for a user fn, or
@@ -12183,8 +12100,9 @@ extern crate loft;"
                 // a buffer is reachable, cycles included (`fib`): the guard's drop would find
                 // nothing above its mark, every time.  The depth count stays: it is the
                 // recursion cap both backends share.
-                let guard_free =
-                    leaf || (!self.switches.guard_free_disabled && self.is_guard_free(def_nr));
+                let guard_free = leaf
+                    || (!self.switches.guard_free_disabled
+                        && self.guard_free.is_guard_free(self.data, def_nr));
                 crate::rewrite_census::fired("R-GuardFree", usize::from(guard_free && !leaf));
                 let fnref_guard = if guard_free {
                     String::new()

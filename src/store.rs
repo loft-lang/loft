@@ -5322,6 +5322,14 @@ impl Store {
         rec > PRIMARY && rec < self.size && self.read::<i32>(rec, 0) > 0
     }
 
+    /// Does this store hold a ROOT — record 1 claimed?  A store `init()` left as one free
+    /// block has none yet: its record-1 words past the header were never written (a store
+    /// is not zero-filled unless `defined`), so nothing may read a type or a field there.
+    #[must_use]
+    pub fn has_root_record(&self) -> bool {
+        self.size > PRIMARY && self.read::<i32>(PRIMARY, 0) > 0
+    }
+
     /// Does a stored reference name record `rec` (`@FR-H-Removed`)?  Such a record keeps its
     /// position when it is removed, so its block may not change hands (`(R-HandOver)`).
     #[must_use]

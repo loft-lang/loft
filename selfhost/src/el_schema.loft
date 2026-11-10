@@ -32,6 +32,28 @@ pub const NO_TYPE = 65535;
 // `typedef::fill_all`, the part a plain struct reaches: every struct the file declared that has
 // no type number yet is registered, in definition order, then the schema is finished.
 pub fn fill_all(e: el::El) {
+  // `actual_types_deferred`: the forward references this file made resolve to what their stubs
+  // became; a stub nothing adopted is the undefined type Rust reports.
+  for d in 0..len(e.b.data.definitions) {
+    df = el::def(e, d);
+    if df.source == e.source {
+      if df.def_type == el::DT_UNKNOWN && e.first_pass && !e.default {
+        el::refuse(e, "an undefined type, or one declared in another file of a cycle");
+      }
+      if df.def_type == el::DT_FUNCTION || df.def_type == el::DT_STRUCT || (df.def_type == el::DT_ENUM_VALUE && len(df.attributes) > 0) {
+        copy_unknown_fields(e, d);
+      }
+    }
+  }
+  // A struct whose fields reach it again — `Tree { left: Tree? }`, `A { b: B }` with
+  // `B { a: A? }` — is laid out with that field out of line, a child (`@FR-L-OutOfLine`): not
+  // carried.  Refused before any layout, as `fill_all` stops before laying out a cycle.
+  for d in 0..len(e.b.data.definitions) {
+    if el::def(e, d).source == e.source && (el::def(e, d).def_type == el::DT_STRUCT || el::def(e, d).def_type == el::DT_ENUM) && reaches(e, d, d, []) {
+      el::refuse(e, "a type whose fields contain it again (an out-of-line child)");
+      return;
+    }
+  }
   // `actual_types_deferred` before it: each enum the file declared, in definition order, a
   // schema enum of its name whose values its variants are, each variant valued its position
   // (`register_enum_db`, `stamp_enum_variants`).
@@ -40,6 +62,7 @@ pub fn fill_all(e: el::El) {
       register_enum(e, d#index);
     }
   }
+  synth_nullable_struct_fields(e);
   // A unit variant of a struct enum is a record too: its one field, `enum`, holds its ordinal.
   for d in e.b.data.definitions {
     if d.def_type == el::DT_ENUM_VALUE && len(d.attributes) == 0 && d.parent >= 0 && el::def(e, d.parent).returned[0] == ir::TyEnum { n: d.parent, is_ref: true, dep: [] } {
@@ -76,6 +99,19 @@ pub fn fill_all(e: el::El) {
   for d in e.b.data.definitions {
     if (d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE && len(d.attributes) > 0) && d.known_type == NO_TYPE {
       fill_database(e, d#index);
+      // @PLN25 E2: a struct's `__nullable<S>` variants are laid out right after it, so their
+      // type numbers follow `S` and precede any later struct that holds one.
+      if d.def_type == el::DT_STRUCT {
+        syn = el::source_nr(e, d.source, "__nullable<{d.name}>");
+        if syn >= 0 && el::def(e, syn).known_type != NO_TYPE {
+          for vn in ["Null", "Some"] {
+            v = el::variant_of(e, syn, vn);
+            if v >= 0 && el::def(e, v).known_type == NO_TYPE {
+              fill_database(e, v);
+            }
+          }
+        }
+      }
     }
   }
   // P191: each keyed local's store type — a `hash`, `index`, `spatial` or `trie`, through a `?` —
@@ -94,6 +130,87 @@ pub fn fill_all(e: el::El) {
   }
   record_reference_targets(e);
   finish(e);
+}
+
+// Does a field held inline in `from` (a record, `τ?` of one, a struct enum's variant) lead
+// back to `target`?  `seen`: the definitions already walked.
+fn reaches(e: el::El, from: integer, target: integer, seen: vector<integer>) -> boolean {
+  holders: vector<integer> = [from];
+  if el::def(e, from).def_type == el::DT_ENUM {
+    holders = [for v in 0..len(e.b.data.definitions) if el::def(e, v).def_type == el::DT_ENUM_VALUE && el::def(e, v).parent == from { v }];
+  }
+  for h in holders {
+    for a in el::def(e, h).attributes {
+      n = match el_types::base(a.typedef[0] ?? ir::TyVoid) {
+        TyReference { n: r, dep } => if len(dep) == 0 { r } else { -1 },
+        TyEnum { n: r, is_ref } => if is_ref { r } else { -1 },
+        _ => -1
+      };
+      if n < 0 || (el::def(e, n).def_type != el::DT_STRUCT && el::def(e, n).def_type != el::DT_ENUM && el::def(e, n).def_type != el::DT_ENUM_VALUE) {
+        continue;
+      }
+      if n == target {
+        return true;
+      }
+      if !seen.contains(n) {
+        seen += [n];
+        if reaches(e, n, target, seen) {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+// `typedef::copy_unknown_fields` (and `actual_types_deferred`'s return arm): each attribute
+// typed by a forward reference's stub — bare, `S?` or `vector<S>` — takes the type the stub's
+// definition now answers; a function's result likewise.  An instance keeps its template's.
+fn copy_unknown_fields(e: el::El, d: integer) {
+  if el::def(e, d).instance_of >= 0 {
+    return;
+  }
+  for a in 0..len(el::def(e, d).attributes) {
+    r = resolved_stub(e, el::def(e, d).attributes[a]!.typedef[0] ?? ir::TyVoid);
+    if r != null {
+      e.b.data.definitions[d].attributes[a].typedef = [r!];
+    }
+  }
+  if el::def(e, d).def_type == el::DT_FUNCTION {
+    match el::def(e, d).returned[0] ?? ir::TyVoid {
+      TyUnknown { n } => {
+        if n != 0 && n != d && el::def(e, n).def_type != el::DT_TYPE_TEMPLATE && el::def(e, n).def_type != el::DT_UNKNOWN {
+          el::set_returned(e, d, el::def(e, n).returned[0] ?? ir::TyUnknown { n: n });
+        }
+      },
+      _ => {}
+    }
+  }
+}
+
+// `t` with a stub `Unknown(n)` (bare, under a `?` or as a vector's element) replaced by what
+// definition `n` answers once adopted; null where `t` names no adopted stub.
+fn resolved_stub(e: el::El, t: ir::TypeT) -> ir::TypeT? {
+  match t {
+    TyUnknown { n } => {
+      if n == 0 || el::def(e, n).def_type == el::DT_UNKNOWN || el::def(e, n).def_type == el::DT_TYPE_TEMPLATE {
+        return null;
+      }
+      el::def(e, n).returned[0]
+    },
+    TyOptional { inner } => {
+      r = resolved_stub(e, inner);
+      if r == null {
+        return null;
+      }
+      if (r! is TyOptional) { r } else { ir::TyOptional { inner: r! } }
+    },
+    TyVector { inner, dep } => {
+      r = resolved_stub(e, inner);
+      if r == null { null } else { ir::TyVector { inner: r!, dep: dep } }
+    },
+    _ => null
+  }
 }
 
 // `Stores::dbref_shapes`: the owned `dbref` and the borrowed `dbref_borrow` rows, registered
@@ -146,7 +263,7 @@ fn keyed_content_known(e: el::El, t: ir::TypeT) -> boolean {
 // wrapper struct a vector local's store is (one field, `vector`), both at `pos`; `typed` gives
 // the wrapper its record type, as a construct does (the schema's own pass leaves it unknown,
 // and makes the `vector<T>` store type at once instead — `vector_store_type`).
-pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean) {
+pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean, narrow_early: boolean = true) {
   vt = ir::TyVector { inner: t, dep: [] };
   if el::def_nr(e, "vector<{nm}>") < 0 {
     vd = el::add_def(e, "vector<{nm}>", pos, el::DT_VECTOR);
@@ -154,6 +271,7 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     e.b.data.definitions[vd].parent = match t {
       TyReference { n } => n,
       TyEnum { n } => n,
+      TyOptional { inner } => match inner { TyEnum { n } => n, TyReference { n } => n, _ => -1 },
       TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
       // `type_def_nr` of any vector is the library's `vector`.
       TyVector { inner: _ } => el::source_nr(e, 0, "vector"),
@@ -162,9 +280,11 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
   }
   // A narrow integer's element and `vector<…>` store types are made with the definitions, ahead
   // of every struct the schema fills.
+  // `narrow_early: false` — `Data::vector_def` itself registers no store type: a `[]` read against
+  // a known element (`??`'s default) has them made when the literal is built, `main_vector` first.
   match t {
     TyInteger { spec } => {
-      if el_types::narrow_width(spec) > 0 {
+      if narrow_early && el_types::narrow_width(spec) > 0 {
         vector_type(e, content_type(e, t));
       }
     },
@@ -215,6 +335,103 @@ fn register_enum(e: el::El, d: integer) {
   e.b.data.definitions[d].known_type = num;
 }
 
+// `typedef::synth_nullable_struct_fields` (@PLN25 E2a.2, `@FR-L-Null-Which`): an embedded record
+// field `item: S?` becomes the tagged `__nullable<S>`, so absence is discriminant 0 and has
+// somewhere to live; a `reference<S>?` keeps the pointer's own null.  Then every enum still
+// without a store type is registered — the synthetic ones this made.
+fn synth_nullable_struct_fields(e: el::El) {
+  for host in e.b.data.definitions {
+    if host.synthetic != "" || !(host.def_type == el::DT_STRUCT || host.def_type == el::DT_ENUM_VALUE && len(host.attributes) > 0) {
+      continue;
+    }
+    for a in host.attributes {
+      if a.constant {
+        continue;
+      }
+      sd = nullable_record_of(e, a.typedef[0] ?? ir::TyVoid);
+      if sd < 0 {
+        continue;
+      }
+      // `@FR-L-OutOfLine`: a `S?` whose `S` holds the host is out of line, record 0 its null.
+      if holds_record(e, sd, host#index, []) {
+        el::refuse(e, "an out-of-line nullable record field");
+        return;
+      }
+      syn = nullable_enum_for(e, sd);
+      if el::def(e, syn).known_type == NO_TYPE {
+        register_enum(e, syn);
+      }
+      e.b.data.definitions[host#index].attributes[a#index].typedef = [ir::TyEnum { n: syn, is_ref: true, dep: [] }];
+    }
+  }
+  for d in e.b.data.definitions {
+    if d.def_type == el::DT_ENUM && d.known_type == NO_TYPE {
+      register_enum(e, d#index);
+    }
+  }
+}
+
+// The struct an embedded `S?` field holds (`synth_nullable_target`: a plain struct of the
+// program, not a type variable's placeholder), or -1.
+pub fn nullable_record_of(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => {
+      match inner {
+        TyReference { n, dep } => {
+          if !dep.contains(el_types::MARKER) && el::def(e, n).def_type == el::DT_STRUCT && el::def(e, n).synthetic == "" && el_types::type_var(e, inner) < 0 {
+            return n;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  -1
+}
+
+// `Data::nullable_enum_for`: the synthetic `__nullable<S>` — a struct enum of a unit `Null`
+// (discriminant 1) and a `Some` (2) holding `payload: S` inline — made once per struct.  The
+// enum is keyed on the struct's own source (two libraries may each have a `Chunk`); its
+// variants are added under the current one, at the position the lexer stands on: the file's end.
+pub fn nullable_enum_for(e: el::El, sd: integer) -> integer {
+  name = "__nullable<{el::def(e, sd).name}>";
+  src = el::def(e, sd).source;
+  have = el::source_nr(e, src, name);
+  if have >= 0 {
+    return have;
+  }
+  at = el::pos_at(e, len(e.p.src) - 1);
+  own = e.source;
+  e.source = src;
+  en = el::add_def(e, name, at, el::DT_ENUM);
+  e.source = own;
+  self_tp = ir::TyEnum { n: en, is_ref: true, dep: [] };
+  el::set_returned(e, en, self_tp);
+  enumerate = el::def_nr(e, "enumerate");
+  nv = el::add_def(e, "Null", at, el::DT_ENUM_VALUE);
+  e.b.data.definitions[nv].parent = en;
+  el::set_returned(e, nv, self_tp);
+  null_attr = el::attribute("Null", self_tp);
+  null_attr.constant = true;
+  null_attr.value = [ir::NdEnum { ord: 1, tp: NO_TYPE }];
+  e.b.data.definitions[en].attributes += [null_attr];
+  sv = el::add_def(e, "Some", at, el::DT_ENUM_VALUE);
+  e.b.data.definitions[sv].parent = en;
+  el::set_returned(e, sv, self_tp);
+  some_attr = el::attribute("Some", self_tp);
+  some_attr.constant = true;
+  some_attr.value = [ir::NdEnum { ord: 2, tp: NO_TYPE }];
+  e.b.data.definitions[en].attributes += [some_attr];
+  disc = el::attribute("enum", ir::TyEnum { n: enumerate, is_ref: false, dep: [] });
+  disc.value = [ir::NdEnum { ord: 2, tp: NO_TYPE }];
+  e.b.data.definitions[sv].attributes += [disc, el::attribute("payload", ir::TyReference { n: sd, dep: [] })];
+  e.b.data.definitions[en].synthetic = "@PLN25 nullable-enum for embedded struct field";
+  e.b.data.definitions[nv].synthetic = "@PLN25 nullable-enum Null variant";
+  e.b.data.definitions[sv].synthetic = "@PLN25 nullable-enum Some variant";
+  en
+}
+
 // `typedef::fill_database` for a plain struct: a schema type under the struct's name, each
 // stored attribute a field of its content type, in declaration order.
 fn fill_database(e: el::El, d: integer) {
@@ -223,6 +440,11 @@ fn fill_database(e: el::El, d: integer) {
   // a record of itself) is registered under a name no program type can take.
   own = match def.returned[0] ?? ir::TyVoid { TyReference { n } => n == d, _ => false };
   reg = if len(def.attributes) == 0 && own { "__typevar_{def.name}" } else { def.name };
+  // A `__nullable<S>` variant is registered under its enum's store name (`__nullable<S>::Some`):
+  // every such enum has a `Null` and a `Some`, each `Some` of another payload.
+  if def.def_type == el::DT_ENUM_VALUE && def.parent >= 0 && starts_with(el::def(e, def.parent).name, "__nullable<") && el::def(e, def.parent).synthetic != "" {
+    reg = "{e.b.types[el::def(e, def.parent).known_type].name}::{def.name}";
+  }
   if schema_type(e, reg) >= 0 {
     el::refuse(e, "a struct named like a type the schema already has");
     return;
@@ -258,22 +480,6 @@ fn fill_database(e: el::El, d: integer) {
   for a in def.attributes {
     if a.constant {
       continue;
-    }
-    // An embedded record field `S?` is the tagged `__nullable<S>` (`@FR-L-Null-Which`,
-    // `fill_all`'s rewrite): not carried.  A `reference<S>?` keeps the pointer's own null.
-    match a.typedef[0] {
-      TyOptional { inner } => {
-        match inner {
-          TyReference { n, dep } => {
-            if !dep.contains(el_types::MARKER) && el::def(e, n).def_type == el::DT_STRUCT && el::def(e, n).synthetic == "" && el_types::type_var(e, inner) < 0 {
-              el::refuse(e, "a nullable record field (a `__nullable<S>`)");
-              return;
-            }
-          },
-          _ => {}
-        }
-      },
-      _ => {}
     }
     // A struct-enum field one of whose variants holds this record is an out-of-line child
     // (`@FR-L-OutOfLine`, `field_is_out_of_line`): not carried.
@@ -371,6 +577,8 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       if td < 0 || el::def(e, td).known_type == NO_TYPE { -1 } else { el::def(e, td).known_type }
     },
     TyEnum { n } => enum_content(e, n),
+    // A nullable struct enum's slot is the enum's record (its null the zero tag).
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, _ => -1 },
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),
@@ -413,6 +621,26 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       vd = el::def_nr(e, "vector<{nm}>");
       if vd >= 0 && e.b.types[vt].name == "vector<{nm}>" {
         e.b.data.definitions[vd].known_type = vt;
+      }
+      // `check_vector` names the definition after the element's own definition: a nullable struct
+      // enum's (`vector<DEnt?>`) is `vector<DEnt>`, made where missing — beside the `vector<DEnt?>`
+      // one, at its place — and given the store type.
+      match inner {
+        TyOptional { inner: oi } => match oi {
+          TyEnum { n: en, is_ref } => {
+            if is_ref && vd >= 0 {
+              cn = "vector<{el::def(e, en).name}>";
+              cd = el::def_nr(e, cn);
+              if cd < 0 {
+                cd = el::add_def(e, cn, el::def(e, vd).position, el::DT_VECTOR);
+                e.b.data.definitions[cd].parent = en;
+              }
+              e.b.data.definitions[cd].known_type = vt;
+            }
+          },
+          _ => {}
+        },
+        _ => {}
       }
       vt
     },
@@ -493,6 +721,7 @@ pub fn key_descriptors(e: el::El, t: integer) -> vector<ir::Key> {
     },
     PtTrie { content, key } => { c = content; ks = [ir::KeyField { nr: key, asc: true }]; },
     PtSorted { content, keys } => { c = content; ks = keys; },
+    PtOrdered { content, keys } => { c = content; ks = keys; },
     PtIndex { content, keys } => { c = content; ks = keys; },
     _ => {}
   }
@@ -538,6 +767,25 @@ fn immutable(e: el::El, d: integer, name: text) {
       e.b.data.definitions[d].attributes[a#index].mutable = false;
     }
   }
+}
+
+// The key fields a keyed type's name lists (`T[a,-b]`), numbered in its element `c` now that the
+// element's fields are laid out.
+fn named_keys(e: el::El, c: integer, name: text) -> vector<ir::KeyField> {
+  r: vector<ir::KeyField> = [];
+  open = name.find("[");
+  if open == null {
+    return r;
+  }
+  inner = name[open! + 1..len(name) - 2];
+  for k in inner.split(',') {
+    asc = !starts_with(k, "-");
+    f = field_nr(e, c, if asc { k } else { k[1..] });
+    if f >= 0 {
+      r += [ir::KeyField { nr: f, asc: asc }];
+    }
+  }
+  r
 }
 
 // `Stores::sorted` / `Stores::index` (`create_key`): named by the element and its directed keys.
@@ -620,6 +868,12 @@ pub fn int_part(e: el::El, spec: ir::IntegerSpec, alias: integer, nullable: bool
     return narrow_part(e, "int<{m},{nullable}>", ir::PtInt { start: m, nullable: nullable }, 4);
   }
   schema_type(e, "integer")
+}
+
+// `Stores::int`: the 4-byte integer row `int<min,nullable>` — what `get_type` answers for a
+// function value (its definition number, stored as an `i32`).
+pub fn int_store(e: el::El, min: integer, nullable: boolean) -> integer {
+  narrow_part(e, "int<{min},{nullable}>", ir::PtInt { start: min, nullable: nullable }, 4)
 }
 
 fn byte_name(m: integer, nullable: boolean) -> text {
@@ -724,6 +978,15 @@ pub fn schema_type(e: el::El, name: text) -> integer {
   for t in e.b.types {
     if t.name == name {
       return t#index;
+    }
+  }
+  // `rename_type` keeps the old name: a `sorted<…>` laid out as `ordered<…>` is still found by it.
+  if starts_with(name, "sorted<") {
+    on = "ordered<{name[7..]}";
+    for t in e.b.types {
+      if t.name == on && (t.parts[0] ?? ir::PtBase) is PtOrdered {
+        return t#index;
+      }
     }
   }
   if starts_with(name, "vector<") {
@@ -947,9 +1210,12 @@ fn finish(e: el::El) {
             e.b.types[f.content].name = "array<{e.b.types[content]!.name}>";
           }
         },
-        PtSorted { content } => {
+        // `sorted` → `ordered`: the same keys over records laid out by id (`@C145`).
+        PtSorted { content, keys } => {
           if linked.contains(content) {
-            el::refuse(e, "a sorted field of a linked record (laid out by id)");
+            e.b.types[content].linked = true;
+            e.b.types[f.content].parts = [ir::PtOrdered { content: content, keys: if len(keys) > 0 { keys } else { named_keys(e, content, e.b.types[f.content]!.name) } }];
+            e.b.types[f.content].name = "ordered{e.b.types[f.content]!.name[len("sorted")..]}";
           }
         },
         _ => {}
@@ -968,7 +1234,7 @@ fn finish(e: el::El) {
   }
   // `determine_keys`, once every record is laid out: each keyed type's key descriptors.
   for t in e.b.types {
-    if t.parts[0] is PtHash || t.parts[0] is PtSorted || t.parts[0] is PtIndex || t.parts[0] is PtRadix || t.parts[0] is PtTrie {
+    if t.parts[0] is PtHash || t.parts[0] is PtSorted || t.parts[0] is PtOrdered || t.parts[0] is PtIndex || t.parts[0] is PtRadix || t.parts[0] is PtTrie {
       e.b.types[t#index].keys = key_descriptors(e, t#index);
     }
   }

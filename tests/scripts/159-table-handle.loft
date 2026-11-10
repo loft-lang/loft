@@ -1,0 +1,259 @@
+// `@FR-R-TableHandle` — the C's keyed operations on one hash place share a table handle, checked
+// at every use: the same place, the store's table generation unchanged, the collection slot
+// still naming the claim; any other use resolves it again.  So every cell here makes two or more
+// keyed operations on one place, or one in a loop (where the handle is declared), and changes
+// the table between them along one path the design lists (bench/portal/analysis/table-handle.md
+// § How it fails): a growth, removals only, the field emptied by a callee, the owner rebound,
+// the owner's store freed and made again in a loop.  Every value is hand-computed; the cells run
+// on the interpreter and the C, and `LOFT_KEYED_VERIFY=1` (every live handle compared with a
+// fresh resolve) and `LOFT_NO_TABLE_HANDLE=1` must answer the same.  Only a hash of linked
+// elements takes a handle (t7–t9); t1–t6 hold owned elements in inline tables and pin the plain
+// calls' answers beside them.
+//
+// @falsified-at: hand-measured (2026-11-09) — `loft_h_reshaped` sabotaged to do nothing (no
+// table generation anywhere): t9 answers `233` for `250` on `--native-c` (a stale handle
+// hashes the new table's keys with the old table's seed and misses them), the C sweep's
+// keyed-verify mode stops the run, and `LOFT_NO_TABLE_HANDLE=1` answers 250.  Removing only
+// `loft_h_install_table`'s bump, or only the seed writes', changes nothing: a growth installs a
+// new claim, which the slot check sees, and a table's creation also writes its slot width.
+// @falsified-at: hand-measured (2026-11-09) — `loft_hh_shift_out` with the backward shift
+// sabotaged (the hole emptied, nothing moved back): t7 answers `21 14 261` for `20 19 361` on
+// `--native-c` and the C sweep's keyed-verify mode reports a differ.
+
+struct E { k: integer, v: integer }
+struct Box { h: hash<E[k]>, tag: integer }
+
+// t1 — a growth between uses: inserts in a loop take the table from empty through several
+// doublings while the same handle keeps answering lookups.
+fn t1() {
+  b = Box { tag: 1 };
+  hits = 0;
+  for i in 0..300 {
+    b.h += [E { k: i * 7, v: i }];
+    if b.h[i * 7] != null { hits += 1; }
+    if b.h[i * 7 + 1] != null { hits += 100; }
+  }
+  // sum of v over k = 7*i for i in 0..300 = 0+1+…+299
+  s = 0;
+  for i in 0..300 { s += b.h[i * 7].v ?? -1; }
+  r = "{hits} {len(b.h)} {s}";
+  assert(r == "300 300 44850", "t1 {r}");
+  println("t1 {r}");
+}
+
+// t2 — removals only: the handle stays live across them (no table changes shape).
+fn t2() {
+  b = Box { tag: 2 };
+  for i in 0..64 { b.h += [E { k: i, v: i * i }]; }
+  for i in 0..64 {
+    if i % 2 == 1 { b.h[i] = null; }
+  }
+  s = 0;
+  n = 0;
+  for i in 0..64 {
+    e = b.h[i];
+    if e != null { s += e.v; n += 1; }
+  }
+  // even i in 0..64: sum of i*i = 4 * (0+1+…+31 squared) = 4 * 10416 = 41664
+  r = "{n} {len(b.h)} {s}";
+  assert(r == "32 32 41664", "t2 {r}");
+  println("t2 {r}");
+}
+
+fn empty_it(b: Box) {
+  b.h = [];
+}
+
+// t3 — a callee replaces the field between two uses of the caller's handle.
+fn t3() {
+  b = Box { tag: 3 };
+  for i in 0..20 { b.h += [E { k: i, v: 1 }]; }
+  before = len(b.h);
+  had = b.h[5] != null;
+  empty_it(b);
+  after = len(b.h);
+  gone = b.h[5] == null;
+  b.h += [E { k: 5, v: 9 }];
+  r = "{before} {had} {after} {gone} {b.h[5].v ?? -1} {len(b.h)}";
+  assert(r == "20 true 0 true 9 1", "t3 {r}");
+  println("t3 {r}");
+}
+
+// t4 — the owner rebound between uses: the same variable names another record, another table.
+fn t4() {
+  b = Box { tag: 4 };
+  for i in 0..10 { b.h += [E { k: i, v: i }]; }
+  first = len(b.h);
+  b = Box { tag: 5 };
+  b.h += [E { k: 3, v: 33 }];
+  r = "{first} {len(b.h)} {b.h[3].v ?? -1} {b.h[4] == null} {b.tag}";
+  assert(r == "10 1 33 true 5", "t4 {r}");
+  println("t4 {r}");
+}
+
+// t5 — the owner's store freed and made again each round: the handle declared once for the
+// function sees a new store (possibly in the same slot, the table at the same claim) every round.
+fn t5() {
+  total = 0;
+  for round in 0..40 {
+    b = Box { tag: round };
+    for i in 0..(round + 1) { b.h += [E { k: i, v: round }]; }
+    if b.h[round] != null { total += b.h[round].v ?? 0; }
+    if b.h[round + 1] != null { total += 1000; }
+    total += len(b.h);
+  }
+  // per round: v of key `round` is `round`, length round + 1:
+  //   sum(round) + sum(round + 1) over 0..40 = 780 + 820 = 1600
+  assert(total == 1600, "t5 {total}");
+  println("t5 {total}");
+}
+
+// t6 — a lookup, the length, a removal and an insert in one function (the eviction shape).
+fn evict_put(b: Box, k: integer, v: integer) {
+  if b.h[k] != null { return; }
+  if len(b.h) >= 8 {
+    old = k - 8;
+    b.h[old] = null;
+  }
+  b.h += [E { k: k, v: v }];
+}
+
+fn t6() {
+  b = Box { tag: 6 };
+  for i in 0..100 { evict_put(b, i, i * 3); }
+  s = 0;
+  for i in 0..100 { s += b.h[i].v ?? 0; }
+  // keys 92..99 remain: 3 * (92+…+99) = 3 * 764 = 2292
+  r = "{len(b.h)} {s}";
+  assert(r == "8 2292", "t6 {r}");
+  println("t6 {r}");
+}
+
+// t7 — records a link can name (filed as records of their own, through the handle's one-probe
+// insert), links into the removed ones reading null afterwards (`@FR-H-Removed`).  Linked the
+// way bench 23 links its nodes: a parameter stored in the holder's field, a field copied.
+struct N { k: integer, prev: reference<N>? }
+struct Chain { h: hash<N[k]>, last: reference<N>? }
+
+fn push(c: Chain, n: N) {
+  n.prev = c.last;
+  c.last = &n;
+}
+
+// The insert and its lookup in one function, as bench 23's `put`: the place's handle covers both.
+fn add(c: Chain, k: integer) {
+  if c.h[k] != null { return; }
+  c.h += [N { k: k }];
+  m = c.h[k];
+  if m != null { push(c, m); }
+}
+
+fn t7() {
+  c = Chain { };
+  for i in 0..30 { add(c, i); }
+  for i in 0..10 { c.h[i] = null; }
+  linked = 0;
+  s = 0;
+  for i in 10..30 {
+    m = c.h[i];
+    if m != null && m.prev != null { linked += 1; s += m.prev.k; }
+  }
+  // keys 10..29 remain; 10's prev (9) is removed and reads null; 11..29 link to 10..28
+  r = "{len(c.h)} {linked} {s}";
+  assert(r == "20 19 361", "t7 {r}");
+  println("t7 {r}");
+}
+
+fn reset_chain(c: Chain) {
+  c.h = [];
+  c.last = null;
+}
+
+// t8 — the table emptied and made again between two uses of one handle: the new table can take
+// the freed claim number, so the collection slot names the same claim while the seed is new.
+// Only the generation (the new table's seed write) tells the handle; without it the lookup
+// hashes with the old seed and misses the key it just filed.
+fn refill(c: Chain) -> integer {
+  a = 0;
+  if c.h[1] != null { a += 1; }
+  reset_chain(c);
+  c.h += [N { k: 7 }];
+  if c.h[7] != null { a += 10; }
+  if c.h[1] == null { a += 100; }
+  a
+}
+
+fn t8() {
+  c = Chain { };
+  for i in 0..5 { add(c, i); }
+  r = refill(c);
+  assert(r == 111, "t8 {r}");
+  println("t8 {r}");
+}
+
+// t9 — the owner's store freed and made again each round with a table of linked records: the
+// new store takes the same slot and the new table the same claim, with a fresh seed.  The slot
+// check passes; only the store's new table generation sends the handle (declared once for the
+// loop) to resolve again.  Per round: key `round` is present (i = 0), `round + 1` never is, and
+// the table holds `round + 2` keys — 20 + (2 + 3 + … + 21) = 250.
+fn t9() {
+  total = 0;
+  for round in 0..20 {
+    c = Chain { };
+    for i in 0..(round + 2) { add(c, i * 3 + round); }
+    if c.h[round] != null { total += 1; }
+    if c.h[round + 1] != null { total += 1000; }
+    total += len(c.h);
+  }
+  assert(total == 250, "t9 {total}");
+  println("t9 {total}");
+}
+
+// t10 — keyed lookups in a loop inside a GENERATOR: its resume body is assembled from the
+// frame, where a handle declared for the function would never be written, so a generator takes
+// none (the C failed to compile with `hh1` undeclared before it declined).  0+2+4+6+8+10 = 30.
+fn doubled_present(n: integer) -> iterator<integer> {
+  c = Chain { };
+  for i in 0..n { add(c, i); }
+  for i in 0..n {
+    if c.h[i] != null { yield i * 2; }
+  }
+}
+
+fn t10() {
+  s = 0;
+  for x in doubled_present(6) { s += x; }
+  assert(s == 30, "t10 {s}");
+  println("t10 {s}");
+}
+
+// t11 — removals through a handle shift the probe run behind each hole back (`@FR-Col-Remove`):
+// 200 linked records filed, every third removed in a loop on one handle, then every key looked
+// up.  A shift that leaves an entry past a hole makes a lookup miss it.  Kept: i in 0..200 with
+// i % 3 != 0, 133 keys; the sum of their keys 7 * (19900 - 3 * 2211) = 92869; the 67 removed
+// read null; filed again, the table holds 200.
+fn t11() {
+  c = Chain { };
+  for i in 0..200 { c.h += [N { k: i * 7 }]; }
+  for i in 0..200 {
+    if i % 3 == 0 { c.h[i * 7] = null; }
+  }
+  found = 0;
+  s = 0;
+  gone = 0;
+  for i in 0..200 {
+    m = c.h[i * 7];
+    if m != null { found += 1; s += m.k; } else { gone += 1; }
+  }
+  kept = len(c.h);
+  for i in 0..200 {
+    if i % 3 == 0 { c.h += [N { k: i * 7 }]; }
+  }
+  r = "{found} {gone} {s} {kept} {len(c.h)}";
+  assert(r == "133 67 92869 133 200", "t11 {r}");
+  println("t11 {r}");
+}
+
+fn main() {
+  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9(); t10(); t11();
+}

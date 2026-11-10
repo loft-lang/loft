@@ -903,7 +903,7 @@ impl Parser {
             self.lexer,
             Level::Error,
             "`{name}` is abstract outside `{lib}`: {what}.\n  fix: go through `{lib}`'s \
-             functions, or `{lib}` declares `pub type {name}`"
+             functions, or declare `pub type {name}` in `{lib}`"
         );
     }
 

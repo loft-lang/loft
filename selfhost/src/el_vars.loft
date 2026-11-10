@@ -33,6 +33,25 @@ pub struct LenLocal {
   pub vec: ir::Node
 }
 
+// A name an `is` capture rebound, and the variable it named before (-1: none).  Its own element
+// type: a `vector<VarName>` would be one record set with `names` (`@FR-Col-Group`).
+pub struct CaptureAlias {
+  pub name: text,
+  pub nr: integer
+}
+
+// A place and the variant ordinal a test proved it holds.
+pub struct Proven {
+  pub place: ir::Node,
+  pub disc: integer
+}
+
+// A work ref and the syntax node it was minted at.
+pub struct RefSite {
+  pub nr: integer,
+  pub site: integer
+}
+
 pub struct LoopCounter {
   pub lv: integer,
   pub count: integer
@@ -48,7 +67,7 @@ pub struct Vars {
   pub defined: vector<boolean>,
   // `Function::work_texts`: the `__work_N` text buffers this body minted, in order
   pub work_texts: vector<integer>,
-  pub work_text: integer,
+  pub work_text: integer = 0,
   // The record locals a struct literal has built in place on this pass.
   pub built: vector<integer>,
   // The record locals bound from a call that delivers into a hidden buffer: like a built one,
@@ -58,16 +77,30 @@ pub struct Vars {
   pub mid_params: vector<integer>,
   // The `SIndex` node an assignment is about to bind, whose vector slice it lowers itself
   // (`materialize_iterator`); -1 for none.
-  pub slice_node: integer,
+  pub slice_node: integer = -1,
   // `Function::unique`: the counters `create_unique` names `_<name>_<n>` locals by, one per
   // name, per pass
   pub unique: hash<UniqueCount[name]>,
   // `Function::work_vdb` and `work_references`: the `__vdb_N` vector stores this body minted
-  pub work_vdb: integer,
+  pub work_vdb: integer = 0,
   // `Function::work_ref` and its second-pass twin: the `__ref_N` / `__ref_p2_N` record buffers
-  pub work_ref: integer,
-  pub work_ref_p2: integer,
+  pub work_ref: integer = 0,
+  pub work_ref_p2: integer = 0,
   pub work_refs: vector<integer>,
+  // The work refs the first pass made parameters, each with the site that minted it: `work_ref`
+  // steps over one at any other site (`argument_of_another_site`).
+  pub step_over: vector<RefSite>,
+  // The work refs this pass minted, each with its site (`Variable::source`).
+  pub ref_sites: vector<RefSite>,
+  // The syntax node being elaborated: where a work ref is minted (`lexer.at()` in Rust).
+  pub site: integer = -1,
+  // An `if` test is being read, whose `is` may capture fields (`Parser::is_capture_*`): the
+  // captures' bindings for the then-block, and each captured name with what it named before.
+  pub capture_ok: boolean = false,
+  pub is_bindings: vector<ir::Node>,
+  pub is_aliases: vector<CaptureAlias>,
+  // `Parser::variant_proven`: the places an `is` test proved hold one variant, in the arm.
+  pub proven: vector<Proven>,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
   // The `x#count` counter a body asked of an open loop (`Function::loop_count_of`), by its loop
@@ -75,7 +108,7 @@ pub struct Vars {
   pub loop_counts: vector<LoopCounter>,
   // The `while` loops open: loops of their own in `#break`'s count, which `active_loops` (the
   // `for` loops) does not hold.
-  pub whiles: integer,
+  pub whiles: integer = 0,
   // The loop variables of the open `rev(…)` walks (`on`'s reverse bit, which `#remove` reads).
   pub reversed: vector<integer>,
   // `Iterator::value` of each open loop, beside `active_loops`: the vector a `for` walks, or
@@ -84,9 +117,9 @@ pub struct Vars {
   // The locals this pass assigned a vector's length (`n = len(v)`), with that vector
   pub len_locals: vector<LenLocal>,
   // Set when an index read was trusted through a length local (`Parser::length_local_read`)
-  pub len_read: boolean,
+  pub len_read: boolean = false,
   // The syntax node of the body being elaborated
-  pub body: integer,
+  pub body: integer = -1,
   // `Function::loop_binds`: how many loops have bound each spelling, per pass
   pub loop_binds: hash<LoopCount[name]>,
   // `Parser::divisor_nonzero`: the locals a condition proves non-zero where they are read
@@ -106,9 +139,9 @@ pub struct Vars {
   // Locals a `&` bound to a place in a store (`pi = &o.i`, `pe = &v[0]`, `is_amp_link`).
   pub amp_places: vector<integer>,
   // `Function::work_ctext`: the `__work_cN` text buffers a call hands a text-returning callee
-  pub work_ctext: integer,
+  pub work_ctext: integer = 0,
   // `Function::work_text_p2`: the `__work_p2_N` destinations a text-dest call is given
-  pub work_tp2: integer,
+  pub work_tp2: integer = 0,
   // `child_allocs` on the first pass's code, which keeps every loop body: per record made
   // through a local's field (one per appended literal), that local
   pub allocs: vector<integer>,
@@ -123,30 +156,43 @@ pub struct Vars {
   pub rebind_params: vector<integer>,
   pub rebind_origs: vector<integer>,
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
-  pub dn4_coalesce: boolean,
+  pub dn4_coalesce: boolean = false,
   // `Parser::lambda_counter`: the lambdas this body made, naming the next `__lambda_<fn>_<N>`
-  pub lambdas: integer,
+  pub lambdas: integer = 0,
   // `Parser::expected` for the one node a bind is about to read (`expect_node`): the type its
   // target holds, which an `if` there hands its arms (an untyped `[]` built in its place)
-  pub expect_node: integer,
-  pub expect: ir::TypeT,
+  pub expect_node: integer = -1,
+  pub expect: ir::TypeT = ir::TyVoid,
+  // `Parser::lambda_hint` for a call's argument: the `fn(…)` its parameter takes, for the one
+  // short lambda (`|x| …`) at `lambda_node` (-1: none)
+  // `Parser::assign_target`: the local the statement being read assigns (-1: none) — a closure
+  // built in its right-hand side does not release that local's previous capture
+  pub assign_target: integer = -1,
+  // `Variable::captured`: the locals a closure built in this body reads (second pass)
+  pub captured: vector<integer>,
+  pub lambda_node: integer = -1,
+  pub lambda_hint: ir::TypeT = ir::TyVoid,
   // the local a `+` chain of vectors is bound to (`a = v + w` builds into it), or -1
-  pub concat_dest: integer,
+  pub concat_dest: integer = -1,
   // `parse_var`'s `into` arm: the syntax node of a local bind's right-hand side read first,
   // into the destination — a text read there keeps its own type (-1: none)
-  pub read_into: integer,
+  pub read_into: integer = -1,
   // Parsing the value of a plain local's `=` (`Parser::in_bind_rhs`).
-  pub bind_rhs: boolean,
+  pub bind_rhs: boolean = false,
   // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.
   pub rebuilt: vector<integer>,
   // The element type the context gives the vector literal at node `lit_hint_node` (an
   // operator's right operand takes its left's), or -1.
-  pub lit_hint_node: integer,
-  pub lit_hint: ir::TypeT
+  pub lit_hint_node: integer = -1,
+  pub lit_hint: ir::TypeT = ir::TyVoid,
+  // `Variable::viewed`, per variable: the borrows each earlier bind ended with on the second
+  // pass (`note_bind`).  The type keeps only the last bind's, but a read after
+  // `v = a[0]; if c { v = b[0]; }` may be either (`store_viewers`).
+  pub viewed: vector<vector<integer>>
 }
 
 pub fn new_vars(name: text, file: text) -> Vars {
-  Vars { name: name, file: file, vars: [], names: [], defined: [], work_texts: [], work_text: 0, built: [], adopted: [], mid_params: [], slice_node: -1, unique: [], work_vdb: 0, work_ref: 0, work_ref_p2: 0, work_refs: [], active_loops: [], loop_counts: [], whiles: 0, reversed: [], active_values: [], len_locals: [], len_read: false, body: -1, loop_binds: [], nonzero: [], present: [], present_exprs: [], text_links: [], store_links: [], amp_vectors: [], amp_places: [], work_ctext: 0, work_tp2: 0, allocs: [], inline_refs: [], annotated: [], rebind_params: [], rebind_origs: [], dn4_coalesce: false, lambdas: 0, expect_node: -1, expect: ir::TyVoid, concat_dest: -1, read_into: -1, bind_rhs: false, rebuilt: [], lit_hint_node: -1, lit_hint: ir::TyVoid }
+  Vars { name: name, file: file }
 }
 
 pub fn name_of(v: Vars, nr: integer) -> text {
@@ -155,6 +201,16 @@ pub fn name_of(v: Vars, nr: integer) -> text {
 
 pub fn count(v: Vars) -> integer {
   len(v.vars)
+}
+
+// `Function::rebind_must_mint`: a closure captured `nr`, which holds a store — a rebind mints a
+// fresh one rather than rebuilding the store the closure shares (loft#1447).
+pub fn rebind_must_mint(v: Vars, nr: integer) -> boolean {
+  if !v.captured.contains(nr) {
+    return false;
+  }
+  t = el_types::base(tp(v, nr));
+  t is TyReference || t is TyVector || t is TyHash || t is TySorted || t is TyIndex || t is TyRadix || t is TyTrie || (match t { TyEnum { is_ref } => is_ref, _ => false })
 }
 
 // `Function::var`: the variable `name` names, or -1 (`u16::MAX`).
@@ -175,7 +231,18 @@ pub fn new_var(v: Vars, name: text, tp: ir::TypeT) -> integer {
   }
   v.vars += [fresh_variable(name, tp)];
   v.defined += [false];
+  v.viewed += [[]];
   nr
+}
+
+// `Function::copy_variable`: a second variable of the same name, type and flags, which no
+// spelling names — the per-field copy of a `#fields` body's binding.
+pub fn copy_variable(v: Vars, nr: integer) -> integer {
+  c = len(v.vars);
+  v.vars += [v.vars[nr]!];
+  v.defined += [v.defined[nr] ?? false];
+  v.viewed += [[]];
+  c
 }
 
 // A new variable's record: used once, no slot, no flags (`Variable::new`).
@@ -373,6 +440,27 @@ pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean
   // A local bound again is no longer what a guard proved of it.
   v.present = [for x in v.present if x != nr { x }];
   cur = tp(v, nr);
+  // `_` holds whatever it is given last.
+  if name_of(v, nr) == "_" && !el_types::is_unknown(t) {
+    set_type(v, nr, t);
+    return true;
+  }
+  // A fn-ref local takes the return deps of the function it is now bound to: the types are equal
+  // but for what the result borrows (`adopt_fnref_ret`).
+  match cur {
+    TyFunction { result: cr } => {
+      match t {
+        TyFunction { result: tr } => {
+          if el_types::is_equal(e, cr, tr) && el_types::deps(cr) != el_types::deps(tr) {
+            set_type(v, nr, t);
+            return true;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   if el_types::is_unknown(t) || el_types::is_equal(e, cur, t) {
     // `depend_all`: the local borrows what the value borrows.
     ds = el_types::deps(t);
@@ -398,7 +486,125 @@ pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean
     },
     _ => {}
   }
+  declared = v.vars[nr].argument || v.annotated.contains(nr);
+  bt = el_types::base(t);
+  // `(N-Join)`: a local first bound to `null` and then to a scalar or a record is `τ?`.
+  if cur is TyNull && (null_scalar(bt) || is_dbref(bt)) {
+    set_type(v, nr, el_types::with_deps(ir::TyOptional { inner: bt }, el_types::deps(t)));
+    return true;
+  }
+  // `(N-Join)`: an inferred local bound to `τ` and then to `τ?` is `τ?` — over the wider of two
+  // integer widths.
+  if !declared && !(cur is TyOptional || cur is TyNull || cur is TyRefVar) {
+    match t {
+      TyOptional { inner } => {
+        if el_types::is_equal(e, inner, cur) {
+          wider = match cur { TyInteger { spec: cs } => match inner { TyInteger { spec: ns } => integer_bytes(ns) > integer_bytes(cs), _ => false }, _ => false };
+          set_type(v, nr, el_types::with_deps(ir::TyOptional { inner: if wider { inner } else { cur } }, el_types::deps(t)));
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  // `(C-Var)`: an inferred local bound to two variants of one struct enum is the enum.
+  if !declared {
+    j = variant_join(e, cur, t);
+    if j != null {
+      set_type(v, nr, el_types::with_deps(j!, el_types::deps(t)));
+      return true;
+    }
+  }
+  // A vector local given an iterator keeps its type: the iterator is collected into it.
+  if cur is TyVector && t is TyIterator {
+    return true;
+  }
+  // A link given a value of what it links to (or a nullable link a `null`).
+  shape = el_types::base(cur);
+  match cur {
+    TyRefVar { inner } => {
+      shape = el_types::base(inner);
+      if el_types::is_equal(e, inner, bt) || el_types::is_equal(e, el_types::base(inner), bt) || inner is TyOptional && t is TyNull {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  // A struct-enum local given one of its variants.
+  match shape {
+    TyEnum { n: pd, is_ref } => {
+      match bt {
+        TyReference { n: rd } => {
+          if is_ref && rd >= 0 && el::def(e, rd).parent == pd {
+            return true;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   false
+}
+
+// The scalars whose null is in-band (`is_null_scalar`).
+fn null_scalar(t: ir::TypeT) -> boolean {
+  t is TyInteger || t is TyText || t is TyBoolean || t is TyFloat || t is TySingle || t is TyCharacter
+}
+
+// `data::is_dbref`: a type held as a store reference.
+fn is_dbref(t: ir::TypeT) -> boolean {
+  match t {
+    TyEnum { is_ref } => is_ref,
+    _ => t is TyReference || t is TyVector || t is TySorted || t is TyIndex || t is TyHash || t is TyRadix || t is TyTrie
+  }
+}
+
+// `IntegerSpec::byte_width(true)` (`el_expressions::byte_width`): the bytes a nullable integer
+// of this spec is stored in.
+fn integer_bytes(s: ir::IntegerSpec) -> integer {
+  if s.forced_size > 0 {
+    return s.forced_size;
+  }
+  codes = s.max - s.min + 2;
+  if codes <= 256 { 1 } else if codes <= 65536 { 2 } else { 8 }
+}
+
+// `Function::variant_join` (`@FR-C-Var`): two different variants of one struct enum — or a
+// variant and the enum — joined to the enum, `?` when either is; null for any other pair.
+fn variant_join(e: el::El, cur: ir::TypeT, t: ir::TypeT) -> ir::TypeT? {
+  cb = el_types::base(cur);
+  tb = el_types::base(t);
+  ce = variant_enum(e, cb);
+  te = variant_enum(e, tb);
+  j: ir::TypeT? = null;
+  match cb {
+    TyReference { n: a, dep } => {
+      match tb {
+        TyReference { n: b } => { if a != b && ce >= 0 && te == ce { j = ir::TyEnum { n: ce, is_ref: true, dep: dep }; } },
+        TyEnum { n: f, is_ref } => { if is_ref && ce == f { j = ir::TyEnum { n: f, is_ref: true, dep: dep }; } },
+        _ => {}
+      }
+    },
+    TyEnum { n: en, is_ref } => {
+      if is_ref && te == en {
+        j = cb;
+      }
+    },
+    _ => {}
+  }
+  if j == null {
+    return null;
+  }
+  if cur is TyOptional || t is TyOptional { ir::TyOptional { inner: j! } } else { j! }
+}
+
+// The enum a variant record belongs to, or -1.
+fn variant_enum(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n } => if n >= 0 && el::def(e, n).def_type == el::DT_ENUM_VALUE && el::def(e, n).parent >= 0 { el::def(e, n).parent } else { -1 },
+    _ => -1
+  }
 }
 
 // `Function::append(other)`: this table takes over the one a definition kept from the pass
@@ -411,6 +617,10 @@ pub fn take_over(v: Vars, kept: ir::Function) {
     y.uses = 0;
     v.vars += [y];
     v.defined += [false];
+  }
+  v.viewed = [];
+  for _ in v.vars {
+    v.viewed += [[]];
   }
   v.names = [];
   for n in kept.names {
@@ -428,11 +638,14 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.rebuilt = [];
   v.rebind_params = [];
   v.rebind_origs = [];
+  v.captured = [];
   v.unique = [];
   v.work_vdb = 0;
   v.work_ref = 0;
   v.work_ref_p2 = 0;
   v.work_refs = [];
+  v.ref_sites = [];
+  v.site = -1;
   v.active_loops = [];
   v.loop_counts = [];
   v.whiles = 0;
@@ -610,11 +823,42 @@ fn sorted_in(l: vector<integer>, nr: integer) -> vector<integer> {
 
 // `Function::work_refs`: the next `__ref_N` record buffer — a call's hidden return buffer — noted
 // among the work references the body's head sets to null.
+// A name that now denotes another site's return buffer is stepped over, not reused (loft#848).
 pub fn work_ref(v: Vars, t: ir::TypeT) -> integer {
   v.work_ref += 1;
+  while another_sites_parameter(v, "__ref_{v.work_ref}", t) {
+    v.work_ref += 1;
+  }
   nr = add_variable(v, "__ref_{v.work_ref}", t);
   v.work_refs = sorted_in(v.work_refs, nr);
+  v.ref_sites += [RefSite { nr: nr, site: v.site }];
   nr
+}
+
+// `retypes_argument` / `argument_of_another_site`: does the work ref `name` denote a parameter
+// this site must not be handed — one of another type, or one the first pass minted elsewhere?
+// The counter restarts each pass while the names persist, so the name the first pass left on
+// the return buffer can come up at another site on the second (loft#848).
+fn another_sites_parameter(v: Vars, name: text, t: ir::TypeT) -> boolean {
+  x = v.names[name];
+  if x == null || !v.vars[x!.nr].argument {
+    return false;
+  }
+  nr = x!.nr;
+  if el_types::without_deps(tp(v, nr)) != el_types::without_deps(t) {
+    return true;
+  }
+  for s in v.step_over {
+    if s.nr == nr {
+      return s.site != v.site;
+    }
+  }
+  false
+}
+
+// The first pass's work refs that ended as parameters, with their sites, for the second pass.
+pub fn minted_parameters(v: Vars) -> vector<RefSite> {
+  [for s in v.ref_sites if v.vars[s.nr].argument { s }]
 }
 
 // `Parser::ensure_rebind_witness`: the work-ref that witnesses parameter `p`'s entry store —
@@ -670,6 +914,15 @@ pub fn depend(v: Vars, nr: integer, on: integer) {
 // The variable's type replaced.
 fn set_type(v: Vars, nr: integer, t: ir::TypeT) {
   v.vars[nr].type_def = [t];
+}
+
+// `Function::note_bind`: a bind of `nr` finished on the second pass, its borrows remembered.
+pub fn note_bind(v: Vars, nr: integer) {
+  for d in el_types::deps(tp(v, nr)) {
+    if d != 65535 && !v.viewed[nr]!.contains(d) {
+      v.viewed[nr] += [d];
+    }
+  }
 }
 
 // A stored table taken up again after the passes (the inverse of `stored`), its work-ref counter

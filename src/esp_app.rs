@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 /// The BSP the libraries' Tanmatsu sections are written against: 2.0, the one the launcher
 /// runs, which knows every display panel the boards ship with (THIRDPARTY.md, `badge-bsp`).
-const BSP: &str = "badgeteam/badge-bsp: \"=2.0.0\"";
+const BSP: &str = "badgeteam/badge-bsp: \"=2.0.3\"";
 
 /// The ESP-IDF release the template builds with.
 const IDF_VERSION: &str = "v6.0.3";

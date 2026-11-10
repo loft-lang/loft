@@ -225,6 +225,9 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     TyCharacter => "character",
     TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
     TyEnum { n, is_ref } => if is_ref && starts_with(el::def(e, n).name, "__nullable<") { "" } else { el::def(e, n).name },
+    // A nullable struct enum is named as its enum with the `?` (`Type::name`): its elements are
+    // the enum's records, null the zero tag.
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref && !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, _ => "" },
     // A vector of vectors: its element is named as the inner vector's own type.
     TyVector { inner } => if elem_name(e, inner) == "" { "" } else { "vector<{elem_name(e, inner)}>" },
     _ => ""
@@ -344,7 +347,7 @@ pub fn is_collection(t: ir::TypeT) -> boolean {
 // that name answers.  What it does not carry yet is refused by name.
 pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
   match e.p.nodes[n] {
-    STy { name, member, args, elem_null, keys, deps, limit, not_null, assoc, nullable } => {
+    STy { at, name, member, args, elem_null, keys, deps, limit, not_null, assoc, nullable } => {
       if name == "vector" && member == "" && len(args) == 1 && !elem_null && len(keys) == 0 && len(deps) == 0 && limit == null && !not_null && assoc == "" {
         // `sub_type_inner`'s vector arm: the element read as a type, no deps yet.
         inner = parse_type(e, args[0]);
@@ -473,7 +476,13 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
         t = ir::TyInteger { spec: spec };
         return if nullable { ir::TyOptional { inner: t } } else { t };
       }
-      if member != "" || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
+      // `lib::Type`: the library's own definition of the name (`parse_type_inner`'s `::` arm).
+      qual = if member != "" && el::use_exists(e, name) { el::qualified_def(e, name, member) } else { -1 };
+      if member != "" && el::use_exists(e, name) && (qual < 0 || el::def(e, qual).def_type == el::DT_UNKNOWN) {
+        el::refuse(e, "a qualified type the library does not declare before its use");
+        return null;
+      }
+      if (member != "" && qual < 0) || len(args) > 0 || len(keys) > 0 || len(deps) > 0 || limit != null || not_null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;
       }
@@ -484,10 +493,31 @@ pub fn parse_type(e: el::El, n: integer) -> ir::TypeT? {
           return if nullable { ir::TyOptional { inner: h } } else { h };
         }
       }
-      d = el::def_nr(e, name);
+      d = if qual >= 0 { qual } else { el::def_nr(e, name) };
+      // `parse_type_inner`'s forward reference: on the first pass a name no definition holds yet
+      // takes a stub of this source (`DefType::Unknown`), which its declaration adopts; until
+      // then the type is the stub's `Unknown`, which `copy_unknown_fields` resolves after the file.
+      if d < 0 && e.first_pass && member == "" && name != "spatial" {
+        d = el::add_def(e, name, el::pos_at(e, at + 1), el::DT_UNKNOWN);
+      }
       if d < 0 {
         el::refuse(e, "a forward type reference");
         return null;
+      }
+      if el::def(e, d).def_type == el::DT_UNKNOWN {
+        u = ir::TyUnknown { n: d };
+        return if nullable { ir::TyOptional { inner: u } } else { u };
+      }
+      // `@FR-C-Var`: a variant TYPE is a record variant, the variant's own reference — not the
+      // enum its values have.  A plain enum's value names no type; Rust refuses it on pass 2.
+      if el::def(e, d).def_type == el::DT_ENUM_VALUE {
+        plain = match el::def(e, el::def(e, d).parent).returned[0] ?? ir::TyVoid { TyEnum { is_ref } => !is_ref, _ => false };
+        if plain {
+          el::refuse(e, "a value of a plain enum as a type");
+          return null;
+        }
+        r = ir::TyReference { n: d, dep: [] };
+        return if nullable { ir::TyOptional { inner: r } } else { r };
       }
       t = el::def(e, d).returned[0] ?? ir::TyUnknown { n: d };
       // An integer alias with a `size(n)` (`u8`, `i32`) stamps that width onto the spec, so it
@@ -625,7 +655,7 @@ pub fn tuple_spelling(elems: vector<ir::TypeT>, sep: text) -> text {
 // every file shares it, its members not-null, its one Tuple field group covering them all.
 // The existing definition where the shape has one; -1 for a member this port does not carry.
 pub fn tuple_def(e: el::El, elems: vector<ir::TypeT>, pos: ir::Position) -> integer {
-  sp = tuple_spelling(elems, ",");
+  sp = tuple_shape(e, elems);
   if sp == "" {
     return -1;
   }
@@ -641,25 +671,50 @@ pub fn tuple_def(e: el::El, elems: vector<ir::TypeT>, pos: ir::Position) -> inte
   size = 0;
   align = 1;
   for t in elems {
-    a = el::attribute("_{t#index}", t);
+    // `tuple_member_stored`: a member is stored without the borrow its value carried.
+    a = el::attribute("_{t#index}", without_deps(t));
     a.nullable = false;
     e.b.data.definitions[d].attributes += [a];
     idx += [t#index];
+    // `group_size`: each member at its alignment, then its size (`element_stack_size` /
+    // `element_stack_align`; a struct enum is one `DbRef`, 12 bytes at 4).
     w = tuple_member_width(t);
-    // Each member at its natural alignment (`LinkedFieldGroup::group_size`); `w` is never 0.
-    q = (size + w - 1) / w;
-    size = (q ?? 0) * w + w;
-    if w > align {
-      align = w;
+    ma = if is_struct_enum(t) { 4 } else { w };
+    ms = if is_struct_enum(t) { 12 } else { w };
+    rem = (size % ma) ?? 0;
+    if rem != 0 {
+      size += ma - rem;
+    }
+    size += ms;
+    if ma > align {
+      align = ma;
     }
   }
   e.b.data.definitions[d].field_groups += [ir::LinkedFieldGroup { kind: 0, instance: 0, field_indices: idx, alignment: align, size: size }];
   d
 }
 
+fn is_struct_enum(t: ir::TypeT) -> boolean {
+  match t { TyEnum { is_ref } => is_ref, _ => false }
+}
+
+// `Data::tuple_def`'s name parts: each member as `Type::name` writes it — the carried scalars and
+// texts as `tuple_member` spells them, a struct enum by its own name.  "" for any other member.
+fn tuple_shape(e: el::El, elems: vector<ir::TypeT>) -> text {
+  r = "";
+  for t in elems {
+    m = match t { TyEnum { n, is_ref } => if is_ref { el::def(e, n).name } else { "" }, _ => tuple_member(t) };
+    if m == "" {
+      return "";
+    }
+    r = if t#index == 0 { m } else { "{r},{m}" };
+  }
+  r
+}
+
 // The definition a tuple type is stored as, or -1 where none is made yet.
 pub fn tuple_def_of(e: el::El, elems: vector<ir::TypeT>) -> integer {
-  sp = tuple_spelling(elems, ",");
+  sp = tuple_shape(e, elems);
   if sp == "" { -1 } else { el::def_nr(e, "__tuple<{sp}>") }
 }
 
@@ -677,6 +732,8 @@ pub fn carried_step(t: ir::TypeT) -> boolean {
     },
     TyText { dep: _ } => true,
     TyReference { n: _ } => true,
+    // A struct enum's value is a record as any other: the yielded element is its `DbRef`.
+    TyEnum { n: _, is_ref } => is_ref,
     TyInteger { spec } => narrow_width(spec) == 0 && spec.forced_size == 0,
     TyFloat => true,
     TySingle => true,
@@ -687,7 +744,7 @@ pub fn carried_step(t: ir::TypeT) -> boolean {
 }
 
 // The `)` closing the `(` at token `open`.
-fn closing_paren(e: el::El, open: integer) -> integer {
+pub fn closing_paren(e: el::El, open: integer) -> integer {
   depth = 0;
   i = open;
   while i < len(e.p.src) {
@@ -706,27 +763,38 @@ fn closing_paren(e: el::El, open: integer) -> integer {
 
 // `drop_hook_nr`: the type's own `OpDrop`, or -1.
 pub fn hook(e: el::El, t: integer) -> integer {
+  hook_of(e, t, "OpDrop")
+}
+
+// The type's own hook `h` (`OpDrop`, `OpCopy` — `copy_hook_nr`), or -1.
+pub fn hook_of(e: el::El, t: integer, h: text) -> integer {
   nm = el::def(e, t).name;
-  el::def_nr(e, "t_{len(nm)}{nm}_OpDrop")
+  el::def_nr(e, "t_{len(nm)}{nm}_{h}")
 }
 
 // `owns_droppable_walk`: a value of definition `t` holds a droppable — its own hook, a field's,
 // a variant's — each definition visited once on a path.
 pub fn owns_droppable(e: el::El, t: integer, path: vector<integer>) -> boolean {
+  owns_hook(e, t, "OpDrop", path)
+}
+
+// `owns_droppable_walk` for any hook (`copy_reach`'s `leases` for `OpCopy`): a value of
+// definition `t` holds a type declaring hook `h` — its own, a field's, a variant's.
+pub fn owns_hook(e: el::El, t: integer, h: text, path: vector<integer>) -> boolean {
   if t < 0 || path.contains(t) {
     return false;
   }
   path += [t];
-  if hook(e, t) >= 0 {
+  if hook_of(e, t, h) >= 0 {
     return true;
   }
   for a in el::def(e, t).attributes {
-    if type_owns(e, a.typedef[0] ?? ir::TyVoid, path) {
+    if type_owns_hook(e, a.typedef[0] ?? ir::TyVoid, h, path) {
       return true;
     }
   }
   for x in e.b.data.definitions {
-    if x.def_type == el::DT_ENUM_VALUE && x.parent == t && owns_droppable(e, x#index, path) {
+    if x.def_type == el::DT_ENUM_VALUE && x.parent == t && owns_hook(e, x#index, h, path) {
       return true;
     }
   }
@@ -778,27 +846,32 @@ pub fn holds_generator(e: el::El, t: ir::TypeT, path: vector<integer>) -> boolea
 
 // `type_owns_droppable`.
 pub fn type_owns(e: el::El, t: ir::TypeT, path: vector<integer>) -> boolean {
+  type_owns_hook(e, t, "OpDrop", path)
+}
+
+// `type_owns` for any hook: a generator's frame is a droppable, and never a lease.
+pub fn type_owns_hook(e: el::El, t: ir::TypeT, h: text, path: vector<integer>) -> boolean {
   match t {
-    TyReference { n } => owns_droppable(e, n, path),
-    TyEnum { n, is_ref } => is_ref && owns_droppable(e, n, path),
-    TySorted { n } => owns_droppable(e, n, path),
-    TyIndex { n } => owns_droppable(e, n, path),
-    TyRadix { n } => owns_droppable(e, n, path),
-    TyTrie { n } => owns_droppable(e, n, path),
-    TyHash { n } => owns_droppable(e, n, path),
-    TyVector { inner } => type_owns(e, inner, path),
-    TyOptional { inner } => type_owns(e, inner, path),
-    TyRefVar { inner } => type_owns(e, inner, path),
-    TyRewritten { inner } => type_owns(e, inner, path),
+    TyReference { n } => owns_hook(e, n, h, path),
+    TyEnum { n, is_ref } => is_ref && owns_hook(e, n, h, path),
+    TySorted { n } => owns_hook(e, n, h, path),
+    TyIndex { n } => owns_hook(e, n, h, path),
+    TyRadix { n } => owns_hook(e, n, h, path),
+    TyTrie { n } => owns_hook(e, n, h, path),
+    TyHash { n } => owns_hook(e, n, h, path),
+    TyVector { inner } => type_owns_hook(e, inner, h, path),
+    TyOptional { inner } => type_owns_hook(e, inner, h, path),
+    TyRefVar { inner } => type_owns_hook(e, inner, h, path),
+    TyRewritten { inner } => type_owns_hook(e, inner, h, path),
     TyTuple { elems } => {
       for m in elems {
-        if type_owns(e, m, path) {
+        if type_owns_hook(e, m, h, path) {
           return true;
         }
       }
       false
     },
-    TyIterator { step: _ } => true,
+    TyIterator { step: _ } => h == "OpDrop",
     _ => false
   }
 }

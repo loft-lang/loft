@@ -1,18 +1,18 @@
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 1b1a8ac6b..6132f79a7 100644
+index 561378040..fc7c5afce 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -3413,8 +3413,7 @@ impl State {
-                 // `x` reassigned, read the freed record as null, loft#2362).  The stash is
-                 // released after the copy, as on every other stashed arm.
+@@ -3493,8 +3493,7 @@ impl State {
+                 let reads_v_on_exit_only =
+                     rhs_reads_v && stash_old_for_post_free && !reads_var_unless_exiting(value, v);
                  if owned_ref
 -                    // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
 -                    && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
 +                    && let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
-                     && !rhs_reads_v
+                     && (!rhs_reads_v || reads_v_on_exit_only)
                      && !rhs_is_new_record
                      && crate::use_analysis::projection_container_var(stack.data, value).is_some()
-@@ -3656,13 +3655,7 @@ impl State {
+@@ -3743,13 +3742,7 @@ impl State {
              // through `c2`, loft#1319).
              note_bind("F3");
              self.gen_set_first_ref_var_copy(stack, v, *src, d_nr);

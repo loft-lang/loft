@@ -71,6 +71,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on this macOS probe.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 

@@ -132,6 +132,11 @@ pub struct LogConfig {
     /// allocation site by grepping for `alloc #N`.  Enabled with
     /// `LOFT_LOG=alloc_free`.
     pub trace_alloc_free: bool,
+    /// Limit the `trace_alloc_free` lines to ONE store, each naming the op, its position and
+    /// the function it ran in — the interpreter's free-site attribution (its `FreeRef` takes
+    /// a bare `DbRef` and `LOFT_STORES=timeline` cannot name the site).  Enabled with
+    /// `LOFT_LOG=store_life:<N>`, which logs no opcodes, so a long run stays small.
+    pub trace_store: Option<u16>,
     /// Write a poison pattern into freed text/ref slots so subsequent
     /// reads through `Str::str()` / `DbRef::valid()` panic loudly with
     /// "read from poisoned slot" instead of the cryptic Rust UB
@@ -224,6 +229,7 @@ impl LogConfig {
             scope_debug: false,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -247,6 +253,7 @@ impl LogConfig {
             scope_debug: false,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -270,6 +277,7 @@ impl LogConfig {
             scope_debug: false,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -294,6 +302,7 @@ impl LogConfig {
             scope_debug: false,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -317,6 +326,7 @@ impl LogConfig {
             scope_debug: false,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -340,6 +350,7 @@ impl LogConfig {
             scope_debug: false,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -363,6 +374,7 @@ impl LogConfig {
             scope_debug: false,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -389,6 +401,7 @@ impl LogConfig {
             scope_debug: false,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -425,6 +438,7 @@ impl LogConfig {
             scope_debug: false,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -454,6 +468,7 @@ impl LogConfig {
             scope_debug: true,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -482,6 +497,7 @@ impl LogConfig {
             scope_debug: false,
             dump_vars: false,
             trace_alloc_free: false,
+            trace_store: None,
             poison_free: false,
             trace_locks: false,
             trace_type_timeline: None,
@@ -504,6 +520,7 @@ impl LogConfig {
     /// | `variables` | [`Self::variables`] |
     /// | `all_fns` | [`Self::all_fns`] — bytecode of every function including `default/` |
     /// | `scope_debug` | [`Self::scope_debug`] — scope-analysis diagnostics to stderr |
+    /// | `store_life:<N>` | store `N`'s allocs and frees only, each with its op and function |
     ///
     /// Falls back to [`Self::full`] when the variable is absent or unrecognised.
     #[must_use]
@@ -516,6 +533,15 @@ impl LogConfig {
             Ok("bridging") => Self::bridging(),
             Ok("variables") => Self::variables(),
             Ok("scope_debug") => Self::scope_debug(),
+            Ok(v) if v.starts_with("store_life:") => {
+                let mut c = Self::full();
+                c.phases = LogPhase::execution_only();
+                c.show_all_functions = false;
+                c.trace_opcodes = Some(Vec::new());
+                c.trace_alloc_free = true;
+                c.trace_store = v["store_life:".len()..].parse().ok();
+                c
+            }
             Ok("alloc_free") => {
                 let mut c = Self::full();
                 c.trace_alloc_free = true;

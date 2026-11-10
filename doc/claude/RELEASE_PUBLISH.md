@@ -289,13 +289,17 @@ exempt, because it is not a `loft package`, and the weekly `repro-build.yml` cov
 - **The Windows link:** `rust-lld` stamps a wall-clock TimeDateStamp and PDB GUID;
   `scripts/repro-flags.sh` passes `/Brepro` and `/DEBUG:NONE` on a Windows host.  A Windows
   bundle ships no PDB.  With `/Brepro` the TimeDateStamp is a hash of the image, so a stamp
-  that differs means other bytes differ too.  An occasional Windows rebuild orders two `.data`
-  objects differently from the others ([loft#2431](https://github.com/loft-lang/loft/issues/2431)). <!-- doc-lint: ok -->
-  The linker relinks identical inputs to identical bytes, so the variation is in the object
-  files rustc hands it.  `repro-build.yml` therefore has `rust-lld` record the `loft.exe`
-  link's inputs (`LLD_REPRODUCE`) and uploads that tarball when the bytes differ.  Diff it
-  against the tarball of a rebuild that matches: the crate whose objects differ is the one
-  to fix.
+  that differs means other bytes differ too.
+- **One codegen unit for the binary crate:** `scripts/lean_build.sh` builds a bundle's
+  `--bin loft` with `cargo rustc … -- -C codegen-units=1`.  Split into rustc's sixteen units,
+  the unit holding the MSVC `type_info` vtable reference (`??_7type_info@@6B@`) varies from
+  build to build, and the linker orders `.data` by object, so a Windows rebuild could differ
+  from the release ([loft#2431](https://github.com/loft-lang/loft/issues/2431)).  One unit <!-- doc-lint: ok -->
+  leaves no choice.  The library keeps its units (the interpreter's code; the binary crate's
+  one unit costs nothing measurable), and `make install`'s `--lib --bin loft` build is
+  unchanged.  When a rebuild still differs, `repro-build.yml` keeps `rust-lld`'s record of
+  the `loft.exe` link (`LLD_REPRODUCE`): diff its objects against a matching rebuild's, and
+  the crate whose objects differ is the one to fix.
 - **Comparing with a GitHub artifact** needs the release's image: the Linux bundle is built
   in the manylinux container `release.yml` names, and a local build links against this
   machine's glibc and gcc, so its bytes differ.  `repro-build.yml` rebuilds in that image;

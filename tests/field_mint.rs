@@ -150,32 +150,58 @@ fn run(args: &[&str], env: &[(&str, &str)]) -> String {
     stdout
 }
 
-#[test]
-fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers() {
-    let oracle = run(&["--interpret"], &[("LOFT_STRICT_STORES", "1")]);
-    for switch in [
-        None,
-        Some(("LOFT_NO_FIELD_MINT", "1")),
-        Some(("LOFT_NO_RECORD_PUSH", "1")),
-        Some(("LOFT_NO_HEAP_RECORD_PUSH", "1")),
-        Some(("LOFT_NO_ELEMENT_FIRST", "1")),
+/// The interpreter's answer, computed once and shared by the five switch-state tests below.
+fn oracle() -> &'static str {
+    static ORACLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ORACLE.get_or_init(|| run(&["--interpret"], &[("LOFT_STRICT_STORES", "1")]))
+}
+
+/// Native under every falsifier must print what the interpreter printed, in one switch state.
+/// One test per switch state, so the five run in parallel: as one test the 25 native builds
+/// passed the test-duration gate's 300 s on a loaded runner (328.8 s), and the limit is not
+/// raised (CI_BUDGET.md).
+fn cells_answer_the_interpreter(switch: Option<(&str, &str)>) {
+    for falsifier in [
+        ("LOFT_STRICT_STORES", "1"),
+        ("LOFT_POISON", "1"),
+        ("LOFT_POISON_CLAIM", "1"),
+        ("LOFT_NATIVE_LEAK_CHECK", "1"),
+        ("LOFT_HOIST_VERIFY", "1"),
     ] {
-        for falsifier in [
-            ("LOFT_STRICT_STORES", "1"),
-            ("LOFT_POISON", "1"),
-            ("LOFT_POISON_CLAIM", "1"),
-            ("LOFT_NATIVE_LEAK_CHECK", "1"),
-            ("LOFT_HOIST_VERIFY", "1"),
-        ] {
-            let mut env = vec![falsifier];
-            env.extend(switch);
-            let got = run(&["--native"], &env);
-            assert_eq!(
-                got, oracle,
-                "native under {env:?} must print what the interpreter printed"
-            );
-        }
+        let mut env = vec![falsifier];
+        env.extend(switch);
+        let got = run(&["--native"], &env);
+        assert_eq!(
+            got,
+            oracle(),
+            "native under {env:?} must print what the interpreter printed"
+        );
     }
+}
+
+#[test]
+fn the_cells_answer_the_interpreter_under_the_falsifiers() {
+    cells_answer_the_interpreter(None);
+}
+
+#[test]
+fn the_cells_answer_the_interpreter_without_field_mint() {
+    cells_answer_the_interpreter(Some(("LOFT_NO_FIELD_MINT", "1")));
+}
+
+#[test]
+fn the_cells_answer_the_interpreter_without_record_push() {
+    cells_answer_the_interpreter(Some(("LOFT_NO_RECORD_PUSH", "1")));
+}
+
+#[test]
+fn the_cells_answer_the_interpreter_without_heap_record_push() {
+    cells_answer_the_interpreter(Some(("LOFT_NO_HEAP_RECORD_PUSH", "1")));
+}
+
+#[test]
+fn the_cells_answer_the_interpreter_without_element_first() {
+    cells_answer_the_interpreter(Some(("LOFT_NO_ELEMENT_FIRST", "1")));
 }
 
 #[test]

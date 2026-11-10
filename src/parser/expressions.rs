@@ -4726,6 +4726,30 @@ use a separate collection or add after the loop"
         mut var_nr: u16,
         skip_validate: bool,
     ) -> Type {
+        // loft#2441 — a field the variants lay out at different offsets is READ through the
+        // tag-switching getter (`variant_field_getter`); a write has no such route, so it is
+        // refused rather than landing in another field's bytes.
+        if let Value::Block(bl) = to.unspan()
+            && bl.name == Self::VARIANT_FIELD
+        {
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "this field sits at a different offset in each variant that declares it, so a \
+                     write through the enum cannot name one place — declare it FIRST in every \
+                     variant, so they lay it out at one offset, and the write is a plain field write"
+                );
+            }
+            // One mistake, one error: the value is still parsed (and dropped), so the
+            // statement ends where it does — left unread, `= 5` reported `Expect token ;`.
+            if self.preset_rhs.take().is_none() {
+                let mut dropped = Value::Null;
+                let _ = self.parse_operators(f_type, &mut dropped, &mut parent_tp, 0);
+            }
+            *code = Value::Null;
+            return Type::Void;
+        }
         self.check_iter_safety(to, f_type, op);
         self.check_loop_source_write(to, op, f_type);
         // `@FR-H-RefHome`, `@FR-H-Removed` — a local vector a stored reference names into is
@@ -5156,6 +5180,37 @@ use a separate collection or add after the loop"
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
         self.in_bind_rhs = prev_bind_rhs;
+        // A value that answers nothing has nothing to bind.  Admitted, `s = f()` of a function
+        // with no result left `s` a `void` local, and each later read misfired far from the
+        // cause: `s + 1` reported `Expect token ;`, `"{s + 1}"` five syntax errors.  Named here,
+        // and the local poisoned `never` as any failed binding is, so its reads add nothing.
+        // Asked on pass 1 as well: the misread `+` derails that pass, which then never reaches
+        // pass 2 — and a `void` result is known there (a later callee reads `unknown`).
+        if op == "="
+            && matches!(s_type.base(), Type::Void)
+            && let Some(at) = rhs_at
+            && let Value::Var(v) = to.unspan()
+        {
+            let name = self.vars.name(*v).to_string();
+            // A call names its function, whose missing result is the usual cause.
+            let cure = match code.unspan() {
+                Value::Call(d, _) if !self.data.def(*d).name().starts_with("Op") => {
+                    let f = self.data.def(*d).original_name();
+                    format!(
+                        " — `{f}` declares no result: give it one (`-> T`), or call it as a \
+                         statement, `{f}(…);`"
+                    )
+                }
+                _ => String::new(),
+            };
+            diagnostic_at!(
+                self.lexer,
+                &at,
+                Level::Error,
+                "`{name} = …` binds nothing: the right-hand side answers no value{cure}"
+            );
+            s_type = Type::Never;
+        }
         // `@FR-B-Ref-StoredRef` (loft#2166) — the `&` a record place was handed, resolved as
         // the struct literal resolves it: a `reference<τ>` field (the pointer marker) holds
         // the link, so the write below stores the source's DbRef exactly as `d.r = p` does
@@ -9472,6 +9527,11 @@ use a separate collection or add after the loop"
         let outer_read = self.length_local_read.replace(false);
         let tp = self.parse_assign_inner(code);
         self.last_place_discharge = outer_discharge;
+        if !self.first_pass
+            && let Value::Set(v, _) = code.unspan()
+        {
+            self.vars.note_bind(*v);
+        }
         if !self.first_pass && self.length_locals.0 == self.context {
             // `(N-Index)` — a length local's assignment names its vector now it is laid out.
             if !self.length_locals.1.is_empty()

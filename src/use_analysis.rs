@@ -3055,6 +3055,14 @@ impl<'a> Ownership<'a> {
                     {
                         variant_check_subject(self.data, t, e)
                     }
+                    // A bare-variable discharge (`va!.p`, `(va ?? return).p`) is `va` itself,
+                    // the peel [`projection_container_place`] makes.  Without it the block
+                    // named no base, the view classified `Owned`, and `lost-write` told the
+                    // author a write that lands was lost (loft#2447).
+                    Some(a) if discharged_variable(a).is_some() => match discharged_variable(a) {
+                        Some(Value::Var(b)) => Some(*b),
+                        _ => None,
+                    },
                     // nested `o.inner.rows`
                     Some(inner) => self.borrow_base_guarded(inner, func, defs, visited),
                     None => None,
@@ -3765,7 +3773,10 @@ fn projection_walk(
             };
             run_since_elem = ANY_FIELD;
         }
-        match args.first().map(Value::unspan) {
+        match args
+            .first()
+            .map(|a| discharged_variable(a).unwrap_or(a.unspan()))
+        {
             Some(Value::Var(c)) => {
                 return Some((
                     *c,
@@ -3778,6 +3789,38 @@ fn projection_walk(
             Some(inner) => cur = inner,
             None => return None,
         }
+    }
+}
+
+/// The VARIABLE a bare-variable discharge answers — `x` in `x!`, `x ?? return`, `x ?? break` —
+/// or `None` when `v` is not one.
+///
+/// The parser lowers such a discharge to an `ncr` block of exactly two statements,
+/// `{ if <x is absent> { <exit> }; x }` (`null_coalesce_exit`, loft#2298: a variable is tested
+/// and answered as itself, with no temp).  Every exit diverges, so the block's value is `x` on
+/// every path that has one — the same `DbRef`, not a copy — and a projection through it reads
+/// `x`'s place exactly as `x.f` does (`(B-View)`).  Read as anything else, `x!.f` named no
+/// container: a reassignment of `x` while the view lived disturbed nothing, and the view kept
+/// reading the record the reassignment released (loft#2447, both backends).
+///
+/// Recognised by what the builder BUILDS — the block's name, its two statements, the `if`
+/// with no else — never by a looser shape: the temp form (`{ ncr_N = e; if …; ncr_N }`) binds
+/// an owned value and is not a place of anything, and a value-`if` (`a?` on a nullable
+/// parameter) has an arm that mints.
+#[must_use]
+pub(crate) fn discharged_variable(v: &Value) -> Option<&Value> {
+    let Value::Block(bl) = v.unspan() else {
+        return None;
+    };
+    match bl.operators.as_slice() {
+        [test, tail]
+            if bl.name == "ncr"
+                && matches!(test.unspan(), Value::If(_, _, e) if matches!(e.unspan(), Value::Null))
+                && matches!(tail.unspan(), Value::Var(_)) =>
+        {
+            Some(tail.unspan())
+        }
+        _ => None,
     }
 }
 
@@ -5647,6 +5690,7 @@ pub fn drop_copy_census(
                 refusals: Vec::new(),
                 sites: 0,
                 pending_site: None,
+                pending_fresh: false,
                 pending_tail: None,
                 lease_sites: Vec::new(),
                 quiet: false,
@@ -5918,6 +5962,9 @@ struct Census<'a> {
     /// the new structure it makes, and that structure's type definition.  Set by the arms whose
     /// copy is one statement the rewrite can follow; an arm that sets none keeps refusing.
     pending_site: Option<(Value, Value, u32)>,
+    /// The record copy at hand copies a value that is not a variable — a constructor's block, a
+    /// call — so a `Move` verdict there places a fresh value and owes no `OpCopy` (loft#2442).
+    pending_fresh: bool,
     /// The site an APPEND is about to be judged at: the node, the collection appended to, the
     /// appended source, and the collection's element definition.  The lease runs over the
     /// appended tail only.
@@ -6092,6 +6139,7 @@ impl Census<'_> {
                 } else {
                     self.pending_site = copied_record_def(self.data, &args[2])
                         .map(|d| (node.clone(), args[1].clone(), d));
+                    self.pending_fresh = !matches!(args[0].unspan(), Value::Var(_));
                     self.note_destination(&args[1]);
                     (
                         Some(self.frame.written_verdict(&args[0], placement)),
@@ -6117,7 +6165,7 @@ impl Census<'_> {
                     && args.len() >= 2
                     && !self.member_of_whole_tuple(&args[1])
                     && matches!(args[0].unspan(), Value::Var(v)
-                        if self.data.type_owns_droppable_anywhere(self.func.tp(*v).base())) =>
+                        if crate::lease::copy_observed(self.data, self.func.tp(*v).base())) =>
             {
                 let Some(Value::Var(dest)) = args.first().map(Value::unspan) else {
                     unreachable!("matched above")
@@ -6154,9 +6202,7 @@ impl Census<'_> {
                     if src != v
                         && !self.func.tp(*v).depend().contains(src)
                         && self.whole_tuple != Some(*src))
-                    && self
-                        .data
-                        .type_owns_droppable_anywhere(self.func.tp(*v).base()) =>
+                    && crate::lease::copy_observed(self.data, self.func.tp(*v).base()) =>
             {
                 let Value::Var(src) = rhs.unspan() else {
                     unreachable!("matched above")
@@ -6187,9 +6233,7 @@ impl Census<'_> {
             // `__ret_N` temp places its arms out of the function.
             Value::Set(v, rhs)
                 if matches!(rhs.unspan(), Value::If(..))
-                    && self
-                        .data
-                        .type_owns_droppable_anywhere(self.func.tp(*v).base()) =>
+                    && crate::lease::copy_observed(self.data, self.func.tp(*v).base()) =>
             {
                 let mut arms = Vec::new();
                 join_var_arms(rhs, &mut arms);
@@ -6209,9 +6253,7 @@ impl Census<'_> {
                             .depend()
                             .iter()
                             .any(|d| dest_deps.contains(d))
-                        || !self
-                            .data
-                            .type_owns_droppable_anywhere(self.func.tp(src).base())
+                        || !crate::lease::copy_observed(self.data, self.func.tp(src).base())
                     {
                         continue;
                     }
@@ -6226,9 +6268,7 @@ impl Census<'_> {
                 if let Some(base) = crate::lease::whole_tuple_source(self.func, node) {
                     let (root, through_member) = self.frame.resolve_view(base);
                     if self.whole_tuple != Some(root)
-                        && self
-                            .data
-                            .type_owns_droppable_anywhere(self.func.tp(base).base())
+                        && crate::lease::copy_observed(self.data, self.func.tp(base).base())
                     {
                         let (lease, liveness) = if through_member {
                             let refused = Lease::Refuse(Refusal::Container(root));
@@ -6262,7 +6302,7 @@ impl Census<'_> {
                     let func = self.func;
                     if let Type::Tuple(elms) = func.tp(v).base() {
                         for (item, elm) in items.iter().zip(elms) {
-                            if !self.data.type_owns_droppable_anywhere(elm)
+                            if !crate::lease::copy_observed(self.data, elm)
                                 || matches!(item.unspan(),
                                     Value::Block(b) if matches!(b.name, "tuple_member_copy" | "tuple_member_move"))
                             {
@@ -6360,6 +6400,48 @@ impl Census<'_> {
         // which the corpus agrees with, 0 refusals across 666 snapshot rows.
         let site = self.pending_site.take();
         let tail = self.pending_tail.take();
+        let fresh = std::mem::take(&mut self.pending_fresh);
+        // `@FR-H-Copy-Lease` with `@FR-B-Copy`: `(H-Move)` moves only a value that holds a lease
+        // (`@FR-H-Lease`: its type owns a droppable).  A type with `OpCopy` and no droppable holds
+        // none, so the positions that would move such a value — a bind of an owned local, its
+        // append, a literal's field — COPY it, and the copy runs the hook on the new structure
+        // (loft#2442).  Never refused: nothing is released twice.  A FRESH value — a record
+        // copied from a constructor or a call, not from a variable, or from the `__lift_N` the
+        // scope pass hoists an inline call into — is placed, not copied, and owes no hook.
+        let fresh = fresh
+            || from.is_empty()
+            || from
+                .iter()
+                .all(|&v| self.func.name(v).starts_with("__lift_"));
+        if matches!(lease, Some(crate::lease::Lease::Move)) && !fresh {
+            let unleased =
+                |d: u32| crate::lease::leases_whole(self.data, d) && !self.data.owns_droppable(d);
+            if let Some((node, dst, src, ed)) = tail.clone()
+                && unleased(ed)
+            {
+                if let Value::Var(dv) = dst.unspan()
+                    && let Type::Vector(elm, _) = self.func.tp(*dv).base()
+                {
+                    let walk =
+                        crate::lease::copy_tail_nr(self.data, self.data.collection_def_nr(elm));
+                    let len = self.data.def_nr("OpLengthVector");
+                    if walk != u32::MAX && len != u32::MAX {
+                        self.lease_sites.push((
+                            node,
+                            Value::Call(walk, vec![dst.clone(), Value::Call(len, vec![src])]),
+                        ));
+                    }
+                }
+            } else if let Some((node, dst, d)) = site.clone()
+                && unleased(d)
+            {
+                let cascade = crate::lease::copy_cascade_nr(self.data, d);
+                if cascade != u32::MAX {
+                    self.lease_sites
+                        .push((node, Value::Call(cascade, vec![dst])));
+                }
+            }
+        }
         if let Some(crate::lease::Lease::Refuse(r)) = lease {
             // `(H-Copy-Lease)`: a copy of a type whose every droppable declares `OpCopy` is not
             // refused — the new structure takes its own lease.  Only at a site the rewrite can
@@ -8308,7 +8390,8 @@ fn drop_targets(data: &Data, code: &Value) -> HashSet<u16> {
 /// [`crate::keys::COPY_TP_MASK`] strips.  A release exists exactly when that type has a cascade
 /// or a hook of its own ([`Data::drop_cascade_nr`]).  The destination is no proof of it: a
 /// container that owns a droppable in one field takes a plain record into another through the
-/// same copy.
+/// same copy.  A type with `OpCopy` and no release is admitted too: its copy owes the hook
+/// (`@FR-H-Copy-Lease`, loft#2442), though it has nothing to release.
 fn copied_record_releases(data: &Data, tp: &Value) -> bool {
     let Value::Int(tp) = tp.unspan() else {
         return false;
@@ -8317,8 +8400,11 @@ fn copied_record_releases(data: &Data, tp: &Value) -> bool {
         return false;
     };
     known != u16::MAX
-        && (0..data.definitions())
-            .any(|d| data.def(d).known_type == known && data.drop_cascade_nr(d) != u32::MAX)
+        && (0..data.definitions()).any(|d| {
+            data.def(d).known_type == known
+                && (data.drop_cascade_nr(d) != u32::MAX
+                    || crate::lease::copy_cascade_nr(data, d) != u32::MAX)
+        })
 }
 
 /// The root variable of a PLACE: the variable itself, or a projection's root.
@@ -10715,16 +10801,16 @@ mod ref_param_publish_tests {
 /// so both backends run it.  A move, the scope pass's `__disp_` snapshot and an elided copy have
 /// no copy verdict and run nothing.
 ///
-/// Runs at the end of the scope pass, once per load.  Idempotent: a copy already followed by its
-/// call is left alone, so a later load's pass changes nothing.
-pub fn lease_calls(data: &mut Data) {
+/// Runs at the end of the scope pass, over `fresh`, the functions that pass is checking.  Also
+/// idempotent: a copy already followed by its call is left alone.
+pub fn lease_calls(data: &mut Data, fresh: &[u32]) {
     if !(0..data.definitions())
         .any(|d| data.def(d).def_type == DefType::Function && data.def(d).name.ends_with("_OpCopy"))
     {
         return;
     }
     let copy_d = data.def_nr("OpCopyRecord");
-    for d_nr in 0..data.definitions() {
+    for &d_nr in fresh {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }
@@ -10750,6 +10836,7 @@ pub fn lease_calls(data: &mut Data) {
                 refusals: Vec::new(),
                 sites: 0,
                 pending_site: None,
+                pending_fresh: false,
                 pending_tail: None,
                 lease_sites: Vec::new(),
                 quiet: true,

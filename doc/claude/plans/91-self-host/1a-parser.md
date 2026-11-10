@@ -42,6 +42,45 @@ them.
 and the same diagnostics.  The syntax tree is the one structure the Rust parser does not
 have, and it is internal: nothing outside the front end sees it.
 
+## The porting method — transcribe, do not re-derive
+
+Above the syntax tree the elaborator is a TRANSCRIPTION of `src/parser/`, not a design of its
+own: one loft function per Rust function, with the Rust name, its parameters in the same order,
+its calls in the same order, and the same state (each `Parser` / `Function` field it reads is
+the `El` / `Vars` field `scripts/parser_state.py` maps it to).
+
+- **The tree stands in for the lexer.**  Where Rust peeks at or consumes a token, the loft
+  reads the node that token starts.  Where Rust parses a span again — the second pass, or a
+  lexer revert after an attempt (a literal tried in place, then built apart) — the loft calls
+  the same function again on the same node.  The variables and work references the attempt
+  leaves behind then fall out of the same control flow; they are not minted by hand.
+- **Each transcribed function names its original** in its doc comment, one line:
+  `// port: dispatch.rs dispatch_rank`.  A loft helper with no Rust original says so
+  (`// port: none — <what Rust does inline instead>`).  `grep -c '// port: ' selfhost/src/el*.loft`
+  counts what is transcribed.
+- **A form loft cannot write** (a `&mut` into a collection, an early `?` out of a nested
+  borrow) keeps the name and the call order, and the comment says what changed.
+- **A gate E difference is located by function, not by image:** the state trace
+  (`LOFT_STATE_TRACE`, `selfhost/front/state_diff.py`) prints function entry and exit keyed by
+  the source position on both sides, and the first function whose exit differs is the one to
+  read.  One function against one function is one debug round.
+
+**Why.**  A re-derived elaborator agrees with Rust only in the final image.  When it does not,
+the difference has no address: it takes several debug rounds to find the function, and an
+effect of Rust's control flow (an unused `_elm_N`, a re-parse) is copied by a special case at
+each site that shows it.  Porting Rust's own rule removes those special cases (the work-ref
+step-over: `retypes_argument` and `argument_of_another_site` replaced three materialise-site
+records).
+
+**Rust's intricacy is the specification.**  The port does not start from a cleaner design and
+add Rust's special cases back as gate E finds them; that is the rewrite trap, where every case
+costs a debug round.  It copies them with the function that holds them.  Nor is Rust
+simplified first to make the port easier: the Rust front end changes only to fix a defect.
+
+**What gets transcribed.**  Every function a family still lacks.  Code that already agrees is
+left as it is: a re-derived function is replaced by its transcription only when a difference
+traces back to it.
+
 ## Syntax decisions that read semantics — each becomes a general node
 
 The Rust parser takes a few SYNTACTIC decisions from semantic facts.  A survey of
@@ -100,18 +139,8 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 
 ## Open
 
-- **A rule answering a `vector`, captured in a match that is a function's tail**, loses the
-  match's value on the interpreter and is refused by the C backend ("an integer expected, a Void
-  found") when the rule also takes a hidden work buffer.  Minimal shape: `[k: kw, (tv: tvars)?,
-  LParen] => 42` returns 0; the IR binds the match value nowhere and assigns the capture's
-  conditional free (`if OpDistinctStore(tv, __ref_1) if OpDistinctStore(tv, __ref_2)
-  OpFreeRef(tv)`, `get_free_vars.rs`'s witness-buffer arm) to `__ret_1`.  Hand-written twins
-  (the capture a plain local, its assignment inside a condition) are right, so the trigger is
-  the capture being a PATTERN binding (`pattern_binding`, an arm-scoped loop variable) that
-  adopts the callee's return buffer.  Repro: the scratch copy of the syntax layer before its
-  list rules answered `SList` nodes.  The grammar's list rules answer nodes, so it does not
-  block the parser; it is this branch's own defect (the sub-rule lowering is new) and is fixed
-  before the branch merges.
+- **Lift after #2439:** `el_vars::take_over` fills `viewed` with a loop; its best form is the
+  comprehension `[for _ in v.vars { [] }]`, refused today.
 - **Diagnostics** are part of the port (same text, same position), measured after gate E on the
   programs `tests/parse_errors.rs` and the suite's refusal cells carry.
 - **Scripts** (`src/script.rs`, a textual desugar before parsing) are not ported yet: gate S
@@ -128,13 +157,55 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 The corpus for every gate: `default/*.loft`, `tests/scripts/`, `tests/docs/`, `lib/`, and the
 language suite (`../loft-suite-91`).
 
+The port has two purposes: a front end on C with no rustc to bootstrap, and a second
+implementation that VALIDATES the Rust one.  So a gate E difference is triaged, never just
+copied:
+- the port is incomplete → port what Rust does (1b-interpreter.md rule 5);
+- Rust answers wrong (a silent wrong value, a refusal the formal rules say must work, a
+  backend that does not build) → fix Rust, with a falsified suite cell;
+- Rust carries an accident with no meaning (a variable minted and never used, an order that
+  falls out of the pass structure) → log it under § Rust accidents and reproduce it only
+  while gate E compares images byte for byte.
+
+### Rust accidents
+
+- A call answering a record `τ?` that borrows a parameter (`fn whole(s: S) -> S? { s }`) is
+  typed borrowing a VARIABLE argument but not a literal one: `whole(S { a: 7 })` is `ref(S)?`
+  with no dep on the literal's store, where the dense `-> S` names it.  Reproduced; probed
+  (both backends, `LOFT_POISON` + `LOFT_STRICT_STORES`, the result outliving the literal's
+  block, churn between): no fault — the record lives in the caller's return buffer.
+
+- A record literal with a vector-literal field written into a place (`xs[i].m = V { a: [1] }`)
+  is built apart and copied in; the first pass's in-place attempt leaves an `_elm_N` the second
+  never uses, still declared at the function head.  The port refuses this shape by name.
+- A literal of a droppable rebinding a local (`s = RbS { h: mk(…) }`) is tried in place, then
+  parsed again apart; the first attempt's work refs stay declared, unused (`abandon_work_refs`
+  reproduces that).  Where a field value reads the local (`h: mk(s.h.id)`), the attempt also
+  stages it, one more `__ref_N` the port does not mint: refused by name.
+
 ## Where it stands
 
 | Gate | Measured | Remaining |
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | 74 of 1649 programs agree, none differs (`selfhost/front/elab_gate.py`); 224 more are programs the Rust front end itself refuses | the families `elab_gate.py --plan` ranks first |
+| E image | 511 of 1679 programs agree, none differs (`selfhost/front/elab_gate.py`); 225 more are programs the Rust front end itself refuses (an `@ARGS: --lib` is passed to both) | the families `elab_gate.py --plan` ranks first |
+| E by rule | 60 of 379 formal rules carried for every suite cell, 94 for some, 225 for none; 254 of 1073 suite cells (14 rules have only cells the Rust front end refuses) | dispatch (5 of 28 cells: free overload sets carried; methods in a set, generic members, run-time variant dispatch refused by name), tuples (0 of 22), closures (1 of 47), calls (6 of 50), interfaces (2 of 38) |
+
+**Measuring by formal rule.**  The suite holds its cells under `rules/<chapter>/<rule>/`, so a
+gate run's verdicts file reads per rule: a rule is carried when every one of its cells agrees.
+It measures the front end only, and pessimistically — a cell crosses several rules, so a
+refusal from another chapter blocks a cell whose own rule is carried (dispatch blocks most
+interface and call cells).  The empty chapters are each ONE unported family: calls not by a
+bare name (dispatch), tuple members, lambdas that capture a local.
+
+```bash
+awk -F'\t' '$2 ~ /^loft-suite-91\/rules\// { split($2, p, "/"); r = p[3] "/" p[4]; n[r]++;
+  if ($1 == "agree") a[r]++; if ($1 == "noimage") x[r]++ }
+  END { for (r in n) { m = n[r] - x[r]; k = a[r] + 0;
+    print (m == 0 ? "n/a" : k == m ? "full" : k == 0 ? "none" : "part") "\t" k "/" m "\t" r } }' \
+  ~/workspace/.pln91-gate/verdicts-<sha>.txt | sort -k3
+```
 
 Elaboration is `selfhost/src/el*.loft`; gate E's runner is `selfhost/front/elab.loft` (`elab
 <image> <program>` over a `LOFT_EMIT_PARSED` image, or `elab <stdlib files>`), its oracle side
@@ -164,4 +235,8 @@ The syntax layer is `selfhost/src/syntax.loft` (the rules, one per production of
 
 1. Elaboration, pass by pass, in the Rust parser's order — definitions first, then the
    bodies; gate E per definition so a partial port is measured.
-2. The script desugar, then diagnostics.
+2. The transcription, family by family ([§ The porting method](#the-porting-method--transcribe-do-not-re-derive)):
+   dispatch first (`src/parser/dispatch.rs` → `selfhost/src/el_dispatch.loft`, gated by the
+   suite's `rules/dispatch/` cells), then calls, closures, tuples and interfaces.  The
+   function-level state trace comes with the first family.
+3. The script desugar, then diagnostics.

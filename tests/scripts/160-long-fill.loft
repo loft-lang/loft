@@ -1,0 +1,78 @@
+// `@FR-R-Fill` — the C's span fill chooses its loop by length: a fill of `LOFT_FILL_LONG`
+// (4096) bytes or more writes up to the next 64-byte boundary one element at a time and runs
+// the rest unrolled, a shorter one runs one plain loop.  Both must write exactly the elements
+// of the span and nothing beside it, at every width, on both sides of the threshold and from a
+// start that is not on a 64-byte boundary.  Every value is hand-computed; the cells run on the
+// interpreter (no fill: the oracle) and the C.
+//
+// @falsified-at: hand-measured (2026-11-10) — the long loop's head sabotaged to skip its
+// first element: l1 answers `4965 0 0 5 0 1200` for `4970 0 5 5 0 1200` on `--native-c`.
+
+// l1 — integers (8 bytes): 1200 zeros, 3..997 set to 5 — 994 elements, 7952 bytes, from the
+// fourth element: 994 * 5 = 4970; the neighbours 2 and 997 stay 0.
+fn l1() {
+  v = [for _i in 0..1200 { 0 }];
+  for i in 3..997 { v[i] = 5; }
+  s = 0;
+  for x in v { s += x; }
+  r = "{s} {v[2]} {v[3]} {v[996]} {v[997]} {len(v)}";
+  assert(r == "4970 0 5 5 0 1200", "l1 {r}");
+  println("l1 {r}");
+}
+
+// l2 — the threshold in 8-byte elements: 512 * 8 = 4096.  Spans of 511, 512 and 513 from the
+// start of three vectors of 600 zeros, each set to 1: the sums 511, 512, 513; element 511 is
+// the last of the 512 and 513 spans, element 512 only of the 513 span.
+fn span_sum(n: integer) -> text {
+  v = [for _i in 0..600 { 0 }];
+  for i in 0..n { v[i] = 1; }
+  s = 0;
+  for x in v { s += x; }
+  "{s} {v[511]} {v[512]}"
+}
+
+fn l2() {
+  r = "{span_sum(511)} | {span_sum(512)} | {span_sum(513)}";
+  assert(r == "511 0 0 | 512 1 0 | 513 1 1", "l2 {r}");
+  println("l2 {r}");
+}
+
+// l3 — i32 (4 bytes, the threshold 1024 elements) built as `[c; n]`: the first element is
+// written and the other n - 1 filled.  1024 elements fill 1023 (4092 bytes, the plain loop),
+// 1025 fill 1024 (4096 bytes, the long loop), 3000 fill 2999.  Sums 3 * 1024 = 3072,
+// 3 * 1025 = 3075, -7 * 3000 = -21000; the last element of each is the value.
+fn i32_sum(c: integer, n: integer) -> text {
+  w: vector<i32> = [c as i32; n];
+  s = 0;
+  for x in w { s += x as integer; }
+  "{s} {w[n - 1]} {len(w)}"
+}
+
+fn l3() {
+  r = "{i32_sum(3, 1024)} | {i32_sum(3, 1025)} | {i32_sum(-7, 3000)}";
+  assert(r == "3072 3 1024 | 3075 3 1025 | -21000 -7 3000", "l3 {r}");
+  println("l3 {r}");
+}
+
+// l4 — single (4 bytes) and i16 (2 bytes, the threshold 2048 elements) as `[c; n]`: 2000
+// singles of 0.5 sum to 1000 exactly (every partial sum a multiple of 0.5 below 2^23); 3000
+// i16 of -2 fill 2999 (5998 bytes, the long loop) and sum to -6000; 2048 of 5 fill 2047 (4094
+// bytes, the plain loop) and sum to 10240.
+fn l4() {
+  f: vector<single> = [0.5f; 2000];
+  fs = 0.0f;
+  for x in f { fs += x; }
+  a: vector<i16> = [-2 as i16; 3000];
+  sa = 0;
+  for x in a { sa += x as integer; }
+  b: vector<i16> = [5 as i16; 2048];
+  sb = 0;
+  for x in b { sb += x as integer; }
+  r = "{fs == 1000.0f} {sa} {a[2999]} {sb} {b[2047]}";
+  assert(r == "true -6000 -2 10240 5", "l4 {r}");
+  println("l4 {r}");
+}
+
+fn main() {
+  l1(); l2(); l3(); l4();
+}

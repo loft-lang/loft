@@ -71,6 +71,23 @@ made once for the whole box: drawing laid-out text runs at 1.5 times Rust.
 because the wrapper reports the same version.  The compiler's path is now part of the build's
 key.
 
+### Bug fixes
+
+**A compiled program that opens a file reads no uninitialised memory when it rebuilds a
+result.**  A `--native` program that read a file into a vector checked the type word of a
+store nothing had written yet, to see whether it held a file to close.  The store is now
+checked for a root first; a store without one holds no file.
+
+**An empty vector as a comprehension's element.**  `rows: vector<vector<integer>> = [for _ in
+n { [] }]` was refused with "comprehension body must produce a value"; the body now takes its
+type from the declared element, so it builds three empty rows.  The same holds for a nested
+comprehension and for an `if` whose one arm is `[]`.
+
+**A copy hook runs on every copy.**  A type that declares `OpCopy` without an `OpDrop` skipped
+its hook when a variable was copied — `b = a`, `v += [a]`, `S { h: a }`, a by-value parameter
+bound to a local — so the copy kept the original's values.  The hook now runs on each copy,
+and still not on a fresh value placed where it is built (`S { h: mk() }`).
+
 ## 2026-11
 
 ### May need a change in your code

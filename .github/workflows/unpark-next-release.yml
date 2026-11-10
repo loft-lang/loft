@@ -39,6 +39,16 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
     runs-on: ubuntu-latest
     steps:
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # This job builds nothing and runs on Linux, so both steps are skipped; the checkout
+      # fetches only the step's folder, and only where the step runs.
+      - if: runner.os == 'Windows'
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/actions/windows-gcc
+          sparse-checkout-cone-mode: false
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
       - uses: actions/github-script@v7
         with:
           script: |

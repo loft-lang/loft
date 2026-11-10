@@ -1,0 +1,1590 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A name's OVERLOAD SET (src/parser/dispatch.rs, `Data::admit_overload_set` in src/data.rs; the
+// rules in doc/claude/formal/dispatch.md).  A second definition of a name with another parameter
+// spelling joins the first in a set (`@FR-Disp-Key`): each member is keyed by its full spelling,
+// `f_<LEN><spelling>_<name>`, and the name's `Dynamic` definition carries every member as a
+// constant `Routine` labelled by that spelling.  A call of the name reaches the unique most
+// specific member that takes its argument types (`@FR-Disp-Select`).
+//
+// Carried: free functions of this program over parameters of a spelled type, and a call decided
+// at run time by an enum's variant (`Disp-Dynamic`: a synthesized dispatcher).  Refused by name:
+// a generic member, a call inside a generic, a nullable or hidden-parameter run-time dispatch.
+use ir;
+use el;
+use el_ir;
+use el_vars;
+use el_types;
+use el_convert;
+use el_expressions;
+use el_definitions;
+
+// `Data::identity_spelling`: what tells one type from another in a definition key — the alias
+// or the range of an integer with its forced width, a struct or an enum by its name, a vector by
+// its element.  "" for a type this port spells no identity for.
+pub fn identity(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    // `Pt` and `Pt?` are two instantiations (@PLN165 B1).
+    TyOptional { inner } => {
+      sp = identity(e, inner);
+      if sp == "" { "" } else { "{sp}?" }
+    },
+    TyInteger { spec } => {
+      named = integer_name(spec);
+      if spec.forced_size > 0 { "{named}s{spec.forced_size}" } else { named }
+    },
+    TyFloat => "float",
+    TySingle => "single",
+    TyBoolean => "boolean",
+    TyCharacter => "character",
+    TyText { dep: _ } => "text",
+    TyReference { n } => if el_types::type_var(e, t) < 0 && (el::def(e, n).def_type == el::DT_STRUCT || el::def(e, n).def_type == el::DT_ENUM_VALUE) { declared(e, n) } else { "" },
+    TyEnum { n } => declared(e, n),
+    TyVector { inner } => {
+      sp = if el_types::is_unknown(inner) { "" } else { identity(e, inner) };
+      if sp == "" { "" } else { "vector<{sp}>" }
+    },
+    // A keyed collection: the element's declared name and the key list as Rust's `{:?}` writes
+    // it (`identity_spelling`).
+    TyHash { n, names } => "hash<{declared(e, n)},[{join([for k in names { "\"{k.name}\"" }], ", ")}]>",
+    TyRadix { n, names } => "spatial<{declared(e, n)},[{join([for k in names { "\"{k.name}\"" }], ", ")}]>",
+    TySorted { n, keys } => "sorted<{declared(e, n)},[{sort_keys(keys)}]>",
+    TyIndex { n, keys } => "index<{declared(e, n)},[{sort_keys(keys)}]>",
+    TyTrie { n, key } => "trie<{declared(e, n)}[{key}]>",
+    _ => ""
+  }
+}
+
+// A sort key list as Rust's `{:?}` of `Vec<(String, bool)>` writes it: `("x", true), …`.
+fn sort_keys(keys: vector<ir::SortKey>) -> text {
+  join([for k in keys { "(\"{k.name}\", {k.asc})" }], ", ")
+}
+
+// The type variables `t` names, appended to `out` in order of first appearance.
+fn collect_type_vars(e: el::El, t: ir::TypeT, out: vector<integer>) {
+  h = el_types::type_var(e, t);
+  if h >= 0 {
+    if !out.contains(h) {
+      out += [h];
+    }
+    return;
+  }
+  match t {
+    TyOptional { inner } => collect_type_vars(e, inner, out),
+    TyVector { inner } => collect_type_vars(e, inner, out),
+    _ => {}
+  }
+}
+
+// `identity_with_vars`: `identity`, a type variable written as its `$<k>` label.
+fn labelled(e: el::El, t: ir::TypeT, holders: vector<integer>) -> text {
+  h = el_types::type_var(e, t);
+  if h >= 0 {
+    k = -1;
+    for x in holders {
+      if x == h {
+        k = x#index;
+      }
+    }
+    if k < 0 {
+      return "";
+    }
+    // `full_spelling`'s label: a bounded variable carries its bound set (`$0:Ordered`), so
+    // `f<T: A>` and `f<T: B>` are two keys.
+    key = el_definitions::placeholder_key(e, el::def(e, h));
+    return if key == "" { "${k}" } else { "${k}:{key}" };
+  }
+  match t {
+    TyOptional { inner } => {
+      sp = labelled(e, inner, holders);
+      if sp == "" { "" } else { "{sp}?" }
+    },
+    TyVector { inner } => {
+      sp = labelled(e, inner, holders);
+      if sp == "" { "" } else { "vector<{sp}>" }
+    },
+    _ => identity(e, t)
+  }
+}
+
+// `IntegerSpec::source_name`, else the explicit range (`Type::name`).
+fn integer_name(spec: ir::IntegerSpec) -> text {
+  if spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295) {
+    "integer"
+  } else if spec.min == 0 && spec.max == 256 {
+    "byte"
+  } else {
+    "integer({spec.min}, {spec.max})"
+  }
+}
+
+// `Data::declared_identity`: the bare name of the standard library's and the program's own
+// definitions, `<library>::<name>` for a library's (a name is unique only within its source); a
+// name spelled from other types (`__tuple<…>`, an instance, a type variable's `T#4`) stays bare.
+fn declared(e: el::El, d: integer) -> text {
+  df = el::def(e, d);
+  if df.source == el::STD_SOURCE || df.source == el::MAIN_SOURCE || df.name.contains("<") || df.name.contains("#") {
+    df.name
+  } else {
+    "{el::source_label(e, df.source)}::{df.name}"
+  }
+}
+
+// `Data::full_spelling`: every declared parameter's identity joined with `#` — the spelling a
+// member of a set is keyed and labelled by.  "" when a parameter has no identity here.
+pub fn full_spelling(e: el::El, types: vector<ir::TypeT>) -> text {
+  // port: data.rs full_spelling
+  // A template's type variables are written as their position among the variables in order of
+  // first appearance, with the bound set (`$0`, `$0:Ordered`), so `f<T>(v: T)` and `f<U>(v: U)`
+  // are one key and `f<T: A>` and `f<T: B>` two.
+  holders: vector<integer> = [];
+  for t in types {
+    collect_type_vars(e, t, holders);
+  }
+  parts: vector<text> = [];
+  for t in types {
+    sp = labelled(e, t, holders);
+    if sp == "" {
+      return "";
+    }
+    parts += [sp];
+  }
+  parts.join("#")
+}
+
+// The declared parameter types of definition `d`, its hidden buffers left out (`visible_params`).
+fn visible_params(e: el::El, d: integer) -> vector<ir::TypeT> {
+  [for a in el::def(e, d).attributes if !a.hidden { a.typedef[0] }]
+}
+
+// `Data::mangle_free_overload`.
+fn member_key(spelling: text, name: text) -> text {
+  "f_{len(spelling)}{spelling}_{name}"
+}
+
+// The program's overload set named `name` — its `Dynamic` definition — or -1.
+pub fn own_set(e: el::El, name: text) -> integer {
+  set = el::source_nr(e, e.source, name);
+  if set >= 0 && el::def(e, set).def_type == el::DT_DYNAMIC { set } else { -1 }
+}
+
+// `Data::add_fn`'s `Disp-Key` arm: the key a free definition `key` of `name` is registered under.
+// The first pass makes the set when a definition of this program already holds `key` with another
+// spelling (`admit_overload_set`): the dispatcher is made, the incumbent moved to its own full key
+// and carried.  Either pass answers the member key `f_<LEN><spelling>_<name>` for a name that is
+// a set, and `key` itself for any other.  "" when the definition is refused.
+pub fn definition_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>, pos: ir::Position) -> text {
+  // The standard library never overloads a name: its keys are the native registry's.
+  if e.default {
+    return key;
+  }
+  if key.starts_with("t_") {
+    return method_key(e, key, name, types, pos);
+  }
+  if !key.starts_with("n_") {
+    return key;
+  }
+  set = own_set(e, name);
+  incumbent = el::source_nr(e, e.source, key);
+  // `incumbent_joins`: a function or a template (`@FR-D-Rank`'s generic member).
+  joins = incumbent >= 0 && (el::def(e, incumbent).def_type == el::DT_FUNCTION || el::def(e, incumbent).def_type == el::DT_GENERIC);
+  if set < 0 && (!joins || !e.first_pass) {
+    return key;
+  }
+  full = full_spelling(e, types);
+  if full == "" {
+    el::refuse(e, "an overload set member with a parameter of a type no key spells here");
+    return "";
+  }
+  if set >= 0 {
+    return member_key(full, name);
+  }
+  own_full = full_spelling(e, visible_params(e, incumbent));
+  if own_full == full {
+    // The same spelling twice: the redefinition the caller refuses.
+    return key;
+  }
+  if own_full == "" {
+    el::refuse(e, "an overload set member with a parameter of a type no key spells here");
+    return "";
+  }
+  set = el::add_def(e, name, pos, el::DT_DYNAMIC);
+  el::rename_def(e, incumbent, member_key(own_full, name));
+  carry(e, set, own_full, incumbent);
+  member_key(full, name)
+}
+
+// `add_fn`'s `Disp-Key` arm for a `self` METHOD: a second method of the name on one receiver
+// with another full spelling is an overload — keyed `t_<LEN><full>_<name>` (`mangle_method`
+// of the full spelling), while the incumbent keeps its receiver key and its slot on the type,
+// carried in the set under its receiver spelling.  `key` itself for the incumbent, a lone
+// method, or the same spelling twice (the redefinition the caller refuses).
+fn method_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>, pos: ir::Position) -> text {
+  incumbent = el::source_nr(e, e.source, key);
+  if incumbent < 0 || el::def(e, incumbent).def_type != el::DT_FUNCTION {
+    return key;
+  }
+  full = full_spelling(e, types);
+  own_full = full_spelling(e, visible_params(e, incumbent));
+  if full == own_full {
+    return key;
+  }
+  if len(e.type_vars) > 0 {
+    el::refuse(e, "a generic member of an overload set");
+    return "";
+  }
+  if full == "" || own_full == "" {
+    el::refuse(e, "an overload set member with a parameter of a type no key spells here");
+    return "";
+  }
+  if e.first_pass {
+    set = el::source_nr(e, e.source, name);
+    if set >= 0 && el::def(e, set).def_type != el::DT_DYNAMIC {
+      el::refuse(e, "a method overload beside a definition of its name that is no set");
+      return "";
+    }
+    if set < 0 {
+      set = el::add_def(e, name, pos, el::DT_DYNAMIC);
+    }
+    if !carries(e, set, incumbent) {
+      carry(e, set, receiver_spelling(key), incumbent);
+    }
+    // `@FR-F-Recv` / `@FR-Disp-Applicable`: the receiver's nullability twin is the same
+    // receiver's other spelling — the set decides between them only if it carries both.
+    join_twin(e, set, name, receiver_spelling(key));
+  }
+  "t_{len(full)}{full}_{name}"
+}
+
+// The method of `name` on the nullability twin of receiver spelling `sp` (`RP` ↔ `RP?`), carried
+// in `set` under its own receiver spelling when this source declares one.
+fn join_twin(e: el::El, set: integer, name: text, sp: text) {
+  tw = if sp.ends_with("?") { sp[..-1] } else { "{sp}?" };
+  twin = el::source_nr(e, e.source, "t_{len(tw)}{tw}_{name}");
+  if twin >= 0 && !carries(e, set, twin) {
+    carry(e, set, tw, twin);
+  }
+}
+
+// `add_fn`'s other order: a method whose receiver's nullability twin is already a member of
+// this source's set joins it under its own receiver key.
+pub fn join_method_twin(e: el::El, name: text, d: integer) {
+  set = own_set(e, name);
+  if set < 0 {
+    return;
+  }
+  sp = receiver_spelling(el::def(e, d).name);
+  tw = if sp.ends_with("?") { sp[..-1] } else { "{sp}?" };
+  twin = el::source_nr(e, e.source, "t_{len(tw)}{tw}_{name}");
+  if twin >= 0 && carries(e, set, twin) && !carries(e, set, d) {
+    carry(e, set, sp, d);
+  }
+}
+
+// The receiver spelling a method key `t_<LEN><spelling>_<name>` carries.
+fn receiver_spelling(key: text) -> text {
+  digits = 0;
+  while digits + 2 < len(key) && key[digits + 2] >= '0' && key[digits + 2] <= '9' {
+    digits += 1;
+  }
+  n = key[2..2 + digits] as integer ?? 0;
+  key[2 + digits..2 + digits + n]
+}
+
+fn carries(e: el::El, set: integer, d: integer) -> boolean {
+  for a in el::def(e, set).attributes {
+    if (a.typedef[0] ?? ir::TyVoid) == ir::TyRoutine { n: d } {
+      return true;
+    }
+  }
+  false
+}
+
+// A new member `d` of `name`'s set, labelled by its spelling (`add_fn`'s `overload_label`) — or,
+// for a method keyed by its receiver alone (`join_as_method` → `admit_overload_set`), by that
+// receiver's spelling.
+pub fn join(e: el::El, name: text, d: integer) {
+  set = own_set(e, name);
+  dn = el::def(e, d).name;
+  if set >= 0 && (dn.starts_with("f_") || dn.starts_with("t_")) && !carries(e, set, d) {
+    recv = if dn.starts_with("t_") { receiver_spelling(dn) } else { "" };
+    label = if recv != "" && dn == "t_{len(recv)}{recv}_{name}" { recv } else { full_spelling(e, visible_params(e, d)) };
+    carry(e, set, label, d);
+  }
+}
+
+fn carry(e: el::El, set: integer, label: text, d: integer) {
+  m = el::attribute(label, ir::TyRoutine { n: d });
+  m.mutable = false;
+  m.constant = true;
+  e.b.data.definitions[set].attributes += [m];
+}
+
+// ── variant dispatch (src/parser/definitions.rs `enum_fn`, @F20) ──
+
+// port: definitions.rs enum_fn
+// After the first pass over a file: definitions of one name on an enum and on its variants are
+// made one overload set (`join_enum_lattice_sets`); a variant method whose enum answers the name
+// nowhere is a member of the dispatcher @F20 builds over the enum — not carried, refused by
+// name; and a set that dispatches past its receiver takes the enum's member slot.
+pub fn enum_fn(e: el::El) {
+  if !e.first_pass {
+    return;
+  }
+  join_enum_lattice_sets(e);
+  members: vector<ir::NameNr> = [];
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_FUNCTION || len(d.attributes) == 0 {
+      continue;
+    }
+    recv = receiver_def_nr(e, d#index);
+    if recv < 0 {
+      continue;
+    }
+    en = match el::def(e, recv).returned[0] ?? ir::TyVoid { TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
+    name = original_name(d.name);
+    if en < 0 || enum_answers(e, name, en) || has_attribute(el::def(e, en), name) {
+      continue;
+    }
+    if overload_set_owns_dispatch(e, name, en) {
+      past = dispatches_past_receiver(e, name, en);
+      free_member = false;
+      for r in overload_routines(e, name) {
+        if el::def(e, r).name.starts_with("f_") {
+          free_member = true;
+        }
+      }
+      if past && !free_member && !holds(members, en, name) {
+        members += [ir::NameNr { name: name, nr: en }];
+      }
+      continue;
+    }
+    el::refuse(e, "a variant method its enum answers nowhere (the @F20 dispatcher)");
+  }
+  for m in members {
+    set = el::def_nr(e, m.name);
+    if set < 0 || has_attribute(el::def(e, m.nr), m.name) {
+      continue;
+    }
+    a = el::attribute(m.name, ir::TyRoutine { n: set });
+    a.mutable = false;
+    a.constant = true;
+    e.b.data.definitions[m.nr].attributes += [a];
+  }
+}
+
+// port: definitions.rs join_enum_lattice_sets
+// The program's definitions whose first parameter is an enum or one of its variants, grouped by
+// name and enum: a group with a variant member and an enum-level one — or whose set dispatches
+// past its receiver — is admitted as one overload set, unless the name is already something
+// other than this source's set.
+fn join_enum_lattice_sets(e: el::El) {
+  groups: vector<LatticeGroup> = [];
+  for d in e.b.data.definitions {
+    if d.def_type != el::DT_FUNCTION || d.source != e.source || d.synthetic != "" {
+      continue;
+    }
+    first = -1;
+    for a in d.attributes {
+      if first < 0 && !a.hidden {
+        first = a#index;
+      }
+    }
+    if first < 0 {
+      continue;
+    }
+    t = el_types::base(d.attributes[first]!.typedef[0] ?? ir::TyVoid);
+    en = -1;
+    at_enum = false;
+    match t {
+      TyEnum { n, is_ref } => if is_ref { en = n; at_enum = true; },
+      TyReference { n } => if el::def(e, n).def_type == el::DT_ENUM_VALUE { en = el::def(e, n).parent; },
+      _ => {}
+    }
+    if en < 0 {
+      continue;
+    }
+    name = original_name(d.name);
+    g = -1;
+    for x in groups {
+      if x.name == name && x.en == en {
+        g = x#index;
+      }
+    }
+    if g < 0 {
+      groups += [LatticeGroup { name: name, en: en, at_enum: false, at_variant: false, members: [] }];
+      g = len(groups) - 1;
+    }
+    if at_enum {
+      groups[g].at_enum = true;
+    } else {
+      groups[g].at_variant = true;
+    }
+    groups[g].members += [d#index];
+  }
+  // Rust walks the groups in key order: by name, then by enum.
+  for x in sorted_groups(groups) {
+    if !(x.at_variant && (x.at_enum || dispatches_past_receiver(e, x.name, x.en))) {
+      continue;
+    }
+    main = el::def_nr(e, x.name);
+    if main >= 0 && (el::def(e, main).def_type != el::DT_DYNAMIC || el::def(e, main).source != e.source) {
+      continue;
+    }
+    // The lexer stands at the end of the file here: a set made now is placed there.
+    for m in x.members {
+      admit_overload_set(e, x.name, m, el::pos_at(e, len(e.p.src)));
+    }
+  }
+}
+
+struct LatticeGroup {
+  name: text,
+  en: integer,
+  at_enum: boolean,
+  at_variant: boolean,
+  members: vector<integer>,
+}
+
+fn sorted_groups(groups: vector<LatticeGroup>) -> vector<LatticeGroup> {
+  out: vector<LatticeGroup> = [];
+  for g in groups {
+    at = len(out);
+    for o in out {
+      if at == len(out) && (g.name < o.name || (g.name == o.name && g.en < o.en)) {
+        at = o#index;
+      }
+    }
+    out = out[0..at] + [g] + out[at..len(out)];
+  }
+  out
+}
+
+// port: data.rs admit_overload_set
+// Member `incumbent` carried in the set `name` (made here when there is none), labelled by its
+// receiver spelling when it is that receiver's own method, else by its full spelling.  A free
+// incumbent moves to its full key, which this port reaches only through `definition_key`:
+// refused by name here.
+fn admit_overload_set(e: el::El, name: text, incumbent: integer, pos: ir::Position) {
+  set = el::def_nr(e, name);
+  if set < 0 {
+    set = el::add_def(e, name, pos, el::DT_DYNAMIC);
+  }
+  if carries(e, set, incumbent) {
+    return;
+  }
+  inc = el::def(e, incumbent);
+  if !inc.name.starts_with("t_") {
+    el::refuse(e, "a free definition joined into an enum's overload set");
+    return;
+  }
+  recv = type_spelling(e, inc.attributes[0]!.typedef[0] ?? ir::TyVoid);
+  label = if inc.name == "t_{len(recv)}{recv}_{name}" { recv } else { full_spelling(e, visible_params(e, incumbent)) };
+  carry(e, set, label, incumbent);
+}
+
+// port: data.rs type_spelling — the key name of a type, `?` for a nullable one; "" for none.
+fn type_spelling(e: el::El, t: ir::TypeT) -> text {
+  tn = el_expressions::type_def_nr(e, t);
+  if tn < 0 {
+    return "";
+  }
+  base = el::def(e, tn).name;
+  if t is TyOptional { "{base}?" } else { base }
+}
+
+// port: data.rs receiver_def_nr — the definition a first parameter of reference type names.
+fn receiver_def_nr(e: el::El, d: integer) -> integer {
+  if len(el::def(e, d).attributes) == 0 {
+    return -1;
+  }
+  match el_types::base(el::def(e, d).attributes[0]!.typedef[0] ?? ir::TyVoid) {
+    TyReference { n } => n,
+    _ => -1
+  }
+}
+
+// port: data.rs find_fn(u16::MAX, name, Enum(en)) != u32::MAX — the enum's own method under either
+// receiver spelling, else the free function of the name.
+fn enum_answers(e: el::El, name: text, en: integer) -> boolean {
+  base = el::def(e, en).name;
+  for sp in [base, "{base}?"] {
+    if el::def_nr(e, "t_{len(sp)}{sp}_{name}") >= 0 {
+      return true;
+    }
+  }
+  el::def_nr(e, "n_{name}") >= 0
+}
+
+fn has_attribute(d: ir::Definition, name: text) -> boolean {
+  for a in d.attributes {
+    if a.name == name {
+      return true;
+    }
+  }
+  false
+}
+
+fn holds(members: vector<ir::NameNr>, en: integer, name: text) -> boolean {
+  for m in members {
+    if m.nr == en && m.name == name {
+      return true;
+    }
+  }
+  false
+}
+
+// port: data.rs overload_routines — the members a set named `name` carries.
+fn overload_routines(e: el::El, name: text) -> vector<integer> {
+  set = el::def_nr(e, name);
+  if set < 0 || el::def(e, set).def_type != el::DT_DYNAMIC {
+    return [];
+  }
+  out: vector<integer> = [];
+  for a in el::def(e, set).attributes {
+    match el_types::base(a.typedef[0] ?? ir::TyVoid) {
+      // A member not declared yet (`receiver_shared_in_set`) is none here.
+      TyRoutine { n } => if n < len(e.b.data.definitions) { out += [n]; },
+      _ => {}
+    }
+  }
+  out
+}
+
+// port: data.rs overload_set_owns_dispatch
+fn overload_set_owns_dispatch(e: el::El, name: text, en: integer) -> boolean {
+  for r in overload_routines(e, name) {
+    if el::def(e, r).name.starts_with("f_") {
+      return true;
+    }
+    ps = visible_params(e, r);
+    if len(ps) > 0 && match el_types::base(ps[0]!) { TyEnum { n } => n == en, _ => false } {
+      return true;
+    }
+  }
+  dispatches_past_receiver(e, name, en)
+}
+
+// port: data.rs dispatches_past_receiver — two members on one variant of `en` that differ after
+// the receiver.
+fn dispatches_past_receiver(e: el::El, name: text, en: integer) -> boolean {
+  seen_v: vector<integer> = [];
+  seen_r: vector<text> = [];
+  for r in overload_routines(e, name) {
+    ps = visible_params(e, r);
+    v = match el_types::base(ps[0] ?? ir::TyVoid) { TyReference { n } => n, _ => -1 };
+    if v < 0 || el::def(e, v).def_type != el::DT_ENUM_VALUE || el::def(e, v).parent != en {
+      continue;
+    }
+    rest = full_spelling(e, [for p in ps[1..len(ps)] { el_types::base(p) }]);
+    for s in seen_v {
+      if s == v && seen_r[s#index] != rest {
+        return true;
+      }
+    }
+    seen_v += [v];
+    seen_r += [rest];
+  }
+  false
+}
+
+// port: data.rs original_name (`source_name_of_key`) — the name a definition key was written as:
+// a method's or a free overload's rest, an instance key's template key read again.
+fn original_name(key: text) -> text {
+  k = key;
+  for _step in 0..len(key) {
+    if k.starts_with("n_") {
+      at = k.find("@");
+      return if at != null { k[2..at!] } else { k[2..] };
+    }
+    if !(k.starts_with("t_") || k.starts_with("f_") || k.starts_with("i_")) {
+      break;
+    }
+    body = k[2..];
+    digits = 0;
+    while digits < len(body) && body[digits] >= '0' && body[digits] <= '9' {
+      digits += 1;
+    }
+    if digits == 0 {
+      break;
+    }
+    rest = body[digits + (body[0..digits] as integer ?? 0)..];
+    if !rest.starts_with("_") {
+      break;
+    }
+    if !k.starts_with("i_") {
+      return rest[1..];
+    }
+    k = rest[1..];
+  }
+  if len(k) > 2 { k[2..] } else { k }
+}
+
+// ── argument hints (control.rs `free_call_hint`, fields.rs method hint) ──
+
+// port: control.rs free_call_hint
+// The definition that types a bare call's arguments before the call is selected: the one free
+// function of the name, else — from the first argument's type — the receiver's own method,
+// unless that receiver is shared by more than one member of the name's set.  -1 for none.
+pub fn free_call_hint(e: el::El, name: text, types: vector<ir::TypeT>) -> integer {
+  free = el::def_nr(e, "n_{name}");
+  if free >= 0 {
+    return free;
+  }
+  if len(types) == 0 || el_types::is_unknown(types[0]!) {
+    return -1;
+  }
+  method_hint(e, name, types[0]!, -1)
+}
+
+// port: fields.rs (the method call's `hint_nr`)
+// For `x.name(…)`: no hint where the receiver is shared in the set, the one method `candidates`
+// finds, else `fallback` (the receiver type's own slot).
+pub fn method_hint(e: el::El, name: text, receiver: ir::TypeT, fallback: integer) -> integer {
+  if receiver_shared_in_set(e, name, receiver) {
+    return -1;
+  }
+  cs = candidates(e, name, receiver);
+  if len(cs) == 1 && el::def(e, cs[0]!).name.starts_with("t_") {
+    return cs[0]!;
+  }
+  fallback
+}
+
+// port: data.rs candidates (source = the caller's scope)
+// The definitions a call of `name` on `tp` may reach, without asking for a refusal: the
+// receiver's method under its own nullability spelling first, a variant's or its enum's, a
+// bound holder's stubs, else the free function, else an operator taking exactly `tp`.
+pub fn candidates(e: el::El, name: text, tp0: ir::TypeT) -> vector<integer> {
+  fd = el::def_nr(e, "n_{name}");
+  free: vector<integer> = if fd >= 0 { [fd] } else { [] };
+  if el_types::is_unknown(tp0) {
+    return free;
+  }
+  tp = match tp0 { TyRefVar { inner } => inner, _ => tp0 };
+  tn = el_expressions::type_def_nr(e, tp);
+  if tn < 0 {
+    return free;
+  }
+  if el::def(e, tn).def_type == el::DT_ENUM_VALUE {
+    parent = el::def(e, tn).parent;
+    vb = el::def(e, tn).name;
+    declares_own = false;
+    for sp in [vb, "{vb}?"] {
+      if el::def_nr(e, "t_{len(sp)}{sp}_{name}") >= 0 {
+        declares_own = true;
+      }
+    }
+    if parent >= 0 && el::def(e, parent).def_type == el::DT_ENUM && !declares_own {
+      tn = parent;
+    }
+  }
+  td = el::def(e, tn);
+  if len(td.bounds) > 0 && el_types::type_var(e, ir::TyReference { n: tn, dep: [] }) >= 0 {
+    stubs: vector<integer> = [];
+    for a in 1..10 {
+      st = el::def_nr(e, el_expressions::bound_stub_name(td.name, name, a));
+      if st >= 0 {
+        stubs += [st];
+      }
+    }
+    return if len(stubs) > 0 { stubs } else { free };
+  }
+  // `key_type_name`: an instance keys on its template.
+  base = if td.instance_of >= 0 { el::def(e, td.instance_of).name } else { td.name };
+  sig = if tp is TyOptional { "{base}?" } else { base };
+  spellings = if sig == base { [base, "{base}?"] } else { [sig, base] };
+  for sp in spellings {
+    key = "t_{len(sp)}{sp}_{name}";
+    d = el::def_nr(e, key);
+    if d < 0 {
+      continue;
+    }
+    if el_expressions::receives(e, d, tn) {
+      return [d];
+    }
+    own = el::source_nr(e, td.source, key);
+    if own >= 0 && el_expressions::receives(e, own, tn) {
+      return [own];
+    }
+  }
+  if len(free) > 0 {
+    return free;
+  }
+  for op in el::possible(e, name) {
+    if len(el::def(e, op).attributes) > 0 && el_types::is_equal(e, el::def(e, op).attributes[0]!.typedef[0] ?? ir::TyVoid, tp) {
+      return [op];
+    }
+  }
+  []
+}
+
+// port: data.rs receiver_shared_in_set
+// Is the receiver taken by more than one member of the set of `name` it would choose among?
+fn receiver_shared_in_set(e: el::El, name: text, receiver: ir::TypeT) -> boolean {
+  main = el::def_nr(e, name);
+  rt = match el_types::base(receiver) { TyRefVar { inner } => el_types::base(inner), _ => el_types::base(receiver) };
+  if main < 0 || el::def(e, main).def_type != el::DT_DYNAMIC {
+    // `receiver_overload_source`: no set in scope — the receiver's own source's set.
+    tn = el_expressions::type_def_nr(e, rt);
+    if tn < 0 || el::def(e, tn).source == el::STD_SOURCE {
+      return false;
+    }
+    main = el::source_nr(e, el::def(e, tn).source, name);
+    if main < 0 || el::def(e, main).def_type != el::DT_DYNAMIC {
+      return false;
+    }
+  }
+  n = 0;
+  for a in el::def(e, main).attributes {
+    match el_types::base(a.typedef[0] ?? ir::TyVoid) {
+      TyRoutine { n: r } => {
+        // The standard library's image lists the members this program adds to one of its sets
+        // (an operator method joins `compare`); one not declared yet is no member here, as it is
+        // none of Rust's at this point of its parse.
+        if r >= len(e.b.data.definitions) {
+          continue;
+        }
+        ps = visible_params(e, r);
+        if len(ps) > 0 && param_fits(e, rt, ps[0]!) {
+          n += 1;
+        }
+      },
+      _ => {}
+    }
+  }
+  n > 1
+}
+
+// port: data.rs param_fits — the same type definition, or a variant and its enum either way; a
+// type variable or an unknown fits anything.
+fn param_fits(e: el::El, have: ir::TypeT, want: ir::TypeT) -> boolean {
+  if el_types::is_unknown(want) || el_definitions::mentions_type_var(e, want) || el_definitions::mentions_type_var(e, have) {
+    return true;
+  }
+  h = el_expressions::type_def_nr(e, have);
+  w = el_expressions::type_def_nr(e, want);
+  h == w || variant_of(e, h, w) || variant_of(e, w, h)
+}
+
+fn variant_of(e: el::El, v: integer, en: integer) -> boolean {
+  v >= 0 && el::def(e, v).def_type == el::DT_ENUM_VALUE && el::def(e, v).parent == en
+}
+
+// ── selection (src/parser/dispatch.rs) ──
+
+// `Rank`: how far an argument is from a parameter, per position; smaller is more specific.  A
+// concrete rank is its base step plus its nullability step, and carries `CONVERSION` when the
+// base step is a conversion.
+const EXACT = 0;
+const WIDENED = 1;
+const LOSSY = 2;
+const CONVERTED = 3;
+const CONVERSION = 64;
+// A template's position that names a type variable: worse than every non-converting rank, and
+// not ordered against a conversion (`rank_no_worse`).
+const GENERIC = 128;
+
+// A member that takes a call, with its rank at each position.
+struct Ranked {
+  d: integer,
+  ranks: vector<integer>
+}
+
+// `Data::routed_types` (`F-Recv`'s argument clause): where any argument is nullable, every other
+// is read as nullable too, so a nullable argument anywhere reaches the `τ?` member.
+fn routed(types: vector<ir::TypeT>) -> vector<ir::TypeT> {
+  if len(types) == 0 {
+    return [ir::TyUnknown { n: 0 }];
+  }
+  any_nullable = false;
+  for t in types {
+    if t is TyOptional {
+      any_nullable = true;
+    }
+  }
+  if !any_nullable {
+    return types;
+  }
+  [for t in types { if t is TyOptional || t is TyNull { t } else { ir::TyOptional { inner: el_types::base(t) } } }]
+}
+
+// `Parser::dispatch_rank`: the rank of passing `arg` to a `param` slot, or -1 when it cannot.
+fn rank(e: el::El, arg: ir::TypeT, param: ir::TypeT) -> integer {
+  // A `null` fits a `τ?` slot as it is, a dense one only by `(N-Store)`'s lossy step.
+  if el_types::base(arg) is TyNull {
+    return if (param is TyOptional) { EXACT } else { LOSSY };
+  }
+  a = el_types::base(arg);
+  p = el_types::base(param);
+  ia = identity(e, a);
+  b = if ia != "" && ia == identity(e, p) {
+    EXACT
+  } else if a is TyInteger && p is TyInteger {
+    // `@FR-C-Int`: the wider integer takes the narrower; a store that narrows is no candidate.
+    if el_convert::narrowing_store(a, p) {
+      return -1;
+    }
+    WIDENED
+  } else if variant_of(e, a, p) {
+    WIDENED
+  } else if el_convert::converts(e, a, p) {
+    CONVERTED
+  } else {
+    return -1;
+  };
+  // The nullability step on top: `(N-Intro)` free, `(N-Store)` lossy.
+  arg_nullable = arg is TyOptional;
+  param_nullable = param is TyOptional;
+  step = if param_nullable && !arg_nullable { WIDENED } else if arg_nullable && !param_nullable { LOSSY } else { EXACT };
+  if b == CONVERTED { b + step + CONVERSION } else { b + step }
+}
+
+// `@FR-C-Var`: a variant satisfies its enum.
+fn variant_of(e: el::El, a: ir::TypeT, p: ir::TypeT) -> boolean {
+  v = match a { TyReference { n } => n, _ => -1 };
+  en = match p { TyEnum { n } => n, _ => -2 };
+  v >= 0 && el::def(e, v).def_type == el::DT_ENUM_VALUE && el::def(e, v).parent == en
+}
+
+// `rank_order`: a rank with its conversion bit masked off; `GENERIC` above every concrete rank.
+fn order(r: integer) -> integer {
+  if r == GENERIC { 255 } else { r % CONVERSION }
+}
+
+// `rank_no_worse`: is `a` no worse than `b` at one position?  A generic position and a converting
+// one are not ordered.
+fn no_worse(a: integer, b: integer) -> boolean {
+  conv_a = a != GENERIC && a >= CONVERSION;
+  conv_b = b != GENERIC && b >= CONVERSION;
+  if (a == GENERIC && conv_b) || (b == GENERIC && conv_a) {
+    return false;
+  }
+  order(a) <= order(b)
+}
+
+// port: dispatch.rs definition_ranks
+// How far each routed argument is from member `d`'s parameter, or null when `d` does not take the
+// call (`@FR-Disp-Applicable`): more arguments than parameters, a trailing parameter with no
+// default, or an argument its parameter cannot accept.
+fn definition_ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
+  if el::def(e, d).def_type == el::DT_GENERIC {
+    return template_ranks(e, d, args);
+  }
+  if !takes_arity(e, d, len(args)) {
+    return null;
+  }
+  params = visible_params(e, d);
+  r: vector<integer> = [];
+  for p in params[0..len(args)] {
+    k = rank(e, args[p#index] ?? ir::TyUnknown { n: 0 }, p);
+    if k < 0 {
+      return null;
+    }
+    r += [k];
+  }
+  r
+}
+
+// port: dispatch.rs template_ranks
+// `@FR-D-Rank` for a template member: it takes the call where every variable binds and the bound
+// types satisfy the bounds.  A position whose parameter names a variable ranks `GENERIC` where the
+// argument takes the parameter AS BOUND without a conversion; any other ranks as a concrete
+// definition's does.  Changed: `bind_template` is `el_expressions::template_binding`, which
+// answers null where two positions bind one variable differently (Rust binds the first and the
+// second position then fails its rank, so the member is out either way).  `refused_templates` has
+// no twin (a refused header refuses the program here), nor has `open_instance_bindings` (an open
+// instance, `Box<T>` inside a template, is not carried by this port).
+fn template_ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
+  if !takes_arity(e, d, len(args)) {
+    return null;
+  }
+  b = el_expressions::template_binding(e, d, args);
+  if b == null {
+    return null;
+  }
+  // A binding to the caller's own variable is ranked like any other (`set_reselect`, on).
+  for t in b!.types {
+    if el_types::is_unknown(t) {
+      return null;
+    }
+  }
+  if !satisfies(e, d, b!) {
+    return null;
+  }
+  params = visible_params(e, d);
+  r: vector<integer> = [];
+  for p in params[0..len(args)] {
+    arg = args[p#index] ?? ir::TyUnknown { n: 0 };
+    tv: vector<integer> = [];
+    collect_placeholders(e, p, tv);
+    k = if len(tv) > 0 {
+      kb = rank(e, arg, substitute_all(p, b!));
+      if kb < 0 || kb >= CONVERSION { -1 } else { GENERIC }
+    } else {
+      rank(e, arg, p)
+    };
+    if k < 0 {
+      return null;
+    }
+    r += [k];
+  }
+  r
+}
+
+// port: bounds.rs satisfies
+// Do the bound types satisfy template `d`'s bounds: every interface a variable is bounded by,
+// asked of the concrete type the variable binds (`satisfaction_messages`, empty)?  A binding
+// with no concrete type definition is not checked, as Rust's `continue` leaves it.  Changed:
+// `infer_associated` is not ported — an interface with a companion type is refused by name in
+// `satisfaction_failures`.
+fn satisfies(e: el::El, d: integer, b: el_expressions::Binding) -> boolean {
+  for v in b.vars {
+    concrete = el_expressions::type_def_nr(e, b.types[v#index] ?? ir::TyVoid);
+    if concrete < 0 {
+      continue;
+    }
+    for iface in var_bounds(e, d, v, v#index == 0) {
+      if len(satisfaction_failures(e, iface, concrete)) > 0 {
+        return false;
+      }
+    }
+  }
+  true
+}
+
+// port: bounds.rs satisfaction_failures
+// The members of interface `iface` the type `concrete` does not provide (`@FR-G-Sat`: the
+// methods VISIBLE for the type decide, each against its signature with `Self` replaced by the
+// type), one message each.  Changed: only the plain-method path is carried.  An operator member
+// (`is_operator_alias`, `operator_meets_member`, `backs_operator`), a companion type, a member
+// found at another arity (`possible_with_signature`), a template implementor
+// (`overload_with_params`), and a parameter list or result that differs where `params_fit` /
+// `return_fits` would have to decide, are refused by name.
+fn satisfaction_failures(e: el::El, iface: integer, concrete: integer) -> vector<text> {
+  out: vector<text> = [];
+  cdef = el::def(e, concrete);
+  concrete_type = cdef.returned[0] ?? ir::TyVoid;
+  self_nr = el::def_nr(e, "Self");
+  for c in e.b.data.definitions {
+    if c.parent != iface {
+      continue;
+    }
+    if c.def_type != el::DT_FUNCTION {
+      el::refuse(e, "an interface bound that declares an associated type");
+      out += ["an associated type"];
+      return out;
+    }
+    method = el_definitions::interface_method_name(c.name);
+    if method.starts_with("Op") || c.operator_form {
+      el::refuse(e, "an interface bound with an operator member");
+      out += [method];
+      return out;
+    }
+    // A variant's own type first, its enum's methods the fallback (`(G-Sat)`).
+    found = -1;
+    if cdef.def_type == el::DT_ENUM_VALUE {
+      found = el_expressions::find_fn(e, method, ir::TyReference { n: concrete, dep: [] });
+    }
+    if found < 0 {
+      found = el_expressions::find_fn(e, method, concrete_type);
+    }
+    // @PLN25 E2 — a synth `__nullable<S>` satisfies through `S`'s methods.
+    if found < 0 && cdef.name.starts_with("__nullable<") && cdef.name.ends_with(">") {
+      s = el::def_nr(e, cdef.name[11..len(cdef.name) - 1]);
+      if s >= 0 {
+        found = el_expressions::find_fn(e, method, el::def(e, s).returned[0] ?? ir::TyVoid);
+      }
+    }
+    if found < 0 {
+      out += ["missing {method}"];
+      continue;
+    }
+    if len(visible_params(e, found)) != len(visible_params(e, c#index)) {
+      el::refuse(e, "an interface bound met by a member of another arity");
+      out += [method];
+      return out;
+    }
+    if el::def(e, found).def_type == el::DT_GENERIC {
+      el::refuse(e, "an interface bound met by a template member");
+      out += [method];
+      return out;
+    }
+    // `bound_params_at` + `params_fit`: the member's parameter list with `Self` replaced.
+    have = visible_params(e, found);
+    for p in visible_params(e, c#index) {
+      w = if self_nr >= 0 { el_expressions::substitute(p, self_nr, concrete_type) } else { p };
+      if identity(e, el_types::base(w)) != identity(e, el_types::base(have[p#index] ?? ir::TyVoid)) {
+        el::refuse(e, "an interface bound met by a member whose parameters differ");
+        out += [method];
+        return out;
+      }
+    }
+    // `return_type_mismatch`: the result is part of the signature.
+    rw = c.returned[0] ?? ir::TyVoid;
+    want = if self_nr >= 0 { el_expressions::substitute(rw, self_nr, concrete_type) } else { rw };
+    got = el::def(e, found).returned[0] ?? ir::TyVoid;
+    if !(el_types::base(want) is TyVoid) && identity(e, el_types::base(want)) != identity(e, el_types::base(got)) {
+      wn = match el_types::base(want) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
+      gn = match el_types::base(got) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
+      if wn >= 0 && gn >= 0 {
+        out += ["{method} answers another type"];
+        continue;
+      }
+      el::refuse(e, "an interface bound met by a member whose result differs");
+      out += [method];
+      return out;
+    }
+  }
+  out
+}
+
+// port: bounds.rs var_bounds
+// The bounds of template `d`'s variable `holder`: the variable's own, recorded on its
+// placeholder, or for the first variable whose placeholder carries none, the template's list.
+fn var_bounds(e: el::El, d: integer, holder: integer, first: boolean) -> vector<integer> {
+  own = el::def(e, holder).bounds;
+  if len(own) > 0 || !first {
+    return own;
+  }
+  el::def(e, d).bounds
+}
+
+// port: none — `Type::substitute` once per binding, as `Parser::substitute_all` does.
+fn substitute_all(t: ir::TypeT, b: el_expressions::Binding) -> ir::TypeT {
+  r = t;
+  for h in b.vars {
+    r = el_expressions::substitute(r, h, b.types[h#index] ?? ir::TyUnknown { n: 0 });
+  }
+  r
+}
+
+// port: data.rs mentions_type_var (its placeholder half)
+// The type-variable placeholders `t` names anywhere, appended to `out`.  An open instance is not
+// carried by this port.
+fn collect_placeholders(e: el::El, t: ir::TypeT, out: vector<integer>) {
+  h = el_types::type_var(e, el_types::base(t));
+  if h >= 0 && !out.contains(h) {
+    out += [h];
+  }
+  for c in type_children(t) {
+    collect_placeholders(e, c, out);
+  }
+}
+
+// port: data.rs Type::for_each_child
+// A type's child types in order; none for a leaf (a definition-numbered head carries none).
+fn type_children(t: ir::TypeT) -> vector<ir::TypeT> {
+  out: vector<ir::TypeT> = [];
+  match t {
+    TyRefVar { inner } => { out += [inner]; },
+    TyVector { inner } => { out += [inner]; },
+    TyRewritten { inner } => { out += [inner]; },
+    TyOptional { inner } => { out += [inner]; },
+    TyIterator { step, inner } => { out += [step, inner]; },
+    TyFunction { args, result } => { out += args; out += [result]; },
+    TyTuple { elems } => { out += elems; },
+    _ => {}
+  }
+  out
+}
+
+// port: data.rs Type::zip_children (the shape test)
+// Do two types with children have the same former: the same variant, and for a function or a
+// tuple the same number of children?
+fn same_former(a: ir::TypeT, b: ir::TypeT) -> boolean {
+  match a {
+    TyRefVar { inner: _ } => b is TyRefVar,
+    TyVector { inner: _ } => b is TyVector,
+    TyRewritten { inner: _ } => b is TyRewritten,
+    TyOptional { inner: _ } => b is TyOptional,
+    TyIterator { step: _ } => b is TyIterator,
+    TyFunction { args } => match b { TyFunction { args: other } => len(args) == len(other), _ => false },
+    TyTuple { elems } => match b { TyTuple { elems: other } => len(elems) == len(other), _ => false },
+    _ => false
+  }
+}
+
+// `Parser::takes_arity`: no more arguments than declared parameters, and a default on every
+// parameter past them.
+fn takes_arity(e: el::El, d: integer, given: integer) -> boolean {
+  declared = [for a in el::def(e, d).attributes if !a.hidden { a }];
+  if given > len(declared) {
+    return false;
+  }
+  for a in declared[given..] {
+    if el_ir::is_null(a.value[0] ?? ir::NdNull) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: dispatch.rs strictly_better
+// Is member `b` strictly better than `a` for the call both were ranked on: no worse at any
+// position and better at one (`@FR-Disp-Specific`)?  Where both rank `GENERIC` at a position,
+// `generic_position_order` orders them; elsewhere the ranks' own order does.
+fn strictly_better(e: el::El, b: Ranked, a: Ranked) -> boolean {
+  better = false;
+  for x in a.ranks {
+    y = b.ranks[x#index] ?? 0;
+    if x == GENERIC && y == GENERIC {
+      o = generic_position_order(e, b.d, a.d, x#index);
+      if o == ORD_LESS {
+        better = true;
+      } else if o != ORD_EQUAL {
+        return false;
+      }
+    } else if no_worse(y, x) {
+      if order(y) != order(x) {
+        better = true;
+      }
+    } else {
+      return false;
+    }
+  }
+  better
+}
+
+// `std::cmp::Ordering`, and `None` for a pair neither side contains.
+const ORD_LESS = -1;
+const ORD_EQUAL = 0;
+const ORD_GREATER = 1;
+const ORD_NONE = 2;
+
+// port: dispatch.rs generic_position_order
+// `D-Specific` between two templates at position `i` where both rank `GENERIC`: LESS when `a`'s
+// parameter admits strictly fewer types than `b`'s, GREATER the reverse, EQUAL when they admit the
+// same, NONE when neither contains the other.  The PATTERN order (`vector<T>` admits fewer than
+// `T`) and the BOUND-SET order (a strict superset admits fewer) must agree; where one says fewer
+// and the other more, or either says neither, the pair is not ordered.
+fn generic_position_order(e: el::El, a: integer, b: integer, i: integer) -> integer {
+  pa = visible_params(e, a)[i];
+  pb = visible_params(e, b)[i];
+  if pa == null || pb == null {
+    return ORD_NONE;
+  }
+  va: vector<integer> = [];
+  ia: vector<text> = [];
+  a_in_b = pattern_instance(e, pb!, pa!, va, ia);
+  vb: vector<integer> = [];
+  ib: vector<text> = [];
+  b_in_a = pattern_instance(e, pa!, pb!, vb, ib);
+  pattern = if a_in_b && b_in_a { ORD_EQUAL } else if a_in_b { ORD_LESS } else if b_in_a { ORD_GREATER } else { ORD_NONE };
+  if pattern == ORD_NONE {
+    return ORD_NONE;
+  }
+  ba: vector<text> = [];
+  position_bounds(e, pa!, ba);
+  bb: vector<text> = [];
+  position_bounds(e, pb!, bb);
+  a_sup = superset(ba, bb);
+  b_sup = superset(bb, ba);
+  bounds = if a_sup && b_sup { ORD_EQUAL } else if a_sup { ORD_LESS } else if b_sup { ORD_GREATER } else { ORD_NONE };
+  if bounds == ORD_NONE {
+    return ORD_NONE;
+  }
+  if pattern == ORD_EQUAL {
+    bounds
+  } else if bounds == ORD_EQUAL || bounds == pattern {
+    pattern
+  } else {
+    ORD_NONE
+  }
+}
+
+// port: none — `BTreeSet::is_superset`.
+fn superset(a: vector<text>, b: vector<text>) -> boolean {
+  for x in b {
+    if !a.contains(x) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: dispatch.rs pattern_instance
+// Is `specific` a substitution instance of `general`: does some assignment of `general`'s type
+// variables make it `specific`?  A variable in `specific` is an opaque atom; a variable of
+// `general` met twice must meet the same type twice.  Changed: Rust's `binds` pairs are two
+// vectors, `vars` and their identity spellings `ids`.
+fn pattern_instance(e: el::El, general: ir::TypeT, specific: ir::TypeT, vars: vector<integer>, ids: vector<text>) -> boolean {
+  // `(@FR-N-Shape)`: `T?` admits only a nullable spelling, the two peeled together.
+  match general {
+    TyOptional { inner: g } => {
+      return match specific {
+        TyOptional { inner: sp } => pattern_instance(e, g, sp, vars, ids),
+        _ => false
+      };
+    },
+    _ => {}
+  }
+  h = el_types::type_var(e, general);
+  if h >= 0 {
+    id = atom_identity(e, specific);
+    if id == "" {
+      return false;
+    }
+    for v in vars {
+      if v == h {
+        return (ids[v#index] ?? "") == id;
+      }
+    }
+    vars += [h];
+    ids += [id];
+    return true;
+  }
+  gc = type_children(general);
+  sc = type_children(specific);
+  if len(gc) == 0 || len(sc) == 0 {
+    gid = atom_identity(e, general);
+    return (len(gc) == 0) == (len(sc) == 0) && gid != "" && gid == atom_identity(e, specific);
+  }
+  if !same_former(general, specific) {
+    return false;
+  }
+  for g in gc {
+    if !pattern_instance(e, g, sc[g#index] ?? ir::TyVoid, vars, ids) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: data.rs key_identity
+// `identity` with a type variable spelled by its placeholder's name, as Rust spells any declared
+// type: the opaque atom `pattern_instance` compares.  Changed: `identity` answers "" for a
+// variable, which this port uses to mean "no key".
+fn atom_identity(e: el::El, t: ir::TypeT) -> text {
+  h = el_types::type_var(e, t);
+  if h >= 0 {
+    return el::def(e, h).name;
+  }
+  match t {
+    TyOptional { inner } => {
+      sp = atom_identity(e, inner);
+      if sp == "" { "" } else { "{sp}?" }
+    },
+    TyVector { inner } => {
+      sp = atom_identity(e, inner);
+      if sp == "" { "" } else { "vector<{sp}>" }
+    },
+    _ => identity(e, t)
+  }
+}
+
+// port: dispatch.rs position_bounds
+// The interfaces bounding the type variables a parameter type mentions, by name, appended to
+// `out`.  Changed: Rust reads `type_var_bound_keys`; the elaborator keeps a variable's bounds on
+// its placeholder, which is the same set.
+fn position_bounds(e: el::El, t: ir::TypeT, out: vector<text>) {
+  h = el_types::type_var(e, el_types::base(t));
+  if h >= 0 {
+    for b in el::def(e, h).bounds {
+      nm = el::def(e, b).name;
+      if !out.contains(nm) {
+        out += [nm];
+      }
+    }
+  }
+  for c in type_children(t) {
+    position_bounds(e, c, out);
+  }
+}
+
+// `Parser::select_overload` over the program's set `set` for a call with these argument types:
+// the unique most specific member that takes them (`@FR-Disp-Select`), or -1.  On the first pass
+// an argument not typed yet decides nothing; on the second each undecided call is refused by
+// name — Rust answers it with a diagnostic.  Where an argument held at a struct enum meets a
+// member naming one of its variants, the call reaches the run-time dispatcher instead
+// (`dynamic_dispatcher`), made at `pos`, the call's position.
+// The overload set `name` is in library `source` (a qualified call's), or -1.
+pub fn source_set(e: el::El, source: integer, name: text) -> integer {
+  set = el::source_nr(e, source, name);
+  if set >= 0 && el::def(e, set).def_type == el::DT_DYNAMIC { set } else { -1 }
+}
+
+// `only`: a qualified call's library, whose own members alone it reaches (-1: every member).
+pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos: ir::Position, only: integer = -1) -> integer {
+  args = routed(types);
+  for t in args {
+    if !(el_types::base(t) is TyNull) && identity(e, t) == "" {
+      // An argument typed `Unknown` is one already refused where it was read.
+      if !e.first_pass && !el_types::is_unknown(t) {
+        el::refuse(e, "a call of an overload set with an argument of this type: {el_expressions::type_kind(t)}");
+      }
+      return -1;
+    }
+  }
+  if len(e.type_vars) > 0 {
+    el::refuse(e, "a call of an overload set inside a generic");
+    return -1;
+  }
+  one = select_static(e, set, args, only);
+  if !e.first_pass {
+    // `dynamic_positions(…, nullable: fallback.is_some())`: a nullable position decides by
+    // variant only where the static types select a member, its null leaf.
+    decided = variant_positions(e, set, args, one >= 0);
+    if len(decided) > 0 && only >= 0 {
+      el::refuse(e, "a qualified call an enum's variant decides at run time");
+      return -1;
+    }
+    if len(decided) > 0 {
+      return dynamic_dispatcher(e, set, name, args, decided, pos, one);
+    }
+  }
+  if one < 0 && !e.first_pass {
+    el::refuse(e, if one == -1 { "a call no member of an overload set takes" } else { "a call two members of an overload set take" });
+  }
+  if one < 0 { -1 } else { one }
+}
+
+// `select_overload_from`: the unique minimal member taking `args`; -1 for none, -2 for two.
+fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>, only: integer = -1) -> integer {
+  taking: vector<Ranked> = [];
+  for a in el::def(e, set).attributes {
+    match a.typedef[0] {
+      TyRoutine { n } => {
+        if only >= 0 && el::def(e, n).source != only {
+          continue;
+        }
+        r = definition_ranks(e, n, args);
+        if r != null {
+          taking += [Ranked { d: n, ranks: r! }];
+        }
+      },
+      _ => {}
+    }
+  }
+  // The minimal members: those no other taking member is strictly better than.
+  minimal: vector<integer> = [];
+  for a in taking {
+    beaten = false;
+    for b in taking {
+      if strictly_better(e, b, a) {
+        beaten = true;
+      }
+    }
+    if !beaten {
+      minimal += [a.d];
+    }
+  }
+  if len(minimal) == 0 { -1 } else if len(minimal) > 1 { -2 } else { minimal[0]! }
+}
+
+// port: dispatch.rs dynamic_positions
+// Each argument held at a struct enum where some member names one of that enum's variants at that
+// position — the positions whose run-time variant decides the call (`@FR-Disp-Dynamic`).  A
+// nullable position counts only with a fallback (`nullable`), the member its null reaches.
+fn variant_positions(e: el::El, set: integer, args: vector<ir::TypeT>, nullable: boolean) -> vector<integer> {
+  out: vector<integer> = [];
+  for t in args {
+    if t is TyOptional && !nullable {
+      continue;
+    }
+    en = match el_types::base(t) { TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
+    if en < 0 {
+      continue;
+    }
+    for a in el::def(e, set).attributes {
+      m = match a.typedef[0] { TyRoutine { n } => n, _ => -1 };
+      if m >= 0 && variant_of(e, visible_params(e, m)[t#index] ?? ir::TyVoid, ir::TyEnum { n: en, is_ref: true, dep: [] }) && !out.contains(t#index) {
+        out += [t#index];
+      }
+    }
+  }
+  out
+}
+
+// `Parser::dynamic_dispatcher` / `build_specialisation`: the function `n_<name>__dyn_<spelling>`
+// a call whose run-time variants decide it reaches — one parameter per argument (an enum held
+// position as its enum), and for every tuple of variants at those positions a tag test that
+// returns the member `Disp-Select` picks for the tuple's types; the result type's null last.
+// Made once per spelling, on the second pass.  A tuple no member or two members take, members of
+// different result types, or a member with hidden parameters is refused by name.
+fn dynamic_dispatcher(e: el::El, set: integer, name: text, args: vector<ir::TypeT>, positions: vector<integer>, pos: ir::Position, fallback: integer = -1) -> integer {
+  spelling = full_spelling(e, args);
+  key = "n_{name}__dyn_{spelling}";
+  existing = el::source_nr(e, e.source, key);
+  if existing >= 0 {
+    return existing;
+  }
+  enums: vector<integer> = [];
+  for p in positions {
+    enums += [match el_types::base(args[p] ?? ir::TyVoid) { TyEnum { n } => n, _ => -1 }];
+  }
+  // Every tuple of variants at the positions, the first position varying slowest, kept flat:
+  // tuple `k`'s variant at position `j` is `tuples[k * len(positions) + j]`.
+  counts: vector<integer> = [];
+  variants: vector<integer> = [];
+  for en in enums {
+    n = 0;
+    for x in e.b.data.definitions {
+      if x.def_type == el::DT_ENUM_VALUE && x.parent == en {
+        variants += [x#index];
+        n += 1;
+      }
+    }
+    counts += [n];
+  }
+  total = 1;
+  for c in counts {
+    total *= c;
+  }
+  tuples: vector<integer> = [];
+  leaves: vector<integer> = [];
+  for k in 0..total {
+    rest = total;
+    first = 0;
+    chosen: vector<integer> = [];
+    for p in positions {
+      c = counts[p#index]!;
+      rest = (rest / c)!;
+      v = variants[first + ((k / rest)! % c)!]!;
+      first += c;
+      tuples += [v];
+      chosen += [v];
+    }
+    // The tuple's argument types: each decided position as its variant.  Built whole — an
+    // element write into a copy of `args` was lost here (handoff 2026-11-08 c, not reduced).
+    leaf_args = [for t in args { if positions.contains(t#index) { variant_arg(positions, chosen, t#index) } else { t } }];
+    m = select_static(e, set, leaf_args);
+    if m < 0 {
+      el::refuse(e, "a call an overload set decides by variant with a variant tuple no member, or two, takes");
+      return -1;
+    }
+    leaves += [m];
+  }
+  // `null_leaf`: where a decided position may hold null, the member the static types select
+  // takes it, after every tag test.
+  null_leaf = -1;
+  for p in positions {
+    if (args[p] ?? ir::TyVoid) is TyOptional {
+      null_leaf = fallback;
+    }
+  }
+  every = if null_leaf >= 0 { leaves + [null_leaf] } else { leaves };
+  ret = el::def(e, leaves[0]!).returned[0] ?? ir::TyVoid;
+  for m in every {
+    if identity(e, el::def(e, m).returned[0] ?? ir::TyVoid) != identity(e, ret) {
+      el::refuse(e, "a call decided by variant whose members answer different types");
+      return -1;
+    }
+  }
+  null_ret = el_convert::null_of(e, ret);
+  if null_leaf < 0 && null_ret == null && !(ret is TyVoid) {
+    el::refuse(e, "a call decided by variant answering a type with no null");
+    return -1;
+  }
+  // A position decided by variant is declared as its enum; any other as the argument's type.  A
+  // nullable one beside a null leaf is `?` exactly where that leaf's parameter is.
+  declared: vector<ir::TypeT> = [];
+  for t in args {
+    dynamic = positions.contains(t#index);
+    if null_leaf >= 0 && (t is TyOptional) {
+      b = el_types::without_deps(el_types::base(t));
+      fa = visible_attr(e, null_leaf, t#index);
+      wants_null = fa != null && (fa!.typedef[0] ?? ir::TyVoid) is TyOptional;
+      declared += [if wants_null { ir::TyOptional { inner: b } } else { b }];
+    } else if dynamic {
+      declared += [el_types::without_deps(el_types::base(t))];
+    } else {
+      declared += [t];
+    }
+  }
+  c = el::add_def(e, key, pos, el::DT_FUNCTION);
+  for t in declared {
+    at = el::attribute("d{t#index}", t);
+    all_const = true;
+    for m in every {
+      if !(visible_attr(e, m, t#index) ?? el::attribute("", ir::TyVoid)).value_const {
+        all_const = false;
+      }
+    }
+    at.value_const = all_const;
+    e.b.data.definitions[c].attributes += [at];
+  }
+  // The members' hidden parameters (a result buffer, a text's work buffer), of the first member
+  // that has any: the dispatcher takes them as `__fwd_<k>` and hands them on to each member
+  // that has hidden parameters of its own.
+  hidden: vector<ir::Attribute> = [];
+  for m in every {
+    if len(hidden) == 0 {
+      hidden = [for a in el::def(e, m).attributes if a.hidden { a }];
+    }
+  }
+  for h in hidden {
+    fw = el::attribute("__fwd_{h#index}", h.typedef[0] ?? ir::TyVoid);
+    fw.value = h.value;
+    e.b.data.definitions[c].attributes += [fw];
+  }
+  el::set_returned(e, c, ret);
+  e.b.data.definitions[c].synthetic = "dynamic_dispatcher";
+  vars = el_vars::new_vars(key, pos.file);
+  dv: vector<integer> = [];
+  for t in declared {
+    v = el_vars::add_variable(vars, "d{t#index}", t);
+    el_vars::become_argument(vars, v);
+    dv += [v];
+  }
+  fwd: vector<integer> = [];
+  for h in hidden {
+    v = el_vars::add_variable(vars, "__fwd_{h#index}", h.typedef[0] ?? ir::TyVoid);
+    el_vars::become_argument(vars, v);
+    fwd += [v];
+  }
+  ls: vector<ir::Node> = [];
+  for k in 0..len(leaves) {
+    cond = ir::NdNull;
+    for p in positions {
+      v = tuples[k * len(positions) + p#index]!;
+      ord = match el::def(e, v).attributes[0]!.value[0] ?? ir::NdNull { NdEnum { ord } => ord, _ => 0 };
+      test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [ir::NdVar { n: dv[p]! }, ir::NdInt { n: 0 }])]), ir::NdInt { n: ord }]);
+      cond = if cond is NdNull { test } else { el_ir::v_if(cond, test, ir::NdBoolean { b: false }) };
+    }
+    has_hidden = len([for a in el::def(e, leaves[k]!).attributes if a.hidden { a }]) > 0;
+    // A member's parameters past the supplied ones take their defaults (`specialisation_call`'s
+    // omitted), then its hidden ones the forwarded buffers.
+    visible = [for a in el::def(e, leaves[k]!).attributes if !a.hidden { a }];
+    omitted = [for a in visible[len(dv)..] { a.value[0] ?? ir::NdNull }];
+    call = ir::NdCall { def_nr: leaves[k]!, args: [for v in dv { ir::NdVar { n: v } }] + omitted + if has_hidden { [for v in fwd { ir::NdVar { n: v } }] } else { [] } };
+    ls += [el_ir::v_if(cond, el_ir::v_block([ir::NdReturn { inner: call }], ir::TyVoid, "ret"), ir::NdNull)];
+  }
+  if null_leaf >= 0 {
+    has_hidden = len([for a in el::def(e, null_leaf).attributes if a.hidden { a }]) > 0;
+    visible = [for a in el::def(e, null_leaf).attributes if !a.hidden { a }];
+    omitted = [for a in visible[len(dv)..] { a.value[0] ?? ir::NdNull }];
+    ls += [ir::NdReturn { inner: ir::NdCall { def_nr: null_leaf, args: [for v in dv { ir::NdVar { n: v } }] + omitted + if has_hidden { [for v in fwd { ir::NdVar { n: v } }] } else { [] } } }];
+  } else {
+    ls += [ir::NdReturn { inner: null_ret ?? ir::NdNull }];
+  }
+  e.b.data.definitions[c].code = [el_ir::v_block(ls, ret, "dynamic_fn")];
+  e.b.data.definitions[c].variables = el_vars::stored(vars);
+  c
+}
+
+// The variant `chosen` holds for argument `i`, as that argument's type.
+fn variant_arg(positions: vector<integer>, chosen: vector<integer>, i: integer) -> ir::TypeT {
+  for p in positions {
+    if p == i {
+      return ir::TyReference { n: chosen[p#index] ?? -1, dep: [] };
+    }
+  }
+  ir::TyVoid
+}
+
+// Definition `d`'s `i`th declared (not hidden) attribute.
+fn visible_attr(e: el::El, d: integer, i: integer) -> ir::Attribute? {
+  n = 0;
+  for a in el::def(e, d).attributes {
+    if a.hidden {
+      continue;
+    }
+    if n == i {
+      return a;
+    }
+    n += 1;
+  }
+  null
+}

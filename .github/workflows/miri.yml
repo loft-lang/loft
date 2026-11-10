@@ -462,6 +462,12 @@ jobs:
             extra_filter: ' | test(deep_nesting_guard)'
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       # The sweep walks the language suite's programs too (@PLN193).
       - uses: ./.github/actions/checkout-suite
       - name: Install Rust nightly
@@ -618,6 +624,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
@@ -694,6 +705,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -773,6 +789,12 @@ jobs:
           - {sweep: asan, of: 8, shard: 7}
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       - uses: ./.github/actions/checkout-suite
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -790,7 +812,7 @@ jobs:
   c-sweep-platforms:
     # @nightly-class: unsound — the C backend answering other than the interpreter on macOS or Windows
     # @PLN203 C8 — `ci.yml`'s `c-sweep` on the other two hosts and their compilers: Apple clang,
-    # MinGW-w64 gcc (all three macro modes) and MSVC `cl` (the default mode: strict C99 is the
+    # MinGW-w64 gcc — MSYS2's, `.github/actions/windows-gcc` (all three macro modes) and MSVC `cl` (the default mode: strict C99 is the
     # gcc legs' question, and `cl` holds no `-pedantic`).  Six shards each: measured 2026-10-30,
     # a sixth of the corpus is ~9 min on macOS, ~26 min on MinGW, ~11 min on `cl` in one mode.
     # `--verbose`: a differing program's two outputs are in the log, the one place a host this
@@ -807,6 +829,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/checkout-suite
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      - uses: ./.github/actions/windows-gcc
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Build the release loft binary
@@ -815,10 +840,10 @@ jobs:
       - name: Sweep this shard (Apple clang)
         if: matrix.leg == 'macos'
         run: python3 scripts/c_sweep.py --verbose --shard ${{ matrix.shard }}/6
-      - name: Sweep this shard (MinGW-w64 gcc)
+      - name: Sweep this shard (MSYS2 MinGW-w64 gcc)
         if: matrix.leg == 'mingw'
         shell: bash
-        run: LOFT_CC=gcc python scripts/c_sweep.py --verbose --shard ${{ matrix.shard }}/6
+        run: python scripts/c_sweep.py --verbose --shard ${{ matrix.shard }}/6
       # `cl` needs a developer prompt's environment: the newest Visual Studio's, found as
       # vswhere finds it.
       - name: Sweep this shard (MSVC cl)
@@ -837,6 +862,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -894,6 +924,11 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -1033,6 +1068,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       # Nightly is needed for `-Zsanitizer=address` on the GENERATED native binary,
       # and it must build the runtime rlib TOO — see the build step below for why.
       - name: Install Rust stable + nightly
@@ -1120,6 +1160,12 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       # The sweep walks the language suite's programs too (@PLN193).
       - uses: ./.github/actions/checkout-suite
 
@@ -1204,6 +1250,12 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       # The sweep walks the language suite's programs too (@PLN193).
       - uses: ./.github/actions/checkout-suite
 
@@ -1292,6 +1344,11 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -1529,6 +1586,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
+
       # The suite's programs guard decisions too (@PLN193): without it every decision whose
       # only guard moved there with the corpus reads as unguarded.
       - uses: ./.github/actions/checkout-suite

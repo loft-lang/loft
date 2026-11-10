@@ -17,12 +17,12 @@ use crate::variables::Function;
 /// or by then handed to someone else, and the buffer's own exit free released it a second time.
 /// So once the owner has taken the store, the buffer is set to the null sentinel after its last
 /// use in that block, and its next mint is a fresh store (`@FR-O-Detach`: after the reads).
-pub(super) fn detach_owned_buffers(data: &mut Data) {
+pub(super) fn detach_owned_buffers(data: &mut Data, fresh: &[u32]) {
     let sentinel = data.def_nr("OpNullRefSentinel");
     if sentinel == u32::MAX {
         return;
     }
-    for d_nr in 0..data.definitions() {
+    for &d_nr in fresh {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
             continue;
         }

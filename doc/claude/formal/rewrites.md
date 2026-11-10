@@ -194,7 +194,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Counter)` | `R-Counter` ir, c, native |
 | `(R-CtorLiteral)` | `R-CtorLiteral` parse |
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
-| `(R-DecodeView)` | `R-DecodeView` native · `/structure` native |
+| `(R-DecodeView)` | counted; admitted on no bench program |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
 | `(R-Demote)` | `R-Demote` parse · `/place` parse |
 | `(R-Destination)` | `R-Destination` c, native |
@@ -222,7 +222,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-FrameHeadroom)` | not counted — executor: one capacity test per frame entry |
 | `(R-Fuse)` | `R-Fuse` interp · `/field` interp · `/jump` interp · `/tag` interp · `/text` interp |
 | `(R-GroupPush)` | `R-GroupPush` native |
-| `(R-GuardFree)` | `R-GuardFree` native |
+| `(R-GuardFree)` | `R-GuardFree` c, native |
 | `(R-GuardedChain)` | `R-GuardedChain` c, native · `/operators` c, native · `/versions` c |
 | `(R-HandOver)` | `/rotate` c, native |
 | `(R-Header)` | `R-Header` c, native · `/apart` c, native · `/apart-param` c, native · `/function` native · `/grown` c · `/grown-held` c · `/kept` native · `/kept-growth` c · `/kept-twin` c, native · `/narrow` c · `/rebind` c · `/text` c, native |
@@ -289,7 +289,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SingleUse)` | `R-SingleUse` parse |
 | `(R-SliceArg)` | `/range` ir |
 | `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
-| `(R-SliceInto)` | `R-SliceInto` c |
+| `(R-SliceInto)` | `R-SliceInto` c · `/transient` c |
 | `(R-SpecChain)` | `R-SpecChain` c |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
@@ -298,12 +298,13 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-StickySum)` | `R-StickySum` c |
 | `(R-StreamWalk)` | `R-StreamWalk` native |
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
+| `(R-TableHandle)` | `R-TableHandle` c |
 | `(R-Tabulate)` | `R-Tabulate` c |
 | `(R-TailSelf)` | `R-TailSelf` parse |
 | `(R-TextBorrow)` | `R-TextBorrow` interp, c, native · `/tested` c, native |
 | `(R-TextClear)` | `R-TextClear` native |
 | `(R-TextLen)` | `R-TextLen` parse |
-| `(R-TextRun)` | `R-TextRun` ir |
+| `(R-TextRun)` | counted; admitted on no bench program |
 | `(R-Transient)` | `R-Transient` c |
 | `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/remove` c · `/text` c, native |
 | `(R-TypedRead)` | `R-TypedRead` c, native · `/float` c |
@@ -2696,10 +2697,10 @@ and otherwise the bits of the processor's operator, and none of them reports any
 with no event the plain chain IS the checked answer, and with one the checked chain answers
 itself.  What moves is the dependency chain: a checked operator compiles to selects on the
 value it produces, and a loop carrying that value (`acc = ((acc ^ i) + (i & 7)) & M`) waits on
-them every trip.  Measured (C ÷ Rust): sum_loop 2.96× → 1.00×, index_read 3.01× → 1.00×,
-binary_read 3.29× → 1.89×, binary_map 1.78× → 0.84×.  The product clause: with the overflow
-builtin, `par_reduce`'s `h * 1103515245` cost a high multiply on its chain (1.90× → 2.58×); with
-it, 1.85×.  `LOFT_NO_SPEC_CHAIN=1`; guard
+them every trip.  A product by a literal keeps `loft_mul` because the overflow builtin would put a
+high multiply on the chain; the measurements are in
+[rewrites-history.md § (R-SpecChain) measured](rewrites-history.md#r-specchain-measured).
+`LOFT_NO_SPEC_CHAIN=1`; guard
 `loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-chain-runs-plain-and-falls-back-on-any-null.loft`.
 
 ### A counted loop's index chains run plain behind a guard
@@ -3997,6 +3998,56 @@ digest and inlined reference accessors, bench 23 `lru_mixed` on the ship lane: g
 the filed clause's (`FnWriter::filed_record`, census `R-SameRead/filed`)
 `loft-suite/rules/rewrites/R-SameRead/a-lookup-of-the-key-just-filed-is-the-record.loft`.
 
+**The insert, in the C runtime.**  `loft_hash_insert` files a record under one integer key in
+ONE probe (`loft_h_insert_int_fast`) when the table is tagged, holds arena or record entries,
+is not due to grow, and the walk from the key's home meets an empty bucket before the key or
+the record itself.  It writes what the general path writes there (`loft_h_probe_for_insert`'s
+free bucket, then `loft_h_add_at` without a grow).  A duplicate, the record already filed, a
+grow, an inline table or a locked store take the general path.  The falsifier is
+`-DLOFT_KEYED_VERIFY`: after each one-probe insert the general lookup must find the record it
+filed, or the run stops naming both.
+
+### Several keyed operations on one hash share one decoded table
+
+```
+  (R-TableHandle) the keyed operations of one function on one hash place P — a variable,
+                  or a field chain over one, of a hash with ONE 8-byte integer key whose
+                  elements a link can name (records of their own, a tagged table) —
+                  share a table handle when two or more of them name P, or one sits in
+                  a loop: the lookup, the length, the typed removal and the insert.  The
+                  handle holds P's decoded table (claim, slot count, seed, entries) and
+                  answers only while P is the place it was resolved for, P's store has
+                  the table generation it was resolved under, and P's collection slot
+                  names the claim it was resolved from; any other use resolves it again,
+                  and a table it does not cover (absent, inline, untagged) takes the
+                  general operation.  Every runtime path that changes a table's claim,
+                  size, slot width, entry kind, seed or entry directory, or replaces a
+                  store's content, gives that store a new table generation.
+```
+
+**In words.**  Every keyed operation re-derived its table from the record before it probed —
+the collection slot, the claim, the header, the seed, the entry directory — and bench 23's
+`put` makes four on `c.nodes`.  Only a hash of linked elements takes a handle: an element the
+table owns lives inline, a table the handle does not cover, and a handle there only adds its
+check to the general operation.  The handle is checked, not proved: it is never wrong, only
+stale, so the writer's one decision (which operations share a handle) is about speed, and no
+statement between two uses has to be shown to leave the table alone.  What the check rests on
+is the generation: a table emptied and made again can take the freed claim number with a new
+seed, and a store freed and made again takes the same slot and the same layout, so the slot
+check alone passes a stale handle.  `loft_h_set_header` is the only writer of the header
+fields, and it, `loft_h_install_table`, store creation and in-place clear (`loft_st_init`),
+`loft_st_resync`, binding a store to a file and `loft_swap_in` give the store a new generation.
+The handle's address never leaves the inlined code (helpers are handed copies): escaped, the
+compiler reloads every field after each call and the handle costs more than it saves.  Switch
+`LOFT_NO_TABLE_HANDLE`; census `R-TableHandle` (one per handle declared); the falsifier is
+`-DLOFT_KEYED_VERIFY`, under which every live handle is compared with a fresh resolve.  Cell
+`tests/scripts/159-table-handle.loft` (t9 falsified: with no generation a stale handle hashes
+the new table's keys with the old seed, 233 for 250); guards `tests/table_handle.rs` (no raw
+header write, every store-content replacement classified; the writer's sharing pinned).  Sites:
+`src/c/body/table_handle.rs` (`places`, `FnWriter::table_handle`), the four emission sites in
+`src/c/body/keyed.rs`, `loft_hh` in `src/c/loft_hash.h`, `loft_h_reshaped` in
+`src/c/loft_store.h`.  Design: `bench/portal/analysis/table-handle.md`.
+
 ### A vector its caller walks once is never built
 
 ```
@@ -4802,8 +4853,10 @@ panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
                  is reachable — over the closure of its call graph, cycles INCLUDED:
                  no fn-ref call, no `parallel`, no `yield`, no `OpFreeRefOrHandUp`,
                  no callee without a loft body that is a user's native function or
-                 takes a fn-ref — constructs no `FnRefBufGuard`, in every tier.  The
-                 depth count stays: it is the recursion cap both backends share.
+                 takes a fn-ref — carries no fn-ref buffer guard: native constructs
+                 no `FnRefBufGuard`, in every tier, and the C takes no `loft_nfnrefs`
+                 mark and runs no `loft_fnref_release`.  The depth count stays: it is
+                 the recursion cap both backends share.
 ```
 
 **In words.**  @PLN158 round 3, C1.  A `--native` frame entered with a `FnRefBufGuard`
@@ -4826,8 +4879,10 @@ against the machine's stack would fault at a machine-dependent depth — the dis
 `LOFT_TRACE_GUARD_FREE` (each frame that keeps its guard, naming the registrant); scored on
 the LEAK channel — cells `tests/scripts/158-guard-free.loft` g1–g9 under
 `LOFT_NATIVE_LEAK_CHECK=1` / `LOFT_STRICT_STORES=1` (falsified by answering `true` for every
-frame: g5's three delivered buffers leak), pins `tests/guard_free.rs`.  Sites: `Output::registers_buffers`, `Output::is_guard_free`, the guard
-line in `Output::output_function`'s prelude.
+frame: g5's three delivered buffers leak), pins `tests/guard_free.rs`.  The C registers only in its dispatch arms (`loft_fnref_buf`,
+`loft_fnref_mint`), a subset of native's registrants, so the one verdict serves both writers.
+Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the guard line in
+`Output::output_function`'s prelude, and the C's `framed`.
 
 ### A fast path inlines; its cold half is outlined
 
@@ -5334,7 +5389,12 @@ line in `Output::output_function`'s prelude.
                  @PLN219's hand pricing −10 % to −21 %.  Switch `LOFT_NO_THREAD_FACT=1`.
 
   (R-Inline)     a loft function the C writes in at most twelve statements is declared
-                 `static inline`, its frame wrapper with it.  The hint changes no
+                 `static inline`, its frame wrapper with it, and its body is ALWAYS
+                 inlined into that wrapper (`LOFT_HOT_INLINE`): wrapper and body are one
+                 unit, which the compiler takes into a caller or not as a whole.  Hinted
+                 alike, gcc could take the wrapper into a loop and call the body out of
+                 line, every argument handed over twice (stage `pack_instances` +25 %).  The
+                 hint changes no
                  observable behaviour; what it moves is the C compiler's inlining
                  budget, so a small helper a hot loop calls — a push through an
                  overwrite-or-append helper, an accessor — is taken into its caller,
@@ -5620,6 +5680,15 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  owes the vector's own.  A view of the LITERAL does not — it names
                  the literal's own field under the move and under the copy alike,
                  so a cursor matched after the move (`match cur { … }`) is admitted.
+                 THE BUILD-INTO CLAUSE: `a.f = y` for a vector field, where `y` owns
+                 its store and is dead after the assignment, may build `y` IN `a.f` —
+                 `a.f` cleared where `y`'s build begins, no copy at the assignment —
+                 only where nothing in that build names `a.f`'s container: not `a`
+                 itself (`s.v = s.v[1..]` slices the field it is about to replace), not
+                 a local whose deps reach `a`'s store (`l = a.f; y = [for x in l
+                 { … }]` walks the field after the clear emptied it), and no rebind of
+                 `a` (the build would land in the record `a` named before it).  Any of
+                 them keeps the build apart and the copy at the assignment.
   (R-ExitVector) a LOCAL VECTOR whose wrapper is minted once and that reaches the
                  function's exit only inside the literal built into the return
                  buffer — `xs: vector<T> = []; …; return Out { xs: xs, … }` — has its

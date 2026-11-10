@@ -33,7 +33,7 @@ CVE-2026-113783 = "fixed: in v6.0.3, our pin (lwIP dns_lookup() bounds the cache
 [thirdparty.badge-bsp]
 kind       = "sdk"
 source     = "esp-registry:badgeteam/badge-bsp"
-version    = "2.0.0"
+version    = "2.0.3"
 pinned     = "src/esp_app.rs:BSP"
 # 2.0 for the features: mipi_dsi_abstraction 2.0 drives the boards' second display panel
 # (SW39480800PN03-01-1); the BSP's own code is unchanged from 1.6.4.  Measured against 1.6.4 on

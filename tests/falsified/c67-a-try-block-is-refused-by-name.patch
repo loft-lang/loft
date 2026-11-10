@@ -1,8 +1,8 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index e02d9737d..f985f94cf 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -674,41 +674,6 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 054f896f2..27761a0ca 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -872,41 +872,6 @@ impl Parser {
                  .starts_with("n___lambda_")
      }
  
@@ -44,10 +44,10 @@ index e02d9737d..f985f94cf 100644
      pub(crate) fn parse_block(&mut self, context: &str, val: &mut Value, result: &Type) -> Type {
          // loft#1540 — an arm handed its SIBLING's function type converts with that type's
          // `const` parameters set aside: the join is the parameters BOTH arms declare `const`
-@@ -877,35 +842,6 @@ impl Parser {
-             if self.lexer.peek_token("}") {
+@@ -1105,35 +1070,6 @@ impl Parser {
                  break;
              }
+             self.state_trace("stmt");
 -            // @C67 — loft has no `try { … } catch { … }`, and was refusing it as a bare
 -            // "Expect token ;" that named neither the decision nor the spelling to use.  Said
 -            // by name, then both blocks are skipped so nothing cascades.  Only `try` directly

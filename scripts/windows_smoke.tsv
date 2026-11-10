@@ -65,6 +65,7 @@ scripts/native_call_census.py	--help
 scripts/native_ratio.sh	--help
 scripts/nullable_road.py	--help
 scripts/op_census.py	--help
+scripts/parser_state.py	--help
 scripts/perf_check.py	--help
 scripts/perf_trend.py	--help
 scripts/pr_watch.py	--help
@@ -110,6 +111,7 @@ selfhost/bench/measure.py	--help
 selfhost/compare/compare.py	--help
 selfhost/cover/census.py	--help
 selfhost/front/elab_gate.py	--help
+selfhost/front/state_diff.py	--help
 selfhost/front/tokens_gate.py	--help
 tests/comparisons/scripts/replay_tool.sh	tests/comparisons/scripts/bin/true
 tools/audience-demo/run-demo.sh	--help

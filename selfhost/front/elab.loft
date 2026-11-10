@@ -71,10 +71,13 @@ fn program(image: text, f: text, std_image: text) {
   e.source = el::MAIN_SOURCE;
   e.first_pass = true;
   e.line = 0;
+  el::reset_uses(e);
   el_definitions::elab_file(e, tree ?? 0);
+  el_definitions::resolve_adopted_stubs(e);
   el_definitions::reserve_late_return_buffers(e);
   e.first_pass = false;
   e.line = 0;
+  el::reset_uses(e);
   el_definitions::elab_file(e, tree ?? 0);
   // `resolve_deferred_unknowns`: the instances made above their template are filled now.
   el_expressions::rebuild_stale(e);
@@ -85,6 +88,8 @@ fn program(image: text, f: text, std_image: text) {
   // Then `synth_drop_cascades`: the layout-upgrade drain first, then the drop cascades.
   el_refhome::check_stored_reference_homes(e);
   el_refhome::check_later_fresh_binds(e);
+  // `synth_drop_cascades` makes the copy cascades first (`synth_copy_cascades`).
+  el_drop::synth_copy_cascades(e);
   el_upgrade::synth_upgrade_drain(e);
   el_drop::synth_drop_cascades(e);
   print(report::defs_report(e.b, upto, templates: env_variable("LOFT_DEFS_TEMPLATES") == "1"));

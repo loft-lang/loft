@@ -417,6 +417,12 @@ not yet published), where the pixel-by-pixel path took 63 ms.
   does on the CPU; the chip's ROM has an inflater (`tinfl_decompress`) lodepng could use; the
   runtime's hash seed reads `/dev/urandom`, which ESP-IDF does not have, where the hardware
   random number generator is (`esp_fill_random`).
+- `imaging`'s lodepng is 51–73 KB of flash at `-Os` (51 with its unused parts compiled out).
+  An owned C99 PNG codec of 12 KB — the same decoded bytes on the imaging fixtures, encoded
+  files within 5 %, clean under ASan and UBSan on 100k corrupted files — is kept at
+  `loft-libs-graphics` tag `archive/firewall02-imaging-c99`; take it if the flash budget needs
+  the room.  It reads files itself, so only its codec moves behind `c/imaging_png.c`'s
+  memory-in, memory-out calls, and it accepts some corrupt files lodepng refuses.
 - `loft_esp_nvs` (`loft_esp.h`) erases the whole NVS partition when it is full or of a newer format.
   That partition is the launcher's, with its Wi-Fi networks and settings; an app must never erase it
   ([@PLN213](https://github.com/loft-lang/plans/issues/213) T0.4).

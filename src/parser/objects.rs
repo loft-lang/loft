@@ -6010,26 +6010,24 @@ impl Parser {
                 if Self::seeds_lambda_hint(&td) || crate::parser::vectors::is_collection(&td_base) {
                     self.expected = td.clone();
                 }
-                // A COLLECTION member of a literal rebuilt into a whole local is written through
-                // its field after the re-init, so the #330 hoist below cannot reach it: watch
-                // for the author naming the local inside it (see `Parser::rebuild_watch`).
+                // A COLLECTION member of a literal rebuilt into a whole local — a struct literal
+                // of its type or a variant of its enum (`@FR-R-InPlaceLiteral`'s variant clause)
+                // — is written through its field after the re-init, so the #330 hoist below
+                // cannot reach it: watch for the author naming the local, or a view of it,
+                // inside it (see `Parser::rebuild_watch`).
                 let watch = match self_read_root {
                     Some((xv, off))
                         if primed
                             && off == crate::use_analysis::ANY_FIELD
                             && crate::parser::vectors::is_collection(&td_base)
-                            && matches!(self.vars.tp(xv).base(), Type::Reference(d, _) if *d == td_nr) =>
+                            && (matches!(self.vars.tp(xv).base(), Type::Reference(d, _) if *d == td_nr)
+                                || self.is_variant_of_local(xv, td_nr)) =>
                     {
                         Some(xv)
                     }
                     _ => None,
                 };
-                let outer_watch = watch.map(|xv| {
-                    (
-                        std::mem::replace(&mut self.rebuild_watch, xv),
-                        std::mem::replace(&mut self.rebuild_watch_hit, false),
-                    )
-                });
+                let outer_watch = watch.map(|xv| self.arm_rebuild_watch(xv));
                 let value_pos = *self.lexer.peek_pos();
                 let mut t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
                 if let Some((w, hit)) = outer_watch {
@@ -6659,6 +6657,19 @@ impl Parser {
             && self.is_variant_of_local(v_nr, td_nr)
     }
 
+    /// Watch `dest` while a member of a literal rebuilt into it is parsed: `dest` itself and
+    /// every variable viewing its store — the set `reads_place` asks of a staged field, so the
+    /// two roads agree on what reads the destination (`@FR-R-InPlaceLiteral`).  Answers the
+    /// outer watch, which the caller puts back.
+    fn arm_rebuild_watch(&mut self, dest: u16) -> (Vec<u16>, bool) {
+        let mut watch: Vec<u16> = self.vars.store_viewers(dest).into_iter().collect();
+        watch.push(dest);
+        (
+            std::mem::replace(&mut self.rebuild_watch, watch),
+            std::mem::replace(&mut self.rebuild_watch_hit, false),
+        )
+    }
+
     fn is_variant_of_local(&self, v_nr: u16, td_nr: u32) -> bool {
         self.data.def_type(td_nr) == DefType::EnumValue
             && matches!(self.vars.tp(v_nr).base(), Type::Enum(d, true, _) if *d == self.data.def(td_nr).parent)
@@ -6828,7 +6839,14 @@ impl Parser {
             // captured local ROUTES to the fresh-buffer arm instead of falling between the
             // two — without it the field initialisers write into uninitialised storage,
             // which is the failure that branch's own comment describes.
-            if self.vars.owns_store(*v_nr) && type_matches && !self.vars.rebind_must_mint(*v_nr) {
+            // `@FR-R-InPlaceLiteral` — and only a local no earlier bind left viewing another store
+            // (`viewed_by_an_earlier_bind`): its type keeps the last bind's deps alone.
+            let viewed_before = self.vars.viewed_by_an_earlier_bind(*v_nr);
+            if self.vars.owns_store(*v_nr)
+                && type_matches
+                && !self.vars.rebind_must_mint(*v_nr)
+                && !viewed_before
+            {
                 // #330: remember the in-place target — a field initialiser
                 // that READS it must be hoisted ABOVE the OpDatabase re-init
                 // (see the hoist in parse_object_field and the splice after
@@ -6906,6 +6924,7 @@ impl Parser {
                 }
             } else if (!type_matches
                 || self.vars.rebind_must_mint(*v_nr)
+                || viewed_before
                 || (!self.vars.is_independent(*v_nr) && !self.vars.is_compiler_generated(*v_nr)))
                 && !self.first_pass
             {
@@ -7333,12 +7352,7 @@ impl Parser {
                 // computed before the update stores, `(E-Asgn)`), but in place the bind and
                 // the earlier writes have already replaced it: watch for it, as a rebuilt
                 // literal's collection member does (`Parser::rebuild_watch`).
-                let outer_watch = (!fresh).then(|| {
-                    (
-                        std::mem::replace(&mut self.rebuild_watch, dest),
-                        std::mem::replace(&mut self.rebuild_watch_hit, false),
-                    )
-                });
+                let outer_watch = (!fresh).then(|| self.arm_rebuild_watch(dest));
                 self.parse_assign_op(
                     &mut target,
                     "=",
@@ -7668,6 +7682,54 @@ impl Parser {
             "NullableSome",
         );
         enum_tp
+    }
+
+    /// The work-ref a struct-enum VARIANT default builds in, when it builds in one of its own:
+    /// `mode: Mode = Idle` (an `EnumUnitLit` block) and `hint: Ty = TyInt { n: 4 }` (an `Object`
+    /// block of the variant) each close on the work-ref they fill.  `None` for every other
+    /// default, an `Object` built in place through the record (`Var(0)`) included.
+    ///
+    /// The default is parsed once, in the struct, where each such default takes the NEXT
+    /// work-ref of the struct's own table — the first `Var(0)`, the second `Var(1)` — so at a
+    /// construction site that number names whatever local it is there.
+    pub(crate) fn variant_default_ref(val: &Value) -> Option<u16> {
+        let Value::Block(b) = val.unspan() else {
+            return None;
+        };
+        let Some(Value::Var(w)) = b.operators.last().map(Value::unspan) else {
+            return None;
+        };
+        match b.name {
+            "EnumUnitLit" => Some(*w),
+            "Object" if *w != 0 => Some(*w),
+            _ => None,
+        }
+    }
+
+    /// Re-home a variant default ([`Self::variant_default_ref`]) from its struct-table work-ref
+    /// `own` to `fresh`, a work-ref of the construction site, and point a `$` read (`Var(0)`)
+    /// at the `record`.  Re-homing only `Var(0)` left a second default building into local 1
+    /// — in `fn new_v(name: text, file: text) -> V { V { name: name, file: file } }`, the
+    /// parameter `file`: the interpreter crashed reading it after, the C refused the program
+    /// and rustc did not compile it.  The work-ref's `Set` is re-homed with its reads; left
+    /// alone it nulled local 2, the return buffer.
+    pub(crate) fn rehome_variant_default(
+        val: Value,
+        own: u16,
+        fresh: u16,
+        record: &Value,
+    ) -> Value {
+        let mut val = val;
+        val.map_nodes(&mut |n| match n {
+            Value::Var(v) if *v == own => *n = Value::Var(fresh),
+            Value::Set(v, _) if *v == own => *v = fresh,
+            _ => {}
+        });
+        if own == 0 {
+            val
+        } else {
+            Self::replace_record_ref(val, record)
+        }
     }
 
     /// Recursively replace `Value::Var(0)` (the record placeholder used in field default
@@ -8234,10 +8296,11 @@ impl Parser {
                 if default == Value::Null {
                     default = to_default(&tp, &self.data);
                 }
-            } else if matches!(&default, Value::Block(b) if b.name == "EnumUnitLit") {
+            } else if let Some(own) = Self::variant_default_ref(&default) {
                 // @PLN22 Phase 1 — a mixed struct-enum unit-variant default
                 // (`mode: Mode = Idle`) is a SELF-CONTAINED allocation block whose
-                // `Var(0)` is its OWN work-ref, not the record placeholder.  Re-home
+                // closing `Var(w)` is its OWN work-ref (`Var(0)` for the struct's first
+                // such default only), not the record placeholder.  Re-home
                 // it to a FRESH work-ref in THIS construction context: leaving
                 // `Var(0)` for the `replace_record_ref(_, code)` below would rewrite
                 // it to the struct's own ref, so the default's `OpDatabase`
@@ -8248,7 +8311,7 @@ impl Parser {
                 // freed at scope end (NOT skip_free, unlike the `s = Idle`
                 // assignment case where the LHS owns the store directly).
                 let fresh = self.vars.work_refs(&tp, &mut self.lexer);
-                default = Self::replace_record_ref(default, &Value::Var(fresh));
+                default = Self::rehome_variant_default(default, own, fresh, code);
             } else {
                 default = Self::replace_record_ref(default, code);
             }

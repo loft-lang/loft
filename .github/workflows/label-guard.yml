@@ -73,8 +73,14 @@ jobs:
       # a body is judged by must be the one that is merged.
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/actions/windows-gcc
           sparse-checkout-cone-mode: false
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on a Linux or macOS leg; the `if` keeps an older checkout's missing action unread.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
       - uses: actions/github-script@v7
         with:
           script: |

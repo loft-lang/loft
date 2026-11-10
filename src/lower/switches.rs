@@ -229,6 +229,10 @@ pub struct Switches {
     /// again, as before `@FR-R-GuardFree`; the bisect step for a leaked or doubly-freed
     /// fn-ref return buffer in a program with recursion.
     pub guard_free_disabled: bool,
+    /// `LOFT_NO_TABLE_HANDLE=1` — the C's keyed operations each decode their table again, as
+    /// before `@FR-R-TableHandle`; the bisect step for a wrong keyed answer in a function that
+    /// makes several keyed operations on one hash, or one in a loop.
+    pub table_handle_disabled: bool,
     /// `LOFT_NO_WRITE_HOIST=1` — classify in-place element writes as hoist
     /// blockers again (@PLN157 P4a), so a loop that writes keeps the pre-885
     /// per-element form for everything.  One step finer than
@@ -317,6 +321,7 @@ impl Switches {
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
             guard_free_disabled: std::env::var("LOFT_NO_GUARD_FREE").is_ok_and(|v| v != "0"),
+            table_handle_disabled: std::env::var("LOFT_NO_TABLE_HANDLE").is_ok_and(|v| v != "0"),
             write_hoist_disabled: std::env::var("LOFT_NO_WRITE_HOIST").is_ok_and(|v| v != "0"),
         }
     }

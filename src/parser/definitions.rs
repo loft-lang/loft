@@ -8826,9 +8826,9 @@ impl Parser {
         let mut default = self.data.def(d_nr).attributes()[a_nr].value.clone();
         // The two shapes `object_init` treats apart, treated the same: a struct-enum unit
         // variant builds in a work-ref of its own, every other default reads `$` as the record.
-        if matches!(&default, Value::Block(b) if b.name == "EnumUnitLit") {
+        if let Some(own) = Self::variant_default_ref(&default) {
             let fresh = self.vars.work_refs(&a_type, &mut self.lexer);
-            default = Self::replace_record_ref(default, &Value::Var(fresh));
+            default = Self::rehome_variant_default(default, own, fresh, &Value::Var(self_var));
         } else {
             default = Self::replace_record_ref(default, &Value::Var(self_var));
         }

@@ -13374,12 +13374,12 @@ impl Data {
                     Some(m) => format!(
                         "{spelling} reaches a name `{lib}` only imports for its own use — \
                          it is `{m}`'s, and `{lib}` does not pass it on.\n  fix: write \
-                         `{m}::{name}` after `use {m};` (or `{lib}` passes it on with \
+                         `{m}::{name}` after `use {m};` (or pass it on in `{lib}` with \
                          `pub use {m}::({name});`)"
                     ),
                     None => format!(
                         "{spelling} reaches a name `{lib}` only imports for its own use, \
-                         and does not pass on.\n  fix: `{lib}` passes it on with `pub use`"
+                         and does not pass on.\n  fix: pass it on in `{lib}` with `pub use`"
                     ),
                 });
             }
@@ -13389,8 +13389,8 @@ impl Data {
             {
                 return Some(format!(
                     "`{name}` is not `pub` in `{lib}`, so {spelling} cannot reach it: a \
-                     library's surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, \
-                     or the program uses something `{lib}` does publish"
+                     library's surface is its `pub` items.\n  fix: declare it `pub` in `{lib}`, \
+                     or use something `{lib}` does publish"
                 ));
             }
         }

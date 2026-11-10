@@ -777,7 +777,30 @@ impl Parser {
             Value::If(_, a, b) => self
                 .leaf_cure(a, declare)
                 .or_else(|| self.leaf_cure(b, declare)),
-            leaf => return self.leaf_text(leaf, declare).map(|text| (text, here)),
+            leaf => {
+                if let Some(text) = self.leaf_text(leaf, declare) {
+                    return Some((text, here));
+                }
+                // An operator is nullable because an operand is (`n.clamp(0, 10) +
+                // n.floor_mod(7)`): the cure is that operand's, and so is the caret — the
+                // sum named no source, and the reader had to find the `-> integer?` alone.
+                if let Value::Call(d, args) = leaf
+                    && self.data.def(*d).is_operator()
+                {
+                    // Only an operand that CAN be null: a call answers null only where its
+                    // declared result is `τ?` (`leaf_text` assumes the call it names does).
+                    return args
+                        .iter()
+                        .filter(|a| {
+                            !matches!(a.unspan(), Value::Call(c, _)
+                                if !self.data.def(*c).name.starts_with("Op")
+                                    && !matches!(self.data.def(*c).returned(), Type::Optional(_)))
+                        })
+                        .find_map(|a| self.leaf_cure(a, declare))
+                        .map(|(text, at)| (text, at.or(here)));
+                }
+                return None;
+            }
         };
         inner.map(|(text, at)| (text, at.or(here)))
     }

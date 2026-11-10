@@ -1229,11 +1229,17 @@ fn main() {
         for f in ["n_mk__fr(", "n_pick__fr("] {
             let sig = text
                 .lines()
-                .find(|l| l.starts_with("static ") && l.contains(f))
+                .find(|l| {
+                    (l.starts_with("static ") || l.starts_with("LOFT_HOT_INLINE ")) && l.contains(f)
+                })
                 .unwrap_or_default();
-            // `static inline` where the function is small (`@FR-R-Inline`): the return type is
-            // what this asks.
-            let sig = sig.replacen("static inline ", "static ", 1);
+            // `static inline` where the function is small, and its body `LOFT_HOT_INLINE`
+            // (`@FR-R-Inline`): the return type is what this asks.
+            let sig = sig.replacen("static inline ", "static ", 1).replacen(
+                "LOFT_HOT_INLINE ",
+                "static ",
+                1,
+            );
             assert_eq!(sig.starts_with("static loft_tup"), structs, "{mode}: {sig}");
         }
         let mut kinds: Vec<(&str, Vec<&str>)> = vec![
@@ -8190,7 +8196,9 @@ fn functions_containing(text: &str, needle: &str) -> std::collections::BTreeSet<
     let mut out = std::collections::BTreeSet::new();
     let mut current: Option<String> = None;
     for line in text.lines() {
-        if line.starts_with("static ") && line.ends_with('{') {
+        if (line.starts_with("static ") || line.starts_with("LOFT_HOT_INLINE "))
+            && line.ends_with('{')
+        {
             current = line
                 .split('(')
                 .next()

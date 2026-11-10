@@ -6,7 +6,7 @@
 // the operator `OpAbsInt`; `pow` reaches `OpPowInt`, which the interpreter does not carry, so
 // it is refused by name.
 fn use_stdlib(n: integer) -> integer {
-  n.clamp(0, 10) + n.floor_mod(7) + n.max(3)
+  n.clamp(0, 10) + n.floor_mod(7)! + n.max(3)
 }
 
 fn uses_abs(n: integer) -> integer {

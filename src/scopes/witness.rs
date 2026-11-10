@@ -739,3 +739,39 @@ pub(super) fn displaces_owned_through_fresh_callee(
         .enumerate()
         .all(|(i, a)| i == buf_idx || (!a.reads_var(v) && !a.reads_var(ov)))
 }
+
+/// The named locals a PROJECTION bound into `v` is rooted at — `v = b.f`, `v = b.f.g`,
+/// `v = b[i]` — for `@FR-O-Witness`: a witnessed local's view binds keep their bases alive.
+/// A parameter is the caller's and outlives the frame; a compiler temp releases its own store
+/// and hands it over where the local reads it ([`held_by_compiler_temp`]), so neither is one.
+pub(super) fn view_bind_bases(code: &Value, v: u16, function: &Function, data: &Data) -> Vec<u16> {
+    let projections = data.op_sets().projections.clone();
+    let root = |n: &Value| -> Option<u16> {
+        let mut cur = n.unspan();
+        loop {
+            match cur {
+                Value::Var(b) => return Some(*b),
+                Value::Call(d, args) if projections.contains(d) => cur = args.first()?.unspan(),
+                _ => return None,
+            }
+        }
+    };
+    let mut out: Vec<u16> = Vec::new();
+    code.any_node(&mut |n| {
+        if let Value::Set(t, val) = n.unspan()
+            && *t == v
+            && matches!(val.unspan(), Value::Call(..))
+            && let Some(b) = root(val)
+            && b != v
+            && (b as usize) < function.count() as usize
+            && !function.is_argument(b)
+            && !function.is_compiler_generated(b)
+            && function.tp(b).base().heap_def_nr().is_some()
+            && !out.contains(&b)
+        {
+            out.push(b);
+        }
+        false
+    });
+    out
+}

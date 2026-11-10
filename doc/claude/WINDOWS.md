@@ -76,6 +76,27 @@ the MSVC toolchain is the missing piece.
   works (cached verdict), but standalone `loft --native …` requires the
   binary to be code-signed with a trusted cert after each build.
 
+## The C compiler on a Windows runner
+
+The C backend compiles with `LOFT_CC`, else `CC`, else the `cc` on `PATH`
+(`platform::c_unit_compiler`).  On `windows-latest` that `cc` is MinGW-Builds
+gcc 15.2 (`C:\mingw64\bin`), which miscompiles loft's C at `-O2` and above.  Its
+modref pass rates a function that reads a record as reading no memory, so two
+calls on a record that was reused in between merge into one, and the second
+returns the first one's stale answer.  `tests/ctor_literal.rs` case 157 (`c8`,
+`c13`) catches it under `--ship`.  It is a compiler defect: the source runs
+clean under `-fsanitize=undefined`, `-fno-strict-aliasing` and `-fwrapv` do not
+cure it, and MSYS2 gcc 16.2 and MSVC `cl` compile the same source right.
+
+Every Windows job that builds C runs `.github/actions/windows-gcc` first
+(`prebuild-native` from its `_loft/` checkout).  That
+step sets `LOFT_CC=C:/msys64/ucrt64/bin/gcc.exe` (MSYS2's UCRT gcc, preinstalled
+on the runner; installed with `pacman` if missing) and fails if that gcc is
+older than 16.  It puts nothing on `PATH`: MSYS2's `bin` would hide the runner's
+python and other tools.  The MSVC sweep leg still sets `LOFT_CC=cl` itself.  On
+your own machine, use gcc 16 or newer, or MSVC; with gcc 15.2, add
+`-fno-ipa-modref`.
+
 ## Known gaps
 
 ### Engine-host kernel on Windows — PROBED 2026-06-11 (the focused windows-probe loop)

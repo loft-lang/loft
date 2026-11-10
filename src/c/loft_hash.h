@@ -39,10 +39,24 @@
 #define LOFT_H_STAGE_MARK 0xFFFFFFF1u
 #define LOFT_H_GROWTH 2u
 
+/* A table header field written — the slot width and entry kind (`LOFT_H_STRIDE_FLD`), the seed,
+ * or the arena's entry directory — and the store given a new table generation
+ * (`@FR-R-TableHandle`): a handle resolved before sees the change at its next use.  The only
+ * writer of those fields (tests/table_handle.rs scans for another). */
+static void loft_h_set_header(loft_store_t *s, uint32_t claim, uint32_t field, uint32_t v) {
+    loft_set_u32(s, claim, field, v);
+    loft_h_reshaped(s);
+}
+
+/* The floor of log2 `v` (0 for 0 and 1): every table header decode asks it. */
 static uint32_t loft_ilog2(uint32_t v) {
+#if defined(__GNUC__) || defined(__clang__)
+    return v ? 31u - (uint32_t) __builtin_clz(v) : 0;
+#else
     uint32_t r = 0;
     while (v >>= 1) r++;
     return r;
+#endif
 }
 
 static uint64_t loft_next_pow2(uint64_t v) {
@@ -110,7 +124,7 @@ static void loft_ar_set_chunk_rec(loft_store_t *s, uint32_t table, uint32_t k, u
             for (uint32_t i = 0; i < old; i++) loft_set_u32(s, fresh, LOFT_AR_DIR0 + 4 * i, loft_u32(s, dir, LOFT_AR_DIR0 + 4 * i));
             loft_st_delete(s, dir);
         }
-        loft_set_u32(s, table, LOFT_AR_DIR_FLD, fresh);
+        loft_h_set_header(s, table, LOFT_AR_DIR_FLD, fresh);
     }
     loft_set_u32(s, loft_u32(s, table, LOFT_AR_DIR_FLD), LOFT_AR_DIR0 + 4 * k, rec);
 }
@@ -287,8 +301,8 @@ static uint64_t loft_h_read_seed(loft_store_t *s, uint32_t claim) {
 }
 
 static void loft_h_write_seed(loft_store_t *s, uint32_t claim, uint64_t seed) {
-    loft_set_u32(s, claim, LOFT_H_SEED_FLD, (uint32_t) seed);
-    loft_set_u32(s, claim, LOFT_H_SEED_FLD + 4, (uint32_t) (seed >> 32));
+    loft_h_set_header(s, claim, LOFT_H_SEED_FLD, (uint32_t) seed);
+    loft_h_set_header(s, claim, LOFT_H_SEED_FLD + 4, (uint32_t) (seed >> 32));
 }
 
 /* hash::Entries: where a slot's entry lives. */
@@ -364,7 +378,7 @@ static uint32_t loft_h_slot_value(loft_store_t *s, uint32_t claim, loft_ref rec,
 static uint32_t loft_h_arena_table(loft_store_t *s, uint32_t sb, uint32_t stride) {
     uint32_t claim = loft_st_claim(s, LOFT_H_RESERVED + 16 * sb / 8);
     loft_zero_fill(s, claim);
-    loft_set_u32(s, claim, LOFT_H_STRIDE_FLD, stride | (sb == 8 ? LOFT_H_TAGGED : 0));
+    loft_h_set_header(s, claim, LOFT_H_STRIDE_FLD, stride | (sb == 8 ? LOFT_H_TAGGED : 0));
     return claim;
 }
 
@@ -382,14 +396,14 @@ static void loft_h_zero_table(loft_store_t *s, uint32_t claim) {
 
 static uint32_t loft_h_inline_create(loft_store_t *s, uint32_t count, uint32_t stride, uint32_t owner) {
     uint32_t claim = loft_st_claim(s, loft_h_inline_words(count, stride));
-    loft_set_u32(s, claim, LOFT_H_SEED_FLD, 0);
-    loft_set_u32(s, claim, LOFT_H_SEED_FLD + 4, 0);
+    loft_h_set_header(s, claim, LOFT_H_SEED_FLD, 0);
+    loft_h_set_header(s, claim, LOFT_H_SEED_FLD + 4, 0);
     loft_set_u32(s, claim, LOFT_H_INLINE_LEN_FLD, 0);
     loft_set_u32(s, claim, LOFT_AR_FREE_FLD, 0);
     loft_set_u32(s, claim, LOFT_AR_OWNER_FLD, owner);
     loft_set_u32(s, claim, LOFT_AR_NEXT_FLD, 1);
     count = loft_h_inline_count(loft_rec_words(s, claim) - LOFT_H_RESERVED, stride);
-    loft_set_u32(s, claim, LOFT_H_STRIDE_FLD, loft_h_inline_flags(stride, count));
+    loft_h_set_header(s, claim, LOFT_H_STRIDE_FLD, loft_h_inline_flags(stride, count));
     loft_h_zero_table(s, claim);
     return claim;
 }
@@ -426,6 +440,8 @@ static loft_ref loft_h_alloc_entry(loft_ref c, uint32_t stride, uint32_t owner) 
 
 static void loft_h_install_table(loft_ref c, uint32_t old_claim, uint32_t new_claim) {
     loft_store_t *s = loft_store_of(c);
+    /* The place names another table from here (`@FR-R-TableHandle`). */
+    loft_h_reshaped(s);
     loft_set_u32(s, c.rec, c.pos, new_claim);
     if (old_claim != 0) loft_st_delete(s, old_claim);
 }
@@ -454,10 +470,10 @@ static void loft_h_rehash_into(loft_ref c, uint32_t from, uint32_t into, const l
     loft_h_write_seed(s, into, loft_h_read_seed(s, from));
     loft_hents ents = loft_h_entries(s, from, c.store_nr);
     uint32_t width = loft_u32(s, into, LOFT_H_STRIDE_FLD) & LOFT_H_TAGGED;
-    loft_set_u32(s, into, LOFT_AR_DIR_FLD, loft_u32(s, from, LOFT_AR_DIR_FLD));
+    loft_h_set_header(s, into, LOFT_AR_DIR_FLD, loft_u32(s, from, LOFT_AR_DIR_FLD));
     loft_set_u32(s, into, LOFT_AR_NEXT_FLD, loft_u32(s, from, LOFT_AR_NEXT_FLD));
     loft_set_u32(s, into, LOFT_AR_FREE_FLD, loft_u32(s, from, LOFT_AR_FREE_FLD));
-    loft_set_u32(s, into, LOFT_H_STRIDE_FLD, loft_h_stride(s, from) | width);
+    loft_h_set_header(s, into, LOFT_H_STRIDE_FLD, loft_h_stride(s, from) | width);
     uint32_t length = loft_u32(s, from, LOFT_H_LEN_FLD);
     uint32_t count = loft_h_hdr(s, from).count, from_sb = loft_h_slot_bytes(s, from);
     uint32_t into_count = loft_h_hdr(s, into).count, into_sb = loft_h_slot_bytes(s, into);
@@ -491,7 +507,7 @@ static uint32_t loft_h_grow_if_full(loft_ref c, uint32_t claim, uint32_t length,
     if (want > UINT32_MAX) return 0;
     uint32_t grown = loft_st_claim(s, (uint32_t) want);
     loft_zero_fill(s, grown);
-    loft_set_u32(s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
+    loft_h_set_header(s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
     loft_h_rehash_into(c, claim, grown, keys, nk);
     loft_h_install_table(c, claim, grown);
     return grown;
@@ -504,9 +520,9 @@ static uint32_t loft_h_inline_rebuild(loft_ref c, uint32_t claim, uint32_t want)
     uint32_t grown = loft_st_claim(s, loft_h_inline_words(want, h.stride));
     static const uint32_t kept[] = { LOFT_AR_OWNER_FLD, LOFT_H_SEED_FLD, LOFT_H_SEED_FLD + 4, LOFT_H_INLINE_LEN_FLD,
                                      LOFT_AR_NEXT_FLD };
-    for (int i = 0; i < 5; i++) loft_set_u32(s, grown, kept[i], loft_u32(s, claim, kept[i]));
+    for (int i = 0; i < 5; i++) loft_h_set_header(s, grown, kept[i], loft_u32(s, claim, kept[i]));
     uint32_t new_count = loft_h_inline_count(loft_rec_words(s, grown) - LOFT_H_RESERVED, h.stride);
-    loft_set_u32(s, grown, LOFT_H_STRIDE_FLD, loft_h_inline_flags(h.stride, new_count));
+    loft_h_set_header(s, grown, LOFT_H_STRIDE_FLD, loft_h_inline_flags(h.stride, new_count));
     loft_set_u32(s, grown, LOFT_AR_FREE_FLD, 0);
     loft_h_zero_table(s, grown);
     uint32_t mask = new_count - 1, old0 = loft_h_ent0(h.count), new0 = loft_h_ent0(new_count);
@@ -671,14 +687,13 @@ static loft_hprobe loft_h_probe_for_insert(loft_ref c, loft_ref rec, const loft_
 }
 
 /* hash::add_at: file `rec` in the bucket a probe found free. */
-static void loft_h_add_at(loft_ref c, loft_ref rec, uint32_t bucket, uint32_t index, uint32_t tag, const loft_key *keys,
-                          int nk) {
+/* The add at the bucket a probe found free; answers where `rec` lives afterwards (an inline
+ * table moves a staged entry into itself). */
+static loft_ref loft_h_add_at(loft_ref c, loft_ref rec, uint32_t bucket, uint32_t index, uint32_t tag,
+                              const loft_key *keys, int nk) {
     loft_store_t *s = loft_store_of(c);
     uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
-    if (loft_h_is_inline(s, claim)) {
-        (void) loft_h_inline_add(c, claim, rec, keys, nk);
-        return;
-    }
+    if (loft_h_is_inline(s, claim)) return loft_h_inline_add(c, claim, rec, keys, nk);
     uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
 #ifdef LOFT_KEYED_VERIFY
     /* `add_at`'s check: the bucket the probe found free is the one the free-slot walk takes. */
@@ -696,11 +711,12 @@ static void loft_h_add_at(loft_ref c, loft_ref rec, uint32_t bucket, uint32_t in
     if (grown != 0) {
         loft_h_set(s, grown, index, rec, keys, nk);
         loft_set_u32(s, grown, LOFT_H_LEN_FLD, length + 1);
-        return;
+        return rec;
     }
     loft_set_u32(s, claim, bucket, index);
     if (loft_h_slot_bytes(s, claim) == 8) loft_set_u32(s, claim, bucket + 4, tag);
     loft_set_u32(s, claim, LOFT_H_LEN_FLD, length + 1);
+    return rec;
 }
 
 /* hash::replace_at: bucket `bucket` names `index` instead; what it named answered. */
@@ -728,7 +744,7 @@ static void loft_h_reserve(loft_ref c, int64_t count, uint32_t stride, const lof
     if (loft_h_hdr(s, claim).count >= target) return;
     uint32_t grown = loft_st_claim(s, (uint32_t) words);
     loft_zero_fill(s, grown);
-    loft_set_u32(s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
+    loft_h_set_header(s, grown, LOFT_H_STRIDE_FLD, LOFT_H_TAGGED);
     loft_h_rehash_into(c, claim, grown, keys, nk);
     loft_h_install_table(c, claim, grown);
 }
@@ -788,6 +804,26 @@ static loft_ref LOFT_H_TYPED(loft_h_find_i64)(loft_ref c, const loft_key *keys, 
     uint64_t hv = loft_digest_i64(loft_h_read_seed(s, claim), key);
     uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count), kpos = keys[0].pos;
     loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    if (sb == 8 && !ents.inl && loft_is_pow2(count)) {
+        /* A tagged table of arena or record entries: the slots read in place, the probe masked.
+         * Nothing is written during the walk, so the slot pointer stays valid. */
+        const uint8_t *b = loft_at(s, claim, LOFT_H_BUCKET0);
+        uint32_t mask = count - 1;
+        for (uint32_t i = 0; i < count; i++, index = (index + 1) & mask) {
+            uint32_t slot, t;
+            memcpy(&slot, b + (size_t) index * 8, 4);
+            if (slot == 0) break;
+            memcpy(&t, b + (size_t) index * 8 + 4, 4);
+            if (t != tag) continue;
+            loft_ref e = { c.store_nr, 0, 0, 0 };
+            int64_t have;
+            loft_h_at(&ents, s, slot, &e.rec, &e.pos);
+            if (e.rec == 0) continue;
+            memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
+            if (have == key) return e;
+        }
+        return loft_ref_null();
+    }
     for (uint32_t i = 0; i < count; i++) {
         uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
         if (slot == 0) break;
@@ -1496,6 +1532,31 @@ static void loft_hash_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, lof
  * there, one probe where finding the record and then removing it (`loft_h_rec_pos`, by the
  * record's digest) took two.  Every outcome is `loft_hash_remove(…, loft_h_find_i64(…), …)`'s:
  * a miss changes nothing, an inline table and a locked store take that route itself. */
+/* Entry `e`, whose bucket value was `slot`, has left the table: release it (`@FR-Col-Remove`).
+ * Shared by the general removal and the table handle's. */
+LOFT_HOT_INLINE void loft_h_release_removed(const loft_tdesc *T, uint16_t elem, loft_ref c, int view, loft_ref e,
+                                            uint32_t slot) {
+    if (view) return;
+    if (loft_hash_owns_entries(c)) {
+        loft_remove_claims(T, elem, e);
+        loft_free_hash_entry(c, e, slot);
+        return;
+    }
+    loft_ref rec = { e.store_nr, e.rec, 8, 0 };
+    loft_remove_claims(T, elem, rec);
+    loft_st_delete(loft_store_of(c), e.rec);
+}
+
+/* The typed removal's second half: entry `e`, found in bucket `index` holding `val`, leaves the
+ * table and is released (`@FR-Col-Remove`). */
+LOFT_HOT_INLINE void loft_h_remove_found(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_store_t *s, uint32_t claim,
+                                const loft_hents *ents, const loft_key *keys, int nk, int view, loft_ref e,
+                                uint32_t index, uint32_t val) {
+    loft_forget_in_scratches(c, e);
+    uint32_t slot = loft_h_remove_at(s, claim, ents, keys, nk, index, val);
+    loft_h_release_removed(T, elem, c, view, e, slot);
+}
+
 static void loft_hash_remove_i64(const loft_tdesc *T, uint16_t elem, loft_ref c, int64_t key, const loft_key *keys,
                                  int nk, int view) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return;
@@ -1544,17 +1605,7 @@ static void loft_hash_remove_i64(const loft_tdesc *T, uint16_t elem, loft_ref c,
     }
 #endif
     if (e.rec == 0) return;
-    loft_forget_in_scratches(c, e);
-    uint32_t slot = loft_h_remove_at(s, claim, &ents, keys, nk, index, val);
-    if (view) return;
-    if (loft_hash_owns_entries(c)) {
-        loft_remove_claims(T, elem, e);
-        loft_free_hash_entry(c, e, slot);
-        return;
-    }
-    loft_ref rec = { e.store_nr, e.rec, 8, 0 };
-    loft_remove_claims(T, elem, rec);
-    loft_st_delete(loft_store_of(c), e.rec);
+    loft_h_remove_found(T, elem, c, s, claim, &ents, keys, nk, view, e, index, val);
 }
 
 /* Stores::displace_keyed: the entry `existing` makes room for an insert under its key — unlinked,
@@ -1570,9 +1621,96 @@ static void loft_hash_displace(const loft_tdesc *T, uint16_t elem, loft_ref c, l
 /* Stores::insert_record on a hash (`@FR-Col-Insert`: latest insert wins): `rec` filed under its
  * key; the entry it displaced answered (released already unless `secondary`), or the null
  * reference. */
+/* Where the latest `loft_hash_insert` on this thread filed its record, null where it filed
+ * nothing: the entry itself.  An inline table copies a STAGED entry into itself and deletes the
+ * stage, so the record handed to the insert is not always the entry afterwards.  Read by
+ * `@FR-R-SameRead`'s filed clause, in the statement right after the insert. */
+static LOFT_TLS loft_ref loft_h_filed;
+
+/* The one-probe insert on a decoded table: `claim` of `count` (a power of two) tagged slots, its
+ * `seed` and entries.  Shared by `loft_h_insert_int_fast` and the table handle's insert. */
+LOFT_HOT_INLINE int loft_h_insert_int_at(loft_ref c, loft_store_t *s, uint32_t claim, uint32_t count, uint64_t seed,
+                                const loft_hents *ents, loft_ref rec, const loft_key *keys) {
+    uint32_t length = loft_u32(s, claim, LOFT_H_LEN_FLD);
+    if (loft_h_is_full(length, count)) return 0;
+    uint32_t own = loft_h_slot_value(s, claim, rec, ents->stride), kpos = keys[0].pos, mask = count - 1;
+    int64_t key;
+    memcpy(&key, loft_at(s, rec.rec, rec.pos + kpos), 8);
+    uint64_t hv = loft_digest_i64(seed, key);
+    uint32_t tag = (uint32_t) hv, at = tag & mask;
+    uint8_t *b = loft_at(s, claim, LOFT_H_BUCKET0);
+    for (uint32_t i = 0; i < count; i++, at = (at + 1) & mask) {
+        uint32_t slot, t;
+        memcpy(&slot, b + (size_t) at * 8, 4);
+        if (slot == 0) {
+            memcpy(b + (size_t) at * 8, &own, 4);
+            memcpy(b + (size_t) at * 8 + 4, &tag, 4);
+            loft_set_u32(s, claim, LOFT_H_LEN_FLD, length + 1);
+            return 1;
+        }
+        if (slot == own) return 0;
+        memcpy(&t, b + (size_t) at * 8 + 4, 4);
+        if (t != tag) continue;
+        loft_ref e = { c.store_nr, 0, 0, 0 };
+        int64_t have;
+        loft_h_at(ents, s, slot, &e.rec, &e.pos);
+        if (e.rec == 0) continue;
+        memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
+        if (have == key) return 0;
+    }
+    return 0;
+}
+
+/* The one integer key `keys` names, as the insert reads it: 1 for an 8-byte integer key. */
+static int loft_h_int_key(const loft_key *keys, int nk) {
+    int kt = keys[0].type < 0 ? -keys[0].type : keys[0].type;
+    return nk == 1 && (kt == 1 || kt == 2);
+}
+
+/* `loft_hash_insert`'s common case, in one probe: a tagged table of arena or record entries, one
+ * integer key, the table not due to grow, and the key absent.  Filed exactly as the general path
+ * files it (`loft_h_probe_for_insert`'s free bucket, then `loft_h_add_at` without a grow); 1 when
+ * filed, 0 when the general path must decide (a duplicate, the record already filed, a grow). */
+static int loft_h_insert_int_fast(loft_ref c, loft_ref rec, const loft_key *keys, int nk) {
+    if (!loft_h_int_key(keys, nk) || rec.store_nr != c.store_nr) return 0;
+    loft_store_t *s = loft_store_of(c);
+    if (LOFT_WRITE_REFUSED(s)) return 0;
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(s, claim) <= LOFT_H_RESERVED || loft_h_is_inline(s, claim)) return 0;
+    uint32_t count = loft_h_hdr(s, claim).count;
+    if (loft_h_slot_bytes(s, claim) != 8 || !loft_is_pow2(count)) return 0;
+    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    return loft_h_insert_int_at(c, s, claim, count, loft_h_read_seed(s, claim), &ents, rec, keys);
+}
+
+/* Under LOFT_KEYED_VERIFY, the one-probe insert's check: the key now finds the record it filed. */
+static void loft_h_verify_filed(loft_ref c, loft_ref rec, const loft_key *keys) {
+#ifdef LOFT_KEYED_VERIFY
+    loft_kv vk = loft_key_get(loft_store_of(rec), rec.rec, rec.pos, &keys[0]);
+    loft_ref found = loft_h_find(c, keys, &vk, 1);
+    if (found.rec != rec.rec || found.pos != rec.pos) {
+        fflush(stdout);
+        fprintf(stderr, "LOFT_KEYED_VERIFY: the one-probe insert filed %u+%u where the lookup finds %u+%u\n",
+                (unsigned) rec.rec, (unsigned) rec.pos, (unsigned) found.rec, (unsigned) found.pos);
+        abort();
+    }
+#else
+    (void) c;
+    (void) rec;
+    (void) keys;
+#endif
+}
+
 static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref rec, const loft_key *keys,
                                  int nk, int secondary) {
+    loft_h_filed = loft_ref_null();
     if (c.store_nr == 0xFFFF || c.rec == 0 || rec.rec == 0) return loft_ref_null();
+    if (loft_h_insert_int_fast(c, rec, keys, nk)) {
+        loft_h_verify_filed(c, rec, keys);
+        /* The one-probe insert takes no inline table, so the record it filed is the entry. */
+        loft_h_filed = rec;
+        return loft_ref_null();
+    }
     loft_hprobe p = loft_h_probe_for_insert(c, rec, keys, nk);
 #ifdef LOFT_KEYED_VERIFY
     /* `Stores::verify_probe`: the probe's duplicate is the one the lookup `dedup_keyed` runs
@@ -1594,7 +1732,7 @@ static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c,
     }
 #endif
     if (p.kind == LOFT_H_FREE) {
-        loft_h_add_at(c, rec, p.bucket, p.index, p.tag, keys, nk);
+        loft_h_filed = loft_h_add_at(c, rec, p.bucket, p.index, p.tag, keys, nk);
         return loft_ref_null();
     }
     if (p.kind == LOFT_H_PRESENT) {
@@ -1605,6 +1743,7 @@ static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c,
             loft_remove_claims(T, elem, p.entry);
             loft_free_hash_entry(c, p.entry, gone);
         }
+        loft_h_filed = rec;
         return p.entry;
     }
     /* Stores::dedup_keyed: the entry under the key, displaced, then the add. */
@@ -1617,8 +1756,218 @@ static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c,
         loft_hash_displace(T, elem, c, existing, keys, nk, secondary);
         displaced = existing;
     }
-    (void) loft_h_add(c, rec, keys, nk);
+    loft_h_filed = loft_h_add(c, rec, keys, nk);
     return displaced;
+}
+
+/* ── The table handle (`@FR-R-TableHandle`) ──────────────────────────────────────────────────
+ * A function that makes several keyed operations on one collection place, or one inside a loop,
+ * holds a handle: the table's decoded header (claim, slot count, seed, entries) with the place
+ * and the store's table generation it was resolved under.  Each operation checks the handle first
+ * (`loft_hh_live`: the same place, the same generation, the slot still naming the claim) and
+ * resolves it again otherwise, so a handle is never wrong, only stale.  A table it does not cover
+ * (absent, inline, untagged) takes the general operation.  bench/portal/analysis/table-handle.md.
+ *
+ * Every function here is inline, and an out-of-line helper is handed COPIES of the handle's
+ * fields, never `&h->…`: once the handle's address leaves the inlined code, the compiler keeps
+ * none of its fields in registers across the caller's other calls, and the handle costs more
+ * than it saves (lru_mixed: 497 µs with the address escaping, 469 µs without). */
+typedef struct {
+    uint16_t nr;
+    uint32_t rec, pos, claim, count, mask;
+    uint64_t gen, seed;
+    loft_hents ents;
+    int ok;
+} loft_hh;
+#define LOFT_HH_NONE { 0xFFFF, 0xFFFFFFFFu, 0, 0, 0, 0, 0, 0, { 0, 0, 0, 0, 0, 0, 0 }, 0 }
+
+/* `h` resolved for place `c` now: covered (`ok`) when the table is a tagged arena or record
+ * table of a power-of-two slot count. */
+LOFT_HOT_INLINE void loft_hh_resolve(loft_hh *h, loft_ref c) {
+    loft_store_t *s = loft_store_of(c);
+    h->nr = c.store_nr;
+    h->rec = c.rec;
+    h->pos = c.pos;
+    h->gen = s->hgen;
+    h->claim = loft_collection_rec(s, c.rec, c.pos);
+    h->ok = 0;
+    if (h->claim == 0) return;
+    uint32_t words = loft_rec_words(s, h->claim), flags = loft_u32(s, h->claim, LOFT_H_STRIDE_FLD);
+    if (words <= LOFT_H_RESERVED || !(flags & LOFT_H_TAGGED) || (flags & LOFT_H_INLINE)) return;
+    h->count = loft_h_hdr(s, h->claim).count;
+    if (!loft_is_pow2(h->count)) return;
+    h->mask = h->count - 1;
+    h->seed = loft_h_read_seed(s, h->claim);
+    h->ents = loft_h_entries(s, h->claim, c.store_nr);
+    h->ok = 1;
+}
+
+/* Does `h` still describe place `c`'s table: the same place, the store's table generation the
+ * one it was resolved under, and the collection slot naming the same claim? */
+LOFT_HOT_INLINE int loft_hh_live(const loft_hh *h, loft_ref c) {
+    if (h->nr != c.store_nr || h->rec != c.rec || h->pos != c.pos) return 0;
+    loft_store_t *s = &loft_stores[c.store_nr];
+    return s->hgen == h->gen && loft_collection_rec(s, c.rec, c.pos) == h->claim;
+}
+
+#ifdef LOFT_KEYED_VERIFY
+/* A live handle is the table as a fresh resolve reads it, or the generation missed a change. */
+static void loft_hh_verify(const loft_hh *h, loft_ref c) {
+    loft_hh f = LOFT_HH_NONE;
+    loft_hh_resolve(&f, c);
+    if (f.ok != h->ok || f.claim != h->claim
+        || (h->ok && (f.count != h->count || f.seed != h->seed || f.ents.stride != h->ents.stride
+                      || f.ents.dir != h->ents.dir || f.ents.cap != h->ents.cap))) {
+        fflush(stdout);
+        fprintf(stderr, "LOFT_KEYED_VERIFY: a table handle on %u+%u+%u is stale under an unchanged generation "
+                        "(claim %u for %u, slots %u for %u)\n",
+                (unsigned) c.store_nr, (unsigned) c.rec, (unsigned) c.pos, (unsigned) h->claim, (unsigned) f.claim,
+                (unsigned) h->count, (unsigned) f.count);
+        abort();
+    }
+}
+#endif
+
+/* The slow half of `loft_hh_ready`: `h` resolved for place `c` again, or `c` refused. */
+LOFT_HOT_INLINE int loft_hh_reready(loft_hh *h, loft_ref c) {
+    if (c.store_nr == 0xFFFF || c.rec == 0 || c.store_nr >= loft_nstores) return 0;
+    loft_hh_resolve(h, c);
+    return h->ok;
+}
+
+/* 1 when `h` covers place `c`'s table now — resolved again first if it had gone stale.  The
+ * empty handle names record 0xFFFFFFFF, which no place does, so it never passes the compare. */
+LOFT_HOT_INLINE int loft_hh_ready(loft_hh *h, loft_ref c) {
+    if (h->nr == c.store_nr && h->rec == c.rec && h->pos == c.pos) {
+        loft_store_t *s = &loft_stores[c.store_nr];
+        if (s->hgen == h->gen && loft_collection_rec(s, c.rec, c.pos) == h->claim) {
+#ifdef LOFT_KEYED_VERIFY
+            loft_hh_verify(h, c);
+#endif
+            return h->ok;
+        }
+    }
+    return loft_hh_reready(h, c);
+}
+
+/* The entry under integer `key` in `h`'s table, the null reference when absent; `*index` and
+ * `*val` its bucket and the slot value there. */
+LOFT_HOT_INLINE loft_ref loft_hh_probe_i64(const loft_hh *h, loft_store_t *s, int64_t key, uint32_t kpos,
+                                           uint32_t *index, uint32_t *val) {
+    uint32_t tag = (uint32_t) loft_digest_i64(h->seed, key), at = tag & h->mask;
+    const uint8_t *b = loft_at(s, h->claim, LOFT_H_BUCKET0);
+    for (uint32_t i = 0; i < h->count; i++, at = (at + 1) & h->mask) {
+        uint32_t slot, t;
+        memcpy(&slot, b + (size_t) at * 8, 4);
+        if (slot == 0) break;
+        memcpy(&t, b + (size_t) at * 8 + 4, 4);
+        if (t != tag) continue;
+        loft_ref e = { h->nr, 0, 0, 0 };
+        int64_t have;
+        loft_h_at(&h->ents, s, slot, &e.rec, &e.pos);
+        if (e.rec == 0) continue;
+        memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
+        if (have == key) {
+            *index = at;
+            *val = slot;
+            return e;
+        }
+    }
+    return loft_ref_null();
+}
+
+#ifdef LOFT_KEYED_VERIFY
+static void loft_hh_verify_found(const char *what, loft_ref c, const loft_key *keys, int64_t key, loft_ref e) {
+    loft_ref want = loft_h_find_i64(c, keys, key);
+    if (want.rec != e.rec || (e.rec != 0 && want.pos != e.pos)) {
+        fflush(stdout);
+        fprintf(stderr, "LOFT_KEYED_VERIFY: the handle's %s found %u+%u where the lookup finds %u+%u\n", what,
+                (unsigned) e.rec, (unsigned) (e.rec ? e.pos : 0), (unsigned) want.rec, (unsigned) (want.rec ? want.pos : 0));
+        abort();
+    }
+}
+#endif
+
+/* `loft_h_find_i64` through handle `h`. */
+LOFT_HOT_INLINE loft_ref loft_hh_find_i64(loft_hh *h, loft_ref c, const loft_key *keys, int64_t key) {
+    if (!loft_hh_ready(h, c)) return loft_h_find_i64(c, keys, key);
+    uint32_t index, val;
+    loft_ref e = loft_hh_probe_i64(h, &loft_stores[c.store_nr], key, keys[0].pos, &index, &val);
+#ifdef LOFT_KEYED_VERIFY
+    loft_hh_verify_found("lookup", c, keys, key, e);
+#endif
+    return e;
+}
+
+/* `loft_hash_len` through handle `h`. */
+LOFT_HOT_INLINE int64_t loft_hh_len(loft_hh *h, loft_ref c) {
+    if (!loft_hh_ready(h, c)) return loft_hash_len(c);
+    return loft_u32(&loft_stores[c.store_nr], h->claim, LOFT_H_LEN_FLD);
+}
+
+/* `loft_h_remove_at` on a ready handle's table (`@FR-Col-Remove`): bucket `hole` is emptied and
+ * the probe run behind it shifted back by tag.  The handle is `ok` only for a tagged
+ * power-of-two table, so every slot carries its tag and its home is `tag & mask`: the count,
+ * seed and slot width the general removal decodes again are the handle's. */
+LOFT_HOT_INLINE void loft_hh_shift_out(const loft_hh *h, loft_store_t *s, uint32_t hole) {
+    uint8_t *b = loft_at(s, h->claim, LOFT_H_BUCKET0);
+    uint32_t m = h->mask, zero = 0;
+    memcpy(b + (size_t) hole * 8, &zero, 4);
+    for (uint32_t i = 0, idx = (hole + 1) & m; i < h->count; i++, idx = (idx + 1) & m) {
+        uint32_t val, tag;
+        memcpy(&val, b + (size_t) idx * 8, 4);
+        if (val == 0) break;
+        memcpy(&tag, b + (size_t) idx * 8 + 4, 4);
+        uint32_t home = tag & m;
+        if (((hole - home) & m) < ((idx - home) & m)) {
+            memcpy(b + (size_t) hole * 8, &val, 4);
+            memcpy(b + (size_t) hole * 8 + 4, &tag, 4);
+            memcpy(b + (size_t) idx * 8, &zero, 4);
+            hole = idx;
+        }
+    }
+    loft_set_u32(s, h->claim, LOFT_H_LEN_FLD, loft_u32(s, h->claim, LOFT_H_LEN_FLD) - 1);
+}
+
+/* `loft_hash_remove_i64` through handle `h`.  A removal changes no table's shape, so the handle
+ * stays live after it. */
+LOFT_HOT_INLINE void loft_hh_remove_i64(loft_hh *h, const loft_tdesc *T, uint16_t elem, loft_ref c, int64_t key,
+                               const loft_key *keys, int nk, int view) {
+    if (!loft_hh_ready(h, c)) {
+        loft_hash_remove_i64(T, elem, c, key, keys, nk, view);
+        return;
+    }
+    loft_store_t *s = &loft_stores[c.store_nr];
+    if (LOFT_WRITE_REFUSED(s) || loft_u32(s, h->claim, LOFT_H_LEN_FLD) == 0) {
+        loft_hash_remove_i64(T, elem, c, key, keys, nk, view);
+        return;
+    }
+    uint32_t index = 0, val = 0;
+    loft_ref e = loft_hh_probe_i64(h, s, key, keys[0].pos, &index, &val);
+#ifdef LOFT_KEYED_VERIFY
+    loft_hh_verify_found("removal", c, keys, key, e);
+#endif
+    if (e.rec == 0) return;
+    loft_forget_in_scratches(c, e);
+    loft_hh_shift_out(h, s, index);
+    loft_h_release_removed(T, elem, c, view, e, val);
+}
+
+/* `loft_hash_insert` through handle `h`: the one-probe insert on the handle's table, the general
+ * insert for everything else (a growth there gives the store a new generation). */
+LOFT_HOT_INLINE loft_ref loft_hh_insert(loft_hh *h, const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref rec,
+                               const loft_key *keys, int nk, int secondary) {
+    if (rec.rec != 0 && rec.store_nr == c.store_nr && loft_h_int_key(keys, nk) && loft_hh_ready(h, c)) {
+        loft_store_t *s = &loft_stores[c.store_nr];
+        loft_hents ents = h->ents;
+        if (!LOFT_WRITE_REFUSED(s) && loft_h_insert_int_at(c, s, h->claim, h->count, h->seed, &ents, rec, keys)) {
+            loft_h_verify_filed(c, rec, keys);
+            /* As `loft_hash_insert`'s one-probe path: no inline table, so `rec` is the entry. */
+            loft_h_filed = rec;
+            return loft_ref_null();
+        }
+    }
+    return loft_hash_insert(T, elem, c, rec, keys, nk, secondary);
 }
 
 /* Stores::reserve_hash: buckets for `count` entries (`@PLN135` arc C). */

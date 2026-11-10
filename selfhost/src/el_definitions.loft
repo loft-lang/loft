@@ -12,6 +12,7 @@ use el;
 use el_vars;
 use el_types;
 use el_expressions;
+use el_dispatch;
 use el_schema;
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
@@ -19,14 +20,24 @@ pub fn elab_file(e: el::El, file: integer) {
   match e.p.nodes[file] {
     SFile { items } => {
       claim_declared_type_names(e, items);
+      use_region(e, items);
       for it in items {
+        before = len(e.b.data.definitions);
         top_item(e, it);
+        if item_public(e, it) {
+          publish(e, it, before);
+        }
       }
     },
     _ => {}
   }
-  // The end of `parse_file`: the definitions this pass declared take their store types.
+  // The end of `parse_file`: the definitions this pass declared take their store types, then
+  // the variant dispatch (`enum_fn`).  The standard library's image already holds what its own
+  // parse made there.
   el_schema::fill_all(e);
+  if !e.default {
+    el_dispatch::enum_fn(e);
+  }
 }
 
 fn top_item(e: el::El, it: integer) {
@@ -38,7 +49,7 @@ fn top_item(e: el::El, it: integer) {
         el::refuse(e, "a `#width {arg}` file");
       }
     },
-    SUse { at } => { el::refuse(e, "use"); },
+    SUse { at } => {},
     SCapability { at } => {},
     SAlias { at, name, tp, size } => { parse_typedef(e, at, name, tp, size); },
     SEnum { at, name, tvars, variants } => { parse_enum(e, at, name, tvars, variants); },
@@ -53,6 +64,386 @@ fn top_item(e: el::El, it: integer) {
     SStruct { at, value, name, tvars, fields } => { parse_struct(e, at, value, name, tvars, fields); },
     SConst { at, name, tp, value } => { parse_constant(e, at, name, tp, value); },
     _ => { el::refuse(e, "item"); }
+  }
+}
+
+// `Data::resolve_adopted_stubs`, between the passes: every forward reference's stub a
+// declaration adopted names the type it became in each attribute and in each function's variable
+// table (pass 1 stored `Unknown(stub)` there; a function's result is pass 2's to recompute).
+pub fn resolve_adopted_stubs(e: el::El) {
+  for st in e.adopted {
+    target = el::def(e, st).returned[0] ?? ir::TyUnknown { n: st };
+    if el::def(e, st).def_type == el::DT_TYPE_TEMPLATE || target is TyUnknown {
+      continue;
+    }
+    for d in 0..len(e.b.data.definitions) {
+      for a in 0..len(el::def(e, d).attributes) {
+        r = rewrite_unknown(el::def(e, d).attributes[a]!.typedef[0] ?? ir::TyVoid, st, target);
+        if r != null {
+          e.b.data.definitions[d].attributes[a].typedef = [r!];
+        }
+      }
+      for v in 0..len(el::def(e, d).variables.variables) {
+        r = rewrite_unknown(el::def(e, d).variables.variables[v]!.type_def[0] ?? ir::TyVoid, st, target);
+        if r != null {
+          e.b.data.definitions[d].variables.variables[v].type_def = [r!];
+        }
+      }
+    }
+  }
+  e.adopted = [];
+}
+
+// `Function::rewrite_unknown`: `t` with `Unknown(stub)` replaced by `target` at any depth of a
+// vector, a link, a `?` or a tuple; null where `t` does not name the stub.
+fn rewrite_unknown(t: ir::TypeT, stub: integer, target: ir::TypeT) -> ir::TypeT? {
+  match t {
+    TyUnknown { n } => if n == stub { target } else { null },
+    TyVector { inner, dep } => {
+      r = rewrite_unknown(inner, stub, target);
+      if r == null { null } else { ir::TyVector { inner: r!, dep: dep } }
+    },
+    TyRefVar { inner } => {
+      r = rewrite_unknown(inner, stub, target);
+      if r == null { null } else { ir::TyRefVar { inner: r! } }
+    },
+    TyRewritten { inner } => {
+      r = rewrite_unknown(inner, stub, target);
+      if r == null { null } else { ir::TyRewritten { inner: r! } }
+    },
+    TyOptional { inner } => {
+      r = rewrite_unknown(inner, stub, target);
+      if r == null { null } else if (r! is TyOptional) { r } else { ir::TyOptional { inner: r! } }
+    },
+    TyTuple { elems } => {
+      changed = false;
+      out: vector<ir::TypeT> = [];
+      for x in elems {
+        r = rewrite_unknown(x, stub, target);
+        if r != null {
+          changed = true;
+          out += [r!];
+        } else {
+          out += [x];
+        }
+      }
+      if changed { ir::TyTuple { elems: out } } else { null }
+    },
+    _ => null
+  }
+}
+
+// ── the use region (src/parser/mod.rs `parse_file`, src/parser/imports.rs) ──
+
+// `parse_file`'s use region: a library is loaded the first time a `use` names it — elaborated
+// under a source of its own, ahead of this file's definitions, as the Rust parser switches to
+// it and resumes this file afterwards — and every `use` queues the import it makes, applied
+// once the region is read (`apply_pending_imports`).
+fn use_region(e: el::El, items: vector<integer>) {
+  package = has_package_directive(e.p, items);
+  for it in items {
+    match e.p.nodes[it] {
+      SUse { at } => { use_decl(e, it, package); },
+      _ => {}
+    }
+  }
+  apply_pending_imports(e);
+}
+
+fn use_decl(e: el::El, it: integer, package: boolean) {
+  public = false;
+  own = false;
+  lib = "";
+  alias = "";
+  star = false;
+  names: vector<integer> = [];
+  match e.p.nodes[it] {
+    SUse { public: pb, own: ow, lib: lb, alias: al, star: st, names: ns } => {
+      public = pb;
+      own = ow;
+      lib = lb;
+      alias = al;
+      star = st;
+      names = ns;
+    },
+    _ => { return; }
+  }
+  if package {
+    el::refuse(e, "a `#package` file in a `use`");
+    return;
+  }
+  if own {
+    el::refuse(e, "a `use self::` of a package's own module");
+    return;
+  }
+  if package_root(e.file) != "" {
+    el::refuse(e, "a `use` inside a package (its manifest resolves it)");
+    return;
+  }
+  if !el::use_exists(e, lib) {
+    f = lib_path(e, lib);
+    if f == "" {
+      el::refuse(e, "a library found only by a manifest or the registry");
+      return;
+    }
+    load_library(e, lib, alias, f);
+    if !el::use_exists(e, lib) {
+      return;
+    }
+  }
+  src = el::get_source(e, lib);
+  if e.loading.contains(src) {
+    el::refuse(e, "a cyclic `use`");
+    return;
+  }
+  if alias != "" {
+    el::use_alias(e, alias, src);
+  }
+  imports: vector<el::ImportName> = [];
+  for n in names {
+    match e.p.nodes[n] {
+      SImport { name, alias: bind } => { imports += [el::ImportName { name: name, bind: if bind == "" { name } else { bind } }]; },
+      _ => {}
+    }
+  }
+  e.pending += [el::PendingImport { for_source: e.source, lib_source: src, star: star, names: imports, public: public }];
+}
+
+// The library `id` read from `f` and elaborated (this pass) under a new source, then this
+// file's state back.
+fn load_library(e: el::El, id: text, alias: text, f: text) {
+  src = file(f).content() ?? "";
+  p = syntax::prepare(lex(src));
+  tree = syntax::parse_file(p);
+  if tree == null {
+    el::refuse(e, "a library that does not parse");
+    return;
+  }
+  if has_package_directive(p, file_items(p, tree!)) {
+    el::refuse(e, "a `#package` file in a `use`");
+    return;
+  }
+  // A copy (a record update), not `keep_p = e.p`: a struct field's plain bind views its place,
+  // which the library's tree is about to overwrite (`@FR-B-View`).
+  keep_p = syntax::Syntax { ..e.p };
+  keep_file = e.file;
+  keep_lines = e.lines;
+  keep_source = e.source;
+  keep_line = e.line;
+  e.loading += [keep_source];
+  el::use_add(e, id);
+  if alias != "" {
+    el::use_alias(e, alias, e.source);
+  }
+  e.p = p;
+  e.file = f;
+  e.lines = [];
+  for ln in src.split('\n') {
+    e.lines += [ln];
+  }
+  e.line = 0;
+  elab_file(e, tree!);
+  name_only_types(e, e.source);
+  e.p = keep_p;
+  e.file = keep_file;
+  e.lines = keep_lines;
+  e.source = keep_source;
+  e.line = keep_line;
+  e.loading = [for l in e.loading if l != keep_source { l }];
+}
+
+fn file_items(p: syntax::Syntax, tree: integer) -> vector<integer> {
+  match p.nodes[tree] {
+    SFile { items } => items,
+    _ => []
+  }
+}
+
+// A `#package` directive among a file's items.
+fn has_package_directive(p: syntax::Syntax, items: vector<integer>) -> boolean {
+  for it in items {
+    match p.nodes[it] {
+      SDirective { name } => {
+        if name == "package" {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
+// `Data::passes_on`'s third case, refused: a type of library `lib` that is not `pub` but that a
+// `pub` definition's signature names (`api_surface::name_only_defs`) — its importer may name it.
+fn name_only_types(e: el::El, lib: integer) {
+  for d in e.b.data.definitions {
+    if d.source == lib && d.pub_visible {
+      for a in d.attributes {
+        if names_private_type(e, a.typedef[0] ?? ir::TyVoid, lib) {
+          el::refuse(e, "a library type named only by a `pub` signature");
+          return;
+        }
+      }
+      for t in d.returned {
+        if d.def_type == el::DT_FUNCTION && names_private_type(e, t, lib) {
+          el::refuse(e, "a library type named only by a `pub` signature");
+          return;
+        }
+      }
+    }
+  }
+}
+
+fn names_private_type(e: el::El, t: ir::TypeT, lib: integer) -> boolean {
+  match t {
+    TyReference { n } => private_type(e, n, lib),
+    TyEnum { n } => private_type(e, n, lib),
+    TyOptional { inner } => names_private_type(e, inner, lib),
+    TyVector { inner } => names_private_type(e, inner, lib),
+    _ => false
+  }
+}
+
+fn private_type(e: el::El, n: integer, lib: integer) -> boolean {
+  n >= 0 && n < len(e.b.data.definitions) && el::def(e, n).source == lib && !el::def(e, n).pub_visible && (el::def(e, n).def_type == el::DT_STRUCT || el::def(e, n).def_type == el::DT_ENUM || el::def(e, n).def_type == el::DT_TYPE)
+}
+
+// `Parser::apply_pending_imports`: the imports queued for this source.
+fn apply_pending_imports(e: el::El) {
+  cur = e.source;
+  now: vector<el::PendingImport> = [];
+  later: vector<el::PendingImport> = [];
+  for pi in e.pending {
+    if pi.for_source == cur {
+      now += [pi];
+    } else {
+      later += [pi];
+    }
+  }
+  e.pending = later;
+  if len(now) > 0 {
+    el::note_source_file(e, cur, e.file);
+  }
+  for pi in now {
+    el::import_operators(e, pi.lib_source, cur);
+    if pi.star {
+      el::import_all(e, pi.lib_source, cur, pi.public);
+    } else {
+      for n in pi.names {
+        if !el::import_name(e, pi.lib_source, cur, n.name, n.bind, pi.public) {
+          el::refuse(e, "an imported name the library does not pass on");
+        }
+      }
+    }
+  }
+}
+
+// The directory holding a `loft.toml` at or above `f`'s, or "".
+fn package_root(f: text) -> text {
+  d = script_dir(f);
+  while d != "" {
+    if exists("{d}/loft.toml") {
+      return d;
+    }
+    d = script_dir(d);
+  }
+  ""
+}
+
+// `packages::script_dir`: everything before the last `/`.
+fn script_dir(f: text) -> text {
+  i = len(f) - 1;
+  while i >= 0 && f[i] != '/' {
+    i -= 1;
+  }
+  if i < 0 { "" } else { f[..i] }
+}
+
+// `packages::tests_base_dir`: the directory above a `/tests/` in `dir`, or "".
+fn tests_base_dir(dir: text) -> text {
+  i = dir.find("/tests/");
+  if i == null { "" } else { dir[..i!] }
+}
+
+// `Parser::lib_path`'s probes a program outside a package reaches: the project's `lib/`, the
+// `lib/` beside the file and above its `tests/`, the directory named after the file, the file's
+// own directory, and the one above `tests/`.  "" where only a probe this port does not carry —
+// `LOFT_LIB`, an installed package, the registry — could answer.
+fn lib_path(e: el::El, id: text) -> text {
+  cur_dir = script_dir(e.file);
+  base_dir = tests_base_dir(cur_dir);
+  f = if exists("lib/{id}.loft") { "lib/{id}.loft" } else { "{id}.loft" };
+  if cur_dir != "" && !exists(f) {
+    f = "{cur_dir}/lib/{id}.loft";
+  }
+  if base_dir != "" && !exists(f) {
+    f = "{base_dir}/lib/{id}.loft";
+  }
+  if !exists(f) && len(e.file) >= 5 {
+    f = "{e.file[..len(e.file) - 5]}/{id}.loft";
+  }
+  // `--lib` directories (the gate passes a program's `@ARGS` ones as `LOFT_ELAB_LIB`), flat; a
+  // package there is resolved by its manifest.
+  for dir in (env_variable("LOFT_ELAB_LIB") ?? "").split(':') {
+    if dir != "" && !exists(f) {
+      if exists("{dir}/{id}.loft") {
+        f = "{dir}/{id}.loft";
+      } else if exists("{dir}/{id}/loft.toml") {
+        return "";
+      }
+    }
+  }
+  if !exists(f) && (len(env_variable("LOFT_LIB")) > 0 || exists("{env_variable("HOME")}/.loft/lib/{id}")) {
+    return "";
+  }
+  if cur_dir != "" && !exists(f) {
+    f = "{cur_dir}/{id}.loft";
+  }
+  if !exists(f) && exists("{env_variable("HOME")}/.loft/cache") {
+    return "";
+  }
+  if base_dir != "" && !exists(f) {
+    f = "{base_dir}/{id}.loft";
+  }
+  if exists(f) { f } else { "" }
+}
+
+// The item's `pub` mark.
+fn item_public(e: el::El, it: integer) -> boolean {
+  match e.p.nodes[it] {
+    SFn { public } => public,
+    SStruct { public } => public,
+    SEnum { public } => public,
+    SAlias { public } => public,
+    SConst { public } => public,
+    SInterface { public } => public,
+    SCapability { public } => public,
+    _ => false
+  }
+}
+
+// `parse_file`'s `@FR-F-Surface` step after a `pub` item: what it declared — every definition
+// it added that is no unresolved stub, and the stub of its name it adopted — is `pub`.
+fn publish(e: el::El, it: integer, before: integer) {
+  d = before;
+  while d < len(e.b.data.definitions) {
+    if el::def(e, d).def_type != el::DT_UNKNOWN {
+      e.b.data.definitions[d].pub_visible = true;
+    }
+    d += 1;
+  }
+  nm = match e.p.nodes[it] {
+    SStruct { name } => name,
+    SEnum { name } => name,
+    SAlias { name } => name,
+    _ => ""
+  };
+  if nm != "" {
+    t = el::source_nr(e, e.source, nm);
+    if t >= 0 && el::def(e, t).source == e.source && el::def(e, t).def_type != el::DT_UNKNOWN {
+      e.b.data.definitions[t].pub_visible = true;
+    }
   }
 }
 
@@ -94,6 +485,7 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
     if d >= 0 && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source == e.source {
       e.b.data.definitions[d].def_type = el::DT_STRUCT;
       e.b.data.definitions[d].position = el::pos_at(e, nt + 1);
+      e.adopted += [d];
     } else if d >= 0 {
       el::refuse(e, "a struct over an existing name");
       return;
@@ -211,6 +603,11 @@ fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
   vars = el_vars::new_vars("__default", e.file);
   x = el_expressions::expression(e, vars, init);
   if el_types::is_unknown(x.tp) {
+    // An untyped `[]` (a collection field's empty default, Rust's `__dflt_<S>_<f>` builder) is
+    // not carried.
+    if !e.first_pass {
+      el::refuse(e, "a field default of this kind: an untyped value");
+    }
     return if e.first_pass { ir::NdNull } else { null };
   }
   plain_enum = match el_types::base(x.tp) { TyEnum { is_ref } => !is_ref, _ => false };
@@ -229,6 +626,44 @@ fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
     return x.code;
   }
   el_convert::convert(e, vars, x.code, x.tp, el_types::base(ft), false)
+}
+
+// `parse_arguments`' `= default` for a constant: a plain scalar, a literal text or `null`, read
+// with no frame and converted to the parameter's type.  A default that builds a value, reads
+// another parameter or calls (Rust hoists those into a `__dflt` function) is refused by name.
+fn param_default(e: el::El, init: integer, pt: ir::TypeT) -> ir::Node? {
+  vars = el_vars::new_vars("__default", e.file);
+  x = el_expressions::expression(e, vars, init);
+  if x.tp is TyNull {
+    return ir::NdNull;
+  }
+  plain_enum = match el_types::base(x.tp) { TyEnum { is_ref } => !is_ref, _ => false };
+  constant = match el_ir::unspan(x.code) {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    NdText { s: _ } => true,
+    NdEnum { ord: _ } => plain_enum,
+    _ => false
+  };
+  if !constant || len(vars.vars) > 0 {
+    el::refuse(e, "a parameter default other than a constant");
+    return null;
+  }
+  if e.first_pass {
+    return x.code;
+  }
+  // A text default is the text itself (`convert` of text to text is no conversion).
+  if el_types::base(x.tp) is TyText && el_types::base(pt) is TyText {
+    return x.code;
+  }
+  c = el_convert::convert(e, vars, x.code, x.tp, pt, false);
+  if c == null {
+    el::refuse(e, "a parameter default its parameter's type does not take");
+  }
+  c
 }
 
 // `Parser::parse_constant`, `const NAME = value;`: a definition of its own (`DefType::Constant`),
@@ -328,6 +763,11 @@ fn parse_enum(e: el::El, at: integer, name: text, tvars: vector<integer>, varian
   d = el::def_nr(e, name);
   if d < 0 {
     d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_ENUM);
+  } else if e.first_pass && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source == e.source {
+    // A forward reference's stub is adopted (`note_stub_adopted`).
+    e.b.data.definitions[d].def_type = el::DT_ENUM;
+    e.b.data.definitions[d].position = el::pos_at(e, nt + 1);
+    e.adopted += [d];
   } else if e.first_pass {
     el::refuse(e, "an enum over an existing name");
     return;
@@ -518,7 +958,9 @@ fn op_rename(tok: text) -> text {
 struct Argument {
   name: text,
   typedef: ir::TypeT,
-  constant: boolean
+  constant: boolean,
+  // the declared `= default`, converted to the parameter's type; NdNull for none
+  dflt: ir::Node = ir::NdNull
 }
 
 // A block whose one statement is a vector literal.
@@ -594,7 +1036,7 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
 // The plain path: no type variables, no operator form, no annotation, no `both`.
 // A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
 // the definition's key, or "" where the declaration was refused before one was known.
-pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer>, ret: integer?, body: integer?, is_op: boolean = false, tvars: vector<integer> = [], ret_const: boolean = false, annots: vector<integer> = []) -> text {
+pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer>, ret: integer?, body: integer?, is_op: boolean = false, tvars: vector<integer> = [], ret_const: boolean = false, annots: vector<integer> = [], short_names: vector<text> = [], hint: ir::TypeT = ir::TyVoid) -> text {
   // A capability (`fs#read`) and a `-> const` result are checks at the call and the return; the
   // definition's image is the plain one, so both are read past.  An `operator` form is the
   // method of its name, marked (`operator_form`) so the form it backs reaches it.
@@ -622,11 +1064,32 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   }
   vars = el_vars::new_vars(name, e.file);
   arguments: vector<Argument> = [];
+  // A short lambda's parameters: each typed as the hint's argument at its place, `const` where
+  // the hint's is.
+  hint_args: vector<ir::TypeT> = [];
+  hint_consts = 0;
+  hint_ret: ir::TypeT = ir::TyVoid;
+  match hint {
+    TyFunction { args: ha, result: hr, consts: hc } => {
+      hint_args = ha;
+      hint_consts = hc;
+      hint_ret = hr;
+    },
+    _ => {}
+  }
+  for sn in short_names {
+    ht = hint_args[sn#index];
+    if ht == null || el_types::is_unknown(ht!) {
+      el::refuse(e, "a short lambda parameter its hint does not type");
+      return "";
+    }
+    arguments += [Argument { name: sn, typedef: ht!, constant: ((hint_consts >> sn#index) & 1) == 1, dflt: ir::NdNull }];
+  }
   for pn in params {
     match e.p.nodes[pn] {
       SParam { name: an, amp, fixed, tp, init, cap: pcap } => {
-        if init != null || pcap != null || tp == null {
-          kind = if init != null { "a default" } else if pcap != null { "a capability" } else { "no type" };
+        if pcap != null || tp == null {
+          kind = if pcap != null { "a capability" } else { "no type" };
           el::refuse(e, "a parameter with a default, a capability or no type: {kind}");
           return "";
         }
@@ -647,7 +1110,15 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           el::refuse(e, "a method: {an}");
           return "";
         }
-        arguments += [Argument { name: an, typedef: t!, constant: fixed }];
+        dv = ir::NdNull;
+        if init != null {
+          d = param_default(e, init!, t!);
+          if d == null {
+            return "";
+          }
+          dv = d!;
+        }
+        arguments += [Argument { name: an, typedef: t!, constant: fixed, dflt: dv }];
       },
       _ => {}
     }
@@ -658,7 +1129,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   }
   // Where the Rust lexer stands after `)`: on the `->`, the body's `{` or the `;`.
   after = at;
-  rt: ir::TypeT = ir::TyVoid;
+  // A short lambda answers the hint's result, unless that names nothing (loft#945).
+  rt: ir::TypeT = if !(hint is TyFunction) || el_types::is_unknown(hint_ret) { ir::TyVoid } else { hint_ret };
   if ret != null {
     // `-> T` (or `-> const T`, a function or a tuple type): the lexer stood on the `->`, which a
     // `const` stands between.
@@ -675,12 +1147,24 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       _ => {}
     }
   }
+  // `@FR-Disp-Key`: a definition of a name that is (or now becomes) an overload set is keyed by
+  // its full parameter spelling.
+  key = el_dispatch::definition_key(e, key, name, [for a in arguments { a.typedef }], el::pos_at(e, after));
+  if key == "" {
+    return "";
+  }
   if e.first_pass {
     if el::def_nr(e, key) >= 0 {
-      el::refuse(e, "a function over an existing name");
+      el::refuse(e, "a function over an existing name: {name}");
       return "";
     }
     e.context = add_fn(e, key, name, arguments, el::pos_at(e, after));
+    if e.context >= 0 {
+      el_dispatch::join(e, name, e.context);
+      if key.starts_with("t_") {
+        el_dispatch::join_method_twin(e, name, e.context);
+      }
+    }
     if len(e.type_vars) > 0 && e.context >= 0 {
       e.b.data.definitions[e.context].def_type = el::DT_GENERIC;
     }
@@ -712,7 +1196,16 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     rt = t!;
   }
   el_vars::take_over(vars, el::def(e, e.context).variables);
+  for so in e.step_over {
+    if so.d == e.context && el_vars::var(vars, so.name) >= 0 {
+      vars.step_over += [el_vars::RefSite { nr: el_vars::var(vars, so.name), site: so.site }];
+    }
+  }
   if e.first_pass {
+    el::set_returned(e, e.context, rt);
+  } else if hint is TyFunction && !(rt is TyVoid) && !el_types::is_unknown(rt) {
+    // `parse_lambda_short_body`: on the second pass a short lambda's result is reset to the
+    // hint's, so its body is parsed against the bare result the first pass met.
     el::set_returned(e, e.context, rt);
   }
   if body != null {
@@ -764,7 +1257,22 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       e.closure_var = cv;
     }
     code = el_expressions::parse_code(e, vars, body ?? 0);
+    // A body answering a function value is typed as the declared function type: the closure
+    // slot its value names is the result's dep (`callee_frame1`), not the block's.
+    if el_types::base(rt) is TyFunction {
+      match code {
+        NdBlock { block } => {
+          bl = block[0];
+          bl.result = [el_types::without_deps(rt)];
+          code = ir::NdBlock { block: [bl] };
+        },
+        _ => {}
+      }
+    }
     e.b.data.definitions[e.context].code = [code];
+    if e.first_pass {
+      add_capture_owner_slots(e, vars, e.context);
+    }
     // `@FR-R-Const` (`literal_body_constant`, pass 1): a plain function of no parameters whose
     // whole body is one vector literal of constants, answering a plain vector through its
     // buffer, gets a constant twin `__const_<name>` with its result — what a read of a call of
@@ -778,13 +1286,63 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       e.bodies2 += [e.context];
     }
   }
+  if e.first_pass {
+    for s in el_vars::minted_parameters(vars) {
+      e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, s.nr), site: s.site }];
+    }
+  }
   e.b.data.definitions[e.context].variables = el_vars::stored(vars);
   e.context = -1;
   key
 }
 
+// `add_capture_owner_slots` (`@FR-L-CapOwn`, `@FR-O-Witness`), at a function's pass-1 body end:
+// each closure record of a lambda it made gets, beside every record capture of a LOCAL, a hidden
+// owner slot `<name>__own` of the same shared record type — what the scope pass hands the
+// local's owner witness to at the build.
+fn add_capture_owner_slots(e: el::El, vars: el_vars::Vars, parent: integer) {
+  outer = el::def(e, parent).name;
+  bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
+  for k in 0..vars.lambdas {
+    rec = el::def_nr(e, "__closure_{bare}_{k}");
+    if rec < 0 {
+      continue;
+    }
+    slots: vector<el::Capture> = [];
+    for a in el::def(e, rec).attributes {
+      if a.hidden || starts_with(a.name, "__") {
+        continue;
+      }
+      match a.typedef[0] ?? ir::TyVoid {
+        TyReference { n: d, dep } => {
+          v = el_vars::var(vars, a.name);
+          local_record = v >= 0 && !vars.vars[v].argument && el_types::base(el_vars::tp(vars, v)) is TyReference;
+          if len(dep) > 0 && el::def(e, d).def_type == el::DT_STRUCT && !starts_with(el::def(e, d).name, "__") && local_record {
+            slots += [el::Capture { name: a.name, tp: ir::TyReference { n: d, dep: [el_types::MARKER] } }];
+          }
+        },
+        _ => {}
+      }
+    }
+    for sl in slots {
+      own = "{sl.name}__own";
+      exists = false;
+      for a in el::def(e, rec).attributes {
+        if a.name == own {
+          exists = true;
+        }
+      }
+      if !exists {
+        o = el::attribute(own, sl.tp);
+        o.hidden = true;
+        e.b.data.definitions[rec].attributes += [o];
+      }
+    }
+  }
+}
+
 // Does `t` name a header variable of the function being read?
-fn mentions_type_var(e: el::El, t: ir::TypeT) -> boolean {
+pub fn mentions_type_var(e: el::El, t: ir::TypeT) -> boolean {
   for tv in e.type_vars {
     if el_expressions::type_mentions(t, tv.holder) {
       return true;
@@ -813,7 +1371,7 @@ fn bounds_key(names: vector<text>) -> text {
 }
 
 // The bound-set key of a placeholder's own bounds (`placeholder_bounds_key`).
-fn placeholder_key(e: el::El, d: ir::Definition) -> text {
+pub fn placeholder_key(e: el::El, d: ir::Definition) -> text {
   names: vector<text> = [];
   for b in d.bounds {
     names += [el::def(e, b).name];
@@ -926,7 +1484,7 @@ fn keyed(t: ir::TypeT) -> boolean {
 
 // `Parser::interface_method_name`: the method an interface child stands for —
 // `__iface_<interface>#<arity>_<method>`, or the legacy `t_4Self_<method>`.
-fn interface_method_name(name: text) -> text {
+pub fn interface_method_name(name: text) -> text {
   if name.starts_with("__iface_") {
     rest = name[8..];
     u = rest.find("_");
@@ -990,10 +1548,10 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
   if len(arguments) == 0 || arguments[0].name != "self" {
     return "n_{name}";
   }
-  // An operator method (`OpAdd`, the `OpCopy` hook) is its own port.  The `OpDrop` hook is a
-  // method as any other; the cascades a type holding a droppable takes are refused after the
-  // passes (`refuse_drop_cascades`).
-  if starts_with(name, "Op") && name != "OpDrop" {
+  // An operator method (`OpAdd`) is its own port.  The `OpDrop` and `OpCopy` hooks are methods
+  // as any other; the cascades a type holding a droppable takes are refused after the passes
+  // (`refuse_drop_cascades`).
+  if starts_with(name, "Op") && name != "OpDrop" && name != "OpCopy" {
     el::refuse(e, "a method named as an operator: {name}");
     return "";
   }
@@ -1003,12 +1561,16 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
     return "";
   }
   td = el::def(e, tn);
-  if td.def_type == el::DT_ENUM_VALUE || td.instance_of >= 0 {
-    el::refuse(e, "a method receiver that is a variant or a generic instance");
+  // port: data.rs key_type_name — a variant keys on its own name, as any type does.  An
+  // instance keys on its template, and its member slot is the template's (`method_family`):
+  // not carried, refused by name.
+  if td.instance_of >= 0 {
+    el::refuse(e, "a method receiver that is a generic instance");
     return "";
   }
-  // The standard library's types come with the image, their members included.
-  if td.source != e.source {
+  // The standard library's types come with the image, their members included; a library's
+  // take the program's methods as its own types do.
+  if td.source != e.source && td.source == el::STD_SOURCE {
     el::refuse(e, "a method on a type the program does not declare");
     return "";
   }
@@ -1022,22 +1584,48 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
 // name (a field, the nullable twin of a method) is refused by name.
 fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
   tn = -1;
+  // The receiver's slot this definition takes over, as the nullability twin's dense half.
+  take_slot = -1;
   if len(arguments) > 0 && arguments[0].name == "self" {
     t = arguments[0].typedef;
     tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
     if tn >= 0 {
       for a in el::def(e, tn).attributes {
         if a.name == name {
+          slot = match a.typedef[0] ?? ir::TyVoid { TyRoutine { n } => n, _ => -1 };
+          // An overload of the slot's method (`Disp-Key`): the slot keeps the incumbent, the
+          // set carries both.
+          if el_dispatch::own_set(e, name) >= 0 && slot >= 0 && el::def(e, slot).name != key {
+            tn = -1;
+            break;
+          }
+          // `@FR-F-Recv`: `m(τ)` and `m(τ?)` are one method's two receiver spellings, two keys
+          // sharing the type's slot — which the DENSE one owns, in either declaration order.
+          slot_nullable = slot >= 0 && (el::def(e, slot).attributes[0]!.typedef[0] ?? ir::TyVoid) is TyOptional;
+          new_nullable = t is TyOptional;
+          if slot >= 0 && slot_nullable != new_nullable {
+            take_slot = if new_nullable { -1 } else { a#index };
+            tn = -1;
+            break;
+          }
           el::refuse(e, "a method whose name its receiver already carries: {name}");
           return -1;
         }
       }
+      if take_slot >= 0 {
+        tn = el_expressions::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+      }
     }
   }
   d = el::add_def(e, key, pos, el::DT_FUNCTION);
+  if take_slot >= 0 {
+    e.b.data.definitions[tn].attributes[take_slot].typedef = [ir::TyRoutine { n: d }];
+    tn = -1;
+  }
   for a in arguments {
     e.b.data.definitions[d].attributes += [el::attribute(a.name, a.typedef)];
     e.b.data.definitions[d].attributes[a#index].value_const = a.constant;
+    e.b.data.definitions[d].attributes[a#index].value = [a.dflt];
   }
   if tn >= 0 {
     m = el::attribute(name, ir::TyRoutine { n: d });

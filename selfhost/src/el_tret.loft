@@ -13,6 +13,7 @@ use ir;
 use el;
 use el_ir;
 use el_vars;
+use el_types;
 use el_expressions;
 use el_buffers;
 use own;
@@ -46,12 +47,19 @@ pub fn promote_text_returns(e: el::El) {
 // each `return x` through `___tret_N = x; return ___tret_N`, the tail as `___tret_N = tail;
 // ___tret_N` (a tail that always returns keeps its returns and answers the buffer after them) —
 // which `text_return` makes the hidden `&text` parameter, renumbered onto its argument slot.
+// port: control.rs promote_text_return_def
+// Only a text function whose body IS a block with statements is promoted — matched as it
+// stands, as Rust matches it.  Any other one (an interface's method declaration has no body)
+// keeps its signature, and `patch_callers` leaves its calls alone: they already pass every
+// argument it declares.
 fn promote_def(e: el::El, d: integer) {
+  if !(el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyText) {
+    return;
+  }
   code = el::def(e, d).code[0] ?? ir::NdNull;
-  bl = match el_ir::unspan(code) {
+  bl = match code {
     NdBlock { block } => block[0],
     _ => {
-      el::refuse(e, "a text-return promotion of a body that is not a block");
       return;
     }
   };
@@ -64,14 +72,14 @@ fn promote_def(e: el::El, d: integer) {
   last = len(bl.operators) - 1;
   for op in bl.operators {
     if op#index < last {
-      ops += [into_buffer(op, tv)];
+      ops += [el_expressions::into_buffer(op, tv)];
     }
   }
   tail = bl.operators[last]!;
   if el_ir::unspan(tail) is NdReturn {
     ops += [el_ir::v_set(tv, el_expressions::peel_return(tail)), ir::NdReturn { inner: ir::NdVar { n: tv } }];
   } else if diverges(tail) {
-    ops += [into_buffer(tail, tv), ir::NdVar { n: tv }];
+    ops += [el_expressions::into_buffer(tail, tv), ir::NdVar { n: tv }];
   } else {
     ops += [el_ir::v_set(tv, tail), ir::NdVar { n: tv }];
   }
@@ -90,29 +98,6 @@ fn promote_def(e: el::El, d: integer) {
   bl.result = [ir::TyText { dep: [if a >= 0 { a } else { tv }] }];
   e.b.data.definitions[d].code = [el_ir::respan(code, ir::NdBlock { block: [bl] })];
   e.b.data.definitions[d].variables = f;
-}
-
-// `rewrite_text_returns_into`: every `return x` inside `n` written into the buffer first.
-fn into_buffer(n: ir::Node, tv: integer) -> ir::Node {
-  match n {
-    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: into_buffer(inner, tv) },
-    NdReturn { inner: _ } => ir::NdInsert { items: [el_ir::v_set(tv, el_expressions::peel_return(n)), ir::NdReturn { inner: ir::NdVar { n: tv } }] },
-    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: into_buffer(t, tv), f: into_buffer(f, tv) },
-    NdBlock { block } => {
-      b = block[0];
-      b.operators = [for o in b.operators { into_buffer(o, tv) }];
-      ir::NdBlock { block: [b] }
-    },
-    NdLoop { block } => {
-      b = block[0];
-      b.operators = [for o in b.operators { into_buffer(o, tv) }];
-      ir::NdLoop { block: [b] }
-    },
-    NdInsert { items } => ir::NdInsert { items: [for o in items { into_buffer(o, tv) }] },
-    NdIter { var, create, next, init } => ir::NdIter { var: var, create: into_buffer(create, tv), next: into_buffer(next, tv), init: into_buffer(init, tv) },
-    NdDrop { inner } => ir::NdDrop { inner: into_buffer(inner, tv) },
-    _ => n
-  }
 }
 
 // `ir_diverges`: every path through `n` returns.

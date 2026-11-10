@@ -254,7 +254,9 @@ impl Parser {
         // arithmetic with no store in it.  Anything else can be a whole `??` block, whose
         // default arm BUILDS a value, and evaluating that twice mints two stores and orphans
         // one.
-        if Self::is_repeatable_place(&self.data, &slot_ref) {
+        if Self::is_repeatable_place(&self.data, &slot_ref)
+            || Self::is_place_through_discharge(&self.data, &slot_ref)
+        {
             let pick = self.nullable_pick(slot_ref.clone(), slot_ref, payload_pos, struct_kt);
             return pick;
         }
@@ -339,6 +341,13 @@ impl Parser {
             return false;
         }
         self.vars.mark_inline_ref(named);
+        // A PROJECTION base (`f()[i]`, an element read) is a view into its container's store,
+        // never a delivered record: the name borrows it, and freeing it released the
+        // container — a double free of a vector the frame owns, and the caller's own store
+        // where the container was a buffer it lent (loft#2443; `Own::Borrowed`).
+        if self.data.op_sets().projections.contains(call_d) {
+            self.vars.set_skip_free(named);
+        }
         let mut slot_args = args.clone();
         slot_args[0] = Value::Var(named);
         let slot = Value::Call(get_d, slot_args);
@@ -400,6 +409,27 @@ impl Parser {
                     && args
                         .first()
                         .is_some_and(|a| Self::is_repeatable_place(data, a))
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `v` a projection chain rooted in a bare-variable discharge — `x!.f`, `(x ?? return).f`?
+    ///
+    /// Free to repeat: the discharge reads `x` and tests it, minting nothing, and a second
+    /// evaluation repeats a test the first already passed.  The slot reader asks this beside
+    /// [`Self::is_repeatable_place`] so `x!.f` of an `S?` field reads inline as `x.f` does.
+    /// Named into a hidden local instead, the read became a projection of that local, which
+    /// names no place a disturbance reaches: a reassignment of `x` released the record the
+    /// view still read (loft#2447).  Kept off `is_repeatable_place`, whose other callers read
+    /// its answer as "this is a handle or a place" and not only as "this may be repeated".
+    fn is_place_through_discharge(data: &crate::data::Data, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Call(d, args) if crate::use_analysis::is_projection_op(data, *d) => {
+                args.first().is_some_and(|a| {
+                    crate::use_analysis::discharged_variable(a).is_some()
+                        || Self::is_place_through_discharge(data, a)
+                })
             }
             _ => false,
         }

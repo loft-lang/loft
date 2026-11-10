@@ -449,9 +449,10 @@ fn ref_params_copied(
 }
 
 /// The name a column-0 line defines or declares: a function (`static T name(…) {` or its
-/// prototype `…);`), or a one-line table (`static const T name[…] = …;`).
+/// prototype `…);`, a body always inlined into its wrapper spelled `LOFT_HOT_INLINE T name(…)`),
+/// or a one-line table (`static const T name[…] = …;`).
 fn defined_name(l: &str) -> Option<(&str, bool)> {
-    if !l.starts_with("static ") {
+    if !l.starts_with("static ") && !l.starts_with("LOFT_HOT_INLINE ") {
         return None;
     }
     if let Some(open) = l.find('(')

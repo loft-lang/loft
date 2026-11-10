@@ -31,12 +31,53 @@ pub struct Capture {
   pub tp: ir::TypeT
 }
 
+// A work ref the first pass made a parameter (the return buffer renamed onto it), by function
+// and name, with the site that minted it: the second pass steps over its name at any other site
+// (`Function::argument_of_another_site`, loft#848).
+pub struct StepOver {
+  pub d: integer,
+  pub name: text,
+  pub site: integer
+}
+
 // An instance made before its template's second-pass body was read: filled after the pass.
 pub struct StaleInstance {
   pub d: integer,
   pub g: integer,
   pub holder: integer,
   pub bound: ir::TypeT
+}
+
+// A `use` short name or alias and the source it names (`Data::use_names`), or a source and the
+// name its `use` loaded it under (`Data::source_labels`), or a source and its file
+// (`Data::source_files`).
+pub struct UseSource {
+  pub name: text,
+  pub source: integer
+}
+
+// A plain `use`'s binding in its importer, `"{source}\t{key}"` -> definition: kept from whoever
+// imports that importer in turn (`Data::private_imports`).
+pub struct PrivateImport {
+  pub key: text,
+  pub nr: integer
+}
+
+// One name of a selective import, bound under `bind` (`use lib::name as bind`).
+pub struct ImportName {
+  pub name: text,
+  pub bind: text
+}
+
+// A `use` waiting for its importer's use region to end (`Parser::pending_imports`): a wildcard
+// (`star`) or the names it lists — none for a bare `use lib;`, which still brings the library's
+// operators.
+pub struct PendingImport {
+  pub for_source: integer,
+  pub lib_source: integer,
+  pub star: boolean,
+  pub names: vector<ImportName>,
+  pub public: boolean
 }
 
 pub struct El {
@@ -78,7 +119,20 @@ pub struct El {
   // the `__closure` parameter they are read through (-1 where there is none yet).
   pub captures: vector<Capture>,
   pub closure_rec: integer,
-  pub closure_var: integer
+  pub closure_var: integer,
+  pub step_over: vector<StepOver>,
+  // The libraries: `Data::use_names` (emptied each pass, as `Data::reset` does), the name each
+  // source was first loaded under, the file each importing source is read from, the plain
+  // imports, the imports waiting for their importer's use region to end, and the sources being
+  // elaborated now (a library's own `use` of one of them is a cycle).
+  pub use_names: hash<UseSource[name]>,
+  pub labels: vector<UseSource>,
+  pub source_files: vector<UseSource>,
+  pub private: hash<PrivateImport[key]>,
+  pub pending: vector<PendingImport>,
+  pub loading: vector<integer>,
+  // The forward references' stubs a declaration adopted this pass (`Data::adopted_stubs`).
+  pub adopted: vector<integer>
 }
 
 pub const STD_SOURCE = 0;
@@ -122,7 +176,15 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     stale: [],
     captures: [],
     closure_rec: -1,
-    closure_var: -1
+    closure_var: -1,
+    step_over: [],
+    use_names: [UseSource { name: "std", source: STD_SOURCE }],
+    labels: [],
+    source_files: [],
+    private: [],
+    pending: [],
+    loading: [],
+    adopted: []
   }
 }
 
@@ -171,6 +233,229 @@ fn key(source: integer, name: text) -> text {
 pub fn source_nr(el: El, source: integer, name: text) -> integer {
   e = el.names[key(source, name)];
   if e == null { -1 } else { e.nr }
+}
+
+// A definition moved to another key of its source (`def_names.remove` / `insert`).
+pub fn rename_def(el: El, d: integer, name: text) {
+  src = def(el, d).source;
+  el.names[key(src, def(el, d).name)] = null;
+  el.names += [DefName { key: key(src, name), nr: d }];
+  el.b.data.definitions[d].name = name;
+}
+
+// ── the libraries (src/data.rs `use_names`, the imports) ──────────────────────────────────
+
+// `Data::reset`'s part for the libraries: a pass loads them again, under the same sources.
+pub fn reset_uses(el: El) {
+  el.use_names = [UseSource { name: "std", source: STD_SOURCE }];
+  el.pending = [];
+}
+
+// `Data::use_exists`.
+pub fn use_exists(el: El, name: text) -> boolean {
+  el.use_names[name] != null
+}
+
+// `Data::get_source`: the source a `use` name or alias names, or -1.
+pub fn get_source(el: El, name: text) -> integer {
+  u = el.use_names[name];
+  if u == null { -1 } else { u.source }
+}
+
+// `Data::use_add`: a library's source, the next after the program's (`use_names` holds the
+// standard library and every library name and alias, never the program), made current.
+pub fn use_add(el: El, short: text) {
+  n = len(el.use_names) + 1;
+  el.use_names += [UseSource { name: short, source: n }];
+  known = false;
+  for l in el.labels {
+    if l.source == n {
+      known = true;
+    }
+  }
+  if !known {
+    el.labels += [UseSource { name: short, source: n }];
+  }
+  el.source = n;
+}
+
+// `Data::use_alias`: another qualifier for a loaded library (`use lib as m;`).
+pub fn use_alias(el: El, alias: text, source: integer) {
+  el.use_names[alias] = null;
+  el.use_names += [UseSource { name: alias, source: source }];
+}
+
+// `Data::source_label`: the name a library source was loaded under.
+pub fn source_label(el: El, source: integer) -> text {
+  if source == STD_SOURCE {
+    return "std";
+  }
+  if source == MAIN_SOURCE {
+    return "main";
+  }
+  for l in el.labels {
+    if l.source == source {
+      return l.name;
+    }
+  }
+  "src{source}"
+}
+
+// `Data::note_source_file`: the file a source is read from, the first time it imports.
+pub fn note_source_file(el: El, source: integer, file: text) {
+  for f in el.source_files {
+    if f.source == source {
+      return;
+    }
+  }
+  el.source_files += [UseSource { name: file, source: source }];
+}
+
+// `Data::is_private_import`: `key` of `source` is a plain import of `d`, not a definition
+// written in that source's own file.
+fn is_private_import(el: El, source: integer, key: text, d: integer) -> boolean {
+  p = el.private["{source}\t{key}"];
+  if p == null || p.nr != d {
+    return false;
+  }
+  for f in el.source_files {
+    if f.source == source {
+      return def(el, d).position.file != f.name;
+    }
+  }
+  true
+}
+
+// `Data::passes_on`: what an importer of `d`'s source receives — a `pub` definition or an
+// unresolved stub.  (A name-only type, not `pub` but named by a `pub` signature, is refused
+// where a library declares one: `name_only_types`.)
+fn passes_on(el: El, d: integer) -> boolean {
+  def(el, d).pub_visible || def(el, d).def_type == DT_UNKNOWN
+}
+
+// `Data::exported_names`: every key of `lib` that passes on, with its definition.
+pub fn exported_names(el: El, lib: integer) -> vector<DefName> {
+  prefix = "{lib}\t";
+  r: vector<DefName> = [];
+  for n in el.names {
+    if n.key.starts_with(prefix) {
+      name = n.key[len(prefix)..];
+      if passes_on(el, n.nr) && !is_private_import(el, lib, name, n.nr) {
+        r += [DefName { key: name, nr: n.nr }];
+      }
+    }
+  }
+  r
+}
+
+// `Data::bind_import`: `d` under `name` in `into`, where that key is free (or, `over_stub`,
+// holds an unresolved stub); a plain import is recorded as one, a `pub use` passes it on.
+pub fn bind_import(el: El, name: text, into: integer, d: integer, public: boolean, over_stub: boolean = false) {
+  k = key(into, name);
+  sitting = el.names[k];
+  free = sitting == null || (over_stub && def(el, sitting!.nr).def_type == DT_UNKNOWN);
+  if free {
+    el.names[k] = null;
+    el.names += [DefName { key: k, nr: d }];
+  } else if sitting!.nr != d {
+    return;
+  }
+  if public {
+    el.private[k] = null;
+  } else if free {
+    el.private += [PrivateImport { key: k, nr: d }];
+  }
+}
+
+// `Data::import_all`: everything `lib` passes on, bound in `into`.
+pub fn import_all(el: El, lib: integer, into: integer, public: boolean) {
+  for n in exported_names(el, lib) {
+    bind_import(el, n.key, into, n.nr, public);
+  }
+}
+
+// `Data::import_operators`: the `operator` definitions `lib` publishes, bound privately in
+// `into` under their own keys, whatever the `use` lists (`@FR-Op-Left`).
+pub fn import_operators(el: El, lib: integer, into: integer) {
+  for n in exported_names(el, lib) {
+    if def(el, n.nr).operator_form {
+      bind_import(el, n.key, into, n.nr, false, over_stub: true);
+    }
+  }
+}
+
+// `Data::method_name_of_key`: the method a `t_<LEN><Type>_<method>` key files, or "".
+fn method_name_of_key(k: text) -> text {
+  if !k.starts_with("t_") {
+    return "";
+  }
+  digits = 0;
+  while digits + 2 < len(k) && k[digits + 2] >= '0' && k[digits + 2] <= '9' {
+    digits += 1;
+  }
+  n = k[2..2 + digits] as integer ?? -1;
+  if digits == 0 || n < 0 || 2 + digits + n >= len(k) || k[2 + digits + n] != '_' {
+    return "";
+  }
+  k[3 + digits + n..]
+}
+
+// `Data::import_name`: one name of `lib` bound in `into` as `bind` — the definition, the
+// function (`n_<name>`), and, imported under its own name, every `pub` method of that name.
+// False when the library passes on none of them.
+pub fn import_name(el: El, lib: integer, into: integer, name: text, bind: text, public: boolean) -> boolean {
+  plain = el.names[key(lib, name)];
+  found_plain = if plain != null && passes_on(el, plain!.nr) && !is_private_import(el, lib, name, plain!.nr) { plain!.nr } else { -1 };
+  fnk = el.names[key(lib, "n_{name}")];
+  found_fn = if fnk != null && passes_on(el, fnk!.nr) && !is_private_import(el, lib, "n_{name}", fnk!.nr) { fnk!.nr } else { -1 };
+  methods: vector<DefName> = [];
+  if bind == name {
+    prefix = "{lib}\t";
+    for n in el.names {
+      if n.key.starts_with(prefix) {
+        k = n.key[len(prefix)..];
+        if method_name_of_key(k) == name && def(el, n.nr).pub_visible && !is_private_import(el, lib, k, n.nr) {
+          methods += [DefName { key: k, nr: n.nr }];
+        }
+      }
+    }
+  }
+  if found_plain < 0 && found_fn < 0 && len(methods) == 0 {
+    return false;
+  }
+  for m in methods {
+    bind_import(el, m.key, into, m.nr, public);
+  }
+  if found_plain >= 0 {
+    bind_import(el, bind, into, found_plain, public);
+  }
+  if found_fn >= 0 {
+    bind_import(el, "n_{bind}", into, found_fn, public);
+  }
+  true
+}
+
+// `lib::Name` (`Parser::parse_var`'s `source`): the definition `member` of the library `name`
+// names, or -1 where `name` is no library.  A bare `name` (`member` "") is the name's own
+// definition.
+pub fn qualified_def(el: El, name: text, member: text) -> integer {
+  if member == "" {
+    return def_nr(el, name);
+  }
+  if !use_exists(el, name) {
+    return -1;
+  }
+  source_nr(el, get_source(el, name), member)
+}
+
+// `Data::any_source_nr`: the first definition named `name` in any source, or -1.
+pub fn any_source_nr(el: El, name: text) -> integer {
+  for d in el.b.data.definitions {
+    if d.name == name && source_nr(el, d.source, name) == d#index {
+      return d#index;
+    }
+  }
+  -1
 }
 
 // `Data::def_nr` (`get_or_std`): the current source's definition, else the standard library's.

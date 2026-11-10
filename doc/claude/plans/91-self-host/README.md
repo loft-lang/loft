@@ -14,9 +14,12 @@ runtime is the one part that is not loft.  **Self-hosting is the first objective
 goes first again:** the lexer and the parser in loft, now; 1b's open items wait behind them.
 
 The path, in order, with the gate each stage passes before the next starts, is
-[§ The path](#the-path--stages-and-gates).  **Where it stands:** 1b's interpreter runs
-766 of the 1,078 corpus programs (the latest handoff, `handoff-*.md` beside this file,
-has the census); 1a starts now, with the lexer.
+[§ The path](#the-path--stages-and-gates).  **Where it stands:** 1a's lexer and parser pass
+gates T and S on nearly every file, and its elaborator is gate E's work: the gate table, by
+program and by formal rule, is [1a-parser.md § Where it stands](1a-parser.md#where-it-stands).
+1b's interpreter runs programs from the RUST front end's image (766 of the 1,078 corpus
+programs at its last census, in an earlier `handoff-*.md`; not re-measured since); the IR
+passes and the bytecode writer are not ported yet.
 
 **One rule for every stage — a reimplementation, not a new language (owner,
 2026-10-30):** the same IR, the same bytecode, the same memory structures, the same

@@ -75,8 +75,11 @@ fn nl(o: &text, ind: integer) {
   }
 }
 
-// The value of type `tp` at reference (`s`, `r`, `p`), appended to `o` (`loft_show{tp}`).
-pub fn render(b: ir::Bundle, tp: integer, s: integer, r: integer, p: integer, fmt: integer, ind: integer, o: &text) {
+// The value of type `tp` at `at`, appended to `o` (`loft_show{tp}`).
+pub fn render(b: ir::Bundle, tp: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+  s = at.s;
+  r = at.r;
+  p = at.p;
   if tp <= 6 {
     o += crt::show_leaf(tp, s, r, p, fmt, 0, false);
     return;
@@ -88,29 +91,29 @@ pub fn render(b: ir::Bundle, tp: integer, s: integer, r: integer, p: integer, fm
   t = b.types[tp]!;
   complex = t.complex;
   match t.parts[0]! {
-    PtStruct { fields } => show_fields(b, fields, s, r, p, fmt, ind, complex, o),
+    PtStruct { fields } => show_fields(b, fields, at, fmt, ind, complex, o),
     PtEnumValue { value: _, fields } => {
       if fmt & 2 != 0 {
         o += "{{\"{t.name}\":";
-        show_fields(b, fields, s, r, p, fmt, ind, complex, o);
+        show_fields(b, fields, at, fmt, ind, complex, o);
         o += "}}";
       } else {
-        show_fields(b, fields, s, r, p, fmt, ind, complex, o);
+        show_fields(b, fields, at, fmt, ind, complex, o);
       }
     }
-    PtEnum { values } => show_enum(b, t.name, values, s, r, p, fmt, ind, complex, o),
+    PtEnum { values: _ } => show_enum(b, t, at, fmt, ind, o),
     PtVector { content } => {
       if crt::vec_absent(s, r, p) {
         o += "null";
       } else {
-        show_list(b, content, s, r, p, fmt, ind, o);
+        show_list(b, content, at, fmt, ind, o);
       }
     }
     PtHash { content, fields: _ } => {
       if crt::vec_absent(s, r, p) {
         o += "null";
       } else {
-        show_hash(b, tp, content, s, r, p, fmt, ind, o);
+        show_hash(b, tp, content, at, fmt, ind, o);
       }
     }
     PtByte { start, nullable } => { o += crt::show_leaf(crt::SHOW_BYTE, s, r, p, fmt, start, nullable); }
@@ -127,7 +130,7 @@ pub fn render(b: ir::Bundle, tp: integer, s: integer, r: integer, p: integer, fm
 // `write_struct` over `fields` (`loft_showf{tp}`): the fields `show.rs` keeps — not the enum tag,
 // not a hidden `#` field, not a link — framed as `loft_show_open`, `_sep`, `_name` and `_close`
 // frame them.  `complex` is the rendered type's.
-fn show_fields(b: ir::Bundle, fields: vector<ir::DbField>, s: integer, r: integer, p: integer, fmt: integer, ind: integer, complex: boolean, o: &text) {
+fn show_fields(b: ir::Bundle, fields: vector<ir::DbField>, at: crt::Pos, fmt: integer, ind: integer, complex: boolean, o: &text) {
   shown: vector<ir::DbField> = [];
   for f in fields {
     if f.name != "enum" && !f.name.starts_with("#") && (f.other_indexes[0] ?? 0) != 65535 {
@@ -159,7 +162,7 @@ fn show_fields(b: ir::Bundle, fields: vector<ir::DbField>, s: integer, r: intege
     if pretty {
       o += " ";
     }
-    render(b, f.content, s, r, p + f.position, fmt, ind + 1, o);
+    render(b, f.content, crt::moved(at, f.position), fmt, ind + 1, o);
   }
   if c && any {
     nl(o, ind);
@@ -169,11 +172,14 @@ fn show_fields(b: ir::Bundle, fields: vector<ir::DbField>, s: integer, r: intege
   o += "}}";
 }
 
-// An enum by its tag byte: the variant's name, and a struct variant's fields after it; JSON
+// An enum `t` by its tag byte: the variant's name, and a struct variant's fields after it; JSON
 // wraps a variant as `{"Name": …}`.  A `__nullable<S>` renders the value its present variant
 // carries.
-fn show_enum(b: ir::Bundle, name: text, values: vector<ir::EnumPair>, s: integer, r: integer, p: integer, fmt: integer, ind: integer, complex: boolean, o: &text) {
-  v = crt::get_w(crt::W_BYTE, s, r, p, 0, 0) ?? 0;
+fn show_enum(b: ir::Bundle, t: ir::DbType, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
+  name = t.name;
+  complex = t.complex;
+  values = match t.parts[0]! { PtEnum { values: vs } => vs, _ => [] };
+  v = crt::get_w(crt::W_BYTE, at.s, at.r, at.p, 0, 0) ?? 0;
   if name.starts_with("__nullable<") {
     if v == 0 {
       o += "null";
@@ -185,7 +191,7 @@ fn show_enum(b: ir::Bundle, name: text, values: vector<ir::EnumPair>, s: integer
         PtEnumValue { value: _, fields } => {
           for f in fields {
             if f.name == "payload" {
-              render(b, f.content, s, r, p + f.position, fmt, ind, o);
+              render(b, f.content, crt::moved(at, f.position), fmt, ind, o);
             }
           }
         }
@@ -213,7 +219,7 @@ fn show_enum(b: ir::Bundle, name: text, values: vector<ir::EnumPair>, s: integer
   if fmt & 2 != 0 {
     o += "{{\"{vt.name}\":";
     if payload {
-      show_fields(b, fields, s, r, p, fmt, ind, complex, o);
+      show_fields(b, fields, at, fmt, ind, complex, o);
     } else {
       o += "{{}}";
     }
@@ -222,7 +228,7 @@ fn show_enum(b: ir::Bundle, name: text, values: vector<ir::EnumPair>, s: integer
     o += vt.name;
     if payload {
       o += " ";
-      show_fields(b, fields, s, r, p, fmt, ind, complex, o);
+      show_fields(b, fields, at, fmt, ind, complex, o);
     }
   }
 }
@@ -263,16 +269,16 @@ fn is_struct(b: ir::Bundle, tp: integer) -> boolean {
   }
 }
 
-fn show_list(b: ir::Bundle, elem: integer, s: integer, r: integer, p: integer, fmt: integer, ind: integer, o: &text) {
+fn show_list(b: ir::Bundle, elem: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
   e = b.types[elem]!;
   complex_elem = fmt & 1 != 0 && e.complex;
   struct_elem = is_struct(b, elem);
   o += "[";
-  at = crt::null_ref();
-  for i in 0..crt::vec_len(s, r, p) {
+  got = crt::null_ref();
+  for i in 0..crt::vec_len(at.s, at.r, at.p) {
     open_element(i, fmt, complex_elem, struct_elem, ind, o);
-    crt::vec_get(at, s, r, p, e.size, i);
-    render(b, elem, at[0] ?? 65535, at[1] ?? 0, at[2] ?? 0, fmt, ind + 1, o);
+    crt::vec_get(got, at.s, at.r, at.p, e.size, i);
+    render(b, elem, crt::Pos { s: got[0] ?? 65535, r: got[1] ?? 0, p: got[2] ?? 0 }, fmt, ind + 1, o);
   }
   if fmt & 1 != 0 {
     o += " ";
@@ -282,15 +288,15 @@ fn show_list(b: ir::Bundle, elem: integer, s: integer, r: integer, p: integer, f
 
 // A hash in key order (`hash::records_sorted`), its entries held outside the store, as the Rust
 // renderer holds them.
-fn show_hash(b: ir::Bundle, tp: integer, elem: integer, s: integer, r: integer, p: integer, fmt: integer, ind: integer, o: &text) {
+fn show_hash(b: ir::Bundle, tp: integer, elem: integer, at: crt::Pos, fmt: integer, ind: integer, o: &text) {
   e = b.types[elem]!;
   complex_elem = fmt & 1 != 0 && e.complex;
   struct_elem = is_struct(b, elem);
   o += "[";
-  refs = crt::hash_refs(s, r, p, tp);
+  refs = crt::hash_refs(at.s, at.r, at.p, tp);
   for i in 0..len(refs) / 3 {
     open_element(i, fmt, complex_elem, struct_elem, ind, o);
-    render(b, elem, refs[3 * i] ?? 65535, refs[3 * i + 1] ?? 0, refs[3 * i + 2] ?? 0, fmt, ind + 1, o);
+    render(b, elem, crt::Pos { s: refs[3 * i] ?? 65535, r: refs[3 * i + 1] ?? 0, p: refs[3 * i + 2] ?? 0 }, fmt, ind + 1, o);
   }
   if fmt & 1 != 0 {
     o += " ";

@@ -441,7 +441,10 @@ and a decision that reads the wrong one is wrong in the silent direction:
                 (O-Override), and both backends translate the one fact (O-NoDiverge).  A
                 projection bound into such a local is always a VIEW: binding.md's
                 materialise clause does not apply to it, and a binding that clause names
-                is never witnessed.  Every copy into it lands in a FRESH store, never in
+                is never witnessed.  Its BASE outlives the local: every named local a
+                projection bound into it is rooted at joins its dep list beside the last
+                assignment's, so that local's store is not released while the witnessed
+                one can still read through it.  Every copy into it lands in a FRESH store, never in
                 place — the slot may hold a view.  A store a COMPILER TEMP holds — an
                 element of a call's result held by the call's work-ref, a `??` result held
                 by its subject or its default's work-ref — is such a view too: the temp

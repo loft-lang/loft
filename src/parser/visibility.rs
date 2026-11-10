@@ -108,7 +108,7 @@ impl Parser {
         let (why, fix) = match (kind, attr) {
             ("field" | "literal-field" | "pattern-field" | "key", Some(a)) if !a.pub_field => (
                 format!("field `{}` of `{shown}` is not `pub` in `{lib}`", a.name),
-                format!("`{lib}` declares it `pub {}`", a.name),
+                format!("declare it `pub {}` in `{lib}`", a.name),
             ),
             ("literal", _) if !owner.pub_visible => {
                 if !trace {
@@ -116,7 +116,7 @@ impl Parser {
                 }
                 (
                     format!("`{}` is not `pub` in `{lib}`", owner.name),
-                    format!("`{lib}` declares it `pub`"),
+                    format!("declare it `pub` in `{lib}`"),
                 )
             }
             ("literal", _) => {
@@ -135,8 +135,8 @@ impl Parser {
                         private.name
                     ),
                     format!(
-                        "`{lib}` declares every field of `{shown}` `pub`, or the program builds \
-                         it with `{lib}`'s functions"
+                        "declare every field of `{shown}` `pub` in `{lib}`, or build it with \
+                         `{lib}`'s functions"
                     ),
                 )
             }
@@ -145,7 +145,7 @@ impl Parser {
                     "`{}` is a variant of `{}`, which is not `pub` in `{lib}`",
                     def.name, owner.name
                 ),
-                format!("`{lib}` declares `pub enum {}`", owner.name),
+                format!("declare `pub enum {}` in `{lib}`", owner.name),
             ),
             _ => return,
         };
@@ -197,8 +197,8 @@ impl Parser {
             self.lexer,
             Level::Error,
             "`{name}` is not `pub` in `{lib}`, so {spelling} cannot reach it: a library's \
-             surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, or the program \
-             uses something `{lib}` does publish"
+             surface is its `pub` items.\n  fix: declare it `pub` in `{lib}`, or use \
+             something `{lib}` does publish"
         );
     }
 
@@ -238,7 +238,7 @@ impl Parser {
             Level::Error,
             "`{name}` is not `pub` in `{lib}`, so it cannot be built outside that file: `{lib}` \
              only lets its `pub` functions hand it out.\n  fix: build it with `{lib}`'s \
-             functions, or `{lib}` declares it `pub`"
+             functions, or declare it `pub` in `{lib}`"
         );
     }
 

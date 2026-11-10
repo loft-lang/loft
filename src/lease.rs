@@ -989,6 +989,15 @@ impl Pass<'_> {
     }
 }
 
+/// `@FR-H-Copy-Lease` — does a COPY of a value of type `t` owe the program anything: a droppable
+/// it owns (the copy must take its own), or a type declaring `OpCopy` inside it (the copy runs
+/// the hook on the new structure)?  A type with `OpCopy` and no `OpDrop` owns no droppable, so
+/// asking only that let its copies skip the hook in silence (loft#2442).
+#[must_use]
+pub fn copy_observed(data: &Data, t: &Type) -> bool {
+    data.type_owns_droppable_anywhere(t) || copy_reach(data, t).leases
+}
+
 /// A type's own `OpCopy` hook, or `u32::MAX` — resolved the way [`Data::drop_hook_nr`] resolves
 /// `OpDrop`: through the type's own source first, so a library's private hook is found for its
 /// own type.

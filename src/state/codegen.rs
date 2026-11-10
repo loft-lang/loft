@@ -3486,15 +3486,21 @@ impl State {
                 // nullability of the bound value changes nothing" (`t: Ty? …; t = x.tp`, then
                 // `x` reassigned, read the freed record as null, loft#2362).  The stash is
                 // released after the copy, as on every other stashed arm.
+                // A value that names `v` only inside an EXIT arm — the cleanup of a `?? return`
+                // or `?? continue` discharge frees it there — reads nothing of `v` on the path
+                // that binds, so it materialises too, evaluated first (loft#2447).  Read as a
+                // read of `v`, the view stayed an alias of the record the next rebind released.
+                let reads_v_on_exit_only =
+                    rhs_reads_v && stash_old_for_post_free && !reads_var_unless_exiting(value, v);
                 if owned_ref
                     // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
                     && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
-                    && !rhs_reads_v
+                    && (!rhs_reads_v || reads_v_on_exit_only)
                     && !rhs_is_new_record
                     && crate::use_analysis::projection_container_var(stack.data, value).is_some()
                 {
                     note_bind("R2d");
-                    self.gen_set_first_ref_elem_copy(stack, v, value, d_nr);
+                    self.gen_set_first_ref_elem_copy(stack, v, value, d_nr, value_can_exit(value));
                     if stash_old_for_post_free {
                         self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
@@ -3780,7 +3786,7 @@ impl State {
             // act on the fact both backends already read, rather than changing the fact.
             // A binding that kept its deps is untouched and still aliases.
             note_bind("F4");
-            self.gen_set_first_ref_elem_copy(stack, v, value, d_nr);
+            self.gen_set_first_ref_elem_copy(stack, v, value, d_nr, value_can_exit(value));
         } else if let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
             && let Value::TupleGet(_, _) = value
             // @FR-O-Proxy asks copy — whether a tuple-element bind deep-copies the record
@@ -4290,7 +4296,22 @@ impl State {
     /// Same emission shape as [`Self::gen_set_first_ref_tuple_copy`] — allocate at `v`'s
     /// slot, then deep-copy the interior pointer's record into it — but reached from an
     /// element/field read whose deps were stripped, so `v` is an owner (@PLN130 F1).
-    fn gen_set_first_ref_elem_copy(&mut self, stack: &mut Stack, v: u16, value: &Value, d_nr: u32) {
+    ///
+    /// `value_first` evaluates the source BEFORE `v`'s slot is prepared, the order the
+    /// call-result rebind (`R2b`) and native use, and both arms ask for it when the value can
+    /// leave by an exit ([`value_can_exit`]) — a `?? return` / `?? continue` discharge.
+    /// Allocated first, such an exit left the fresh store owned by nothing (a first bind: one
+    /// record per exit) or released it in place of the stashed old one (a rebind, whose exit
+    /// cleanup frees `v`); evaluated first, nothing is prepared on the path that leaves, and
+    /// the completing path copies and frees the stash as before (loft#2447).
+    fn gen_set_first_ref_elem_copy(
+        &mut self,
+        stack: &mut Stack,
+        v: u16,
+        value: &Value,
+        d_nr: u32,
+        value_first: bool,
+    ) {
         let tp_nr = stack.data.def(d_nr).known_type();
         let ref_size = size_of::<crate::keys::DbRef>() as u16;
         let slot_end = stack.function.stack(v).saturating_add(ref_size);
@@ -4299,6 +4320,9 @@ impl State {
             stack.add_op("OpReserveFrame", self);
             self.code_add(bump);
             stack.grow(bump);
+        }
+        if value_first {
+            self.generate(value, stack, false);
         }
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpInitRef", self);
@@ -4312,11 +4336,14 @@ impl State {
         // read false and `k.x` answered its bytes (loft#823).  This opcode is the null-aware
         // sibling built for exactly that shape — it reclaims the pre-allocated record and
         // binds the sentinel when the source is absent, and deep-copies otherwise.
-        // `generate(value)` pushes the source and the opcode pops it, so the slot offset
-        // taken above stays valid.
-        self.generate(value, stack, false);
+        // `generate(value)` pushes the source and the opcode pops it, so the slot offset is
+        // taken after the pop: the one above when the value runs here, one DbRef lower when it
+        // ran first.
+        if !value_first {
+            self.generate(value, stack, false);
+        }
         stack.add_op("OpCopyRefOrNull", self);
-        self.code_add(slot_offset);
+        self.code_add(stack.var_pos(v));
         self.code_add(tp_nr);
         crate::copy_manifest::record(
             stack.def_nr,
@@ -7718,4 +7745,41 @@ fn no_prefill_twin(stack: &Stack, op: u32, parameters: &[Value]) -> Option<u32> 
     };
     let nr = stack.data.def_nr(twin);
     (nr != u32::MAX).then_some(nr)
+}
+
+/// Can evaluating `value` leave it by `return`, `break` or `continue`?  Conservative: an exit
+/// anywhere counts, a `break` of a loop nested inside the value included — the answer only
+/// moves the copy's allocation after the value, which is right whether or not it leaves.
+fn value_can_exit(value: &Value) -> bool {
+    value.any_node(&mut |n| matches!(n, Value::Return(_) | Value::Break(_) | Value::Continue(_)))
+}
+
+/// Does `value` name `v` on a path that can complete — anywhere except inside an arm that
+/// leaves by `return`, `break` or `continue`?  [`Value::reads_var`] with the exit arms skipped:
+/// the frees a discharge's exit carries name every owned local, the destination of the bind
+/// included, and none of them is a read the bound value depends on.
+fn reads_var_unless_exiting(value: &Value, v: u16) -> bool {
+    fn exits(node: &Value) -> bool {
+        match node.unspan() {
+            Value::Return(_) | Value::Break(_) | Value::Continue(_) => true,
+            Value::Block(bl) => bl.operators.iter().any(exits),
+            Value::Insert(ops) => ops.iter().any(exits),
+            Value::If(_, t, e) => exits(t) && exits(e),
+            _ => false,
+        }
+    }
+    match value.unspan() {
+        Value::If(c, t, e) => {
+            reads_var_unless_exiting(c, v)
+                || (!exits(t) && reads_var_unless_exiting(t, v))
+                || (!exits(e) && reads_var_unless_exiting(e, v))
+        }
+        other => {
+            other.names_var_here(v) || {
+                let mut found = false;
+                other.for_each_child(&mut |c| found = found || reads_var_unless_exiting(c, v));
+                found
+            }
+        }
+    }
 }

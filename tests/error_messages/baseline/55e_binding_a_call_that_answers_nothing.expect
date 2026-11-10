@@ -1,0 +1,10 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: `s = …` binds nothing: the right-hand side answers no value — `tally55e` declares no result: give it one (`-> T`), or call it as a statement, `tally55e(…);`
+  --> <cases>/55e_binding_a_call_that_answers_nothing.loft:4:7
+  |
+4 |   s = tally55e();
+  |       ^
+
+error: aborting due to 1 previous error

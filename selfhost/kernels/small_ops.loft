@@ -136,7 +136,7 @@ fn scalars(n: integer) -> integer {
 //   = 11030909111117.
 struct Tr { w: integer, name: text }
 struct Kept { rows: vector<Tr> }
-fn kept(k: &Kept, n: integer) {
+fn kept(k: Kept, n: integer) {
   t: vector<Tr> = [];
   for i in 1..n {
     t += [k.rows[i]?];
