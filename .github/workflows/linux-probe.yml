@@ -64,6 +64,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      # A no-op on this Linux probe.
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
       - uses: ./.github/actions/checkout-suite
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
