@@ -7300,6 +7300,11 @@ use a separate collection or add after the loop"
                     && call_has_body
                     && self.vars.exists(*v_nr)
                     && !self.vars.is_argument(*v_nr)
+                    // A `&` link's deps name the PLACE it links, which a whole write copies
+                    // into (`@FR-B-Ref-Write`): the call's result never becomes the binding's,
+                    // so there is no guess of the call's to correct.  Cleared, the link read
+                    // OWNS, its bind copied the field, and the write landed in the copy.
+                    && !self.vars.is_amp_link(*v_nr)
                     && !s_type.is_unknown()
                     // …and the SLOT must be resolved too.  `is_equal(Unknown, τ)` is TRUE, so
                     // without this a generic's still-unknown local passes the equality test and
