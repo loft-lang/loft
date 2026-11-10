@@ -1,5 +1,5 @@
 diff --git a/src/scopes.rs b/src/scopes.rs
-index 4a26b0d88..d0168f617 100644
+index d05faff1c..72dac015d 100644
 --- a/src/scopes.rs
 +++ b/src/scopes.rs
 @@ -411,14 +411,6 @@ struct Scopes<'s> {
@@ -182,7 +182,7 @@ index b00d5743a..aba14fb7c 100644
              guarded.append(&mut ls);
              ls = guarded;
 diff --git a/src/scopes/phase.rs b/src/scopes/phase.rs
-index ba47c763a..e057a4c2e 100644
+index 6e4751cbc..aa228478d 100644
 --- a/src/scopes/phase.rs
 +++ b/src/scopes/phase.rs
 @@ -202,7 +202,6 @@ pub(super) fn run_scan_phase(
@@ -193,9 +193,9 @@ index ba47c763a..e057a4c2e 100644
          prefix_released: Vec::new(),
          displaced_owned,
          views_to_materialise,
-@@ -331,18 +330,6 @@ pub(super) fn run_scan_phase(
-         scopes.var_order.push(w);
-         scopes.owner_witness.insert(v, w);
+@@ -339,18 +338,6 @@ pub(super) fn run_scan_phase(
+             function.depend(v, b);
+         }
      }
 -    // loft#2145 — the view locals a `&` callee may rebind, and the snapshot of the store each
 -    // views.  Minted before the scan: `scan_args` protects the snapshot at every such call.
@@ -212,7 +212,7 @@ index ba47c763a..e057a4c2e 100644
      // @PLN219 `@FR-B-Ref-Repoint` — the cell a `&` PARAMETER is re-pointed to (`slot =
      // &slot.left` names the field through a compiler-made cell, `Parser::repoint_slot_param`)
      // is read through the parameter for the rest of the call, where its own name is not
-@@ -555,24 +542,6 @@ pub(super) fn run_scan_phase(
+@@ -563,24 +550,6 @@ pub(super) fn run_scan_phase(
      // call and not as `null`, because a heap local's `= null` lowers to `OpInitRef` — a
      // stack-record placeholder the allocator is expected to replace — and a free of THAT is
      // the `#306` refusal.
@@ -237,7 +237,7 @@ index ba47c763a..e057a4c2e 100644
      // @PLN219 — a slot cell is declared at the top, where every backend gives it the frame's
      // lifetime; a cell first set in a loop body was otherwise declared inside it.
      if !slot_cells.is_empty()
-@@ -1033,89 +1002,3 @@ pub(super) fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Da
+@@ -1041,89 +1010,3 @@ pub(super) fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Da
      let v = function.var(&name);
      (v != u16::MAX).then_some(v)
  }
