@@ -19,6 +19,7 @@ jobs:
   # `strip` calls a workflow and cannot carry steps, so the step has a job of its own.  It
   # runs on Linux, so both steps are skipped; the checkout fetches only the step's folder.
   windows-gcc:
+    # @windows-exempt: platform-free — holds the windows-gcc step for this file, and builds nothing
     runs-on: ubuntu-latest
     permissions:
       contents: read
