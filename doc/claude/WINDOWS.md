@@ -88,7 +88,8 @@ returns the first one's stale answer.  `tests/ctor_literal.rs` case 157 (`c8`,
 clean under `-fsanitize=undefined`, `-fno-strict-aliasing` and `-fwrapv` do not
 cure it, and MSYS2 gcc 16.2 and MSVC `cl` compile the same source right.
 
-Every Windows job that builds C runs `.github/actions/windows-gcc` first.  That
+Every Windows job that builds C runs `.github/actions/windows-gcc` first
+(`prebuild-native` from its `_loft/` checkout).  That
 step sets `LOFT_CC=C:/msys64/ucrt64/bin/gcc.exe` (MSYS2's UCRT gcc, preinstalled
 on the runner; installed with `pacman` if missing) and fails if that gcc is
 older than 16.  It puts nothing on `PATH`: MSYS2's `bin` would hide the runner's
