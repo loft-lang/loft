@@ -1798,6 +1798,24 @@ impl Parser {
     /// source), and `a -= 1` over `OpMin(self: V, o: integer)` looked for `OpMin(V, V)`
     /// (loft#1819).  Answers the composed value and its type; the caller judges the type
     /// against the place.
+    /// Is `v` a comparison (`==`, `<`, …) or a short-circuit `&&` / `||` (`if a { b } else
+    /// { false }`, `if a { true } else { b }`) — the operators a `??` binds looser than?
+    fn is_comparison_or_logic(&self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::If(_, t, f) => {
+                matches!(f.unspan(), Value::Boolean(false))
+                    || matches!(t.unspan(), Value::Boolean(true))
+            }
+            Value::Call(d, _) => {
+                let n = self.data.def(*d).name();
+                ["OpEq", "OpNe", "OpLt", "OpLe", "OpGt", "OpGe"]
+                    .iter()
+                    .any(|p| n.starts_with(p))
+            }
+            _ => false,
+        }
+    }
+
     /// `@FR-N-Div` and its float twin `@FR-N-Domain` — does `left ⊕ divisor` answer `τ?`
     /// because ⊕ is `/` or `%` and a zero divisor yields the reserved null?  A divisor
     /// provably non-zero (a non-zero constant, a name a guard proved) keeps `τ`.  Captured
@@ -4730,12 +4748,23 @@ impl Parser {
                 rhs_type.source_name(&self.data),
                 result_type.source_name(&self.data),
             );
+            // A `boolean` default for a value that is not one is, nearly always, precedence:
+            // `x ?? -1 == 3` reads `-1 == 3` as the default, because `??` binds looser than a
+            // comparison, `&&` and `||`.  The mismatch alone names the symptom, not that.
+            let precedence = matches!(rhs_type, Type::Boolean)
+                && !matches!(result_type.base(), Type::Boolean)
+                && self.is_comparison_or_logic(&rhs);
+            let why = if precedence {
+                " — `??` binds looser than a comparison, `&&` and `||`, so the default here is \
+                 the whole test after it; parenthesise the coalesce: `(x ?? d) == y`"
+            } else {
+                " — a default must be usable where the value's type is expected"
+            };
             diagnostic!(
                 self.lexer,
                 Level::Error,
                 code = "coalesce-default-type-mismatch",
-                "`??` default of type `{given}` is not assignable to `{wanted}` — a default \
-                 must be usable where the value's type is expected",
+                "`??` default of type `{given}` is not assignable to `{wanted}`{why}",
             );
             // @PLN131 — ONE fix, and no `edit`.  The obvious rewrite (`… as {wanted}`) is
             // not sound to spell: `"x" as integer` is a text parse that can fail, so

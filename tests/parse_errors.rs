@@ -512,6 +512,15 @@ fn qq_coalesce_numeric_default_mismatch() {
         .warning("Variable b is never read at qq_coalesce_numeric_default_mismatch:1:36");
 }
 
+// A `boolean` default after a comparison is precedence, not a wrong value: `??` binds looser
+// than `==`, so `n ?? -1 == 3` defaults to `-1 == 3`.  The message says so and names the
+// parenthesised spelling.
+#[test]
+fn qq_coalesce_default_that_is_a_comparison_names_the_precedence() {
+    code!("fn test() { n: integer? = null; assert(n ?? -1 == 3, \"x\"); }")
+        .error("`??` default of type `boolean` is not assignable to `integer` — `??` binds looser than a comparison, `&&` and `||`, so the default here is the whole test after it; parenthesise the coalesce: `(x ?? d) == y` at qq_coalesce_default_that_is_a_comparison_names_the_precedence:1:53");
+}
+
 #[test]
 fn qq_coalesce_crosstype_default_mismatch() {
     code!("fn test() { n: integer? = null; b = n ?? \"x\"; }")
