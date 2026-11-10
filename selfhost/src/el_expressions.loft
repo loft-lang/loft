@@ -16844,7 +16844,8 @@ fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) ->
   void = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
   narrow = match elm { TyInteger { spec } => el_types::narrow_width(spec) > 0 || spec.forced_size != 0, _ => false };
-  if !(el_convert::plain_scalar(elm) || elm is TyText) || narrow || elm is TyEnum {
+  sed = el_types::struct_enum_def(elm);
+  if !(el_convert::plain_scalar(elm) || elm is TyText || sed >= 0) || narrow || (elm is TyEnum && sed < 0) {
     el::refuse(e, "a vector match over this element type: {type_kind(elm)}");
     return void;
   }
@@ -17002,12 +17003,18 @@ fn pattern_bind(vars: el_vars::Vars, name: text, tp: ir::TypeT, names: vector<el
 
 // `parse_slice_pattern` for plain names, `_` and one `..` / `..rest` over `sv`.
 fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems: vector<integer>, names: vector<el_vars::VarName>) -> SliceArm? {
+  // Each fixed element: a name ("_" for none) or, over a struct enum, a variant pattern (its
+  // syntax node in `head_pat` / `tail_pat`, -1 for a name).
   head: vector<text> = [];
   tail: vector<text> = [];
+  head_pat: vector<integer> = [];
+  tail_pat: vector<integer> = [];
   has_rest = false;
   rest = "";
+  sed = el_types::struct_enum_def(elm);
   for el0 in elems {
     nm = "";
+    pat = -1;
     match e.p.nodes[el0] {
       PRest { name } => {
         if has_rest {
@@ -17021,29 +17028,55 @@ fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
       PWild => { nm = "_"; },
       _ => {
         nm = rename_of(e, el0);
-        if nm == "" {
+        if nm == "" && sed >= 0 && e.p.nodes[el0] is PName {
+          pat = el0;
+        } else if nm == "" {
           el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
           return null;
         }
       }
     }
-    if has_rest { tail += [nm]; } else { head += [nm]; }
+    if has_rest {
+      tail += [nm];
+      tail_pat += [pat];
+    } else {
+      head += [nm];
+      head_pat += [pat];
+    }
   }
   fixed = len(head) + len(tail);
   ln = el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: sv }]);
   cond = if has_rest { el_ir::cl(e, "OpLeInt", [ir::NdInt { n: fixed }, ln]) } else { el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: fixed }]) };
-  es = elem_size(elm);
+  es = if sed >= 0 { element_stride(e, elm) } else { elem_size(elm) };
+  // A record element bound by name views the subject's element: it borrows what the subject does.
+  named_t = if sed >= 0 { el_types::with_deps(elm, el_types::deps(el_vars::tp(vars, sv))) } else { elm };
   binds: vector<ir::Node> = [];
   for h in head {
-    if h != "_" {
-      bv = pattern_bind(vars, h, elm, names);
-      binds += [el_ir::v_set(bv, elem_read(e, elm, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: h#index }])))];
+    at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: h#index }]);
+    if (head_pat[h#index] ?? -1) >= 0 {
+      va = slice_variant(e, vars, head_pat[h#index] ?? -1, sed, slice_elem(e, elm, at), names);
+      if va == null {
+        return null;
+      }
+      cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
+      binds += va!.binds;
+    } else if h != "_" {
+      bv = pattern_bind(vars, h, named_t, names);
+      binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     }
   }
   for t in tail {
-    if t != "_" {
-      bv = pattern_bind(vars, t, elm, names);
-      binds += [el_ir::v_set(bv, elem_read(e, elm, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: t#index - len(tail) }])))];
+    at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: t#index - len(tail) }]);
+    if (tail_pat[t#index] ?? -1) >= 0 {
+      va = slice_variant(e, vars, tail_pat[t#index] ?? -1, sed, slice_elem(e, elm, at), names);
+      if va == null {
+        return null;
+      }
+      cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
+      binds += va!.binds;
+    } else if t != "_" {
+      bv = pattern_bind(vars, t, named_t, names);
+      binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     }
   }
   if rest != "" {
@@ -17057,6 +17090,30 @@ fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, elems:
     }
   }
   SliceArm { binds: binds, cond: cond, shape: SliceShape { min: fixed, exact: !has_rest } }
+}
+
+// An element of the slice subject read at `at` (`OpGetVector(…)`): a struct enum's record in its
+// slot (`OpGetField(…, 0, T)`), a scalar or a text read at 0.
+fn slice_elem(e: el::El, elm: ir::TypeT, at: ir::Node) -> ir::Node {
+  place = element_place_type(e, elm);
+  if el_types::struct_enum_def(elm) >= 0 && place >= 0 {
+    return el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: place }]);
+  }
+  elem_read(e, elm, at)
+}
+
+// A variant pattern at one element of a slice (`[Kw { k }, ..rest]`): its test and its field
+// captures over the element `x`, as a struct-enum arm over a subject (`variant_arm`); the names it
+// binds are restored at the arm's end.  Null where refused.
+fn slice_variant(e: el::El, vars: el_vars::Vars, pat: integer, sed: integer, x: ir::Node, names: vector<el_vars::VarName>) -> VArm? {
+  va = variant_arm(e, vars, [pat], sed, x);
+  if va == null {
+    return null;
+  }
+  for al in va!.aliases {
+    names += [al];
+  }
+  va
 }
 
 // `materialize_named_rest` + `materialize_iterator`'s element loop: the rest `rv` a fresh vector
@@ -17077,7 +17134,9 @@ fn named_rest(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, rv: i
   advance = el_ir::v_set(idx, el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [i])]), ir::NdVar { n: lo_v }, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }])));
   brk = el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: hi_v }, i]), ir::NdBreak { n: 0 }, ir::NdNull);
   at = el_ir::v_block([advance, brk, i], int_t, "Iter range");
-  read = el_ir::v_block([elem_read(e, elm, el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: sv }, ir::NdInt { n: elem_size(elm) }, at]))], elm, "Vector Index");
+  sed = el_types::struct_enum_def(elm);
+  es = if sed >= 0 { element_stride(e, elm) } else { elem_size(elm) };
+  read = el_ir::v_block([slice_elem(e, elm, el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at]))], elm, "Vector Index");
   nm = el_types::elem_name(e, elm);
   rows = vector_rows(e, elm, 0, true);
   if nm == "" || rows == null {
@@ -17086,7 +17145,8 @@ fn named_rest(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, rv: i
   }
   r = rows!;
   ev = el_vars::create_unique(vars, "elm", ir::TyReference { n: el::def_nr(e, nm), dep: [rv] });
-  fv = el_vars::create_unique(vars, "slice_elm", elm);
+  // A record element is a view of the subject's element (`Vector Index`'s dep on the vector).
+  fv = el_vars::create_unique(vars, "slice_elm", if el_types::struct_enum_def(elm) >= 0 { el_types::with_deps(elm, [sv]) } else { elm });
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   el_vars::depend(vars, rv, db);
   el_vars::set_var_type(vars, ev, ir::TyReference { n: el::def_nr(e, nm), dep: [db] });
@@ -17094,7 +17154,13 @@ fn named_rest(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT, rv: i
   body = [
     el_ir::v_set(fv, read),
     el_ir::v_set(ev, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: rv }, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])),
-    el_ir::cl(e, tuple_set_op(elm), [w, ir::NdInt { n: 0 }, ir::NdVar { n: fv }]),
+    // A record element is copied into the new slot (`OpCopyRecord`), a scalar written there.
+    if sed >= 0 {
+      place = element_place_type(e, elm);
+      el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: fv }, el_ir::cl(e, "OpGetField", [w, ir::NdInt { n: 0 }, ir::NdInt { n: place }]), ir::NdInt { n: place }])
+    } else {
+      el_ir::cl(e, tuple_set_op(elm), [w, ir::NdInt { n: 0 }, ir::NdVar { n: fv }])
+    },
     el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: rv }, w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])
   ];
   ops: vector<ir::Node> = [
