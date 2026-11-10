@@ -73,6 +73,11 @@ key.
 
 ### Bug fixes
 
+**A compiled program that opens a file reads no uninitialised memory when it rebuilds a
+result.**  A `--native` program that read a file into a vector checked the type word of a
+store nothing had written yet, to see whether it held a file to close.  The store is now
+checked for a root first; a store without one holds no file.
+
 **An empty vector as a comprehension's element.**  `rows: vector<vector<integer>> = [for _ in
 n { [] }]` was refused with "comprehension body must produce a value"; the body now takes its
 type from the declared element, so it builds three empty rows.  The same holds for a nested
