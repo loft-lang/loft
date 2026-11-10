@@ -51,6 +51,14 @@ pub fn rewrite_program(data: &mut Data) -> usize {
     if std::env::var("LOFT_NO_HOST_RESULT").is_ok_and(|v| v != "0") {
         return 0;
     }
+    // The clause builds each result in the store of the first result on its path, which is
+    // the store the callee answered only where that first bind ADOPTS it (`(R-AdoptFirstBind)`).
+    // With the adoption off the bind copies into a store of its own, and the second call, the
+    // node and its adoptions were laid out for a store the result no longer names: `(7*7)` for
+    // `(2*7)`, an offset overflow on C.  Off with the rule it stands on.
+    if !crate::keys::adopt_first_bind_enabled() {
+        return 0;
+    }
     let ops = Ops {
         database: data.def_nr("OpDatabase"),
         free_distinct: data.def_nr("OpFreeRefIfDistinct"),
