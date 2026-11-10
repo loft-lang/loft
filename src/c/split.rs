@@ -340,7 +340,8 @@ fn is_macro_name(init: &str) -> bool {
     let b = init.as_bytes();
     !b.is_empty()
         && !b[0].is_ascii_digit()
-        && b.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == b'_')
+        && b.iter()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == b'_')
         && b.iter().any(u8::is_ascii_uppercase)
 }
 
@@ -1019,7 +1020,9 @@ mod tests {
         let decl = "    loft_hh hh6 = LOFT_HH_NONE;\n";
         let out = split(&body(decl, &read("hh6.rec"))).expect("split");
         assert!(
-            out.contains("{ loft_hh loft_split_tmp = LOFT_HH_NONE; loft_fr->hh6 = loft_split_tmp; }"),
+            out.contains(
+                "{ loft_hh loft_split_tmp = LOFT_HH_NONE; loft_fr->hh6 = loft_split_tmp; }"
+            ),
             "{out}"
         );
         assert!(!out.contains("loft_fr->hh6 = LOFT_HH_NONE;"), "{out}");
