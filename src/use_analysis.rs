@@ -3055,6 +3055,14 @@ impl<'a> Ownership<'a> {
                     {
                         variant_check_subject(self.data, t, e)
                     }
+                    // A bare-variable discharge (`va!.p`, `(va ?? return).p`) is `va` itself,
+                    // the peel [`projection_container_place`] makes.  Without it the block
+                    // named no base, the view classified `Owned`, and `lost-write` told the
+                    // author a write that lands was lost (loft#2447).
+                    Some(a) if discharged_variable(a).is_some() => match discharged_variable(a) {
+                        Some(Value::Var(b)) => Some(*b),
+                        _ => None,
+                    },
                     // nested `o.inner.rows`
                     Some(inner) => self.borrow_base_guarded(inner, func, defs, visited),
                     None => None,
@@ -3765,7 +3773,10 @@ fn projection_walk(
             };
             run_since_elem = ANY_FIELD;
         }
-        match args.first().map(Value::unspan) {
+        match args
+            .first()
+            .map(|a| discharged_variable(a).unwrap_or(a.unspan()))
+        {
             Some(Value::Var(c)) => {
                 return Some((
                     *c,
@@ -3778,6 +3789,38 @@ fn projection_walk(
             Some(inner) => cur = inner,
             None => return None,
         }
+    }
+}
+
+/// The VARIABLE a bare-variable discharge answers — `x` in `x!`, `x ?? return`, `x ?? break` —
+/// or `None` when `v` is not one.
+///
+/// The parser lowers such a discharge to an `ncr` block of exactly two statements,
+/// `{ if <x is absent> { <exit> }; x }` (`null_coalesce_exit`, loft#2298: a variable is tested
+/// and answered as itself, with no temp).  Every exit diverges, so the block's value is `x` on
+/// every path that has one — the same `DbRef`, not a copy — and a projection through it reads
+/// `x`'s place exactly as `x.f` does (`(B-View)`).  Read as anything else, `x!.f` named no
+/// container: a reassignment of `x` while the view lived disturbed nothing, and the view kept
+/// reading the record the reassignment released (loft#2447, both backends).
+///
+/// Recognised by what the builder BUILDS — the block's name, its two statements, the `if`
+/// with no else — never by a looser shape: the temp form (`{ ncr_N = e; if …; ncr_N }`) binds
+/// an owned value and is not a place of anything, and a value-`if` (`a?` on a nullable
+/// parameter) has an arm that mints.
+#[must_use]
+pub(crate) fn discharged_variable(v: &Value) -> Option<&Value> {
+    let Value::Block(bl) = v.unspan() else {
+        return None;
+    };
+    match bl.operators.as_slice() {
+        [test, tail]
+            if bl.name == "ncr"
+                && matches!(test.unspan(), Value::If(_, _, e) if matches!(e.unspan(), Value::Null))
+                && matches!(tail.unspan(), Value::Var(_)) =>
+        {
+            Some(tail.unspan())
+        }
+        _ => None,
     }
 }
 

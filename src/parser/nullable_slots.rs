@@ -254,7 +254,9 @@ impl Parser {
         // arithmetic with no store in it.  Anything else can be a whole `??` block, whose
         // default arm BUILDS a value, and evaluating that twice mints two stores and orphans
         // one.
-        if Self::is_repeatable_place(&self.data, &slot_ref) {
+        if Self::is_repeatable_place(&self.data, &slot_ref)
+            || Self::is_place_through_discharge(&self.data, &slot_ref)
+        {
             let pick = self.nullable_pick(slot_ref.clone(), slot_ref, payload_pos, struct_kt);
             return pick;
         }
@@ -407,6 +409,27 @@ impl Parser {
                     && args
                         .first()
                         .is_some_and(|a| Self::is_repeatable_place(data, a))
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `v` a projection chain rooted in a bare-variable discharge — `x!.f`, `(x ?? return).f`?
+    ///
+    /// Free to repeat: the discharge reads `x` and tests it, minting nothing, and a second
+    /// evaluation repeats a test the first already passed.  The slot reader asks this beside
+    /// [`Self::is_repeatable_place`] so `x!.f` of an `S?` field reads inline as `x.f` does.
+    /// Named into a hidden local instead, the read became a projection of that local, which
+    /// names no place a disturbance reaches: a reassignment of `x` released the record the
+    /// view still read (loft#2447).  Kept off `is_repeatable_place`, whose other callers read
+    /// its answer as "this is a handle or a place" and not only as "this may be repeated".
+    fn is_place_through_discharge(data: &crate::data::Data, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Call(d, args) if crate::use_analysis::is_projection_op(data, *d) => {
+                args.first().is_some_and(|a| {
+                    crate::use_analysis::discharged_variable(a).is_some()
+                        || Self::is_place_through_discharge(data, a)
+                })
             }
             _ => false,
         }
