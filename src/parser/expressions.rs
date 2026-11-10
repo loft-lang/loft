@@ -4399,8 +4399,11 @@ use a separate collection or add after the loop"
         let mut fixed = to.clone();
         let mut prefix = Vec::new();
         for x in read {
+            // A variable the PLACE writes itself — a `??` temp inside an index — is the
+            // place's own work, defined there, not a value moving the place.
             if !matches!(self.vars.tp(x).base(), Type::Integer(_) | Type::Character)
                 || !written(x, code)
+                || written(x, to)
             {
                 continue;
             }
