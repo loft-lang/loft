@@ -2810,7 +2810,15 @@ impl Parser {
                             // this, `fn f() -> text { ...; a.v.0 }` returns
                             // a `Str` whose ptr points into a freed host.
                             let parent_deps = t.depend();
+                            // `@FR-T-Absent` × `(N-Prop)` — a member of an in-flight tuple
+                            // (`v[i]` by a variable index, `Optional(Tuple)`) is `τᵢ?`: an absent
+                            // tuple is a tuple of null members, and N-Store polices where each
+                            // lands (`y: integer = v[i].0` is warned, as the whole tuple is).
+                            let in_flight = matches!(t, Type::Optional(_));
                             t = elems[idx].clone();
+                            if in_flight {
+                                t = Type::optional(t);
+                            }
                             // `@FR-O-Oracle`: a projection is Borrowed(BASE), so the element
                             // carries what the whole base borrows — ALL of it.  A tuple's base
                             // deps are the union of its elements' (`Type::depend`), so a literal
