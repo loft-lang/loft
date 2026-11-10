@@ -151,7 +151,10 @@ VERIFY_MODES = {
     # alone is the difference.
     "copy-check": (["-DLOFT_COPY_CHECK", "-w"], {"LOFT_COPY_CHECK": "1"}),
 }
-ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
+# `-g1`: the line tables a report's `file:line` frames need, without the full debug info that
+# doubled each compile (8.7 s against 4.5 s on a mid-size program) — and compiling is the whole
+# of an ASan shard's time, its runs taking hundredths of a second.
+ASAN = ["-g1", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 # `--wasm`: the same unit for wasm32-wasi.  The runtime's recoverable faults use setjmp, which
 # wasm has through the exception-handling proposal (clang's `-wasm-enable-sjlj` in its standard
 # encoding — clang 22's default is the legacy `try`, which wasmtime refuses — wasmtime's
