@@ -46,6 +46,13 @@ pub struct Proven {
   pub disc: integer
 }
 
+// `Parser::index_bounded`: an index local a test proved in range for the vector `vec` (its read,
+// a local or a field of one), so `vec[var]` reads its element as present (`@FR-N-Index`).
+pub struct Bound {
+  pub var: integer,
+  pub vec: ir::Node
+}
+
 // A work ref and the syntax node it was minted at.
 pub struct RefSite {
   pub nr: integer,
@@ -129,6 +136,8 @@ pub struct Vars {
   // Projections a condition proved present in the arm being read (`narrowed_non_null_exprs`),
   // compared by their IR without spans.
   pub present_exprs: vector<ir::Node>,
+  // `index_bounded`: the (index, vector) pairs a test proved in range where they are read
+  pub bounded: vector<Bound>,
   // `bind_text_link_kind`: the locals bound as text links, and of those the store kind (a text
   // field or element, read and written through `OpVarRef`)
   pub text_links: vector<integer>,
@@ -655,6 +664,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.loop_binds = [];
   v.nonzero = [];
   v.present = [];
+  v.bounded = [];
   v.work_ctext = 0;
   v.work_tp2 = 0;
   v.lambdas = 0;

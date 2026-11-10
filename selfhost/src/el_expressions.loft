@@ -320,6 +320,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // A tail already refused is no second refusal.
       if built != null {
         code = built!;
+        if el_types::base(result) is TyReference {
+          code = stage_exits(e, vars, code, rb);
+        }
       } else if !(kind == "null" && len(e.refused) > 0) {
         el::refuse(e, "a function returning a record from something other than a literal: {kind}");
       }
@@ -2609,7 +2612,7 @@ fn literal_arms_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: int
 // buffer the caller handed in live, every mention of the literal's buffer the return buffer's.
 // The tail of a body and the value of a mid-body `return` are both delivered this way.  Null when
 // `x` is not such a literal.
-fn object_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+fn object_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integer, result: ir::TypeT, stage: boolean = true) -> ir::Node? {
   w = -1;
   ops: vector<ir::Node> = [];
   lit_t = result;
@@ -2651,7 +2654,7 @@ fn object_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integer, 
     }
     built += [y];
   }
-  if el_types::base(result) is TyReference {
+  if stage && el_types::base(result) is TyReference {
     built = rebind_safe_literal(e, vars, built, rb);
   }
   // Typed as the literal — a variant's own record where the result is its enum.
@@ -2668,6 +2671,49 @@ fn variant_parent(e: el::El, t: ir::TypeT) -> integer {
 
 // Every `Var(from)` in `n` as `Var(to)` (`substitute_work_ref`): reads, assignment targets and
 // a block's result dependency alike.
+// `literal_exits_into_buffer`'s order: Rust builds a mid-body `return` literal in its work ref
+// and redirects it into the return buffer after the tail's delivery, so the reads its writes stage
+// (`rebind_safe_literal`, `__stg_p2_N`, numbered by the variable count) follow the tail's, exit by
+// exit in source order.  `record_return` redirected each exit unstaged; this stages them.
+fn stage_exits(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer) -> ir::Node {
+  match n {
+    NdReturn { inner } => ir::NdReturn { inner: stage_exit(e, vars, inner, rb) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: stage_exits(e, vars, inner, rb) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: stage_exits(e, vars, t, rb), f: stage_exits(e, vars, f, rb) },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { stage_exits(e, vars, x, rb) }] },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { stage_exits(e, vars, x, rb) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { stage_exits(e, vars, x, rb) }];
+      ir::NdLoop { block: [b] }
+    },
+    _ => n
+  }
+}
+
+// One exit's value: a literal built into `rb` (an `Object` block) staged, through the arms of a
+// branch every arm of which answers one.
+fn stage_exit(e: el::El, vars: el_vars::Vars, v: ir::Node, rb: integer) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: stage_exit(e, vars, inner, rb) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: stage_exit(e, vars, t, rb), f: stage_exit(e, vars, f, rb) },
+    NdBlock { block } => {
+      b = block[0];
+      if b.name == "Object" {
+        b.operators = rebind_safe_literal(e, vars, b.operators, rb);
+      } else if len(b.operators) > 0 {
+        b.operators[len(b.operators) - 1] = stage_exit(e, vars, b.operators[-1]!, rb);
+      }
+      ir::NdBlock { block: [b] }
+    },
+    _ => v
+  }
+}
+
 fn rename_var(n: ir::Node, from: integer, to: integer) -> ir::Node {
   match n {
     NdVar { n: v } => if v == from { ir::NdVar { n: to } } else { n },
@@ -4475,16 +4521,43 @@ fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
 // copies a local, 0 where it can but none copies, -1 where an arm is neither a whole-vector
 // local nor a value the bind takes as it is (a vector literal, a pass-1 placeholder).
 fn sinkable_arms(e: el::El, vars: el_vars::Vars, code: ir::Node) -> integer {
-  match el_ir::unspan(code) {
+  // `vec_arm_copies`: a value block or an insert is its last operator; a block that yields
+  // nothing (a diverging arm) or nothing at all cannot be written out as a bind.
+  c = el_ir::unspan(code);
+  while true {
+    next: ir::Node? = null;
+    match c {
+      NdBlock { block } => {
+        bl = block[0];
+        if len(bl.operators) == 0 || el_types::base(bl.result[0]) is TyVoid || el_types::base(bl.result[0]) is TyNull {
+          return -1;
+        }
+        next = el_ir::unspan(bl.operators[-1]!);
+      },
+      NdInsert { items } => {
+        if len(items) == 0 {
+          return -1;
+        }
+        next = el_ir::unspan(items[-1]!);
+      },
+      _ => {}
+    }
+    if next == null {
+      break;
+    }
+    c = next!;
+  }
+  match c {
     NdIf { cond: _, t, f } => {
       a = sinkable_arms(e, vars, t);
       b = sinkable_arms(e, vars, f);
       if a < 0 || b < 0 { -1 } else if a == 1 || b == 1 { 1 } else { 0 }
     },
-    NdVar { n } => if el_vars::is_compiler_generated(vars, n) { 0 } else { 1 },
-    NdBlock { block } => if block[0].name == "Vector" { 0 } else { -1 },
     NdNull => 0,
-    _ => -1
+    // A compiler temp — a literal's own buffer — keeps the value it has; a whole local or a
+    // vector field read off an owned record copies (`classify_vec_bind`).
+    NdVar { n } => if el_vars::is_compiler_generated(vars, n) { 0 } else { 1 },
+    _ => if copies_whole_vector(e, vars, c) { 1 } else { 0 }
   }
 }
 
@@ -4521,8 +4594,29 @@ fn sink_arms(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
 }
 
 fn sink_arm(e: el::El, vars: el_vars::Vars, v: integer, n: ir::Node, t: ir::TypeT) -> ir::Node {
-  match el_ir::unspan(n) {
+  match n {
+    // The bind is written inside the span, where the tail stood.
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: sink_arm(e, vars, v, inner, t) },
     NdIf { cond, t: a, f } => ir::NdIf { cond: cond, t: sink_arm(e, vars, v, a, t), f: sink_arm(e, vars, v, f, t) },
+    // A block yielding its own buffer (a literal's `_vec_N`) is the arm's value as it stands,
+    // bound whole; any other block binds its last operator and stops yielding a value.
+    NdBlock { block } => {
+      bl = block[0];
+      own = match el_ir::unspan(bl.operators[-1] ?? ir::NdNull) { NdVar { n: x } => el_vars::is_compiler_generated(vars, x), _ => false };
+      if own || len(bl.operators) == 0 {
+        return el_ir::v_set(v, n);
+      }
+      bl.operators[len(bl.operators) - 1] = sink_arm(e, vars, v, bl.operators[-1]!, t);
+      bl.result = [ir::TyVoid];
+      ir::NdBlock { block: [bl] }
+    },
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return n;
+      }
+      items[len(items) - 1] = sink_arm(e, vars, v, items[-1]!, t);
+      ir::NdInsert { items: items }
+    },
     NdVar { n: src } => {
       if el_vars::is_compiler_generated(vars, src) {
         return el_ir::v_set(v, n);
@@ -4530,7 +4624,7 @@ fn sink_arm(e: el::El, vars: el_vars::Vars, v: integer, n: ir::Node, t: ir::Type
       // The arm a `??` takes where its subject is present copies it as present.
       vec_copy_bind(e, vars, v, ex(n, el_types::base(el_vars::tp(vars, src)))).code
     },
-    _ => el_ir::v_set(v, n)
+    _ => if copies_whole_vector(e, vars, n) { vec_copy_bind(e, vars, v, ex(n, el_types::base(t))).code } else { el_ir::v_set(v, n) }
   }
 }
 
@@ -4976,6 +5070,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   }
   // `sink_vec_bind_into_arms`: a vector `if` one of whose arms copies a local is bound arm by arm.
   if el_types::base(x.tp) is TyVector && el_ir::unspan(x.code) is NdIf && !vars.vars[v].argument && sinkable_arms(e, vars, x.code) == 1 {
+    first_vector_bind(e, vars, v, el_types::base(x.tp), at);
     return sink_arms(e, vars, v, x);
   }
   // …and a `??` holding a field in its `__ncc_N`: the present arm copies the held view, the
@@ -6386,6 +6481,15 @@ fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: inte
   }
   r = call_op(e, vars, bin, [ir::NdVar { n: v }, x.code], [sv, x.tp]);
   el_vars::drop_use(vars, v);
+  // `(N-Join)`: an inferred local stepped by a value that may be null (`s += a / b`) is `τ?`, as
+  // `change_var_type`'s nullable arm makes it (`compound_null_store`); a declared slot keeps its
+  // declaration and a link the type of the place it names.
+  r.tp = arith_type(e, vars, bin, ex(ir::NdVar { n: v }, vt), x, r.tp);
+  declared = vars.vars[v].argument || vars.annotated.contains(v);
+  if !(vt is TyRefVar) && !declared && r.tp is TyOptional && !el_vars::change_var_type(e, vars, v, r.tp) {
+    el::refuse(e, "a compound assignment whose value does not fit the local: {type_kind(r.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   // The composed value takes the slot's range (`guard_compound_range`): a link steps the slot
   // it names (`linked_store_target`).
   code = r.code;
@@ -11751,16 +11855,23 @@ fn binary(e: el::El, vars: el_vars::Vars, at: integer, op: text, l: integer, r: 
   b = expression(e, vars, r);
   vars.lit_hint_node = -1;
   x = builtin_op(e, vars, op, a, b);
-  // `@FR-N-Div` / `@FR-N-Domain`: a quotient or remainder whose divisor is not provably
-  // non-zero is `τ?`.
+  x.tp = arith_type(e, vars, op, a, b, x.tp);
+  arithmetic_span(e, at, op, x)
+}
+
+// The type of `a op b` that the operator typed `t`: `@FR-N-Div` / `@FR-N-Domain`, a quotient or
+// remainder whose divisor is not provably non-zero is `τ?`; `@FR-N-Prop`, arithmetic over a
+// nullable operand is `τ?`.  A binary operator and a compound step (`s += a / b`) both ask it.
+fn arith_type(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex, t: ir::TypeT) -> ir::TypeT {
   arith = op == "+" || op == "-" || op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>";
   ab = el_types::base(a.tp);
-  if (op == "/" || op == "%") && (ab is TyInteger || ab is TyFloat || ab is TySingle) && !divisor_nonzero(e, vars, b.code) && !el_types::is_unknown(x.tp) {
-    x.tp = ir::TyOptional { inner: x.tp };
-  } else if arith {
-    x.tp = propagated(a, b, x.tp);
+  if (op == "/" || op == "%") && (ab is TyInteger || ab is TyFloat || ab is TySingle) && !divisor_nonzero(e, vars, b.code) && !el_types::is_unknown(t) {
+    return ir::TyOptional { inner: t };
   }
-  arithmetic_span(e, at, op, x)
+  if arith {
+    return propagated(a, b, t);
+  }
+  t
 }
 
 // `@FR-N-Prop`: arithmetic over a nullable operand is `τ?`.
@@ -11810,6 +11921,7 @@ fn statement_proofs(e: el::El, vars: el_vars::Vars, code: ir::Node) {
         if !p.then {
           push_nonzero(vars, p.v);
         }
+        push_bounds(vars, guard_pairs_negated(e, cond));
       }
     },
     NdCall { def_nr, args } => {
@@ -11818,6 +11930,7 @@ fn statement_proofs(e: el::El, vars: el_vars::Vars, code: ir::Node) {
         if p.then {
           push_nonzero(vars, p.v);
         }
+        push_bounds(vars, guard_pairs(e, args[0]));
       }
     },
     _ => {}
@@ -12034,13 +12147,17 @@ fn truncate_nonzero(vars: el_vars::Vars, n: integer) {
 }
 
 // `Parser::fact_mark`: where each stack of proven facts stands, for `forget_facts` to return to.
-struct FactMark { nonzero: integer, present: integer, present_exprs: integer, proven: integer }
+struct FactMark { nonzero: integer, present: integer, present_exprs: integer, proven: integer, bounded: integer }
+
+fn fact_mark(vars: el_vars::Vars) -> FactMark {
+  FactMark { nonzero: len(vars.nonzero), present: len(vars.present), present_exprs: len(vars.present_exprs), proven: len(vars.proven), bounded: len(vars.bounded) }
+}
 
 // `Parser::assume_condition` (`@FR-N-Guard`): what `test` proves on its `side` (true: where it
 // holds, false: where it fails), assumed for the code elaborated next — a divisor non-zero, a
 // local and a projection present, and where it holds, an `is` test's variant.
 fn assume_condition(e: el::El, vars: el_vars::Vars, test: ir::Node, side: boolean) -> FactMark {
-  mark = FactMark { nonzero: len(vars.nonzero), present: len(vars.present), present_exprs: len(vars.present_exprs), proven: len(vars.proven) };
+  mark = fact_mark(vars);
   dv = divisor_proof(e, test);
   if dv.then == side {
     push_nonzero(vars, dv.v);
@@ -12059,7 +12176,127 @@ fn assume_condition(e: el::El, vars: el_vars::Vars, test: ir::Node, side: boolea
       vars.proven += [vp!];
     }
   }
+  push_bounds(vars, if side { guard_pairs(e, test) } else { guard_pairs_negated(e, test) });
   mark
+}
+
+// `collect_guard_pairs` (`@FR-N-Index` through `@FR-N-Guard`): the (index local, vector) pairs
+// `test` proves in range where it holds — `i < len(v)`, each conjunct of an `&&`.
+fn guard_pairs(e: el::El, test: ir::Node) -> vector<el_vars::Bound> {
+  t = cond_core(e, test);
+  match t {
+    NdIf { cond, t: then, f } => {
+      if el_ir::unspan(f) == ir::NdBoolean { b: false } {
+        return guard_pairs(e, cond) + guard_pairs(e, then);
+      }
+    },
+    NdCall { def_nr, args } => {
+      if len(args) == 2 && plain_op(el::def(e, def_nr).name) == "OpLtInt" {
+        return bound_of(e, args[0], args[1]);
+      }
+    },
+    _ => {}
+  }
+  []
+}
+
+// `collect_guard_pairs_negated`: the pairs `test` proves in range where it FAILS — `i >= len(v)`
+// (normalised to `len(v) <= i`), `!(i < len(v))`, each disjunct of an `||`.
+fn guard_pairs_negated(e: el::El, test: ir::Node) -> vector<el_vars::Bound> {
+  t = cond_core(e, test);
+  match t {
+    NdIf { cond, t: then, f } => {
+      if el_ir::unspan(then) == ir::NdBoolean { b: true } {
+        return guard_pairs_negated(e, cond) + guard_pairs_negated(e, f);
+      }
+    },
+    NdCall { def_nr, args } => {
+      nm = plain_op(el::def(e, def_nr).name);
+      if nm == "OpNot" && len(args) == 1 {
+        return guard_pairs(e, args[0]);
+      }
+      if len(args) == 2 && (nm == "OpLeInt" || nm == "OpLeLong") {
+        return bound_of(e, args[1], args[0]);
+      }
+      if len(args) == 2 && (nm == "OpGeInt" || nm == "OpGeLong") {
+        return bound_of(e, args[0], args[1]);
+      }
+    },
+    _ => {}
+  }
+  []
+}
+
+// An operator's name without the `Nullable` of its null-carrying twin (`original_name`'s
+// `strip_suffix("Nullable")`).
+fn plain_op(nm: text) -> text {
+  if nm.ends_with("Nullable") { nm[..len(nm) - 8] } else { nm }
+}
+
+// `unwrap_cond`: a condition without its spans and boolean conversions.
+fn cond_core(e: el::El, n: ir::Node) -> ir::Node {
+  u = el_ir::unspan(n);
+  while true {
+    inner: ir::Node? = null;
+    match u {
+      NdCall { def_nr, args } => {
+        if len(args) == 1 && el::def(e, def_nr).name.starts_with("OpConv") {
+          inner = el_ir::unspan(args[0]);
+        }
+      },
+      _ => {}
+    }
+    if inner == null {
+      return u;
+    }
+    u = inner!;
+  }
+  u
+}
+
+// `guard_pair_with_ctx` / `len_arg_vec_key`: the pair `idx` against `len(vec)`, where `idx` is a
+// local and `vec` a local or a field of one (`vec_key`); none otherwise.
+fn bound_of(e: el::El, idx: ir::Node, len_side: ir::Node) -> vector<el_vars::Bound> {
+  match el_ir::unspan(idx) {
+    NdVar { n } => {
+      match el_ir::unspan(len_side) {
+        NdCall { def_nr, args } => {
+          nm = plain_op(el::def(e, def_nr).name);
+          if len(args) == 1 && (is_len(nm) || nm == "OpLengthVector") && vec_keyed(e, args[0]) {
+            return [el_vars::Bound { var: n, vec: el_ir::unspan(args[0]) }];
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  []
+}
+
+// `vec_key`: a vector named by a local or by a field of one.
+fn vec_keyed(e: el::El, v: ir::Node) -> boolean {
+  match el_ir::unspan(v) {
+    NdVar { n: _ } => true,
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetField" && len(args) == 3 && el_ir::unspan(args[0]) is NdVar,
+    _ => false
+  }
+}
+
+fn push_bounds(vars: el_vars::Vars, pairs: vector<el_vars::Bound>) {
+  for b in pairs {
+    vars.bounded += [b];
+  }
+}
+
+// Is `vec[i]` in range by a pair a test proved (`index_bounded`)?
+fn bounded_by_guard(e: el::El, vars: el_vars::Vars, i: integer, vec: ir::Node) -> boolean {
+  for b in vars.bounded {
+    if b.var == i && same_vector(e, b.vec, vec) {
+      return true;
+    }
+  }
+  false
 }
 
 // `variant_proof_from_condition`: an `is` test, `OpEqInt(OpConvIntFromEnum(OpGetEnum(p, …)), d)`,
@@ -12096,7 +12333,7 @@ fn variant_proof(e: el::El, test: ir::Node) -> el_vars::Proven? {
 // `Parser::assume_guard`: a match arm's guard holds wherever its body runs (`@FR-P-Guard`).
 fn assume_guard(e: el::El, vars: el_vars::Vars, guard: ir::Node?) -> FactMark {
   if guard == null {
-    return FactMark { nonzero: len(vars.nonzero), present: len(vars.present), present_exprs: len(vars.present_exprs), proven: len(vars.proven) };
+    return fact_mark(vars);
   }
   assume_condition(e, vars, guard!, true)
 }
@@ -12107,6 +12344,7 @@ fn forget_facts(vars: el_vars::Vars, m: FactMark) {
   vars.present = vars.present[0..m.present];
   vars.present_exprs = vars.present_exprs[0..m.present_exprs];
   vars.proven = vars.proven[0..m.proven];
+  vars.bounded = vars.bounded[0..m.bounded];
 }
 
 // `handle_null_coalesce` / `build_null_coalesce_default` for a plain scalar subject: the subject
@@ -14257,7 +14495,8 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
     }
   }
   if !e.first_pass && unrenamed {
-    built = object_into_buffer(e, vars, x, rb, result);
+    // Staged after the tail's delivery (`stage_exits`), as Rust redirects a mid-body exit.
+    built = object_into_buffer(e, vars, x, rb, result, stage: false);
     if built != null {
       return ex(ir::NdReturn { inner: built! }, ir::TyNever);
     }
@@ -19448,6 +19687,11 @@ fn fits(e: el::El, vars: el_vars::Vars, i: ir::Node, vec: ir::Node, arith: boole
     NdLong { n: _ } => true,
     NdVar { n } => {
       if el_vars::is_active_loop_var(vars, n) || same_vector(e, el_vars::loop_value_of_index(vars, n), vec) {
+        return true;
+      }
+      // A test proved the pair (`index_bounded`) — for the bare index only: the proof is
+      // `v[i]`'s and does not survive `v[i * 2]`.
+      if !arith && bounded_by_guard(e, vars, n, vec) {
         return true;
       }
       if arith {
