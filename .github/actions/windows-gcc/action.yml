@@ -1,0 +1,27 @@
+# The C compiler the C backend drives on a Windows runner: MSYS2's UCRT gcc (16 or newer),
+# named in `LOFT_CC`.  The runner's `cc` on `PATH` is MinGW-Builds gcc 15.2, which
+# miscompiles loft's C (its modref pass rates a function that reads a record as reading no
+# memory, so a call on a reused record is merged with the one before it: WINDOWS.md § The C
+# compiler on a Windows runner).  Only `LOFT_CC` changes: MSYS2's `bin` is not put on
+# `PATH`, where it would hide the runner's own python and other tools.  A step that sets
+# `LOFT_CC` itself (`cl`) still wins.  Does nothing off Windows.
+name: MSYS2 gcc for the C backend on Windows
+description: Points LOFT_CC at C:/msys64/ucrt64/bin/gcc.exe (gcc 16+) on a Windows runner
+runs:
+  using: composite
+  steps:
+    - name: Point LOFT_CC at MSYS2 gcc
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        gcc=/c/msys64/ucrt64/bin/gcc.exe
+        if [ ! -x "$gcc" ]; then
+          timeout 600 /c/msys64/usr/bin/pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-gcc
+        fi
+        "$gcc" --version | head -1
+        major=$("$gcc" -dumpversion | cut -d. -f1)
+        if [ "$major" -lt 16 ]; then
+          echo "::error::MSYS2 gcc is $("$gcc" -dumpversion); the C backend needs 16 or newer on Windows (gcc 15.2 miscompiles it)"
+          exit 1
+        fi
+        echo "LOFT_CC=C:/msys64/ucrt64/bin/gcc.exe" >> "$GITHUB_ENV"

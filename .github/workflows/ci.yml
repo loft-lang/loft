@@ -436,6 +436,8 @@ jobs:
       # The language suite beside the tree (@PLN193): the IR round-trip in this pool walks
       # its programs, as it walked them under `tests/scripts` before the move.
       - uses: ./.github/actions/checkout-suite
+      # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+      - uses: ./.github/actions/windows-gcc
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
