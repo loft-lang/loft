@@ -1037,7 +1037,7 @@ impl Parser {
             && !self.lexer.peek_token("{")
         {
             // `never`, so the join adopts the sibling arm's type (`C-Never`) and the value's
-            // consumers stay quiet (@P376): `void` here reported the one mistake again at every
+            // consumers stay quiet: `void` here reported the one mistake again at every
             // use of the `if`'s value.
             *val = v_block(Vec::new(), Type::Never, "empty block");
             return Type::Never;

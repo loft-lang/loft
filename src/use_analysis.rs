@@ -6410,7 +6410,9 @@ impl Census<'_> {
         // scope pass hoists an inline call into — is placed, not copied, and owes no hook.
         let fresh = fresh
             || from.is_empty()
-            || from.iter().all(|&v| self.func.name(v).starts_with("__lift_"));
+            || from
+                .iter()
+                .all(|&v| self.func.name(v).starts_with("__lift_"));
         if matches!(lease, Some(crate::lease::Lease::Move)) && !fresh {
             let unleased =
                 |d: u32| crate::lease::leases_whole(self.data, d) && !self.data.owns_droppable(d);
@@ -6435,7 +6437,8 @@ impl Census<'_> {
             {
                 let cascade = crate::lease::copy_cascade_nr(self.data, d);
                 if cascade != u32::MAX {
-                    self.lease_sites.push((node, Value::Call(cascade, vec![dst])));
+                    self.lease_sites
+                        .push((node, Value::Call(cascade, vec![dst])));
                 }
             }
         }
@@ -8397,12 +8400,11 @@ fn copied_record_releases(data: &Data, tp: &Value) -> bool {
         return false;
     };
     known != u16::MAX
-        && (0..data.definitions())
-            .any(|d| {
-                data.def(d).known_type == known
-                    && (data.drop_cascade_nr(d) != u32::MAX
-                        || crate::lease::copy_cascade_nr(data, d) != u32::MAX)
-            })
+        && (0..data.definitions()).any(|d| {
+            data.def(d).known_type == known
+                && (data.drop_cascade_nr(d) != u32::MAX
+                    || crate::lease::copy_cascade_nr(data, d) != u32::MAX)
+        })
 }
 
 /// The root variable of a PLACE: the variable itself, or a projection's root.

@@ -1462,38 +1462,7 @@ impl FnWriter<'_> {
         let n = values.len();
         let kv = value_array(&values);
         let (keys, nk) = self.cx.keys_of(tp);
-        // `@FR-R-TypedKeyed`: a hash with ONE 8-byte integer key, looked up by that integer,
-        // takes the typed entry — the same digest, home bucket, walk and equality, in place.
-        // Two to four such keys take the compound entry (the same clause's compound form).
-        let ints: Option<Vec<&str>> = (kind == Keyed::Hash
-            && n == nk
-            && (1..=4).contains(&n)
-            && types.iter().take(n).all(|t| matches!(t, 1 | 2)))
-        .then(|| {
-            values
-                .iter()
-                .map(|v| {
-                    v.strip_prefix("loft_kv_int(")
-                        .and_then(|v| v.strip_suffix(')'))
-                })
-                .collect()
-        })
-        .flatten();
-        // One text key takes the text entry (the same clause's text form).
-        let text_find = (kind == Keyed::Hash && n == 1 && nk == 1 && types[0] == 6)
-            .then(|| {
-                values[0]
-                    .strip_prefix("loft_kv_text(")
-                    .and_then(|v| v.strip_suffix(')'))
-                    .map(|key| format!("loft_h_find_text({data}, {keys}, {key})"))
-            })
-            .flatten();
-        match (&ints, &text_find) {
-            (Some(ks), _) if ks.len() == 1 => crate::rewrite_census::fired("R-TypedKeyed", 1),
-            (Some(_), _) => crate::rewrite_census::fired("R-TypedKeyed/compound", 1),
-            (None, Some(_)) => crate::rewrite_census::fired("R-TypedKeyed/text", 1),
-            (None, None) => {}
-        }
+        let (ints, text_find) = typed_lookup_keys(kind, &types, &values, nk, &data, &keys);
         // `@FR-R-SameRead`'s filed clause: the previous statement filed a record into this hash,
         // so where that insert landed (the store takes writes, neither handle is null) and the
         // entry it filed (`loft_h_filed`: an inline table moves a staged record into itself, so
@@ -1801,4 +1770,49 @@ impl crate::c::Cx<'_> {
             })
             .unwrap_or_default()
     }
+}
+
+/// `@FR-R-TypedKeyed`'s lookup forms for `OpGetRecord`: a hash with ONE 8-byte integer key,
+/// looked up by that integer, takes the typed entry — the same digest, home bucket, walk and
+/// equality, in place; two to four such keys take the compound entry, and one text key the text
+/// entry.  Answers the integer key expressions, and the text entry's call.
+fn typed_lookup_keys(
+    kind: Keyed,
+    types: &[i8],
+    values: &[String],
+    nk: usize,
+    data: &str,
+    keys: &str,
+) -> (Option<Vec<String>>, Option<String>) {
+    let n = values.len();
+    let ints: Option<Vec<String>> = (kind == Keyed::Hash
+        && n == nk
+        && (1..=4).contains(&n)
+        && types.iter().take(n).all(|t| matches!(t, 1 | 2)))
+    .then(|| {
+        values
+            .iter()
+            .map(|v| {
+                v.strip_prefix("loft_kv_int(")
+                    .and_then(|v| v.strip_suffix(')'))
+                    .map(str::to_string)
+            })
+            .collect()
+    })
+    .flatten();
+    let text_find = (kind == Keyed::Hash && n == 1 && nk == 1 && types[0] == 6)
+        .then(|| {
+            values[0]
+                .strip_prefix("loft_kv_text(")
+                .and_then(|v| v.strip_suffix(')'))
+                .map(|key| format!("loft_h_find_text({data}, {keys}, {key})"))
+        })
+        .flatten();
+    match (&ints, &text_find) {
+        (Some(ks), _) if ks.len() == 1 => crate::rewrite_census::fired("R-TypedKeyed", 1),
+        (Some(_), _) => crate::rewrite_census::fired("R-TypedKeyed/compound", 1),
+        (None, Some(_)) => crate::rewrite_census::fired("R-TypedKeyed/text", 1),
+        (None, None) => {}
+    }
+    (ints, text_find)
 }

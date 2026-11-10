@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 //! `(R-TableHandle)` — the keyed operations on one hash collection place share a table handle.
 //!
 //! The runtime's keyed operations re-derive their table from the record each time: the

@@ -14,10 +14,9 @@ use std::path::{Path, PathBuf};
 fn runtime_headers() -> Vec<(String, String)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c");
     let mut out = Vec::new();
-    for e in std::fs::read_dir(&dir).expect("src/c") {
-        let p = e.expect("entry").path();
-        if p.extension().is_some_and(|x| x == "h") {
-            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+    for p in fa::read_dir(dir.as_path()).expect("src/c") {
+        if fa::has_extension(&p, "h") {
+            let name = fa::file_name(&p).expect("a header's name");
             out.push((name, fa::read_to_string(&p).expect("read header")));
         }
     }

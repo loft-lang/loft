@@ -10168,29 +10168,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(t, K::Ref))
             }
             ("OpFinishRecord", [data, rec, ptp, fld]) => {
-                let (v, _, coll) = self.record_collection(data, ptp, fld, ind)?;
-                match coll {
-                    Coll::Keyed(tp) => {
-                        let rec = self.expr(rec, ind)?;
-                        let rec = as_ref(rec)?;
-                        let hh = match (Self::literal(ptp, "type"), Self::literal(fld, "field")) {
-                            (Ok(p), Ok(f)) => u16::try_from(p)
-                                .ok()
-                                .zip(u16::try_from(f).ok())
-                                .and_then(|(p, f)| table_handle::finish_place(self.cx, data, p, f))
-                                .and_then(|path| self.table_handle_at(path)),
-                            _ => None,
-                        };
-                        return self.keyed_finish(&v, &rec, tp, hh.as_deref());
-                    }
-                    Coll::Group(parent, members) => {
-                        let rec = self.expr(rec, ind)?;
-                        let rec = as_ref(rec)?;
-                        return self.group_finish(&parent, &rec, &members);
-                    }
-                    Coll::Vector => {}
-                }
-                Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
+                self.finish_record(data, rec, ptp, fld, ind)
             }
             ("OpClearVector", [v]) if self.in_delivery > 0 && self.adopted_buffer(v) => {
                 Ok(E::new("((void) 0)", K::Void))
@@ -10244,6 +10222,42 @@ impl<'a> FnWriter<'a> {
             }
             _ => self.collection_operator(name, args, ind),
         }
+    }
+
+    /// `OpFinishRecord(data, rec, ptp, fld)`: `rec` filed into its collection — a keyed one
+    /// through the place's table handle where `(R-TableHandle)` admitted it, a group into each
+    /// member, a plain vector closed.
+    fn finish_record(
+        &mut self,
+        data: &Value,
+        rec: &Value,
+        ptp: &Value,
+        fld: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let (v, _, coll) = self.record_collection(data, ptp, fld, ind)?;
+        match coll {
+            Coll::Keyed(tp) => {
+                let rec = self.expr(rec, ind)?;
+                let rec = as_ref(rec)?;
+                let hh = match (Self::literal(ptp, "type"), Self::literal(fld, "field")) {
+                    (Ok(p), Ok(f)) => u16::try_from(p)
+                        .ok()
+                        .zip(u16::try_from(f).ok())
+                        .and_then(|(p, f)| table_handle::finish_place(self.cx, data, p, f))
+                        .and_then(|path| self.table_handle_at(path)),
+                    _ => None,
+                };
+                return self.keyed_finish(&v, &rec, tp, hh.as_deref());
+            }
+            Coll::Group(parent, members) => {
+                let rec = self.expr(rec, ind)?;
+                let rec = as_ref(rec)?;
+                return self.group_finish(&parent, &rec, &members);
+            }
+            Coll::Vector => {}
+        }
+        Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
     }
 
     /// `v[i]`: the element's reference, an unguarded read (`OpGetVector`) reporting an index
