@@ -18722,6 +18722,7 @@ impl Parser {
     /// the caller-provided buffer (no extra allocation in the adopt case).
     /// Returns the work-ref var so the caller passes `[w]` to `ref_return`.
     fn materialize_view_return(&mut self, td: u32, tail: &mut Value) -> u16 {
+        let td = self.return_copy_type(td);
         let ref_tp = Type::Reference(td, Deps::none());
         let w = self.vars.work_refs(&ref_tp, &mut self.lexer);
         // A join whose arms copy a type that declares `OpCopy` is copied per arm as well: a fresh
@@ -18844,7 +18845,17 @@ impl Parser {
     /// buffer by `ref_return`'s copy leg (a named local another return
     /// site can read must not alias the buffer, so it is copied at the
     /// return instead).
+    /// The record type a return copy is made in.  A join of two nullable field reads is typed
+    /// in the SLOT's spelling, `__nullable<S>`, while the value the tail yields is already the
+    /// `S` read through the tag (`read_through_tag`): copied with the wrapper's layout, the
+    /// payload's text and vector were read at the wrong offsets.  A copy into a return is
+    /// always of the dense `S` (`@FR-L-Null-Which`).
+    fn return_copy_type(&self, td: u32) -> u32 {
+        self.nullable_payload_struct(td).unwrap_or(td)
+    }
+
     fn materialize_return_into(&mut self, td: u32, tail: &mut Value, w: u16) {
+        let td = self.return_copy_type(td);
         if let Value::Return(inner) = tail {
             return self.materialize_return_into(td, inner, w);
         }
