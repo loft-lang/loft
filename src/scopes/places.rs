@@ -174,13 +174,23 @@ fn view_place_in<'a>(
         // naming different containers name none — so the whole binding stopped being a view
         // and loft#1399 came back.  `(B-Disturb)` is about places the author can disturb, and
         // nothing in the program can reassign a `__vdb_N`; `Self::resolve_view_root` stops at
-        // one for the same reason and says so.  A compiler temp that BORROWS — its deps name a
-        // place, as a `match` subject's `_match_subj_N = o.items` does — is a view itself, and
-        // a capture read out of it is a view of that place (`@FR-P-Cap-View`).
+        // one for the same reason and says so.  A compiler temp holding a BORROWED vector —
+        // its deps name a place, as a `match` subject's `_match_subj_N = o.items` does — is a
+        // view itself, and a capture read out of it is a view of that place
+        // (`@FR-P-Cap-View`).  Only a vector: a record temp of the `&`-walk lowering borrows
+        // too, and naming its places would refuse writes no program made through a view.
         other => {
+            // A projection whose root is a tagged nullable FIELD read through its tag
+            // (`if tag(p.g) { p.g.payload } else { null }`, `L-Null-Which`) names the place
+            // the present arm reads: `d = p.g.next` is a place inside `p.g`, which an
+            // overwrite of `p.g` ends (`@FR-B-Disturb`).
+            let peeled = peel_tag_read(other, data);
+            let other = peeled.as_ref().unwrap_or(other);
             if let Some((place, elems)) = crate::use_analysis::view_source_place_depth(data, other)
                 .filter(|((c, _), _)| {
-                    !function.is_compiler_generated(*c) || !function.tp(*c).depend().is_empty()
+                    !function.is_compiler_generated(*c)
+                        || (matches!(function.tp(*c).base(), crate::data::Type::Vector(..))
+                            && !function.tp(*c).depend().is_empty())
                 })
             {
                 match out.iter_mut().find(|(p, _)| *p == place) {
@@ -189,6 +199,29 @@ fn view_place_in<'a>(
                 }
             }
         }
+    }
+}
+
+/// `value` with the tag read at the root of its projection chain replaced by its present arm,
+/// or `None` when there is none: `OpGetField(if tag(x) { x.payload } else { null }, f)` becomes
+/// `OpGetField(x.payload, f)`.  Only the namer of a VIEW's place reads through it — the
+/// absent arm reads nothing, so the place a view may name is the present arm's.
+fn peel_tag_read(value: &Value, data: &Data) -> Option<Value> {
+    let sentinel = |v: &Value| {
+        matches!(v.unspan(), Value::Call(d, args)
+            if args.is_empty() && data.def(*d).name() == "OpNullRefSentinel")
+    };
+    match value.unspan() {
+        Value::If(_, t, e) if sentinel(e) && matches!(t.unspan(), Value::Call(..)) => {
+            Some((**t).clone())
+        }
+        Value::Call(d, args) if !args.is_empty() => {
+            let inner = peel_tag_read(&args[0], data)?;
+            let mut args = args.clone();
+            args[0] = inner;
+            Some(Value::Call(*d, args))
+        }
+        _ => None,
     }
 }
 
