@@ -4586,7 +4586,21 @@ fn call_leaves_param(
             is_scalar(&at.typedef) || matches!(at.typedef.base(), Type::Text(_)) || at.value_const
         });
     for (i, a) in args.iter().enumerate() {
-        if !is_path_of(data, a, p) {
+        // A VECTOR place this frame does not own may be `p`'s own vector under another name
+        // (`@FR-F-ParamHeap`: `grow(s.v, s)` hands one vector twice), so a native that writes
+        // one changes what `p`'s header holds as surely as a write to `p` does.  The op must
+        // take a vector there: a field write through a record parameter changes no header.
+        let aliases = callee
+            .attributes()
+            .get(i)
+            .is_some_and(|at| matches!(at.typedef.base(), Type::Vector(_, _)))
+            && vector_path(data, a).is_some_and(|(root, _)| {
+                root != p
+                    && !is_scalar(vars.tp(root))
+                    && !matches!(vars.tp(root).base(), Type::Text(_))
+                    && !local_owns_store(data, d_nr, vars, params, root)
+            });
+        if !is_path_of(data, a, p) && !aliases {
             continue;
         }
         // An append READS its source — the whole vector, or a range of it (`t += v[lo..hi]`,
