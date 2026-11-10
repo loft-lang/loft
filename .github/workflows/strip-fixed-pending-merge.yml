@@ -14,3 +14,19 @@ env:
 jobs:
   strip:
     uses: loft-lang/.github/.github/workflows/strip-fixed-pending-merge.yml@main
+
+  # The C backend's compiler on Windows: MSYS2 gcc 16, not the runner's MinGW-Builds 15.2.
+  # `strip` calls a workflow and cannot carry steps, so the step has a job of its own.  It
+  # runs on Linux, so both steps are skipped; the checkout fetches only the step's folder.
+  windows-gcc:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - if: runner.os == 'Windows'
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/actions/windows-gcc
+          sparse-checkout-cone-mode: false
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-gcc
