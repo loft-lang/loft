@@ -2539,6 +2539,17 @@ fn unit_defines(
     if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
     }
+    // `@FR-Path-Case` — a unit that reaches the file library compares a name with the entries
+    // of its directory the way the interpreter does, through the full lowercase mapping
+    // (`str::to_lowercase`): `É.txt` beside `é.txt` is a case clash, not a second file.  The
+    // table is the one `t.to_lowercase()` already registers, so only such a unit carries it.
+    if reached
+        .iter()
+        .any(|&d| data.def(d).position.file.ends_with("02_files.loft"))
+    {
+        cx.unicode_case(false);
+        out.push_str("#define LOFT_PATH_FOLD 1\n");
+    }
     // `@FR-R-NoLocks`: a store is read-only only through `#lock = …`, a mapped file
     // (`file_map`) or a constant store; a unit that reaches none of them meets no locked write.
     let locks = reached

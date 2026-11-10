@@ -301,8 +301,22 @@ static int loft_path_exists(const char *path) {
 #endif
 }
 
-/* ASCII case-insensitive equality of two names. */
+#ifdef LOFT_PATH_FOLD
+/* The full lowercase mapping, emitted with the unit's Unicode tables (`crate::c::unicode`). */
+static loft_text loft_text_lower(loft_str s);
+#endif
+
+/* Case-insensitive equality of two names, as `file_access::case_clash` compares them
+ * (`str::to_lowercase` on both): the full mapping where the unit carries it, else ASCII. */
 static int loft_name_fold_eq(const char *a, size_t an, const char *b, size_t bn) {
+#ifdef LOFT_PATH_FOLD
+    loft_str as = { a, an }, bs = { b, bn };
+    loft_text la = loft_text_lower(as), lb = loft_text_lower(bs);
+    int eq = la.len == lb.len && memcmp(la.p, lb.p, la.len) == 0;
+    loft_text_free(&la);
+    loft_text_free(&lb);
+    return eq;
+#endif
     if (an != bn) return 0;
     for (size_t i = 0; i < an; i++) {
         char x = a[i] >= 'A' && a[i] <= 'Z' ? (char) (a[i] + 32) : a[i];
