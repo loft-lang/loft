@@ -6011,8 +6011,7 @@ impl Parser {
                 // checks at the field's width.
                 if Self::seeds_lambda_hint(&td)
                     || crate::parser::vectors::is_collection(&td_base)
-                    || (self.data.width32()
-                        && matches!(td_base, Type::Integer(s) if s.is_wide()))
+                    || (self.data.width32() && matches!(td_base, Type::Integer(s) if s.is_wide()))
                 {
                     self.expected = td.clone();
                 }
