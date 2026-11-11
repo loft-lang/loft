@@ -26,7 +26,7 @@
 #   cargo nextest run --release --status-level pass | <sum per binary>
 # when these numbers look stale.
 
-# ── The excluded eight ──────────────────────────────────────────────────────
+# ── The excluded heavy binaries ──────────────────────────────────────────────
 # Each is slow-and-few: minutes of wall time for a handful of tests.  Kept OUT of
 # the default and pulled back IN automatically when a change touches what they
 # cover (see `subject_paths`).  `--full` always runs them.
@@ -38,6 +38,12 @@ HEAVY_BINARIES=(
   multiplayer_v5       #  126s /   5 tests — networked, serialised
   engine_host_audience #   93s /   1 test  — one long host session
   html_wasm            #  114s /  20 tests — wasm-pack per case
+  # measured 2026-11-11 under the full suite's contention (find_problems' slowest-binaries
+  # block): the page builders beside html_wasm, each a wasm build of a whole page per test.
+  html_embed           #  585s /   8 tests — a page with its declared pack, per case
+  html_page_store      #  278s /   2 tests — a page reading a store from its filesystem
+  html_asyncify        #  151s /   2 tests — an asyncified page run to completion
+  html_fonts           #  140s /   6 tests — a page with its fonts, per case
 )
 
 # ── Subjects: a name, and the binary-name PATTERNS it selects ───────────────
@@ -138,7 +144,7 @@ subject_paths() {
   esac
 }
 
-# The nextest filterset for the DEFAULT run: everything except the heavy eight.
+# The nextest filterset for the DEFAULT run: everything except the heavy binaries.
 curated_filter() {
   local parts=() b
   for b in "${HEAVY_BINARIES[@]}"; do parts+=("binary($b)"); done
