@@ -1638,6 +1638,33 @@ impl Run<'_> {
                 Self::narrow(&mut distinct, *x, rest);
                 (Some(distinct), Some(same))
             }
+            // Where the two are the SAME, the first names only what the witness may name too:
+            // a store both may name, or null or a caller's store where the witness may be null
+            // or a caller's store (two parameters may name one store, or both be null).
+            _ if let Some(Value::Var(x)) = args.first().map(Value::unspan)
+                && !a.contains(&Pt::Unknown)
+                && !b.contains(&Pt::Unknown) =>
+            {
+                let b_null = b.iter().any(|p| matches!(p, Pt::Null | Pt::Param(_)));
+                let same_pts: Pts = a
+                    .iter()
+                    .copied()
+                    .filter(|p| {
+                        b.contains(p)
+                            || (*p == Pt::Null && b_null)
+                            // A caller's store may be another parameter's, or null.
+                            || (matches!(p, Pt::Param(_)) && b_null)
+                    })
+                    .collect();
+                if same_pts.is_empty() {
+                    return (Some(st), None);
+                }
+                let mut same = st.clone();
+                if same_pts != a {
+                    Self::narrow(&mut same, *x, same_pts);
+                }
+                (Some(st), Some(same))
+            }
             _ => (Some(st.clone()), Some(st)),
         }
     }
