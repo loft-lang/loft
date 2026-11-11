@@ -72,7 +72,17 @@ struct SInfo {
     /// closure that leaves) and that have not been rebound since.  Where one of them is also
     /// in `live`, the store is handed on wherever it is live.
     handed_by: BTreeSet<u16>,
+    /// The leaving closure records it was captured into, on every path where it is handed
+    /// on: there it is handed on only where one of them names a record.  `UNCORRELATED` in
+    /// the set: handed on some other way too, so a null record proves nothing.
+    handed_into: BTreeSet<u16>,
+    /// Closure records null on every path where it is live: built only where the store was
+    /// captured into them (arm 1 captures `e`, arm 2 frees the record arm 1 builds).
+    live_null: BTreeSet<u16>,
 }
+
+/// A `handed_into` entry for a hand-on that no record's null test can undo.
+const UNCORRELATED: u16 = u16::MAX;
 
 impl SInfo {
     fn has(&self, bit: u8) -> bool {
@@ -138,6 +148,8 @@ fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
         live: meet(&a.live, a.has(LIVE), &b.live, b.has(LIVE)),
         ended: meet(&a.ended, a.has(ENDED), &b.ended, b.has(ENDED)),
         handed_by: meet(&a.handed_by, a.has(LIVE), &b.handed_by, b.has(LIVE)),
+        handed_into: a.handed_into.union(&b.handed_into).copied().collect(),
+        live_null: BTreeSet::new(),
     }
 }
 
@@ -151,7 +163,24 @@ fn join_state(a: &State, b: &State) -> State {
     }
     let mut stores = BTreeMap::new();
     for k in a.stores.keys().chain(b.stores.keys()) {
-        stores.insert(*k, join_info(&info_of(a, *k), &info_of(b, *k)));
+        let (ia, ib) = (info_of(a, *k), info_of(b, *k));
+        let mut info = join_info(&ia, &ib);
+        if info.has(LIVE) {
+            // A record null wherever either side has the store live: one that side knew,
+            // or one that side holds null.
+            let null_on = |st: &State, i: &SInfo, w: u16| {
+                !i.has(LIVE) || i.live_null.contains(&w) || !st.vars.contains_key(&w)
+            };
+            info.live_null = ia
+                .live_null
+                .iter()
+                .chain(&ib.live_null)
+                .chain(&info.handed_into)
+                .copied()
+                .filter(|w| *w != UNCORRELATED && null_on(a, &ia, *w) && null_on(b, &ib, *w))
+                .collect();
+        }
+        stores.insert(*k, info);
     }
     let flags = a
         .flags
@@ -483,6 +512,10 @@ impl Run<'_> {
             info.live.remove(&v);
             info.ended.remove(&v);
             info.handed_by.remove(&v);
+            info.live_null.remove(&v);
+            if info.handed_into.remove(&v) {
+                info.handed_into.insert(UNCORRELATED);
+            }
         }
         // A closure record bound anew is a new record: its slots start empty.
         st.slots.remove(&v);
@@ -680,7 +713,13 @@ impl Run<'_> {
     /// [`Self::hand_on`] of the value variable `x` holds: the stores it names also record
     /// that `x`'s value went on (`handed_by`).
     fn hand_on_var(st: &mut State, x: Option<u16>, val: &Val) {
-        Self::hand_on(st, val);
+        Self::hand_on_var_into(st, x, val, UNCORRELATED);
+    }
+
+    /// [`Self::hand_on_var`] into the leaving closure record `into` (a capture's
+    /// `OpSetDbRef`), or `UNCORRELATED`.
+    fn hand_on_var_into(st: &mut State, x: Option<u16>, val: &Val, into: u16) {
+        Self::hand_on_into(st, val, into);
         let Some(x) = x else {
             return;
         };
@@ -694,11 +733,16 @@ impl Run<'_> {
     }
 
     fn hand_on(st: &mut State, val: &Val) {
+        Self::hand_on_into(st, val, UNCORRELATED);
+    }
+
+    fn hand_on_into(st: &mut State, val: &Val, into: u16) {
         let single = val.pts.len() == 1;
         for k in Self::stores_of(&val.pts) {
             if let Some(info) = st.stores.get_mut(&k)
                 && info.status & LIVE != 0
             {
+                info.handed_into.insert(into);
                 if single || val.corr.contains(&k) {
                     info.status = (info.status & !LIVE) | HANDED;
                     info.live.clear();
@@ -1489,34 +1533,73 @@ impl Run<'_> {
             .iter()
             .any(|p| matches!(p, Pt::Null | Pt::Param(_) | Pt::Unknown));
         let may_store = pts.iter().any(|p| !matches!(p, Pt::Null));
-        let null_arm = may_null.then(|| {
-            let mut s = st.clone();
-            for k in Self::stores_of(&pts) {
-                if let Some(info) = s.stores.get_mut(&k) {
-                    if info.live.contains(&x) {
-                        info.status &= !LIVE;
-                        info.live.clear();
-                    }
-                    if info.ended.contains(&x) {
-                        info.status &= !ENDED;
-                        info.ended.clear();
-                    }
-                    if info.status == 0 {
-                        info.status = ABSENT;
+        let null_arm = may_null
+            .then(|| {
+                let mut s = st.clone();
+                for k in Self::stores_of(&pts) {
+                    if let Some(info) = s.stores.get_mut(&k) {
+                        if info.live.contains(&x) {
+                            info.status &= !LIVE;
+                            info.live.clear();
+                        }
+                        if info.ended.contains(&x) {
+                            info.status &= !ENDED;
+                            info.ended.clear();
+                        }
+                        if info.status == 0 {
+                            info.status = ABSENT;
+                        }
                     }
                 }
-            }
-            s.vars.remove(&x);
-            s
-        });
-        let store_arm = may_store.then(|| {
-            let mut s = st;
-            if let Some(p) = s.vars.get_mut(&x) {
-                p.remove(&Pt::Null);
-            }
-            s
-        });
+                s.vars.remove(&x);
+                Self::null_record_possible(&mut s, x).then_some(s)
+            })
+            .flatten();
+        let store_arm = may_store
+            .then(|| {
+                let mut s = st;
+                if let Some(p) = s.vars.get_mut(&x) {
+                    p.remove(&Pt::Null);
+                }
+                Self::present_record_possible(&mut s, x).then_some(s)
+            })
+            .flatten();
         (null_arm, store_arm)
+    }
+
+    /// On a path where the closure record `x` is null: a capture handed on only into records
+    /// now known null was not handed on here (one of them names a record wherever it was).
+    /// `false` when that leaves the store no status: the path does not happen (`if p { fn … }
+    /// else { fn … }`, then a free of the capture guarded by "neither record was built").
+    fn null_record_possible(st: &mut State, x: u16) -> bool {
+        for info in st.stores.values_mut() {
+            if info.handed_into.contains(&UNCORRELATED) || !info.handed_into.remove(&x) {
+                continue;
+            }
+            if info.handed_into.is_empty() && info.has(HANDED) {
+                info.status &= !HANDED;
+                if info.status == 0 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// On a path where the closure record `x` names a record: a store live only where `x` is
+    /// null is not live here.  `false` when that leaves the store no status.
+    fn present_record_possible(st: &mut State, x: u16) -> bool {
+        for info in st.stores.values_mut() {
+            if info.has(LIVE) && info.live_null.contains(&x) {
+                info.status &= !LIVE;
+                info.live.clear();
+                info.live_null.clear();
+                if info.status == 0 {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// `OpStoreLive(x)` (`@FR-L-CapOwn`'s guard): is the store `x` names still allocated?
@@ -2176,7 +2259,7 @@ impl Run<'_> {
                         .name(w)
                         .starts_with("___clos_") =>
                 {
-                    Self::hand_on_var(&mut s, Self::first_var(args, 2), value);
+                    Self::hand_on_var_into(&mut s, Self::first_var(args, 2), value, w);
                 }
                 _ => {
                     let function = &self.data.def(self.d_nr).variables;
@@ -2446,6 +2529,9 @@ fn closure_records(
 ) {
     let child_rec = data.def_nr("OpChildRec");
     let mut returned: BTreeSet<u16> = BTreeSet::new();
+    // Every record a fn-ref variable can name: one per arm of a branch of lambdas
+    // (`r = if p { fn … } else { fn … }`), where `fn_record` keeps the last.
+    let mut every_record: BTreeMap<u16, BTreeSet<u16>> = BTreeMap::new();
     body.walk(&mut |n| match n {
         Value::Set(g, rhs) => {
             if vars.name(*g).starts_with("___clos_")
@@ -2458,6 +2544,7 @@ fn closure_records(
                     && *w != u16::MAX
                 {
                     fn_record.insert(*g, *w);
+                    every_record.entry(*g).or_default().insert(*w);
                 }
             });
         }
@@ -2466,14 +2553,14 @@ fn closure_records(
     });
     returned_tail(body, &mut returned, leaving);
     for g in returned {
-        if let Some(&w) = fn_record.get(&g) {
-            leaving.insert(w);
+        if let Some(ws) = every_record.get(&g) {
+            leaving.extend(ws.iter().copied());
         }
     }
 }
 
 /// What a returned value hands the caller, read through its blocks' tails: a fn-ref variable
-/// (its record leaves once `fn_record` names it), or a lambda built in place
+/// (each record its builds name leaves), or a lambda built in place
 /// (`return { …; FnRef(_, w) }`), whose record `w` leaves.
 fn returned_tail(v: &Value, returned: &mut BTreeSet<u16>, leaving: &mut BTreeSet<u16>) {
     match v.unspan() {
