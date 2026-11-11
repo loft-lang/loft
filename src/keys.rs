@@ -3253,6 +3253,15 @@ pub fn double_free_audit() -> bool {
     *ON.get_or_init(|| env_set("LOFT_DOUBLE_FREE"))
 }
 
+/// `LOFT_TEMP_NULL_RESET_FREES=1` — a compiler temporary's null reset frees the store it
+/// displaces, as it did before (`bind_lowering::re_bind`): the re-free the store records
+/// must then report.
+#[must_use]
+pub fn temp_null_reset_frees() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TEMP_NULL_RESET_FREES"))
+}
+
 /// `LOFT_NO_FREE_RESET=1` — the interpreter resets a variable after its free only where it
 /// took a pre-build free or is a lift temp, not after every free (`Codegen::generate_call`).
 #[must_use]

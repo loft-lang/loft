@@ -100,7 +100,9 @@ instead, naming the op that freed the store and the one freeing it again; it bec
 default once no suite cell re-frees.  Every backend resets a variable to null after its
 free, so a stale variable freed again is a free of null (`Codegen::generate_call` on the
 interpreter); `LOFT_NO_FREE_RESET=1` limits the interpreter's reset to the variables that
-took a pre-build free and to lift temps.  A
+took a pre-build free and to lift temps.  A compiler temporary reset to null frees nothing:
+the compiler writes that null only after the temp's store was released or handed over
+(`bind_lowering::re_bind`); `LOFT_TEMP_NULL_RESET_FREES=1` restores the free.  A
 **guarded** free (one that asks first whether the store is live, as `OpStoreLive` does) is
 not a re-free.
 

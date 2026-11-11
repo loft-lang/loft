@@ -671,7 +671,18 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // it keeps its position ahead of the call (the adopt pins read it there) and stops
     // firing exactly when the store it would release is the buffer's.
     let buffer_witness = function.displaced_buffer_witness(v, value, data);
-    let free = if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
+    // `@FR-H-FreeTwice` — the compiler writes a null into one of its OWN temporaries only
+    // after it released that temporary's store or handed it over: a free-source copy took it
+    // (`take_local`), a consuming call did (`Scopes::scan_args`), or the temp's free just ran
+    // (a displaced snapshot's reset, `scopes::drops`).  Its displaced store is gone, so the
+    // reset frees nothing; a free here is the second release of that store.  A user's
+    // `c = null` keeps its free: there the store the local held is the one being let go.
+    let null_reset_of_temp = function.is_compiler_generated(v)
+        && is_null_value(data, value)
+        && !crate::keys::temp_null_reset_frees();
+    let free = if null_reset_of_temp {
+        DisplacedFree::None
+    } else if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
         DisplacedFree::Stash
     } else if owned_ref && !s1_substituted {
         let witness = if crate::keys::displaced_witness_enabled() {
@@ -790,4 +801,18 @@ fn re_arm(
         return ReArm::ElementCopy { d_nr: rec };
     }
     ReArm::Plain
+}
+
+/// Is `value` a null — `null`, or the sentinel a reference reset writes?
+fn is_null_value(data: &Data, value: &Value) -> bool {
+    match value.unspan() {
+        Value::Null => true,
+        Value::Call(d, args) if args.is_empty() => {
+            matches!(
+                data.def(*d).name(),
+                "OpNullRefSentinel" | "OpConvRefFromNull"
+            )
+        }
+        _ => false,
+    }
 }
