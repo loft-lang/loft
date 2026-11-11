@@ -15821,6 +15821,15 @@ impl Parser {
         {
             return TextDep::SkipOwnedLocal;
         }
+        // `@FR-R-TextBorrow` — a `for` loop's own variable stays a local, delivered by copy:
+        // promoted to the return buffer it would be copied INTO on every turn (the caller's
+        // `&text`), where left a local a walk over a vector of texts borrows each element
+        // instead (server `Request.header`, `return h[wl + 1..].trim()` inside
+        // `for h in self.headers`).  `was_loop_var` is set by the loop header, which the
+        // parser meets before any `return` in its body, on both passes.
+        if self.vars.was_loop_var(v) && !self.vars.is_argument(v) {
+            return TextDep::SkipOwnedLocal;
+        }
         let tp = self.vars.tp(v);
         // A text local promotes to a HIDDEN RefVar(Text) out-param buffer.
         // @PLN25 DN1 (#487 / 449): `.base()` peel — an `Optional(Text)` local

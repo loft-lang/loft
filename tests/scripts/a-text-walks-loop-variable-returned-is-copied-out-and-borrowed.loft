@@ -1,0 +1,72 @@
+struct Req { hs: vector<text>, n: integer }
+
+// 1: a slice of the loop variable, trimmed.  "b:  two " → "two".
+fn slice_of(r: Req, k: text) -> text {
+  for h in r.hs { if h.starts_with(k) { return h[2..].trim(); } }
+  ""
+}
+// 2: the loop variable itself.  "b:  two ".
+fn whole(r: Req, k: text) -> text {
+  for h in r.hs { if h.starts_with(k) { return h; } }
+  "none"
+}
+// 3: a concatenation with it.  "c:three!".
+fn joined(r: Req, k: text) -> text {
+  for h in r.hs { if h.starts_with(k) { return h + "!"; } }
+  ""
+}
+// 4: a second text local in the result.  "<a:one>".
+fn two_deps(r: Req, k: text) -> text {
+  t = "<";
+  for h in r.hs { if h.starts_with(k) { return t + h + ">"; } }
+  t
+}
+// 5: nested loops, the inner variable.  "c:three".
+fn nested(r: Req, k: text) -> text {
+  for o in r.hs { for i in r.hs { if i.starts_with(k) && o.starts_with("a") { return i; } } }
+  ""
+}
+// 6: a local vector.  "y2".
+fn local_vec(k: text) -> text {
+  v: vector<text> = ["x1", "y2", "z3"];
+  for e in v { if e.starts_with(k) { return e; } }
+  ""
+}
+// 7: the body writes the record's store (the borrow declines): "b:  two ", n = 2.
+fn writes(r: Req, k: text) -> text {
+  for h in r.hs { r.n += 1; if h.starts_with(k) { return h; } }
+  ""
+}
+// 8: a `text?` result: "a:one", then null.
+fn maybe(r: Req, k: text) -> text? {
+  for h in r.hs { if h.starts_with(k) { return h; } }
+  null
+}
+// 9: the same name in two loops: the second loop's match, "c:three".
+fn twice(r: Req) -> text {
+  for h in r.hs { if h.starts_with("zz") { return h; } }
+  for h in r.hs { if h.starts_with("c") { return h; } }
+  ""
+}
+
+fn main() {
+  r = Req { hs: ["a:one", "b:  two ", "c:three"], n: 0 };
+  assert(slice_of(r, "b") == "two", "1 '{slice_of(r, "b")}'");
+  assert(whole(r, "b") == "b:  two ", "2 '{whole(r, "b")}'");
+  assert(whole(r, "q") == "none", "2n");
+  assert(joined(r, "c") == "c:three!", "3 '{joined(r, "c")}'");
+  assert(two_deps(r, "a") == "<a:one>", "4 '{two_deps(r, "a")}'");
+  assert(nested(r, "c") == "c:three", "5 '{nested(r, "c")}'");
+  assert(local_vec("y") == "y2", "6 '{local_vec("y")}'");
+  w = Req { hs: ["a:one", "b:  two ", "c:three"], n: 0 };
+  assert(writes(w, "b") == "b:  two ", "7 '{writes(w, "b")}'");
+  assert(w.n == 2, "7 n {w.n}");
+  assert(maybe(r, "a") == "a:one", "8");
+  assert(maybe(r, "x") == null, "8n");
+  assert(twice(r) == "c:three", "9 '{twice(r)}'");
+  // 10: called often, each answer fresh: 2000 × (3 + 5) characters.
+  n = 0;
+  for k in 0..2000 { n += size(slice_of(r, if k % 2 == 0 { "b" } else { "c" })); }
+  assert(n == 1000 * 3 + 1000 * 5, "10 {n}");
+  println("ok");
+}
