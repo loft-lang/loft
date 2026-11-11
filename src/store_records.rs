@@ -2054,6 +2054,25 @@ impl Run<'_> {
                     corr: BTreeSet::new(),
                 }
             }
+            // A buffer-filler handed "null, or the store this same call made on an earlier
+            // pass" (a loop's head): the null path makes that store's role again, so the call
+            // answers that store — not one more generation of it.
+            Summary::Buf(i)
+                if vals.get(i as usize).is_some_and(|v| {
+                    let site = self.site_of.get(&(std::ptr::from_ref(node) as usize)).copied();
+                    let stores = Self::stores_of(&v.pts);
+                    !stores.is_empty()
+                        && stores.iter().all(|k| Some(k.site) == site && !k.older)
+                        && v.pts.iter().all(|p| matches!(p, Pt::Null | Pt::Store(_)))
+                }) =>
+            {
+                let v = &vals[i as usize];
+                let pts: Pts = v.pts.iter().copied().filter(|p| *p != Pt::Null).collect();
+                Val {
+                    corr: Self::stores_of(&pts).into_iter().collect(),
+                    pts,
+                }
+            }
             Summary::Join(i) | Summary::Buf(i)
                 if vals
                     .get(i as usize)
