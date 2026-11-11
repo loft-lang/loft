@@ -4611,22 +4611,22 @@ fn call_leaves_param(
             .get(i)
             .is_some_and(|at| matches!(at.typedef.base(), Type::Vector(_, _)))
             && vector_path(data, a).is_some_and(|(root, _)| {
+                // A HIDDEN parameter — the return buffer, or a WORK BUFFER promoted from this
+                // frame's own local (`lr_px` of `lock_ribbons`, `@FR-R-WorkBuffer`) — is
+                // storage the compiler hands in: the caller never passes a user value there,
+                // so it cannot be `p` under another name.  A promoted parameter's variable
+                // number is not its attribute index, so it is found by name.
+                let handed_in = vars.is_argument(root)
+                    && data
+                        .def(d_nr)
+                        .attributes()
+                        .iter()
+                        .any(|at| at.name == vars.name(root) && (at.hidden || at.work_buffer));
                 root != p
                     && !is_scalar(vars.tp(root))
                     && !matches!(vars.tp(root).base(), Type::Text(_))
                     && !local_owns_store(data, d_nr, vars, params, root)
-                    // A HIDDEN parameter — the return buffer, or a WORK BUFFER promoted from this
-                    // frame's own local (`lr_px` of `lock_ribbons`, `@FR-R-WorkBuffer`) — is
-                    // storage the compiler hands in: the caller never passes a user value there,
-                    // so it cannot be `p` under another name.
-                    // A promoted parameter's variable number is not its attribute index, so it
-                    // is found by name.
-                    && !(vars.is_argument(root)
-                        && data
-                            .def(d_nr)
-                            .attributes()
-                            .iter()
-                            .any(|at| at.name == vars.name(root) && (at.hidden || at.work_buffer)))
+                    && !handed_in
             });
         if !is_path_of(data, a, p) && !aliases {
             continue;

@@ -875,8 +875,7 @@ O(1) off the footer (tree-confirmed — claimed data can spell a false footer) i
 leaving adjacent frees to `claim`'s lazy O(blocks) sweep; the sweep stays armed only for
 the untracked one-word case.  **`LOFT_NO_FREE_FOOTER=1`** restores the sweep-only form
 whole (every delete arms it) and is the first bisect step for a store-layout fault in a
-delete-heavy run.  The class it retires is the `coalesce_free` cliff
-(PERFORMANCE.md § V-j P2).
+delete-heavy run.  The class it retires is the `coalesce_free` cliff (PERFORMANCE.md § V-j P2).
 
 **The tail free block is a wilderness (@PLN164, default-ON, both backends,
 `@FR-H-Wilderness`):** the free block that ends a store is held beside the free tree, and the

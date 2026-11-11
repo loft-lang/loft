@@ -567,7 +567,7 @@ fn caller_arg_base(data: &Data, d_nr: u32, callee_d: u32, callee_base: u16, args
 }
 
 /// Forward ownership fixpoint: returns each block's OUT-state and the pass count (SI-3).
-/// @P302/@PLN25 materialisation: a var RE-MINTED via `OpDatabase` on ANY path is a materialised
+/// Materialisation: a var RE-MINTED via `OpDatabase` on ANY path is a materialised
 /// OWNED local (the function owns its store), so a whole-value `var = src` copy INTO it is also
 /// owned — not a borrow of `src`. `OpDatabase(v)` is a `Call` statement, invisible to the `Set`-only
 /// `record_own`, so the transfer would otherwise carry the false-arm copy's `Borrowed(src)` through

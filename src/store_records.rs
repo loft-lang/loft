@@ -1360,7 +1360,7 @@ impl Run<'_> {
     }
 
     /// A copy's source-free (`COPY_FREE_SOURCE`) releases what the call answered unless the
-    /// `@P290` bracket protects it: a store of the answer that no protectable argument names
+    /// copy bracket protects it: a store of the answer that no protectable argument names
     /// (`use_analysis::protectable_ref_args`, the code generator's own list) ends here.
     fn unprotected_source_free(&mut self, st: &mut State, call: &Value, value: &Val) {
         let protected: BTreeSet<SKey> =
