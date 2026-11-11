@@ -1858,13 +1858,15 @@ impl Run<'_> {
                     let witness_holds_it = shared
                         .iter()
                         .all(|k| w.is_some_and(|w| info_of(&st, *k).live.contains(&w)));
-                    if !witness_holds_it {
-                        // The stores the witness cannot name end as any free ends them.
-                        let rest: BTreeSet<SKey> = Self::stores_of(&xp)
-                            .into_iter()
-                            .filter(|k| !shared.contains(k))
-                            .collect();
+                    // The stores the witness cannot name end as any free ends them.
+                    let rest: BTreeSet<SKey> = Self::stores_of(&xp)
+                        .into_iter()
+                        .filter(|k| !shared.contains(k))
+                        .collect();
+                    if !rest.is_empty() {
                         self.end_only(&mut st, x, &name, false, Some(&rest));
+                    }
+                    if !witness_holds_it {
                         // One the witness may name ends only on the paths it does not: where
                         // `x` names it on every path it is live, it stays live exactly where
                         // the witness names it (`return if c { f } else { g }`).
