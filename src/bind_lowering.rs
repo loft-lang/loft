@@ -857,6 +857,30 @@ fn re_arm(
     {
         return ReArm::ElementCopy { d_nr: rec };
     }
+    // `@FR-B-Copy` — an owning record local rebound from a value that reads it and answers a
+    // VIEW on some path (`x = x.next ?? y`: a stored reference's record, or another local):
+    // copied into a fresh store with the value computed first (`R2d`), since bound plainly the
+    // local named the other store and both freed it (`@FR-H-FreeTwice`).
+    // `LOFT_NO_READING_VIEW_COPY=1` keeps the plain bind.
+    if rb.owned_ref
+        && stashed
+        && rb.rhs_reads_v
+        && !rb.rhs_is_new_record
+        && !crate::keys::reading_view_copy_off()
+        && let Some(rec) = tp.base().heap_def_nr()
+        // A call's answer (bare, or the tail of the insert that hands it a literal:
+        // `s = me(Bx { … })`) has its own delivery; a copy there orphans the handed store.
+        && !matches!(
+            delivered_tail(value),
+            Value::Var(_) | Value::Call(_, _) | Value::CallRef(_, _)
+        )
+        && matches!(
+            crate::use_analysis::ownership_of(data, d_nr, value),
+            crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. }
+        )
+    {
+        return ReArm::ElementCopy { d_nr: rec };
+    }
     ReArm::Plain
 }
 
@@ -871,5 +895,14 @@ fn is_null_value(data: &Data, value: &Value) -> bool {
             )
         }
         _ => false,
+    }
+}
+
+/// The node a value delivers: the last operator through spans, inserts and blocks.
+fn delivered_tail(value: &Value) -> &Value {
+    match value.unspan() {
+        Value::Insert(ops) => ops.last().map_or(value, delivered_tail),
+        Value::Block(bl) => bl.operators.last().map_or(value, delivered_tail),
+        v => v,
     }
 }

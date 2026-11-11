@@ -3201,7 +3201,15 @@ impl State {
                 // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
                 if let ReArm::ElementCopy { d_nr } = rb.arm {
                     note_bind("R2d");
-                    self.gen_set_first_ref_elem_copy(stack, v, value, d_nr, value_can_exit(value));
+                    // The value reads `v` (`x = x.next ?? y`): computed before `v`'s fresh store
+                    // replaces the old one in the slot.
+                    self.gen_set_first_ref_elem_copy(
+                        stack,
+                        v,
+                        value,
+                        d_nr,
+                        value_can_exit(value) || rb.rhs_reads_v,
+                    );
                     if stash_old_for_post_free {
                         self.free_stashed(stack, v, entry_w, buffer_witness);
                     }

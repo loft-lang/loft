@@ -3454,6 +3454,15 @@ pub fn fresh_copy_of_view_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_FRESH_COPY_OF_VIEW"))
 }
 
+/// `LOFT_NO_READING_VIEW_COPY=1` — an owning record local rebound from a value that reads it
+/// and answers a view binds that view plainly (`bind_lowering::re_arm`): it then names another
+/// store, which both release.
+#[must_use]
+pub fn reading_view_copy_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_READING_VIEW_COPY"))
+}
+
 /// `LOFT_NO_FRESH_PROTECTS_OLD=1` — a reassignment copied into a fresh store leaves the local's
 /// old store out of the protection bracket even where the value reads the local, as it did
 /// before (`Codegen::generate_set_inner`, arm R2b): the copy's source-free then releases it and
