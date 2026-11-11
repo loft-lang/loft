@@ -907,3 +907,35 @@ fn delivered_tail(value: &Value) -> &Value {
         v => v,
     }
 }
+
+/// Does a vector local's FIRST null init (`FirstArm::VectorNull`) mint a store of its own?  Not
+/// for a local that borrows (`skip_free`, which also marks a match bind's or a `??`'s view), a
+/// lift temporary overwritten before it is read (`inline_ref`), a lazy buffer that mints at its
+/// first use (`@FR-O-LazyBuffer`), or a view (a dep).  The one answer the interpreter's code
+/// generator (`gen_set_first_vector_null`) and the store records read.
+#[must_use]
+pub fn vector_null_mints(function: &Function, v: u16) -> bool {
+    !(function.is_skip_free(v) || function.is_inline_ref(v) || function.is_lazy_buffer(v))
+        && matches!(function.tp(v), Type::Vector(_, dep) if dep.is_empty())
+}
+
+/// Does a keyed local's FIRST null init (`FirstArm::KeyedNull`) mint a store of its own?  Not
+/// for one that borrows an outer store (`inline_ref`) or a binding overwritten by its view
+/// (`is_overwritten_view`, loft#1155); a never-free keyed local that hands its store on still
+/// mints (`gen_keyed_null`).
+#[must_use]
+pub fn keyed_null_mints(function: &Function, v: u16) -> bool {
+    !(function.is_inline_ref(v) || function.is_overwritten_view(v))
+}
+
+/// `@FR-O-LazyBuffer` — is `v = value` a lazy buffer's MINT?  Its entry null init wrote only the
+/// sentinel (`vector_null_mints`), and the scope pass placed a later `Set(v, Null)` behind
+/// `OpRefIsNull(v)`: that one makes the store.  Never `vector<T>?` (`lazy_buffer_mints`
+/// declines those).  Read by the interpreter's code generator (`set_var`) and the store records.
+#[must_use]
+pub fn lazy_buffer_mints_at(function: &Function, v: u16, value: &Value) -> bool {
+    matches!(value.unspan(), Value::Null)
+        && function.is_lazy_buffer(v)
+        && !matches!(function.tp(v), Type::Optional(_))
+        && matches!(function.tp(v).base(), Type::Vector(_, dep) if dep.is_empty())
+}

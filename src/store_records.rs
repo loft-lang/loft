@@ -982,13 +982,16 @@ impl Run<'_> {
                 | FirstArm::TupleNull => Val::null(),
                 // A keyed local's null init gives it a keyed store of its own, as a vector
                 // local's does (`gen_set_first_keyed_null`).
-                FirstArm::VectorNull | FirstArm::KeyedNull => {
-                    if !function.is_skip_free(x) && function.tp(x).depend().is_empty() {
-                        self.copied(&mut s, node)
-                    } else {
-                        Val::null()
-                    }
+                // The code generator's own answer (`bind_lowering::vector_null_mints`,
+                // `keyed_null_mints`): a lift temporary, a lazy buffer or a borrowed view gets no
+                // store at its null init.
+                FirstArm::VectorNull if crate::bind_lowering::vector_null_mints(function, x) => {
+                    self.copied(&mut s, node)
                 }
+                FirstArm::KeyedNull if crate::bind_lowering::keyed_null_mints(function, x) => {
+                    self.copied(&mut s, node)
+                }
+                FirstArm::VectorNull | FirstArm::KeyedNull => Val::null(),
                 FirstArm::RecordCopyCall { .. }
                 | FirstArm::RecordVarCopy { .. }
                 | FirstArm::ElementCopy { .. }
@@ -1151,6 +1154,18 @@ impl Run<'_> {
             let (mut s, value) = self.eval(val, st)?;
             Self::hand_on(&mut s, &value);
             return Some((s, Val::null()));
+        }
+        // A lazy buffer's guarded `Set(v, Null)` is where its store is made (`set_var`).
+        if crate::bind_lowering::lazy_buffer_mints_at(function, x, val) {
+            let mut st = st;
+            let site = self.site(node, Origin::Mint);
+            let k = Self::fresh(&mut st, site);
+            let minted = Val {
+                pts: [Pt::Store(k)].into(),
+                corr: [k].into(),
+            };
+            self.bind(&mut st, x, &minted);
+            return Some((st, Val::null()));
         }
         let rb = match self.rebinds.get(&(std::ptr::from_ref(node) as usize)) {
             Some(rb) => *rb,
@@ -1563,6 +1578,7 @@ impl Run<'_> {
     /// A free op: its own argument is not a use.
     fn free_op(&mut self, d: u32, args: &[Value], st: State) -> State {
         let ops = self.ops;
+
         if ops.unconditional.contains(&d) || d == ops.text_free {
             let name = self.data.def(d).name().to_string();
             let mut st = st;

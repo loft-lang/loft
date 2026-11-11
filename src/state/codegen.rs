@@ -2303,7 +2303,7 @@ impl State {
         // function-entry `OpReserveFrame(frame_hwm)` in `def_code`
         // guarantees `stack.position >= v.slot + 12`, so the init is
         // always addressable as `slot_offset = stack.position - v.slot`.
-        if let Type::Vector(elm_tp, dep) = stack.function.tp(v).clone() {
+        if let Type::Vector(elm_tp, _) = stack.function.tp(v).clone() {
             let ref_size = size_of::<crate::keys::DbRef>() as u16;
             let slot_end = stack.function.stack(v).saturating_add(ref_size);
             if stack.position < slot_end {
@@ -2313,25 +2313,17 @@ impl State {
                 stack.grow(bump);
             }
             let slot_offset = stack.var_pos(v);
-            if stack.function.is_skip_free(v)
-                || stack.function.is_inline_ref(v)
-                || stack.function.is_lazy_buffer(v)
-            {
-                // skip_free bindings borrow; inline_ref lift temporaries are
-                // overwritten before read; a lazy buffer mints at its first use
-                // (`@FR-O-LazyBuffer`).  All want a null sentinel in the slot with
-                // no store alloc.
-                stack.add_op("OpInitRefSentinel", self);
-                self.code_add(slot_offset);
-            } else if dep.is_empty() {
+            // `bind_lowering::vector_null_mints`, the answer the store records read too.
+            if crate::bind_lowering::vector_null_mints(&stack.function, v) {
                 // Owned vector: the slot's null-init, then a fresh store at it.
                 stack.add_op("OpInitRef", self);
                 self.code_add(slot_offset);
                 self.gen_owned_vector_store(stack, v, &elm_tp);
             } else {
-                // Borrowed view before its first bind: the null sentinel, as native and C
-                // hold it, so a liveness test answers alike on every backend (loft#2354's
-                // class — see `gen_set_first_ref_null`).
+                // A borrowing binding, a lift temporary overwritten before it is read, a lazy
+                // buffer that mints at its first use (`@FR-O-LazyBuffer`), or a view before its
+                // first bind: the null sentinel and no store — as native and C hold it, so a
+                // liveness test answers alike on every backend (loft#2354's class).
                 stack.add_op("OpInitRefSentinel", self);
                 self.code_add(slot_offset);
             }
@@ -2451,7 +2443,7 @@ impl State {
         // unbounded in a loop, and `vector` clean beside it — which is precisely the boundary
         // the issue measured.  It comes back under its own name, `is_overwritten_view`, so the
         // owned return-local the de-conflation was FOR still allocates.
-        if stack.function.is_inline_ref(v) || stack.function.is_overwritten_view(v) {
+        if !crate::bind_lowering::keyed_null_mints(&stack.function, v) {
             // inline_ref keyed locals borrow an outer-owned store.
             // On first assignment, point the slot at it via the sentinel; on
             // reassignment there is nothing to re-init (no current shape
@@ -5916,11 +5908,8 @@ impl State {
         // `@FR-O-LazyBuffer` — a lazy buffer's later `Set(v, Null)` is its MINT (the scopes
         // pass places it behind `OpRefIsNull(v)`); its entry null-init wrote the sentinel.
         // A lazy buffer is never `vector<T>?` (`lazy_buffer_mints` declines those).
-        if matches!(value.unspan(), Value::Null)
-            && stack.function.is_lazy_buffer(var)
-            && !matches!(stack.function.tp(var), Type::Optional(_))
-            && let Type::Vector(elm_tp, dep) = stack.function.tp(var).base().clone()
-            && dep.is_empty()
+        if crate::bind_lowering::lazy_buffer_mints_at(&stack.function, var, value)
+            && let Type::Vector(elm_tp, _) = stack.function.tp(var).base().clone()
         {
             self.gen_owned_vector_store(stack, var, &elm_tp);
             return;
