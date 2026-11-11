@@ -118,6 +118,39 @@ fn corpus() -> Vec<String> {
     files
 }
 
+/// The keys in `code`'s type table that name no type (`?<id>`, `TypeNames::key` of an id the
+/// program does not have): no host can answer one, so it refuses the whole artifact.
+fn unknown_keys(code: &str) -> Vec<String> {
+    code.lines()
+        .skip_while(|l| !l.starts_with("const __TID_KEYS"))
+        .skip(1)
+        .take_while(|l| !l.starts_with("];"))
+        .map(str::trim)
+        .filter(|l| l.starts_with("\"?"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// A tuple inserted into a vector has no type of its own: the insert takes the no-type id
+/// (`OpInsertVector`'s `db_tp`), which the code writes as it is.  It takes no place in the type
+/// table — masked as a flagged id it named type `0x3FFF`, `?16383`, and the host refused the
+/// library, every function of it interpreting.
+#[test]
+fn the_no_type_id_takes_no_table_slot() {
+    let src = "pub fn n_pairs(n: integer) -> integer {\n\
+                 out: vector<(integer, integer)> = [];\n\
+                 for i in 0..n { out.insert(0, (i, i * 2)); }\n\
+                 len(out)\n\
+               }\n";
+    let code = code_of("", src, "lib").expect("the library generates");
+    assert!(
+        code.contains("65535_i32"),
+        "the probe no longer passes the no-type id; pick another that does"
+    );
+    let unknown = unknown_keys(&code);
+    assert!(unknown.is_empty(), "the type table names {}", unknown.join(", "));
+}
+
 const SHARDS: usize = 8;
 
 /// Every `SHARDS`-th program from `shard` on.  A shard runs in its own process (nextest):
@@ -137,6 +170,10 @@ fn check_shard(shard: usize) {
         compared += 1;
         if a != b {
             differ.push(format!("{f}: {}", first_difference(&a, &b)));
+        }
+        let unknown = unknown_keys(&a);
+        if !unknown.is_empty() {
+            differ.push(format!("{f}: names types no program has: {}", unknown.join(", ")));
         }
     }
     assert!(
