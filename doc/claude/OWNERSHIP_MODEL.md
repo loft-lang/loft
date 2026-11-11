@@ -596,7 +596,9 @@ ARGS=--control` proves the buckets can move in both directions before any of it 
    reconcile, not a single-var structural walk.
 
 When these hold, both backends translate the *same* facts, so interp and native
-cannot diverge.
+cannot diverge.  They are checked statically against per-store records built from the IR,
+independently of the facts the code generator decides from:
+[STORE_RECORDS.md](STORE_RECORDS.md).
 
 ## The migration backlog (provenance record — live status is formal/ownership.md)
 
