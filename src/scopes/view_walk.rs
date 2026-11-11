@@ -406,11 +406,41 @@ impl ViewWalk<'_> {
         database: Option<&'a crate::database::Stores>,
         start_line: u32,
     ) -> HashMap<u16, Disturbance> {
+        Self::run_seeded(
+            code,
+            function,
+            data,
+            cross_frame,
+            disturbed,
+            database,
+            start_line,
+            &[],
+        )
+        .0
+    }
+
+    /// [`Self::run`] with `seeds` open from the start: each `(view, container, field)` a
+    /// variable that already views a place inside `container` when the body begins — a
+    /// callee's element PARAMETER whose caller handed it an element of another parameter
+    /// (`@FR-B-Ref-Reshape`: a plain parameter aliases the caller's element as a `&` one
+    /// does).  Answers the views used after a disturbance, and the seeds a disturbance
+    /// reached at all, used or not.
+    #[expect(clippy::too_many_arguments, reason = "run's arguments plus the seeds")]
+    pub(super) fn run_seeded<'a>(
+        code: &Value,
+        function: &'a Function,
+        data: &'a Data,
+        cross_frame: Option<&'a RemovedParams>,
+        disturbed: Option<&'a DisturbedParams>,
+        database: Option<&'a crate::database::Stores>,
+        start_line: u32,
+        seeds: &[(u16, u16, u32)],
+    ) -> (HashMap<u16, Disturbance>, HashSet<u16>) {
         let mut walk = ViewWalk {
             function,
             data,
-            open: vec![Vec::new()],
-            bound_at: HashMap::default(),
+            open: vec![seeds.to_vec()],
+            bound_at: seeds.iter().map(|(v, _, _)| (*v, 0)).collect(),
             view_keys: HashMap::default(),
             view_depth: HashMap::default(),
             view_index: HashMap::default(),
@@ -428,7 +458,12 @@ impl ViewWalk<'_> {
             loop_edge: 0,
         };
         walk.walk_block(std::slice::from_ref(code));
-        walk.out
+        let reached = seeds
+            .iter()
+            .map(|(v, _, _)| *v)
+            .filter(|v| walk.shaken.contains_key(v) || walk.out.contains_key(v))
+            .collect();
+        (walk.out, reached)
     }
 
     fn walk_block(&mut self, stmts: &[Value]) {

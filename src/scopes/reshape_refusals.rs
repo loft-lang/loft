@@ -251,6 +251,47 @@ pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<
     out
 }
 
+/// `@FR-B-Ref-Reshape` — *"LIVENESS is the condition, not existence"*, and the disturbance may
+/// be in anything the frame calls: is the callee's element parameter `param` already dead where
+/// the callee disturbs `place`, the container the caller's argument for it lives in?
+///
+/// The callee's body is walked as its own frame with `param` open as a view into `place`, the
+/// walk the in-frame link is judged by.  Dead only when that walk saw the disturbance reach
+/// `param`, never used it after, and condemned no view the plain walk does not — a view the
+/// body takes THROUGH `param` (`f = e`) carries the alias on.  Anything the walk cannot see
+/// keeps the refusal.
+fn param_dead_at_disturbance(
+    data: &Data,
+    callee: u32,
+    place: ParamPlace,
+    param: u16,
+    removed: &RemovedParams,
+    disturbed: Option<&DisturbedParams>,
+    database: &crate::database::Stores,
+) -> bool {
+    let cdef = data.def(callee);
+    if matches!(cdef.code, Value::Null) {
+        return false;
+    }
+    let walk = |seeds: &[(u16, u16, u32)]| {
+        ViewWalk::run_seeded(
+            &cdef.code,
+            &cdef.variables,
+            data,
+            Some(removed),
+            disturbed,
+            Some(database),
+            cdef.position.line,
+            seeds,
+        )
+    };
+    let (plain, _) = walk(&[]);
+    let (seeded, reached) = walk(&[(param, place.0, place.1)]);
+    reached.contains(&param)
+        && !seeded.contains_key(&param)
+        && seeded.keys().all(|v| plain.contains_key(v))
+}
+
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn def_reshape_refusals(
     data: &Data,
@@ -549,6 +590,18 @@ fn def_reshape_refusals(
                     continue;
                 }
                 if !arg_references_element_in(arg, place, &def.code, function, data) {
+                    continue;
+                }
+                let Ok(j16) = u16::try_from(j) else { continue };
+                if param_dead_at_disturbance(
+                    data,
+                    *callee,
+                    (slot, inner),
+                    j16,
+                    removed,
+                    disturbed,
+                    database,
+                ) {
                     continue;
                 }
                 reported.insert((k, j));
