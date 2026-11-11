@@ -4535,6 +4535,7 @@ use a separate collection or add after the loop"
             self.mark_const_view(dst, &rhs, false);
         }
         self.rebind_local_heap_param(code, op, to, var_nr);
+        self.rebind_param_through_link(code, op, to, var_nr);
         self.rebind_lowered = already;
         self.group_reindex_after_vector_write(code, &group_to, &group_parent);
         // @C118 — `r = null` on a vector LOCAL is a whole-value write of the ABSENT
@@ -4711,6 +4712,62 @@ use a separate collection or add after the loop"
             return;
         }
         *code = Value::Insert(vec![free, detach, assign]);
+    }
+
+    /// `@FR-F-ParamRebind`, `@FR-O-Complete` — a whole write through a `&` link to a PLAIN heap
+    /// parameter (`cur = &n; cur = N { … }`) rebinds the parameter as `n = N { … }` does: the
+    /// record lands in the parameter's slot, and the caller's store stays the caller's
+    /// (`Function::link_write_releases` declines that free — f6e294a27's use-after-free).  So
+    /// it takes [`Self::rebind_local_heap_param`]'s witness: the exit frees what the parameter
+    /// names unless it is still the caller's store, and a later write frees the earlier one
+    /// first.  Left out, every written record leaked.  A re-point of the link (`cur = &x`,
+    /// `cur = &cur.next`) writes nothing.  `LOFT_NO_LINK_PARAM_REBIND=1`.
+    fn rebind_param_through_link(&mut self, code: &mut Value, op: &str, to: &Value, var_nr: u16) {
+        if self.first_pass
+            || op != "="
+            || var_nr == u16::MAX
+            || !matches!(to.unspan(), Value::Var(v) if *v == var_nr)
+            || crate::env_once!(std::env::var_os("LOFT_NO_LINK_PARAM_REBIND").is_some())
+        {
+            return;
+        }
+        let Type::RefVar(_) = self.vars.tp(var_nr).base() else {
+            return;
+        };
+        let [param] = self.vars.link_targets(var_nr)[..] else {
+            return;
+        };
+        if !self.vars.is_argument(param)
+            || matches!(self.vars.tp(param).base(), Type::RefVar(_))
+            || !matches!(
+                self.vars.tp(param).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+            || self.vars.is_compiler_generated(param)
+            || self.is_hidden_param(param)
+        {
+            return;
+        }
+        let Some(rhs) = bound_rhs(code, var_nr) else {
+            return;
+        };
+        if matches!(rhs.unspan(), Value::Call(d, _)
+            if matches!(self.data.def(*d).name(),
+                "OpCreateStack" | "OpVarRef" | "OpGetField" | "OpGetVector" | "OpVectorRef"))
+        {
+            return;
+        }
+        let reads = rhs.reads_var(var_nr) || rhs.reads_var(param);
+        let orig = self.ensure_rebind_witness(param);
+        if reads {
+            return;
+        }
+        let free = self.cl(
+            "OpFreeRefIfDistinct",
+            &[Value::Var(param), Value::Var(orig)],
+        );
+        let assign = std::mem::replace(code, Value::Null);
+        *code = Value::Insert(vec![free, assign]);
     }
 
     /// Record that this lambda rebinds a captured name whole-value.

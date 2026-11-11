@@ -190,7 +190,12 @@ of its own and copies the base in, which on a return buffer is the caller's stor
 named onto the buffer freed the caller's store (the records: `store-wrong-end`).  A collection
 coalesce read inline (`(g ?? nr_h(i))[i]`) lifts its fallback call into a `__lift_N` inside the
 arm (`Scopes::lift_owned_coalesce_arm`), handed off where the outer call consumes it;
-`LOFT_NO_COALESCE_ARM_LIFT=1` leaves the call inline, and a keyed fallback leaks.
+`LOFT_NO_COALESCE_ARM_LIFT=1` leaves the call inline, and a keyed fallback leaks.  Where
+the fn-ref lift makes a local a view (`v = h(k)`), an append backing the local's guarded mint
+marked never-free releases its own store again (`scan_set`); `LOFT_NO_LIFT_BACKING_FREE=1` keeps
+it never-free, and the C output leaks it.  A whole write through a `&` link to a plain heap
+parameter takes the direct rebind's entry witness (`Parser::rebind_param_through_link`);
+`LOFT_NO_LINK_PARAM_REBIND=1` leaves the written record to nobody.
 
 The closure records' releases, each switch bringing back one second free (doc strings in
 `keys.rs`):
