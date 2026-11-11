@@ -87,6 +87,9 @@ struct State {
     /// Per closure record that stays in this frame: the stores its capture slots hold
     /// (`@FR-L-CapOwn` — such a record BORROWS what it captured; the frame releases it).
     slots: BTreeMap<u16, Pts>,
+    /// Boolean locals whose value this path knows: an ownership flag (`__rbo_<buf>`, a
+    /// `__lbo_` displacement flag) written a constant, and read by the guard of a free.
+    flags: BTreeMap<u16, bool>,
 }
 
 /// A value: the stores it may point into, and the stores CORRELATED with it — live only on
@@ -145,6 +148,12 @@ fn join_state(a: &State, b: &State) -> State {
     for k in a.stores.keys().chain(b.stores.keys()) {
         stores.insert(*k, join_info(&info_of(a, *k), &info_of(b, *k)));
     }
+    let flags = a
+        .flags
+        .iter()
+        .filter(|(k, v)| b.flags.get(k) == Some(v))
+        .map(|(k, v)| (*k, *v))
+        .collect();
     let mut slots: BTreeMap<u16, Pts> = a.slots.clone();
     for (w, p) in &b.slots {
         slots.entry(*w).or_default().extend(p.iter().copied());
@@ -153,6 +162,7 @@ fn join_state(a: &State, b: &State) -> State {
         vars,
         stores,
         slots,
+        flags,
     }
 }
 
@@ -740,7 +750,15 @@ impl Run<'_> {
                 }
                 Some((st, val))
             }
-            Value::Set(x, val) => self.assign(v, *x, val, st),
+            Value::Set(x, val) => {
+                let mut st = st;
+                if let Value::Boolean(c) = val.unspan() {
+                    st.flags.insert(*x, *c);
+                    return Some((st, Val::null()));
+                }
+                st.flags.remove(x);
+                self.assign(v, *x, val, st)
+            }
             Value::If(cond, then_v, else_v) => {
                 let (s, _) = self.eval(cond, st)?;
                 let (then_st, else_st) = self.decide(cond, s);
@@ -822,7 +840,11 @@ impl Run<'_> {
             }
             Value::Tuple(xs) => {
                 let target = self.tuple_target;
-                let (mut s, vals) = self.args(xs, st)?;
+                let (mut s, vals) = if target.is_some() {
+                    self.tuple_elems(xs, st)?
+                } else {
+                    self.args(xs, st)?
+                };
                 match target {
                     // A branch arm's tail literal for a tuple local: its members.
                     Some(t) => {
@@ -944,7 +966,7 @@ impl Run<'_> {
             } else {
                 self.seq(prefix, st)?.0
             };
-            let (mut s, vals) = self.args(xs, st)?;
+            let (mut s, vals) = self.tuple_elems(xs, st)?;
             for (i, value) in vals.iter().enumerate() {
                 let k = member_key(x, i as u16).expect("checked above");
                 self.bind(&mut s, k, value);
@@ -1347,6 +1369,13 @@ impl Run<'_> {
         let both = |st: State| (Some(st.clone()), Some(st));
         match cond.unspan() {
             Value::Boolean(true) => (Some(st), None),
+            Value::Var(b) if st.flags.contains_key(b) => {
+                if st.flags[b] {
+                    (Some(st), None)
+                } else {
+                    (None, Some(st))
+                }
+            }
             Value::Boolean(false) => (None, Some(st)),
             Value::Call(op, a) if *op == self.ops.not && a.len() == 1 => {
                 let (t, f) = self.decide(&a[0], st);
@@ -1583,6 +1612,34 @@ impl Run<'_> {
             head = again;
         }
         exits.map(|s| (s, Val::null()))
+    }
+
+    /// The elements of a tuple literal bound into a tuple local's members: a nested tuple
+    /// literal is part of its member, so it answers the stores it holds rather than handing
+    /// them on (`n = ((S { … }, 22), 8)`).
+    fn tuple_elems(&mut self, xs: &[Value], st: State) -> Option<(State, Vec<Val>)> {
+        let mut s = st;
+        let mut vals = Vec::with_capacity(xs.len());
+        for x in xs {
+            if let Value::Tuple(inner) = x.unspan() {
+                let (s2, parts) = self.tuple_elems(inner, s)?;
+                s = s2;
+                let mut whole = Val::null();
+                for p in parts {
+                    whole.pts.extend(p.pts);
+                    whole.corr.extend(p.corr);
+                }
+                if whole.pts.len() > 1 {
+                    whole.pts.remove(&Pt::Null);
+                }
+                vals.push(whole);
+            } else {
+                let (s2, vs) = self.args(std::slice::from_ref(x), s)?;
+                s = s2;
+                vals.extend(vs);
+            }
+        }
+        Some((s, vals))
     }
 
     /// Evaluate call arguments left to right.  A bare variable argument is a use of its
