@@ -823,7 +823,14 @@ fn re_arm(
         && !(rb.rhs_reads_v
             && !rb.witnessed
             && data.def(fn_nr).returns_borrowed_view()
-            && !(rb.rhs_base == Some(u16::MAX) && stashed))
+            && !(rb.rhs_base == Some(u16::MAX) && stashed)
+            // The pass-through exists for an answer that may BE `v`'s own store (#360: a copy
+            // would wipe the source it reads; and a recursion handing `v` back, `t = insert(t,
+            // k)`, must not copy per call).  An answer that can never be `v`'s store
+            // (`!rhs_may_alias_v`: `c = cond2(c, t, 3)` answering a mint or `t`) copies like any
+            // other — bound plain, `c` aliased `t` and both freed it (`@FR-H-FreeTwice`).
+            // `LOFT_NO_FRESH_COPY_OF_VIEW=1`.
+            && !(!rb.rhs_may_alias_v && !crate::keys::fresh_copy_of_view_off()))
         && !function.is_view_elided(v)
         && !(function.is_deferred_first_bind(v)
             && crate::use_analysis::adopts_minted_at_bind(data, function, v, value))

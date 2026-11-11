@@ -3436,6 +3436,15 @@ pub fn buffer_fresh_copy_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_FRESH_COPY"))
 }
 
+/// `LOFT_NO_FRESH_COPY_OF_VIEW=1` — a reassignment from a call that reads the local and may
+/// answer a borrowed view keeps the plain pass-through even where the copy would land in a
+/// fresh store (`bind_lowering::re_arm`): the local then aliases what the call answered.
+#[must_use]
+pub fn fresh_copy_of_view_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_FRESH_COPY_OF_VIEW"))
+}
+
 /// `LOFT_NO_FRESH_PROTECTS_OLD=1` — a reassignment copied into a fresh store leaves the local's
 /// old store out of the protection bracket even where the value reads the local, as it did
 /// before (`Codegen::generate_set_inner`, arm R2b): the copy's source-free then releases it and
