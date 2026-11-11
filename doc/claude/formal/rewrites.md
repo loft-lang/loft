@@ -7033,6 +7033,36 @@ across crawler, drawing, text2d, stage, graphics.  Census row `R-Version/nest`; 
 `loft-suite/rules/rewrites/R-Version/an-inner-loops-calls-are-decided-once-per-outer-entry-at-the-boxs-corners.loft`.
 Site `FnWriter::version_level`, the corners in `FnWriter::version_site`.
 
+**The element kinds.**  A float or boolean element read or written at a linear index is proven
+like an integer one (`OpGetFloat`, `OpSetFloat`, `OpGetBoolean`, `OpSetBoolean`): its fast form
+is `loft_vh_at_float`, `loft_vh_put_float`, `loft_pa_bool` at `loft_vh_at_addr`, and
+`loft_vh_put_bool`.  Guard
+`tests/scripts/a-leaf-reads-and-writes-float-and-boolean-elements-at-its-proven-index.loft`.
+
+**The early exit.**  `if c { return x }` with no else, its arm holding no access while an access
+follows on the path that goes on, is DECIDED toward going on: `!c` joins the precondition and the
+fast twin drops the `if`.  Deciding is sound either way round (the test joins the
+precondition); toward the exit the precondition would fail where the access runs, so it is
+decided toward the access.  Guard `tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft`
+(W: a column past the window's right edge whose index wraps into the next row, kept out by the
+exit's test alone).
+
+**The callee clause.**  A leaf may call a leaf, one level deep: the walk enters the callee with its
+integer parameters bound to the caller's linear arguments and its record parameter to the
+caller's record, so the callee's own decided `if`s and accesses join the caller's plan and its
+tests the caller's precondition, and the value it answers is the caller's local.  The C writes
+the callee's fast twin `g__inv__vf` from the part of the caller's plan that lies in the callee's
+IR, and the caller's fast twin calls it.  A callee that is a leaf of its own (its own plan would
+write another fast twin), or that two callers would plan differently, declines the caller.  The
+hex libraries' cell accessors are the shape: `hexset_get` calls `hs_index`.  Measured (gcc /
+clang, the routines whose C changed): hex_place `field_union` −63 % / −52 %, hex_roof `roof_cone`
+−52 % / −37 %, hex_place `combine_cut` −22 % / −21 %, hex_roof `roof_match` −16 % / −7 %, graphics
+`blend_pixel` −7 % / −12 %; hex_fit `draft_fit_p` +1 % / +5 %: its one versioned call sits behind
+an `edge_mat(…) != 0 &&` that rarely holds, and the guard asked per row (+7.6 % instructions)
+is not repaid — a call in an `if` arm cannot be told from text2d `draw_quads`' hot one, so
+restricting the guard to calls every turn reaches would undo that rule's own measured gain.
+Guard `tests/scripts/a-leaf-that-calls-an-index-helper-takes-its-tests-once-per-loop.loft`.
+
 ### A short counted loop is written once per trip
 
 ```

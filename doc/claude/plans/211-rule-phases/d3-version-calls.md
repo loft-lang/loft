@@ -90,3 +90,34 @@ the oracle, then C, `LOFT_CC` verify-C, rustc-native):
 Each part lands as its own commit with its cells, a falsified plant, the census, and the A/B on
 the four routines above (and every routine whose C changes, found by diffing the emitted C, not
 by timing the unchanged ones).
+
+## Built (2026-11-11)
+
+The three parts, one commit each with its guard and a plant that turned it red (the receipts
+are in each guard's header): `ea9a07db7`/`e7627d604` element kinds, `f47731187`/`159869e81`
+the early exit, `d61342f70`/`77e04bb25` the callee clause.  The census: `R-Version` admitted at
+40 sites in hex_roof, 19 in hex_field, 7 in hex_place and 1–3 in nine more programs.  Timed
+only where the C changed (the call graph from each timed routine to a changed function, 20
+routines in 11 programs; ab.py on the two emitted units, min of 11 interleaved runs, hashes
+equal):
+
+| routine | gcc | clang |
+|---|--:|--:|
+| hex_place `field_union` | −63.1 % | −52.1 % |
+| hex_roof `roof_cone` | −51.7 % | −37.1 % |
+| hex_place `combine_cut` | −21.8 % | −21.3 % |
+| hex_roof `roof_match` | −16.1 % | −7.4 % |
+| graphics `blend_pixel` | −6.7 % | −12.0 % |
+| hex_recover `index_build` | +1.0 % | +5.1 % |
+| hex_fit `draft_fit_p` | +1.1 % | +5.3 % |
+
+The other 13 are unchanged, or noisy (`doc_read` ±48 % spread, `field_digest` the known
+layout row).  `index_build`: +2.0 % instructions, most of its clang rise layout.  `draft_fit_p`:
++7.6 % instructions — its one versioned call (`run_is_inside`'s `hexset_get`) sits behind an
+`edge_mat(…) != 0 &&` that rarely holds, and the guard is asked per row.  Restricting guards to
+calls every turn reaches was tried and reverted: it unversions text2d `draw_quads`' `set_pixel`
+(in an `if` arm, and hot) and drawing's `fill_gradient`.  A guard cost model would need call
+frequencies the compiler does not have.
+
+Not done: `seg_distance` (hex_way, 31 % of `roof_match`) — natives and a non-leaf beside the
+`pv` reads; the byte and single element kinds (no consumer measured).
