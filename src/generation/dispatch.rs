@@ -569,7 +569,9 @@ impl Output<'_> {
                     self.rebind_buffer_used = false;
                     write!(w, "let mut __rbb_{name} = false; ")?;
                 }
+                let outer_stash = self.old_stash_var.replace(var);
                 self.output_set_inner(w, var, to)?;
+                self.old_stash_var = outer_stash;
                 self.rebind_buffer = None;
                 let handed = std::mem::take(&mut self.rebind_buffer_used)
                     .then_some(rebind_buf)
@@ -1338,8 +1340,14 @@ impl Output<'_> {
         } else {
             String::new()
         };
+        // `@FR-H-FreeTwice` — inside `output_set`'s `_old_<name>` stash the displaced store is
+        // released there, after this arm, by the same identity and a stricter guard; freed
+        // here too, an adopting fn-ref rebind (`cv = f(t)`) released it twice.
+        // `LOFT_NATIVE_INNER_DISPLACED_FREE=1` keeps both.
+        let stash_releases = self.old_stash_var == Some(var)
+            && !crate::env_once!(std::env::var_os("LOFT_NATIVE_INNER_DISPLACED_FREE").is_some());
         let displaced_free = || -> String {
-            if witnessed {
+            if witnessed || stash_releases {
                 String::new()
             } else {
                 format!(

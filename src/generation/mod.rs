@@ -423,6 +423,9 @@ pub struct Output<'a> {
     /// hand the displaced store to that buffer instead of freeing it.
     pub rebind_buffer: Option<(u16, String, Option<String>)>,
     pub rebind_buffer_used: bool,
+    /// The local whose reassignment `output_set` wraps in its `_old_<name>` stash, which
+    /// releases the displaced store itself: a call arm inside it frees nothing more.
+    pub old_stash_var: Option<u16>,
     /// Set by the call-return bind arm (`output_set_inner`) when the local it binds ends up
     /// holding a store of its OWN — an adopted null or same-store result, or a copy — so an
     /// owner witness can be pointed at it (`output_set_witnessed`).
@@ -1919,6 +1922,7 @@ impl<'a> Output<'a> {
             refill_in_place: crate::keys::refill_in_place_enabled(),
             rebind_buffer: None,
             rebind_buffer_used: false,
+            old_stash_var: None,
             call_bind_owns: false,
             rebind_handed: HashSet::new(),
             inline_hint: crate::keys::inline_hint_enabled(),

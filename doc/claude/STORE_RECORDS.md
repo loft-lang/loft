@@ -179,6 +179,9 @@ field (`Holder.parse(t).rows == null`) reads it in place, the temp's lift owning
 read an operator answering a heap value from a text (`OpCastVectorFromText`) as a mint.  A literal
 buffer adopted by a renamed return buffer that is assigned again takes no free, its guard against
 the return included (`pair_literal_buffers`); `LOFT_NO_GUARDED_BUFFER_DISARM=1` keeps the guarded one.
+On rustc `--native`, a call arm inside `output_set`'s `_old_<name>` stash leaves the displaced
+store to that stash (`Output::old_stash_var`); `LOFT_NATIVE_INNER_DISPLACED_FREE=1` frees it in
+the arm too.  The records read IR, which both spellings share, so they cannot see this one.
 
 The closure records' releases, each switch bringing back one second free (doc strings in
 `keys.rs`):
