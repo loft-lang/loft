@@ -436,7 +436,17 @@ impl Scopes<'_> {
         // runtime fact (`Own::Join`), not a copy — except a call arm the parser gave an owner for
         // the value form, which is written out as the call itself, because that owner served the
         // join.  RECORDS only: a vector keeps the value form, which already copies the chosen arm.
+        // …and the FIRST bind of a binding assigned again later is written out too, where every
+        // arm hands back a WHOLE variable (each arm's `Set` then copies, and the binding owns):
+        // the lift's temps released their copies at scope exit while the later bind's displaced
+        // free released the one the binding names — the same store twice (`at = if c { a }
+        // else { a }; at = reset(at)`).  A projection arm is not written out: it would leave the
+        // binding a VIEW for its later whole-value binds too, and `x = y` would alias `y`.
+        // `LOFT_NO_MULTI_FIRST_WRITES_OUT=1` keeps the lift there.
         let writes_out = (self.var_scope.contains_key(&v)
+            || (self.multi_assigned.contains(&ov)
+                && !multi_first_writes_out_off()
+                && every_arm_tail_is_var(value))
             || (data.type_owns_droppable_anywhere(function.tp(v))
                 && !self.arm_source_outlives_loop(value, function)))
             && Self::is_value_branch(value)
@@ -2433,4 +2443,21 @@ fn unbox_work_ref(value: &Value) -> Option<u16> {
 /// (`Parser::unboxed_member_types`).
 fn unbox_member_deps_off() -> bool {
     crate::env_once!(std::env::var_os("LOFT_NO_UNBOX_MEMBER_DEPS").is_some())
+}
+
+/// `LOFT_NO_MULTI_FIRST_WRITES_OUT=1` (STORE_RECORDS.md § The checks): the first bind of a
+/// multiply-assigned record local from a value branch keeps the per-arm lift it borrows — the
+/// re-free the store records must then report.
+fn multi_first_writes_out_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_MULTI_FIRST_WRITES_OUT").is_some())
+}
+
+/// Does every arm of the value branch `value` end in a bare variable?
+fn every_arm_tail_is_var(value: &Value) -> bool {
+    match value.unspan() {
+        Value::If(_, t, e) => every_arm_tail_is_var(t) && every_arm_tail_is_var(e),
+        Value::Block(b) => b.operators.last().is_some_and(every_arm_tail_is_var),
+        Value::Var(_) => true,
+        _ => false,
+    }
 }

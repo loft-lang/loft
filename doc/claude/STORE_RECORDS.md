@@ -133,7 +133,10 @@ declared dense local keeps what it borrows (`dd: S = o.opt` views `o`);
 interpreter's reassignment copy goes into a fresh store wherever the displaced store waits
 for its stashed free; `LOFT_NO_STASH_FRESH=1` writes into it, and a null answer then frees it
 twice.  A captured local that only names its backings' stores stands its frame-end release
-down (`rebound_captures`); `LOFT_NO_BACKED_CAPTURE_STAND_DOWN=1` keeps it beside theirs.
+down (`rebound_captures`); `LOFT_NO_BACKED_CAPTURE_STAND_DOWN=1` keeps it beside theirs.  The
+first bind of a record local assigned again later, from a value branch of whole variables, is
+written out per arm as a reassignment is (`scan_set`'s `writes_out`);
+`LOFT_NO_MULTI_FIRST_WRITES_OUT=1` keeps the per-arm lift the binding borrows.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it
