@@ -79,7 +79,7 @@ pub(crate) fn own_length_locals(data: &Data, d: u32, vars: &Function) -> Vec<(u1
     let mut found: Vec<(u16, u16)> = length_locals(code, data, vars)
         .into_iter()
         .filter(|(n, v)| {
-            own_after(data, d, vars, *n, *v) && holds_var_length(code, data, *n, *v)
+            own_vector(def.attributes(), vars, *v) && holds_var_length(code, data, *n, *v)
         })
         .collect();
     if crate::env_once!(std::env::var("LOFT_NO_LOCKSTEP").is_ok_and(|v| v != "0")) {
@@ -90,7 +90,7 @@ pub(crate) fn own_length_locals(data: &Data, d: u32, vars: &Function) -> Vec<(u1
     let mut twins = Vec::new();
     for &(n, v) in &found {
         for w in lockstep_twins(code, data, vars, v) {
-            if own_after(data, d, vars, n, w)
+            if own_vector(def.attributes(), vars, w)
                 && stable_after(code, data, vars, n, w)
                 && !found.contains(&(n, w))
                 && !twins.contains(&(n, w))
@@ -375,54 +375,6 @@ pub(crate) fn own_vector(attrs: &[crate::data::Attribute], vars: &Function, v: u
         i += 1;
     }
     true
-}
-
-/// Is `v` a vector whose length no name but its own can change once `n = len(v)` is assigned in
-/// function `d`: the frame's own (`own_vector`), or a declared parameter beside which every
-/// other parameter that could name the same vector — `f(a, a)`, `f(s.items, s)` — is written by
-/// nothing after the assignment (`stable_after`, the write test `v` itself passes), in a function
-/// that does not yield (a generator's caller runs between two of its turns).  A parameter that
-/// holds no vector (a scalar, a text, a record of scalars) names none.
-/// `LOFT_NO_PARAM_LENGTH=1` admits the frame's own vectors only.
-fn own_after(data: &Data, d: u32, vars: &Function, n: u16, v: u16) -> bool {
-    let def = data.def(d);
-    if own_vector(def.attributes(), vars, v) {
-        return true;
-    }
-    if crate::env_once!(std::env::var("LOFT_NO_PARAM_LENGTH").is_ok_and(|x| x != "0")) {
-        return false;
-    }
-    let code = def.code();
-    if code.any_node(&mut |x| matches!(x, Value::Yield(_))) {
-        return false;
-    }
-    // `v` and what it views: their writes are `v`'s own write test.
-    let mut chain = vec![v];
-    let mut i = 0;
-    while i < chain.len() {
-        for x in vars.tp(chain[i]).depend() {
-            if !chain.contains(&x) {
-                chain.push(x);
-            }
-        }
-        i += 1;
-    }
-    vars.arguments().into_iter().all(|q| {
-        chain.contains(&q)
-            || holds_no_vector(data, vars.tp(q))
-            || stable_after(code, data, vars, n, q)
-    })
-}
-
-/// Can a value of type `tp` reach no vector: a scalar, a text, a record of scalars?
-fn holds_no_vector(data: &Data, tp: &crate::data::Type) -> bool {
-    use crate::data::Type;
-    match tp.base() {
-        Type::Text(_) => true,
-        Type::Reference(r, _) => crate::data::all_scalar_record(data, *r),
-        Type::RefVar(inner) => holds_no_vector(data, inner),
-        other => crate::data::is_scalar(other),
-    }
 }
 
 /// Is `n`'s one assignment in `code` the length of the variable `v` ITSELF (`n = len(v)`), not

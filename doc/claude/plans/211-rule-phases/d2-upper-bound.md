@@ -195,6 +195,22 @@ Each part is a separate commit, the matrix before each: the wrap shapes (`c` = 0
 from `len(v)` and a length local; the loop exclusive and inclusive; a counter not from 0; a
 negative `c`), and the alias shapes above.
 
+### Part 3 measured, not built (2026-11-11)
+
+Built and checked (the alias cells in `probes/wrapped-param-aliases.loft` pass on every
+backend: two unwritten vector parameters admitted; the same vector passed twice and cleared
+through the other name, the vector a field of another parameter, a generator — all declined),
+then measured where it changes the C, not where the census rises.  Five of the eight programs
+it reaches emit identical C (hex_form, hex_shape, hex_place, hex_fit, hex_draw: only an
+integer index's `??` drops, which the C already wrote plain).  Two functions change:
+hex_form `poly_holds` (two reads test-free, the wrap branch gone), which no timed routine runs
+(hex_recover `field_digest`: 7,127,147 instructions in both builds, its −12.6 % on gcc is
+layout); and crypto `b64_encode` (three `_lt` reads), pluginabi `req_state_b64` −4.9 %
+instructions, −4.4 % gcc, 0 % clang; `request`, `check_request`, `index_build` unchanged.
+No clear win for a widened formal rule, so it is not built (the owner's rule: no optimisation
+without a clear win).  `turns_cyclic_eq`, the case that motivated it, needs the counter step
+too (`(ci + cs) % n`) and is not in a timed routine either.
+
 ## One list walker for a value block (found building the wrapped counter)
 
 A value block's statements before its value — the top level of every function that returns a
