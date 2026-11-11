@@ -14,19 +14,26 @@ Each run gets one verdict:
   MISS    the runtime found a leak, a use after free or a refused wrong free,
           and the checker reported nothing: a hole in the checker
   CAUGHT  both found something
+  MASKED  a switched run whose checker findings are all ones the same cell
+          already has with no switch: the fault is new, the checker said
+          nothing new — a MISS hidden behind a false finding
   STATIC  only the checker found something (a false finding, or a fault this
           run did not reach)
   CLEAN   neither found anything
+
+A switched run is judged against the cell's no-switch run when the sweep has one
+(`--switch ''` beside the others): only its NEW findings answer its faults.
 
   scripts/own_sweep.py --chapter ownership
   scripts/own_sweep.py --switch '' --switch LOFT_NO_JOIN_OWN --out sweep.tsv
   scripts/own_sweep.py --cell path/to/prog.loft     # any program, not only cells
   scripts/own_sweep.py --oracle check-records       # judge the store records instead
 
-The table goes to --out (TSV); the summary and every MISS go to stdout.
+The table goes to --out (TSV); the summary and every MISS and MASKED go to stdout.
 """
 
 import argparse
+import collections
 import concurrent.futures
 import os
 import re
@@ -58,6 +65,14 @@ FAULTS = [
 RED = re.compile(r"^RED ", re.M)
 # The kind of each checker finding (`RED <fn>: store-<kind> …`).
 RED_KIND = re.compile(r"^RED [^:]*: store-([a-z-]+)", re.M)
+# One finding's identity across two builds of one program: its line, with the numbers a
+# lowering switch can shift (store numbers, compiler temporaries) taken out.
+RED_LINE = re.compile(r"^RED .*$", re.M)
+RED_VOLATILE = re.compile(r"#\d+|\b(_{1,3}[a-z][a-z0-9]*_)\d+\b")
+
+
+def red_identity(line):
+    return RED_VOLATILE.sub(lambda m: m.group(1) + "N" if m.group(1) else "#N", line)
 # Which checker kinds answer a runtime fault kind: a CAUGHT whose findings answer none of the
 # run's faults is a coincidence, and `matched` says so.
 ANSWERS = {"uaf": {"use-after-end", "wrong-end", "re-free", "double-end"},
@@ -124,7 +139,7 @@ def run(loft, cell, switch, timeout):
         out = p.stdout + p.stderr
     except subprocess.TimeoutExpired:
         os.unlink(fault_log)
-        return cell, switch, "timeout", 0, ""
+        return cell, switch, "timeout", 0, "", "", ()
     kinds = [k for k, rx in FAULTS if rx.search(out)]
     for k in logged_kinds(fault_log):
         if k not in kinds:
@@ -133,7 +148,20 @@ def run(loft, cell, switch, timeout):
     reds = len(RED.findall(out))
     first_red = next((ln for ln in out.splitlines() if ln.startswith("RED ")), "")
     red_kinds = ",".join(sorted(set(RED_KIND.findall(out))))
-    return cell, switch, ",".join(kinds), reds, first_red, red_kinds
+    red_lines = tuple(red_identity(ln) for ln in RED_LINE.findall(out))
+    return cell, switch, ",".join(kinds), reds, first_red, red_kinds, red_lines
+
+
+def new_findings(red_lines, baseline):
+    """The findings in `red_lines` that `baseline` (the same cell, no switch) lacks."""
+    left = collections.Counter(baseline)
+    out = []
+    for ln in red_lines:
+        if left[ln]:
+            left[ln] -= 1
+        else:
+            out.append(ln)
+    return out
 
 
 # A fault-log kind as this sweep names it.
@@ -167,7 +195,7 @@ def compare(before_path, rows):
             if len(f) >= 5 and f[0] != "verdict":
                 before[(f[4], f[1])] = (f[0], f[3])
     worse = better = 0
-    rank = {"CLEAN": 0, "CAUGHT": 1, "STATIC": 2, "MISS": 3, "TIMEOUT": 4}
+    rank = {"CLEAN": 0, "CAUGHT": 1, "STATIC": 2, "MASKED": 3, "MISS": 3, "TIMEOUT": 4}
     for cell, sw, _kinds, reds, _first, v, _rk in rows:
         key = (os.path.relpath(cell, ROOT), sw)
         old = before.get(key)
@@ -217,10 +245,20 @@ def main():
     cells = [os.path.abspath(c) for c in a.cell] or cells_of(os.path.abspath(a.suite), a.chapter)
     switches = a.switch if a.switch is not None else [""]
     jobs = [(c, s) for s in switches for c in cells]
-    rows = []
+    results = []
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
-        for r in ex.map(lambda j: run(a.loft, j[0], j[1], a.timeout), jobs):
-            rows.append(r[:5] + (verdict(r[2], r[3]), r[5]))
+        results = list(ex.map(lambda j: run(a.loft, j[0], j[1], a.timeout), jobs))
+    # A switched run answers its faults only with findings its cell's no-switch run lacks.
+    baseline = {r[0]: r[6] for r in results if r[1] == "" and r[2] != "timeout"}
+    rows = []
+    for r in results:
+        v, rk = verdict(r[2], r[3]), r[5]
+        if v == "CAUGHT" and r[1] and r[0] in baseline:
+            fresh = new_findings(r[6], baseline[r[0]])
+            rk = ",".join(sorted({k for ln in fresh for k in RED_KIND.findall(ln)}))
+            if not fresh:
+                v = "MASKED"
+        rows.append(r[:5] + (v, rk))
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
             fh.write("verdict\tswitch\tfaults\treds\tcell\tfirst_red\tred_kinds\tmatched\n")
@@ -234,10 +272,10 @@ def main():
             tally["UNMATCHED"] = tally.get("UNMATCHED", 0) + 1
     print("  ".join(f"{k}={tally[k]}" for k in sorted(tally)) + f"  over {len(rows)} run(s)")
     for cell, sw, kinds, reds, _, v, _rk in rows:
-        if v in ("MISS", "TIMEOUT"):
+        if v in ("MISS", "MASKED", "TIMEOUT"):
             print(f"{v:7} {sw or '-':28} {kinds:16} {os.path.relpath(cell, ROOT)}")
     worse = compare(a.compare, rows) if a.compare else 0
-    return 1 if tally.get("MISS") or worse else 0
+    return 1 if tally.get("MISS") or tally.get("MASKED") or worse else 0
 
 
 if __name__ == "__main__":
