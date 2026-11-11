@@ -917,7 +917,13 @@ fn adopted_store_key(
         (u32::from(record_local) << 16) | (a as u32 & 0xFFFF),
     );
     let capture = function.var(&super::capture_builds::capture_name(data, record, a));
-    if capture == u16::MAX || builds.rebuilt_in_loop.contains(&capture) {
+    // `@FR-L-CapOne` — a capture the loop re-assigns still names ONE store between two of its
+    // assignments, on every pass: two records built there (`h.f`, `h.g` over `v`) coexist and
+    // adopt it, so the build walk's generation groups them like any other pair.  The stores of
+    // different passes stay apart because each record is one local across passes.
+    if capture == u16::MAX
+        || (builds.rebuilt_in_loop.contains(&capture) && !crate::keys::loop_capture_group())
+    {
         return unique;
     }
     match builds

@@ -3284,6 +3284,15 @@ pub fn temp_null_reset_frees() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TEMP_NULL_RESET_FREES"))
 }
 
+/// `LOFT_NO_LOOP_CAPTURE_GROUP=1` — two closure records built over a capture the loop
+/// re-assigns are never grouped by the store they adopt (`capture_adoption`), so each owns it
+/// and both cascades free it.
+#[must_use]
+pub fn loop_capture_group() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_CAPTURE_GROUP"))
+}
+
 /// `LOFT_NO_BACKED_CAPTURE_STAND_DOWN=1` — a captured local that only names its backings'
 /// stores keeps its own frame-end release beside theirs (`rebound_captures`): the last pass's
 /// store is then freed twice where the leaving record holds an earlier one.
