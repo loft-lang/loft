@@ -2292,10 +2292,15 @@ impl Output<'_> {
     /// table read stands for the id alone and the flags are or-ed back onto it.
     pub(super) fn type_lit_as(&self, tp: u16, ty: &str) -> String {
         let flags = tp & super::TYPE_ID_FLAGS;
-        match self
-            .shared_type_slot(tp & !super::TYPE_ID_FLAGS)
-            .filter(|_| tp != u16::MAX)
-        {
+        // The no-type id is written as it is and asks for no slot: masked like a flagged id it
+        // would register type `0x3FFF`, which no program has, and the host would refuse the
+        // whole artifact for that one unused key.
+        let slot = if tp == u16::MAX {
+            None
+        } else {
+            self.shared_type_slot(tp & !super::TYPE_ID_FLAGS)
+        };
+        match slot {
             Some(k) if flags == 0 && ty == "u16" => format!("__tid({k})"),
             Some(k) if flags == 0 => format!("(__tid({k}) as {ty})"),
             Some(k) => format!("((__tid({k}) | {flags}) as {ty})"),
