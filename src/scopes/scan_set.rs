@@ -1965,6 +1965,28 @@ impl Scopes<'_> {
         // inits, the hoisted RHS preamble, and the Set itself, so the owned
         // store is released before any part of the new value is computed.
         if let Some(free) = transition_free {
+            // `@FR-H-FreeTwice`, `@FR-O-Complete` — a store a frame TEMPORARY owns (the backing or
+            // call buffer another assignment of `v` viewed) is that temporary's to release: the
+            // displaced free declines while `v` still names it (`x: vector<T> = []` then
+            // `x = fwd(none)`, a forwarding fn-ref whose declared return borrows `none`, freed
+            // the literal's store and `__vdb_N` freed it again — loft#1323).
+            let free = if crate::keys::view_temp_transition_guard() {
+                let distinct = data.def_nr("OpDistinctStore");
+                self.view_temps
+                    .get(&v)
+                    .into_iter()
+                    .flatten()
+                    .filter(|&&t| t != v)
+                    .fold(free, |inner, &t| {
+                        v_if(
+                            Value::Call(distinct, vec![Value::Var(v), Value::Var(t)]),
+                            inner,
+                            Value::Null,
+                        )
+                    })
+            } else {
+                free
+            };
             prefix.push(free);
         }
         // …and the witness snapshot is written AFTER it, so the free compares against the

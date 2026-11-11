@@ -186,6 +186,7 @@ pub(super) fn run_scan_phase(
         lift_join_witness: HashMap::default(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        view_temps: view_temps_in(orig_code, orig_vars, data),
         first_set: u16::MAX,
         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
         arm_projection_temps: arm_projection_temps_in(orig_code, orig_vars, data),
@@ -1139,4 +1140,23 @@ fn snapshot_after_bind(code: &mut Value, v: u16, w: u16, data: &Data) {
         done
     }
     walk(code, v, w, data.def_nr("OpPutRef"));
+}
+
+/// Per local, the frame temporaries its assignments bind it to a view of — see
+/// `Scopes::view_temps`.
+pub(crate) fn view_temps_in(node: &Value, vars: &Function, data: &Data) -> HashMap<u16, Vec<u16>> {
+    let mut out: HashMap<u16, Vec<u16>> = HashMap::default();
+    node.walk(&mut |n: &Value| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && let Some(t) = super::backings::literal_backing_of(rhs, vars, data)
+                .or_else(|| super::backings::call_buffer_of(rhs, vars))
+            && t != *v
+        {
+            let e = out.entry(*v).or_default();
+            if !e.contains(&t) {
+                e.push(t);
+            }
+        }
+    });
+    out
 }

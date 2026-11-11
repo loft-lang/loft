@@ -44,8 +44,54 @@ pub(super) fn mark_borrowed_captures(data: &mut Data, database: &crate::database
         }
         let function = &data.def(d_nr).variables;
         let builds = capture_build_backings(data, function, data.def(d_nr).code());
-        let (adopters, mut never_adopted) = capture_store_adopters(data, function, &builds);
+        let (mut adopters, mut never_adopted) = capture_store_adopters(data, function, &builds);
         borrowed.append(&mut never_adopted);
+        // `@FR-L-CapOwn`, `@FR-H-FreeTwice` — a JOIN-bound capture reassigned after its build
+        // (`c = mk(n) ?? []; h = |…| c…; c = [9]`) whose record STAYS in the frame: the frame
+        // releases both arm owners (`__ref_N`, the literal's `__vdb_N`) itself, and no identity
+        // witness can order them against a record the frame releases too
+        // (`reassigned_join_capture_slot` serves a record that leaves).  So the record borrows
+        // the capture, and each arm's store has its one release (loft#1725's `r2`).
+        if crate::keys::staying_join_capture_borrows() {
+            let delivered = claimed_into_delivered(data, function, d_nr);
+            for group in adopters.values_mut() {
+                group.retain(|&(local, record, a)| {
+                    let c = function.var(&super::capture_builds::capture_name(data, record, a));
+                    let stays = !record_store_leaves_frame(data, function, d_nr, local)
+                        && !delivered.contains(&local);
+                    let borrows = c != u16::MAX
+                        && builds.reassigned_after_build.contains(&c)
+                        && builds.join_bound_builds.contains(&(local, c))
+                        && !join_arm_holders(function, &builds, c).is_empty()
+                        && stays;
+                    // …and a capture the LOOP reassigns from a call whose buffer the frame keeps
+                    // releasing (`v = build_v(|i| v[0] + i)` swaps two `__ref_N` buffers): the
+                    // frame's own release stands for it (`backs_an_adopted_capture` declines a
+                    // capture rebound in a loop), so the record that stays only borrows it
+                    // (O-Witness `test_a_vector_capture_in_a_loop`).
+                    let borrows = borrows
+                        || (crate::keys::loop_buffer_capture_borrows()
+                            && c != u16::MAX
+                            && stays
+                            && builds.rebound_in_loop.contains(&c)
+                            // …from a CALL's buffer: a capture the loop reassigns from literals
+                            // is released by identity (`rebound_captures`) with the record
+                            // owning, and a borrow there leaves its stores to nobody (2357).
+                            && assigned_from_call_buffer(data.def(d_nr).code(), function, c)
+                            && builds.backing.get(&c).is_some_and(|&b| {
+                                (function.name(b).starts_with("__ref_")
+                                    || function.name(b).starts_with("__vdb_"))
+                                    && !super::capture_builds::capture_adoption_owns_free(
+                                        data, function, &builds, b,
+                                    )
+                            }));
+                    if borrows {
+                        borrowed.push((record, a));
+                    }
+                    !borrows
+                });
+            }
+        }
         // @FR-L-CapOwn — one STORE, one owner.  Two closures over one store both adopted it,
         // and their deaths are independent: where one record escapes and the other is left
         // behind, the one left behind released the store the escaped record still holds and the
@@ -84,12 +130,15 @@ pub(super) fn mark_borrowed_captures(data: &mut Data, database: &crate::database
             }
         }
     }
-    for (record, a) in borrowed {
+    for &(record, a) in &borrowed {
         data.mark_capture_borrowed(record, a);
         strip_borrowed_capture_walk(data, database, record, a);
     }
+    if crate::keys::borrowed_displaced_strip() {
+        strip_borrowed_displaced_releases(data, database, &borrowed);
+    }
     prune_empty_cascades(data);
-    cascade_before_record_frees(data);
+    cascade_before_record_frees(data, database);
 }
 
 /// `@FR-L-CapOwn` — every release of a closure RECORD runs the record's cascade first, so
@@ -99,7 +148,7 @@ pub(super) fn mark_borrowed_captures(data: &mut Data, database: &crate::database
 /// at its scope end, per arm of a branch that hands out another (loft#1476), before a
 /// rebuild — and each was written while the store runtime cascaded on any free.  A free whose
 /// statement is already preceded by the record's cascade is left as it is.
-fn cascade_before_record_frees(data: &mut Data) {
+fn cascade_before_record_frees(data: &mut Data, database: &crate::database::Stores) {
     let ops = ReleaseOps {
         free_ref: data.def_nr("OpFreeRef"),
         live: data.def_nr("OpStoreLive"),
@@ -123,7 +172,7 @@ fn cascade_before_record_frees(data: &mut Data) {
         {
             let data: &Data = data;
             let vars = &data.def(d).variables;
-            patch_statement_lists(&mut code, &mut |list| ops.patch(list, data, vars));
+            patch_statement_lists(&mut code, &mut |list| ops.patch(list, data, vars, database));
         }
         data.definitions[d as usize].code = code;
     }
@@ -156,7 +205,13 @@ impl ReleaseOps {
     /// Place the cascades one statement list owes: before each release of a closure record,
     /// and after each bind of a displaced one.  The list is rebuilt only when it holds such a
     /// statement.
-    fn patch(&self, list: &mut Vec<Value>, data: &Data, vars: &Function) {
+    fn patch(
+        &self,
+        list: &mut Vec<Value>,
+        data: &Data,
+        vars: &Function,
+        database: &crate::database::Stores,
+    ) {
         let owes = list.iter().any(|op| {
             self.owed(data, vars, op).is_some() || Self::old_record(op, data, vars).is_some()
         });
@@ -164,7 +219,8 @@ impl ReleaseOps {
             return;
         }
         let mut out: Vec<Value> = Vec::with_capacity(list.len() + 2);
-        for op in std::mem::take(list) {
+        let ops_in = std::mem::take(list);
+        for (at, op) in ops_in.iter().cloned().enumerate() {
             if let Some((t, c)) = Self::old_record(&op, data, vars) {
                 out.push(op);
                 let cascade = v_if(
@@ -178,8 +234,22 @@ impl ReleaseOps {
             if let Some((v, c)) = self.owed(data, vars, &op) {
                 // A cascade the scope pass already placed ahead of this free is re-guarded on
                 // the store rather than run a second time beside a new one.
-                if out.last().is_some_and(|prev| runs_cascade(prev, v, c)) {
-                    let prev = out.pop().unwrap_or(Value::Null);
+                let placed = if out.last().is_some_and(|prev| runs_cascade(prev, v, c)) {
+                    out.pop()
+                } else {
+                    None
+                };
+                // The shared names let go BEFORE the cascade, while the slots still read.
+                if crate::keys::record_release_detach() {
+                    out.extend(self.detach_shared_names(
+                        v,
+                        data,
+                        vars,
+                        database,
+                        &ops_in[at + 1..],
+                    ));
+                }
+                if let Some(prev) = placed {
                     let reguard = matches!(prev.unspan(), Value::If(test, _, _)
                         if matches!(test.unspan(), Value::Call(d, _)
                             if *d == self.conv || *d == self.live));
@@ -267,6 +337,73 @@ impl ReleaseOps {
                     rest,
                 )
             })
+    }
+
+    /// `@FR-H-FreeTwice`, `@FR-O-Latest` — before record `v`'s cascade releases what its OWNED
+    /// capture slots hold, a frame local of the capture's name that still names that store
+    /// lets go of it (`x = null`), so the local's own release, later in the sweep, frees nothing.
+    /// A capture reassigned after the build only on SOME paths (`if p { c = mk(9) }`) leaves the
+    /// local sharing the record's store on the others (loft#2459's keyed `not_taken`).  A
+    /// BORROWED slot is skipped: there the local's release is the store's one release.
+    fn detach_shared_names(
+        &self,
+        v: u16,
+        data: &Data,
+        vars: &Function,
+        database: &crate::database::Stores,
+        rest: &[Value],
+    ) -> Vec<Value> {
+        let Type::Reference(r, _) = vars.tp(v).base() else {
+            return Vec::new();
+        };
+        let r = *r;
+        let kt = data.def(r).known_type();
+        let (get, distinct) = (data.def_nr("OpGetDbRef"), data.def_nr("OpDistinctStore"));
+        let mut out = Vec::new();
+        for a in 0..data.attributes(r) {
+            let Type::Reference(_, deps) = data.attr_type(r, a) else {
+                continue;
+            };
+            if deps.is_borrowed_share() {
+                continue;
+            }
+            let name = data.attr_name(r, a);
+            let x = vars.var(&name);
+            if x == u16::MAX || x == v || vars.is_argument(x) {
+                continue;
+            }
+            // Only a local the rest of this list releases with a PLAIN free, and reads nowhere
+            // else: one an identity free compares against (`unless r names it`) is a witness,
+            // and nulling it would turn that free into a second release.
+            let plain_free = rest.iter().any(|op| {
+                matches!(op.unspan(), Value::Call(d, a) if *d == self.free_ref
+                    && matches!(a.as_slice(), [arg] if matches!(arg.unspan(), Value::Var(y) if *y == x)))
+            });
+            let read_elsewhere = rest.iter().any(|op| {
+                !matches!(op.unspan(), Value::Call(d, a) if *d == self.free_ref
+                    && matches!(a.as_slice(), [arg] if matches!(arg.unspan(), Value::Var(y) if *y == x)))
+                    && op.reads_var(x)
+            });
+            if !plain_free || read_elsewhere {
+                continue;
+            }
+            let pos = database.position(kt, &name);
+            if pos == u16::MAX {
+                continue;
+            }
+            let slot = Value::Call(get, vec![Value::Var(v), Value::Int(i32::from(pos))]);
+            let same = v_if(
+                Value::Call(distinct, vec![Value::Var(x), slot]),
+                Value::Null,
+                v_set(x, Value::Call(self.null_ref, Vec::new())),
+            );
+            out.push(v_if(
+                Value::Call(self.live, vec![Value::Var(v)]),
+                same,
+                Value::Null,
+            ));
+        }
+        out
     }
 
     fn guarded(&self, v: u16, c: u32) -> Value {
@@ -366,6 +503,67 @@ fn prune_empty_cascades(data: &mut Data) {
     }
     for d in pruned {
         data.retire_def_name(d);
+    }
+}
+
+/// `@FR-H-FreeTwice` — a record that BORROWS a capture releases nothing it holds, at its
+/// rebuild either.  The build releases the store the capture slot DISPLACES
+/// (`OpFreeRefIfDistinct(OpGetDbRef(w, off), fill)`, loft#1483), written at parse time for a
+/// record that adopts its capture; where this pass decided the record borrows, the frame's own
+/// free released that store already, at the end of the pass that built it (loft#1869's
+/// `test_built_every_pass`).  One walk over every function's builds of the borrowing records.
+fn strip_borrowed_displaced_releases(
+    data: &mut Data,
+    database: &crate::database::Stores,
+    borrowed: &[(u32, usize)],
+) {
+    if borrowed.is_empty() {
+        return;
+    }
+    let mut offs: HashMap<u32, Vec<i32>> = HashMap::default();
+    for &(record, a) in borrowed {
+        let off = database.position(data.def(record).known_type(), &data.attr_name(record, a));
+        if off != u16::MAX {
+            offs.entry(record).or_default().push(i32::from(off));
+        }
+    }
+    let (get_dbref, free_if) = (
+        data.def_nr("OpGetDbRef"),
+        data.def_nr("OpFreeRefIfDistinct"),
+    );
+    fn strip(v: &mut Value, vars: &Function, offs: &HashMap<u32, Vec<i32>>, gd: u32, fi: u32) {
+        if let Value::Block(bl) = v.unspan_mut()
+            && bl.name == "fn_ref_with_closure"
+            && let Some(Value::FnRef(_, w, _)) = bl.operators.last().map(Value::unspan)
+            && let Type::Reference(r, _) = vars.tp(*w).base()
+            && let Some(slots) = offs.get(r)
+        {
+            let w = *w;
+            bl.operators.retain(|op| {
+                let Value::If(_, then, _) = op.unspan() else { return true };
+                let Value::Call(d, args) = then.unspan() else { return true };
+                !(*d == fi
+                    && matches!(args.first().map(Value::unspan),
+                        Some(Value::Call(g, ga)) if *g == gd
+                            && matches!(ga.first().map(Value::unspan), Some(Value::Var(x)) if *x == w)
+                            && matches!(ga.get(1).map(Value::unspan), Some(Value::Int(o)) if slots.contains(o))))
+            });
+        }
+        v.for_each_child_mut(&mut |c| strip(c, vars, offs, gd, fi));
+    }
+    for d_nr in 0..data.definitions() {
+        if !matches!(data.def(d_nr).def_type, DefType::Function) {
+            continue;
+        }
+        let mut code = data.def(d_nr).code().clone();
+        strip(
+            &mut code,
+            data.def(d_nr).variables(),
+            &offs,
+            get_dbref,
+            free_if,
+        );
+        data.definitions[d_nr as usize].code = code;
     }
 }
 
@@ -1566,4 +1764,19 @@ fn frame_owns_capture_store(function: &Function, start: u16) -> bool {
         v = dep[0];
     }
     false
+}
+
+/// Is local `c` assigned anywhere in `code` from a call handed a hidden buffer
+/// (`c = f(…, __ref_N)`)?
+fn assigned_from_call_buffer(code: &Value, function: &Function, c: u16) -> bool {
+    let mut hit = false;
+    code.walk(&mut |n: &Value| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && *v == c
+            && super::backings::call_buffer_of(rhs, function).is_some()
+        {
+            hit = true;
+        }
+    });
+    hit
 }

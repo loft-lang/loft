@@ -2656,9 +2656,18 @@ or build a local and use that."
                     // snapshot: the hook, then the store (`Scopes::displaced_drop`).  A free
                     // here ran first, without the hook, and the snapshot's cascade read the
                     // store it had freed (loft#1610, a record capture in a loop).
+                    // `@FR-H-FreeTwice` — the snapshot releases EVERY slot of the record, so the
+                    // question is the record's: a cell beside a droppable capture (`k += 1` next
+                    // to `w: vector<H>`) was released here and again by the snapshot's cascade
+                    // (loft#1610's `c6`).
                     let snapshot_releases = self
                         .data
-                        .type_owns_droppable_anywhere(&self.data.attr_type(closure_rec_d, aid));
+                        .type_owns_droppable_anywhere(&self.data.attr_type(closure_rec_d, aid))
+                        || (crate::keys::record_snapshot_releases()
+                            && self.data.type_owns_droppable_anywhere(&Type::Reference(
+                                closure_rec_d,
+                                crate::data::Deps::none(),
+                            )));
                     if v_nr != u16::MAX
                         && self.assign_target != v_nr
                         && !snapshot_releases

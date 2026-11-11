@@ -479,6 +479,12 @@ pub(crate) struct CaptureBuilds {
     /// The backing local a capture named AT THE BUILD — the store the record actually holds.
     /// A capture that owns its store outright (a struct) has no backing root and is absent.
     pub(crate) backing: crate::fxhash::FxHashMap<u16, u16>,
+    /// Every backing a capture named at ANY of its builds: `backing` keeps the last, while a
+    /// record built before a reassignment still holds the earlier one (`@FR-O-Latest`).
+    pub(crate) backings_at_builds: crate::fxhash::FxHashMap<u16, Vec<u16>>,
+    /// `(record local, capture)` for each build at which the capture was JOIN-bound
+    /// (`join_arms_at_build` keeps the arms per capture, whichever build saw them).
+    pub(crate) join_bound_builds: crate::fxhash::FxHashSet<(u16, u16)>,
     /// Locals whose store the record adopted and which were ASSIGNED AGAIN afterwards, so the
     /// local no longer names the adopted store and the frame still owes its own free.
     pub(crate) reassigned_after_build: crate::fxhash::FxHashSet<u16>,

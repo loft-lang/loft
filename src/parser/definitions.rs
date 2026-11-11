@@ -9969,6 +9969,12 @@ impl Parser {
             {
                 let fn_tp = self.data.attr_type(t, a);
                 let tmp = self.vars.add_variable("__held_fn", &fn_tp, &mut self.lexer);
+                // `@FR-H-FreeTwice` — `__held_fn` only NAMES the slot's record, which this
+                // release frees; as a fn-ref local it would take a scope-end release of its own,
+                // a second `OpDropFnRef` + `OpFreeRef` of the same record (loft#1869's `rebound`).
+                if crate::keys::held_fn_skip_free() {
+                    self.vars.set_skip_free(tmp);
+                }
                 let read_dnr = self.cl(
                     "OpGetInt4",
                     &[Value::Var(self_var), Value::Int(i32::from(dnr_off))],

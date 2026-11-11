@@ -294,6 +294,10 @@ struct Scopes<'s> {
     /// is already gone, so such a base is not offered as a witness.  Conservative in the safe
     /// direction: declining keeps today's leak, never frees a store twice.
     multi_assigned: HashSet<u16>,
+    /// Per local: the frame temporaries its assignments bind it to a VIEW of — a literal's
+    /// backing (`x = OpGetField(__vdb_N, …)`) or a call's buffer (`x = f(…, __ref_N)`).  Their
+    /// stores are theirs to release (`scan_set`'s transition free declines on them).
+    view_temps: HashMap<u16, Vec<u16>>,
     /// The binding whose FIRST assignment the `Set` being scanned is, or `u16::MAX`.  A
     /// multi-assigned binding is first bound with no store of its own, so its value branch's
     /// arms take the per-arm copy `(B-Copy)` asks (`Scopes::arm_bind`, loft#2398).

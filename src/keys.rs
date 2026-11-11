@@ -3302,6 +3302,113 @@ pub fn link_param_releases() -> bool {
     *ON.get_or_init(|| env_set("LOFT_LINK_PARAM_RELEASES"))
 }
 
+/// `LOFT_NO_VIEW_TEMP_TRANSITION_GUARD=1` — a local's displaced free at a rebind also releases a
+/// store a frame temporary owns (the literal backing or call buffer another assignment viewed),
+/// as it did before (`scan_set`): the temporary then frees it again.
+#[must_use]
+pub fn view_temp_transition_guard() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_TEMP_TRANSITION_GUARD"))
+}
+
+/// `LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS=1` — a staying record keeps owning a capture the loop
+/// reassigns from a call buffer the frame releases (`capture_adoption`): its cascade and the
+/// frame's buffer release free the same store.
+#[must_use]
+pub fn loop_buffer_capture_borrows() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS"))
+}
+
+/// `LOFT_NO_FDISP_KEEP_TEMP=1` — a rebind's displaced fn-ref snapshot (`__fdisp_N = f`) counts as
+/// reading `f` as a value when confinement is asked after the scope pass (`closure_keep`), so
+/// the two readings disagree and a capture is released by the frame and by the record.
+#[must_use]
+pub fn fdisp_keep_temp() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FDISP_KEEP_TEMP"))
+}
+
+/// `LOFT_NO_RECORD_RELEASE_DETACH=1` — a closure record's release leaves a frame local that
+/// still names an owned capture's store in place (`capture_adoption`): the local's own release
+/// then frees what the record's cascade just freed.
+#[must_use]
+pub fn record_release_detach() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RECORD_RELEASE_DETACH"))
+}
+
+/// `LOFT_NO_RECORD_SNAPSHOT_RELEASES=1` — a closure build releases a displaced capture slot
+/// itself unless that CAPTURE's type owns a droppable (`vectors.rs`), though the displaced
+/// record's snapshot releases every slot once the record owns one: a second free.
+#[must_use]
+pub fn record_snapshot_releases() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RECORD_SNAPSHOT_RELEASES"))
+}
+
+/// `LOFT_NO_ARM_WRITTEN_JOIN=1` — a value branch written out per arm is not read as a join of
+/// its arms' stores (`capture_builds`): a record built after it keeps the last arm's backing
+/// only, and the frame also frees the other arm's store the record may hold.
+#[must_use]
+pub fn arm_written_join() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ARM_WRITTEN_JOIN"))
+}
+
+/// `LOFT_NO_PASS_END_BACKING_DETACH=1` — a loop pass's record released at the pass end leaves
+/// the frame backing that names its captured store in place (`closure_keep_pass_end`): the
+/// backing's own release then frees that store again.
+#[must_use]
+pub fn pass_end_backing_detach() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PASS_END_BACKING_DETACH"))
+}
+
+/// `LOFT_NO_STAYING_JOIN_CAPTURE_BORROWS=1` — a record that stays in its frame keeps owning a
+/// join-bound capture reassigned after the build (`capture_adoption`): its cascade and the
+/// frame's arm release free the same store.
+#[must_use]
+pub fn staying_join_capture_borrows() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STAYING_JOIN_CAPTURE_BORROWS"))
+}
+
+/// `LOFT_NO_EVERY_BUILD_BACKING=1` — only the backing a capture named at its LAST build is
+/// handed to a record (`capture_builds`): the frame also frees the backing an earlier build's
+/// record adopted.
+#[must_use]
+pub fn every_build_backing() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_EVERY_BUILD_BACKING"))
+}
+
+/// `LOFT_NO_NULL_SLOT_GENERATION=1` — every build's null-slot step counts as an assignment of
+/// the captured local (`capture_builds`), so two builds over one null local never group and
+/// both records own the one store.
+#[must_use]
+pub fn null_slot_generation() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NULL_SLOT_GENERATION"))
+}
+
+/// `LOFT_NO_BORROWED_DISPLACED_STRIP=1` — a closure record that borrows a capture keeps the
+/// displaced release its build was given at parse time (`capture_adoption`): its rebuild frees
+/// the store the frame already freed.
+#[must_use]
+pub fn borrowed_displaced_strip() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BORROWED_DISPLACED_STRIP"))
+}
+
+/// `LOFT_NO_HELD_FN_SKIP_FREE=1` — a closure record's cascade releases a captured fn-ref's record
+/// through `__held_fn` and again at that local's scope end, as it did before (`definitions.rs`).
+#[must_use]
+pub fn held_fn_skip_free() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_HELD_FN_SKIP_FREE"))
+}
+
 /// `LOFT_NO_LOOP_CAPTURE_GROUP=1` — two closure records built over a capture the loop
 /// re-assigns are never grouped by the store they adopt (`capture_adoption`), so each owns it
 /// and both cascades free it.
