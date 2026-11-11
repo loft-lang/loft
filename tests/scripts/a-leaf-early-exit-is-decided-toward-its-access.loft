@@ -1,3 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Version`'s early exit: in a leaf, `if c { return x }` with no else, whose arm holds no
+// element access while one follows it, is decided toward going on — `!c` joins the
+// precondition asked once per loop and the fast twin drops the `if`.  An exit with an else arm
+// (e3), an access before the exit (e5) stay undecided; a test that is not linear in the loop
+// (e6) is decided only where a counter it reads is held.  Every cell sums its leaf over a box:
+// inside the window (A), across all four edges (B), a window larger than its vector (D), and
+// (W) one column past the right edge whose index wraps into the next row, where only the
+// exit's own test keeps the read out.  Hand-computed per cell.
+//
+// @falsified-at: f47731187 — by hand: with a decided exit's tests left out of the precondition,
+//   W answers 72 for 60 on `--native-c` (the fast twin reads the wrapped column, z[8] + z[16]);
+//   the `-DLOFT_VERIFY` build passes it too (every index lies in the vector) and the
+//   interpreter is untouched (a C rule).  Deciding an exit the wrong way round is no plant: its
+//   test then asks for the outside, the precondition fails, and the written path runs.
+// CHANNEL: the asserts.
+// ARMED: none needed.
+// WITNESS: each assert message prints the value it read.
+// HOLDS: one exit (e1), two (e2), an exit arm that works first (e4); undecided e3, e5, e6.
+
 struct Hz { q0: integer, r0: integer, w: integer, h: integer, z: vector<float> }
 
 // E1: one early exit over the window test, then the access.
@@ -60,10 +82,17 @@ fn box(f: Hz, which: integer, q0: integer, q1: integer, r0: integer, r1: integer
 fn main() {
   f = Hz { q0: 2, r0: 3, w: 4, h: 3, z: zs12() };
   big = Hz { q0: 0, r0: 0, w: 4, h: 4, z: zs12() };
+  z24: vector<float> = [];
+  for k in 0..24 { z24 += [(k as float) * 0.5]; }
+  f8 = Hz { q0: 2, r0: 3, w: 8, h: 3, z: z24 };
   for w in 1..7 {
     assert(box(f, w, 2, 6, 3, 6) == 33.0, "A{w} {box(f, w, 2, 6, 3, 6)}");
     assert(box(f, w, 1, 7, 2, 7) == 33.0, "B{w} {box(f, w, 1, 7, 2, 7)}");
     assert(box(big, w, 0, 4, 0, 4) == 33.0, "D{w} {box(big, w, 0, 4, 0, 4)}");
+    // W: one column past the right edge of an 8 x 3 window over 24 elements (the inner range
+    // nine wide, past the floor of eight): its index wraps into the next row, so the window
+    // test, not the index test, keeps it out.  Rows 0 and 1: 0.5 * (0 + … + 15) = 60.
+    assert(box(f8, w, 2, 11, 3, 5) == 60.0, "W{w} {box(f8, w, 2, 11, 3, 5)}");
   }
   println("ok");
 }
