@@ -3495,17 +3495,21 @@ impl<'a> FnWriter<'a> {
         let Value::Var(end) = rc.hi.unspan() else {
             return;
         };
-        let Some((vec, local)) = self
+        // Every vector the end is the length of: a length local can be the length of a
+        // vector's lockstep twins too (`length_locals::lockstep_twins`).
+        let lens: Vec<(Value, bool)> = self
             .range_lens
             .iter()
-            .find(|(e, _, _)| e == end)
+            .filter(|(e, _, _)| e == end)
             .map(|(_, v, l)| (v.clone(), *l))
-        else {
+            .collect();
+        let held: Vec<_> = lens
+            .iter()
+            .filter_map(|(vec, local)| self.held_vector(vec).map(|h| (h, *local)))
+            .collect();
+        if held.is_empty() {
             return;
-        };
-        let Some(h) = self.held_vector(&vec) else {
-            return;
-        };
+        }
         let counter = rc.next.unwrap_or(rc.index);
         let start = if rc.next.is_some() { 0 } else { -1 };
         if !self
@@ -3534,11 +3538,13 @@ impl<'a> FnWriter<'a> {
         if assigned {
             return;
         }
-        if local {
-            crate::rewrite_census::fired("R-Base/length-local", 1);
+        for (h, local) in held {
+            if local {
+                crate::rewrite_census::fired("R-Base/length-local", 1);
+            }
+            self.in_range.push((rc.index, h.clone()));
+            self.in_range.push((rc.loop_var, h));
         }
-        self.in_range.push((rc.index, h.clone()));
-        self.in_range.push((rc.loop_var, h));
     }
 
     /// The locals of this function that hold the length of a vector of its own from their one

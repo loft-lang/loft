@@ -77,11 +77,13 @@ pub(super) fn range_lens(
             out.push((*end, v.clone(), false));
         } else if let Value::Set(end, x) = op.unspan()
             && let Value::Var(n) = x.unspan()
-            && let Some((_, v)) = locals.iter().find(|(m, _)| m == n)
         {
             // `end = n` where `n` holds `len(v)` for the rest of the function (`length_locals`):
-            // assigned once, and nothing that can run after it writes `v`.
-            out.push((*end, Value::Var(*v), true));
+            // assigned once, and nothing that can run after it writes `v` — one entry for each
+            // vector it is the length of.
+            for (_, v) in locals.iter().filter(|(m, _)| m == n) {
+                out.push((*end, Value::Var(*v), true));
+            }
         }
     }
     out

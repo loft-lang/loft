@@ -104,19 +104,30 @@ impl Cx<'_> {
         }
     }
 
-    /// The vector `l` is the length of: `len(v)`, or a local holding it.
-    fn length_of(&self, l: &Value) -> Option<u16> {
+    /// The vectors `l` is the length of: `len(v)`, or a local holding it — the length of
+    /// `v`'s lockstep twins too (`length_locals::lockstep_twins`).
+    fn length_of(&self, l: &Value) -> Vec<u16> {
         match l.unspan() {
             Value::Call(d, a)
-                if a.len() == 1 && matches!(name(self.data, *d), "OpLengthVector" | "t_6vector_len") =>
+                if a.len() == 1
+                    && matches!(name(self.data, *d), "OpLengthVector" | "t_6vector_len") =>
             {
                 let Value::Var(v) = a[0].unspan() else {
-                    return None;
+                    return Vec::new();
                 };
-                crate::parser::length_locals::own_vector(self.attrs, self.vars, *v).then_some(*v)
+                if crate::parser::length_locals::own_vector(self.attrs, self.vars, *v) {
+                    vec![*v]
+                } else {
+                    Vec::new()
+                }
             }
-            Value::Var(n) => self.own_len.iter().find(|(m, _)| m == n).map(|(_, v)| *v),
-            _ => None,
+            Value::Var(n) => self
+                .own_len
+                .iter()
+                .filter(|(m, _)| m == n)
+                .map(|(_, v)| *v)
+                .collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -135,14 +146,14 @@ impl Cx<'_> {
                     _ => return,
                 };
                 let mut vars = Vec::new();
-                if let Some(v) = self.length_of(bound)
-                    && self.pure(index, &mut vars)
-                {
-                    into.push(Fact {
-                        v,
-                        e: index.clone(),
-                        vars,
-                    });
+                if self.pure(index, &mut vars) {
+                    for v in self.length_of(bound) {
+                        into.push(Fact {
+                            v,
+                            e: index.clone(),
+                            vars: vars.clone(),
+                        });
+                    }
                 }
             }
             _ => {}
@@ -152,7 +163,11 @@ impl Cx<'_> {
     /// Forget every fact `node` may end.
     fn kill(&self, live: &mut Vec<Fact>, node: &Value) {
         live.retain(|f| {
-            let idxs: &[u16] = if f.vars.is_empty() { &[u16::MAX] } else { &f.vars };
+            let idxs: &[u16] = if f.vars.is_empty() {
+                &[u16::MAX]
+            } else {
+                &f.vars
+            };
             idxs.iter().all(|&x| {
                 let w = Walk {
                     vec_t: f.v,

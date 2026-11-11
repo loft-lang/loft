@@ -16,7 +16,8 @@ clause of an existing rule, one phase at a time.
 | a guard: `if e < len(v)` / `while e < n` | `(R-Base)` guard clause (C), fact in `opt` | built (below) |
 | a stepped `while` counter (`i += 4`, `pos -= 1` under `pos > 0`) | `(R-Range)` while-counter clause | not built: no site pays (§ The stepped counter, priced) |
 | `i % n`, `n = len(v)` | `(R-Range)` rem clause + the guard fact | open |
-| `eb`, `comp` of `boundary_loops`: equal lengths by construction | — | open, no rule yet |
+| `eb` of `boundary_loops`: pushed in lockstep with `ea` | the length-local answer, widened (§ Lockstep twins) | building |
+| `comp` of `boundary_loops`: one push per turn of `0..ne` | — | not built: priced at 0 (§ Lockstep twins) |
 
 ## The guard clause
 
@@ -106,6 +107,48 @@ Four clang rows are slower in all three rounds, and each is layout:
 
 A widening this shows: `sort_floats`' guard is `best >= 0 and best < len(used)`, so the test
 itself carries the lower bound, which would give the no-test form instead of `_lt`.
+
+## Lockstep twins
+
+**Price first** (2026-11-11, hex_form ship C, min of nine interleaved runs; hash `6c9375d9`):
+after both built spellings, `boundary_loops`' `ea[…]` reads take no test and its `eb[…]` and
+`comp[…]` accesses still test the upper bound (`_nn`).
+
+| hand form | gcc | clang |
+|---|--:|--:|
+| as emitted | 9.24 ms | 12.45 ms |
+| `comp` test-free | −0.1 % | +1.6 % |
+| `eb` test-free | −20.1 % | −17.3 % |
+| both | −20.5 % | −19.0 % |
+
+So `eb` is the prize and `comp` is not built.
+
+**Invariant.**  `len(w) == len(v)` at every statement boundary of the function, outside the
+two places where one has moved and the other not yet, when:
+
+1. `v` and `w` are distinct vectors of the frame's own (`own_vector`), neither captured;
+2. their starts are ADJACENT statements of one statement list, each making its vector empty:
+   the local form (`__vdb = null; OpDatabase(__vdb, …); x = OpGetField(__vdb, …);
+   OpSetInt4(__vdb, 0, 0)`) or the work-buffer form (`if OpRefIsNull(x) { … x = … } else {
+   OpClearVector(x) }`);
+3. every OTHER node that writes either (the write test `stable_after` uses) lies in a PAIR:
+   one append to one, then, as the very next statement, one append to the other.  An append is
+   an optional `OpPreAllocVector(x, 1, _)` and an `OpPush*(x, e)`.  The second `e` holds no
+   `break`, `continue`, `return` or `yield`, so no path leaves between the two pushes.
+
+A length local `n = len(v)` is a statement, so it never runs inside a pair or between the two
+starts: `n` holds `len(w)` too, from its assignment for as long as it holds `len(v)`, and while
+`w` is `stable_after` it.  `own_length_locals` answers `(n, w)` beside `(n, v)`; switch
+`LOFT_NO_LOCKSTEP`.  A start run again (in a loop) resets both; a free ends both.
+
+**Not covered**: an element write to either (`w[i] = x` does not resize, but the write test
+counts it), an append of a vector or a slice, a record append (`OpNewRecord` …
+`OpFinishRecord`), starts that are not adjacent.  Each is a later widening if a site needs it.
+
+**Readers**: each one mapped a range end to ONE vector (`.find`).  Now each takes every vector the
+local is the length of: `peel::range_lens` and `counters_in_range` (C, `@FR-R-Base`),
+`below_len::length_of` (one guard fact per vector), and `in_range`'s alias (`rewrite_for` once
+per vector, `@FR-R-InRange`).
 
 ## The stepped counter, priced (2026-11-11)
 

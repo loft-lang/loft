@@ -186,22 +186,26 @@ fn strip(ops: &Ops, node: &mut Value, v: Src, idx: u16, lv: u16, n: &mut usize) 
     node.for_each_child_mut(&mut |c| strip(ops, c, v, idx, lv, n));
 }
 
-/// The length local a `for i in 0..n` block's end `n` is, as an alias: `n` holds `len(v)` for
-/// the rest of the function (`own`), so it is `v`'s length where the loop starts.
-fn length_local_alias(stmt: &Value, own: &[(u16, u16)]) -> Option<(u16, Src)> {
+/// The length local a `for i in 0..n` block's end `n` is, as aliases: `n` holds `len(v)` for
+/// the rest of the function (`own`), so it is `v`'s length where the loop starts — one alias for
+/// each vector it is the length of (a vector's lockstep twins share its length local).
+fn length_local_aliases(stmt: &Value, own: &[(u16, u16)]) -> Vec<(u16, Src)> {
     let Value::Block(fb) = stmt.unspan() else {
-        return None;
+        return Vec::new();
     };
     if fb.name != "For block" {
-        return None;
+        return Vec::new();
     }
-    let Value::Set(_, end) = plain(&fb.operators).first()? else {
-        return None;
+    let Some(Value::Set(_, end)) = plain(&fb.operators).first() else {
+        return Vec::new();
     };
-    let n = var(end)?;
+    let Some(n) = var(end) else {
+        return Vec::new();
+    };
     own.iter()
-        .find(|(m, _)| *m == n)
+        .filter(|(m, _)| *m == n)
         .map(|(n, v)| (*n, Src::Var(*v)))
+        .collect()
 }
 
 fn rewrite_in(
@@ -229,16 +233,21 @@ fn rewrite_in(
             .rev()
             .find(|o| !matches!(o.unspan(), Value::Line(_)))
             .and_then(|prev| len_bind(ops, prev));
-        let local = length_local_alias(&block.operators[k], own);
-        let Some(alias) = local.or(prev) else {
-            continue;
+        let locals = length_local_aliases(&block.operators[k], own);
+        let local = !locals.is_empty();
+        let aliases: Vec<(u16, Src)> = if local {
+            locals
+        } else {
+            prev.into_iter().collect()
         };
-        if let Value::Block(fb) = block.operators[k].unspan_mut() {
-            let dropped = rewrite_for(data, ops, vars, fb, Some(alias), fname);
-            if local.is_some() {
-                crate::rewrite_census::fired("R-InRange/length-local", dropped);
+        for alias in aliases {
+            if let Value::Block(fb) = block.operators[k].unspan_mut() {
+                let dropped = rewrite_for(data, ops, vars, fb, Some(alias), fname);
+                if local {
+                    crate::rewrite_census::fired("R-InRange/length-local", dropped);
+                }
+                n += dropped;
             }
-            n += dropped;
         }
     }
     n + rewrite_for(data, ops, vars, block, None, fname)
