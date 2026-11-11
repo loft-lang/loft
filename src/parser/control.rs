@@ -16559,9 +16559,17 @@ impl Parser {
         let is_param = |p: &Self, v: &Value| match v.unspan() {
             Value::Var(x) => {
                 let (shape, nullable) = p.vars.tp(*x).peel_optional();
+                // …except that the discharge did NOT deliver it: `if a { return a?; }` handed
+                // `a` back raw, the caller adopted its own argument's store as fresh, and both
+                // freed it (`@FR-H-FreeTwice`, 1026's `guard1026`).  A nullable parameter in
+                // return position stands under its presence guard (the return type is dense),
+                // so it is copied like a dense one.  `LOFT_NO_NULLABLE_PARAM_RETURN_COPY=1`.
                 p.vars.is_argument(*x)
                     && !p.vars.name(*x).starts_with("__")
-                    && !nullable
+                    && (!nullable
+                        || !crate::env_once!(
+                            std::env::var_os("LOFT_NO_NULLABLE_PARAM_RETURN_COPY").is_some()
+                        ))
                     && matches!(shape.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
             }
             _ => false,

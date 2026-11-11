@@ -164,7 +164,11 @@ protecting nothing.  An explicit `return p` of a `&` parameter records the borro
 `{ p }` does; `LOFT_NO_RETURN_LINK_BORROW=1` declares the return fresh.  A generic instance
 whose return leaves are its parameters through a mutual recursion over another generic
 (`pick` → `pick_again` → `pick`) declares their borrow, as its concrete twin does
-(`ViewWalk::template_call_views`); `LOFT_NO_TEMPLATE_CALL_VIEW=1` declares it fresh.
+(`ViewWalk::template_call_views`); `LOFT_NO_TEMPLATE_CALL_VIEW=1` declares it fresh.  A
+reassignment from a call that reads the local and answers a borrowed view copies where the answer
+can never be the local's own store (`re_arm`); `LOFT_NO_FRESH_COPY_OF_VIEW=1` keeps the plain
+pass-through.  A fresh-returning generic instance copies a NULLABLE parameter it hands back too
+(`copy_param_returns_of_fresh_instance`); `LOFT_NO_NULLABLE_PARAM_RETURN_COPY=1` hands it back raw.
 
 The closure records' releases, each switch bringing back one second free (doc strings in
 `keys.rs`):
