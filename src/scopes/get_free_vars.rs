@@ -184,6 +184,9 @@ impl Scopes<'_> {
         let scope_debug =
             crate::env_once!(std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug"));
         let mut ls = Vec::new();
+        // `@FR-H-FreeTwice` — each fn-ref release this sweep emits, with the closure records it
+        // carries, for the stand-down below.
+        let mut fnref_releases: Vec<(u16, Vec<u16>)> = Vec::new();
         // The conditional releases of loft#1464, kept apart so they can go FIRST.  Each reads a
         // closure-record local to decide whether that record's cascade already owes this store,
         // and the sweep's own `OpFreeRef` of that record would destroy the answer: the two
@@ -1116,6 +1119,11 @@ impl Scopes<'_> {
                         ls.push(call("OpDropFnRef", v, data));
                     }
                     ls.push(call("OpFreeRef", v, data));
+                    // A frame the closure-keep pass gates decides these releases by store
+                    // identity already, in an order its own stand-downs rely on.
+                    if !keep {
+                        fnref_releases.push((v, carried.clone()));
+                    }
                 }
             }
         }
@@ -1228,10 +1236,97 @@ impl Scopes<'_> {
                 ));
             }
         }
+        fnref_stand_down(&mut ls, &fnref_releases, function, data);
         if !guarded.is_empty() {
             guarded.append(&mut ls);
             ls = guarded;
         }
         ls
+    }
+}
+
+/// `@FR-H-FreeTwice` (owner: a re-free is a defect, not a tolerated case) — a fn-ref and the
+/// local closure record it was built over are two names for one store, and each takes its own
+/// release at the scope's end: the record's `OpFreeRef(___clos_N)`, then the fn-ref's
+/// `OpDropFnRef(f); OpFreeRef(f)`, which frees the same store again.  Where this sweep releases
+/// such a record unconditionally, the fn-ref's release runs only for a closure DISTINCT from it
+/// — one written into the fn-ref through a `&fn` link since (loft#1463), which no record here
+/// releases — and is asked before the record's free, while both still name their stores.
+/// `LOFT_NO_FNREF_STAND_DOWN=1` restores the double release.
+fn fnref_stand_down(
+    ls: &mut Vec<Value>,
+    releases: &[(u16, Vec<u16>)],
+    function: &Function,
+    data: &Data,
+) {
+    if crate::env_once!(std::env::var_os("LOFT_NO_FNREF_STAND_DOWN").is_some()) {
+        return;
+    }
+    let free = data.def_nr("OpFreeRef");
+    let drop = data.def_nr("OpDropFnRef");
+    // A top-level `op(v)` statement's position: statements are inserted around a release after
+    // it is emitted, so a release is found by what it is, not where it was put.
+    let find = |ls: &[Value], op: u32, v: u16| {
+        ls.iter().position(|st| {
+            matches!(st.unspan(), Value::Call(d, args) if *d == op
+                && matches!(args.as_slice(), [a] if matches!(a.unspan(), Value::Var(x) if *x == v)))
+        })
+    };
+    for (v, carried) in releases.iter().rev() {
+        let records: Vec<u16> = carried
+            .iter()
+            .copied()
+            .filter(|&r| {
+                r != *v
+                    && r < function.count()
+                    && function.name(r).starts_with("___clos_")
+                    && find(ls, free, r).is_some()
+            })
+            .collect();
+        let Some(end) = find(ls, free, *v) else {
+            continue;
+        };
+        if records.is_empty() {
+            continue;
+        }
+        let start = match end.checked_sub(1) {
+            Some(p) if find(&ls[p..=p], drop, *v).is_some() => p,
+            _ => end,
+        };
+        // Asked BEFORE the record's own free: a free resets the variable it names, so after it
+        // the record no longer names the store the fn-ref's closure is compared with.
+        // A record's release is its hook (`if <live> <cascade>(r)`) and then its free: the
+        // guard goes ahead of the pair, never between them.
+        let hook_of = |st: &Value, r: u16| {
+            matches!(st.unspan(), Value::If(_, t, _) if matches!(t.unspan(), Value::Call(_, a)
+                if matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(y) if *y == r))))
+        };
+        let at = records
+            .iter()
+            .filter_map(|&r| {
+                let p = find(ls, free, r)?;
+                Some(if p > 0 && hook_of(&ls[p - 1], r) {
+                    p - 1
+                } else {
+                    p
+                })
+            })
+            .min()
+            .map_or(start, |p| p.min(start));
+        let release: Vec<Value> = ls.drain(start..=end).collect();
+        let guarded = records
+            .iter()
+            .rev()
+            .fold(Value::Insert(release), |inner, &r| {
+                v_if(
+                    Value::Call(
+                        data.def_nr("OpDistinctStore"),
+                        vec![call("OpFnRefClosure", *v, data), Value::Var(r)],
+                    ),
+                    inner,
+                    Value::Null,
+                )
+            });
+        ls.insert(at, guarded);
     }
 }

@@ -51,3 +51,20 @@ pluginabi's `check_request` −6 %: the free-tree walks were a quarter of the ro
 
 mesh3d's `mesh_to_floats`, whose per-triangle `[t.a, t.b, t.c]` was a buffer reset, three appends
 and three element reads through the store before the rewrite.
+
+## The join buffer witness — the consumer's `smooth`
+
+the consumer's `smooth` −26 %.
+
+## `(R-Rebind)`'s own-buffer clause — zttext's insert loop
+
+zttext insert loop 5.01 → 5.95 ms per op with the switch.
+
+## `(R-VecCopy)` — zttext's `insert_text`
+
+zttext `insert_text` 25.4 → 5.95 ms per op.
+
+## `(R-FormatAppend)` — html and zttext
+
+html `escape_html` 10.3× → 2.6× of Rust, zttext `materialise` 24× → 6.9×, `flow_layout_full`
+107× → 15×.

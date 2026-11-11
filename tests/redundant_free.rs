@@ -24,6 +24,11 @@ fn loft_bin() -> PathBuf {
 /// Write `src` to a scratch file and run it under `LOFT_TRACE_DB`, answering
 /// `(stdout, redundant_free_count)`.
 fn redundant_frees(name: &str, src: &str) -> (String, usize) {
+    redundant_frees_with(name, src, &[])
+}
+
+/// [`redundant_frees`] with extra environment variables for the run.
+fn redundant_frees_with(name: &str, src: &str, env: &[(&str, &str)]) -> (String, usize) {
     let dir = std::env::temp_dir().join(format!("loft_redundant_free_{}", std::process::id()));
     fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join(format!("{name}.loft"));
@@ -34,6 +39,7 @@ fn redundant_frees(name: &str, src: &str) -> (String, usize) {
         .env("LOFT_TRACE_DB", "1")
         .env("LOFT_TIMEOUT", "180")
         .env("LOFT_NO_CACHE", "1")
+        .envs(env.iter().copied())
         .output()
         .expect("failed to invoke loft binary");
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
@@ -120,14 +126,26 @@ fn the_borrow_arm_releases_nothing_twice() {
 #[test]
 fn the_harness_can_see_a_redundant_free() {
     // Without a cell that DOES report one, every assertion above would hold on a build whose
-    // trace said nothing at all — a broken instrument and a clean tree read alike.
-    let (stdout, count) = redundant_frees("captured_collection", CAPTURED_COLLECTION);
+    // trace said nothing at all — a broken instrument and a clean tree read alike.  The
+    // closure record and the fn-ref built over it released one store twice at the scope's end
+    // until the fn-ref stood down (`@FR-H-FreeTwice`); its switch brings the double release
+    // back, which is the shape this control needs, and the default run releases it once.
+    let (stdout, count) = redundant_frees_with(
+        "captured_collection",
+        CAPTURED_COLLECTION,
+        &[("LOFT_NO_FNREF_STAND_DOWN", "1")],
+    );
     assert!(stdout.contains('3'), "the captured value: {stdout}");
     assert!(
         count > 0,
-        "the instrument reported no redundant free for a captured collection — either the \
-         closure-record double release has been fixed (good: replace this cell with a shape \
-         that still shows one, or retire it) or `LOFT_TRACE_DB` has stopped reporting \
-         `already_free=true` and the three tests above are vacuous"
+        "the instrument reported no redundant free for the closure double release the switch \
+         restores — `LOFT_TRACE_DB` has stopped reporting `already_free=true`, and the three \
+         tests above are vacuous"
+    );
+    let (stdout, count) = redundant_frees("captured_collection", CAPTURED_COLLECTION);
+    assert!(stdout.contains('3'), "the captured value: {stdout}");
+    assert_eq!(
+        count, 0,
+        "the fn-ref and its record released one store {count} time(s) too many"
     );
 }

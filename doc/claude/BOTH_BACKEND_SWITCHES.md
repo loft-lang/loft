@@ -25,10 +25,9 @@ are in [formal/rewrites.md](formal/rewrites.md), [formal/heap.md](formal/heap.md
 **`LOFT_NO_FORMAT_APPEND=1`** (`@FR-R-FormatAppend`, default-ON, parse time, BOTH backends)
 makes `out += "…{e}…"` build its work text again — with it off, every literal and hole of
 the format is appended to `out` directly, in order, where no hole reads `out` and `out` is
-a text variable (a field keeps the work text; html `escape_html` 10.3× → 2.6× of Rust,
-zttext `materialise` 24× → 6.9×, `flow_layout_full` 107× → 15×) — and is the first bisect step for a wrong, missing or doubled part of
-a text built by appending format strings.  `LOFT_TRACE_FORMAT_APPEND=1` names each append
-written through and each kept, with the reason.
+a text variable (a field keeps the work text) — and is the first bisect step for a wrong,
+missing or doubled part of a text built by appending format strings.
+`LOFT_TRACE_FORMAT_APPEND=1` names each append written through and each kept, with the reason.
 
 **`LOFT_NO_LITERAL_EXIT_BUFFER=1`** (@PLN164 B2, `@FR-R-Place`'s callee clause, parse
 time, BOTH backends) makes a mid-body `return S { … }` build its record in a store of its
@@ -233,8 +232,8 @@ It also names every view copied out of its container (`[materialise] fn \`view\`
 parse time):** `v = if c { mk(i) } else { mk2(i) }` in a loop binds `v` to whichever arm's
 hidden return buffer ran, so every arm's buffer is `v`'s witness — the buffers are
 allocated once per activation and `v`'s per-iteration free declines against each, where
-before the branch paired nothing and every iteration minted and freed a store (the
-consumer's `smooth` −26 %).  **`LOFT_NO_JOIN_BUFFER_WITNESS=1`** restores the unpaired
+before the branch paired nothing and every iteration minted and freed a store.
+**`LOFT_NO_JOIN_BUFFER_WITNESS=1`** restores the unpaired
 form and is the first bisect step for a leak, a double free or a stale record out of a
 loop that binds a record from a branch of calls; `LOFT_STRICT_STORES=1` and
 `LOFT_POISON=1` are the falsifiers.
@@ -309,15 +308,15 @@ serves both arms.  `LOFT_TRACE_STORE_SWAP=1` names each exchange.
 
 **`LOFT_NO_REBIND_OWN_BUFFER=1`** (`@FR-R-Rebind`'s own-buffer clause, default-ON, scope
 pass, BOTH backends) keeps `(R-Rebind)` to plain locals: a builder's `d = step(d, …)`, where
-`d` is the frame's own promoted return buffer, copies the step's result into `d` again (zttext
-insert loop 5.01 → 5.95 ms per op) — the first bisect step for a wrong or stale record out of
-such a loop.  `LOFT_TRACE_REBIND=1` names each site.
+`d` is the frame's own promoted return buffer, copies the step's result into `d` again — the
+first bisect step for a wrong or stale record out of such a loop.  `LOFT_TRACE_REBIND=1` names
+each site.
 
 **`LOFT_NO_VEC_COPY=1`** (`@FR-R-VecCopy`, default-ON, scope pass, BOTH backends) makes
 `for e in V { t += [e] }` push element by element again — with it off, the walk is
-`t += V` where t is a local or the frame's hidden return or work buffer (zttext `insert_text`
-25.4 → 5.95 ms per op) — and is the first bisect step for a wrong, missing or extra element
-out of such a copy.  `LOFT_TRACE_VEC_COPY=1` names each site admitted and each kept.
+`t += V` where t is a local or the frame's hidden return or work buffer — and is the first
+bisect step for a wrong, missing or extra element out of such a copy.  `LOFT_TRACE_VEC_COPY=1`
+names each site admitted and each kept.
 
 **`LOFT_NO_LITERAL_WALK=1`** (`@FR-R-LiteralWalk`, default-ON, parse time,
 BOTH backends) makes `for x in [a, b, c]` build and walk the vector again — with it off, the
@@ -382,7 +381,9 @@ a freed store.  **`LOFT_NO_CAPREBIND_KEEP=1`** lets the last-use pass free a sto
 local was bound to at its last read here (`scopes::last_use`), while the closure record still
 reads it: a use after free the next allocation exposes (`--native-c` under
 `LOFT_STRICT_STORES=1` names it; the interpreter under `LOFT_POISON=1` reads a corrupt
-reference).  `LOFT_OWN_ORACLE=check` reports it as `capture-freed`.
+reference).  `LOFT_OWN_ORACLE=check` reports it as `capture-freed`.  **`LOFT_NO_FNREF_STAND_DOWN=1`**
+(`@FR-H-FreeTwice`, scope pass) lets a fn-ref free its closure at the scope's end even where
+the local record it was built over is freed there too — a re-free (`LOFT_DOUBLE_FREE` counts it).
 
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
 a plain local first-bound from a callee that returns the local it promoted onto its buffer
