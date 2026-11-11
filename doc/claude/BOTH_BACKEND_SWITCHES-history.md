@@ -98,3 +98,8 @@ Measured on the cbor decoder's bench: decode 34.7 ms → 26.2 ms per op, and sto
 Measured on the cbor decoder's bench (`--ship`): decode 42.6 ms → 34.7 ms per op.  On
 pluginabi's `check_request` driver (`--ship`): 0.34 s → 0.33 s per 40 rounds; the copy census
 of `return p.a` 1 → 0 per call.
+
+## The work-buffer pool (`LOFT_NO_WORK_BUFFER_POOL`)
+
+Before the pool (loft#1697), work buffers were per call site: a 15 500-line library spent 96 s in
+the scope pass; with the pool it spends 0.17 s.

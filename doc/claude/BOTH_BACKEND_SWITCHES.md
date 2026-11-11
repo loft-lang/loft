@@ -9,12 +9,13 @@ Which switch turns off an optimisation that the interpreter AND `--native` both 
 what checks it.  Two families: LOWERING rewrites, made at parse time or in the scope pass, so
 both backends run the rewritten IR; and RUNTIME policies inside the store, keyed collections
 and the free tree.  A wrong answer on `--native` only belongs to
-[NATIVE_SWITCHES.md](NATIVE_SWITCHES.md) instead.  What each switch measured, and since when:
-[BOTH_BACKEND_SWITCHES-history.md](BOTH_BACKEND_SWITCHES-history.md).
+[NATIVE_SWITCHES.md](NATIVE_SWITCHES.md) instead.
 
 Each entry names its switch (the first bisect step), the falsifiers that apply
 (`LOFT_STRICT_STORES=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_KEYED_VERIFY=1`, the
-native leak check) and its `LOFT_TRACE_*` switch where one exists.  Because both backends
+native leak check, `LOFT_POISON_HOST=windows` —
+[WINDOWS.md § Falsifier](WINDOWS.md#falsifier-the-emulated-windows-host)) and its `LOFT_TRACE_*`
+switch where one exists.  Because both backends
 share the rewrite, agreement between them proves nothing here: hand-computed cell values and
 the switch A/B are the evidence.  The store's design is [DATABASE.md](DATABASE.md); the rules
 are in [formal/rewrites.md](formal/rewrites.md), [formal/heap.md](formal/heap.md) and
@@ -587,9 +588,8 @@ answered, in a function that only reads it.  `LOFT_TRACE_WORK_BUFFER=1` names ea
 call site a work buffer of its own again.  By default a frame POOLS them: the k-th work buffer
 of element type τ in one call takes the frame's buffer `(τ, k)`, shared by every call site,
 because calls in a frame never overlap and a callee clears its buffer on entry.  Per site,
-the buffers climbed one per call: a function of 150 calls took 150 hidden parameters and its
-caller 150 more per call — a 15 500-line library spent 96 s in the scope pass where it now
-spends 0.17 s.  The pool is disjoint from the frame's OWN promoted locals, the only buffers
+the buffers climb one per call: a function of 150 calls takes 150 hidden parameters and its
+caller 150 more per call, which the scope pass pays for.  The pool is disjoint from the frame's OWN promoted locals, the only buffers
 that hold data across a call.  The bisect step between the rewrite and the pool: a wrong
 value that goes away here and not under `LOFT_NO_WORK_BUFFER` is two buffers of one frame
 sharing a store they must not.
@@ -998,8 +998,3 @@ zero divisor), merged into `<file>` at exit (@PLN201 step 2, `src/ledger.rs`).  
 ordinary checked run on either backend and answers the same; it is slower, since every integer
 operator is a call, and it neither reads nor writes the program cache.  Both backends write the
 same file for the same runs.  `--ship` ignores it.  Guards: `tests/ledger.rs`.
-
-## Falsifier: the emulated Windows host
-
-`LOFT_POISON_HOST=windows` runs a program as if on Windows (runtime, both backends):
-[WINDOWS.md § Falsifier: the emulated Windows host](WINDOWS.md#falsifier-the-emulated-windows-host).
