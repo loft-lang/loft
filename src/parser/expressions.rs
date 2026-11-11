@@ -13585,6 +13585,36 @@ fn replace_subtree(code: &mut Value, from: &Value, with: &Value) {
     code.for_each_child_mut(&mut |c| replace_subtree(c, from, with));
 }
 
+/// `LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED=1` (STORE_RECORDS.md § The checks): `own_fresh_binds`
+/// gives a work-ref owner to a local that already owns what it names through a guarded backing
+/// — the re-free the store records must then report.
+fn fresh_bind_owner_beside_guarded() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED").is_ok_and(|v| v != "0")
+    })
+}
+
+/// `LOFT_NO_REPR_KEEPS_DEPS=1` (STORE_RECORDS.md § The checks): a value converted into a
+/// declared local's representation takes the bare declared type, dropping what it borrows —
+/// the wrong free the store records must then report.
+fn repr_keeps_deps_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_REPR_KEEPS_DEPS").is_some())
+}
+
+/// `LOFT_FRESH_BIND_BESIDE_BUFFER=1` (STORE_RECORDS.md § The checks): `own_fresh_binds` gives a
+/// work-ref owner to a call's result even where the call delivers into a hidden buffer — the
+/// re-free the store records must then report.
+fn fresh_bind_beside_buffer() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_FRESH_BIND_BESIDE_BUFFER").is_some())
+}
+
+/// `LOFT_NO_LINK_NEVER_FREE=1` (STORE_RECORDS.md § The checks): a `&` link to a collection may
+/// be freed as an owner — the re-free the store records must then report.
+fn link_never_free_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_LINK_NEVER_FREE").is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::inline_ref_set_in;
@@ -13616,34 +13646,4 @@ mod tests {
         }
         assert!(inline_ref_set_in(&w, 7), "deeply nested Set must be found");
     }
-}
-
-/// `LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED=1` (STORE_RECORDS.md § The checks): `own_fresh_binds`
-/// gives a work-ref owner to a local that already owns what it names through a guarded backing
-/// — the re-free the store records must then report.
-fn fresh_bind_owner_beside_guarded() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::var("LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED").is_ok_and(|v| v != "0")
-    })
-}
-
-/// `LOFT_NO_REPR_KEEPS_DEPS=1` (STORE_RECORDS.md § The checks): a value converted into a
-/// declared local's representation takes the bare declared type, dropping what it borrows —
-/// the wrong free the store records must then report.
-fn repr_keeps_deps_off() -> bool {
-    crate::env_once!(std::env::var_os("LOFT_NO_REPR_KEEPS_DEPS").is_some())
-}
-
-/// `LOFT_FRESH_BIND_BESIDE_BUFFER=1` (STORE_RECORDS.md § The checks): `own_fresh_binds` gives a
-/// work-ref owner to a call's result even where the call delivers into a hidden buffer — the
-/// re-free the store records must then report.
-fn fresh_bind_beside_buffer() -> bool {
-    crate::env_once!(std::env::var_os("LOFT_FRESH_BIND_BESIDE_BUFFER").is_some())
-}
-
-/// `LOFT_NO_LINK_NEVER_FREE=1` (STORE_RECORDS.md § The checks): a `&` link to a collection may
-/// be freed as an owner — the re-free the store records must then report.
-fn link_never_free_off() -> bool {
-    crate::env_once!(std::env::var_os("LOFT_NO_LINK_NEVER_FREE").is_some())
 }

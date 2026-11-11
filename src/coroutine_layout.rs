@@ -403,7 +403,7 @@ fn handed_temps(data: &Data, val: &Value, temp: &impl Fn(u16) -> bool, out: &mut
         && matches!(rhs.unspan(), Value::Call(..))
         && temp(*w)
         && !out.contains(w)
-        && !std::env::var_os("LOFT_NO_UNBOX_YIELD_HANDOVER").is_some_and(|v| v != "0")
+        && !crate::keys::unbox_yield_handover_off()
     {
         out.push(*w);
     }

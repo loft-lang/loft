@@ -8610,42 +8610,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if self.first_pass || !crate::coroutine_layout::yield_handed_over(tp) {
             return;
         }
-        // A TUPLE hands over each heap member: a literal's members one by one, and a tuple
-        // the generator holds through a literal of its members, which copies each of them.
         if let Type::Tuple(elems) = tp.base() {
-            if let Value::Var(t) = val.unspan()
-                && *t < self.vars.count()
-                && (self.vars.is_argument(*t) || !self.vars.is_compiler_generated(*t))
-            {
-                let t = *t;
-                *val = Value::Tuple(
-                    (0..elems.len())
-                        .map(|i| Value::TupleGet(t, i as u16))
-                        .collect(),
-                );
-            }
-            if let Value::Tuple(items) = val.unspan_mut() {
-                for (item, elm) in items.iter_mut().zip(elems.clone()) {
-                    self.yield_owned_value(item, &elm);
-                }
-            }
-            // A tuple RECORD held by an existing value (`t = mkp(5); yield t`) arrives unboxed
-            // through a work-ref that VIEWS it: its members are that value's, so each is copied
-            // like a literal's member.  Handed over as they were, the consumer released `t`'s
-            // record and the generator released it again (`@FR-H-FreeTwice`).  A record a CALL
-            // just filled is the yield's own and is handed over whole
-            // (`coroutine_layout::yield_handed_temps`).
-            if let Value::Block(bl) = val.unspan_mut()
-                && bl.name == "tuple_unbox"
-                && matches!(bl.operators.first().map(Value::unspan),
-                    Some(Value::Set(_, r)) if !matches!(r.unspan(), Value::Call(..)))
-                && !std::env::var_os("LOFT_NO_UNBOX_YIELD_HANDOVER").is_some_and(|v| v != "0")
-                && let Some(Value::Tuple(items)) = bl.operators.last_mut().map(Value::unspan_mut)
-            {
-                for (item, elm) in items.iter_mut().zip(elems.clone()) {
-                    self.yield_owned_value(item, &elm);
-                }
-            }
+            self.yield_owned_tuple(val, elems);
             return;
         }
         if self.value_is_fresh(val, tp) {
@@ -8725,6 +8691,45 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             Type::Vector(Box::new(elm), Deps::frame1(o)),
             "yield_copy",
         );
+    }
+
+    /// The tuple half of [`Self::yield_owned_value`].
+    // A TUPLE hands over each heap member: a literal's members one by one, and a tuple
+    // the generator holds through a literal of its members, which copies each of them.
+    fn yield_owned_tuple(&mut self, val: &mut Value, elems: &[Type]) {
+        if let Value::Var(t) = val.unspan()
+            && *t < self.vars.count()
+            && (self.vars.is_argument(*t) || !self.vars.is_compiler_generated(*t))
+        {
+            let t = *t;
+            *val = Value::Tuple(
+                (0..elems.len())
+                    .map(|i| Value::TupleGet(t, i as u16))
+                    .collect(),
+            );
+        }
+        if let Value::Tuple(items) = val.unspan_mut() {
+            for (item, elm) in items.iter_mut().zip(elems.to_vec()) {
+                self.yield_owned_value(item, &elm);
+            }
+        }
+        // A tuple RECORD held by an existing value (`t = mkp(5); yield t`) arrives unboxed
+        // through a work-ref that VIEWS it: its members are that value's, so each is copied
+        // like a literal's member.  Handed over as they were, the consumer released `t`'s
+        // record and the generator released it again (`@FR-H-FreeTwice`).  A record a CALL
+        // just filled is the yield's own and is handed over whole
+        // (`coroutine_layout::yield_handed_temps`).
+        if let Value::Block(bl) = val.unspan_mut()
+            && bl.name == "tuple_unbox"
+            && matches!(bl.operators.first().map(Value::unspan),
+                Some(Value::Set(_, r)) if !matches!(r.unspan(), Value::Call(..)))
+            && !crate::keys::unbox_yield_handover_off()
+            && let Some(Value::Tuple(items)) = bl.operators.last_mut().map(Value::unspan_mut)
+        {
+            for (item, elm) in items.iter_mut().zip(elems.to_vec()) {
+                self.yield_owned_value(item, &elm);
+            }
+        }
     }
 
     /// Is the value FRESH — held by nothing of the function's but the compiler temp it was

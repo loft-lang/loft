@@ -3486,6 +3486,14 @@ pub fn reading_view_copy_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_READING_VIEW_COPY"))
 }
 
+/// `LOFT_NO_UNBOX_YIELD_HANDOVER=1` — a yielded tuple unboxed through a work-ref hands its
+/// members over as they are (`Parser::yield_owned_value`, `coroutine_layout::yield_handed_temps`).
+#[must_use]
+pub fn unbox_yield_handover_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_NO_UNBOX_YIELD_HANDOVER").is_some_and(|v| v != "0"))
+}
+
 /// `LOFT_NO_FRESH_PROTECTS_OLD=1` — a reassignment copied into a fresh store leaves the local's
 /// old store out of the protection bracket even where the value reads the local, as it did
 /// before (`Codegen::generate_set_inner`, arm R2b): the copy's source-free then releases it and

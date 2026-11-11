@@ -345,6 +345,10 @@ impl ReleaseOps {
     /// A capture reassigned after the build only on SOME paths (`if p { c = mk(9) }`) leaves the
     /// local sharing the record's store on the others (loft#2459's keyed `not_taken`).  A
     /// BORROWED slot is skipped: there the local's release is the store's one release.
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "the IR walk names its nodes as the IR does: v, r, w, x, k"
+    )]
     fn detach_shared_names(
         &self,
         v: u16,

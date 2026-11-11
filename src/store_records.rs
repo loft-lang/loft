@@ -717,6 +717,10 @@ impl Run<'_> {
         clippy::too_many_lines,
         reason = "one arm per IR shape the records follow"
     )]
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "one arm per Value variant, each binding its fields by the IR's own short names"
+    )]
     fn eval(&mut self, v: &Value, st: State) -> Option<(State, Val)> {
         self.steps += 1;
         if self.steps > STEP_BUDGET {

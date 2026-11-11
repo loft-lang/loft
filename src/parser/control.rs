@@ -5122,7 +5122,7 @@ impl Parser {
             return None;
         }
         let unboxed = self.unbox_tuple_from_dbref(tail.clone(), &elems);
-        let src = Type::Tuple(self.unboxed_member_types(&unboxed, &elems));
+        let src = Type::Tuple(Self::unboxed_member_types(&unboxed, &elems));
         let tmp = self.create_unique("_tret", &src);
         *tail = v_block(
             vec![v_set(tmp, unboxed), Value::Var(tmp)],

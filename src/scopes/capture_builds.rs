@@ -323,6 +323,10 @@ pub(super) fn escaping_record_holds_buffer(
 /// map, and neither is one whose build this body does not contain.  Both fall back to the type
 /// dep, which is the only fact available for them and is right whenever the local is assigned
 /// once.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one walk over a build and its backings; to be split at the release file-split row"
+)]
 pub(crate) fn capture_build_backings(
     data: &Data,
     function: &Function,

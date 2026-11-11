@@ -1242,7 +1242,7 @@ impl Parser {
                 let tup_tp = Type::Tuple(if self.first_pass {
                     elems_vec.clone()
                 } else {
-                    self.unboxed_member_types(&val_code, &elems_vec)
+                    Self::unboxed_member_types(&val_code, &elems_vec)
                 });
                 let tmp = self.vars.work_refs(&tup_tp, &mut self.lexer);
                 if !self.first_pass {

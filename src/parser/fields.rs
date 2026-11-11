@@ -2800,7 +2800,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// them, and the scope end freed `t.0` — a DbRef into the work-ref's own store — and then
     /// the work-ref (`@FR-H-FreeTwice`).  Any other `code` answers `elems` unchanged.
     /// `LOFT_NO_UNBOX_MEMBER_DEPS=1` leaves the members owning.
-    pub(crate) fn unboxed_member_types(&self, code: &Value, elems: &[Type]) -> Vec<Type> {
+    pub(crate) fn unboxed_member_types(code: &Value, elems: &[Type]) -> Vec<Type> {
         let source = match code.unspan() {
             Value::Block(b) if b.name == "tuple_unbox" => {
                 match b.operators.first().map(Value::unspan) {

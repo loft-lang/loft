@@ -198,6 +198,10 @@ impl Scopes<'_> {
     /// and the fn-ref nulled so it does not release the store a second time.  The block's end
     /// is not reached by a `break` or a `continue`: those passes release at the next rebuild or
     /// at the function's end, once either way.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass over the statements, each closure-keep case an arm of it; to be split at the release file-split row"
+    )]
     pub(super) fn closure_keep_pass_end(
         &mut self,
         bl: &Block,
