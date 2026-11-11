@@ -1225,8 +1225,11 @@ impl Run<'_> {
                 self.end(&mut st, x, "the displaced free", true);
             }
         }
-        let old = Self::pts(&st, x);
         let (mut s, value) = self.eval(val, st)?;
+        // What `x` held, read AFTER the value: a call that makes a store at a site `x`'s old
+        // store came from moves that store to the older generation (`fresh`), and a key read
+        // before it would name the new store instead (a loop's `fixed = step(i)`).
+        let old = Self::pts(&s, x);
         let bound = match rb.arm {
             ReArm::KeyedNull => Self::read(&s, x),
             ReArm::Join { .. } | ReArm::OpaqueCallRef { .. } => {
