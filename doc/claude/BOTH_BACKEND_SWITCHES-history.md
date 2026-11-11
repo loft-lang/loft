@@ -82,3 +82,13 @@ together with the block repeat `lock_curved` 4.2× → 2.2×.
 Both default-ON since 2026-09-28 (@PLN174 F4a, F4b).  The block copy: forty 200 000-element
 slices 0.13 → 0.03 s.  @PLN174 F5 extended `LOFT_NO_FOREIGN_VIEW` to a `#native` bridge's
 whole vector answer.
+
+## A value branch of calls (`LOFT_NO_JOIN_BUFFER_WITNESS`)
+
+Before the pairing, the branch paired nothing and every iteration minted and freed a store;
+with it, the consumer's `smooth` ran 26 % faster.
+
+## `(R-Place)` in a loop
+
+Measured on the cbor decoder's bench: decode 34.7 ms → 26.2 ms per op, and stores per
+`check_request` 20 → 7.

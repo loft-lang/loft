@@ -232,12 +232,13 @@ It also names every view copied out of its container (`[materialise] fn \`view\`
 **A value branch of calls witnesses every arm's buffer (@PLN157 § V-af, BOTH backends,
 parse time):** `v = if c { mk(i) } else { mk2(i) }` in a loop binds `v` to whichever arm's
 hidden return buffer ran, so every arm's buffer is `v`'s witness — the buffers are
-allocated once per activation and `v`'s per-iteration free declines against each, where
-before the branch paired nothing and every iteration minted and freed a store.
-**`LOFT_NO_JOIN_BUFFER_WITNESS=1`** restores the unpaired
-form and is the first bisect step for a leak, a double free or a stale record out of a
-loop that binds a record from a branch of calls; `LOFT_STRICT_STORES=1` and
-`LOFT_POISON=1` are the falsifiers.
+allocated once per activation and `v`'s per-iteration free declines against each.
+**`LOFT_NO_JOIN_BUFFER_WITNESS=1`** restores the unpaired form and is the first bisect step
+for a leak, a double free or a stale record out of a loop that binds a record from a branch
+of calls; `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the falsifiers.  Where an arm's
+answer needs a temp of its own (a call answering a borrow, which the bind copies), `v`
+borrows that temp and the temp releases it (`@FR-O-Complete`, `Scopes::lift_join_arm_tails`);
+**`LOFT_NO_CALL_ARM_HOLDERS=1`** leaves `v` owning it too — a re-free per evaluation.
 
 **A match lowered once per arm (`@FR-M-Once`, default-ON, both backends, parse time):** a
 guarded arm folds its guard into its own condition (`parser::control::guarded_arm`), so a

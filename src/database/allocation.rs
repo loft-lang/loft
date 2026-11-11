@@ -1744,7 +1744,12 @@ impl Stores {
         if crate::keys::trace_db() {
             let was_free =
                 (al as usize) < self.allocations.len() && self.allocations[al as usize].free;
-            eprintln!("[db] free #{al} name={name} already_free={was_free}");
+            // `pc` is the freeing op's position, the `@abs` column of `loft introspect`: the
+            // interpreter's frees carry no name, so it is what tells two frees apart.
+            eprintln!(
+                "[db] free #{al} name={name} pc={} already_free={was_free}",
+                self.alloc_pc
+            );
         }
         // #405 — a wrong/stale free can carry an out-of-range store_nr (e.g. a
         // stack-NRVO loop-local's dep slot read on a not-taken branch before it
