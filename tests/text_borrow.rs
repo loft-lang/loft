@@ -62,7 +62,7 @@ fn count(hay: &str, needle: &str) -> usize {
 }
 
 /// The walks that borrow, with the loop variable each binds as a `&str`.
-const BORROWS: [(&str, &str); 7] = [
+const BORROWS: [(&str, &str); 8] = [
     ("n_t1", "p"),
     ("n_t2", "p"),
     ("n_t3", "p"),
@@ -70,11 +70,12 @@ const BORROWS: [(&str, &str); 7] = [
     ("n_t4", "w"),
     ("n_t15", "p"),
     ("n_t16", "p"),
+    ("n_t11", "p"),
 ];
 
 /// The walks that keep the copy, and why (the cell file names each).
-const COPIES: [&str; 10] = [
-    "n_t6", "n_t7", "n_t8", "n_t9", "n_t10", "n_t11", "n_t12", "n_t13", "n_t17", "n_t18",
+const COPIES: [&str; 9] = [
+    "n_t6", "n_t7", "n_t8", "n_t9", "n_t10", "n_t12", "n_t13", "n_t17", "n_t18",
 ];
 
 #[test]
@@ -190,8 +191,13 @@ fn the_checking_form_rereads_the_element_at_the_walks_release() {
     let rust = emit("verify", &[("LOFT_HOIST_VERIFY", "1")]);
     for (name, var) in BORROWS {
         let b = body(&rust, name);
-        // A lazy split's piece has no store to re-read: nothing is verified there.
-        let expect = if name == "n_t4" { 0 } else { 3 };
+        // A lazy split's piece has no store to re-read: nothing is verified there.  t11's
+        // `return p` leaves the walk a fourth way, re-read there too.
+        let expect = match name {
+            "n_t4" => 0,
+            "n_t11" => 4,
+            _ => 3,
+        };
         assert_eq!(
             count(b, &format!("vector::text_borrow_verify(var_{var}, ")),
             expect,
