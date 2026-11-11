@@ -526,9 +526,15 @@ impl Scopes<'_> {
                 // Free them explicitly at function exit so the leak-check
                 // at `src/state/debug.rs:1045` doesn't trip.  Skip when
                 // the work-ref participates in the return chain.
+                // `@FR-B-View` — a work-ref whose deps name only OTHER bindings is a view of
+                // them, not a store of its own: an update over a value branch
+                // (`S { l: 7, ..(if c { p } else { q }) }`) binds its base work-ref to the arm's
+                // `__lift_N`, which frees that store, and freeing the work-ref too released it
+                // twice (`@FR-H-FreeTwice`).  `LOFT_WORK_REF_VIEW_FREES=1` frees it anyway.
                 let is_work_ref = {
                     let n = function.name(v);
-                    n.starts_with("__ref_") || n.starts_with("__rref_")
+                    (n.starts_with("__ref_") || n.starts_with("__rref_"))
+                        && (dep.is_empty() || dep.contains(&v) || work_ref_view_frees())
                 };
                 // @P302 — a keyed-collection local backed by its OWN store
                 // carries a self-dep `[v]` (added by the `s = []` clear path
@@ -1536,4 +1542,11 @@ fn captured_view_stand_down(guarded: &mut Vec<Value>, function: &Function, data:
     for i in drop_at.into_iter().rev() {
         guarded.remove(i);
     }
+}
+
+/// `LOFT_WORK_REF_VIEW_FREES=1` (STORE_RECORDS.md § The checks): a work-ref that only views
+/// other bindings is freed at the scope's end as if it owned — the re-free the store records
+/// must then report.
+fn work_ref_view_frees() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_WORK_REF_VIEW_FREES").is_some())
 }
