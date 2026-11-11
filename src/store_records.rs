@@ -1147,9 +1147,13 @@ impl Run<'_> {
         {
             return self.link_write(x, t, val, st);
         }
-        // A whole write through a `&` PARAMETER (`d = OrdDoc.parse(t)`) lands in the caller's
-        // place: the caller holds what it names from here on.
-        if function.is_argument(x) && matches!(function.tp(x).base(), crate::data::Type::RefVar(_))
+        // `@FR-F-ParamRef` — a whole write through a `&` PARAMETER is the write-back: the
+        // value is the caller's from here (handed on), and the store it displaced is the
+        // caller's to release (the generator's stash / install / `OpFreeRefIfDistinct`).
+        if function.is_argument(x)
+            && matches!(function.tp(x).base(), crate::data::Type::RefVar(_))
+            && !matches!(val.unspan(), Value::Call(d, _)
+                if matches!(data.def(*d).name(), "OpCreateStack" | "OpVarRef"))
         {
             let (mut s, value) = self.eval(val, st)?;
             Self::hand_on(&mut s, &value);
