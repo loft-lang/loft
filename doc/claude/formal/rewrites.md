@@ -3297,6 +3297,12 @@ written in its own branch so the arm not taken computes nothing (`view_choice` /
 the C ship lane).  `LOFT_NO_VIEW_CHOICE_SLICE=1` copies a slice arm again; cells
 `tests/scripts/a-text-choice-between-slices-is-a-view.loft`.
 
+**A returned loop variable.**  A `for` loop's own variable is never promoted to the function's
+text return buffer (`classify_text_dep`: `was_loop_var` reads `SkipOwnedLocal`), so a function
+that returns a slice of it, or it, copies the result out and the walk borrows its element:
+server `Request.header` (`return h[wl + 1..].trim()` in `for h in self.headers`) −55 % on both
+compilers.  Guard `tests/scripts/a-text-walks-loop-variable-returned-is-copied-out-and-borrowed.loft`.
+
 **The store-read clause.**  `w = words[i]?` over a `const vector<text>` parameter bound `w`
 through two copies (the temp's `.to_string()` and the bind's `.clone()`) and a third where
 it became a hash key, while the Rust twin borrows `&str` throughout; `word_count` is that
