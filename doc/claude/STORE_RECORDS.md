@@ -161,7 +161,23 @@ included — joins its arms member by member, a `null` member blocking nothing
 argument (`OpCreateStack(u)`) is protected across a copy's source-free as the store it reaches
 (`protectable_ref_args`); `LOFT_NO_LINK_ARG_PROTECT=1` skips it, and the set reads complete while
 protecting nothing.  An explicit `return p` of a `&` parameter records the borrow as the tail
-`{ p }` does; `LOFT_NO_RETURN_LINK_BORROW=1` declares the return fresh.  Two closure records
+`{ p }` does; `LOFT_NO_RETURN_LINK_BORROW=1` declares the return fresh.
+
+The closure records' releases, each switch bringing back one second free (doc strings in
+`keys.rs`):
+
+- `LOFT_NO_HELD_FN_SKIP_FREE` — a captured fn-ref's record released by the cascade and the frame.
+- `LOFT_NO_BORROWED_DISPLACED_STRIP` — a borrowing record keeps its parse-time displaced release.
+- `LOFT_NO_NULL_SLOT_GENERATION` — two builds over one null local never group; both own it.
+- `LOFT_NO_EVERY_BUILD_BACKING` — only the last build's backing is handed to a record.
+- `LOFT_NO_STAYING_JOIN_CAPTURE_BORROWS` — a staying record owns a join-bound capture rebound later.
+- `LOFT_NO_PASS_END_BACKING_DETACH` — a pass-end record release leaves the frame backing in place.
+- `LOFT_NO_ARM_WRITTEN_JOIN` — a written-out branch is not read as a join of its arms' stores.
+- `LOFT_NO_RECORD_SNAPSHOT_RELEASES` — a build releases a displaced slot the snapshot also releases.
+- `LOFT_NO_RECORD_RELEASE_DETACH` — a record's release leaves a local naming its capture's store.
+- `LOFT_NO_FDISP_KEEP_TEMP` — a displaced fn-ref snapshot reads as a value use after the scope pass.
+- `LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS` — a staying record owns a capture rebound from a call buffer.
+- `LOFT_NO_VIEW_TEMP_TRANSITION_GUARD` — a rebind's displaced free releases a frame temporary's store.  Two closure records
 built over a loop-reassigned capture between the same two assignments group by the store
 they adopt, so one owns it (`capture_adoption`, `@FR-L-CapOne`);
 `LOFT_NO_LOOP_CAPTURE_GROUP=1` lets each own it, and both cascades free it.  A call that
