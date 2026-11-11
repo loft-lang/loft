@@ -184,7 +184,8 @@ The closure records' releases, each switch bringing back one second free (doc st
 - `LOFT_NO_RECORD_RELEASE_DETACH` — a record's release leaves a local naming its capture's store.
 - `LOFT_NO_FDISP_KEEP_TEMP` — a displaced fn-ref snapshot reads as a value use after the scope pass.
 - `LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS` — a staying record owns a capture rebound from a call buffer.
-- `LOFT_NO_VIEW_TEMP_TRANSITION_GUARD` — a rebind's displaced free releases a frame temporary's store.  Two closure records
+- `LOFT_NO_VIEW_TEMP_TRANSITION_GUARD` — a rebind's displaced free releases a frame temporary's store.
+- `LOFT_NO_FKEEP_REBUILD_DETACH` — a rebuild's release leaves the `__fkeep_N` snapshot naming the record.  Two closure records
 built over a loop-reassigned capture between the same two assignments group by the store
 they adopt, so one owns it (`capture_adoption`, `@FR-L-CapOne`);
 `LOFT_NO_LOOP_CAPTURE_GROUP=1` lets each own it, and both cascades free it.  A call that
