@@ -1289,18 +1289,29 @@ impl Scopes<'_> {
         }));
         let mut i = 0;
         while i < ls.len() {
+            // The buffer's free may already be guarded against its adopter — a renamed return
+            // buffer guards every release against itself (`code = NdNull; … code = cl(…)`):
+            // the same pair, and the disarm below applies to it alike.
+            let guarded_by_adopter = |args: &[Value], b: u16| {
+                !crate::env_once!(std::env::var_os("LOFT_NO_GUARDED_BUFFER_DISARM").is_some())
+                    && matches!(args.get(1).map(Value::unspan),
+                        Some(Value::Var(x)) if self.literal_buffer.get(&b) == Some(x))
+            };
             let paired = match ls[i].unspan() {
-                Value::Call(d, args) if *d == free => match args.first().map(Value::unspan) {
-                    Some(Value::Var(b)) => self
-                        .literal_buffer
-                        .get(b)
-                        .filter(|&&w| {
-                            w != *b
-                                && (ls.iter().any(|op| frees(op, w)) || rebound_params.contains(&w))
-                        })
-                        .map(|&w| (*b, w)),
-                    _ => None,
-                },
+                Value::Call(d, args) if *d == free || *d == free_distinct => {
+                    match args.first().map(Value::unspan) {
+                        Some(Value::Var(b)) if *d == free || guarded_by_adopter(args, *b) => self
+                            .literal_buffer
+                            .get(b)
+                            .filter(|&&w| {
+                                w != *b
+                                    && (ls.iter().any(|op| frees(op, w))
+                                        || rebound_params.contains(&w))
+                            })
+                            .map(|&w| (*b, w)),
+                        _ => None,
+                    }
+                }
                 _ => None,
             };
             let Some((b, w)) = paired else {

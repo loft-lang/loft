@@ -176,7 +176,9 @@ coalesce bound in its buffer's own scope (`q = mq(4) ?? return`) frees `q` only 
 names the buffer; `LOFT_NO_COALESCE_SAME_SCOPE_WITNESS=1` frees both.  A null test of a temp's
 field (`Holder.parse(t).rows == null`) reads it in place, the temp's lift owning the store;
 `LOFT_NO_NULL_TEST_PROJECTION_VIEW=1` captures it in a work-ref that frees it again.  The records
-read an operator answering a heap value from a text (`OpCastVectorFromText`) as a mint.
+read an operator answering a heap value from a text (`OpCastVectorFromText`) as a mint.  A literal
+buffer adopted by a renamed return buffer that is assigned again takes no free, its guard against
+the return included (`pair_literal_buffers`); `LOFT_NO_GUARDED_BUFFER_DISARM=1` keeps the guarded one.
 
 The closure records' releases, each switch bringing back one second free (doc strings in
 `keys.rs`):
