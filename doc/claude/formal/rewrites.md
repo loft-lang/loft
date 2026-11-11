@@ -1274,6 +1274,13 @@ clause, the guard clause, `(R-InRange)`).  hex_form `boundary_loops` (`eb` pushe
 pair check struck, t3 with the starts' adjacency struck).  Not yet: an element write to either
 (it does not resize, but the write test counts it), a vector or record append, starts apart.
 
+**The wrapped form.**  A read at `(i + c) % n` — a counter of such a loop, `c` a literal from 0
+up, `n` a local holding the held vector's length for the loop (the range end, or the local it
+was copied from) — lies in `[0, n)` (`(R-InRange)`'s wrapped form gives the reason) and takes
+no test either; it is written `((i + c) % n)`, `i` alone for `c = 0`.  Site:
+`FnWriter::counter_index`, through `loop_shape::wrapped_counter`.  Census row `R-Base/counter`.
+Guard `tests/scripts/a-counter-wrapped-at-the-length-is-read-in-range.loft`.
+
 **The guard clause.**  An index a passed test keeps below the length: inside `if e < len(v)`
 (its then-arm), after a `while e < n` loop's test (the rest of each turn), or either side of
 `a && b`, with `n` a length local of `v` as above and `e` a variable or `+`, `-`, `*` over
@@ -7516,6 +7523,19 @@ loop-invariant record number, which clang unswitches (those routines 4–6 % slo
 local is the length of: a lockstep twin shares it).  Census row
 `R-InRange/length-local`.  Guard `tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft`
 (a8–a10; a10 falsified on `--interpret` with the own-vector test struck).
+
+**The wrapped form.**  Inside such a loop — exclusive, the counter from 0, the end `len(v)` or
+a local holding it — the index `(i + c) % n ?? d`, with `c` a literal from 0 up and `n` that
+length (the local the end came from, or `len(v)` itself), is `(i + c) % n` alone: the body runs
+only when `n >= 1`, so the divisor is not 0, and `%` takes the dividend's sign, so the value
+lies in `[0, n)`.  A record element's `?` read at that index is then its read alone, as at
+`i`.  A negative `c` is not the form: `(0 - 1) % n` is -1, and a vector read takes -1 from the
+end.  Inclusive ranges decline (`0..=n` runs once when `n` is 0).  graphics `polygon_crossings`
+(`pc_pts[(i + 1) % pc_n ?? 0]?`, with the counter form's test-free read): `fill_polygon` −39 % (clang),
+−6.1 % (gcc), hand-priced −23 % / −3.9 %.  Site: `in_range::wrapped_discharge`, through
+`loop_shape::wrapped_counter` (the one reading of the shape, `(R-Base)`'s counter clause asks
+it too).  Census row `R-InRange/wrapped`.  Guard
+`tests/scripts/a-counter-wrapped-at-the-length-is-read-in-range.loft`.
 
 ### A computed range start is one counter, stepped at the test
 

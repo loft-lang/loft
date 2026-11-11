@@ -294,9 +294,11 @@ pub(crate) struct FnWriter<'a> {
     peel_seeds: Vec<(u16, i64)>,
     /// `@FR-R-Base`'s counter clause: the vector whose length the statements just before a
     /// loop gave its range end (`end = len(v)`), and per enclosing such loop the counters
-    /// proven inside the held vector (counter, header).
+    /// proven inside the held vector (counter, header), and the locals that hold that
+    /// vector's length for the loop (local, header): a wrapped counter's divisor.
     range_lens: Vec<peel::RangeLen>,
     in_range: Vec<(u16, String)>,
+    in_range_lens: Vec<(u16, String)>,
     /// `n = len(v)` as the statement right before the `for` block being written (`v` by `n`).
     len_alias: Option<(u16, Value)>,
     /// `@FR-R-Base`'s grid clause: the facts `0 <= x < bound` that hold where the code is
@@ -805,6 +807,7 @@ impl<'a> FnWriter<'a> {
             peel_seeds: Vec::new(),
             range_lens: Vec::new(),
             in_range: Vec::new(),
+            in_range_lens: Vec::new(),
             len_alias: None,
             grid_facts: Vec::new(),
             grid_binds: Vec::new(),
@@ -2664,13 +2667,9 @@ impl<'a> FnWriter<'a> {
                 };
                 let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let index = self.expr(idx, ind)?;
-                if name == "OpGetInt" && self.version_raw(args) {
-                    let index = as_int(index)?;
-                    let code = version::version_access(name, &held, size, fld, &index, None);
-                    return Ok(Some(E::new(code, K::Int)));
-                }
-                if let Some(i) = self.counter_index(idx, &held) {
+                let versioned = name == "OpGetInt" && self.version_raw(args);
+                // A proven index is its own C expression: the operand is not written at all.
+                if !versioned && let Some(i) = self.counter_index(idx, &held) {
                     let (f, k) = if name == "OpGetInt" {
                         ("loft_vh_at_int", K::Int)
                     } else {
@@ -2682,6 +2681,12 @@ impl<'a> FnWriter<'a> {
                         format!("({proof}, {f}({held}, {size}, {i}, {fld}))"),
                         k,
                     )));
+                }
+                let index = self.expr(idx, ind)?;
+                if versioned {
+                    let index = as_int(index)?;
+                    let code = version::version_access(name, &held, size, fld, &index, None);
+                    return Ok(Some(E::new(code, K::Int)));
                 }
                 let guard = self.guard_index(idx);
                 if guard == Some(true) {
@@ -2755,27 +2760,23 @@ impl<'a> FnWriter<'a> {
                 };
                 let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let index = as_int(self.expr(idx, ind)?)?;
-                let guard = if self.counter_index(idx, &held).is_some() {
-                    None
-                } else {
-                    self.guard_index(idx)
-                };
-                let (index, nn) = match guard {
-                    Some(_) => (index, "_lt"),
-                    None => self.index_arg(idx, index),
-                };
                 let proof = self.held_proof(vec, &held);
-                let (at, tail) = at(report);
-                let addr = match self.counter_index(idx, &held) {
-                    Some(i) => {
-                        crate::rewrite_census::fired("R-Base/counter", 1);
-                        format!("loft_vh_at_addr({held}, {size}, {i})")
-                    }
-                    None if guard == Some(true) => {
+                let addr = if let Some(i) = self.counter_index(idx, &held) {
+                    crate::rewrite_census::fired("R-Base/counter", 1);
+                    format!("loft_vh_at_addr({held}, {size}, {i})")
+                } else {
+                    let index = as_int(self.expr(idx, ind)?)?;
+                    let guard = self.guard_index(idx);
+                    let (index, nn) = match guard {
+                        Some(_) => (index, "_lt"),
+                        None => self.index_arg(idx, index),
+                    };
+                    let (at, tail) = at(report);
+                    if guard == Some(true) {
                         format!("loft_vh_at_addr({held}, {size}, {index})")
+                    } else {
+                        format!("loft_vh_addr{at}{nn}({held}, {size}, {index}{tail})")
                     }
-                    None => format!("loft_vh_addr{at}{nn}({held}, {size}, {index}{tail})"),
                 };
                 let call = if let [_, _, min] = args {
                     let min = c_long(Self::literal(min, "minimum")?);
@@ -3549,6 +3550,10 @@ impl<'a> FnWriter<'a> {
             if local {
                 crate::rewrite_census::fired("R-Base/length-local", 1);
             }
+            self.in_range_lens.push((*end, h.clone()));
+            if let Some(n) = via {
+                self.in_range_lens.push((n, h.clone()));
+            }
             self.in_range.push((rc.index, h.clone()));
             self.in_range.push((rc.loop_var, h));
         }
@@ -3825,15 +3830,35 @@ impl<'a> FnWriter<'a> {
         None
     }
 
-    /// The counter `idx` names when it is proven inside the held vector `h` (`counters_in_range`).
-    fn counter_index(&self, idx: &Value, h: &str) -> Option<String> {
-        let Value::Var(i) = idx.unspan() else {
+    /// The index `idx` names when it is proven inside the held vector `h` (`counters_in_range`):
+    /// a counter, or a counter wrapped at a local holding `h`'s length
+    /// (`loop_shape::wrapped_counter`: `(i + c) % n` is in `[0, n)` there).
+    fn counter_index(&self, idx: &Value, held: &str) -> Option<String> {
+        let ours = |ctr: u16| self.in_range.iter().any(|(c, hh)| *c == ctr && hh == held);
+        if let Value::Var(ctr) = idx.unspan() {
+            return ours(*ctr).then(|| self.var(*ctr));
+        }
+        let (ctr, step, divisor) = crate::loop_shape::wrapped_counter(self.cx.data, idx)?;
+        let Value::Var(len) = divisor.unspan() else {
             return None;
         };
-        self.in_range
-            .iter()
-            .any(|(c, hh)| c == i && hh == h)
-            .then(|| self.var(*i))
+        if !ours(ctr)
+            || !self
+                .in_range_lens
+                .iter()
+                .any(|(m, hh)| m == len && hh == held)
+        {
+            return None;
+        }
+        Some(if step == 0 {
+            self.var(ctr)
+        } else {
+            format!(
+                "(({} + INT64_C({step})) % {})",
+                self.var(ctr),
+                self.var(*len)
+            )
+        })
     }
 
     /// The bind of a record's address `pa` (`bind_record_ptr`): the store lookup, or — the
@@ -3900,12 +3925,14 @@ impl<'a> FnWriter<'a> {
             let Value::Int(size) = args[1].unspan() else {
                 return None;
             };
-            let Value::Var(index) = args[2].unspan() else {
-                return None;
-            };
             let header = self.held_vector(&args[0])?;
-            let raw = self.counter_index(&args[2], &header).is_some();
-            Some((header, i64::from(*size), self.var(*index), raw))
+            // A variable index, or one the loop proves inside the vector (a wrapped counter).
+            let (index, raw) = match (args[2].unspan(), self.counter_index(&args[2], &header)) {
+                (_, Some(i)) => (i, true),
+                (Value::Var(index), None) => (self.var(*index), false),
+                _ => return None,
+            };
+            Some((header, i64::from(*size), index, raw))
         };
         if let Some((header, size, idx, raw)) = read(value) {
             return Some((header, size, idx, None, raw));
@@ -4941,7 +4968,7 @@ impl<'a> FnWriter<'a> {
         self.hold_invariants(b, ind)?;
         let mints = self.hold_vectors(b, ind)?;
         self.hold_versions(b, ind)?;
-        let in_range_at = self.in_range.len();
+        let in_range_at = (self.in_range.len(), self.in_range_lens.len());
         let grid_at = self.grid_facts.len();
         self.counters_in_range(b);
         self.grid_counter_facts(b);
@@ -4977,7 +5004,8 @@ impl<'a> FnWriter<'a> {
                 .expect("the window this loop opened");
             self.line(ind, &format!("loft_tw_sync(&{w}, &{place});"));
         }
-        self.in_range.truncate(in_range_at);
+        self.in_range.truncate(in_range_at.0);
+        self.in_range_lens.truncate(in_range_at.1);
         self.grid_facts.truncate(grid_at);
         self.headers.pop();
         self.loop_calls.pop();

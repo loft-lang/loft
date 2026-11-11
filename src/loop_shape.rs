@@ -180,3 +180,42 @@ pub fn plain_for_body(lp: &Block) -> Option<&Block> {
         _ => None,
     }
 }
+
+/// The largest step `wrapped_counter` admits: `i + c` stays far from overflow for any
+/// vector length.
+const WRAP_STEP_MAX: i32 = 1 << 16;
+
+/// A counter wrapped at a divisor, `(i + c) % n` or `i % n` with `c` a literal from 0 up:
+/// the counter variable, `c` and the divisor.  Inside `for i in 0..n` (exclusive, from 0) the
+/// value is in `[0, n)` — the loop runs only when `n >= 1`, and loft's `%` takes the dividend's
+/// sign — so `@FR-R-InRange` drops its `??` and `@FR-R-Base`'s counter clause reads the element
+/// at it without a test.  A negative `c` is not one: `(0 - 1) % n` is -1, which a vector read
+/// takes from the end.  The one reading of the shape both phases ask.
+#[must_use]
+pub fn wrapped_counter<'a>(data: &Data, index: &'a Value) -> Option<(u16, i32, &'a Value)> {
+    let Value::Call(rem, operands) = index.unspan() else {
+        return None;
+    };
+    if operands.len() != 2
+        || (*rem as usize) >= data.definitions.len()
+        || !matches!(data.def(*rem).name(), "OpRemInt" | "OpRemIntNullable")
+    {
+        return None;
+    }
+    match operands[0].unspan() {
+        Value::Var(ctr) => Some((*ctr, 0, &operands[1])),
+        Value::Call(add, sum)
+            if sum.len() == 2
+                && (*add as usize) < data.definitions.len()
+                && data.def(*add).name() == "OpAddInt" =>
+        {
+            match (sum[0].unspan(), sum[1].unspan()) {
+                (Value::Var(ctr), Value::Int(step)) if (0..=WRAP_STEP_MAX).contains(step) => {
+                    Some((*ctr, *step, &operands[1]))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
