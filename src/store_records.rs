@@ -289,6 +289,15 @@ impl Ops {
 /// The passes a loop may take before it is marked imprecise.
 const LOOP_PASSES: usize = 30;
 
+/// A tuple local's MEMBER is followed as a variable of its own: its key is the tuple's
+/// variable and the member index packed above every real variable number.  A tuple whose
+/// number or width does not fit is not followed (its members read as unknown, as before).
+const MEMBER_BASE: u16 = 0x8000;
+
+fn member_key(t: u16, i: u16) -> Option<u16> {
+    (t < 0x0800 && i < 16).then_some(MEMBER_BASE | (t << 4) | i)
+}
+
 /// The evaluation steps one function may take before it is marked imprecise.
 const STEP_BUDGET: usize = 4_000_000;
 
@@ -348,7 +357,32 @@ impl Run<'_> {
     }
 
     fn var_name(&self, v: u16) -> String {
+        if v >= MEMBER_BASE {
+            let (t, i) = ((v & !MEMBER_BASE) >> 4, v & 15);
+            return format!("{}.{i}", self.data.def(self.d_nr).variables.name(t));
+        }
         self.data.def(self.d_nr).variables.name(v).to_string()
+    }
+
+    /// The members of tuple local `t` this state follows, with what each names.
+    fn members(st: &State, t: u16) -> Vec<(u16, Pts)> {
+        let Some(lo) = member_key(t, 0) else {
+            return Vec::new();
+        };
+        st.vars
+            .range(lo..=lo | 15)
+            .map(|(k, p)| (*k, p.clone()))
+            .collect()
+    }
+
+    /// The variable a free or a read of `v` names: a variable, or a followed tuple member
+    /// (`OpFreeRef(t.1)`).
+    fn named_var(st: &State, v: &Value) -> Option<u16> {
+        match v.unspan() {
+            Value::Var(x) => Some(*x),
+            Value::TupleGet(t, i) => member_key(*t, *i).filter(|k| st.vars.contains_key(k)),
+            _ => None,
+        }
     }
 
     fn find(&mut self, kind: &'static str, site: u32, detail: String) {
@@ -644,7 +678,11 @@ impl Run<'_> {
             Value::Insert(ops) => self.seq(ops, st),
             Value::Loop(b) => self.run_loop(&b.operators, st),
             Value::Var(x) => {
-                let val = Self::read(&st, *x);
+                let mut val = Self::read(&st, *x);
+                // A tuple carries its members: handed on, copied or returned, they go with it.
+                for (_, p) in Self::members(&st, *x) {
+                    val.pts.extend(p.iter().copied().filter(|q| *q != Pt::Null));
+                }
                 Some((st, val))
             }
             Value::Set(x, val) => self.assign(v, *x, val, st),
@@ -719,9 +757,12 @@ impl Run<'_> {
                 let val = Self::read(&st, *w);
                 Some((st, val))
             }
-            Value::TuplePut(_, _, x) => {
+            Value::TuplePut(t, i, x) => {
                 let (mut s, value) = self.eval(x, st)?;
-                Self::hand_on(&mut s, &value);
+                match member_key(*t, *i).filter(|k| s.vars.contains_key(k)) {
+                    Some(k) => self.bind(&mut s, k, &value),
+                    None => Self::hand_on(&mut s, &value),
+                }
                 Some((s, Val::null()))
             }
             Value::Tuple(xs) => {
@@ -731,7 +772,13 @@ impl Run<'_> {
                 }
                 Some((s, Val::null()))
             }
-            Value::TupleGet(..) => Some((st, Val::unknown())),
+            Value::TupleGet(t, i) => match member_key(*t, *i).filter(|k| st.vars.contains_key(k)) {
+                Some(k) => {
+                    let val = Self::read(&st, k);
+                    Some((st, val))
+                }
+                None => Some((st, Val::unknown())),
+            },
             Value::Yield(_) | Value::Iter(..) => {
                 self.imprecise = true;
                 Some((st, Val::unknown()))
@@ -770,6 +817,22 @@ impl Run<'_> {
         use crate::bind_lowering::FirstArm;
         let data = self.data;
         let function = &data.def(self.d_nr).variables;
+        // A tuple literal into a tuple local: each member holds what its element names, and
+        // the tuple's own release of a member (`OpFreeRef(t.i)`) ends it.
+        if let Value::Tuple(xs) = val.unspan()
+            && matches!(function.tp(x).base(), crate::data::Type::Tuple(_))
+            && u16::try_from(xs.len())
+                .ok()
+                .and_then(|n| member_key(x, n.saturating_sub(1)))
+                .is_some()
+        {
+            let (mut s, vals) = self.args(xs, st)?;
+            for (i, value) in vals.iter().enumerate() {
+                let k = member_key(x, i as u16).expect("checked above");
+                self.bind(&mut s, k, value);
+            }
+            return Some((s, Val::null()));
+        }
         if self
             .first_sets
             .contains(&(std::ptr::from_ref(node) as usize))
@@ -1201,10 +1264,11 @@ impl Run<'_> {
                 }
                 return st;
             }
-            if let Some(x) = Self::first_var(args, 0) {
+            if let Some(x) = args.first().and_then(|a| Self::named_var(&st, a)) {
                 // The code generator emits no `OpFreeRef` of a never-free variable
                 // (`Codegen::generate_call`, S34), including one a move made never-free.
                 let dropped = name == "OpFreeRef"
+                    && x < MEMBER_BASE
                     && (self.data.def(self.d_nr).variables.is_skip_free(x)
                         || self.moved_away.contains(&x));
                 if !dropped {
@@ -1370,7 +1434,12 @@ impl Run<'_> {
                 let host = vals.into_iter().next().unwrap_or_else(Val::unknown);
                 return Some(self.place(node, &host, s));
             }
-            let val = if def.name().starts_with("Op") {
+            let val = if def.name() == "OpNullRefSentinel" {
+                // The null reference: no store.  Read as an operator answering into its
+                // (absent) first argument it was unknown, and every `-> S?` callee whose null
+                // arm spells it answered Unknown instead of Fresh.
+                Val::null()
+            } else if def.name().starts_with("Op") {
                 vals.into_iter().next().unwrap_or_else(Val::unknown)
             } else {
                 Val::unknown()
