@@ -14,7 +14,7 @@
 //! (control flow).
 
 use super::State;
-use crate::bind_lowering::FirstArm;
+use crate::bind_lowering::{DisplacedFree, FirstArm, ReArm, ReBind};
 use crate::data::{Context, Data, Deps, I32, IntegerSpec, Type, Value};
 use crate::data_store::ValueType;
 use crate::database::Stores;
@@ -2578,9 +2578,11 @@ impl State {
             // `scan_set` no longer elides keyed `Set(v, Null)`.  Without this
             // arm it would fall to `set_var` → `gen_put_var` → panic (no keyed
             // OpPut* arm).
-            if crate::parser::vectors::owns_keyed_store(stack.function.tp(v))
-                && *value == Value::Null
-            {
+            // The lowering and the facts it is decided on: `bind_lowering::re_bind`, the one
+            // home both this emission and the store records read.
+            let rb =
+                crate::bind_lowering::re_bind(stack.data, stack.def_nr, &stack.function, v, value);
+            if rb.arm == ReArm::KeyedNull {
                 note_bind("B0");
                 self.gen_keyed_null(stack, v, false);
                 return;
@@ -2596,266 +2598,19 @@ impl State {
                 stack.add_op("OpClearText", self);
                 self.code_add(var_pos);
             }
-            // Free the old store before reassigning an owned Reference.
-            // Only safe when the variable truly owns its store (dep empty).
-            // The dep was cleared on first assignment only when codegen will
-            // deep-copy (gen_set_first_ref_call_copy). O-B2 adopted stores
-            // keep their dep, so this won't fire for them.
-            // @P377-CORRUPTION: skip when this is an S1-substituted call
-            // (`Set(v, Call(fn, [.., Var(v), ..]))` — the inner Call's
-            // hidden-buffer arg has been substituted to be v itself by
-            // `nrvo_collapse_tail_set`).  In that shape, the Call writes
-            // its result INTO v's existing store, so freeing v's old
-            // content here destroys what the Call is about to write into.
-            // Detection (#360): an arg of the RHS Call is `Var(v)` AT A
-            // HIDDEN parameter position — only the hidden buffer arg is
-            // what `nrvo_collapse_tail_set` substitutes.  A VISIBLE
-            // `Var(v)` argument (`s = grow(s)` passing s as plain data) is
-            // NOT the S1 shape: classifying it as S1 skipped both the
-            // pre-Set free and the deep-copy, so `s` adopted the call-site
-            // buffer store and the next iteration's callee `OpDatabase`
-            // wiped it while `x` still pointed there — every later
-            // iteration read null.  Pairs with the evaluate-call-first
-            // re-init order in the deep-copy emission below (the interp
-            // half of @P290).  Bails for every other shape
-            // (struct-literal RHS, non-S1 calls, non-tail patterns) —
-            // those keep the load-bearing pre-Set FreeRef intact, so
-            // `tests/scripts/130-gridmesh-crystal-equiv.loft` and the
-            // broader moros_* suite stay green.
-            let s1_substituted = if let Value::Call(fn_nr, args) = value.unspan() {
-                let attrs = stack.data.def(*fn_nr).attributes();
-                args.iter().enumerate().any(|(i, a)| {
-                    matches!(a.unspan(), Value::Var(av) if *av == v)
-                        && attrs.get(i).is_some_and(|at| at.hidden)
-                })
-            } else {
-                false
-            };
-            // @PLAN51 Cluster II/III — also skip the pre-Set OpFreeRef
-            // when `v` is a hidden-buffer parameter AND the call IS S1-
-            // substituted (the call's args contain `v` itself).  In that
-            // case the callee's OpDatabase routes through
-            // `state/io.rs::database` which does `clear(cv); claim(cv,
-            // size)` — an in-place reuse of the caller's buffer store.
-            // No leak, no corruption: store_nr is preserved.
-            //
-            // When the call is NOT S1-substituted (probes 04 + 28: the
-            // call's hidden buf is a fresh `__ref_N` distinct from `v`),
-            // the in-place-reuse assumption breaks — `v`'s current store
-            // (e.g. from a preceding struct-literal init) becomes
-            // orphan when the reassignment writes the deep-copied
-            // result.  We must fall through to the reassignment path so
-            // the pre-Set free runs on `v`.  `s1_substituted` is the
-            // already-computed check we need.
-            let is_hidden_buf_arg = s1_substituted && stack.function.is_argument(v) && {
-                let attrs = &stack.data.def(stack.def_nr).attributes();
-                attrs
-                    .iter()
-                    .any(|a| a.hidden && stack.function.var(&a.name) == v)
-            };
-            // Enforces @FR-O-Detach — this is the site that gets the order right, and the
-            // one the other three are measured against: the free is DEFERRED past the
-            // assignment when the RHS reads `v`, rather than the slot being prepared first.
-            //
-            // #330 — ONE recursive "does the RHS read v?" predicate decides
-            // the free strategy (shared with scopes' #316 transition logic).
-            // The old top-level-arg S1 scan missed struct-literal field
-            // initialisers (`x = S { v: x.v + 1 }`) and the bare self-assign
-            // (`x = x`): the pre-Set free released the store, the literal's
-            // OpDatabase reused the slot, and the RHS read the recycled
-            // record — silent null/corruption on both backends.
-            //
-            // When the RHS reads v, the old DbRef is STASHED on the eval
-            // stack before anything runs and freed AFTER the assignment via
-            // OpFreeRefIfDistinct — which also degrades to a no-op for the
-            // S1 in-place shapes (the new value IS the old store).
-            let rhs_reads_v = value.reads_var(v);
-            // @FR-O-Detach — may the value being assigned name `v`'s OWN store, so that
-            // re-initialising that store IN PLACE would wipe the record the copy reads from?
-            //
-            // Three facts were tried here and two of them are wrong in opposite directions;
-            // the measurements are in `formal/ownership-history.md` D-own-41, and the short form is:
-            //
-            // - `value.reads_var(v)` is SYNTACTIC and answers NO for the defect, because a `??`
-            //   HOISTS the read of `v` into a temporary in a PRIOR statement — the lowering
-            //   `(O-Detach)` itself prescribes — so the assignment mentions `v` nowhere.  It also
-            //   answers YES for `s = grow(s)`, which needs the in-place destination and leaks one
-            //   store per loop pass without it.
-            // - `Def::returns_borrowed_view` (the return's dep names a visible param) is true for
-            //   a callee that MINTS its record and carries a dep through a `text` field, so it
-            //   forces freshness on the same leaking shape.
-            //
-            // The fact that separates them is the ORACLE's borrow BASE: a `Borrowed`/`Join` whose
-            // base may hold `v`'s store.  The `??` hoist temp carries a dep naming `v` —
-            // `__lift_1` reads `["c", "__ref_p2_1"]` — because the hoist moved the READ and not
-            // the VALUE.  A view of some OTHER binding has a base whose deps do not name `v`
-            // (measured: `w`, `d`, `target` in `1184-a-view-assigned-back-onto-its-own-source`,
-            // all with empty dep lists), and that population needs the in-place destination
-            // precisely because it is assigning a view back onto its own source.
-            let rhs_base = match crate::use_analysis::ownership_of(stack.data, stack.def_nr, value)
-            {
-                crate::use_analysis::Own::Borrowed { base }
-                | crate::use_analysis::Own::Join { base } => Some(base),
-                _ => None,
-            };
-            // A base of `u16::MAX` names no variable — a borrow of one of several arguments
-            // (loft#1550) — so it may be `v` exactly when the value reads `v`.
-            let rhs_may_alias_v = match rhs_base {
-                Some(u16::MAX) => rhs_reads_v,
-                Some(base) => base == v || stack.function.tp(base).depend().contains(&v),
-                None => false,
-            };
-            // loft#615 — an OWNED heap variable that is re-assigned must free the
-            // store it is dropping, and `Vector` was missing from this list while
-            // `Reference` / `Enum` had it.  A `??` materialises its subject into a
-            // function-scope owner (`__ncc_N`, see
-            // `parser/operators.rs::handle_null_coalesce`); re-assigning it once per
-            // loop iteration overwrote the previous store with nothing freeing it, so
-            // `for … { ns = list_dir(d) ?? [] }` leaked exactly (iterations - 1)
-            // stores.  Empty deps is loft's owned-vs-borrowed convention, so a view
-            // (`vv[i]`, a `??` result naming its owner) still takes no free here.
-            // loft#723 — empty deps is only a PROXY for ownership, and it reads
-            // "owned" for a borrow whose dep list was never populated.  A `??`
-            // subject of Reference type is exactly that: the parser materialises
-            // it into `__ncc_N` and marks it `skip_free` — the carried fact that
-            // says its store belongs to someone else — while its type keeps empty
-            // deps.  `skip_free`'s whole contract is "never emit `OpFreeRef` for
-            // this var", so it must veto the proxy here rather than only at the
-            // scope-exit sweep that `get_free_vars` runs.
-            //
-            // Consulting it only there left the unconditional pre-Set free below
-            // reachable, and in a LOOP that free lands on the NEXT iteration's
-            // store: `for … { e = f().items[0] ?? P {} }` freed the subject at the
-            // body exit, `f()` reallocated the same slot, and the pre-Set free then
-            // released that live store before the element read — silent stale bytes
-            // without `LOFT_POISON`, SIGSEGV with it.  The @PLN118 sentinel reset
-            // cannot cover it: that reset hangs off a block-exit free, which a
-            // `skip_free` var by definition does not have.
-            //
-            // An OWNED Vector `??` subject is unaffected — the parser marks that one
-            // `inline_ref`, not `skip_free`, precisely so it keeps the loft#615 free.
-            //
-            // The five KEYED kinds are here for the same reason `Vector` is, and were missing:
-            // a keyed local's handle is the same store-backed slot, so `c = null` (which lowers
-            // to `OpNullRefSentinel`, NOT to the @P302 in-place clear above) displaced its store
-            // with nothing naming it — one orphan per evaluation on BOTH backends, values right
-            // throughout.  Read through `base()`, because the shape that reaches this is the
-            // NULLABLE one: a dense keyed local cannot be assigned the sentinel at all.
-            //
-            // `Vector` is read through `base()` for the same reason, and once did not be:
-            // the bare spelling carried the claim that a nullable vector *"already releases
-            // through its own path"*, so widening it *"would free twice"*.  Re-measured, that
-            // is false — `x: vector<τ>? = null; for i in 0..N { x = m(i) }` over a fn-ref held
-            // one store per iteration on BOTH backends, and the peak grew 1:1 with N while the
-            // dense twin beside it stayed flat.  What makes the peel safe is `nullable_local`
-            // below: an `Optional` destination routes to the runtime-GUARDED post-free, which
-            // `free_displaced` no-ops on a same-store, free-protected or stack-record ref —
-            // so the double free the bare spelling was avoiding cannot be reached from here.
-            // Enforces @FR-O-Proxy, and is a SECOND home for the question
-            // `Scopes::owns_freeable_store` already answers — *may this function free the
-            // store this binding names?*  The last three conjuncts are that predicate
-            // restated: `depend().is_empty() && !is_skip_free(v)` verbatim, and
-            // `!is_hidden_buf_arg` where it spells the argument carve-out
-            // `(!is_argument(v) || is_promoted_ret_buffer(..))`.  Two spellings of one rule
-            // is what lets them disagree, and they do: the shape test in front of them does
-            // not peel `Optional`, so a NULLABLE heap-record local (`c: S?` is
-            // `Optional(Reference(S))`) matches no arm and skips this whole free path —
-            // pre-free, stash and post-free alike — while its dense twin gets all three.
-            // That is `formal/ownership.md` D-own-16's open half, and folding this onto
-            // `owns_freeable_store` is where the peel belongs, so it lands once rather than
-            // at whichever site a leak was noticed
-            // (doc/claude/plans/own16-displaced-store-free/, step 2).
-            //
-            // ⚠ The peel is NOT sound on its own, which is why this comment is not a TODO to
-            // widen the `matches!`: the empty dep list the rule above calls a PROXY reads
-            // `OWNS` for a local a lambda has CAPTURED, and freeing there is a use-after-free
-            // against the closure's capture-time DbRef.  The licence has to come from a
-            // per-run witness.
-            // @FR-O-Proxy asks free — the pre-Set free of the store `v` is displacing.  The
-            // fact-reading half is `Function::owns_displaced_store`, the ONE spelling both
-            // backends read (@FR-O-NoDiverge; its native twin is `generation/dispatch.rs`'s
-            // `owned_ref_reassign`).  What this side adds is the interpreter's own: the hidden
-            // buffer ARGUMENT is excluded, because the caller owns that store.
-            // `@FR-O-Buffer` — a promoted return buffer may hold the store the CALLER handed,
-            // which no free below may release: every one of them is guarded by the entry
-            // witness the scope pass minted (native compares `_rb_w_<name>` at its rebind).
-            let entry_w = stack.function.entry_witness(v);
-            // The hidden buffer argument is excluded only where no entry witness can tell the
-            // caller's store from one this frame minted.  With one, the buffer is freed like any
-            // owned local, guarded, as native's `owned_ref_reassign` does with `_rb_w_<name>`
-            // (@FR-O-NoDiverge).  Excluding it outright left the store a frame minted for a
-            // null-handed buffer to nobody when a call that took the buffer answered another
-            // store: `none = rec(k - 1, none)` leaked one record per top-level call.
-            // loft#2021 — a return temp bound in a branch written out per arm: its one dep
-            // names the hidden return buffer, which the proxy reads as a borrow, while each
-            // arm's bind copies into the temp (that is what the write-out is for), so the
-            // temp owns what the arm displaces — the sentinel its pre-init put there.
-            let owned_ref = (stack.function.owns_displaced_store(v, value, stack.data)
-                || is_return_temp_owning_its_arms(stack, v))
-                && (!is_hidden_buf_arg || entry_w.is_some());
-            // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
-            // container's backing store (a vector element / nested field), so
-            // the new value can land in the SAME store as v's old value —
-            // consecutive elements of one vector share its backing.  The
-            // unconditional pre-Set `OpFreeRef` below whole-store-frees that
-            // backing, killing the live data: `xs[i].field = V{a: [literal]}`
-            // (field-of-element set built in place) silently freed
-            // `xs[i].field.a`'s store (correct bytes until churn overwrote the
-            // freed slot; SIGSEGV/UAF under the armed build — the native
-            // generator's `if _old.store_nr != new.store_nr` guard already
-            // protects it).  Route it through the runtime-guarded post-free
-            // (`OpFreeRefIfDistinct`) so a same-store reassignment is a no-op.
-            let rhs_is_new_record = matches!(
-                value.unspan(),
-                Value::Call(fn_nr, _) if stack.data.def(*fn_nr).name() == "OpNewRecord"
-            );
-            // A NULLABLE heap local's slot does not always hold an owned heap store: on the
-            // paths where it never took one it holds the null sentinel, and where its record
-            // was stack-allocated it holds a stack-record ref.  The pre-Set free below is
-            // UNCONDITIONAL and whole-store, which is sound only for a local that always
-            // holds a store of its own — a dense `Reference` does, an `Optional` one does
-            // not.  Route it to the runtime-GUARDED post-free instead, which is the same
-            // answer `rhs_is_new_record` above takes for the same reason: `free_displaced`
-            // no-ops on a same-store, free-protected or stack-record displaced ref, where
-            // `OpFreeRef` can only refuse it loudly (`#306`).  @FR-H-Free's `store(r) ≠ 0`
-            // side condition is what separates the two frees; see `Stores::free_displaced`.
-            let nullable_local = matches!(stack.function.tp(v), Type::Optional(_));
-            // loft#1336 / @FR-O-Witness — a local whose OWNER WITNESS releases its stores.
-            // It is never-free, so `owned_ref` above is false and none of the frees below
-            // are emitted for it; but the COPY arms further down must still run, because
-            // @FR-B-Copy does not depend on who frees: a whole-value bind is independent.
-            // Every copy into such a local lands in a FRESH store (the slot is reset before
-            // the allocation), since the local may be holding a VIEW at that moment and an
-            // in-place `OpDatabase` would write the copy into the viewed record.
-            let witnessed = stack.function.owner_witness(v).is_some();
-            // loft#1522's veto (`rebind_keeps_displaced`) takes the displaced FREE away from an
-            // owner that adopted a construction buffer's store — a struct literal built apart
-            // because the local later borrows — and `owned_ref` above is false for it.  A VIEW
-            // can carry the veto too (one path of `e = v[i]?` adopts a work ref) and is no owner:
-            // its slot names the viewed record, which a copy arm would mint over.  It does
-            // not take the COPY away: @FR-B-Copy does not depend on who frees, so the copy arms
-            // below run for it as they do for a witnessed local, and add no free.  Without them
-            // `x = S { … }; x = id(u)` aliased `u`, and the scope-exit free released `u`'s store
-            // while `u` still named it — on the interpreter alone; the C backend copies at every
-            // such bind.  A right-hand side that reads `x` keeps the plain bind: the callee may
-            // answer `x`'s own store, which a copy arm would clear before copying from it.
-            let buffer_kept = !rhs_reads_v
-                && stack.function.rebind_keeps_displaced(v)
-                && stack.function.owns_its_binding(v, value, stack.data);
-            // `@FR-O-Buffer` — the hidden buffer a right-hand-side CALL is handed may come
-            // back as the call's result, and a POOLED buffer (`OpClear` on re-entry, one store
-            // per site per activation) holds the previous call's record — which is what `v`
-            // holds now.  Native frees the displaced store after the call and only when the new
-            // value names another store (`owned_ref_reassign`); the unconditional pre-Set free
-            // here released the pooled buffer under the callee, and the next pass wrote its
-            // record into a freed store (measured: `x = a ?? mk(i)` in a loop,
-            // `a-join-bound-local-owns-what-it-was-handed` jo2, once every exit literal built
-            // into the buffer).  So the buffer is one more WITNESS of the displaced free below:
-            // it keeps its position ahead of the call (the adopt pins read it there) and stops
-            // firing exactly when the store it would release is the buffer's.
-            let buffer_witness = stack
-                .function
-                .displaced_buffer_witness(v, value, stack.data);
+            let ReBind {
+                s1_substituted,
+                rhs_reads_v,
+                rhs_may_alias_v,
+                entry_w,
+                owned_ref,
+                rhs_is_new_record,
+                nullable_local,
+                witnessed,
+                buffer_kept,
+                buffer_witness,
+                ..
+            } = rb;
             let mut stash_old_for_post_free = false;
             if bind_trace_on() {
                 let b2 = if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
@@ -2875,12 +2630,12 @@ impl State {
                     u8::from(buffer_witness.is_some())
                 ));
             }
-            if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
+            if rb.free == DisplacedFree::Stash {
                 let free_pos = stack.var_pos(v);
                 stack.add_op("OpVarRef", self);
                 self.code_add(free_pos);
                 stash_old_for_post_free = true;
-            } else if owned_ref && !s1_substituted {
+            } else if let DisplacedFree::Pre { witness } = rb.free {
                 let free_pos = stack.var_pos(v);
                 stack.add_op("OpVarRef", self);
                 self.code_add(free_pos);
@@ -2904,15 +2659,10 @@ impl State {
                 // (`outs[2].inner`) names its root rather than the call just above it.  A
                 // VARIABLE is also free to push twice, which is what lets the witness be read
                 // here without re-evaluating anything.
-                let witness = if crate::keys::displaced_witness_enabled() {
-                    crate::use_analysis::projection_container_var(stack.data, value)
-                } else {
-                    None
-                }
-                // A projection and a call are different right-hand sides, so the container
-                // witness and the buffer witness never both apply; whichever the RHS is
-                // supplies the one witness beside the entry's.
-                .or(buffer_witness);
+                // `witness` is decided in `bind_lowering::re_bind`: the projection's container
+                // (`projection_container_var`, under `displaced_witness_enabled`) or else the
+                // hidden buffer the call is handed (`@FR-O-Buffer`) — a projection and a call
+                // are different right-hand sides, so the two never both apply.
                 match (witness, entry_w) {
                     (Some(container), Some(entry)) => {
                         self.push_var_ref(stack, container);
@@ -2938,29 +2688,19 @@ impl State {
             // arm (the source-free then frees it) and materialises the borrow arm (the
             // source-free hits the copy; the borrowed arg is intact). A static gate
             // cannot — the source-free is load-bearing for the owned branch.
-            if (owned_ref || buffer_kept)
-                && !s1_substituted
-                && !stash_old_for_post_free
-                // The runtime adopt-vs-copy guard is for a FRESH runtime-Join value
-                // — a call return (`__lift = pick(t,i)`) or an ncc/`??` reassign
-                // (`r = v[i] ?? x`, #495/test 85): `OpBindOrCopy` adopts the owned
-                // arm and materialises the borrow arm.  A plain `Value::Var` RHS is
-                // a REUSED named local (`md = sb`); loft value semantics require
-                // COPYING it — adopting would move `sb`'s store into `md`, then
-                // `md`'s owned `OpFreeRef` would kill `sb` (#496 interp clobber:
-                // `md = sa; if c { md = sb }`).  The `Var` case falls through to the
-                // #306 whole-struct copy below.  (Native's join-own in
-                // `generation/dispatch.rs` never reaches a bare-Var RHS either.)
-                && !matches!(value.unspan(), Value::Var(_))
-                && crate::keys::join_own_enabled()
-                // @PLN157 § V-g — an elided bind keeps the view; its minted arm is
-                // released by identity at scope exit, so nothing is materialised here.
-                && !stack.function.is_view_elided(v)
-                && let crate::use_analysis::Own::Join { base } =
-                    crate::use_analysis::ownership_of(stack.data, stack.def_nr, value)
-                && base != u16::MAX
-                && let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
-            {
+            // The runtime adopt-vs-copy guard is for a FRESH runtime-Join value
+            // — a call return (`__lift = pick(t,i)`) or an ncc/`??` reassign
+            // (`r = v[i] ?? x`, #495/test 85): `OpBindOrCopy` adopts the owned
+            // arm and materialises the borrow arm.  A plain `Value::Var` RHS is
+            // a REUSED named local (`md = sb`); loft value semantics require
+            // COPYING it — adopting would move `sb`'s store into `md`, then
+            // `md`'s owned `OpFreeRef` would kill `sb` (#496 interp clobber:
+            // `md = sa; if c { md = sb }`).  The `Var` case falls through to the
+            // #306 whole-struct copy below.  (Native's join-own in
+            // `generation/dispatch.rs` never reaches a bare-Var RHS either.)
+            // @PLN157 § V-g — an elided bind keeps the view; its minted arm is
+            // released by identity at scope exit, so nothing is materialised here.
+            if let ReArm::Join { d_nr, base } = rb.arm {
                 let tp_nr = stack.data.def(d_nr).known_type();
                 note_bind("R1");
                 // The DISPLACED old store is already released — or, for a `buffer_kept` local,
@@ -3027,17 +2767,7 @@ impl State {
                 // call may still read.  No @P290 bracket: the op never frees its source.  A
                 // witnessed local keeps its own route, which its `__own_` witness is
                 // maintained against.
-                if owned_ref
-                    && !witnessed
-                    && !stack.function.is_argument(v)
-                    && !stack.function.is_view_elided(v)
-                    && let Some(rec) = crate::use_analysis::opaque_callref_bind(
-                        stack.data,
-                        stack.def_nr,
-                        stack.function.tp(v),
-                        value,
-                    )
-                {
+                if let ReArm::OpaqueCallRef { rec } = rb.arm {
                     let tp_nr = stack.data.def(rec).known_type();
                     note_bind("R2a");
                     let ref_size = size_of::<crate::keys::DbRef>() as u16;
@@ -3066,98 +2796,67 @@ impl State {
                     );
                     return;
                 }
-                if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
-                    stack.function.tp(v).base().clone()
-                    // loft#2021 — the PROMOTED return buffer is the one argument this frame
-                    // binds a value into: a local renamed onto the hidden buffer (`r = if c {
-                    // id(g(3)) } else { null }; r`, written out per arm).  Its bind from a
-                    // callee that may hand back a caller's store copies like a local's does;
-                    // adopted, it handed up the lifted argument the frame frees at exit.
-                    // Not where the call is handed that buffer itself (`r = f(…, r)`): the
-                    // callee delivers INTO it and the result is its own store, which native's
-                    // same-store passthrough adopts — copying it here minted a store per call.
-                    && (!stack.function.is_argument(v)
-                        || (is_promoted_return_buffer(stack, v) && !rhs_reads_v))
-                    && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
-                    && let Some(fn_nr) =
-                        crate::use_analysis::callee_of(stack.data, stack.def_nr, value)
-                    // The shared gate on the carried ownership facts — a METHOD
-                    // (`t_`) takes a caller-allocated buffer exactly like a global
-                    // (`n_`) does, and reading the fact for only one of them is what
-                    // made a method's return adopt the buffer and then free it
-                    // (loft#810).  See `Def::is_loft_defined`.
-                    && stack.data.def(fn_nr).is_loft_defined()
-                    && (if crate::keys::reassign_copy_enabled() {
-                        // The carried A.3 fact (see the comment above).
-                        !stack.data.def(fn_nr).return_adopts_fresh_store()
-                    } else {
-                        // Preserved raw path (LOFT_NO_REASSIGN_COPY) — the old
-                        // visible-Reference/Enum proxy, kept ONLY so the fuzz
-                        // gate's crash control can still reproduce the class.
-                        stack.data.def(fn_nr).attributes().iter().any(|a| {
-                            !a.hidden
-                                && matches!(
-                                    a.typedef.base(),
-                                    Type::Reference(_, _) | Type::Enum(_, true, _)
-                                )
-                        })
-                    })
-                    // #360 follow-up: when the RHS call READS v AND the
-                    // callee returns a BORROWED view (its returned dep names
-                    // a VISIBLE param, e.g. `fn id_g(g: G) -> G { return g }`),
-                    // the call's result may BE v's own store — any dst
-                    // re-init/copy here would wipe the source in place
-                    // (tests/scripts/291's hash round-trip).  Keep the plain
-                    // pointer pass-through for that composition: PutRef binds
-                    // the returned DbRef and the stash's FreeRefIfDistinct
-                    // no-ops on the same store, exactly the (correct)
-                    // behaviour the over-broad S1 match used to produce.
-                    // @PLN85 D-own-1 — the canonical borrowed-view fact (its
-                    // returned dep names a VISIBLE param), not the inline visible-dep
-                    // scan; identical verdict, one fewer per-site re-derivation
-                    // (siblings at 1845/2582 already read it).
-                    //
-                    // The question is whether the CALL reads `v` — `rhs_reads_v` — and not
-                    // whether the post-free is routed through the guarded form.  That
-                    // routing (`stash_old_for_post_free`) is also taken for a NULLABLE
-                    // local and for an `OpNewRecord` right-hand side, neither of which
-                    // means the result may be `v`'s own store; asked through it, every
-                    // nullable record local reassigned from a borrowed-view call kept the
-                    // raw pointer, and a `-> S?` result chosen by an `if` (its lifted arm
-                    // temp is declared nullable and assigned in the arm) aliased the
-                    // callee's argument field on this backend alone — `--native` copies
-                    // through its own arm (loft#1346, @FR-O-NoDiverge).
-                    //
-                    // loft#1550 — except a view of one of SEVERAL arguments, which the plain
-                    // pointer pass-through would keep as an alias of whichever argument the
-                    // callee answered (`cv = either(cv, h, c)` then wrote into `h`).  It takes
-                    // the copy through a FRESH store, which `rhs_may_alias_v` arms below, so
-                    // the answer being `v`'s own store is copied before the old one is freed.
-                    //
-                    // `@FR-O-Witness` — except a WITNESSED local: its witness adopts what this
-                    // bind gives it as a store of its own (`scopes::witness_set_kind`: a call
-                    // that does not adopt a fresh store is COPIED by both backends), so the
-                    // pass-through handed the witness the callee's argument — a view — and the
-                    // witness released it.  It copies, as the C backend does.
-                    && !(rhs_reads_v
-                        && !witnessed
-                        && stack.data.def(fn_nr).returns_borrowed_view()
-                        && !(rhs_base == Some(u16::MAX) && stash_old_for_post_free))
-                    // @PLN157 § V-g — the copy is elided: the plain `PutRef` below binds
-                    // the view, and `scopes` registered the identity free for the
-                    // minted arm.
-                    && !stack.function.is_view_elided(v)
-                    // @PLN164 B1 — the local's one bind after its `if` pre-init is its
-                    // first: the slot holds the sentinel, and the plain `PutRef` below
-                    // adopts the store the callee minted, as the first-bind arm does.
-                    && !(stack.function.is_deferred_first_bind(v)
-                        && crate::use_analysis::adopts_minted_at_bind(
-                            stack.data,
-                            &stack.function,
-                            v,
-                            value,
-                        ))
-                {
+                // loft#2021 — the PROMOTED return buffer is the one argument this frame
+                // binds a value into: a local renamed onto the hidden buffer (`r = if c {
+                // id(g(3)) } else { null }; r`, written out per arm).  Its bind from a
+                // callee that may hand back a caller's store copies like a local's does;
+                // adopted, it handed up the lifted argument the frame frees at exit.
+                // Not where the call is handed that buffer itself (`r = f(…, r)`): the
+                // callee delivers INTO it and the result is its own store, which native's
+                // same-store passthrough adopts — copying it here minted a store per call.
+                // The shared gate on the carried ownership facts — a METHOD
+                // (`t_`) takes a caller-allocated buffer exactly like a global
+                // (`n_`) does, and reading the fact for only one of them is what
+                // made a method's return adopt the buffer and then free it
+                // (loft#810).  See `Def::is_loft_defined`.
+                // The carried A.3 fact (see the comment above).
+                // Preserved raw path (LOFT_NO_REASSIGN_COPY) — the old
+                // visible-Reference/Enum proxy, kept ONLY so the fuzz
+                // gate's crash control can still reproduce the class.
+                // #360 follow-up: when the RHS call READS v AND the
+                // callee returns a BORROWED view (its returned dep names
+                // a VISIBLE param, e.g. `fn id_g(g: G) -> G { return g }`),
+                // the call's result may BE v's own store — any dst
+                // re-init/copy here would wipe the source in place
+                // (tests/scripts/291's hash round-trip).  Keep the plain
+                // pointer pass-through for that composition: PutRef binds
+                // the returned DbRef and the stash's FreeRefIfDistinct
+                // no-ops on the same store, exactly the (correct)
+                // behaviour the over-broad S1 match used to produce.
+                // @PLN85 D-own-1 — the canonical borrowed-view fact (its
+                // returned dep names a VISIBLE param), not the inline visible-dep
+                // scan; identical verdict, one fewer per-site re-derivation
+                // (siblings at 1845/2582 already read it).
+                //
+                // The question is whether the CALL reads `v` — `rhs_reads_v` — and not
+                // whether the post-free is routed through the guarded form.  That
+                // routing (`stash_old_for_post_free`) is also taken for a NULLABLE
+                // local and for an `OpNewRecord` right-hand side, neither of which
+                // means the result may be `v`'s own store; asked through it, every
+                // nullable record local reassigned from a borrowed-view call kept the
+                // raw pointer, and a `-> S?` result chosen by an `if` (its lifted arm
+                // temp is declared nullable and assigned in the arm) aliased the
+                // callee's argument field on this backend alone — `--native` copies
+                // through its own arm (loft#1346, @FR-O-NoDiverge).
+                //
+                // loft#1550 — except a view of one of SEVERAL arguments, which the plain
+                // pointer pass-through would keep as an alias of whichever argument the
+                // callee answered (`cv = either(cv, h, c)` then wrote into `h`).  It takes
+                // the copy through a FRESH store, which `rhs_may_alias_v` arms below, so
+                // the answer being `v`'s own store is copied before the old one is freed.
+                //
+                // `@FR-O-Witness` — except a WITNESSED local: its witness adopts what this
+                // bind gives it as a store of its own (`scopes::witness_set_kind`: a call
+                // that does not adopt a fresh store is COPIED by both backends), so the
+                // pass-through handed the witness the callee's argument — a view — and the
+                // witness released it.  It copies, as the C backend does.
+                // @PLN157 § V-g — the copy is elided: the plain `PutRef` below binds
+                // the view, and `scopes` registered the identity free for the
+                // minted arm.
+                // @PLN164 B1 — the local's one bind after its `if` pre-init is its
+                // first: the slot holds the sentinel, and the plain `PutRef` below
+                // adopts the store the callee minted, as the first-bind arm does.
+                if let ReArm::CallCopy { d_nr, fn_nr: _ } = rb.arm {
                     let tp_nr = stack.data.def(d_nr).known_type();
                     // Plan-04 Phase B.3.f: allocate fresh store directly
                     // at v's slot.  Old pattern emitted
@@ -3424,12 +3123,7 @@ impl State {
                 // record shape as a struct (`Type::heap_def_nr` is the one home for that
                 // question), and the bare `Reference` spelling left its rebind on the same
                 // alias its first bind took.
-                if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
-                    && let Value::Var(src) = value.unspan()
-                    && *src != v
-                    && let Some(src_d) = stack.function.record_copy_source(stack.data, v, *src)
-                    && stack.data.copies_as(d_nr, src_d)
-                {
+                if let ReArm::VarCopy { src, d_nr } = rb.arm {
                     let tp_nr = stack.data.def(d_nr).known_type();
                     let ref_size = size_of::<crate::keys::DbRef>() as u16;
                     let slot_end = stack.function.stack(v).saturating_add(ref_size);
@@ -3444,8 +3138,8 @@ impl State {
                     self.code_add(slot_offset);
                     // The source is tested whatever it is typed, as the first bind tests it
                     // (`@FR-N-Store`: a dense slot can hold the null it was handed).
-                    self.generate(&Value::Var(*src), stack, false);
-                    self.push_copy_witness(stack, *src);
+                    self.generate(&Value::Var(src), stack, false);
+                    self.push_copy_witness(stack, src);
                     note_bind("R2c");
                     stack.add_op("OpBindOrCopy", self);
                     self.code_add(stack.var_pos(v));
@@ -3491,15 +3185,8 @@ impl State {
                 // or `?? continue` discharge frees it there — reads nothing of `v` on the path
                 // that binds, so it materialises too, evaluated first (loft#2447).  Read as a
                 // read of `v`, the view stayed an alias of the record the next rebind released.
-                let reads_v_on_exit_only =
-                    rhs_reads_v && stash_old_for_post_free && !reads_var_unless_exiting(value, v);
-                if owned_ref
-                    // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
-                    && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
-                    && (!rhs_reads_v || reads_v_on_exit_only)
-                    && !rhs_is_new_record
-                    && crate::use_analysis::projection_container_var(stack.data, value).is_some()
-                {
+                // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
+                if let ReArm::ElementCopy { d_nr } = rb.arm {
                     note_bind("R2d");
                     self.gen_set_first_ref_elem_copy(stack, v, value, d_nr, value_can_exit(value));
                     if stash_old_for_post_free {
