@@ -245,6 +245,12 @@ The goal is **MISS = 0 and STATIC = 0** over the suite under every switch.  A ST
 either a false finding or a fault this run did not reach: run the cell with the switch that
 reaches it before calling it false.
 
+Each STATIC finding resolved is recorded as **gap** (a records error, cured in
+`src/store_records.rs`) or **real** (a compiler defect the checker finds first, cured in the
+three places below), in its commit and as a tally per batch.  Gaps per STATIC is
+the checker's false-finding rate; reals per STATIC is how often it finds a defect first.  Both
+are meant to improve over time.
+
 ## Every new defect updates the records and the checker
 
 **Owner's rule.**  Every new store-lifetime defect — a leak, a double free, a use after free
