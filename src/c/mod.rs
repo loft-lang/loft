@@ -252,6 +252,10 @@ pub(crate) struct Cx<'a> {
     pub(crate) version_leaves: std::cell::RefCell<
         std::collections::HashMap<u32, Option<std::rc::Rc<crate::opt::version::Leaf>>>,
     >,
+    /// `@FR-R-Version`'s callee clause: the part of a caller's plan each called leaf's own fast
+    /// twin is written from (its decided `if`s, accesses and plain operators).
+    pub(crate) version_callees:
+        std::cell::RefCell<std::collections::HashMap<u32, std::rc::Rc<crate::opt::version::Leaf>>>,
     pub(crate) version_pres: std::cell::RefCell<std::collections::HashSet<u32>>,
     /// `@FR-R-Transient`'s twins and the structs they use (`body::transient`).
     pub(crate) tr: std::cell::RefCell<body::transient::TrState>,
@@ -438,6 +442,7 @@ impl<'a> Cx<'a> {
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
             version_leaves: std::cell::RefCell::new(std::collections::HashMap::new()),
+            version_callees: std::cell::RefCell::new(std::collections::HashMap::new()),
             version_pres: std::cell::RefCell::new(std::collections::HashSet::new()),
             tr: std::cell::RefCell::new(body::transient::TrState::default()),
             ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),

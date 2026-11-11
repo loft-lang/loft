@@ -70,8 +70,57 @@ impl Cx<'_> {
             return l.clone();
         }
         let l = self.compute_leaf(d).map(Rc::new);
+        let l = l.filter(|l| self.version_register_callees(d, l));
         self.version_leaves.borrow_mut().insert(d, l.clone());
         l
+    }
+
+    /// The plan a fast twin of `d` is written from: `d`'s own, or — `d` a leaf another leaf
+    /// calls — the part of that caller's plan that lies in `d`.
+    pub(crate) fn version_fast_plan(&self, d: u32) -> Option<Rc<Leaf>> {
+        self.version_leaf(d)
+            .or_else(|| self.version_callees.borrow().get(&d).cloned())
+    }
+
+    /// Register the part of `caller`'s plan each of its callees' fast twins is written from.
+    /// `false` (the caller is not versioned) where a callee is a leaf of its own, whose own
+    /// fast twin would be another body, or where another caller planned it differently.
+    fn version_register_callees(&self, caller: u32, leaf: &Leaf) -> bool {
+        for &c in &leaf.callees {
+            if self.version_leaf(c).is_some() {
+                return self.version_callee_decline(caller, c, "is a leaf of its own");
+            }
+            let part = Rc::new(leaf_part(leaf, self.data.def(c).code()));
+            let mut reg = self.version_callees.borrow_mut();
+            match reg.get(&c) {
+                Some(p)
+                    if p.decided != part.decided || p.raw != part.raw || p.plain != part.plain =>
+                {
+                    drop(reg);
+                    return self.version_callee_decline(
+                        caller,
+                        c,
+                        "is planned otherwise by another caller",
+                    );
+                }
+                Some(_) => {}
+                None => {
+                    reg.insert(c, part);
+                }
+            }
+        }
+        true
+    }
+
+    fn version_callee_decline(&self, caller: u32, c: u32, why: &str) -> bool {
+        if crate::opt::version::trace() {
+            eprintln!(
+                "[version] {}: no leaf: its callee {} {why}",
+                self.data.def(caller).original_name(),
+                self.data.def(c).original_name()
+            );
+        }
+        false
     }
 
     fn compute_leaf(&self, d: u32) -> Option<Leaf> {
@@ -684,6 +733,43 @@ impl FnWriter<'_> {
             );
         }
         None
+    }
+}
+
+/// The part of `leaf`'s plan that lies in `code` — a callee's body: the decided `if`s, proven
+/// accesses and plain operators keyed by an address of one of its nodes.
+fn leaf_part(leaf: &Leaf, code: &Value) -> Leaf {
+    let mut nodes = HashSet::new();
+    code.walk(&mut |n| match n {
+        Value::If(c, _, _) => {
+            nodes.insert(std::ptr::from_ref::<Value>(c) as usize);
+        }
+        Value::Call(_, a) => {
+            nodes.insert(a.as_ptr() as usize);
+        }
+        _ => {}
+    });
+    Leaf {
+        decided: leaf
+            .decided
+            .iter()
+            .filter(|(k, _)| nodes.contains(*k))
+            .map(|(k, v)| (*k, *v))
+            .collect(),
+        raw: leaf
+            .raw
+            .iter()
+            .filter(|k| nodes.contains(*k))
+            .copied()
+            .collect(),
+        plain: leaf
+            .plain
+            .iter()
+            .filter(|k| nodes.contains(*k))
+            .copied()
+            .collect(),
+        tests: Vec::new(),
+        callees: Vec::new(),
     }
 }
 

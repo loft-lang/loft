@@ -1004,7 +1004,7 @@ impl<'a> FnWriter<'a> {
         if on {
             let leaf = self
                 .cx
-                .version_leaf(self.d)
+                .version_fast_plan(self.d)
                 .ok_or("a fast twin of a function that is no leaf")?;
             self.plain_chains.push((leaf.plain.clone(), None));
             self.vf = Some(leaf);
@@ -7898,7 +7898,16 @@ impl<'a> FnWriter<'a> {
         } else {
             name
         };
+        // `@FR-R-Version`'s callee clause: inside a fast twin, a leaf it walked calls that
+        // leaf's own fast twin (its decided tests are in this one's precondition).
+        let callee_fast =
+            mask & super::INV_BIT != 0 && self.vf.as_ref().is_some_and(|l| l.callees.contains(&d));
         let call = match &version {
+            _ if callee_fast => {
+                cx.request_twin(d, mask | super::VF_BIT);
+                let fast = super::twin_name(cx.data, d, mask | super::VF_BIT);
+                format!("{fast}({})", xs.join(", "))
+            }
             // `@FR-R-Version`: the fast twin where the flag holds, the twin as written elsewhere.
             Some(flag)
                 if mask & super::INV_BIT != 0 && mask & super::AP_BIT == 0 && fresh.is_none() =>

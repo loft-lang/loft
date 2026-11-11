@@ -1,0 +1,102 @@
+struct HexSet { hs_q0: integer, hs_r0: integer, hs_w: integer, hs_h: integer, hs_cells: vector<boolean>, hs_count: integer }
+struct Heights { hz_q0: integer, hz_r0: integer, hz_w: integer, hz_h: integer, hz_z: vector<float> }
+
+fn hs_index(s: HexSet, q: integer, r: integer) -> integer {
+  dq = q - s.hs_q0;
+  dr = r - s.hs_r0;
+  if dq < 0 || dq >= s.hs_w || dr < 0 || dr >= s.hs_h { return -1; }
+  dr * s.hs_w + dq
+}
+fn hexset_get(s: HexSet, q: integer, r: integer) -> boolean {
+  i = hs_index(s, q, r);
+  if i < 0 { return false; }
+  s.hs_cells[i] ?? false
+}
+fn hexset_set(s: HexSet, q: integer, r: integer, on: boolean) {
+  i = hs_index(s, q, r);
+  if i < 0 { return; }
+  had = s.hs_cells[i] ?? false;
+  s.hs_cells[i] = on;
+  if on && !had { s.hs_count = s.hs_count + 1; }
+  if !on && had { s.hs_count = s.hs_count - 1; }
+}
+fn hz_index(f: Heights, q: integer, r: integer) -> integer {
+  dq = q - f.hz_q0;
+  dr = r - f.hz_r0;
+  if dq < 0 || dr < 0 || dq >= f.hz_w || dr >= f.hz_h { return -1; }
+  dr * f.hz_w + dq
+}
+fn height_get(f: Heights, q: integer, r: integer) -> float {
+  i = hz_index(f, q, r);
+  if i < 0 { return 0.0; }
+  f.hz_z[i] ?? 0.0
+}
+fn height_set(f: Heights, q: integer, r: integer, z: float) {
+  i = hz_index(f, q, r);
+  if i >= 0 { f.hz_z[i] = z; }
+}
+
+fn set_of(q0: integer, r0: integer, w: integer, h: integer) -> HexSet {
+  c: vector<boolean> = [];
+  for k in 0..w * h { c += [k % 3 == 0]; }
+  HexSet { hs_q0: q0, hs_r0: r0, hs_w: w, hs_h: h, hs_cells: c, hs_count: 0 }
+}
+fn heights_of(q0: integer, r0: integer, w: integer, h: integer) -> Heights {
+  z: vector<float> = [];
+  for k in 0..w * h { z += [(k as float) * 0.5]; }
+  Heights { hz_q0: q0, hz_r0: r0, hz_w: w, hz_h: h, hz_z: z }
+}
+
+// The sum of z over the set's on cells in a box (the walk every hex_roof loop is).
+fn walk(s: HexSet, f: Heights, q0: integer, q1: integer, r0: integer, r1: integer) -> float {
+  t = 0.0;
+  for r in r0..r1 { for q in q0..q1 { if hexset_get(s, q, r) { t += height_get(f, q, r); } } }
+  t
+}
+// Every z in a box, on or not.
+fn zsum(f: Heights, q0: integer, q1: integer, r0: integer, r1: integer) -> float {
+  t = 0.0;
+  for r in r0..r1 { for q in q0..q1 { t += height_get(f, q, r); } }
+  t
+}
+// Set every cell of a box to `on` where q + r is even, z = 10 q + r; answer the count, and the
+// z sum after.
+fn paint(s: HexSet, f: Heights, q0: integer, q1: integer, r0: integer, r1: integer) -> float {
+  for r in r0..r1 { for q in q0..q1 { hexset_set(s, q, r, (q + r) % 2 == 0); height_set(f, q, r, (q * 10 + r) as float); } }
+  (s.hs_count as float) * 10000.0 + zsum(f, q0, q1, r0, r1)
+}
+
+fn main() {
+  // A: an 8 x 3 window at (2, 3) over 24 cells; on at k = 0, 3, …, 21 (8 cells), z = 0.5 k:
+  // 0.5 * (0 + 3 + … + 21) = 0.5 * 84 = 42.
+  s = set_of(2, 3, 8, 3);
+  f = heights_of(2, 3, 8, 3);
+  assert(walk(s, f, 2, 10, 3, 6) == 42.0, "A {walk(s, f, 2, 10, 3, 6)}");
+  // B: a box across all four edges: the outside answers false / 0.0, the same 42; every z: 0.5 * 276 = 138.
+  assert(walk(s, f, 1, 12, 2, 7) == 42.0, "B {walk(s, f, 1, 12, 2, 7)}");
+  assert(zsum(f, 1, 12, 2, 7) == 138.0, "B2 {zsum(f, 1, 12, 2, 7)}");
+  // W: one column past the right edge, rows 0 and 1: k 0..15 sum 120 * 0.5 = 60; the
+  // wrapped column (q = 10) is outside: 60.
+  assert(zsum(f, 2, 11, 3, 5) == 60.0, "W {zsum(f, 2, 11, 3, 5)}");
+  // S: the heights' window smaller than the set's (6 wide at the same origin, 18 cells, z 0.5 k
+  // row-major over 6): the set's on cells k = 0, 3, …, 21 at (row, col) (0,0) (0,3) (0,6)
+  // (1,1) (1,4) (1,7) (2,2) (2,5); columns 6 and 7 lie outside the heights (0.0); the others
+  // at 6 r + c: 0, 3, 7, 10, 14, 17 → 0.5 * 51 = 25.5.
+  fs = heights_of(2, 3, 6, 3);
+  assert(walk(s, fs, 2, 10, 3, 6) == 25.5, "S {walk(s, fs, 2, 10, 3, 6)}");
+  // L: the heights' window larger (10 x 4 at (1, 2)): z at 10 (r - 2) + (q - 1) for the 8 on
+  // cells (r, q) = (3,2) (3,5) (3,8) (4,3) (4,6) (4,9) (5,4) (5,7):
+  // 11 + 14 + 17 + 22 + 25 + 28 + 33 + 36 = 186 → 93.
+  fl = heights_of(1, 2, 10, 4);
+  assert(walk(s, fl, 2, 10, 3, 6) == 93.0, "L {walk(s, fl, 2, 10, 3, 6)}");
+  // P: paint the window: q + r even on 12 of 24 cells; the count starts at 0 and counts the
+  // cells turned on (the 8 cells on before with q + r even stay, the rest turn on): count is
+  // the cells on after that were off before.  Hand: on-before (k % 3 == 0) at (r, q):
+  // (3,2) (3,5) (3,8) (4,3) (4,6) (4,9) (5,4) (5,7); q + r even among them: (3,5) (4,6) (5,7)
+  // stay on, so 12 - 3 = 9 turned on, and the 5 others turn off: 9 - 5 = 4.
+  // z sum = sum over q 2..9, r 3..5 of 10 q + r = 3 * 10 * 44 + 8 * 12 = 1416.
+  sp = set_of(2, 3, 8, 3);
+  fp = heights_of(2, 3, 8, 3);
+  assert(paint(sp, fp, 2, 10, 3, 6) == 41416.0, "P {paint(sp, fp, 2, 10, 3, 6)}");
+  println("ok");
+}
