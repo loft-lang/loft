@@ -1143,6 +1143,12 @@ static uint8_t loft_get_dir(loft_str raw, loft_ref v, uint32_t size) {
  * boolean or byte in 1, a text its bytes, a record its fields one after another, a vector its
  * elements — in the File's byte order. */
 
+/* Is the host little-endian?  A written value in the host's order is its stored bytes (the
+ * serialisers' block path, `files.rs`). */
+static inline int loft_host_le(void) {
+    const uint16_t one = 1;
+    return *(const unsigned char *) &one == 1;
+}
 static void loft_put(loft_text *b, uint64_t v, int n, int le) {
     char c[8];
     for (int i = 0; i < n; i++) c[le ? i : n - 1 - i] = (char) (unsigned char) (v >> (8 * i));
