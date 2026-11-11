@@ -1546,8 +1546,18 @@ impl Run<'_> {
     }
 
     fn run_loop(&mut self, body: &[Value], st: State) -> Option<(State, Val)> {
-        let mut head = st;
-        let mut exits: Option<State> = None;
+        // The first pass on its own, from the state before the loop: the null a variable has
+        // before its first bind, and the store it held before the loop, never meet the state
+        // of a later pass at the head (a lazy buffer's mint, a store rebound away, a closure
+        // built per pass).  Its exits — the zero-pass one included — join the others.
+        self.loops.push((None, None));
+        let first = self.seq(body, st);
+        let (brk, cont) = self.loops.pop().unwrap_or_default();
+        let mut exits: Option<State> = brk;
+        let Some(mut head) = join_opt(first.map(|(s, _)| s), cont) else {
+            return exits.map(|s| (s, Val::null()));
+        };
+        Self::normalize(&mut head);
         for pass in 0..LOOP_PASSES {
             self.loops.push((None, None));
             let out = self.seq(body, head.clone());
@@ -1803,7 +1813,12 @@ impl Run<'_> {
                 .copied()
                 .filter(|p| match p {
                     Pt::Param(_) => true,
-                    Pt::Store(k) => info_of(&st, *k).has(LIVE) && !info_of(&st, *k).has(ENDED),
+                    // A store this frame handed on (written back through a `&` parameter,
+                    // into a field) still exists: the slot naming it is re-initialised in place.
+                    Pt::Store(k) => {
+                        let info = info_of(&st, *k);
+                        (info.has(LIVE) || info.has(HANDED)) && !info.has(ENDED)
+                    }
                     _ => false,
                 })
                 .collect();
