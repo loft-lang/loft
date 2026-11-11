@@ -5487,7 +5487,7 @@ impl<'a> FnWriter<'a> {
                 written?;
                 if !matches!(else_arm.unspan(), Value::Null) {
                     self.line(ind, "} else {");
-                    if null_test {
+                    if null_test && !self.int_literal_fallback(cond, else_arm) {
                         self.line(ind + 1, "LOFT_COLD_PATH();");
                     }
                     self.stmt(else_arm, ind + 1)?;
@@ -8697,6 +8697,7 @@ impl<'a> FnWriter<'a> {
             return self.assign(if want { t } else { e }, target, c, ind);
         }
         let null_test = self.null_test(cond);
+        let cond_v = cond;
         // Only the test is evaluated before the `if`; each arm's work — its call temporaries
         // included — is emitted inside that arm's braces, so it runs only when the arm does.
         // `a && b` and `a || b` arrive as such an `if`, which is what keeps the right operand
@@ -8706,12 +8707,45 @@ impl<'a> FnWriter<'a> {
         self.line(ind, &format!("if ({}) {{", bare(&cond)));
         self.assign(t, target, c, ind + 1)?;
         self.line(ind, "} else {");
-        if null_test {
+        if null_test && !self.int_literal_fallback_value(cond_v, e) {
             self.line(ind + 1, "LOFT_COLD_PATH();");
         }
         self.assign(e, target, c, ind + 1)?;
         self.line(ind, "}");
         Ok(())
+    }
+
+    /// An integer's `?? <literal>` — a not-null test of an integer whose else gives a literal —
+    /// stays a plain branch: the compiler makes it a select, which is cheaper than the
+    /// predicted jump `LOFT_COLD_PATH()` keeps (hex_form `boundary_loops` -36 % on clang, -9 %
+    /// on gcc).  A float's discharge keeps the marker: without it bench 11 `par` ran 23–49 %
+    /// slower.  `LOFT_COLD_INT_LITERAL=1` marks these too.
+    fn int_literal_fallback_value(&self, c: &Value, e: &Value) -> bool {
+        if crate::env_once!(std::env::var("LOFT_COLD_INT_LITERAL").is_ok_and(|v| v != "0")) {
+            return false;
+        }
+        matches!(c.unspan(), Value::Call(d, a) if a.len() == 1
+            && matches!(self.cx.data.def(*d).name(), "OpConvBoolFromInt" | "OpConvBoolFromLong"))
+            && matches!(e.unspan(), Value::Int(_) | Value::Long(_))
+    }
+
+    /// [`Self::int_literal_fallback_value`] for a statement `if`: its else assigns the literal.
+    fn int_literal_fallback(&self, c: &Value, else_arm: &Value) -> bool {
+        let one = match else_arm.unspan() {
+            Value::Block(b) => {
+                let ops: Vec<&Value> = b
+                    .operators
+                    .iter()
+                    .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+                    .collect();
+                match ops.as_slice() {
+                    [one] => *one,
+                    _ => return false,
+                }
+            }
+            other => other,
+        };
+        matches!(one.unspan(), Value::Set(_, x) if self.int_literal_fallback_value(c, x))
     }
 
     /// Is `c` a not-null test (`x != null` of a number)?  Its else is the null's path, which
