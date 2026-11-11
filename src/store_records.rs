@@ -1131,6 +1131,14 @@ impl Run<'_> {
         {
             return self.link_write(x, t, val, st);
         }
+        // A whole write through a `&` PARAMETER (`d = OrdDoc.parse(t)`) lands in the caller's
+        // place: the caller holds what it names from here on.
+        if function.is_argument(x) && matches!(function.tp(x).base(), crate::data::Type::RefVar(_))
+        {
+            let (mut s, value) = self.eval(val, st)?;
+            Self::hand_on(&mut s, &value);
+            return Some((s, Val::null()));
+        }
         let rb = match self.rebinds.get(&(std::ptr::from_ref(node) as usize)) {
             Some(rb) => *rb,
             None => crate::bind_lowering::re_bind(data, self.d_nr, function, x, val),
@@ -1763,6 +1771,20 @@ impl Run<'_> {
                 // (absent) first argument it was unknown, and every `-> S?` callee whose null
                 // arm spells it answered Unknown instead of Fresh.
                 Val::null()
+            } else if def.name().starts_with("Op")
+                && def
+                    .attributes
+                    .first()
+                    .is_some_and(|a| matches!(a.typedef, crate::data::Type::Text(_)))
+            {
+                // …unless that argument holds no store to answer into: a parse
+                // (`OpCastVectorFromText(text, tp)`) builds its answer in a store of its own.
+                let site = self.site(node, Origin::Call(d));
+                let k = Self::fresh(&mut s, site);
+                Val {
+                    pts: [Pt::Store(k)].into(),
+                    corr: [k].into(),
+                }
             } else if def.name().starts_with("Op") {
                 vals.into_iter().next().unwrap_or_else(Val::unknown)
             } else {

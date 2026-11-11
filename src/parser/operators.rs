@@ -986,7 +986,15 @@ impl Parser {
             // freeing it took the holder's storage with it and the next read of the same
             // field dereferenced poison (loft#920).
             let borrows = !tp.depend().is_empty();
-            let w = if matches!(operand.unspan(), Value::Var(_)) || borrows {
+            // …and so is a FIELD read of a temp (`Holder.parse(t).rows == null`): it is a view
+            // into the temp's store, which the temp's own lift releases, so a work-ref free
+            // released it a second time (`@FR-H-FreeTwice`).  `LOFT_NO_NULL_TEST_PROJECTION_VIEW=1`.
+            let projection = matches!(operand.unspan(), Value::Call(op, _)
+                if crate::use_analysis::is_projection_op(&self.data, *op))
+                && !crate::env_once!(
+                    std::env::var_os("LOFT_NO_NULL_TEST_PROJECTION_VIEW").is_some()
+                );
+            let w = if matches!(operand.unspan(), Value::Var(_)) || borrows || projection {
                 u16::MAX
             } else {
                 self.vars.work_refs(tp, &mut self.lexer)

@@ -169,6 +169,13 @@ reassignment from a call that reads the local and answers a borrowed view copies
 can never be the local's own store (`re_arm`); `LOFT_NO_FRESH_COPY_OF_VIEW=1` keeps the plain
 pass-through.  A fresh-returning generic instance copies a NULLABLE parameter it hands back too
 (`copy_param_returns_of_fresh_instance`); `LOFT_NO_NULLABLE_PARAM_RETURN_COPY=1` hands it back raw.
+An owning record local rebound from a value that reads it and answers a view (`x = x.next ?? y`)
+copies into a fresh store (`re_arm`); `LOFT_NO_READING_VIEW_COPY=1` binds the view.  A diverging
+coalesce bound in its buffer's own scope (`q = mq(4) ?? return`) frees `q` only where it no longer
+names the buffer; `LOFT_NO_COALESCE_SAME_SCOPE_WITNESS=1` frees both.  A null test of a temp's
+field (`Holder.parse(t).rows == null`) reads it in place, the temp's lift owning the store;
+`LOFT_NO_NULL_TEST_PROJECTION_VIEW=1` captures it in a work-ref that frees it again.  The records
+read an operator answering a heap value from a text (`OpCastVectorFromText`) as a mint.
 
 The closure records' releases, each switch bringing back one second free (doc strings in
 `keys.rs`):
