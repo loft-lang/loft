@@ -22,7 +22,7 @@ a decline reason seen at the hot site.
 
 | # | class: the rule and why it declines | routines (gcc / clang) |
 |---|---|---|
-| 1 | **`(R-Range)`'s INDEX clause proves only the lower bound.**  An index the loop or a guard keeps below `len(v)` still pays `LOFT_VH_OUT` (and the wrap, where the lower bound is unproved).  Spellings seen: a counter of `0..n` with `n = len(v)`; a guard `i < len(v)` / `i + k < n` (the parser records it as `index_bounded`, a typing fact the writers never read); `i % n` with `n = len(v)`; a stepped `while` variable under `pos > 0`. | hex_form boundary_loops (1.86 / 3.01), random indices (2.22 / 2.21), graphics fill_polygon (2.23 / 2.49), drawing smooth (1.88 / 2.49), drawing render_marks (1.70 / 2.34), hex_recover forms_upto (2.17 / 1.82), pluginabi request (2.26 / 2.19), zttext materialise (1.58 / 2.35), zttext flow_layout_full (2.58 / 2.55) |
+| 1 | **`(R-Range)`'s INDEX clause proves only the lower bound.**  An index the loop or a guard keeps below `len(v)` still pays `LOFT_VH_OUT` (and the wrap, where the lower bound is unproved).  Spellings seen: a counter of `0..n` with `n = len(v)`; a guard `i < len(v)` / `i + k < n` (the parser records it as `index_bounded`, a typing fact the writers never read); `i % n` with `n = len(v)`; a stepped `while` variable under `pos > 0`. | hex_form boundary_loops (1.86 / 3.01), random indices (2.22 / 2.21), graphics fill_polygon (2.23 / 2.49), drawing smooth (1.88 / 2.49), drawing render_marks (1.70 / 2.34), pluginabi request (2.26 / 2.19), zttext materialise (1.58 / 2.35), zttext flow_layout_full (2.58 / 2.55) |
 | 2 | **`(R-Version)` takes only a LEAF**: an accessor that calls an index helper is refused ("no leaf: calls hs_index", "calls hz_index"), so every cell read pays checked `loft_sub`, the window tests, the bounds test and the null read. | hex_place field_union (2.13 / 2.34), hex_roof roof_match (2.66 / 1.88), hex_roof roof_cone (2.22 / 1.40); boundary_loops' scan half |
 | 3 | **A copy where the twin borrows or moves.**  `(R-TextBorrow)`: a loop variable reached through a field ("the loop variable is not a text").  `(R-MoveLast)`: a parameter moved into a field (`Doc { buf: d.buf, … }` copies the buffer).  View return: `pa_get` answers `OpCopyRecord`.  `(R-Place)`/`(R-Destination)`: a text result appended to a place is built, copied out, then appended. | server header (2.04 / 2.27), zttext delete_range (1.47 / 2.13), pluginabi req_state_b64 (2.87 / 1.63), zttext materialise, flow_layout_full, arguments parse (`Pos { word: arg }`) |
 | 4 | **A record walk holds no record pointer on C**: `(R-RecPtr)`'s `/nested` clause is native only, and `/text` does not reach a field read inside a walk; a `&`-slot cursor is decoded on every read. | 17 slope_path_with_undo (2.30 / 1.78), arguments parse (1.95 / 2.36), 21_tree tree_query (1.03 / 2.13) |
@@ -34,7 +34,13 @@ a decline reason seen at the hot site.
 | 10 | **Runtime, no rewrite rule**: the generic JSON lexer and printer (an owned token per peek), a per-element cursor decode (`(R-StreamWalk)` is native only and deferred), a per-element serialiser (`loft_ser2` per `single`), a single-byte `find`. | 17 map_json (2.21 / 1.94), 18 binary_read (2.00 / 2.29), glb save_glb (2.51 / 2.53) |
 | 11 | **Element width**: a `vector<integer>` canvas writes 8 bytes a pixel where the twin writes 4; the fill is memory-bound. | graphics canvas (2.11 / 2.10), graphics clear (2.01 / 2.01) |
 
-Not classed: 23_lru lru_mixed (set aside), drawing parse (no samples at its size).  The
+Not classed: 23_lru lru_mixed (set aside), drawing parse (no samples at its size).  hex_recover
+forms_upto (2.17 / 1.82) was listed under class 1 from a whole-binary profile; profiled on its
+own it never reaches `sort_keys`: each of its 110,880 inner turns builds a `Form` holding two
+three-element vectors, tests it and drops it — `loft_vec_clear_release_body` 24 % (about 113
+instructions per release), `form_closes` 21 %, `form_canon` 14 %, `loft_vec_reserve_more` 7 %
+([d2-upper-bound.md](d2-upper-bound.md) § The stepped counter, priced).  Its class is the
+release and claim cost of a small vector, which no class above names yet.  The
 null-integer conversions in drawing `brush_sample` and stage `i2s` are the owner's deferred
 focus.
 

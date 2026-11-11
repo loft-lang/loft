@@ -14,7 +14,7 @@ clause of an existing rule, one phase at a time.
 |---|---|---|
 | a counter of `0..n`, `n` a length local of `v` | `(R-Base)` counter clause (C), `(R-InRange)` (IR) | built 9ca584382 |
 | a guard: `if e < len(v)` / `while e < n` | `(R-Base)` guard clause (C), fact in `opt` | built (below) |
-| a stepped `while` counter (`i += 4`, `pos -= 1` under `pos > 0`) | `(R-Range)` while-counter clause | open: the LOWER bound (forms_upto; turns a guarded `_lt` access into no test) |
+| a stepped `while` counter (`i += 4`, `pos -= 1` under `pos > 0`) | `(R-Range)` while-counter clause | not built: no site pays (§ The stepped counter, priced) |
 | `i % n`, `n = len(v)` | `(R-Range)` rem clause + the guard fact | open |
 | `eb`, `comp` of `boundary_loops`: equal lengths by construction | — | open, no rule yet |
 
@@ -106,3 +106,30 @@ Four clang rows are slower in all three rounds, and each is layout:
 
 A widening this shows: `sort_floats`' guard is `best >= 0 and best < len(used)`, so the test
 itself carries the lower bound, which would give the no-test form instead of `_lt`.
+
+## The stepped counter, priced (2026-11-11)
+
+Not built: neither site it was meant for pays.
+
+- crypto `b64_decode` (`i += 4`): the lower bound turns its `_lt` reads into the no-test form,
+  and the hand price above shows that form is no faster (gcc 1496 → 1503 µs, clang 1453 →
+  1456).
+- hex_recover `sort_keys` (`pos = len(out) - 1`, `while pos > 0 && … { …; pos = pos - 1 }`):
+  its reads have no `< len(out)` guard, so it would need the guard's lower bound AND an upper
+  bound carried from `pos = len(out) - 1` through the decrement.  Priced by hand first on the
+  ship C (`n_sort_keys__fr`, all eight reads and two writes; min of 11 interleaved runs):
+
+  | routine | form | gcc | clang |
+  |---|---|--:|--:|
+  | forms_upto | lower only / upper only / both | −0.5 / 0.0 / +0.3 % | +0.1 / +0.2 / +0.1 % |
+  | field_digest | lower only / upper only / both | −1.4 / +10.8 / +10.8 % | −14.3 / +16.1 / −2.6 % |
+
+  `forms_upto` never calls `sort_keys` (callgrind, collecting inside `n_forms_upto` only): D1's
+  attribution came from a whole-binary profile, where `field_digest`'s samples landed.  In
+  `field_digest`, `sort_keys` is 85 % of the instructions and the no-test form cuts them 36 %
+  (604 M → 384 M), yet the time moves ±15 % in both directions, which is layout. The sort is
+  bound by its data-dependent compare, not by the tests.  `field_digest` is under 2× anyway.
+
+The guard's own lower bound (`best >= 0 and best < len(used)`, crawler `sort_floats`) is not
+built either: its one guarded write runs once per outer turn beside an n² loop (§ Both
+spellings).
