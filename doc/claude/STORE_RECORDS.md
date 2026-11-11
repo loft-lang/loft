@@ -129,7 +129,11 @@ displaced free then releases the view's temporary store.  A nullable value store
 declared dense local keeps what it borrows (`dd: S = o.opt` views `o`);
 `LOFT_NO_REPR_KEEPS_DEPS=1` types the local as the bare declaration, an owner.  An inline
 `??` is lifted into an owner only where its subject temp owns nothing (loft#879's leak);
-`LOFT_NCC_LIFT_BESIDE_OWNER=1` lifts beside a subject temp that owns the store too.
+`LOFT_NCC_LIFT_BESIDE_OWNER=1` lifts beside a subject temp that owns the store too.  The
+interpreter's reassignment copy goes into a fresh store wherever the displaced store waits
+for its stashed free; `LOFT_NO_STASH_FRESH=1` writes into it, and a null answer then frees it
+twice.  A captured local that only names its backings' stores stands its frame-end release
+down (`rebound_captures`); `LOFT_NO_BACKED_CAPTURE_STAND_DOWN=1` keeps it beside theirs.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it
