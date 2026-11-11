@@ -5894,6 +5894,29 @@ impl Function {
         n.starts_with("__ncc_") || n.starts_with("__ret_")
     }
 
+    /// `@FR-O-Override`'s second admissible free: the IDENTITY-GUARDED release a pass places for
+    /// a never-free binding it made — `OpFreeRefIfDistinct(v, witness)`, which releases `v`'s
+    /// store only when it is no longer the one the witness holds.  Four passes place one: the
+    /// owner witness (`__own_<v>`, `@FR-O-Witness`), a rebind parameter (one with a
+    /// `__rbw_<v>` witness), the call-site snapshot of a local a `&` parameter may rebind (`__lift_N`,
+    /// loft#2195) and the write-back of a call's result into an out-of-line field
+    /// (`_written_back_N`, `@FR-B-OutOfLine`).  Like [`Self::is_staged_text_temp`], the name
+    /// says which pass made the binding and `skip_free` that the pass did mark it.
+    #[must_use]
+    pub fn is_placed_identity_release(&self, v: u16, witness: u16) -> bool {
+        if !self.is_skip_free(v) || witness == v {
+            return false;
+        }
+        let n = self.name(v);
+        let w = self.name(witness);
+        w.strip_prefix("__own_") == Some(n)
+            // A rebind parameter's release sits under its witness's guard and names the
+            // returned store as its own (`v` is freed unless it is what the call hands back).
+            || self.names.contains_key(&format!("__rbw_{n}"))
+            || n.starts_with("__lift_")
+            || n.starts_with("_written_back_")
+    }
+
     /// Mark a variable so that `get_free_vars` will not emit `OpFreeRef` for it.
     /// Used for borrowed references (e.g. par-loop result variables that point
     /// into the result vector store).
