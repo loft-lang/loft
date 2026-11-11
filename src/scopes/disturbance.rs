@@ -350,6 +350,48 @@ pub(super) fn overwritten_records(
     out
 }
 
+/// The tagged `__nullable<S>` slots `code` clears — the `OpClearKeyed(slot)` that
+/// `Parser::build_nullable_set_null` and a may-be-null write put before the discriminant.
+/// The clear releases what the payload owned and the slot answers absent until a value is
+/// written back, so every view inside the slot ends (`@FR-B-Disturb`), and a view OF the
+/// slot ends too: its reference holds the payload's address, which cannot re-read an
+/// absence.  That is `@FR-B-OutOfLine`'s null write, for the same `S?` field stored inline
+/// (`@FR-L-Null-Tag`).  Reported with the slot's own depth and byte span, as
+/// [`overwritten_records`] reports a record; without a store to read the type by, none.
+pub(super) fn cleared_tagged_slots(
+    code: &Value,
+    data: &Data,
+    database: Option<&crate::database::Stores>,
+) -> Vec<Overwrite> {
+    let mut out = Vec::new();
+    let Some(db) = database else { return out };
+    code.walk(&mut |v| {
+        let Value::Call(d, args) = v else { return };
+        let ("OpClearKeyed", [slot, tp]) = (data.def(*d).name(), &args[..]) else {
+            return;
+        };
+        let Value::Int(kt) = tp.unspan() else { return };
+        let Some(kt) = u16::try_from(*kt).ok().filter(|&kt| {
+            db.types
+                .get(usize::from(kt))
+                .is_some_and(|t| t.name.starts_with("__nullable<"))
+        }) else {
+            return;
+        };
+        if let Some((place, depth)) = named_place_depth(slot, data) {
+            out.push(Overwrite {
+                place,
+                at: ContainerAt {
+                    depth,
+                    index: crate::use_analysis::root_element_index(data, slot),
+                },
+                size: Some(u32::from(db.size(kt))),
+            });
+        }
+    });
+    out
+}
+
 /// One write [`overwritten_records`] found.
 pub(super) struct Overwrite {
     pub(super) place: (u16, u32),

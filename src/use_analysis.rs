@@ -3729,6 +3729,15 @@ fn projection_walk(
                 nearest,
             ));
         }
+        // A tagged `__nullable<S>` slot's read is the slot's payload when present: the view
+        // lives at that payload, a place inside the slot's holder (`@FR-L-Null-Tag`), so a
+        // write to the slot disturbs it as it does any field (`@FR-B-Disturb`).
+        if let Value::If(c, t, e) = cur.unspan()
+            && let Some(payload) = tag_read_payload(data, c, t, e)
+        {
+            cur = payload;
+            continue;
+        }
         let Value::Call(d, args) = cur.unspan() else {
             return None;
         };
@@ -3822,6 +3831,45 @@ pub(crate) fn discharged_variable(v: &Value) -> Option<&Value> {
         }
         _ => None,
     }
+}
+
+/// The present arm of a tagged nullable slot's read — `Parser::nullable_pick`'s
+/// `if tag(slot) != 0 { slot.payload } else { OpNullRefSentinel() }` — or `None` for any
+/// other `if`.
+///
+/// Recognised by what the builder BUILDS: the absent arm is the sentinel, the present arm a
+/// field read of a slot, and the condition the discriminant test of that SAME slot.  A
+/// user's `if` with a sentinel arm is not a projection (see [`variant_check_subject`]).
+fn tag_read_payload<'a>(
+    data: &Data,
+    cond: &Value,
+    then_arm: &'a Value,
+    else_arm: &Value,
+) -> Option<&'a Value> {
+    fn call<'v>(data: &Data, v: &'v Value, op: &str) -> Option<&'v [Value]> {
+        match v.unspan() {
+            Value::Call(d, args) if data.def(*d).name() == op => Some(args),
+            _ => None,
+        }
+    }
+    let is_zero = |v: &Value| matches!(v.unspan(), Value::Int(0));
+    if !call(data, else_arm, "OpNullRefSentinel").is_some_and(<[Value]>::is_empty) {
+        return None;
+    }
+    let slot = call(data, then_arm, "OpGetField")?.first()?;
+    let [absent] = call(data, cond, "OpNot")? else {
+        return None;
+    };
+    let [as_int, zero] = call(data, absent, "OpEqInt")? else {
+        return None;
+    };
+    let [disc] = call(data, as_int, "OpConvIntFromEnum")? else {
+        return None;
+    };
+    let [tag_slot, at] = call(data, disc, "OpGetEnum")? else {
+        return None;
+    };
+    (is_zero(zero) && is_zero(at) && tag_slot.unspan() == slot.unspan()).then_some(then_arm)
 }
 
 /// The subject of a VARIANT-CHECK `if` — the shape a struct-enum payload projection wraps its

@@ -7,8 +7,8 @@
 //! that may move.
 
 use super::disturbance::{
-    ContainerAt, Disturbance, DisturbedParams, RemovedParams, ViewCause, grown_containers,
-    named_place, overwritten_records, released_children, reshaped_containers,
+    ContainerAt, Disturbance, DisturbedParams, RemovedParams, ViewCause, cleared_tagged_slots,
+    grown_containers, named_place, overwritten_records, released_children, reshaped_containers,
 };
 use super::places::{
     ParamPlace, add_offset, call_arg_at, compose_param_at, get_record_literal_keys,
@@ -777,6 +777,16 @@ impl ViewWalk<'_> {
                 );
             }
         }
+        // A null written into a tagged slot ends every view inside it, and the view OF the
+        // slot's payload too (`cleared_tagged_slots`), so the shake starts AT the slot's depth.
+        for w in cleared_tagged_slots(stmt, self.data, self.database) {
+            for place in self.overwritten_slots(w.place, w.size) {
+                self.shake_payload_views(place, w.at.depth, w.at.index);
+                if let Some((root, at)) = self.through_views(place, w.at.depth) {
+                    self.shake_payload_views(root, at, None);
+                }
+            }
+        }
         // A growth ends the views deeper than the container it grows (`shake_places_keyed`).
         for (place, at) in grown_containers(stmt, self.data, self.function, self.database) {
             self.shake_deeper_through_views(place, at.depth, at.index, ViewCause::Grown);
@@ -1386,6 +1396,49 @@ impl ViewWalk<'_> {
         cause: ViewCause,
         via: Option<u32>,
     ) {
+        self.shake_places_at(place, depth.saturating_add(1), index, cause, via);
+    }
+
+    /// A tagged slot's null write at `place`, `depth` element reads below its root: every
+    /// view deeper than the slot ends, and so does one AT its depth that holds the payload's
+    /// address (`c = r.g`, typed `S?`), which cannot re-read the absence.  A handle typed as
+    /// the slot itself (`__nullable<S>`, the lowering's own temp) reads the discriminant on
+    /// every use and is spared, as the view of an overwritten place is (`@FR-B-Disturb`).
+    fn shake_payload_views(&mut self, place: (u16, u32), depth: u8, index: Option<(u32, i32)>) {
+        let slot_handles: Vec<(u16, Option<Disturbance>)> = self
+            .open
+            .iter()
+            .flatten()
+            .filter(|(view, c, _)| {
+                *c == place.0
+                    && self.view_depth.get(view) == Some(&depth)
+                    && self.data.is_nullable_wrapper(self.function.tp(*view))
+            })
+            .map(|(view, _, _)| (*view, self.shaken.get(view).copied()))
+            .collect();
+        self.shake_places_at(place, depth, index, ViewCause::Released, None);
+        for (view, prior) in slot_handles {
+            match prior {
+                Some(d) => {
+                    self.shaken.insert(view, d);
+                }
+                None => {
+                    self.shaken.remove(&view);
+                }
+            }
+        }
+    }
+
+    /// [`Self::shake_places_deeper`] counting the views AT `min_depth` and below, so a
+    /// disturbance that ends the view of its own place can say so.
+    fn shake_places_at(
+        &mut self,
+        place: (u16, u32),
+        min_depth: u8,
+        index: Option<(u32, i32)>,
+        cause: ViewCause,
+        via: Option<u32>,
+    ) {
         let spared: Vec<u16> = match index {
             Some((run, i)) => self
                 .open
@@ -1411,7 +1464,7 @@ impl ViewWalk<'_> {
             cause,
             via,
             &HashMap::default(),
-            depth.saturating_add(1),
+            min_depth,
         );
         for (view, prior) in before {
             match prior {
@@ -1470,7 +1523,9 @@ impl ViewWalk<'_> {
         // at the container's own depth was shaken by the root-level events and spared by the
         // ones nobody collected, so `c = b.vecf; b.vecf += [9]` copied `c` while `c =
         // o.inner.v; o.inner.v += [9]` kept it (loft#2161).
-        let min_depth = if cause == ViewCause::Reassigned {
+        // A tagged slot's null write (`Released`, asked at the slot's own depth) ends its view
+        // too: the view holds the payload's address, which cannot re-read the absence.
+        let min_depth = if matches!(cause, ViewCause::Reassigned | ViewCause::Released) {
             min_depth
         } else {
             min_depth.max(1)
