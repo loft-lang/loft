@@ -240,8 +240,7 @@ impl Summary {
             (Args(m), Arg(i)) | (Arg(i), Args(m)) => bit(i).map_or(Unknown, |b| Args(m | b)),
             (Args(a), Args(b)) => Args(a | b),
             (Buf(i), Arg(j)) | (Arg(j), Buf(i)) if i == j => Buf(i),
-            (Fresh, Arg(i) | Buf(i) | Join(i))
-            | (Arg(i) | Buf(i) | Join(i), Fresh) => Join(i),
+            (Fresh, Arg(i) | Buf(i) | Join(i)) | (Arg(i) | Buf(i) | Join(i), Fresh) => Join(i),
             (Join(i), Arg(j) | Buf(j)) | (Arg(j) | Buf(j), Join(i)) if i == j => Join(i),
             _ => Unknown,
         }
@@ -985,10 +984,7 @@ impl Run<'_> {
                 // The code generator's own answer (`bind_lowering::vector_null_mints`,
                 // `keyed_null_mints`): a lift temporary, a lazy buffer or a borrowed view gets no
                 // store at its null init.
-                FirstArm::VectorNull if crate::bind_lowering::vector_null_mints(function, x) => {
-                    self.copied(&mut s, node)
-                }
-                FirstArm::KeyedNull if crate::bind_lowering::keyed_null_mints(function, x) => {
+                FirstArm::VectorNull | FirstArm::KeyedNull if null_init_mints(arm, function, x) => {
                     self.copied(&mut s, node)
                 }
                 FirstArm::VectorNull | FirstArm::KeyedNull => Val::null(),
@@ -1137,15 +1133,22 @@ impl Run<'_> {
         Some((s, Val::null()))
     }
 
-    fn reassign(&mut self, node: &Value, x: u16, val: &Value, st: State) -> Option<(State, Val)> {
-        use crate::bind_lowering::{DisplacedFree, ReArm};
+    /// The reassignments that are not `bind_lowering`'s arms: a write through a local link, the
+    /// write-back of a `&` parameter, a lazy buffer's mint.  `Err` hands the state back.
+    fn reassign_special(
+        &mut self,
+        node: &Value,
+        x: u16,
+        val: &Value,
+        st: State,
+    ) -> Result<Option<(State, Val)>, State> {
         let data = self.data;
         let function = &data.def(self.d_nr).variables;
         if let Some(t) = self.link_install(x)
             && !matches!(val.unspan(), Value::Call(d, _)
                 if matches!(data.def(*d).name(), "OpCreateStack" | "OpVarRef"))
         {
-            return self.link_write(x, t, val, st);
+            return Ok(self.link_write(x, t, val, st));
         }
         // `@FR-F-ParamRef` — a whole write through a `&` PARAMETER is the write-back: the
         // value is the caller's from here (handed on), and the store it displaced is the
@@ -1155,9 +1158,11 @@ impl Run<'_> {
             && !matches!(val.unspan(), Value::Call(d, _)
                 if matches!(data.def(*d).name(), "OpCreateStack" | "OpVarRef"))
         {
-            let (mut s, value) = self.eval(val, st)?;
+            let Some((mut s, value)) = self.eval(val, st) else {
+                return Ok(None);
+            };
             Self::hand_on(&mut s, &value);
-            return Some((s, Val::null()));
+            return Ok(Some((s, Val::null())));
         }
         // A lazy buffer's guarded `Set(v, Null)` is where its store is made (`set_var`).
         if crate::bind_lowering::lazy_buffer_mints_at(function, x, val) {
@@ -1169,8 +1174,34 @@ impl Run<'_> {
                 corr: [k].into(),
             };
             self.bind(&mut st, x, &minted);
-            return Some((st, Val::null()));
+            return Ok(Some((st, Val::null())));
         }
+        Err(st)
+    }
+
+    /// Does a displaced free's witness `w` keep the store `x` displaces?  The runtime keeps it
+    /// when the witness names it.  A null `x` frees nothing, so the null `x` may also hold (a
+    /// loop's first pass) is no reason to free: the two are compared without it.
+    fn witness_keeps(st: &State, x: u16, w: u16) -> bool {
+        let held: Pts = Self::pts(st, x)
+            .into_iter()
+            .filter(|p| *p != Pt::Null)
+            .collect();
+        let named: Pts = Self::pts(st, w)
+            .into_iter()
+            .filter(|p| *p != Pt::Null)
+            .collect();
+        !held.is_empty() && held == named
+    }
+
+    fn reassign(&mut self, node: &Value, x: u16, val: &Value, st: State) -> Option<(State, Val)> {
+        use crate::bind_lowering::{DisplacedFree, ReArm};
+        let data = self.data;
+        let function = &data.def(self.d_nr).variables;
+        let st = match self.reassign_special(node, x, val, st) {
+            Ok(done) => return done,
+            Err(st) => st,
+        };
         let rb = match self.rebinds.get(&(std::ptr::from_ref(node) as usize)) {
             Some(rb) => *rb,
             None => crate::bind_lowering::re_bind(data, self.d_nr, function, x, val),
@@ -1184,14 +1215,7 @@ impl Run<'_> {
             let keep = witness
                 .into_iter()
                 .chain(rb.entry_w)
-                .any(|w| {
-                    // The runtime keeps the store when the witness names it.  A null `x` frees
-                    // nothing, so the null `x` may also hold (a loop's first pass) is no reason
-                    // to free: the two are compared without it.
-                    let held: Pts = Self::pts(&st, x).into_iter().filter(|p| *p != Pt::Null).collect();
-                    let named: Pts = Self::pts(&st, w).into_iter().filter(|p| *p != Pt::Null).collect();
-                    !held.is_empty() && held == named
-                });
+                .any(|w| Self::witness_keeps(&st, x, w));
             if !keep {
                 self.end(&mut st, x, "the displaced free", true);
             }
@@ -1666,7 +1690,9 @@ impl Run<'_> {
                 // Every store `x` may name is one the witness names — a caller's store (a
                 // parameter's) as much as one of this frame's: the free declines on every path.
                 let declines = xp.iter().any(|p| *p != Pt::Null)
-                    && xp.iter().all(|p| *p == Pt::Null || (!matches!(p, Pt::Unknown) && wp.contains(p)))
+                    && xp
+                        .iter()
+                        .all(|p| *p == Pt::Null || (!matches!(p, Pt::Unknown) && wp.contains(p)))
                     && xp.iter().any(|p| matches!(p, Pt::Param(_)));
                 if declines {
                     // Nothing ends: the caller's store stays the caller's.
@@ -1788,7 +1814,10 @@ impl Run<'_> {
                 // A loop's head joins the null of the first pass with the store an earlier
                 // pass made here: on the null path this `OpDatabase` makes that same store
                 // (later passes find it live and re-init it in place), not another generation.
-                let site = self.site_of.get(&(std::ptr::from_ref(node) as usize)).copied();
+                let site = self
+                    .site_of
+                    .get(&(std::ptr::from_ref(node) as usize))
+                    .copied();
                 site.and_then(|site| {
                     kept.iter().find_map(|p| match p {
                         Pt::Store(k) if k.site == site && !k.older => Some(*k),
@@ -1894,10 +1923,9 @@ impl Run<'_> {
                         .unwrap_or_default();
                     let owned_elsewhere = |k: &SKey| {
                         host.contains(k)
-                            || info_of(&s, *k)
-                                .live
-                                .iter()
-                                .any(|w| *w < function.count() && !function.is_compiler_generated(*w))
+                            || info_of(&s, *k).live.iter().any(|w| {
+                                *w < function.count() && !function.is_compiler_generated(*w)
+                            })
                     };
                     let handed = Val {
                         pts: value
@@ -1906,7 +1934,12 @@ impl Run<'_> {
                             .copied()
                             .filter(|p| !matches!(p, Pt::Store(k) if owned_elsewhere(k)))
                             .collect(),
-                        corr: value.corr.iter().copied().filter(|k| !owned_elsewhere(k)).collect(),
+                        corr: value
+                            .corr
+                            .iter()
+                            .copied()
+                            .filter(|k| !owned_elsewhere(k))
+                            .collect(),
                     };
                     Self::hand_on(&mut s, &handed);
                 }
@@ -1997,7 +2030,10 @@ impl Run<'_> {
             // A buffer-filling callee handed a store answers that store, borrowed, as `Arg`.
             Summary::Buf(i)
                 if vals.get(i as usize).is_some_and(|v| {
-                    !v.pts.is_empty() && v.pts.iter().all(|p| matches!(p, Pt::Store(_) | Pt::Param(_)))
+                    !v.pts.is_empty()
+                        && v.pts
+                            .iter()
+                            .all(|p| matches!(p, Pt::Store(_) | Pt::Param(_)))
                 }) =>
             {
                 let v = &vals[i as usize];
@@ -2401,4 +2437,21 @@ fn branch_ends_in_tuples(v: &Value) -> bool {
         }
     }
     tails(v, false).unwrap_or(false)
+}
+
+/// Does a vector or keyed local's first null init mint a store (`bind_lowering`'s answer)?
+fn null_init_mints(
+    arm: crate::bind_lowering::FirstArm,
+    function: &crate::variables::Function,
+    x: u16,
+) -> bool {
+    match arm {
+        crate::bind_lowering::FirstArm::VectorNull => {
+            crate::bind_lowering::vector_null_mints(function, x)
+        }
+        crate::bind_lowering::FirstArm::KeyedNull => {
+            crate::bind_lowering::keyed_null_mints(function, x)
+        }
+        _ => false,
+    }
 }
