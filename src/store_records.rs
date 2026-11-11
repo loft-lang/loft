@@ -1783,6 +1783,14 @@ impl Run<'_> {
             }
             return Some((st, Val::null()));
         }
+        // `OpInitRefSentinel(v)`: `v` is reset to null and names no store from here.
+        if self.data.def(d).name() == "OpInitRefSentinel"
+            && let Some(x) = Self::first_var(args, 0)
+        {
+            let mut s = st;
+            self.bind(&mut s, x, &Val::null());
+            return Some((s, Val::null()));
+        }
         // `OpPutRef(dst, src)`: a raw copy of the reference — `dst` names exactly the stores
         // `src` names.  A never-free `dst` is a witness (an entry snapshot `__ref_1 = v`,
         // `ensure_rebind_witness`) and owns none of them; any other takes them over (a buffer
