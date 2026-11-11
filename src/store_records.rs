@@ -84,6 +84,9 @@ struct State {
     vars: BTreeMap<u16, Pts>,
     /// A store missing from the map is absent.
     stores: BTreeMap<SKey, SInfo>,
+    /// Per closure record that stays in this frame: the stores its capture slots hold
+    /// (`@FR-L-CapOwn` — such a record BORROWS what it captured; the frame releases it).
+    slots: BTreeMap<u16, Pts>,
 }
 
 /// A value: the stores it may point into, and the stores CORRELATED with it — live only on
@@ -142,7 +145,15 @@ fn join_state(a: &State, b: &State) -> State {
     for k in a.stores.keys().chain(b.stores.keys()) {
         stores.insert(*k, join_info(&info_of(a, *k), &info_of(b, *k)));
     }
-    State { vars, stores }
+    let mut slots: BTreeMap<u16, Pts> = a.slots.clone();
+    for (w, p) in &b.slots {
+        slots.entry(*w).or_default().extend(p.iter().copied());
+    }
+    State {
+        vars,
+        stores,
+        slots,
+    }
 }
 
 /// Join two outcomes, where `None` is "no path".
@@ -237,6 +248,9 @@ struct Ops {
     database: u32,
     set_dbref: u32,
     ref_is_null: u32,
+    distinct: u32,
+    fnref_closure: u32,
+    get_dbref: u32,
     not: u32,
     unconditional: BTreeSet<u32>,
     conditional: BTreeSet<u32>,
@@ -250,6 +264,9 @@ impl Ops {
             database: data.def_nr("OpDatabase"),
             set_dbref: data.def_nr("OpSetDbRef"),
             ref_is_null: data.def_nr("OpRefIsNull"),
+            distinct: data.def_nr("OpDistinctStore"),
+            fnref_closure: data.def_nr("OpFnRefClosure"),
+            get_dbref: data.def_nr("OpGetDbRef"),
             not: data.def_nr("OpNot"),
             unconditional: s.unconditional_ref_frees.iter().copied().collect(),
             conditional: s.conditional_ref_frees.iter().copied().collect(),
@@ -296,6 +313,12 @@ struct Run<'a> {
     /// variable an EARLIER reassignment freed before its build (`owned_reassigned`), or a
     /// lift temporary (`Codegen::generate_call`, @PLN118, loft#2385).
     resets: BTreeSet<usize>,
+    /// Per fn-ref variable, the closure record its build names (`g = { …; FnRef(_, w) }`).
+    fn_record: BTreeMap<u16, u16>,
+    /// The closure records that leave the frame: the function returns their fn-ref, or the
+    /// record is built inside another store (a fn field).  Such a record adopts what it
+    /// captures (`@FR-L-CapOwn`); every other record only holds it.
+    leaving: BTreeSet<u16>,
 }
 
 impl Run<'_> {
@@ -356,6 +379,7 @@ impl Run<'_> {
                     .iter()
                     .any(|(&w, p)| w != v && p.contains(&Pt::Store(k)))
                 && !val.pts.contains(&Pt::Store(k))
+                && !st.slots.values().any(|p| p.contains(&Pt::Store(k)))
             {
                 let name = self.var_name(v);
                 self.find(
@@ -369,6 +393,8 @@ impl Run<'_> {
             info.live.remove(&v);
             info.ended.remove(&v);
         }
+        // A closure record bound anew is a new record: its slots start empty.
+        st.slots.remove(&v);
         let single = val.pts.len() == 1;
         for k in Self::stores_of(&val.pts) {
             self.sites[k.site as usize].holders.insert(v);
@@ -492,6 +518,34 @@ impl Run<'_> {
         }
     }
 
+    /// Release the stores closure record `w`'s capture slots hold — its cascade
+    /// (`<record>_OpDropAll(w)`), or a free of a slot read (`OpFreeRef(OpGetDbRef(w, off))`,
+    /// `scopes::rebound_captures`).  A slot store already ended on every path is ended twice.
+    fn end_slots(&mut self, st: &mut State, w: u16, how: &str) {
+        let held: Vec<SKey> = Self::stores_of(&st.slots.get(&w).cloned().unwrap_or_default());
+        let label = format!("{how}({})", self.var_name(w));
+        for k in held {
+            self.sites[k.site as usize].ends.insert(label.clone());
+            let info = info_of(st, k);
+            if info.has(ENDED) && !info.has(LIVE) {
+                let name = self.var_name(w);
+                self.find(
+                    "double-end",
+                    k.site,
+                    format!("the record `{name}` releases a capture by {how} after its store was already freed"),
+                );
+            }
+            if !info.has(LIVE) {
+                continue;
+            }
+            let mut next = info.clone();
+            next.ended = info.live.clone();
+            next.status = (info.status & !LIVE) | ENDED;
+            next.live.clear();
+            st.stores.insert(k, next);
+        }
+    }
+
     /// The value leaves this function's hands: returned, or stored where another owner
     /// holds it.
     fn hand_on(st: &mut State, val: &Val) {
@@ -603,9 +657,35 @@ impl Run<'_> {
             }
             Value::Drop(x) => self.eval(x, st).map(|(s, _)| (s, Val::null())),
             Value::Call(d, args) => self.call(v, *d, args, st),
-            Value::CallRef(_, args) => {
+            Value::CallRef(g, args) => {
                 let (s, _) = self.args(args, st)?;
+                // A call through a closure reads what its record captured.
+                if let Some(w) = self.fn_record.get(g).copied() {
+                    let held: Vec<SKey> =
+                        Self::stores_of(&s.slots.get(&w).cloned().unwrap_or_default());
+                    for k in held {
+                        self.sites[k.site as usize]
+                            .uses
+                            .insert("a closure call".to_string());
+                        let info = info_of(&s, k);
+                        if info.has(ENDED) && !info.has(LIVE) {
+                            let name = self.var_name(*g);
+                            self.find(
+                                "use-after-end",
+                                k.site,
+                                format!(
+                                    "a call through `{name}` reads a capture whose store was freed"
+                                ),
+                            );
+                        }
+                    }
+                }
                 Some((s, Val::unknown()))
+            }
+            // A fn-ref holds its closure record.
+            Value::FnRef(_, w, _) if *w != u16::MAX => {
+                let val = Self::read(&st, *w);
+                Some((st, val))
             }
             Value::TuplePut(_, _, x) => {
                 let (mut s, value) = self.eval(x, st)?;
@@ -811,6 +891,9 @@ impl Run<'_> {
         let Some(Value::Var(x)) = test_args.first().map(Value::unspan) else {
             return (Some(st.clone()), Some(st));
         };
+        if *op == self.ops.distinct {
+            return self.decide_distinct(test_args, flip, st);
+        }
         if *op != self.ops.ref_is_null {
             return (Some(st.clone()), Some(st));
         }
@@ -847,6 +930,49 @@ impl Run<'_> {
             (store_arm, null_arm)
         } else {
             (null_arm, store_arm)
+        }
+    }
+
+    /// `OpDistinctStore(a, b)`: where both operands name one single store, the two are that
+    /// store on every path and the DISTINCT arm cannot run; where they name two different
+    /// single stores, the SAME arm cannot.  Anything wider keeps both arms.
+    fn decide_distinct(
+        &self,
+        args: &[Value],
+        flip: bool,
+        st: State,
+    ) -> (Option<State>, Option<State>) {
+        let operand = |v: &Value| -> Option<Pts> {
+            match v.unspan() {
+                Value::Var(x) => Some(Self::pts(&st, *x)),
+                Value::Call(op, a) if *op == self.ops.fnref_closure => {
+                    match a.first().map(Value::unspan) {
+                        Some(Value::Var(g)) => Some(Self::pts(&st, *g)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+        let (Some(a), Some(b)) = (
+            args.first().and_then(operand),
+            args.get(1).and_then(operand),
+        ) else {
+            return (Some(st.clone()), Some(st));
+        };
+        let single = |p: &Pts| match p.iter().next() {
+            Some(Pt::Store(k)) if p.len() == 1 => Some(*k),
+            _ => None,
+        };
+        let (distinct, same) = match (single(&a), single(&b)) {
+            (Some(x), Some(y)) if x == y => (None, Some(st)),
+            (Some(_), Some(_)) => (Some(st), None),
+            _ => (Some(st.clone()), Some(st)),
+        };
+        if flip {
+            (same, distinct)
+        } else {
+            (distinct, same)
         }
     }
 
@@ -931,6 +1057,14 @@ impl Run<'_> {
         if ops.unconditional.contains(&d) || d == ops.text_free {
             let name = self.data.def(d).name().to_string();
             let mut st = st;
+            if let Some(Value::Call(g, gargs)) = args.first().map(Value::unspan)
+                && *g == ops.get_dbref
+                && let Some(w) = Self::first_var(gargs, 0)
+                && st.slots.contains_key(&w)
+            {
+                self.end_slots(&mut st, w, &name);
+                return st;
+            }
             if let Some(x) = Self::first_var(args, 0) {
                 // The code generator emits no `OpFreeRef` of a never-free variable
                 // (`Codegen::generate_call`, S34), including one a move made never-free.
@@ -1008,11 +1142,38 @@ impl Run<'_> {
         }
         let (mut s, vals) = self.args(args, st)?;
         let def = self.data.def(d);
+        if def.name().ends_with("_OpDropAll")
+            && let Some(w) = Self::first_var(args, 0)
+            && s.slots.contains_key(&w)
+        {
+            self.end_slots(&mut s, w, "its cascade");
+        }
         if d == ops.set_dbref
             && let Some(value) = vals.get(2)
         {
-            // A reference written into another store's field: that store holds it now.
-            Self::hand_on(&mut s, value);
+            match Self::first_var(args, 0) {
+                // A capture into a closure record that stays in this frame: the record holds
+                // the store for as long as it lives, and the frame still releases it.
+                Some(w)
+                    if self
+                        .data
+                        .def(self.d_nr)
+                        .variables
+                        .name(w)
+                        .starts_with("___clos_")
+                        && !self.leaving.contains(&w) =>
+                {
+                    s.slots.entry(w).or_default().extend(
+                        value
+                            .pts
+                            .iter()
+                            .copied()
+                            .filter(|p| matches!(p, Pt::Store(_))),
+                    );
+                }
+                // A reference written into another store's field: that store holds it now.
+                _ => Self::hand_on(&mut s, value),
+            }
         }
         if def.returned().heap_dep().is_none() {
             return Some((s, Val::null()));
@@ -1089,6 +1250,8 @@ fn run_fn<'a>(
         moved_away: BTreeSet::new(),
         rebinds: BTreeMap::new(),
         resets: BTreeSet::new(),
+        fn_record: BTreeMap::new(),
+        leaving: BTreeSet::new(),
     };
     let body = def.code.clone();
     // One pass in emission order: which assignments are first, each reassignment's lowering,
@@ -1122,12 +1285,59 @@ fn run_fn<'a>(
             _ => {}
         }
     });
+    closure_records(data, vars, &body, &mut run.fn_record, &mut run.leaving);
     if let Some((mut s, value)) = run.eval(&body, st) {
         run.answer = run.answer.join(run.summary_of(&value.pts));
         Run::hand_on(&mut s, &value);
         run.exit(&s, "the end of the function");
     }
     run
+}
+
+/// The closure records a body builds: per fn-ref variable the record its build names, and the
+/// records that leave the frame — a returned fn-ref's, or one built inside another store
+/// (`w = OpChildRec(…)`, a fn field), whose host decides its life.
+fn closure_records(
+    data: &Data,
+    vars: &crate::variables::Function,
+    body: &Value,
+    fn_record: &mut BTreeMap<u16, u16>,
+    leaving: &mut BTreeSet<u16>,
+) {
+    let child_rec = data.def_nr("OpChildRec");
+    let mut returned: BTreeSet<u16> = BTreeSet::new();
+    body.walk(&mut |n| match n {
+        Value::Set(g, rhs) => {
+            if vars.name(*g).starts_with("___clos_")
+                && matches!(rhs.unspan(), Value::Call(d, _) if *d == child_rec)
+            {
+                leaving.insert(*g);
+            }
+            rhs.walk(&mut |m| {
+                if let Value::FnRef(_, w, _) = m
+                    && *w != u16::MAX
+                {
+                    fn_record.insert(*g, *w);
+                }
+            });
+        }
+        Value::Return(v) => {
+            if let Value::Var(g) = v.unspan() {
+                returned.insert(*g);
+            }
+        }
+        _ => {}
+    });
+    if let Value::Block(bl) = body.unspan()
+        && let Some(Value::Var(g)) = bl.operators.last().map(Value::unspan)
+    {
+        returned.insert(*g);
+    }
+    for g in returned {
+        if let Some(&w) = fn_record.get(&g) {
+            leaving.insert(w);
+        }
+    }
 }
 
 fn is_analysed(data: &Data, d: u32) -> bool {
