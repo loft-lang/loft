@@ -267,8 +267,7 @@ impl Parser {
         if self.first_pass {
             return Some(vec_tp);
         }
-        self.materialise_slice_leaves(code, elm, &vec_tp);
-        Some(vec_tp)
+        Some(self.materialise_slice_leaves(code, elm, &vec_tp))
     }
 
     /// Is every VALUE position of `code` a vector slice — the `Value::Iter` a range
@@ -285,7 +284,18 @@ impl Parser {
 
     /// Materialise each slice leaf of `code` (see [`Parser::slice_shaped`]) into a hidden
     /// local read in its place, and retype the blocks and `if`s on the way as the vector.
-    pub(super) fn materialise_slice_leaves(&mut self, code: &mut Value, elm: &Type, vec_tp: &Type) {
+    ///
+    /// Answers the vector type with the borrows of every leaf (`@FR-B-View`): a leaf's hidden
+    /// local views the `__vdb` store its materialisation minted, and that store is released by
+    /// the `__vdb`, so whatever binds the answer borrows it.  Typed dep-less, the binding owned
+    /// the store beside its `__vdb` — two frees of one store.  A shape that carries no leaf
+    /// answers the plain `vec_tp`: there is nothing it could borrow.
+    pub(super) fn materialise_slice_leaves(
+        &mut self,
+        code: &mut Value,
+        elm: &Type,
+        vec_tp: &Type,
+    ) -> Type {
         match code {
             Value::Iter(..) => {
                 let tmp = self.create_unique("__iter_vec", vec_tp);
@@ -293,22 +303,36 @@ impl Parser {
                 let iter_tp = Type::Iterator(Box::new(elm.clone()), Box::new(Type::Null));
                 let mut mat = code.clone();
                 self.materialize_iterator(&mut mat, &iter_tp, &Value::Var(tmp), vec_tp, tmp, "=");
-                *code = v_block(vec![mat, Value::Var(tmp)], vec_tp.clone(), "iter_vec");
+                let tp = if slice_leaf_borrows_off() {
+                    vec_tp.clone()
+                } else {
+                    self.vars.tp(tmp).clone()
+                };
+                *code = v_block(vec![mat, Value::Var(tmp)], tp.clone(), "iter_vec");
+                tp
             }
             Value::If(_, a, b) => {
-                self.materialise_slice_leaves(a, elm, vec_tp);
-                self.materialise_slice_leaves(b, elm, vec_tp);
+                let ta = self.materialise_slice_leaves(a, elm, vec_tp);
+                let tb = self.materialise_slice_leaves(b, elm, vec_tp);
+                match (ta.deps_ref(), tb.deps_ref()) {
+                    (Some(da), Some(db)) => vec_tp.with_deps(&da.union(db)),
+                    _ => vec_tp.clone(),
+                }
             }
             Value::Block(bl) => {
-                if let Some(last) = bl.operators.last_mut() {
-                    self.materialise_slice_leaves(last, elm, vec_tp);
-                }
-                bl.result = vec_tp.clone();
+                let tp = match bl.operators.last_mut() {
+                    Some(last) => self.materialise_slice_leaves(last, elm, vec_tp),
+                    None => vec_tp.clone(),
+                };
+                bl.result = tp.clone();
+                tp
             }
             other => {
                 // Only a span wrapper carries a leaf; anything else is not slice-shaped.
                 if matches!(other, Value::Span(..)) {
-                    self.materialise_slice_leaves(other.unspan_mut(), elm, vec_tp);
+                    self.materialise_slice_leaves(other.unspan_mut(), elm, vec_tp)
+                } else {
+                    vec_tp.clone()
                 }
             }
         }
@@ -1880,4 +1904,12 @@ impl Parser {
             _ => {}
         }
     }
+}
+
+/// `LOFT_NO_SLICE_LEAF_BORROWS=1` (STORE_RECORDS.md § The checks): a slice materialised at a
+/// vector position is typed dep-less, so whatever binds it owns the store its `__vdb` releases —
+/// the re-free the store records must then report.
+fn slice_leaf_borrows_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("LOFT_NO_SLICE_LEAF_BORROWS").is_ok_and(|v| v != "0"))
 }
