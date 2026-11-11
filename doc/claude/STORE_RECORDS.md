@@ -109,7 +109,9 @@ materialised where a vector is wanted (`a = v[..-1] + [9]`, `iterator_as_vector`
 the borrows of its hidden local; `LOFT_NO_SLICE_LEAF_BORROWS=1` types it dep-less.  A
 literal handed to a callee that returns its parameter (`st = id(P { … })`) is paired with the
 binding that adopts it (`adopted_work_refs`); `LOFT_NO_CALL_DELIVERED_PAIR=1` leaves it
-unpaired.  At a
+unpaired.  A vector local that owns what it names through an append's guarded backing gets no
+second owner for a call's fresh result (`own_fresh_binds`);
+`LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED=1` gives it one.  At a
 scope's end the sweep releases one store once where two names hold it
 (`scopes::get_free_vars`): a fn-ref and the local closure record it was built over
 (`LOFT_NO_FNREF_STAND_DOWN=1` frees both), a record a capturing record's cascade adopts

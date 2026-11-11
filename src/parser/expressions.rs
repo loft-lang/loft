@@ -1045,6 +1045,10 @@ impl Parser {
             && !self.vars.is_argument(*p)
             && matches!(self.vars.tp(*p).base(), Type::Vector(_, _))
             && self.vars.tp(*p).deps_ref().is_some_and(|d| !d.is_empty())
+            // `@FR-O-Proxy` — deps that name only a GUARDED backing (an append's conditional
+            // mint, loft#1486) are not a borrow: the local owns what it names on every path and
+            // frees it, so a work-ref owner beside it freed the call's store a second time.
+            && (fresh_bind_owner_beside_guarded() || !self.vars.proxy_says_owned(*p))
             && matches!(self.data.def(*d).returned().base(), Type::Vector(_, deps) if deps.is_empty())
         {
             // Cloned only here, where the rewrite fires: the checks above run for every bind.
@@ -13575,4 +13579,14 @@ mod tests {
         }
         assert!(inline_ref_set_in(&w, 7), "deeply nested Set must be found");
     }
+}
+
+/// `LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED=1` (STORE_RECORDS.md § The checks): `own_fresh_binds`
+/// gives a work-ref owner to a local that already owns what it names through a guarded backing
+/// — the re-free the store records must then report.
+fn fresh_bind_owner_beside_guarded() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED").is_ok_and(|v| v != "0")
+    })
 }
