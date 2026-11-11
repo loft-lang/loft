@@ -8620,6 +8620,23 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     self.yield_owned_value(item, &elm);
                 }
             }
+            // A tuple RECORD held by an existing value (`t = mkp(5); yield t`) arrives unboxed
+            // through a work-ref that VIEWS it: its members are that value's, so each is copied
+            // like a literal's member.  Handed over as they were, the consumer released `t`'s
+            // record and the generator released it again (`@FR-H-FreeTwice`).  A record a CALL
+            // just filled is the yield's own and is handed over whole
+            // (`coroutine_layout::yield_handed_temps`).
+            if let Value::Block(bl) = val.unspan_mut()
+                && bl.name == "tuple_unbox"
+                && matches!(bl.operators.first().map(Value::unspan),
+                    Some(Value::Set(_, r)) if !matches!(r.unspan(), Value::Call(..)))
+                && !std::env::var_os("LOFT_NO_UNBOX_YIELD_HANDOVER").is_some_and(|v| v != "0")
+                && let Some(Value::Tuple(items)) = bl.operators.last_mut().map(Value::unspan_mut)
+            {
+                for (item, elm) in items.iter_mut().zip(elems.clone()) {
+                    self.yield_owned_value(item, &elm);
+                }
+            }
             return;
         }
         if self.value_is_fresh(val, tp) {

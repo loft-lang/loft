@@ -392,6 +392,21 @@ fn handed_temps(data: &Data, val: &Value, temp: &impl Fn(u16) -> bool, out: &mut
             }
         }
     }
+    // A tuple UNBOXED from a call's record (`{#tuple_unbox __ref_N = mk(…); (__ref_N.0, …)}`):
+    // the members are reads of that record, and the consumer's copy of a record member frees
+    // the record's store — the work-ref's.  Left with the generator, the work-ref released it
+    // again at the end, by then another store's slot (`@FR-H-FreeTwice`).
+    // `LOFT_NO_UNBOX_YIELD_HANDOVER=1` keeps it.
+    if let Value::Block(bl) = val.unspan()
+        && bl.name == "tuple_unbox"
+        && let Some(Value::Set(w, rhs)) = bl.operators.first().map(Value::unspan)
+        && matches!(rhs.unspan(), Value::Call(..))
+        && temp(*w)
+        && !out.contains(w)
+        && !std::env::var_os("LOFT_NO_UNBOX_YIELD_HANDOVER").is_some_and(|v| v != "0")
+    {
+        out.push(*w);
+    }
     let mut tail = val.unspan();
     while let Value::Block(bl) = tail {
         let Some(last) = bl.operators.last() else {

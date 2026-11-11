@@ -796,6 +796,25 @@ impl Run<'_> {
                 }
                 None => Some((st, Val::unknown())),
             },
+            // `(G-Own)` — a yield whose type hands over gives the consumer the stores its value
+            // names, and the generator forgets the temps that held them
+            // (`coroutine_layout::yield_handed_temps`, the one home both code generators read).
+            Value::Yield(y)
+                if matches!(self.data.def(self.d_nr).returned().base(),
+                    crate::data::Type::Iterator(inner, _)
+                        if crate::coroutine_layout::yield_handed_over(inner)) =>
+            {
+                let (mut s, value) = self.eval(y, st)?;
+                Self::hand_on(&mut s, &value);
+                for w in crate::coroutine_layout::yield_handed_temps(self.data, self.d_nr, y) {
+                    s.vars.remove(&w);
+                    for info in s.stores.values_mut() {
+                        info.live.remove(&w);
+                        info.ended.remove(&w);
+                    }
+                }
+                Some((s, Val::null()))
+            }
             Value::Yield(_) | Value::Iter(..) => {
                 self.imprecise = true;
                 Some((st, Val::unknown()))

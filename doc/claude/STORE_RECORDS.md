@@ -147,7 +147,11 @@ built over a loop-reassigned capture between the same two assignments group by t
 they adopt, so one owns it (`capture_adoption`, `@FR-L-CapOne`);
 `LOFT_NO_LOOP_CAPTURE_GROUP=1` lets each own it, and both cascades free it.  A call that
 delivers into the caller's hidden buffer gets no second owner from `own_fresh_binds`;
-`LOFT_FRESH_BIND_BESIDE_BUFFER=1` gives it one.
+`LOFT_FRESH_BIND_BESIDE_BUFFER=1` gives it one.  A yielded tuple unboxed from a call's record
+hands that record's work-ref to the consumer (`yield_handed_temps`), and one unboxed from an
+existing value copies its record members (`yield_owned_value`); `LOFT_NO_UNBOX_YIELD_HANDOVER=1`
+does neither.  The records model a handing-over `yield` (its stores are the consumer's, its
+handed temps forgotten) instead of giving up on a generator.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it
