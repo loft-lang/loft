@@ -21,6 +21,7 @@ Each run gets one verdict:
   scripts/own_sweep.py --chapter ownership
   scripts/own_sweep.py --switch '' --switch LOFT_NO_JOIN_OWN --out sweep.tsv
   scripts/own_sweep.py --cell path/to/prog.loft     # any program, not only cells
+  scripts/own_sweep.py --oracle check-records       # judge the store records instead
 
 The table goes to --out (TSV); the summary and every MISS go to stdout.
 """
@@ -36,11 +37,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 FAULTS = [
     ("leak", re.compile(r"store\(s\) not freed at exit|stores not freed at program exit")),
-    ("uaf", re.compile(r"USE AFTER FREE|use-after-free \(LOFT_UAF\)")),
+    # A read through a freed store: named by strict stores, or caught by the poisoned
+    # record number (`LOFT_POISON` fills a freed record, so its reference reads as corrupt).
+    ("uaf", re.compile(r"USE AFTER FREE|use-after-free \(LOFT_UAF\)|the reference is corrupt")),
     ("wrong-free", re.compile(r"loft: BUG \(#(?:306|405)\)")),
 ]
 RED = re.compile(r"^RED ", re.M)
 ARMED = re.compile(r"@ARMED:(.*)")
+# The checker mode: `check` (the shipped checks) or `check-records` (the store records).
+ORACLE = ["check"]
 ARMED_SWITCH = re.compile(r"\b(LOFT_[A-Z0-9_]+)=([^\s`.,;)]+)")
 
 
@@ -59,7 +64,8 @@ def run(loft, cell, switch, timeout):
         LOFT_LEAK_CHECK="1",
         LOFT_STRICT_STORES="1",
         LOFT_POISON="1",
-        LOFT_OWN_ORACLE="check",
+        LOFT_OWN_ORACLE=ORACLE[0],
+        LOFT_NO_CACHE="1",
     )
     try:
         with open(cell, encoding="utf-8", errors="replace") as fh:
@@ -104,7 +110,10 @@ def main():
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     ap.add_argument("--timeout", type=int, default=60)
     ap.add_argument("--out", default="")
+    ap.add_argument("--oracle", default="check", choices=["check", "check-records"],
+                    help="the static checker: the shipped checks, or the store records")
     a = ap.parse_args()
+    ORACLE[0] = a.oracle
     cells = [os.path.abspath(c) for c in a.cell] or cells_of(os.path.abspath(a.suite), a.chapter)
     switches = a.switch if a.switch is not None else [""]
     jobs = [(c, s) for s in switches for c in cells]
