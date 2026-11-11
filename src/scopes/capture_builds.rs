@@ -80,8 +80,25 @@ pub(super) fn adopted_work_refs(rhs: &Value, function: &Function, data: &Data, o
                 adopted_work_refs(&last, function, data, out);
             }
         }
+        // `st = id(P { … })` — a callee that hands its parameter back whole delivers the
+        // construction's work-ref to the binding through the call (`delivered_work_ref`), so
+        // the binding adopts that store as it adopts a literal's (`@FR-O-Buffer`).  Left out,
+        // the binding and the work-ref each freed it (`@FR-H-FreeTwice`).  The pairing this
+        // feeds frees by identity, so a callee that answers another store on some path keeps
+        // both frees there.  `LOFT_NO_CALL_DELIVERED_PAIR=1` leaves the call out.
+        Value::Call(..) if !call_delivered_pair_off() => {
+            if let Some(w) = super::backings::delivered_work_ref(rhs, function, data) {
+                out.push(w);
+            }
+        }
         _ => {}
     }
+}
+
+/// `LOFT_NO_CALL_DELIVERED_PAIR=1` (STORE_RECORDS.md § The checks): a work-ref a call hands back
+/// is not paired with the binding that adopts it — the re-free the store records must report.
+fn call_delivered_pair_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_CALL_DELIVERED_PAIR").is_some())
 }
 
 /// Does a closure record's adoption take over the frame-exit free of local `v`?

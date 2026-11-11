@@ -106,7 +106,10 @@ the compiler writes that null only after the temp's store was released or handed
 subject temp borrows what its subject borrows (`parse_vector_match`; an iterator subject's
 buffer views its `__vdb`); `LOFT_NO_MATCH_SUBJ_BORROWS=1` leaves it owning that store.  A slice
 materialised where a vector is wanted (`a = v[..-1] + [9]`, `iterator_as_vector`) answers
-the borrows of its hidden local; `LOFT_NO_SLICE_LEAF_BORROWS=1` types it dep-less.  At a
+the borrows of its hidden local; `LOFT_NO_SLICE_LEAF_BORROWS=1` types it dep-less.  A
+literal handed to a callee that returns its parameter (`st = id(P { … })`) is paired with the
+binding that adopts it (`adopted_work_refs`); `LOFT_NO_CALL_DELIVERED_PAIR=1` leaves it
+unpaired.  At a
 scope's end the sweep releases one store once where two names hold it
 (`scopes::get_free_vars`): a fn-ref and the local closure record it was built over
 (`LOFT_NO_FNREF_STAND_DOWN=1` frees both), a record a capturing record's cascade adopts
