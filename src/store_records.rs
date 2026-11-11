@@ -1581,10 +1581,52 @@ impl Run<'_> {
             {
                 let mut distinct = st.clone();
                 let rest: Pts = a.iter().copied().filter(|p| *p != y).collect();
-                distinct.vars.insert(*x, rest);
-                (Some(distinct), Some(st))
+                Self::narrow(&mut distinct, *x, rest);
+                let mut same = st;
+                Self::narrow(&mut same, *x, [y].into());
+                (Some(distinct), Some(same))
+            }
+            // The witness is null: where the first operand is the SAME, it is null too.
+            (_, Some(Pt::Null))
+                if let Some(Value::Var(x)) = args.first().map(Value::unspan)
+                    && a.len() > 1
+                    && a.contains(&Pt::Null)
+                    && !a.contains(&Pt::Unknown) =>
+            {
+                let mut same = st.clone();
+                Self::narrow(&mut same, *x, [Pt::Null].into());
+                let mut distinct = st;
+                let rest: Pts = a.iter().copied().filter(|p| *p != Pt::Null).collect();
+                Self::narrow(&mut distinct, *x, rest);
+                (Some(distinct), Some(same))
             }
             _ => (Some(st.clone()), Some(st)),
+        }
+    }
+
+    /// On a path where `x` is known to name only `to`: a store it no longer names, and that
+    /// is live only where `x` names it, is not live on this path.
+    fn narrow(st: &mut State, x: u16, to: Pts) {
+        let from = Self::pts(st, x);
+        for k in Self::stores_of(&from) {
+            if to.contains(&Pt::Store(k)) {
+                continue;
+            }
+            if let Some(info) = st.stores.get_mut(&k)
+                && info.has(LIVE)
+                && info.live.contains(&x)
+            {
+                info.status &= !LIVE;
+                info.live.clear();
+                if info.status == 0 {
+                    st.stores.remove(&k);
+                }
+            }
+        }
+        if to.len() == 1 && to.contains(&Pt::Null) {
+            st.vars.remove(&x);
+        } else {
+            st.vars.insert(x, to);
         }
     }
 
