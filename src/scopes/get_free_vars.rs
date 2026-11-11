@@ -1332,6 +1332,8 @@ impl Scopes<'_> {
                     .any(|(o, n)| *n == w && self.multi_assigned.contains(o));
             // A renamed return buffer is an argument by slot, never-free to the sweep, and still
             // releases at exit what the caller did not hand it.
+            // @FR-O-Proxy asks free — whether the buffer's free is the store's release;
+            // `proxy_says_owned` carries @FR-O-Override's veto.
             let owner = function.proxy_says_owned(w)
                 || (function.is_argument(w) && rebound_params.contains(&w));
             if multi && owner && !rebound_adopter_disarm_off() {

@@ -329,6 +329,17 @@ pub fn create(path: impl HostPath) -> io::Result<std::fs::File> {
     })
 }
 
+/// Open the file for appending, creating it when absent: a log several writers add lines to
+/// (`crate::fault_log`).
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn open_append(path: impl HostPath) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    open_with(path, &options)
+}
+
 /// Open an existing file for reading AND writing, neither creating nor truncating it.
 ///
 /// # Errors

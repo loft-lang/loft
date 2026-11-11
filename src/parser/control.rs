@@ -20709,6 +20709,7 @@ impl Parser {
                             // released by its owner, and freed here it released the owner's
                             // store a second time (`@FR-H-FreeTwice`).
                             // `LOFT_ARM_FREES_VIEW_DEPS=1` frees every dep.
+                            // @FR-O-Proxy asks free — `proxy_says_owned` carries @FR-O-Override's veto.
                             if self.vars.proxy_says_owned(d) || arm_frees_view_deps() {
                                 seq.push(self.cl("OpFreeRef", &[Value::Var(d)]));
                             }
@@ -22589,9 +22590,8 @@ impl Parser {
                     Type::RefVar(inner)
                         if !crate::env_once!(
                             std::env::var_os("LOFT_NO_RETURN_LINK_BORROW").is_some()
-                        ) && matches!(v.unspan(), Value::Var(p)
-                                if self.vars.is_argument(*p)
-                                    && matches!(inner.base(), Type::Reference(..))) =>
+                        ) && matches!(inner.base(), Type::Reference(..))
+                            && matches!(v.unspan(), Value::Var(p) if self.vars.is_argument(*p)) =>
                     {
                         let Value::Var(p) = v.unspan() else {
                             unreachable!("matched as a variable above")

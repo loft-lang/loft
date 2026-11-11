@@ -403,9 +403,10 @@ impl Scopes<'_> {
         // the parser's own holders of an unbox do (`Parser::unboxed_member_types`).  Left
         // owning, the scope end freed `t.0` — a DbRef into that store — and then the
         // work-ref.  A local bound more than once keeps its type: another bind may own.
+        // @FR-O-Proxy asks copy — view or owner; adding the dep authorises no free.
         if !self.multi_assigned.contains(&ov)
             && !unbox_member_deps_off()
-            && matches!(function.tp(v), Type::Tuple(_))
+            && matches!(function.tp(v).base(), Type::Tuple(_))
             && function.tp(v).depend().is_empty()
             && let Some(w) = unbox_work_ref(value)
             && w != v
@@ -2303,6 +2304,7 @@ impl Scopes<'_> {
         // lift's store, which the lift releases.  The parser typed it before the lift existed,
         // as an owner, and both freed the store (`@FR-H-FreeTwice`).  A local bound again keeps
         // its type: another bind may own.  `LOFT_NO_LIFT_PROJECTION_VIEW=1` keeps it owning.
+        // @FR-O-Proxy asks copy — view or owner; adding the dep authorises no free.
         if !self.multi_assigned.contains(&ov)
             && !lift_projection_view_off()
             && function.tp(v).depend().is_empty()

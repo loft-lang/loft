@@ -3304,6 +3304,8 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
         // is no one's borrow source and neither protects nor blocks.
         // A `&` link carries the store of what it links to (its `OpCreateStack` arm below).
         let carried = match tp {
+            // `τ?` carries τ's store: the `base` test below reads it.
+            Type::Optional(_) => tp,
             Type::RefVar(inner)
                 if !crate::env_once!(std::env::var_os("LOFT_NO_LINK_ARG_PROTECT").is_some()) =>
             {
@@ -3314,6 +3316,12 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
         if carried.heap_dep().is_none() && carried.base().heap_dep().is_none() {
             continue;
         }
+        // What a `&` parameter links to; a `τ?` is no link.
+        let link_target: Option<&Type> = match tp {
+            Type::Optional(_) => None,
+            Type::RefVar(inner) => Some(inner),
+            _ => None,
+        };
         // Every argument whose type CARRIES A STORE is protectable, because the bracket
         // marks that store through the argument's own `DbRef` and every one of these
         // holds one.  loft#981 is why this must stay in step with `heap_dep` above: a
@@ -3371,7 +3379,7 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
             // filter above did: the set then read COMPLETE while protecting nothing.
             Value::Call(d, cargs)
                 if data.def(*d).name() == "OpCreateStack"
-                    && matches!(tp, Type::RefVar(inner) if is_protectable_store_type(inner)) =>
+                    && link_target.is_some_and(is_protectable_store_type) =>
             {
                 match cargs.first().map(Value::unspan) {
                     Some(Value::Var(u)) => protectable.push(*u),

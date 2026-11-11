@@ -4765,7 +4765,7 @@ impl Parser {
             // A `boolean` default for a value that is not one is, nearly always, precedence:
             // `x ?? -1 == 3` reads `-1 == 3` as the default, because `??` binds looser than a
             // comparison, `&&` and `||`.  The mismatch alone names the symptom, not that.
-            let precedence = matches!(rhs_type, Type::Boolean)
+            let precedence = matches!(rhs_type.base(), Type::Boolean)
                 && !matches!(result_type.base(), Type::Boolean)
                 && self.is_comparison_or_logic(&rhs);
             let why = if precedence {

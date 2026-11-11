@@ -219,6 +219,7 @@ pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Va
 /// The arms of a first assignment that is not a heap record bind: the null inits, a function
 /// reference, an `&` link, and the plain bind.
 fn first_arm_plain(function: &Function, tp: &Type, value: &Value) -> FirstArm {
+    // `Value::unspan`'s contract: a `Span` must not hide the null or the link source.
     let value = value.unspan();
     if *value == Value::Null
         && matches!(tp, Type::Optional(_))
@@ -916,7 +917,12 @@ fn delivered_tail(value: &Value) -> &Value {
 #[must_use]
 pub fn vector_null_mints(function: &Function, v: u16) -> bool {
     !(function.is_skip_free(v) || function.is_inline_ref(v) || function.is_lazy_buffer(v))
-        && matches!(function.tp(v), Type::Vector(_, dep) if dep.is_empty())
+        // A `vector?` local's null init is `NullableVectorNull`, which mints nothing here.
+        && match function.tp(v) {
+            Type::Optional(_) => false,
+            Type::Vector(_, dep) => dep.is_empty(),
+            _ => false,
+        }
 }
 
 /// Does a keyed local's FIRST null init (`FirstArm::KeyedNull`) mint a store of its own?  Not

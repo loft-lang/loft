@@ -26,15 +26,13 @@
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
 
-fn sink() -> Option<&'static Mutex<std::fs::File>> {
-    static SINK: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+fn sink() -> Option<&'static Mutex<crate::file_access::File>> {
+    static SINK: OnceLock<Option<Mutex<crate::file_access::File>>> = OnceLock::new();
     SINK.get_or_init(|| {
         let path = std::env::var("LOFT_FAULT_LOG")
             .ok()
             .filter(|p| !p.is_empty())?;
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true).append(true);
-        crate::file_access::open_with(path.as_str(), &options)
+        crate::file_access::open_append(path.as_str())
             .ok()
             .map(Mutex::new)
     })

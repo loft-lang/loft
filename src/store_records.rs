@@ -952,6 +952,7 @@ impl Run<'_> {
             .contains(&(std::ptr::from_ref(node) as usize))
         {
             let arm = crate::bind_lowering::first_arm(data, self.d_nr, function, x, val);
+            // @FR-O-Proxy asks oracle — the records' own reading; it drives no emission.
             if let FirstArm::RecordVarCopy { src, .. } = arm
                 && function.uses(src) == 1
                 && function.proxy_says_owned(src)
@@ -1537,9 +1538,11 @@ impl Run<'_> {
 
     /// A call to an operator or function that answers nothing (a free, a set).
     fn is_void_call(&self, op: &Value) -> bool {
-        matches!(op.unspan(), Value::Call(d, _)
-            if (*d as usize) < self.data.definitions.len()
-                && *self.data.def(*d).returned() == crate::data::Type::Void)
+        let Value::Call(d, _) = op.unspan() else {
+            return false;
+        };
+        (*d as usize) < self.data.definitions.len()
+            && matches!(self.data.def(*d).returned().base(), crate::data::Type::Void)
     }
 
     fn run_loop(&mut self, body: &[Value], st: State) -> Option<(State, Val)> {
@@ -1965,7 +1968,7 @@ impl Run<'_> {
                 && def
                     .attributes
                     .first()
-                    .is_some_and(|a| matches!(a.typedef, crate::data::Type::Text(_)))
+                    .is_some_and(|a| matches!(a.typedef.base(), crate::data::Type::Text(_)))
             {
                 // …unless that argument holds no store to answer into: a parse
                 // (`OpCastVectorFromText(text, tp)`) builds its answer in a store of its own.

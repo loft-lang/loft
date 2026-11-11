@@ -61,7 +61,7 @@ LAYERS: list[tuple[str, list[str]]] = [
         "call_frames", "codegen_runtime", "compact", "components", "const_eval",
         "coroutine_layout", "crash_report", "data", "data_ref", "data_store", "database",
         "diagnostic_render", "diagnostics", "doc_catalogue", "doc_construct", "doc_render",
-        "documentation", "engine_host", "exit_record", "exit_vector", "ffi_deliver",
+        "documentation", "engine_host", "exit_record", "exit_vector", "fault_log", "ffi_deliver",
         "file_access", "fixpoint", "fnref", "forward_result", "fxhash", "git_query", "hash",
         "host_abi", "host_imports", "html_embed", "html_fonts", "install", "integrity",
         "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys", "layout_schema", "ledger",
@@ -140,15 +140,15 @@ BUDGET: dict[tuple[str, str], int] = {
 # ratchet that only falls.  A module leaves the set only when nothing in the set names it.
 RUNTIME: list[str] = [
     "arena", "base64", "btree", "c_libs", "cache", "calc", "call_frames", "codegen_runtime",
-    "crash_report", "database", "diagnostic_render", "diagnostics", "engine_host", "file_access",
-    "fxhash", "git_query", "hash", "host_abi", "integrity", "json", "keys", "ledger", "lexer",
-    "limits", "live_control", "live_rebuild", "lockfile", "log_config", "logger", "loop_kernels",
-    "mmap_file", "narrow", "native", "native_bind", "net", "net_profile", "op_census", "ops",
-    "page_metrics", "paged_reader", "par_pool", "placement", "platform", "png_store",
-    "process_run", "radix_db", "radix_tree", "resolution_scope", "rewrite_census", "runtime_abi",
-    "runtime_error", "schema_sidecar", "siphash", "stack_verify", "store", "store_budget",
-    "store_census", "store_trace", "timeout", "tls", "trie_db", "vector", "wasm", "wasm_assets",
-    "web_browser", "web_bytes", "ws_handshake",
+    "crash_report", "database", "diagnostic_render", "diagnostics", "engine_host", "fault_log",
+    "file_access", "fxhash", "git_query", "hash", "host_abi", "integrity", "json", "keys",
+    "ledger", "lexer", "limits", "live_control", "live_rebuild", "lockfile", "log_config",
+    "logger", "loop_kernels", "mmap_file", "narrow", "native", "native_bind", "net",
+    "net_profile", "op_census", "ops", "page_metrics", "paged_reader", "par_pool", "placement",
+    "platform", "png_store", "process_run", "radix_db", "radix_tree", "resolution_scope",
+    "rewrite_census", "runtime_abi", "runtime_error", "schema_sidecar", "siphash", "stack_verify",
+    "store", "store_budget", "store_census", "store_trace", "timeout", "tls", "trie_db", "vector",
+    "wasm", "wasm_assets", "web_browser", "web_bytes", "ws_handshake",
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.
