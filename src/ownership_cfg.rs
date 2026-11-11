@@ -1924,7 +1924,10 @@ mod tests {
         // Borrowing from different bases borrows on every path: no free is ever licensed, so it
         // stays `Borrowed`, with no one base to name — what `ownership_of` answers.
         assert_eq!(OFact::meet(Borrowed(1), Borrowed(2)), Borrowed(u16::MAX));
-        assert_eq!(OFact::meet(Borrowed(u16::MAX), Borrowed(3)), Borrowed(u16::MAX));
+        assert_eq!(
+            OFact::meet(Borrowed(u16::MAX), Borrowed(3)),
+            Borrowed(u16::MAX)
+        );
         // Join dominates.
         assert_eq!(OFact::meet(Join(7), Owned), Join(7));
         assert_eq!(OFact::meet(Owned, Join(7)), Join(7));
