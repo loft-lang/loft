@@ -239,6 +239,9 @@ of calls; `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the falsifiers.  Where 
 answer needs a temp of its own (a call answering a borrow, which the bind copies), `v`
 borrows that temp and the temp releases it (`@FR-O-Complete`, `Scopes::lift_join_arm_tails`);
 **`LOFT_NO_CALL_ARM_HOLDERS=1`** leaves `v` owning it too — a re-free per evaluation.
+A literal built in a buffer the local adopts is freed only where the local moved off it
+(`OpFreeRefIfDistinct(buffer, local)`, ahead of the local's own free, `@FR-O-Buffer`);
+**`LOFT_NO_LITERAL_BUFFER_PAIR=1`** keeps both plain frees — a re-free per evaluation.
 
 **A match lowered once per arm (`@FR-M-Once`, default-ON, both backends, parse time):** a
 guarded arm folds its guard into its own condition (`parser::control::guarded_arm`), so a

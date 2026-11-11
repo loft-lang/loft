@@ -1243,7 +1243,70 @@ impl Scopes<'_> {
             guarded.append(&mut ls);
             ls = guarded;
         }
+        self.pair_literal_buffers(&mut ls, data);
         ls
+    }
+
+    /// `@FR-O-Buffer` — a literal's buffer and the local that adopted it name ONE store, and
+    /// where this sweep frees both, the local is its owner: the buffer's plain free becomes
+    /// `OpFreeRefIfDistinct(buffer, local)`, a free only where the local was reassigned away
+    /// from it.  It moves ahead of the local's first mention, because a free resets the local
+    /// on C and `--native`, and a guard read after that compares against null.  A local this
+    /// sweep does not free keeps the buffer's plain free: that is then the store's only release
+    /// (a captured local, one with no free of its own — loft#1317's measurements).
+    /// `LOFT_NO_LITERAL_BUFFER_PAIR=1` keeps every buffer's plain free.
+    fn pair_literal_buffers(&self, ls: &mut Vec<Value>, data: &Data) {
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *OFF.get_or_init(|| std::env::var("LOFT_NO_LITERAL_BUFFER_PAIR").is_ok_and(|v| v != "0"))
+            || self.literal_buffer.is_empty()
+        {
+            return;
+        }
+        let free = data.def_nr("OpFreeRef");
+        let free_distinct = data.def_nr("OpFreeRefIfDistinct");
+        let frees = |op: &Value, w: u16| {
+            matches!(op.unspan(), Value::Call(d, args)
+                if (*d == free || *d == free_distinct)
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w))
+        };
+        let mut i = 0;
+        while i < ls.len() {
+            let paired = match ls[i].unspan() {
+                Value::Call(d, args) if *d == free => match args.first().map(Value::unspan) {
+                    Some(Value::Var(b)) => self
+                        .literal_buffer
+                        .get(b)
+                        .filter(|&&w| w != *b && ls.iter().any(|op| frees(op, w)))
+                        .map(|&w| (*b, w)),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let Some((b, w)) = paired else {
+                i += 1;
+                continue;
+            };
+            ls.remove(i);
+            let mentions = |op: &Value| {
+                let mut hit = false;
+                op.walk(&mut |n| {
+                    if matches!(n, Value::Var(x) | Value::Set(x, _) if *x == w) {
+                        hit = true;
+                    }
+                });
+                hit
+            };
+            let at = ls.iter().position(mentions).unwrap_or(ls.len());
+            ls.insert(
+                at,
+                Value::Call(free_distinct, vec![Value::Var(b), Value::Var(w)]),
+            );
+            if at > i {
+                // The slot `i` now holds the op after the one moved; read it next.
+                continue;
+            }
+            i += 1;
+        }
     }
 }
 

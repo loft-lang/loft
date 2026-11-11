@@ -597,6 +597,9 @@ pub struct Store {
     /// Bytecode position that allocated this store (via OpDatabase).
     /// Used for diagnostics when a store is leaked at program exit.
     pub created_at: u32,
+    /// Bytecode position of the op that freed this store, while it is free: a second free
+    /// names it (`@FR-H-FreeTwice`).
+    pub freed_at: u32,
     /// Bytecode position of the last significant operation on this store
     /// (OpCopyRecord, OpFreeRef skip, ref_count change, etc.).
     pub last_op_at: u32,
@@ -1231,6 +1234,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             free_root: 0,
             wild: 0,
@@ -1448,6 +1452,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             pinned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
@@ -1532,6 +1537,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             free_root: 0,
             wild: 0,
@@ -1654,6 +1660,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             free_root: 0,
             wild: 0,
@@ -3472,6 +3479,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
             lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
@@ -3520,6 +3528,7 @@ impl Store {
             store_nr: self.store_nr,
             alloc_serial: self.alloc_serial,
             created_at: self.created_at,
+            freed_at: self.freed_at,
             last_op_at: self.last_op_at,
             free_root: self.free_root,
             wild: self.wild,
@@ -3595,6 +3604,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
             lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),

@@ -133,6 +133,9 @@ pub enum RuntimeErrorKind {
     /// the relay happened to build.  The variant exists because the kind's own
     /// structured fields do not cross — only what renders does.
     Relayed { label: String, detail: String },
+    /// A store freed a second time (`@FR-H-FreeTwice`): a defect of the compiler, never of the
+    /// program, so the message asks for a report.  `detail` names both frees.
+    StoreFreedTwice { detail: String },
 }
 
 impl RuntimeErrorKind {
@@ -154,6 +157,7 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::AssertionFailed { .. } => "assertion_failed",
             RuntimeErrorKind::Exit { .. } => "exit",
             RuntimeErrorKind::Relayed { label, .. } => label,
+            RuntimeErrorKind::StoreFreedTwice { .. } => "store_freed_twice",
         }
     }
 
@@ -202,6 +206,9 @@ impl RuntimeErrorKind {
             // Already rendered on the far side; describing it again would
             // prefix a second `panic:` onto one that is already there.
             RuntimeErrorKind::Relayed { detail, .. } => detail.clone(),
+            RuntimeErrorKind::StoreFreedTwice { detail } => format!(
+                "a store was freed twice: {detail} (a defect in the loft compiler; please report it)"
+            ),
         }
     }
 }

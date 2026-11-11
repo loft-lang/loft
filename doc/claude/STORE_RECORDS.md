@@ -94,7 +94,10 @@ number is all they check: when anything allocates between the two frees it takes
 and the second free releases the new owner's store.  The C backend ships what the compiler
 emits, so the compiler emits each free once on every path wherever it can.  The records
 report a re-free as its own kind, so the list of compiler sites still emitting one stays
-visible, and `LOFT_DOUBLE_FREE` counts the ones a run reaches on either backend.  A
+visible, and `LOFT_DOUBLE_FREE` counts the ones a run reaches on either backend.
+`LOFT_REFREE_FAILS=1` makes the interpreter (and `--native`) fail the run at a re-free
+instead, naming the op that freed the store and the one freeing it again; it becomes the
+default once no suite cell re-frees.  A
 **guarded** free (one that asks first whether the store is live, as `OpStoreLive` does) is
 not a re-free.
 

@@ -362,7 +362,10 @@ impl Logger {
         let severity = match kind {
             // A relayed fault halted the library it fired in, whatever kind it
             // started as — only halting faults cross a placement boundary.
-            Rk::UserPanic { .. } | Rk::StackOverflow | Rk::Relayed { .. } => Severity::Fatal,
+            Rk::UserPanic { .. }
+            | Rk::StackOverflow
+            | Rk::Relayed { .. }
+            | Rk::StoreFreedTwice { .. } => Severity::Fatal,
             // An `exit(code)` is the program's own verdict, never a fault; it reaches a log
             // only through a host that logs every halt, and then as information.
             Rk::Exit { .. } => Severity::Info,

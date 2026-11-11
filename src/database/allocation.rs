@@ -1709,6 +1709,23 @@ impl Stores {
                 .is_some_and(|s| !s.is_free())
     }
 
+    /// `@FR-H-FreeTwice` — fail the run at a second free of store `al`, naming the op that
+    /// freed it first (`first`, a bytecode position) and the one freeing it again.
+    fn refuse_refree(&mut self, al: u16, first: u32) {
+        let at = |pc: u32| {
+            crate::crash_report::nearest_source_loc_for_pc(pc).map_or_else(
+                || format!("pc={pc}"),
+                |(_, p)| format!("{}:{}:{} (pc={pc})", p.file, p.line, p.pos),
+            )
+        };
+        let detail = format!(
+            "store #{al} freed at {}, freed again at {}",
+            at(first),
+            at(self.alloc_pc)
+        );
+        self.raise_runtime(crate::runtime_error::RuntimeErrorKind::StoreFreedTwice { detail });
+    }
+
     /**
     Like [`free`], but includes the loft variable name in `LOFT_STORE_LOG` output.
     Generated native code calls this variant via `OpFreeRef(stores, var, "var_name")`.
@@ -1870,7 +1887,16 @@ impl Stores {
         }
         let store = &mut self.allocations[al as usize];
         if store.free {
-            return; // Already freed — no-op (replaces Issue #120 tolerance hack).
+            // `@FR-H-FreeTwice` — a re-free is a compiler defect: under `LOFT_REFREE_FAILS=1`
+            // the run fails at it, naming both frees, unless `LOFT_DOUBLE_FREE` asks for the
+            // census above instead.  A
+            // re-free whose slot was handed out in between finds it live and is not seen here;
+            // `LOFT_STRICT_STORES` never hands a slot out again, so it sees those too.
+            if crate::keys::refree_fails() && !crate::keys::double_free_audit() {
+                let first = store.freed_at;
+                self.refuse_refree(al, first);
+            }
+            return;
         }
         // Plan-57 Phase C: const/global stores are PINNED — never freed (they
         // live for the whole program).  This replaces the `ref_count = u32::MAX/2`
@@ -1979,6 +2005,7 @@ impl Stores {
             store.reclaim_tail();
         }
         store.free = true;
+        store.freed_at = self.alloc_pc;
         crate::store_census::note(crate::store_census::Work::StoreFree, 1);
         #[cfg(feature = "op-census")]
         crate::store_census::alloc_event(format_args!("F {}", store.alloc_serial));

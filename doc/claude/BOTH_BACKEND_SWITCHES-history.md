@@ -92,3 +92,9 @@ with it, the consumer's `smooth` ran 26 % faster.
 
 Measured on the cbor decoder's bench: decode 34.7 ms → 26.2 ms per op, and stores per
 `check_request` 20 → 7.
+
+## Placed results (`(R-Place)`, `(R-MoveLast)`'s return-field clause)
+
+Measured on the cbor decoder's bench (`--ship`): decode 42.6 ms → 34.7 ms per op.  On
+pluginabi's `check_request` driver (`--ship`): 0.34 s → 0.33 s per 40 rounds; the copy census
+of `return p.a` 1 → 0 per call.

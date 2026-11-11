@@ -3253,6 +3253,15 @@ pub fn double_free_audit() -> bool {
     *ON.get_or_init(|| env_set("LOFT_DOUBLE_FREE"))
 }
 
+/// `LOFT_REFREE_FAILS=1` — a free of an already-freed store fails the run, naming both frees
+/// (`Stores::refuse_refree`, `@FR-H-FreeTwice`).  Opt-in while the compiler still emits
+/// re-frees; STORE_RECORDS.md § The checks.
+#[must_use]
+pub fn refree_fails() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_REFREE_FAILS"))
+}
+
 static DF_SAME_SITE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static DF_OTHER_SITE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
