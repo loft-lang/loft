@@ -54,6 +54,13 @@ the suite now reads 0 under strict stores on the interpreter and C.
 | `R-Demote/a-front-push-moves-the-old-node-and-keeps-what-it-owns.loft` (interpreter, C, native) | a link walk over a plain parameter released the caller's list | fixed; cell armed; new cell `F-ParamRebind/a-link-to-a-plain-parameter-walks-…` |
 | `O-NoDiverge/1328-…`, `O-NoDiverge/1329-…`, `O-Proxy/1320-…` | not a UAF: each cell lowers the store ceiling (`@STORE_LIMIT: 1310`), and strict stores never reuses a store number, so the run exhausts the table; run without the ceiling they are clean on both backends | not a defect |
 
+**Coverage after the fixes** (2026-11-11, the suite at `8778c1e` plus this arc's cells): no use
+after free under `LOFT_STRICT_STORES=1` on the interpreter, C or rustc-native.  Every failure
+left is a cell that lowers `@STORE_LIMIT` to 1310 (interpreter: 3, native: 6), and each is clean
+with the ceiling lifted.  The 574 `tests/scripts` programs: no use after free; 45 could not be
+checked from a scratch copy (they fail without strict stores too: imports and files the copy
+lacks).  Not swept: the libraries and the consumer programs.
+
 Run a cell alone the way the runner does: `LOFT_LEAK_CHECK=1`, the cell's `@STORE_LIMIT` as
 `LOFT_STORE_LIMIT`, `loft --tests`, from the suite root.
 
