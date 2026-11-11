@@ -230,7 +230,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-HotInline)` | not counted — executor: #hot operators inlined into the lean loop |
 | `(R-InPlace)` | not counted — condition: the write test the header hoists ask; counted under them |
 | `(R-InPlaceLiteral)` | `R-InPlaceLiteral` parse · `/child` parse |
-| `(R-InRange)` | `R-InRange` parse · `/length-local` parse |
+| `(R-InRange)` | `R-InRange` parse · `/length-local` parse · `/wrapped` parse |
 | `(R-Inline)` | `R-Inline` c · `/helper` c |
 | `(R-InlineLeaf)` | `R-InlineLeaf` parse |
 | `(R-Inputs)` | `R-Inputs` c, native |
