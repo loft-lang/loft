@@ -142,7 +142,10 @@ when the value reads the local (`ReBind::protects_old`, one answer for the code 
 the records, beside `ReBind::copies_into_fresh`); `LOFT_NO_FRESH_PROTECTS_OLD=1` leaves it out,
 and the copy's source-free and the stashed free both release it.  A literal buffer adopted by
 an owning local that is assigned again takes no scope-exit free (the local releases its store
-on every path); `LOFT_NO_REBOUND_ADOPTER_DISARM=1` keeps the pairing.
+on every path); `LOFT_NO_REBOUND_ADOPTER_DISARM=1` keeps the pairing.  Two closure records
+built over a loop-reassigned capture between the same two assignments group by the store
+they adopt, so one owns it (`capture_adoption`, `@FR-L-CapOne`);
+`LOFT_NO_LOOP_CAPTURE_GROUP=1` lets each own it, and both cascades free it.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it
