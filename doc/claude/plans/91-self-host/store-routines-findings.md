@@ -41,33 +41,67 @@ a silent null read.
 
 ## Use-after-free cases
 
-Measured 2026-11-11 on `tuxedo-pln204-int32` @ `15a2291fb` (suite `8778c1e`): **1442 passed,
-4 failed, with the reset on and with it off — the same four cells.**  The reset hides no UAF the
-suite reaches.
+Measured 2026-11-11 on `tuxedo-pln204-int32` (suite `8778c1e`), the suite under
+`LOFT_STRICT_STORES=1`.  The first interpreter sweep read 1442 passed, 4 failed, but it was
+partly blind: `loft --tests` counted strict-store violations and never failed a test on them
+(the direct run's exit did).  `test_runner.rs` now fails a test that adds one.  With that, and
+with the C backend swept too, the suite held **two** use-after-free cases; both are fixed, and
+the suite now reads 0 under strict stores on the interpreter and C.
 
 | Case | Cause | State |
 |---|---|---|
-| `R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them.loft` | see below | cause found |
-| `O-NoDiverge/1328-a-fn-ref-rebind-frees-the-store-it-displaces.loft` (3 of 6 tests) | not yet known: passes when run alone | open |
-| `O-NoDiverge/1329-a-fn-ref-vector-rebind-frees-the-store-it-displaces.loft` (2 of 8) | not yet known: passes when run alone | open |
-| `O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft` (1 of 11) | not yet known: passes when run alone | open |
+| `R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them.loft` (interpreter) | the adopted result's let-go freed the host store | fixed; cell armed with strict stores |
+| `R-Demote/a-front-push-moves-the-old-node-and-keeps-what-it-owns.loft` (interpreter, C, native) | a link walk over a plain parameter released the caller's list | fixed; cell armed; new cell `F-ParamRebind/a-link-to-a-plain-parameter-walks-…` |
+| `O-NoDiverge/1328-…`, `O-NoDiverge/1329-…`, `O-Proxy/1320-…` | not a UAF: each cell lowers the store ceiling (`@STORE_LIMIT: 1310`), and strict stores never reuses a store number, so the run exhausts the table; run without the ceiling they are clean on both backends | not a defect |
 
-**R-HostStore: the adopted local's null reset frees the host store.**  `simplify` builds the
-`Add` node in the store of its first child's result and adopts both children by number:
+Run a cell alone the way the runner does: `LOFT_LEAK_CHECK=1`, the cell's `@STORE_LIMIT` as
+`LOFT_STORE_LIMIT`, `loft --tests`, from the suite root.
+
+**R-HostStore: the adopted local's let-go freed the host store.**  `simplify` builds the `Add`
+node in the store of its first child's result and adopts both children by number:
 
 ```text
 __ref_p2_1 = OpStoreBuf(a);                     // the node goes into a's store
 OpDatabase(__ref_p2_1, Add);
 OpAdoptChildRec(OpGetField(__ref_p2_1, l), a);  // the node takes a's record
-a = null;                                       // a no longer holds it
+a = null;                                       // a lets go of it
 OpAdoptChildRec(OpGetField(__ref_p2_1, r), _result_20);   // reads the node: freed
 ```
 
-`a = null` is a user variable's reassignment, so `bind_lowering::re_bind` gives it a displaced
-free (`LOFT_TRACE_BIND`: `b2=pre … R3`), and `OpFreeRef(a)` releases the whole store the node
-was just built in.  The rule "a compiler temporary reset to null frees nothing" (`re_bind`,
-`LOFT_TEMP_NULL_RESET_FREES`) covers only compiler temporaries.  The null written after an
-adoption has the same meaning for any variable: the store was handed over.
+`(R-HostStore)`'s result clause says the local LETS GO (null): one owner per record, the store
+living on for the answer.  `re_bind` lowered `a = null` as a user variable's reassignment, with
+a displaced free.  Fix: `host_result` writes the let-go as a detach (`OpNullRefSentinel()`), and
+`data::is_null_sentinel_detach` admits a local whose one bind adopts its callee's record
+(`deferred_first_bind`); the predicate is shared, so no backend frees there.  Behind it the
+strict child-record check refused record 1 as a child (`is_claimed_record` excludes the store's
+first record); a host-store tree's first leaf IS record 1, so the check now admits it when
+claimed.  The bytecode differs from before only by the two let-go frees.
+
+**R-Demote: a link walk over a plain parameter released the caller's list.**  `walk(n: N?)`
+reads `cur = &n; while … { cur = &cur.next }`.  Each step writes `n = n.next` through the link
+(`OpMoveSlotRef`), and the write-back released the displaced store where the new value is not
+in it: on the last step, `null`, the whole store, which is `main`'s list.  `(F-ParamRebind)`:
+replacing a plain parameter's value only rebinds the callee's name.  Fix: one predicate,
+`Function::link_write_releases`, false for a link that reaches a plain parameter, gates the
+move form and the displaced release in all three writers (interpreter, rustc, C).
+
+**The records and the checker (the three-place rule).**  Each cure has a switch that restores
+its defect — `LOFT_HOST_LETGO_FREES=1`, `LOFT_LINK_PARAM_RELEASES=1` — and
+`scripts/own_sweep.py --oracle check-records` reads CAUGHT with it on and CLEAN (R-Demote, the
+F-ParamRebind cell) or the cell's known STATIC (R-HostStore) with it off.  The host-store case
+needed no records change: `OpStoreBuf(a)` already answers `a`'s store, so the restored free is a
+use after end of the node.  The link case needed one: the records now follow a `&` link
+installed on one variable as a write to that variable, with the code generator's release.
+`own_sweep.py` now counts the strict child-record check as a use after free (under
+`LOFT_POISON` it fires first, and R-Demote's cure-off run read CLEAN).  Over the suite: STATIC
+366 → 362, no cell worse.  Landed on `91-self-host` as a patch to loft-c9.
+
+**Left open: a whole new record written through a link to a plain parameter leaks.**
+`cur = &n; cur = N { … }` puts a fresh store in `n` that nothing frees; the direct spelling
+`n = N { … }` is clean because the parser gives a rebound parameter an entry witness
+(`ensure_rebind_witness`) and frees it at exit when distinct.  Before the fix above this shape
+freed the caller's store first and leaked the new one too.  The cure is to treat a whole write
+through such a link as a rebind of its target, so the witness applies.
 
 ## Can a store's paths be followed today?
 
@@ -89,8 +123,13 @@ host-store function reads as leaking and the free inside it as harmless.  Its st
 per-function abstractions, not the runtime's, so a runtime report cannot be looked up in it.
 What would make the paths easy to follow, in order of leverage:
 
-1. One report per runtime fault that names the source line and variable of the free and of the
-   access (the pcs are already known; `introspect` has the map).
+1. **Built** (`src/store_trace.rs`, [DEBUG_STORES.md](../../DEBUG_STORES.md) § Debugging
+   store-ownership bugs): `LOFT_STRICT_STORES` and `LOFT_REFREE_FAILS` name the function, file,
+   line (column when a span covers the pc) and the freed variable; `LOFT_LOG=store_life:<N>`
+   adds the jumps each frame took from the store's allocation to each free, and reports a frame
+   that returns with the store live.  On R-HostStore the strict report now reads
+   `freed `simplify` … line 36 by `a`` / `read … line 36`, and the store-life path shows
+   lines 34 and 35's conditions false before the free.
 2. The records keyed to the same store identity the runtime reports, so a strict-stores fault
    can be looked up in `LOFT_STORE_TABLE`.
 3. The records modelling host stores (`OpStoreBuf`, `OpAdoptChildRec`), so this cell reads
