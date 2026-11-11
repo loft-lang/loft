@@ -135,6 +135,8 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     crate::opt::loop_record::rewrite_program(data, database);
     laps.lap("loop_record");
     laps.report("close_program", data.definitions());
+    // The store records (STORE_RECORDS.md), on the closed program: an observer.
+    crate::store_records::observe(data);
 }
 
 /// Incremental variant of [`byte_code`] — only emit bytecode for

@@ -386,6 +386,7 @@ pub mod single_use;
 pub mod siphash;
 pub mod slice_text;
 pub mod slot_alias;
+pub mod store_records;
 pub mod tail_frame;
 pub mod take_local;
 pub mod text_len;

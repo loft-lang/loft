@@ -121,13 +121,39 @@ A fix that makes the runtime clean while the checker stays silent on the defect 
 incomplete: the next defect of the same shape is again found only by a run.  This holds for
 a defect found by any route: a failing run, the sweep, an issue, a consumer's report.
 
+## What the IR does not say yet: how an assignment is lowered
+
+An IR `Set(v, value)` does not say what happens to stores.  The code generator decides it:
+`gen_set_first_at_tos` and the reassignment path in `src/state/codegen.rs` choose among about
+30 named lowerings (`LOFT_TRACE_BIND` prints the one each assignment takes): bind `v` to the
+value, deep-copy the value into a fresh store of `v`'s own and free the source, adopt the
+store a callee minted, move, and more.  The choice reads the facts the records must not
+trust (`deps`, `return_adopts_fresh_store`), and the Rust-native (`src/generation/`) and C
+(`src/c/`) backends repeat it in their own code.
+
+So the IR is not yet a full description of a function's stores, and a record built from it
+alone mis-reads every assignment whose lowering copies.  Measured: `x = f(e)` where `f`
+answers its argument on some paths reads as "`x` views `e`'s store" in the IR, while the
+emitted code copies into a fresh store, so the records report a double free that never
+happens.
+
+The store abstraction therefore has two halves: the records, and **the lowering choice moved
+into the IR** — each assignment says, in the IR, whether it binds, copies, adopts or moves,
+decided once and read by all three code generators and by the records.  Until then the
+records can only read the choice the interpreter's code generator made.
+
 ## Phases
 
 1. **Records beside the checker.**  Build the records as an observer (the shipped code stays
-   byte-identical) and print them with `LOFT_STORE_TABLE=<fn>`.
-2. **Checks on the records.**  Re-base the leak, double-end, use-after-end and wrong-end
+   byte-identical) and print them with `LOFT_STORE_TABLE=<fn>`; `LOFT_OWN_ORACLE=check-records`
+   reports their findings, and `scripts/own_sweep.py --oracle check-records` measures them.
+   Built: `src/store_records.rs`.
+2. **The lowering in the IR.**  Each assignment carries its lowering kind, decided in one place
+   before code generation; the three code generators read it instead of deciding it, and
+   `LOFT_TRACE_BIND`'s arms become the kinds' names.
+3. **Checks on the records.**  Re-base the leak, double-end, use-after-end and wrong-end
    checks on the records; drive the sweep's MISS and STATIC counts to 0, one shape at a time,
    each with its suite cell.
-3. **Gate.**  The suite runner and CI fail on a checker finding, as they do on a runtime one.
-4. **Frees from the records.**  The code generator places frees from the records, and the
+4. **Gate.**  The suite runner and CI fail on a checker finding, as they do on a runtime one.
+5. **Frees from the records.**  The code generator places frees from the records, and the
    `deps`-derived facts become one input to them rather than a second answer.
