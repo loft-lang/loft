@@ -1348,53 +1348,58 @@ impl Run<'_> {
             ReArm::Plain => value,
         };
         if rb.free == DisplacedFree::Stash && rb.arm != ReArm::KeyedNull && bound.pts != old {
-            // The stashed old reference, freed unless the new value names the same store.
-            let tmp = u16::MAX;
-            s.vars.insert(tmp, old.clone());
-            for k in Self::stores_of(&old) {
-                if let Some(info) = s.stores.get_mut(&k)
-                    && info.live.contains(&x)
-                {
-                    info.live.insert(tmp);
-                }
-            }
-            self.bind(&mut s, x, &bound);
-            let shared: Vec<SKey> = Self::stores_of(&old)
-                .into_iter()
-                .filter(|k| bound.pts.contains(&Pt::Store(*k)))
-                .collect();
-            if shared.is_empty() {
-                self.end(&mut s, tmp, "the stashed free", false);
-            } else {
-                // A store the new value may name too is freed on the paths where it does not:
-                // where `x` named it on every path it was live, it stays live exactly where
-                // `x` names it now (`none = rec(k - 1, none)`, answering `none` or a fresh store).
-                let rest: BTreeSet<SKey> = Self::stores_of(&old)
-                    .into_iter()
-                    .filter(|k| !shared.contains(k))
-                    .collect();
-                if !rest.is_empty() {
-                    self.end_only(&mut s, tmp, "the stashed free", false, Some(&rest));
-                }
-                for k in &shared {
-                    let Some(info) = s.stores.get_mut(k) else {
-                        continue;
-                    };
-                    if info.has(LIVE) && (old.len() == 1 || info.live.contains(&tmp)) {
-                        info.status |= ENDED;
-                        info.live.insert(x);
-                    }
-                }
-            }
-            s.vars.remove(&tmp);
-            for info in s.stores.values_mut() {
-                info.live.remove(&tmp);
-                info.ended.remove(&tmp);
-            }
+            self.stashed_free(&mut s, x, &old, &bound);
             return Some((s, Val::null()));
         }
         self.bind(&mut s, x, &bound);
         Some((s, Val::null()))
+    }
+
+    /// The stashed old reference of a reassignment, freed unless the new value names the
+    /// same store, with `x` bound to the new value.
+    fn stashed_free(&mut self, s: &mut State, x: u16, old: &Pts, bound: &Val) {
+        let tmp = u16::MAX;
+        s.vars.insert(tmp, old.clone());
+        for k in Self::stores_of(old) {
+            if let Some(info) = s.stores.get_mut(&k)
+                && info.live.contains(&x)
+            {
+                info.live.insert(tmp);
+            }
+        }
+        self.bind(s, x, bound);
+        let shared: Vec<SKey> = Self::stores_of(old)
+            .into_iter()
+            .filter(|k| bound.pts.contains(&Pt::Store(*k)))
+            .collect();
+        if shared.is_empty() {
+            self.end(s, tmp, "the stashed free", false);
+        } else {
+            // A store the new value may name too is freed on the paths where it does not:
+            // where `x` named it on every path it was live, it stays live exactly where
+            // `x` names it now (`none = rec(k - 1, none)`, answering `none` or a fresh store).
+            let rest: BTreeSet<SKey> = Self::stores_of(old)
+                .into_iter()
+                .filter(|k| !shared.contains(k))
+                .collect();
+            if !rest.is_empty() {
+                self.end_only(s, tmp, "the stashed free", false, Some(&rest));
+            }
+            for k in &shared {
+                let Some(info) = s.stores.get_mut(k) else {
+                    continue;
+                };
+                if info.has(LIVE) && (old.len() == 1 || info.live.contains(&tmp)) {
+                    info.status |= ENDED;
+                    info.live.insert(x);
+                }
+            }
+        }
+        s.vars.remove(&tmp);
+        for info in s.stores.values_mut() {
+            info.live.remove(&tmp);
+            info.ended.remove(&tmp);
+        }
     }
 
     /// A copy's source-free (`COPY_FREE_SOURCE`) releases what the call answered unless the
