@@ -124,17 +124,19 @@ fn the_values_hold_on_both_backends_in_both_switch_states() {
     let src = cells();
     for switch in [None, Some(("LOFT_NO_LAZY_BUFFER", "1"))] {
         for backend in ["--interpret", "--native"] {
-            for falsifier in [
-                ("LOFT_STRICT_STORES", "1"),
-                ("LOFT_POISON", "1"),
-                ("LOFT_NATIVE_LEAK_CHECK", "1"),
-            ] {
-                let mut env = vec![falsifier];
+            {
+                // Every detector at once: one build per switch state, each detector still on
+                // (falsifying a guard is a one-time receipt, not a cost of every run).
+                let mut env = vec![
+                    ("LOFT_STRICT_STORES", "1"),
+                    ("LOFT_POISON", "1"),
+                    ("LOFT_NATIVE_LEAK_CHECK", "1"),
+                ];
                 env.extend(switch);
                 let res = loft(&[backend, &src], &env);
                 let out = String::from_utf8_lossy(&res.stdout);
                 let err = String::from_utf8_lossy(&res.stderr);
-                let label = format!("{backend} {switch:?} {falsifier:?}");
+                let label = format!("{backend} {env:?}");
                 assert!(
                     res.status.success(),
                     "{label}: exit {:?}\n{err}",

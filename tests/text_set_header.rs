@@ -31,8 +31,10 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
 fn the_cells_hold_under_the_hoist_falsifiers_in_both_switch_states() {
     for mode in ["--native", "--ship"] {
         for switch in [None, Some(("LOFT_NO_TEXT_SET_HEADER", "1"))] {
-            for falsifier in [("LOFT_HOIST_VERIFY", "1"), ("LOFT_POISON", "1")] {
-                let mut env = vec![falsifier];
+            {
+                // Every detector at once: one build per switch state, each detector still on
+                // (falsifying a guard is a one-time receipt, not a cost of every run).
+                let mut env = vec![("LOFT_HOIST_VERIFY", "1"), ("LOFT_POISON", "1")];
                 env.extend(switch);
                 let out = loft(&[mode], &env);
                 let stdout = String::from_utf8_lossy(&out.stdout);
