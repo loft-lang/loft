@@ -155,7 +155,9 @@ handed temps forgotten) instead of giving up on a generator.  A `&` link to a co
 (`c = &h`) never takes a free (every whole-value write goes through it);
 `LOFT_NO_LINK_NEVER_FREE=1` lets it free as an owner.  A local bound once to a projection of
 a lifted call result (`own = mk(n).bounds`) views the lift; `LOFT_NO_LIFT_PROJECTION_VIEW=1`
-keeps it owning.
+keeps it owning.  A tagged-slot read off a call's record (`x = fresh_h(k).e`) borrows the
+work-ref that holds the record (`read_through_enum_slot`); `LOFT_NO_SLOT_READ_VIEW=1` types it
+as an owner.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it

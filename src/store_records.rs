@@ -294,6 +294,9 @@ const LOOP_PASSES: usize = 30;
 /// number or width does not fit is not followed (its members read as unknown, as before).
 const MEMBER_BASE: u16 = 0x8000;
 
+/// The name an `ended` set keeps for a variable that freed the store and was then reset.
+const FREED_NAME: u16 = 0xFFFE;
+
 fn member_key(t: u16, i: u16) -> Option<u16> {
     (t < 0x0800 && i < 16).then_some(MEMBER_BASE | (t << 4) | i)
 }
@@ -358,6 +361,9 @@ impl Run<'_> {
     }
 
     fn var_name(&self, v: u16) -> String {
+        if v == FREED_NAME {
+            return "a freed name".to_string();
+        }
         if v >= MEMBER_BASE {
             let (t, i) = ((v & !MEMBER_BASE) >> 4, v & 15);
             return format!("{}.{i}", self.data.def(self.d_nr).variables.name(t));
@@ -534,7 +540,7 @@ impl Run<'_> {
             let weakly_ended = pts.len() == 1
                 && info.has(LIVE)
                 && !info.ended.is_empty()
-                && info.ended.iter().all(|e| !info.live.contains(e));
+                && !info.ended.contains(&v);
             if report
                 && info.has(ENDED)
                 && (info.ended.contains(&v) || (only_this && !info.has(LIVE)) || weakly_ended)
@@ -1431,10 +1437,14 @@ impl Run<'_> {
             if self.resets.contains(&(std::ptr::from_ref(node) as usize))
                 && let Some(x) = Self::first_var(args, 0)
             {
-                // The free's variable is reset to null right after it.
+                // The free's variable is reset to null right after it.  Where it had (maybe)
+                // ended a store, the store keeps that fact under a placeholder name, so a
+                // later free of the same store by another name still reads as a second one.
                 for info in st.stores.values_mut() {
                     info.live.remove(&x);
-                    info.ended.remove(&x);
+                    if info.ended.remove(&x) {
+                        info.ended.insert(FREED_NAME);
+                    }
                 }
                 st.vars.remove(&x);
             }
@@ -1572,6 +1582,21 @@ impl Run<'_> {
                 pts: v.pts.clone(),
                 corr: BTreeSet::new(),
             }),
+            // A join over an argument that is NULL here is the callee's own mint: a callee
+            // that answers its hidden buffer or a store it made, handed a null buffer, makes one
+            // (`OpDatabase` on null).
+            Summary::Join(i)
+                if vals
+                    .get(i as usize)
+                    .is_some_and(|v| v.pts.iter().all(|p| *p == Pt::Null)) =>
+            {
+                let site = self.site(node, Origin::Call(d));
+                let k = Self::fresh(&mut s, site);
+                Val {
+                    pts: [Pt::Store(k)].into(),
+                    corr: [k].into(),
+                }
+            }
             Summary::Join(i) => {
                 let viewed = vals.get(i as usize).cloned().unwrap_or_else(Val::unknown);
                 let site = self.site(node, Origin::Call(d));

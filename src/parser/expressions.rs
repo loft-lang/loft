@@ -7526,6 +7526,19 @@ use a separate collection or add after the loop"
         let text_appends_rendering = op != "="
             && matches!(place_tp.base(), Type::Text(_))
             && Self::appends_rendering(&s_type);
+        // A tagged-slot read the store's conversion built (`enum_slot_read_named`) names the
+        // record it reads in its own result type; the bind adopts that borrow (`@FR-B-View`),
+        // which the conversion — answering only yes or no — cannot hand back itself.
+        let s_type = match code.unspan() {
+            Value::Block(bl)
+                if op == "="
+                    && bl.name == "enum_slot_read_named"
+                    && !bl.result.depend().is_empty() =>
+            {
+                s_type.with_deps_of(&bl.result)
+            }
+            _ => s_type,
+        };
         if !compound_keeps_place && !text_appends_rendering {
             self.change_var(to, &s_type);
         }
