@@ -56,6 +56,20 @@ FAULTS = [
     ("re-free", re.compile(r"\[double-free\] [1-9][0-9]* re-free")),
 ]
 RED = re.compile(r"^RED ", re.M)
+# The kind of each checker finding (`RED <fn>: store-<kind> …`).
+RED_KIND = re.compile(r"^RED [^:]*: store-([a-z-]+)", re.M)
+# Which checker kinds answer a runtime fault kind: a CAUGHT whose findings answer none of the
+# run's faults is a coincidence, and `matched` says so.
+ANSWERS = {"uaf": {"use-after-end", "wrong-end", "re-free", "double-end"},
+           "re-free": {"re-free", "double-end", "wrong-end"},
+           "leak": {"leak"},
+           "wrong-free": {"wrong-end"}}
+
+
+def matched(faults, red_kinds):
+    """Does every runtime fault kind have a finding of a kind that answers it?"""
+    rk = set(filter(None, red_kinds.split(",")))
+    return all(ANSWERS.get(f, set()) & rk for f in filter(None, faults.split(",")))
 ARMED = re.compile(r"@ARMED:(.*)")
 # The checker mode: `check` (the shipped checks) or `check-records` (the store records).
 ORACLE = ["check"]
@@ -118,7 +132,8 @@ def run(loft, cell, switch, timeout):
     os.unlink(fault_log)
     reds = len(RED.findall(out))
     first_red = next((ln for ln in out.splitlines() if ln.startswith("RED ")), "")
-    return cell, switch, ",".join(kinds), reds, first_red
+    red_kinds = ",".join(sorted(set(RED_KIND.findall(out))))
+    return cell, switch, ",".join(kinds), reds, first_red, red_kinds
 
 
 # A fault-log kind as this sweep names it.
@@ -153,7 +168,7 @@ def compare(before_path, rows):
                 before[(f[4], f[1])] = (f[0], f[3])
     worse = better = 0
     rank = {"CLEAN": 0, "CAUGHT": 1, "STATIC": 2, "MISS": 3, "TIMEOUT": 4}
-    for cell, sw, _kinds, reds, _first, v in rows:
+    for cell, sw, _kinds, reds, _first, v, _rk in rows:
         key = (os.path.relpath(cell, ROOT), sw)
         old = before.get(key)
         if old is None or old == (v, str(reds)):
@@ -205,17 +220,20 @@ def main():
     rows = []
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
         for r in ex.map(lambda j: run(a.loft, j[0], j[1], a.timeout), jobs):
-            rows.append(r + (verdict(r[2], r[3]),))
+            rows.append(r[:5] + (verdict(r[2], r[3]), r[5]))
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
-            fh.write("verdict\tswitch\tfaults\treds\tcell\tfirst_red\n")
-            for cell, sw, kinds, reds, first, v in rows:
-                fh.write(f"{v}\t{sw}\t{kinds}\t{reds}\t{os.path.relpath(cell, ROOT)}\t{first}\n")
+            fh.write("verdict\tswitch\tfaults\treds\tcell\tfirst_red\tred_kinds\tmatched\n")
+            for cell, sw, kinds, reds, first, v, rk in rows:
+                m = "" if v != "CAUGHT" else ("yes" if matched(kinds, rk) else "no")
+                fh.write(f"{v}\t{sw}\t{kinds}\t{reds}\t{os.path.relpath(cell, ROOT)}\t{first}\t{rk}\t{m}\n")
     tally = {}
-    for *_, v in rows:
+    for _c, _s, kinds, _r, _f, v, rk in rows:
         tally[v] = tally.get(v, 0) + 1
+        if v == "CAUGHT" and not matched(kinds, rk):
+            tally["UNMATCHED"] = tally.get("UNMATCHED", 0) + 1
     print("  ".join(f"{k}={tally[k]}" for k in sorted(tally)) + f"  over {len(rows)} run(s)")
-    for cell, sw, kinds, reds, _, v in rows:
+    for cell, sw, kinds, reds, _, v, _rk in rows:
         if v in ("MISS", "TIMEOUT"):
             print(f"{v:7} {sw or '-':28} {kinds:16} {os.path.relpath(cell, ROOT)}")
     worse = compare(a.compare, rows) if a.compare else 0

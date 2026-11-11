@@ -1119,8 +1119,13 @@ impl Run<'_> {
             self.bind(&mut absent, x, &Val::null());
             join_state(&present, &absent)
         } else {
+            // Released only where the new value is not in it: the stores the value names stay.
+            let gone: BTreeSet<SKey> = Self::stores_of(&old)
+                .into_iter()
+                .filter(|k| !value.pts.contains(&Pt::Store(*k)))
+                .collect();
             if !old.iter().all(|p| value.pts.contains(p)) {
-                self.end(&mut s, t, "the link write-back", true);
+                self.end_only(&mut s, t, "the link write-back", true, Some(&gone));
             }
             self.bind(&mut s, t, &value);
             self.bind(&mut s, x, &value);
@@ -1702,6 +1707,22 @@ impl Run<'_> {
                 Val {
                     corr: Self::stores_of(&kept).into_iter().collect(),
                     pts: kept,
+                }
+            } else if let Some(own) = {
+                // A loop's head joins the null of the first pass with the store an earlier
+                // pass made here: on the null path this `OpDatabase` makes that same store
+                // (later passes find it live and re-init it in place), not another generation.
+                let site = self.site_of.get(&(std::ptr::from_ref(node) as usize)).copied();
+                site.and_then(|site| {
+                    kept.iter().find_map(|p| match p {
+                        Pt::Store(k) if k.site == site && !k.older => Some(*k),
+                        _ => None,
+                    })
+                })
+            } {
+                Val {
+                    pts: kept,
+                    corr: [own].into(),
                 }
             } else {
                 let origin = self
