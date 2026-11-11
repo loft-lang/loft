@@ -355,7 +355,9 @@ impl Parser {
                             && matches!(rhs.unspan(), Value::Var(r) if *r == var_nr))
                 });
                 if self_ref {
-                    ls.remove(0);
+                    if !self.concat_into_a_held_store(ls, tp, f_type, var_nr, snapshot_len) {
+                        ls.remove(0);
+                    }
                 } else {
                     // Trailing self-reference `v = a + v` (the accumulator `v`
                     // appears as a NON-first operand): the parts loop emitted
@@ -494,6 +496,58 @@ impl Parser {
         } else {
             false
         }
+    }
+
+    /// `@FR-L-CapRebind` — `v = v + [...]` where a closure record built over `v` holds `v`'s
+    /// store.  A rebind is not a mutation-through, so the in-place append the self-concat
+    /// otherwise takes would reach the record: `v` takes a fresh store instead, its old value
+    /// copied out first (loft#2459).  `false`, changing nothing, where no record holds it.
+    fn concat_into_a_held_store(
+        &mut self,
+        ls: &mut Vec<Value>,
+        tp: &Type,
+        f_type: &Type,
+        var_nr: u16,
+        snapshot_len: usize,
+    ) -> bool {
+        if self.first_pass
+            || !self.vars.rebind_must_mint(var_nr)
+            || self
+                .capture_records
+                .get(&(false, self.context, var_nr))
+                .is_none_or(Vec::is_empty)
+        {
+            return false;
+        }
+        let append_nr = self.data.def_nr("OpAppendVector");
+        let Some(rec) = ls.iter().find_map(|stmt| match stmt.unspan() {
+            Value::Call(d, args)
+                if *d == append_nr
+                    && args.len() == 3
+                    && matches!(args[0].unspan(), Value::Var(t) if *t == var_nr) =>
+            {
+                Some(args[2].clone())
+            }
+            _ => None,
+        }) else {
+            return false;
+        };
+        let tmp = self.create_unique("__trail_tmp", f_type);
+        self.vars.defined(tmp);
+        let mut front = self.vector_db(tp, tmp);
+        front.push(self.cl(
+            "OpAppendVector",
+            &[Value::Var(tmp), Value::Var(var_nr), rec.clone()],
+        ));
+        front.extend(self.vector_db(tp, var_nr));
+        ls[0] = self.cl(
+            "OpAppendVector",
+            &[Value::Var(var_nr), Value::Var(tmp), rec],
+        );
+        for (i, p) in front.into_iter().enumerate() {
+            ls.insert(snapshot_len + i, p);
+        }
+        true
     }
 
     /// P193: eager init for `local: keyed_collection<T[key]> = []`.

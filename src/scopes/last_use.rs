@@ -324,6 +324,13 @@ fn reclaim_safe(code: &Value, vars: &Function, st: u16) -> bool {
     if guard_escapes(code, st) {
         return false;
     }
+    // `@FR-L-CapRebind` — a closure record built over a local keeps the store the local named
+    // AT THE BUILD, past a rebind of the local: the type's deps name only the latest bind, so a
+    // store a CAPTURED local was ever bound to is read through the record after its last read
+    // here, and keeps its scope-exit free (loft#2459).
+    if bound_to_a_captured_local(code, vars, st) {
+        return false;
+    }
     // #426B — the holder set must be the TRANSITIVE dep closure, not just the
     // one-hop depers.  A view-of-a-view keeps `st` live through an intermediate
     // local: `b = idx0(ww)` where `idx0` returns `w[0]` binds `b` with dep
@@ -368,6 +375,16 @@ fn reclaim_safe(code: &Value, vars: &Function, st: u16) -> bool {
         .collect();
     holders.insert(st);
     !holder_retained(code, &holders)
+}
+
+/// Does any `Set(c, OpGetField(st, …))` bind a captured local `c` to backing `st`?
+fn bound_to_a_captured_local(code: &Value, vars: &Function, st: u16) -> bool {
+    code.any_node(&mut |n| {
+        matches!(n.unspan(), Value::Set(c, rhs)
+            if vars.is_captured(*c)
+                && matches!(rhs.unspan(), Value::Call(_, args)
+                    if matches!(args.first().map(Value::unspan), Some(Value::Var(b)) if *b == st)))
+    })
 }
 
 /// Plan-57 — the reclaim PLAN, the single source of truth shared by
