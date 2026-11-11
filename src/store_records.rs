@@ -416,6 +416,9 @@ struct Run<'a> {
     /// record is built inside another store (a fn field).  Such a record adopts what it
     /// captures (`@FR-L-CapOwn`); every other record only holds it.
     leaving: BTreeSet<u16>,
+    /// The variables inside an IR `n_protect_store_frees` bracket (`@P290`): a source-free
+    /// in it declines the stores they name.
+    protected: Vec<u16>,
 }
 
 impl Run<'_> {
@@ -2241,25 +2244,56 @@ impl Run<'_> {
             }
             return Some((st, Val::null()));
         }
+        match self.data.def(d).name() {
+            "n_protect_store_frees" => self.protected.extend(Self::first_var(args, 0)),
+            "n_unprotect_store_frees" => {
+                if let Some(v) = Self::first_var(args, 0)
+                    && let Some(i) = self.protected.iter().rposition(|p| *p == v)
+                {
+                    self.protected.remove(i);
+                }
+            }
+            _ => {}
+        }
         let (mut s, vals) = self.args(args, st)?;
         // A copy that frees its source store (`COPY_FREE_SOURCE`, `OpSets::freed_source`):
-        // the source's stores end here, except one the destination names, whose release
-        // the runtime declines.
-        if let Some((src, dst)) = self.data.op_sets().freed_source(d, args)
-            && let Some(x) =
-                Self::first_var(args, src).or_else(|| args.get(src).and_then(Self::tail_var))
-        {
+        // the source's stores end here, except one the destination names or a bracket
+        // protects, whose release the runtime declines.  A source that is no variable (a
+        // join `if c { keep } else { mk() }`) frees what its value names.
+        if let Some((src, dst)) = self.data.op_sets().freed_source(d, args) {
+            let x = Self::first_var(args, src).or_else(|| args.get(src).and_then(Self::tail_var));
             let kept: BTreeSet<SKey> = vals
                 .get(dst)
-                .map(|v| Self::stores_of(&v.pts).into_iter().collect())
-                .unwrap_or_default();
-            let freed: BTreeSet<SKey> = Self::stores_of(&Self::pts(&s, x))
+                .map(|v| v.pts.clone())
                 .into_iter()
-                .filter(|k| !kept.contains(k))
+                .chain(self.protected.iter().map(|p| Self::pts(&s, *p)))
+                .flat_map(|pts| Self::stores_of(&pts))
                 .collect();
-            if !freed.is_empty() {
-                let name = format!("{} (its source)", self.data.def(d).name());
-                self.end_only(&mut s, x, &name, true, Some(&freed));
+            let name = format!("{} (its source)", self.data.def(d).name());
+            if let Some(x) = x {
+                let freed: BTreeSet<SKey> = Self::stores_of(&Self::pts(&s, x))
+                    .into_iter()
+                    .filter(|k| !kept.contains(k))
+                    .collect();
+                if !freed.is_empty() {
+                    self.end_only(&mut s, x, &name, true, Some(&freed));
+                }
+            } else if let Some(v) = vals.get(src) {
+                // A store correlated with the value is live only where the value names it, so
+                // the free ends it outright; any other only where the value may name it.
+                for k in Self::stores_of(&v.pts) {
+                    if kept.contains(&k) {
+                        continue;
+                    }
+                    let pts = if v.corr.contains(&k) {
+                        [Pt::Store(k)].into()
+                    } else {
+                        v.pts.clone()
+                    };
+                    s.vars.insert(FREED_NAME - 1, pts);
+                    self.end_only(&mut s, FREED_NAME - 1, &name, true, Some(&[k].into()));
+                }
+                s.vars.remove(&(FREED_NAME - 1));
             }
         }
         let def = self.data.def(d);
@@ -2521,6 +2555,7 @@ fn run_fn<'a>(
         resets: BTreeSet::new(),
         fn_record: BTreeMap::new(),
         leaving: BTreeSet::new(),
+        protected: Vec::new(),
     };
     let body = def.code.clone();
     // One pass in emission order: which assignments are first, each reassignment's lowering,
