@@ -101,6 +101,10 @@ struct State {
     /// Per closure record that stays in this frame: the stores its capture slots hold
     /// (`@FR-L-CapOwn` — such a record BORROWS what it captured; the frame releases it).
     slots: BTreeMap<u16, Pts>,
+    /// Per closure record that LEAVES the frame: what its capture slots name.  The record
+    /// owns those stores; a guarded free reads a slot as its witness
+    /// (`OpFreeRefIfDistinct(__ref_1, OpGetDbRef(___clos_1, 0))`).
+    captured: BTreeMap<u16, Pts>,
     /// Boolean locals whose value this path knows: an ownership flag (`__rbo_<buf>`, a
     /// `__lbo_` displacement flag) written a constant, and read by the guard of a free.
     flags: BTreeMap<u16, bool>,
@@ -192,10 +196,15 @@ fn join_state(a: &State, b: &State) -> State {
     for (w, p) in &b.slots {
         slots.entry(*w).or_default().extend(p.iter().copied());
     }
+    let mut captured: BTreeMap<u16, Pts> = a.captured.clone();
+    for (w, p) in &b.captured {
+        captured.entry(*w).or_default().extend(p.iter().copied());
+    }
     State {
         vars,
         stores,
         slots,
+        captured,
         flags,
     }
 }
@@ -519,6 +528,7 @@ impl Run<'_> {
         }
         // A closure record bound anew is a new record: its slots start empty.
         st.slots.remove(&v);
+        st.captured.remove(&v);
         let single = val.pts.len() == 1;
         for k in Self::stores_of(&val.pts) {
             self.sites[k.site as usize].holders.insert(v);
@@ -1654,6 +1664,34 @@ impl Run<'_> {
         (live_arm, dead_arm)
     }
 
+    /// What a guarded free's witness names, and whether it is a capture slot of a closure
+    /// record that leaves: where such a slot names the store the record owns it, and
+    /// everywhere else the free ends it.
+    fn guard_witness(&self, st: &State, w: Option<u16>, arg: Option<&Value>) -> (Pts, bool) {
+        match (w, arg.map(Value::unspan)) {
+            (Some(w), _) => (Self::pts(st, w), false),
+            // A capture slot read out of a closure record.
+            (None, Some(Value::Call(g, gargs))) if *g == self.ops.get_dbref => {
+                let r = Self::first_var(gargs, 0);
+                let leaving =
+                    r.is_some_and(|r| !st.slots.contains_key(&r) && st.captured.contains_key(&r));
+                let pts = r.and_then(|r| Self::slot_pts(st, r)).unwrap_or_default();
+                (pts, leaving)
+            }
+            _ => (Pts::default(), false),
+        }
+    }
+
+    /// What the capture slots of closure record `w` name: a record that stays (`slots`) or
+    /// one that leaves (`captured`).  `None` where nothing was captured into it.
+    fn slot_pts(st: &State, w: u16) -> Option<Pts> {
+        st.slots
+            .get(&w)
+            .or_else(|| st.captured.get(&w))
+            .filter(|p| !p.is_empty())
+            .cloned()
+    }
+
     /// `OpDistinctStore(a, b)`: where both operands name one single store (or both are
     /// null), the two are that store on every path and the DISTINCT arm cannot run; where
     /// they name two different single stores, the SAME arm cannot.  Anything wider keeps
@@ -1672,7 +1710,7 @@ impl Run<'_> {
                 }
                 Value::Call(op, a) if *op == self.ops.get_dbref => {
                     match a.first().map(Value::unspan) {
-                        Some(Value::Var(w)) => st.slots.get(w).filter(|p| !p.is_empty()).cloned(),
+                        Some(Value::Var(w)) => Self::slot_pts(&st, *w),
                         _ => None,
                     }
                 }
@@ -1933,6 +1971,21 @@ impl Run<'_> {
         }
     }
 
+    /// `OpFreeRecordIn` releases one record: a store of its own only where the record is
+    /// that store's root (a placed record whose host was null); a record placed inside a host
+    /// leaves the host's store live.
+    fn free_record_in(&mut self, args: &[Value], name: &str, st: &mut State) {
+        if let Some(x) = Self::first_var(args, 0) {
+            let placed: BTreeSet<SKey> = Self::stores_of(&Self::pts(st, x))
+                .into_iter()
+                .filter(|k| matches!(self.sites[k.site as usize].origin, Some(Origin::Place)))
+                .collect();
+            if !placed.is_empty() {
+                self.end_only(st, x, name, true, Some(&placed));
+            }
+        }
+    }
+
     /// A free op: its own argument is not a use.
     fn free_op(&mut self, d: u32, args: &[Value], st: State) -> State {
         let ops = self.ops;
@@ -1949,20 +2002,7 @@ impl Run<'_> {
                 return st;
             }
             if d == ops.free_in {
-                // `OpFreeRecordIn` releases one record: a store of its own only where the
-                // record is that store's root (a placed record whose host was null); a
-                // record placed inside a host leaves the host's store live.
-                if let Some(x) = Self::first_var(args, 0) {
-                    let placed: BTreeSet<SKey> = Self::stores_of(&Self::pts(&st, x))
-                        .into_iter()
-                        .filter(|k| {
-                            matches!(self.sites[k.site as usize].origin, Some(Origin::Place))
-                        })
-                        .collect();
-                    if !placed.is_empty() {
-                        self.end_only(&mut st, x, &name, true, Some(&placed));
-                    }
-                }
+                self.free_record_in(args, &name, &mut st);
                 return st;
             }
             if let Some(x) = args.first().and_then(|a| Self::named_var(&st, a)) {
@@ -1985,7 +2025,7 @@ impl Run<'_> {
             if let Some(x) = Self::first_var(args, 0) {
                 let w = Self::first_var(args, 1);
                 let xp = Self::pts(&st, x);
-                let wp = w.map(|w| Self::pts(&st, w)).unwrap_or_default();
+                let (wp, leaving_slot) = self.guard_witness(&st, w, args.get(1));
                 let shared: Vec<SKey> = Self::stores_of(&xp)
                     .into_iter()
                     .filter(|k| wp.contains(&Pt::Store(*k)))
@@ -2030,6 +2070,12 @@ impl Run<'_> {
                                 continue;
                             };
                             if !info.has(LIVE) {
+                                continue;
+                            }
+                            if leaving_slot {
+                                info.status = (info.status & !LIVE) | ENDED;
+                                info.live.clear();
+                                info.ended = [x].into();
                                 continue;
                             }
                             let strong = xp.len() == 1 || info.live.contains(&x);
@@ -2259,6 +2305,10 @@ impl Run<'_> {
                         .name(w)
                         .starts_with("___clos_") =>
                 {
+                    s.captured
+                        .entry(w)
+                        .or_default()
+                        .extend(value.pts.iter().copied());
                     Self::hand_on_var_into(&mut s, Self::first_var(args, 2), value, w);
                 }
                 _ => {
