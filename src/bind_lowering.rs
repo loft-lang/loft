@@ -213,6 +213,12 @@ pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Va
         }
         return FirstArm::CallCopy { d_nr: rec };
     }
+    first_arm_plain(function, tp, value)
+}
+
+/// The arms of a first assignment that is not a heap record bind: the null inits, a function
+/// reference, an `&` link, and the plain bind.
+fn first_arm_plain(function: &Function, tp: &Type, value: &Value) -> FirstArm {
     if *value == Value::Null
         && matches!(tp, Type::Optional(_))
         && matches!(tp.base(), Type::Vector(_, _))
