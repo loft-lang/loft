@@ -246,6 +246,13 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                comparison, a null test, a condition, `??`'s subject, `match`, a
                null-transparent callee and an `if` arm meeting its sibling's type
                (`(N-Join)`) say nothing.
+               What the warned store WRITES: a local, a parameter, a text slot and a plain-enum
+               slot hold the null.  A DENSE slot — a record or struct-enum field or vector
+               element, stored inline — has no null to hold, so the null is
+               `construct_default(τ)` of the SLOT's τ, the answer `e?` gives (`(N-Default)`),
+               and a τ outside `has_default` refuses the store at compile time (@C163).  A
+               keyed collection's element is not a dense slot: absence under a key is a state
+               the collection has, and `(Col-Assign)` / `(Col-Remove)` say what a write does.
 
   inference — declared vs inferred storage (the "by definition vs by use" split)
                The hard error for a narrow width is (I-Narrow)'s refusal seen from the slot:

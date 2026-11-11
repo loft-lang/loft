@@ -1088,6 +1088,27 @@ impl Parser {
         None
     }
 
+    /// Is `to` an element of a KEYED collection, `c[k]` — the place `OpSetKeyed` writes?  Its
+    /// absence is a state the collection has (no record under the key), unlike a dense slot.
+    pub(crate) fn is_keyed_element_place(&self, to: &Value) -> bool {
+        if let Value::Call(get_nr, get_args) = to.unspan()
+            && self.data.def(*get_nr).name() == "OpGetRecord"
+            && let Some(Value::Int(db_tp)) = get_args.get(1)
+            && (*db_tp as usize) < self.database.types.len()
+        {
+            return matches!(
+                self.database.types[*db_tp as usize].parts,
+                Parts::Hash(_, _)
+                    | Parts::Sorted(_, _)
+                    | Parts::Ordered(_, _)
+                    | Parts::Index(_, _)
+                    | Parts::Radix(_, _)
+                    | Parts::Trie(_, _)
+            );
+        }
+        false
+    }
+
     /// `coll[key] = null` where `coll` is one member of a LINKED COLLECTION GROUP:
     /// the record leaves every member, and is freed exactly once (loft#900).
     /// `None` when `coll` is not a group member, which yields the single removal.

@@ -1259,14 +1259,36 @@ impl Parser {
         // `null` argument arrives null, a `return null` reads back null), and false here.  The
         // cure is unchanged and is the real one — a dense field has no discriminant to spend
         // on absence (`synth_nullable_struct_fields`), and the `?` is what creates the room.
-        if matches!(code.unspan(), Value::Null) {
-            self.nstore_null_report_as(
-                f_type,
-                "the assignment target",
-                None,
-                false,
-                Some("the store does not happen, so the slot keeps the value it had"),
-            );
+        // @C163 — and the null a dense slot cannot hold is the slot type's default, written as
+        // `S {}` would be; a type with no default refuses the store, as it refuses `e?`.
+        if matches!(code.unspan(), Value::Null) && !self.first_pass {
+            match self.data.has_default(f_type.base()) {
+                Ok(()) => {
+                    let note = format!(
+                        "the slot takes `{}`'s default, as `?` gives it",
+                        f_type.base().source_name(&self.data)
+                    );
+                    self.nstore_null_report_as(
+                        f_type,
+                        "the assignment target",
+                        None,
+                        false,
+                        Some(&note),
+                    );
+                    if let Some((default, _)) = self.build_default(f_type.base()) {
+                        return self.copy_ref(to, &default, f_type);
+                    }
+                }
+                Err(reason) => {
+                    let spelled = f_type.base().source_name(&self.data);
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`null` is stored into a `{spelled}` slot, which has no null and no \
+                         default ({reason}) — write a value, or declare the slot `{spelled}?`"
+                    );
+                }
+            }
         }
         let d_nr = self.data.type_def_nr(f_type);
         let tp = self.data.def(d_nr).known_type();

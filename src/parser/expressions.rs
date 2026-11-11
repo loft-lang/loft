@@ -7247,17 +7247,63 @@ use a separate collection or add after the loop"
                 _ => false,
             };
             let inner = (**inner).clone();
-            self.nstore_unwrap_report_as(
-                &inner,
-                slot_tp,
-                "the assignment target",
-                None,
-                false,
-                kept.then_some(
-                    "when it is null the store does not happen, so the slot keeps the value it had",
-                ),
-                None,
-            );
+            // What the store does with a null, by slot (the warning's consequence clause):
+            //   * a text, a plain enum or a POINTER field holds the null;
+            //   * a keyed collection's element: absence under a key is a state the collection
+            //     has (`(Col-Remove)`), and `OpSetKeyed` skips a null value;
+            //   * @C163 — a DENSE record or struct-enum slot has no null to hold, so the null is
+            //     the slot type's default, as `e?` gives it (`(N-Default)`); a type with no
+            //     default refuses the store, as it refuses `e?`.
+            let keyed = kept && self.is_keyed_element_place(to);
+            let dense = kept && !keyed;
+            let no_default = if dense {
+                self.data.has_default(slot_tp.base()).err()
+            } else {
+                None
+            };
+            let spelled = slot_tp.base().source_name(&self.data);
+            if let Some(reason) = no_default {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a nullable value is stored into a `{spelled}` slot, which has no null and \
+                     no default ({reason}) — discharge it with `?? <value>` or `!`, or declare the \
+                     field `{spelled}?`"
+                );
+            } else {
+                let consequence = if keyed {
+                    Some(
+                        "when it is null the store does not happen, so the slot keeps the value \
+                         it had"
+                            .to_string(),
+                    )
+                } else if dense {
+                    Some(format!(
+                        "when it is null the slot takes `{spelled}`'s default, as `?` gives it"
+                    ))
+                } else {
+                    None
+                };
+                self.nstore_unwrap_report_as(
+                    &inner,
+                    slot_tp,
+                    "the assignment target",
+                    None,
+                    false,
+                    consequence.as_deref(),
+                    None,
+                );
+                if dense {
+                    // The default is the SLOT's: a `Circle?` written into a `Shape` field takes
+                    // `Shape`'s first variant, not `Circle`'s zero.  A variant's value is a
+                    // `Shape` value, so reading it as `Shape?` changes no representation; the
+                    // value keeps its own deps, which say whose store it is to free.
+                    let mut parent = Type::Null;
+                    let mut tp = Type::Optional(Box::new(slot_tp.base().with_deps_of(&inner)));
+                    self.handle_default_fallback(slot_tp, code, &mut parent, &mut tp);
+                    s_type = tp;
+                }
+            }
         }
         // @FR-O-Latest, loft#1466 — a CALL RESULT's borrow list is the CALLEE's answer, and on
         // pass 1 the callee has not been read yet.  What pass 1 publishes for it is a guess
