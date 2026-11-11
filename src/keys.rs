@@ -3253,6 +3253,14 @@ pub fn double_free_audit() -> bool {
     *ON.get_or_init(|| env_set("LOFT_DOUBLE_FREE"))
 }
 
+/// `LOFT_NO_FREE_RESET=1` — the interpreter resets a variable after its free only where it
+/// took a pre-build free or is a lift temp, not after every free (`Codegen::generate_call`).
+#[must_use]
+pub fn free_reset_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_FREE_RESET"))
+}
+
 /// `LOFT_REFREE_FAILS=1` — a free of an already-freed store fails the run, naming both frees
 /// (`Stores::refuse_refree`, `@FR-H-FreeTwice`).  Opt-in while the compiler still emits
 /// re-frees; STORE_RECORDS.md § The checks.

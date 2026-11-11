@@ -4270,28 +4270,20 @@ impl State {
             self.code_add(new_pos);
             return Type::Void;
         }
-        // @PLN118 — free a heap variable that took an unconditional pre-build free
-        // (`generate_set`'s `owned_ref` path), then RESET its slot to the null
-        // sentinel.  The native backend resets after EVERY var free
-        // (`generation/ops/ref_ops.rs`: `OpFreeRef(...); var_x.store_nr = u16::MAX`);
-        // the interpreter emitted `OpVarRef + OpFreeRef` only, leaving the variable
-        // pointing at the freed slot.  In a loop the block-exit sweep frees the
-        // per-iteration temp and the next iteration's pre-build `OpFreeRef` re-frees
-        // it — and if the allocator reclaimed that slot for a live value meanwhile,
-        // the re-free destroys it (the moros glb H4 store-slot-reuse UAF: `pos`
-        // reads null on 4-of-7 hex verts).  `OpInitRefSentinel` after the free makes
-        // that re-free a no-op.  Scoped to `owned_reassigned` (not every var free):
-        // a retbuf/Database-reused local like `off` keeps its DbRef for in-place
-        // `OpDatabase` reuse, and nulling it destabilises the `protect_store_frees`
-        // machinery (leaks the returned value).
-        // A LIFT temp is reset too (loft#2385): it is rebound by every evaluation, and the
-        // rebind of a call that may answer a borrow (`Database` + `CopyRefOrNull`) re-inits
-        // the slot's store IN PLACE — after its free, a store the allocator may have handed to
-        // the call's own fresh answer, so the re-init wiped that answer and the copy read an
-        // empty record.  Native resets after every free; a lift's slot holds nothing after it.
+        // @PLN118, `@FR-H-FreeTwice` — a variable's free RESETS it to the null sentinel, as
+        // the C and native backends do after every free (`@FR-O-NoDiverge`).  A variable left
+        // naming its freed slot is freed again by whatever frees it next — a loop's next
+        // pre-build free, a join's other arm, the scope-exit sweep — and if the allocator
+        // has handed the slot to a live value meanwhile, that second free destroys it (the
+        // moros glb H4 store-slot-reuse UAF).  After the reset that free is a free of null.
+        // A lift temp is the case that needed it first (loft#2385: its rebind re-inits the
+        // slot's store in place).  `LOFT_NO_FREE_RESET=1` resets only a variable that took
+        // an unconditional pre-build free (`owned_reassigned`) and a lift temp.
         if stack.data.def(op).name() == "OpFreeRef"
             && let Some(Value::Var(v)) = parameters.first()
-            && (stack.owned_reassigned.contains(v) || stack.function.is_lift_temp(*v))
+            && (stack.owned_reassigned.contains(v)
+                || stack.function.is_lift_temp(*v)
+                || !crate::keys::free_reset_off())
         {
             let var_pos = stack.var_pos(*v);
             self.generate(&parameters[0], stack, false);

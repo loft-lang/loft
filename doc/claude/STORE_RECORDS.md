@@ -97,7 +97,10 @@ report a re-free as its own kind, so the list of compiler sites still emitting o
 visible, and `LOFT_DOUBLE_FREE` counts the ones a run reaches on either backend.
 `LOFT_REFREE_FAILS=1` makes the interpreter (and `--native`) fail the run at a re-free
 instead, naming the op that freed the store and the one freeing it again; it becomes the
-default once no suite cell re-frees.  A
+default once no suite cell re-frees.  Every backend resets a variable to null after its
+free, so a stale variable freed again is a free of null (`Codegen::generate_call` on the
+interpreter); `LOFT_NO_FREE_RESET=1` limits the interpreter's reset to the variables that
+took a pre-build free and to lift temps.  A
 **guarded** free (one that asks first whether the store is live, as `OpStoreLive` does) is
 not a re-free.
 
