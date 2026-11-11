@@ -3528,7 +3528,7 @@ pub fn free_reset_off() -> bool {
 #[must_use]
 pub fn refree_fails() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_REFREE_FAILS"))
+    *ON.get_or_init(|| !env_set("LOFT_ALLOW_REFREE"))
 }
 
 /// `LOFT_REFREE_FAILS=1` — a re-free's report names the function, line and variable of each

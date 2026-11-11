@@ -95,9 +95,10 @@ and the second free releases the new owner's store.  The C backend ships what th
 emits, so the compiler emits each free once on every path wherever it can.  The records
 report a re-free as its own kind, so the list of compiler sites still emitting one stays
 visible, and `LOFT_DOUBLE_FREE` counts the ones a run reaches on either backend.
-`LOFT_REFREE_FAILS=1` makes the interpreter (and `--native`) fail the run at a re-free
-instead, naming the op that freed the store and the one freeing it again; it becomes the
-default once no suite cell re-frees.  Every backend resets a variable to null after its
+The interpreter (and `--native`) fails the run at a re-free, giving the position of the free
+and of the one freeing it again; `LOFT_REFREE_FAILS=1` names each free's function, line and
+variable too (a name table the compile otherwise skips), and `LOFT_ALLOW_REFREE=1` lets a
+re-free pass.  No suite cell re-frees, under `LOFT_STRICT_STORES` either.  Every backend resets a variable to null after its
 free, so a stale variable freed again is a free of null (`Codegen::generate_call` on the
 interpreter); `LOFT_NO_FREE_RESET=1` limits the interpreter's reset to the variables that
 took a pre-build free and to lift temps.  A compiler temporary reset to null frees nothing:
