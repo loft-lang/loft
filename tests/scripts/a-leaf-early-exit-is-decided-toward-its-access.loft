@@ -1,0 +1,69 @@
+struct Hz { q0: integer, r0: integer, w: integer, h: integer, z: vector<float> }
+
+// E1: one early exit over the window test, then the access.
+fn e1(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  if dq < 0 || dq >= f.w || dr < 0 || dr >= f.h { return 0.0; }
+  f.z[dr * f.w + dq] ?? 0.0
+}
+// E2: two exits.
+fn e2(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  if dq < 0 || dq >= f.w { return 0.0; }
+  if dr < 0 || dr >= f.h { return 0.0; }
+  f.z[dr * f.w + dq] ?? 0.0
+}
+// E3: an exit with an else arm: undecided, still right.
+fn e3(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  k = 0;
+  if dq < 0 || dq >= f.w || dr < 0 || dr >= f.h { return 0.0; } else { k = 1; }
+  (f.z[dr * f.w + dq] ?? 0.0) * (k as float)
+}
+// E4: the exit arm works before it returns.
+fn e4(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  if dq < 0 || dq >= f.w || dr < 0 || dr >= f.h { k = dq + dr; return 0.0 * (k as float); }
+  f.z[dr * f.w + dq] ?? 0.0
+}
+// E5: the access before the exit: nothing follows it, undecided.
+fn e5(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  v = f.z[dr * f.w + dq] ?? 0.0;
+  if dq < 0 || dq >= f.w || dr < 0 || dr >= f.h { return 0.0; }
+  v
+}
+// E6: a test that is not linear: undecided.
+fn e6(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  if dq * dr < 0 || dq >= f.w || dr >= f.h || dq < 0 || dr < 0 { return 0.0; }
+  f.z[dr * f.w + dq] ?? 0.0
+}
+
+fn zs12() -> vector<float> { v: vector<float> = []; for k in 0..12 { v += [(k as float) * 0.5]; } v }
+
+// Each sums its leaf over a box: inside the window (A), across all four edges (B), and over a
+// window larger than its vector (D, q0 = r0 = 0, 4 x 4 over 12 elements).  The window's z sum
+// to 0.5 * 66 = 33 and everything outside answers 0.0, so every cell answers 33.
+fn box(f: Hz, which: integer, q0: integer, q1: integer, r0: integer, r1: integer) -> float {
+  t = 0.0;
+  for r in r0..r1 {
+    for q in q0..q1 {
+      t += if which == 1 { e1(f, q, r) } else if which == 2 { e2(f, q, r) }
+           else if which == 3 { e3(f, q, r) } else if which == 4 { e4(f, q, r) }
+           else if which == 5 { e5(f, q, r) } else { e6(f, q, r) };
+    }
+  }
+  t
+}
+
+fn main() {
+  f = Hz { q0: 2, r0: 3, w: 4, h: 3, z: zs12() };
+  big = Hz { q0: 0, r0: 0, w: 4, h: 4, z: zs12() };
+  for w in 1..7 {
+    assert(box(f, w, 2, 6, 3, 6) == 33.0, "A{w} {box(f, w, 2, 6, 3, 6)}");
+    assert(box(f, w, 1, 7, 2, 7) == 33.0, "B{w} {box(f, w, 1, 7, 2, 7)}");
+    assert(box(big, w, 0, 4, 0, 4) == 33.0, "D{w} {box(big, w, 0, 4, 0, 4)}");
+  }
+  println("ok");
+}

@@ -149,6 +149,9 @@ struct Walk<'a> {
     inputs: &'a Inputs<'a>,
     env: HashMap<u16, Local>,
     leaf: Leaf,
+    /// Does an element access follow the statement being walked, on the path that does not
+    /// leave the leaf?  An early exit is decided toward that path.
+    follows: bool,
 }
 
 fn op_name(data: &Data, d: u32) -> &str {
@@ -177,6 +180,32 @@ fn assigned(v: &Value, out: &mut HashSet<u16>) {
 }
 
 /// Does `v` read or write a vector element?
+/// Does `v` only leave the leaf: a `return`, or a block whose last statement is one?
+fn exits(v: &Value) -> bool {
+    match v.unspan() {
+        Value::Return(_) => true,
+        Value::Block(b) => b
+            .operators
+            .iter()
+            .rev()
+            .find(|o| !matches!(o.unspan(), Value::Line(_)))
+            .is_some_and(exits),
+        _ => false,
+    }
+}
+
+/// Is `v` an arm that does nothing: no `else`, or an empty block?
+fn empty_arm(v: &Value) -> bool {
+    match v.unspan() {
+        Value::Null => true,
+        Value::Block(b) => b
+            .operators
+            .iter()
+            .all(|o| matches!(o.unspan(), Value::Line(_))),
+        _ => false,
+    }
+}
+
 fn has_access(data: &Data, v: &Value) -> bool {
     let mut found = false;
     v.walk(&mut |n| {
@@ -377,21 +406,22 @@ impl Walk<'_> {
         self.leaf.raw.insert(args.as_ptr() as usize);
     }
 
+    /// A statement list in order, each statement knowing whether an access follows it.
+    fn walk_list(&mut self, ops: &[Value]) -> Result<(), String> {
+        let outer = self.follows;
+        for (k, op) in ops.iter().enumerate() {
+            self.follows = outer || ops[k + 1..].iter().any(|o| has_access(self.data, o));
+            self.walk(op)?;
+        }
+        self.follows = outer;
+        Ok(())
+    }
+
     /// Walk `v` in evaluation order; `Err` where the function is no leaf.
     fn walk(&mut self, v: &Value) -> Result<(), String> {
         match v.unspan() {
-            Value::Block(b) => {
-                for op in &b.operators {
-                    self.walk(op)?;
-                }
-                Ok(())
-            }
-            Value::Insert(ops) => {
-                for op in ops {
-                    self.walk(op)?;
-                }
-                Ok(())
-            }
+            Value::Block(b) => self.walk_list(&b.operators),
+            Value::Insert(ops) => self.walk_list(ops),
             Value::Set(x, e) => {
                 self.walk(e)?;
                 let local = self
@@ -414,6 +444,10 @@ impl Walk<'_> {
                 let want = match (at, ae) {
                     (true, false) => Some(true),
                     (false, true) => Some(false),
+                    // An early exit — `if c { return x }` — with an access after it: decided
+                    // toward going on, so `!c` joins the precondition and the fast twin skips it.
+                    (false, false) if self.follows && exits(t) && empty_arm(e) => Some(false),
+                    (false, false) if self.follows && exits(e) && empty_arm(t) => Some(true),
                     _ => None,
                 };
                 if let Some(want) = want
@@ -485,6 +519,7 @@ pub fn leaf(data: &Data, d: u32, inputs: &Inputs) -> Option<Leaf> {
         inputs,
         env: HashMap::new(),
         leaf: Leaf::default(),
+        follows: false,
     };
     let r = w.walk(def.code());
     let name = def.original_name();
