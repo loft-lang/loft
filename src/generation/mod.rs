@@ -426,6 +426,8 @@ pub struct Output<'a> {
     /// The local whose reassignment `output_set` wraps in its `_old_<name>` stash, which
     /// releases the displaced store itself: a call arm inside it frees nothing more.
     pub old_stash_var: Option<u16>,
+    /// The exit each open `output_set` took, innermost last, for `LOFT_TRACE_BIND_NATIVE`.
+    pub bind_arm: Vec<&'static str>,
     /// Set by the call-return bind arm (`output_set_inner`) when the local it binds ends up
     /// holding a store of its OWN — an adopted null or same-store result, or a copy — so an
     /// owner witness can be pointed at it (`output_set_witnessed`).
@@ -1923,6 +1925,7 @@ impl<'a> Output<'a> {
             rebind_buffer: None,
             rebind_buffer_used: false,
             old_stash_var: None,
+            bind_arm: Vec::new(),
             call_bind_owns: false,
             rebind_handed: HashSet::new(),
             inline_hint: crate::keys::inline_hint_enabled(),

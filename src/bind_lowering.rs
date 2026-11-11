@@ -953,3 +953,31 @@ pub fn answers_a_view_to_copy(data: &Data, d_nr: u32, value: &Value) -> bool {
             crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. }
         )
 }
+
+/// The lowering census (STORE_RECORDS.md § Phases, 2): one row per assignment a writer lowers,
+/// `function⇥variable⇥first|re⇥arm`, appended to the file the environment variable `env` names
+/// (`LOFT_TRACE_BIND_C`, `LOFT_TRACE_BIND_NATIVE`; the interpreter's own is `LOFT_TRACE_BIND`).
+/// A no-op when it is unset.  Rows from one process go to one file, in emission order.
+pub fn trace_row(env: &str, function: &str, var: &str, first: bool, arm: &str) {
+    use std::io::Write as _;
+    use std::sync::Mutex;
+    static SINKS: Mutex<Vec<(String, crate::file_access::File)>> = Mutex::new(Vec::new());
+    let Ok(path) = std::env::var(env) else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+    let Ok(mut sinks) = SINKS.lock() else {
+        return;
+    };
+    if !sinks.iter().any(|(e, _)| e == env)
+        && let Ok(f) = crate::file_access::create(path.as_str())
+    {
+        sinks.push((env.to_string(), f));
+    }
+    if let Some((_, f)) = sinks.iter_mut().find(|(e, _)| e == env) {
+        let kind = if first { "first" } else { "re" };
+        let _ = writeln!(f, "{function}\t{var}\t{kind}\t{arm}");
+    }
+}

@@ -120,3 +120,4 @@ tools/indexer/migrate.py	--help
 tools/indexer/rewrite_links.py	--help
 scripts/store_why.py	--help
 scripts/own_sweep.py	--help
+scripts/bind_census.py	--help

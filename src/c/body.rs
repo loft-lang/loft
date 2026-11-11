@@ -227,6 +227,9 @@ pub(crate) struct FnWriter<'a> {
     sticky_temps: Vec<(u16, u16)>,
     /// `@FR-R-ValueRecord`'s facts for this function (`value::VrFn`), when the plan has any.
     vr: Option<Box<value::VrFn>>,
+    /// The arm each open `set_stmt` took, innermost last, for `LOFT_TRACE_BIND_C` (the lowering
+    /// census): a value's own assignments are lowered inside its arm.
+    bind_arm: Vec<&'static str>,
     /// `@FR-R-Transient`: this body's transient variables, when it is a twin or holds a site.
     tr: Option<Box<transient::TrFn>>,
     /// `@FR-H-KeepRoom`: vector wrappers just minted by `loft_database_room`, with their type,
@@ -773,6 +776,7 @@ impl<'a> FnWriter<'a> {
             push_heads: Vec::new(),
             slice_carriers: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
+            bind_arm: Vec::new(),
             tr: None,
             room_minted: std::collections::HashMap::new(),
             filed: None,
@@ -6116,22 +6120,53 @@ impl<'a> FnWriter<'a> {
         clippy::too_many_lines,
         reason = "one arm per kind of bind; the rewritten binds are already helpers"
     )]
+    /// One assignment; under `LOFT_TRACE_BIND_C=<file>` also one row naming the lowering it
+    /// took, in the interpreter's `LOFT_TRACE_BIND` form (`function⇥variable⇥first|re⇥arm`), so
+    /// the two writers' choices can be compared row by row (STORE_RECORDS.md § Phases, 2).
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        let first = !self.bound[var as usize];
+        self.bind_arm.push("");
+        let r = self.set_stmt_arms(var, x, ind);
+        let arm = self.bind_arm.pop().unwrap_or("");
+        if r.is_ok() {
+            crate::bind_lowering::trace_row(
+                "LOFT_TRACE_BIND_C",
+                self.cx.data.def(self.d).name(),
+                self.vars.name(var),
+                first,
+                arm,
+            );
+        }
+        r
+    }
+
+    /// Name the arm the innermost open `set_stmt` takes.
+    fn set_arm(&mut self, arm: &'static str) {
+        if let Some(top) = self.bind_arm.last_mut() {
+            *top = arm;
+        }
+    }
+
+    fn set_stmt_arms(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
         if self.vr.is_some()
             && let Some(r) = self.vr_set(var, x, ind)
         {
             self.bound[var as usize] = true;
+            self.set_arm("value-record");
             return r;
         }
         // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
         // every later read and write of it goes through.
         if self.store_links[var as usize] {
+            self.set_arm("store-link");
             return self.store_link_set(var, x, ind);
         }
         if self.link_repoint(var, x, ind)? {
+            self.set_arm("link-repoint");
             return Ok(());
         }
         if self.links[var as usize] && self.shapes[var as usize] == CType::Ref {
+            self.set_arm("link-write");
             return self.link_rebind(var, x, ind);
         }
         if let Some(a) = self.adopt
@@ -6140,6 +6175,7 @@ impl<'a> FnWriter<'a> {
         {
             self.bound[var as usize] = true;
             self.adopted_init(a, ind)?;
+            self.set_arm("adopted-init");
             return Ok(());
         }
         let first = !std::mem::replace(&mut self.bound[var as usize], true);
@@ -6154,6 +6190,7 @@ impl<'a> FnWriter<'a> {
             && crate::parser::vectors::owns_keyed_store(self.vars.tp(var))
         {
             self.keyed_null(var, first, ind);
+            self.set_arm("keyed-null");
             return Ok(());
         }
         if matches!(x.unspan(), Value::Null)
@@ -6167,16 +6204,20 @@ impl<'a> FnWriter<'a> {
             && !self.split_tabs.values().any(|t| t.dead_buf == Some(var))
         {
             self.owned_vector_null(var, ind);
+            self.set_arm("vector-null");
             return Ok(());
         }
         let c = self.shapes[var as usize];
         if let Some(done) = self.rewritten_bind(var, x, ind) {
+            self.set_arm("rewritten");
             return done;
         }
         if c == CType::Int && self.sticky_update(var, x, ind)? {
+            self.set_arm("sticky");
             return Ok(());
         }
         if c == CType::Int && self.spec_chain(var, x, ind)? {
+            self.set_arm("spec-chain");
             return Ok(());
         }
         if c == CType::Text && !self.text_held(var) {
@@ -6186,9 +6227,11 @@ impl<'a> FnWriter<'a> {
         if self.join_stmt(var, x, first, &name, ind)?
             || self.opaque_callref_stmt(var, x, first, &name, ind)?
         {
+            self.set_arm("join");
             return Ok(());
         }
         if let Some((tp, frees)) = self.call_copy(var, x) {
+            self.set_arm(if frees { "call-copy-free" } else { "call-copy" });
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
@@ -6252,6 +6295,7 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         if let Some(tp) = self.element_copy(var, x) {
+            self.set_arm("element-copy");
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
@@ -6265,6 +6309,7 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         if !first && let Some(tp) = self.reading_view_copy(var, x) {
+            self.set_arm("reading-view-copy");
             // `x = x.next ?? y`: the value reads `var` and answers another store; computed
             // first, copied into a fresh store, and the displaced one released after — bound
             // plainly, `var` named the other store and both freed it (`@FR-H-FreeTwice`).
@@ -6287,6 +6332,7 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         if let Some((src, tp)) = self.whole_value_bind(var, x) {
+            self.set_arm("var-copy");
             let bytes = self.copyable(tp)?;
             let src = self.var(src);
             self.fresh_unless_owned(var, x, first, &name, ind);
@@ -6297,12 +6343,14 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         if !first && c == CType::Ref && self.displacing_rebind(var, x, &name, ind)? {
+            self.set_arm("displacing-rebind");
             return Ok(());
         }
         // A tuple local this function owns gives up the texts of its old value when a call's
         // tuple moves in (`assign`); a parameter's or a link's texts are the caller's.
         let owner = !self.params[var as usize] && !self.links[var as usize];
         let outer = std::mem::replace(&mut self.frees_old_tuple, owner);
+        self.set_arm("assign");
         let done = self.assign(x, &name, c, ind);
         self.frees_old_tuple = outer;
         done?;
