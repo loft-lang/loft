@@ -38,6 +38,9 @@ struct Rebound {
     /// a store detached from under it is released by the next rebuild or by the frame's end
     /// ([`release_confined_at_end`]), never by the record.
     confined: Vec<Slot>,
+    /// The captured locals some assignment binds to a value no backing minted (a call's
+    /// answer, another local): such a local may hold a store of its own.
+    unbacked: HashSet<u16>,
 }
 
 fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> {
@@ -52,6 +55,7 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
     let mut slots: HashMap<u16, Vec<Slot>> = HashMap::default();
     let mut backings: HashMap<u16, Vec<u16>> = HashMap::default();
     let mut owners: HashMap<(u16, u16), i32> = HashMap::default();
+    let mut unbacked: HashSet<u16> = HashSet::default();
     code.any_node(&mut |n| {
         match n.unspan() {
             Value::Call(d, args) if *d == set_dbref => {
@@ -90,6 +94,8 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
                     if !e.contains(&b) {
                         e.push(b);
                     }
+                } else {
+                    unbacked.insert(*c);
                 }
             }
             // `OpDatabase(c, …)`: a record local mints its own store.
@@ -135,6 +141,7 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
         backings,
         owners,
         confined,
+        unbacked,
     })
 }
 
@@ -551,6 +558,21 @@ fn keep_leaving_captures(code: &mut Value, facts: &Rebound, leaving: &HashSet<u1
     wrap_outside_loops(code, &mut |op| {
         let x = released_local(op, data)?;
         let slots = kept_by.get(&x)?;
+        // `@FR-O-Complete`, `@FR-H-FreeTwice` — a captured local every assignment binds to a
+        // store a BACKING minted (`c = OpGetField(__vdb_N, …)`) only ever names a backing's
+        // store, and that backing's own release, decided here the same way, frees it.  Its
+        // release would free the same store a second time where the leaving record holds an
+        // earlier pass's store, not the last one (loft#2357's `branch`).
+        if facts.slots.contains_key(&x)
+            && !facts.unbacked.contains(&x)
+            && facts
+                .backings
+                .get(&x)
+                .is_some_and(|b| !b.is_empty() && !b.contains(&x))
+            && crate::keys::backed_capture_stand_down()
+        {
+            return Some(Value::Null);
+        }
         // The presence-decided form: its release is the plain one, decided here by identity.
         let release = match op.unspan() {
             Value::If(..) => Value::Call(free, vec![Value::Var(x)]),

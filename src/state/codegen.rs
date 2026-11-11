@@ -2946,8 +2946,18 @@ impl State {
                     // call (loft#1550's `cv = either(cv, h, c)`).  The old store is the one
                     // being displaced, so the copy's source-free may release it; the stashed
                     // free after it is then a no-op.
-                    let fresh_path =
-                        (witnessed && rhs_reads_v) || (stash_old_for_post_free && rhs_may_alias_v);
+                    //
+                    // `@FR-H-FreeTwice` — and wherever the old store waits for the stashed free,
+                    // the copy may not land in it: the stashed free releases it after the copy,
+                    // so a copy written there is freed under `v`, and a NULL answer
+                    // (`OpCopyRefOrNull` releasing the destination it was handed) frees the
+                    // old store twice.  `a = mko(1); a = mko(0)` over an adopted call buffer did
+                    // both on the interpreter; C binds and never copies here.  Only where the
+                    // value does not read `v`: one that does keeps `v` in the protection bracket
+                    // below, which the fresh path leaves it out of (`s = simplify(s)`).
+                    let fresh_path = (witnessed && rhs_reads_v)
+                        || (stash_old_for_post_free
+                            && (rhs_may_alias_v || (!rhs_reads_v && crate::keys::stash_fresh())));
                     // `@FR-O-Witness` — a WITNESSED `v` is the exception: its witness alone
                     // releases the store it displaces, and that store may be a VIEW (`t =
                     // with_deps(t, …)` over `t = df.attrs[0].tp`, where the callee answers `t`

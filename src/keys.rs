@@ -3262,6 +3262,24 @@ pub fn temp_null_reset_frees() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TEMP_NULL_RESET_FREES"))
 }
 
+/// `LOFT_NO_BACKED_CAPTURE_STAND_DOWN=1` — a captured local that only names its backings'
+/// stores keeps its own frame-end release beside theirs (`rebound_captures`): the last pass's
+/// store is then freed twice where the leaving record holds an earlier one.
+#[must_use]
+pub fn backed_capture_stand_down() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BACKED_CAPTURE_STAND_DOWN"))
+}
+
+/// `LOFT_NO_STASH_FRESH=1` — the interpreter's reassignment copy with a stashed displaced free
+/// writes into the old store when the value cannot alias the local, as it did before
+/// (`Codegen::generate_set_inner`, arm R2b): a null answer then frees that store twice.
+#[must_use]
+pub fn stash_fresh() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STASH_FRESH"))
+}
+
 /// `LOFT_NO_CALLREF_LIFT=1` — a collection a fn-ref call delivers into a local that another
 /// assignment binds to a view takes the local as its owner, as it did before (`scan_set`):
 /// the local's displaced free then releases the store the view's temporary owns.
