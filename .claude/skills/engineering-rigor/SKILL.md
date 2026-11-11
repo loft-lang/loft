@@ -4,7 +4,7 @@ description: >-
   The discipline for fixing a non-trivial bug or reshaping load-bearing code, in any
   codebase. USE THIS before you fix a crash, a silent corruption, a wrong answer, a leak or
   a disagreement between two implementations that should agree — and STOP AND LOAD IT when:
-  the fix already looks obvious; a second fix for the same symptom has failed; probes do not
+  the fix already looks obvious; a fix did not work in one go and is about to be retried; probes do not
   converge or a diagnostic shows a symptom but not its cause; a failure happens "sometimes";
   or you are about to write a helper, predicate or type list that may already exist, or port
   working code to another target. It is a speed tool, not a brake: a coherent explanation is
@@ -21,7 +21,7 @@ user-invocable: true
 ## Start here — you are here because…
 
 - **the fix already looks obvious** → state the cause, then run the cheapest probe that could kill it (§ The one idea; loop step 1).
-- **a second fix for the same symptom failed** → stop fixing; build the boundary matrix that shows the class (§ The shared loop, steps 2–3).
+- **a fix did not work in one go** (a red it left, a regression it caused, a cure that had to be narrowed) → load this BEFORE the retry, not after the second failure (owner); stop fixing and build the boundary matrix that shows the class (§ The shared loop, steps 2–3).
 - **probes do not converge, a diagnostic shows a symptom but not its cause, or it fails "sometimes"** → the instrument is blind: build attribution (§ The blind-instrument tell); if you can see but the frame is wrong, go deep on one case (§ Change altitude).
 - **each part passes alone but they fail together** → read the boundary contract, then the shared medium (§ When verified parts fail together).
 - **you are unsure which code actually runs** → a usage sentinel (§ The usage sentinel).

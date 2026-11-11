@@ -203,7 +203,10 @@ disagree.  An edge the rules cannot express means the RULE wants extending, and 
 is a claim to re-measure ([formal/README.md § When to reach for this doc](doc/claude/formal/README.md)).
 
 **Load the `engineering-rigor` skill the moment a situation is not diagnosed in ONE pass** —
-before the second round of probes, not after several (owner).
+before the second round of probes, not after several (owner).  **The same for a FIX: a fix that
+did not work in one go — a red the first attempt left, a regression it caused, a cure that had to
+be narrowed — is retried only after loading the skill** (owner): the retry starts from its
+matrix, not from a second guess.
 
 **Matrix-first for any non-trivial bug (esp. crash / silent corruption) — the urge to fix is the
 signal you haven't earned it:**
