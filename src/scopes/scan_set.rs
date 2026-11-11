@@ -397,9 +397,6 @@ impl Scopes<'_> {
         if let Some(copy) = self.copy_temp_held_bind(ov, v, value, function, data) {
             return self.scan(&copy, function, data);
         }
-        if let Some(lifted) = call_tail_bind(ov, v, value, function, data, self.d_nr) {
-            return self.scan(&lifted, function, data);
-        }
         // `@FR-O-Complete` / `@FR-B-Copy` — a REASSIGNMENT of a heap local from a value
         // branch is lowered to the statement form, `if c { x = a } else { x = b }`, so each
         // arm's `Set` gets the lowering a single bind of that tail has: a whole variable is
@@ -2382,48 +2379,4 @@ enum RefRhs {
     Owned,
     /// A borrowed view into someone else's store (must never be freed).
     View,
-}
-
-/// `v = { init; f(…) }` — a call whose arguments the parser built in front of it (a literal's
-/// work-ref: `OpDatabase(__ref_p2_1); …; f(__ref_p2_1, …)`) — becomes `init; v = f(…)`, so
-/// the bind lowers the CALL (`bind_lowering::first_arm` reads the value as a call, and the
-/// `Insert` hid it).  Bound as the block, the local took the call's answer as it was: a callee
-/// that hands back its argument (`fn id(x: P) -> P { x }`) left the local naming the
-/// work-ref's store, and both freed it (`@FR-H-FreeTwice`).  Lowered as a call, the answer is
-/// copied or adopted as a call's answer is, whatever built its arguments.
-///
-/// Only a heap record local that owns (no deps: a view binds as it is), only a loft-defined
-/// callee (the bind arms that read the call are for those), and only an `init` that does not
-/// name `v` — run ahead of the bind instead of inside it, it would see `v` before the
-/// assignment either way, but a `Set(v, …)` among it is a construction INTO `v`, which this
-/// must not split from its tail.  Anything else answers `None` and binds as before.
-/// `LOFT_NO_CALL_TAIL_BIND=1` keeps the block bind.
-fn call_tail_bind(
-    ov: u16,
-    v: u16,
-    value: &Value,
-    function: &Function,
-    data: &Data,
-    d_nr: u32,
-) -> Option<Value> {
-    if crate::env_once!(std::env::var_os("LOFT_NO_CALL_TAIL_BIND").is_some()) {
-        return None;
-    }
-    let Value::Insert(ops) = value.unspan() else {
-        return None;
-    };
-    let (last, init) = ops.split_last()?;
-    if init.is_empty()
-        || !matches!(function.tp(v), Type::Reference(_, _) | Type::Enum(_, true, _))
-        || !function.tp(v).depend().is_empty()
-        || !matches!(last.unspan(), Value::Call(..))
-        || !crate::use_analysis::callee_of(data, d_nr, last)
-            .is_some_and(|f| data.def(f).is_loft_defined())
-        || init.iter().any(|op| op.reads_var(v) || op.reads_var(ov))
-    {
-        return None;
-    }
-    let mut out = init.to_vec();
-    out.push(crate::data::v_set(ov, last.clone()));
-    Some(Value::Insert(out))
 }
