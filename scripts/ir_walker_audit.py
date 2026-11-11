@@ -922,6 +922,9 @@ TYPE_DESCEND = re.compile(r"\.(?:any_node|for_each_child|contains_def|type_menti
 # peeling to opaque.  Measured on loft#1445, which moved three: `is_keyed`, `is_collection`
 # and `keyed_known_type` all peel MORE than they used to and all three scored worse for it.
 # An instrument that penalises the stronger peel argues against the fix it exists to find.
+# The free functions that peel a former, written `peel(tp)` rather than `tp.peel()`.
+FREE_PEELS = {"Optional": ("first_bind_shape",)}
+
 FORMERS = {
     "Optional": (
         ("base", "peel_optional", "peel_link", "ret_dep_shape", "ret_promo_base"),
@@ -965,7 +968,17 @@ class Former:
         self.aware_call = re.compile(rf"\.(?:{body_alt})\s*\(" if body_alt else r"(?!)")
         # No peel verb: a regex that cannot match, rather than `(?:)` — which matches
         # the empty string and would score every site as seeing through.
-        self.peel_call = re.compile(rf"\.(?:{alt})\s*\(" if peels else r"(?!)")
+        # A FREE function that peels counts as its method twin does: `first_bind_shape(tp)`
+        # (`use_analysis`) answers `τ` for a `τ?` exactly as `tp.base()` does, and the code that
+        # moved into `bind_lowering` calls it that way.
+        free = "|".join(FREE_PEELS.get(name, ()))
+        self.peel_call = (
+            re.compile(rf"(?:\.(?:{alt})|\b(?:{free}))\s*\(" if free else rf"\.(?:{alt})\s*\(")
+            if peels
+            else r"(?!)"
+        )
+        if isinstance(self.peel_call, str):
+            self.peel_call = re.compile(self.peel_call)
         # A local bound FROM a peel: the scrutinee is then a peeled value under another
         # name.  Both spellings occur — `let base = t.base()` and the same-name rebinding
         # `let tp = tp.base().clone()`.

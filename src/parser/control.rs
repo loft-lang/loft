@@ -12067,18 +12067,15 @@ impl Parser {
     /// The declared type a forward stub field type `Unknown(T)` (or `Unknown(T)?`) names, once
     /// `T` is a declared struct or enum; `None` for every other type.
     fn forward_field_type(&self, tp: &Type) -> Option<Type> {
-        let (inner, optional) = match tp {
-            Type::Optional(inner) => (&**inner, true),
-            other => (other, false),
-        };
-        let Type::Unknown(nr) = inner else {
+        let optional = matches!(tp, Type::Optional(_));
+        let Type::Unknown(nr) = tp.base() else {
             return None;
         };
         if *nr == 0 || !matches!(self.data.def_type(*nr), DefType::Struct | DefType::Enum) {
             return None;
         }
         let resolved = self.data.def(*nr).returned.clone();
-        if matches!(resolved, Type::Unknown(_)) {
+        if matches!(resolved.base(), Type::Unknown(_)) {
             return None;
         }
         Some(if optional {
@@ -13466,7 +13463,7 @@ impl Parser {
             // An author's variable only: a compiler buffer (an iterator subject drained into
             // one) is filled by statements of its own around the match.
             Value::Var(x)
-                if !matches!(self.vars.tp(*x), Type::RefVar(_))
+                if !matches!(self.vars.tp(*x).base(), Type::RefVar(_))
                     && !self.vars.is_compiler_generated(*x) =>
             {
                 Some(*x)

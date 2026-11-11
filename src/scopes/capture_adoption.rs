@@ -361,7 +361,8 @@ impl ReleaseOps {
         let (get, distinct) = (data.def_nr("OpGetDbRef"), data.def_nr("OpDistinctStore"));
         let mut out = Vec::new();
         for a in 0..data.attributes(r) {
-            let Type::Reference(_, deps) = data.attr_type(r, a) else {
+            let slot_tp = data.attr_type(r, a);
+            let Type::Reference(_, deps) = slot_tp.base() else {
                 continue;
             };
             if deps.is_borrowed_share() {
