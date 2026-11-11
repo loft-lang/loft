@@ -531,7 +531,7 @@ host, the adopted witness, and the companions of a vector `R-Apart` keeps inline
 (`opt::apart_vector`, moved from `lower` for this; the inline buffer is no store at all).  A
 function that yields or calls a generator is declined: a live frame may hold the store, which
 rustc tested at run time (`is_frame_held`).  The C's push-run reservation reads the form as an
-empty vector (`known_empty`, now `opt::empty_slot` — C′1).  Found on the way, in every IR pass of
+empty vector (`known_empty`, now `empty_slot`, in the front layer — C′1).  Found on the way, in every IR pass of
 this plan: a definition with a native NAME (a library export once its artifact is built) was
 skipped, though a native build emits its loft body — hex_shape with a warm library lost
 `form_read`'s 16 buffers; the filter is gone.  Census: rustc counted once per emitted copy (the
@@ -557,7 +557,7 @@ only `(R-FnRefBuffer)`'s records in `c/body/loop_record.rs`, and now keeps plain
 (drawing, 2 — the IR's kept pass mints nothing, where the C's port had measured a store reset as
 no gain).  Ownership goes through `opt::buffer_owner`, which gained the apart RECORD owners
 (`opt::apart_records`, moved from `lower` for this, with `ident_part` and `apart_disabled`
-given their one home there): an apart record holds no store to keep.  `opt::empty_slot`'s
+given their one home there): an apart record holds no store to keep.  `empty_slot`'s
 block scan learned that a write to ANOTHER field of the record leaves a vector slot empty —
 without it the C's push-run reservation lost hex_recover's `forms_upto` (8 → 6), whose kept
 record's other fields are written between the clear and the push.  Census: the rustc rows

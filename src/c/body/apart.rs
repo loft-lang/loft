@@ -184,7 +184,7 @@ impl FnWriter<'_> {
         if self.apv.is_empty() {
             return false;
         }
-        if let Some((v, _)) = apart_vector::buffer_init(self.cx.data, x)
+        if let Some((v, _)) = crate::empty_slot::buffer_init(self.cx.data, x)
             && self.apv_vec(v)
         {
             self.line(ind, &format!("loft_apv_clear(&loft_apv{v});"));

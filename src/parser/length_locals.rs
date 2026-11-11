@@ -150,7 +150,7 @@ pub(crate) fn lockstep_twins(code: &Value, data: &Data, vars: &Function, v: u16)
 /// `if OpRefIsNull(x) { mint } else { clear }`, or a local's `x = OpGetField(db, off, …)` whose
 /// slot a following statement naming only `db` empties (`OpSetInt4(db, off, 0)`).
 fn start_at(pl: &[&Value], j: usize, data: &Data, vars: &Function) -> Option<(u16, Vec<u16>)> {
-    if let Some((x, others)) = crate::opt::apart_vector::buffer_init(data, pl[j]) {
+    if let Some((x, others)) = crate::empty_slot::buffer_init(data, pl[j]) {
         return Some((x, others));
     }
     let Value::Set(x, rhs) = pl[j].unspan() else {
@@ -175,7 +175,7 @@ fn start_at(pl: &[&Value], j: usize, data: &Data, vars: &Function) -> Option<(u1
     pl[j + 1..]
         .iter()
         .take_while(|op| names_only(op, &comps))
-        .any(|op| crate::opt::empty_slot::empties(data, op, (*db, *off)))
+        .any(|op| crate::empty_slot::empties(data, op, (*db, *off)))
         .then_some((*x, comps))
 }
 
@@ -457,7 +457,7 @@ fn writes_node(
         crate::parser::closures::collect_vars_in(arg, &mut named);
         named.into_iter().any(reach)
     };
-    match node {
+    match node.unspan() {
         Value::Set(w, _) => *w == base,
         Value::TuplePut(w, _, _) => reach(*w),
         Value::Call(op, args) => {

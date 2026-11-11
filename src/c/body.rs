@@ -3087,10 +3087,10 @@ impl<'a> FnWriter<'a> {
         crate::opt::writes::fused_push(data, name, args).map(|fp| (fp, next))
     }
 
-    /// Whether `vector` is EMPTY where statement list `ops` ends (`opt::empty_slot::known_empty`,
+    /// Whether `vector` is EMPTY where statement list `ops` ends (`empty_slot::known_empty`,
     /// the front's one answer).
     fn known_empty(&self, ops: &[Value], vector: &Value) -> bool {
-        crate::opt::empty_slot::known_empty(self.cx.data, ops, vector)
+        crate::empty_slot::known_empty(self.cx.data, ops, vector)
     }
 
     /// `@FR-H-KeepRoom`'s prologue clause: statement `i` clears a vector buffer `x`

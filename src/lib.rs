@@ -349,6 +349,7 @@ pub mod const_fn;
 pub mod copy_view;
 pub mod ctor_literal;
 pub mod discharge_into;
+pub mod empty_slot;
 pub mod exit_record;
 pub mod exit_vector;
 pub mod exp_pow;

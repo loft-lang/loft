@@ -15,7 +15,7 @@ clause of an existing rule, one phase at a time.
 | a counter of `0..n`, `n` a length local of `v` | `(R-Base)` counter clause (C), `(R-InRange)` (IR) | built 9ca584382 |
 | a guard: `if e < len(v)` / `while e < n` | `(R-Base)` guard clause (C), fact in `opt` | built (below) |
 | a stepped `while` counter (`i += 4`, `pos -= 1` under `pos > 0`) | `(R-Range)` while-counter clause | not built: no site pays (§ The stepped counter, priced) |
-| `i % n`, `n = len(v)` | `(R-Range)` rem clause + the guard fact | open |
+| `(i + c) % n ?? d` in `for i in 0..n`, `n = len(v)` | `(R-InRange)` wrap clause, read by `(R-Base)`'s counter clause | designed (§ The wrapped counter) |
 | `eb` of `boundary_loops`: pushed in lockstep with `ea` | the length-local answer, widened (§ Lockstep twins) | built 27c0a84c0: −20.1 % gcc, −17.8 % clang |
 | `comp` of `boundary_loops`: one push per turn of `0..ne` | — | not built: priced at 0 (§ Lockstep twins) |
 
@@ -149,6 +149,51 @@ counts it), an append of a vector or a slice, a record append (`OpNewRecord` …
 local is the length of: `peel::range_lens` and `counters_in_range` (C, `@FR-R-Base`),
 `below_len::length_of` (one guard fact per vector), and `in_range`'s alias (`rewrite_for` once
 per vector, `@FR-R-InRange`).
+
+## The wrapped counter
+
+**Price first** (2026-11-11, graphics ship C, `fill_polygon` → `polygon_crossings`, min of nine
+interleaved runs; hash `91eac327`): `pc_a = pc_pts[i]?` and `pc_b = pc_pts[(i + 1) % pc_n ?? 0]?`
+over a `const` parameter, each `_nn` or plain `get` today, and `pc_b`'s `?` mints a default
+record in the loop body.
+
+| hand form | gcc | clang |
+|---|--:|--:|
+| `pc_a` test-free | −2.2 % | −3.3 % |
+| `pc_b` test-free, its `?` dropped | −3.9 % | −23.0 % |
+| both | −4.0 % | −22.5 % |
+
+The wrapped read carries it, and most of clang's share is the default record's mint leaving the
+loop, which is `(R-InRange)`'s IR work: the interpreter gains it too.  drawing `smooth_pts`
+(`pts[i % sp_n ?? 0]?`, `pts[(i + 1) % sp_n ?? 0]?`) is the same shape, unpriced.
+
+**Invariant.**  Inside `for i in 0..n` (exclusive, counter from 0) the body runs only when
+`n >= 1` and `0 <= i < n`.  Then for a constant `c >= 0`, `(i + c) % n` is never null (the
+divisor is not 0, the dividend not null) and lies in `[0, n)`, since loft's `%` takes the
+dividend's sign — so `?? d` never answers `d`, and when `n` is `len(v)` for the whole loop the
+read `v[(i + c) % n]` names an element.  `i + c` must not overflow: `(R-Range)` bounds it
+(`n <= i64::MAX`, `c` a small literal).
+
+**Three parts, one decision each:**
+1. The IR (`in_range`, beside the counter read it already handles): in such a loop, an index
+   `{ncc: t = (i + c) % n; t ?? d}` is `(i + c) % n` alone, and a record element's `?` at that
+   index is the read alone.  One shared predicate names the shape
+   (`loop_shape::wrapped_counter`: the index, the counter, the range end), so the C reader
+   does not match it a second time.
+2. The C counter clause (`counter_index`) accepts the wrapped index for every vector the range
+   end is the length of, through that predicate: no index test.
+3. `own_vector` admits a declared parameter that nothing else in the frame can name: every
+   other parameter's type holds no vector of its type (a scalar, a text, or a vector or record
+   that cannot reach it), and the function does not yield (a generator resumes after its
+   caller ran).  `const` is not needed for that — the write test already sees the function's
+   own writes — but every site in D1 has it.  This widens `@FR-R-Base`'s own-vector condition
+   (formal/rewrites.md § R-Base, the length-local form), so it is a `Contract: strained`
+   change, with a guard cell for each excluded alias: `f(a, a)`, `f(s.items, s)`, and a
+   generator.
+
+Each part is a separate commit, the matrix before each: the wrap shapes (`c` = 0, 1, 2; `n`
+from `len(v)` and a length local; the loop exclusive and inclusive; a counter not from 0; a
+negative `c`), and the alias shapes above.
 
 ## The stepped counter, priced (2026-11-11)
 

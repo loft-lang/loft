@@ -628,7 +628,7 @@ impl Output<'_> {
         if self.apart_vector_quiet(x) {
             return true;
         }
-        if let Some((v, _)) = apart_vector::buffer_init(self.data, x)
+        if let Some((v, _)) = crate::empty_slot::buffer_init(self.data, x)
             && self.ap_vec(v)
         {
             return true;
@@ -685,7 +685,7 @@ impl Output<'_> {
             }
             return Ok(true);
         }
-        if let Some((v, _)) = apart_vector::buffer_init(data, x)
+        if let Some((v, _)) = crate::empty_slot::buffer_init(data, x)
             && self.ap_vec(v)
         {
             write!(w, "{}.clear()", self.ap_name(v))?;
