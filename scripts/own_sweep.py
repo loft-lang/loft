@@ -42,6 +42,9 @@ FAULTS = [
     # record number (`LOFT_POISON` fills a freed record, so its reference reads as corrupt).
     ("uaf", re.compile(r"USE AFTER FREE|use-after-free \(LOFT_UAF\)|the reference is corrupt")),
     ("wrong-free", re.compile(r"loft: BUG \(#(?:306|405)\)")),
+    # A free of an already-freed store (`LOFT_DOUBLE_FREE`'s census): harmless only while
+    # nothing takes the slot in between, so the compiler removes it (STORE_RECORDS.md).
+    ("re-free", re.compile(r"\[double-free\] [1-9][0-9]* re-free")),
 ]
 RED = re.compile(r"^RED ", re.M)
 ARMED = re.compile(r"@ARMED:(.*)")
@@ -72,6 +75,7 @@ def run(loft, cell, switch, timeout):
         LOFT_LEAK_CHECK="1",
         LOFT_STRICT_STORES="1",
         LOFT_POISON="1",
+        LOFT_DOUBLE_FREE="1",
         LOFT_OWN_ORACLE=ORACLE[0],
         LOFT_NO_CACHE="1",
     )

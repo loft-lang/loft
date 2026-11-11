@@ -1507,8 +1507,10 @@ static void loft_perrs_deliver_vector(loft_ref data, loft_ref to, int whole);
 /* `LOFT_DOUBLE_FREE` (`keys::double_free_audit`, `@FR-H-FreeTwice`): a CENSUS of tolerated
  * re-frees, split by whether the freeing site is the one that freed the slot first, and of FREED
  * slots made again through a reference that still names them (`loft_database`'s "a freed one
- * too").  Neither is a defect count: a branch join frees once per arm, and a loop's work-ref is
- * freed at the end of a pass and re-made at the next.  But a revival is also the one place a
+ * too").  A re-free is a free the compiler emitted twice on one path, which it removes where it
+ * can (STORE_RECORDS.md § The checks): this branch only sees the ones whose slot was not reused.
+ * A revival is the design (a loop's work-ref is freed at the end of a pass and re-made at the
+ * next), but it is also the one place a
  * STALE reference re-initialises a slot another store may have taken since — which is why each
  * different-site line names both sites.  Printed at exit (`loft_double_free_report`). */
 #ifdef LOFT_DOUBLE_FREE
@@ -1544,9 +1546,10 @@ static void loft_double_free_report(void) {
     fflush(stdout);
     fprintf(stderr,
             "[double-free] %llu re-free(s) of an already-free slot: %llu from a DIFFERENT site and %llu from the "
-            "SAME site; %llu freed slot(s) made again through a reference that still named them.  A census, not "
-            "a defect count: run with LOFT_STRICT_STORES too, so a freed slot is never handed to another store "
-            "and a stale reference meets the store it named.\n",
+            "SAME site; %llu freed slot(s) made again through a reference that still named them.  Each re-free is a "
+            "free the compiler emitted twice, harmless here only because nothing took the slot in between: run "
+            "with LOFT_STRICT_STORES too, so a freed slot is never handed to another store and a stale reference "
+            "meets the store it named.\n",
             (unsigned long long) (loft_df_same + loft_df_other), (unsigned long long) loft_df_other,
             (unsigned long long) loft_df_same, (unsigned long long) loft_df_revived);
 }

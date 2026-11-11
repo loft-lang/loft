@@ -195,6 +195,9 @@ enum Origin {
     /// An assignment the code generator lowers as a copy into a store of the variable's
     /// own (`bind_lowering`).
     Copy,
+    /// `OpPlaceRecord` with a null host: the record is the root of a fresh store, which
+    /// `OpFreeRecordIn` releases whole (`@FR-R-Place`).
+    Place,
 }
 
 /// A function's answer, as its callers see it.
@@ -251,6 +254,10 @@ struct Ops {
     distinct: u32,
     fnref_closure: u32,
     get_dbref: u32,
+    ref_present: u32,
+    place: u32,
+    free_in: u32,
+    store_live: u32,
     not: u32,
     unconditional: BTreeSet<u32>,
     conditional: BTreeSet<u32>,
@@ -267,6 +274,10 @@ impl Ops {
             distinct: data.def_nr("OpDistinctStore"),
             fnref_closure: data.def_nr("OpFnRefClosure"),
             get_dbref: data.def_nr("OpGetDbRef"),
+            ref_present: data.def_nr("OpConvBoolFromRef"),
+            place: data.def_nr("OpPlaceRecord"),
+            free_in: data.def_nr("OpFreeRecordIn"),
+            store_live: data.def_nr("OpStoreLive"),
             not: data.def_nr("OpNot"),
             unconditional: s.unconditional_ref_frees.iter().copied().collect(),
             conditional: s.conditional_ref_frees.iter().copied().collect(),
@@ -460,15 +471,32 @@ impl Run<'_> {
     /// End the stores `v` names.  `report` is off for a guarded free, whose skip the
     /// analysis may not have seen.
     fn end(&mut self, st: &mut State, v: u16, how: &str, report: bool) {
+        self.end_only(st, v, how, report, None);
+    }
+
+    /// [`Self::end`], limited to the stores in `only` when it is given.
+    fn end_only(
+        &mut self,
+        st: &mut State,
+        v: u16,
+        how: &str,
+        report: bool,
+        only: Option<&BTreeSet<SKey>>,
+    ) {
         let pts = Self::pts(st, v);
         let label = format!("{how}({})", self.var_name(v));
         for k in Self::stores_of(&pts) {
+            if only.is_some_and(|o| !o.contains(&k)) {
+                continue;
+            }
             self.sites[k.site as usize].ends.insert(label.clone());
             let info = info_of(st, k);
             if report && info.has(ENDED) && info.ended.contains(&v) {
+                // Every end here is a free, which the runtime refuses on a free slot
+                // (`@FR-H-FreeTwice`) and runs on whatever store took the slot since.
                 let name = self.var_name(v);
                 self.find(
-                    "double-end",
+                    "re-free",
                     k.site,
                     format!("`{name}` is freed by {how} after its store was already freed"),
                 );
@@ -530,7 +558,7 @@ impl Run<'_> {
             if info.has(ENDED) && !info.has(LIVE) {
                 let name = self.var_name(w);
                 self.find(
-                    "double-end",
+                    if how == "its cascade" { "double-end" } else { "re-free" },
                     k.site,
                     format!("the record `{name}` releases a capture by {how} after its store was already freed"),
                 );
@@ -539,7 +567,7 @@ impl Run<'_> {
                 continue;
             }
             let mut next = info.clone();
-            next.ended = info.live.clone();
+            next.ended.clone_from(&info.live);
             next.status = (info.status & !LIVE) | ENDED;
             next.live.clear();
             st.stores.insert(k, next);
@@ -600,6 +628,10 @@ impl Run<'_> {
 
     /// Run `v` from `st`: the state it ends in and its value; `None` when no path falls
     /// through (a `break`, `continue` or `return`).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per IR shape the records follow"
+    )]
     fn eval(&mut self, v: &Value, st: State) -> Option<(State, Val)> {
         self.steps += 1;
         if self.steps > STEP_BUDGET {
@@ -873,81 +905,157 @@ impl Run<'_> {
         Some((s, Val::null()))
     }
 
-    /// The states the two arms of an `if` on `c` start from: a null test of a variable
-    /// narrows it in each arm, and an arm it rules out does not run.
+    /// The states the two arms of an `if` on `cond` start from, as (then, else); `None` is
+    /// an arm the test rules out.  A test the records cannot read keeps both arms with the
+    /// state unchanged, which is sound: narrowing only ever removes paths a test excludes.
     fn decide(&self, cond: &Value, st: State) -> (Option<State>, Option<State>) {
-        let mut test = cond.unspan();
-        let mut flip = false;
-        while let Value::Call(op, inner) = test
-            && *op == self.ops.not
-            && inner.len() == 1
-        {
-            flip = !flip;
-            test = inner[0].unspan();
+        let both = |st: State| (Some(st.clone()), Some(st));
+        match cond.unspan() {
+            Value::Boolean(true) => (Some(st), None),
+            Value::Boolean(false) => (None, Some(st)),
+            Value::Call(op, a) if *op == self.ops.not && a.len() == 1 => {
+                let (t, f) = self.decide(&a[0], st);
+                (f, t)
+            }
+            // A condition that is itself a choice: `a && b` and `a || b` lower to this.
+            Value::If(c, t, e) => {
+                let (ct, cf) = self.decide(c, st);
+                let (tt, tf) = ct.map_or((None, None), |s| self.decide(t, s));
+                let (et, ef) = cf.map_or((None, None), |s| self.decide(e, s));
+                (join_opt(tt, et), join_opt(tf, ef))
+            }
+            Value::Call(op, a) if *op == self.ops.distinct => self.decide_distinct(a, st),
+            Value::Call(op, a) if a.len() == 1 => {
+                let Value::Var(x) = a[0].unspan() else {
+                    return both(st);
+                };
+                if *op == self.ops.ref_is_null {
+                    Self::null_test(*x, st)
+                } else if *op == self.ops.ref_present {
+                    // `OpConvBoolFromRef(x)`: true when `x` names a record.  A freed store
+                    // still names one, so this is the null test turned round, never a
+                    // liveness test.
+                    let (null, present) = Self::null_test(*x, st);
+                    (present, null)
+                } else if *op == self.ops.store_live {
+                    Self::live_test(*x, st)
+                } else {
+                    both(st)
+                }
+            }
+            _ => both(st),
         }
-        let Value::Call(op, test_args) = test else {
-            return (Some(st.clone()), Some(st));
-        };
-        let Some(Value::Var(x)) = test_args.first().map(Value::unspan) else {
-            return (Some(st.clone()), Some(st));
-        };
-        if *op == self.ops.distinct {
-            return self.decide_distinct(test_args, flip, st);
-        }
-        if *op != self.ops.ref_is_null {
-            return (Some(st.clone()), Some(st));
-        }
-        let pts = Self::pts(&st, *x);
+    }
+
+    /// `OpRefIsNull(x)`, as (null arm, store arm).  Where `x` is null, a store `x` points
+    /// into on every path where that store is live is not live, and one it points into on
+    /// every path where it is ended is not ended.
+    fn null_test(x: u16, st: State) -> (Option<State>, Option<State>) {
+        let pts = Self::pts(&st, x);
         let may_null = pts
             .iter()
             .any(|p| matches!(p, Pt::Null | Pt::Param(_) | Pt::Unknown));
         let may_store = pts.iter().any(|p| !matches!(p, Pt::Null));
-        // The arm where `x` is null: a store `x` must-holds whenever it is live is not live.
         let null_arm = may_null.then(|| {
             let mut s = st.clone();
             for k in Self::stores_of(&pts) {
-                if let Some(info) = s.stores.get_mut(&k)
-                    && info.live.contains(x)
-                {
-                    info.status &= !LIVE;
-                    info.live.clear();
+                if let Some(info) = s.stores.get_mut(&k) {
+                    if info.live.contains(&x) {
+                        info.status &= !LIVE;
+                        info.live.clear();
+                    }
+                    if info.ended.contains(&x) {
+                        info.status &= !ENDED;
+                        info.ended.clear();
+                    }
                     if info.status == 0 {
                         info.status = ABSENT;
                     }
                 }
             }
-            s.vars.remove(x);
+            s.vars.remove(&x);
             s
         });
         let store_arm = may_store.then(|| {
             let mut s = st;
-            if let Some(p) = s.vars.get_mut(x) {
+            if let Some(p) = s.vars.get_mut(&x) {
                 p.remove(&Pt::Null);
             }
             s
         });
-        if flip {
-            (store_arm, null_arm)
-        } else {
-            (null_arm, store_arm)
-        }
+        (null_arm, store_arm)
     }
 
-    /// `OpDistinctStore(a, b)`: where both operands name one single store, the two are that
-    /// store on every path and the DISTINCT arm cannot run; where they name two different
-    /// single stores, the SAME arm cannot.  Anything wider keeps both arms.
-    fn decide_distinct(
-        &self,
-        args: &[Value],
-        flip: bool,
-        st: State,
-    ) -> (Option<State>, Option<State>) {
+    /// `OpStoreLive(x)` (`@FR-L-CapOwn`'s guard): is the store `x` names still allocated?
+    /// A store handed on keeps both answers: its new holder may or may not have freed it.
+    fn live_test(x: u16, st: State) -> (Option<State>, Option<State>) {
+        let pts = Self::pts(&st, x);
+        let followed = !pts.iter().any(|p| matches!(p, Pt::Param(_) | Pt::Unknown));
+        let stores: Vec<SKey> = Self::stores_of(&pts).into_iter().collect();
+        // Live: `x` names a store, and that store is live or handed on.
+        let live_arm = {
+            let mut s = st.clone();
+            if let Some(p) = s.vars.get_mut(&x) {
+                p.remove(&Pt::Null);
+            }
+            let mut possible = !followed || !stores.is_empty();
+            for k in &stores {
+                if let Some(info) = s.stores.get_mut(k) {
+                    let only = followed && stores.len() == 1;
+                    if only || info.ended.contains(&x) {
+                        info.status &= !(ENDED | ABSENT);
+                        info.ended.clear();
+                    }
+                    if only && info.status == 0 {
+                        possible = false;
+                    }
+                }
+            }
+            possible.then_some(s)
+        };
+        // Not live: `x` is null, or the store it names has ended (or was never made).
+        let dead_arm = {
+            let mut s = st;
+            let mut possible = !followed || pts.contains(&Pt::Null) || stores.is_empty();
+            for k in &stores {
+                if let Some(info) = s.stores.get_mut(k) {
+                    if info.live.contains(&x) {
+                        info.status &= !LIVE;
+                        info.live.clear();
+                    }
+                    if info.status & !LIVE != 0 {
+                        possible = true;
+                    }
+                    if info.status == 0 {
+                        info.status = ABSENT;
+                    }
+                } else {
+                    possible = true;
+                }
+            }
+            possible.then_some(s)
+        };
+        (live_arm, dead_arm)
+    }
+
+    /// `OpDistinctStore(a, b)`: where both operands name one single store (or both are
+    /// null), the two are that store on every path and the DISTINCT arm cannot run; where
+    /// they name two different single stores, the SAME arm cannot.  Anything wider keeps
+    /// both arms.  An operand may be a variable, a closure's record (`OpFnRefClosure`) or a
+    /// capture slot read out of a record that stays in this frame (`OpGetDbRef`).
+    fn decide_distinct(&self, args: &[Value], st: State) -> (Option<State>, Option<State>) {
         let operand = |v: &Value| -> Option<Pts> {
             match v.unspan() {
                 Value::Var(x) => Some(Self::pts(&st, *x)),
                 Value::Call(op, a) if *op == self.ops.fnref_closure => {
                     match a.first().map(Value::unspan) {
                         Some(Value::Var(g)) => Some(Self::pts(&st, *g)),
+                        _ => None,
+                    }
+                }
+                Value::Call(op, a) if *op == self.ops.get_dbref => {
+                    match a.first().map(Value::unspan) {
+                        Some(Value::Var(w)) => st.slots.get(w).filter(|p| !p.is_empty()).cloned(),
                         _ => None,
                     }
                 }
@@ -961,18 +1069,13 @@ impl Run<'_> {
             return (Some(st.clone()), Some(st));
         };
         let single = |p: &Pts| match p.iter().next() {
-            Some(Pt::Store(k)) if p.len() == 1 => Some(*k),
+            Some(q @ (Pt::Store(_) | Pt::Null)) if p.len() == 1 => Some(*q),
             _ => None,
         };
-        let (distinct, same) = match (single(&a), single(&b)) {
+        match (single(&a), single(&b)) {
             (Some(x), Some(y)) if x == y => (None, Some(st)),
             (Some(_), Some(_)) => (Some(st), None),
             _ => (Some(st.clone()), Some(st)),
-        };
-        if flip {
-            (same, distinct)
-        } else {
-            (distinct, same)
         }
     }
 
@@ -1065,6 +1168,23 @@ impl Run<'_> {
                 self.end_slots(&mut st, w, &name);
                 return st;
             }
+            if d == ops.free_in {
+                // `OpFreeRecordIn` releases one record: a store of its own only where the
+                // record is that store's root (a placed record whose host was null); a
+                // record placed inside a host leaves the host's store live.
+                if let Some(x) = Self::first_var(args, 0) {
+                    let placed: BTreeSet<SKey> = Self::stores_of(&Self::pts(&st, x))
+                        .into_iter()
+                        .filter(|k| {
+                            matches!(self.sites[k.site as usize].origin, Some(Origin::Place))
+                        })
+                        .collect();
+                    if !placed.is_empty() {
+                        self.end_only(&mut st, x, &name, true, Some(&placed));
+                    }
+                }
+                return st;
+            }
             if let Some(x) = Self::first_var(args, 0) {
                 // The code generator emits no `OpFreeRef` of a never-free variable
                 // (`Codegen::generate_call`, S34), including one a move made never-free.
@@ -1111,6 +1231,34 @@ impl Run<'_> {
         st
     }
 
+    /// `OpPlaceRecord(host, tp)`: a record inside the host's store, or the root of a fresh
+    /// store where the host is null (`@FR-R-Place`).
+    fn place(&mut self, node: &Value, host: &Val, mut s: State) -> (State, Val) {
+        let mut pts: Pts = host
+            .pts
+            .iter()
+            .copied()
+            .filter(|p| *p != Pt::Null)
+            .collect();
+        let mut corr = BTreeSet::new();
+        if host.pts.contains(&Pt::Null) {
+            let site = self.site(node, Origin::Place);
+            let k = Self::fresh(&mut s, site);
+            if !pts.is_empty()
+                && let Some(info) = s.stores.get_mut(&k)
+            {
+                info.status = LIVE | ABSENT;
+            }
+            pts.insert(Pt::Store(k));
+            corr.insert(k);
+        }
+        (s, Val { pts, corr })
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one branch per op family the records give a meaning to"
+    )]
     fn call(&mut self, node: &Value, d: u32, args: &[Value], st: State) -> Option<(State, Val)> {
         let ops = self.ops;
         if ops.unconditional.contains(&d) || d == ops.text_free || ops.conditional.contains(&d) {
@@ -1182,6 +1330,10 @@ impl Run<'_> {
         if !bodied {
             // An operator answering a reference answers one into its first argument's store;
             // a native's answer is not followed.
+            if d == ops.place {
+                let host = vals.into_iter().next().unwrap_or_else(Val::unknown);
+                return Some(self.place(node, &host, s));
+            }
             let val = if def.name().starts_with("Op") {
                 vals.into_iter().next().unwrap_or_else(Val::unknown)
             } else {
@@ -1542,6 +1694,7 @@ fn site_label(run: &Run, site: u32) -> String {
     match run.sites.get(site as usize).and_then(|s| s.origin.as_ref()) {
         Some(Origin::Mint) => format!("[store #{site}, minted] "),
         Some(Origin::Copy) => format!("[store #{site}, copied] "),
+        Some(Origin::Place) => format!("[store #{site}, placed] "),
         Some(Origin::Call(d)) => {
             format!("[store #{site}, answered by {}] ", run.data.def(*d).name())
         }

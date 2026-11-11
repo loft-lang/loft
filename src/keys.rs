@@ -3266,6 +3266,27 @@ pub fn note_double_free(same_site: bool) {
     }
 }
 
+/// Print the double-free audit's census when `LOFT_DOUBLE_FREE` is armed: at a program's
+/// exit and at the end of a test run.  A re-free is a free the compiler emitted twice on one
+/// path; reaching this count it found the slot not yet reused, and the store records name the
+/// emitting site (STORE_RECORDS.md § The checks).
+pub fn double_free_report() {
+    if !double_free_audit() {
+        return;
+    }
+    let (same, other) = double_free_counts();
+    eprintln!(
+        "[double-free] {n} re-free(s) of an already-free slot: {other} from a DIFFERENT site \
+         (a free emitted on each of two paths that meet) and {same} from the SAME site (a \
+         runtime-guarded free whose guard let it through twice).  Each is a free the compiler \
+         emitted twice; it was harmless here only because nothing took the slot in between.  \
+         `LOFT_STRICT_STORES` never recycles a slot, so a stale free that would have released \
+         another store is counted here too.  Interpreter only: `alloc_pc` is zero on \
+         `--native`, which collapses the split.",
+        n = same + other
+    );
+}
+
 /// `(same-site, other-site)` re-free counts — the second is the one to read.
 #[must_use]
 pub fn double_free_counts() -> (usize, usize) {
