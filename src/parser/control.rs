@@ -23142,7 +23142,13 @@ impl Parser {
                     // this signature wants and `State::fn_call_ref` pops the excess once
                     // the target IS known (loft#1116).
                     let work_vars = self.fnref_text_buffer_vars(0, ret_type.as_ref());
-                    if !self.first_pass {
+                    if self.first_pass {
+                        // Pass 1 answers the call's SHAPE too: the expression around it
+                        // decides by it (a text `+=` folds into its target only while its
+                        // first operand IS the target), and a decision that differs between
+                        // the passes shifts every later work buffer's number (loft#662).
+                        *val = Value::CallRef(v_nr, Vec::new());
+                    } else {
                         self.var_usages(v_nr, true);
                         let mut args = vec![];
                         // inject work-buffer DbRef blocks before __closure (zero-param case).
@@ -24006,7 +24012,12 @@ impl Parser {
         // `&text` points into the CALLER's frame and only the caller can supply one that
         // outlives the call (loft#1116).
         let work_vars = self.fnref_text_buffer_vars(param_types.len(), ret_type.as_ref());
-        if !self.first_pass {
+        if self.first_pass {
+            // Pass 1 answers the call's shape, as the zero-argument twin above does.
+            *val = Value::CallRef(v_nr, list.to_vec());
+            return Some(*ret_type);
+        }
+        {
             if list.len() != param_types.len() {
                 diagnostic!(
                     self.lexer,
