@@ -8,7 +8,7 @@
 // and every big-endian write of a multi-byte element take the per-element path.  Every byte
 // is hand-computed in its assert.
 //
-// @falsified-at: 4468a7cdc — by hand: with the block path taken whatever the byte order, the
+// @falsified-at: 67fb02fd3 — by hand: with the block path taken whatever the byte order, the
 //   big-endian `i32` and `single` cells answer the little-endian bytes on `--native-c`; the
 //   interpreter is untouched (a C writer path).
 // CHANNEL: the asserts.
