@@ -351,9 +351,15 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
                         f"{pkg_dir}: loft --emit-c ({lane})", times, f"{lane}-emit", reserve_gb,
                         cwd=pkg_dir, **({"env": env} if env else {}))
             with open(csrc, encoding="utf-8", errors="replace") as f:
-                links = [arg for line in re.findall(r"/\* link: (.*?) \*/", f.read())
-                         for arg in shlex.split(line)]
-            run_checked([*C_CMD, "-o", exe, csrc, *links, "-lm", "-ldl", "-pthread"],
+                unit = f.read()
+            links = [arg for line in re.findall(r"/\* link: (.*?) \*/", unit)
+                     for arg in shlex.split(line)]
+            # The ship lane builds what `--ship` builds (`c_driver::build`): a `[c] shim`'s
+            # sources compiled with the unit under link-time optimisation, not its archive.
+            lto = []
+            if lane == "cship" and os.environ.get("LOFT_NO_SHIM_LTO", "0") == "0":
+                links, lto = shims_as_sources(unit, links)
+            run_checked([*C_CMD, *lto, "-o", exe, csrc, *links, "-lm", "-ldl", "-pthread"],
                         f"{pkg_dir}: {C_CMD[0]} ({lane} lane)", times, f"{lane}-cc", reserve_gb)
             cmds[lane] = [exe]
         except BuildFailed as e:
@@ -366,6 +372,32 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
             if os.path.exists(csrc):
                 os.remove(csrc)
     return cmds
+
+
+def shims_as_sources(unit, links):
+    """`links` with each `[c] shim` archive the unit names (`/* shim-archive: */`) replaced by
+    the sources it names after it (`/* shim-source: */`), and the flags that compile them with
+    the unit — `c_driver::shims_as_sources`, the release tier's form."""
+    of, cur = {}, None
+    for line in unit.splitlines():
+        m = re.match(r"/\* shim-archive: (.*) \*/$", line)
+        if m:
+            cur = m.group(1)
+            continue
+        m = re.match(r"/\* shim-source: (.*) \*/$", line)
+        if m and cur:
+            of.setdefault(cur, []).append(m.group(1))
+        elif not line.startswith("/* link: "):
+            cur = None
+    out, used = [], False
+    for l in links:
+        srcs = of.get(l)
+        if srcs and all(x.endswith(".c") for x in srcs):
+            out.extend(srcs)
+            used = True
+        else:
+            out.append(l)
+    return out, (["-flto"] if used else [])
 
 
 # ── running ──────────────────────────────────────────────────────────────────────────────
