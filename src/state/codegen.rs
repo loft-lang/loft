@@ -14,6 +14,7 @@
 //! (control flow).
 
 use super::State;
+use crate::bind_lowering::FirstArm;
 use crate::data::{Context, Data, Deps, I32, IntegerSpec, Type, Value};
 use crate::data_store::ValueType;
 use crate::database::Stores;
@@ -3680,415 +3681,163 @@ impl State {
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn gen_set_first_at_tos(&mut self, stack: &mut Stack, v: u16, value: &Value) {
-        // @PLN25: a `text?` local's first-Set routes to the heap-aware text path (same sentinel
-        // storage as plain `text`) — peel the marker. Else an `Optional(Text)` var fell through
-        // to the scalar match below (no Text arm) and panicked "unsupported var type".
-        if matches!(stack.function.tp(v).base(), Type::Text(_)) {
-            note_bind("first-text");
-            self.gen_set_first_text(stack, v, value);
-        } else if matches!(
-            stack.function.tp(v).base(),
-            Type::Reference(_, _) | Type::Enum(_, true, _)
-        ) && *value == Value::Null
-        {
-            // `.base()`: a `τ?` local's null-init is the same sentinel write as `τ`'s.  Asked
-            // bare, an `Optional(Reference)` temp fell to the generic fallthrough, which lands
-            // the shared null store (`Stores::null()`, a real slot with `rec == 0`) in the
-            // slot instead of the sentinel — and the scope-exit `OpFreeRef` of that temp then
-            // trips the stack-store net (BUG #306).  User code never reaches this arm with a
-            // `τ?` (a `P? = null` is parsed to `OpNullRefSentinel`); a compiler temp's
-            // preamble does.
-            note_bind("F1");
-            self.gen_set_first_ref_null(stack, v);
-        } else if matches!(stack.function.tp(v).base(), Type::Iterator(_, _))
-            && *value == Value::Null
-        {
-            // loft#1540's neighbour (@PLN162's own iterators): `z: iterator<τ>? = null` is a
-            // null HANDLE — DbRef-sized like a collection's, and `exhausted(z)` reads it as
-            // absent.  Without an arm here it fell to the generic fallthrough below, where
-            // `generate(Null)` pushes nothing, the `stack.position == before` early return
-            // fires, and the slot is left UNWRITTEN: correct only because the preamble
-            // sentinel-inits the frame, and caught by @PLN120 A's debug assertion, which says
-            // a local holding a slot must have a store span.  The sentinel write is the same
-            // one a nullable collection's null-init emits.
-            note_bind("first-iter-null");
-            self.gen_set_first_nullable_collection_null(stack, v);
-        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
-            && let Value::Call(op_nr, _) = value.unspan()
-            && stack.data.def(*op_nr).name() == "OpCopyRecord"
-        {
-            // The first assignment of a Reference variable being copied from another:
-            // allocate a fresh store, initialize the struct record, then copy the data.
-            note_bind("F2");
-            self.gen_set_first_ref_copy(stack, v, d_nr, value);
-        } else if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
-            && let Value::Var(src) = value
-            // `record_copy_source` also reads a `&S` source as its `S` (@FR-C-Ref), so `y = e`
-            // with `e = &z` copies the record the link names (`binding.md` D-bind-52).
-            && let Some(src_d_nr) = stack.function.record_copy_source(stack.data, v, *src)
-            && stack.data.copies_as(d_nr, src_d_nr)
-        {
-            // First assignment `d = c` where both hold the same heap RECORD type — a struct
-            // or a struct-enum, the two shapes `Type::heap_def_nr` names: give d its own
-            // independent record by allocating storage and copying c's data.  Asked as a
-            // bare `Reference`, a struct-enum bind fell through to the plain adopt below and
-            // ALIASED (`e: Sh = Ci {…}; c = e; e.n = 9` read 9 through `c`), while `--native`
-            // reads the same question through `heap_def_nr` and copies.
-            //
-            // Read through `base()`, the peel the `Text` arm at the top of this function
-            // already takes and for the same reason: `S?` is `Optional(Reference(S))`, the
-            // same storage behind a nullability marker, and matching the bare spelling left
-            // a nullable bind on the plain-adopt fallthrough — an ALIAS, where `@FR-B-Copy`
-            // says a whole-value bind is INDEPENDENT (`c2 = ns; ns.v = 99` then read 99
-            // through `c2`, loft#1319).
-            note_bind("F3");
-            self.gen_set_first_ref_var_copy(stack, v, *src, d_nr);
-        } else if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
-            // loft#1693 — `heap_def_nr`, native's own test (`dispatch.rs`), so a struct-ENUM
-            // view materialises as a struct view does.  Matched as `Type::Reference` alone, a
-            // struct-enum element bound as a view and disturbed (`c = v[0]; v.remove(0)`)
-            // kept the interior pointer on the interpreter — it read the NEXT element after a
-            // removal and `null` after a growth — while `--native` copied, and the
-            // `(H-Materialise)` advice told the author a copy had been made.
-            // @FR-O-Proxy asks copy — whether to MATERIALISE an element read into a store `v`
-            // owns rather than bind the interior pointer.  The materialise is what PREVENTS
-            // the container-wide free described below; it emits no free of its own.
-            //
-            // Through `base()`: an element view is `Reference(E)` when the read types non-null
-            // and `Optional(Reference(E))` when it does not, and the `?` says nothing about
-            // whether `v` owns a store — @FR-L-Null makes `E?` the same record behind a
-            // nullability bit.  Read bare, a nullable-typed local never materialised: it kept
-            // the interior pointer, so a write through it reached the CONTAINER.  Measured on a
-            // keyed element view whose KEY field is written — @PLN130 F4's materialise silently
-            // stopped happening and the element was left reachable by no key (loft#1456).
-            && stack.function.tp(v).depend().is_empty()
-            // Not for a WITNESSED local (loft#1336, @FR-O-Witness): its deps are empty
-            // here only because a later whole-value copy stripped them, and the
-            // container-wide free this arm guards against is one such a local never
-            // emits.  Its projections stay views on both backends, so the witness — which
-            // classifies a projection as a view — cannot lose the store this would mint.
-            && stack.function.owner_witness(v).is_none()
-            && crate::use_analysis::projection_container_var(stack.data, value).is_some()
-        {
-            // @PLN130 F1 — MATERIALISE an element read into a store `v` owns.
-            //
-            // `c = v[i]` normally binds a VIEW and keeps its container dep, which is the
-            // documented alias (loft#774) and stays a borrow.  Reaching here means the deps
-            // are EMPTY — `scopes.rs` stripped them because `v` is reassigned later, so from
-            // this point on every consumer treats `v` as an owner.  Binding the raw interior
-            // pointer anyway left an owner whose "own" store is the CONTAINER's: the
-            // reassignment's pre-Set `OpFreeRef` then released the whole container, and
-            // `k = a[0]; for x in a { k = x }` ended with `len(a) == 0` before any removal
-            // (probe 30 / loft#778).
-            //
-            // Native already does the right thing here — the same empty deps make its
-            // generator allocate `_own_store_k` at the bind — so this makes the interpreter
-            // act on the fact both backends already read, rather than changing the fact.
-            // A binding that kept its deps is untouched and still aliases.
-            note_bind("F4");
-            self.gen_set_first_ref_elem_copy(stack, v, value, d_nr, value_can_exit(value));
-        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
-            && let Value::TupleGet(_, _) = value
-            // @FR-O-Proxy asks copy — whether a tuple-element bind deep-copies the record
-            // instead of aliasing it.  A binding whose deps say BORROW is skip-free, so
-            // copying for one would leave an owner nobody frees; the guard is against a
-            // stranded allocation, and the arm releases nothing.
-            && stack.function.tp(v).depend().is_empty()
-            // Not for a witnessed local, for the element arm's reason above.
-            && stack.function.owner_witness(v).is_none()
-        {
-            // T1.8c: tuple destructuring `(q1, q2) = expr` — when an element
-            // is Type::Reference, deep-copy the record to avoid aliasing.
-            //
-            // ONLY when the binding OWNS, which is what empty deps mean.  The copy
-            // allocates a store and puts the binding in charge of it, and a binding that
-            // deps say is a BORROW is skip-free — so the copy had an owner nobody frees,
-            // and `t = (a, b); (ca, cb) = t` leaked one record per struct element on
-            // every execution, unbounded in a loop (loft#1051).
-            //
-            // The guard is the one the element-read arm above already uses, for the same
-            // reason and out of the same rule: ownership.md O-Deps — the free placement
-            // DERIVES from `deps`, and a codegen condition that re-derives it is the bug.
-            // This condition re-derived "copy" without consulting the fact.
-            //
-            // It also closes a backend divergence, which is the other half of O-Deps:
-            // `--native` reads the same deps and aliases a borrow, so it was always
-            // clean here while the interpreter leaked.  A binding that keeps its deps
-            // now aliases on BOTH backends, exactly as the undestructured read `ca = t.0`
-            // already did on both.
-            note_bind("F5");
-            self.gen_set_first_ref_tuple_copy(stack, v, value, d_nr);
-        } else if let Some((join_d_nr, base)) = crate::use_analysis::callref_join_first_bind(
-            stack.data,
-            stack.def_nr,
-            stack.function.tp(v),
-            value,
-        ) {
-            // loft#1248 — a first bind from a CLOSURE call whose return may borrow.  The arm
-            // below that asks this for a direct call is keyed on `Value::Call`, so a
-            // `CallRef` — which names a runtime value rather than a definition — reached
-            // neither it nor the plain-adopt paths' deps strip.  The bind stayed an alias
-            // carrying the argument's dep, and the arm where the closure MINTED its store
-            // left it with no owner: one per call, released only when the CALLER's frame
-            // exits, so a loop reaches the store-table ceiling.
-            //
-            // Same guard as its direct-call twin, for the same reason: `OpBindOrCopy` copies
-            // when the returned store is the witness's and adopts when it is not, so the
-            // scope-exit free the deps strip enables is right on both arms.
-            note_bind("F6");
-            self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
-        } else if let Some((join_d_nr, base)) = crate::use_analysis::nullable_join_first_bind(
-            stack.data,
-            stack.def_nr,
-            stack.function.tp(v),
-            value,
-        ) {
-            // loft#1106 — a NULLABLE heap local (`r: S?`) first-bound from a call whose
-            // return may borrow one of its arguments.  `S?` is `Optional(Reference(S))`,
-            // and every arm of this dispatch asks its shape question against the bare
-            // type, so the nullable spelling of the same storage reached none of them:
-            // the bind stayed a plain `OpPutRef` alias.  A write through the result then
-            // reached the caller's own variable — which `(B-Copy)` says a bind cannot do —
-            // and the arm where the callee MINTED its store left it with no owner.
-            //
-            // The `-> S` twin of the same call already resolves this per execution, and
-            // this is that bind: `OpBindOrCopy` copies when the returned store is the
-            // witness's and adopts when it is not, so the scope-exit free is right on
-            // both arms.  It is also what makes a `null` answer safe — a null `src` has
-            // no store to alias, so the guard adopts it and the local stays null.
-            if base == u16::MAX {
-                // loft#1550 — a borrow of one of several arguments: copied on every run.
-                note_bind("F7-copy");
-                self.gen_set_first_ref_call_copy(stack, v, value, join_d_nr);
-            } else {
-                note_bind("F7-join");
-                self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
+        // The arm is decided once, in `bind_lowering::first_arm`, where the reason for each
+        // test lives; the store records read the same answer.  This emits it.
+        let arm =
+            crate::bind_lowering::first_arm(stack.data, stack.def_nr, &stack.function, v, value);
+        note_bind(arm.trace_name());
+        match arm {
+            FirstArm::Text => self.gen_set_first_text(stack, v, value),
+            FirstArm::RefNull => self.gen_set_first_ref_null(stack, v),
+            FirstArm::IterNull => self.gen_set_first_nullable_collection_null(stack, v),
+            FirstArm::RecordCopyCall { d_nr } => self.gen_set_first_ref_copy(stack, v, d_nr, value),
+            FirstArm::RecordVarCopy { src, d_nr } => {
+                self.gen_set_first_ref_var_copy(stack, v, src, d_nr);
             }
-        } else if let Some(rec) = crate::use_analysis::opaque_callref_bind(
-            stack.data,
-            stack.def_nr,
-            stack.function.tp(v),
-            value,
-        ) {
-            // loft#1659 — a closure call whose target is unresolved.  Adopted as a plain
-            // `PutRef` it took a capture the closure handed back as an owned store, and the
-            // scope-exit free released the caller's capture; `OpBindFnRefResult` copies that
-            // arm and adopts the minted one (@FR-O-Unknown decides here, @FR-B-Copy).
-            note_bind("F8");
-            self.gen_set_first_ref_fnref(stack, v, value, rec);
-        } else if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
-            crate::use_analysis::first_bind_shape(stack.function.tp(v)).clone()
-            // loft#1245 — BOTH spellings of a call, because a `CallRef` reaching a
-            // definition is the same question as a `Call` reaching one and only the
-            // second was asked.  Reading `Value::Call` alone sent every fn-ref bind to
-            // the plain-adopt fallthrough at the bottom of this dispatch: a borrowed
-            // return was then ALIASED (a write through the bind reached the caller's own
-            // variable, which B-Copy forbids) and a minted one was left with no owner.
-            // An unresolved fn-ref answers `None` and keeps that fallthrough, which is
-            // the behaviour every fn-ref had before.
-            && let Some(fn_nr) = crate::use_analysis::callee_of(stack.data, stack.def_nr, value)
-            // The shared gate on the carried ownership facts (`Def::is_loft_defined`) —
-            // methods and generic monomorphs (`t_`) reach this arm too.  While it read
-            // `n_` alone, a method returning through the caller's `__ref_N` fell to the
-            // plain-adopt fallthrough at the bottom of this dispatch and was then freed
-            // as an owner, taking the caller's buffer with it (loft#810).
-            && stack.data.def(fn_nr).is_loft_defined()
-        {
-            // Cluster A.3 (OWNERSHIP_MODEL row 102): read the carried
-            // adopt-vs-copy fact.  When the callee returns a genuinely FRESH
-            // store (empty dep, or the `["??"]` one-buffer marker), the caller
-            // adopts it directly — no deep copy needed (OpAppendVector in
-            // handle_field already deep-copies vector field data into the
-            // struct's store during construction).  Otherwise the return is
-            // tied to a passed buffer/param — a visible param it aliases, or a
-            // hidden `ref_return` work-ref the caller REUSES across iterations —
-            // and must be deep-copied into a fresh store `v` owns.  This reads
-            // `return_adopts_fresh_store()` rather than re-deriving the coarse
-            // "any visible ref param" proxy (A.3).
-            //
-            // #429: a struct-enum (`Type::Enum(_, true, _)`) binding is a heap
-            // record exactly like `Type::Reference`, so it needs the SAME
-            // copy-or-adopt split.  Before, only `Reference` had this arm — a
-            // `acl = get_field(m, k)` whose callee returns a BORROWED view of
-            // `m` (`["m"]`) fell through to a plain adopt, then `OpFreeRef(acl)`
-            // at scope exit whole-store-freed `m`'s record (interp-only;
-            // native's runtime adopt-or-copy guard already handled it).  The
-            // record copy (`OpDatabase` + `OpCopyRecord`, keyed on the enum's
-            // `known_type`) is identical for an enum d_nr, mirroring
-            // `materialize_return_into`'s `Type::Enum(td, true, _)` leg.
-            // @PLN85 join delivery, first-Set half: when the callee's return is a
-            // runtime `??` JOIN — owned on one arm, a borrow of `base` on the other —
-            // neither static answer below is right for both arms, so bind through the
-            // same `OpBindOrCopy` store-identity guard the REASSIGNMENT path uses.
-            if crate::keys::join_own_enabled()
-                && let Type::Reference(join_d_nr, _) =
-                    crate::use_analysis::first_bind_shape(stack.function.tp(v)).clone()
-                // @PLN157 § V-g — an elided bind keeps the view and takes the plain
-                // `OpPutRef` below; `scopes` registered the identity free for the
-                // minted arm, so the join guard is not needed here.
-                && !stack.function.is_view_elided(v)
-                && let crate::use_analysis::Own::Join { base } =
-                    crate::use_analysis::ownership_of(stack.data, stack.def_nr, value)
-                && base != u16::MAX
-            {
-                note_bind("F9a");
-                self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
-            } else if stack.data.def(fn_nr).return_adopts_fresh_store()
-                || stack.function.is_view_elided(v)
-                // @PLN164 B1 (`@FR-O-Move`) — the callee returns the local it promoted onto
-                // its buffer, and `v` is a plain local: adopt the store it minted; `scopes`
-                // paired the two so the scope-exit free is guarded by identity.
-                || crate::use_analysis::adopts_minted_at_bind(stack.data, &stack.function, v, value)
-            {
-                // runtime tolerates double-free as a no-op so leaving
-                // __ref_N to be freed by scopes.rs's is_work_ref gate at
-                // scope exit is safe in both adoption and orphan cases.
-                // Plan-04 Phase B.3 atomic bundle: the callee's returned
-                // DbRef is pushed onto TOS by `generate`; move it to v's
-                // slot via `OpPutRef(slot_offset)`.
-                note_bind("F9b");
+            FirstArm::ElementCopy { d_nr } => {
+                self.gen_set_first_ref_elem_copy(stack, v, value, d_nr, value_can_exit(value));
+            }
+            FirstArm::TupleElementCopy { d_nr } => {
+                self.gen_set_first_ref_tuple_copy(stack, v, value, d_nr);
+            }
+            FirstArm::CallRefJoin { d_nr, base }
+            | FirstArm::NullableCallJoin { d_nr, base }
+            | FirstArm::CallJoin { d_nr, base } => {
+                self.gen_set_first_ref_join(stack, v, value, d_nr, base);
+            }
+            FirstArm::NullableCallCopy { d_nr } | FirstArm::CallCopy { d_nr } => {
+                self.gen_set_first_ref_call_copy(stack, v, value, d_nr);
+            }
+            FirstArm::OpaqueCallRef { rec } => self.gen_set_first_ref_fnref(stack, v, value, rec),
+            FirstArm::CallAdopt => {
+                // The callee's returned DbRef is pushed onto TOS by `generate`; move it to
+                // v's slot via `OpPutRef(slot_offset)`.  A `__ref_N` buffer the callee wrote
+                // is freed by its own scope-exit free (a re-free of an adopted store is the
+                // runtime's no-op, `@FR-H-FreeTwice`).
                 self.generate(value, stack, false);
                 let var_pos = stack.var_pos(v);
                 stack.add_op("OpPutRef", self);
                 self.code_add(var_pos);
-            } else {
-                note_bind("F9c");
-                self.gen_set_first_ref_call_copy(stack, v, value, d_nr);
             }
-        } else if *value == Value::Null
-            && matches!(stack.function.tp(v), Type::Optional(_))
-            && matches!(stack.function.tp(v).base(), Type::Vector(_, _))
-        {
-            note_bind("F10");
-            self.gen_set_first_nullable_collection_null(stack, v);
-        } else if matches!(stack.function.tp(v), Type::Vector(_, _)) && *value == Value::Null {
-            note_bind("F11");
-            self.gen_set_first_vector_null(stack, v);
-        } else if crate::parser::vectors::owns_keyed_store(stack.function.tp(v))
-            && *value == Value::Null
-        {
-            note_bind("F12");
-            self.gen_set_first_keyed_null(stack, v);
-        } else if matches!(stack.function.tp(v).base(), Type::Tuple(_)) && *value == Value::Null {
-            note_bind("first-tuple-null");
-            self.gen_set_first_tuple_null(stack, v);
-        } else if matches!(stack.function.tp(v), Type::Function(..)) {
-            note_bind("first-fn");
-            // Plan-04 Phase B.3 atomic bundle: push the 20-byte fn-ref
-            // value (8B d_nr + 12B closure DbRef) then OpPutFnRef at v's
-            // slot.  `OpPutFnRef`'s stdlib signature pops a 16-byte
-            // `text`, so the runtime actually pops 20 bytes but the
-            // compile-time tracker only accounts for 16 — mirror
-            // `set_var`'s `fnref_signature_gap` correction.
-            if *value == Value::Null {
-                stack.add_op("OpConstInt", self);
-                self.code_add(i64::MIN);
-                self.emit_push_sentinel(stack);
-            } else {
-                self.gen_fn_ref_value(value, stack);
+            FirstArm::NullableVectorNull => self.gen_set_first_nullable_collection_null(stack, v),
+            FirstArm::VectorNull => self.gen_set_first_vector_null(stack, v),
+            FirstArm::KeyedNull => self.gen_set_first_keyed_null(stack, v),
+            FirstArm::TupleNull => self.gen_set_first_tuple_null(stack, v),
+            FirstArm::FnRef => {
+                // Plan-04 Phase B.3 atomic bundle: push the 20-byte fn-ref
+                // value (8B d_nr + 12B closure DbRef) then OpPutFnRef at v's
+                // slot.  `OpPutFnRef`'s stdlib signature pops a 16-byte
+                // `text`, so the runtime actually pops 20 bytes but the
+                // compile-time tracker only accounts for 16 — mirror
+                // `set_var`'s `fnref_signature_gap` correction.
+                if *value == Value::Null {
+                    stack.add_op("OpConstInt", self);
+                    self.code_add(i64::MIN);
+                    self.emit_push_sentinel(stack);
+                } else {
+                    self.gen_fn_ref_value(value, stack);
+                }
+                let var_pos = stack.var_pos(v);
+                stack.add_op("OpPutFnRef", self);
+                self.code_add(var_pos);
+                stack.position -= stack.fnref_signature_gap(); // @PLAN53 S4 fn-ref
             }
-            let var_pos = stack.var_pos(v);
-            stack.add_op("OpPutFnRef", self);
-            self.code_add(var_pos);
-            stack.position -= stack.fnref_signature_gap(); // @PLAN53 S4 fn-ref
-        } else if matches!(stack.function.tp(v), Type::RefVar(_))
-            && let Value::Var(src) = value
-            && matches!(stack.function.tp(*src), Type::RefVar(_))
-        {
-            // #257: aliasing a `&ref` param into a fresh local (`snap = s`).
-            // Both sides are RefVars — a RefVar slot is double-indirect (it
-            // holds a stack-cell DbRef that itself points at the record).  Copy
-            // the RAW cell: emit OpVarRef WITHOUT generate_var's trailing
-            // OpGetStackRef deref.  Going through `generate` would store the
-            // already-dereferenced record ref, so every later `snap.field`
-            // access (which derefs once more) would read one level too far →
-            // garbage / null write.
-            note_bind("first-refvar");
-            let src_pos = stack.var_pos(*src);
-            stack.add_op("OpVarRef", self);
-            self.code_add(src_pos);
-            let var_pos = stack.var_pos(v);
-            stack.add_op("OpPutRef", self);
-            self.code_add(var_pos);
-        } else {
-            note_bind("F13");
-            // Plan-04 Phase B.3 atomic bundle: push then OpPut* at v's
-            // slot.  Mirrors `set_var`'s non-RefVar dispatch at
-            // codegen.rs:2313.  `Value::Null` on a type where `generate`
-            // produces no bytes leaves the slot uninitialised (old
-            // fall-through behaviour) — detected via a stack-position
-            // delta check.
-            let before = stack.position;
-            // loft#1069 — a fn-ref TUPLE MEMBER has to arrive as the whole 20-byte slot
-            // (8B d_nr + 12B closure DbRef), because `emit_tuple_put_ops` POPS twenty for
-            // it.  A bare `dbl` lowers to `Value::Int(d_nr)` and pushes only eight, so the
-            // pop ran twelve bytes into whatever sat below it — every other member's offset
-            // shifted, and the tuple's own base moved under the reader.  That is why
-            // `t.1`, a plain integer, faulted exactly as `t.0(3)` did: the member that
-            // broke the tuple was not the member being read.
-            //
-            // The top-up is `gen_fn_ref_value`, which every OTHER position for the same
-            // value already routes through (a plain local's first Set, a return, a call
-            // argument).  It has to happen HERE rather than in the tuple walker because
-            // only the destination names the element as a `fn(…)`: a bare `d_nr` generates
-            // as an `integer`, so the value cannot say what it is.
-            if let Type::Tuple(elems) = stack.function.tp(v).base().clone()
-                && let Value::Tuple(items) = value.unspan()
-                && items.len() == elems.len()
-                && elems.iter().any(crate::data::tuple_carries_fn_ref)
-            {
-                self.gen_tuple_members_with_fn_refs(&elems, items, stack);
-            } else {
-                self.generate(value, stack, false);
+            FirstArm::RefVar => {
+                // #257: aliasing a `&ref` param into a fresh local (`snap = s`).  Both sides
+                // are RefVars — a RefVar slot is double-indirect (it holds a stack-cell DbRef
+                // that itself points at the record).  Copy the RAW cell: emit OpVarRef
+                // WITHOUT generate_var's trailing OpGetStackRef deref.  Going through
+                // `generate` would store the already-dereferenced record ref, so every later
+                // `snap.field` access (which derefs once more) would read one level too far.
+                let Value::Var(src) = value else {
+                    unreachable!("first_arm answers RefVar only for a variable source")
+                };
+                let src_pos = stack.var_pos(*src);
+                stack.add_op("OpVarRef", self);
+                self.code_add(src_pos);
+                let var_pos = stack.var_pos(v);
+                stack.add_op("OpPutRef", self);
+                self.code_add(var_pos);
             }
-            if stack.position == before {
-                return;
-            }
-            let var_pos = stack.var_pos(v);
-            let tp = stack.function.tp(v).clone();
-            // @PLN25 slice (b): an `Optional(τ)` var's first-Set uses the base put-op (same
-            // sentinel storage) — peel the marker.
-            let tp = tp.base().clone();
-            // @PLN167 decision 1 — a LINKED narrow local is written in its field encoding.
-            let narrow_slot = stack.function.linked_narrow_slot(v);
-            match tp {
-                Type::Integer(_) if narrow_slot.is_some() => stack.add_op("OpPutNarrow", self),
-                Type::Integer(_) => stack.add_op("OpPutInt", self),
-                Type::Character => stack.add_op("OpPutCharacter", self),
-                Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
-                Type::Boolean => stack.add_op("OpPutBool", self),
-                Type::Single => stack.add_op("OpPutSingle", self),
-                Type::Float => stack.add_op("OpPutFloat", self),
-                Type::Vector(_, _)
-                | Type::Reference(_, _)
-                | Type::Enum(_, true, _)
-                | Type::Iterator(_, _)
-                | Type::Sorted(_, _, _)
-                | Type::Hash(_, _, _)
-                | Type::Index(_, _, _)
-                | Type::Radix(_, _, _)
-                | Type::Trie(_, _, _) => stack.add_op("OpPutRef", self),
-                // @PLN87 L1 — first-Set of a local `&`-link (`b = &a` →
-                // `b: &T = OpCreateStack(a)`): the value is the 12-byte stack-cell
-                // ref; store it raw into `b`'s RefVar slot.  Reads/writes of `b`
-                // then deref the cell to the source's slot.
-                Type::RefVar(_) => stack.add_op("OpPutRef", self),
-                Type::Tuple(elems) => {
-                    let tuple_var_base = stack.function.stack(v);
-                    let owned = tuple_slot_owned(stack, v);
-                    self.emit_tuple_put_ops(stack, &elems, tuple_var_base, v, owned);
+            FirstArm::Plain => {
+                // Plan-04 Phase B.3 atomic bundle: push then OpPut* at v's
+                // slot.  Mirrors `set_var`'s non-RefVar dispatch at
+                // codegen.rs:2313.  `Value::Null` on a type where `generate`
+                // produces no bytes leaves the slot uninitialised (old
+                // fall-through behaviour) — detected via a stack-position
+                // delta check.
+                let before = stack.position;
+                // loft#1069 — a fn-ref TUPLE MEMBER has to arrive as the whole 20-byte slot
+                // (8B d_nr + 12B closure DbRef), because `emit_tuple_put_ops` POPS twenty for
+                // it.  A bare `dbl` lowers to `Value::Int(d_nr)` and pushes only eight, so the
+                // pop ran twelve bytes into whatever sat below it — every other member's offset
+                // shifted, and the tuple's own base moved under the reader.  That is why
+                // `t.1`, a plain integer, faulted exactly as `t.0(3)` did: the member that
+                // broke the tuple was not the member being read.
+                //
+                // The top-up is `gen_fn_ref_value`, which every OTHER position for the same
+                // value already routes through (a plain local's first Set, a return, a call
+                // argument).  It has to happen HERE rather than in the tuple walker because
+                // only the destination names the element as a `fn(…)`: a bare `d_nr` generates
+                // as an `integer`, so the value cannot say what it is.
+                if let Type::Tuple(elems) = stack.function.tp(v).base().clone()
+                    && let Value::Tuple(items) = value.unspan()
+                    && items.len() == elems.len()
+                    && elems.iter().any(crate::data::tuple_carries_fn_ref)
+                {
+                    self.gen_tuple_members_with_fn_refs(&elems, items, stack);
+                } else {
+                    self.generate(value, stack, false);
+                }
+                if stack.position == before {
                     return;
                 }
-                other => panic!(
-                    "gen_set_first_at_tos fallthrough: unsupported var type {other:?} for \
+                let var_pos = stack.var_pos(v);
+                let tp = stack.function.tp(v).clone();
+                // @PLN25 slice (b): an `Optional(τ)` var's first-Set uses the base put-op (same
+                // sentinel storage) — peel the marker.
+                let tp = tp.base().clone();
+                // @PLN167 decision 1 — a LINKED narrow local is written in its field encoding.
+                let narrow_slot = stack.function.linked_narrow_slot(v);
+                match tp {
+                    Type::Integer(_) if narrow_slot.is_some() => stack.add_op("OpPutNarrow", self),
+                    Type::Integer(_) => stack.add_op("OpPutInt", self),
+                    Type::Character => stack.add_op("OpPutCharacter", self),
+                    Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
+                    Type::Boolean => stack.add_op("OpPutBool", self),
+                    Type::Single => stack.add_op("OpPutSingle", self),
+                    Type::Float => stack.add_op("OpPutFloat", self),
+                    Type::Vector(_, _)
+                    | Type::Reference(_, _)
+                    | Type::Enum(_, true, _)
+                    | Type::Iterator(_, _)
+                    | Type::Sorted(_, _, _)
+                    | Type::Hash(_, _, _)
+                    | Type::Index(_, _, _)
+                    | Type::Radix(_, _, _)
+                    | Type::Trie(_, _, _) => stack.add_op("OpPutRef", self),
+                    // @PLN87 L1 — first-Set of a local `&`-link (`b = &a` →
+                    // `b: &T = OpCreateStack(a)`): the value is the 12-byte stack-cell
+                    // ref; store it raw into `b`'s RefVar slot.  Reads/writes of `b`
+                    // then deref the cell to the source's slot.
+                    Type::RefVar(_) => stack.add_op("OpPutRef", self),
+                    Type::Tuple(elems) => {
+                        let tuple_var_base = stack.function.stack(v);
+                        let owned = tuple_slot_owned(stack, v);
+                        self.emit_tuple_put_ops(stack, &elems, tuple_var_base, v, owned);
+                        return;
+                    }
+                    other => panic!(
+                        "gen_set_first_at_tos fallthrough: unsupported var type {other:?} for \
                      first-Set of {}",
-                    stack.function.name(v)
-                ),
-            }
-            self.code_add(var_pos);
-            if let Some(slot) = narrow_slot {
-                self.code_add(slot.min);
-                self.code_add(slot.code());
+                        stack.function.name(v)
+                    ),
+                }
+                self.code_add(var_pos);
+                if let Some(slot) = narrow_slot {
+                    self.code_add(slot.min);
+                    self.code_add(slot.code());
+                }
             }
         }
     }
