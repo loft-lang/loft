@@ -201,6 +201,8 @@ now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
 #   `  cdylib lib/server/native       3.4s`  (always >= 0.1s precision)
 # A `=== Wall-clock timing summary ===` block prints at run/wait end.
 TIMINGS_FILE=/tmp/loft_timings.$REPO_TAG.txt
+# Every test's duration and status from the latest run: `status<TAB>seconds<TAB>binary<TAB>test`.
+TEST_TIMES_FILE=/tmp/loft_test_times.$REPO_TAG.tsv
 
 # Pick the test runner.  cargo-nextest parallelises at the test level
 # (cargo-test only at the binary level), giving 2-3x faster wall-clock
@@ -217,7 +219,11 @@ test_runner_cmd() {
     # reused by the next.  Now one build serves the loop and the gate.  The release
     # `loft` binary + `libloft.rlib` are still built by rebuild_native_cdylibs, because
     # the native harness links the release rlib and some tests spawn target/release/loft.
-    local base="cargo nextest run --no-fail-fast --status-level fail"
+    # `--status-level pass`: every test's line, with its duration, lands in the log, so each
+    # run says what it spent where (`=== Slowest test binaries ===` in the summary and
+    # $TEST_TIMES_FILE) — a run that hits the cap names its slow tests itself, with no second
+    # run to find them (CI_BUDGET.md § the 20-minute cap).
+    local base="cargo nextest run --no-fail-fast --status-level pass"
     if [[ -n "${TEST_SELECT:-}" ]]; then
       echo "$base -E '$TEST_SELECT'"
     else
@@ -502,9 +508,37 @@ summarise() {
   fi
 }
 
+# The run's per-test durations (nextest's status lines) into $TEST_TIMES_FILE, and the slowest
+# binaries and tests as a block of the summary — with how many of the selected tests the run
+# reached, so a run cut by the cap says how much it left and where the time went.
+test_times() {
+  local log="$1"
+  # `LC_ALL=C`: a locale with a decimal comma reads `243.2` as 243 and prints `243,0`.
+  LC_ALL=C awk '
+    match($0, /^[[:space:]]+(PASS|FAIL|SIGTERM|SIGKILL|SIGSEGV|TIMEOUT|LEAK|SLOW)[[:space:]]+\[[[:space:]]*[0-9.]+s\]/) {
+      st = $1; t = $0; sub(/^[^[]*\[[[:space:]]*/, "", t); sub(/s\].*/, "", t)
+      rest = $0; sub(/^.*\][[:space:]]+(\([^)]*\)[[:space:]]+)?/, "", rest)
+      n = split(rest, w, /[[:space:]]+/); id = w[1]; test = w[2]
+      bin = id; sub(/^[^:]*::/, "", bin)
+      if (st != "SLOW") printf "%s\t%s\t%s\t%s\n", st, t, bin, test
+    }' "$log" > "$TEST_TIMES_FILE" 2>/dev/null || true
+  local started reached
+  started=$(grep -aoE "Starting [0-9]+ tests" "$log" | tail -1 | grep -oE "[0-9]+")
+  reached=$(wc -l < "$TEST_TIMES_FILE" 2>/dev/null || echo 0)
+  echo "=== Slowest test binaries (this run; every test in $TEST_TIMES_FILE) ==="
+  echo "reached ${reached:-0} of ${started:-?} selected tests"
+  LC_ALL=C awk -F'\t' '{ s[$3] += $2; n[$3]++ } END { for (b in s) printf "%8.1f s  %5d tests  %s\n", s[b], n[b], b }' \
+    "$TEST_TIMES_FILE" 2>/dev/null | LC_ALL=C sort -rn | head -15
+  echo "slowest tests:"
+  LC_ALL=C sort -t$'\t' -k2 -rn "$TEST_TIMES_FILE" 2>/dev/null | head -10 \
+    | LC_ALL=C awk -F'\t' '{ printf "%8.1f s  %-7s %s::%s\n", $2, $1, $3, $4 }'
+}
+
 do_summarise() {
   local log="$1" out="$2"
   {
+    test_times "$log"
+    echo
     echo "=== Test binaries that reported FAILED ==="
     # Both runner formats: cargo test ("test ... FAILED") and nextest
     # ("        FAIL [   0.040s] (2256/2332) loft::wrap stack_trace_script"
