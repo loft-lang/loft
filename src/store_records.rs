@@ -2461,22 +2461,34 @@ fn closure_records(
                 }
             });
         }
-        Value::Return(v) => {
-            if let Value::Var(g) = v.unspan() {
-                returned.insert(*g);
-            }
-        }
+        Value::Return(v) => returned_tail(v, &mut returned, leaving),
         _ => {}
     });
-    if let Value::Block(bl) = body.unspan()
-        && let Some(Value::Var(g)) = bl.operators.last().map(Value::unspan)
-    {
-        returned.insert(*g);
-    }
+    returned_tail(body, &mut returned, leaving);
     for g in returned {
         if let Some(&w) = fn_record.get(&g) {
             leaving.insert(w);
         }
+    }
+}
+
+/// What a returned value hands the caller, read through its blocks' tails: a fn-ref variable
+/// (its record leaves once `fn_record` names it), or a lambda built in place
+/// (`return { …; FnRef(_, w) }`), whose record `w` leaves.
+fn returned_tail(v: &Value, returned: &mut BTreeSet<u16>, leaving: &mut BTreeSet<u16>) {
+    match v.unspan() {
+        Value::Var(g) => {
+            returned.insert(*g);
+        }
+        Value::FnRef(_, w, _) if *w != u16::MAX => {
+            leaving.insert(*w);
+        }
+        Value::Block(bl) => {
+            if let Some(last) = bl.operators.last() {
+                returned_tail(last, returned, leaving);
+            }
+        }
+        _ => {}
     }
 }
 
