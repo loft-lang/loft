@@ -1295,6 +1295,12 @@ jobs:
       - name: Interpreter corpus — whole, in one process
         run: cargo test --release --test wrap loft_suite_whole_corpus -- --ignored
 
+      # Library artifact code names none of its program's numbers, over the WHOLE corpus (eight
+      # shards).  The per-commit suite checks every 32nd program; its `#[ignore]` reason names
+      # this job.
+      - name: Library code names no program numbers — whole corpus
+        run: cargo test --release --test lib_ids -- --ignored
+
       # The limit guards at the real 300 / 64 KiB (`tests/limits_full/`).  The per-commit corpus
       # proves the same relations under LOWERED limits (`// @LIMIT:`); this run proves the real
       # numbers fit on the runner's thread, on both backends.

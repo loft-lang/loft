@@ -157,12 +157,12 @@ fn the_no_type_id_takes_no_table_slot() {
 
 const SHARDS: usize = 8;
 
-/// Every `SHARDS`-th program from `shard` on.  A shard runs in its own process (nextest):
+/// Every `stride`-th program from `shard` on.  A shard runs in its own process (nextest):
 /// the parser keeps process-wide state, so two parses on two threads of one process are not
 /// the same parse twice.
-fn check_shard(shard: usize) {
+fn check_shard(shard: usize, stride: usize) {
     let (mut compared, mut differ) = (0, Vec::new());
-    for f in corpus().iter().skip(shard).step_by(SHARDS) {
+    for f in corpus().iter().skip(shard).step_by(stride) {
         let Ok(src) = fa::read_to_string(f) else {
             continue;
         };
@@ -199,11 +199,20 @@ macro_rules! shards {
     ($($name:ident = $k:expr),* $(,)?) => {
         $(
             #[test]
+            #[ignore = "the whole corpus — runs nightly in miri.yml's release-gate job; the per-commit run checks a sample"]
             fn $name() {
-                check_shard($k);
+                check_shard($k, SHARDS);
             }
         )*
     };
+}
+
+/// Every 32nd program of the corpus, per commit: a literal id left in generated code shows in
+/// nearly every program that generates it, so a sample finds it; the whole corpus, in eight
+/// shards, is the nightly's (CI_BUDGET.md: the per-commit suite fits 20 minutes).
+#[test]
+fn library_code_does_not_name_the_programs_numbers_in_a_sample() {
+    check_shard(0, 32);
 }
 
 shards!(
