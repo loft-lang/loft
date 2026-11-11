@@ -17,7 +17,11 @@ and who owns the fix.
 |---|---|---|
 | loft-c9 | `../loft`, branch `91-self-host` | the re-free cells; `src/store_records.rs`; `src/scopes/{get_free_vars,scan_set,tuple_members,capture_builds}.rs`; the parser sites of the cures |
 | loft3-c1 | `../loft3` | the closure re-frees (fn-ref and captured-record stand-downs) |
-| loft2 | `../loft2`, branch `tuxedo-pln204-int32` | the use-after-free cases; `src/bind_lowering.rs` |
+| loft2 | `../loft2`, branch `tuxedo-pln204-int32` | the use-after-free cases; `src/bind_lowering.rs`; the records' false findings outside closures |
+
+The records' false findings are split: loft3-c1 takes the closure cells, loft2 the rest.  A
+finding that turns out to be a real defect goes to loft-c9, which owns the cures (leaks
+included).
 
 loft2 sends changes to files it does not own as patches against `91-self-host`'s head
 (`git am -3`), kept small so they rebase over the records' churn.
@@ -246,3 +250,57 @@ it is not carried on the IR, and the native and C writers decide it in their own
 5. **The null reset after a free hides re-frees from the instruments** — verified (198 → 148
    cells under `LOFT_REFREE_FAILS=1`).  It hides no UAF the suite reaches: the strict-stores
    sweep fails the same four cells with `LOFT_NO_FREE_RESET=1` as without it.
+
+## The records' false findings (STATIC): gap or real
+
+The checker (`LOFT_OWN_ORACLE=check-records`) is swept over the suite with every cure on.
+A cell it reports (STATIC) is worked to the end, one cell at a time, and is one of two kinds:
+
+- **gap**: the records model the program wrongly.  The fix goes in `store_records.rs`, the
+  cell reads CLEAN, and the sweep then shows which other cells the same fix cleared.
+- **real**: the compiler is wrong and the checker found it first.  The cure goes to loft-c9
+  (the three-place rule: compiler, records, checker CAUGHT with the cure off).
+
+A cell counts as real only after a probe makes the defect happen on a backend: the suite
+cell often never takes the path (a coalesce whose fallback never runs).
+
+```bash
+LOFT_OWN_ORACLE=check-records LOFT_NO_CACHE=1 loft --tests <cell>          # one cell's findings
+LOFT_STORE_TABLE=<fn> LOFT_NO_CACHE=1 loft --tests <cell>                  # that function's stores
+LOFT_NO_CACHE=1 python3 scripts/own_sweep.py --loft <bin> --oracle check-records \
+    --suite <loft-suite> --jobs 8 --out cand.tsv --compare best.tsv        # the whole sweep
+```
+
+| batch | STATIC before → after | gap | real |
+|---|---|---|---|
+| patches7 | 133 → 113 | 5 | 1 (B-Copy record update: `__retbuf = u` freed the caller's buffer; loft-c9 09ecad0cf) |
+| patches8 | 113 → 94 | 5 | 2 (below) |
+
+The real defects the checker found first:
+
+1. **A keyed collection a coalesce's fallback calls, read inline by key, is never freed** —
+   verified on both backends (`(g ?? nr_h(i))[i].v`; bound to a local first, or a vector or
+   struct fallback, it is freed).  No temporary took the call inside the coalesce arm.  Fixed
+   by loft-c9 (faa069e72, switch `LOFT_NO_COALESCE_ARM_LIFT`).
+2. **A vector grown on append after a fn-ref call answered null keeps its buffer** —
+   verified on the C backend (`v = h(k); v += [1000]` with `h` a lambda answering null):
+   `__vdb_1` has no free in the IR.  The interpreter frees it only through its frame-exit
+   release at `Return`.  A direct call is clean.  Open, loft-c9.
+
+The gaps fixed, by the representation they corrected:
+
+- **Paths the guards rule out** — `OpDistinctStore` narrows both arms (a fresh store is
+  never the caller's; the SAME arm keeps only what the witness may also name, where a
+  parameter may be null or another parameter's store); a boolean ownership flag written a
+  constant decides the guard that reads it.
+- **Frees that are no-ops on some paths** — a guarded free (`OpFreeRefIfDistinct(x, w)`) or
+  a stashed free whose other operand may name the store ends it only where that operand does
+  not, and the store then stays live exactly where it does; the stores the witness cannot name
+  always end.
+- **Values handed on** — a variable's value returned or captured by a leaving closure hands
+  on the stores it keeps live (`handed_by`); an owned value written through a slot link is
+  given up (`OpSetSlotRef` with `COPY_FREE_SOURCE`).
+- **Store generations** — a reassignment reads the store it displaces after the value; a
+  buffer call handed null or its own earlier store answers that store; `OpInitRefSentinel`
+  resets its variable; a nested tuple literal in a tuple member answers its stores.
+
