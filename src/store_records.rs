@@ -790,8 +790,13 @@ impl Run<'_> {
             }
             let (mut s, value) = self.eval(val, st)?;
             let bound = match arm {
+                // A fn-ref holds the closure record its build names (`FnRef(_, w)` reads `w`),
+                // so its first bind holds that store as a reassignment does.  One read out of a
+                // record this function was handed (a cascade's `__held_fn`) is that record's
+                // to release, not a store of this frame's.
+                FirstArm::FnRef if value.pts.iter().any(|p| matches!(p, Pt::Store(_))) => value,
+                FirstArm::FnRef => Val::null(),
                 FirstArm::Text
-                | FirstArm::FnRef
                 | FirstArm::RefVar
                 | FirstArm::RefNull
                 | FirstArm::IterNull
