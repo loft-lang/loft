@@ -161,7 +161,10 @@ included — joins its arms member by member, a `null` member blocking nothing
 argument (`OpCreateStack(u)`) is protected across a copy's source-free as the store it reaches
 (`protectable_ref_args`); `LOFT_NO_LINK_ARG_PROTECT=1` skips it, and the set reads complete while
 protecting nothing.  An explicit `return p` of a `&` parameter records the borrow as the tail
-`{ p }` does; `LOFT_NO_RETURN_LINK_BORROW=1` declares the return fresh.
+`{ p }` does; `LOFT_NO_RETURN_LINK_BORROW=1` declares the return fresh.  A generic instance
+whose return leaves are its parameters through a mutual recursion over another generic
+(`pick` → `pick_again` → `pick`) declares their borrow, as its concrete twin does
+(`ViewWalk::template_call_views`); `LOFT_NO_TEMPLATE_CALL_VIEW=1` declares it fresh.
 
 The closure records' releases, each switch bringing back one second free (doc strings in
 `keys.rs`):

@@ -16918,6 +16918,7 @@ impl Parser {
             sets: &sets,
             xs,
             self_d,
+            assumed: &[],
         };
         // (found, all) over the leaves reached: a body with no leaf answers no, and one
         // leaf that does not view `xs` refuses the whole body.
@@ -25744,6 +25745,9 @@ struct ViewWalk<'a> {
     sets: &'a [(u16, &'a Value)],
     xs: &'a [u16],
     self_d: u32,
+    /// Generic templates assumed to hand back a view of their arguments — the ones whose own
+    /// bodies this check is inside, read by co-induction (`template_call_views`).
+    assumed: &'a [u32],
 }
 
 impl<'a> ViewWalk<'a> {
@@ -25831,15 +25835,89 @@ impl<'a> ViewWalk<'a> {
         }
         let callee = self.data.def(*d);
         let borrowed = callee.returned.depend();
-        !borrowed.is_empty()
-            && borrowed.iter().all(|&i| {
-                callee.attributes.get(i as usize).is_some_and(|a| !a.hidden)
-                    && match args.get(i as usize).map(Value::unspan) {
-                        Some(Value::Var(y)) => self.local_views(*y, &mut seen.to_vec()),
-                        Some(arg) => self.leaf_views(arg),
-                        None => false,
-                    }
+        if borrowed.is_empty() {
+            return self.template_call_views(*d, args, seen);
+        }
+        borrowed.iter().all(|&i| {
+            callee.attributes.get(i as usize).is_some_and(|a| !a.hidden)
+                && match args.get(i as usize).map(Value::unspan) {
+                    Some(Value::Var(y)) => self.local_views(*y, &mut seen.to_vec()),
+                    Some(arg) => self.leaf_views(arg),
+                    None => false,
+                }
+        })
+    }
+
+    /// loft#1872 — a call to a GENERIC template, which declares no return dep (its `-> T` is
+    /// resolved per instance), in a recursion that runs through it (`pick` → `pick_again` →
+    /// `pick`).  It hands back a view of its arguments when every return leaf of its own body
+    /// views its own heap parameters, where a call back into a template already being checked
+    /// counts as such a view (the co-induction a mutual recursion is); and then this call views
+    /// `xs` when every heap argument it is handed does.  Anything else answers no, the answer
+    /// before.  `LOFT_NO_TEMPLATE_CALL_VIEW=1` keeps that answer everywhere.
+    fn template_call_views(&self, d: u32, args: &[Value], seen: &[u16]) -> bool {
+        if crate::env_once!(std::env::var_os("LOFT_NO_TEMPLATE_CALL_VIEW").is_some()) {
+            return false;
+        }
+        let callee = self.data.def(d);
+        let heap: Vec<u16> = callee
+            .attributes
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| !a.hidden && crate::data::has_lifetime_concern(&a.typedef))
+            .filter_map(|(i, _)| u16::try_from(i).ok())
+            .collect();
+        let generic_param = |i: usize| {
+            callee.attributes.get(i).is_some_and(|a| {
+                !a.hidden && matches!(a.typedef.base(), crate::data::Type::Unknown(_))
             })
+        };
+        let args_view = || {
+            args.iter().enumerate().all(|(i, a)| {
+                if !(heap.contains(&(i as u16)) || generic_param(i)) {
+                    return true;
+                }
+                match a.unspan() {
+                    Value::Var(y) => self.local_views(*y, &mut seen.to_vec()),
+                    other => self.leaf_views(other),
+                }
+            })
+        };
+        if self.assumed.contains(&d) || d == self.self_d {
+            return args_view();
+        }
+        if callee.def_type != crate::data::DefType::Generic {
+            return false;
+        }
+        let Value::Block(bl) = &callee.code else {
+            return false;
+        };
+        let params: Vec<u16> = (0..callee.attributes.len())
+            .filter(|&i| heap.contains(&(i as u16)) || generic_param(i))
+            .filter_map(|i| u16::try_from(i).ok())
+            .collect();
+        if params.is_empty() {
+            return false;
+        }
+        let mut assumed: Vec<u32> = self.assumed.to_vec();
+        assumed.push(self.self_d);
+        let mut sets: Vec<(u16, &Value)> = Vec::new();
+        for op in &bl.operators {
+            ViewWalk::collect_sets(op, &mut sets);
+        }
+        let inner = ViewWalk {
+            data: self.data,
+            sets: &sets,
+            xs: &params,
+            self_d: d,
+            assumed: &assumed,
+        };
+        let mut acc = (false, true);
+        let n = bl.operators.len();
+        for (i, op) in bl.operators.iter().enumerate() {
+            inner.walk(op, i + 1 == n, &mut acc);
+        }
+        acc.0 && acc.1 && args_view()
     }
 
     fn self_call_views(&self, rhs: &Value, seen: &[u16]) -> bool {

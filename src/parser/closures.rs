@@ -831,7 +831,17 @@ impl Parser {
             crate::use_analysis::return_ownership(&self.data, d_nr),
             crate::use_analysis::Own::Borrowed { .. }
         );
+        // …left to `bind_monomorph_join_return`, which binds RECORD returns only: a collection
+        // return (a `hash`, a `vector`) has no such binder, so it takes the parameter set its
+        // twin declares (`-> hash["a", "b"]`) — undeclared, the caller adopted its own
+        // argument's store as fresh and freed it beside the argument (G-Mono/1872).
+        let record_return =
+            matches!(
+                def.returned().base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            ) || crate::env_once!(std::env::var_os("LOFT_NO_TEMPLATE_CALL_VIEW").is_some());
         if !borrows_only
+            && record_return
             && bl
                 .operators
                 .iter()

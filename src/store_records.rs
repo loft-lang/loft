@@ -211,16 +211,26 @@ enum Summary {
     Arg(u16),
     /// Fresh on some paths, the i-th argument's store on others.
     Join(u16),
+    /// One of several arguments' stores, a bit per argument index (`if c { a } else { b }`, a
+    /// recursion that swaps its arguments).
+    Args(u32),
     /// Not followed.
     Unknown,
 }
 
 impl Summary {
     fn join(self, other: Summary) -> Summary {
-        use Summary::{Arg, Bottom, Fresh, Join, Unknown};
+        use Summary::{Arg, Args, Bottom, Fresh, Join, Unknown};
+        let bit = |i: u16| if i < 32 { Some(1u32 << i) } else { None };
         match (self, other) {
             (Bottom, x) | (x, Bottom) => x,
             (a, b) if a == b => a,
+            (Arg(i), Arg(j)) => match (bit(i), bit(j)) {
+                (Some(a), Some(b)) => Args(a | b),
+                _ => Unknown,
+            },
+            (Args(m), Arg(i)) | (Arg(i), Args(m)) => bit(i).map_or(Unknown, |b| Args(m | b)),
+            (Args(a), Args(b)) => Args(a | b),
             (Fresh, Arg(i))
             | (Arg(i), Fresh)
             | (Join(i), Fresh | Arg(_))
@@ -587,6 +597,11 @@ impl Run<'_> {
                 } else {
                     [v].into()
                 };
+                // A store a reset name (maybe) freed stays marked: another maybe-free does not
+                // make that one not have happened.
+                if info.ended.contains(&FREED_NAME) {
+                    next.ended.insert(FREED_NAME);
+                }
                 next.status |= ENDED;
             }
             st.stores.insert(k, next);
@@ -1775,6 +1790,19 @@ impl Run<'_> {
             // A join over an argument that is NULL here is the callee's own mint: a callee
             // that answers its hidden buffer or a store it made, handed a null buffer, makes one
             // (`OpDatabase` on null).
+            // One of several arguments' stores, borrowed: the answer owns none of them.
+            Summary::Args(m) => {
+                let mut pts = Pts::new();
+                for (i, v) in vals.iter().enumerate() {
+                    if i < 32 && m & (1u32 << i) != 0 {
+                        pts.extend(v.pts.iter().copied());
+                    }
+                }
+                Val {
+                    pts,
+                    corr: BTreeSet::new(),
+                }
+            }
             Summary::Join(i)
                 if vals
                     .get(i as usize)
