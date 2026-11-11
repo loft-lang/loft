@@ -68,6 +68,10 @@ struct SInfo {
     live: BTreeSet<u16>,
     /// The variables that point into it on EVERY path where it is ended.
     ended: BTreeSet<u16>,
+    /// The variables whose value, naming this store, was handed on (returned, captured by a
+    /// closure that leaves) and that have not been rebound since.  Where one of them is also
+    /// in `live`, the store is handed on wherever it is live.
+    handed_by: BTreeSet<u16>,
 }
 
 impl SInfo {
@@ -133,6 +137,7 @@ fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
         status: a.status | b.status,
         live: meet(&a.live, a.has(LIVE), &b.live, b.has(LIVE)),
         ended: meet(&a.ended, a.has(ENDED), &b.ended, b.has(ENDED)),
+        handed_by: meet(&a.handed_by, a.has(LIVE), &b.handed_by, b.has(LIVE)),
     }
 }
 
@@ -477,6 +482,7 @@ impl Run<'_> {
         for info in st.stores.values_mut() {
             info.live.remove(&v);
             info.ended.remove(&v);
+            info.handed_by.remove(&v);
         }
         // A closure record bound anew is a new record: its slots start empty.
         st.slots.remove(&v);
@@ -671,6 +677,22 @@ impl Run<'_> {
 
     /// The value leaves this function's hands: returned, or stored where another owner
     /// holds it.
+    /// [`Self::hand_on`] of the value variable `x` holds: the stores it names also record
+    /// that `x`'s value went on (`handed_by`).
+    fn hand_on_var(st: &mut State, x: Option<u16>, val: &Val) {
+        Self::hand_on(st, val);
+        let Some(x) = x else {
+            return;
+        };
+        for k in Self::stores_of(&Self::pts(st, x)) {
+            if let Some(info) = st.stores.get_mut(&k)
+                && info.has(LIVE)
+            {
+                info.handed_by.insert(x);
+            }
+        }
+    }
+
     fn hand_on(st: &mut State, val: &Val) {
         let single = val.pts.len() == 1;
         for k in Self::stores_of(&val.pts) {
@@ -690,7 +712,7 @@ impl Run<'_> {
     /// Every store that may still be live at an exit is a leak.
     fn exit(&mut self, st: &State, how: &str) {
         for (k, info) in &st.stores {
-            if !info.has(LIVE) {
+            if !info.has(LIVE) || !info.live.is_disjoint(&info.handed_by) {
                 continue;
             }
             let holders: Vec<String> = st
@@ -774,7 +796,11 @@ impl Run<'_> {
                     self.use_var(&s, *x, "the return");
                 }
                 self.answer = self.answer.join(self.summary_of(&value.pts));
-                Self::hand_on(&mut s, &value);
+                let x = match val.unspan() {
+                    Value::Var(x) => Some(*x),
+                    _ => None,
+                };
+                Self::hand_on_var(&mut s, x, &value);
                 self.exit(&s, "a return");
                 None
             }
@@ -1540,6 +1566,11 @@ impl Run<'_> {
         match (single(&a), single(&b)) {
             (Some(x), Some(y)) if x == y => (None, Some(st)),
             (Some(Pt::Store(_) | Pt::Null), Some(Pt::Store(_) | Pt::Null)) => (Some(st), None),
+            // A store this frame made is never the caller's (`if OpDistinctStore(f, __rbw_f)`
+            // after `f` was rebound to a fresh store).
+            (Some(Pt::Store(_)), Some(Pt::Param(_))) | (Some(Pt::Param(_)), Some(Pt::Store(_))) => {
+                (Some(st), None)
+            }
             // The witness names one store: where the first operand is DISTINCT from it, it
             // does not name that store (`if OpDistinctStore(__ref_1, __rbw___ref_1)` — the
             // caller's buffer is never the one freed under it).
@@ -1786,7 +1817,35 @@ impl Run<'_> {
                         .iter()
                         .all(|k| w.is_some_and(|w| info_of(&st, *k).live.contains(&w)));
                     if !witness_holds_it {
-                        self.end(&mut st, x, &name, false);
+                        // The stores the witness cannot name end as any free ends them.
+                        let rest: BTreeSet<SKey> = Self::stores_of(&xp)
+                            .into_iter()
+                            .filter(|k| !shared.contains(k))
+                            .collect();
+                        self.end_only(&mut st, x, &name, false, Some(&rest));
+                        // One the witness may name ends only on the paths it does not: where
+                        // `x` names it on every path it is live, it stays live exactly where
+                        // the witness names it (`return if c { f } else { g }`).
+                        let label = format!("{name}({})", self.var_name(x));
+                        for k in &shared {
+                            self.sites[k.site as usize].ends.insert(label.clone());
+                            let Some(info) = st.stores.get_mut(k) else {
+                                continue;
+                            };
+                            if !info.has(LIVE) {
+                                continue;
+                            }
+                            let strong = xp.len() == 1 || info.live.contains(&x);
+                            info.ended = if info.has(ENDED) {
+                                info.ended.intersection(&[x].into()).copied().collect()
+                            } else {
+                                [x].into()
+                            };
+                            info.status |= ENDED;
+                            if strong && let Some(w) = w {
+                                info.live.insert(w);
+                            }
+                        }
                     }
                 }
             }
@@ -2003,7 +2062,7 @@ impl Run<'_> {
                         .name(w)
                         .starts_with("___clos_") =>
                 {
-                    Self::hand_on(&mut s, value);
+                    Self::hand_on_var(&mut s, Self::first_var(args, 2), value);
                 }
                 _ => {
                     let function = &self.data.def(self.d_nr).variables;
@@ -2119,7 +2178,10 @@ impl Run<'_> {
             // answers that store — not one more generation of it.
             Summary::Buf(i)
                 if vals.get(i as usize).is_some_and(|v| {
-                    let site = self.site_of.get(&(std::ptr::from_ref(node) as usize)).copied();
+                    let site = self
+                        .site_of
+                        .get(&(std::ptr::from_ref(node) as usize))
+                        .copied();
                     let stores = Self::stores_of(&v.pts);
                     !stores.is_empty()
                         && stores.iter().all(|k| Some(k.site) == site && !k.older)
