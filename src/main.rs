@@ -10170,6 +10170,10 @@ fn main() {
     // and says so; a warm load would replay the marks without the notice, so such a run is
     // not cached.
     let mut any_partial_native = false;
+    // loft#706's heal, for a library: a crate the runtime rlib links rebuilt after it (E0460)
+    // or by another rustc (E0514) fails every library's cdylib with the library blamed.  The
+    // runtime is rebuilt once per run, and the library tried again.
+    let mut lib_runtime_rebuilt = false;
     // #460 — never auto-native-compile the package that OWNS the entry file: that
     // package is the *script* being run, not a `use`d library, and the model is
     // "libraries compile, scripts interpret".  Its export set is entry-point
@@ -10228,7 +10232,7 @@ fn main() {
         if export.is_empty() {
             continue;
         }
-        let built = if force_build_fail {
+        let mut built = if force_build_fail {
             Err("LOFT_FORCE_NATIVE_BUILD_FAIL".to_string())
         } else {
             loft::native_artifact::cached_or_build_shared_cdylib(
@@ -10239,6 +10243,25 @@ fn main() {
                 &pending_native,
             )
         };
+        if let Err(e) = &built
+            && !lib_runtime_rebuilt
+            && native_utils::crate_resolution_failure(e)
+            && let Some(tree) = native_utils::loft_source_tree()
+        {
+            lib_runtime_rebuilt = true;
+            if native_utils::rebuild_runtime(
+                &tree,
+                "a crate the runtime rlib links was rebuilt after it, or by another rustc",
+            ) {
+                built = loft::native_artifact::cached_or_build_shared_cdylib(
+                    &p.data,
+                    &p.database,
+                    &export,
+                    pkg_dir,
+                    &pending_native,
+                );
+            }
+        }
         match built {
             Ok(Some(so)) => {
                 // loft#831 — the build succeeding does not mean this process can
