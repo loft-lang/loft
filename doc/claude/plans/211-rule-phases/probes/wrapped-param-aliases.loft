@@ -1,0 +1,65 @@
+struct P { x: integer, y: integer }
+struct Bag { items: vector<P> }
+
+fn f(b: P) -> integer { b.x * 100 + b.y }
+
+fn mk() -> vector<P> {
+  [P { x: 1, y: 2 }, P { x: 3, y: 5 }, P { x: 7, y: 11 }, P { x: 13, y: 17 }]
+}
+
+// admitted: two vector parameters, neither written: 6086.
+fn two(a: const vector<P>, b: const vector<P>) -> integer {
+  n = len(a);
+  s = len(b) - len(b);
+  for i in 0..n { x = a[(i + 1) % n ?? 0]?; s += (i + 1) * f(x); }
+  s
+}
+
+// declines: the same vector as `b`, cleared through `b` at i = 1: 305 + 2 * 711 = 1727.
+fn alias_clear(a: vector<P>, b: vector<P>) -> integer {
+  n = len(a);
+  s = 0;
+  for i in 0..n {
+    x = a[(i + 1) % n ?? 0]?;
+    s += (i + 1) * f(x);
+    if i == 1 { b.clear(); }
+  }
+  s
+}
+
+// declines: the vector is a field of `g`, cleared through it at i = 1: 1727.
+fn bag_clear(a: vector<P>, g: Bag) -> integer {
+  n = len(a);
+  s = 0;
+  for i in 0..n {
+    x = a[(i + 1) % n ?? 0]?;
+    s += (i + 1) * f(x);
+    if i == 1 { g.items.clear(); }
+  }
+  s
+}
+
+// declines: a generator; its caller clears the vector after two turns: 305, 711, then 0, 0.
+fn walk(a: vector<P>) -> iterator<integer> {
+  n = len(a);
+  for i in 0..n { x = a[(i + 1) % n ?? 0]?; yield f(x); }
+}
+
+fn main() {
+  ps = mk();
+  assert(two(ps, ps) == 6086, "two {two(ps, ps)}");
+  qs = mk();
+  assert(alias_clear(qs, qs) == 1727, "alias {len(qs)}");
+  bg = Bag { items: mk() };
+  assert(bag_clear(bg.items, bg) == 1727, "bag {len(bg.items)}");
+  ws = mk();
+  s = 0;
+  k = 0;
+  for y in walk(ws) {
+    k += 1;
+    s += k * y;
+    if k == 2 { ws.clear(); }
+  }
+  assert(s == 1727, "gen {s}");
+  println("ok");
+}
