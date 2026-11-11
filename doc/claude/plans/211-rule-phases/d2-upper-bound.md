@@ -86,3 +86,23 @@ Found on the way: `own_vector` read a parameter's attribute by its variable numb
 its place among the parameters only when no local is numbered between two of them; a promoted
 work buffer keeps its local's number, so work buffers were never admitted.  Fixed (the place
 in `vars.arguments()`).
+
+## Both spellings against the tip before them (2026-11-11)
+
+`bench/stats.py --lanes rust,cship`, `--only 18,20` plus drawing, hex_form, hex_recover,
+zttext, pluginabi, crypto and graphics; a0da7073f against ca30d9971; gcc two rounds, clang
+three on the programs that moved.  Gains in every round: boundary_loops −17 to −31 %,
+base64_to_bytes −6 to −13 %, fill_star −3 to −5 %, pluginabi `request` −3 to −6 %;
+fill_circle and wide_line −1 to −12 %.  No gcc row is slower in both rounds.
+
+Four clang rows are slower in all three rounds, and each is layout:
+
+| row | clang | evidence |
+|---|--:|---|
+| zttext `locate` | +8 to +23 % | its C is identical; zttext changed only `seg` and `main`'s argument read |
+| crawler `build_vis` | +12 to +16 % | its C is identical; reverting crawler's guard sites by hand leaves it as slow |
+| graphics `fill_polygon` | +6 to +7 % | reverting its one `_lt` read by hand leaves it as slow; reverting `main`'s untimed argument read restores it, at the same instruction count (9.762 G both) |
+| crawler `sort_floats` | +5 to +7 % | its `_lt` write runs once per outer turn beside an unchanged n² loop; with it the program runs fewer instructions (6.1283 G against 6.1318 G) and fewer branch misses; gcc −5 to −9 % |
+
+A widening this shows: `sort_floats`' guard is `best >= 0 and best < len(used)`, so the test
+itself carries the lower bound, which would give the no-test form instead of `_lt`.
