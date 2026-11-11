@@ -579,11 +579,15 @@ impl Run<'_> {
             }
             st.stores.insert(k, next);
         }
-        if report
-            && pts.len() == 1
-            && how != "OpFreeText"
-            && let Some(Pt::Param(_)) = pts.first()
-        {
+        // A free of a variable that names the caller's store — alone, or that or null.
+        // The "or null" reading only for a plain free: a guarded one (`OpFreeRefIfDistinct`)
+        // of a buffer that may be the caller's declines where its witness holds it.
+        let params: Vec<&Pt> = if how == "OpFreeRef" {
+            pts.iter().filter(|p| **p != Pt::Null).collect()
+        } else {
+            pts.iter().collect()
+        };
+        if report && params.len() == 1 && how != "OpFreeText" && matches!(params[0], Pt::Param(_)) {
             let name = self.var_name(v);
             self.find(
                 "wrong-end",
@@ -1391,14 +1395,38 @@ impl Run<'_> {
         if d == ops.database
             && let Some(x) = Self::first_var(args, 0)
         {
-            let site = self.site(node, Origin::Mint);
+            // `OpDatabase` re-inits a LIVE store in place and mints only where the variable is
+            // null (or names a freed store): a callee filling its hidden buffer answers the
+            // caller's store, not one of its own (`state/io.rs::database`).
+            let cur = Self::pts(&st, x);
+            let kept: Pts = cur
+                .iter()
+                .copied()
+                .filter(|p| match p {
+                    Pt::Param(_) => true,
+                    Pt::Store(k) => info_of(&st, *k).has(LIVE) && !info_of(&st, *k).has(ENDED),
+                    _ => false,
+                })
+                .collect();
             let mut st = st;
-            let k = Self::fresh(&mut st, site);
-            let val = Val {
-                pts: [Pt::Store(k)].into(),
-                corr: [k].into(),
+            let val = if !kept.is_empty() && kept.len() == cur.len() {
+                Val {
+                    corr: Self::stores_of(&kept).into_iter().collect(),
+                    pts: kept,
+                }
+            } else {
+                let site = self.site(node, Origin::Mint);
+                let k = Self::fresh(&mut st, site);
+                let mut pts = kept;
+                pts.insert(Pt::Store(k));
+                Val {
+                    pts,
+                    corr: [k].into(),
+                }
             };
-            self.bind(&mut st, x, &val);
+            if val.pts != cur {
+                self.bind(&mut st, x, &val);
+            }
             return Some((st, Val::null()));
         }
         let (mut s, vals) = self.args(args, st)?;
