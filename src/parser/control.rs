@@ -13475,8 +13475,10 @@ impl Parser {
         // `@FR-B-View`: the subject temp is a second name for the subject, so it borrows what
         // the subject borrows.  Pass 2 meets pass 1's variable, typed before the subject's
         // borrows were known (an iterator's buffer gains its `__vdb` only in pass 2), so they
-        // are added here; left dep-less, the temp owned that store beside its `__vdb`.
-        if !self.first_pass && !match_subject_borrows_off() {
+        // are added here; left dep-less, the temp owned that store beside its `__vdb`.  A
+        // subject matched as ITSELF has no temp: its borrows are already its own, and adding
+        // them again made the author's vector a borrower (`v += […]` in an arm rebuilt it).
+        if !self.first_pass && subject_var.is_none() && !match_subject_borrows_off() {
             for d in subject_type.depend() {
                 self.vars.depend(v, d);
             }
