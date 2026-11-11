@@ -37,7 +37,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 FAULTS = [
     ("leak", re.compile(r"store\(s\) not freed at exit|stores not freed at program exit")),
-    ("uaf", re.compile(r"USE AFTER FREE|use-after-free \(LOFT_UAF\)")),
+    # A read through a freed store: named by strict stores, or caught by the poisoned
+    # record number (`LOFT_POISON` fills a freed record, so its reference reads as corrupt).
+    ("uaf", re.compile(r"USE AFTER FREE|use-after-free \(LOFT_UAF\)|the reference is corrupt")),
     ("wrong-free", re.compile(r"loft: BUG \(#(?:306|405)\)")),
 ]
 RED = re.compile(r"^RED ", re.M)

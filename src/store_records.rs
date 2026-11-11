@@ -13,15 +13,20 @@
 //!
 //! An OBSERVER: it never rewrites IR.  Reached only through
 //!   * `LOFT_STORE_TABLE=<fn substring>` — print the records of the matching functions;
-//!   * `LOFT_OWN_ORACLE=check-records` — report every finding as a `RED` line.
+//!   * `LOFT_OWN_ORACLE=check-records` — report every finding as a `RED` line;
+//!   * `LOFT_STORE_PROFILE=1` — the analysis' cost, and the slowest functions.
 //!
-//! The analysis is an abstract run of each body over a SET of states.  A state maps every
-//! variable to what it points into (nothing, one store of this function, a parameter's store,
-//! or unknown) and every store to whether it is still live, ended or handed on.  States are
-//! kept apart rather than joined, so an `if` that mints in one arm and frees in a later
-//! matching arm does not read as a leak; identical states merge.  A store is keyed by its
-//! creation SITE, plus one older generation, so a loop that mints every pass sees the last
-//! pass's store when it mints the next.
+//! **The analysis.**  One state per program point, joined where paths meet, so its cost
+//! grows with the size of the body rather than with the number of paths through it.  A state
+//! maps every variable to the stores it MAY point into, and every store to the set of
+//! statuses it may have (absent, live, ended, handed on) plus two MUST-holder sets: the
+//! variables that hold it on every path where it is live, and on every path where it is
+//! ended.  Those sets keep what separate paths would: a free of `x` definitely ends a store
+//! only `x` holds whenever it is live, even when `x` is null on other paths, and a second free
+//! or a read is a fault only where the variable is known to name the ended store.
+//!
+//! A store is keyed by its creation SITE, plus one older generation, so a loop that mints
+//! every pass sees the previous pass's store when it mints the next.
 
 use crate::data::{Data, DefType, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -40,7 +45,7 @@ enum Pt {
     Unknown,
 }
 
-/// A store: its creation site (an index into `Records::sites`) and whether it is the store
+/// A store: its creation site (an index into `Run::sites`) and whether it is the store
 /// that site made most recently (`false`) or the one before (`true`).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 struct SKey {
@@ -48,19 +53,125 @@ struct SKey {
     older: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum Status {
-    Live,
-    /// Freed on this path.
-    Ended,
-    /// Returned, or stored where another owner holds it.
-    HandedOn,
+/// The statuses a store may have, as bits.
+const ABSENT: u8 = 1;
+const LIVE: u8 = 2;
+const ENDED: u8 = 4;
+const HANDED: u8 = 8;
+
+/// What a state knows about one store.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+struct SInfo {
+    /// The statuses it may have on the paths reaching this point.
+    status: u8,
+    /// The variables that point into it on EVERY path where it is live.
+    live: BTreeSet<u16>,
+    /// The variables that point into it on EVERY path where it is ended.
+    ended: BTreeSet<u16>,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+impl SInfo {
+    fn has(&self, bit: u8) -> bool {
+        self.status & bit != 0
+    }
+}
+
+type Pts = BTreeSet<Pt>;
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 struct State {
-    vars: BTreeMap<u16, Pt>,
-    stores: BTreeMap<SKey, Status>,
+    /// A variable missing from the map points nowhere (null).
+    vars: BTreeMap<u16, Pts>,
+    /// A store missing from the map is absent.
+    stores: BTreeMap<SKey, SInfo>,
+}
+
+/// A value: the stores it may point into, and the stores CORRELATED with it — live only on
+/// paths where the value names them (a fresh store, or one a variable must-holds).
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+struct Val {
+    pts: Pts,
+    corr: BTreeSet<SKey>,
+}
+
+impl Val {
+    fn null() -> Self {
+        Val {
+            pts: [Pt::Null].into(),
+            corr: BTreeSet::new(),
+        }
+    }
+    fn unknown() -> Self {
+        Val {
+            pts: [Pt::Unknown].into(),
+            corr: BTreeSet::new(),
+        }
+    }
+}
+
+fn info_of(st: &State, k: SKey) -> SInfo {
+    st.stores.get(&k).cloned().unwrap_or(SInfo {
+        status: ABSENT,
+        ..Default::default()
+    })
+}
+
+fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
+    let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
+        (true, true) => x.intersection(y).copied().collect(),
+        (true, false) => x.clone(),
+        (false, true) => y.clone(),
+        (false, false) => BTreeSet::new(),
+    };
+    SInfo {
+        status: a.status | b.status,
+        live: meet(&a.live, a.has(LIVE), &b.live, b.has(LIVE)),
+        ended: meet(&a.ended, a.has(ENDED), &b.ended, b.has(ENDED)),
+    }
+}
+
+fn join_state(a: &State, b: &State) -> State {
+    let null: Pts = [Pt::Null].into();
+    let mut vars = BTreeMap::new();
+    for k in a.vars.keys().chain(b.vars.keys()) {
+        let x = a.vars.get(k).unwrap_or(&null);
+        let y = b.vars.get(k).unwrap_or(&null);
+        vars.insert(*k, x.union(y).copied().collect());
+    }
+    let mut stores = BTreeMap::new();
+    for k in a.stores.keys().chain(b.stores.keys()) {
+        stores.insert(*k, join_info(&info_of(a, *k), &info_of(b, *k)));
+    }
+    State { vars, stores }
+}
+
+/// Join two outcomes, where `None` is "no path".
+fn join_opt(a: Option<State>, b: Option<State>) -> Option<State> {
+    match (a, b) {
+        (None, x) | (x, None) => x,
+        (Some(a), Some(b)) => Some(join_state(&a, &b)),
+    }
+}
+
+/// Join the outcomes of two arms: the states, and their values (a store stays correlated
+/// with the value when, in each arm, it is either correlated there or not live).
+fn join_out(a: Option<(State, Val)>, b: Option<(State, Val)>) -> Option<(State, Val)> {
+    match (a, b) {
+        (None, x) | (x, None) => x,
+        (Some((sa, va)), Some((sb, vb))) => {
+            let corr = va
+                .corr
+                .union(&vb.corr)
+                .copied()
+                .filter(|k| {
+                    (va.corr.contains(k) || !info_of(&sa, *k).has(LIVE))
+                        && (vb.corr.contains(k) || !info_of(&sb, *k).has(LIVE))
+                })
+                .collect();
+            let pts = va.pts.union(&vb.pts).copied().collect();
+            Some((join_state(&sa, &sb), Val { pts, corr }))
+        }
+    }
 }
 
 /// How a store comes into being.
@@ -144,9 +255,11 @@ impl Ops {
     }
 }
 
-/// The most states kept at one program point; past it the function is marked imprecise and
-/// draws no findings.
-const STATE_CAP: usize = 256;
+/// The passes a loop may take before it is marked imprecise.
+const LOOP_PASSES: usize = 30;
+
+/// The evaluation steps one function may take before it is marked imprecise.
+const STEP_BUDGET: usize = 4_000_000;
 
 struct Run<'a> {
     data: &'a Data,
@@ -159,10 +272,13 @@ struct Run<'a> {
     findings: BTreeSet<Finding>,
     /// The function's answer, joined over every return.
     answer: Summary,
+    /// The analysis lost track somewhere (a construct it does not follow, or its budget):
+    /// the function draws no findings and answers `Unknown`.
     imprecise: bool,
-    /// Per enclosing loop: the states that leave it (`break`) and that start its next pass
+    steps: usize,
+    /// Per enclosing loop: the state that leaves it (`break`) and that starts its next pass
     /// (`continue`).
-    loops: Vec<(Vec<State>, Vec<State>)>,
+    loops: Vec<(Option<State>, Option<State>)>,
     /// The parameter variables, in order.
     params: Vec<u16>,
 }
@@ -190,63 +306,106 @@ impl Run<'_> {
         self.findings.insert(Finding { kind, site, detail });
     }
 
-    fn pt(st: &State, v: u16) -> Pt {
-        st.vars.get(&v).copied().unwrap_or(Pt::Null)
-    }
-
-    /// Does any variable other than `except` point into `k`?
-    fn held_elsewhere(st: &State, k: SKey, except: u16) -> bool {
+    fn pts(st: &State, v: u16) -> Pts {
         st.vars
-            .iter()
-            .any(|(&v, &p)| v != except && p == Pt::Store(k))
+            .get(&v)
+            .cloned()
+            .unwrap_or_else(|| [Pt::Null].into())
     }
 
-    /// `v` is about to point somewhere else: a live store only `v` held is now unreachable.
-    fn drop_binding(&mut self, st: &State, v: u16) {
-        if let Pt::Store(k) = Self::pt(st, v)
-            && st.stores.get(&k) == Some(&Status::Live)
-            && !Self::held_elsewhere(st, k, v)
-        {
-            let name = self.var_name(v);
-            self.find(
-                "leak",
-                k.site,
-                format!("`{name}` is rebound while it holds the only reference"),
-            );
+    fn stores_of(p: &Pts) -> Vec<SKey> {
+        p.iter()
+            .filter_map(|x| if let Pt::Store(k) = x { Some(*k) } else { None })
+            .collect()
+    }
+
+    /// The value of reading `v`.
+    fn read(st: &State, v: u16) -> Val {
+        let pts = Self::pts(st, v);
+        let single = pts.len() == 1;
+        let corr = Self::stores_of(&pts)
+            .into_iter()
+            .filter(|k| single || info_of(st, *k).live.contains(&v))
+            .collect();
+        Val { pts, corr }
+    }
+
+    /// Bind `v` to `val`.  A live store only `v` named is left unreachable: a leak.
+    fn bind(&mut self, st: &mut State, v: u16, val: &Val) {
+        for k in Self::stores_of(&Self::pts(st, v)) {
+            let info = info_of(st, k);
+            if info.has(LIVE)
+                && info.live.contains(&v)
+                && !st
+                    .vars
+                    .iter()
+                    .any(|(&w, p)| w != v && p.contains(&Pt::Store(k)))
+                && !val.pts.contains(&Pt::Store(k))
+            {
+                let name = self.var_name(v);
+                self.find(
+                    "leak",
+                    k.site,
+                    format!("`{name}` is rebound while it holds the only reference"),
+                );
+            }
         }
-    }
-
-    /// Bind `v` to `p` in `st`.
-    fn bind(&mut self, st: &mut State, v: u16, p: Pt) {
-        self.drop_binding(st, v);
-        if let Pt::Store(k) = p {
+        for info in st.stores.values_mut() {
+            info.live.remove(&v);
+            info.ended.remove(&v);
+        }
+        let single = val.pts.len() == 1;
+        for k in Self::stores_of(&val.pts) {
             self.sites[k.site as usize].holders.insert(v);
-        }
-        st.vars.insert(v, p);
-    }
-
-    /// A fresh store at `site` in `st`: an older store of the same site moves to the older
-    /// generation; one already there is folded into it.
-    fn mint(st: &mut State, site: u32) -> SKey {
-        let cur = SKey { site, older: false };
-        let old = SKey { site, older: true };
-        if let Some(status) = st.stores.remove(&cur) {
-            st.stores.insert(old, status);
-            for p in st.vars.values_mut() {
-                if *p == Pt::Store(cur) {
-                    *p = Pt::Store(old);
+            if let Some(info) = st.stores.get_mut(&k) {
+                if (single || val.corr.contains(&k)) && info.status & LIVE != 0 {
+                    info.live.insert(v);
+                }
+                if single && info.status & ENDED != 0 {
+                    info.ended.insert(v);
                 }
             }
         }
-        st.stores.insert(cur, Status::Live);
+        if val.pts.len() == 1 && val.pts.contains(&Pt::Null) {
+            st.vars.remove(&v);
+        } else {
+            st.vars.insert(v, val.pts.clone());
+        }
+    }
+
+    /// A fresh store at `site`: the previous one from this site moves to the older
+    /// generation (joined with any already there).
+    fn fresh(st: &mut State, site: u32) -> SKey {
+        let cur = SKey { site, older: false };
+        let old = SKey { site, older: true };
+        if let Some(info) = st.stores.remove(&cur) {
+            let merged = match st.stores.get(&old) {
+                Some(o) => join_info(o, &info),
+                None => info,
+            };
+            st.stores.insert(old, merged);
+            for p in st.vars.values_mut() {
+                if p.remove(&Pt::Store(cur)) {
+                    p.insert(Pt::Store(old));
+                }
+            }
+        }
+        st.stores.insert(
+            cur,
+            SInfo {
+                status: LIVE,
+                ..Default::default()
+            },
+        );
         cur
     }
 
     /// A read of `v` that goes through the store it names.
     fn use_var(&mut self, st: &State, v: u16, how: &str) {
-        if let Pt::Store(k) = Self::pt(st, v) {
+        for k in Self::stores_of(&Self::pts(st, v)) {
             self.sites[k.site as usize].uses.insert(how.to_string());
-            if st.stores.get(&k) == Some(&Status::Ended) {
+            let info = info_of(st, k);
+            if info.has(ENDED) && info.ended.contains(&v) {
                 let name = self.var_name(v);
                 self.find(
                     "use-after-end",
@@ -257,67 +416,95 @@ impl Run<'_> {
         }
     }
 
-    /// End the store `v` names (an unconditional free).
-    fn end(&mut self, st: &mut State, v: u16, how: &str) {
-        match Self::pt(st, v) {
-            Pt::Store(k) => {
-                let label = format!("{how}({})", self.var_name(v));
-                self.sites[k.site as usize].ends.insert(label);
-                match st.stores.get(&k) {
-                    Some(Status::Ended) => {
-                        let name = self.var_name(v);
-                        self.find(
-                            "double-end",
-                            k.site,
-                            format!("`{name}` is freed by {how} after its store was already freed"),
-                        );
-                    }
-                    Some(Status::HandedOn) => {
-                        let name = self.var_name(v);
-                        self.find(
-                            "wrong-end",
-                            k.site,
-                            format!("`{name}` is freed by {how} after its store was handed on"),
-                        );
-                    }
-                    _ => {
-                        st.stores.insert(k, Status::Ended);
-                    }
-                }
+    /// End the stores `v` names.  `report` is off for a guarded free, whose skip the
+    /// analysis may not have seen.
+    fn end(&mut self, st: &mut State, v: u16, how: &str, report: bool) {
+        let pts = Self::pts(st, v);
+        let label = format!("{how}({})", self.var_name(v));
+        for k in Self::stores_of(&pts) {
+            self.sites[k.site as usize].ends.insert(label.clone());
+            let info = info_of(st, k);
+            if report && info.has(ENDED) && info.ended.contains(&v) {
+                let name = self.var_name(v);
+                self.find(
+                    "double-end",
+                    k.site,
+                    format!("`{name}` is freed by {how} after its store was already freed"),
+                );
             }
-            Pt::Param(_) if how != "OpFreeText" => {
+            if report && info.has(HANDED) && pts.len() == 1 && !info.has(LIVE) {
                 let name = self.var_name(v);
                 self.find(
                     "wrong-end",
-                    u32::MAX,
-                    format!("`{name}` is freed by {how}, but its store is the caller's"),
+                    k.site,
+                    format!("`{name}` is freed by {how} after its store was handed on"),
                 );
             }
-            _ => {}
+            if !info.has(LIVE) {
+                continue;
+            }
+            let strong = pts.len() == 1 || info.live.contains(&v);
+            let mut next = info.clone();
+            if strong {
+                next.ended = if info.has(ENDED) {
+                    info.ended.intersection(&info.live).copied().collect()
+                } else {
+                    info.live.clone()
+                };
+                next.status = (info.status & !LIVE) | ENDED;
+                next.live.clear();
+            } else {
+                next.ended = if info.has(ENDED) {
+                    info.ended.intersection(&[v].into()).copied().collect()
+                } else {
+                    [v].into()
+                };
+                next.status |= ENDED;
+            }
+            st.stores.insert(k, next);
         }
-    }
-
-    fn hand_on(st: &mut State, p: Pt) {
-        if let Pt::Store(k) = p
-            && st.stores.get(&k) == Some(&Status::Live)
+        if report
+            && pts.len() == 1
+            && how != "OpFreeText"
+            && let Some(Pt::Param(_)) = pts.first()
         {
-            st.stores.insert(k, Status::HandedOn);
+            let name = self.var_name(v);
+            self.find(
+                "wrong-end",
+                u32::MAX,
+                format!("`{name}` is freed by {how}, but its store is the caller's"),
+            );
         }
     }
 
-    /// Every live store left at an exit is a leak.
+    /// The value leaves this function's hands: returned, or stored where another owner
+    /// holds it.
+    fn hand_on(st: &mut State, val: &Val) {
+        let single = val.pts.len() == 1;
+        for k in Self::stores_of(&val.pts) {
+            if let Some(info) = st.stores.get_mut(&k)
+                && info.status & LIVE != 0
+            {
+                if single || val.corr.contains(&k) {
+                    info.status = (info.status & !LIVE) | HANDED;
+                    info.live.clear();
+                } else {
+                    info.status |= HANDED;
+                }
+            }
+        }
+    }
+
+    /// Every store that may still be live at an exit is a leak.
     fn exit(&mut self, st: &State, how: &str) {
-        let live: Vec<SKey> = st
-            .stores
-            .iter()
-            .filter(|(_, s)| **s == Status::Live)
-            .map(|(k, _)| *k)
-            .collect();
-        for k in live {
+        for (k, info) in &st.stores {
+            if !info.has(LIVE) {
+                continue;
+            }
             let holders: Vec<String> = st
                 .vars
                 .iter()
-                .filter(|(_, p)| **p == Pt::Store(k))
+                .filter(|(_, p)| p.contains(&Pt::Store(*k)))
                 .map(|(v, _)| format!("`{}`", self.var_name(*v)))
                 .collect();
             let held = if holders.is_empty() {
@@ -325,341 +512,348 @@ impl Run<'_> {
             } else {
                 holders.join(", ")
             };
-            self.find(
-                "leak",
-                k.site,
-                format!("a path reaches {how} with the store live, held by {held}"),
-            );
+            let f = Finding {
+                kind: "leak",
+                site: k.site,
+                detail: format!("a path reaches {how} with the store live, held by {held}"),
+            };
+            self.findings.insert(f);
         }
     }
 
-    fn cap(&mut self, mut states: Vec<(State, Pt)>) -> Vec<(State, Pt)> {
-        states.sort();
-        states.dedup();
-        if states.len() > STATE_CAP {
+    /// Drop what no later step can observe: a store that cannot be live any more once no
+    /// variable names it.
+    fn normalize(st: &mut State) {
+        let named: BTreeSet<SKey> = st.vars.values().flat_map(Self::stores_of).collect();
+        st.stores
+            .retain(|k, s| s.status & LIVE != 0 || named.contains(k));
+    }
+
+    /// Run `v` from `st`: the state it ends in and its value; `None` when no path falls
+    /// through (a `break`, `continue` or `return`).
+    fn eval(&mut self, v: &Value, st: State) -> Option<(State, Val)> {
+        self.steps += 1;
+        if self.steps > STEP_BUDGET {
             self.imprecise = true;
-            states.truncate(STATE_CAP);
+            return None;
         }
-        states
-    }
-
-    /// Run `v` from `st`: every state it can end in, with what its value points into.  An
-    /// empty answer means no path falls through (a `break`, `continue` or `return`).
-    fn eval(&mut self, v: &Value, st: State) -> Vec<(State, Pt)> {
         match v {
             Value::Span(b) => self.eval(&b.1, st),
             Value::Block(b) => self.seq(&b.operators, st),
             Value::Insert(ops) => self.seq(ops, st),
             Value::Loop(b) => self.run_loop(&b.operators, st),
             Value::Var(x) => {
-                let p = Self::pt(&st, *x);
-                vec![(st, p)]
+                let val = Self::read(&st, *x);
+                Some((st, val))
             }
             Value::Set(x, val) => {
-                let out = self.eval(val, st);
-                let mut res = Vec::new();
-                for (mut s, p) in out {
-                    self.bind(&mut s, *x, p);
-                    res.push((s, Pt::Null));
-                }
-                self.cap(res)
+                let (mut s, value) = self.eval(val, st)?;
+                self.bind(&mut s, *x, &value);
+                Some((s, Val::null()))
             }
-            Value::If(c, t, f) => {
-                let mut res = Vec::new();
-                for (s, _) in self.eval(c, st) {
-                    let (take_then, take_else) = self.decide(c, &s);
-                    if take_then {
-                        res.extend(self.eval(t, s.clone()));
-                    }
-                    if take_else {
-                        res.extend(self.eval(f, s));
-                    }
-                }
-                self.cap(res)
+            Value::If(cond, then_v, else_v) => {
+                let (s, _) = self.eval(cond, st)?;
+                let (then_st, else_st) = self.decide(cond, s);
+                let then_out = then_st.and_then(|s| self.eval(then_v, s));
+                let else_out = else_st.and_then(|s| self.eval(else_v, s));
+                let mut out = join_out(then_out, else_out)?;
+                Self::normalize(&mut out.0);
+                Some(out)
             }
             Value::Return(val) => {
-                for (mut s, p) in self.eval(val, st) {
-                    if let Value::Var(x) = val.unspan() {
-                        self.use_var(&s, *x, "the return");
-                    }
-                    self.answer = self.answer.join(self.summary_of(p));
-                    Self::hand_on(&mut s, p);
-                    self.exit(&s, "a return");
+                let (mut s, value) = self.eval(val, st)?;
+                if let Value::Var(x) = val.unspan() {
+                    self.use_var(&s, *x, "the return");
                 }
-                Vec::new()
+                self.answer = self.answer.join(self.summary_of(&value.pts));
+                Self::hand_on(&mut s, &value);
+                self.exit(&s, "a return");
+                None
             }
             Value::Break(n) => {
-                let i = self.loops.len().checked_sub(1 + *n as usize);
-                if let Some(i) = i {
-                    self.loops[i].0.push(st);
-                } else {
-                    self.imprecise = true;
+                match self.loops.len().checked_sub(1 + *n as usize) {
+                    Some(i) => {
+                        let prev = self.loops[i].0.take();
+                        self.loops[i].0 = join_opt(prev, Some(st));
+                    }
+                    None => self.imprecise = true,
                 }
-                Vec::new()
+                None
             }
             Value::Continue(n) => {
-                let i = self.loops.len().checked_sub(1 + *n as usize);
-                if let Some(i) = i {
-                    self.loops[i].1.push(st);
-                } else {
-                    self.imprecise = true;
+                match self.loops.len().checked_sub(1 + *n as usize) {
+                    Some(i) => {
+                        let prev = self.loops[i].1.take();
+                        self.loops[i].1 = join_opt(prev, Some(st));
+                    }
+                    None => self.imprecise = true,
                 }
-                Vec::new()
+                None
             }
-            Value::Drop(x) => self
-                .eval(x, st)
-                .into_iter()
-                .map(|(s, _)| (s, Pt::Null))
-                .collect(),
+            Value::Drop(x) => self.eval(x, st).map(|(s, _)| (s, Val::null())),
             Value::Call(d, args) => self.call(v, *d, args, st),
             Value::CallRef(_, args) => {
-                let out = self.args(args, st);
-                out.into_iter().map(|(s, _)| (s, Pt::Unknown)).collect()
+                let (s, _) = self.args(args, st)?;
+                Some((s, Val::unknown()))
             }
             Value::TuplePut(_, _, x) => {
-                let mut res = Vec::new();
-                for (mut s, p) in self.eval(x, st) {
-                    Self::hand_on(&mut s, p);
-                    res.push((s, Pt::Null));
-                }
-                res
+                let (mut s, value) = self.eval(x, st)?;
+                Self::hand_on(&mut s, &value);
+                Some((s, Val::null()))
             }
             Value::Tuple(xs) => {
-                let out = self.args(xs, st);
-                out.into_iter()
-                    .map(|(mut s, ps)| {
-                        for p in ps {
-                            Self::hand_on(&mut s, p);
-                        }
-                        (s, Pt::Null)
-                    })
-                    .collect()
+                let (mut s, vals) = self.args(xs, st)?;
+                for value in &vals {
+                    Self::hand_on(&mut s, value);
+                }
+                Some((s, Val::null()))
             }
-            Value::TupleGet(..) => vec![(st, Pt::Unknown)],
+            Value::TupleGet(..) => Some((st, Val::unknown())),
             Value::Yield(_) | Value::Iter(..) => {
                 self.imprecise = true;
-                vec![(st, Pt::Unknown)]
+                Some((st, Val::unknown()))
             }
-            _ => vec![(st, Pt::Null)],
+            _ => Some((st, Val::null())),
         }
     }
 
-    /// Which arms of an `if` on condition `c` can run in `st`: a null test of a variable
-    /// whose binding is known takes one arm.
-    fn decide(&self, c: &Value, st: &State) -> (bool, bool) {
-        let mut c = c.unspan();
+    /// The states the two arms of an `if` on `c` start from: a null test of a variable
+    /// narrows it in each arm, and an arm it rules out does not run.
+    fn decide(&self, cond: &Value, st: State) -> (Option<State>, Option<State>) {
+        let mut test = cond.unspan();
         let mut flip = false;
-        while let Value::Call(d, a) = c
-            && *d == self.ops.not
-            && a.len() == 1
+        while let Value::Call(op, inner) = test
+            && *op == self.ops.not
+            && inner.len() == 1
         {
             flip = !flip;
-            c = a[0].unspan();
+            test = inner[0].unspan();
         }
-        if let Value::Call(d, a) = c
-            && *d == self.ops.ref_is_null
-            && let Some(Value::Var(x)) = a.first().map(Value::unspan)
-        {
-            let is_null = match Self::pt(st, *x) {
-                Pt::Null => Some(true),
-                Pt::Store(_) | Pt::Param(_) => Some(false),
-                Pt::Unknown => None,
-            };
-            if let Some(n) = is_null {
-                return if n == flip {
-                    (false, true)
-                } else {
-                    (true, false)
-                };
-            }
+        let Value::Call(op, test_args) = test else {
+            return (Some(st.clone()), Some(st));
+        };
+        let Some(Value::Var(x)) = test_args.first().map(Value::unspan) else {
+            return (Some(st.clone()), Some(st));
+        };
+        if *op != self.ops.ref_is_null {
+            return (Some(st.clone()), Some(st));
         }
-        (true, true)
-    }
-
-    fn seq(&mut self, ops: &[Value], st: State) -> Vec<(State, Pt)> {
-        let mut cur = vec![(st, Pt::Null)];
-        for op in ops {
-            let mut next = Vec::new();
-            for (s, _) in cur {
-                next.extend(self.eval(op, s));
-            }
-            cur = self.cap(next);
-            if cur.is_empty() {
-                break;
-            }
-        }
-        cur
-    }
-
-    fn run_loop(&mut self, body: &[Value], st: State) -> Vec<(State, Pt)> {
-        let mut seen: BTreeSet<State> = BTreeSet::new();
-        let mut todo = vec![st];
-        let mut exits = Vec::new();
-        for _ in 0..8 {
-            let fresh: Vec<State> = todo
-                .into_iter()
-                .filter(|s| seen.insert(s.clone()))
-                .collect();
-            if fresh.is_empty() {
-                break;
-            }
-            todo = Vec::new();
-            for s in fresh {
-                self.loops.push((Vec::new(), Vec::new()));
-                let out = self.seq(body, s);
-                let (brk, cont) = self.loops.pop().unwrap_or_default();
-                exits.extend(brk);
-                todo.extend(cont);
-                todo.extend(out.into_iter().map(|(s, _)| s));
-            }
-            if seen.len() > STATE_CAP {
-                self.imprecise = true;
-                break;
-            }
-        }
-        let res = exits.into_iter().map(|s| (s, Pt::Null)).collect();
-        self.cap(res)
-    }
-
-    /// Evaluate call arguments left to right: every state, with what each argument points
-    /// into.  A bare variable argument is a use of its store.
-    fn args(&mut self, args: &[Value], st: State) -> Vec<(State, Vec<Pt>)> {
-        let mut cur = vec![(st, Vec::new())];
-        for a in args {
-            let mut next = Vec::new();
-            for (s, ps) in cur {
-                for (s2, p) in self.eval(a, s) {
-                    if let Value::Var(x) = a.unspan() {
-                        self.use_var(&s2, *x, "a call");
+        let pts = Self::pts(&st, *x);
+        let may_null = pts
+            .iter()
+            .any(|p| matches!(p, Pt::Null | Pt::Param(_) | Pt::Unknown));
+        let may_store = pts.iter().any(|p| !matches!(p, Pt::Null));
+        // The arm where `x` is null: a store `x` must-holds whenever it is live is not live.
+        let null_arm = may_null.then(|| {
+            let mut s = st.clone();
+            for k in Self::stores_of(&pts) {
+                if let Some(info) = s.stores.get_mut(&k)
+                    && info.live.contains(x)
+                {
+                    info.status &= !LIVE;
+                    info.live.clear();
+                    if info.status == 0 {
+                        info.status = ABSENT;
                     }
-                    let mut ps2 = ps.clone();
-                    ps2.push(p);
-                    next.push((s2, ps2));
                 }
             }
-            next.sort();
-            next.dedup();
-            if next.len() > STATE_CAP {
-                self.imprecise = true;
-                next.truncate(STATE_CAP);
+            s.vars.remove(x);
+            s
+        });
+        let store_arm = may_store.then(|| {
+            let mut s = st;
+            if let Some(p) = s.vars.get_mut(x) {
+                p.remove(&Pt::Null);
             }
-            cur = next;
-        }
-        cur
-    }
-
-    fn summary_of(&self, p: Pt) -> Summary {
-        match p {
-            Pt::Null => Summary::Bottom,
-            Pt::Store(_) => Summary::Fresh,
-            Pt::Param(v) => self
-                .params
-                .iter()
-                .position(|&x| x == v)
-                .map_or(Summary::Unknown, |i| Summary::Arg(i as u16)),
-            Pt::Unknown => Summary::Unknown,
+            s
+        });
+        if flip {
+            (store_arm, null_arm)
+        } else {
+            (null_arm, store_arm)
         }
     }
 
-    fn call(&mut self, node: &Value, d: u32, args: &[Value], st: State) -> Vec<(State, Pt)> {
-        let ops = self.ops;
-        let first_var = args.first().and_then(|a| {
+    fn seq(&mut self, ops: &[Value], st: State) -> Option<(State, Val)> {
+        let mut cur = (st, Val::null());
+        for op in ops {
+            cur = self.eval(op, cur.0)?;
+        }
+        Some(cur)
+    }
+
+    fn run_loop(&mut self, body: &[Value], st: State) -> Option<(State, Val)> {
+        let mut head = st;
+        let mut exits: Option<State> = None;
+        for pass in 0..LOOP_PASSES {
+            self.loops.push((None, None));
+            let out = self.seq(body, head.clone());
+            let (brk, cont) = self.loops.pop().unwrap_or_default();
+            exits = join_opt(exits, brk);
+            let again = join_opt(join_opt(Some(head.clone()), out.map(|(s, _)| s)), cont)
+                .expect("the head state is a path");
+            let mut again = again;
+            Self::normalize(&mut again);
+            if again == head || self.imprecise {
+                break;
+            }
+            if pass + 1 == LOOP_PASSES {
+                self.imprecise = true;
+            }
+            head = again;
+        }
+        exits.map(|s| (s, Val::null()))
+    }
+
+    /// Evaluate call arguments left to right.  A bare variable argument is a use of its
+    /// store.
+    fn args(&mut self, args: &[Value], st: State) -> Option<(State, Vec<Val>)> {
+        let mut s = st;
+        let mut vals = Vec::with_capacity(args.len());
+        for a in args {
+            let (s2, value) = self.eval(a, s)?;
+            if let Value::Var(x) = a.unspan() {
+                self.use_var(&s2, *x, "a call");
+            }
+            vals.push(value);
+            s = s2;
+        }
+        Some((s, vals))
+    }
+
+    fn summary_of(&self, pts: &Pts) -> Summary {
+        let mut out = Summary::Bottom;
+        for p in pts {
+            let one = match p {
+                Pt::Null => Summary::Bottom,
+                Pt::Store(_) => Summary::Fresh,
+                Pt::Param(v) => self
+                    .params
+                    .iter()
+                    .position(|x| x == v)
+                    .map_or(Summary::Unknown, |i| Summary::Arg(i as u16)),
+                Pt::Unknown => Summary::Unknown,
+            };
+            out = out.join(one);
+        }
+        out
+    }
+
+    fn first_var(args: &[Value], i: usize) -> Option<u16> {
+        args.get(i).and_then(|a| {
             if let Value::Var(x) = a.unspan() {
                 Some(*x)
             } else {
                 None
             }
-        });
+        })
+    }
+
+    fn call(&mut self, node: &Value, d: u32, args: &[Value], st: State) -> Option<(State, Val)> {
+        let ops = self.ops;
         // A free: its own argument is not a use.
         if ops.unconditional.contains(&d) || d == ops.text_free {
             let name = self.data.def(d).name().to_string();
             let mut st = st;
-            if let Some(x) = first_var {
-                self.end(&mut st, x, &name);
+            if let Some(x) = Self::first_var(args, 0) {
+                self.end(&mut st, x, &name, true);
             }
-            return vec![(st, Pt::Null)];
+            return Some((st, Val::null()));
         }
         if ops.conditional.contains(&d) {
             // A free that is a no-op where the freed variable and its witness name one store.
             let name = self.data.def(d).name().to_string();
-            let witness = args.get(1).and_then(|a| {
-                if let Value::Var(x) = a.unspan() {
-                    Some(*x)
-                } else {
-                    None
-                }
-            });
             let mut st = st;
-            if let Some(x) = first_var {
-                let same = witness.is_some_and(|w| Self::pt(&st, x) == Self::pt(&st, w));
-                if !same {
-                    self.end(&mut st, x, &name);
-                } else if let Pt::Store(k) = Self::pt(&st, x) {
-                    let label = format!("{name}({}) skipped: witness holds it", self.var_name(x));
-                    self.sites[k.site as usize].ends.insert(label);
+            if let Some(x) = Self::first_var(args, 0) {
+                let w = Self::first_var(args, 1);
+                let xp = Self::pts(&st, x);
+                let wp = w.map(|w| Self::pts(&st, w)).unwrap_or_default();
+                let shared: Vec<SKey> = Self::stores_of(&xp)
+                    .into_iter()
+                    .filter(|k| wp.contains(&Pt::Store(*k)))
+                    .collect();
+                if shared.is_empty() {
+                    self.end(&mut st, x, &name, true);
+                } else if xp.len() == 1 && wp.len() == 1 {
+                    let label =
+                        format!("{name}({}) skipped: its witness holds it", self.var_name(x));
+                    self.sites[shared[0].site as usize].ends.insert(label);
+                } else {
+                    // Skipped on the paths where the witness names the store: a free of the
+                    // rest, which is where the witness holds something else.
+                    let witness_holds_it = shared
+                        .iter()
+                        .all(|k| w.is_some_and(|w| info_of(&st, *k).live.contains(&w)));
+                    if !witness_holds_it {
+                        self.end(&mut st, x, &name, false);
+                    }
                 }
             }
-            return vec![(st, Pt::Null)];
+            return Some((st, Val::null()));
         }
         if d == ops.database
-            && let Some(x) = first_var
+            && let Some(x) = Self::first_var(args, 0)
         {
             let site = self.site(node, Origin::Mint);
             let mut st = st;
-            self.drop_binding(&st, x);
-            let k = Self::mint(&mut st, site);
-            self.sites[site as usize].holders.insert(x);
-            st.vars.insert(x, Pt::Store(k));
-            return vec![(st, Pt::Null)];
+            let k = Self::fresh(&mut st, site);
+            let val = Val {
+                pts: [Pt::Store(k)].into(),
+                corr: [k].into(),
+            };
+            self.bind(&mut st, x, &val);
+            return Some((st, Val::null()));
         }
-        let out = self.args(args, st);
+        let (mut s, vals) = self.args(args, st)?;
         let def = self.data.def(d);
-        let heap = def.returned().heap_dep().is_some();
-        let bodied = !matches!(def.code.unspan(), Value::Null) && !def.name().starts_with("Op");
-        let mut res = Vec::new();
-        for (mut s, ps) in out {
-            if d == ops.set_dbref
-                && let Some(&p) = ps.get(2)
-            {
-                // A reference written into another store's field: that store holds it now.
-                Self::hand_on(&mut s, p);
-            }
-            if !heap {
-                res.push((s, Pt::Null));
-                continue;
-            }
-            if !bodied {
-                // An operator answering a reference answers one into its first argument's
-                // store; a native's answer is not followed.
-                let p = if def.name().starts_with("Op") {
-                    ps.first().copied().unwrap_or(Pt::Unknown)
-                } else {
-                    Pt::Unknown
-                };
-                res.push((s, p));
-                continue;
-            }
-            match self.summaries.get(&d).copied().unwrap_or(Summary::Unknown) {
-                Summary::Bottom => res.push((s, Pt::Null)),
-                Summary::Unknown => res.push((s, Pt::Unknown)),
-                Summary::Fresh => {
-                    let site = self.site(node, Origin::Call(d));
-                    let k = Self::mint(&mut s, site);
-                    res.push((s, Pt::Store(k)));
-                }
-                Summary::Arg(i) => {
-                    res.push((s, ps.get(i as usize).copied().unwrap_or(Pt::Unknown)))
-                }
-                Summary::Join(i) => {
-                    let viewed = ps.get(i as usize).copied().unwrap_or(Pt::Unknown);
-                    res.push((s.clone(), viewed));
-                    let site = self.site(node, Origin::Call(d));
-                    let k = Self::mint(&mut s, site);
-                    res.push((s, Pt::Store(k)));
-                }
-            }
+        if d == ops.set_dbref
+            && let Some(value) = vals.get(2)
+        {
+            // A reference written into another store's field: that store holds it now.
+            Self::hand_on(&mut s, value);
         }
-        self.cap(res)
+        if def.returned().heap_dep().is_none() {
+            return Some((s, Val::null()));
+        }
+        let bodied = !matches!(def.code.unspan(), Value::Null) && !def.name().starts_with("Op");
+        if !bodied {
+            // An operator answering a reference answers one into its first argument's store;
+            // a native's answer is not followed.
+            let val = if def.name().starts_with("Op") {
+                vals.into_iter().next().unwrap_or_else(Val::unknown)
+            } else {
+                Val::unknown()
+            };
+            return Some((s, val));
+        }
+        let val = match self.summaries.get(&d).copied().unwrap_or(Summary::Unknown) {
+            Summary::Bottom => Val::null(),
+            Summary::Unknown => Val::unknown(),
+            Summary::Fresh => {
+                let site = self.site(node, Origin::Call(d));
+                let k = Self::fresh(&mut s, site);
+                Val {
+                    pts: [Pt::Store(k)].into(),
+                    corr: [k].into(),
+                }
+            }
+            Summary::Arg(i) => vals.get(i as usize).cloned().unwrap_or_else(Val::unknown),
+            Summary::Join(i) => {
+                let viewed = vals.get(i as usize).cloned().unwrap_or_else(Val::unknown);
+                let site = self.site(node, Origin::Call(d));
+                let k = Self::fresh(&mut s, site);
+                if let Some(info) = s.stores.get_mut(&k) {
+                    info.status = LIVE | ABSENT;
+                }
+                let mut pts = viewed.pts;
+                pts.insert(Pt::Store(k));
+                Val {
+                    pts,
+                    corr: [k].into(),
+                }
+            }
+        };
+        Some((s, val))
     }
 }
 
@@ -672,12 +866,9 @@ fn run_fn<'a>(
 ) -> Run<'a> {
     let def = data.def(d_nr);
     let params = def.variables.arguments();
-    let mut st = State {
-        vars: BTreeMap::new(),
-        stores: BTreeMap::new(),
-    };
+    let mut st = State::default();
     for &p in &params {
-        st.vars.insert(p, Pt::Param(p));
+        st.vars.insert(p, [Pt::Param(p)].into());
     }
     let mut run = Run {
         data,
@@ -689,14 +880,14 @@ fn run_fn<'a>(
         findings: BTreeSet::new(),
         answer: Summary::Bottom,
         imprecise: false,
+        steps: 0,
         loops: Vec::new(),
         params,
     };
     let body = def.code.clone();
-    let out = run.eval(&body, st);
-    for (mut s, p) in out {
-        run.answer = run.answer.join(run.summary_of(p));
-        Run::hand_on(&mut s, p);
+    if let Some((mut s, value)) = run.eval(&body, st) {
+        run.answer = run.answer.join(run.summary_of(&value.pts));
+        Run::hand_on(&mut s, &value);
         run.exit(&s, "the end of the function");
     }
     run
@@ -709,31 +900,160 @@ fn is_analysed(data: &Data, d: u32) -> bool {
         && !def.name().starts_with("Op")
 }
 
-/// The least fixpoint of every function's answer over the call graph.
-fn summaries(data: &Data, ops: &Ops) -> BTreeMap<u32, Summary> {
+/// The analysed functions `d`'s body calls.
+fn callees(data: &Data, d: u32) -> Vec<u32> {
+    let mut out = BTreeSet::new();
+    data.def(d).code.walk(&mut |v| {
+        if let Value::Call(c, _) = v
+            && is_analysed(data, *c)
+        {
+            out.insert(*c);
+        }
+    });
+    out.into_iter().collect()
+}
+
+/// The strongly connected components of the call graph, callees before callers (Tarjan's
+/// order), so each function is analysed after every function it calls outside its own cycle.
+fn components(data: &Data, fns: &[u32]) -> Vec<Vec<u32>> {
+    let edges: BTreeMap<u32, Vec<u32>> = fns.iter().map(|&d| (d, callees(data, d))).collect();
+    let mut index: BTreeMap<u32, (usize, usize)> = BTreeMap::new();
+    let mut on_stack: BTreeSet<u32> = BTreeSet::new();
+    let mut stack: Vec<u32> = Vec::new();
+    let mut out: Vec<Vec<u32>> = Vec::new();
+    let mut next = 0usize;
+    for &root in fns {
+        if index.contains_key(&root) {
+            continue;
+        }
+        // An explicit stack of (node, next edge to visit): a deep call chain must not
+        // overflow the Rust stack.
+        let mut work: Vec<(u32, usize)> = vec![(root, 0)];
+        index.insert(root, (next, next));
+        next += 1;
+        stack.push(root);
+        on_stack.insert(root);
+        while let Some(&mut (v, ref mut i)) = work.last_mut() {
+            let succ = &edges[&v];
+            if *i < succ.len() {
+                let w = succ[*i];
+                *i += 1;
+                if let Some(&(wi, _)) = index.get(&w) {
+                    if on_stack.contains(&w) {
+                        let e = index.get_mut(&v).expect("indexed");
+                        e.1 = e.1.min(wi);
+                    }
+                } else {
+                    index.insert(w, (next, next));
+                    next += 1;
+                    stack.push(w);
+                    on_stack.insert(w);
+                    work.push((w, 0));
+                }
+                continue;
+            }
+            work.pop();
+            let (vi, vl) = index[&v];
+            if let Some(&(p, _)) = work.last() {
+                let pl = index[&p].1.min(vl);
+                index.get_mut(&p).expect("indexed").1 = pl;
+            }
+            if vi == vl {
+                let mut comp = Vec::new();
+                while let Some(w) = stack.pop() {
+                    on_stack.remove(&w);
+                    comp.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                out.push(comp);
+            }
+        }
+    }
+    out
+}
+
+/// Every function's answer and its final run: the least fixpoint over the call graph, taken
+/// component by component, callees first, so only a recursive component iterates.
+fn analyse_all(
+    data: &Data,
+    ops: &Ops,
+    sum: &mut BTreeMap<u32, Summary>,
+) -> BTreeMap<u32, (Vec<String>, bool)> {
     let fns: Vec<u32> = (0..data.definitions())
         .filter(|&d| is_analysed(data, d))
         .collect();
-    let mut sum: BTreeMap<u32, Summary> = fns.iter().map(|&d| (d, Summary::Bottom)).collect();
-    for _ in 0..12 {
-        let mut changed = false;
-        for &d in &fns {
-            let run = run_fn(data, ops, &sum, d);
-            let new = if run.imprecise {
-                Summary::Unknown
-            } else {
-                sum[&d].join(run.answer)
-            };
-            if new != sum[&d] {
-                sum.insert(d, new);
-                changed = true;
+    for &d in &fns {
+        sum.insert(d, Summary::Bottom);
+    }
+    let profile = std::env::var_os("LOFT_STORE_PROFILE").is_some();
+    let t_all = std::time::Instant::now();
+    let mut slow: Vec<(u128, u32)> = Vec::new();
+    let mut runs = 0usize;
+    let mut found: BTreeMap<u32, (Vec<String>, bool)> = BTreeMap::new();
+    for comp in components(data, &fns) {
+        for _ in 0..8 {
+            let mut changed = false;
+            for &d in &comp {
+                let t = std::time::Instant::now();
+                if profile && std::env::var_os("LOFT_STORE_PROFILE_EACH").is_some() {
+                    eprintln!("[stores] start {}", data.def(d).name());
+                }
+                let (answer, imprecise, lines) = {
+                    let run = run_fn(data, ops, sum, d);
+                    let lines: Vec<String> = run
+                        .findings
+                        .iter()
+                        .map(|f| {
+                            format!("store-{} {}{}", f.kind, site_label(&run, f.site), f.detail)
+                        })
+                        .collect();
+                    (run.answer, run.imprecise, lines)
+                };
+                runs += 1;
+                if profile {
+                    let us = t.elapsed().as_micros();
+                    if us > 200_000 {
+                        eprintln!(
+                            "[stores] slow: {} took {} ms",
+                            data.def(d).name(),
+                            us / 1000
+                        );
+                    }
+                    slow.push((us, d));
+                }
+                let new = if imprecise {
+                    Summary::Unknown
+                } else {
+                    sum[&d].join(answer)
+                };
+                if new != sum[&d] {
+                    sum.insert(d, new);
+                    changed = true;
+                }
+                found.insert(d, (lines, imprecise));
+            }
+            if !changed {
+                break;
             }
         }
-        if !changed {
-            break;
-        }
     }
-    sum
+    if profile {
+        slow.sort_unstable_by(|a, b| b.cmp(a));
+        let top: Vec<String> = slow
+            .iter()
+            .take(8)
+            .map(|(us, d)| format!("{}={}ms", data.def(*d).name(), us / 1000))
+            .collect();
+        eprintln!(
+            "[stores] {} fns, {runs} runs, {} ms; slowest {}",
+            fns.len(),
+            t_all.elapsed().as_millis(),
+            top.join(" ")
+        );
+    }
+    found
 }
 
 /// The observer entry point, at the end of `close_program`.
@@ -744,7 +1064,8 @@ pub fn observe(data: &Data) {
         return;
     }
     let ops = Ops::new(data);
-    let sum = summaries(data, &ops);
+    let mut sum = BTreeMap::new();
+    let found = analyse_all(data, &ops, &mut sum);
     let mut reds = 0usize;
     for d in (0..data.definitions()).filter(|&d| is_analysed(data, d)) {
         let name = data.def(d).name().to_string();
@@ -754,18 +1075,13 @@ pub fn observe(data: &Data) {
         if !shown && !check {
             continue;
         }
-        let run = run_fn(data, &ops, &sum, d);
         if shown {
+            let run = run_fn(data, &ops, &sum, d);
             print_records(&run, &name, sum[&d]);
         }
-        if check && !run.imprecise {
-            for f in &run.findings {
-                eprintln!(
-                    "RED {name}: store-{} {}{}",
-                    f.kind,
-                    site_label(&run, f.site),
-                    f.detail
-                );
+        if check && let Some((lines, false)) = found.get(&d) {
+            for l in lines {
+                eprintln!("RED {name}: {l}");
                 reds += 1;
             }
         }
