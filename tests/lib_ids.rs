@@ -155,8 +155,6 @@ fn the_no_type_id_takes_no_table_slot() {
     );
 }
 
-const SHARDS: usize = 8;
-
 /// Every `stride`-th program from `shard` on.  A shard runs in its own process (nextest):
 /// the parser keeps process-wide state, so two parses on two threads of one process are not
 /// the same parse twice.
@@ -195,33 +193,17 @@ fn check_shard(shard: usize, stride: usize) {
     );
 }
 
-macro_rules! shards {
-    ($($name:ident = $k:expr),* $(,)?) => {
-        $(
-            #[test]
-            #[ignore = "the whole corpus — runs nightly in miri.yml's release-gate job; the per-commit run checks a sample"]
-            fn $name() {
-                check_shard($k, SHARDS);
-            }
-        )*
-    };
-}
-
 /// Every 32nd program of the corpus, per commit: a literal id left in generated code shows in
-/// nearly every program that generates it, so a sample finds it; the whole corpus, in eight
-/// shards, is the nightly's (CI_BUDGET.md: the per-commit suite fits 20 minutes).
+/// nearly every program that generates it, so a sample finds it; the whole corpus is the
+/// nightly's (CI_BUDGET.md: the per-commit suite fits 20 minutes).
 #[test]
 fn library_code_does_not_name_the_programs_numbers_in_a_sample() {
     check_shard(0, 32);
 }
 
-shards!(
-    library_code_does_not_name_the_programs_numbers_0 = 0,
-    library_code_does_not_name_the_programs_numbers_1 = 1,
-    library_code_does_not_name_the_programs_numbers_2 = 2,
-    library_code_does_not_name_the_programs_numbers_3 = 3,
-    library_code_does_not_name_the_programs_numbers_4 = 4,
-    library_code_does_not_name_the_programs_numbers_5 = 5,
-    library_code_does_not_name_the_programs_numbers_6 = 6,
-    library_code_does_not_name_the_programs_numbers_7 = 7,
-);
+/// The whole corpus, every program in turn in this one process — the nightly's run.
+#[test]
+#[ignore = "the whole corpus — runs nightly in miri.yml's release-gate job; the per-commit run checks a sample"]
+fn library_code_does_not_name_the_programs_numbers_in_the_whole_corpus() {
+    check_shard(0, 1);
+}

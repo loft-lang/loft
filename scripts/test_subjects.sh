@@ -44,6 +44,7 @@ HEAVY_BINARIES=(
   html_page_store      #  278s /   2 tests — a page reading a store from its filesystem
   html_asyncify        #  151s /   2 tests — an asyncified page run to completion
   html_fonts           #  140s /   6 tests — a page with its fonts, per case
+  paged_browser        #  480s /   3 tests — a store paged into a real browser page
 )
 
 # ── Subjects: a name, and the binary-name PATTERNS it selects ───────────────

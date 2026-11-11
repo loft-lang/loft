@@ -202,7 +202,7 @@ now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
 # A `=== Wall-clock timing summary ===` block prints at run/wait end.
 TIMINGS_FILE=/tmp/loft_timings.$REPO_TAG.txt
 # Every test's duration and status from the latest run: `status<TAB>seconds<TAB>binary<TAB>test`.
-TEST_TIMES_FILE=/tmp/loft_test_times.$REPO_TAG.tsv
+TEST_TIMES_FILE="${TIMINGS_FILE%.txt}.tests.tsv"
 
 # Pick the test runner.  cargo-nextest parallelises at the test level
 # (cargo-test only at the binary level), giving 2-3x faster wall-clock
