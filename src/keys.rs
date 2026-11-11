@@ -3293,6 +3293,16 @@ pub fn backed_capture_stand_down() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_BACKED_CAPTURE_STAND_DOWN"))
 }
 
+/// `LOFT_NO_FRESH_PROTECTS_OLD=1` — a reassignment copied into a fresh store leaves the local's
+/// old store out of the protection bracket even where the value reads the local, as it did
+/// before (`Codegen::generate_set_inner`, arm R2b): the copy's source-free then releases it and
+/// the stashed free releases it again.
+#[must_use]
+pub fn fresh_protects_old_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_FRESH_PROTECTS_OLD"))
+}
+
 /// `LOFT_NO_STASH_FRESH=1` — the interpreter's reassignment copy with a stashed displaced free
 /// writes into the old store when the value cannot alias the local, as it did before
 /// (`Codegen::generate_set_inner`, arm R2b): a null answer then frees that store twice.

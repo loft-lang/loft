@@ -964,10 +964,34 @@ impl Run<'_> {
             ReArm::CallCopy { .. } => {
                 if crate::use_analysis::call_return_frees_source(data, self.d_nr, val) {
                     Self::consume(&mut s, &value);
+                    // The copy's source-free releases what the call answered, and a call that
+                    // reads `x` may answer `x`'s own store.  Unprotected (`ReBind::protects_old`),
+                    // that store is then released by the copy AND by the stashed free after it.
+                    let x_arg = crate::use_analysis::protectable_ref_args(data, self.d_nr, val)
+                        .0
+                        .contains(&x);
+                    if rb.free == DisplacedFree::Stash
+                        && rb.copies_into_fresh()
+                        && rb.rhs_reads_v
+                        && x_arg
+                        && !rb.protects_old(x_arg)
+                        && let Some(k) = Self::stores_of(&old).first()
+                    {
+                        let name = self.var_name(x);
+                        self.find(
+                            "re-free",
+                            k.site,
+                            format!(
+                                "`{name}`'s old store is released by the copy's source-free and \
+                                 again by the stashed free"
+                            ),
+                        );
+                    }
                 }
-                // A stashed or witnessed-and-read local re-initialises its own store in
-                // place after the call; anything else starts from a fresh one.
-                let in_place = rb.free == DisplacedFree::Stash || (rb.witnessed && rb.rhs_reads_v);
+                // A stashed local re-initialises its own store in place after the call unless
+                // the copy lands in a fresh store (`ReBind::copies_into_fresh`, the code
+                // generator's own answer); anything else starts from a fresh one.
+                let in_place = rb.free == DisplacedFree::Stash && !rb.copies_into_fresh();
                 if in_place && Self::stores_of(&old).len() == 1 && old.len() == 1 {
                     Val {
                         pts: old.clone(),

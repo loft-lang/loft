@@ -136,7 +136,13 @@ twice.  A captured local that only names its backings' stores stands its frame-e
 down (`rebound_captures`); `LOFT_NO_BACKED_CAPTURE_STAND_DOWN=1` keeps it beside theirs.  The
 first bind of a record local assigned again later, from a value branch of whole variables, is
 written out per arm as a reassignment is (`scan_set`'s `writes_out`);
-`LOFT_NO_MULTI_FIRST_WRITES_OUT=1` keeps the per-arm lift the binding borrows.
+`LOFT_NO_MULTI_FIRST_WRITES_OUT=1` keeps the per-arm lift the binding borrows.  A
+reassignment copied into a fresh store keeps the local's old store protected across the copy
+when the value reads the local (`ReBind::protects_old`, one answer for the code generator and
+the records, beside `ReBind::copies_into_fresh`); `LOFT_NO_FRESH_PROTECTS_OLD=1` leaves it out,
+and the copy's source-free and the stashed free both release it.  A literal buffer adopted by
+an owning local that is assigned again takes no scope-exit free (the local releases its store
+on every path); `LOFT_NO_REBOUND_ADOPTER_DISARM=1` keeps the pairing.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it

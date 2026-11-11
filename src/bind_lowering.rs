@@ -336,6 +336,33 @@ pub struct ReBind {
     pub buffer_witness: Option<u16>,
 }
 
+impl ReBind {
+    /// Does a copying reassignment (`ReArm::CallCopy`) land in a FRESH store, rather than
+    /// re-initialise `v`'s own store in place?  The ONE answer the interpreter's code generator
+    /// emits (`Codegen::generate_set_inner`, arm R2b) and the store records read: a witnessed
+    /// local whose value reads it, and wherever the displaced store waits for its stashed free
+    /// and the value may alias `v` — or does not read `v` at all (`LOFT_NO_STASH_FRESH`).
+    #[must_use]
+    pub fn copies_into_fresh(&self) -> bool {
+        (self.witnessed && self.rhs_reads_v)
+            || (self.free == DisplacedFree::Stash
+                && (self.rhs_may_alias_v || (!self.rhs_reads_v && crate::keys::stash_fresh())))
+    }
+
+    /// Is `v`'s OLD store protected across the copy (`n_protect_store_frees` through a stashed
+    /// reference), so the copy's source-free cannot release it?  Where `v` is one of the call's
+    /// protectable reference arguments (`v_is_ref_arg`) and the value reads it: a witnessed
+    /// local, and a copy into a fresh store — there the stashed free is the old store's one
+    /// release (`LOFT_NO_FRESH_PROTECTS_OLD` leaves it out of the bracket).
+    #[must_use]
+    pub fn protects_old(&self, v_is_ref_arg: bool) -> bool {
+        self.rhs_reads_v
+            && v_is_ref_arg
+            && (self.witnessed
+                || (self.copies_into_fresh() && !crate::keys::fresh_protects_old_off()))
+    }
+}
+
 /// Is `v` the function's return buffer with a local's name — a hidden parameter other than
 /// `__retbuf`?
 #[must_use]

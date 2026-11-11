@@ -2601,7 +2601,6 @@ impl State {
             let ReBind {
                 s1_substituted,
                 rhs_reads_v,
-                rhs_may_alias_v,
                 entry_w,
                 owned_ref,
                 rhs_is_new_record,
@@ -2955,9 +2954,8 @@ impl State {
                     // both on the interpreter; C binds and never copies here.  Only where the
                     // value does not read `v`: one that does keeps `v` in the protection bracket
                     // below, which the fresh path leaves it out of (`s = simplify(s)`).
-                    let fresh_path = (witnessed && rhs_reads_v)
-                        || (stash_old_for_post_free
-                            && (rhs_may_alias_v || (!rhs_reads_v && crate::keys::stash_fresh())));
+                    let fresh_path = rb.copies_into_fresh();
+                    debug_assert_eq!(stash_old_for_post_free, rb.free == DisplacedFree::Stash);
                     // `@FR-O-Witness` — a WITNESSED `v` is the exception: its witness alone
                     // releases the store it displaces, and that store may be a VIEW (`t =
                     // with_deps(t, …)` over `t = df.attrs[0].tp`, where the callee answers `t`
@@ -2968,7 +2966,12 @@ impl State {
                     let mut ref_args: Vec<u16> =
                         crate::use_analysis::protectable_ref_args(stack.data, stack.def_nr, value)
                             .0;
-                    let protects_old = witnessed && rhs_reads_v && ref_args.contains(&v);
+                    // …and on the fresh path wherever the value READS `v` (`class = pick(class,
+                    // c)` answering `class`): left out of the bracket, the copy's source-free
+                    // released `v`'s old store and the stashed free released it again
+                    // (`@FR-H-FreeTwice`).  `ReBind::protects_old` is the one answer, which the
+                    // store records read too.
+                    let protects_old = rb.protects_old(ref_args.contains(&v));
                     ref_args.retain(|&a| !(fresh_path && a == v));
                     // @PLAN51 Cluster II Step 2 — collect caller-hidden-buf
                     // work-ref args.  After the OpCopyRecord wrap frees

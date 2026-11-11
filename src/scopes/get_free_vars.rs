@@ -1250,7 +1250,7 @@ impl Scopes<'_> {
             guarded.append(&mut ls);
             ls = guarded;
         }
-        self.pair_literal_buffers(&mut ls, data);
+        self.pair_literal_buffers(&mut ls, data, function);
         ls
     }
 
@@ -1262,7 +1262,7 @@ impl Scopes<'_> {
     /// sweep does not free keeps the buffer's plain free: that is then the store's only release
     /// (a captured local, one with no free of its own — loft#1317's measurements).
     /// `LOFT_NO_LITERAL_BUFFER_PAIR=1` keeps every buffer's plain free.
-    fn pair_literal_buffers(&self, ls: &mut Vec<Value>, data: &Data) {
+    fn pair_literal_buffers(&self, ls: &mut Vec<Value>, data: &Data, function: &Function) {
         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *OFF.get_or_init(|| std::env::var("LOFT_NO_LITERAL_BUFFER_PAIR").is_ok_and(|v| v != "0"))
             || self.literal_buffer.is_empty()
@@ -1294,6 +1294,20 @@ impl Scopes<'_> {
                 continue;
             };
             ls.remove(i);
+            // `@FR-H-FreeTwice` — an OWNING local assigned more than once releases the
+            // buffer's store on every path: its rebind's displaced free where it moved on, its
+            // own free here where it did not.  Paired, the buffer freed it a second time once
+            // the local had moved on (`class = Pt { … }; class = pick(class, c)` under strict
+            // stores; with slot reuse the guard declined by luck).  So the buffer takes no free.
+            // `LOFT_NO_REBOUND_ADOPTER_DISARM=1` keeps the pairing.
+            let multi = self.multi_assigned.contains(&w)
+                || self
+                    .var_mapping
+                    .iter()
+                    .any(|(o, n)| *n == w && self.multi_assigned.contains(o));
+            if multi && function.proxy_says_owned(w) && !rebound_adopter_disarm_off() {
+                continue;
+            }
             let mentions = |op: &Value| {
                 let mut hit = false;
                 op.walk(&mut |n| {
@@ -1550,4 +1564,11 @@ fn captured_view_stand_down(guarded: &mut Vec<Value>, function: &Function, data:
 /// must then report.
 fn work_ref_view_frees() -> bool {
     crate::env_once!(std::env::var_os("LOFT_WORK_REF_VIEW_FREES").is_some())
+}
+
+/// `LOFT_NO_REBOUND_ADOPTER_DISARM=1` (STORE_RECORDS.md § The checks): a literal buffer adopted
+/// by an owning local that is assigned again keeps its scope-exit free, paired with the local —
+/// the re-free the store records must then report.
+fn rebound_adopter_disarm_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_REBOUND_ADOPTER_DISARM").is_some())
 }
