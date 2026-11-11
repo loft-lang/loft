@@ -20,7 +20,8 @@
 //! | `wrong-free` | a refused free (#306 the stack store, #405 out of range) |
 //! | `corrupt-reference` | a store access out of the store's bounds |
 //!
-//! and further fields per kind (`store`, `freed`, `access`, `var`, `count`, `detail`).  A
+//! and further fields per kind (`store`, `freed`, `access`, `var`, `count`, `detail`; a
+//! `corrupt-reference` on the interpreter carries the `pc` and `site` of the read).  A
 //! consumer reads `kind` and treats the rest as detail; a reporter may add fields.
 
 use std::io::Write;

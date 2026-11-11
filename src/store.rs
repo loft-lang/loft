@@ -4369,14 +4369,19 @@ impl Store {
     #[cold]
     #[inline(never)]
     fn raise_out_of_bounds(&self, rec: u32, fld: u32, width: usize) -> ! {
-        crate::fault_log::record(
-            "corrupt-reference",
-            &[
-                ("rec", rec.to_string()),
-                ("fld", fld.to_string()),
-                ("type", self.known_type.to_string()),
-            ],
-        );
+        // The interpreter's last dispatched op is the access: its site names where the
+        // corrupt reference was read (a compiled backend dispatches nothing, pc 0).
+        let (pc, _, _) = crate::crash_report::last_context();
+        let mut fields = vec![
+            ("rec", rec.to_string()),
+            ("fld", fld.to_string()),
+            ("type", self.known_type.to_string()),
+        ];
+        if pc != 0 && crate::fault_log::armed() {
+            fields.push(("pc", pc.to_string()));
+            fields.push(("site", crate::store_trace::site(pc)));
+        }
+        crate::fault_log::record("corrupt-reference", &fields);
         panic!(
             "Store access out of bounds: rec={rec} fld={fld} width={width} \
              store_bytes={} type={} — the reference is corrupt, not merely \

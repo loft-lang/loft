@@ -116,6 +116,9 @@ def main():
         f"\n  {k:8}{v}" for k, v in first.items() if k not in ("kind", "backend")))
     store = first.get("store")
     if not store or first.get("kind") == "leak":
+        if first.get("kind") == "corrupt-reference":
+            print("\nno store to trace: the reference names a record outside its store's bounds, "
+                  "so it was made for another store; `site` is where it was read")
         return 1
     traced = run(loft, prog, extra, {**env_add, "LOFT_LOG": f"store_life:{store}"}, a.timeout)
     lines = story(traced or "", store)
