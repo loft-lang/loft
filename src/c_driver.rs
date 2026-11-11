@@ -821,6 +821,8 @@ mod tests {
     /// The release tier compiles each `[c] shim` the unit links from the sources it names after
     /// that archive; an archive with no sources named, or a lazy one (not marked
     /// `shim-archive`), stays linked, and every other input passes through in order.
+    /// Falsified at c3defa8ff: with the source list not closed at a line that is no link,
+    /// the lazy archive's source attached to `libq.a` and replaced it.
     #[test]
     fn a_release_unit_compiles_its_shims_from_their_sources() {
         let c = "/* `[c] shim` of package p, 2 sources */\n/* shim-archive: /s/libp.a */\n\
