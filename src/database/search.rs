@@ -538,12 +538,19 @@ impl Stores {
         sub: &[Content],
         free_source: bool,
     ) {
-        // An absent value stores nothing and the slot keeps what it had — the promise the
-        // `K?`-into-`K` warning makes at `c[k] = c[absent]`.  It panicked in a store accessor.
+        let full = !sub.is_empty() && sub.len() == self.types[db as usize].keys.len();
+        // @FR-Col-Assign, @FR-Col-Remove — an absent value leaves the place reading null, as
+        // `c[k] = null` does: the record under the subscript is removed (loft#2470).  Without a
+        // full subscript there is no place to name, so nothing is stored.
         if value.is_null() || value.store_nr == u16::MAX {
+            if full {
+                let existing = self.find(coll, db, sub);
+                if existing.rec != 0 {
+                    self.remove_owned(coll, &existing, db);
+                }
+            }
             return;
         }
-        let full = !sub.is_empty() && sub.len() == self.types[db as usize].keys.len();
         let snapshot = if full && value.store_nr == coll.store_nr {
             let content_tp = self.content(db);
             let size = u32::from(self.size(content_tp));

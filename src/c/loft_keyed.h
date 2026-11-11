@@ -459,15 +459,39 @@ static loft_ref loft_keyed_find(loft_ref c, int kind, uint32_t size, const loft_
     return loft_seq_find(c, kind == LOFT_KEYED_SORTED ? size : 0, keys, nk, kv, n);
 }
 
+/* The element `existing` of `c` taken out and released, by the collection's kind — the removal
+ * `c[k…] = v` makes before it files the copy, and the one an absent `v` makes alone. */
+static void loft_keyed_remove_at(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_ref existing, int kind,
+                                 const loft_key *keys, int nk, uint32_t size) {
+    if (kind == LOFT_KEYED_HASH) loft_hash_remove(T, etp, c, existing, keys, nk, 0);
+    else if (kind == LOFT_KEYED_SORTED) loft_sorted_remove(c, existing, size);
+    else if (kind == LOFT_KEYED_INDEX) loft_ix_remove(T, etp, c, existing, keys, nk, 0);
+    else if (kind == LOFT_KEYED_SPATIAL || kind == LOFT_KEYED_TRIE)
+        loft_rx_remove_owned(T, etp, c, existing, keys, nk, kind == LOFT_KEYED_TRIE, 0);
+    else loft_ordered_remove(T, etp, c, existing, 0, 0);
+}
+
 /* OpSetKeyed (Stores::set_keyed, @FR-Col-Assign): `c[k…] = v` — a deep copy of `v` filed under
  * the subscript's key (or, with no full subscript, under its own), replacing the element that
  * key named; a value the bind gives up is freed. */
 static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_ref value, int kind,
                            const loft_key *keys, int nk, const loft_kv *sub, int nsub, int free_source,
                            const loft_group *g) {
-    if (value.store_nr == 0xFFFF || value.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return;
+    if (c.store_nr == 0xFFFF || c.rec == 0) return;
     uint32_t size = T[etp].size;
     int full = nsub > 0 && nsub == nk;
+    /* @FR-Col-Assign, @FR-Col-Remove: an absent value leaves the place reading null, as
+     * `c[k] = null` does — the element under the full subscript is removed (loft#2470).  A
+     * linked group's member keeps the skip: its removal unlinks every member. */
+    if (value.store_nr == 0xFFFF || value.rec == 0) {
+        if (full && !g) {
+            loft_ref existing = loft_keyed_find(c, kind, size, keys, nk, sub, nsub);
+            if (existing.rec != 0) {
+                loft_keyed_remove_at(T, etp, c, existing, kind, keys, nk, size);
+            }
+        }
+        return;
+    }
     loft_ref source = value, tmp = loft_ref_null();
     if (full && value.store_nr == c.store_nr) {
         loft_database(&tmp, size);
@@ -491,12 +515,7 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
     }
     loft_ref existing = loft_keyed_find(c, kind, size, keys, nk, key, n);
     if (existing.rec != 0) {
-        if (kind == LOFT_KEYED_HASH) loft_hash_remove(T, etp, c, existing, keys, nk, 0);
-        else if (kind == LOFT_KEYED_SORTED) loft_sorted_remove(c, existing, size);
-        else if (kind == LOFT_KEYED_INDEX) loft_ix_remove(T, etp, c, existing, keys, nk, 0);
-        else if (kind == LOFT_KEYED_SPATIAL || kind == LOFT_KEYED_TRIE)
-            loft_rx_remove_owned(T, etp, c, existing, keys, nk, kind == LOFT_KEYED_TRIE, 0);
-        else loft_ordered_remove(T, etp, c, existing, 0, 0);
+        loft_keyed_remove_at(T, etp, c, existing, kind, keys, nk, size);
     }
     loft_ref e = kind == LOFT_KEYED_SORTED ? loft_sorted_new(c, size)
                  : kind == LOFT_KEYED_HASH ? loft_hash_entry(c, size, T[etp].linked)
@@ -527,12 +546,7 @@ static loft_ref loft_keyed_place_begin(const loft_tdesc *T, uint16_t etp, loft_r
     uint32_t size = T[etp].size;
     loft_ref existing = loft_keyed_find(c, kind, size, keys, nk, sub, nsub);
     if (existing.rec != 0) {
-        if (kind == LOFT_KEYED_HASH) loft_hash_remove(T, etp, c, existing, keys, nk, 0);
-        else if (kind == LOFT_KEYED_SORTED) loft_sorted_remove(c, existing, size);
-        else if (kind == LOFT_KEYED_INDEX) loft_ix_remove(T, etp, c, existing, keys, nk, 0);
-        else if (kind == LOFT_KEYED_SPATIAL || kind == LOFT_KEYED_TRIE)
-            loft_rx_remove_owned(T, etp, c, existing, keys, nk, kind == LOFT_KEYED_TRIE, 0);
-        else loft_ordered_remove(T, etp, c, existing, 0, 0);
+        loft_keyed_remove_at(T, etp, c, existing, kind, keys, nk, size);
     }
     return kind == LOFT_KEYED_SORTED ? loft_sorted_new(c, size)
            : kind == LOFT_KEYED_HASH ? loft_hash_entry(c, size, T[etp].linked)

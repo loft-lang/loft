@@ -7250,7 +7250,8 @@ use a separate collection or add after the loop"
             // What the store does with a null, by slot (the warning's consequence clause):
             //   * a text, a plain enum or a POINTER field holds the null;
             //   * a keyed collection's element: absence under a key is a state the collection
-            //     has (`(Col-Remove)`), and `OpSetKeyed` skips a null value;
+            //     has, so a null value removes the key, as `c[k] = null` does (`(Col-Assign)`,
+            //     `(Col-Remove)`, loft#2470);
             //   * @C163 — a DENSE record or struct-enum slot has no null to hold, so the null is
             //     the slot type's default, as `e?` gives it (`(N-Default)`); a type with no
             //     default refuses the store, as it refuses `e?`.
@@ -7273,8 +7274,7 @@ use a separate collection or add after the loop"
             } else {
                 let consequence = if keyed {
                     Some(
-                        "when it is null the store does not happen, so the slot keeps the value \
-                         it had"
+                        "when it is null the key is removed, as `c[k] = null` removes it"
                             .to_string(),
                     )
                 } else if dense {
