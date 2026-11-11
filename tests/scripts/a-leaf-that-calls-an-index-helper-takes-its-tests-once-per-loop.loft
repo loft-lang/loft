@@ -1,3 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Version`'s callee clause: a leaf may call a leaf (hex_field's accessors call their
+// index helper).  The callee is walked inline — its parameters bound to the caller's
+// arguments, its record parameter to the caller's record — so its window test is decided
+// toward the access that follows in the caller and joins the caller's precondition; the C
+// writes the callee's own fast twin from that part of the caller's plan, and the caller's fast
+// twin calls it.  The accessors are hex_field's, verbatim.  Each cell answers what the
+// interpreter answers, hand-computed in its comment: a window nest (A), a box across every
+// edge (B, B2), one column past the right edge whose index wraps into the next row (W), a
+// heights window smaller (S) and larger (L) than the set's, and writes through both setters
+// with the count they keep (P).
+//
+// @falsified-at: d61342f70 — by hand: with the callee's tests dropped from the caller's
+//   precondition, B2 answers 158 for 138 on `--native-c` and under `-DLOFT_VERIFY` (the fast
+//   twin reads cells outside the window whose index still lies in the vector); the interpreter
+//   is untouched (a C rule).
+// CHANNEL: the asserts; the `-DLOFT_VERIFY` build checks each raw access's index too.
+// ARMED: none for the asserts; `LOFT_CC` a wrapper adding `-DLOFT_VERIFY` for the proofs.
+// WITNESS: each assert message prints the value it read.
+// HOLDS: boolean read and write through `hs_index`, float read and write through `hz_index`,
+// both helpers' early exit decided, the setter's count update kept on the fast path.
+
 struct HexSet { hs_q0: integer, hs_r0: integer, hs_w: integer, hs_h: integer, hs_cells: vector<boolean>, hs_count: integer }
 struct Heights { hz_q0: integer, hz_r0: integer, hz_w: integer, hz_h: integer, hz_z: vector<float> }
 
