@@ -30,6 +30,7 @@ import argparse
 import concurrent.futures
 import os
 import re
+import resource
 import subprocess
 import sys
 
@@ -57,6 +58,13 @@ def cells_of(suite, chapter):
     return sorted(out)
 
 
+def cap_memory():
+    """Each run gets 8 GB of address space: a runaway analysis fails its own run instead of
+    pushing the machine into the out-of-memory killer."""
+    limit = 8 * 1024 ** 3
+    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+
+
 def run(loft, cell, switch, timeout):
     env = dict(os.environ)
     env.update(
@@ -77,7 +85,8 @@ def run(loft, cell, switch, timeout):
         env[switch] = "1"
     try:
         p = subprocess.run([loft, "--tests", cell], env=env, capture_output=True, text=True,
-                           errors="replace", timeout=timeout + 10, cwd=os.path.dirname(cell))
+                           errors="replace", timeout=timeout + 10, cwd=os.path.dirname(cell),
+                           preexec_fn=cap_memory)
         out = p.stdout + p.stderr
     except subprocess.TimeoutExpired:
         return cell, switch, "timeout", 0, ""

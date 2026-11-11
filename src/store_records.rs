@@ -181,6 +181,9 @@ enum Origin {
     Mint,
     /// A call to a function whose answer is a store of its own.
     Call(u32),
+    /// An assignment the code generator lowers as a copy into a store of the variable's
+    /// own (`bind_lowering`).
+    Copy,
 }
 
 /// A function's answer, as its callers see it.
@@ -281,6 +284,18 @@ struct Run<'a> {
     loops: Vec<(Option<State>, Option<State>)>,
     /// The parameter variables, in order.
     params: Vec<u16>,
+    /// The `Set` nodes (by address) that are their variable's FIRST assignment in emission
+    /// order, which is the order the code generator claims slots in.
+    first_sets: BTreeSet<usize>,
+    /// Variables a first-assignment MOVE made never-free during code generation: the code
+    /// generator drops their later `OpFreeRef`.
+    moved_away: BTreeSet<u16>,
+    /// Each reassignment's lowering (by `Set` address), decided once per run.
+    rebinds: BTreeMap<usize, crate::bind_lowering::ReBind>,
+    /// The free nodes after which the code generator resets their variable to null: a
+    /// variable an EARLIER reassignment freed before its build (`owned_reassigned`), or a
+    /// lift temporary (`Codegen::generate_call`, @PLN118, loft#2385).
+    resets: BTreeSet<usize>,
 }
 
 impl Run<'_> {
@@ -546,11 +561,7 @@ impl Run<'_> {
                 let val = Self::read(&st, *x);
                 Some((st, val))
             }
-            Value::Set(x, val) => {
-                let (mut s, value) = self.eval(val, st)?;
-                self.bind(&mut s, *x, &value);
-                Some((s, Val::null()))
-            }
+            Value::Set(x, val) => self.assign(v, *x, val, st),
             Value::If(cond, then_v, else_v) => {
                 let (s, _) = self.eval(cond, st)?;
                 let (then_st, else_st) = self.decide(cond, s);
@@ -615,6 +626,171 @@ impl Run<'_> {
             }
             _ => Some((st, Val::null())),
         }
+    }
+
+    /// A fresh store at this assignment, the variable's own: a copy the code generator makes.
+    fn copied(&mut self, st: &mut State, node: &Value) -> Val {
+        let site = self.site(node, Origin::Copy);
+        let k = Self::fresh(st, site);
+        Val {
+            pts: [Pt::Store(k)].into(),
+            corr: [k].into(),
+        }
+    }
+
+    /// The stores a value owns outright (correlated fresh stores): consumed by a copy or an
+    /// adopt into the destination's own store.
+    fn consume(st: &mut State, value: &Val) {
+        for k in &value.corr {
+            if let Some(info) = st.stores.get_mut(k)
+                && info.status & LIVE != 0
+            {
+                info.status = (info.status & !LIVE) | HANDED;
+                info.live.clear();
+            }
+        }
+    }
+
+    /// `x = val`, as the code generator lowers it: the arm `bind_lowering` decides, with its
+    /// store meaning — a bind, a copy into a store of `x`'s own, a copy-or-adopt, a move —
+    /// and, for a reassignment, the free of the store `x` displaces.
+    fn assign(&mut self, node: &Value, x: u16, val: &Value, st: State) -> Option<(State, Val)> {
+        use crate::bind_lowering::FirstArm;
+        let data = self.data;
+        let function = &data.def(self.d_nr).variables;
+        if self
+            .first_sets
+            .contains(&(std::ptr::from_ref(node) as usize))
+        {
+            let arm = crate::bind_lowering::first_arm(data, self.d_nr, function, x, val);
+            if let FirstArm::RecordVarCopy { src, .. } = arm
+                && function.uses(src) == 1
+                && function.proxy_says_owned(src)
+                && !function.is_argument(src)
+                && !function.is_captured(src)
+            {
+                // The move: `x` takes `src`'s store, and `src`'s free is dropped.
+                self.moved_away.insert(src);
+                let value = Self::read(&st, src);
+                let mut s = st;
+                self.bind(&mut s, x, &value);
+                return Some((s, Val::null()));
+            }
+            let (mut s, value) = self.eval(val, st)?;
+            let bound = match arm {
+                FirstArm::Text
+                | FirstArm::FnRef
+                | FirstArm::RefVar
+                | FirstArm::RefNull
+                | FirstArm::IterNull
+                | FirstArm::NullableVectorNull
+                | FirstArm::KeyedNull
+                | FirstArm::TupleNull => Val::null(),
+                FirstArm::VectorNull => {
+                    if !function.is_skip_free(x) && function.tp(x).depend().is_empty() {
+                        self.copied(&mut s, node)
+                    } else {
+                        Val::null()
+                    }
+                }
+                FirstArm::RecordCopyCall { .. }
+                | FirstArm::RecordVarCopy { .. }
+                | FirstArm::ElementCopy { .. }
+                | FirstArm::TupleElementCopy { .. } => self.copied(&mut s, node),
+                FirstArm::CallCopy { .. } | FirstArm::NullableCallCopy { .. } => {
+                    if crate::use_analysis::call_return_frees_source(data, self.d_nr, val) {
+                        Self::consume(&mut s, &value);
+                    }
+                    self.copied(&mut s, node)
+                }
+                FirstArm::CallRefJoin { .. }
+                | FirstArm::NullableCallJoin { .. }
+                | FirstArm::CallJoin { .. }
+                | FirstArm::OpaqueCallRef { .. } => {
+                    Self::consume(&mut s, &value);
+                    self.copied(&mut s, node)
+                }
+                FirstArm::CallAdopt | FirstArm::Plain => value,
+            };
+            self.bind(&mut s, x, &bound);
+            return Some((s, Val::null()));
+        }
+        self.reassign(node, x, val, st)
+    }
+
+    /// `x = val` where `x` already holds a slot: the displaced store's free, then the arm.
+    fn reassign(&mut self, node: &Value, x: u16, val: &Value, st: State) -> Option<(State, Val)> {
+        use crate::bind_lowering::{DisplacedFree, ReArm};
+        let data = self.data;
+        let function = &data.def(self.d_nr).variables;
+        let rb = match self.rebinds.get(&(std::ptr::from_ref(node) as usize)) {
+            Some(rb) => *rb,
+            None => crate::bind_lowering::re_bind(data, self.d_nr, function, x, val),
+        };
+        let mut st = st;
+        if let DisplacedFree::Pre { witness } = rb.free {
+            let keep = witness
+                .into_iter()
+                .chain(rb.entry_w)
+                .any(|w| Self::pts(&st, w) == Self::pts(&st, x));
+            if !keep {
+                self.end(&mut st, x, "the displaced free", true);
+            }
+        }
+        let old = Self::pts(&st, x);
+        let (mut s, value) = self.eval(val, st)?;
+        let bound = match rb.arm {
+            ReArm::KeyedNull => Self::read(&s, x),
+            ReArm::Join { .. } | ReArm::OpaqueCallRef { .. } => {
+                Self::consume(&mut s, &value);
+                self.copied(&mut s, node)
+            }
+            ReArm::CallCopy { .. } => {
+                if crate::use_analysis::call_return_frees_source(data, self.d_nr, val) {
+                    Self::consume(&mut s, &value);
+                }
+                // A stashed or witnessed-and-read local re-initialises its own store in
+                // place after the call; anything else starts from a fresh one.
+                let in_place = rb.free == DisplacedFree::Stash || (rb.witnessed && rb.rhs_reads_v);
+                if in_place && Self::stores_of(&old).len() == 1 && old.len() == 1 {
+                    Val {
+                        pts: old.clone(),
+                        corr: Self::stores_of(&old).into_iter().collect(),
+                    }
+                } else {
+                    self.copied(&mut s, node)
+                }
+            }
+            ReArm::VarCopy { .. } | ReArm::ElementCopy { .. } => self.copied(&mut s, node),
+            ReArm::Plain => value,
+        };
+        if rb.free == DisplacedFree::Stash && bound.pts != old {
+            // The stashed old reference, freed unless the new value names the same store.
+            let tmp = u16::MAX;
+            s.vars.insert(tmp, old.clone());
+            for k in Self::stores_of(&old) {
+                if let Some(info) = s.stores.get_mut(&k)
+                    && info.live.contains(&x)
+                {
+                    info.live.insert(tmp);
+                }
+            }
+            self.bind(&mut s, x, &bound);
+            if !Self::stores_of(&old)
+                .iter()
+                .any(|k| bound.pts.contains(&Pt::Store(*k)))
+            {
+                self.end(&mut s, tmp, "the stashed free", false);
+            }
+            s.vars.remove(&tmp);
+            for info in s.stores.values_mut() {
+                info.live.remove(&tmp);
+                info.ended.remove(&tmp);
+            }
+            return Some((s, Val::null()));
+        }
+        self.bind(&mut s, x, &bound);
+        Some((s, Val::null()))
     }
 
     /// The states the two arms of an `if` on `c` start from: a null test of a variable
@@ -749,16 +925,23 @@ impl Run<'_> {
         })
     }
 
-    fn call(&mut self, node: &Value, d: u32, args: &[Value], st: State) -> Option<(State, Val)> {
+    /// A free op: its own argument is not a use.
+    fn free_op(&mut self, d: u32, args: &[Value], st: State) -> State {
         let ops = self.ops;
-        // A free: its own argument is not a use.
         if ops.unconditional.contains(&d) || d == ops.text_free {
             let name = self.data.def(d).name().to_string();
             let mut st = st;
             if let Some(x) = Self::first_var(args, 0) {
-                self.end(&mut st, x, &name, true);
+                // The code generator emits no `OpFreeRef` of a never-free variable
+                // (`Codegen::generate_call`, S34), including one a move made never-free.
+                let dropped = name == "OpFreeRef"
+                    && (self.data.def(self.d_nr).variables.is_skip_free(x)
+                        || self.moved_away.contains(&x));
+                if !dropped {
+                    self.end(&mut st, x, &name, true);
+                }
             }
-            return Some((st, Val::null()));
+            return st;
         }
         if ops.conditional.contains(&d) {
             // A free that is a no-op where the freed variable and its witness name one store.
@@ -788,6 +971,25 @@ impl Run<'_> {
                         self.end(&mut st, x, &name, false);
                     }
                 }
+            }
+            return st;
+        }
+        st
+    }
+
+    fn call(&mut self, node: &Value, d: u32, args: &[Value], st: State) -> Option<(State, Val)> {
+        let ops = self.ops;
+        if ops.unconditional.contains(&d) || d == ops.text_free || ops.conditional.contains(&d) {
+            let mut st = self.free_op(d, args, st);
+            if self.resets.contains(&(std::ptr::from_ref(node) as usize))
+                && let Some(x) = Self::first_var(args, 0)
+            {
+                // The free's variable is reset to null right after it.
+                for info in st.stores.values_mut() {
+                    info.live.remove(&x);
+                    info.ended.remove(&x);
+                }
+                st.vars.remove(&x);
             }
             return Some((st, Val::null()));
         }
@@ -883,8 +1085,43 @@ fn run_fn<'a>(
         steps: 0,
         loops: Vec::new(),
         params,
+        first_sets: BTreeSet::new(),
+        moved_away: BTreeSet::new(),
+        rebinds: BTreeMap::new(),
+        resets: BTreeSet::new(),
     };
     let body = def.code.clone();
+    // One pass in emission order: which assignments are first, each reassignment's lowering,
+    // and the frees the code generator follows with a reset to null.
+    let mut seen: BTreeSet<u16> = run.params.iter().copied().collect();
+    let mut owned_reassigned: BTreeSet<u16> = BTreeSet::new();
+    let unconditional = data.def_nr("OpFreeRef");
+    let if_distinct = data.def_nr("OpFreeRefIfDistinct");
+    let vars = &def.variables;
+    body.walk(&mut |n| {
+        let at = std::ptr::from_ref(n) as usize;
+        match n {
+            Value::Set(x, val) => {
+                if seen.insert(*x) {
+                    run.first_sets.insert(at);
+                } else {
+                    let rb = crate::bind_lowering::re_bind(data, d_nr, vars, *x, val);
+                    if matches!(rb.free, crate::bind_lowering::DisplacedFree::Pre { .. }) {
+                        owned_reassigned.insert(*x);
+                    }
+                    run.rebinds.insert(at, rb);
+                }
+            }
+            Value::Call(op, args)
+                if (*op == unconditional || *op == if_distinct)
+                    && let Some(Value::Var(x)) = args.first().map(Value::unspan)
+                    && (owned_reassigned.contains(x) || vars.is_lift_temp(*x)) =>
+            {
+                run.resets.insert(at);
+            }
+            _ => {}
+        }
+    });
     if let Some((mut s, value)) = run.eval(&body, st) {
         run.answer = run.answer.join(run.summary_of(&value.pts));
         Run::hand_on(&mut s, &value);
@@ -1094,6 +1331,7 @@ pub fn observe(data: &Data) {
 fn site_label(run: &Run, site: u32) -> String {
     match run.sites.get(site as usize).and_then(|s| s.origin.as_ref()) {
         Some(Origin::Mint) => format!("[store #{site}, minted] "),
+        Some(Origin::Copy) => format!("[store #{site}, copied] "),
         Some(Origin::Call(d)) => {
             format!("[store #{site}, answered by {}] ", run.data.def(*d).name())
         }
