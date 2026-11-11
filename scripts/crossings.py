@@ -12,9 +12,10 @@ says how a row is earned).  `rule_tags.py pairs` reads it through `verified_pair
 those pairs out of its queue, so a crossing that was built, hand-computed and found to hold on
 both backends is not built again by the next walk.
 
-A row counts when its verdict is `holds` or `fixed loft#N`: the composition was exercised and
-answers what the rules say.  A row whose verdict is anything else (`open loft#N`) is listed but
-NOT skipped — the pair still owes work.
+A row counts when its verdict is `holds` or `fixed loft#N` (the composition was exercised and
+answers what the rules say) or `disjoint — <why>` (no program can make both rules act at once,
+and the row says which decline keeps them apart).  A row whose verdict is anything else
+(`open loft#N`) is listed but NOT skipped — the pair still owes work.
 """
 
 import os
@@ -24,8 +25,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER = os.path.join(ROOT, "doc", "claude", "RULE_CROSSINGS-history.md")
 HEADER = ["Rule A", "Rule B", "Verdict", "Validated", "How", "Axes crossed", "Guard"]
-SKIP_VERDICT = re.compile(r"^(holds|fixed loft#\d+)\b")
-ANY_VERDICT = re.compile(r"^(holds|fixed loft#\d+|open loft#\d+)\b")
+SKIP_VERDICT = re.compile(r"^(holds|fixed loft#\d+|disjoint\b)")
+ANY_VERDICT = re.compile(r"^(holds|fixed loft#\d+|open loft#\d+|disjoint\b)")
+# A `disjoint` verdict must say WHY: the decline that keeps the two rules apart.
+DISJOINT_REASON = re.compile(r"^disjoint\s+[—-]+\s+\S")
 
 
 def _tag(cell):
@@ -78,9 +81,15 @@ def main():
                 if t not in rules:
                     print(f"crossings: @FR-{t} is not a defined rule", file=sys.stderr)
                     bad += 1
-            if not ANY_VERDICT.match(r.get("Verdict", "")):
+            verdict = r.get("Verdict", "")
+            if not ANY_VERDICT.match(verdict):
                 print(f"crossings: @FR-{r['A']} x @FR-{r['B']}: verdict "
-                      f"'{r.get('Verdict', '')}' is not holds / fixed loft#N / open loft#N",
+                      f"'{verdict}' is not holds / fixed loft#N / open loft#N / disjoint",
+                      file=sys.stderr)
+                bad += 1
+            elif verdict.startswith("disjoint") and not DISJOINT_REASON.match(verdict):
+                print(f"crossings: @FR-{r['A']} x @FR-{r['B']}: a disjoint verdict names "
+                      f"the decline that keeps the rules apart (`disjoint — <why>`)",
                       file=sys.stderr)
                 bad += 1
         return 1 if bad else 0

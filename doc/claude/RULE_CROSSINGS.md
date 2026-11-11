@@ -29,7 +29,11 @@ redo it:
 
 1. **The pair** — two `@FR-` tags, the rule the cells were written against first.
 2. **The verdict** — `holds` (every cell answered what the rules say), `fixed loft#N` (a
-   defect was found and fixed, with a cell), or `open loft#N` (found, not fixed yet).
+   defect was found and fixed, with a cell), `open loft#N` (found, not fixed yet), or
+   `disjoint — <why>`: no program can make both rules act on one site, and the verdict names
+   the decline in the code that keeps them apart.  A `disjoint` row's **How** gives the probes
+   that reached each rule and the point where the other declined, and its **Guard** is the
+   cell that would fail if that decline moved; `crossings.py check` refuses one without a why.
 3. **Validated** — the date and the `main` sha the probes ran on.
 4. **How** — the cells, the backends (the interpreter and `--native-c` at least,
    CLAUDE.md § Debugging policy), and the channel each cell reads: value, length, leak.
@@ -39,7 +43,9 @@ redo it:
    applies (element type, source position, statement context, nullability).  This is the
    part that tells the next walker what was NOT tried: a pair verified only at scalar
    elements is not verified at records.
-6. **Guard** — the suite cell that keeps the crossing true.  A passing probe that is not
+6. **Guard** — the suite cell that keeps the crossing true.  A crossing no loft program can
+   observe (allocator layout in a file only the runtime opens, an image written by another
+   release) is guarded by the Rust test that does, named with its path and test function.  A passing probe that is not
    graduated into a cell is remembered only by this row, and the row cannot fail when the
    code regresses: graduate the probes, then write the row.
 

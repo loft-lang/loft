@@ -8054,6 +8054,9 @@ mod tests {
     }
 
     /// A store file with freed blocks in it, written and flushed: the image a cache bundle is.
+    /// Every other record is freed, so the interior holds free blocks with their footers
+    /// (`@FR-H-FreeFooter`), and the LAST record is freed too, so the store ends in a free block
+    /// (`@FR-H-Wilderness`): the read surface must build neither.
     #[cfg(feature = "mmap")]
     fn image_with_freed_blocks(tag: &str) -> (std::path::PathBuf, Vec<u8>) {
         let path = std::env::temp_dir().join(format!(
@@ -8067,6 +8070,7 @@ mod tests {
             for r in recs.iter().step_by(2) {
                 s.delete(*r);
             }
+            s.delete(recs[23]);
         }
         let bytes = std::fs::read(&path).unwrap();
         (path, bytes)
