@@ -51,38 +51,66 @@ pub(super) fn seeds(ops: &[Value], i: usize) -> Vec<(u16, i64)> {
     out
 }
 
+/// One range end [`range_lens`] found: the end variable, the vector it is the length of,
+/// whether it came through a length local, and the local it was copied from.
+pub(super) struct RangeLen {
+    pub end: u16,
+    pub vec: Value,
+    pub local: bool,
+    pub via: Option<u16>,
+}
+
 /// The range ends the (at most two) statements before `ops[i]` set to a vector's length
 /// (`end = len(v)`, or `end = n` for a length local `n`, marked `true`), when `ops[i]` is a
-/// loop: `@FR-R-Base`'s counter clause reads them.
+/// loop, each with the local `n` the end was copied from (`None` for `end = len(v)`):
+/// `@FR-R-Base`'s counter clause reads them, and the loop body may not assign that `n`.
 pub(super) fn range_lens(
     data: &crate::data::Data,
     ops: &[Value],
     i: usize,
     alias: Option<&(u16, Value)>,
     locals: &[(u16, u16)],
-) -> Vec<(u16, Value, bool)> {
+) -> Vec<RangeLen> {
     if !matches!(ops[i].unspan(), Value::Loop(_)) {
         return Vec::new();
     }
     let mut out = Vec::new();
     for op in ops[i.saturating_sub(2)..i].iter().rev() {
         if let Some((end, v)) = len_bind(data, op) {
-            out.push((end, v, false));
-        } else if let Value::Set(end, x) = op.unspan()
-            && let (Value::Var(n), Some((an, v))) = (x.unspan(), alias)
-            && n == an
-        {
-            // `end = n` where the statement before the `for` block was `n = len(v)`; the
-            // loop body may not assign `n` (`counters_in_range` checks).
-            out.push((*end, v.clone(), false));
+            out.push(RangeLen {
+                end,
+                vec: v,
+                local: false,
+                via: None,
+            });
         } else if let Value::Set(end, x) = op.unspan()
             && let Value::Var(n) = x.unspan()
         {
+            // `end = n` where the statement before the `for` block was `n = len(v)`; the
+            // loop body may not assign `n` (`counters_in_range` checks).
+            if let Some((an, v)) = alias
+                && n == an
+            {
+                out.push(RangeLen {
+                    end: *end,
+                    vec: v.clone(),
+                    local: false,
+                    via: Some(*n),
+                });
+            }
             // `end = n` where `n` holds `len(v)` for the rest of the function (`length_locals`):
             // assigned once, and nothing that can run after it writes `v` — one entry for each
-            // vector it is the length of.
+            // vector it is the length of, its lockstep twins among them, beside the one above.
             for (_, v) in locals.iter().filter(|(m, _)| m == n) {
-                out.push((*end, Value::Var(*v), true));
+                let vec = Value::Var(*v);
+                if !out.iter().any(|r| r.end == *end && r.vec == vec) {
+                    out.push(RangeLen {
+                        end: *end,
+                        vec,
+                        local: true,
+                        via: Some(*n),
+                    });
+                }
             }
         }
     }

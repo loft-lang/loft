@@ -295,7 +295,7 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-Base`'s counter clause: the vector whose length the statements just before a
     /// loop gave its range end (`end = len(v)`), and per enclosing such loop the counters
     /// proven inside the held vector (counter, header).
-    range_lens: Vec<(u16, Value, bool)>,
+    range_lens: Vec<peel::RangeLen>,
     in_range: Vec<(u16, String)>,
     /// `n = len(v)` as the statement right before the `for` block being written (`v` by `n`).
     len_alias: Option<(u16, Value)>,
@@ -2988,6 +2988,16 @@ impl<'a> FnWriter<'a> {
     }
 
     fn stmts_in(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
+        self.stmts_upto(ops, ops.len(), ind)
+    }
+
+    /// `ops[..end]`, the statements of a list whose remainder `ops[end..]` is written by the
+    /// caller (a value block's value and the frees after it).  A rewrite that takes a run of
+    /// statements sees only `ops[..end]`, so it never takes the value; what a statement binds
+    /// for the rest of the block — a held record address, a view header — looks over all of
+    /// `ops`, since it stays bound while the value is written.
+    fn stmts_upto(&mut self, all: &[Value], end: usize, ind: usize) -> Result<(), String> {
+        let ops = &all[..end];
         let mut i = 0;
         // The end of the push run a reservation was made for (`reserve_push_run`), and whether
         // a header frame is open for it.
@@ -3049,8 +3059,8 @@ impl<'a> FnWriter<'a> {
                     .and_then(|prev| peel::len_bind(self.cx.data, prev));
             }
             self.stmt(&ops[i], ind)?;
-            self.bind_record_ptr(ops, i, ind);
-            self.bind_view_header(ops, i, ind);
+            self.bind_record_ptr(all, i, ind);
+            self.bind_view_header(all, i, ind);
             i += 1;
         }
         if run_head {
@@ -3497,15 +3507,11 @@ impl<'a> FnWriter<'a> {
         };
         // Every vector the end is the length of: a length local can be the length of a
         // vector's lockstep twins too (`length_locals::lockstep_twins`).
-        let lens: Vec<(Value, bool)> = self
+        let held: Vec<(String, bool, Option<u16>)> = self
             .range_lens
             .iter()
-            .filter(|(e, _, _)| e == end)
-            .map(|(_, v, l)| (v.clone(), *l))
-            .collect();
-        let held: Vec<_> = lens
-            .iter()
-            .filter_map(|(vec, local)| self.held_vector(vec).map(|h| (h, *local)))
+            .filter(|r| r.end == *end)
+            .filter_map(|r| self.held_vector(&r.vec).map(|h| (h, r.local, r.via)))
             .collect();
         if held.is_empty() {
             return;
@@ -3519,26 +3525,27 @@ impl<'a> FnWriter<'a> {
         {
             return;
         }
-        // The counters, and a length bound just before the `for` block, which the body may not
-        // move either.
-        let counters = [
-            Some(rc.index),
-            Some(rc.loop_var),
-            rc.next,
-            self.len_alias.as_ref().map(|(n, _)| *n),
-        ];
-        let mut assigned = false;
+        // The body may move none of the counters, nor the local a range end was copied from
+        // (`end = n` after `n = len(v)`): a local the end did not come from may change freely.
+        let mut assigned = std::collections::HashSet::new();
         for op in &b.operators[1..] {
             op.walk(&mut |n| {
                 if let Value::Set(x, _) = n {
-                    assigned |= counters.contains(&Some(*x));
+                    assigned.insert(*x);
                 }
             });
         }
-        if assigned {
+        if [Some(rc.index), Some(rc.loop_var), rc.next]
+            .iter()
+            .flatten()
+            .any(|c| assigned.contains(c))
+        {
             return;
         }
-        for (h, local) in held {
+        for (h, local, via) in held {
+            if via.is_some_and(|n| assigned.contains(&n)) {
+                continue;
+            }
             if local {
                 crate::rewrite_census::fired("R-Base/length-local", 1);
             }
@@ -6878,36 +6885,22 @@ impl<'a> FnWriter<'a> {
                 !matches!(o.unspan(), Value::Line(_) | Value::Set(..)) && !self.is_free(o)
             })
             .ok_or("a value block with no value")?;
-        // A view the block binds before its value serves the rest of it (`@FR-R-View`), the
-        // value included; its frame closes with the block.
+        // The statements before the value are a statement list like any other, walked by the
+        // one list walker (`stmts_in`), so every per-list fact holds there too: a range end's
+        // length, the peel seeds, the held record pointers, the push runs.  What the list binds
+        // — a view (`@FR-R-View`), a record pointer, a grid bind — serves the value as well, so
+        // it closes after the value, with the block (`stmts` closes it at the list's end).
         let frames = self.headers.len();
+        let held = self.rec_ptrs.len();
+        let binds = self.grid_binds.len();
         let r = (|| {
-            let mut run_end = 0;
-            let mut run_head = false;
-            for i in 0..at {
-                if run_head && i >= run_end {
-                    self.push_heads.pop();
-                    run_head = false;
-                }
-                if i >= run_end
-                    && let Some((end, head)) = self.reserve_push_run(&ops[..at], i, ind)?
-                {
-                    run_end = end;
-                    run_head = head;
-                }
-                if self.clear_before_mint(&ops[..at], i) {
-                    continue;
-                }
-                self.stmt(&ops[i], ind)?;
-                self.bind_view_header(ops, i, ind);
-            }
-            if run_head {
-                self.push_heads.pop();
-            }
+            self.stmts_upto(ops, at, ind)?;
             self.assign(&ops[at], target, c, ind)?;
             self.flush(ind);
             ops[at + 1..].iter().try_for_each(|o| self.stmt(o, ind))
         })();
+        self.grid_binds.truncate(binds);
+        self.rec_ptrs.truncate(held);
         self.headers.truncate(frames.min(self.headers.len()));
         r
     }

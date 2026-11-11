@@ -195,6 +195,55 @@ Each part is a separate commit, the matrix before each: the wrap shapes (`c` = 0
 from `len(v)` and a length local; the loop exclusive and inclusive; a counter not from 0; a
 negative `c`), and the alias shapes above.
 
+## One list walker for a value block (found building the wrapped counter)
+
+A value block's statements before its value — the top level of every function that returns a
+value — were written by `FnWriter::assign_seq`'s own loop: a copy of `stmts_in` that kept the
+push-run reservation, the clear-before-mint and the view header, and dropped the rest.  So
+none of the per-list facts held there: the range end's length (`range_lens`, the length alias),
+the peel seeds, the record pointers, the grid binds, the construction, rotate and destination
+runs.  `polygon_crossings`' counter read paid `_nn` for that alone.  One rule in two places in
+one backend; now `assign_seq` writes `ops[..at]` through `stmts_upto`, the one walker: a
+rewrite that takes a run of statements sees only `ops[..at]`, so it never takes the value,
+and what a statement binds for the rest of the block (a record address, a view header) looks
+over the whole list, the value included, since it stays bound while the value is written; it
+closes after the value.
+
+Two over-strict conditions this walker exposed, both fixed with it:
+- `counters_in_range` forbade the body to assign the length alias even when the range end was
+  `len(v)` itself, not the alias (`acc = len(vals); for v in vals { acc = … }`, crawler
+  `c_binary_read`).  A range end now carries the local it was copied from (`RangeLen::via`),
+  and only that local must stay unassigned.
+- `peel::range_lens` took the alias entry OR the length-local entries: when the alias won, a
+  lockstep twin's entry was never made.  Both are made now, a vector once.
+
+Census against the tip before it: `R-RecPtr` +103 sites over 14 programs (glb 21 → 76, stage
+13 → 37), `R-Base/counter` +3 (each with its `R-Range/index` −1: the same read made test-free),
+no `R-View` change.  Two `R-Inline` sites lost (gridmesh `idx_at`, stage `view_at`): the record
+address bound for their one field read is a statement more, past the small-function bound.
+Sweep: 2601 match, the one known strict differ, 0 sanitizer.
+
+Timed (2026-11-11, ship C, benches 17 and 18 and the 14 library benches, two rounds per
+compiler, min of 11 samples, the old walk kept behind a temporary switch for the comparison;
+every hash equal):
+
+| routine | gcc | clang |
+|---|--:|--:|
+| stage `pack_instances` | −22.1 % | −8.6 % |
+| stage `compose` | −4.4 % | −20.1 % |
+| mesh3d `sphere` | −9.3 % | −11.1 % |
+| stage `draw_list` | −3.5 % | −7.3 % |
+| graphics `fill_polygon` | −4.5 % | ±2 % |
+| 22 more on gcc, 6 more on clang | −2 … −5 % | −2 … −4 % |
+
+The rises (up to +6.5 %: hex_field `stencil_rotate` / `doc_read` / `edgeset_count`, zttext
+`locate`, hex_roof `roof_match`, drawing `parse`) read as layout: in hex_field and zttext the
+C of each timed routine and its callees is byte-identical between the two (what changed there
+is off the timed path: a file test, the document builders); on `roof_match`'s and `parse`'s
+paths (clang only) the one change is a record address bound once per call for straight-line
+field reads beside calls (`roof_ridge_fit`, `parse_background`), no loop work.  The gridmesh
+`idx_at` inline loss is off every timed path (its one caller is `gather_halo`).
+
 ## The stepped counter, priced (2026-11-11)
 
 Not built: neither site it was meant for pays.
