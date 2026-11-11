@@ -2241,6 +2241,22 @@ impl Scopes<'_> {
                 WitnessSet::Other => witness_ops.push(guarded_release),
             }
         }
+        // `@FR-B-View` — a local bound ONCE to a projection of a lifted call result
+        // (`own = mk(n).bounds`: `__lift_1 = mk(n); own = OpGetField(__lift_1, …)`) views the
+        // lift's store, which the lift releases.  The parser typed it before the lift existed,
+        // as an owner, and both freed the store (`@FR-H-FreeTwice`).  A local bound again keeps
+        // its type: another bind may own.  `LOFT_NO_LIFT_PROJECTION_VIEW=1` keeps it owning.
+        if !self.multi_assigned.contains(&ov)
+            && !lift_projection_view_off()
+            && function.tp(v).depend().is_empty()
+            && crate::data::is_dbref(function.tp(v).base())
+            && let Some(root) = crate::use_analysis::projection_root(&set_value, data)
+            && root != v
+            && root < function.count()
+            && function.is_lift_temp(root)
+        {
+            function.depend(v, root);
+        }
         if prefix.is_empty()
             && ls.is_empty()
             && witness_update.is_none()
@@ -2460,4 +2476,11 @@ fn every_arm_tail_is_var(value: &Value) -> bool {
         Value::Var(_) => true,
         _ => false,
     }
+}
+
+/// `LOFT_NO_LIFT_PROJECTION_VIEW=1` (STORE_RECORDS.md § The checks): a local bound once to a
+/// projection of a lifted call result keeps owning it — the re-free the store records must
+/// then report.
+fn lift_projection_view_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_LIFT_PROJECTION_VIEW").is_some())
 }
