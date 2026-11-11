@@ -40,7 +40,10 @@ FAULTS = [
     ("leak", re.compile(r"store\(s\) not freed at exit|stores not freed at program exit")),
     # A read through a freed store: named by strict stores, or caught by the poisoned
     # record number (`LOFT_POISON` fills a freed record, so its reference reads as corrupt).
-    ("uaf", re.compile(r"USE AFTER FREE|use-after-free \(LOFT_UAF\)|the reference is corrupt")),
+    # The strict child-record check (`Stores::ref_from_child_rec`) is the same fault reached
+    # through a child's number: under `LOFT_POISON` it can fire before any access report.
+    ("uaf", re.compile(r"USE AFTER FREE|use-after-free \(LOFT_UAF\)|the reference is corrupt"
+                       r"|strict stores: the child-record field")),
     ("wrong-free", re.compile(r"loft: BUG \(#(?:306|405)\)")),
     # A free of an already-freed store (`LOFT_DOUBLE_FREE`'s census): harmless only while
     # nothing takes the slot in between, so the compiler removes it (STORE_RECORDS.md).

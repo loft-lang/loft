@@ -3284,6 +3284,24 @@ pub fn temp_null_reset_frees() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TEMP_NULL_RESET_FREES"))
 }
 
+/// `LOFT_HOST_LETGO_FREES=1` — `(R-HostStore)`'s result let-go after an adoption is a plain
+/// `= null` again (`host_result::adopt_and_release`), which frees the host store: the use
+/// after end the store records must then report.
+#[must_use]
+pub fn host_letgo_frees() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_HOST_LETGO_FREES"))
+}
+
+/// `LOFT_LINK_PARAM_RELEASES=1` — a whole write through a link to a plain parameter releases
+/// what it displaces again (`Function::link_write_releases`): the wrong end, a free of the
+/// caller's store, the store records must then report.
+#[must_use]
+pub fn link_param_releases() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_LINK_PARAM_RELEASES"))
+}
+
 /// `LOFT_NO_LOOP_CAPTURE_GROUP=1` — two closure records built over a capture the loop
 /// re-assigns are never grouped by the store they adopt (`capture_adoption`), so each owns it
 /// and both cascades free it.

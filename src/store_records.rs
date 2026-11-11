@@ -961,10 +961,129 @@ impl Run<'_> {
     }
 
     /// `x = val` where `x` already holds a slot: the displaced store's free, then the arm.
+    /// The variable the `&` link `x` was installed on (`x = OpCreateStack(t)`), when every
+    /// install of `x` names that one variable; `None` for a link to a field or an element, or
+    /// one re-pointed between variables.
+    fn link_install(&self, x: u16) -> Option<u16> {
+        let data = self.data;
+        // A link to a store-backed kind: a scalar or text link holds no store to release.
+        let crate::data::Type::RefVar(inner) = data.def(self.d_nr).variables.tp(x).base() else {
+            return None;
+        };
+        if !(matches!(
+            inner.base(),
+            crate::data::Type::Vector(..)
+                | crate::data::Type::Reference(..)
+                | crate::data::Type::Enum(_, true, _)
+        ) || crate::data::is_keyed(inner.base()))
+        {
+            return None;
+        }
+        let mut target: Option<u16> = None;
+        let mut other = false;
+        fn walk(node: &Value, link: u16, data: &Data, target: &mut Option<u16>, other: &mut bool) {
+            if let Value::Set(set, rhs) = node
+                && *set == link
+            {
+                match rhs.unspan() {
+                    Value::Call(op, args) if data.def(*op).name() == "OpCreateStack" => {
+                        match args.first().map(Value::unspan) {
+                            Some(Value::Var(var)) if target.is_none_or(|p| p == *var) => {
+                                *target = Some(*var);
+                            }
+                            _ => *other = true,
+                        }
+                    }
+                    // A re-point to another place (`p = &v[i]`, `p = &o.f`, `p = q`).
+                    Value::Call(op, _)
+                        if matches!(
+                            data.def(*op).name(),
+                            "OpVarRef" | "OpGetField" | "OpGetVector" | "OpVectorRef"
+                        ) =>
+                    {
+                        *other = true;
+                    }
+                    _ => {}
+                }
+            }
+            node.for_each_child(&mut |c| walk(c, link, data, target, other));
+        }
+        walk(&data.def(self.d_nr).code, x, data, &mut target, &mut other);
+        if other { None } else { target }
+    }
+
+    /// A whole write `x = val` THROUGH the link `x` to the variable `t` (`@FR-B-Ref-Write`):
+    /// the value lands in `t`, and the code generator releases the store `t` displaced unless
+    /// the new value lives in it — the slot move's write-back (`OpMoveSlotRef`) or the
+    /// stash / install / `OpFreeRefIfDistinct` — but never through a link to a plain parameter
+    /// (`Function::link_write_releases`, `@FR-F-ParamRebind`).  A read of `x` in `val` reads
+    /// `t`.  A child read (`x = &x.next`) stays in `t`'s store when the child is present and
+    /// leaves `t` null when it is absent, so the release is the absent path's alone.
+    fn link_write(&mut self, x: u16, t: u16, val: &Value, st: State) -> Option<(State, Val)> {
+        let data = self.data;
+        let function = &data.def(self.d_nr).variables;
+        let crate::data::Type::RefVar(inner) = function.tp(x).base() else {
+            return None;
+        };
+        let owned = matches!(
+            crate::use_analysis::ownership_of(data, self.d_nr, val),
+            crate::use_analysis::Own::Owned
+        );
+        // The code generator's own test (`state/codegen.rs`'s `amp_displaces`): an owned value
+        // of a store-backed kind, or any record.  What a `&` parameter displaces is the
+        // caller's to give up (`@FR-F-ParamRef`), which no store here records; a plain
+        // parameter is not released at all, unless the cure is switched off.
+        let store_kind = matches!(
+            inner.base(),
+            crate::data::Type::Vector(..)
+                | crate::data::Type::Reference(..)
+                | crate::data::Type::Enum(_, true, _)
+        ) || crate::data::is_keyed(inner.base());
+        let releases = ((store_kind && owned) || inner.heap_def_nr().is_some())
+            && function.link_write_releases(x)
+            && !(function.is_argument(t)
+                && matches!(function.tp(t).base(), crate::data::Type::RefVar(_)));
+        let mut st = st;
+        let old = Self::pts(&st, t);
+        st.vars.insert(x, old.clone());
+        let (mut s, value) = self.eval(val, st)?;
+        let child_read = matches!(val.unspan(),
+            Value::Call(d, _) if data.def(*d).name() == "OpRefFromChildRec");
+        // The link reads what its target holds, so both are bound to the written value.
+        let s = if !releases {
+            self.bind(&mut s, t, &value);
+            self.bind(&mut s, x, &value);
+            s
+        } else if child_read {
+            let mut present = s.clone();
+            self.bind(&mut present, t, &value);
+            self.bind(&mut present, x, &value);
+            let mut absent = s;
+            self.end(&mut absent, t, "the link write-back", true);
+            self.bind(&mut absent, t, &Val::null());
+            self.bind(&mut absent, x, &Val::null());
+            join_state(&present, &absent)
+        } else {
+            if !old.iter().all(|p| value.pts.contains(p)) {
+                self.end(&mut s, t, "the link write-back", true);
+            }
+            self.bind(&mut s, t, &value);
+            self.bind(&mut s, x, &value);
+            s
+        };
+        Some((s, Val::null()))
+    }
+
     fn reassign(&mut self, node: &Value, x: u16, val: &Value, st: State) -> Option<(State, Val)> {
         use crate::bind_lowering::{DisplacedFree, ReArm};
         let data = self.data;
         let function = &data.def(self.d_nr).variables;
+        if let Some(t) = self.link_install(x)
+            && !matches!(val.unspan(), Value::Call(d, _)
+                if matches!(data.def(*d).name(), "OpCreateStack" | "OpVarRef"))
+        {
+            return self.link_write(x, t, val, st);
+        }
         let rb = match self.rebinds.get(&(std::ptr::from_ref(node) as usize)) {
             Some(rb) => *rb,
             None => crate::bind_lowering::re_bind(data, self.d_nr, function, x, val),

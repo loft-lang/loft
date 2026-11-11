@@ -4283,10 +4283,12 @@ impl Function {
     pub fn link_write_releases(&self, v: u16) -> bool {
         // …and only where the place the link names OWNS the store (`link_target_owns`: a view
         // behind the link borrows): the two halves of one question, asked by every writer.
+        // `LOFT_LINK_PARAM_RELEASES=1` brings the parameter half's release back.
         self.link_target_owns(v)
-            && !crate::opt::body_writes::link_targets(self, v)
-            .iter()
-            .any(|&t| self.is_argument(t) && !matches!(self.tp(t).base(), Type::RefVar(_)))
+            && (crate::keys::link_param_releases()
+                || !crate::opt::body_writes::link_targets(self, v)
+                    .iter()
+                    .any(|&t| self.is_argument(t) && !matches!(self.tp(t).base(), Type::RefVar(_))))
     }
 
     /// The variables that may VIEW a store `root` lives in — every variable a read of which

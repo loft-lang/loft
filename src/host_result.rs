@@ -693,7 +693,11 @@ fn adopt_and_release(v: &mut Value, shape: &Shape, ops: &Ops, tp: i32) {
                 // The local lets go of the record the field adopted: a DETACH
                 // (`data::is_null_sentinel_detach`), never a free — the store lives on for the
                 // answer, and freeing it released the store the adopting node was built in.
-                let detach = Value::Call(ops.null_sentinel, Vec::new());
+                let detach = if crate::keys::host_letgo_frees() {
+                    Value::Null
+                } else {
+                    Value::Call(ops.null_sentinel, Vec::new())
+                };
                 bl.operators.insert(i + 1, Value::Set(l, Box::new(detach)));
                 i += 2;
                 continue;
