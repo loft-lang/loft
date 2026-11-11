@@ -20696,7 +20696,14 @@ impl Parser {
                         consumed.push(local);
                     } else {
                         for d in deps {
-                            seq.push(self.cl("OpFreeRef", &[Value::Var(d)]));
+                            // Only a dep that OWNS its store (`@FR-O-Proxy`): a dep that is
+                            // itself a view (`e = vv[0]` over `vv`, a view of `__vdb_1`) is
+                            // released by its owner, and freed here it released the owner's
+                            // store a second time (`@FR-H-FreeTwice`).
+                            // `LOFT_ARM_FREES_VIEW_DEPS=1` frees every dep.
+                            if self.vars.proxy_says_owned(d) || arm_frees_view_deps() {
+                                seq.push(self.cl("OpFreeRef", &[Value::Var(d)]));
+                            }
                         }
                     }
                 }
@@ -26003,4 +26010,12 @@ fn disjuncts(test: &Value) -> Vec<&Value> {
 fn match_subject_borrows_off() -> bool {
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *OFF.get_or_init(|| std::env::var("LOFT_NO_MATCH_SUBJ_BORROWS").is_ok_and(|v| v != "0"))
+}
+
+/// `LOFT_ARM_FREES_VIEW_DEPS=1` (STORE_RECORDS.md § The checks): a branch arm delivering a
+/// vector local into the return buffer frees every dep of that local, a view's included — the
+/// re-free the store records must then report.
+fn arm_frees_view_deps() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOFT_ARM_FREES_VIEW_DEPS").is_ok_and(|v| v != "0"))
 }

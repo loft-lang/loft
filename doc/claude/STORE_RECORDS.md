@@ -152,7 +152,9 @@ on every path) — a local renamed onto the return buffer included, which releas
 through its entry witness; `LOFT_NO_REBOUND_ADOPTER_DISARM=1` keeps the pairing.  Such a renamed
 buffer, rebound from a call that reads it, copies the call's answer where the copy lands in a
 fresh store (`re_arm`); `LOFT_NO_BUFFER_FRESH_COPY=1` binds it plainly, aliasing what the call
-answered.  Two closure records
+answered.  A branch arm delivering a vector local into the return buffer frees only the
+local's OWNING deps (`materialize_vector_arms_collect`); `LOFT_ARM_FREES_VIEW_DEPS=1` frees a
+view dep too.  Two closure records
 built over a loop-reassigned capture between the same two assignments group by the store
 they adopt, so one owns it (`capture_adoption`, `@FR-L-CapOne`);
 `LOFT_NO_LOOP_CAPTURE_GROUP=1` lets each own it, and both cascades free it.  A call that
