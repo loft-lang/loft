@@ -19,6 +19,50 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* `LOFT_FAULT_LOG=<file>` — each store fault as one JSON line, the Rust runtime's
+ * `fault_log` in the same format (`"backend":"c"`), beside the message printed anyway. */
+static inline FILE *loft_fault_file(void) {
+    static int ready = 0;
+    static FILE *f = NULL;
+    if (!ready) {
+        const char *p = getenv("LOFT_FAULT_LOG");
+        ready = 1;
+        if (p && *p) f = fopen(p, "a");
+    }
+    return f;
+}
+static inline void loft_fault_str(FILE *f, const char *s, size_t n) {
+    size_t i;
+    fputc('"', f);
+    for (i = 0; s && i < n && s[i]; i++) {
+        unsigned char c = (unsigned char) s[i];
+        if (c == '"' || c == '\\') {
+            fputc('\\', f);
+            fputc(c, f);
+        } else if (c < 0x20) {
+            fprintf(f, "\\u%04x", (unsigned) c);
+        } else {
+            fputc(c, f);
+        }
+    }
+    fputc('"', f);
+}
+static inline void loft_fault_begin(FILE *f, const char *kind) {
+    fputs("{\"kind\":", f);
+    loft_fault_str(f, kind, strlen(kind));
+    fputs(",\"backend\":\"c\"", f);
+}
+static inline void loft_fault_field(FILE *f, const char *k, const char *v) {
+    fputc(',', f);
+    loft_fault_str(f, k, strlen(k));
+    fputc(':', f);
+    loft_fault_str(f, v ? v : "", v ? strlen(v) : 0);
+}
+static inline void loft_fault_end(FILE *f) {
+    fputs("}\n", f);
+    fflush(f);
+}
 #ifndef LOFT_NO_JUMPS
 #include <setjmp.h>
 /* MinGW-w64 on 64-bit Windows spells `setjmp(b)` as `_setjmp(b, <frame>)`, which makes the
@@ -1314,6 +1358,25 @@ static LOFT_COLD void loft_strict_use_after_free(loft_ref r) {
         fflush(stdout);
         fprintf(stderr, "[strict-store] USE AFTER FREE (access) store #%u type=%s rec=%u pos=%u\n",
                 (unsigned) r.store_nr, kt < loft_ntn ? loft_tn[kt] : "?", (unsigned) r.rec, (unsigned) r.pos);
+        {
+            FILE *lf = loft_fault_file();
+            if (lf) {
+                char buf[512];
+                loft_fault_begin(lf, "use-after-free");
+                snprintf(buf, sizeof buf, "%u", (unsigned) r.store_nr);
+                loft_fault_field(lf, "store", buf);
+                loft_fault_field(lf, "access", "access");
+                loft_fault_field(lf, "type", kt < loft_ntn ? loft_tn[kt] : "?");
+                if (w) {
+                    snprintf(buf, sizeof buf, "`%s` %s:%u", w->fn, w->file, (unsigned) w->line);
+                    loft_fault_field(lf, "freed", buf);
+                }
+                snprintf(buf, sizeof buf, "`%s` %s:%u", here.fn ? here.fn : "?",
+                         here.file ? here.file : "?", (unsigned) here.line);
+                loft_fault_field(lf, "at", buf);
+                loft_fault_end(lf);
+            }
+        }
         if (w)
             fprintf(stderr, "  killed by the free in fn %s() at %s:%u\n", w->fn, w->file, (unsigned) w->line);
         else
@@ -1523,6 +1586,22 @@ static void loft_note_double_free(uint32_t nr) {
         loft_df_same++;
         return;
     }
+    {
+        FILE *lf = loft_fault_file();
+        if (lf && loft_df_other < 200) {
+            char buf[512];
+            loft_fault_begin(lf, "re-free");
+            snprintf(buf, sizeof buf, "%u", (unsigned) nr);
+            loft_fault_field(lf, "store", buf);
+            snprintf(buf, sizeof buf, "`%s` %s:%u", w ? w->fn : "?", w ? w->file : "?",
+                     w ? (unsigned) w->line : 0u);
+            loft_fault_field(lf, "freed", buf);
+            snprintf(buf, sizeof buf, "`%s` %s:%u", here.fn ? here.fn : "?",
+                     here.file ? here.file : "?", (unsigned) here.line);
+            loft_fault_field(lf, "again", buf);
+            loft_fault_end(lf);
+        }
+    }
     if (loft_df_other++ < 20) {
         fflush(stdout);
         fprintf(stderr, "[double-free] store #%u freed again in fn %s() at %s:%u, first freed in fn %s() at %s:%u\n",
@@ -1534,6 +1613,23 @@ static void loft_note_double_free(uint32_t nr) {
 static void loft_note_revival(uint32_t nr) {
     const loft_free_site *w = loft_freed_site(nr);
     loft_free_site here = loft_site_here();
+    {
+        FILE *lf = loft_fault_file();
+        if (lf && loft_df_revived < 200) {
+            char buf[512];
+            loft_fault_begin(lf, "use-after-free");
+            snprintf(buf, sizeof buf, "%u", (unsigned) nr);
+            loft_fault_field(lf, "store", buf);
+            snprintf(buf, sizeof buf, "`%s` %s:%u", w ? w->fn : "?", w ? w->file : "?",
+                     w ? (unsigned) w->line : 0u);
+            loft_fault_field(lf, "freed", buf);
+            snprintf(buf, sizeof buf, "`%s` %s:%u", here.fn ? here.fn : "?",
+                     here.file ? here.file : "?", (unsigned) here.line);
+            loft_fault_field(lf, "at", buf);
+            loft_fault_field(lf, "detail", "a freed slot made again through a reference that named it");
+            loft_fault_end(lf);
+        }
+    }
     if (loft_df_revived++ < 20) {
         fflush(stdout);
         fprintf(stderr, "[double-free] store #%u made again in fn %s() at %s:%u, freed in fn %s() at %s:%u\n",

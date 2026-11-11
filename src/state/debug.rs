@@ -545,6 +545,7 @@ impl State {
                             }
                         },
                     );
+                    crate::fault_log::uaf_gen(r.store_nr, &fv.name);
                     let msg = format!(
                         "use-after-free (LOFT_UAF): store slot #{} freed at pc={} in fn \
                          `{free_fn}` while variable '{}' (type {}) in fn `{}` still READS it \

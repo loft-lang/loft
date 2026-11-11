@@ -156,7 +156,12 @@ checker extended to report them.
 | `scripts/own_sweep.py` | high: MISS / CAUGHT / STATIC is the right question | fair | faults recognised by output regex (missed the child-record panic: a hidden MISS); before/after needs a hand-written per-cell diff |
 | `loft introspect` | essential for the bytecode and IR | heavy (8,800 lines for one cell) | pc → line by hand, before `store_trace` |
 
-The highest-leverage change: **a fault reported as data, not text** — one machine-readable line
+**Built since** (2026-11-11): the fault log (`LOFT_FAULT_LOG`, all three backends), read by
+`own_sweep.py`, which also gained `--compare`; and `scripts/store_why.py`, the strict run →
+the first fault's store → its traced life, as one command.  The records' STATIC noise is
+left.
+
+The highest-leverage change was: **a fault reported as data, not text** — one machine-readable line
 per store fault (kind, store, sites, variable) that `own_sweep`, the suite runner and the
 tests read, instead of each matching its own regex against a human message.  Two of this
 arc's blind spots (`--tests` ignoring strict faults, `own_sweep` missing the child-record

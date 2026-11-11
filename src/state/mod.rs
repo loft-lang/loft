@@ -8192,6 +8192,10 @@ impl State {
             // checked at RUNTIME rather than discharged statically: every store is freed
             // exactly once by exit, so a residue is a violation whatever its shape.
             let msg = format!("{count} stores not freed at program exit: {preview}");
+            crate::fault_log::record(
+                "leak",
+                &[("count", count.to_string()), ("stores", preview.clone())],
+            );
             // @PLN130 F8 — under LOFT_STRICT_STORES a store that is never freed is an
             // ERROR, not a warning. It is the other half of the same question: strict mode
             // asks that every store be freed exactly once, so both "freed then used" and

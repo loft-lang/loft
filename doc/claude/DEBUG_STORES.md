@@ -114,6 +114,18 @@ where a vector's length word lives**.  This family (`@P311`, `@P313`, `@P314`,
 > emits unrelated same-frame noise (loft#939 — the report reads as "no detector sees
 > it", which is what sends you off building one).
 
+**Start with `scripts/store_why.py <prog>`** (`--tests` for a test file, `--env NAME=VALUE` for a
+switch).  It runs the program under strict stores with the fault log on, takes the first
+fault's store and runs again with that store's life traced: one command prints the fault with
+its sites and the store's history up to it, below.  Exit 0 when there is no store fault.
+
+**Every store fault is also written as data with `LOFT_FAULT_LOG=<file>`** (`src/fault_log.rs`,
+the C runtime's `loft_fault_log` in `loft_rt.h`): one JSON line per fault, `{"kind": …,
+"backend": "interpret" | "native" | "c", …}`, `kind` one of `use-after-free`, `leak`,
+`re-free`, `wrong-free`, `corrupt-reference`, with the store, the sites and the variable where
+known.  A tool that asks whether a run faulted reads this file, not the messages:
+`scripts/own_sweep.py` does.
+
 **Follow one store's path with `LOFT_LOG=store_life:<N>`** (`src/store_trace.rs`).  For store
 `N` it prints each allocation and free with its function, source position and the variable
 freed, and at each free the jumps the frame took since the allocation; a frame that returns

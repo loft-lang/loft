@@ -586,6 +586,23 @@ static void loft_leak_report(void) {
         sprintf(buf, " ... and %u more", (unsigned) (nk - 5));
         loft_push(&out, buf, strlen(buf));
     }
+    if (total && (check || getenv("LOFT_STRICT_STORES"))) {
+        FILE *lf = loft_fault_file();
+        if (lf) {
+            char cnt[32];
+            char *stores = (char *) malloc(out.len + 1);
+            snprintf(cnt, sizeof cnt, "%u", (unsigned) total);
+            loft_fault_begin(lf, "leak");
+            loft_fault_field(lf, "count", cnt);
+            if (stores) {
+                memcpy(stores, out.p, out.len);
+                stores[out.len] = 0;
+                loft_fault_field(lf, "stores", stores);
+                free(stores);
+            }
+            loft_fault_end(lf);
+        }
+    }
     if (total && check) {
         fflush(stdout);
         fprintf(stderr, "Warning: %u stores not freed at program exit: ", (unsigned) total);

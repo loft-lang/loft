@@ -232,6 +232,7 @@ scripts/own_sweep.py --suite ../loft-suite                 # the suite, no switc
 scripts/own_sweep.py --suite ../loft-suite $(grep -o 'LOFT_NO_[A-Z0-9_]*' \
     doc/claude/BOTH_BACKEND_SWITCHES.md | sort -u | sed 's/^/--switch /') --out sweep.tsv
 scripts/own_sweep.py --cell prog.loft                      # one program
+scripts/own_sweep.py --out after.tsv --compare before.tsv  # each cell whose verdict changed
 ```
 
 The goal is **MISS = 0 and STATIC = 0** over the suite under every switch.  A STATIC row is

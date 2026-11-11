@@ -30,9 +30,15 @@ import argparse
 import concurrent.futures
 import os
 import re
-import resource
 import subprocess
 import sys
+import tempfile
+
+try:  # POSIX only: Windows has no `resource`, and runs without the memory cap
+    import resource
+except ImportError:
+    resource = None
+import json
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -67,6 +73,8 @@ def cells_of(suite, chapter):
 def cap_memory():
     """Each run gets 8 GB of address space: a runaway analysis fails its own run instead of
     pushing the machine into the out-of-memory killer."""
+    if resource is None:
+        return
     limit = 8 * 1024 ** 3
     resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
 
@@ -82,6 +90,11 @@ def run(loft, cell, switch, timeout):
         LOFT_OWN_ORACLE=ORACLE[0],
         LOFT_NO_CACHE="1",
     )
+    # The faults as data (`LOFT_FAULT_LOG`, src/fault_log.rs): one JSON line per fault, read
+    # by kind.  The text patterns below stay as the fallback for a binary that predates it.
+    fd, fault_log = tempfile.mkstemp(prefix="own_sweep_", suffix=".jsonl")
+    os.close(fd)
+    env["LOFT_FAULT_LOG"] = fault_log
     try:
         with open(cell, encoding="utf-8", errors="replace") as fh:
             for line in ARMED.findall(fh.read()):
@@ -93,14 +106,66 @@ def run(loft, cell, switch, timeout):
     try:
         p = subprocess.run([loft, "--tests", cell], env=env, capture_output=True, text=True,
                            errors="replace", timeout=timeout + 10, cwd=os.path.dirname(cell),
-                           preexec_fn=cap_memory)
+                           preexec_fn=cap_memory if resource is not None else None)
         out = p.stdout + p.stderr
     except subprocess.TimeoutExpired:
+        os.unlink(fault_log)
         return cell, switch, "timeout", 0, ""
     kinds = [k for k, rx in FAULTS if rx.search(out)]
+    for k in logged_kinds(fault_log):
+        if k not in kinds:
+            kinds.append(k)
+    os.unlink(fault_log)
     reds = len(RED.findall(out))
     first_red = next((ln for ln in out.splitlines() if ln.startswith("RED ")), "")
     return cell, switch, ",".join(kinds), reds, first_red
+
+
+# A fault-log kind as this sweep names it.
+LOGGED = {"use-after-free": "uaf", "corrupt-reference": "uaf", "leak": "leak",
+          "wrong-free": "wrong-free", "re-free": "re-free"}
+
+
+def logged_kinds(path):
+    """The fault kinds a run wrote to its `LOFT_FAULT_LOG`, in this sweep's names."""
+    kinds = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    k = LOGGED.get(json.loads(line).get("kind", ""), "")
+                except ValueError:
+                    continue
+                if k and k not in kinds:
+                    kinds.append(k)
+    except OSError:
+        pass
+    return kinds
+
+
+def compare(before_path, rows):
+    """Print every cell × switch whose verdict or red count differs from `before_path`."""
+    before = {}
+    with open(before_path, encoding="utf-8") as fh:
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            if len(f) >= 5 and f[0] != "verdict":
+                before[(f[4], f[1])] = (f[0], f[3])
+    worse = better = 0
+    rank = {"CLEAN": 0, "CAUGHT": 1, "STATIC": 2, "MISS": 3, "TIMEOUT": 4}
+    for cell, sw, _kinds, reds, _first, v in rows:
+        key = (os.path.relpath(cell, ROOT), sw)
+        old = before.get(key)
+        if old is None or old == (v, str(reds)):
+            continue
+        was = rank.get(old[0], 9), int(old[1] or 0)
+        now = rank.get(v, 9), reds
+        mark = "better" if now < was else "WORSE"
+        worse += mark == "WORSE"
+        better += mark == "better"
+        print(f"{mark:7} {old[0]}({old[1]}) -> {v}({reds})  {sw or '-'}  {key[0]}")
+    print(f"compare: {better} better, {worse} worse against {before_path}")
+    return worse
 
 
 def verdict(kinds, reds):
@@ -126,10 +191,14 @@ def main():
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     ap.add_argument("--timeout", type=int, default=60)
     ap.add_argument("--out", default="")
+    ap.add_argument("--compare", default="",
+                    help="a previous --out table: print each run whose verdict or red count changed")
     ap.add_argument("--oracle", default="check", choices=["check", "check-records"],
                     help="the static checker: the shipped checks, or the store records")
     a = ap.parse_args()
     ORACLE[0] = a.oracle
+    # Each cell runs from its own directory, so a relative binary path is resolved here.
+    a.loft = os.path.abspath(a.loft)
     cells = [os.path.abspath(c) for c in a.cell] or cells_of(os.path.abspath(a.suite), a.chapter)
     switches = a.switch if a.switch is not None else [""]
     jobs = [(c, s) for s in switches for c in cells]
@@ -149,7 +218,8 @@ def main():
     for cell, sw, kinds, reds, _, v in rows:
         if v in ("MISS", "TIMEOUT"):
             print(f"{v:7} {sw or '-':28} {kinds:16} {os.path.relpath(cell, ROOT)}")
-    return 1 if tally.get("MISS") else 0
+    worse = compare(a.compare, rows) if a.compare else 0
+    return 1 if tally.get("MISS") or worse else 0
 
 
 if __name__ == "__main__":

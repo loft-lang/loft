@@ -353,6 +353,7 @@ pub mod empty_slot;
 pub mod exit_record;
 pub mod exit_vector;
 pub mod exp_pow;
+pub mod fault_log;
 pub mod file_access;
 pub mod forward_result;
 pub mod forward_walk;

@@ -1692,18 +1692,31 @@ impl Stores {
         // a read after the child's release, is caught here instead of reading foreign bytes.
         // Record 1 counts when claimed: `@FR-R-HostStore` builds a whole tree in one store, so
         // the first leaf is the store's first record and a node built later adopts it.
+        let live = rec == 0
+            || !crate::keys::strict_stores()
+            || store.is_claimed_record(rec)
+            || (rec == crate::store::PRIMARY && store.has_root_record());
+        if !live {
+            crate::fault_log::record(
+                "use-after-free",
+                &[
+                    ("store", host_field.store_nr.to_string()),
+                    (
+                        "detail",
+                        format!(
+                            "child record {rec} of #{}.{}+{} is not live",
+                            host_field.store_nr, host_field.rec, host_field.pos
+                        ),
+                    ),
+                ],
+            );
+        }
         assert!(
-            rec == 0
-                || !crate::keys::strict_stores()
-                || store.is_claimed_record(rec)
-                || (rec == crate::store::PRIMARY && store.has_root_record()),
+            live,
             "strict stores: the child-record field at #{}.{}+{} names record {rec}, which \
              is not a live record of store #{} — the child was released, or its number \
              left its host's store",
-            host_field.store_nr,
-            host_field.rec,
-            host_field.pos,
-            host_field.store_nr
+            host_field.store_nr, host_field.rec, host_field.pos, host_field.store_nr
         );
         if rec == 0 {
             DbRef::NULL

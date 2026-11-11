@@ -1724,6 +1724,14 @@ impl Stores {
             at(first),
             at(self.alloc_pc)
         );
+        crate::fault_log::record(
+            "re-free",
+            &[
+                ("store", al.to_string()),
+                ("freed", at(first)),
+                ("again", at(self.alloc_pc)),
+            ],
+        );
         self.raise_runtime(crate::runtime_error::RuntimeErrorKind::StoreFreedTwice { detail });
     }
 
@@ -1781,6 +1789,14 @@ impl Stores {
             // iteration, so a per-occurrence print would flood stderr.
             use std::sync::atomic::{AtomicBool, Ordering};
             static WARNED: AtomicBool = AtomicBool::new(false);
+            crate::fault_log::record(
+                "wrong-free",
+                &[
+                    ("store", al.to_string()),
+                    ("var", name.to_string()),
+                    ("detail", "#405 out of range".to_string()),
+                ],
+            );
             if !WARNED.swap(true, Ordering::Relaxed) {
                 crate::loft_eprintln!(
                     "loft: BUG (#405): refused free of out-of-range store #{al} \
@@ -1839,6 +1855,15 @@ impl Stores {
             } else {
                 format!(", op={op}")
             };
+            crate::fault_log::record(
+                "wrong-free",
+                &[
+                    ("store", "0".to_string()),
+                    ("var", name.to_string()),
+                    ("at", at.clone()),
+                    ("detail", "#306 the stack store".to_string()),
+                ],
+            );
             crate::loft_eprintln!(
                 "loft: BUG (#306): refused to free the stack store (#0) \
                  (rec={}, pos={}, var='{name}', at {at}{op}) — a stack-record ref was \

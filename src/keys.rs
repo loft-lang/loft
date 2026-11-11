@@ -3145,6 +3145,29 @@ pub fn strict_store_violation(
     now_pc: u32,
 ) {
     let n = STRICT_VIOLATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n < 200 && crate::fault_log::armed() {
+        let (freed_pc, var) = strict_free_site(store_nr).unwrap_or((0, String::new()));
+        let var = if var.is_empty() {
+            crate::store_trace::freed_variable(freed_pc).unwrap_or_default()
+        } else {
+            var
+        };
+        let mut fields = vec![
+            ("store", store_nr.to_string()),
+            ("access", what.to_string()),
+            ("type", type_name.to_string()),
+        ];
+        if !var.is_empty() {
+            fields.push(("var", var.trim_matches('`').to_string()));
+        }
+        // Generated Rust has no bytecode positions: leave the sites out rather than `pc=0`.
+        for (key, pc) in [("created", created_at), ("freed", freed_pc), ("at", now_pc)] {
+            if pc != 0 {
+                fields.push((key, crate::store_trace::site(pc)));
+            }
+        }
+        crate::fault_log::record("use-after-free", &fields);
+    }
     // Cap the output: a stale ref inside a loop reports every iteration, and the first
     // few already name the site.
     if n < 20 {
@@ -3530,6 +3553,16 @@ pub fn double_free_report() {
         return;
     }
     let (same, other) = double_free_counts();
+    if same + other > 0 {
+        crate::fault_log::record(
+            "re-free",
+            &[
+                ("count", (same + other).to_string()),
+                ("other_site", other.to_string()),
+                ("same_site", same.to_string()),
+            ],
+        );
+    }
     eprintln!(
         "[double-free] {n} re-free(s) of an already-free slot: {other} from a DIFFERENT site \
          (a free emitted on each of two paths that meet) and {same} from the SAME site (a \

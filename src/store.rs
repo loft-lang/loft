@@ -4369,6 +4369,14 @@ impl Store {
     #[cold]
     #[inline(never)]
     fn raise_out_of_bounds(&self, rec: u32, fld: u32, width: usize) -> ! {
+        crate::fault_log::record(
+            "corrupt-reference",
+            &[
+                ("rec", rec.to_string()),
+                ("fld", fld.to_string()),
+                ("type", self.known_type.to_string()),
+            ],
+        );
         panic!(
             "Store access out of bounds: rec={rec} fld={fld} width={width} \
              store_bytes={} type={} — the reference is corrupt, not merely \

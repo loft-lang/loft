@@ -2467,11 +2467,21 @@ pub(crate) fn run_tests(
                         ),
                         Ok((_, _, leaks)) if !leaks.is_empty() => (
                             false,
-                            Some(format!(
-                                "{} store(s) not freed at exit: {}",
-                                leaks.len(),
-                                leaks.join(", ")
-                            )),
+                            Some({
+                                loft::fault_log::record(
+                                    "leak",
+                                    &[
+                                        ("count", leaks.len().to_string()),
+                                        ("stores", leaks.join(", ")),
+                                        ("test", fn_name.clone()),
+                                    ],
+                                );
+                                format!(
+                                    "{} store(s) not freed at exit: {}",
+                                    leaks.len(),
+                                    leaks.join(", ")
+                                )
+                            }),
                         ),
                         Ok((fault, fault_msg, _)) => {
                             if fault {
