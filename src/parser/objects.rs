@@ -7516,7 +7516,14 @@ impl Parser {
         } else {
             (base, base_tp)
         };
-        if fresh && view_base {
+        // …and so is a WHOLE-variable base (`Unit { hp: …, ..u }`): a temporary named onto the
+        // return buffer (`ref_return`) turned the bind into `__retbuf = u`, a reassignment of
+        // the caller's buffer — freed unguarded, or, without the free, `u` itself, written
+        // through.  `LOFT_NO_UPDATE_TEMP_COPY=1` copies only a view base this way.
+        if fresh
+            && (view_base
+                || !crate::env_once!(std::env::var_os("LOFT_NO_UPDATE_TEMP_COPY").is_some()))
+        {
             // A temporary is a work reference, and an assignment between two of those is a
             // plain `Set`: bound through the assignment path, the "copy" of a view base was
             // the base's own record, so the named fields wrote through to the base

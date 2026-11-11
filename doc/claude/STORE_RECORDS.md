@@ -181,7 +181,11 @@ buffer adopted by a renamed return buffer that is assigned again takes no free, 
 the return included (`pair_literal_buffers`); `LOFT_NO_GUARDED_BUFFER_DISARM=1` keeps the guarded one.
 On rustc `--native`, a call arm inside `output_set`'s `_old_<name>` stash leaves the displaced
 store to that stash (`Output::old_stash_var`); `LOFT_NATIVE_INNER_DISPLACED_FREE=1` frees it in
-the arm too.  The records read IR, which both spellings share, so they cannot see this one.
+the arm too.  The records read IR, which both spellings share, so they cannot see this one.  A
+record update built in a temporary (`Unit { hp: …, ..u }` as a value) gives the temporary a store
+of its own and copies the base in, which on a return buffer is the caller's store, refilled
+(`parse_object_update`); `LOFT_NO_UPDATE_TEMP_COPY=1` binds a whole-variable base instead, which
+named onto the buffer freed the caller's store (the records: `store-wrong-end`).
 
 The closure records' releases, each switch bringing back one second free (doc strings in
 `keys.rs`):
