@@ -2792,6 +2792,39 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         )
     }
 
+    /// The member types of a tuple held from `code`: `elems`, where every heap member of a
+    /// [`Parser::unbox_tuple_from_dbref`] block borrows the work-ref the block binds.
+    ///
+    /// `@FR-B-View` — the unboxed members are READS of the record that work-ref holds
+    /// (`OpGetField(__ref_N, …)`).  Typed dep-less, a local or stash holding the tuple owned
+    /// them, and the scope end freed `t.0` — a DbRef into the work-ref's own store — and then
+    /// the work-ref (`@FR-H-FreeTwice`).  Any other `code` answers `elems` unchanged.
+    /// `LOFT_NO_UNBOX_MEMBER_DEPS=1` leaves the members owning.
+    pub(crate) fn unboxed_member_types(&self, code: &Value, elems: &[Type]) -> Vec<Type> {
+        let source = match code.unspan() {
+            Value::Block(b) if b.name == "tuple_unbox" => {
+                match b.operators.first().map(Value::unspan) {
+                    Some(Value::Set(w, _)) => Some(*w),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        match source {
+            Some(w) if !unbox_member_deps_off() => elems
+                .iter()
+                .map(|e| {
+                    if e.heap_dep().is_some() {
+                        e.with_deps(&crate::data::Deps::frame1(w))
+                    } else {
+                        e.clone()
+                    }
+                })
+                .collect(),
+            _ => elems.to_vec(),
+        }
+    }
+
     /// loft#821 — the DbRef a [`Parser::unbox_tuple_from_dbref`] block reads FROM, if
     /// `code` is such a block.
     ///
@@ -4318,4 +4351,10 @@ impl Parser {
             _ => {}
         }
     }
+}
+
+/// `LOFT_NO_UNBOX_MEMBER_DEPS=1` (STORE_RECORDS.md § The checks): a tuple held from a record's
+/// unbox keeps its heap members owning — the re-free the store records must then report.
+fn unbox_member_deps_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_UNBOX_MEMBER_DEPS").is_some())
 }

@@ -118,6 +118,8 @@ whose copy frees a construction's store resets the construction's work-ref after
 (`v += [S { op: 0, ..n }]`); `LOFT_NO_APPEND_SOURCE_DISARM=1` leaves it naming the store.  A
 nullable slot write's stash of a projection (`a.1` into a returned tuple) borrows the
 projection's root (`emit_nullable_slot_write`); `LOFT_NO_STASH_VIEW_DEP=1` types it as an owner.
+A tuple held from a record's unbox (a call's tuple returned or appended) borrows the work-ref
+the unbox binds (`unboxed_member_types`); `LOFT_NO_UNBOX_MEMBER_DEPS=1` leaves its members owning.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it

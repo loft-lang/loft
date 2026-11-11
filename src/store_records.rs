@@ -329,9 +329,10 @@ struct Run<'a> {
     moved_away: BTreeSet<u16>,
     /// Each reassignment's lowering (by `Set` address), decided once per run.
     rebinds: BTreeMap<usize, crate::bind_lowering::ReBind>,
-    /// The free nodes after which the code generator resets their variable to null: a
-    /// variable an EARLIER reassignment freed before its build (`owned_reassigned`), or a
-    /// lift temporary (`Codegen::generate_call`, @PLN118, loft#2385).
+    /// The free nodes after which the code generator resets their variable to null: every
+    /// `OpFreeRef` of a variable, and an `OpFreeRefIfDistinct` of a variable an EARLIER
+    /// reassignment freed before its build (`owned_reassigned`) or of a lift temporary
+    /// (`Codegen::generate_call`, @PLN118, loft#2385).
     resets: BTreeSet<usize>,
     /// Per fn-ref variable, the closure record its build names (`g = { …; FnRef(_, w) }`).
     fn_record: BTreeMap<u16, u16>,
@@ -525,7 +526,13 @@ impl Run<'_> {
             }
             self.sites[k.site as usize].ends.insert(label.clone());
             let info = info_of(st, k);
-            if report && info.has(ENDED) && info.ended.contains(&v) {
+            // A variable naming only this store or null, where the store is ended on every
+            // path: freed again wherever the variable is not null.
+            let only_this = pts.iter().all(|p| *p == Pt::Null || *p == Pt::Store(k));
+            if report
+                && info.has(ENDED)
+                && (info.ended.contains(&v) || (only_this && !info.has(LIVE)))
+            {
                 // Every end here is a free, which the runtime refuses on a free slot
                 // (`@FR-H-FreeTwice`) and runs on whatever store took the slot since.
                 let name = self.var_name(v);
@@ -819,13 +826,32 @@ impl Run<'_> {
         let function = &data.def(self.d_nr).variables;
         // A tuple literal into a tuple local: each member holds what its element names, and
         // the tuple's own release of a member (`OpFreeRef(t.i)`) ends it.
-        if let Value::Tuple(xs) = val.unspan()
+        // The literal may be the tail of a value block (a call's record unboxed into a stack
+        // tuple: `{ __ref_2 = mp(k); (OpGetField(__ref_2, …), …) }`); its leading statements
+        // run first.
+        let (prefix, lit): (&[Value], &Value) = match val.unspan() {
+            Value::Block(b) => match b.operators.split_last() {
+                Some((last, init)) => (init, last),
+                None => (&[], val),
+            },
+            Value::Insert(ops) => match ops.split_last() {
+                Some((last, init)) => (init, last),
+                None => (&[], val),
+            },
+            _ => (&[], val),
+        };
+        if let Value::Tuple(xs) = lit.unspan()
             && matches!(function.tp(x).base(), crate::data::Type::Tuple(_))
             && u16::try_from(xs.len())
                 .ok()
                 .and_then(|n| member_key(x, n.saturating_sub(1)))
                 .is_some()
         {
+            let st = if prefix.is_empty() {
+                st
+            } else {
+                self.seq(prefix, st)?.0
+            };
             let (mut s, vals) = self.args(xs, st)?;
             for (i, value) in vals.iter().enumerate() {
                 let k = member_key(x, i as u16).expect("checked above");
@@ -1532,10 +1558,14 @@ fn run_fn<'a>(
                     run.rebinds.insert(at, rb);
                 }
             }
+            // The interpreter resets after EVERY `OpFreeRef` of a variable unless
+            // `LOFT_NO_FREE_RESET` (`Codegen::generate_call`, the twin of this test).
             Value::Call(op, args)
                 if (*op == unconditional || *op == if_distinct)
                     && let Some(Value::Var(x)) = args.first().map(Value::unspan)
-                    && (owned_reassigned.contains(x) || vars.is_lift_temp(*x)) =>
+                    && (owned_reassigned.contains(x)
+                        || vars.is_lift_temp(*x)
+                        || (*op == unconditional && !crate::keys::free_reset_off())) =>
             {
                 run.resets.insert(at);
             }
