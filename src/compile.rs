@@ -250,13 +250,54 @@ pub fn byte_code_from(
     crate::copy_manifest::report(data);
     // The store instruments' names for each pc (`store_trace`): built only when one is on.
     state.pc_names = crate::store_trace::wanted().then(|| {
-        std::sync::Arc::new(crate::store_trace::build(
+        std::sync::Arc::new(store_trace_names(
             &state.bytecode,
             &state.vars,
             &state.line_numbers,
             data,
         ))
     });
+}
+
+/// The store instruments' table (`store_trace`) from the generated code: each function's range,
+/// each variable-reading op from the code generator's `pc -> variable` map, and its statement
+/// lines.
+fn store_trace_names(
+    bytecode: &[u8],
+    vars: &crate::fxhash::FxHashMap<u32, u16>,
+    lines: &std::collections::BTreeMap<u32, u32>,
+    data: &Data,
+) -> crate::store_trace::PcNames {
+    let mut names = crate::store_trace::PcNames::new(lines.clone());
+    let mut owner: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
+    for d_nr in 0..data.definitions() {
+        let def = data.def(d_nr);
+        if !matches!(def.def_type, crate::data::DefType::Function)
+            || def.is_operator()
+            || def.code_length == 0
+        {
+            continue;
+        }
+        let name = def
+            .name()
+            .strip_prefix("n_")
+            .unwrap_or(def.name())
+            .to_string();
+        let end = def.code_position + def.code_length;
+        names.add_fn(def.code_position, end, name, def.position().file.as_str());
+        owner.insert(def.code_position, d_nr);
+    }
+    for (&pc, &v) in vars {
+        let Some(start) = names.fn_start(pc) else {
+            continue;
+        };
+        let Some(len) = instruction_len(bytecode, pc as usize, data) else {
+            continue;
+        };
+        let var_name = data.def(owner[&start]).variables().name(v).to_string();
+        names.add_var(pc, var_name, len as u32);
+    }
+    names
 }
 
 /// `LOFT_TRACE_BYTECODE=<file>` — the strict comparison's opcodes and bytecode layers

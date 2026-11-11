@@ -4285,6 +4285,26 @@ impl Function {
     /// caller's, which the caller keeps (`cur = &n; cur = &cur.next` walks `n`).  A `&T`
     /// parameter (`@FR-F-ParamRef`) or a local behind the link is released as before.  Asked
     /// by all three writers, so they agree (`@FR-O-NoDiverge`).
+    /// The variables `v` LINKS to: a `g = &e` local's type is a `RefVar` whose deps name its
+    /// target, and a link to a link follows through.  Empty for a variable that is no link.
+    #[must_use]
+    pub fn link_targets(&self, v: u16) -> Vec<u16> {
+        let mut out: Vec<u16> = Vec::new();
+        let mut todo = vec![v];
+        while let Some(x) = todo.pop() {
+            if x >= self.count() || !matches!(self.tp(x).base(), Type::RefVar(_)) {
+                continue;
+            }
+            for d in self.tp(x).depend() {
+                if d != v && !out.contains(&d) {
+                    out.push(d);
+                    todo.push(d);
+                }
+            }
+        }
+        out
+    }
+
     #[must_use]
     pub fn link_write_releases(&self, v: u16) -> bool {
         // …and only where the place the link names OWNS the store (`link_target_owns`: a view
@@ -4292,7 +4312,8 @@ impl Function {
         // `LOFT_LINK_PARAM_RELEASES=1` brings the parameter half's release back.
         self.link_target_owns(v)
             && (crate::keys::link_param_releases()
-                || !crate::opt::body_writes::link_targets(self, v)
+                || !self
+                    .link_targets(v)
                     .iter()
                     .any(|&t| self.is_argument(t) && !matches!(self.tp(t).base(), Type::RefVar(_))))
     }

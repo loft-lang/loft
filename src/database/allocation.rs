@@ -1719,8 +1719,14 @@ impl Stores {
                 .map_or_else(String::new, |v| format!(" by {v}"));
             format!("{}{by}", crate::store_trace::site(pc))
         };
+        // The names cost a table per compile, so only `LOFT_REFREE_FAILS=1` builds it.
+        let names = if crate::keys::refree_names() {
+            ""
+        } else {
+            "; LOFT_REFREE_FAILS=1 names the line and variable of each free"
+        };
         let detail = format!(
-            "store #{al} freed {}, freed again {}",
+            "store #{al} freed {}, freed again {}{names}",
             at(first),
             at(self.alloc_pc)
         );
@@ -1913,9 +1919,9 @@ impl Stores {
         }
         let store = &mut self.allocations[al as usize];
         if store.free {
-            // `@FR-H-FreeTwice` — a re-free is a compiler defect: under `LOFT_REFREE_FAILS=1`
-            // the run fails at it, naming both frees, unless `LOFT_DOUBLE_FREE` asks for the
-            // census above instead.  A
+            // `@FR-H-FreeTwice` — a re-free is a compiler defect: the run fails at it, naming
+            // both frees, unless `LOFT_DOUBLE_FREE` asks for the census above instead or
+            // `LOFT_ALLOW_REFREE` lets it pass.  A
             // re-free whose slot was handed out in between finds it live and is not seen here;
             // `LOFT_STRICT_STORES` never hands a slot out again, so it sees those too.
             if crate::keys::refree_fails() && !crate::keys::double_free_audit() {

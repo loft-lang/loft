@@ -3,16 +3,15 @@
 
 //! Where a store went: bytecode positions resolved to the function, the source position and
 //! the variable, for the store-lifetime instruments — `LOFT_STRICT_STORES` (an access to a
-//! freed store), `LOFT_REFREE_FAILS` (a second free) and `LOFT_LOG=store_life:<N>` (one
+//! freed store), `LOFT_REFREE_FAILS` (a second free's names) and `LOFT_LOG=store_life:<N>` (one
 //! store's allocation, frees and the jumps its frames took to each).
 //!
 //! A position is the innermost construct covering the pc, with its column, so a one-line
 //! `if c { a } else { b }` resolves to the arm that ran.  Code a pass inserted without a span
 //! of its own resolves to the line of the statement it sits in (`line N`, no column).  The
-//! table is built once at the end of code generation, only when one of the instruments is on,
-//! and published per thread beside the crash hook's span table (`State::publish_source_spans`).
+//! table is built once at the end of code generation (`compile::store_trace_names`), only when
+//! one of the instruments is on, and published per thread beside the crash hook's span table (`State::publish_source_spans`).
 
-use crate::data::{Data, DefType};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -44,59 +43,35 @@ thread_local! {
 #[must_use]
 pub fn wanted() -> bool {
     crate::keys::strict_stores()
-        || crate::keys::refree_fails()
+        || crate::keys::refree_names()
         || std::env::var("LOFT_LOG").is_ok_and(|v| v.contains("store_life"))
 }
 
-/// Build the table from the generated code: each function's range, each variable-reading op
-/// from the code generator's `pc -> variable` map, and its statement lines.
-#[must_use]
-pub fn build(
-    bytecode: &[u8],
-    vars: &crate::fxhash::FxHashMap<u32, u16>,
-    lines: &BTreeMap<u32, u32>,
-    data: &Data,
-) -> PcNames {
-    let mut names = PcNames {
-        lines: lines.clone(),
-        ..PcNames::default()
-    };
-    let mut owner: BTreeMap<u32, u32> = BTreeMap::new();
-    for d_nr in 0..data.definitions() {
-        let def = data.def(d_nr);
-        if !matches!(def.def_type, DefType::Function) || def.is_operator() || def.code_length == 0 {
-            continue;
+impl PcNames {
+    /// An empty table over the code generator's `pc -> line` map.
+    #[must_use]
+    pub fn new(lines: BTreeMap<u32, u32>) -> Self {
+        PcNames {
+            lines,
+            ..PcNames::default()
         }
-        let name = def
-            .name()
-            .strip_prefix("n_")
-            .unwrap_or(def.name())
-            .to_string();
-        let end = def.code_position + def.code_length;
-        names.fns.insert(
-            def.code_position,
-            Func {
-                end,
-                name,
-                file: def.position().file.as_str(),
-            },
-        );
-        owner.insert(def.code_position, d_nr);
     }
-    for (&pc, &v) in vars {
-        let Some((&start, func)) = names.fns.range(..=pc).next_back() else {
-            continue;
-        };
-        if pc >= func.end {
-            continue;
-        }
-        let Some(len) = crate::compile::instruction_len(bytecode, pc as usize, data) else {
-            continue;
-        };
-        let var_name = data.def(owner[&start]).variables().name(v).to_string();
-        names.vars.insert(pc, (var_name, len as u32));
+
+    /// Generated function `name` occupies `start..end`, from source `file`.
+    pub fn add_fn(&mut self, start: u32, end: u32, name: String, file: &'static str) {
+        self.fns.insert(start, Func { end, name, file });
     }
-    names
+
+    /// The first pc of the function `pc` lies in.
+    #[must_use]
+    pub fn fn_start(&self, pc: u32) -> Option<u32> {
+        func_at(self, pc).map(|(start, _)| start)
+    }
+
+    /// The op at `pc`, `len` bytes long, reads variable `name`.
+    pub fn add_var(&mut self, pc: u32, name: String, len: u32) {
+        self.vars.insert(pc, (name, len));
+    }
 }
 
 /// Make `names` the table this thread's reports read; `None` clears it.

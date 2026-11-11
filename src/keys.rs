@@ -3522,11 +3522,20 @@ pub fn free_reset_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_FREE_RESET"))
 }
 
-/// `LOFT_REFREE_FAILS=1` — a free of an already-freed store fails the run, naming both frees
-/// (`Stores::refuse_refree`, `@FR-H-FreeTwice`).  Opt-in while the compiler still emits
-/// re-frees; STORE_RECORDS.md § The checks.
+/// A free of an already-freed store fails the run, naming both frees (`Stores::refuse_refree`,
+/// `@FR-H-FreeTwice`): a re-free is a compiler defect.  On by default; `LOFT_ALLOW_REFREE=1`
+/// turns it off, and `LOFT_DOUBLE_FREE` counts instead.  STORE_RECORDS.md § The checks.
 #[must_use]
 pub fn refree_fails() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_REFREE_FAILS"))
+}
+
+/// `LOFT_REFREE_FAILS=1` — a re-free's report names the function, line and variable of each
+/// free (`store_trace`); without it the report gives each free's source position only, so
+/// no compile pays for the name table.
+#[must_use]
+pub fn refree_names() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| env_set("LOFT_REFREE_FAILS"))
 }
