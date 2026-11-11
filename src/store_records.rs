@@ -1197,9 +1197,26 @@ impl Run<'_> {
     ) -> Result<Option<(State, Val)>, State> {
         let data = self.data;
         let function = &data.def(self.d_nr).variables;
+        let installs = matches!(val.unspan(), Value::Call(d, _)
+            if matches!(data.def(*d).name(), "OpCreateStack" | "OpVarRef"));
+        // `@FR-F-ParamRef` — an OWNED value written through a slot link (`OpSetSlotRef` with
+        // `COPY_FREE_SOURCE`): copied into the field the cell names and its store released
+        // there, or moved into the caller's variable.  Either way the frame gives it up.
+        if !installs
+            && data.slot_link_def(function.tp(x)).is_some()
+            && matches!(
+                crate::use_analysis::ownership_of(data, self.d_nr, val),
+                crate::use_analysis::Own::Owned
+            )
+        {
+            let Some((mut s, value)) = self.eval(val, st) else {
+                return Ok(None);
+            };
+            Self::hand_on(&mut s, &value);
+            return Ok(Some((s, Val::null())));
+        }
         if let Some(t) = self.link_install(x)
-            && !matches!(val.unspan(), Value::Call(d, _)
-                if matches!(data.def(*d).name(), "OpCreateStack" | "OpVarRef"))
+            && !installs
         {
             return Ok(self.link_write(x, t, val, st));
         }
