@@ -148,7 +148,11 @@ when the value reads the local (`ReBind::protects_old`, one answer for the code 
 the records, beside `ReBind::copies_into_fresh`); `LOFT_NO_FRESH_PROTECTS_OLD=1` leaves it out,
 and the copy's source-free and the stashed free both release it.  A literal buffer adopted by
 an owning local that is assigned again takes no scope-exit free (the local releases its store
-on every path); `LOFT_NO_REBOUND_ADOPTER_DISARM=1` keeps the pairing.  Two closure records
+on every path) — a local renamed onto the return buffer included, which releases at exit
+through its entry witness; `LOFT_NO_REBOUND_ADOPTER_DISARM=1` keeps the pairing.  Such a renamed
+buffer, rebound from a call that reads it, copies the call's answer where the copy lands in a
+fresh store (`re_arm`); `LOFT_NO_BUFFER_FRESH_COPY=1` binds it plainly, aliasing what the call
+answered.  Two closure records
 built over a loop-reassigned capture between the same two assignments group by the store
 they adopt, so one owns it (`capture_adoption`, `@FR-L-CapOne`);
 `LOFT_NO_LOOP_CAPTURE_GROUP=1` lets each own it, and both cascades free it.  A call that

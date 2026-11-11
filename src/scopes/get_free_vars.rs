@@ -1276,6 +1276,17 @@ impl Scopes<'_> {
                 if (*d == free || *d == free_distinct)
                     && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w))
         };
+        // A rebound parameter (a local renamed onto the return buffer) releases at exit, through
+        // its entry witness, what the caller did not hand it — a release added after this sweep.
+        let mut rebound_params: Vec<u16> = function
+            .rebind_params()
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        // …and so does a local renamed onto the return buffer (`__rbw_<name>` is its witness).
+        rebound_params.extend((0..function.count()).filter(|&p| {
+            crate::bind_lowering::is_promoted_return_buffer(data, self.d_nr, function, p)
+        }));
         let mut i = 0;
         while i < ls.len() {
             let paired = match ls[i].unspan() {
@@ -1283,7 +1294,10 @@ impl Scopes<'_> {
                     Some(Value::Var(b)) => self
                         .literal_buffer
                         .get(b)
-                        .filter(|&&w| w != *b && ls.iter().any(|op| frees(op, w)))
+                        .filter(|&&w| {
+                            w != *b
+                                && (ls.iter().any(|op| frees(op, w)) || rebound_params.contains(&w))
+                        })
                         .map(|&w| (*b, w)),
                     _ => None,
                 },
@@ -1305,7 +1319,11 @@ impl Scopes<'_> {
                     .var_mapping
                     .iter()
                     .any(|(o, n)| *n == w && self.multi_assigned.contains(o));
-            if multi && function.proxy_says_owned(w) && !rebound_adopter_disarm_off() {
+            // A renamed return buffer is an argument by slot, never-free to the sweep, and still
+            // releases at exit what the caller did not hand it.
+            let owner = function.proxy_says_owned(w)
+                || (function.is_argument(w) && rebound_params.contains(&w));
+            if multi && owner && !rebound_adopter_disarm_off() {
                 continue;
             }
             let mentions = |op: &Value| {

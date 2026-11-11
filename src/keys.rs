@@ -3320,6 +3320,15 @@ pub fn backed_capture_stand_down() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_BACKED_CAPTURE_STAND_DOWN"))
 }
 
+/// `LOFT_NO_BUFFER_FRESH_COPY=1` — a local renamed onto the return buffer, rebound from a call
+/// that reads it, binds the call's answer plainly even where the copy would land in a fresh
+/// store (`bind_lowering::re_arm`): it then aliases a view the call answered.
+#[must_use]
+pub fn buffer_fresh_copy_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_FRESH_COPY"))
+}
+
 /// `LOFT_NO_FRESH_PROTECTS_OLD=1` — a reassignment copied into a fresh store leaves the local's
 /// old store out of the protection bracket even where the value reads the local, as it did
 /// before (`Codegen::generate_set_inner`, arm R2b): the copy's source-free then releases it and

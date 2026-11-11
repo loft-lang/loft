@@ -797,7 +797,15 @@ fn re_arm(
     }
     if let Type::Reference(rec, _) | Type::Enum(rec, true, _) = tp.base().clone()
         && (!function.is_argument(v)
-            || (is_promoted_return_buffer(data, d_nr, function, v) && !rb.rhs_reads_v))
+            // A renamed return buffer whose value reads it copies too where the copy lands in
+            // a FRESH store (`copies_into_fresh`): an in-place copy would wipe the source it
+            // reads, which is what excluded it, and bound plain it aliased whatever the call
+            // answered — a view into another store its exit release then freed
+            // (`@FR-H-FreeTwice`, O-Buffer's `class = pick(class, c)`).
+            // `LOFT_NO_BUFFER_FRESH_COPY=1` keeps the plain bind.
+            || (is_promoted_return_buffer(data, d_nr, function, v)
+                && (!rb.rhs_reads_v
+                    || (rb.copies_into_fresh() && !crate::keys::buffer_fresh_copy_off()))))
         && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
         && let Some(fn_nr) = crate::use_analysis::callee_of(data, d_nr, value)
         && data.def(fn_nr).is_loft_defined()
