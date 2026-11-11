@@ -148,7 +148,11 @@ fn the_no_type_id_takes_no_table_slot() {
         "the probe no longer passes the no-type id; pick another that does"
     );
     let unknown = unknown_keys(&code);
-    assert!(unknown.is_empty(), "the type table names {}", unknown.join(", "));
+    assert!(
+        unknown.is_empty(),
+        "the type table names {}",
+        unknown.join(", ")
+    );
 }
 
 const SHARDS: usize = 8;
@@ -173,7 +177,10 @@ fn check_shard(shard: usize) {
         }
         let unknown = unknown_keys(&a);
         if !unknown.is_empty() {
-            differ.push(format!("{f}: names types no program has: {}", unknown.join(", ")));
+            differ.push(format!(
+                "{f}: names types no program has: {}",
+                unknown.join(", ")
+            ));
         }
     }
     assert!(
