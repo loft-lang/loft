@@ -1289,6 +1289,25 @@ impl Run<'_> {
             return Some((st, Val::null()));
         }
         let (mut s, vals) = self.args(args, st)?;
+        // A copy that frees its source store (`COPY_FREE_SOURCE`, `OpSets::freed_source`):
+        // the source's stores end here, except one the destination names, whose release
+        // the runtime declines.
+        if let Some((src, dst)) = self.data.op_sets().freed_source(d, args)
+            && let Some(x) = Self::first_var(args, src)
+        {
+            let kept: BTreeSet<SKey> = vals
+                .get(dst)
+                .map(|v| Self::stores_of(&v.pts).into_iter().collect())
+                .unwrap_or_default();
+            let freed: BTreeSet<SKey> = Self::stores_of(&Self::pts(&s, x))
+                .into_iter()
+                .filter(|k| !kept.contains(k))
+                .collect();
+            if !freed.is_empty() {
+                let name = format!("{} (its source)", self.data.def(d).name());
+                self.end_only(&mut s, x, &name, true, Some(&freed));
+            }
+        }
         let def = self.data.def(d);
         if def.name().ends_with("_OpDropAll")
             && let Some(w) = Self::first_var(args, 0)

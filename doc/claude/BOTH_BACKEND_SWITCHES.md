@@ -9,7 +9,8 @@ Which switch turns off an optimisation that the interpreter AND `--native` both 
 what checks it.  Two families: LOWERING rewrites, made at parse time or in the scope pass, so
 both backends run the rewritten IR; and RUNTIME policies inside the store, keyed collections
 and the free tree.  A wrong answer on `--native` only belongs to
-[NATIVE_SWITCHES.md](NATIVE_SWITCHES.md) instead.
+[NATIVE_SWITCHES.md](NATIVE_SWITCHES.md) instead.  What each switch measured, and since when:
+[BOTH_BACKEND_SWITCHES-history.md](BOTH_BACKEND_SWITCHES-history.md).
 
 Each entry names its switch (the first bisect step), the falsifiers that apply
 (`LOFT_STRICT_STORES=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_KEYED_VERIFY=1`, the
@@ -248,9 +249,9 @@ condition is the shape to suspect.  Guards `loft-suite/rules/matching/M-Once/`. 
 test as one op is the interpreter's alone, `LOFT_NO_TAG_JUMP`: `formal/rewrites.md` `(R-Fuse)`.)
 
 **Store confinement across sibling blocks (default-ON, both backends):** a local reassigned
-across sibling `if`/`else if`/`match` arms keeps only the store of the arm that runs:
-`recover_backer` confines each block's store to its block, so the watermark follows how many
-arms run, not how many reassign. **`LOFT_NO_CONF_RECOVER=1`** emits the pre-confinement form and is the first bisect
+across sibling `if`/`else if`/`match` arms keeps only the store of the arm that ran:
+`recover_backer` confines each block's store to its block, so the watermark grows with the
+arms that run, not with the reassignment sites. **`LOFT_NO_CONF_RECOVER=1`** emits the pre-confinement form and is the first bisect
 step for a wrong answer in a function that reassigns a local across sibling blocks. ⚠ The
 soundness condition is `store_dead_after_block`, NOT the flag: a local READ after the blocks
 does not confine, because freeing a confined store while the local still holds it returns the
@@ -587,24 +588,23 @@ value that goes away here and not under `LOFT_NO_WORK_BUFFER` is two buffers of 
 sharing a store they must not.
 ## Lowering: slices
 
-**`LOFT_NO_SLICE_COPY=1`** (@PLN174 F4a, `(Slice-Value)`'s block-copy form, default-ON since
-2026-09-28, parse time, BOTH backends) keeps the per-element loop for a SCALAR-element slice
-bound to a local (`s = v[a..b]`, `s += v[a..b]`, and every vector-typed position the
-coercion serves) — with it off the span is copied in ONE block (`OpSliceVector`,
-`Stores::vector_slice`; forty 200 000-element slices 0.13 → 0.03 s) — and is the first bisect
+**`LOFT_NO_SLICE_COPY=1`** (@PLN174 F4a, `(Slice-Value)`'s block-copy form, default-ON, parse
+time, BOTH backends) keeps the per-element loop for a SCALAR-element slice bound to a local
+(`s = v[a..b]`, `s += v[a..b]`, and every vector-typed position the coercion serves) — with
+it off the span is copied in ONE block (`OpSliceVector`, `Stores::vector_slice`) — the first bisect
 step for a wrong slice of a scalar vector.  A heap, struct, type-variable or linked element
 keeps the loop either way.  **`LOFT_TRACE_ITERVEC=1`** names an iterator that meets a
 vector-typed position and is NOT materialised, with the value's shape — the instrument for
 "expected vector, got iterator" surviving at a site the coercion should serve.
 
-**`LOFT_NO_FOREIGN_VIEW=1`** (@PLN174 F4b, `(Slice-Value)`'s view clause, default-ON since
-2026-09-28, RUNTIME, both backends) copies a slice of a FOREIGN store (a mapped file, a
+**`LOFT_NO_FOREIGN_VIEW=1`** (@PLN174 F4b, `(Slice-Value)`'s view clause, default-ON, RUNTIME,
+both backends) copies a slice of a FOREIGN store (a mapped file, a
 library's buffer) where a bind into the local's own store takes a VIEW of the bytes
 (`OpSliceView` → `Stores::vector_slice_view`; under the switch the same op copies) — the
 first bisect step for a wrong byte, a leak or a refused write out of a slice of `file_map`'s
 result, and the A/B `tests/foreign_store.rs` runs both cell files under.  The one observable
-difference between the forms is that the copy takes a write and the view refuses it.  Since
-F5 the same switch covers a `#native` bridge's whole vector answer bound to a local
+difference between the forms is that the copy takes a write and the view refuses it.  The
+same switch covers a `#native` bridge's whole vector answer bound to a local
 (`OpAdoptVector` → `Stores::vector_adopt`, which views a foreign answer and copies under the
 switch; `tests/foreign_bridge.rs` is its A/B).
 
@@ -618,6 +618,12 @@ that contains itself; it is the first bisect step only for a program whose types
 recurse, since a recursive one stops compiling.  For a wrong value, a leak or a double release
 in a recursive type, the falsifiers are `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` against
 hand-computed values (`loft-suite/rules/binding/B-OutOfLine/`).
+
+**A field write frees a call's answer once (both backends, scope pass):** `OpSetChildRec`, like
+`OpCopyRecord` and `OpReplaceKeyed`, frees its source store under `COPY_FREE_SOURCE`, so the
+call's `__lift_N` is read back as null after it and keeps no free (`OpSets::freed_source_arg`).
+**`LOFT_NO_CHILD_REC_TAKES=1`** leaves `OpSetChildRec` out: the first bisect step for a
+re-free (`LOFT_DOUBLE_FREE`) after `cur = f(…)` through a link (`B-Ref-Write/2433-…`).
 
 ## Lowering: `??` chains and nested literals
 
@@ -847,7 +853,8 @@ O(1) off the footer (tree-confirmed — claimed data can spell a false footer) i
 leaving adjacent frees to `claim`'s lazy O(blocks) sweep; the sweep stays armed only for
 the untracked one-word case.  **`LOFT_NO_FREE_FOOTER=1`** restores the sweep-only form
 whole (every delete arms it) and is the first bisect step for a store-layout fault in a
-delete-heavy run.
+delete-heavy run.  The class it retires is the `coalesce_free` cliff
+(PERFORMANCE.md § V-j P2).
 
 **The tail free block is a wilderness (@PLN164, default-ON, both backends,
 `@FR-H-Wilderness`):** the free block that ends a store is held beside the free tree, and the

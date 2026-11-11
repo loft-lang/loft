@@ -57,7 +57,9 @@ the scope pass has placed the frees, so it describes exactly what both backends 
 
 **Ends:**
 
-- **Free**, in any of the spellings `OpSets::frees` names.
+- **Free**, in any of the spellings `OpSets::frees` names, and the source of a copy that frees
+  it (`OpSets::freed_source_arg`: `OpCopyRecord`, `OpReplaceKeyed` and `OpSetChildRec` under
+  `COPY_FREE_SOURCE`), except a source in the destination's own store.
 - **Transfer**: returned to the caller, stored into another store (which then owns it),
   captured by a closure, or handed to a call that consumes it.
 - **Guarded free**: a free that is a no-op when this path's store is already ended, as in

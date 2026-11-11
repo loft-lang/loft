@@ -76,3 +76,9 @@ cbor `encode_bytes` 94.7× → 43.1×; 2.9 → 0.4 ns a byte on the probe.
 ## The field fill with the block repeat — `lock_curved`
 
 together with the block repeat `lock_curved` 4.2× → 2.2×.
+
+## Slices (`LOFT_NO_SLICE_COPY`, `LOFT_NO_FOREIGN_VIEW`)
+
+Both default-ON since 2026-09-28 (@PLN174 F4a, F4b).  The block copy: forty 200 000-element
+slices 0.13 → 0.03 s.  @PLN174 F5 extended `LOFT_NO_FOREIGN_VIEW` to a `#native` bridge's
+whole vector answer.

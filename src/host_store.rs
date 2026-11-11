@@ -153,9 +153,13 @@ fn rewrite(n: &mut Value, data: &Data, ids: &Ids, me: &Me, count: &mut usize) {
 /// `f` is its buffer, `f` is handed `OpStoreBuf(node)`, the field adopts the answer by number,
 /// and each `OpFreeRef(lift)` becomes `OpFreeRefIfDistinct(lift, node)`: the answer's store
 /// is freed only where it is not the node's.
-fn literal_clause(ops: &mut [Value], data: &Data, ids: &Ids, me: &Me, count: &mut usize) {
+fn literal_clause(ops: &mut Vec<Value>, data: &Data, ids: &Ids, me: &Me, count: &mut usize) {
     let trace = std::env::var("LOFT_TRACE_HOST_STORE").is_ok();
-    for i in 0..ops.len().saturating_sub(1) {
+    // An index walk, not a range: an admitted site inserts its free into `ops`.
+    let mut next = 0;
+    while next + 1 < ops.len() {
+        let i = next;
+        next += 1;
         let Some((lift, host, buf_at)) = literal_site(&ops[i], &ops[i + 1], data, ids, me) else {
             continue;
         };
@@ -175,11 +179,27 @@ fn literal_clause(ops: &mut [Value], data: &Data, ids: &Ids, me: &Me, count: &mu
         {
             args[buf_at] = Value::Call(ids.store_buf, vec![Value::Var(host)]);
         }
+        // The answer's store is released once, where it is not the node's: by the lift's
+        // own frees made distinct from the node below, or — where the scope pass already
+        // gave the store to the write (`OpSets::freed_source_arg`) and the lift keeps no
+        // free — by one distinct free right after the adopt, before the lift is read back
+        // as null.
+        let lift_freed = ops.iter().any(|op| {
+            matches!(op.unspan(), Value::Call(f, args)
+                if *f == ids.free_ref
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == lift))
+        });
         if let Value::Call(op, args) = ops[i + 1].unspan_mut() {
             *op = ids.adopt;
             if let Some(Value::Int(tp)) = args.get_mut(2) {
                 *tp &= i32::from(crate::keys::COPY_TP_MASK);
             }
+        }
+        if !lift_freed {
+            ops.insert(
+                i + 2,
+                Value::Call(ids.free_distinct, vec![Value::Var(lift), Value::Var(host)]),
+            );
         }
         for op in ops.iter_mut() {
             if let Value::Call(f, args) = op.unspan_mut()

@@ -54,28 +54,29 @@ fn lift_view_deps(arg: &Value, data: &Data) -> Option<Vec<u16>> {
     }
 }
 
-/// loft#890, loft#1647 — the argument index whose STORE `outer_call` frees WHOLE for
-/// itself, via the `0x8000` source-free bit on its `const u16` type parameter.
-///
-/// `OpReplaceKeyed` and `OpCopyRecord` answer: each releases its source's whole store
-/// (`Stores::free` takes the store, not the record) once the copy is made, and a source
-/// that is an inline call the scope pass lifts into a `__lift_N` is a store that temp also
-/// owns.  Its scope-exit `OpFreeRef` is then a second release — silent while the slot stays
-/// free, and a stolen store the moment the allocator hands that slot to anything minted
-/// before the scope ends: `m.vs += [vert(a, up)]` followed by a lazily minted return buffer
-/// in the same pass freed that buffer at the pass's end, and the next pass's value was read
-/// from whatever took the slot after it (@FR-H-FreeAll: a store is released exactly once;
-/// @FR-H-FreeTwice names the slot reuse a second release hits).  Where the
-/// copy declines its release (the same store as the destination, a stack, free, read-only
-/// or free-protected store) the lift's own free would release nothing it owns either.
+/// The argument whose store `outer_call` frees for itself (`OpSets::freed_source_arg`): a
+/// source that is an inline call the scope pass lifts into a `__lift_N` is a store that temp
+/// also owns, and its scope-exit `OpFreeRef` would be a second release — silent while the
+/// slot stays free, and a stolen store the moment the allocator hands that slot to anything
+/// minted before the scope ends: `m.vs += [vert(a, up)]` followed by a lazily minted return
+/// buffer in the same pass freed that buffer at the pass's end (@FR-H-FreeAll: a store is
+/// released exactly once).  `cur = leaf(k)` through a link to an out-of-line field is the
+/// `OpSetChildRec` spelling of the same copy.
 fn moved_source_arg(outer_call: u32, args: &[Value], data: &Data) -> Option<usize> {
-    if outer_call == u32::MAX
-        || (outer_call != data.def_nr("OpReplaceKeyed")
-            && outer_call != data.def_nr("OpCopyRecord"))
-    {
+    if outer_call == u32::MAX {
         return None;
     }
-    matches!(args.get(2).map(Value::unspan), Some(Value::Int(tp)) if tp & 0x8000 != 0).then_some(0)
+    // `LOFT_NO_CHILD_REC_TAKES=1` (BOTH_BACKEND_SWITCHES.md) leaves the field write's lift its
+    // own free: the re-free the store records must then report.
+    if outer_call == data.def_nr("OpSetChildRec") && child_rec_takes_off() {
+        return None;
+    }
+    data.op_sets().freed_source_arg(outer_call, args)
+}
+
+fn child_rec_takes_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("LOFT_NO_CHILD_REC_TAKES").is_ok_and(|v| v != "0"))
 }
 
 impl Scopes<'_> {
