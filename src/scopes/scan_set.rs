@@ -914,7 +914,14 @@ impl Scopes<'_> {
         // loft#1511 — remember which elements of a tuple-literal RHS were minted by their
         // own call, for the element frees at reassignment and scope exit.
         if matches!(function.tp(v).base(), Type::Tuple(_)) {
-            let joined = if matches!(value.unspan(), Value::If(..)) {
+            // A `match` arrives as a block that binds its subject and ends in the `if` chain
+            // (`scalar_match`); its arms join the same way (`@FR-H-FreeTwice`: the arms'
+            // construction work-refs were never retired, and each freed its member again).
+            // `LOFT_NO_MATCH_TUPLE_JOIN=1` reads only a bare `if`.
+            let joined = if matches!(value.unspan(), Value::If(..))
+                || (!crate::env_once!(std::env::var_os("LOFT_NO_MATCH_TUPLE_JOIN").is_some())
+                    && ends_in_branch(value))
+            {
                 branch_tuple_call_mints(value, function, data, data.def_nr("OpNullRefSentinel"))
             } else {
                 tuple_call_mints(value, function, data).map(|m| (m, Vec::new()))
@@ -2483,4 +2490,13 @@ fn every_arm_tail_is_var(value: &Value) -> bool {
 /// then report.
 fn lift_projection_view_off() -> bool {
     crate::env_once!(std::env::var_os("LOFT_NO_LIFT_PROJECTION_VIEW").is_some())
+}
+
+/// Does `value` end — through the tails of its blocks — in an `if`?
+fn ends_in_branch(value: &Value) -> bool {
+    match value.unspan() {
+        Value::If(..) => true,
+        Value::Block(b) => b.operators.last().is_some_and(ends_in_branch),
+        _ => false,
+    }
 }

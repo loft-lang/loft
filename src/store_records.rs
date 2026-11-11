@@ -330,6 +330,9 @@ struct Run<'a> {
     /// Variables a first-assignment MOVE made never-free during code generation: the code
     /// generator drops their later `OpFreeRef`.
     moved_away: BTreeSet<u16>,
+    /// The tuple local a branch's TAIL literals bind the members of, while its value runs
+    /// (`m = match k { 1 => (S { … }, 1), _ => (S { … }, 2) }`); cleared inside call arguments.
+    tuple_target: Option<u16>,
     /// Each reassignment's lowering (by `Set` address), decided once per run.
     rebinds: BTreeMap<usize, crate::bind_lowering::ReBind>,
     /// The free nodes after which the code generator resets their variable to null: every
@@ -789,9 +792,22 @@ impl Run<'_> {
                 Some((s, Val::null()))
             }
             Value::Tuple(xs) => {
+                let target = self.tuple_target;
                 let (mut s, vals) = self.args(xs, st)?;
-                for value in &vals {
-                    Self::hand_on(&mut s, value);
+                match target {
+                    // A branch arm's tail literal for a tuple local: its members.
+                    Some(t) => {
+                        for (i, value) in vals.iter().enumerate() {
+                            if let Some(k) = u16::try_from(i).ok().and_then(|i| member_key(t, i)) {
+                                self.bind(&mut s, k, value);
+                            }
+                        }
+                    }
+                    None => {
+                        for value in &vals {
+                            Self::hand_on(&mut s, value);
+                        }
+                    }
                 }
                 Some((s, Val::null()))
             }
@@ -875,6 +891,18 @@ impl Run<'_> {
             },
             _ => (&[], val),
         };
+        // A value BRANCH (an `if`, or a `match`'s block ending in its `if` chain) whose tails are
+        // tuple literals binds the members on each arm.
+        if !matches!(lit.unspan(), Value::Tuple(_))
+            && matches!(function.tp(x).base(), crate::data::Type::Tuple(_))
+            && member_key(x, 15).is_some()
+            && branch_ends_in_tuples(val)
+        {
+            let prev = self.tuple_target.replace(x);
+            let out = self.eval(val, st);
+            self.tuple_target = prev;
+            return out.map(|(s, _)| (s, Val::null()));
+        }
         if let Value::Tuple(xs) = lit.unspan()
             && matches!(function.tp(x).base(), crate::data::Type::Tuple(_))
             && u16::try_from(xs.len())
@@ -1391,6 +1419,13 @@ impl Run<'_> {
     /// Evaluate call arguments left to right.  A bare variable argument is a use of its
     /// store.
     fn args(&mut self, args: &[Value], st: State) -> Option<(State, Vec<Val>)> {
+        let target = self.tuple_target.take();
+        let out = self.args_inner(args, st);
+        self.tuple_target = target;
+        out
+    }
+
+    fn args_inner(&mut self, args: &[Value], st: State) -> Option<(State, Vec<Val>)> {
         let mut s = st;
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
@@ -1763,6 +1798,7 @@ fn run_fn<'a>(
         params,
         first_sets: BTreeSet::new(),
         moved_away: BTreeSet::new(),
+        tuple_target: None,
         rebinds: BTreeMap::new(),
         resets: BTreeSet::new(),
         fn_record: BTreeMap::new(),
@@ -2096,4 +2132,18 @@ fn print_records(run: &Run, name: &str, sum: Summary) {
             f.detail
         );
     }
+}
+
+/// Does `v` end — through its blocks' tails and both arms of every `if` — in tuple literals
+/// only, with at least one branch on the way?
+fn branch_ends_in_tuples(v: &Value) -> bool {
+    fn tails(v: &Value, branched: bool) -> Option<bool> {
+        match v.unspan() {
+            Value::If(_, a, b) => Some(tails(a, true)? && tails(b, true)?),
+            Value::Block(bl) => tails(bl.operators.last()?, branched),
+            Value::Tuple(_) => Some(branched),
+            _ => None,
+        }
+    }
+    tails(v, false).unwrap_or(false)
 }

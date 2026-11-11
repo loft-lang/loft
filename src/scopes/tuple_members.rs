@@ -320,19 +320,50 @@ pub(super) fn branch_tuple_call_mints(
         .iter()
         .map(|t| tuple_call_mints(t, function, data))
         .collect::<Option<_>>()?;
-    let (first, rest) = maps.split_first()?;
+    // A `null` member owns nothing, so an arm answering null for a member does not block the
+    // other arms' claim on it (`@FR-H-FreeTwice`: `match k { 1 => (null, 11), 2 => (S {…}, 22) }`
+    // left member 0 unjoined, and on the arm that built it the member and the construction's
+    // work-ref both freed it).  `LOFT_NO_NULL_ARM_TUPLE_JOIN=1` keeps the old reading.
+    let null_ok = !crate::env_once!(std::env::var_os("LOFT_NO_NULL_ARM_TUPLE_JOIN").is_some());
+    let null_member = |end: &Value, idx: u16| -> bool {
+        null_ok
+            && matches!(end.unspan(), Value::Tuple(ms)
+            if ms.get(idx as usize).is_some_and(|m| match m.unspan() {
+                Value::Null => true,
+                Value::Call(d, a) => a.is_empty() && *d == sentinel,
+                _ => false,
+            }))
+    };
+    let mut indices: Vec<u16> = maps.iter().flat_map(|m| m.keys().copied()).collect();
+    indices.sort_unstable();
+    indices.dedup();
     let mut out = HashMap::default();
     let mut claimants: Vec<u16> = Vec::new();
-    for (&idx, &claim) in first {
-        let others: Vec<Option<u16>> = rest.iter().filter_map(|m| m.get(&idx).copied()).collect();
-        if others.len() != rest.len() {
+    for idx in indices {
+        // Each arm's claim on the member, or `None` for an arm whose member is null.
+        let mut claims: Vec<Option<Option<u16>>> = Vec::with_capacity(maps.len());
+        for (m, end) in maps.iter().zip(&ends) {
+            match m.get(&idx) {
+                Some(&c) => claims.push(Some(c)),
+                None if null_member(end, idx) => claims.push(None),
+                None => {
+                    claims.clear();
+                    break;
+                }
+            }
+        }
+        if claims.len() != maps.len() {
             continue;
         }
-        if others.iter().all(|&o| o == claim) {
-            out.insert(idx, claim);
+        let present: Vec<Option<u16>> = claims.iter().flatten().copied().collect();
+        let Some(&first) = present.first() else {
+            continue;
+        };
+        if present.len() == claims.len() && present.iter().all(|&o| o == first) {
+            out.insert(idx, first);
         } else {
             out.insert(idx, None);
-            claimants.extend(std::iter::once(claim).chain(others).flatten());
+            claimants.extend(present.into_iter().flatten());
         }
     }
     claimants.sort_unstable();

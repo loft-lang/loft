@@ -154,7 +154,10 @@ buffer, rebound from a call that reads it, copies the call's answer where the co
 fresh store (`re_arm`); `LOFT_NO_BUFFER_FRESH_COPY=1` binds it plainly, aliasing what the call
 answered.  A branch arm delivering a vector local into the return buffer frees only the
 local's OWNING deps (`materialize_vector_arms_collect`); `LOFT_ARM_FREES_VIEW_DEPS=1` frees a
-view dep too.  Two closure records
+view dep too.  A tuple bound from a value branch — a `match` block ending in its `if` chain
+included — joins its arms member by member, a `null` member blocking nothing
+(`branch_tuple_call_mints`); `LOFT_NO_MATCH_TUPLE_JOIN=1` reads only a bare `if`, and
+`LOFT_NO_NULL_ARM_TUPLE_JOIN=1` lets a `null` arm leave the member unjoined.  Two closure records
 built over a loop-reassigned capture between the same two assignments group by the store
 they adopt, so one owns it (`capture_adoption`, `@FR-L-CapOne`);
 `LOFT_NO_LOOP_CAPTURE_GROUP=1` lets each own it, and both cascades free it.  A call that
