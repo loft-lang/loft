@@ -122,7 +122,10 @@ A tuple held from a record's unbox (a call's tuple returned or appended) borrows
 the unbox binds (`unboxed_member_types`); `LOFT_NO_UNBOX_MEMBER_DEPS=1` leaves its members owning.
 A tuple member's free retires every work-ref an assignment made that member's claimant, where
 it still names the store (a loop drops the per-assignment claimant, `tuple_claimants`);
-`LOFT_NO_CLAIMANT_DISARM=1` leaves them naming it.
+`LOFT_NO_CLAIMANT_DISARM=1` leaves them naming it.  A collection a fn-ref call delivers into
+a local that another assignment binds to a view gets a lift temporary as its owner, and the
+local views it (`scan_set`); `LOFT_NO_CALLREF_LIFT=1` makes the local its owner again, whose
+displaced free then releases the view's temporary store.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it
