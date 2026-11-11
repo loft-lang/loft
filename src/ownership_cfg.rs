@@ -477,8 +477,11 @@ impl OFact {
             (Bottom, x) | (x, Bottom) => x,
             (Owned, Owned) => Owned,
             (Borrowed(b1), Borrowed(b2)) if b1 == b2 => Borrowed(b1),
+            // Borrowed on every path, of different stores: no path owns, so no free is ever
+            // licensed — still `Borrowed`, with no one base to name (`ownership_of`'s answer).
+            (Borrowed(_), Borrowed(_)) => Borrowed(u16::MAX),
             (Join(bb), _) | (_, Join(bb)) => Join(bb),
-            // remaining: Owned×Borrowed or Borrowed×Borrowed(differing base) — runtime-dependent.
+            // remaining: Owned×Borrowed — runtime-dependent.
             (Borrowed(bb), _) | (_, Borrowed(bb)) => Join(bb),
         }
     }
@@ -603,8 +606,10 @@ fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize)
                 // A `= null` DECLARATION sentinel is not a real def — skip it (B's `collect_defs`
                 // does the same). Recording it would default a var whose real def is nested/
                 // conditional (a `??` `__ncc_N` temp) to `Owned`, the unsound over-free direction;
-                // skipping lets a read fall through to `ownership_of` (B's fact) instead.
-                if matches!(rhs.unspan(), Value::Null) {
+                // skipping lets a read fall through to `ownership_of` (B's fact) instead.  A null
+                // in either spelling holds no store, and is the identity in B's join too
+                // (`holds_no_store`): a null on one path does not make a view runtime-owned.
+                if crate::use_analysis::holds_no_store(data, rhs) {
                     continue;
                 }
                 let f = match rhs.unspan() {
@@ -651,7 +656,11 @@ fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize)
                 // (A flow-INSENSITIVE db_var→Owned rule was tried and REVERTED: it forces the A1b
                 // return work-ref — `OpDatabase`'d for its Cell then returned as a borrowing view —
                 // to `Owned`, matching B's wrong-under-`LOFT_NO_A1B` fact and LOSING the catch.)
-                let f = if f == OFact::Borrowed(*var) {
+                // Only a KEYED local carries that marker: a link re-pointed at its own child
+                // (`l = l.next`) is a real projection of itself, and stays the borrow it is.
+                let f = if f == OFact::Borrowed(*var)
+                    && crate::parser::vectors::is_keyed(data.def(d_nr).variables.tp(*var))
+                {
                     OFact::Owned
                 } else {
                     f
