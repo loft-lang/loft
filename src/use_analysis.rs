@@ -3302,7 +3302,16 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
         // canonical "carries a store" question — and asking it through `base` as well,
         // because an `Optional` wrapper hides the storage under it.  A scalar argument
         // is no one's borrow source and neither protects nor blocks.
-        if tp.heap_dep().is_none() && tp.base().heap_dep().is_none() {
+        // A `&` link carries the store of what it links to (its `OpCreateStack` arm below).
+        let carried = match tp {
+            Type::RefVar(inner)
+                if !crate::env_once!(std::env::var_os("LOFT_NO_LINK_ARG_PROTECT").is_some()) =>
+            {
+                inner.as_ref()
+            }
+            other => other,
+        };
+        if carried.heap_dep().is_none() && carried.base().heap_dep().is_none() {
             continue;
         }
         // Every argument whose type CARRIES A STORE is protectable, because the bracket
@@ -3354,6 +3363,21 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
                 Some(roots) => protectable.extend(roots),
                 None => covers_all = false,
             },
+            // A `&` LINK to a local (`OpCreateStack(u)` for a `&(integer, text)` parameter):
+            // the callee reaches `u`'s store through it and may hand that store back whole
+            // (`fn ret_r(p: &(…)) -> (…) { return p; }`), so the store to protect is `u`'s.
+            // Left out, the copy's source-free released `u`'s store and `u` freed it again
+            // (`@FR-H-FreeTwice`).  `LOFT_NO_LINK_ARG_PROTECT=1` skips a link parameter as the
+            // filter above did: the set then read COMPLETE while protecting nothing.
+            Value::Call(d, cargs)
+                if data.def(*d).name() == "OpCreateStack"
+                    && matches!(tp, Type::RefVar(inner) if is_protectable_store_type(inner)) =>
+            {
+                match cargs.first().map(Value::unspan) {
+                    Some(Value::Var(u)) => protectable.push(*u),
+                    _ => covers_all = false,
+                }
+            }
             _ => covers_all = false,
         }
     }

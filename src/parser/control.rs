@@ -22573,6 +22573,23 @@ impl Parser {
                 // discharged the nullability against the dense declared return.
                 let t = match &t {
                     Type::Optional(inner) => (**inner).clone(),
+                    // `return p` of a `&` parameter hands back the store the link reaches: the
+                    // borrow is the parameter's, as the tail spelling `{ p }` records it.  Left
+                    // a link, no arm below matched, the signature declared a FRESH return, and
+                    // the caller adopted its own argument's store (`@FR-H-FreeTwice`).
+                    // `LOFT_NO_RETURN_LINK_BORROW=1` keeps the link type.
+                    Type::RefVar(inner)
+                        if !crate::env_once!(
+                            std::env::var_os("LOFT_NO_RETURN_LINK_BORROW").is_some()
+                        ) && matches!(v.unspan(), Value::Var(p)
+                                if self.vars.is_argument(*p)
+                                    && matches!(inner.base(), Type::Reference(..))) =>
+                    {
+                        let Value::Var(p) = v.unspan() else {
+                            unreachable!("matched as a variable above")
+                        };
+                        inner.base().depending(*p)
+                    }
                     other => other.clone(),
                 };
                 if let Type::Reference(td, ls) = &t {

@@ -367,6 +367,9 @@ impl Run<'_> {
         if v == FREED_NAME {
             return "a freed name".to_string();
         }
+        if v == FREED_NAME - 1 {
+            return "the copy's source".to_string();
+        }
         if v >= MEMBER_BASE {
             let (t, i) = ((v & !MEMBER_BASE) >> 4, v & 15);
             return format!("{}.{i}", self.data.def(self.d_nr).variables.name(t));
@@ -970,6 +973,7 @@ impl Run<'_> {
                 FirstArm::CallCopy { .. } | FirstArm::NullableCallCopy { .. } => {
                     if crate::use_analysis::call_return_frees_source(data, self.d_nr, val) {
                         Self::consume(&mut s, &value);
+                        self.unprotected_source_free(&mut s, val, &value);
                     }
                     self.copied(&mut s, node)
                 }
@@ -1141,6 +1145,9 @@ impl Run<'_> {
             ReArm::CallCopy { .. } => {
                 if crate::use_analysis::call_return_frees_source(data, self.d_nr, val) {
                     Self::consume(&mut s, &value);
+                    if rb.free != DisplacedFree::Stash {
+                        self.unprotected_source_free(&mut s, val, &value);
+                    }
                     // The copy's source-free releases what the call answered, and a call that
                     // reads `x` may answer `x`'s own store.  Unprotected (`ReBind::protects_old`),
                     // that store is then released by the copy AND by the stashed free after it.
@@ -1208,6 +1215,35 @@ impl Run<'_> {
         }
         self.bind(&mut s, x, &bound);
         Some((s, Val::null()))
+    }
+
+    /// A copy's source-free (`COPY_FREE_SOURCE`) releases what the call answered unless the
+    /// `@P290` bracket protects it: a store of the answer that no protectable argument names
+    /// (`use_analysis::protectable_ref_args`, the code generator's own list) ends here.
+    fn unprotected_source_free(&mut self, st: &mut State, call: &Value, value: &Val) {
+        let protected: BTreeSet<SKey> =
+            crate::use_analysis::protectable_ref_args(self.data, self.d_nr, call)
+                .0
+                .into_iter()
+                .flat_map(|a| Self::stores_of(&Self::pts(st, a)))
+                .collect();
+        let freed: BTreeSet<SKey> = Self::stores_of(&value.pts)
+            .into_iter()
+            .filter(|k| !protected.contains(k) && !value.corr.contains(k))
+            .filter(|k| info_of(st, *k).has(LIVE))
+            .collect();
+        if freed.is_empty() {
+            return;
+        }
+        st.vars.insert(FREED_NAME - 1, value.pts.clone());
+        self.end_only(
+            st,
+            FREED_NAME - 1,
+            "the copy's source-free",
+            true,
+            Some(&freed),
+        );
+        st.vars.remove(&(FREED_NAME - 1));
     }
 
     /// The states the two arms of an `if` on `cond` start from, as (then, else); `None` is
