@@ -24,6 +24,14 @@ it compiles to, and time it. Only when that hand-written version is clearly fast
 building the general rewrite that turns the natural spelling into it. Building first and
 measuring afterwards is how days disappear into changes that buy nothing.
 
+**No optimisation without a clear win somewhere** (the owner's rule): a measured routine of a
+real workload — a bench row, a library routine, a script's profile — that the change moves, not
+a micro-probe of the shape alone.  A probe proves a mechanism is cheap; it does not prove anyone
+runs it.  Check WHERE the shape runs before building: a loop inside a `use`d library runs
+compiled even for an interpreted script (@C71), so an interpreter-only move of it wins nothing.
+Hardware mechanisms (wide or broadcast stores, SIMD, special instructions) are welcome on the
+same terms: evidence first.
+
 A slow routine is rarely the problem itself: it is evidence of a MECHANISM in loft that costs
 more than it should. Any one routine can be slow, and a user can work around it. The aim is to
 find the mechanism and remove its cost, so that every program using it gets faster, including
