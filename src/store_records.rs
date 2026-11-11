@@ -1964,6 +1964,15 @@ impl Run<'_> {
                 // (absent) first argument it was unknown, and every `-> S?` callee whose null
                 // arm spells it answered Unknown instead of Fresh.
                 Val::null()
+            } else if def.name() == "OpCopyClosure" {
+                // A fn-ref copied out of a field is a copy (`(L-CapKeep)`): the closure record
+                // is copied into a store of its own, which the copy's holder frees.
+                let site = self.site(node, Origin::Copy);
+                let k = Self::fresh(&mut s, site);
+                Val {
+                    pts: [Pt::Store(k)].into(),
+                    corr: [k].into(),
+                }
             } else if def.name().starts_with("Op")
                 && def
                     .attributes
