@@ -5430,10 +5430,10 @@ server	b4075f3fc	c	R-Rotate	16
 server	b4075f3fc	c	R-SingleUse	2
 server	b4075f3fc	c	R-SpecChain	1
 server	b4075f3fc	c	R-StickySum	7
-server	b4075f3fc	c	R-TextBorrow	16
+server	b4075f3fc	c	R-TextBorrow	18
 server	b4075f3fc	c	R-ValueRecord	16
 server	b4075f3fc	c	R-View	2
-server	b4075f3fc	c	R-WorkPark	7
+server	b4075f3fc	c	R-WorkPark	5
 server	b4075f3fc	c	R-Wrapper	10
 server	b4075f3fc	c	R-ZeroCount	13
 server	b4075f3fc	rust	R-Base	10
@@ -5468,8 +5468,8 @@ server	b4075f3fc	rust	R-Reuse	1
 server	b4075f3fc	rust	R-Rotate	16
 server	b4075f3fc	rust	R-SingleUse	2
 server	b4075f3fc	rust	R-SplitTable	2
-server	b4075f3fc	rust	R-TextBorrow	24
-server	b4075f3fc	rust	R-TextClear	38
+server	b4075f3fc	rust	R-TextBorrow	28
+server	b4075f3fc	rust	R-TextClear	34
 server	b4075f3fc	rust	R-ValueLocal	42
 server	b4075f3fc	rust	R-ValueRecord	16
 server	b4075f3fc	rust	R-View	6
