@@ -7496,9 +7496,10 @@ impl Parser {
             // parse optional guard clause after pattern + field bindings.
             // Field-bound variables are in scope for the guard expression.
             let guard_opt = self.parse_optional_guard();
-            // @FR-P-Guard × @FR-P-Multi — a guard on a multi-pattern arm holds for whichever
-            // pattern matched: each extra pattern's branch below carries a clone of it, run
-            // after that branch's own bindings.  It was refused ("not yet supported") while the
+            // @FR-P-Guard × @FR-P-Multi, @C162 — a guard on a multi-pattern arm is asked of each
+            // listed pattern that matches, in order: each extra pattern's branch below carries a
+            // clone of it, run after that branch's own bindings, so a guard that rejects the
+            // first pattern's bindings lets the next pattern try.  It was refused ("not yet supported") while the
             // two rules it composes were each implemented.  A guard can reject, so the arm
             // covers none of its variants — the extra patterns' coverage marks come back out.
             let multi_guard = guard_opt.clone().filter(|_| !multi_branches.is_empty());
@@ -11785,7 +11786,9 @@ impl Parser {
         // alternative's tag does, each name is read from whichever variant matched, `τ?` where
         // only some bind it (the slice element's alternation, without its parentheses).  The
         // names borrow what the value borrows (`match_borrow_source`, a tuple member's own
-        // source included).  A PLAIN enum's `Red | Green` is the value-test loop below.
+        // source included).  A PLAIN enum's `Red | Green` is the value-test loop below.  The
+        // alternation commits to its first match: an arm guard that rejects it rejects the arm,
+        // with no retry of the next alternative here (@C162).
         if let Some((e_nr, true)) = self.pattern_variant_enum(field_type)
             && self.sub_pattern_lists_alternatives()
         {

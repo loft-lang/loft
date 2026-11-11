@@ -385,3 +385,26 @@ group capture in `Parser::parse_slice_pattern` / `parse_slice_repetition`
 (`src/parser/control.rs`); `formal/matching.md` `(P-Cap)`; guard
 `loft-suite/rules/matching/P-Cap/a-capture-of-a-group-binds-the-sub-slice-it-matched.loft`.
 **Catalogue:** `formal/matching.md` `(P-Rest)`, `(P-Opt)`, `(P-Rep)`.
+
+## C162 — a guard on a multi-pattern arm is asked of each listed pattern that matches
+
+**Decision.** `p_a | p_b if g => body` tries the guard against each listed pattern that matches,
+in order, under that pattern's own bindings; the first whose guard holds commits the arm, and the
+arm fails only when none does.  So the arm answers as the two arms `p_a if g` and `p_b if g`
+would, and the guard may run once per matching pattern.  An alternation nested inside a pattern
+(a tuple element, a field sub-pattern, a slice element) commits to its first match before the
+guard runs; a guard that rejects it rejects the arm.  **Why.** Merging two guarded arms into one
+`|` arm, or splitting one, never changes what a program answers, and which pattern is written
+first matters only when two of them pass the guard with different bindings.  It is the reading
+Rust gives, and both backends already gave it at the arm.  The cost is a guard that can run more
+than once, which a guard with a side effect shows.  The nested position keeps first-match because
+a nested alternation is resolved by the value's tag at that position, and retrying it would make
+every pattern a backtracking search.
+
+**Revisit when.** A program wants a nested alternation retried after a failed guard — the arm's
+retry would then have to reach inside the pattern.  Decided 2026-11-11 (owner: "the more or less
+Rust version").
+**Holds at:** `@C162` — `./scripts/idx tag:@C162`: the multi-pattern guard branches and the nested
+alternation element in `src/parser/control.rs`; `formal/matching.md` `(P-Guard)`, `(P-Multi)`;
+guard `loft-suite/rules/matching/P-Guard/a-guard-is-asked-of-each-listed-pattern.loft`.
+**Catalogue:** `formal/matching.md` `(P-Alt)`, `(P-Atomic)`.
