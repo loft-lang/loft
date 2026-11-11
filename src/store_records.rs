@@ -919,9 +919,10 @@ impl Run<'_> {
                 | FirstArm::RefNull
                 | FirstArm::IterNull
                 | FirstArm::NullableVectorNull
-                | FirstArm::KeyedNull
                 | FirstArm::TupleNull => Val::null(),
-                FirstArm::VectorNull => {
+                // A keyed local's null init gives it a keyed store of its own, as a vector
+                // local's does (`gen_set_first_keyed_null`).
+                FirstArm::VectorNull | FirstArm::KeyedNull => {
                     if !function.is_skip_free(x) && function.tp(x).depend().is_empty() {
                         self.copied(&mut s, node)
                     } else {
@@ -963,7 +964,11 @@ impl Run<'_> {
             None => crate::bind_lowering::re_bind(data, self.d_nr, function, x, val),
         };
         let mut st = st;
-        if let DisplacedFree::Pre { witness } = rb.free {
+        // A keyed local assigned null is cleared IN PLACE (`B0`): the code generator emits no
+        // displaced free for it (`Codegen::generate_set_inner` returns at that arm).
+        if let DisplacedFree::Pre { witness } = rb.free
+            && rb.arm != ReArm::KeyedNull
+        {
             let keep = witness
                 .into_iter()
                 .chain(rb.entry_w)
@@ -1023,7 +1028,7 @@ impl Run<'_> {
             ReArm::VarCopy { .. } | ReArm::ElementCopy { .. } => self.copied(&mut s, node),
             ReArm::Plain => value,
         };
-        if rb.free == DisplacedFree::Stash && bound.pts != old {
+        if rb.free == DisplacedFree::Stash && rb.arm != ReArm::KeyedNull && bound.pts != old {
             // The stashed old reference, freed unless the new value names the same store.
             let tmp = u16::MAX;
             s.vars.insert(tmp, old.clone());

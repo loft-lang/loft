@@ -151,7 +151,9 @@ delivers into the caller's hidden buffer gets no second owner from `own_fresh_bi
 hands that record's work-ref to the consumer (`yield_handed_temps`), and one unboxed from an
 existing value copies its record members (`yield_owned_value`); `LOFT_NO_UNBOX_YIELD_HANDOVER=1`
 does neither.  The records model a handing-over `yield` (its stores are the consumer's, its
-handed temps forgotten) instead of giving up on a generator.
+handed temps forgotten) instead of giving up on a generator.  A `&` link to a collection
+(`c = &h`) never takes a free (every whole-value write goes through it);
+`LOFT_NO_LINK_NEVER_FREE=1` lets it free as an owner.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it

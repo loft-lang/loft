@@ -5612,6 +5612,13 @@ use a separate collection or add after the loop"
         }
         if amp_collection_bind && var_nr != u16::MAX {
             self.vars.set_amp_container_link(var_nr);
+            // `@FR-B-Ref-Alias`, `@FR-H-FreeTwice` — the link shares its source's store and every
+            // whole-value write goes THROUGH it (`assign_writes_through`), so it never owns one:
+            // a write-through `c = a` retyped it as an owner, and the scope end freed the
+            // source's store under both names.  `LOFT_NO_LINK_NEVER_FREE=1` lets it free.
+            if !self.first_pass && !link_never_free_off() {
+                self.vars.set_skip_free(var_nr);
+            }
             // @FR-Col-Group, loft#1664 — and this is the OTHER half of the question left open
             // above.  `(Col-Group)` says a record entering through one member of a linked group
             // is in every member, BY ANY WRITE ROUTE, and a `&` link is a write route:
@@ -13620,4 +13627,10 @@ fn repr_keeps_deps_off() -> bool {
 /// re-free the store records must then report.
 fn fresh_bind_beside_buffer() -> bool {
     crate::env_once!(std::env::var_os("LOFT_FRESH_BIND_BESIDE_BUFFER").is_some())
+}
+
+/// `LOFT_NO_LINK_NEVER_FREE=1` (STORE_RECORDS.md § The checks): a `&` link to a collection may
+/// be freed as an owner — the re-free the store records must then report.
+fn link_never_free_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_LINK_NEVER_FREE").is_some())
 }
