@@ -1795,8 +1795,45 @@ impl Run<'_> {
                             .filter(|p| matches!(p, Pt::Store(_))),
                     );
                 }
-                // A reference written into another store's field: that store holds it now.
-                _ => Self::hand_on(&mut s, value),
+                // A reference written into another store's field: that store holds it now —
+                // unless a variable the program named still holds it, or it is the host's own
+                // store.  A stored reference then only points (`reference<T>`), and the named
+                // owner still releases the store (`u`'s child linked into `k.to`).
+                // A capture into a closure record that leaves: the record takes it over.
+                Some(w)
+                    if self
+                        .data
+                        .def(self.d_nr)
+                        .variables
+                        .name(w)
+                        .starts_with("___clos_") =>
+                {
+                    Self::hand_on(&mut s, value);
+                }
+                _ => {
+                    let function = &self.data.def(self.d_nr).variables;
+                    let host: BTreeSet<SKey> = vals
+                        .first()
+                        .map(|h| Self::stores_of(&h.pts).into_iter().collect())
+                        .unwrap_or_default();
+                    let owned_elsewhere = |k: &SKey| {
+                        host.contains(k)
+                            || info_of(&s, *k)
+                                .live
+                                .iter()
+                                .any(|w| *w < function.count() && !function.is_compiler_generated(*w))
+                    };
+                    let handed = Val {
+                        pts: value
+                            .pts
+                            .iter()
+                            .copied()
+                            .filter(|p| !matches!(p, Pt::Store(k) if owned_elsewhere(k)))
+                            .collect(),
+                        corr: value.corr.iter().copied().filter(|k| !owned_elsewhere(k)).collect(),
+                    };
+                    Self::hand_on(&mut s, &handed);
+                }
             }
         }
         if def.returned().heap_dep().is_none() {
