@@ -1961,6 +1961,19 @@ impl Scopes<'_> {
                 self.lift_decl_depth.insert(tmp, self.loop_depth_at(home));
                 let call = std::mem::replace(&mut set_value, Value::Null);
                 set_value = Value::Insert(vec![v_set(tmp, call), Value::Var(tmp)]);
+                // `@FR-O-Complete` — an append's guarded mint (`v += […]` while `v` is absent)
+                // marks its backing never-free because the LOCAL frees whatever it names
+                // (loft#1486).  A view of the lift frees nothing, so the backing releases its
+                // own store again; it is null where the mint did not run.  Kept never-free, a
+                // null pass's backing was released by nobody (N-Shape/2248's fn-ref append, on
+                // C; the interpreter's frame exit hid it).  `LOFT_NO_LIFT_BACKING_FREE=1`.
+                if !crate::env_once!(std::env::var_os("LOFT_NO_LIFT_BACKING_FREE").is_some()) {
+                    for d in function.tp(v).depend().clone() {
+                        if function.is_inline_ref(d) && function.is_skip_free(d) {
+                            function.clear_skip_free(d);
+                        }
+                    }
+                }
                 function.depend(v, tmp);
             } else {
                 let deps: Vec<u16> = function.tp(v).depend().clone();
