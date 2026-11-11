@@ -102,7 +102,9 @@ free, so a stale variable freed again is a free of null (`Codegen::generate_call
 interpreter); `LOFT_NO_FREE_RESET=1` limits the interpreter's reset to the variables that
 took a pre-build free and to lift temps.  A compiler temporary reset to null frees nothing:
 the compiler writes that null only after the temp's store was released or handed over
-(`bind_lowering::re_bind`); `LOFT_TEMP_NULL_RESET_FREES=1` restores the free.  A
+(`bind_lowering::re_bind`); `LOFT_TEMP_NULL_RESET_FREES=1` restores the free.  A `match`
+subject temp borrows what its subject borrows (`parse_vector_match`; an iterator subject's
+buffer views its `__vdb`); `LOFT_NO_MATCH_SUBJ_BORROWS=1` leaves it owning that store.  A
 **guarded** free (one that asks first whether the store is live, as `OpStoreLive` does) is
 not a re-free.
 

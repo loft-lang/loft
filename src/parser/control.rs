@@ -9560,7 +9560,12 @@ impl Parser {
             v_if(exhausted, v_set(done, Value::Boolean(true)), append),
         ];
         setup.push(v_loop(loop_body, "stream pull"));
-        (buf, vec_tp, setup)
+        // `@FR-B-View`: the buffer views the `__vdb` store `vector_db` minted for it, and its
+        // type now says so.  The match subject is typed from what this returns, so handing back
+        // the dep-less `vec_tp` made `_match_subj_N` an owner of `__vdb_N`'s store beside
+        // `__vdb_N` itself — two frees of one store at the match's end.
+        let buf_tp = self.vars.tp(buf).clone();
+        (buf, buf_tp, setup)
     }
 
     /// @PLN35 (`@FR-P-Cap-Fresh`) — materialise a named `..rest` sub-slice `v[lo .. hi]` into a
@@ -13470,6 +13475,15 @@ impl Parser {
         };
         let v = subject_var.unwrap_or_else(|| self.create_unique("match_subj", subject_type));
         self.vars.defined(v);
+        // `@FR-B-View`: the subject temp is a second name for the subject, so it borrows what
+        // the subject borrows.  Pass 2 meets pass 1's variable, typed before the subject's
+        // borrows were known (an iterator's buffer gains its `__vdb` only in pass 2), so they
+        // are added here; left dep-less, the temp owned that store beside its `__vdb`.
+        if !self.first_pass && !match_subject_borrows_off() {
+            for d in subject_type.depend() {
+                self.vars.depend(v, d);
+            }
+        }
         let elm_size = Value::Int(self.element_store_size(&elm_tp));
         // @PLN35 P-Cap-View — a heap element view's borrow-dep must name the SUBJECT's
         // source var (the caller's param/local), not the internal `_match_subj` copy `v`,
@@ -25981,4 +25995,12 @@ fn disjuncts(test: &Value) -> Vec<&Value> {
         }
         _ => vec![test],
     }
+}
+
+/// `LOFT_NO_MATCH_SUBJ_BORROWS=1` (STORE_RECORDS.md § The checks): a `match` subject temp
+/// keeps pass 1's dep-less type and owns the store its subject borrows — the re-free the store
+/// records must then report.
+fn match_subject_borrows_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("LOFT_NO_MATCH_SUBJ_BORROWS").is_ok_and(|v| v != "0"))
 }
