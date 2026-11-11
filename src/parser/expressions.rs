@@ -1041,7 +1041,15 @@ impl Parser {
         // — a nullable local or a nullable native result leaked exactly as the dense one did.
         // `deps_ref` and `with_deps` see through the wrapper themselves.
         if let Value::Set(p, rhs) = node
-            && let Value::Call(d, _) = rhs.unspan()
+            && let Value::Call(d, call_args) = rhs.unspan()
+            // A call handed the caller's hidden return buffer delivers INTO it: the buffer is
+            // the store's owner already, and a second owner freed it again (`@FR-H-FreeTwice`,
+            // a library function shadowing a stdlib name, F-Surface/2331).
+            && (fresh_bind_beside_buffer()
+                || !call_args.iter().any(|a| {
+                    matches!(a.unspan(), Value::Var(b)
+                        if *b < self.vars.count() && self.vars.is_caller_hidden_buf(*b))
+                }))
             && !self.vars.is_argument(*p)
             && matches!(self.vars.tp(*p).base(), Type::Vector(_, _))
             && self.vars.tp(*p).deps_ref().is_some_and(|d| !d.is_empty())
@@ -13605,4 +13613,11 @@ fn fresh_bind_owner_beside_guarded() -> bool {
 /// the wrong free the store records must then report.
 fn repr_keeps_deps_off() -> bool {
     crate::env_once!(std::env::var_os("LOFT_NO_REPR_KEEPS_DEPS").is_some())
+}
+
+/// `LOFT_FRESH_BIND_BESIDE_BUFFER=1` (STORE_RECORDS.md § The checks): `own_fresh_binds` gives a
+/// work-ref owner to a call's result even where the call delivers into a hidden buffer — the
+/// re-free the store records must then report.
+fn fresh_bind_beside_buffer() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_FRESH_BIND_BESIDE_BUFFER").is_some())
 }
