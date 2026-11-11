@@ -7719,6 +7719,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     } else {
                         ls.push(copy);
                     }
+                    // `@FR-H-FreeTwice` — the source-free released the construction's work-ref
+                    // store inside the copy (`v += [S { op: 0, ..n }]`), while the work-ref
+                    // still named it and freed it again at the scope's end, after another
+                    // store had taken the slot.  The work-ref stops naming it here.
+                    if free_source_bit != 0
+                        && !self.first_pass
+                        && let Some(w) = object_work_ref(p, &self.vars)
+                        && !append_source_disarm_off()
+                    {
+                        ls.push(v_set(w, self.cl("OpNullRefSentinel", &[])));
+                    }
                 }
             } else if let Value::Tuple(values) = p {
                 // P189c — vector-element tuple literal.  Emit
@@ -11398,4 +11409,24 @@ impl Parser {
                 }
         })
     }
+}
+
+/// `LOFT_NO_APPEND_SOURCE_DISARM=1` (STORE_RECORDS.md § The checks): a construction's work-ref
+/// keeps naming the store an append's source-freeing copy released — the re-free the store
+/// records must then report.
+fn append_source_disarm_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_APPEND_SOURCE_DISARM").is_some())
+}
+
+/// The work-ref an inline construction block builds in and hands back as its tail
+/// (`{#Object __ref_p2_N = …; …; __ref_p2_N}`), or `None` for any other value.
+fn object_work_ref(v: &Value, vars: &crate::variables::Function) -> Option<u16> {
+    let Value::Block(bl) = v.unspan() else {
+        return None;
+    };
+    let Value::Var(w) = bl.operators.last()?.unspan() else {
+        return None;
+    };
+    let n = vars.name(*w);
+    (n.starts_with("__ref_") || n.starts_with("__rref_")).then_some(*w)
 }

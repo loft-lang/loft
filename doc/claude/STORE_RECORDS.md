@@ -111,7 +111,11 @@ literal handed to a callee that returns its parameter (`st = id(P { … })`) is 
 binding that adopts it (`adopted_work_refs`); `LOFT_NO_CALL_DELIVERED_PAIR=1` leaves it
 unpaired.  A vector local that owns what it names through an append's guarded backing gets no
 second owner for a call's fresh result (`own_fresh_binds`);
-`LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED=1` gives it one.  At a
+`LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED=1` gives it one.  A work-ref whose deps name only
+other bindings is a view and takes no scope-exit free (an update over a value branch,
+`S { l: 7, ..(if c { p } else { q }) }`); `LOFT_WORK_REF_VIEW_FREES=1` frees it.  An append
+whose copy frees a construction's store resets the construction's work-ref after it
+(`v += [S { op: 0, ..n }]`); `LOFT_NO_APPEND_SOURCE_DISARM=1` leaves it naming the store.  At a
 scope's end the sweep releases one store once where two names hold it
 (`scopes::get_free_vars`): a fn-ref and the local closure record it was built over
 (`LOFT_NO_FNREF_STAND_DOWN=1` frees both), a record a capturing record's cascade adopts

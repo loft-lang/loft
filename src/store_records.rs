@@ -1159,6 +1159,17 @@ impl Run<'_> {
         })
     }
 
+    /// The variable a value block hands back as its tail (`{#Object __ref_p2_N = …;
+    /// __ref_p2_N}`): a copy that frees such a source releases that variable's store.
+    fn tail_var(v: &Value) -> Option<u16> {
+        match v.unspan() {
+            Value::Var(x) => Some(*x),
+            Value::Block(bl) => bl.operators.last().and_then(Self::tail_var),
+            Value::Insert(ops) => ops.last().and_then(Self::tail_var),
+            _ => None,
+        }
+    }
+
     /// A free op: its own argument is not a use.
     fn free_op(&mut self, d: u32, args: &[Value], st: State) -> State {
         let ops = self.ops;
@@ -1298,7 +1309,8 @@ impl Run<'_> {
         // the source's stores end here, except one the destination names, whose release
         // the runtime declines.
         if let Some((src, dst)) = self.data.op_sets().freed_source(d, args)
-            && let Some(x) = Self::first_var(args, src)
+            && let Some(x) =
+                Self::first_var(args, src).or_else(|| args.get(src).and_then(Self::tail_var))
         {
             let kept: BTreeSet<SKey> = vals
                 .get(dst)
