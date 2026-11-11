@@ -391,6 +391,7 @@ impl Scopes<'_> {
                         call_mints: self.tuple_call_mint.get(&v),
                         handed: Some(&self.drop_transferred),
                         moved: Some(&self.tuple_moved),
+                        claimants: Some(&self.tuple_claimants),
                     },
                     None,
                 ));

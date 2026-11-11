@@ -233,6 +233,7 @@ pub(super) fn run_scan_phase(
         tuple_member_now: HashMap::default(),
         fnref_bound: Vec::new(),
         written_tuple_members: written_tuple_members_in(orig_code),
+        tuple_claimants: super::tuple_members::tuple_claimants_in(orig_code, orig_vars, data),
         view_backing: HashMap::default(),
         construction_backing: HashMap::default(),
         bind_backing: HashMap::default(),

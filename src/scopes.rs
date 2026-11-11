@@ -486,6 +486,12 @@ struct Scopes<'s> {
     /// bufferless mint).  Every member write can then release the record it displaces with no
     /// other claimant left, on every path, and both arms of a join agree on the pairing.
     written_tuple_members: HashSet<(u16, u16)>,
+    /// `@FR-H-FreeTwice` — every work-ref an assignment of this function makes the claimant
+    /// of a tuple member (`b = (S { … }, 0)` claims `b.0` for the construction's work-ref), by
+    /// the variable numbers of the unscanned body.  A loop drops the per-assignment fact
+    /// (`tuple_call_mint`) its body changes, so a member released without it retires each
+    /// claimant that still names the store (`tuple_owned_elem_frees`).
+    tuple_claimants: HashMap<(u16, u16), Vec<u16>>,
     /// D-heap-3 (loft#1506) — a local BOUND to a projection of another local, and the
     /// `(offset, depth)` path from that local's record to the member it views.
     ///

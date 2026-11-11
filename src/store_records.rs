@@ -1147,6 +1147,7 @@ impl Run<'_> {
         let operand = |v: &Value| -> Option<Pts> {
             match v.unspan() {
                 Value::Var(x) => Some(Self::pts(&st, *x)),
+                Value::TupleGet(..) => Self::named_var(&st, v).map(|k| Self::pts(&st, k)),
                 Value::Call(op, a) if *op == self.ops.fnref_closure => {
                     match a.first().map(Value::unspan) {
                         Some(Value::Var(g)) => Some(Self::pts(&st, *g)),

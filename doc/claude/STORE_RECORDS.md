@@ -120,6 +120,9 @@ nullable slot write's stash of a projection (`a.1` into a returned tuple) borrow
 projection's root (`emit_nullable_slot_write`); `LOFT_NO_STASH_VIEW_DEP=1` types it as an owner.
 A tuple held from a record's unbox (a call's tuple returned or appended) borrows the work-ref
 the unbox binds (`unboxed_member_types`); `LOFT_NO_UNBOX_MEMBER_DEPS=1` leaves its members owning.
+A tuple member's free retires every work-ref an assignment made that member's claimant, where
+it still names the store (a loop drops the per-assignment claimant, `tuple_claimants`);
+`LOFT_NO_CLAIMANT_DISARM=1` leaves them naming it.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it

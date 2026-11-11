@@ -38,6 +38,7 @@ pub(super) struct MemberFacts<'a> {
     pub(super) call_mints: Option<&'a HashMap<u16, Option<u16>>>,
     pub(super) handed: Option<&'a HashSet<u16>>,
     pub(super) moved: Option<&'a HashMap<(u16, u16), u16>>,
+    pub(super) claimants: Option<&'a HashMap<(u16, u16), Vec<u16>>>,
 }
 
 impl MemberFacts<'_> {
@@ -45,6 +46,7 @@ impl MemberFacts<'_> {
         call_mints: None,
         handed: None,
         moved: None,
+        claimants: None,
     };
 }
 
@@ -89,6 +91,7 @@ pub(super) fn tuple_owned_elem_frees(
         call_mints,
         handed,
         moved,
+        claimants,
     } = facts;
     let mut out = Vec::new();
     for &(_offset, idx) in crate::data::owned_elements(elems).iter().rev() {
@@ -160,6 +163,8 @@ pub(super) fn tuple_owned_elem_frees(
                     });
                 }
             }
+            // Any OTHER claimant (a loop's later bind) is retired where it names this store.
+            out.extend(claimant_disarms(claimants, v, idx as u16, buf, data));
             out.push(Value::Call(data.def_nr("OpFreeRef"), vec![elem()]));
             if let Some(b) = buf {
                 out.push(v_set(
@@ -169,11 +174,78 @@ pub(super) fn tuple_owned_elem_frees(
             }
             continue;
         }
+        // A member whose claimant this point does not know (a loop dropped the fact) retires
+        // every work-ref an assignment made its claimant, where that work-ref still names the
+        // store about to be freed — or the work-ref frees it a second time at its own end.
+        out.extend(claimant_disarms(claimants, v, idx as u16, None, data));
         out.push(Value::Call(
             data.def_nr("OpFreeRef"),
             vec![Value::TupleGet(v, idx as u16)],
         ));
     }
+    out
+}
+
+/// The guarded retire of each claimant work-ref of member `idx` of `v` but `except`: set to
+/// the sentinel where it names the store the member's free is about to release.
+fn claimant_disarms(
+    claimants: Option<&HashMap<(u16, u16), Vec<u16>>>,
+    v: u16,
+    idx: u16,
+    except: Option<u16>,
+    data: &Data,
+) -> Vec<Value> {
+    if claimant_disarm_off() {
+        return Vec::new();
+    }
+    claimants
+        .and_then(|c| c.get(&(v, idx)))
+        .into_iter()
+        .flatten()
+        .filter(|&&w| Some(w) != except)
+        .map(|&w| {
+            v_if(
+                Value::Call(
+                    data.def_nr("OpDistinctStore"),
+                    vec![Value::Var(w), Value::TupleGet(v, idx)],
+                ),
+                Value::Null,
+                v_set(w, Value::Call(data.def_nr("OpNullRefSentinel"), vec![])),
+            )
+        })
+        .collect()
+}
+
+/// `LOFT_NO_CLAIMANT_DISARM=1` (STORE_RECORDS.md § The checks): a tuple member freed where
+/// its claimant is unknown leaves the claimant work-ref naming the store — the re-free the
+/// store records must then report.
+fn claimant_disarm_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_CLAIMANT_DISARM").is_some())
+}
+
+/// Every `(tuple, member) → work-refs` claim the assignments in `code` make
+/// ([`tuple_call_mints`]): the construction or call buffer that delivered each member.
+pub(super) fn tuple_claimants_in(
+    code: &Value,
+    function: &Function,
+    data: &Data,
+) -> HashMap<(u16, u16), Vec<u16>> {
+    let mut out: HashMap<(u16, u16), Vec<u16>> = HashMap::default();
+    code.walk(&mut |n| {
+        if let Value::Set(t, rhs) = n
+            && matches!(function.tp(*t).base(), Type::Tuple(_))
+            && let Some(mints) = tuple_call_mints(rhs, function, data)
+        {
+            for (idx, claim) in mints {
+                if let Some(w) = claim {
+                    let ws = out.entry((*t, idx)).or_default();
+                    if !ws.contains(&w) {
+                        ws.push(w);
+                    }
+                }
+            }
+        }
+    });
     out
 }
 
