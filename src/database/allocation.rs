@@ -1712,14 +1712,15 @@ impl Stores {
     /// `@FR-H-FreeTwice` — fail the run at a second free of store `al`, naming the op that
     /// freed it first (`first`, a bytecode position) and the one freeing it again.
     fn refuse_refree(&mut self, al: u16, first: u32) {
+        // Each free resolved to its function, source position and the variable it released
+        // (`store_trace`), so the two sites can be read without `introspect`.
         let at = |pc: u32| {
-            crate::crash_report::nearest_source_loc_for_pc(pc).map_or_else(
-                || format!("pc={pc}"),
-                |(_, p)| format!("{}:{}:{} (pc={pc})", p.file, p.line, p.pos),
-            )
+            let by = crate::store_trace::freed_variable(pc)
+                .map_or_else(String::new, |v| format!(" by {v}"));
+            format!("{}{by}", crate::store_trace::site(pc))
         };
         let detail = format!(
-            "store #{al} freed at {}, freed again at {}",
+            "store #{al} freed {}, freed again {}",
             at(first),
             at(self.alloc_pc)
         );

@@ -248,6 +248,15 @@ pub fn byte_code_from(
     // Reports (and drains) the ones no diagnostic accounts for; native generation records its
     // own sites later and reports them separately.  A no-op unless `LOFT_COPY_MANIFEST` is set.
     crate::copy_manifest::report(data);
+    // The store instruments' names for each pc (`store_trace`): built only when one is on.
+    state.pc_names = crate::store_trace::wanted().then(|| {
+        std::sync::Arc::new(crate::store_trace::build(
+            &state.bytecode,
+            &state.vars,
+            &state.line_numbers,
+            data,
+        ))
+    });
 }
 
 /// `LOFT_TRACE_BYTECODE=<file>` — the strict comparison's opcodes and bytecode layers
@@ -757,7 +766,7 @@ pub fn disassemble(
 /// A fixed per-opcode table cannot express these (`size(Text)` reports the
 /// in-memory pointer width, not the inline byte count).  `None` if the
 /// opcode is unknown or its operands run past the buffer.
-fn instruction_len(bytecode: &[u8], pc: usize, data: &Data) -> Option<usize> {
+pub(crate) fn instruction_len(bytecode: &[u8], pc: usize, data: &Data) -> Option<usize> {
     use crate::data::Context;
     use crate::variables::size as type_size;
     let first = *bytecode.get(pc)?;

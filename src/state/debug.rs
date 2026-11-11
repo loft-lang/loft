@@ -1255,6 +1255,8 @@ impl State {
         self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
         self.code_pos = data.def(d_nr).code_position;
         self.def_pos = self.code_pos;
+        // The store instruments resolve pcs through the published tables (`store_trace`).
+        self.publish_source_spans();
         // Fix #88 (parity): push a synthetic CallFrame for the entry function so that
         // stack_trace() returns the same frame count as execute_argv.
         // @PLAN53 cluster 2 / S4: match execute_argv's aligned entry base.
@@ -1288,6 +1290,12 @@ impl State {
         } else {
             Vec::new()
         };
+        // `store_life:<N>` — the jumps each live frame took (`store_trace::Path`), printed at
+        // each free of store N and when the frame holding it returns with it live; and the
+        // call depth of that frame.
+        let mut path = crate::store_trace::Path::default();
+        let mut holder_depth: Option<usize> = None;
+        let mut prev_depth = self.call_stack.len();
         while self.code_pos < self.bytecode.len() as u32 {
             let code = self.code_pos;
             // 2-byte opcode handling — mirrors `state/mod.rs::execute`
@@ -1321,7 +1329,50 @@ impl State {
             if trace_this {
                 self.log_step(log, op, code, &(cur_d_nr, frame_offset), config, data)?;
             }
+            // A jump op's fall-through position: anywhere else afterwards means it jumped.
+            let jump_fall = (config.trace_store.is_some()
+                && (op_name.starts_with("OpGoto") || op_name.ends_with("Jump")))
+            .then(|| crate::compile::instruction_len(&self.bytecode, code as usize, data))
+            .flatten()
+            .map(|len| code + len as u32);
             OPERATORS[op as usize](self);
+            if let Some(fall) = jump_fall {
+                path.push(crate::store_trace::Step {
+                    depth: self.call_stack.len(),
+                    pc: code,
+                    to: self.code_pos,
+                    taken: self.code_pos != fall,
+                    on_false: op_name.starts_with("OpGotoFalse"),
+                });
+            }
+            if let Some(n) = config.trace_store {
+                let depth = self.call_stack.len();
+                if depth < prev_depth {
+                    let live = self
+                        .database
+                        .allocations
+                        .get(usize::from(n))
+                        .is_some_and(|s| !s.free);
+                    if live && holder_depth == Some(prev_depth) {
+                        let in_fn = if cur_d_nr == u32::MAX {
+                            "?"
+                        } else {
+                            data.def(cur_d_nr).name()
+                        };
+                        writeln!(
+                            log,
+                            "    [exit  #{n}: fn={in_fn} returned with the store live; its path:]"
+                        )?;
+                        for line in path.render(prev_depth, 12) {
+                            writeln!(log, "        {line}")?;
+                        }
+                        holder_depth = Some(depth);
+                        log.flush()?;
+                    }
+                    path.leave(depth);
+                }
+                prev_depth = depth;
+            }
             // @PLAN53 cluster 2 / S4 — alignment invariant guard (trace path).
             #[cfg(feature = "stack_align_guard")]
             {
@@ -1370,6 +1421,12 @@ impl State {
                             "    [alloc #{s_nr} at pc={code} op={op_base} fn={in_fn} via={}]",
                             via.join("<")
                         )?;
+                        if config.trace_store.is_some() {
+                            writeln!(log, "        {}", crate::store_trace::site(code))?;
+                            holder_depth = Some(self.call_stack.len());
+                            path.restart(self.call_stack.len());
+                            log.flush()?;
+                        }
                         alloc_pcs.insert(s_nr as u16, (code, op_name.clone()));
                     } else if !was_free && s.free {
                         let origin = alloc_pcs
@@ -1384,6 +1441,22 @@ impl State {
                             log,
                             "    [free  #{s_nr} at pc={code} op={op_base} fn={in_fn} (allocated at {origin})]"
                         )?;
+                        if config.trace_store.is_some() {
+                            let by = crate::store_trace::freed_variable(code)
+                                .map_or_else(String::new, |v| format!(" by {v}"));
+                            writeln!(log, "        {}{by}", crate::store_trace::site(code))?;
+                            if let Some(x) = crate::store_trace::excerpt(code) {
+                                writeln!(log, "{x}")?;
+                            }
+                            let lines = path.render(self.call_stack.len(), 12);
+                            if !lines.is_empty() {
+                                writeln!(log, "        the path this frame took:")?;
+                                for line in lines {
+                                    writeln!(log, "        {line}")?;
+                                }
+                            }
+                            log.flush()?;
+                        }
                     }
                     if let Some(slot) = prev_free.get_mut(s_nr) {
                         *slot = s.free;

@@ -629,6 +629,9 @@ pub struct State {
     /// Cleared by the one place that writes `source_spans`, so a stale snapshot
     /// cannot be published.
     published_spans: Option<Arc<BTreeMap<u32, (Position, u32)>>>,
+    /// The store instruments' function and variable names per pc (`store_trace`), published
+    /// with the spans; `None` unless one of them is on.
+    pub(crate) pc_names: Option<Arc<crate::store_trace::PcNames>>,
     /// Function coverage — `Some(bitmap)` records which definitions this run actually
     /// entered, indexed by `d_nr`.  `None` on a normal run, so the hook in
     /// [`State::fn_call`] costs one branch and nothing else.  The test runner turns it
@@ -1009,6 +1012,7 @@ impl State {
             halt_floor: 0,
             source_spans: BTreeMap::new(),
             published_spans: None,
+            pc_names: None,
             entered_fns: None,
             fn_positions: Vec::new(),
             worker_fn_memo: (u32::MAX, u32::MAX),
@@ -4189,6 +4193,7 @@ impl State {
             self.published_spans = Some(Arc::new(self.source_spans.clone()));
         }
         crate::crash_report::set_source_spans(self.published_spans.clone());
+        crate::store_trace::publish(self.pc_names.clone());
     }
 
     // ── @PLN16 debugger ──────────────────────────────────────────────────────
@@ -9174,6 +9179,7 @@ impl State {
         state.store_spans.clone_from(&self.store_spans);
         state.source_spans.clone_from(&self.source_spans);
         state.published_spans.clone_from(&self.published_spans);
+        state.pc_names.clone_from(&self.pc_names);
         state.fn_positions.clone_from(&self.fn_positions);
         state.frame_headroom = Arc::clone(&self.frame_headroom);
         state.gen_max_position = self.gen_max_position;
@@ -9240,6 +9246,7 @@ impl State {
             halt_floor: 0,
             source_spans: BTreeMap::new(),
             published_spans: None,
+            pc_names: None,
             entered_fns: None,
             fn_positions: Vec::new(),
             worker_fn_memo: (u32::MAX, u32::MAX),

@@ -3149,25 +3149,47 @@ pub fn strict_store_violation(
     // few already name the site.
     if n < 20 {
         let site = strict_free_site(store_nr);
-        let who = site.as_ref().map_or("<not recorded>", |(_, nm)| {
-            if nm.is_empty() { "<anon>" } else { nm.as_str() }
-        });
+        let freed_pc = site.as_ref().map_or(0, |(pc, _)| *pc);
+        // The interpreter's free carries no name: the variable is the one its operand read.
+        let who = site.as_ref().map_or_else(
+            || "<not recorded>".to_string(),
+            |(_, nm)| {
+                if nm.is_empty() {
+                    crate::store_trace::freed_variable(freed_pc)
+                        .unwrap_or_else(|| "<anon>".to_string())
+                } else {
+                    format!("`{nm}`")
+                }
+            },
+        );
         // The pcs are BYTECODE positions, so they exist on `--interpret` and are all zero
         // under `--native` (generated Rust has no pc). Print them only when they say
-        // something — a line of `pc=0, pc=0, pc=0` reads as data and is not.
-        let freed_pc = site.as_ref().map_or(0, |(pc, _)| *pc);
+        // something — a line of `pc=0, pc=0, pc=0` reads as data and is not.  Each is
+        // resolved to its function and source position (`store_trace::site`).
         let spans = created_at | last_op_at | now_pc | freed_pc;
         let where_ = if spans == 0 {
             "  (no bytecode positions — native run; re-run with --interpret for pcs)".to_string()
         } else {
-            format!(
-                "  created at pc={created_at}, last legitimate op at pc={last_op_at}, \
-                 freed at pc={freed_pc}, {what} now at pc={now_pc}"
-            )
+            let at = crate::store_trace::site;
+            let mut w = format!(
+                "  created {}\n  freed   {}\n  {what:<7} {}",
+                at(created_at),
+                at(freed_pc),
+                at(now_pc)
+            );
+            if let Some(x) = crate::store_trace::excerpt(now_pc) {
+                w.push('\n');
+                w.push_str(&x);
+            }
+            if last_op_at != 0 {
+                use std::fmt::Write as _;
+                let _ = write!(w, "\n  last legitimate op at pc={last_op_at}");
+            }
+            w
         };
         crate::loft_eprintln!(
             "[strict-store] USE AFTER FREE ({what}) store #{store_nr} type={type_name} \
-             rec={rec} pos={pos}\n  killed by the free of `{who}`\n{where_}"
+             rec={rec} pos={pos}\n  killed by the free of {who}\n{where_}"
         );
     } else if n == 20 {
         crate::loft_eprintln!("[strict-store] ... further use-after-free reports suppressed");
