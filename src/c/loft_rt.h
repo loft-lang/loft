@@ -1885,6 +1885,32 @@ static int loft_slice_give(uint32_t nr) {
     return 0;
 }
 
+/* `@FR-H-FreeTwice` (`Stores::refuse_refree`): a free of a store that is already free is a
+ * compiler defect, and the run fails at it as the interpreter's does — the slot number is all a
+ * free checks, so a store made in between would be the one released.  `LOFT_ALLOW_REFREE` lets
+ * it pass; a `-DLOFT_DOUBLE_FREE` build counts instead. */
+static int loft_refree_allowed(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("LOFT_ALLOW_REFREE");
+        v = e && *e && strcmp(e, "0") != 0;
+    }
+    return v;
+}
+
+static void loft_refree_fail(uint32_t nr) {
+    char m[160];
+    snprintf(m, sizeof m,
+             "a store was freed twice: store #%u (a defect in the loft compiler; please report it)",
+             (unsigned) nr);
+    fflush(stdout);
+    fprintf(stderr, "error: %s\n", m);
+    loft_fail_msg.len = 0;
+    loft_push(&loft_fail_msg, m, strlen(m));
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
+    exit(1);
+}
+
 static void loft_free_ref(loft_ref r) {
     if (r.store_nr == 0xFFFE) {
         loft_gen_free(r);
@@ -1895,6 +1921,8 @@ static void loft_free_ref(loft_ref r) {
     loft_store_t *s = &loft_stores[r.store_nr];
 #ifdef LOFT_DOUBLE_FREE
     if (!s->pinned && !s->live) loft_note_double_free(r.store_nr);
+#else
+    if (!s->pinned && !s->live && !loft_refree_allowed()) loft_refree_fail(r.store_nr);
 #endif
     /* `Stores::free_named`: a store already free stays as it is. */
     if (s->pinned || !s->live) return;

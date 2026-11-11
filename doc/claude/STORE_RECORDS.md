@@ -95,10 +95,11 @@ and the second free releases the new owner's store.  The C backend ships what th
 emits, so the compiler emits each free once on every path wherever it can.  The records
 report a re-free as its own kind, so the list of compiler sites still emitting one stays
 visible, and `LOFT_DOUBLE_FREE` counts the ones a run reaches on either backend.
-The interpreter (and `--native`) fails the run at a re-free, giving the position of the free
-and of the one freeing it again; `LOFT_REFREE_FAILS=1` names each free's function, line and
+The interpreter, `--native` and the C output (`loft_rt.h` `loft_refree_fail`) fail the run
+at a re-free, the interpreter giving the position of the free and of the one freeing it again; `LOFT_REFREE_FAILS=1` names each free's function, line and
 variable too (a name table the compile otherwise skips), and `LOFT_ALLOW_REFREE=1` lets a
-re-free pass.  No suite cell re-frees, under `LOFT_STRICT_STORES` either.  Every backend resets a variable to null after its
+re-free pass on every backend (a `-DLOFT_DOUBLE_FREE` C build counts instead).  No suite cell
+re-frees, under `LOFT_STRICT_STORES` either.  Every backend resets a variable to null after its
 free, so a stale variable freed again is a free of null (`Codegen::generate_call` on the
 interpreter); `LOFT_NO_FREE_RESET=1` limits the interpreter's reset to the variables that
 took a pre-build free and to lift temps.  A compiler temporary reset to null frees nothing:
@@ -171,7 +172,8 @@ can never be the local's own store (`re_arm`); `LOFT_NO_FRESH_COPY_OF_VIEW=1` ke
 pass-through.  A fresh-returning generic instance copies a NULLABLE parameter it hands back too
 (`copy_param_returns_of_fresh_instance`); `LOFT_NO_NULLABLE_PARAM_RETURN_COPY=1` hands it back raw.
 An owning record local rebound from a value that reads it and answers a view (`x = x.next ?? y`)
-copies into a fresh store (`re_arm`); `LOFT_NO_READING_VIEW_COPY=1` binds the view.  A diverging
+copies into a fresh store (`re_arm`, and the C writer's `reading_view_copy`, one test:
+`bind_lowering::answers_a_view_to_copy`); `LOFT_NO_READING_VIEW_COPY=1` binds the view.  A diverging
 coalesce bound in its buffer's own scope (`q = mq(4) ?? return`) frees `q` only where it no longer
 names the buffer; `LOFT_NO_COALESCE_SAME_SCOPE_WITNESS=1` frees both.  A null test of a temp's
 field (`Holder.parse(t).rows == null`) reads it in place, the temp's lift owning the store;

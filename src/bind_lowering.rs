@@ -868,18 +868,8 @@ fn re_arm(
         && stashed
         && rb.rhs_reads_v
         && !rb.rhs_is_new_record
-        && !crate::keys::reading_view_copy_off()
         && let Some(rec) = tp.base().heap_def_nr()
-        // A call's answer (bare, or the tail of the insert that hands it a literal:
-        // `s = me(Bx { … })`) has its own delivery; a copy there orphans the handed store.
-        && !matches!(
-            delivered_tail(value),
-            Value::Var(_) | Value::Call(_, _) | Value::CallRef(_, _)
-        )
-        && matches!(
-            crate::use_analysis::ownership_of(data, d_nr, value),
-            crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. }
-        )
+        && answers_a_view_to_copy(data, d_nr, value)
     {
         return ReArm::ElementCopy { d_nr: rec };
     }
@@ -944,4 +934,22 @@ pub fn lazy_buffer_mints_at(function: &Function, v: u16, value: &Value) -> bool 
         && function.is_lazy_buffer(v)
         && !matches!(function.tp(v), Type::Optional(_))
         && matches!(function.tp(v).base(), Type::Vector(_, dep) if dep.is_empty())
+}
+
+/// The value half of the reading-view copy (`re_arm`'s `R2d` arm, the C writer's
+/// `Body::reading_view_copy`): a value that answers a VIEW on some path — another local, a
+/// stored reference's record — and is not a call's answer, whose delivery is its own (bare, or
+/// the tail of the insert that hands it a literal: `s = me(Bx { … })`, where a copy orphans the
+/// handed store).  `LOFT_NO_READING_VIEW_COPY=1` answers no.
+#[must_use]
+pub fn answers_a_view_to_copy(data: &Data, d_nr: u32, value: &Value) -> bool {
+    !crate::keys::reading_view_copy_off()
+        && !matches!(
+            delivered_tail(value),
+            Value::Var(_) | Value::Call(_, _) | Value::CallRef(_, _)
+        )
+        && matches!(
+            crate::use_analysis::ownership_of(data, d_nr, value),
+            crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. }
+        )
 }

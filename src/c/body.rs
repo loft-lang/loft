@@ -5652,6 +5652,16 @@ impl<'a> FnWriter<'a> {
         .then(|| self.cx.data.def(d).known_type())
     }
 
+    /// `var = x` where `var` owns what it displaces and `x` reads it and answers a view
+    /// (`bind_lowering::answers_a_view_to_copy`, the bytecode writer's `R2d` arm): the store type.
+    fn reading_view_copy(&self, var: u16, x: &Value) -> Option<u16> {
+        let d = self.vars.tp(var).base().heap_def_nr()?;
+        (x.reads_var(var)
+            && self.vars.owns_displaced_store(var, x, self.cx.data)
+            && crate::bind_lowering::answers_a_view_to_copy(self.cx.data, self.d, x))
+        .then(|| self.cx.data.def(d).known_type())
+    }
+
     /// Register record type `tp` for the deep copy, or refuse a kind it does not walk yet.
     fn copyable(&self, tp: u16) -> Result<u16, String> {
         self.cx.copy_type(tp)?;
@@ -6250,6 +6260,28 @@ impl<'a> FnWriter<'a> {
             self.line(
                 ind,
                 &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+            );
+            self.flush(ind);
+            return Ok(());
+        }
+        if !first && let Some(tp) = self.reading_view_copy(var, x) {
+            // `x = x.next ?? y`: the value reads `var` and answers another store; computed
+            // first, copied into a fresh store, and the displaced one released after — bound
+            // plainly, `var` named the other store and both freed it (`@FR-H-FreeTwice`).
+            let bytes = self.copyable(tp)?;
+            let e = self.expr(x, ind)?;
+            let r = self.temp(CType::Ref);
+            let old = self.temp(CType::Ref);
+            self.line(ind, &format!("{r} = {};", as_ref(e)?));
+            self.line(ind, &format!("{old} = {name};"));
+            self.line(ind, &format!("{name} = loft_ref_null();"));
+            self.line(
+                ind,
+                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+            );
+            self.line(
+                ind,
+                &format!("if ({old}.store_nr != 0xFFFF) loft_free_ref({old});"),
             );
             self.flush(ind);
             return Ok(());
