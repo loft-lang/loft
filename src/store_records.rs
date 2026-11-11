@@ -1469,12 +1469,25 @@ impl Run<'_> {
             return (Some(st.clone()), Some(st));
         };
         let single = |p: &Pts| match p.iter().next() {
-            Some(q @ (Pt::Store(_) | Pt::Null)) if p.len() == 1 => Some(*q),
+            Some(q @ (Pt::Store(_) | Pt::Null | Pt::Param(_))) if p.len() == 1 => Some(*q),
             _ => None,
         };
         match (single(&a), single(&b)) {
             (Some(x), Some(y)) if x == y => (None, Some(st)),
-            (Some(_), Some(_)) => (Some(st), None),
+            (Some(Pt::Store(_) | Pt::Null), Some(Pt::Store(_) | Pt::Null)) => (Some(st), None),
+            // The witness names one store: where the first operand is DISTINCT from it, it
+            // does not name that store (`if OpDistinctStore(__ref_1, __rbw___ref_1)` — the
+            // caller's buffer is never the one freed under it).
+            (_, Some(y @ (Pt::Store(_) | Pt::Param(_))))
+                if let Some(Value::Var(x)) = args.first().map(Value::unspan)
+                    && a.len() > 1
+                    && a.contains(&y) =>
+            {
+                let mut distinct = st.clone();
+                let rest: Pts = a.iter().copied().filter(|p| *p != y).collect();
+                distinct.vars.insert(*x, rest);
+                (Some(distinct), Some(st))
+            }
             _ => (Some(st.clone()), Some(st)),
         }
     }
@@ -1632,7 +1645,14 @@ impl Run<'_> {
                     .into_iter()
                     .filter(|k| wp.contains(&Pt::Store(*k)))
                     .collect();
-                if shared.is_empty() {
+                // Every store `x` may name is one the witness names — a caller's store (a
+                // parameter's) as much as one of this frame's: the free declines on every path.
+                let declines = xp.iter().any(|p| *p != Pt::Null)
+                    && xp.iter().all(|p| *p == Pt::Null || (!matches!(p, Pt::Unknown) && wp.contains(p)))
+                    && xp.iter().any(|p| matches!(p, Pt::Param(_)));
+                if declines {
+                    // Nothing ends: the caller's store stays the caller's.
+                } else if shared.is_empty() {
                     self.end(&mut st, x, &name, true);
                 } else if xp.len() == 1 && wp.len() == 1 {
                     let label =
