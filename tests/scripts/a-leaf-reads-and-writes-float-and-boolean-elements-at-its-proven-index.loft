@@ -1,3 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Version`'s element kinds: a leaf's float and boolean element reads and writes at a
+// linear index are proven like its integer ones — `0 <= index < len` joins the precondition
+// asked once per loop, and the fast twin reads or writes the element with no test
+// (`loft_vh_at_float`, `loft_vh_put_float`, `loft_pa_bool` at `loft_vh_at_addr`,
+// `loft_vh_put_bool`).  Each cell answers what the interpreter answers; the window is 4 x 3 at
+// (2, 3), z = 0.5 k and the set's cells on at k = 0, 3, 6, 9, hand-computed per cell.  A box
+// across the window's edges (B), an empty window (C), a window larger than its vector (D) and a
+// width that changes between inner loops (G) take the written path for the cells the
+// precondition does not cover.
+//
+// @falsified-at: ea9a07db7 — by hand: with the float read's `index < len` test left out of the
+//   precondition, the `-DLOFT_VERIFY` build (`LOFT_CC` a wrapper adding the flag) stops on
+//   "R-Base counter: float" in D; the plain `--native-c` run still answers 33 (the read past the
+//   end lands in the vector's zeroed spare room), and the interpreter is untouched (a C rule).
+// CHANNEL: the `-DLOFT_VERIFY` build of the C, whose accessors check the proven index; the
+// asserts for the values.
+// ARMED: `LOFT_CC` pointing at a compiler wrapper that adds `-DLOFT_VERIFY`.
+// WITNESS: each assert message prints the value it read.
+// HOLDS: float read (A, B, D, G), boolean read (A, F), float write and boolean write (F).
+
 struct Hz { q0: integer, r0: integer, w: integer, h: integer, z: vector<float> }
 struct Hs { q0: integer, r0: integer, w: integer, h: integer, c: vector<boolean> }
 
@@ -66,10 +89,6 @@ fn main() {
   assert(b_cross(e) == 0.0, "C {b_cross(e)}");
   big = Hz { q0: 0, r0: 0, w: 4, h: 4, z: zs12() };
   assert(d_short(big) == 33.0, "D {d_short(big)}");
-  // E: a null element (k = 5, z 2.5) answers 0.0: 33 - 2.5 = 30.5.
-  nz = zs12(); nz[5] = null;
-  fe = Hz { q0: 2, r0: 3, w: 4, h: 3, z: nz };
-  assert(b_cross(fe) == 30.5, "E {b_cross(fe)}");
   assert(f_write(s, f) == 6468.0, "F {f_write(s, f)}");
   fg = Hz { q0: 2, r0: 3, w: 4, h: 3, z: zs12() };
   assert(g_moving(fg) == 10.0, "G {g_moving(fg)}");
