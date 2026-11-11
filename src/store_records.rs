@@ -1740,6 +1740,28 @@ impl Run<'_> {
             }
             return Some((st, Val::null()));
         }
+        // `OpPutRef(dst, src)`: a raw copy of the reference — `dst` names exactly the stores
+        // `src` names.  A never-free `dst` is a witness (an entry snapshot `__ref_1 = v`,
+        // `ensure_rebind_witness`) and owns none of them; any other takes them over (a buffer
+        // rotation `__ref_1 = __ref_2; __ref_2 = l`).
+        if self.data.def(d).name() == "OpPutRef"
+            && let Some(dst) = Self::first_var(args, 0)
+            && let Some(src) = args.get(1)
+        {
+            let (mut s, value) = self.eval(src, st)?;
+            let witness = dst < self.data.def(self.d_nr).variables.count()
+                && self.data.def(self.d_nr).variables.is_skip_free(dst);
+            let bound = if witness {
+                Val {
+                    pts: value.pts,
+                    corr: BTreeSet::new(),
+                }
+            } else {
+                value
+            };
+            self.bind(&mut s, dst, &bound);
+            return Some((s, Val::null()));
+        }
         if d == ops.database
             && let Some(x) = Self::first_var(args, 0)
         {
