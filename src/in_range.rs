@@ -394,8 +394,13 @@ fn rewrite_for(
         strip(data, ops, o, &cn, &mut k, &mut w);
     }
     if (k > 0 || w > 0) && trace() {
+        let wrapped = if w > 0 {
+            format!(", {w} wrapped index(es)")
+        } else {
+            String::new()
+        };
         eprintln!(
-            "in-range: {fname} {} — {k} discharge(s) dropped, {w} wrapped index(es)",
+            "in-range: {fname} {} — {k} discharge(s) dropped{wrapped}",
             vars.name(lv)
         );
     }
