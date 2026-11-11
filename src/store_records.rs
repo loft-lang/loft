@@ -190,6 +190,9 @@ fn join_out(a: Option<(State, Val)>, b: Option<(State, Val)>) -> Option<(State, 
 enum Origin {
     /// `OpDatabase` into a variable.
     Mint,
+    /// `OpDatabase` into the i-th parameter where it is null: a function that fills the buffer
+    /// it was handed mints one of its own only when it was handed none.
+    MintInto(u16),
     /// A call to a function whose answer is a store of its own.
     Call(u32),
     /// An assignment the code generator lowers as a copy into a store of the variable's
@@ -214,14 +217,19 @@ enum Summary {
     /// One of several arguments' stores, a bit per argument index (`if c { a } else { b }`, a
     /// recursion that swaps its arguments).
     Args(u32),
+    /// The i-th argument's store where the argument names one, a fresh store where it is null:
+    /// a function filling the buffer it is handed (`OpDatabase` mints only on null).
+    Buf(u16),
     /// Not followed.
     Unknown,
 }
 
 impl Summary {
     fn join(self, other: Summary) -> Summary {
-        use Summary::{Arg, Args, Bottom, Fresh, Join, Unknown};
+        use Summary::{Arg, Args, Bottom, Buf, Fresh, Join, Unknown};
         let bit = |i: u16| if i < 32 { Some(1u32 << i) } else { None };
+        // Every rule naming an argument index names ONE index on both sides (or collects them
+        // in `Args`): the answer does not depend on the order the returns are met in.
         match (self, other) {
             (Bottom, x) | (x, Bottom) => x,
             (a, b) if a == b => a,
@@ -231,10 +239,10 @@ impl Summary {
             },
             (Args(m), Arg(i)) | (Arg(i), Args(m)) => bit(i).map_or(Unknown, |b| Args(m | b)),
             (Args(a), Args(b)) => Args(a | b),
-            (Fresh, Arg(i))
-            | (Arg(i), Fresh)
-            | (Join(i), Fresh | Arg(_))
-            | (Fresh | Arg(_), Join(i)) => Join(i),
+            (Buf(i), Arg(j)) | (Arg(j), Buf(i)) if i == j => Buf(i),
+            (Fresh, Arg(i) | Buf(i) | Join(i))
+            | (Arg(i) | Buf(i) | Join(i), Fresh) => Join(i),
+            (Join(i), Arg(j) | Buf(j)) | (Arg(j) | Buf(j), Join(i)) if i == j => Join(i),
             _ => Unknown,
         }
     }
@@ -1152,7 +1160,14 @@ impl Run<'_> {
             let keep = witness
                 .into_iter()
                 .chain(rb.entry_w)
-                .any(|w| Self::pts(&st, w) == Self::pts(&st, x));
+                .any(|w| {
+                    // The runtime keeps the store when the witness names it.  A null `x` frees
+                    // nothing, so the null `x` may also hold (a loop's first pass) is no reason
+                    // to free: the two are compared without it.
+                    let held: Pts = Self::pts(&st, x).into_iter().filter(|p| *p != Pt::Null).collect();
+                    let named: Pts = Self::pts(&st, w).into_iter().filter(|p| *p != Pt::Null).collect();
+                    !held.is_empty() && held == named
+                });
             if !keep {
                 self.end(&mut st, x, "the displaced free", true);
             }
@@ -1503,7 +1518,10 @@ impl Run<'_> {
         for p in pts {
             let one = match p {
                 Pt::Null => Summary::Bottom,
-                Pt::Store(_) => Summary::Fresh,
+                Pt::Store(k) => match self.sites[k.site as usize].origin {
+                    Some(Origin::MintInto(i)) => Summary::Buf(i),
+                    _ => Summary::Fresh,
+                },
                 Pt::Param(v) => self
                     .params
                     .iter()
@@ -1686,7 +1704,12 @@ impl Run<'_> {
                     pts: kept,
                 }
             } else {
-                let site = self.site(node, Origin::Mint);
+                let origin = self
+                    .params
+                    .iter()
+                    .position(|p| *p == x)
+                    .map_or(Origin::Mint, |i| Origin::MintInto(i as u16));
+                let site = self.site(node, origin);
                 let k = Self::fresh(&mut st, site);
                 let mut pts = kept;
                 pts.insert(Pt::Store(k));
@@ -1825,7 +1848,7 @@ impl Run<'_> {
                     corr: BTreeSet::new(),
                 }
             }
-            Summary::Join(i)
+            Summary::Join(i) | Summary::Buf(i)
                 if vals
                     .get(i as usize)
                     .is_some_and(|v| v.pts.iter().all(|p| *p == Pt::Null)) =>
@@ -1837,7 +1860,19 @@ impl Run<'_> {
                     corr: [k].into(),
                 }
             }
-            Summary::Join(i) => {
+            // A buffer-filling callee handed a store answers that store, borrowed, as `Arg`.
+            Summary::Buf(i)
+                if vals.get(i as usize).is_some_and(|v| {
+                    !v.pts.is_empty() && v.pts.iter().all(|p| matches!(p, Pt::Store(_) | Pt::Param(_)))
+                }) =>
+            {
+                let v = &vals[i as usize];
+                Val {
+                    pts: v.pts.clone(),
+                    corr: BTreeSet::new(),
+                }
+            }
+            Summary::Join(i) | Summary::Buf(i) => {
                 let viewed = vals.get(i as usize).cloned().unwrap_or_else(Val::unknown);
                 let site = self.site(node, Origin::Call(d));
                 let k = Self::fresh(&mut s, site);
@@ -2181,7 +2216,7 @@ pub fn observe(data: &Data) {
 
 fn site_label(run: &Run, site: u32) -> String {
     match run.sites.get(site as usize).and_then(|s| s.origin.as_ref()) {
-        Some(Origin::Mint) => format!("[store #{site}, minted] "),
+        Some(Origin::Mint | Origin::MintInto(_)) => format!("[store #{site}, minted] "),
         Some(Origin::Copy) => format!("[store #{site}, copied] "),
         Some(Origin::Place) => format!("[store #{site}, placed] "),
         Some(Origin::Call(d)) => {
