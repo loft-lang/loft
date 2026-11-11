@@ -7216,7 +7216,16 @@ use a separate collection or add after the loop"
                 self.vars.name(var_nr)
             );
             if self.convert_store(code, &s_type, slot_tp, &what, rhs_at.as_ref()) {
-                slot_tp.clone()
+                // The declaration says the SHAPE; what the value BORROWS is the value's
+                // (`Type::with_deps_of`, `@FR-B-View`).  `dd: S = o.opt` reads a parameter's
+                // nullable field into a dense local: retyped to the bare declaration, `dd`
+                // owned the caller's record and its scope end freed it.
+                // `LOFT_NO_REPR_KEEPS_DEPS=1` drops the borrow.
+                if repr_keeps_deps_off() {
+                    slot_tp.clone()
+                } else {
+                    slot_tp.with_deps_of(&s_type)
+                }
             } else {
                 s_type
             }
@@ -13589,4 +13598,11 @@ fn fresh_bind_owner_beside_guarded() -> bool {
     *ON.get_or_init(|| {
         std::env::var("LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED").is_ok_and(|v| v != "0")
     })
+}
+
+/// `LOFT_NO_REPR_KEEPS_DEPS=1` (STORE_RECORDS.md § The checks): a value converted into a
+/// declared local's representation takes the bare declared type, dropping what it borrows —
+/// the wrong free the store records must then report.
+fn repr_keeps_deps_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_REPR_KEEPS_DEPS").is_some())
 }
