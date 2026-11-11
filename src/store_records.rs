@@ -1499,9 +1499,23 @@ impl Run<'_> {
     fn seq(&mut self, ops: &[Value], st: State) -> Option<(State, Val)> {
         let mut cur = (st, Val::null());
         for op in ops {
+            let value = cur.1;
             cur = self.eval(op, cur.0)?;
+            // A block's value is its last value-producing statement's: the cleanup frees the
+            // scope pass places after it (`{ if … ; OpFreeRefIfDistinct(…) }`) run while the
+            // value waits, and answer nothing.
+            if self.is_void_call(op) {
+                cur.1 = value;
+            }
         }
         Some(cur)
+    }
+
+    /// A call to an operator or function that answers nothing (a free, a set).
+    fn is_void_call(&self, op: &Value) -> bool {
+        matches!(op.unspan(), Value::Call(d, _)
+            if (*d as usize) < self.data.definitions.len()
+                && *self.data.def(*d).returned() == crate::data::Type::Void)
     }
 
     fn run_loop(&mut self, body: &[Value], st: State) -> Option<(State, Val)> {
