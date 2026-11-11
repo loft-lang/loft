@@ -1690,8 +1690,8 @@ impl Stores {
         // `@FR-L-OutOfLine` I1 — a child lives in its host's store, so under strict stores the
         // number must name a live record there: a copy that carried it into another store, or
         // a read after the child's release, is caught here instead of reading foreign bytes.
-        // The store's ROOT is a live record of it too: `(R-HostStore)` builds a node in its
-        // first result's store and adopts that result — the root — as the node's child.
+        // Record 1 counts when claimed: `@FR-R-HostStore` builds a whole tree in one store, so
+        // the first leaf is the store's first record and a node built later adopts it.
         assert!(
             rec == 0
                 || !crate::keys::strict_stores()

@@ -2325,6 +2325,9 @@ pub(crate) fn run_tests(
 
                     // A fresh runtime for every function, so tests within a file cannot
                     // leak heap/store state into each other.
+                    // `LOFT_STRICT_STORES` counts its violations for the whole process; a test
+                    // that added one FAILS, as the direct run's exit does (`main.rs`).
+                    let strict_before = loft::keys::strict_store_violations();
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let (mut state, mut data_copy) = if let Some((program, data)) = &compiled {
                             // SAFETY: `compiled` outlives this test's `state`, which is
@@ -2453,7 +2456,15 @@ pub(crate) fn run_tests(
                     let should_fail = ann.expect_fail_fn.contains_key(fn_name.as_str())
                         || (!ann.expect_fail_file.is_empty()
                             && !ann.expect_fail_fn.contains_key(fn_name.as_str()));
+                    let strict_new = loft::keys::strict_store_violations() - strict_before;
                     let (passed, fail_msg) = match result {
+                        Ok(_) if strict_new > 0 && loft::keys::strict_stores() => (
+                            false,
+                            Some(format!(
+                                "{strict_new} store-lifetime violation(s) under LOFT_STRICT_STORES \
+                                 (each reported above with its sites)"
+                            )),
+                        ),
                         Ok((_, _, leaks)) if !leaks.is_empty() => (
                             false,
                             Some(format!(

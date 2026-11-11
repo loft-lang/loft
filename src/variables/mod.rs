@@ -4273,6 +4273,22 @@ impl Function {
             })
     }
 
+    /// `@FR-F-ParamRebind` — does a whole write through the link `v` release the store it
+    /// displaces?  Not when the link reaches a plain (by-value) parameter: replacing that
+    /// parameter's value only rebinds the callee's name, and the store it held is the
+    /// caller's, which the caller keeps (`cur = &n; cur = &cur.next` walks `n`).  A `&T`
+    /// parameter (`@FR-F-ParamRef`) or a local behind the link is released as before.  Asked
+    /// by all three writers, so they agree (`@FR-O-NoDiverge`).
+    #[must_use]
+    pub fn link_write_releases(&self, v: u16) -> bool {
+        // …and only where the place the link names OWNS the store (`link_target_owns`: a view
+        // behind the link borrows): the two halves of one question, asked by every writer.
+        self.link_target_owns(v)
+            && !crate::opt::body_writes::link_targets(self, v)
+            .iter()
+            .any(|&t| self.is_argument(t) && !matches!(self.tp(t).base(), Type::RefVar(_)))
+    }
+
     /// The variables that may VIEW a store `root` lives in — every variable a read of which
     /// can see a write through `root`, or be moved by a growth of it.
     ///
