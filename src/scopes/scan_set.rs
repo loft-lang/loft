@@ -1919,9 +1919,27 @@ impl Scopes<'_> {
             // local read as a borrow and the buffer was freed by nobody: `t = h(bag)` with
             // `h = fn(q: Bag) -> vector<integer> { q.items }` held one store per call.  The
             // binding owns the buffer; say so, and `get_free_vars` frees it (`@FR-O-Move`).
-            let deps: Vec<u16> = function.tp(v).depend().clone();
-            for d in deps {
-                function.make_independent(v, d);
+            //
+            // `@FR-O-Complete`, `@FR-H-FreeTwice` — a binding ANOTHER assignment binds to a view
+            // (`x = mk(1)`, `x: vector<T> = []`: the store belongs to the call's buffer or the
+            // literal's temp) cannot also be declared this delivery's owner: one binding for
+            // every path, so its displaced free would release the temp's store, and the temp
+            // frees it again.  The delivery gets an owner of its own instead — a `__lift_N`
+            // declared where the binding is — and the binding views it, as it views the rest.
+            if self.multi_assigned.contains(&v) && crate::keys::callref_lift() {
+                let home = self.var_scope.get(&v).copied().unwrap_or(self.scope);
+                let tp = function.tp(v).with_deps(&Deps::none());
+                let tmp = self.new_lift_var(function, &tp);
+                self.var_scope.insert(tmp, home);
+                self.lift_decl_depth.insert(tmp, self.loop_depth_at(home));
+                let call = std::mem::replace(&mut set_value, Value::Null);
+                set_value = Value::Insert(vec![v_set(tmp, call), Value::Var(tmp)]);
+                function.depend(v, tmp);
+            } else {
+                let deps: Vec<u16> = function.tp(v).depend().clone();
+                for d in deps {
+                    function.make_independent(v, d);
+                }
             }
         }
         // Prepend dependency initializations.

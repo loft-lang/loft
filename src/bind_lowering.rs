@@ -407,6 +407,16 @@ fn reads_var_unless_exiting(value: &Value, v: u16) -> bool {
     }
 }
 
+/// `@FR-H-FreeTwice` — does `value` read a local that VIEWS `v`'s store (one whose deps name
+/// `v`)?  Then the call may be handed the very store `v` displaces, so the displaced free waits
+/// until after it, and runs only when the stores differ (`DisplacedFree::Stash`): `x = m(x)`
+/// where `x` views a lift temp that owns each delivery.  `rhs_reads_v` is syntactic and sees
+/// only `v` itself.
+fn rhs_reads_a_view_of(function: &Function, value: &Value, v: u16) -> bool {
+    (0..function.count())
+        .any(|w| w != v && function.tp(w).depend().contains(&v) && value.reads_var(w))
+}
+
 /// The facts a reassignment `v = value` in function `d_nr` is lowered on, and the lowering;
 /// the reason for each fact is beside it.  `state::codegen::generate_set_inner` emits the
 /// answer.
@@ -682,7 +692,12 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
         && !crate::keys::temp_null_reset_frees();
     let free = if null_reset_of_temp {
         DisplacedFree::None
-    } else if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
+    } else if owned_ref
+        && (rhs_reads_v
+            || rhs_is_new_record
+            || nullable_local
+            || rhs_reads_a_view_of(function, value, v))
+    {
         DisplacedFree::Stash
     } else if owned_ref && !s1_substituted {
         let witness = if crate::keys::displaced_witness_enabled() {

@@ -3262,6 +3262,15 @@ pub fn temp_null_reset_frees() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TEMP_NULL_RESET_FREES"))
 }
 
+/// `LOFT_NO_CALLREF_LIFT=1` — a collection a fn-ref call delivers into a local that another
+/// assignment binds to a view takes the local as its owner, as it did before (`scan_set`):
+/// the local's displaced free then releases the store the view's temporary owns.
+#[must_use]
+pub fn callref_lift() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CALLREF_LIFT"))
+}
+
 /// `LOFT_NO_FREE_RESET=1` — the interpreter resets a variable after its free only where it
 /// took a pre-build free or is a lift temp, not after every free (`Codegen::generate_call`).
 #[must_use]

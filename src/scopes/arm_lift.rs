@@ -114,7 +114,7 @@ impl Scopes<'_> {
     /// as opposed to the depth at the current position.  `self.loops` holds the scope ids of
     /// the loops entered so far and `self.stack` the enclosing scopes outer-to-inner, so the
     /// loops that enclose `home` are those at or before it on that stack.
-    fn loop_depth_at(&self, home: u16) -> usize {
+    pub(super) fn loop_depth_at(&self, home: u16) -> usize {
         if home == self.scope {
             return self.loops.len();
         }
