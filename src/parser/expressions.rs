@@ -8008,8 +8008,18 @@ use a separate collection or add after the loop"
                     // the clear below before the append reads it (loft#1916).  A projection
                     // is COPIED into a fresh temp first, as the borrowed-Var arm above does;
                     // the temp then owns its copy and frees it.
-                    let projection =
-                        !s_type.depend().is_empty() || !s_type.base().depend().is_empty();
+                    // The type's deps are one spelling of a projection; the value's SHAPE is the
+                    // other — a destructured tuple member (`(s.n, s.t, s.v) = trio(…)` reads
+                    // `OpGetField(__ref_N, …)`) carries no dep, and staged as an owner the temp
+                    // freed the call's tuple store beside `__ref_N` (`@FR-H-FreeTwice`).
+                    // `LOFT_NO_UNTYPED_PROJECTION_COPY=1` reads the type only.
+                    let projection = !s_type.depend().is_empty()
+                        || !s_type.base().depend().is_empty()
+                        || (matches!(rhs_saved.unspan(), Value::Call(d, _)
+                            if crate::use_analysis::is_projection_op(&self.data, *d))
+                            && !crate::env_once!(
+                                std::env::var_os("LOFT_NO_UNTYPED_PROJECTION_COPY").is_some()
+                            ));
                     let fill_tmp = if projection {
                         vec![
                             v_set(tmp, Value::Null),
