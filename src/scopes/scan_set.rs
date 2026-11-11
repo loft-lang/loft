@@ -397,6 +397,21 @@ impl Scopes<'_> {
         if let Some(copy) = self.copy_temp_held_bind(ov, v, value, function, data) {
             return self.scan(&copy, function, data);
         }
+        // `@FR-B-View` — a tuple local bound ONCE from a record's unbox (`t: (S?, integer) =
+        // mk()`, the declared spelling that unboxes a call's `__tuple` record): its heap
+        // members are reads of the record the unbox's work-ref holds, so they borrow it, as
+        // the parser's own holders of an unbox do (`Parser::unboxed_member_types`).  Left
+        // owning, the scope end freed `t.0` — a DbRef into that store — and then the
+        // work-ref.  A local bound more than once keeps its type: another bind may own.
+        if !self.multi_assigned.contains(&ov)
+            && !unbox_member_deps_off()
+            && matches!(function.tp(v), Type::Tuple(_))
+            && function.tp(v).depend().is_empty()
+            && let Some(w) = unbox_work_ref(value)
+            && w != v
+        {
+            function.depend(v, w);
+        }
         // `@FR-O-Complete` / `@FR-B-Copy` — a REASSIGNMENT of a heap local from a value
         // branch is lowered to the statement form, `if c { x = a } else { x = b }`, so each
         // arm's `Set` gets the lowering a single bind of that tail has: a whole variable is
@@ -2379,4 +2394,24 @@ enum RefRhs {
     Owned,
     /// A borrowed view into someone else's store (must never be freed).
     View,
+}
+
+/// The work-ref a `tuple_unbox` block binds the unboxed record to, or `None` for any other
+/// value.
+fn unbox_work_ref(value: &Value) -> Option<u16> {
+    match value.unspan() {
+        Value::Block(b) if b.name == "tuple_unbox" => {
+            match b.operators.first().map(Value::unspan) {
+                Some(Value::Set(w, _)) => Some(*w),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// `LOFT_NO_UNBOX_MEMBER_DEPS=1` — the scope pass's half of the switch the parser reads
+/// (`Parser::unboxed_member_types`).
+fn unbox_member_deps_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_UNBOX_MEMBER_DEPS").is_some())
 }

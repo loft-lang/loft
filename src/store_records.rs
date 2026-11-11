@@ -529,9 +529,15 @@ impl Run<'_> {
             // A variable naming only this store or null, where the store is ended on every
             // path: freed again wherever the variable is not null.
             let only_this = pts.iter().all(|p| *p == Pt::Null || *p == Pt::Store(k));
+            // …and a DEFINITE name of a store a weak end already released on some path (a
+            // maybe-null holder freed it first): freed again on that path.
+            let weakly_ended = pts.len() == 1
+                && info.has(LIVE)
+                && !info.ended.is_empty()
+                && info.ended.iter().all(|e| !info.live.contains(e));
             if report
                 && info.has(ENDED)
-                && (info.ended.contains(&v) || (only_this && !info.has(LIVE)))
+                && (info.ended.contains(&v) || (only_this && !info.has(LIVE)) || weakly_ended)
             {
                 // Every end here is a free, which the runtime refuses on a free slot
                 // (`@FR-H-FreeTwice`) and runs on whatever store took the slot since.
