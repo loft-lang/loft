@@ -21345,6 +21345,25 @@ impl Parser {
         if ctx.jo_arm_skip.contains(&v) {
             return RetPromotion::SkipDelivered;
         }
+        // `@FR-F-Ret` — a record of ANOTHER type is never the return's buffer: the container a
+        // projection tail reads (`decode(n).items[0]` from a `-> In`, the `Dec` temp of the
+        // `inline_container`) was renamed onto `__retbuf`, so a `Dec` was built in the caller's
+        // `In` buffer and the displaced free released the caller's store — the interpreter then
+        // read a corrupt reference.  It stays an inner work-ref; the element is copied out.
+        // `LOFT_NO_RET_TYPE_MATCH=1` lets any record type be promoted.
+        // Asked of a compiler WORK-REF holding a struct only: a parameter of another type is the
+        // attribute rung's (its dep still merges), and a variant is its enum's record.
+        if let (Type::Reference(vd, _), Type::Reference(rd, _)) =
+            (self.vars.tp(v).base(), ctx.ret.base())
+            && vd != rd
+            && self.vars.name(v).starts_with("__ref_")
+            && !self.vars.is_argument(v)
+            && self.data.def_type(*vd) == DefType::Struct
+            && self.data.def_type(*rd) == DefType::Struct
+            && !crate::env_once!(std::env::var_os("LOFT_NO_RET_TYPE_MATCH").is_some())
+        {
+            return RetPromotion::SkipInnerRef;
+        }
         let n = self.vars.name(v);
         // loft#1936 — a CONSTANT's anchor (`_const_view_N`, minted at the constant's use site):
         // the value is a view of the write-locked constant store, never assigned to the

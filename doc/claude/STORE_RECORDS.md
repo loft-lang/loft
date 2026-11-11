@@ -195,7 +195,10 @@ the fn-ref lift makes a local a view (`v = h(k)`), an append backing the local's
 marked never-free releases its own store again (`scan_set`); `LOFT_NO_LIFT_BACKING_FREE=1` keeps
 it never-free, and the C output leaks it.  A whole write through a `&` link to a plain heap
 parameter takes the direct rebind's entry witness (`Parser::rebind_param_through_link`);
-`LOFT_NO_LINK_PARAM_REBIND=1` leaves the written record to nobody.
+`LOFT_NO_LINK_PARAM_REBIND=1` leaves the written record to nobody.  A record of another type
+than the return is never promoted onto the return buffer (`classify_ret_promotion_inner`: the
+container a projection tail reads stays an inner work-ref); `LOFT_NO_RET_TYPE_MATCH=1` promotes
+it, and the caller's buffer is freed under a record of the wrong type.
 
 The closure records' releases, each switch bringing back one second free (doc strings in
 `keys.rs`):
