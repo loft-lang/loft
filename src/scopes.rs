@@ -298,6 +298,9 @@ struct Scopes<'s> {
     /// backing (`x = OpGetField(__vdb_N, …)`) or a call's buffer (`x = f(…, __ref_N)`).  Their
     /// stores are theirs to release (`scan_set`'s transition free declines on them).
     view_temps: HashMap<u16, Vec<u16>>,
+    /// The `__fkeep_N` snapshot `closure_keep_rebind` took of the fn-ref the statement being
+    /// scanned rebinds, if any — for the rebuild release in `scan_set` to retire.
+    pending_fkeep: Option<u16>,
     /// The binding whose FIRST assignment the `Set` being scanned is, or `u16::MAX`.  A
     /// multi-assigned binding is first bound with no store of its own, so its value branch's
     /// arms take the per-arm copy `(B-Copy)` asks (`Scopes::arm_bind`, loft#2398).

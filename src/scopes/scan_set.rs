@@ -2173,6 +2173,25 @@ impl Scopes<'_> {
                 }
                 // `@FR-L-CapOwn` — the record gives up what it adopted through its own
                 // cascade, emitted here; the store free releases only the record.
+                // `@FR-H-FreeTwice` — the `(L-CapKeep)` snapshot of the fn-ref being rebound
+                // (`__fkeep_N = g`, taken before this statement) still names the record released
+                // here, and its check after the build releases what no live name holds: the
+                // record again, once the build has minted a new one (O-Witness
+                // `rebuilt_reassigned`, strict stores).  It lets go of the record first — ahead
+                // of the hook, so the cascade stays next to the free it belongs to.
+                if let Some(f) = self.pending_fkeep
+                    && crate::keys::fkeep_rebuild_detach()
+                {
+                    let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(f)]);
+                    prefix.push(v_if(
+                        Value::Call(
+                            data.def_nr("OpDistinctStore"),
+                            vec![closure, Value::Var(*rec)],
+                        ),
+                        Value::Null,
+                        v_set(f, Value::Null),
+                    ));
+                }
                 if let Some(hook) = super::drops::drop_hook(function, *rec, data) {
                     prefix.push(hook);
                 }

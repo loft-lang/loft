@@ -3302,6 +3302,15 @@ pub fn link_param_releases() -> bool {
     *ON.get_or_init(|| env_set("LOFT_LINK_PARAM_RELEASES"))
 }
 
+/// `LOFT_NO_FKEEP_REBUILD_DETACH=1` — a rebuild that releases the record it overwrites leaves the
+/// rebound fn-ref's `__fkeep_N` snapshot naming that record (`scan_set`): its post-build check
+/// releases the record a second time.
+#[must_use]
+pub fn fkeep_rebuild_detach() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FKEEP_REBUILD_DETACH"))
+}
+
 /// `LOFT_NO_VIEW_TEMP_TRANSITION_GUARD=1` — a local's displaced free at a rebind also releases a
 /// store a frame temporary owns (the literal backing or call buffer another assignment viewed),
 /// as it did before (`scan_set`): the temporary then frees it again.

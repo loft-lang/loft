@@ -351,7 +351,18 @@ impl Scopes<'_> {
             {
                 self.keep_build_target = Some(*self.var_mapping.get(t).unwrap_or(t));
             }
+            // The fn-ref snapshot this rebind took, for the rebuild release to retire.  Saved
+            // and restored around the scan: the statements inside the build's own value (a
+            // closure body) pass through here too, and must not erase this one's.
+            let outer_fkeep = std::mem::replace(
+                &mut self.pending_fkeep,
+                call_rebind.as_ref().and_then(|(pre, _)| match pre.first() {
+                    Some(Value::Set(t, _)) if function.name(*t).starts_with("__fkeep_") => Some(*t),
+                    _ => None,
+                }),
+            );
             let sv = self.scan(v, function, data);
+            self.pending_fkeep = outer_fkeep;
             self.keep_build_target = outer_target;
             let loop_depth = self.loops.len();
             let mut arm_moved: Vec<(u16, u16)> = Vec::new();

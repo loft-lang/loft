@@ -187,6 +187,7 @@ pub(super) fn run_scan_phase(
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
         view_temps: view_temps_in(orig_code, orig_vars, data),
+        pending_fkeep: None,
         first_set: u16::MAX,
         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
         arm_projection_temps: arm_projection_temps_in(orig_code, orig_vars, data),
