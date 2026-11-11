@@ -1032,6 +1032,7 @@ pub fn oracle_free_checks(data: &Data) {
         }
         if over {
             total_reds += run_override_check(name, &body, data, d_nr);
+            total_reds += run_capture_free_check(name, &body, data, d_nr);
         }
         if dev {
             let cfg = build(&body);
@@ -1331,6 +1332,167 @@ fn run_leak_scan(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
 /// their frees are visible) + Check C (under-free/leak). Both key off the post-codegen TYPE DEP (the
 /// materialisation-aware ownership signal), so they need no fixpoint — they are a free-placement
 /// CONSISTENCY layer (does the emitted free match the dep), beside Check A's independent cross-check.
+/// `@FR-L-CapRebind` (loft#2459), PROMOTED onto `LOFT_OWN_ORACLE=check` — a closure record holds
+/// the store its captured local named AT THE BUILD, for as long as the record lives.  An
+/// unconditional `OpFreeRef` of that store's backing, followed by a call through the closure
+/// while its record is not yet freed, is a use after the store's end — and so is one in a
+/// function that RETURNS the closure.  A free under an `if` is the identity-decided release the
+/// scope pass places where a record may hold the store, and is not counted.  The local's later
+/// rebinds do not move the record's hold: the backing is the one the local was bound to when
+/// the build ran.
+fn run_capture_free_check(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
+    let mut w = CaptureWalk {
+        vars: data.def(d_nr).variables(),
+        set_dbref: data.def_nr("OpSetDbRef"),
+        get_field: data.def_nr("OpGetField"),
+        free: data.def_nr("OpFreeRef"),
+        name,
+        backing_of: BTreeMap::new(),
+        held: Vec::new(),
+        ended: BTreeSet::new(),
+        reported: BTreeSet::new(),
+        returned: BTreeSet::new(),
+        reds: 0,
+    };
+    w.walk(body, false);
+    // A closure the function hands back outlives every free in it.
+    if let Value::Block(bl) = body.unspan()
+        && let Some(Value::Var(g)) = bl.operators.last().map(Value::unspan)
+    {
+        w.returned.insert(*g);
+    }
+    for i in 0..w.held.len() {
+        let h = w.held[i];
+        if h.freed && w.returned.contains(&h.fn_ref) && w.reported.insert((h.fn_ref, h.backing)) {
+            w.red(h, "which the function returns");
+        }
+    }
+    w.reds
+}
+
+/// One closure build [`run_capture_free_check`] follows.
+#[derive(Clone, Copy)]
+struct Held {
+    fn_ref: u16,
+    record: u16,
+    backing: u16,
+    captured: u16,
+    freed: bool,
+}
+
+struct CaptureWalk<'a> {
+    vars: &'a crate::variables::Function,
+    set_dbref: u32,
+    get_field: u32,
+    free: u32,
+    name: &'a str,
+    /// local -> the `__vdb_N` backing it was bound to last, in evaluation order.
+    backing_of: BTreeMap<u16, u16>,
+    held: Vec<Held>,
+    ended: BTreeSet<u16>,
+    reported: BTreeSet<(u16, u16)>,
+    returned: BTreeSet<u16>,
+    reds: usize,
+}
+
+impl CaptureWalk<'_> {
+    fn red(&mut self, h: Held, why: &str) {
+        eprintln!(
+            "RED {}: capture-freed {} (v{}) is held by the closure record {} built over {}, {why}",
+            self.name,
+            self.vars.name(h.backing),
+            h.backing,
+            self.vars.name(h.record),
+            self.vars.name(h.captured)
+        );
+        self.reds += 1;
+    }
+
+    fn walk(&mut self, n: &Value, guarded: bool) {
+        match n.unspan() {
+            Value::If(c, t, e) => {
+                self.walk(c, guarded);
+                self.walk(t, true);
+                self.walk(e, true);
+                return;
+            }
+            Value::Set(c, rhs) => {
+                self.walk(rhs, guarded);
+                self.bind(*c, rhs);
+                return;
+            }
+            Value::Call(d, args) if *d == self.free => {
+                if let Some(Value::Var(x)) = args.first().map(Value::unspan) {
+                    self.ended.insert(*x);
+                    if !guarded {
+                        for h in &mut self.held {
+                            if h.backing == *x {
+                                h.freed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            Value::CallRef(g, _) => {
+                for i in 0..self.held.len() {
+                    let h = self.held[i];
+                    if h.fn_ref == *g
+                        && h.freed
+                        && !self.ended.contains(&h.record)
+                        && self.reported.insert((h.fn_ref, h.backing))
+                    {
+                        self.red(h, "called after the free");
+                    }
+                }
+            }
+            Value::Return(v) => {
+                if let Value::Var(g) = v.unspan() {
+                    self.returned.insert(*g);
+                }
+            }
+            _ => {}
+        }
+        n.for_each_child(&mut |c| self.walk(c, guarded));
+    }
+
+    /// `c = rhs`: a bind to a literal backing, or a closure build over captured locals.
+    fn bind(&mut self, c: u16, rhs: &Value) {
+        if let Value::Call(d, args) = rhs.unspan()
+            && *d == self.get_field
+            && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+            && self.vars.name(*b).starts_with("__vdb")
+        {
+            self.backing_of.insert(c, *b);
+        }
+        let mut record = None;
+        let mut caps: Vec<u16> = Vec::new();
+        rhs.walk(&mut |m| match m {
+            Value::FnRef(_, w, _) if *w != u16::MAX => record = Some(*w),
+            Value::Call(d, args) if *d == self.set_dbref => {
+                if let Some(Value::Var(x)) = args.get(2).map(Value::unspan) {
+                    caps.push(*x);
+                }
+            }
+            _ => {}
+        });
+        if let Some(w) = record {
+            self.ended.remove(&w);
+            self.held.retain(|h| h.fn_ref != c);
+            for x in caps {
+                if let Some(&b) = self.backing_of.get(&x) {
+                    self.held.push(Held {
+                        fn_ref: c,
+                        record: w,
+                        backing: b,
+                        captured: x,
+                        freed: false,
+                    });
+                }
+            }
+        }
+    }
+}
+
 /// Check B (over-free), PROMOTED onto `LOFT_OWN_ORACLE=check` (runs beside the leak scan). A var freed
 /// by an unconditional `OpFreeRef` whose post-codegen type dep is NON-empty borrows a store owned
 /// elsewhere — freeing it is an over-free (double-free / UAF). The dep is codegen's ground truth

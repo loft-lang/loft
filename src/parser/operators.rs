@@ -498,6 +498,19 @@ impl Parser {
         }
     }
 
+    /// `@FR-L-CapRebind` — may a closure record built earlier on this pass hold the store vector
+    /// local `v` names, so a rebind that reads `v` must move it to a fresh store rather than
+    /// work in place (loft#2459)?  Off under `LOFT_NO_CAPREBIND_MINT`.
+    pub(crate) fn capture_record_holds(&self, v: u16) -> bool {
+        !self.first_pass
+            && crate::keys::caprebind_mint()
+            && self.vars.rebind_must_mint(v)
+            && self
+                .capture_records
+                .get(&(false, self.context, v))
+                .is_some_and(|r| !r.is_empty())
+    }
+
     /// `@FR-L-CapRebind` — `v = v + [...]` where a closure record built over `v` holds `v`'s
     /// store.  A rebind is not a mutation-through, so the in-place append the self-concat
     /// otherwise takes would reach the record: `v` takes a fresh store instead, its old value
@@ -510,13 +523,7 @@ impl Parser {
         var_nr: u16,
         snapshot_len: usize,
     ) -> bool {
-        if self.first_pass
-            || !self.vars.rebind_must_mint(var_nr)
-            || self
-                .capture_records
-                .get(&(false, self.context, var_nr))
-                .is_none_or(Vec::is_empty)
-        {
+        if !self.capture_record_holds(var_nr) {
             return false;
         }
         let append_nr = self.data.def_nr("OpAppendVector");

@@ -1022,6 +1022,27 @@ pub fn demote_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_DEMOTE"))
 }
 
+/// `LOFT_NO_CAPREBIND_KEEP=1` — `@FR-L-CapRebind`: a store a CAPTURED local was ever bound to
+/// may be freed at its last read again (`scopes::last_use`), where the default keeps its
+/// scope-exit free because a closure record built over the local still reads it.  The bisect
+/// step for a closure reading a store the next allocation reused (loft#2459).
+#[must_use]
+pub fn caprebind_keep() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CAPREBIND_KEEP"))
+}
+
+/// `LOFT_NO_CAPREBIND_MINT=1` — `@FR-L-CapRebind`: a whole-value rebind of a captured VECTOR
+/// local that reads the local itself (`a = a + [3]`, `a = a[0..1]`) works in the local's store
+/// again, where the default first moves the local to a fresh store while a closure record
+/// holds the old one (`Parser::concat_into_a_held_store`).  The bisect step for a closure that
+/// sees its local's later rebind (loft#2459).
+#[must_use]
+pub fn caprebind_mint() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CAPREBIND_MINT"))
+}
+
 /// `LOFT_NO_VARIANT_INPLACE=1` — `@FR-R-InPlaceLiteral`'s variant clause: a variant literal
 /// rebound into a whole local of its struct-enum (`l = Cons { v: 1, next: Nil }`) is built on
 /// a work reference and copied over again, where the default builds it in the local as a

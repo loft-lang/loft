@@ -17,7 +17,8 @@ native leak check) and its `LOFT_TRACE_*` switch where one exists.  Because both
 share the rewrite, agreement between them proves nothing here: hand-computed cell values and
 the switch A/B are the evidence.  The store's design is [DATABASE.md](DATABASE.md); the rules
 are in [formal/rewrites.md](formal/rewrites.md), [formal/heap.md](formal/heap.md) and
-[formal/ownership.md](formal/ownership.md).
+[formal/ownership.md](formal/ownership.md).  Past measurements:
+[BOTH_BACKEND_SWITCHES-history.md](BOTH_BACKEND_SWITCHES-history.md).
 
 ## Lowering: format appends, record placement and buffers
 
@@ -52,17 +53,13 @@ bisect step for a wrong field, a leak or a double free out of a record built by 
 stored in an appended element; `LOFT_TRACE_PLACE=1` names each admission and each decline
 (a read after the store, a hand-off to a call, a rebind, a second destination or host, a
 destination in a local record, a loop, a rejoin of a stored and a held path all keep the copy).
-Measured 2026-09-16 on the drawing bench's parse row: one store fewer per line and the copy
-gone, and a WASH on every counter (`perf stat`: instructions, cycles and cache misses equal
-within noise) because the record relocated there carries no heap on that scene.
 The same switch covers `(R-Place)`'s LOOP clause: a bind inside a loop whose
 result's ONE heap-owning field is stored into an element appended to a parameter or to a
 local vector bound before the loop (`sub = read(…); items += [sub.value]; p = sub.next`)
 gets its per-turn buffer claimed in the host's store (`OpPlaceRecord` in the lazy mint's
 `then`, the turn's `OpClear` kept), the field moves by `OpMoveField` — the bytes relocate,
 the source is ZEROED so the next turn's clear and the callee's refill find an empty record
-— and each exit releases the placed record as a block (`OpFreeRecordIn`).  Measured on the
-cbor decoder's bench (`--ship`, this box): decode 42.6 ms → 34.7 ms per op.
+— and each exit releases the placed record as a block (`OpFreeRecordIn`).
 **`LOFT_NO_TAKE_LOCAL=1`** (`(R-MoveLast)`'s local clause, the scope pass, BOTH backends) keeps
 `x = y` for a vector local `y` built afresh each pass (the double buffer `tmp = []; …; result =
 tmp`) a deep copy — with it off, `y` is given up to `x`, the stores exchanged.  It is the first
@@ -98,8 +95,7 @@ in a local, and for a leak into a caller's store; `LOFT_TRACE_PLACE=1` names eac
 mention after the move, a free outside an exit, a wrapper typed a level too deep — the
 tuple-destructured local `tests/branch_join.rs::a_vector_local_is_backed_by_its_own_element_type`
 guards).  A vector placed this way is not a fresh store root, so the native header and base hoists (`(R-LoopBuffer)`, `(R-CompleteWrite)`,
-`(R-Base)`) decline the loops that fill it — measured on the cbor decoder's bench: decode
-34.7 ms → 26.2 ms per op, and stores per `check_request` 20 → 7.
+`(R-Base)`) decline the loops that fill it.
 **`LOFT_NO_ZERO_COUNT=1`** (`@FR-R-ZeroCount`, on the closed program, BOTH backends) keeps
 `len(t) > 0` and every other comparison of a text's character count with the zero boundary
 counting characters — with it off, each reads the byte count (`size(t)`), which answers the
@@ -128,9 +124,7 @@ or freed record out of a callee that returns a field of a local, and for a calle
 store that was released under it; `LOFT_TRACE_PLACE=1` names each admission
 (`[return-field]`) and each decline (a parameter's or a view's field, an element, a returned
 record that owns no heap — the native value form's to answer — a statement in the exit that
-is not a free, a buffer that is not the function's own).  Measured on pluginabi's
-`check_request` driver (`--ship`, this box): 0.34 s → 0.33 s per 40 rounds; the
-copy census of `return p.a` 1 → 0 per call.
+is not a free, a buffer that is not the function's own).
 
 **`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON, parse time +
 scope pass, BOTH backends) keeps `x = f(x, …)` minting the callee's exit record in a store
@@ -217,8 +211,7 @@ is handed the field and the site copies the answer in only when it is not the fi
 (`palette_items_for_tool` answering `HEIGHT_STEP_LABELS`).  The first bisect step for a field
 that holds the wrong one of a callee's answers.
 `tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft` is its guard.
-Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
-byte-identical under the switch — so the gain is structural.  The callee clause admits a CHAIN exit
+The callee clause admits a CHAIN exit
 (`return mk(n)` hands the buffer through; asked recursively, a cycle declines), so a result
 that arrives through a chain is placed like a literal's; the switch covers it with the rest.
 
@@ -255,12 +248,10 @@ leak or a crash in a `match` with guarded arms: a binding first written inside a
 condition is the shape to suspect.  Guards `loft-suite/rules/matching/M-Once/`.  (An enum arm's
 test as one op is the interpreter's alone, `LOFT_NO_TAG_JUMP`: `formal/rewrites.md` `(R-Fuse)`.)
 
-**Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a
-local reassigned across sibling `if`/`else if`/`match` arms used to keep EVERY arm's store
-alive to scope exit, so the watermark grew with the number of reassignment SITES rather than
-with how many of them run — a 16-site function peaked at 20 stores whichever single arm was
-taken. `recover_backer` confines each block's store to its block: a flat **5** at 2, 4, 8 and
-16 sites. **`LOFT_NO_CONF_RECOVER=1`** emits the pre-confinement form and is the first bisect
+**Store confinement across sibling blocks (default-ON, both backends):** a local reassigned
+across sibling `if`/`else if`/`match` arms keeps only the store of the arm that runs:
+`recover_backer` confines each block's store to its block, so the watermark follows how many
+arms run, not how many reassign. **`LOFT_NO_CONF_RECOVER=1`** emits the pre-confinement form and is the first bisect
 step for a wrong answer in a function that reassigns a local across sibling blocks. ⚠ The
 soundness condition is `store_dead_after_block`, NOT the flag: a local READ after the blocks
 does not confine, because freeing a confined store while the local still holds it returns the
@@ -331,9 +322,7 @@ out of such a copy.  `LOFT_TRACE_VEC_COPY=1` names each site admitted and each k
 **`LOFT_NO_LITERAL_WALK=1`** (`@FR-R-LiteralWalk`, default-ON, parse time,
 BOTH backends) makes `for x in [a, b, c]` build and walk the vector again — with it off, the
 items are evaluated once into scalar temps and the loop is a counted select over them, no
-vector on either backend (mesh3d's `mesh_to_floats`, whose per-triangle `[t.a, t.b, t.c]`
-was a buffer reset, three appends and three element reads through the store) — and is the
-first bisect step for a wrong value, order or count out of a loop over a literal of scalars.
+vector on either backend — and is the first bisect step for a wrong value, order or count out of a loop over a literal of scalars.
 `LOFT_REWRITE_CENSUS` counts its admissions as `R-LiteralWalk`.
 
 **`LOFT_NO_FILL_LOOP=1`** (`@FR-R-PushFill`'s fill form, default-ON, IR phase, BOTH backends)
@@ -382,6 +371,18 @@ record into the field again where `h = T { …, f: h }` or `o.g = T { …, f: o.
 **`LOFT_NO_VARIANT_INPLACE=1`** (`@FR-R-InPlaceLiteral`'s variant clause) builds a variant
 literal rebinding an enum local or a return buffer on a work reference again, and so also
 turns off `(R-Demote)`'s variant clause: the next bisect step for an enum list or tree.
+
+**`LOFT_NO_CAPREBIND_MINT=1`** (`@FR-L-CapRebind`, default-ON, parse time and scope pass, BOTH
+backends) lets a rebind of a captured vector local that reads the local itself (`a = a + [3]`,
+`a = a[0..1]`) work in the local's store again, and drops the detach that keeps a loop pass's
+closure record on the store it was built with (`scopes::rebound_captures`, records confined to
+the pass).  The first bisect step for a closure that sees its local's later rebind;
+`LOFT_STRICT_STORES=1` and the leak gate are the falsifiers, since an escaping closure then reads
+a freed store.  **`LOFT_NO_CAPREBIND_KEEP=1`** lets the last-use pass free a store a captured
+local was bound to at its last read here (`scopes::last_use`), while the closure record still
+reads it: a use after free the next allocation exposes (`--native-c` under
+`LOFT_STRICT_STORES=1` names it; the interpreter under `LOFT_POISON=1` reads a corrupt
+reference).  `LOFT_OWN_ORACLE=check` reports it as `capture-freed`.
 
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
 a plain local first-bound from a callee that returns the local it promoted onto its buffer
@@ -845,9 +846,7 @@ O(1) off the footer (tree-confirmed — claimed data can spell a false footer) i
 leaving adjacent frees to `claim`'s lazy O(blocks) sweep; the sweep stays armed only for
 the untracked one-word case.  **`LOFT_NO_FREE_FOOTER=1`** restores the sweep-only form
 whole (every delete arms it) and is the first bisect step for a store-layout fault in a
-delete-heavy run.  Measured: `fronds` −7.7 % (the § V-u arena's churn), and the class it
-retires is the `coalesce_free` cliff PERFORMANCE.md § V-j P2 first measured at 29.5 % of
-a shared-arena row.
+delete-heavy run.
 
 **The tail free block is a wilderness (@PLN164, default-ON, both backends,
 `@FR-H-Wilderness`):** the free block that ends a store is held beside the free tree, and the
@@ -896,7 +895,7 @@ claim once the untracked words reach 256 and a fifth of the extent written, with
 that merges and tracks every free block, or at an explicit reclaim; a fresh or reset store
 starts the phase again, a store bound to a file never enters it.  A store built once and freed whole
 (a call's result buffer, a decoder's tree) never pays for its deletes, and its claims stay on
-the tail (pluginabi's `check_request` −6 %: the free-tree walks were a quarter of the row).
+the tail.
 **`LOFT_NO_LAZY_FREE=1`** tracks every delete at its site again (read per store at
 construction) and is the first bisect step for a store-layout fault, a claim that hands out a
 live block, or a store that grows instead of reusing a freed block.  The falsifiers are the free tree's

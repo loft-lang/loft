@@ -328,7 +328,7 @@ fn reclaim_safe(code: &Value, vars: &Function, st: u16) -> bool {
     // AT THE BUILD, past a rebind of the local: the type's deps name only the latest bind, so a
     // store a CAPTURED local was ever bound to is read through the record after its last read
     // here, and keeps its scope-exit free (loft#2459).
-    if bound_to_a_captured_local(code, vars, st) {
+    if crate::keys::caprebind_keep() && bound_to_a_captured_local(code, vars, st) {
         return false;
     }
     // #426B — the holder set must be the TRANSITIVE dep closure, not just the

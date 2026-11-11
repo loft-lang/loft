@@ -6304,7 +6304,11 @@ use a separate collection or add after the loop"
             // the vector's own record — no temporary, no release, no copy back.  The same
             // admission as the block-copy form (`slice_copy_form`); every other element
             // kind, and `LOFT_NO_SLICE_COPY=1`, keeps the temporary below.
-            if crate::env_once!(std::env::var_os("LOFT_NO_SLICE_COPY").is_none())
+            // A store a closure record holds is not reshaped in place (`@FR-L-CapRebind`):
+            // the temporary below refills a FRESH store then.
+            let held = self.capture_record_holds(var_nr);
+            if !held
+                && crate::env_once!(std::env::var_os("LOFT_NO_SLICE_COPY").is_none())
                 && crate::data::is_scalar(&elm_tp)
                 && !self.is_type_var_element(&elm_tp)
                 && let Value::Iter(_, init, _, _) = code.clone()
@@ -6338,12 +6342,17 @@ use a separate collection or add after the loop"
             // stride per element, over-reading the temp (silent on a copy, refused on a
             // foreign view; @PLN174 F4b found it).
             let rec_tp = Value::Int(self.append_elem_tp(&elm_tp));
-            let clear = self.cl("OpClearVector", &[Value::Var(var_nr)]);
-            let append = self.cl(
+            let mut ls = vec![code.clone()];
+            if held {
+                ls.extend(self.vector_db(&elm_tp, var_nr));
+            } else {
+                ls.push(self.cl("OpClearVector", &[Value::Var(var_nr)]));
+            }
+            ls.push(self.cl(
                 "OpAppendVector",
                 &[Value::Var(var_nr), Value::Var(tmp), rec_tp],
-            );
-            *code = Value::Insert(vec![code.clone(), clear, append]);
+            ));
+            *code = Value::Insert(ls);
             return Type::Void;
         }
         // A `&vector` parameter appends a slice as a local does (`@FR-Slice-Value`); its `=`
