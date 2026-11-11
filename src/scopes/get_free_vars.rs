@@ -1237,6 +1237,8 @@ impl Scopes<'_> {
             }
         }
         fnref_stand_down(&mut ls, &fnref_releases, function, data);
+        captured_record_stand_down(&mut ls, function, data, self.d_nr);
+        captured_view_stand_down(&mut guarded, function, data);
         if !guarded.is_empty() {
             guarded.append(&mut ls);
             ls = guarded;
@@ -1328,5 +1330,147 @@ fn fnref_stand_down(
                 )
             });
         ls.insert(at, guarded);
+    }
+}
+
+/// `@FR-H-FreeTwice`, `@FR-L-CapOwn` (loft#1869) — a closure record that captured a fn-ref
+/// (`OpSetDbRef(R, off, OpFnRefClosure(h))`) adopts the record `h` was built over: its cascade
+/// frees the store in slot `off`.  That record's own variable `r` still takes a free at the
+/// scope's end, of the same store.  Where this sweep releases both `R` (its cascade and free) and
+/// `r` unconditionally, `r` hands the store to `R` first — set to the null sentinel ahead of
+/// `R`'s release pair whenever `R` is live (the cascade's own test) and its slot names `r`'s
+/// store — so `r`'s free does nothing.  `LOFT_NO_CAPTURED_RECORD_STAND_DOWN=1` restores the
+/// double release.
+fn captured_record_stand_down(ls: &mut Vec<Value>, function: &Function, data: &Data, d_nr: u32) {
+    if crate::env_once!(std::env::var_os("LOFT_NO_CAPTURED_RECORD_STAND_DOWN").is_some()) {
+        return;
+    }
+    let set_dbref = data.def_nr("OpSetDbRef");
+    let fn_closure = data.def_nr("OpFnRefClosure");
+    let free = data.def_nr("OpFreeRef");
+    // (capturing record R, slot offset, the record r the captured fn-ref was built over).
+    let mut adopted: Vec<(u16, i32, u16)> = Vec::new();
+    data.def(d_nr).code.walk(&mut |n| {
+        if let Value::Call(d, args) = n
+            && *d == set_dbref
+            && let [Value::Var(big), Value::Int(off), held] = args.as_slice()
+            && let Value::Call(c, cargs) = held.unspan()
+            && *c == fn_closure
+            && let Some(Value::Var(h)) = cargs.first().map(Value::unspan)
+            && function.name(*big).starts_with("___clos_")
+        {
+            for r in function.tp(*h).depend() {
+                if r != *big
+                    && r < function.count()
+                    && function.name(r).starts_with("___clos_")
+                    && !adopted.contains(&(*big, *off, r))
+                {
+                    adopted.push((*big, *off, r));
+                }
+            }
+        }
+    });
+    let plain_free = |ls: &[Value], x: u16| {
+        ls.iter().position(|st| {
+            matches!(st.unspan(), Value::Call(d, a) if *d == free
+                && matches!(a.as_slice(), [v] if matches!(v.unspan(), Value::Var(y) if *y == x)))
+        })
+    };
+    let hook_of = |st: &Value, x: u16| {
+        matches!(st.unspan(), Value::If(_, t, _) if matches!(t.unspan(), Value::Call(_, a)
+            if matches!(a.as_slice(), [v] if matches!(v.unspan(), Value::Var(y) if *y == x))))
+    };
+    // A record confined to one loop pass BORROWS what it captured (`@FR-L-CapOwn`): its cascade
+    // releases nothing, so nothing is handed to it.
+    let confined = super::closure_keep::pass_confined_records(data, function, &data.def(d_nr).code);
+    for (big, off, r) in adopted {
+        if matches!(function.tp(big).base(), Type::Reference(rec, _) if confined.contains(rec)) {
+            continue;
+        }
+        let (Some(big_at), Some(_)) = (plain_free(ls, big), plain_free(ls, r)) else {
+            continue;
+        };
+        // Only where `R`'s release runs its cascade: a record built in a loop pass borrows
+        // what it captured, its hook is empty, and handing it the store would leak it.
+        if big_at == 0 || !hook_of(&ls[big_at - 1], big) {
+            continue;
+        }
+        let at = big_at - 1;
+        let slot = Value::Call(
+            data.def_nr("OpGetDbRef"),
+            vec![Value::Var(big), Value::Int(off)],
+        );
+        let hand_over = v_if(
+            Value::Call(data.def_nr("OpDistinctStore"), vec![Value::Var(r), slot]),
+            Value::Null,
+            v_set(r, Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new())),
+        );
+        let live = Value::Call(data.def_nr("OpStoreLive"), vec![Value::Var(big)]);
+        ls.insert(at, v_if(live, hand_over, Value::Null));
+    }
+}
+
+/// `@FR-H-FreeTwice` — a captured vector local viewing its literal backing (`v` over
+/// `__vdb_N`) and that backing are two names for one store, and where a closure build is
+/// conditional each takes the same guarded release (`free_unless_record_built`: freed unless a
+/// record was built), so a run that skips the build frees the store twice.  Where the guarded
+/// releases hold both under one condition, the view's keeps its hook (the elements' drop runs
+/// once, ahead of the free) and gives up its free; the backing's is the store's one release.
+/// `LOFT_NO_CAPTURED_VIEW_STAND_DOWN=1` restores the double release.
+fn captured_view_stand_down(guarded: &mut Vec<Value>, function: &Function, data: &Data) {
+    if crate::env_once!(std::env::var_os("LOFT_NO_CAPTURED_VIEW_STAND_DOWN").is_some()) {
+        return;
+    }
+    let free = data.def_nr("OpFreeRef");
+    // (condition, released variable, hook) of a `if <cond> null else { [hook;] OpFreeRef(x) }`.
+    let shape = |st: &Value| -> Option<(Value, u16, Option<Value>)> {
+        let Value::If(cond, then_arm, else_arm) = st.unspan() else {
+            return None;
+        };
+        if !matches!(then_arm.unspan(), Value::Null) {
+            return None;
+        }
+        let freed = |op: &Value| match op.unspan() {
+            Value::Call(op_nr, op_args) if *op_nr == free => match op_args.as_slice() {
+                [x] => match x.unspan() {
+                    Value::Var(v) => Some(*v),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        match else_arm.unspan() {
+            Value::Insert(ops) if ops.len() == 2 => {
+                freed(&ops[1]).map(|v| ((**cond).clone(), v, Some(ops[0].clone())))
+            }
+            other => freed(other).map(|v| ((**cond).clone(), v, None)),
+        }
+    };
+    let shapes: Vec<Option<(Value, u16, Option<Value>)>> = guarded.iter().map(shape).collect();
+    let mut drop_at: Vec<usize> = Vec::new();
+    for (i, sh) in shapes.iter().enumerate() {
+        let Some((cond, v, hook)) = sh else {
+            continue;
+        };
+        let [b] = function.tp(*v).depend()[..] else {
+            continue;
+        };
+        if b == *v || b >= function.count() || !function.name(b).starts_with("__vdb_") {
+            continue;
+        }
+        let backing_too = shapes
+            .iter()
+            .any(|o| matches!(o, Some((c, x, _)) if *x == b && c == cond));
+        if !backing_too {
+            continue;
+        }
+        match hook {
+            Some(h) => guarded[i] = v_if(cond.clone(), Value::Null, h.clone()),
+            None => drop_at.push(i),
+        }
+    }
+    for i in drop_at.into_iter().rev() {
+        guarded.remove(i);
     }
 }

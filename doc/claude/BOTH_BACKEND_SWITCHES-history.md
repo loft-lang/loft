@@ -68,3 +68,11 @@ zttext `insert_text` 25.4 → 5.95 ms per op.
 
 html `escape_html` 10.3× → 2.6× of Rust, zttext `materialise` 24× → 6.9×, `flow_layout_full`
 107× → 15×.
+
+## `(R-SliceCopy)`'s byte clause — cbor `encode_bytes`
+
+cbor `encode_bytes` 94.7× → 43.1×; 2.9 → 0.4 ns a byte on the probe.
+
+## The field fill with the block repeat — `lock_curved`
+
+together with the block repeat `lock_curved` 4.2× → 2.2×.

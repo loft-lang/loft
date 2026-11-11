@@ -284,9 +284,8 @@ the type MAXIMUM that never terminates on either form.
 **`LOFT_NO_BYTE_COPY=1`** (`@FR-R-ByteCopy`, default-ON, scope pass, BOTH backends) makes
 `for i in lo..hi { buf += [t.byte_at(i) as u8] }` push byte by byte again — with it off, the
 loop is one append of the bytes `[lo, hi)` behind `0 <= lo && lo <= hi && hi <= size(t)`,
-the loop as written running for a range the guard refuses (cbor `encode_bytes` 94.7× →
-43.1×; 2.9 → 0.4 ns a byte on the probe) — and is the first bisect step for a wrong, missing
-or extra byte out of such a copy.  It turns off the rule's vector clause with it
+the loop as written running for a range the guard refuses — and is the first bisect step for
+a wrong, missing or extra byte out of such a copy.  It turns off the rule's vector clause with it
 (`for i in lo..hi { buf += [v[off + i] ?? d] }` as one slice append behind its in-range
 guard) and `@FR-R-TextRun`, which builds on that clause: a byte vector filled only by such a
 copy and read once by `text_from_bytes` is read in place by `text_from_byte_range`, so the
@@ -381,9 +380,11 @@ a freed store.  **`LOFT_NO_CAPREBIND_KEEP=1`** lets the last-use pass free a sto
 local was bound to at its last read here (`scopes::last_use`), while the closure record still
 reads it: a use after free the next allocation exposes (`--native-c` under
 `LOFT_STRICT_STORES=1` names it; the interpreter under `LOFT_POISON=1` reads a corrupt
-reference).  `LOFT_OWN_ORACLE=check` reports it as `capture-freed`.  **`LOFT_NO_FNREF_STAND_DOWN=1`**
-(`@FR-H-FreeTwice`, scope pass) lets a fn-ref free its closure at the scope's end even where
-the local record it was built over is freed there too — a re-free (`LOFT_DOUBLE_FREE` counts it).
+reference).  `LOFT_OWN_ORACLE=check` reports it as `capture-freed`.  Three switches bring back
+a re-free at a scope's end (`@FR-H-FreeTwice`, scope pass; `LOFT_DOUBLE_FREE` counts it): a fn-ref
+freeing the local record it was built over (**`LOFT_NO_FNREF_STAND_DOWN=1`**), a record a
+capturing record's cascade adopts (**`LOFT_NO_CAPTURED_RECORD_STAND_DOWN=1`**), and a captured
+vector local beside its `__vdb_N` backing (**`LOFT_NO_CAPTURED_VIEW_STAND_DOWN=1`**).
 
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
 a plain local first-bound from a callee that returns the local it promoted onto its buffer
@@ -663,8 +664,7 @@ a constant comprehension.  **`LOFT_NO_FIELD_FILL=1`** (parse time, BOTH backends
 constant comprehension in a struct FIELD (`Lay { best: [for _ in 0..n { 2.0 }] }`) on its
 per-element push loop — with it off it takes the repeat-literal lowering a local's already has,
 when the field is a plain vector (`is_plain_vector`; a keyed collection stays on the loop, since
-n appends are not n inserts); together with the block repeat `lock_curved` 4.2× → 2.2×.
-**`LOFT_NO_SELF_APPEND_BLOCK=1`** (runtime, BOTH backends) makes `v += v` copy through a
+n appends are not n inserts).  **`LOFT_NO_SELF_APPEND_BLOCK=1`** (runtime, BOTH backends) makes `v += v` copy through a
 byte snapshot taken before the growth again — with it off, a self-append is one block copy
 inside the grown record, its source re-read from the field slot after the growth (which is
 also what fixed the heap-owning case: the claims walk read the source through a number
