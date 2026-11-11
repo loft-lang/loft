@@ -1518,7 +1518,12 @@ impl Run<'_> {
                     corr: [k].into(),
                 }
             }
-            Summary::Arg(i) => vals.get(i as usize).cloned().unwrap_or_else(Val::unknown),
+            // The argument's store, BORROWED: the answer owns none of it, so a copy or a join
+            // guard that consumes what its value owns leaves it with the argument's owner.
+            Summary::Arg(i) => vals.get(i as usize).map_or_else(Val::unknown, |v| Val {
+                pts: v.pts.clone(),
+                corr: BTreeSet::new(),
+            }),
             Summary::Join(i) => {
                 let viewed = vals.get(i as usize).cloned().unwrap_or_else(Val::unknown);
                 let site = self.site(node, Origin::Call(d));

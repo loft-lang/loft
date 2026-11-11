@@ -127,7 +127,9 @@ a local that another assignment binds to a view gets a lift temporary as its own
 local views it (`scan_set`); `LOFT_NO_CALLREF_LIFT=1` makes the local its owner again, whose
 displaced free then releases the view's temporary store.  A nullable value stored into a
 declared dense local keeps what it borrows (`dd: S = o.opt` views `o`);
-`LOFT_NO_REPR_KEEPS_DEPS=1` types the local as the bare declaration, an owner.
+`LOFT_NO_REPR_KEEPS_DEPS=1` types the local as the bare declaration, an owner.  An inline
+`??` is lifted into an owner only where its subject temp owns nothing (loft#879's leak);
+`LOFT_NCC_LIFT_BESIDE_OWNER=1` lifts beside a subject temp that owns the store too.
 The records follow a tuple local's members as variables of their own (`t.i`), so a member's
 release and a second name's release of the same store meet.  At a
 scope's end the sweep releases one store once where two names hold it
