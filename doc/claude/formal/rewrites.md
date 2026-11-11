@@ -1259,6 +1259,21 @@ write through that other name shortens `v` where `length_locals` cannot see it. 
 `tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft` (a2 falsified without the
 write test, a6/a7 without the own-vector test).
 
+**The lockstep form.**  A length local of `v` is one of `w` too when `w` moves in lockstep
+with `v`: both the frame's own vectors, assigned once and not captured; their empty starts
+adjacent statements of one list (a local's mint and zero, or a work buffer's `if
+OpRefIsNull(x) { mint } else { clear }`); and every other write of either — `length_locals`'
+own write test — one append (`OpPreAllocVector(x, 1, _)`, `OpPush*(x, e)`) to one, followed as
+the very next statement by one append to the other, whose operand cannot leave between the two
+pushes.  Then `len(w) == len(v)` at every statement boundary outside a pair, and `n = len(v)` is
+a statement.  Each reader takes every vector a length local is the length of (the counter
+clause, the guard clause, `(R-InRange)`).  hex_form `boundary_loops` (`eb` pushed beside `ea`):
+9.24 → 7.38 ms (gcc), 12.45 → 10.23 ms (clang).  Switch `LOFT_NO_LOCKSTEP`.  Site:
+`length_locals::lockstep_twins`.  Census row `R-Base/length-local`.  Guard
+`tests/scripts/two-vectors-pushed-in-lockstep-share-a-length-local.loft` (t4 falsified with the
+pair check struck, t3 with the starts' adjacency struck).  Not yet: an element write to either
+(it does not resize, but the write test counts it), a vector or record append, starts apart.
+
 **The guard clause.**  An index a passed test keeps below the length: inside `if e < len(v)`
 (its then-arm), after a `while e < n` loop's test (the rest of each turn), or either side of
 `a && b`, with `n` a length local of `v` as above and `e` a variable or `+`, `-`, `*` over
@@ -7497,7 +7512,8 @@ element's `?` and its minted default are gone, fill_circle 14.47 → 12.84 µs (
 18.18 (gcc); wide_line 4.60 → 4.20 (clang), 4.31 → 4.19 (gcc).  The counter clause needs this
 form beside it on a vector of records: its proven read alone leaves the discharge testing a
 loop-invariant record number, which clang unswitches (those routines 4–6 % slower).  Switch
-`LOFT_NO_LENGTH_LOCAL`.  Site: `in_range::length_local_alias`.  Census row
+`LOFT_NO_LENGTH_LOCAL`.  Site: `in_range::length_local_aliases` (one alias per vector the
+local is the length of: a lockstep twin shares it).  Census row
 `R-InRange/length-local`.  Guard `tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft`
 (a8–a10; a10 falsified on `--interpret` with the own-vector test struck).
 

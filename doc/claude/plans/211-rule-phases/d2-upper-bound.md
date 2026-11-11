@@ -16,7 +16,7 @@ clause of an existing rule, one phase at a time.
 | a guard: `if e < len(v)` / `while e < n` | `(R-Base)` guard clause (C), fact in `opt` | built (below) |
 | a stepped `while` counter (`i += 4`, `pos -= 1` under `pos > 0`) | `(R-Range)` while-counter clause | not built: no site pays (§ The stepped counter, priced) |
 | `i % n`, `n = len(v)` | `(R-Range)` rem clause + the guard fact | open |
-| `eb` of `boundary_loops`: pushed in lockstep with `ea` | the length-local answer, widened (§ Lockstep twins) | building |
+| `eb` of `boundary_loops`: pushed in lockstep with `ea` | the length-local answer, widened (§ Lockstep twins) | built 27c0a84c0: −20.1 % gcc, −17.8 % clang |
 | `comp` of `boundary_loops`: one push per turn of `0..ne` | — | not built: priced at 0 (§ Lockstep twins) |
 
 ## The guard clause

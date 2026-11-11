@@ -13,10 +13,10 @@ R-AppendTwin	c,native	2	0	0	0	31	33
 R-AppendTwin/loop-window	c	2	0	0	0	2	0
 R-AppendTwin/mint	c	2	0	0	0	4	0
 R-Base	c,native	61	0	0	0	1004	5558
-R-Base/counter	c	44	0	0	0	308	0
+R-Base/counter	c	44	0	0	0	315	0
 R-Base/grid	c	2	0	0	0	102	0
 R-Base/guard	c	56	0	0	0	88	0
-R-Base/length-local	c	3	0	0	0	8	0
+R-Base/length-local	c	3	0	0	0	12	0
 R-BoundAppend	parse	2	2	0	0	0	0
 R-BoundedNest	native	4	0	0	0	0	20
 R-BoundedNest/kernel	ir	61	0	61	0	0	0
@@ -130,7 +130,7 @@ R-PushFill/text	c	2	0	0	0	9	0
 R-PushRec	c,native	23	0	0	0	75	174
 R-PushRec/apart	c,native	5	0	0	0	54	76
 R-Range	c,native	61	0	0	0	6107	15531
-R-Range/index	c	29	0	0	0	410	0
+R-Range/index	c	29	0	0	0	403	0
 R-RangedCall	c,native	43	0	0	0	525	831
 R-RangedCall/guard	c	9	0	0	0	32	0
 R-Rebind	ir	3	0	5	0	0	0

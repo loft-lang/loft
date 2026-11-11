@@ -3787,9 +3787,9 @@ hex_fit	7db0174ab	rust	R-Wrapper	145
 hex_fit	7db0174ab	rust	R-ZeroCount	8
 hex_form	7db0174ab	c	R-Alias/versioned	1
 hex_form	7db0174ab	c	R-Base	18
-hex_form	7db0174ab	c	R-Base/counter	10
+hex_form	7db0174ab	c	R-Base/counter	14
 hex_form	7db0174ab	c	R-Base/guard	1
-hex_form	7db0174ab	c	R-Base/length-local	2
+hex_form	7db0174ab	c	R-Base/length-local	4
 hex_form	7db0174ab	c	R-BoundedNest/kernel	1
 hex_form	7db0174ab	c	R-Callee	1
 hex_form	7db0174ab	c	R-CharWalk	1
@@ -3826,7 +3826,7 @@ hex_form	7db0174ab	c	R-PushFill/fill	3
 hex_form	7db0174ab	c	R-PushFill/run	1
 hex_form	7db0174ab	c	R-PushFill/several	1
 hex_form	7db0174ab	c	R-Range	117
-hex_form	7db0174ab	c	R-Range/index	16
+hex_form	7db0174ab	c	R-Range/index	12
 hex_form	7db0174ab	c	R-RangedCall	14
 hex_form	7db0174ab	c	R-RecPtr	2
 hex_form	7db0174ab	c	R-RecPtr/held	1
@@ -4126,9 +4126,9 @@ hex_place	7db0174ab	rust	R-Wrapper	64
 hex_place	7db0174ab	rust	R-ZeroCount	8
 hex_recover	7db0174ab	c	R-Alias/versioned	6
 hex_recover	7db0174ab	c	R-Base	46
-hex_recover	7db0174ab	c	R-Base/counter	20
+hex_recover	7db0174ab	c	R-Base/counter	23
 hex_recover	7db0174ab	c	R-Base/guard	1
-hex_recover	7db0174ab	c	R-Base/length-local	5
+hex_recover	7db0174ab	c	R-Base/length-local	7
 hex_recover	7db0174ab	c	R-BoundedNest/kernel	1
 hex_recover	7db0174ab	c	R-Callee	1
 hex_recover	7db0174ab	c	R-CompleteWrite	79
@@ -4175,7 +4175,7 @@ hex_recover	7db0174ab	c	R-PushFill/run-header	8
 hex_recover	7db0174ab	c	R-PushFill/several	1
 hex_recover	7db0174ab	c	R-PushRec	2
 hex_recover	7db0174ab	c	R-Range	154
-hex_recover	7db0174ab	c	R-Range/index	22
+hex_recover	7db0174ab	c	R-Range/index	19
 hex_recover	7db0174ab	c	R-RangedCall	14
 hex_recover	7db0174ab	c	R-RecPtr	3
 hex_recover	7db0174ab	c	R-RecPtr/held	1
