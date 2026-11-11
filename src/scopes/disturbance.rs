@@ -358,13 +358,23 @@ pub(super) fn overwritten_records(
 /// absence.  That is `@FR-B-OutOfLine`'s null write, for the same `S?` field stored inline
 /// (`@FR-L-Null-Tag`).  Reported with the slot's own depth and byte span, as
 /// [`overwritten_records`] reports a record; without a store to read the type by, none.
+///
+/// Each comes with whether it opens a VALUE write ([`value_write_clears`]): `value_clears`
+/// names those the caller saw in a statement list, and those inside `code` are found here.
 pub(super) fn cleared_tagged_slots(
     code: &Value,
     data: &Data,
     database: Option<&crate::database::Stores>,
-) -> Vec<Overwrite> {
+    value_clears: &HashSet<*const Value>,
+) -> Vec<(Overwrite, bool)> {
     let mut out = Vec::new();
     let Some(db) = database else { return out };
+    let mut inner: HashSet<*const Value> = HashSet::default();
+    code.walk(&mut |v| match v {
+        Value::Block(b) => inner.extend(value_write_clears(&b.operators, data)),
+        Value::Insert(ops) => inner.extend(value_write_clears(ops, data)),
+        _ => {}
+    });
     code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         let ("OpClearKeyed", [slot, tp]) = (data.def(*d).name(), &args[..]) else {
@@ -379,16 +389,52 @@ pub(super) fn cleared_tagged_slots(
             return;
         };
         if let Some((place, depth)) = named_place_depth(slot, data) {
-            out.push(Overwrite {
-                place,
-                at: ContainerAt {
-                    depth,
-                    index: crate::use_analysis::root_element_index(data, slot),
+            let at = std::ptr::from_ref(v);
+            out.push((
+                Overwrite {
+                    place,
+                    at: ContainerAt {
+                        depth,
+                        index: crate::use_analysis::root_element_index(data, slot),
+                    },
+                    size: Some(u32::from(db.size(kt))),
                 },
-                size: Some(u32::from(db.size(kt))),
-            });
+                value_clears.contains(&at) || inner.contains(&at),
+            ));
         }
     });
+    out
+}
+
+/// The tagged-slot clears in `ops` that open a VALUE write: a may-be-null write's present arm
+/// clears the slot, then writes a present discriminant (`OpSetEnum(slot, 0, k)`, `k ≠ 0`) and
+/// the value.  The slot is OVERWRITTEN, not emptied: what its old payload owned ends, and a
+/// view of the slot itself stays (`@FR-B-Disturb`), so `keep = n.lib; …; n.lib = keep` is a
+/// write-back of a live view.  Named by address, the node [`cleared_tagged_slots`] meets.
+pub(super) fn value_write_clears(ops: &[Value], data: &Data) -> Vec<*const Value> {
+    let slot_of = |v: &Value, name: &str| match v.unspan() {
+        Value::Call(d, args) if data.def(*d).name() == name => {
+            args.first().and_then(|s| named_place_depth(s, data))
+        }
+        _ => None,
+    };
+    let mut out = Vec::new();
+    for (i, op) in ops.iter().enumerate() {
+        let Some(slot) = slot_of(op, "OpClearKeyed") else {
+            continue;
+        };
+        let present = ops[i + 1..].iter().find_map(|o| {
+            let Value::Call(_, args) = o.unspan() else {
+                return None;
+            };
+            (slot_of(o, "OpSetEnum") == Some(slot)).then(
+                || matches!(args.get(2).map(Value::unspan), Some(Value::Enum(k, _)) if *k != 0),
+            )
+        });
+        if present == Some(true) {
+            out.push(std::ptr::from_ref(op.unspan()));
+        }
+    }
     out
 }
 

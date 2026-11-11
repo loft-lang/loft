@@ -9,6 +9,7 @@
 use super::disturbance::{
     ContainerAt, Disturbance, DisturbedParams, RemovedParams, ViewCause, cleared_tagged_slots,
     grown_containers, named_place, overwritten_records, released_children, reshaped_containers,
+    value_write_clears,
 };
 use super::places::{
     ParamPlace, add_offset, call_arg_at, compose_param_at, get_record_literal_keys,
@@ -393,6 +394,9 @@ pub(super) struct ViewWalk<'a> {
     /// Each compiler temp last bound to a plain variable (`__ref_3 = keep`), which a nullable
     /// field's write-back copies from — read so that copy names the view it came from.
     temp_names: HashMap<u16, u16>,
+    /// The tagged-slot clears that open a VALUE write ([`value_write_clears`]), named by
+    /// address: [`Self::walk_block`] sees each one's siblings, the statement walk does not.
+    value_clears: HashSet<*const Value>,
     /// While a loop's whole body is shaken ahead of its walk, that loop's level; 0 otherwise
     /// (`Disturbance::provisional`).
     loop_edge: u8,
@@ -493,6 +497,7 @@ impl ViewWalk<'_> {
             written: HashMap::default(),
             write_backs: Vec::new(),
             temp_names: HashMap::default(),
+            value_clears: HashSet::default(),
         };
         walk.walk_block(std::slice::from_ref(code));
         let reached = seeds
@@ -504,6 +509,8 @@ impl ViewWalk<'_> {
     }
 
     fn walk_block(&mut self, stmts: &[Value]) {
+        self.value_clears
+            .extend(value_write_clears(stmts, self.data));
         for stmt in stmts {
             if let Value::Line(n) = stmt.unspan() {
                 self.line = *n;
@@ -1000,8 +1007,21 @@ impl ViewWalk<'_> {
         }
         // A null written into a tagged slot ends every view inside it, and the view OF the
         // slot's payload too (`cleared_tagged_slots`), so the shake starts AT the slot's depth.
-        for w in cleared_tagged_slots(stmt, self.data, self.database) {
+        // A clear that opens a VALUE write overwrites the slot: the view of it stays, as the
+        // view of an overwritten record does, and only the views inside the old payload end.
+        for (w, value_write) in
+            cleared_tagged_slots(stmt, self.data, self.database, &self.value_clears)
+        {
             for place in self.overwritten_slots(w.place, w.size) {
+                if value_write {
+                    self.shake_deeper_through_views(
+                        place,
+                        w.at.depth,
+                        w.at.index,
+                        ViewCause::Overwritten,
+                    );
+                    continue;
+                }
                 self.shake_payload_views(place, w.at.depth, w.at.index);
                 if let Some((root, at)) = self.through_views(place, w.at.depth) {
                     self.shake_payload_views(root, at, None);
