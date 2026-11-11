@@ -2667,7 +2667,7 @@ impl<'a> FnWriter<'a> {
                 };
                 let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let versioned = name == "OpGetInt" && self.version_raw(args);
+                let versioned = self.version_raw(args);
                 // A proven index is its own C expression: the operand is not written at all.
                 if !versioned && let Some(i) = self.counter_index(idx, &held) {
                     let (f, k) = if name == "OpGetInt" {
@@ -2686,7 +2686,8 @@ impl<'a> FnWriter<'a> {
                 if versioned {
                     let index = as_int(index)?;
                     let code = version::version_access(name, &held, size, fld, &index, None);
-                    return Ok(Some(E::new(code, K::Int)));
+                    let k = if name == "OpGetInt" { K::Int } else { K::Float };
+                    return Ok(Some(E::new(code, k)));
                 }
                 let guard = self.guard_index(idx);
                 if guard == Some(true) {
@@ -2764,6 +2765,10 @@ impl<'a> FnWriter<'a> {
                 let addr = if let Some(i) = self.counter_index(idx, &held) {
                     crate::rewrite_census::fired("R-Base/counter", 1);
                     format!("loft_vh_at_addr({held}, {size}, {i})")
+                } else if self.version_raw(args) {
+                    // `@FR-R-Version`'s fast twin: the leaf's precondition proved the index.
+                    let index = as_int(self.expr(idx, ind)?)?;
+                    format!("loft_vh_at_addr({held}, {size}, {index})")
                 } else {
                     let index = as_int(self.expr(idx, ind)?)?;
                     let guard = self.guard_index(idx);
@@ -2787,6 +2792,23 @@ impl<'a> FnWriter<'a> {
                 crate::rewrite_census::fired("R-Header/narrow", 1);
                 Ok(Some(E::new(format!("({proof}, {call})"), k)))
             }
+            // `@FR-R-Version`'s fast twin writes a boolean element at its proven index; any
+            // other boolean write keeps the store's own path.
+            ("OpSetBoolean", [inner, fld, val]) if self.version_raw(args) => {
+                let Some((vec, size, idx, _)) = elem(inner) else {
+                    return Ok(None);
+                };
+                let Some(held) = self.held_vector(vec) else {
+                    return Ok(None);
+                };
+                let size = Self::literal(size, "element size")?;
+                let fld = Self::literal(fld, "field")?;
+                let (index, value) = self.two(name, &[idx, val], ind)?;
+                let (index, value) = (as_int(index)?, as_bool(value)?);
+                let code = version::version_access(name, &held, size, fld, &index, Some(&value));
+                let proof = self.held_proof(vec, &held);
+                Ok(Some(E::new(format!("({proof}, {code})"), K::Void)))
+            }
             ("OpSetInt" | "OpSetFloat", [inner, fld, val]) => {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
@@ -2797,8 +2819,13 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
                 let (index, value) = self.two(name, &[idx, val], ind)?;
-                if name == "OpSetInt" && self.version_raw(args) {
-                    let (index, value) = (as_int(index)?, as_int(value)?);
+                if self.version_raw(args) {
+                    let index = as_int(index)?;
+                    let value = if name == "OpSetInt" {
+                        as_int(value)?
+                    } else {
+                        as_float(value)?
+                    };
                     let code =
                         version::version_access(name, &held, size, fld, &index, Some(&value));
                     return Ok(Some(E::new(code, K::Void)));

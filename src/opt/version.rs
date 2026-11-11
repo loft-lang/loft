@@ -341,8 +341,10 @@ impl Walk<'_> {
 
     /// An element read or write at a linear index of a header input: its tests and its slice.
     fn access(&mut self, name: &str, args: &[Value]) {
+        // An integer, float or boolean element field: each has a plain form in the fast twin.
         let elem = match (name, args.len()) {
-            ("OpGetInt", 2) | ("OpSetInt", 3) => &args[0],
+            ("OpGetInt" | "OpGetFloat" | "OpGetBoolean", 2)
+            | ("OpSetInt" | "OpSetFloat" | "OpSetBoolean", 3) => &args[0],
             _ => return,
         };
         let Value::Call(g, ga) = elem.unspan() else {

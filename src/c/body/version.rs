@@ -700,6 +700,16 @@ pub(super) fn version_access(
         ("OpSetInt", Some(v)) => {
             format!("loft_vh_put_int({held}, {size}, {index}, {fld}, {v})")
         }
+        ("OpSetFloat", Some(v)) => {
+            format!("loft_vh_put_float({held}, {size}, {index}, {fld}, {v})")
+        }
+        ("OpSetBoolean", Some(v)) => {
+            format!("loft_vh_put_bool({held}, {size}, {index}, {fld}, {v})")
+        }
+        ("OpGetFloat", None) => format!("loft_vh_at_float({held}, {size}, {index}, {fld})"),
+        ("OpGetBoolean", None) => {
+            format!("loft_pa_bool(loft_vh_at_addr({held}, {size}, {index}), {fld})")
+        }
         _ => format!("loft_vh_at_int({held}, {size}, {index}, {fld})"),
     }
 }

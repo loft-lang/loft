@@ -1,0 +1,77 @@
+struct Hz { q0: integer, r0: integer, w: integer, h: integer, z: vector<float> }
+struct Hs { q0: integer, r0: integer, w: integer, h: integer, c: vector<boolean> }
+
+fn zget(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  if dq >= 0 && dq < f.w && dr >= 0 && dr < f.h { f.z[dr * f.w + dq] ?? 0.0 } else { 0.0 }
+}
+fn cget(s: Hs, q: integer, r: integer) -> boolean {
+  dq = q - s.q0; dr = r - s.r0;
+  if dq >= 0 && dq < s.w && dr >= 0 && dr < s.h { s.c[dr * s.w + dq] ?? false } else { false }
+}
+fn zset(f: Hz, q: integer, r: integer, v: float) {
+  dq = q - f.q0; dr = r - f.r0;
+  if dq >= 0 && dq < f.w && dr >= 0 && dr < f.h { f.z[dr * f.w + dq] = v; }
+}
+fn cset(s: Hs, q: integer, r: integer, on: boolean) {
+  dq = q - s.q0; dr = r - s.r0;
+  if dq >= 0 && dq < s.w && dr >= 0 && dr < s.h { s.c[dr * s.w + dq] = on; }
+}
+
+fn zs12() -> vector<float> { v: vector<float> = []; for k in 0..12 { v += [(k as float) * 0.5]; } v }
+fn cs12() -> vector<boolean> { v: vector<boolean> = []; for k in 0..12 { v += [k % 3 == 0]; } v }
+
+// A: the box is the window: the set's four cells k = 0, 3, 6, 9 read z 0 + 1.5 + 3 + 4.5 = 9.
+fn a_inside(s: Hs, f: Hz) -> float {
+  t = 0.0;
+  for r in 3..6 { for q in 2..6 { if cget(s, q, r) { t += zget(f, q, r); } } }
+  t
+}
+// B: the box crosses all four edges (6 x 5 = 30): the outside answers false / 0.0, so the
+// sum of every z read is the whole vector, 0.5 * 66 = 33.
+fn b_cross(f: Hz) -> float {
+  t = 0.0;
+  for r in 2..7 { for q in 1..7 { t += zget(f, q, r); } }
+  t
+}
+// D: the window (4 x 4) is larger than the vector (12): row r = 3 reads past the end, 0.0.
+fn d_short(f: Hz) -> float {
+  t = 0.0;
+  for r in 0..4 { for q in 0..4 { t += zget(f, q, r); } }
+  t
+}
+// F: writes through the fast twin: z = 10 q + r over the window, 3 * 10 * 14 + 4 * 12 = 468;
+// cells on where q + r is even: 6.
+fn f_write(s: Hs, f: Hz) -> float {
+  for r in 3..6 { for q in 2..6 { zset(f, q, r, (q * 10 + r) as float); cset(s, q, r, (q + r) % 2 == 0); } }
+  t = 0.0; n = 0;
+  for r in 3..6 { for q in 2..6 { t += zget(f, q, r); if cget(s, q, r) { n += 1; } } }
+  t + (n as float) * 1000.0
+}
+// G: the width changes after the first row (4 -> 2): row 3 reads 0 + .5 + 1 + 1.5 = 3,
+// rows 4, 5 read indexes 2, 3 and 4, 5 at dq < 2: 1 + 1.5 + 2 + 2.5 = 7: 10.
+fn g_moving(f: Hz) -> float {
+  t = 0.0;
+  for r in 3..6 { for q in 2..6 { t += zget(f, q, r); } f.w = 2; }
+  t
+}
+
+fn main() {
+  s = Hs { q0: 2, r0: 3, w: 4, h: 3, c: cs12() };
+  f = Hz { q0: 2, r0: 3, w: 4, h: 3, z: zs12() };
+  assert(a_inside(s, f) == 9.0, "A {a_inside(s, f)}");
+  assert(b_cross(f) == 33.0, "B {b_cross(f)}");
+  // C: an empty window: nothing inside, 0.
+  e = Hz { q0: 2, r0: 3, w: 0, h: 3, z: zs12() };
+  assert(b_cross(e) == 0.0, "C {b_cross(e)}");
+  big = Hz { q0: 0, r0: 0, w: 4, h: 4, z: zs12() };
+  assert(d_short(big) == 33.0, "D {d_short(big)}");
+  // E: a null element (k = 5, z 2.5) answers 0.0: 33 - 2.5 = 30.5.
+  nz = zs12(); nz[5] = null;
+  fe = Hz { q0: 2, r0: 3, w: 4, h: 3, z: nz };
+  assert(b_cross(fe) == 30.5, "E {b_cross(fe)}");
+  assert(f_write(s, f) == 6468.0, "F {f_write(s, f)}");
+  fg = Hz { q0: 2, r0: 3, w: 4, h: 3, z: zs12() };
+  assert(g_moving(fg) == 10.0, "G {g_moving(fg)}");
+  println("ok");
+}

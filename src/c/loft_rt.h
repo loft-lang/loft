@@ -2613,6 +2613,12 @@ LOFT_HOT_INLINE void loft_vh_put_int(loft_vh h, uint32_t size, int64_t f, uint32
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
+/* @FR-R-Version — a fast twin's boolean element write at an index its precondition proved. */
+LOFT_HOT_INLINE void loft_vh_put_bool(loft_vh h, uint32_t size, int64_t f, uint32_t fld, uint8_t v) {
+    LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put bool");
+    h.base[(size_t) f * size + fld] = v;
+}
+
 /* @FR-R-Base's guard clause — a float element's write at an index proven in [0, len). */
 LOFT_HOT_INLINE void loft_vh_put_float(loft_vh h, uint32_t size, int64_t f, uint32_t fld, double v) {
     LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put float");
