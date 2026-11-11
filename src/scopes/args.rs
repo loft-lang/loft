@@ -467,6 +467,19 @@ impl Scopes<'_> {
                 self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
                 preamble.push(self.lift_set(tmp, scanned, function, data));
                 ls.push(Value::Var(tmp));
+            } else if let Some(arm_lifted) = self.lift_owned_coalesce_arm(
+                &scanned,
+                data,
+                function,
+                (arg_idx, transfer_copy, moved_arg),
+            ) {
+                // `@FR-O-Complete` — a collection coalesce read inline,
+                // `(g ?? nr_h(i))[i]`, lowers to `if present(g) g else nr_h(i)`: the fallback's
+                // owned result is held by nothing, the vector spelling's hidden buffer has no
+                // keyed twin, and every taken fallback leaked its store.  The call is lifted in
+                // its arm, so the temp owns it and the scope's free releases it (a free of null
+                // where the arm did not run).  `LOFT_NO_COALESCE_ARM_LIFT=1` leaves it inline.
+                ls.push(arm_lifted);
             } else if let Value::Call(g_nr, _) = scanned.unspan()
                 // `@FR-N-Shape`: the shape is read through `?`; the lift keeps the whole type.
                 && matches!(data.def(*g_nr).returned.base(), Type::Iterator(_, _))
@@ -1238,5 +1251,46 @@ impl Scopes<'_> {
             Type::Enum(d_nr, true, _) => Some(Type::Enum(*d_nr, true, Deps::none())),
             _ => None,
         }
+    }
+}
+
+impl Scopes<'_> {
+    /// `if c { v } else { call }` (either arm order) whose `call` answers an owned store
+    /// ([`Scopes::inline_struct_return`]) and whose other arm is a variable: the same `If` with
+    /// the call lifted into a `__lift_N` temp inside its arm, handed off where the outer call
+    /// consumes that argument.  `None` for any other value.
+    fn lift_owned_coalesce_arm(
+        &mut self,
+        val: &Value,
+        data: &Data,
+        function: &mut Function,
+        (arg_idx, transfer_copy, moved_arg): (usize, bool, Option<usize>),
+    ) -> Option<Value> {
+        if crate::env_once!(std::env::var_os("LOFT_NO_COALESCE_ARM_LIFT").is_some()) {
+            return None;
+        }
+        let Value::If(cond, then, els) = val.unspan() else {
+            return None;
+        };
+        let call_arm = |arm: &Value| matches!(arm.unspan(), Value::Call(..));
+        let var_arm = |arm: &Value| matches!(arm.unspan(), Value::Var(_));
+        let lift_then = call_arm(then) && var_arm(els);
+        if !(lift_then || (var_arm(then) && call_arm(els))) {
+            return None;
+        }
+        let call = if lift_then { then } else { els };
+        let tp = self.inline_struct_return(call, data, u32::MAX, function)?;
+        let tmp = self.new_lift_var(function, &tp);
+        // A source the outer call consumes (`OpReplaceKeyed`) hands the temp's store over, as
+        // the bare call argument's lift does.
+        self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
+        let set = self.lift_set(tmp, (**call).clone(), function, data);
+        let lifted = Value::Insert(vec![set, Value::Var(tmp)]);
+        let (t, e) = if lift_then {
+            (lifted, (**els).clone())
+        } else {
+            ((**then).clone(), lifted)
+        };
+        Some(Value::If(cond.clone(), Box::new(t), Box::new(e)))
     }
 }
