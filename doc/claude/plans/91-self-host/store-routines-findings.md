@@ -135,6 +135,28 @@ What would make the paths easy to follow, in order of leverage:
 3. The records modelling host stores (`OpStoreBuf`, `OpAdoptChildRec`), so this cell reads
    as a use after end instead of 8 leaks.
 
+## The store tooling, judged from use
+
+Measured on this arc's cases (2026-11-11): two use-after-frees found, traced and fixed, and the
+checker extended to report them.
+
+| Instrument | Insight | Ease of use | What cost time |
+|---|---|---|---|
+| `LOFT_STRICT_STORES` | high: found both cases; exact, no false positive | good since `store_trace` (function, line, freed variable) | `loft --tests` never failed on it (fixed); a cell with a lowered `@STORE_LIMIT` exhausts the no-reuse table (three false failures); under `LOFT_POISON` the child-record panic fires first and ends the run |
+| `LOFT_LOG=store_life:<N>` | high: the path to each free, the frame that leaves a store live | fair: needs the number from a strict report; `#N` is a SLOT that holds several stores in turn | runs the logged loop only |
+| `LOFT_TRACE_BIND` | medium: names the lowering each assignment took | good | the `b2=` column recomputes the free and can disagree with it |
+| store records (`LOFT_OWN_ORACLE=check-records`, `LOFT_STORE_TABLE`) | high when it fires on the defect (both cases CAUGHT with the cure off) | poor: 362 STATIC cells over the suite, 20 false reds beside the 2 real ones on R-HostStore; its store numbers are per-function, not the runtime's | a CLEAN cell may be an unchecked (imprecise) function |
+| `scripts/own_sweep.py` | high: MISS / CAUGHT / STATIC is the right question | fair | faults recognised by output regex (missed the child-record panic: a hidden MISS); before/after needs a hand-written per-cell diff |
+| `loft introspect` | essential for the bytecode and IR | heavy (8,800 lines for one cell) | pc → line by hand, before `store_trace` |
+
+The highest-leverage change: **a fault reported as data, not text** — one machine-readable line
+per store fault (kind, store, sites, variable) that `own_sweep`, the suite runner and the
+tests read, instead of each matching its own regex against a human message.  Two of this
+arc's blind spots (`--tests` ignoring strict faults, `own_sweep` missing the child-record
+panic) were the same defect: a fault channel whose consumers parse prose.  After it: cut the
+records' STATIC noise (the host-store gap is 20 of it) so a CAUGHT stands out, and give
+`own_sweep` a `--compare before.tsv` that prints the per-cell verdict changes.
+
 ## Findings: `bind_lowering` (phase 2 of STORE_RECORDS.md)
 
 Phase 2 is not met yet.  The lowering is one function for the interpreter and the records, but
