@@ -1172,11 +1172,20 @@ impl Scopes<'_> {
                         continue;
                     }
                     let av_scope = self.var_scope.get(av).copied().unwrap_or(u16::MAX);
-                    if v_scope <= av_scope && v_scope != u16::MAX {
+                    // A coalesce bound in the buffer's OWN scope (`q = mq(4) ?? return` at a
+                    // function's top) takes `v`-side guard as well: `v`'s free declines while it
+                    // names the buffer, whose own free then releases it once.  Unguarded, both
+                    // freed it (`@FR-H-FreeTwice`).  `LOFT_NO_COALESCE_SAME_SCOPE_WITNESS=1`.
+                    let same_scope_coalesce = !branch
+                        && v_scope == av_scope
+                        && !crate::env_once!(
+                            std::env::var_os("LOFT_NO_COALESCE_SAME_SCOPE_WITNESS").is_some()
+                        );
+                    if v_scope <= av_scope && v_scope != u16::MAX && !same_scope_coalesce {
                         if branch {
                             self.paired_witness.entry(*av).or_insert(v);
                         }
-                    } else if v_scope != u16::MAX && av_scope != u16::MAX && v_scope > av_scope {
+                    } else if v_scope != u16::MAX && av_scope != u16::MAX && v_scope >= av_scope {
                         let buffers = self.witness_buffer.entry(v).or_default();
                         if !buffers.contains(av) {
                             buffers.push(*av);
