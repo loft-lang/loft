@@ -9217,7 +9217,16 @@ impl Parser {
     /// takes the forms the head does — it just reads at a negative index (loft#1419).
     fn peek_is_variant_subpattern(&mut self, elm_tp: &Type) -> bool {
         // @FR-P-Point — a plain struct `S { f… }` is a point pattern too: the element's own
-        // struct name opens it, and `parse_field_sub_pattern` parses it as a field's would.
+        // struct name opens it, and `parse_field_sub_pattern` parses it as a field's would —
+        // over a `S?` element's tagged slot and a forward-declared `S` alike.
+        let rec = self
+            .tagged_pointer_type(elm_tp)
+            .map(|(_, pointer)| pointer)
+            .or_else(|| self.forward_field_type(elm_tp));
+        let elm_tp = rec.as_ref().unwrap_or(elm_tp);
+        if self.undeclared_struct_pattern(elm_tp) {
+            return true;
+        }
         if let Type::Reference(s_nr, _) = elm_tp.peel_link()
             && self.data.def_type(*s_nr) == DefType::Struct
         {
@@ -11756,6 +11765,21 @@ impl Parser {
         field_conditions: &mut Vec<Value>,
         name_aliases: &mut Vec<(String, Option<u16>)>,
     ) -> Option<Value> {
+        // `@FR-P-Point` — a field typed by a struct or enum declared BELOW its holder is the
+        // forward stub `Unknown(T)` until the passes resolve it, while `T` itself is already
+        // declared when the pattern is read.  Read as `T` here, so pass 1 takes the path
+        // pass 2 takes: else pass 1 parsed the sub-pattern as a scalar test (a struct
+        // construction, which refused `Pt { x: 0, y }`) and left a pattern temp of the
+        // record's type that pass 2 then reused for a scalar (loft#2463).
+        let forward = self.forward_field_type(field_type);
+        let field_type = forward.as_ref().unwrap_or(field_type);
+        // A struct not declared yet when pass 1 reads the pattern has no fields to ask: pass 1
+        // steps over `S { … }` and pass 2, where `S` is declared, parses it.
+        if self.undeclared_struct_pattern(field_type) {
+            self.lexer.has_identifier();
+            self.skip_braced_block();
+            return None;
+        }
         // `@FR-P-Alt` at a field or tuple-element position — `Box { s: Circle { r } | Square
         // { r }, n }`, `(Circle { r } | Square { r }, k)`: the value matches when any
         // alternative's tag does, each name is read from whichever variant matched, `τ?` where
@@ -11907,7 +11931,18 @@ impl Parser {
         // conditions and bindings.  Unrecognised, the pattern fell to the scalar path below,
         // which BUILT an `S` and tested that record: the arm never matched and `--native`
         // refused its own output (loft#1870).
-        if let Type::Reference(s_nr, _) = field_type.peel_link()
+        // A `S?` field holds no record when it is null, so its struct pattern FAILS there:
+        // the pattern then also asks for presence — read through the tag of an inline
+        // `__nullable<S>` slot, or of the pointer.  Unasked, a null field matched as a record
+        // of nulls, and the arm counted as irrefutable.
+        let (rec_val, rec_type) = match self.tagged_pointer_type(field_type) {
+            Some((syn, pointer)) => (
+                self.emit_nullable_slot_read(syn, field_val.clone(), field_type),
+                pointer,
+            ),
+            None => (field_val.clone(), field_type.clone()),
+        };
+        if let Type::Reference(s_nr, _) = rec_type.peel_link()
             && self.data.def_type(*s_nr) == DefType::Struct
             && matches!(&self.lexer.peek().has, LexItem::Identifier(id) if *id == self.data.def(*s_nr).name())
         {
@@ -11915,12 +11950,16 @@ impl Parser {
             self.lexer.has_identifier();
             self.parse_struct_sub_pattern(
                 s_nr,
-                &field_val,
+                &rec_val,
                 arm_stmts,
                 field_conditions,
                 name_aliases,
             );
-            return None;
+            if !rec_type.peel_optional().1 {
+                return None;
+            }
+            let absent = self.cl("OpRefIsNull", &[rec_val]);
+            return Some(self.cl("OpNot", &[absent]));
         }
         // Wildcard for non-enum fields.
         if self.lexer.has_wildcard() {
@@ -11940,6 +11979,46 @@ impl Parser {
             Type::Boolean,
             "field_sub",
         ))
+    }
+
+    /// On pass 1, is the parser at `S {` for a type `S` that is still a forward stub — named
+    /// above its declaration, so its fields are not known yet?
+    fn undeclared_struct_pattern(&self, tp: &Type) -> bool {
+        // A `S?` element or field is the tagged `__nullable<S>` from pass 1 on, its payload a
+        // reference to the stub.
+        let pointer = self.tagged_pointer_type(tp).map(|(_, pointer)| pointer);
+        let (Type::Unknown(nr) | Type::Reference(nr, _)) = pointer.as_ref().unwrap_or(tp).base()
+        else {
+            return false;
+        };
+        self.first_pass
+            && *nr != 0
+            && self.data.def_type(*nr) == DefType::Unknown
+            && matches!(&self.lexer.peek().has, LexItem::Identifier(id) if *id == self.data.def(*nr).name())
+    }
+
+    /// The declared type a forward stub field type `Unknown(T)` (or `Unknown(T)?`) names, once
+    /// `T` is a declared struct or enum; `None` for every other type.
+    fn forward_field_type(&self, tp: &Type) -> Option<Type> {
+        let (inner, optional) = match tp {
+            Type::Optional(inner) => (&**inner, true),
+            other => (other, false),
+        };
+        let Type::Unknown(nr) = inner else {
+            return None;
+        };
+        if *nr == 0 || !matches!(self.data.def_type(*nr), DefType::Struct | DefType::Enum) {
+            return None;
+        }
+        let resolved = self.data.def(*nr).returned.clone();
+        if matches!(resolved, Type::Unknown(_)) {
+            return None;
+        }
+        Some(if optional {
+            Type::Optional(Box::new(resolved))
+        } else {
+            resolved
+        })
     }
 
     /// One alternative of a scalar field pattern, tested against the field's value in `tmp`: a
