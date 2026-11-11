@@ -77,6 +77,7 @@ One walk over the control-flow graph `src/ownership_cfg.rs` already builds:
 |---|---|
 | **leak** | a path from a store's origin reaches the function's exit with no end |
 | **double end** | a path passes two unguarded ends of one store |
+| **re-free** | a double end whose second end is a free the runtime refuses (`@FR-H-FreeTwice`) |
 | **use after end** | a use of a store is reachable from one of its ends |
 | **wrong end** | a free of a foreign store, or of a view |
 
@@ -84,6 +85,16 @@ The runtime detects the same four, on the paths a run takes: the leak check
 (`LOFT_LEAK_CHECK`), `LOFT_STRICT_STORES` for a use after free (it never reuses a slot), and
 the refused-free reports (#306, #405).  A runtime fault the checker did not report is a hole
 in the records or the checks.
+
+**A re-free is a defect, not a tolerated case (owner).**  Both runtimes refuse a free of an
+already-free slot (`Stores::free_named`, and `loft_rt.h` for the C output), but the slot
+number is all they check: when anything allocates between the two frees it takes that slot,
+and the second free releases the new owner's store.  The C backend ships what the compiler
+emits, so the compiler emits each free once on every path wherever it can.  The records
+report a re-free as its own kind, so the list of compiler sites still emitting one stays
+visible, and `LOFT_DOUBLE_FREE` counts the ones a run reaches on either backend.  A
+**guarded** free (one that asks first whether the store is live, as `OpStoreLive` does) is
+not a re-free.
 
 ## Measuring: the sweep
 
