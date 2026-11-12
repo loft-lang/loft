@@ -108,6 +108,10 @@ struct State {
     /// variable is nulled before the return.  A slot keeps the captured value whole: its
     /// `corr` stores are live only where the slot names them, as for a variable's read.
     slots: BTreeMap<SKey, BTreeMap<i32, Val>>,
+    /// Per record store and offset, the variable a capture was read from, while that
+    /// variable still names it: handing the record on hands the capture on through it, as a
+    /// capture handed on in place would (`handed_by`).
+    slot_src: BTreeMap<SKey, BTreeMap<i32, u16>>,
     /// Per record built inside another store (a fn field): what its capture slots name.
     /// Such a record takes its captures over at the capture; a guarded free reads a slot as
     /// its witness (`OpFreeRefIfDistinct(v, OpGetDbRef(___clos_1, 0))`).
@@ -231,6 +235,27 @@ fn join_state(a: &State, b: &State) -> State {
         .filter(|(k, v)| b.flags.get(k) == Some(v))
         .map(|(k, v)| (*k, *v))
         .collect();
+    let (slots, slot_src, field_captures) = join_slots(a, b);
+    State {
+        vars,
+        stores,
+        slots,
+        slot_src,
+        field_captures,
+        flags,
+    }
+}
+
+/// The closure records' part of a state: slots, their source variables, fn-field captures.
+type SlotParts = (
+    BTreeMap<SKey, BTreeMap<i32, Val>>,
+    BTreeMap<SKey, BTreeMap<i32, u16>>,
+    BTreeMap<u16, Pts>,
+);
+
+/// The closure records' part of a join: the slots, their source variables (kept where both
+/// sides agree) and the fn-field captures.
+fn join_slots(a: &State, b: &State) -> SlotParts {
     let mut slots = a.slots.clone();
     for (k, m) in &b.slots {
         let Some(into) = slots.get_mut(k) else {
@@ -256,13 +281,21 @@ fn join_state(a: &State, b: &State) -> State {
             .or_default()
             .extend(p.iter().copied());
     }
-    State {
-        vars,
-        stores,
-        slots,
-        field_captures,
-        flags,
+    let mut slot_src = a.slot_src.clone();
+    for (k, m) in &b.slot_src {
+        let into = slot_src.entry(*k).or_default();
+        for (off, x) in m {
+            match into.get(off) {
+                Some(y) if y != x => {
+                    into.remove(off);
+                }
+                _ => {
+                    into.insert(*off, *x);
+                }
+            }
+        }
     }
+    (slots, slot_src, field_captures)
 }
 
 /// Join two outcomes, where `None` is "no path".
@@ -589,6 +622,9 @@ impl Run<'_> {
             info.live_null.remove(&v);
         }
         st.field_captures.remove(&v);
+        for m in st.slot_src.values_mut() {
+            m.retain(|_, x| *x != v);
+        }
         let single = val.pts.len() == 1;
         for k in Self::stores_of(&val.pts) {
             self.sites[k.site as usize].holders.insert(v);
@@ -831,7 +867,7 @@ impl Run<'_> {
     /// value's stores from here on — replacing what it held where `w` names one record and
     /// the offset is known (a null empties it: the code generator's give-up of a capture
     /// before a return, `@FR-L-CapOne`).
-    fn hold(st: &mut State, w: u16, off: Option<i32>, value: &Val) {
+    fn hold(st: &mut State, w: u16, off: Option<i32>, value: &Val, src: Option<u16>) {
         let recs = Self::stores_of(&Self::pts(st, w));
         let strong = recs.len() == 1 && off.is_some();
         let pts: Pts = value
@@ -857,12 +893,18 @@ impl Run<'_> {
             }
         }
         for k in recs {
-            let slot = st
-                .slots
-                .entry(k)
-                .or_default()
-                .entry(off.unwrap_or(i32::MIN))
-                .or_default();
+            let at = off.unwrap_or(i32::MIN);
+            match src.filter(|_| strong) {
+                Some(x) => {
+                    st.slot_src.entry(k).or_default().insert(at, x);
+                }
+                None => {
+                    if let Some(m) = st.slot_src.get_mut(&k) {
+                        m.remove(&at);
+                    }
+                }
+            }
+            let slot = st.slots.entry(k).or_default().entry(at).or_default();
             if strong {
                 slot.clone_from(&held);
             } else {
@@ -939,12 +981,10 @@ impl Run<'_> {
         // A closure record that leaves takes what its slots hold with it (`@FR-L-CapOne`).
         for k in records {
             if let Some(m) = st.slots.remove(&k) {
-                let mut held = Val::default();
-                for v in m.into_values() {
-                    held.corr.extend(v.corr);
-                    held.pts.extend(v.pts);
+                let src = st.slot_src.remove(&k).unwrap_or_default();
+                for (off, v) in m {
+                    Self::hand_on_var(st, src.get(&off).copied(), &v);
                 }
-                Self::hand_on(st, &held);
             }
         }
     }
@@ -1433,7 +1473,7 @@ impl Run<'_> {
         x: u16,
         val: &Value,
         st: State,
-    ) -> Result<Option<(State, Val)>, State> {
+    ) -> Result<Option<(State, Val)>, Box<State>> {
         let data = self.data;
         let function = &data.def(self.d_nr).variables;
         let installs = matches!(val.unspan(), Value::Call(d, _)
@@ -1485,7 +1525,7 @@ impl Run<'_> {
             self.bind(&mut st, x, &minted);
             return Ok(Some((st, Val::null())));
         }
-        Err(st)
+        Err(Box::new(st))
     }
 
     /// Does a displaced free's witness `w` keep the store `x` displaces?  The runtime keeps it
@@ -1509,7 +1549,7 @@ impl Run<'_> {
         let function = &data.def(self.d_nr).variables;
         let st = match self.reassign_special(node, x, val, st) {
             Ok(done) => return done,
-            Err(st) => st,
+            Err(st) => *st,
         };
         let rb = match self.rebinds.get(&(std::ptr::from_ref(node) as usize)) {
             Some(rb) => *rb,
@@ -2480,7 +2520,13 @@ impl Run<'_> {
                         .starts_with("___clos_")
                         && !self.leaving.contains(&w) =>
                 {
-                    Self::hold(&mut s, w, Self::const_offset(args.get(1)), value);
+                    Self::hold(
+                        &mut s,
+                        w,
+                        Self::const_offset(args.get(1)),
+                        value,
+                        Self::first_var(args, 2),
+                    );
                 }
                 // A reference written into another store's field: that store holds it now —
                 // unless a variable the program named still holds it, or it is the host's own
