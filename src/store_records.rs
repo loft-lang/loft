@@ -1245,11 +1245,33 @@ impl Run<'_> {
                 }
                 st.flags.remove(x);
                 let copied = self.copied_from(val);
+                // `x = f(…, x)` answering `x`'s own store (a value operator writing its result
+                // into the buffer `x` hands it): `x` still names, and must-holds, what it did.
+                let kept: Vec<SKey> = if copied == Some(*x) {
+                    st.stores
+                        .iter()
+                        .filter(|(_, i)| i.has(LIVE) && i.live.contains(x))
+                        .map(|(k, _)| *k)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 let (mut st, out) = self.assign(v, *x, val, st)?;
                 if let Some(src) = copied
                     && src != *x
                 {
                     Self::copy_alts(&mut st, *x, src);
+                }
+                for k in kept {
+                    if Self::pts(&st, *x).contains(&Pt::Store(k))
+                        && let Some(info) = st.stores.get_mut(&k)
+                        && info.has(LIVE)
+                    {
+                        info.live.insert(*x);
+                        for a in &mut info.alts {
+                            a.insert(*x);
+                        }
+                    }
                 }
                 Some((st, out))
             }
