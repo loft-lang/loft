@@ -166,6 +166,12 @@ fn check_shard(shard: usize, stride: usize) {
         };
         let alone = std::panic::catch_unwind(|| code_of("", &src, "lib"));
         let shifted = std::panic::catch_unwind(|| code_of(SHIFT, &src, "lib"));
+        // A panic is a finding with the program's name: skipped, it hid which program the
+        // generator fails on.
+        if alone.is_err() || shifted.is_err() {
+            differ.push(format!("{f}: the generator panics (its message is above)"));
+            continue;
+        }
         let (Ok(Some(a)), Ok(Some(b))) = (alone, shifted) else {
             continue;
         };
