@@ -766,9 +766,20 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // below, since a rebound parameter that owns its binding copies a call's answer as any owner
     // does, and a stashed free (the value reads the parameter, or it is nullable) still runs —
     // it is what the copy arms' fresh-store choice reads (#360).
+    // A keyed local whose null init minted nothing (`keyed_null_mints`) and that is only ever
+    // bound to a null or a borrow (`__kvb_N = b.0`, a temporary viewing a store another binding
+    // owns) never holds a store of its own, so a reassignment displaces nothing — the C and
+    // rustc writers free nothing there either.  One that takes a call's answer may hold a store
+    // that call minted, and keeps its free.  @PLN220.  `LOFT_KEYED_VIEW_DISPLACED_FREE=1` frees
+    // again.
+    let keyed_view = crate::parser::vectors::owns_keyed_store(function.tp(v))
+        && !keyed_null_mints(function, v)
+        && !crate::keys::keyed_view_displaced_free()
+        && only_null_or_borrowed(data, d_nr, v);
     let owned_ref = (function.owns_displaced_store(v, value, data)
         || is_return_temp_owning_its_arms(data, d_nr, function, v))
-        && (!is_hidden_buf_arg || entry_w.is_some());
+        && (!is_hidden_buf_arg || entry_w.is_some())
+        && !keyed_view;
     let frees_displaced = owned_ref
         && (crate::keys::arg_displaced_free() || !function.is_argument(v) || entry_w.is_some());
     // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
@@ -1052,6 +1063,32 @@ fn join_record(tp: &Type) -> Option<u32> {
         Type::Optional(_) => None,
         _ => None,
     }
+}
+
+/// Is every value function `d_nr` binds to `v` a null or a borrow of another binding
+/// (`use_analysis::Own::Borrowed`)?  Then `v` never holds a store of its own.  A value of any
+/// other ownership — a call's answer, a join, a mint — answers no, which only keeps a free.
+fn only_null_or_borrowed(data: &Data, d_nr: u32, v: u16) -> bool {
+    fn walk(data: &Data, d_nr: u32, v: u16, node: &Value, ok: &mut bool) {
+        if !*ok {
+            return;
+        }
+        if let Value::Set(var, value) = node.unspan()
+            && *var == v
+            && !is_null_value(data, value)
+            && !matches!(
+                crate::use_analysis::ownership_of(data, d_nr, value),
+                crate::use_analysis::Own::Borrowed { .. }
+            )
+        {
+            *ok = false;
+            return;
+        }
+        node.for_each_child(&mut |c| walk(data, d_nr, v, c, ok));
+    }
+    let mut ok = true;
+    walk(data, d_nr, v, data.def(d_nr).code(), &mut ok);
+    ok
 }
 
 /// Is `value` a null — `null`, or the sentinel a reference reset writes?

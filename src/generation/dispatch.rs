@@ -321,7 +321,7 @@ impl Output<'_> {
         let is_var_copy = matches!(
             to.unspan(),
             Value::Var(src) if variables.record_copy_source(self.data, var, *src).is_some()
-        );
+        ) && self.var_copy_taken(var, to);
         let owned = is_var_copy
             || matches!(
                 crate::use_analysis::ownership_of(self.data, self.def_nr, to),
@@ -478,6 +478,26 @@ impl Output<'_> {
             )?;
         }
         Ok(())
+    }
+
+    /// Does a whole-record bind from another variable copy it?  A FIRST bind does; a
+    /// REASSIGNMENT only where `bind_lowering::re_bind` copies (R2c), as the bytecode and C
+    /// writers do — a variable that owns none of what it binds (a return temporary taking a
+    /// parameter it hands back) binds the view.  The owner witness asks it too, so a declined
+    /// copy is not counted as an owned store.  @PLN220.  `LOFT_NATIVE_OWN_VAR_COPY=1` copies
+    /// every such reassignment again.
+    fn var_copy_taken(&self, var: u16, to: &Value) -> bool {
+        let variables = self.data.def(self.def_nr).variables();
+        if !self.declared.contains(&var)
+            || self.predeclared.contains(&var)
+            || crate::keys::native_own_var_copy()
+        {
+            return true;
+        }
+        matches!(
+            crate::bind_lowering::re_bind(self.data, self.def_nr, variables, var, to).arm,
+            crate::bind_lowering::ReArm::VarCopy { .. }
+        )
     }
 
     /// Does a bind reaching the call-return arm take its runtime copy-or-adopt?  A FIRST bind
@@ -2286,6 +2306,7 @@ impl Output<'_> {
             (variables.tp(var).base().heap_def_nr(), to_unspanned)
             && variables.record_copy_source(self.data, var, *src).is_some()
             && !self.value_record_locals.contains_key(&var)
+            && self.var_copy_taken(var, to)
         {
             // The source READ, rendered by the Var emitter rather than spelled `var_<src>`: a
             // `&S` link holds `*mut DbRef` and reads as the record behind it (@FR-C-Ref), so

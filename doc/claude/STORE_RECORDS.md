@@ -448,7 +448,11 @@ store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  The rustc writer reads it
 runtime copy-or-adopt (`call_bind_taken`; `LOFT_NATIVE_OWN_CALL_BIND=1` gives the arm back): an
 owner witness then takes the answer as its own where it is no other argument's store
 (`call_bind_declined`), and the plain bind's `_old_` stash stands down where the witness's
-`_disp_` stash already releases the displaced store (`old_stash_var`).  A writer row's `lowering=` asks
+`_disp_` stash already releases the displaced store (`old_stash_var`).  A reassignment from
+another variable's record copies only where `re_bind` copies it (R2c), the owner witness asking
+the same (`var_copy_taken`; `LOFT_NATIVE_OWN_VAR_COPY=1`).  And `re_bind` itself frees nothing a
+keyed local displaces when its null init minted nothing and every value it is bound to is a null
+or a borrow (`__kvb_N = b.0`): it never holds a store (`LOFT_KEYED_VIEW_DISPLACED_FREE=1`).  A writer row's `lowering=` asks
 `bind_lowering` over the IR the writer reads; the bytecode writer changes some variables' deps
 while it generates, so its own row can answer differently for the same assignment — the census
 pairs against that row, never the `lowering=` field.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
