@@ -517,9 +517,9 @@ struct Run<'a> {
     /// The variables inside an IR `n_protect_store_frees` bracket (`@P290`): a source-free
     /// in it declines the stores they name.
     protected: Vec<u16>,
-    /// The lift temporaries the function frees with a plain `OpFreeRef`: each still owns the
-    /// call result it holds, wherever a reference to it is written.
-    freed_lifts: BTreeSet<u16>,
+    /// The compiler temporaries the function frees with a plain `OpFreeRef` (a lift, a literal's
+    /// work-ref): each still owns the record it holds, wherever a reference to it is written.
+    freed_temps: BTreeSet<u16>,
 }
 
 impl Run<'_> {
@@ -2684,15 +2684,15 @@ impl Run<'_> {
                         .first()
                         .map(|h| Self::stores_of(&h.pts).into_iter().collect())
                         .unwrap_or_default();
-                    // …or a lift temporary the function frees: a stored reference only points
-                    // (`@FR-H-RefHome`), and the temporary is the call result's home.
-                    let freed_lifts = &self.freed_lifts;
+                    // …or a compiler temporary the function frees: a stored reference only points
+                    // (`@FR-H-RefHome`), and the temporary is the record's home.
+                    let freed_temps = &self.freed_temps;
                     let owned_elsewhere = |k: &SKey| {
                         host.contains(k)
                             || info_of(&s, *k).live.iter().any(|w| {
                                 *w < function.count()
                                     && (!function.is_compiler_generated(*w)
-                                        || freed_lifts.contains(w))
+                                        || freed_temps.contains(w))
                             })
                     };
                     let handed = Val {
@@ -2904,7 +2904,7 @@ fn run_fn<'a>(
         fn_record: BTreeMap::new(),
         leaving: BTreeSet::new(),
         protected: Vec::new(),
-        freed_lifts: BTreeSet::new(),
+        freed_temps: BTreeSet::new(),
     };
     let body = def.code.clone();
     // One pass in emission order: which assignments are first, each reassignment's lowering,
@@ -2938,8 +2938,8 @@ fn run_fn<'a>(
                         || (*op == unconditional && !crate::keys::free_reset_off())) =>
             {
                 run.resets.insert(at);
-                if *op == unconditional && vars.is_lift_temp(*x) {
-                    run.freed_lifts.insert(*x);
+                if *op == unconditional && vars.is_compiler_generated(*x) {
+                    run.freed_temps.insert(*x);
                 }
             }
             _ => {}
