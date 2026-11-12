@@ -55,6 +55,10 @@ LOFT = os.environ.get("LOFT", "target/release/loft")
 TO_INTERP = os.environ.get("FUZZ_TIMEOUT_INTERP", "60")
 TO_NATIVE = os.environ.get("FUZZ_TIMEOUT_NATIVE", "120")
 LEAK_SIGNAL = "stores not freed"          # identical on both backends (src/state/mod.rs, generation/mod.rs)
+# A store freed twice, as the runtime reports it on every backend (`@FR-H-FreeTwice`: on by
+# default in the interpreter, and in the C output since it fails at a re-free too).  The memory
+# defect this gate exists for, caught by the runtime itself rather than by a crash.
+REFREE_SIGNAL = "a store was freed twice"
 # The cell's own value oracle failing — loft renders it `error: assertion failed: <msg>`.
 ASSERT_SIGNAL = "assertion failed"
 RANGE_RE = re.compile(r"\b0\.\.(\d+)\b")  # `0..N` loop/pressure bounds — the churn axis
@@ -65,7 +69,8 @@ def normalise(s: str) -> str:
 
 
 def run(mode: str, path: str):
-    """Run one program on one backend; return (exit_code, normalised_stdout, leaked, wrong).
+    """Run one program on one backend; return (exit_code, normalised_stdout, leaked, wrong,
+    refreed).
 
     `wrong` is the cell's OWN value oracle: every generated cell asserts what its shape
     must compute, so a failed assertion is a WRONG ANSWER, not a program that merely
@@ -83,13 +88,14 @@ def run(mode: str, path: str):
         p = subprocess.run([LOFT, mode, path], capture_output=True, text=True,
                            env=env, timeout=int(env["LOFT_TIMEOUT"]) + 15)
     except subprocess.TimeoutExpired:
-        return (-99, "", False, False)  # hang = a violation (treated as CRASH by the caller)
+        return (-99, "", False, False, False)  # hang = a violation (CRASH to the caller)
     both = (p.stdout or "") + (p.stderr or "")
     # The interpreter renders it as `error: assertion failed: <msg>`; native raises it as a
     # Rust panic carrying the same message, which exits 101.  Either is the cell saying its
     # own answer is wrong.
     wrong = ASSERT_SIGNAL in both or (mode == "--native" and p.returncode == 101)
-    return (p.returncode, normalise(p.stdout), LEAK_SIGNAL in p.stderr, wrong)
+    return (p.returncode, normalise(p.stdout), LEAK_SIGNAL in p.stderr, wrong,
+            REFREE_SIGNAL in both)
 
 
 def is_crash(rc: int) -> bool:
@@ -111,9 +117,14 @@ def judge(path: str, native_replay: bool):
     A wrong answer is the thing the whole gate exists to catch; it must not depend on a
     disagreement to be seen."""
     viol = []
-    ie, iout, ileak, iwrong = run("--interpret", path)
+    ie, iout, ileak, iwrong, irefree = run("--interpret", path)
     if is_crash(ie):
         viol.append(f"CRASH(interp signal={-ie if ie < 0 else ie - 128})")
+    # A re-free the runtime reports is a memory defect on its own: once both backends report
+    # it the same way, their exits agree and DIVERGENCE no longer sees it (the C backend's
+    # re-free check silenced the crash control exactly so).
+    if irefree:
+        viol.append("REFREE(interp)")
     if ileak:
         viol.append("LEAK(interp)")
     if iwrong:
@@ -121,9 +132,11 @@ def judge(path: str, native_replay: bool):
     # Run native to cross-check whenever interp did anything non-clean, or when sampling.
     # (A clean interp success is only cross-checked under --native-replay — the slow stage.)
     if ie != 0 or ileak or native_replay:
-        ne, nout, nleak, nwrong = run("--native", path)
+        ne, nout, nleak, nwrong, nrefree = run("--native", path)
         if is_crash(ne):
             viol.append(f"CRASH(native signal={-ne if ne < 0 else ne - 128})")
+        if nrefree:
+            viol.append("REFREE(native)")
         if nleak:
             viol.append("LEAK(native)")
         if nwrong:
@@ -210,7 +223,8 @@ def main():
             # third, and it is what remained once both backends started reporting the same
             # corruption instead of one of them masking it.
             crash_fires = any(
-                "CRASH" in x or "DIVERGENCE" in x or "WRONG" in x for x in v_crash
+                "CRASH" in x or "DIVERGENCE" in x or "WRONG" in x or "REFREE" in x
+                for x in v_crash
             )
             leak_fires = any("LEAK" in x for x in v_leak)
             print(f"crash-control (raw path: NO_JOIN_OWN+NO_REASSIGN_COPY+NO_OWNER_WITNESS) elem_accumulate/struct/heavy: "
