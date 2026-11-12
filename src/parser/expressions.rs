@@ -7319,6 +7319,11 @@ use a separate collection or add after the loop"
                 Type::Text(_) | Type::Enum(..) | Type::Reference(..)
             )
             && !self.data.is_nullable_wrapper(slot_tp)
+            // A `τ?` SLOT holds the null: `.base()` above peels the `?`, and an `Entity?` field
+            // read as a dense struct-enum slot took the default for a null handle written into
+            // it (`h.e = absent`, `absent: Fireball? = null`) — the attic program
+            // a-null-struct-enum-slot-leaves-its-slot-as-null.  `@FR-N-Store`, @C163.
+            && !matches!(slot_tp, Type::Optional(_))
             && self.slot_takes_base(slot_tp, inner)
         {
             // A `reference<T>` POINTER field repoints, so it does hold null; it is told apart by
