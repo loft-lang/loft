@@ -2532,6 +2532,9 @@ impl Run<'_> {
             Some(q @ (Pt::Store(_) | Pt::Null | Pt::Param(_))) if p.len() == 1 => Some(*q),
             _ => None,
         };
+        if let Some(arms) = self.slot_arms(args, &a, &b, &st) {
+            return arms;
+        }
         match (single(&a), single(&b)) {
             (Some(x), Some(y)) if x == y => (None, Some(st)),
             (Some(Pt::Store(_) | Pt::Null), Some(Pt::Store(_) | Pt::Null)) => (Some(st), None),
@@ -2632,6 +2635,55 @@ impl Run<'_> {
 
     /// On a path where `x` is known to name only `to`: a store it no longer names, and that
     /// is live only where `x` names it, is not live on this path.
+    /// Keep, in the slot `off` of every record `w` names, only the stores `keep` admits — a
+    /// path-sensitive refinement of what the slot holds on one arm of an identity test.  Its
+    /// `corr` follows: a store dropped from the slot is no longer live through it.
+    /// `OpDistinctStore(OpGetDbRef(w, off), v)` where `v` names one store `y` and the slot may
+    /// hold `y` or others (a loop rebuild's guarded free of the record's old capture): where
+    /// DISTINCT, the slot does not hold `y`; where SAME, only `y` — as a variable first operand
+    /// is narrowed.  `LOFT_RECORDS_NO_SLOT_NARROW=1` keeps both arms unnarrowed.
+    fn slot_arms(
+        &self,
+        args: &[Value],
+        a: &Pts,
+        b: &Pts,
+        st: &State,
+    ) -> Option<(Option<State>, Option<State>)> {
+        let Some(Value::Call(op, ga)) = args.first().map(Value::unspan) else {
+            return None;
+        };
+        let (Some(Value::Var(w)), Some(off)) =
+            (ga.first().map(Value::unspan), Self::const_offset(ga.get(1)))
+        else {
+            return None;
+        };
+        let y = match b.iter().next() {
+            Some(y @ Pt::Store(_)) if b.len() == 1 => *y,
+            _ => return None,
+        };
+        if *op != self.ops.get_dbref
+            || a.len() < 2
+            || !a.contains(&y)
+            || crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_SLOT_NARROW").is_some())
+        {
+            return None;
+        }
+        let mut distinct = st.clone();
+        Self::narrow_slot(&mut distinct, *w, off, |p| *p != y);
+        let mut same = st.clone();
+        Self::narrow_slot(&mut same, *w, off, |p| *p == y);
+        Some((Some(distinct), Some(same)))
+    }
+
+    fn narrow_slot(st: &mut State, w: u16, off: i32, keep: impl Fn(&Pt) -> bool) {
+        for k in Self::stores_of(&Self::pts(st, w)) {
+            if let Some(v) = st.slots.get_mut(&k).and_then(|m| m.get_mut(&off)) {
+                v.pts.retain(|p| !matches!(p, Pt::Store(_)) || keep(p));
+                v.corr.retain(|c| keep(&Pt::Store(*c)));
+            }
+        }
+    }
+
     fn narrow(st: &mut State, x: u16, to: Pts) {
         let from = Self::pts(st, x);
         for k in Self::stores_of(&from) {

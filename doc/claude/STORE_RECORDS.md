@@ -140,7 +140,10 @@ A fn-ref's `OpDropFnRef` runs its record's cascade (`LOFT_RECORDS_NO_DROP_FNREF_
 the capture slots the record type's live `_OpDropAll` frees (none for a retired one), except under the
 emitter's stand-down guard (`if OpDistinctStore(OpFnRefClosure(f), …)`) or while another name may hold the
 record (a `___clos_N` the frame releases, or a copy `k = h`), where that release, or the detach, decides it.
-A local `&fn` link (`pd: &fn() = &g`) is followed like a link to a record (`LOFT_RECORDS_NO_FN_LINK_INSTALL=1`).  The shared detach also nulls a copy (`k = h`)
+A local `&fn` link (`pd: &fn() = &g`) is followed like a link to a record (`LOFT_RECORDS_NO_FN_LINK_INSTALL=1`).
+An identity test of a capture slot against a variable that names one store
+(`if OpDistinctStore(OpGetDbRef(___clos_1, 0), __vdb_1)`, a loop rebuild's guarded free of the old
+capture) narrows the slot on each arm, as it narrows a variable (`LOFT_RECORDS_NO_SLOT_NARROW=1`).  The shared detach also nulls a copy (`k = h`)
 wherever both names must-hold every store they name.
 A tuple member's free retires every work-ref an assignment made that member's claimant, where
 it still names the store (a loop drops the per-assignment claimant, `tuple_claimants`);
