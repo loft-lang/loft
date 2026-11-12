@@ -13,6 +13,10 @@
 # An unhashed `libloft.*` in a per-unit dir is the runtime itself (the profile's uplift), never
 # a dependency, and is left out.
 set -euo pipefail
+if [ "${1:-}" = "--help" ] || [ $# -ne 2 ]; then
+  echo "usage: scripts/cargo_dep_files.sh <profile-dir> <file-pattern>   e.g. target/release '*.rlib'"
+  [ "${1:-}" = "--help" ] && exit 0 || exit 2
+fi
 profile=$1
 pattern=$2
 shopt -s nullglob

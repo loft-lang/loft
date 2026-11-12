@@ -420,7 +420,7 @@ fn per_unit_dep_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
                 let out = h.os_spelling().join("out");
                 if crate::file_access::read_dir(&out).is_ok_and(|rd| {
                     rd.iter().any(|f| {
-                        f.extension().is_some_and(|e| {
+                        crate::file_access::extension(f).is_some_and(|e| {
                             ["rlib", "so", "dylib", "dll"]
                                 .iter()
                                 .any(|k| e.eq_ignore_ascii_case(k))
@@ -526,8 +526,8 @@ pub fn linked_runtime() -> Option<(std::path::PathBuf, Vec<std::path::PathBuf>)>
             .ok()?
             .into_iter()
             .filter(|e| {
-                let n = e.file_name().unwrap_or_default();
-                (n.starts_with("libloft-") || n == "libloft.rlib") && has_rlib_ext(n)
+                let n = crate::file_access::file_name(e).unwrap_or_default();
+                (n.starts_with("libloft-") || n == "libloft.rlib") && has_rlib_ext(&n)
             })
             .max_by_key(|e| modified(&e.os_spelling()))?
             .os_spelling();

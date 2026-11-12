@@ -17,12 +17,12 @@
 3 src/lib_placement/wire.rs
 3 src/logger.rs
 2 src/lsp.rs
-8 src/main.rs
+7 src/main.rs
 2 src/migrate_long.rs
 2 src/native.rs
 3 src/native_build.rs
 2 src/native_lib.rs
-8 src/native_utils.rs
+7 src/native_utils.rs
 4 src/opt/native_key.rs
 6 src/package.rs
 3 src/package_layout.rs
