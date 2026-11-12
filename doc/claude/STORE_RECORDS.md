@@ -436,9 +436,10 @@ run time as a record local is (F9a / R1, `OpBindOrCopy`); `LOFT_NO_ENUM_JOIN=1` 
 every bind.  A renamed return buffer with an entry witness rebound from a closure call takes
 the call's answer through the runtime copy-or-adopt (`@FR-O-Unknown`, R2a) as any local does, as
 the C writer always did (`LOFT_NO_BUFFER_OPAQUE_CALL=1` binds it plain).  A rebound argument with
-no entry witness frees nothing before the bind: the
-scope pass detaches it in the IR first, so that free acted on the sentinel, and the C writer
-never emitted it (`LOFT_ARG_DISPLACED_FREE=1` emits it again).  A nullable local, whose
+no entry witness frees nothing before the bind, as the C writer never did: a by-value parameter
+is detached in the IR first, and a renamed return buffer holds the store its caller handed it,
+which that free released under the caller (`LOFT_ARG_DISPLACED_FREE=1` emits it again; the
+records report the free as a `store-wrong-end`).  A nullable local, whose
 displaced free waits until after the bind, joins too when
 the value is a call that does not read it, with its slot reset first so the copy arm mints a
 store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and

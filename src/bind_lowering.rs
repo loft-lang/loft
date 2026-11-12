@@ -753,10 +753,13 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // arm's bind copies into the temp (that is what the write-out is for), so the
     // temp owns what the arm displaces — the sentinel its pre-init put there.
     // An ARGUMENT frees what it displaces only with an entry witness, which tells the caller's
-    // store from one this frame minted (`@FR-O-Buffer`).  Without one the release is the scope
-    // pass's own: a rebound by-value parameter is detached in the IR before each rebind
-    // (`OpFreeRefIfDistinct(p, snapshot)` and its reset to the sentinel), so a free here would
-    // act on the sentinel — the C writer's `displacing_rebind` frees no such argument either.
+    // store from one this frame minted (`@FR-O-Buffer`).  Without one the release is not this
+    // free's: a rebound by-value parameter is detached in the IR before each rebind
+    // (`OpFreeRefIfDistinct(p, snapshot)` and its reset to the sentinel), and a renamed return
+    // buffer holds the store its CALLER handed it, which a free here released under the caller
+    // (a re-free under `LOFT_NO_ADOPT_BUFFER_REUSE=1`: tests/scripts/a-value-read-and-dropped-is-
+    // built-outside-the-store.loft's `decode`).  The C writer's `displacing_rebind` frees no
+    // such argument either.
     // @PLN220.  `LOFT_ARG_DISPLACED_FREE=1` keeps the free for every argument but the hidden
     // buffer, as before.
     // Only the free BEFORE the bind is the scope pass's: `owned_ref` still decides the copy arms
