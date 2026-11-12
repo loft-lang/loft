@@ -275,6 +275,11 @@ LOFT_NO_CACHE=1 python3 scripts/own_sweep.py --loft <bin> --oracle check-records
 |---|---|---|---|
 | patches7 | 133 → 113 | 5 | 1 (B-Copy record update: `__retbuf = u` freed the caller's buffer; loft-c9 09ecad0cf) |
 | patches8 | 113 → 94 | 5 | 2 (below) |
+| patches9 | 93 → 88 (rebased) | 1 | 1 (3 below) |
+| patches10 | 83 → 80 (base merged main) | 1 | 1 (4 below) |
+| patches11–12 | 80 → 72 | 5 | 1 (5 below) |
+| patches13 | 69 → 53 (base took loft3-c1's closure batch) | 3 | 0 (+ two checker MISSes for loft-c9 now CAUGHT) |
+| patches14 | 53 → 50 | 1 | 1 (6 below) |
 
 The real defects the checker found first:
 
@@ -286,6 +291,28 @@ The real defects the checker found first:
    verified on the C backend (`v = h(k); v += [1000]` with `h` a lambda answering null):
    `__vdb_1` has no free in the IR.  The interpreter frees it only through its frame-exit
    release at `Return`.  A direct call is clean.  Open, loft-c9.
+3. **An element record copied out of its work-ref ran its drop hook on a freed slot** —
+   `S2 { hs: [H { id: 4 }] }` with a hook on `H` printed `dh0` once per element before the
+   real releases, both backends: the work-ref's reset after the source-freeing copy read as a
+   rebind displacing an owned record.  The copy now arms its hand-off where it runs
+   (`scopes/scan.rs`); suite cell H-Drop/a-record-built-for-an-element-of-a-field-literal….
+4. **A heap member of a tuple argument handed back was freed twice** —
+   `fn first(p: (R, integer)) -> R { p.0 }`: the @P290 witness set skipped a tuple, the dep
+   converter gave a vector result no dep, and a member built inside the literal had no name.
+   Silent on main (its runtime does not report a free of a freed store).  Switches
+   `LOFT_NO_TUPLE_ARG_COVER` / `_DEPS` / `_NAME`; suite cell O-Move/a-member-of-a-tuple-argument….
+   Left: a tuple VARIABLE to a callee that may answer its member or mint fails the C backend
+   (loft#2471).
+5. **A call result stored by reference in a literal argument was freed before the call** —
+   `readk(Linked { link: mk(9), n: 1 })` answered 71 where 91 is right on main: the lift that is
+   the record's home was scoped to the literal's block.  It now lasts as long as the holder
+   (`LOFT_NO_REF_HOME_LIFT`); suite cell H-RefHome/a-call-result-in-a-literal-argument….
+6. **A sub-rule run freed a borrowed answer and leaked an answer that consumed nothing** —
+   `(xs: view)*` with `view` answering `p.nodes[0]` freed the caller's whole store; a rule
+   answering without consuming leaked at the stop.  The answer is released only where it is the
+   rule's own or names no argument's store (`LOFT_NO_SUBRULE_OWNED_ANSWER`,
+   `LOFT_NO_SUBRULE_STOP_FREE`); suite cell P-Rule/a-sub-rule-run-releases…  The rustc-native
+   backend still re-frees the run's temporary through its own `_own_store_` shadow (loft-c9).
 
 The gaps fixed, by the representation they corrected:
 
@@ -300,7 +327,29 @@ The gaps fixed, by the representation they corrected:
 - **Values handed on** — a variable's value returned or captured by a leaving closure hands
   on the stores it keeps live (`handed_by`); an owned value written through a slot link is
   given up (`OpSetSlotRef` with `COPY_FREE_SOURCE`).
-- **Store generations** — a reassignment reads the store it displaces after the value; a
-  buffer call handed null or its own earlier store answers that store; `OpInitRefSentinel`
-  resets its variable; a nested tuple literal in a tuple member answers its stores.
+- **Store generations** — a reassignment reads the store it displaces after the value, and
+  keeps it in the state while the copy mints the next generation at the same site; a buffer
+  call handed null or its own earlier store answers that store; `OpInitRefSentinel` resets its
+  variable; a nested tuple literal in a tuple member answers its stores; a store re-initialised
+  in place stays correlated with its variable.
+- **What a value is** — an IR `n_protect_store_frees` bracket declines a source-free; a source
+  that is no variable frees what its value names; a `-> T?` call may answer null, and a call
+  answer's collection null test decides (a local's may be a live absent-marked store); a
+  stored-reference read answers its referent, not the holder's store; a tuple-literal argument
+  is read, not handed on, and a tuple parameter's member is the caller's store; a nested member
+  moved out of another tuple is that member; a put into a local tuple's member assigns it.
+- **Owners a stored reference leaves in place** — a compiler temporary the function frees keeps
+  the record a `reference<T>` field names, and a holder handed to a call reads those records.
+
+Open, each wanting more than a local fix:
+
+- **A value joined from arms answering different buffers** (O-Complete/157-join-witness,
+  C-Var/2315, O-Complete/2386, O-Latest/1323, F-Ret/2188, H-Alloc): the closing guard
+  `if OpDistinctStore(v, a) if OpDistinctStore(v, b) OpFreeRef(v)` is a no-op at runtime, but
+  after the join the records no longer know which buffer `v` came from on each path.  Deriving it
+  from the guard alone, without the variable must-holding the store, made seven cells worse.
+- **A two-buffer rotation** (`__ref_1 ← __ref_3; __ref_3 ← v`: H-RootExtent, B-Copy keyed
+  rebind): each store is held by one of two names, never the same one on every path.
+- **A caller-minted buffer parameter** (R-TailSelf/vec_local): the records follow a null path
+  every caller rules out by minting the buffer first.
 
