@@ -1011,6 +1011,9 @@ fn join_record(tp: &Type) -> Option<u32> {
     match tp {
         Type::Reference(rec, _) => Some(*rec),
         Type::Enum(rec, true, _) if !crate::keys::enum_join_off() => Some(*rec),
+        // A nullable local is joined only where its caller peeled it (`first_bind_shape`, under
+        // `nullable_ret_buffer`): the nullability is the caller's question, not this one's.
+        Type::Optional(_) => None,
         _ => None,
     }
 }
