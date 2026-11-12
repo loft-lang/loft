@@ -1195,7 +1195,8 @@ fn every_operator_is_numbered_in_its_priority_band() {
 }
 
 // N8: Sort must work correctly in native-codegen mode.
-// The #rust template for OpSortVector is inlined directly (no OpSortVector runtime fn needed).
+// The #rust template for OpSortVector is inlined directly (no OpSortVector runtime fn needed):
+// it calls `Stores::sort_vector`, which picks the element order from the schema type.
 #[test]
 fn n8_codegen_runtime_vector_ops_exist() {
     // Sorting a vector of integers must work in native-codegen mode.
@@ -1205,8 +1206,8 @@ fn n8_codegen_runtime_vector_ops_exist() {
     let src = fa::read_to_string("tests/generated/issues_n8_codegen_runtime_vector_ops_exist.rs")
         .expect("generated file not found");
     assert!(
-        src.contains("vector::sort_vector("),
-        "generated code missing inlined vector::sort_vector call"
+        src.contains("stores.sort_vector("),
+        "generated code missing inlined stores.sort_vector call"
     );
 }
 
