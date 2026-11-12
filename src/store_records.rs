@@ -76,6 +76,12 @@ struct SInfo {
     alts: Vec<BTreeSet<u16>>,
     /// The variables that point into it on EVERY path where it is ended.
     ended: BTreeSet<u16>,
+    /// The MAY twin of `ended`: the variables that may point into it on SOME path where it is
+    /// ended (`design-stale-names.md`).  In `ended`: a certain second end; in `stale` only: a
+    /// possible one; in neither, with the store `LIVE|ENDED`: no finding — the name was rebound
+    /// or reset on the paths that ended it.  `None` is every name (unknown: a store ended where
+    /// this is not followed), which never silences a finding.
+    stale: Option<BTreeSet<u16>>,
     /// The variables whose value, naming this store, was handed on (returned, captured by a
     /// closure that leaves) and that have not been rebound since.  Where one of them is also
     /// in `live`, the store is handed on wherever it is live.
@@ -156,6 +162,33 @@ impl Val {
             corr: BTreeSet::new(),
         }
     }
+}
+
+/// `stale` for store `k` as it ends now: the variables naming it, joined to what an earlier
+/// end on another path left (`None` stays `None`).
+fn stale_on_end(st: &State, k: SKey, info: &SInfo) -> Option<BTreeSet<u16>> {
+    let holders: BTreeSet<u16> = st
+        .vars
+        .iter()
+        .filter(|(_, p)| p.contains(&Pt::Store(k)))
+        .map(|(v, _)| *v)
+        .collect();
+    if info.has(ENDED) {
+        info.stale.clone().map(|mut s| {
+            s.extend(holders);
+            s
+        })
+    } else {
+        Some(holders)
+    }
+}
+
+/// May `v` point into the ended store `info` on a path where it is ended?  The analysis's own
+/// placeholder names always may; `LOFT_RECORDS_NO_STALE_NAMES=1` answers yes for every name.
+fn maybe_stale(info: &SInfo, v: u16) -> bool {
+    v >= OLD_NAME
+        || crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_STALE_NAMES").is_some())
+        || info.stale.as_ref().is_none_or(|s| s.contains(&v))
 }
 
 fn info_of(st: &State, k: SKey) -> SInfo {
@@ -277,6 +310,15 @@ fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
             (false, false) => Vec::new(),
         },
         ended: meet(&a.ended, a.has(ENDED), &b.ended, b.has(ENDED)),
+        stale: match (a.has(ENDED), b.has(ENDED)) {
+            (true, true) => match (&a.stale, &b.stale) {
+                (Some(x), Some(y)) => Some(x.union(y).copied().collect()),
+                _ => None,
+            },
+            (true, false) => a.stale.clone(),
+            (false, true) => b.stale.clone(),
+            (false, false) => None,
+        },
         handed_by: meet(&a.handed_by, a.has(LIVE), &b.handed_by, b.has(LIVE)),
         live_some: BTreeSet::new(),
         live_null: BTreeSet::new(),
@@ -771,6 +813,9 @@ impl Run<'_> {
         for info in st.stores.values_mut() {
             forget_holder(info, v);
             info.ended.remove(&v);
+            if let Some(sn) = info.stale.as_mut() {
+                sn.remove(&v);
+            }
             info.handed_by.remove(&v);
             if info.live_some.contains(&v) {
                 info.live_some.clear();
@@ -795,6 +840,12 @@ impl Run<'_> {
                 }
                 if single && info.status & ENDED != 0 {
                     info.ended.insert(v);
+                }
+                // An alias made after the end points into it wherever it is ended.
+                if info.status & ENDED != 0
+                    && let Some(sn) = info.stale.as_mut()
+                {
+                    sn.insert(v);
                 }
             }
         }
@@ -918,7 +969,8 @@ impl Run<'_> {
                 && !info.ended.contains(&v);
             if report
                 && info.has(ENDED)
-                && (info.ended.contains(&v) || (only_this && !info.has(LIVE)) || weakly_ended)
+                && (info.ended.contains(&v)
+                    || (((only_this && !info.has(LIVE)) || weakly_ended) && maybe_stale(&info, v)))
             {
                 // Every end here is a free, which the runtime refuses on a free slot
                 // (`@FR-H-FreeTwice`) and runs on whatever store took the slot since.
@@ -957,6 +1009,7 @@ impl Run<'_> {
                 } else {
                     info.live.clone()
                 };
+                next.stale = stale_on_end(st, k, &info);
                 next.status = (info.status & !LIVE) | ENDED;
                 next.live.clear();
                 next.alts.clear();
@@ -971,6 +1024,7 @@ impl Run<'_> {
                 if info.ended.contains(&FREED_NAME) {
                     next.ended.insert(FREED_NAME);
                 }
+                next.stale = stale_on_end(st, k, &info);
                 next.status |= ENDED;
                 if rest_alts.len() < info.alts.len() {
                     next.live = rest_alts.iter().skip(1).fold(rest_alts[0].clone(), |m, a| {
@@ -1229,6 +1283,7 @@ impl Run<'_> {
             }
             let mut next = info.clone();
             next.ended.clone_from(&info.live);
+            next.stale = stale_on_end(st, h, &info);
             next.status = (info.status & !LIVE) | ENDED;
             next.live.clear();
             next.alts.clear();
@@ -1294,6 +1349,7 @@ impl Run<'_> {
             }
             let mut next = info.clone();
             next.ended.clone_from(&info.live);
+            next.stale = stale_on_end(st, k, &info);
             next.status = (info.status & !LIVE) | ENDED;
             next.live.clear();
             next.alts.clear();
@@ -1957,6 +2013,15 @@ impl Run<'_> {
         let mut st = st;
         let old = Self::pts(&st, t);
         st.vars.insert(x, old.clone());
+        // The link reads its target: where a store `t` names is ended, the link may name it.
+        for k in Self::stores_of(&old) {
+            if let Some(info) = st.stores.get_mut(&k)
+                && info.has(ENDED)
+                && let Some(sn) = info.stale.as_mut()
+            {
+                sn.insert(x);
+            }
+        }
         let (mut s, value) = self.eval(val, st)?;
         let child_read = matches!(val.unspan(),
             Value::Call(d, _) if data.def(*d).name() == "OpRefFromChildRec");
@@ -2419,6 +2484,10 @@ impl Run<'_> {
                 for k in Self::stores_of(&pts) {
                     if let Some(info) = s.stores.get_mut(&k) {
                         rule_out_holder(info, x);
+                        // Null on this arm: `x` names none of its stores here.
+                        if let Some(sn) = info.stale.as_mut() {
+                            sn.remove(&x);
+                        }
                         if info.ended.contains(&x) {
                             info.status &= !ENDED;
                             info.ended.clear();
@@ -3420,6 +3489,11 @@ impl Run<'_> {
                     forget_holder(info, x);
                     if info.ended.remove(&x) {
                         info.ended.insert(FREED_NAME);
+                    }
+                    if let Some(sn) = info.stale.as_mut()
+                        && sn.remove(&x)
+                    {
+                        sn.insert(FREED_NAME);
                     }
                 }
                 st.vars.remove(&x);

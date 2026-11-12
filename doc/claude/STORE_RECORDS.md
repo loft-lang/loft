@@ -145,6 +145,10 @@ An identity test of a capture slot against a variable that names one store
 (`if OpDistinctStore(OpGetDbRef(___clos_1, 0), __vdb_1)`, a loop rebuild's guarded free of the old
 capture) narrows the slot on each arm, as it narrows a variable (`LOFT_RECORDS_NO_SLOT_NARROW=1`).  The shared detach also nulls a copy (`k = h`)
 wherever both names must-hold every store they name.
+A store keeps `ended` (the names pointing into it on EVERY path where it is freed) and its MAY twin
+`stale` (on SOME such path); a re-free through a name that only MAY name the store needs the name in
+`stale` — a name rebound or reset on the paths that freed it is no second free.  An alias made
+after the end enters `stale`; unknown is every name (`LOFT_RECORDS_NO_STALE_NAMES=1`).
 A tuple member's free retires every work-ref an assignment made that member's claimant, where
 it still names the store (a loop drops the per-assignment claimant, `tuple_claimants`);
 `LOFT_NO_CLAIMANT_DISARM=1` leaves them naming it.  A collection a fn-ref call delivers into
