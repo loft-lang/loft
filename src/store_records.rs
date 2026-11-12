@@ -139,6 +139,61 @@ struct State {
     /// Variables known to name a record on this path whatever their store: bound from
     /// `OpChildRec` (a field's present child, or a fresh one), until rebound.
     nonnull: BTreeSet<u16>,
+    /// Per site, how many stores it minted on this path: a join renames the side that minted
+    /// fewer, so a site's current key names one generation on both sides.
+    mints: Mints,
+}
+
+/// A site's mint count per path ([`State::mints`]).  Only the ORDER of two sides' counts at a
+/// join is read, so two states equal in everything else are equal: a loop's head converges
+/// although every pass counts on.
+#[derive(Clone, Debug, Default)]
+struct Mints(BTreeMap<u32, u32>);
+
+impl PartialEq for Mints {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Mints {}
+
+/// `LOFT_RECORDS_NO_GENERATION_ALIGN=1`: a join takes each side's keys as they are.
+fn no_generation_align() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_GENERATION_ALIGN").is_some())
+}
+
+/// Join two paths after renaming, per site, the side that minted fewer stores there: its
+/// current store is the other side's older generation (one arm minted, the other did not).
+fn align_generations(a: &State, b: &State) -> Option<(State, State)> {
+    if no_generation_align() {
+        return None;
+    }
+    let sites: BTreeSet<u32> = a.mints.0.keys().chain(b.mints.0.keys()).copied().collect();
+    let behind = |x: &State, y: &State| -> Vec<u32> {
+        sites
+            .iter()
+            .filter(|s| {
+                x.mints.0.get(s).copied().unwrap_or(0) < y.mints.0.get(s).copied().unwrap_or(0)
+            })
+            .copied()
+            .collect()
+    };
+    let (ra, rb) = (behind(a, b), behind(b, a));
+    if ra.is_empty() && rb.is_empty() {
+        return None;
+    }
+    let mut a = a.clone();
+    let mut b = b.clone();
+    for site in ra {
+        demote(&mut a, site);
+        a.mints.0.insert(site, b.mints.0[&site]);
+    }
+    for site in rb {
+        demote(&mut b, site);
+        b.mints.0.insert(site, a.mints.0[&site]);
+    }
+    Some((a, b))
 }
 
 /// A value: the stores it may point into, and the stores CORRELATED with it — live only on
@@ -326,6 +381,63 @@ fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     }
 }
 
+/// Site `site`'s current store becomes the older generation (joined with any already there):
+/// every name of it is renamed, and a record's slots go with it.  The site then has no
+/// current store until its next mint.
+fn demote(st: &mut State, site: u32) {
+    let cur = SKey { site, older: false };
+    let old = SKey { site, older: true };
+    if let Some(info) = st.stores.remove(&cur) {
+        let merged = match st.stores.get(&old) {
+            Some(o) => join_info(o, &info),
+            None => info,
+        };
+        st.stores.insert(old, merged);
+        for p in st.vars.values_mut() {
+            if p.remove(&Pt::Store(cur)) {
+                p.insert(Pt::Store(old));
+            }
+        }
+        // A fn field's record captured the store this site named at its build: that is
+        // the older generation now, as for a variable.
+        for p in st.field_captures.values_mut() {
+            if p.remove(&Pt::Store(cur)) {
+                p.insert(Pt::Store(old));
+            }
+        }
+        // A record minted again is a new record: its slots start empty, and the
+        // previous generation's move with it.
+        for m in st.slots.values_mut() {
+            for v in m.values_mut() {
+                if v.pts.remove(&Pt::Store(cur)) {
+                    v.pts.insert(Pt::Store(old));
+                }
+                v.corr.remove(&cur);
+            }
+        }
+        if let Some(m) = st.slots.remove(&cur) {
+            let into = st.slots.entry(old).or_default();
+            for (off, v) in m {
+                let x = into.entry(off).or_default();
+                x.pts.extend(v.pts);
+                x.corr.clear();
+            }
+        }
+    }
+}
+
+/// Join the two arms of one branch.  They left the same state, so the arm that minted more at
+/// a site holds its newer store under the current key: the other arm's current store is renamed
+/// older first.  (Two passes of a loop, or two exits, need no renaming: on each path the current
+/// key already names the latest store, and renaming the earlier pass's would name a record that
+/// path already released.)
+fn join_arms(a: &State, b: &State) -> State {
+    if let Some((a, b)) = align_generations(a, b) {
+        return join_state(&a, &b);
+    }
+    join_state(a, b)
+}
+
 fn join_state(a: &State, b: &State) -> State {
     let null: Pts = [Pt::Null].into();
     let mut vars = BTreeMap::new();
@@ -406,6 +518,7 @@ fn join_state(a: &State, b: &State) -> State {
         flags,
         points,
         nonnull: a.nonnull.intersection(&b.nonnull).copied().collect(),
+        mints: a.mints.clone(),
     }
 }
 
@@ -469,6 +582,13 @@ fn join_slots(a: &State, b: &State) -> SlotParts {
 }
 
 /// Join two outcomes, where `None` is "no path".
+fn join_opt_arms(a: Option<State>, b: Option<State>) -> Option<State> {
+    match (a, b) {
+        (None, x) | (x, None) => x,
+        (Some(a), Some(b)) => Some(join_arms(&a, &b)),
+    }
+}
+
 fn join_opt(a: Option<State>, b: Option<State>) -> Option<State> {
     match (a, b) {
         (None, x) | (x, None) => x,
@@ -492,7 +612,7 @@ fn join_out(a: Option<(State, Val)>, b: Option<(State, Val)>) -> Option<(State, 
                 })
                 .collect();
             let pts = va.pts.union(&vb.pts).copied().collect();
-            Some((join_state(&sa, &sb), Val { pts, corr }))
+            Some((join_arms(&sa, &sb), Val { pts, corr }))
         }
     }
 }
@@ -621,6 +741,21 @@ impl Ops {
 
 /// The passes a loop may take before it is marked imprecise.
 const LOOP_PASSES: usize = 30;
+
+/// The passes of a loop analysed one by one, each from the state the one before left, before
+/// the head joins them (`LOFT_RECORDS_PEEL`; 1 is the old single first pass).  A defect that
+/// needs a store from an earlier pass to meet one from a later pass (a buffer rotated through
+/// two passes, freed by the third) shows only on a pass the head has not yet joined.
+fn peeled_passes() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| {
+        std::env::var("LOFT_RECORDS_PEEL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3)
+            .max(1)
+    })
+}
 
 /// A tuple local's MEMBER is followed as a variable of its own: its key is the tuple's
 /// variable and the member index packed above every real variable number.  A tuple whose
@@ -860,44 +995,8 @@ impl Run<'_> {
     /// generation (joined with any already there).
     fn fresh(st: &mut State, site: u32) -> SKey {
         let cur = SKey { site, older: false };
-        let old = SKey { site, older: true };
-        if let Some(info) = st.stores.remove(&cur) {
-            let merged = match st.stores.get(&old) {
-                Some(o) => join_info(o, &info),
-                None => info,
-            };
-            st.stores.insert(old, merged);
-            for p in st.vars.values_mut() {
-                if p.remove(&Pt::Store(cur)) {
-                    p.insert(Pt::Store(old));
-                }
-            }
-            // A fn field's record captured the store this site named at its build: that is
-            // the older generation now, as for a variable.
-            for p in st.field_captures.values_mut() {
-                if p.remove(&Pt::Store(cur)) {
-                    p.insert(Pt::Store(old));
-                }
-            }
-            // A record minted again is a new record: its slots start empty, and the
-            // previous generation's move with it.
-            for m in st.slots.values_mut() {
-                for v in m.values_mut() {
-                    if v.pts.remove(&Pt::Store(cur)) {
-                        v.pts.insert(Pt::Store(old));
-                    }
-                    v.corr.remove(&cur);
-                }
-            }
-            if let Some(m) = st.slots.remove(&cur) {
-                let into = st.slots.entry(old).or_default();
-                for (off, v) in m {
-                    let x = into.entry(off).or_default();
-                    x.pts.extend(v.pts);
-                    x.corr.clear();
-                }
-            }
-        }
+        demote(st, site);
+        *st.mints.0.entry(site).or_default() += 1;
         st.stores.insert(
             cur,
             SInfo {
@@ -2045,7 +2144,7 @@ impl Run<'_> {
             self.end(&mut absent, t, "the link write-back", true);
             self.bind(&mut absent, t, &Val::null());
             self.bind(&mut absent, x, &Val::null());
-            join_state(&present, &absent)
+            join_arms(&present, &absent)
         } else {
             // Released only where the new value is not in it: the stores the value names stay.
             let gone: BTreeSet<SKey> = Self::stores_of(&old)
@@ -2379,7 +2478,7 @@ impl Run<'_> {
                 let (ct, cf) = self.decide(c, st);
                 let (tt, tf) = ct.map_or((None, None), |s| self.decide(t, s));
                 let (et, ef) = cf.map_or((None, None), |s| self.decide(e, s));
-                (join_opt(tt, et), join_opt(tf, ef))
+                (join_opt_arms(tt, et), join_opt_arms(tf, ef))
             }
             Value::Call(op, a) if *op == self.ops.distinct => {
                 let (distinct, mut same) = self.decide_distinct(a, st);
@@ -2978,15 +3077,26 @@ impl Run<'_> {
     }
 
     fn run_loop(&mut self, body: &[Value], st: State) -> Option<(State, Val)> {
-        // The first pass on its own, from the state before the loop: the null a variable has
-        // before its first bind, and the store it held before the loop, never meet the state
-        // of a later pass at the head (a lazy buffer's mint, a store rebound away, a closure
-        // built per pass).  Its exits — the zero-pass one included — join the others.
-        self.loops.push((None, None));
-        let first = self.seq(body, st);
-        let (brk, cont) = self.loops.pop().unwrap_or_default();
-        let mut exits: Option<State> = brk;
-        let Some(mut head) = join_opt(first.map(|(s, _)| s), cont) else {
+        // The first passes on their own (`peeled_passes`), each from the state the one before
+        // left: the null a variable has before its first bind, and the store it held before
+        // the loop, never meet the state of a later pass at the head (a lazy buffer's mint, a
+        // store rebound away, a closure built per pass).  Their exits — the zero-pass one
+        // included — join the others.
+        let mut exits: Option<State> = None;
+        let mut from = st;
+        let mut head = None;
+        for _ in 0..peeled_passes() {
+            self.loops.push((None, None));
+            let out = self.seq(body, from);
+            let (brk, cont) = self.loops.pop().unwrap_or_default();
+            exits = join_opt(exits, brk);
+            head = join_opt(out.map(|(s, _)| s), cont);
+            let Some(h) = &head else {
+                break;
+            };
+            from = h.clone();
+        }
+        let Some(mut head) = head else {
             return exits.map(|s| (s, Val::null()));
         };
         Self::normalize(&mut head);
