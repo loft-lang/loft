@@ -33,8 +33,8 @@ works.
 ## The order of the large arcs
 
 The project's stages are taken in an order, each standing on ground the one before settled (the
-owner's sequence): **the rustc backend in good shape before the C backend; the language stable
-before loft-in-loft** ([@PLN91](https://github.com/loft-lang/plans/issues/91)).  Each stage
+owner's sequence): **the C backend is the one compiled target; the language stable before
+loft-in-loft** ([@PLN91](https://github.com/loft-lang/plans/issues/91)).  Each stage
 hands the next a settled thing rather than one to finish: the speed corpus @PLN157 and @PLN210
 built on the writers is harmonised into the front by [@PLN211](https://github.com/loft-lang/plans/issues/211)
 — every optimisation decided once, in the IR phase — so the C backend inherits it instead of
@@ -45,6 +45,20 @@ first.  The self-hosted compiler is also the deepest check on what crosses: a se
 implementation compared byte for byte with the Rust one at every level (@PLN91 § The path), so
 whatever is decided at the front is verified twice, and the intrinsic problems a single
 implementation hides surface as disagreements.
+
+**The rustc backend is shelved.**  The C99 backend (`src/c/`, [C_BACKEND.md](C_BACKEND.md)) is
+the compiled target: every performance bar is measured on its lanes and the Rust writer is no
+longer judged ([PERFORMANCE.md](PERFORMANCE.md) § the lanes), no new rewrite lands in
+`src/generation/` — an optimisation is decided once, in the IR phase ([@PLN211](https://github.com/loft-lang/plans/issues/211)),
+or in the C writer — and a compiled library ships C, never a rustc-built cdylib
+([@PLN206](https://github.com/loft-lang/plans/issues/206)).  The Rust writer stays in the tree,
+reachable as `--native-rust`, for one purpose: it is the reference the self-hosted ports are
+compared with byte for byte ([@PLN91 § The port method](plans/91-self-host/README.md#the-port-method--the-diff-is-the-work-the-reference-is-the-truth)),
+so a defect it shares with the language is still fixed in it under that method.  `--native` flips to
+the C backend at [@PLN203](https://github.com/loft-lang/plans/issues/203)'s last phase, and the
+writer leaves the tree at @PLN91's stage 6, with Cargo.  The reasons are measured in
+[plans/203-c99-default-backend.md](plans/203-c99-default-backend.md) § The position and
+[ROADMAP-history.md § The rustc backend](ROADMAP-history.md#the-rustc-backend--the-order-as-it-read-until-2026-11-12).
 
 **Games and the Tanmatsu: 2D first, 3D grown from it.**  The 3D stack exists, but using it to the
 fullest needs a large body of consistent art: world models (buildings, trees, hills, roads,
@@ -173,7 +187,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN191](https://github.com/loft-lang/plans/issues/191) | active | The loft crate split into a DAG of crates — an edit rebuilds its own layer, a clean release build compiles the layers in parallel (P0 measures incremental release first) |
 | [@PLN200](https://github.com/loft-lang/plans/issues/200) | next | The interpreter and the code generators as defined parts — `opt` (what every backend asks, the interpreter's optimisations), `interp` (a contract), `lower` (a compiled target's decisions as data) apart from the Rust writer: the base for an ANSI-C backend ([plan](plans/200-backend-structure.md)) |
 | [@PLN206](https://github.com/loft-lang/plans/issues/206) | active | One store model — the interpreter and the C runtime implement the same stores (C's model the standard, the interpreter moving to it unless measurably better), so libraries ship C binaries the interpreter runs and no rustc is needed ([model](STORE_MODEL.md)) |
-| [@PLN203](https://github.com/loft-lang/plans/issues/203) | next | The C99 backend as the only compiled target — the driver, diagnostics parity, the stdlib census, `par` with threads, libraries and hosts without rustc, the wasm and browser targets from C, the perf lane, three platforms, then the flip that shelves the Rust writer ([plan](plans/203-c99-default-backend.md)) |
+| [@PLN203](https://github.com/loft-lang/plans/issues/203) | active | The C99 backend as the only compiled target — the driver, diagnostics parity, the stdlib census, `par` with threads, libraries and hosts without rustc, the wasm and browser targets from C, the perf lane, three platforms, then the flip that shelves the Rust writer ([plan](plans/203-c99-default-backend.md)) |
 | [@PLN202](https://github.com/loft-lang/plans/issues/202) | next | The OCaml bar, for the compiler — the rows a loft-written front end uses, measured on both backends; P1–P4 parser steps (`>>`, `..base` record update, the scalar-match hole warning, slice totality), P5 the self tail call as an `opt` pass, P7 the re-measure; child of @PLN91 1a |
 | [@PLN82](https://github.com/loft-lang/plans/issues/82) | parked | Constant store, phases B and C |
 
