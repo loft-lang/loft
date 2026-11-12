@@ -19309,9 +19309,12 @@ impl Parser {
             }
             let record = matches!(tp.base(), Type::Reference(d, _)
                 if !p.data.is_type_var_placeholder(*d) && tp.heap_def_nr().is_some());
+            // A view of a collection's element may be absent (`r = v[0]` past the end) —
+            // except a loop's own element, which the loop only binds to one that exists.
             if !seen.is_empty()
                 && crate::parser::vectors::is_collection(tp.base())
                 && !crate::keys::element_view_present()
+                && !seen.first().is_some_and(|&root| p.vars.was_loop_var(root))
             {
                 return true;
             }
