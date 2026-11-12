@@ -833,6 +833,11 @@ callee starts as `[c; n]`.  Read where the literal is emitted.
 
 ## Element-first builds, complete writes and return buffers
 
+**`LOFT_NO_SPARE_RESTAMP=1`** / **`LOFT_NATIVE_SWAP_KEEPS_HANDUP=1`** (`@FR-H-FreeTwice`, runtime, rustc
+`--native`) are the bisect steps for a store a fn-ref call's buffer leaves unreleased or releases twice: the
+first keeps a kept spare's old allocation stamp when a callee builds in it (the result then reads as borrowed
+and nobody releases it), the second leaves an exchanged source on the fn-ref hand-up list (released twice).
+
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's
@@ -873,11 +878,6 @@ literal rebuild per iteration again — with it off, `v: vector<float> = [1.0, 2
 guarded on the local being unbound — and is the bisect step for a wrong constant
 vector inside a loop on native.  `LOFT_TRACE_LITHOIST=1` names each literal admitted and
 each declined with its reason.
-**`LOFT_NO_RETBUF_ADOPT=1`** (@PLN157 § V-u) makes a vector-returning function keep its
-delivery copies — with it on, a shape-A result local ADOPTS the hidden return buffer (built
-where it must end up; the exits deliver nothing; the backing reused across calls), on the C
-backend too — and is the bisect step for a wrong vector return, a leak at a vector-returning
-call, or values accumulating across calls.  `LOFT_TRACE_ADOPT=1` names the declining gate.
 **`LOFT_NO_HASH_RESERVE=1`** (`@FR-R-PushFill`'s hash clause) makes a counted loop that inserts
 into a hash grow the table as it fills again, instead of reserving it for the loop's inserts
 up front — the A/B for a keyed fill's time or memory; a reservation changes no value.

@@ -3302,9 +3302,43 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
         // canonical "carries a store" question — and asking it through `base` as well,
         // because an `Optional` wrapper hides the storage under it.  A scalar argument
         // is no one's borrow source and neither protects nor blocks.
-        if tp.heap_dep().is_none() && tp.base().heap_dep().is_none() {
+        // A `&` link carries the store of what it links to (its `OpCreateStack` arm below).
+        let carried = match tp {
+            // `τ?` carries τ's store: the `base` test below reads it.
+            Type::Optional(_) => tp,
+            Type::RefVar(inner)
+                if !crate::env_once!(std::env::var_os("LOFT_NO_LINK_ARG_PROTECT").is_some()) =>
+            {
+                inner.as_ref()
+            }
+            other => other,
+        };
+        if carried.heap_dep().is_none() && carried.base().heap_dep().is_none() {
+            // A TUPLE carries the stores of its heap members, and a callee may hand one back
+            // (`fn first(p: (R, integer)) -> R { p.0 }`).  The bracket names a slot and a
+            // member has none (a literal's member is built inside the argument, after the
+            // bracket), so the set is incomplete — skipped instead, it read complete while
+            // protecting nothing, and the copy's source-free released the member's store
+            // that its holder freed again (`@FR-H-FreeTwice`, the loft#981 shape).
+            // A tuple LITERAL whose heap members are nameable (`scan_args` hoists a member built
+            // inline) protects each member's root instead.  `LOFT_NO_TUPLE_ARG_COVER=1` skips
+            // the tuple as before: the re-free the records report.
+            if crate::data::tuple_heap_leaves(carried) > 0
+                && !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_ARG_COVER").is_some())
+            {
+                match tuple_member_roots(data, arg, carried) {
+                    Some(roots) => protectable.extend(roots),
+                    None => covers_all = false,
+                }
+            }
             continue;
         }
+        // What a `&` parameter links to; a `τ?` is no link.
+        let link_target: Option<&Type> = match tp {
+            Type::Optional(_) => None,
+            Type::RefVar(inner) => Some(inner),
+            _ => None,
+        };
         // Every argument whose type CARRIES A STORE is protectable, because the bracket
         // marks that store through the argument's own `DbRef` and every one of these
         // holds one.  loft#981 is why this must stay in step with `heap_dep` above: a
@@ -3354,12 +3388,49 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
                 Some(roots) => protectable.extend(roots),
                 None => covers_all = false,
             },
+            // A `&` LINK to a local (`OpCreateStack(u)` for a `&(integer, text)` parameter):
+            // the callee reaches `u`'s store through it and may hand that store back whole
+            // (`fn ret_r(p: &(…)) -> (…) { return p; }`), so the store to protect is `u`'s.
+            // Left out, the copy's source-free released `u`'s store and `u` freed it again
+            // (`@FR-H-FreeTwice`).  `LOFT_NO_LINK_ARG_PROTECT=1` skips a link parameter as the
+            // filter above did: the set then read COMPLETE while protecting nothing.
+            Value::Call(d, cargs)
+                if data.def(*d).name() == "OpCreateStack"
+                    && link_target.is_some_and(is_protectable_store_type) =>
+            {
+                match cargs.first().map(Value::unspan) {
+                    Some(Value::Var(u)) => protectable.push(*u),
+                    _ => covers_all = false,
+                }
+            }
             _ => covers_all = false,
         }
     }
     protectable.sort_unstable();
     protectable.dedup();
     (protectable, covers_all)
+}
+
+/// The slots naming every heap member of a tuple-literal argument of type `tp`, or `None` when
+/// one cannot be named (a tuple variable, a member built inline that was not hoisted).
+fn tuple_member_roots(data: &Data, arg: &Value, tp: &Type) -> Option<Vec<u16>> {
+    let (Value::Tuple(members), Type::Tuple(elems)) = (arg.unspan(), tp.base()) else {
+        return None;
+    };
+    let mut roots = Vec::new();
+    for (m, e) in members.iter().zip(elems) {
+        if crate::data::tuple_heap_leaves(e) == 0 {
+            continue;
+        }
+        if matches!(e.base(), Type::Tuple(_)) {
+            roots.extend(tuple_member_roots(data, m, e)?);
+        } else if is_protectable_store_type(e) {
+            roots.extend(view_root_slots(data, m)?);
+        } else {
+            return None;
+        }
+    }
+    Some(roots)
 }
 
 /// Can the @P290 bracket mark the store behind an argument of this type?
@@ -3729,6 +3800,15 @@ fn projection_walk(
                 nearest,
             ));
         }
+        // A tagged `__nullable<S>` slot's read is the slot's payload when present: the view
+        // lives at that payload, a place inside the slot's holder (`@FR-L-Null-Tag`), so a
+        // write to the slot disturbs it as it does any field (`@FR-B-Disturb`).
+        if let Value::If(c, t, e) = cur.unspan()
+            && let Some(payload) = tag_read_payload(data, c, t, e)
+        {
+            cur = payload;
+            continue;
+        }
         let Value::Call(d, args) = cur.unspan() else {
             return None;
         };
@@ -3822,6 +3902,45 @@ pub(crate) fn discharged_variable(v: &Value) -> Option<&Value> {
         }
         _ => None,
     }
+}
+
+/// The present arm of a tagged nullable slot's read — `Parser::nullable_pick`'s
+/// `if tag(slot) != 0 { slot.payload } else { OpNullRefSentinel() }` — or `None` for any
+/// other `if`.
+///
+/// Recognised by what the builder BUILDS: the absent arm is the sentinel, the present arm a
+/// field read of a slot, and the condition the discriminant test of that SAME slot.  A
+/// user's `if` with a sentinel arm is not a projection (see [`variant_check_subject`]).
+fn tag_read_payload<'a>(
+    data: &Data,
+    cond: &Value,
+    then_arm: &'a Value,
+    else_arm: &Value,
+) -> Option<&'a Value> {
+    fn call<'v>(data: &Data, v: &'v Value, op: &str) -> Option<&'v [Value]> {
+        match v.unspan() {
+            Value::Call(d, args) if data.def(*d).name() == op => Some(args),
+            _ => None,
+        }
+    }
+    let is_zero = |v: &Value| matches!(v.unspan(), Value::Int(0));
+    if !call(data, else_arm, "OpNullRefSentinel").is_some_and(<[Value]>::is_empty) {
+        return None;
+    }
+    let slot = call(data, then_arm, "OpGetField")?.first()?;
+    let [absent] = call(data, cond, "OpNot")? else {
+        return None;
+    };
+    let [as_int, zero] = call(data, absent, "OpEqInt")? else {
+        return None;
+    };
+    let [disc] = call(data, as_int, "OpConvIntFromEnum")? else {
+        return None;
+    };
+    let [tag_slot, at] = call(data, disc, "OpGetEnum")? else {
+        return None;
+    };
+    (is_zero(zero) && is_zero(at) && tag_slot.unspan() == slot.unspan()).then_some(then_arm)
 }
 
 /// The subject of a VARIANT-CHECK `if` — the shape a struct-enum payload projection wraps its
@@ -5297,7 +5416,54 @@ pub(crate) fn function_defs(data: &Data, d_nr: u32) -> Defs {
 #[must_use]
 pub(crate) fn ownership_of_with(data: &Data, d_nr: u32, value: &Value, defs: &Defs) -> Own {
     let def = data.def(d_nr);
-    Ownership::new(data).classify(value, &def.variables, defs)
+    match Ownership::new(data).classify(value, &def.variables, defs) {
+        // A TUPLE carries no store of its own: what the value may borrow is one of its
+        // members (`@FR-O-Oracle`, loft#2471): its heap members are the witnesses every reader
+        // compares against ([`join_witness_members`]).  One no member can witness is the
+        // unnameable join every reader copies.
+        Own::Join { base }
+            if base != u16::MAX
+                && join_witness_members(&def.variables, base).is_some_and(|m| m.is_empty()) =>
+        {
+            Own::Join { base: u16::MAX }
+        }
+        own => own,
+    }
+}
+
+/// `LOFT_NO_TUPLE_JOIN_WITNESS=1` — the writers compare a join's answer against a tuple base's
+/// slot, as before loft#2471: the C and rustc writers do not compile it, and the interpreter
+/// reads the slot's first bytes as the record, adopting a member that is not first (the
+/// re-free the store records report).
+pub fn tuple_join_witness_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_JOIN_WITNESS").is_some())
+}
+
+/// The members a join's TUPLE base is witnessed by: each heap member, any of which a callee or
+/// an arm can hand back of it (loft#2471, loft#2472).  `None` for a base that is no tuple (the
+/// base itself is the witness); `Some(empty)` for a tuple no member of which can witness (a heap
+/// member inside a nested tuple), which the oracle answers as a join with no witness at all.
+/// Every reader of an [`Own::Join`] base asks this, so the three writers compare against the
+/// same places: the answer is copied where its store is ANY of them.
+#[must_use]
+pub fn join_witness_members(vars: &Function, base: u16) -> Option<Vec<u16>> {
+    if base == u16::MAX || tuple_join_witness_off() {
+        return None;
+    }
+    let Type::Tuple(elems) = vars.tp(base).base() else {
+        return None;
+    };
+    let mut found = Vec::new();
+    for (i, e) in elems.iter().enumerate() {
+        if crate::data::tuple_heap_leaves(e) == 0 {
+            continue;
+        }
+        if matches!(e.base(), Type::Tuple(_)) {
+            return Some(Vec::new());
+        }
+        found.push(u16::try_from(i).ok()?);
+    }
+    Some(found)
 }
 
 /// True when `classify` resolves a `Call(d, …)` STRUCTURALLY — a store mint
@@ -7030,8 +7196,10 @@ impl GroupAppends<'_> {
                      this block appends to both, so one record set ends up holding everything \
                      they were given"
                 );
+                // A warning: the two batches land in one record set, which the author did
+                // not mean, and nothing else says so — `lost-write`'s reason to gate.
                 diags.add_at_coded(
-                    crate::diagnostics::Level::Advice,
+                    crate::diagnostics::Level::Warning,
                     Some("linked-group-double-fill"),
                     &msg,
                     file,

@@ -324,6 +324,13 @@ fn reclaim_safe(code: &Value, vars: &Function, st: u16) -> bool {
     if guard_escapes(code, st) {
         return false;
     }
+    // `@FR-L-CapRebind` — a closure record built over a local keeps the store the local named
+    // AT THE BUILD, past a rebind of the local: the type's deps name only the latest bind, so a
+    // store a CAPTURED local was ever bound to is read through the record after its last read
+    // here, and keeps its scope-exit free (loft#2459).
+    if crate::keys::caprebind_keep() && bound_to_a_captured_local(code, vars, st) {
+        return false;
+    }
     // #426B — the holder set must be the TRANSITIVE dep closure, not just the
     // one-hop depers.  A view-of-a-view keeps `st` live through an intermediate
     // local: `b = idx0(ww)` where `idx0` returns `w[0]` binds `b` with dep
@@ -368,6 +375,16 @@ fn reclaim_safe(code: &Value, vars: &Function, st: u16) -> bool {
         .collect();
     holders.insert(st);
     !holder_retained(code, &holders)
+}
+
+/// Does any `Set(c, OpGetField(st, …))` bind a captured local `c` to backing `st`?
+fn bound_to_a_captured_local(code: &Value, vars: &Function, st: u16) -> bool {
+    code.any_node(&mut |n| {
+        matches!(n.unspan(), Value::Set(c, rhs)
+            if vars.is_captured(*c)
+                && matches!(rhs.unspan(), Value::Call(_, args)
+                    if matches!(args.first().map(Value::unspan), Some(Value::Var(b)) if *b == st)))
+    })
 }
 
 /// Plan-57 — the reclaim PLAN, the single source of truth shared by
@@ -510,6 +527,7 @@ pub(super) fn lastuse_reclaim(
     gf_nr: u32,
     fr_nr: u32,
     drop_bearing: &HashSet<u16>,
+    data_if_distinct: u32,
 ) -> usize {
     // Eligibility + free-intent come from the shared plan, so the Phase-4 guard
     // (`reclaim_unfreed_eligible`) verifies exactly what this pass acts on.
@@ -569,13 +587,34 @@ pub(super) fn lastuse_reclaim(
         .collect();
     // Rebuild: before each op that allocates store `st`, emit the early frees of the
     // stores that died before it, then `st`'s relocated null-init, then the op.
+    //
+    // `@FR-H-FreeNull`, `@FR-H-FreeTwice` — a statement AHEAD of a relocated store's build
+    // runs before the store exists, so a free of it there (an early return's scope-exit
+    // free) releases nothing on any correct run — and on the interpreter, which declares
+    // nothing up front (#260 Fix B covers native only), it released whatever the store's
+    // uninitialised slot held: in the sqldb `introspect`, the record being returned, which
+    // the free-reset (ad302838b) then nulled.  Those frees are dropped with the relocation.
+    // `LOFT_RECLAIM_KEEPS_EARLY_FREES=1` keeps them.
+    let keep_early = crate::env_once!(std::env::var_os("LOFT_RECLAIM_KEEPS_EARLY_FREES").is_some());
+    let if_distinct = data_if_distinct;
     let mut count = 0;
-    for op in kept {
+    for mut op in kept {
         let allocs_here: Vec<u16> = owning
             .iter()
             .copied()
             .filter(|&st| contains_alloc(&op, st, db_nr))
             .collect();
+        if !keep_early {
+            // Not a store this statement builds itself: its returns may run after the build.
+            let pending: Vec<u16> = saved
+                .keys()
+                .copied()
+                .filter(|st| !allocs_here.contains(st))
+                .collect();
+            if !pending.is_empty() {
+                strip_frees_of(&mut op, &pending, fr_nr, if_distinct);
+            }
+        }
         for &st in &allocs_here {
             if let Some(frees) = before.get(&st) {
                 for &f in frees {
@@ -799,4 +838,27 @@ pub(super) fn last_use_guard(
         }
     }
     count
+}
+
+/// Drop, from each early RETURN's scope-exit free list inside `node`, every `OpFreeRef(v)` /
+/// `OpFreeRefIfDistinct(v, _)` of a variable in `vars` — a free of a store that does not exist
+/// yet where that return runs ([`lastuse_reclaim`]).  Only an exit's list: a free on a path
+/// that continues may follow a build this pass does not recognise.
+fn strip_frees_of(node: &mut Value, vars: &[u16], fr_nr: u32, if_distinct: u32) {
+    let is_free_of = |op: &Value| {
+        matches!(op.unspan(), Value::Call(o, args)
+            if (*o == fr_nr || *o == if_distinct)
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if vars.contains(v)))
+    };
+    let ops = match node {
+        Value::Block(bl) => Some(&mut bl.operators),
+        Value::Insert(ls) => Some(ls),
+        _ => None,
+    };
+    if let Some(ops) = ops
+        && matches!(ops.last().map(Value::unspan), Some(Value::Return(_)))
+    {
+        ops.retain(|op| !is_free_of(op));
+    }
+    node.for_each_child_mut(&mut |c| strip_frees_of(c, vars, fr_nr, if_distinct));
 }

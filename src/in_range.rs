@@ -10,7 +10,10 @@
 //! only when the element is a record — an index outside the vector; an in-range element of a
 //! vector of records IS a record.  Inside `for i in 0..len(v)` whose body can neither resize `v`
 //! nor assign `i` (the check `@FR-R-ForwardWalk` makes, `forward_walk::check_body`), every `i` is
-//! in range, so the discharge block is the read alone.
+//! in range, so the discharge block is the read alone.  The range end may also be a local `n`
+//! bound by `n = len(v)` as the statement before the loop, or anywhere before it when `n` holds
+//! the length of a vector of the frame's own for the rest of the function (the length-local
+//! form, `parser::length_locals::own_length_locals`, which the C writer's `@FR-R-Base` reads too).
 //!
 //! Not for a scalar element: `v[i]?` also discharges an element whose VALUE is null (a non-null
 //! scalar type can hold the sentinel, @C80), which no loop bound rules out.
@@ -35,6 +38,9 @@ struct Ops {
     get_vector_nullable: u32,
     conv_bool_from_ref: u32,
     get_field: u32,
+    rem_int: u32,
+    rem_int_nullable: u32,
+    conv_bool_from_int: u32,
 }
 
 fn var(v: &Value) -> Option<u16> {
@@ -87,7 +93,7 @@ fn len_bind(ops: &Ops, stmt: &Value) -> Option<(u16, Src)> {
     Some((*n, src(ops, &largs[0])?))
 }
 
-/// `for i in 0..len(v)`, or `for i in 0..n` right after `n = len(v)` (`alias`).
+/// `for i in 0..len(v)`, or `for i in 0..n` where `n` is `len(v)` (`alias`).
 fn match_range(
     ops: &Ops,
     block: &Block,
@@ -145,8 +151,70 @@ fn match_range(
     Some((v, *idx, *lv, first_body))
 }
 
-/// The record element read a discharge block wraps, when it reads `v` at `i` or `i#index`.
-fn record_discharge(ops: &Ops, node: &Value, v: Src, idx: u16, lv: u16) -> Option<Value> {
+/// The loop's view of its counters: the vector, `i#index` and `i`, and the local the range end
+/// was copied from (`n = len(v)` before `for i in 0..n`), when it was.
+#[derive(Clone, Copy)]
+struct Counter {
+    v: Src,
+    idx: u16,
+    lv: u16,
+    len_var: Option<u16>,
+}
+
+impl Counter {
+    /// `v`'s length, as the loop sees it: the local the range end came from, or `len(v)`.
+    fn is_length(&self, ops: &Ops, d: &Value) -> bool {
+        match d.unspan() {
+            Value::Var(n) => Some(*n) == self.len_var,
+            Value::Call(ld, a) => {
+                (*ld == ops.length_vector || *ld == ops.vector_len)
+                    && a.len() == 1
+                    && src(ops, &a[0]) == Some(self.v)
+            }
+            _ => false,
+        }
+    }
+
+    /// An index inside `v` for every turn: a counter, or a counter wrapped at the length
+    /// (`loop_shape::wrapped_counter`).
+    fn in_range(&self, data: &Data, ops: &Ops, at: &Value) -> bool {
+        let ours = |i: u16| i == self.idx || i == self.lv;
+        match at.unspan() {
+            Value::Var(i) => ours(*i),
+            _ => crate::loop_shape::wrapped_counter(data, at)
+                .is_some_and(|(i, _, d)| ours(i) && self.is_length(ops, d)),
+        }
+    }
+}
+
+/// `{ t = (i + c) % n; t ?? d }` with `n` the loop's length: the remainder alone, which never
+/// answers null there (`loop_shape::wrapped_counter`).
+fn wrapped_discharge(data: &Data, ops: &Ops, node: &Value, cn: &Counter) -> Option<Value> {
+    let Value::Block(b) = node.unspan() else {
+        return None;
+    };
+    if b.name != "ncc" {
+        return None;
+    }
+    let st = plain(&b.operators);
+    let [Value::Set(t, read), Value::If(test, then_arm, _)] = st.as_slice() else {
+        return None;
+    };
+    let (Value::Call(cd, cargs), Value::Call(rd, rargs)) = (test.unspan(), read.unspan()) else {
+        return None;
+    };
+    (*cd == ops.conv_bool_from_int
+        && cargs.len() == 1
+        && var(&cargs[0]) == Some(*t)
+        && var(then_arm) == Some(*t)
+        && *rd == ops.rem_int_nullable
+        && cn.in_range(data, ops, read))
+    .then(|| Value::Call(ops.rem_int, rargs.clone()))
+}
+
+/// The record element read a discharge block wraps, when it reads `v` at an index the loop
+/// keeps inside it (`Counter::in_range`).
+fn record_discharge(data: &Data, ops: &Ops, node: &Value, cn: &Counter) -> Option<Value> {
     let Value::Block(b) = node.unspan() else {
         return None;
     };
@@ -163,35 +231,63 @@ fn record_discharge(ops: &Ops, node: &Value, v: Src, idx: u16, lv: u16) -> Optio
     let Value::Call(rd, rargs) = read.unspan() else {
         return None;
     };
-    let at = var(rargs.get(2)?)?;
     (*cd == ops.conv_bool_from_ref
         && cargs.len() == 1
         && var(&cargs[0]) == Some(*t)
         && var(then_arm) == Some(*t)
         && *rd == ops.get_vector_nullable
-        && src(ops, &rargs[0]) == Some(v)
-        && (at == idx || at == lv))
-        .then(|| (**read).clone())
+        && src(ops, &rargs[0]) == Some(cn.v)
+        && cn.in_range(data, ops, rargs.get(2)?))
+    .then(|| (**read).clone())
 }
 
-fn strip(ops: &Ops, node: &mut Value, v: Src, idx: u16, lv: u16, n: &mut usize) {
-    if let Some(read) = record_discharge(ops, node, v, idx, lv) {
-        *node = read;
-        *n += 1;
+/// Every wrapped index's `??` dropped (counted in `w`), then every in-range record element's
+/// discharge (counted in `n`): the first makes the index the second reads.
+fn strip(data: &Data, ops: &Ops, node: &mut Value, cn: &Counter, n: &mut usize, w: &mut usize) {
+    if let Some(rem) = wrapped_discharge(data, ops, node, cn) {
+        *node = rem;
+        *w += 1;
         return;
     }
-    node.for_each_child_mut(&mut |c| strip(ops, c, v, idx, lv, n));
+    node.for_each_child_mut(&mut |c| strip(data, ops, c, cn, n, w));
+    if let Some(read) = record_discharge(data, ops, node, cn) {
+        *node = read;
+        *n += 1;
+    }
+}
+
+/// The length local a `for i in 0..n` block's end `n` is, as aliases: `n` holds `len(v)` for
+/// the rest of the function (`own`), so it is `v`'s length where the loop starts — one alias for
+/// each vector it is the length of (a vector's lockstep twins share its length local).
+fn length_local_aliases(stmt: &Value, own: &[(u16, u16)]) -> Vec<(u16, Src)> {
+    let Value::Block(fb) = stmt.unspan() else {
+        return Vec::new();
+    };
+    if fb.name != "For block" {
+        return Vec::new();
+    }
+    let Some(Value::Set(_, end)) = plain(&fb.operators).first() else {
+        return Vec::new();
+    };
+    let Some(n) = var(end) else {
+        return Vec::new();
+    };
+    own.iter()
+        .filter(|(m, _)| *m == n)
+        .map(|(n, v)| (*n, Src::Var(*v)))
+        .collect()
 }
 
 fn rewrite_in(
     data: &Data,
     ops: &Ops,
     vars: &crate::variables::Function,
+    own: &[(u16, u16)],
     node: &mut Value,
     fname: &str,
 ) -> usize {
     let mut n = 0;
-    node.for_each_child_mut(&mut |c| n += rewrite_in(data, ops, vars, c, fname));
+    node.for_each_child_mut(&mut |c| n += rewrite_in(data, ops, vars, own, c, fname));
     let block = match node {
         Value::Block(b) => b,
         // A wrapped block was reached as this node's child, just above.
@@ -199,21 +295,29 @@ fn rewrite_in(
         _ => return n,
     };
     // `n = len(v)` and, as the very next statement, `for i in 0..n`: nothing between them can
-    // shrink `v`, so `n` is its length where the loop starts.
-    for k in 1..block.operators.len() {
+    // shrink `v`, so `n` is its length where the loop starts.  Or `n` is a length local.
+    for k in 0..block.operators.len() {
         // The statement before, past the line marks.
-        let Some(prev) = block.operators[..k]
+        let prev = block.operators[..k]
             .iter()
             .rev()
             .find(|o| !matches!(o.unspan(), Value::Line(_)))
-        else {
-            continue;
+            .and_then(|prev| len_bind(ops, prev));
+        let locals = length_local_aliases(&block.operators[k], own);
+        let local = !locals.is_empty();
+        let aliases: Vec<(u16, Src)> = if local {
+            locals
+        } else {
+            prev.into_iter().collect()
         };
-        let Some(alias) = len_bind(ops, prev) else {
-            continue;
-        };
-        if let Value::Block(fb) = block.operators[k].unspan_mut() {
-            n += rewrite_for(data, ops, vars, fb, Some(alias), fname);
+        for alias in aliases {
+            if let Value::Block(fb) = block.operators[k].unspan_mut() {
+                let dropped = rewrite_for(data, ops, vars, fb, Some(alias), fname);
+                if local {
+                    crate::rewrite_census::fired("R-InRange/length-local", dropped);
+                }
+                n += dropped;
+            }
         }
     }
     n + rewrite_for(data, ops, vars, block, None, fname)
@@ -279,17 +383,29 @@ fn rewrite_for(
             }
         }
     }
-    let mut k = 0;
+    let cn = Counter {
+        v,
+        idx,
+        lv,
+        len_var: alias.map(|(n, _)| n),
+    };
+    let (mut k, mut w) = (0, 0);
     for o in &mut lp.operators[first_body..] {
-        strip(ops, o, v, idx, lv, &mut k);
+        strip(data, ops, o, &cn, &mut k, &mut w);
     }
-    if k > 0 && trace() {
+    if (k > 0 || w > 0) && trace() {
+        let wrapped = if w > 0 {
+            format!(", {w} wrapped index(es)")
+        } else {
+            String::new()
+        };
         eprintln!(
-            "in-range: {fname} {} — {k} discharge(s) dropped",
+            "in-range: {fname} {} — {k} discharge(s) dropped{wrapped}",
             vars.name(lv)
         );
     }
-    n + k
+    crate::rewrite_census::fired("R-InRange/wrapped", w);
+    n + k + w
 }
 
 /// The field clause's body check, for `for i in 0..len(d.f)`: why the body might resize
@@ -463,6 +579,9 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         get_vector_nullable: data.def_nr("OpGetVectorNullable"),
         conv_bool_from_ref: data.def_nr("OpConvBoolFromRef"),
         get_field: data.def_nr("OpGetField"),
+        rem_int: data.def_nr("OpRemInt"),
+        rem_int_nullable: data.def_nr("OpRemIntNullable"),
+        conv_bool_from_int: data.def_nr("OpConvBoolFromInt"),
     };
     let mut total = 0;
     for d in 0..data.definitions() {
@@ -477,9 +596,14 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             continue;
         }
         let fname = def.name().to_string();
+        let own = crate::parser::length_locals::own_length_locals(
+            data,
+            d,
+            &data.definitions[d as usize].variables,
+        );
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
         let vars = data.definitions[d as usize].variables.clone();
-        let n = rewrite_in(data, &ops, &vars, &mut code, &fname);
+        let n = rewrite_in(data, &ops, &vars, &own, &mut code, &fname);
         data.definitions[d as usize].code = code;
         if n > 0 {
             data.definitions[d as usize].variables.reset_intervals();

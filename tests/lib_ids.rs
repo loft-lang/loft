@@ -118,14 +118,49 @@ fn corpus() -> Vec<String> {
     files
 }
 
-const SHARDS: usize = 8;
+/// The keys in `code`'s type table that name no type (`?<id>`, `TypeNames::key` of an id the
+/// program does not have): no host can answer one, so it refuses the whole artifact.
+fn unknown_keys(code: &str) -> Vec<String> {
+    code.lines()
+        .skip_while(|l| !l.starts_with("const __TID_KEYS"))
+        .skip(1)
+        .take_while(|l| !l.starts_with("];"))
+        .map(str::trim)
+        .filter(|l| l.starts_with("\"?"))
+        .map(str::to_string)
+        .collect()
+}
 
-/// Every `SHARDS`-th program from `shard` on.  A shard runs in its own process (nextest):
+/// A tuple inserted into a vector has no type of its own: the insert takes the no-type id
+/// (`OpInsertVector`'s `db_tp`), which the code writes as it is.  It takes no place in the type
+/// table — masked as a flagged id it named type `0x3FFF`, `?16383`, and the host refused the
+/// library, every function of it interpreting.
+#[test]
+fn the_no_type_id_takes_no_table_slot() {
+    let src = "pub fn n_pairs(n: integer) -> integer {\n\
+                 out: vector<(integer, integer)> = [];\n\
+                 for i in 0..n { out.insert(0, (i, i * 2)); }\n\
+                 len(out)\n\
+               }\n";
+    let code = code_of("", src, "lib").expect("the library generates");
+    assert!(
+        code.contains("65535_i32"),
+        "the probe no longer passes the no-type id; pick another that does"
+    );
+    let unknown = unknown_keys(&code);
+    assert!(
+        unknown.is_empty(),
+        "the type table names {}",
+        unknown.join(", ")
+    );
+}
+
+/// Every `stride`-th program from `shard` on.  A shard runs in its own process (nextest):
 /// the parser keeps process-wide state, so two parses on two threads of one process are not
 /// the same parse twice.
-fn check_shard(shard: usize) {
+fn check_shard(shard: usize, stride: usize) {
     let (mut compared, mut differ) = (0, Vec::new());
-    for f in corpus().iter().skip(shard).step_by(SHARDS) {
+    for f in corpus().iter().skip(shard).step_by(stride) {
         let Ok(src) = fa::read_to_string(f) else {
             continue;
         };
@@ -137,6 +172,13 @@ fn check_shard(shard: usize) {
         compared += 1;
         if a != b {
             differ.push(format!("{f}: {}", first_difference(&a, &b)));
+        }
+        let unknown = unknown_keys(&a);
+        if !unknown.is_empty() {
+            differ.push(format!(
+                "{f}: names types no program has: {}",
+                unknown.join(", ")
+            ));
         }
     }
     assert!(
@@ -151,24 +193,17 @@ fn check_shard(shard: usize) {
     );
 }
 
-macro_rules! shards {
-    ($($name:ident = $k:expr),* $(,)?) => {
-        $(
-            #[test]
-            fn $name() {
-                check_shard($k);
-            }
-        )*
-    };
+/// Every 32nd program of the corpus, per commit: a literal id left in generated code shows in
+/// nearly every program that generates it, so a sample finds it; the whole corpus is the
+/// nightly's (CI_BUDGET.md: the per-commit suite fits 20 minutes).
+#[test]
+fn library_code_does_not_name_the_programs_numbers_in_a_sample() {
+    check_shard(0, 32);
 }
 
-shards!(
-    library_code_does_not_name_the_programs_numbers_0 = 0,
-    library_code_does_not_name_the_programs_numbers_1 = 1,
-    library_code_does_not_name_the_programs_numbers_2 = 2,
-    library_code_does_not_name_the_programs_numbers_3 = 3,
-    library_code_does_not_name_the_programs_numbers_4 = 4,
-    library_code_does_not_name_the_programs_numbers_5 = 5,
-    library_code_does_not_name_the_programs_numbers_6 = 6,
-    library_code_does_not_name_the_programs_numbers_7 = 7,
-);
+/// The whole corpus, every program in turn in this one process — the nightly's run.
+#[test]
+#[ignore = "the whole corpus — runs nightly in miri.yml's release-gate job; the per-commit run checks a sample"]
+fn library_code_does_not_name_the_programs_numbers_in_the_whole_corpus() {
+    check_shard(0, 1);
+}

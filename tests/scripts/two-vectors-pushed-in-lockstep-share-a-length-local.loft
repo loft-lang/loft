@@ -1,0 +1,170 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Base`'s length-local form, lockstep twins: two vectors of the frame's own whose empty
+// starts are adjacent statements, and whose every other write is one append to one followed, as
+// the very next statement, by one append to the other, have the same length at every statement.
+// So a local `n = len(ea)` is `eb`'s length too, and the C reads `eb[i]` under `for i in 0..n`
+// (the counter clause) or under `while i < n` (the guard clause) with no index test.
+// Each cell answers what the interpreter answers; the declining shapes make the two lengths
+// differ (t3, t4, t7, t8), or break the shape without doing so (t5, t6).  A read past the
+// shorter one answers its default, 7.  Hand-computed in each cell's comment.
+//
+// @falsified-at: 27c0a84c0 — by hand: `lockstep_twins` with its pair check struck (every write of
+//   either admitted) answers t4 = 97 for 49 on `--native-c`; with the starts' adjacency struck,
+//   t3 = 188 for 140.  The LOFT_VERIFY build stops on "a proven index: int" under both.  The
+//   interpreter passes under both: an integer element's read never goes through `(R-InRange)`.
+// CHANNEL: the asserts, and the `LOFT_VERIFY` build of the C, which stops on the accessor's own
+// proof ("a proven index: int") where a read lies past the length.
+// ARMED: LOFT_VERIFY for the counter and guard clauses; the interpreter's asserts need no
+// instrument.
+// WITNESS: each assert message prints the value it read.
+// HOLDS: the shapes a twin needs are cells of this file — adjacent starts (t3), only paired
+// appends (t4, t7, t8, t9), the two appends adjacent (t5), no element write (t6) — on a local
+// (t0, in `main`) and on a work buffer (every other function: its vectors are promoted).
+
+fn grow(v: &vector<integer>) { v += [1]; }
+
+// t1 — admitted, local starts, the pair in a branch: k in {0,2,3,5,6,8,9} (k % 3 != 1),
+// ea = 7k, eb = 11k, so 18 × 33 = 594.
+fn branch_pairs(m: integer) -> integer {
+  ea: vector<integer> = [];
+  eb: vector<integer> = [];
+  for k in 0..m { if k % 3 != 1 { ea += [k * 7]; eb += [k * 11]; } }
+  ne = len(ea);
+  s = 0;
+  for pi in 0..ne { s += (ea[pi] ?? 0) + (eb[pi] ?? 7); }
+  s
+}
+
+// t2 — admitted both ways, the pair in the other order and the length taken from the second
+// vector: ea = [0, 1, 2], eb = [0, 10, 20]: 3 + 30 = 33.
+fn reversed(m: integer) -> integer {
+  ea: vector<integer> = [];
+  eb: vector<integer> = [];
+  for k in 0..m { eb += [k * 10]; ea += [k]; }
+  ne = len(eb);
+  s = 0;
+  for pi in 0..ne { s += (ea[pi] ?? 7) + (eb[pi] ?? 0); }
+  s
+}
+
+// t3 — declines: the starts are not adjacent, `ea` = [100, 0, 1, 2], eb = [0, 10, 20]:
+// 103 + 30 + 7 = 140.
+fn gap(m: integer) -> integer {
+  ea: vector<integer> = [];
+  ea += [100];
+  eb: vector<integer> = [];
+  for k in 0..m { ea += [k]; eb += [k * 10]; }
+  ne = len(ea);
+  s = 0;
+  for pi in 0..ne { s += (ea[pi] ?? 0) + (eb[pi] ?? 7); }
+  s
+}
+
+// t4 — declines: one unpaired append, ea = [0, 1, 2, 9]: 12 + 30 + 7 = 49.
+fn extra(m: integer) -> integer {
+  ea: vector<integer> = [];
+  eb: vector<integer> = [];
+  for k in 0..m { ea += [k]; eb += [k * 10]; }
+  ea += [9];
+  ne = len(ea);
+  s = 0;
+  for pi in 0..ne { s += (ea[pi] ?? 0) + (eb[pi] ?? 7); }
+  s
+}
+
+// t5 — declines (lengths equal): a statement between the two appends, t = 3: 3 + 3 + 30 = 36.
+fn apart(m: integer) -> integer {
+  ea: vector<integer> = [];
+  eb: vector<integer> = [];
+  t = 0;
+  for k in 0..m { ea += [k]; t += 1; eb += [k * 10]; }
+  ne = len(ea);
+  s = t;
+  for pi in 0..ne { s += (ea[pi] ?? 0) + (eb[pi] ?? 7); }
+  s
+}
+
+// t6 — declines (lengths equal): an element write, eb = [5, 10, 20]: 3 + 35 = 38.
+fn elem(m: integer) -> integer {
+  ea: vector<integer> = [];
+  eb: vector<integer> = [];
+  for k in 0..m { ea += [k]; eb += [k * 10]; }
+  eb[0] = 5;
+  ne = len(ea);
+  s = 0;
+  for pi in 0..ne { s += (ea[pi] ?? 0) + (eb[pi] ?? 7); }
+  s
+}
+
+// t7 — declines: one restarted alone, eb = []: 3 + 3 × 7 = 24.
+fn reset(m: integer) -> integer {
+  ea: vector<integer> = [];
+  eb: vector<integer> = [];
+  for k in 0..m { ea += [k]; eb += [k * 10]; }
+  eb = [];
+  ne = len(ea);
+  s = 0;
+  for pi in 0..ne { s += (ea[pi] ?? 0) + (eb[pi] ?? 7); }
+  s
+}
+
+// t8 — declines: a callee appends to one, ea = [0, 1, 2, 1]: 4 + 30 + 7 = 41.
+fn by_ref(m: integer) -> integer {
+  ea: vector<integer> = [];
+  eb: vector<integer> = [];
+  for k in 0..m { ea += [k]; eb += [k * 10]; }
+  grow(ea);
+  ne = len(ea);
+  s = 0;
+  for pi in 0..ne { s += (ea[pi] ?? 0) + (eb[pi] ?? 7); }
+  s
+}
+
+// t9 — declines: two elements appended to one side, eb = [0, 0, 1, 1, 2, 2], ne = len(eb) = 6:
+// ea's three and three misses (3 + 21) + 6 = 30.
+fn two_on_one(m: integer) -> integer {
+  ea: vector<integer> = [];
+  eb: vector<integer> = [];
+  for k in 0..m { ea += [k]; eb += [k, k]; }
+  ne = len(eb);
+  s = 0;
+  for pi in 0..ne { s += (ea[pi] ?? 7) + (eb[pi] ?? 0); }
+  s
+}
+
+// t10 — admitted, the guard clause: `while i < ne` keeps `eb[i]` below its twin's length:
+// ea = [0, 1, 2], eb = [0, 10, 20]: 33.
+fn guarded(m: integer) -> integer {
+  ea: vector<integer> = [];
+  eb: vector<integer> = [];
+  for k in 0..m { ea += [k]; eb += [k * 10]; }
+  ne = len(ea);
+  s = 0;
+  i = 0;
+  while i < ne { s += (ea[i] ?? 0) + (eb[i] ?? 7); i += 1; }
+  s
+}
+
+fn main() {
+  // t0 — admitted, local starts in `main` (not a work buffer): 3 + 30 = 33.
+  ea: vector<integer> = [];
+  eb: vector<integer> = [];
+  for k in 0..3 { ea += [k]; eb += [k * 10]; }
+  ne = len(ea);
+  s = 0;
+  for pi in 0..ne { s += (ea[pi] ?? 0) + (eb[pi] ?? 7); }
+  assert(s == 33, "t0 {s}");
+  assert(branch_pairs(10) == 594, "t1 {branch_pairs(10)}");
+  assert(reversed(3) == 33, "t2 {reversed(3)}");
+  assert(gap(3) == 140, "t3 {gap(3)}");
+  assert(extra(3) == 49, "t4 {extra(3)}");
+  assert(apart(3) == 36, "t5 {apart(3)}");
+  assert(elem(3) == 38, "t6 {elem(3)}");
+  assert(reset(3) == 24, "t7 {reset(3)}");
+  assert(by_ref(3) == 41, "t8 {by_ref(3)}");
+  assert(two_on_one(3) == 30, "t9 {two_on_one(3)}");
+  assert(guarded(3) == 33, "t10 {guarded(3)}");
+  println("ok");
+}

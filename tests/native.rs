@@ -6067,6 +6067,7 @@ fn a_generation_run_does_not_read_the_previous_programs_facts() {
 /// a vector of records as bytes — answer under `wasmtime` what the interpreter answers.
 /// Skips without `clang`, the `wasm32-wasip2` target or `wasmtime`.
 #[test]
+#[ignore = "a wasm32 build of a whole program, 128 s in the serial native group — runs nightly in miri.yml's release-gate job"]
 fn a_c_shim_links_into_the_wasm_target() -> std::io::Result<()> {
     let have = |tool: &str| {
         loft::platform::process::harness_command(tool)

@@ -20,8 +20,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > would have said why it ran long.
 >
 > **A WARM local run of the whole suite fits in 20 minutes** (owner): nothing to rebuild, every
-> test.  When one does not, that is the trigger to optimise the SUITE — split it, parallelise
-> it, or move tests to a nightly or PR leg — and the limit is never raised.  Enforced twice:
+> test.  When one does not, that is the trigger to optimise the SUITE — make its slow tests
+> fast, parallelise them, or move them to a nightly or PR leg — and the limit is never raised,
+> nor worked around: a LOCAL run is one run — splitting it into several capped runs
+> (`--partition` halves) to cover what one cannot is the cap circumvented, not met.  Sharding
+> is for CI only.  Enforced twice:
 > `global-timeout = "20m"` in `.config/nextest.toml`'s default profile (nextest itself cancels
 > the run, however it was started), and `scripts/hard_cap.sh`, which `find_problems.sh` arms
 > around a whole invocation, rebuild included.  Where a warm run stands, measured per binary:

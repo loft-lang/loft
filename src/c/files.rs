@@ -110,14 +110,48 @@ impl Cx<'_> {
                 out.push_str("    loft_put(b, loft_u32(s, r.rec, r.pos), 4, le);\n");
             }
             Parts::Vector(elem) => {
+                let size = self.stores.size(*elem);
                 let _ = writeln!(
                     out,
-                    "    uint32_t v = loft_collection_rec(s, r.rec, r.pos);\n    uint32_t n = v == 0 ? 0 : loft_u32(s, v, 4);\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref e = {{ r.store_nr, v, 8 + i * {}, 0 }};\n        loft_ser{elem}(b, e, le);\n    }}",
-                    self.stores.size(*elem)
+                    "    uint32_t v = loft_collection_rec(s, r.rec, r.pos);\n    uint32_t n = v == 0 ? 0 : loft_u32(s, v, 4);"
+                );
+                // A vector of elements whose stored bytes ARE their written bytes, in the
+                // host's order (a byte has no order), is one block: the elements lie side by
+                // side from byte 8 of the vector's record.  glb `save_glb`: -44 %.
+                if let Some(w) = self.raw_width(*elem)
+                    && w == size as usize
+                {
+                    let order = if w == 1 { "1".to_string() } else { "le == loft_host_le()".to_string() };
+                    let _ = writeln!(
+                        out,
+                        "    if (n && {order}) {{ loft_push(b, (const char *) loft_at(s, v, 8), (size_t) n * {w}); return; }}"
+                    );
+                }
+                let _ = writeln!(
+                    out,
+                    "    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref e = {{ r.store_nr, v, 8 + i * {size}, 0 }};\n        loft_ser{elem}(b, e, le);\n    }}"
                 );
             }
             // A plain enum and a byte: the stored byte.
             _ => out.push_str("    loft_push_char(b, (char) *loft_at(s, r.rec, r.pos));\n"),
+        }
+    }
+
+    /// The width of a value of type `tp` whose written bytes are its stored bytes in the host's
+    /// order (`loft_put` of the stored word, or the stored byte): the builtin integers, floats,
+    /// singles, characters and booleans, the 4-byte integers, and the plain bytes and enums.
+    /// `None` for a biased or offset narrow integer, a text, a record and a collection.
+    fn raw_width(&self, tp: u16) -> Option<usize> {
+        match &self.stores.types[tp as usize].parts {
+            Parts::Base => match tp {
+                0 | 1 | 3 => Some(8),
+                2 | 6 => Some(4),
+                4 => Some(1),
+                _ => None,
+            },
+            Parts::Int(..) | Parts::IntRaw(..) => Some(4),
+            Parts::Byte(..) | Parts::Enum(..) => Some(1),
+            _ => None,
         }
     }
 

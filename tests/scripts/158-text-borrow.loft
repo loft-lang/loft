@@ -128,7 +128,8 @@ fn t10(words: vector<text>) -> integer {
   n
 }
 
-// t11 — DECLINES: `p` returned from the body.
+// t11 — BORROWS: `p` returned from the body.  A loop variable is never the text return
+// buffer; the result is copied out, so the walk borrows its element.
 fn t11(words: vector<text>, want: text) -> text {
   for p in words {
     if p == want { return p; }

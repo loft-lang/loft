@@ -753,7 +753,13 @@ impl Parser {
             && (base as usize) < attrs_n
             && !self.data.def(d_nr).attributes()[base as usize].hidden
             && matches!(&self.data.def(d_nr).code, Value::Block(bl)
-                if Self::every_return_leaf_views_var(&self.data, &bl.operators, base, g_nr))
+            if Self::every_return_leaf_views_one_of_as(
+                &self.data,
+                &bl.operators,
+                &[base],
+                g_nr,
+                collection_return_views_whole_binds(&new_returned),
+            ))
         {
             // Written directly: `set_returned` refuses a second write on purpose (a return
             // type must not change), and this does not change it — it adds the deps the
@@ -787,7 +793,7 @@ impl Parser {
 
     /// loft#1880 — the visible heap parameters an instance's every return leaf is a VIEW into
     /// (`v[0]`, `w.h`), with self calls read by induction
-    /// ([`Self::every_return_leaf_views_one_of`]), or `None`.  A leaf that is a bare parameter
+    /// ([`Self::every_return_leaf_views_one_of_as`]), or `None`.  A leaf that is a bare parameter
     /// is left to `bind_monomorph_join_return`, which binds that Join into an owned local: the
     /// result is then the instance's own, and declaring it a borrow too would make the caller
     /// copy it and drop the instance's copy.
@@ -831,7 +837,17 @@ impl Parser {
             crate::use_analysis::return_ownership(&self.data, d_nr),
             crate::use_analysis::Own::Borrowed { .. }
         );
+        // …left to `bind_monomorph_join_return`, which binds RECORD returns only: a collection
+        // return (a `hash`, a `vector`) has no such binder, so it takes the parameter set its
+        // twin declares (`-> hash["a", "b"]`) — undeclared, the caller adopted its own
+        // argument's store as fresh and freed it beside the argument (G-Mono/1872).
+        let record_return =
+            matches!(
+                def.returned().base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            ) || crate::env_once!(std::env::var_os("LOFT_NO_TEMPLATE_CALL_VIEW").is_some());
         if !borrows_only
+            && record_return
             && bl
                 .operators
                 .iter()
@@ -840,8 +856,14 @@ impl Parser {
         {
             return None;
         }
-        Self::every_return_leaf_views_one_of(&self.data, &bl.operators, &params, g_nr)
-            .then_some(params)
+        Self::every_return_leaf_views_one_of_as(
+            &self.data,
+            &bl.operators,
+            &params,
+            g_nr,
+            collection_return_views_whole_binds(def.returned()),
+        )
+        .then_some(params)
     }
 
     /// loft#1874 — point lambda `b` at the closure record lambda `a` already shares with any
@@ -966,4 +988,15 @@ impl Parser {
             &mut std::collections::HashSet::new(),
         )
     }
+}
+
+/// `@FR-F-Ret`, `@FR-B-Copy` — does a whole-variable bind inside an instance returning `ret`
+/// VIEW its source?  For a collection (a vector, a keyed collection) it does: the bind shares
+/// the store, and the concrete twin declares the borrow (`-> hash["x"]`); for a record it
+/// copies.  Undeclared, the caller lifted a collection answer as fresh and freed its own
+/// argument's store beside the argument.  `LOFT_NO_COLLECTION_LOCAL_VIEW=1` answers no.
+fn collection_return_views_whole_binds(ret: &Type) -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_NO_COLLECTION_LOCAL_VIEW").is_some())
+        && !matches!(ret.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
+        && crate::data::has_lifetime_concern(ret)
 }

@@ -1,5 +1,4 @@
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
-index 35917b42e..eeaaed684 100644
 --- a/src/codegen_runtime.rs
 +++ b/src/codegen_runtime.rs
 @@ -53,38 +53,6 @@ pub use crate::live_control::n_live_flip;
@@ -42,10 +41,9 @@ index 35917b42e..eeaaed684 100644
  /// Both types have identical layout (u16 + u32 + u32).
  #[must_use]
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index 7dbfe5c15..f928b9e1d 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
-@@ -676,14 +676,6 @@ impl Output<'_> {
+@@ -680,14 +680,6 @@ impl Output<'_> {
                      // block that binds it — is a statement list with a value tail, which
                      // inside a tuple is legal Rust only as a block expression.
                      let as_block = e.unspan().kind() == ValueType::Insert;
@@ -60,7 +58,7 @@ index 7dbfe5c15..f928b9e1d 100644
                      if as_block {
                          write!(w, "{{ ")?;
                      }
-@@ -700,9 +692,6 @@ impl Output<'_> {
+@@ -704,9 +696,6 @@ impl Output<'_> {
                      if as_block {
                          write!(w, " }}")?;
                      }
@@ -71,10 +69,9 @@ index 7dbfe5c15..f928b9e1d 100644
                          write!(w, ") as u8)")?;
                      }
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 986576949..0f72841bf 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -2433,15 +2433,6 @@ impl Parser {
+@@ -2608,15 +2608,6 @@ impl Parser {
              // the same carve-outs — the sibling-variant join, the statement-position discard,
              // the honest nullability.  Gated on a KNOWN expected type exactly as `if` is: the
              // first concrete arm has nothing to agree with and names the type instead.
@@ -90,61 +87,7 @@ index 986576949..0f72841bf 100644
              let arm_of_sibling = context == "else"
                  || ((context == "if" || context == "match_arm") && !result.is_unknown());
              let tuple_rewritten = !self.first_pass
-@@ -4834,53 +4825,6 @@ impl Parser {
-         }
-     }
- 
--    /// loft#1742 — a heap-carrying tuple returned straight from a CALL arrives in its stored
--    /// spelling (`__tuple<text,integer>`), which the return's tuple rewrite does not take, so a
--    /// member widening into the declared `__tuple<text,float>` (`@FR-C-Num`) failed `convert`.
--    /// Bound to a stack-tuple local first — the shape the same function written
--    /// `a: (text, integer) = mk(); a` has — the rewrite writes each member at the declared type,
--    /// converting it.  Answers the tail's new type, or `None` when the tail is not that pair.
--    /// Asked by both return sites, the tail of a body and a `return` statement.
--    pub(crate) fn unbox_stored_tuple_tail(
--        &mut self,
--        t: &Type,
--        result: &Type,
--        tail: &mut Value,
--    ) -> Option<Type> {
--        let (Type::Reference(d, _), Type::Reference(r, _)) = (t, result) else {
--            return None;
--        };
--        if self.first_pass
--            || d == r
--            || !self.data.def(*d).name().starts_with("__tuple<")
--            || !self.data.def(*r).name().starts_with("__tuple<")
--            || !self.changes_representation(t, result)
--        {
--            return None;
--        }
--        let (elems, declared) = (
--            self.stored_tuple_elements(t),
--            self.stored_tuple_elements(result),
--        );
--        if elems.len() != declared.len()
--            || !elems
--                .iter()
--                .zip(&declared)
--                .all(|(x, y)| x.is_equal(y) || self.changes_representation(x, y))
--        {
--            return None;
--        }
--        let src = Type::Tuple(elems.clone());
--        let tmp = self.create_unique("_tret", &src);
--        let unboxed = self.unbox_tuple_from_dbref(tail.clone(), &elems);
--        *tail = v_block(
--            vec![v_set(tmp, unboxed), Value::Var(tmp)],
--            src.clone(),
--            "tuple_return_unbox",
--        );
--        Some(src)
--    }
--
-     pub(crate) fn rewrite_tail_tuple_to_synthetic_struct(
-         &mut self,
-         synthetic_d_nr: u32,
-@@ -20786,9 +20730,6 @@ impl Parser {
+@@ -22579,9 +22570,6 @@ impl Parser {
              // "expected __tuple<…>, got (…)" even though the SAME tuple as a
              // function's final expression compiles.  parse_return is the statement
              // path; block_result is the tail path — they must agree.
@@ -155,10 +98,9 @@ index 986576949..0f72841bf 100644
                  // Through `base()`, exactly as `block_result`'s twin above: the statement path
                  // and the tail path must agree about what a tuple is, and an absent tuple is one
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index d895f8ae8..9c920f4e1 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -7655,16 +7655,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -8122,16 +8122,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                      && !self.vars.work_texts().contains(&d)
                      && !self.vars.is_argument(d)
              });

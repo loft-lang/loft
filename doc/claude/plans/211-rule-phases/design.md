@@ -185,7 +185,7 @@ is computed today.
 | `(R-SliceArg)` carrier | the interpreter's slot reuse with an in-place `init()` is already its analogue |
 | `(R-Transient)` emission, `(R-SliceInto)` transient clause | arena structs and views: representation.  Its site PLAN moves to `opt/transient.rs` (as `(R-ValueRecord)` splits plan and emission) so the census credits the decision; its interpreter gains go to arc D as widenings of `(R-Place)` / `(R-Destination)` (a vector built in its destination's store, a view return) and `(R-DecodeView)` (a dead tree's shape twin) |
 | `(R-Apart)` instances 2, 3 | a dynamically indexed value outside the store; the interpreter's tuple is read at constant indices only |
-| `(R-Fill)` | needs a fill kernel; spans under eight lost on `fill_triangle`.  The owner decides whether a kernel is wanted |
+| `(R-Fill)` | stays in the writers until a SCRIPT workload has a fill loop: priced 2026-11-11, a script-local `clear` loop on 640×480 is 6.55 ms interpreted against 0.16 ms for one bulk fill (40×), but every loop the rule matches is in a library (graphics, through drawing, stage, text2d), and a `use`d library runs compiled for an interpreted script (@C71) — graphics' `clear` from `--interpret` is 54 µs, its writer's fill already applied.  No measured interpreter routine gains; the move (an IR rewrite into a fill kernel, the writers' clauses deleted) is built when one does |
 
 **The rustc-only rules**, which are lost when that writer retires unless ported:
 

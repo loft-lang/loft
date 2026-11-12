@@ -174,10 +174,18 @@ fn view_place_in<'a>(
         // naming different containers name none — so the whole binding stopped being a view
         // and loft#1399 came back.  `(B-Disturb)` is about places the author can disturb, and
         // nothing in the program can reassign a `__vdb_N`; `Self::resolve_view_root` stops at
-        // one for the same reason and says so.
+        // one for the same reason and says so.  A compiler temp holding a BORROWED vector —
+        // its deps name a place, as a `match` subject's `_match_subj_N = o.items` does — is a
+        // view itself, and a capture read out of it is a view of that place
+        // (`@FR-P-Cap-View`).  Only a vector: a record temp of the `&`-walk lowering borrows
+        // too, and naming its places would refuse writes no program made through a view.
         other => {
             if let Some((place, elems)) = crate::use_analysis::view_source_place_depth(data, other)
-                .filter(|((c, _), _)| !function.is_compiler_generated(*c))
+                .filter(|((c, _), _)| {
+                    !function.is_compiler_generated(*c)
+                        || (matches!(function.tp(*c).base(), crate::data::Type::Vector(..))
+                            && !function.tp(*c).depend().is_empty())
+                })
             {
                 match out.iter_mut().find(|(p, _)| *p == place) {
                     Some((_, d)) => *d = (*d).max(elems),

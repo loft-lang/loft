@@ -171,7 +171,7 @@ module and the C header and compare every answer and every byte of the store.
 | `body/par.rs` | `par`: the worker over the rows of a `for … par(…)` loop, its results in a buffer the loop reads |
 | `body/misc.rs` | the operators no family claims: `abs`, `**`, vector reverse and sort, a text's bytes |
 | `body/files.rs` | files: a `File`'s description and text, a value written or read in its binary form, the filesystem operations |
-| `files.rs` | the binary form of each record and vector type a program writes or reads: one `loft_ser{tp}` / `loft_de{tp}` pair |
+| `files.rs` | the binary form of each record and vector type a program writes or reads: one `loft_ser{tp}` / `loft_de{tp}` pair; a vector whose element's written bytes are its stored bytes (`raw_width`: the builtin numbers and booleans, the 4-byte integers, plain bytes and enums) is written as one block where the order is the host's |
 | `loft_cc.h` | the macro layer — the ONLY place the C names a compiler — pasted first into every unit |
 | `loft_store.h` | `src/store.rs`' allocator, ported: the free tree, parked lists, lazy frees, tombstones |
 | `loft_rt.h` | the C runtime, pasted after it |
@@ -212,6 +212,13 @@ The OS beyond C99 — a monotonic clock, a path's kind and size, directories, tr
 POSIX where `loft_cc.h` finds the platform to be one (`LOFT_POSIX`).  `-DLOFT_NO_POSIX` builds
 against ISO C99 alone: the clock is `clock()`, a file is what `fopen` opens, a directory is
 never seen, a listing is empty and the directory operations answer `Other`.
+
+One safe hint carries a choice: a not-null test's else — a discharge's null path — opens with
+`LOFT_COLD_PATH()` (an empty `asm volatile`), which keeps the branch a predicted jump rather than
+a select in the dependency chain around it.  A float's discharge keeps it (without it bench 11
+`par` ran 23–49 % slower); an integer falling back to a literal (`v[i] ?? 0`) goes unmarked, and
+the compiler makes it a select (hex_form `boundary_loops` −36 % on clang, −9 % on gcc).
+`LOFT_COLD_INT_LITERAL=1` marks those too (`FnWriter::int_literal_fallback_value`).
 
 ## Large functions are split into parts (`(R-CSplit)`)
 
@@ -664,7 +671,12 @@ libraries its packages ship: the unit lists each one's package, version and file
 `LOFT_LIB_PATH`, the executable's directory, `LOFT_HOME/.loft/lib/<package>-<version>/`, the
 system root — or exits 1 with its message, naming the package, the version and every directory
 searched (`loft_c_bind_libraries`, POSIX hosts).  A shim stays inside a `--static` program (the
-`--ship` default), linked whole; a `--dynamic` one opens the shim's own library beside it.  A
+`--ship` default), linked whole; a `--dynamic` one opens the shim's own library beside it.  The
+release tier (`--ship`, a GNU-dialect compiler, not `--dynamic`) compiles the shim's sources
+with the unit under `-flto` instead of linking its archive, so a shim's small functions inline
+into their callers (`c_driver::release_shim_lto`; random `rand`, whose `% (hi - lo + 1)` folds
+on constant bounds: −45 %); `bench/stats.py`'s ship lane builds it the same way, and
+`LOFT_NO_SHIM_LTO=1` links the archive.  A
 call into an opened library finds its symbol once (`loft_c_bound_sym`).  This is how a library
 ships its native part without a Rust crate: ANSI C beside its loft, one source for all three
 backends.  A `#native` function — a Rust cdylib's — is NOT reached: the C answers every call

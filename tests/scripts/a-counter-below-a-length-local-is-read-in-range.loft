@@ -1,0 +1,175 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Base`'s counter clause, length-local form: a range end copied from a local `n` that
+// holds `len(v)` for the rest of the function (`n = len(v)` assigned once, nothing that can run
+// after it writing `v`) bounds the counter below `v`'s length, so the C reads `v[i]` with no
+// index test.  It admits only a vector of the frame's own (a local, or a work buffer the caller
+// supplies); a parameter may name the same vector as another parameter or as a field of one.
+// `@FR-R-InRange` reads the same locals (`own_length_locals`): over a vector of records, the
+// element's `?` inside such a loop is the read alone, on both backends (a8–a10).
+// Each cell answers what the interpreter answers; the declining shapes shorten `v` after `n`
+// was taken: a clear, a callee's clear, a clear inside the loop, and the two parameter aliases.
+// Hand-computed in each cell's comment.  `fill(k)` is `[i * 7 % 5 for i in 0..k]`:
+// fill(4) = [0, 2, 4, 1], fill(3) = [0, 2, 4]; `pts(4)` has x = fill(4) and y = 0, 1, 2, 3.
+//
+// @falsified-at: dd6888d17 — by hand: the length locals taken without `length_locals`' write test
+//   (every `n = len(v)` admitted) reads past the cleared vector: a2 answers not 4000 on
+//   `--native-c`, and the LOFT_VERIFY build stops on "a proven index: int".  Without the own-vector
+//   test (a parameter admitted), a6 answers 70 for 4000 and a7 60 for 3000.
+// @falsified-at: 2a3e20d74 — by hand: `own_length_locals` admitting every vector (the shared
+//   own-vector test struck) fails a10 on `--interpret` ("a10 null": `@FR-R-InRange` dropped the
+//   `?` of a read past the cleared vector) and a6 on `--native-c`.
+// CHANNEL: the asserts, and the `LOFT_VERIFY` build of the C, which stops on the accessor's own
+// proof ("a proven index: int") where a read lies past the length.
+// ARMED: LOFT_VERIFY for the counter clause; the interpreter's asserts need no instrument.
+// WITNESS: each assert message prints the value it read.
+// HOLDS: the declining shapes are cells of this file (a clear before the loop, a callee's
+//   clear, a clear inside the loop, a parameter aliased by another parameter and by a field of
+//   one, and the record forms a9, a10); the `n = len(v)` right before the loop is
+//   an-element-at-a-range-counter-is-read-in-range.loft.
+
+struct S { items: vector<integer> }
+struct Pt { x: integer, y: integer }
+
+fn fill(k: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for i in 0..k { r += [i * 7 % 5]; }
+  r
+}
+
+// a1 — admitted: every value of i * 7 % 5 over 0..10 occurs twice (5 classes × 4 ordered
+// pairs = 20); over 0..37 two residues occur 8 times and three 7 times (64 + 64 + 3 × 49 = 275).
+fn pairs(k: integer) -> integer {
+  ea: vector<integer> = [];
+  for i in 0..k { ea += [i * 7 % 5]; }
+  ne = len(ea);
+  if ne == 0 { return 0; }
+  hits = 0;
+  for pi in 0..ne {
+    for pj in 0..ne {
+      if (ea[pi] ?? 0) == (ea[pj] ?? 0) { hits += 1; }
+    }
+  }
+  hits
+}
+
+// a2 — declines: cleared after `ne` was taken, so all four reads are missing (4 × 100), len 0.
+fn cleared() -> integer {
+  ea = fill(4);
+  ne = len(ea);
+  ea.clear();
+  s = 0;
+  for pi in 0..ne { s += ea[pi] ?? 100; }
+  s * 10 + len(ea)
+}
+
+fn drop_all(v: vector<integer>) { v.clear(); }
+
+// a3 — declines: a callee clears it (4 × 100), len 0.
+fn cleared_by_call() -> integer {
+  ea = fill(4);
+  ne = len(ea);
+  drop_all(ea);
+  s = 0;
+  for pi in 0..ne { s += ea[pi] ?? 100; }
+  s * 10 + len(ea)
+}
+
+// a4 — declines: cleared inside the loop after the second read: 0 + 2 + 100 + 100 = 202, len 0.
+fn cleared_in_loop() -> integer {
+  ea = fill(4);
+  ne = len(ea);
+  s = 0;
+  for pi in 0..ne {
+    s += ea[pi] ?? 100;
+    if pi == 1 { ea.clear(); }
+  }
+  s * 10 + len(ea)
+}
+
+// a5 — admitted: `ea = st.items` copies, so clearing the field leaves `ea` whole: 0 + 2 + 4 = 6,
+// len 3.
+fn copied_field() -> integer {
+  st = S { items: fill(3) };
+  ea = st.items;
+  ne = len(ea);
+  st.items.clear();
+  s = 0;
+  for pi in 0..ne { s += ea[pi] ?? 100; }
+  s * 10 + len(ea)
+}
+
+// a6 — declines: `two(a, a)` clears `v` through `w` (4 × 100), len 0.
+fn two(v: vector<integer>, w: vector<integer>) -> integer {
+  n = len(v);
+  w.clear();
+  s = 0;
+  for i in 0..n { s += v[i] ?? 100; }
+  s * 10 + len(v)
+}
+
+// a7 — declines: `in_rec(st.items, st)` clears `v` through the record (3 × 100), len 0.
+fn in_rec(v: vector<integer>, st: S) -> integer {
+  n = len(v);
+  st.items.clear();
+  s = 0;
+  for i in 0..n { s += v[i] ?? 100; }
+  s * 10 + len(v)
+}
+
+fn pts(k: integer) -> vector<Pt> {
+  r: vector<Pt> = [];
+  for i in 0..k { r += [Pt { x: i * 7 % 5, y: i }]; }
+  r
+}
+
+// a8 — admitted (both rules): x * 10 + y over the four: 0 + 21 + 42 + 13 = 76, len 4.
+fn rec_walk() -> integer {
+  ps = pts(4);
+  n = len(ps);
+  s = 0;
+  for i in 0..n { p = ps[i]?; s += p.x * 10 + p.y; }
+  s * 10 + len(ps)
+}
+
+// a9 — declines: cleared after `n` was taken, so every read misses and the `?` answers a zero
+// record: 4 × (0 + 100), len 0.
+fn rec_cleared() -> integer {
+  ps = pts(4);
+  n = len(ps);
+  ps.clear();
+  s = 0;
+  for i in 0..n { p = ps[i]?; s += p.x + 100; }
+  s * 10 + len(ps)
+}
+
+// a10 — declines: `rec_two(a, a)` clears `v` through `w`: as a9, 4000.
+fn rec_two(v: vector<Pt>, w: vector<Pt>) -> integer {
+  n = len(v);
+  w.clear();
+  s = 0;
+  for i in 0..n { p = v[i]?; s += p.x + 100; }
+  s * 10 + len(v)
+}
+
+fn main() {
+  r = "{pairs(10)} {pairs(0)} {pairs(37)}";
+  assert(r == "20 0 275", "a1 {r}");
+  assert(cleared() == 4000, "a2 {cleared()}");
+  assert(cleared_by_call() == 4000, "a3 {cleared_by_call()}");
+  assert(cleared_in_loop() == 2020, "a4 {cleared_in_loop()}");
+  assert(copied_field() == 63, "a5 {copied_field()}");
+  a = fill(4);
+  t = two(a, a);
+  assert(t == 4000, "a6 {t}");
+  st = S { items: fill(3) };
+  q = in_rec(st.items, st);
+  assert(q == 3000, "a7 {q}");
+  assert(rec_walk() == 764, "a8 {rec_walk()}");
+  assert(rec_cleared() == 4000, "a9 {rec_cleared()}");
+  b = pts(4);
+  u = rec_two(b, b);
+  assert(u == 4000, "a10 {u}");
+  println("ok");
+}

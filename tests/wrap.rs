@@ -98,18 +98,8 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
     p.data.limits = loft::limits::Limits::from_annotations(&source);
     p.database = db;
     // Honour `// @ARGS: --lib <dir>` — same logic as `run_test`.
-    for line in source.lines().take(20) {
-        if let Some(args) = line.trim().strip_prefix("// @ARGS:") {
-            let mut tokens = args.split_whitespace();
-            while let Some(tok) = tokens.next() {
-                if tok == "--lib"
-                    && let Some(dir) = tokens.next()
-                {
-                    p.lib_dirs.push(dir.to_string());
-                }
-            }
-        }
-    }
+    p.lib_dirs
+        .extend(common::corpus::args_lib_dirs(&source, entry));
     let start_def = p.data.definitions();
     p.parse(&entry.to_string_lossy(), false);
     for l in p.diagnostics.lines() {
@@ -1811,18 +1801,8 @@ fn run_test_inner(
     // runners are now symmetric on the `@ARGS` convention.  Any other
     // flag in the @ARGS line (e.g. `--path`, `--html`) is ignored at
     // this layer.
-    for line in source.lines().take(20) {
-        if let Some(args) = line.trim().strip_prefix("// @ARGS:") {
-            let mut tokens = args.split_whitespace();
-            while let Some(tok) = tokens.next() {
-                if tok == "--lib"
-                    && let Some(dir) = tokens.next()
-                {
-                    p.lib_dirs.push(dir.to_string());
-                }
-            }
-        }
-    }
+    p.lib_dirs
+        .extend(common::corpus::args_lib_dirs(&source, &entry));
     #[cfg(debug_assertions)]
     let types = p.database.types.len();
     let start_def = p.data.definitions();
@@ -1916,12 +1896,14 @@ fn run_test_inner(
         // false positive from one, which only a corpus this size reads (loft#929, loft#1397).
         // Same precondition as the CLI: an aborting error means resolution did not finish,
         // so every ownership verdict derived from it is known-bad.
+        // One list with `loft --tests` (`test_runner`): the write-backs the scope pass noted,
+        // then `post_scope_lints`.  A hand-kept copy of that list drifted (the
+        // `view-written-back` warning never reached this suite).
         if diagnostics.level() < loft::diagnostics::Level::Error {
-            loft::use_analysis::warn_dead_stores(&p.data, &mut diagnostics, &path);
-            loft::use_analysis::warn_double_move(&p.data, &mut diagnostics, &path);
-            loft::use_analysis::warn_lost_temp_writes(&p.data, &mut diagnostics, &path);
-            loft::use_analysis::warn_variant_overwritten(&p.data, &mut diagnostics, &path);
-            loft::use_analysis::drop_copy_census(&p.data, &mut diagnostics, &path);
+            loft::copy_manifest::drain_written_back_views(&mut diagnostics);
+            loft::use_analysis::post_scope_lints(&p.data, &mut diagnostics, &path);
+        } else {
+            loft::copy_manifest::clear_materialised_views();
         }
         if diagnostics.level() >= loft::diagnostics::Level::Error {
             return None;

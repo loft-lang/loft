@@ -315,7 +315,7 @@ pub(crate) fn tuple_projection_of(v: &Value) -> Option<(u16, u16)> {
 
 /// The variable a block or insert ENDS in, looking through nesting — its tail read as a bare
 /// `Var`, and `None` for a tail that is anything else.
-fn block_tail_var(v: &Value) -> Option<u16> {
+pub(super) fn block_tail_var(v: &Value) -> Option<u16> {
     match v.unspan() {
         Value::Var(var) => Some(*var),
         Value::Block(bl) => bl.operators.last().and_then(block_tail_var),

@@ -67,6 +67,13 @@ fn mentions_var_outside(node: &Value, v: u16, lifted: &[u16]) -> bool {
     found
 }
 
+/// `LOFT_NO_CALL_ARM_HOLDERS=1` (BOTH_BACKEND_SWITCHES.md): a joined binding keeps owning
+/// what its CALL arms' temps own — the re-free the store records must then report.
+fn call_arm_holders_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("LOFT_NO_CALL_ARM_HOLDERS").is_ok_and(|v| v != "0"))
+}
+
 impl Scopes<'_> {
     /// `OpReplaceKeyed(<branch>, r, tp)` with per-arm temps lifted out of `<branch>`, or
     /// `None` where the value is not that op, its branch has no qualifying arm, or it was
@@ -107,7 +114,7 @@ impl Scopes<'_> {
     /// as opposed to the depth at the current position.  `self.loops` holds the scope ids of
     /// the loops entered so far and `self.stack` the enclosing scopes outer-to-inner, so the
     /// loops that enclose `home` are those at or before it on that stack.
-    fn loop_depth_at(&self, home: u16) -> usize {
+    pub(super) fn loop_depth_at(&self, home: u16) -> usize {
         if home == self.scope {
             return self.loops.len();
         }
@@ -399,7 +406,13 @@ impl Scopes<'_> {
     ) -> bool {
         let mut copied: Vec<(u16, u16)> = Vec::new();
         let mut viewed: Vec<u16> = Vec::new();
+        // The temps a CALL arm's answer was bound to: held per path like a copied arm's,
+        // so the joined binding borrows them as well (`@FR-O-Buffer`: one owner per store).
+        let mut called: Vec<u16> = Vec::new();
         let mut materialised = false;
+        // A KEYED binding is not one of them: `OpReplaceKeyed` copies the arm that ran into the
+        // binding's own store, so the binding owns that copy and each temp keeps its own free.
+        let keyed = bound != u16::MAX && crate::parser::vectors::is_keyed(function.tp(bound));
         self.lift_arm_tails_into(
             node,
             home,
@@ -408,8 +421,12 @@ impl Scopes<'_> {
             data,
             &mut copied,
             &mut viewed,
+            &mut called,
             &mut materialised,
         );
+        if keyed {
+            called.clear();
+        }
         // Each `__lift_N = a` is a whole-value copy the collector never saw when it first ran
         // (the lift is built after it), so the drop moves here by the same rule — and PER PATH
         // by construction, since these temps are one per arm.  Recording the temps is what lets
@@ -443,7 +460,7 @@ impl Scopes<'_> {
                 self.drop_transferred.insert(tmp);
             }
         }
-        if bound == u16::MAX || (copied.is_empty() && viewed.is_empty()) {
+        if bound == u16::MAX || (copied.is_empty() && viewed.is_empty() && called.is_empty()) {
             return materialised;
         }
         // A binding assigned elsewhere keeps the parser's fact: the runtime join bind copies
@@ -466,6 +483,7 @@ impl Scopes<'_> {
         // temp (`owned`), and the arms the PARSER already owns, whose `join-arm-owner` `__ref_N`
         // the binding's dep list never names.
         let mut holders: Vec<u16> = copied.iter().map(|&(_, t)| t).collect();
+        holders.extend(called.iter().copied());
         for w in owned
             .iter()
             .copied()
@@ -509,7 +527,11 @@ impl Scopes<'_> {
                 deps.retain(|&d| d != src);
             }
         }
-        for &(_, tmp) in &copied {
+        for tmp in copied
+            .iter()
+            .map(|&(_, tmp)| tmp)
+            .chain(called.iter().copied())
+        {
             if !deps.contains(&tmp) {
                 deps.push(tmp);
             }
@@ -630,6 +652,7 @@ impl Scopes<'_> {
         data: &Data,
         copied: &mut Vec<(u16, u16)>,
         viewed: &mut Vec<u16>,
+        called: &mut Vec<u16>,
         materialised: &mut bool,
     ) {
         match node {
@@ -642,6 +665,7 @@ impl Scopes<'_> {
                     data,
                     copied,
                     viewed,
+                    called,
                     materialised,
                 );
             }
@@ -654,6 +678,7 @@ impl Scopes<'_> {
                     data,
                     copied,
                     viewed,
+                    called,
                     materialised,
                 );
                 self.lift_arm_tails_into(
@@ -664,6 +689,7 @@ impl Scopes<'_> {
                     data,
                     copied,
                     viewed,
+                    called,
                     materialised,
                 );
             }
@@ -677,6 +703,7 @@ impl Scopes<'_> {
                         data,
                         copied,
                         viewed,
+                        called,
                         materialised,
                     );
                 }
@@ -691,6 +718,7 @@ impl Scopes<'_> {
                         data,
                         copied,
                         viewed,
+                        called,
                         materialised,
                     );
                 }
@@ -716,6 +744,8 @@ impl Scopes<'_> {
                         *node = Value::Insert(vec![v_set(tmp, tail), Value::Var(tmp)]);
                         if let Some(src) = src {
                             copied.push((src, tmp));
+                        } else if !call_arm_holders_off() {
+                            called.push(tmp);
                         }
                     }
                     Some(ArmBind::CopyVector { tp, elem }) => {

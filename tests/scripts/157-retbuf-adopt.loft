@@ -1,10 +1,11 @@
 // @PLN157 § V-u (loft#1426 M2) — a vector-returning function's result local
-// ADOPTS the hidden return buffer on the native backend (`@FR-R-RetAdopt`,
+// ADOPTS the hidden return buffer on every backend (`@FR-R-RetAdopt`,
 // formal/rewrites.md): the local builds in the caller's buffer
 // from its declaration, the delivery pair at the exits emits as nothing while
 // the scope-exit frees stay, and the buffer's backing is REUSED across calls
-// (the entry clear is the reuse contract).  The interpreter keeps the delivery
-// copies and is the oracle.  The cells pin the boundary from both sides:
+// (the entry clear is the reuse contract).  The interpreter applies the same
+// decision, so the second answer is `LOFT_NO_RETBUF_ADOPT=1`, which keeps the
+// delivery copies everywhere.  The cells pin the boundary from both sides:
 //   - the shape-A ABI (a separate `__retbuf` attr) adopts: builds from other
 //     calls' buffers, recursion, reuse across an enclosing loop, and the § V-j
 //     move landing in the adopted buffer's store;
@@ -23,6 +24,9 @@
 // it dropped the block's scope-exit frees (2 stores leaked in the V-j corpus,
 // caught by LOFT_NATIVE_LEAK_CHECK); scoped to the block's clear/append pair
 // alone, interpret / native / LOFT_POISON / LOFT_NO_RETBUF_ADOPT all green.
+// @falsified-at: hand-measured (2026-11-10) — the interpreter's clause keeping the
+// delivery's clear (only the append skipped): `main` fails on `--interpret` with "an
+// adopted result local delivers exact elements" (`n_mixed`, `n_tagged` adopt there).
 
 struct In2 { a: integer, b: float }
 struct R2 { id: integer, ins: vector<In2> }

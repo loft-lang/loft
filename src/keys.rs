@@ -1022,6 +1022,27 @@ pub fn demote_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_DEMOTE"))
 }
 
+/// `LOFT_NO_CAPREBIND_KEEP=1` — `@FR-L-CapRebind`: a store a CAPTURED local was ever bound to
+/// may be freed at its last read again (`scopes::last_use`), where the default keeps its
+/// scope-exit free because a closure record built over the local still reads it.  The bisect
+/// step for a closure reading a store the next allocation reused (loft#2459).
+#[must_use]
+pub fn caprebind_keep() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CAPREBIND_KEEP"))
+}
+
+/// `LOFT_NO_CAPREBIND_MINT=1` — `@FR-L-CapRebind`: a whole-value rebind of a captured VECTOR
+/// local that reads the local itself (`a = a + [3]`, `a = a[0..1]`) works in the local's store
+/// again, where the default first moves the local to a fresh store while a closure record
+/// holds the old one (`Parser::concat_into_a_held_store`).  The bisect step for a closure that
+/// sees its local's later rebind (loft#2459).
+#[must_use]
+pub fn caprebind_mint() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CAPREBIND_MINT"))
+}
+
 /// `LOFT_NO_VARIANT_INPLACE=1` — `@FR-R-InPlaceLiteral`'s variant clause: a variant literal
 /// rebound into a whole local of its struct-enum (`l = Cons { v: 1, next: Nil }`) is built on
 /// a work reference and copied over again, where the default builds it in the local as a
@@ -3124,29 +3145,74 @@ pub fn strict_store_violation(
     now_pc: u32,
 ) {
     let n = STRICT_VIOLATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n < 200 && crate::fault_log::armed() {
+        let (freed_pc, var) = strict_free_site(store_nr).unwrap_or((0, String::new()));
+        let var = if var.is_empty() {
+            crate::store_trace::freed_variable(freed_pc).unwrap_or_default()
+        } else {
+            var
+        };
+        let mut fields = vec![
+            ("store", store_nr.to_string()),
+            ("access", what.to_string()),
+            ("type", type_name.to_string()),
+        ];
+        if !var.is_empty() {
+            fields.push(("var", var.trim_matches('`').to_string()));
+        }
+        // Generated Rust has no bytecode positions: leave the sites out rather than `pc=0`.
+        for (key, pc) in [("created", created_at), ("freed", freed_pc), ("at", now_pc)] {
+            if pc != 0 {
+                fields.push((key, crate::store_trace::site(pc)));
+            }
+        }
+        crate::fault_log::record("use-after-free", &fields);
+    }
     // Cap the output: a stale ref inside a loop reports every iteration, and the first
     // few already name the site.
     if n < 20 {
         let site = strict_free_site(store_nr);
-        let who = site.as_ref().map_or("<not recorded>", |(_, nm)| {
-            if nm.is_empty() { "<anon>" } else { nm.as_str() }
-        });
+        let freed_pc = site.as_ref().map_or(0, |(pc, _)| *pc);
+        // The interpreter's free carries no name: the variable is the one its operand read.
+        let who = site.as_ref().map_or_else(
+            || "<not recorded>".to_string(),
+            |(_, nm)| {
+                if nm.is_empty() {
+                    crate::store_trace::freed_variable(freed_pc)
+                        .unwrap_or_else(|| "<anon>".to_string())
+                } else {
+                    format!("`{nm}`")
+                }
+            },
+        );
         // The pcs are BYTECODE positions, so they exist on `--interpret` and are all zero
         // under `--native` (generated Rust has no pc). Print them only when they say
-        // something — a line of `pc=0, pc=0, pc=0` reads as data and is not.
-        let freed_pc = site.as_ref().map_or(0, |(pc, _)| *pc);
+        // something — a line of `pc=0, pc=0, pc=0` reads as data and is not.  Each is
+        // resolved to its function and source position (`store_trace::site`).
         let spans = created_at | last_op_at | now_pc | freed_pc;
         let where_ = if spans == 0 {
             "  (no bytecode positions — native run; re-run with --interpret for pcs)".to_string()
         } else {
-            format!(
-                "  created at pc={created_at}, last legitimate op at pc={last_op_at}, \
-                 freed at pc={freed_pc}, {what} now at pc={now_pc}"
-            )
+            let at = crate::store_trace::site;
+            let mut w = format!(
+                "  created {}\n  freed   {}\n  {what:<7} {}",
+                at(created_at),
+                at(freed_pc),
+                at(now_pc)
+            );
+            if let Some(x) = crate::store_trace::excerpt(now_pc) {
+                w.push('\n');
+                w.push_str(&x);
+            }
+            if last_op_at != 0 {
+                use std::fmt::Write as _;
+                let _ = write!(w, "\n  last legitimate op at pc={last_op_at}");
+            }
+            w
         };
         crate::loft_eprintln!(
             "[strict-store] USE AFTER FREE ({what}) store #{store_nr} type={type_name} \
-             rec={rec} pos={pos}\n  killed by the free of `{who}`\n{where_}"
+             rec={rec} pos={pos}\n  killed by the free of {who}\n{where_}"
         );
     } else if n == 20 {
         crate::loft_eprintln!("[strict-store] ... further use-after-free reports suppressed");
@@ -3232,6 +3298,272 @@ pub fn double_free_audit() -> bool {
     *ON.get_or_init(|| env_set("LOFT_DOUBLE_FREE"))
 }
 
+/// `LOFT_TEMP_NULL_RESET_FREES=1` — a compiler temporary's null reset frees the store it
+/// displaces, as it did before (`bind_lowering::re_bind`): the re-free the store records
+/// must then report.
+#[must_use]
+pub fn temp_null_reset_frees() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TEMP_NULL_RESET_FREES"))
+}
+
+/// `LOFT_HOST_LETGO_FREES=1` — `(R-HostStore)`'s result let-go after an adoption is a plain
+/// `= null` again (`host_result::adopt_and_release`), which frees the host store: the use
+/// after end the store records must then report.
+#[must_use]
+pub fn host_letgo_frees() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_HOST_LETGO_FREES"))
+}
+
+/// `LOFT_LINK_PARAM_RELEASES=1` — a whole write through a link to a plain parameter releases
+/// what it displaces again (`Function::link_write_releases`): the wrong end, a free of the
+/// caller's store, the store records must then report.
+#[must_use]
+pub fn link_param_releases() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_LINK_PARAM_RELEASES"))
+}
+
+/// `LOFT_NO_FKEEP_REBUILD_DETACH=1` — a rebuild that releases the record it overwrites leaves the
+/// rebound fn-ref's `__fkeep_N` snapshot naming that record (`scan_set`): its post-build check
+/// releases the record a second time.
+#[must_use]
+pub fn fkeep_rebuild_detach() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FKEEP_REBUILD_DETACH"))
+}
+
+/// `LOFT_NO_VIEW_TEMP_TRANSITION_GUARD=1` — a local's displaced free at a rebind also releases a
+/// store a frame temporary owns (the literal backing or call buffer another assignment viewed),
+/// as it did before (`scan_set`): the temporary then frees it again.
+#[must_use]
+pub fn view_temp_transition_guard() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_TEMP_TRANSITION_GUARD"))
+}
+
+/// `LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS=1` — a staying record keeps owning a capture the loop
+/// reassigns from a call buffer the frame releases (`capture_adoption`): its cascade and the
+/// frame's buffer release free the same store.
+#[must_use]
+pub fn loop_buffer_capture_borrows() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS"))
+}
+
+/// `LOFT_NO_FDISP_KEEP_TEMP=1` — a rebind's displaced fn-ref snapshot (`__fdisp_N = f`) counts as
+/// reading `f` as a value when confinement is asked after the scope pass (`closure_keep`), so
+/// the two readings disagree and a capture is released by the frame and by the record.
+#[must_use]
+pub fn fdisp_keep_temp() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FDISP_KEEP_TEMP"))
+}
+
+/// `LOFT_NO_RECORD_RELEASE_DETACH=1` — a closure record's release leaves a frame local that
+/// still names an owned capture's store in place (`capture_adoption`): the local's own release
+/// then frees what the record's cascade just freed.
+#[must_use]
+pub fn record_release_detach() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RECORD_RELEASE_DETACH"))
+}
+
+/// `LOFT_NO_RECORD_SNAPSHOT_RELEASES=1` — a closure build releases a displaced capture slot
+/// itself unless that CAPTURE's type owns a droppable (`vectors.rs`), though the displaced
+/// record's snapshot releases every slot once the record owns one: a second free.
+#[must_use]
+pub fn record_snapshot_releases() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RECORD_SNAPSHOT_RELEASES"))
+}
+
+/// `LOFT_NO_ARM_WRITTEN_JOIN=1` — a value branch written out per arm is not read as a join of
+/// its arms' stores (`capture_builds`): a record built after it keeps the last arm's backing
+/// only, and the frame also frees the other arm's store the record may hold.
+#[must_use]
+pub fn arm_written_join() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ARM_WRITTEN_JOIN"))
+}
+
+/// `LOFT_NO_PASS_END_BACKING_DETACH=1` — a loop pass's record released at the pass end leaves
+/// the frame backing that names its captured store in place (`closure_keep_pass_end`): the
+/// backing's own release then frees that store again.
+#[must_use]
+pub fn pass_end_backing_detach() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PASS_END_BACKING_DETACH"))
+}
+
+/// `LOFT_NO_STAYING_JOIN_CAPTURE_BORROWS=1` — a record that stays in its frame keeps owning a
+/// join-bound capture reassigned after the build (`capture_adoption`): its cascade and the
+/// frame's arm release free the same store.
+#[must_use]
+pub fn staying_join_capture_borrows() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STAYING_JOIN_CAPTURE_BORROWS"))
+}
+
+/// `LOFT_NO_EVERY_BUILD_BACKING=1` — only the backing a capture named at its LAST build is
+/// handed to a record (`capture_builds`): the frame also frees the backing an earlier build's
+/// record adopted.
+#[must_use]
+pub fn every_build_backing() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_EVERY_BUILD_BACKING"))
+}
+
+/// `LOFT_NO_NULL_SLOT_GENERATION=1` — every build's null-slot step counts as an assignment of
+/// the captured local (`capture_builds`), so two builds over one null local never group and
+/// both records own the one store.
+#[must_use]
+pub fn null_slot_generation() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NULL_SLOT_GENERATION"))
+}
+
+/// `LOFT_NO_BORROWED_DISPLACED_STRIP=1` — a closure record that borrows a capture keeps the
+/// displaced release its build was given at parse time (`capture_adoption`): its rebuild frees
+/// the store the frame already freed.
+#[must_use]
+pub fn borrowed_displaced_strip() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BORROWED_DISPLACED_STRIP"))
+}
+
+/// `LOFT_NO_HELD_FN_SKIP_FREE=1` — a closure record's cascade releases a captured fn-ref's record
+/// through `__held_fn` and again at that local's scope end, as it did before (`definitions.rs`).
+#[must_use]
+pub fn held_fn_skip_free() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_HELD_FN_SKIP_FREE"))
+}
+
+/// `LOFT_NO_LOOP_CAPTURE_GROUP=1` — two closure records built over a capture the loop
+/// re-assigns are never grouped by the store they adopt (`capture_adoption`), so each owns it
+/// and both cascades free it.
+#[must_use]
+pub fn loop_capture_group() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_CAPTURE_GROUP"))
+}
+
+/// `LOFT_NO_BACKED_CAPTURE_STAND_DOWN=1` — a captured local that only names its backings'
+/// stores keeps its own frame-end release beside theirs (`rebound_captures`): the last pass's
+/// store is then freed twice where the leaving record holds an earlier one.
+#[must_use]
+pub fn backed_capture_stand_down() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BACKED_CAPTURE_STAND_DOWN"))
+}
+
+/// `LOFT_NO_BUFFER_FRESH_COPY=1` — a local renamed onto the return buffer, rebound from a call
+/// that reads it, binds the call's answer plainly even where the copy would land in a fresh
+/// store (`bind_lowering::re_arm`): it then aliases a view the call answered.
+#[must_use]
+pub fn buffer_fresh_copy_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_FRESH_COPY"))
+}
+
+/// `LOFT_NO_FRESH_COPY_OF_VIEW=1` — a reassignment from a call that reads the local and may
+/// answer a borrowed view keeps the plain pass-through even where the copy would land in a
+/// fresh store (`bind_lowering::re_arm`): the local then aliases what the call answered.
+#[must_use]
+pub fn fresh_copy_of_view_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_FRESH_COPY_OF_VIEW"))
+}
+
+/// `LOFT_NO_READING_VIEW_COPY=1` — an owning record local rebound from a value that reads it
+/// and answers a view binds that view plainly (`bind_lowering::re_arm`): it then names another
+/// store, which both release.
+#[must_use]
+pub fn reading_view_copy_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_READING_VIEW_COPY"))
+}
+
+/// `LOFT_NO_UNBOX_YIELD_HANDOVER=1` — a yielded tuple unboxed through a work-ref hands its
+/// members over as they are (`Parser::yield_owned_value`, `coroutine_layout::yield_handed_temps`).
+#[must_use]
+pub fn unbox_yield_handover_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_NO_UNBOX_YIELD_HANDOVER").is_some_and(|v| v != "0"))
+}
+
+/// `LOFT_C_OWN_TUPLE_MEMBER_BIND=1` — the C writer binds a tuple member's first bind plainly
+/// again instead of taking `bind_lowering`'s `TupleElementCopy` (@PLN220's A/B).
+#[must_use]
+pub fn c_own_tuple_member_bind() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_TUPLE_MEMBER_BIND"))
+}
+
+/// `LOFT_C_OWN_VECTOR_NULL=1` — the C writer decides a vector local's first null-init mint by
+/// its own test again instead of `bind_lowering::vector_null_mints` (@PLN220's A/B).
+#[must_use]
+pub fn c_own_vector_null() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_VECTOR_NULL"))
+}
+
+/// `LOFT_NO_FRESH_PROTECTS_OLD=1` — a reassignment copied into a fresh store leaves the local's
+/// old store out of the protection bracket even where the value reads the local, as it did
+/// before (`Codegen::generate_set_inner`, arm R2b): the copy's source-free then releases it and
+/// the stashed free releases it again.
+#[must_use]
+pub fn fresh_protects_old_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_FRESH_PROTECTS_OLD"))
+}
+
+/// `LOFT_NO_STASH_FRESH=1` — the interpreter's reassignment copy with a stashed displaced free
+/// writes into the old store when the value cannot alias the local, as it did before
+/// (`Codegen::generate_set_inner`, arm R2b): a null answer then frees that store twice.
+#[must_use]
+pub fn stash_fresh() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STASH_FRESH"))
+}
+
+/// `LOFT_NO_CALLREF_LIFT=1` — a collection a fn-ref call delivers into a local that another
+/// assignment binds to a view takes the local as its owner, as it did before (`scan_set`):
+/// the local's displaced free then releases the store the view's temporary owns.
+#[must_use]
+pub fn callref_lift() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CALLREF_LIFT"))
+}
+
+/// `LOFT_NO_FREE_RESET=1` — the interpreter resets a variable after its free only where it
+/// took a pre-build free or is a lift temp, not after every free (`Codegen::generate_call`).
+#[must_use]
+pub fn free_reset_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_FREE_RESET"))
+}
+
+/// A free of an already-freed store fails the run, naming both frees (`Stores::refuse_refree`,
+/// `@FR-H-FreeTwice`): a re-free is a compiler defect.  On by default; `LOFT_ALLOW_REFREE=1`
+/// turns it off, and `LOFT_DOUBLE_FREE` counts instead.  STORE_RECORDS.md § The checks.
+#[must_use]
+pub fn refree_fails() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_ALLOW_REFREE"))
+}
+
+/// `LOFT_REFREE_FAILS=1` — a re-free's report names the function, line and variable of each
+/// free (`store_trace`); without it the report gives each free's source position only, so
+/// no compile pays for the name table.
+#[must_use]
+pub fn refree_names() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_REFREE_FAILS"))
+}
+
 static DF_SAME_SITE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static DF_OTHER_SITE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -3243,6 +3575,37 @@ pub fn note_double_free(same_site: bool) {
     } else {
         DF_OTHER_SITE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// Print the double-free audit's census when `LOFT_DOUBLE_FREE` is armed: at a program's
+/// exit and at the end of a test run.  A re-free is a free the compiler emitted twice on one
+/// path; reaching this count it found the slot not yet reused, and the store records name the
+/// emitting site (STORE_RECORDS.md § The checks).
+pub fn double_free_report() {
+    if !double_free_audit() {
+        return;
+    }
+    let (same, other) = double_free_counts();
+    if same + other > 0 {
+        crate::fault_log::record(
+            "re-free",
+            &[
+                ("count", (same + other).to_string()),
+                ("other_site", other.to_string()),
+                ("same_site", same.to_string()),
+            ],
+        );
+    }
+    eprintln!(
+        "[double-free] {n} re-free(s) of an already-free slot: {other} from a DIFFERENT site \
+         (a free emitted on each of two paths that meet) and {same} from the SAME site (a \
+         runtime-guarded free whose guard let it through twice).  Each is a free the compiler \
+         emitted twice; it was harmless here only because nothing took the slot in between.  \
+         `LOFT_STRICT_STORES` never recycles a slot, so a stale free that would have released \
+         another store is counted here too.  Interpreter only: `alloc_pc` is zero on \
+         `--native`, which collapses the split.",
+        n = same + other
+    );
 }
 
 /// `(same-site, other-site)` re-free counts — the second is the one to read.

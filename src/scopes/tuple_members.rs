@@ -38,6 +38,7 @@ pub(super) struct MemberFacts<'a> {
     pub(super) call_mints: Option<&'a HashMap<u16, Option<u16>>>,
     pub(super) handed: Option<&'a HashSet<u16>>,
     pub(super) moved: Option<&'a HashMap<(u16, u16), u16>>,
+    pub(super) claimants: Option<&'a HashMap<(u16, u16), Vec<u16>>>,
 }
 
 impl MemberFacts<'_> {
@@ -45,6 +46,7 @@ impl MemberFacts<'_> {
         call_mints: None,
         handed: None,
         moved: None,
+        claimants: None,
     };
 }
 
@@ -89,6 +91,7 @@ pub(super) fn tuple_owned_elem_frees(
         call_mints,
         handed,
         moved,
+        claimants,
     } = facts;
     let mut out = Vec::new();
     for &(_offset, idx) in crate::data::owned_elements(elems).iter().rev() {
@@ -160,6 +163,8 @@ pub(super) fn tuple_owned_elem_frees(
                     });
                 }
             }
+            // Any OTHER claimant (a loop's later bind) is retired where it names this store.
+            out.extend(claimant_disarms(claimants, v, idx as u16, buf, data));
             out.push(Value::Call(data.def_nr("OpFreeRef"), vec![elem()]));
             if let Some(b) = buf {
                 out.push(v_set(
@@ -169,11 +174,78 @@ pub(super) fn tuple_owned_elem_frees(
             }
             continue;
         }
+        // A member whose claimant this point does not know (a loop dropped the fact) retires
+        // every work-ref an assignment made its claimant, where that work-ref still names the
+        // store about to be freed — or the work-ref frees it a second time at its own end.
+        out.extend(claimant_disarms(claimants, v, idx as u16, None, data));
         out.push(Value::Call(
             data.def_nr("OpFreeRef"),
             vec![Value::TupleGet(v, idx as u16)],
         ));
     }
+    out
+}
+
+/// The guarded retire of each claimant work-ref of member `idx` of `v` but `except`: set to
+/// the sentinel where it names the store the member's free is about to release.
+fn claimant_disarms(
+    claimants: Option<&HashMap<(u16, u16), Vec<u16>>>,
+    v: u16,
+    idx: u16,
+    except: Option<u16>,
+    data: &Data,
+) -> Vec<Value> {
+    if claimant_disarm_off() {
+        return Vec::new();
+    }
+    claimants
+        .and_then(|c| c.get(&(v, idx)))
+        .into_iter()
+        .flatten()
+        .filter(|&&w| Some(w) != except)
+        .map(|&w| {
+            v_if(
+                Value::Call(
+                    data.def_nr("OpDistinctStore"),
+                    vec![Value::Var(w), Value::TupleGet(v, idx)],
+                ),
+                Value::Null,
+                v_set(w, Value::Call(data.def_nr("OpNullRefSentinel"), vec![])),
+            )
+        })
+        .collect()
+}
+
+/// `LOFT_NO_CLAIMANT_DISARM=1` (STORE_RECORDS.md § The checks): a tuple member freed where
+/// its claimant is unknown leaves the claimant work-ref naming the store — the re-free the
+/// store records must then report.
+fn claimant_disarm_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_CLAIMANT_DISARM").is_some())
+}
+
+/// Every `(tuple, member) → work-refs` claim the assignments in `code` make
+/// ([`tuple_call_mints`]): the construction or call buffer that delivered each member.
+pub(super) fn tuple_claimants_in(
+    code: &Value,
+    function: &Function,
+    data: &Data,
+) -> HashMap<(u16, u16), Vec<u16>> {
+    let mut out: HashMap<(u16, u16), Vec<u16>> = HashMap::default();
+    code.walk(&mut |n| {
+        if let Value::Set(t, rhs) = n
+            && matches!(function.tp(*t).base(), Type::Tuple(_))
+            && let Some(mints) = tuple_call_mints(rhs, function, data)
+        {
+            for (idx, claim) in mints {
+                if let Some(w) = claim {
+                    let ws = out.entry((*t, idx)).or_default();
+                    if !ws.contains(&w) {
+                        ws.push(w);
+                    }
+                }
+            }
+        }
+    });
     out
 }
 
@@ -248,19 +320,50 @@ pub(super) fn branch_tuple_call_mints(
         .iter()
         .map(|t| tuple_call_mints(t, function, data))
         .collect::<Option<_>>()?;
-    let (first, rest) = maps.split_first()?;
+    // A `null` member owns nothing, so an arm answering null for a member does not block the
+    // other arms' claim on it (`@FR-H-FreeTwice`: `match k { 1 => (null, 11), 2 => (S {…}, 22) }`
+    // left member 0 unjoined, and on the arm that built it the member and the construction's
+    // work-ref both freed it).  `LOFT_NO_NULL_ARM_TUPLE_JOIN=1` keeps the old reading.
+    let null_ok = !crate::env_once!(std::env::var_os("LOFT_NO_NULL_ARM_TUPLE_JOIN").is_some());
+    let null_member = |end: &Value, idx: u16| -> bool {
+        null_ok
+            && matches!(end.unspan(), Value::Tuple(ms)
+            if ms.get(idx as usize).is_some_and(|m| match m.unspan() {
+                Value::Null => true,
+                Value::Call(d, a) => a.is_empty() && *d == sentinel,
+                _ => false,
+            }))
+    };
+    let mut indices: Vec<u16> = maps.iter().flat_map(|m| m.keys().copied()).collect();
+    indices.sort_unstable();
+    indices.dedup();
     let mut out = HashMap::default();
     let mut claimants: Vec<u16> = Vec::new();
-    for (&idx, &claim) in first {
-        let others: Vec<Option<u16>> = rest.iter().filter_map(|m| m.get(&idx).copied()).collect();
-        if others.len() != rest.len() {
+    for idx in indices {
+        // Each arm's claim on the member, or `None` for an arm whose member is null.
+        let mut claims: Vec<Option<Option<u16>>> = Vec::with_capacity(maps.len());
+        for (m, end) in maps.iter().zip(&ends) {
+            match m.get(&idx) {
+                Some(&c) => claims.push(Some(c)),
+                None if null_member(end, idx) => claims.push(None),
+                None => {
+                    claims.clear();
+                    break;
+                }
+            }
+        }
+        if claims.len() != maps.len() {
             continue;
         }
-        if others.iter().all(|&o| o == claim) {
-            out.insert(idx, claim);
+        let present: Vec<Option<u16>> = claims.iter().flatten().copied().collect();
+        let Some(&first) = present.first() else {
+            continue;
+        };
+        if present.len() == claims.len() && present.iter().all(|&o| o == first) {
+            out.insert(idx, first);
         } else {
             out.insert(idx, None);
-            claimants.extend(std::iter::once(claim).chain(others).flatten());
+            claimants.extend(present.into_iter().flatten());
         }
     }
     claimants.sort_unstable();
@@ -305,6 +408,24 @@ fn member_mint(m: &Value, function: &Function, data: &Data) -> Option<MemberMint
     if let Some(w) = delivered_work_ref(m, function, data) {
         return Some(MemberMint::Claimed(w));
     }
+    // A literal member (`([], 5)`) is built in its function-scoped accumulator (`__kvb_N`),
+    // which still names the store: the claimant to disarm, as a construction's work-ref is.
+    if let Value::Block(_) = m.unspan()
+        && let Some(w) = super::backings::block_tail_var(m)
+        && crate::variables::owns_literal_backing_store(function.name(w))
+        && !function.is_skip_free(w)
+        && !crate::env_once!(std::env::var_os("LOFT_NO_NULL_MEMBER_OWNED").is_some())
+    {
+        return Some(MemberMint::Claimed(w));
+    }
+    // A null keyed member's materialise hands the tuple a store its never-free accumulator
+    // minted (`Parser::keyed_place_materialise`): the member is that store's only owner.
+    if let Value::Var(w) = m.unspan()
+        && crate::variables::owns_literal_backing_store(function.name(*w))
+        && function.is_skip_free(*w)
+    {
+        return Some(MemberMint::Adopted);
+    }
     let Value::Call(fn_nr, args) = m.unspan() else {
         return None;
     };
@@ -319,7 +440,13 @@ fn member_mint(m: &Value, function: &Function, data: &Data) -> Option<MemberMint
             return Some(MemberMint::Claimed(*vr));
         }
         None
-    } else if def.return_adopts_fresh_store() && def.returned().base().heap_def_nr().is_some() {
+    } else if def.return_adopts_fresh_store()
+        && (def.returned().base().heap_def_nr().is_some()
+            // A keyed collection is a store of its own as a record is (`@FR-H-FreeTwice`:
+            // unpaired, a second `t.0 = mk()` kept the plain put and leaked the first).
+            || (crate::parser::vectors::owns_keyed_store(def.returned())
+                && !crate::env_once!(std::env::var_os("LOFT_NO_NULL_MEMBER_OWNED").is_some())))
+    {
         Some(MemberMint::Adopted)
     } else {
         None

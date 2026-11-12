@@ -1,17 +1,16 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 69d432df4..a8c87398e 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -6362,7 +6362,7 @@ use a separate collection or add after the loop"
+@@ -7587,7 +7587,7 @@ use a separate collection or add after the loop"
          // side that is not text leaves the place a text (loft#1827).
          let text_appends_rendering = op != "="
              && matches!(place_tp.base(), Type::Text(_))
 -            && Self::appends_rendering(&s_type);
 +            && !matches!(s_type.base(), Type::Text(_) | Type::Character);
-         if !compound_keeps_place && !text_appends_rendering {
-             self.change_var(to, &s_type);
-         }
-@@ -9621,12 +9621,9 @@ use a separate collection or add after the loop"
+         // A tagged-slot read the store's conversion built (`enum_slot_read_named`) names the
+         // record it reads in its own result type; the bind adopts that borrow (`@FR-B-View`),
+         // which the conversion — answering only yes or no — cannot hand back itself.
+@@ -11037,12 +11037,9 @@ use a separate collection or add after the loop"
          f_type
      }
  
@@ -27,7 +26,7 @@ index 69d432df4..a8c87398e 100644
      pub(crate) fn appends_rendering(rhs: &Type) -> bool {
          let rhs = match rhs.base() {
              Type::RefVar(inner) => inner.as_ref(),
-@@ -9634,7 +9631,7 @@ use a separate collection or add after the loop"
+@@ -11050,7 +11047,7 @@ use a separate collection or add after the loop"
          };
          !matches!(
              rhs.base(),
@@ -36,7 +35,7 @@ index 69d432df4..a8c87398e 100644
          )
      }
  
-@@ -9648,8 +9645,7 @@ use a separate collection or add after the loop"
+@@ -11064,8 +11061,7 @@ use a separate collection or add after the loop"
              _ => tp.clone(),
          };
          let mut ls = Vec::new();
@@ -47,10 +46,9 @@ index 69d432df4..a8c87398e 100644
          // it: rendering into the sentinel would make a text of the sentinel and the value.
          let dest_tp = self.vars.tp(var_nr);
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 27cc17504..366f299cd 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -2052,9 +2052,7 @@ impl Parser {
+@@ -2485,9 +2485,7 @@ impl Parser {
                          current_type.base().clone()
                      };
                      if matches!(effective_type, Type::Text(_) | Type::Character) {
@@ -62,10 +60,9 @@ index 27cc17504..366f299cd 100644
                              // destination.  Prepend it to the parts list and use an empty
                              // text literal as the first operand so parse_append_text
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index e579c5b5d..b1c937e92 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -337,23 +337,80 @@ impl Parser {
+@@ -438,23 +438,80 @@ impl Parser {
          let mut ls = Vec::new();
          let var_nr = if orig_var == u16::MAX {
              let v = self.vars.work_text(&mut self.lexer);
@@ -158,7 +155,7 @@ index e579c5b5d..b1c937e92 100644
          }
          let tp = Type::Text(Deps::frame1(var_nr));
          if orig_var == u16::MAX || var_nr != orig_var {
-@@ -367,132 +424,6 @@ impl Parser {
+@@ -468,132 +525,6 @@ impl Parser {
          Type::Rewritten(Box::new(tp))
      }
  

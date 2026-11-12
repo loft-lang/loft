@@ -1,10 +1,10 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 07f65a620..b0ff09311 100644
+index e22c4746c..a1159f9ac 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -10378,6 +10378,7 @@ impl Parser {
-         // names borrow what the value borrows (`match_borrow_source`, a tuple member's own
-         // source included).  A PLAIN enum's `Red | Green` is the value-test loop below.
+@@ -11854,6 +11854,7 @@ impl Parser {
+         // alternation commits to its first match: an arm guard that rejects it rejects the arm,
+         // with no retry of the next alternative here (@C162).
          if let Some((e_nr, true)) = self.pattern_variant_enum(field_type)
 +            && !matches!(field_val, Value::TupleGet(..))
              && self.sub_pattern_lists_alternatives()

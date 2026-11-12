@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-TextBorrow` with a returned loop variable: a `for` loop's own variable whose text the
+// function returns (a slice of it, itself, a concatenation) is never promoted to the caller's
+// `&text` return buffer — its result is delivered by copy — so a walk over a vector of texts
+// borrows each element instead of copying it in on every turn (server `Request.header`,
+// `return h[wl + 1..].trim()` inside `for h in self.headers`: −55 % on both compilers).  Each
+// cell answers what the interpreter answers, hand-computed in its comment; 7 and 11 write the
+// record's store in the body, where the borrow must decline.
+//
+// @falsified-at: d5b1be411 — by hand: with `(R-TextBorrow)`'s store condition struck, cell 11
+//   (the body grows the record's store by 20000 elements a turn) leaves the borrowed view in
+//   moved memory and the `--native-c` run exits 1 without "ok"; the interpreter passes.  No
+//   plant in the return verdict itself changes a value: every verdict but promotion copies the
+//   result out, which is why keeping the loop variable a local is sound.
+// CHANNEL: the asserts and the C run's exit status.
+// ARMED: none needed.
+// WITNESS: each assert message prints the value it read.
+// HOLDS: a slice (1), the variable (2, 8), a concatenation (3), a second text local (4), nested
+// walks (5), a local vector (6), a store-writing body (7, 11), two loops of one name (9), 2000
+// calls (10).
+
+struct Req { hs: vector<text>, n: integer, big: vector<integer> }
+
+// 1: a slice of the loop variable, trimmed.  "b:  two " → "two".
+fn slice_of(r: Req, k: text) -> text {
+  for h in r.hs { if h.starts_with(k) { return h[2..].trim(); } }
+  ""
+}
+// 2: the loop variable itself.  "b:  two ".
+fn whole(r: Req, k: text) -> text {
+  for h in r.hs { if h.starts_with(k) { return h; } }
+  "none"
+}
+// 3: a concatenation with it.  "c:three!".
+fn joined(r: Req, k: text) -> text {
+  for h in r.hs { if h.starts_with(k) { return h + "!"; } }
+  ""
+}
+// 4: a second text local in the result.  "<a:one>".
+fn two_deps(r: Req, k: text) -> text {
+  t = "<";
+  for h in r.hs { if h.starts_with(k) { return t + h + ">"; } }
+  t
+}
+// 5: nested loops, the inner variable.  "c:three".
+fn nested(r: Req, k: text) -> text {
+  for o in r.hs { for i in r.hs { if i.starts_with(k) && o.starts_with("a") { return i; } } }
+  ""
+}
+// 6: a local vector.  "y2".
+fn local_vec(k: text) -> text {
+  v: vector<text> = ["x1", "y2", "z3"];
+  for e in v { if e.starts_with(k) { return e; } }
+  ""
+}
+// 7: the body writes the record's store (the borrow declines): "b:  two ", n = 2.
+fn writes(r: Req, k: text) -> text {
+  for h in r.hs { r.n += 1; if h.starts_with(k) { return h; } }
+  ""
+}
+// 8: a `text?` result: "a:one", then null.
+fn maybe(r: Req, k: text) -> text? {
+  for h in r.hs { if h.starts_with(k) { return h; } }
+  null
+}
+// 9: the same name in two loops: the second loop's match, "c:three".
+fn twice(r: Req) -> text {
+  for h in r.hs { if h.starts_with("zz") { return h; } }
+  for h in r.hs { if h.starts_with("c") { return h; } }
+  ""
+}
+
+// 11: the body grows the record's store by 20000 elements per turn (the borrow must decline,
+// or its view is left in moved memory): "c:three", and 60000 elements after.
+fn grows(r: Req, k: text) -> text {
+  for h in r.hs { for x in 0..20000 { r.big += [x]; } if h.starts_with(k) { return h; } }
+  ""
+}
+
+fn main() {
+  r = Req { hs: ["a:one", "b:  two ", "c:three"], n: 0, big: [] };
+  assert(slice_of(r, "b") == "two", "1 '{slice_of(r, "b")}'");
+  assert(whole(r, "b") == "b:  two ", "2 '{whole(r, "b")}'");
+  assert(whole(r, "q") == "none", "2n");
+  assert(joined(r, "c") == "c:three!", "3 '{joined(r, "c")}'");
+  assert(two_deps(r, "a") == "<a:one>", "4 '{two_deps(r, "a")}'");
+  assert(nested(r, "c") == "c:three", "5 '{nested(r, "c")}'");
+  assert(local_vec("y") == "y2", "6 '{local_vec("y")}'");
+  w = Req { hs: ["a:one", "b:  two ", "c:three"], n: 0, big: [] };
+  assert(writes(w, "b") == "b:  two ", "7 '{writes(w, "b")}'");
+  assert(w.n == 2, "7 n {w.n}");
+  assert(maybe(r, "a") == "a:one", "8");
+  assert(maybe(r, "x") == null, "8n");
+  assert(twice(r) == "c:three", "9 '{twice(r)}'");
+  // 10: called often, each answer fresh: 2000 × (3 + 5) characters.
+  n = 0;
+  for k in 0..2000 { n += size(slice_of(r, if k % 2 == 0 { "b" } else { "c" })); }
+  assert(n == 1000 * 3 + 1000 * 5, "10 {n}");
+  g = Req { hs: ["a:one", "b:  two ", "c:three"], n: 0, big: [] };
+  assert(grows(g, "c") == "c:three", "11 '{grows(g, "c")}'");
+  assert(len(g.big) == 60000, "11 len {len(g.big)}");
+  println("ok");
+}

@@ -38,7 +38,7 @@ pub const LOFT_WIDTH_H: &str = include_str!("c/loft_width.h");
 ///
 /// # Errors
 /// When the header cannot be written.
-pub(crate) fn put_width_header(dir: &std::path::Path) -> Result<(), String> {
+pub fn put_width_header(dir: &std::path::Path) -> Result<(), String> {
     crate::file_access::write(dir.join("loft_width.h"), LOFT_WIDTH_H)
         .map_err(|e| format!("cannot write loft_width.h: {e}"))
 }

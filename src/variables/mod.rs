@@ -479,6 +479,12 @@ pub(crate) struct CaptureBuilds {
     /// The backing local a capture named AT THE BUILD — the store the record actually holds.
     /// A capture that owns its store outright (a struct) has no backing root and is absent.
     pub(crate) backing: crate::fxhash::FxHashMap<u16, u16>,
+    /// Every backing a capture named at ANY of its builds: `backing` keeps the last, while a
+    /// record built before a reassignment still holds the earlier one (`@FR-O-Latest`).
+    pub(crate) backings_at_builds: crate::fxhash::FxHashMap<u16, Vec<u16>>,
+    /// `(record local, capture)` for each build at which the capture was JOIN-bound
+    /// (`join_arms_at_build` keeps the arms per capture, whichever build saw them).
+    pub(crate) join_bound_builds: crate::fxhash::FxHashSet<(u16, u16)>,
     /// Locals whose store the record adopted and which were ASSIGNED AGAIN afterwards, so the
     /// local no longer names the adopted store and the frame still owes its own free.
     pub(crate) reassigned_after_build: crate::fxhash::FxHashSet<u16>,
@@ -534,6 +540,10 @@ pub struct Function {
     /// leak mirrors that read the function after it (`scopes::FrameReleases`).  Absent on a
     /// function restored from the IR cache.
     capture_builds: Option<CaptureBuilds>,
+    /// The literal buffers the scope pass's free emitter left without an exit free because an
+    /// owning local assigned more than once releases their store (`Scopes::pair_literal_buffers`),
+    /// kept for the static leak mirrors.  Empty on a function restored from the IR cache.
+    adopter_released: std::collections::HashSet<u16>,
     /// loft#1466 — the locals whose borrow list pass 2 has already rebuilt.
     ///
     /// A CALL RESULT's deps are the CALLEE's answer and pass 1 has not read the callee's body,
@@ -918,9 +928,20 @@ impl Function {
         self.capture_builds.as_ref()
     }
 
+    pub(crate) fn set_adopter_released(&mut self, buffers: std::collections::HashSet<u16>) {
+        self.adopter_released = buffers;
+    }
+
+    /// Does an owning local's rebinds and free release this literal buffer's store, so the
+    /// free emitter gave the buffer no exit free (`Scopes::pair_literal_buffers`)?
+    pub(crate) fn adopter_released(&self, v: u16) -> bool {
+        self.adopter_released.contains(&v)
+    }
+
     pub fn new(name: &str, file: &str) -> Self {
         Function {
             capture_builds: None,
+            adopter_released: std::collections::HashSet::new(),
             pass2_rebuilt: std::collections::HashSet::new(),
             pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
@@ -1246,6 +1267,7 @@ impl Function {
         Function {
             // The build facts belong to one finished scope pass, and a copy starts another.
             capture_builds: None,
+            adopter_released: std::collections::HashSet::new(),
             pass2_rebuilt: std::collections::HashSet::new(),
             pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
@@ -4248,6 +4270,70 @@ impl Function {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].argument
     }
 
+    /// `@FR-B-Ref-Write` × `@FR-O-Owner` — does a whole write through the `&` variable `var`
+    /// replace a place that OWNS its store, so the store it displaces is released?  A `&`
+    /// parameter names its caller's place, which owns.  A local link writes the variable it
+    /// names (`B-OutOfLine`), and only an owner's store is its to release: a link whose every
+    /// target borrows — a by-value parameter (`cur = &n` on `n: N`, `@FR-F-ParamRebind`), a
+    /// view (`v = h.next; c = &v`) — leaves the store it showed with its owner.  Every
+    /// backend's write-back asks this.
+    #[must_use]
+    pub fn link_target_owns(&self, var: u16) -> bool {
+        if self.is_argument(var) {
+            return true;
+        }
+        let Type::RefVar(inner) = self.tp(var).base() else {
+            return true;
+        };
+        let deps = inner.depend();
+        deps.is_empty()
+            || deps.iter().any(|&d| {
+                // @FR-O-Proxy asks free — does the place the link names own the store a
+                // write through the link displaces?
+                matches!(self.tp(d).base(), Type::RefVar(_))
+                    || (!self.is_argument(d) && self.proxy_says_owned(d))
+            })
+    }
+
+    /// `@FR-F-ParamRebind` — does a whole write through the link `v` release the store it
+    /// displaces?  Not when the link reaches a plain (by-value) parameter: replacing that
+    /// parameter's value only rebinds the callee's name, and the store it held is the
+    /// caller's, which the caller keeps (`cur = &n; cur = &cur.next` walks `n`).  A `&T`
+    /// parameter (`@FR-F-ParamRef`) or a local behind the link is released as before.  Asked
+    /// by all three writers, so they agree (`@FR-O-NoDiverge`).
+    /// The variables `v` LINKS to: a `g = &e` local's type is a `RefVar` whose deps name its
+    /// target, and a link to a link follows through.  Empty for a variable that is no link.
+    #[must_use]
+    pub fn link_targets(&self, v: u16) -> Vec<u16> {
+        let mut out: Vec<u16> = Vec::new();
+        let mut todo = vec![v];
+        while let Some(x) = todo.pop() {
+            if x >= self.count() || !matches!(self.tp(x).base(), Type::RefVar(_)) {
+                continue;
+            }
+            for d in self.tp(x).depend() {
+                if d != v && !out.contains(&d) {
+                    out.push(d);
+                    todo.push(d);
+                }
+            }
+        }
+        out
+    }
+
+    #[must_use]
+    pub fn link_write_releases(&self, v: u16) -> bool {
+        // …and only where the place the link names OWNS the store (`link_target_owns`: a view
+        // behind the link borrows): the two halves of one question, asked by every writer.
+        // `LOFT_LINK_PARAM_RELEASES=1` brings the parameter half's release back.
+        self.link_target_owns(v)
+            && (crate::keys::link_param_releases()
+                || !self
+                    .link_targets(v)
+                    .iter()
+                    .any(|&t| self.is_argument(t) && !matches!(self.tp(t).base(), Type::RefVar(_))))
+    }
+
     /// The variables that may VIEW a store `root` lives in — every variable a read of which
     /// can see a write through `root`, or be moved by a growth of it.
     ///
@@ -5610,7 +5696,13 @@ impl Function {
     /// produce a store, and that a retbuf-attr local carry an entry-buffer witness.
     #[must_use]
     pub fn owns_displaced_store(&self, v: u16, value: &Value, data: &Data) -> bool {
-        self.owns_its_binding(v, value, data)
+        // A bare `null` is a pass's LET-GO, never a user's write (`a = null` reaches the IR as
+        // `OpNullRefSentinel()`): the local hands its record on — `(R-HostStore)` writes it
+        // after `OpAdoptChildRec` gave the record to a field — and displaces nothing it owns.
+        // The C and Rust emitters free only on a store-producing right-hand side, so this is
+        // the interpreter agreeing with them (`@FR-O-NoDiverge`).
+        !matches!(value.unspan(), Value::Null)
+            && self.owns_its_binding(v, value, data)
             // loft#1522 — and the store is not one a construction work-ref still NAMES.  The
             // proxy answers "owned" for such a local because the adoption leaves its dep list
             // empty, so without this the rebind released the buffer's store out from under it;
@@ -5861,6 +5953,29 @@ impl Function {
         }
         let n = self.name(v);
         n.starts_with("__ncc_") || n.starts_with("__ret_")
+    }
+
+    /// `@FR-O-Override`'s second admissible free: the IDENTITY-GUARDED release a pass places for
+    /// a never-free binding it made — `OpFreeRefIfDistinct(v, witness)`, which releases `v`'s
+    /// store only when it is no longer the one the witness holds.  Four passes place one: the
+    /// owner witness (`__own_<v>`, `@FR-O-Witness`), a rebind parameter (one with a
+    /// `__rbw_<v>` witness), the call-site snapshot of a local a `&` parameter may rebind (`__lift_N`,
+    /// loft#2195) and the write-back of a call's result into an out-of-line field
+    /// (`_written_back_N`, `@FR-B-OutOfLine`).  Like [`Self::is_staged_text_temp`], the name
+    /// says which pass made the binding and `skip_free` that the pass did mark it.
+    #[must_use]
+    pub fn is_placed_identity_release(&self, v: u16, witness: u16) -> bool {
+        if !self.is_skip_free(v) || witness == v {
+            return false;
+        }
+        let n = self.name(v);
+        let w = self.name(witness);
+        w.strip_prefix("__own_") == Some(n)
+            // A rebind parameter's release sits under its witness's guard and names the
+            // returned store as its own (`v` is freed unless it is what the call hands back).
+            || self.names.contains_key(&format!("__rbw_{n}"))
+            || n.starts_with("__lift_")
+            || n.starts_with("_written_back_")
     }
 
     /// Mark a variable so that `get_free_vars` will not emit `OpFreeRef` for it.

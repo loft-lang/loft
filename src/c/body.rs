@@ -227,6 +227,9 @@ pub(crate) struct FnWriter<'a> {
     sticky_temps: Vec<(u16, u16)>,
     /// `@FR-R-ValueRecord`'s facts for this function (`value::VrFn`), when the plan has any.
     vr: Option<Box<value::VrFn>>,
+    /// The arm each open `set_stmt` took, innermost last, for `LOFT_TRACE_BIND_C` (the lowering
+    /// census): a value's own assignments are lowered inside its arm.
+    bind_arm: Vec<&'static str>,
     /// `@FR-R-Transient`: this body's transient variables, when it is a twin or holds a site.
     tr: Option<Box<transient::TrFn>>,
     /// `@FR-H-KeepRoom`: vector wrappers just minted by `loft_database_room`, with their type,
@@ -294,9 +297,11 @@ pub(crate) struct FnWriter<'a> {
     peel_seeds: Vec<(u16, i64)>,
     /// `@FR-R-Base`'s counter clause: the vector whose length the statements just before a
     /// loop gave its range end (`end = len(v)`), and per enclosing such loop the counters
-    /// proven inside the held vector (counter, header).
-    range_lens: Vec<(u16, Value)>,
+    /// proven inside the held vector (counter, header), and the locals that hold that
+    /// vector's length for the loop (local, header): a wrapped counter's divisor.
+    range_lens: Vec<peel::RangeLen>,
     in_range: Vec<(u16, String)>,
+    in_range_lens: Vec<(u16, String)>,
     /// `n = len(v)` as the statement right before the `for` block being written (`v` by `n`).
     len_alias: Option<(u16, Value)>,
     /// `@FR-R-Base`'s grid clause: the facts `0 <= x < bound` that hold where the code is
@@ -307,6 +312,12 @@ pub(crate) struct FnWriter<'a> {
     /// The values the statements just before a loop gave its range ends (`end = x`).
     range_ends: Vec<(u16, Value)>,
     set_once: Option<std::rc::Rc<std::collections::HashSet<u16>>>,
+    /// `@FR-R-Base`'s counter clause, length-local form: the locals that hold a local vector's
+    /// length for the rest of the function (`(N-Index)`'s `length_locals`), as (local, vector).
+    length_locals: Option<std::rc::Rc<Vec<(u16, u16)>>>,
+    /// `@FR-R-Base`'s guard clause: the index nodes a passed test keeps below their vector's
+    /// length (`opt::below_len`), by address.
+    guarded: Option<std::rc::Rc<std::collections::HashSet<usize>>>,
     /// `@FR-R-Transient`'s work clause: the `&text` parameter a `__wr` twin answers (its result
     /// is the caller's buffer), and the call a transient body sends to such a twin.
     work_ret: Option<u16>,
@@ -765,6 +776,7 @@ impl<'a> FnWriter<'a> {
             push_heads: Vec::new(),
             slice_carriers: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
+            bind_arm: Vec::new(),
             tr: None,
             room_minted: std::collections::HashMap::new(),
             filed: None,
@@ -799,11 +811,14 @@ impl<'a> FnWriter<'a> {
             peel_seeds: Vec::new(),
             range_lens: Vec::new(),
             in_range: Vec::new(),
+            in_range_lens: Vec::new(),
             len_alias: None,
             grid_facts: Vec::new(),
             grid_binds: Vec::new(),
             range_ends: Vec::new(),
             set_once: None,
+            length_locals: None,
+            guarded: None,
             work_ret: None,
             wr_call: None,
             chain_guards: 0,
@@ -993,7 +1008,7 @@ impl<'a> FnWriter<'a> {
         if on {
             let leaf = self
                 .cx
-                .version_leaf(self.d)
+                .version_fast_plan(self.d)
                 .ok_or("a fast twin of a function that is no leaf")?;
             self.plain_chains.push((leaf.plain.clone(), None));
             self.vf = Some(leaf);
@@ -2623,7 +2638,20 @@ impl<'a> FnWriter<'a> {
                     )));
                 }
                 let i = self.expr(idx, ind)?;
-                let (i, nn) = self.index_arg(idx, as_int(i)?);
+                let guard = self.guard_index(idx);
+                if guard == Some(true) {
+                    let i = as_int(i)?;
+                    let proof = self.held_proof(v, &h);
+                    return Ok(Some(E::new(
+                        format!("({proof}, loft_vh_at_ref({h}, {size}, {i}))"),
+                        K::Ref,
+                    )));
+                }
+                let (i, nn) = if guard.is_some() {
+                    (as_int(i)?, "_lt")
+                } else {
+                    self.index_arg(idx, as_int(i)?)
+                };
                 let proof = self.held_proof(v, &h);
                 let (at, tail) = at(name == "OpGetVector");
                 Ok(Some(E::new(
@@ -2643,13 +2671,9 @@ impl<'a> FnWriter<'a> {
                 };
                 let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let index = self.expr(idx, ind)?;
-                if name == "OpGetInt" && self.version_raw(args) {
-                    let index = as_int(index)?;
-                    let code = version::version_access(name, &held, size, fld, &index, None);
-                    return Ok(Some(E::new(code, K::Int)));
-                }
-                if let Some(i) = self.counter_index(idx, &held) {
+                let versioned = self.version_raw(args);
+                // A proven index is its own C expression: the operand is not written at all.
+                if !versioned && let Some(i) = self.counter_index(idx, &held) {
                     let (f, k) = if name == "OpGetInt" {
                         ("loft_vh_at_int", K::Int)
                     } else {
@@ -2657,6 +2681,28 @@ impl<'a> FnWriter<'a> {
                     };
                     let proof = self.held_proof(vec, &held);
                     crate::rewrite_census::fired("R-Base/counter", 1);
+                    return Ok(Some(E::new(
+                        format!("({proof}, {f}({held}, {size}, {i}, {fld}))"),
+                        k,
+                    )));
+                }
+                let index = self.expr(idx, ind)?;
+                if versioned {
+                    let index = as_int(index)?;
+                    let code = version::version_access(name, &held, size, fld, &index, None);
+                    let k = if name == "OpGetInt" { K::Int } else { K::Float };
+                    return Ok(Some(E::new(code, k)));
+                }
+                let guard = self.guard_index(idx);
+                if guard == Some(true) {
+                    let f = if name == "OpGetInt" {
+                        "loft_vh_at_int"
+                    } else {
+                        "loft_vh_at_float"
+                    };
+                    let k = if name == "OpGetInt" { K::Int } else { K::Float };
+                    let i = as_int(index)?;
+                    let proof = self.held_proof(vec, &held);
                     return Ok(Some(E::new(
                         format!("({proof}, {f}({held}, {size}, {i}, {fld}))"),
                         k,
@@ -2685,7 +2731,11 @@ impl<'a> FnWriter<'a> {
                 };
                 let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
-                let (index, nn) = self.index_arg(idx, as_int(index)?);
+                let (index, nn) = if guard.is_some() {
+                    (as_int(index)?, "_lt")
+                } else {
+                    self.index_arg(idx, as_int(index)?)
+                };
                 Ok(Some(E::new(
                     format!("({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}{tail}))"),
                     k,
@@ -2715,16 +2765,27 @@ impl<'a> FnWriter<'a> {
                 };
                 let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
-                let index = as_int(self.expr(idx, ind)?)?;
-                let (index, nn) = self.index_arg(idx, index);
                 let proof = self.held_proof(vec, &held);
-                let (at, tail) = at(report);
-                let addr = match self.counter_index(idx, &held) {
-                    Some(i) => {
-                        crate::rewrite_census::fired("R-Base/counter", 1);
-                        format!("loft_vh_at_addr({held}, {size}, {i})")
+                let addr = if let Some(i) = self.counter_index(idx, &held) {
+                    crate::rewrite_census::fired("R-Base/counter", 1);
+                    format!("loft_vh_at_addr({held}, {size}, {i})")
+                } else if self.version_raw(args) {
+                    // `@FR-R-Version`'s fast twin: the leaf's precondition proved the index.
+                    let index = as_int(self.expr(idx, ind)?)?;
+                    format!("loft_vh_at_addr({held}, {size}, {index})")
+                } else {
+                    let index = as_int(self.expr(idx, ind)?)?;
+                    let guard = self.guard_index(idx);
+                    let (index, nn) = match guard {
+                        Some(_) => (index, "_lt"),
+                        None => self.index_arg(idx, index),
+                    };
+                    let (at, tail) = at(report);
+                    if guard == Some(true) {
+                        format!("loft_vh_at_addr({held}, {size}, {index})")
+                    } else {
+                        format!("loft_vh_addr{at}{nn}({held}, {size}, {index}{tail})")
                     }
-                    None => format!("loft_vh_addr{at}{nn}({held}, {size}, {index}{tail})"),
                 };
                 let call = if let [_, _, min] = args {
                     let min = c_long(Self::literal(min, "minimum")?);
@@ -2734,6 +2795,23 @@ impl<'a> FnWriter<'a> {
                 };
                 crate::rewrite_census::fired("R-Header/narrow", 1);
                 Ok(Some(E::new(format!("({proof}, {call})"), k)))
+            }
+            // `@FR-R-Version`'s fast twin writes a boolean element at its proven index; any
+            // other boolean write keeps the store's own path.
+            ("OpSetBoolean", [inner, fld, val]) if self.version_raw(args) => {
+                let Some((vec, size, idx, _)) = elem(inner) else {
+                    return Ok(None);
+                };
+                let Some(held) = self.held_vector(vec) else {
+                    return Ok(None);
+                };
+                let size = Self::literal(size, "element size")?;
+                let fld = Self::literal(fld, "field")?;
+                let (index, value) = self.two(name, &[idx, val], ind)?;
+                let (index, value) = (as_int(index)?, as_bool(value)?);
+                let code = version::version_access(name, &held, size, fld, &index, Some(&value));
+                let proof = self.held_proof(vec, &held);
+                Ok(Some(E::new(format!("({proof}, {code})"), K::Void)))
             }
             ("OpSetInt" | "OpSetFloat", [inner, fld, val]) => {
                 let Some((vec, size, idx, report)) = elem(inner) else {
@@ -2745,8 +2823,13 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
                 let (index, value) = self.two(name, &[idx, val], ind)?;
-                if name == "OpSetInt" && self.version_raw(args) {
-                    let (index, value) = (as_int(index)?, as_int(value)?);
+                if self.version_raw(args) {
+                    let index = as_int(index)?;
+                    let value = if name == "OpSetInt" {
+                        as_int(value)?
+                    } else {
+                        as_float(value)?
+                    };
                     let code =
                         version::version_access(name, &held, size, fld, &index, Some(&value));
                     return Ok(Some(E::new(code, K::Void)));
@@ -2756,9 +2839,27 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_vh_set_float", as_float(value)?)
                 };
+                let guard = self.guard_index(idx);
+                if guard == Some(true) {
+                    let put = if name == "OpSetInt" {
+                        "loft_vh_put_int"
+                    } else {
+                        "loft_vh_put_float"
+                    };
+                    let index = as_int(index)?;
+                    let proof = self.held_proof(vec, &held);
+                    return Ok(Some(E::new(
+                        format!("({proof}, {put}({held}, {size}, {index}, {fld}, {value}))"),
+                        K::Void,
+                    )));
+                }
                 let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
-                let (index, nn) = self.index_arg(idx, as_int(index)?);
+                let (index, nn) = if guard.is_some() {
+                    (as_int(index)?, "_lt")
+                } else {
+                    self.index_arg(idx, as_int(index)?)
+                };
                 Ok(Some(E::new(
                     format!(
                         "({proof}, {f}{at}{nn}({held}, {size}, {index}, {fld}, {value}{tail}))"
@@ -2919,6 +3020,16 @@ impl<'a> FnWriter<'a> {
     }
 
     fn stmts_in(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
+        self.stmts_upto(ops, ops.len(), ind)
+    }
+
+    /// `ops[..end]`, the statements of a list whose remainder `ops[end..]` is written by the
+    /// caller (a value block's value and the frees after it).  A rewrite that takes a run of
+    /// statements sees only `ops[..end]`, so it never takes the value; what a statement binds
+    /// for the rest of the block — a held record address, a view header — looks over all of
+    /// `ops`, since it stays bound while the value is written.
+    fn stmts_upto(&mut self, all: &[Value], end: usize, ind: usize) -> Result<(), String> {
+        let ops = &all[..end];
         let mut i = 0;
         // The end of the push run a reservation was made for (`reserve_push_run`), and whether
         // a header frame is open for it.
@@ -2962,7 +3073,13 @@ impl<'a> FnWriter<'a> {
                 self.grid_bind(*var, x);
             }
             self.peel_seeds = peel::seeds(ops, i);
-            self.range_lens = peel::range_lens(self.cx.data, ops, i, self.len_alias.as_ref());
+            let locals = if matches!(ops[i].unspan(), Value::Loop(_)) {
+                self.length_locals()
+            } else {
+                std::rc::Rc::default()
+            };
+            self.range_lens =
+                peel::range_lens(self.cx.data, ops, i, self.len_alias.as_ref(), &locals);
             self.range_ends = peel::range_ends(ops, i);
             // `n = len(v)` right before a `for` block: the block's range end `n` is `len(v)`.
             // Set afresh at every `for` block, so it never outlives the statement it reads.
@@ -2974,8 +3091,8 @@ impl<'a> FnWriter<'a> {
                     .and_then(|prev| peel::len_bind(self.cx.data, prev));
             }
             self.stmt(&ops[i], ind)?;
-            self.bind_record_ptr(ops, i, ind);
-            self.bind_view_header(ops, i, ind);
+            self.bind_record_ptr(all, i, ind);
+            self.bind_view_header(all, i, ind);
             i += 1;
         }
         if run_head {
@@ -3012,10 +3129,10 @@ impl<'a> FnWriter<'a> {
         crate::opt::writes::fused_push(data, name, args).map(|fp| (fp, next))
     }
 
-    /// Whether `vector` is EMPTY where statement list `ops` ends (`opt::empty_slot::known_empty`,
+    /// Whether `vector` is EMPTY where statement list `ops` ends (`empty_slot::known_empty`,
     /// the front's one answer).
     fn known_empty(&self, ops: &[Value], vector: &Value) -> bool {
-        crate::opt::empty_slot::known_empty(self.cx.data, ops, vector)
+        crate::empty_slot::known_empty(self.cx.data, ops, vector)
     }
 
     /// `@FR-H-KeepRoom`'s prologue clause: statement `i` clears a vector buffer `x`
@@ -3420,17 +3537,17 @@ impl<'a> FnWriter<'a> {
         let Value::Var(end) = rc.hi.unspan() else {
             return;
         };
-        let Some(vec) = self
+        // Every vector the end is the length of: a length local can be the length of a
+        // vector's lockstep twins too (`length_locals::lockstep_twins`).
+        let held: Vec<(String, bool, Option<u16>)> = self
             .range_lens
             .iter()
-            .find(|(e, _)| e == end)
-            .map(|(_, v)| v.clone())
-        else {
+            .filter(|r| r.end == *end)
+            .filter_map(|r| self.held_vector(&r.vec).map(|h| (h, r.local, r.via)))
+            .collect();
+        if held.is_empty() {
             return;
-        };
-        let Some(h) = self.held_vector(&vec) else {
-            return;
-        };
+        }
         let counter = rc.next.unwrap_or(rc.index);
         let start = if rc.next.is_some() { 0 } else { -1 };
         if !self
@@ -3440,27 +3557,83 @@ impl<'a> FnWriter<'a> {
         {
             return;
         }
-        // The counters, and a length bound just before the `for` block, which the body may not
-        // move either.
-        let counters = [
-            Some(rc.index),
-            Some(rc.loop_var),
-            rc.next,
-            self.len_alias.as_ref().map(|(n, _)| *n),
-        ];
-        let mut assigned = false;
+        // The body may move none of the counters, nor the local a range end was copied from
+        // (`end = n` after `n = len(v)`): a local the end did not come from may change freely.
+        let mut assigned = std::collections::HashSet::new();
         for op in &b.operators[1..] {
             op.walk(&mut |n| {
                 if let Value::Set(x, _) = n {
-                    assigned |= counters.contains(&Some(*x));
+                    assigned.insert(*x);
                 }
             });
         }
-        if assigned {
+        if [Some(rc.index), Some(rc.loop_var), rc.next]
+            .iter()
+            .flatten()
+            .any(|c| assigned.contains(c))
+        {
             return;
         }
-        self.in_range.push((rc.index, h.clone()));
-        self.in_range.push((rc.loop_var, h));
+        for (h, local, via) in held {
+            if via.is_some_and(|n| assigned.contains(&n)) {
+                continue;
+            }
+            if local {
+                crate::rewrite_census::fired("R-Base/length-local", 1);
+            }
+            self.in_range_lens.push((*end, h.clone()));
+            if let Some(n) = via {
+                self.in_range_lens.push((n, h.clone()));
+            }
+            self.in_range.push((rc.index, h.clone()));
+            self.in_range.push((rc.loop_var, h));
+        }
+    }
+
+    /// The locals of this function that hold the length of a vector of its own from their one
+    /// assignment on (`length_locals::own_length_locals`, shared with `@FR-R-InRange`), read
+    /// here by `@FR-R-Base`'s counter clause for a range end copied from such a local.
+    fn length_locals(&mut self) -> std::rc::Rc<Vec<(u16, u16)>> {
+        if let Some(l) = &self.length_locals {
+            return l.clone();
+        }
+        let l = std::rc::Rc::new(crate::parser::length_locals::own_length_locals(
+            self.cx.data,
+            self.d,
+            self.vars,
+        ));
+        self.length_locals = Some(l.clone());
+        l
+    }
+
+    /// `@FR-R-Base`'s guard clause: does a passed test keep the access at index `idx` below the
+    /// vector's length (`opt::below_len`, which also checks that nothing since resized the
+    /// vector or moved the index)?  `Some(true)` when `(R-Range)` also proves it non-negative —
+    /// the access names an element and takes no test (`loft_vh_at_*`); `Some(false)` when its sign
+    /// is unproved — the from-the-end wrap and a sign test remain (the `_lt` accessors); `None`
+    /// otherwise.  `LOFT_NO_GUARD_BOUND=1` answers `None`.
+    fn guard_index(&mut self, idx: &Value) -> Option<bool> {
+        let set = if let Some(s) = &self.guarded {
+            s.clone()
+        } else {
+            let s = std::rc::Rc::new(crate::opt::below_len::guarded_indices(self.cx.data, self.d));
+            self.guarded = Some(s.clone());
+            s
+        };
+        if !set.contains(&(std::ptr::from_ref(idx) as usize)) {
+            return None;
+        }
+        crate::rewrite_census::fired("R-Base/guard", 1);
+        if crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0")) {
+            return Some(false);
+        }
+        let facts = self.nn_facts();
+        let over = self.range_override.last().cloned();
+        let ranges = over.as_deref().unwrap_or(&facts.1);
+        Some(matches!(
+            crate::opt::range::range(self.cx.data, &facts.0, ranges, idx, 0),
+            Some((lo, _)) if lo >= 0
+        ))
     }
 
     /// The variables the function sets in more than one place (`grid_bind` trusts the others).
@@ -3688,15 +3861,35 @@ impl<'a> FnWriter<'a> {
         None
     }
 
-    /// The counter `idx` names when it is proven inside the held vector `h` (`counters_in_range`).
-    fn counter_index(&self, idx: &Value, h: &str) -> Option<String> {
-        let Value::Var(i) = idx.unspan() else {
+    /// The index `idx` names when it is proven inside the held vector `h` (`counters_in_range`):
+    /// a counter, or a counter wrapped at a local holding `h`'s length
+    /// (`loop_shape::wrapped_counter`: `(i + c) % n` is in `[0, n)` there).
+    fn counter_index(&self, idx: &Value, held: &str) -> Option<String> {
+        let ours = |ctr: u16| self.in_range.iter().any(|(c, hh)| *c == ctr && hh == held);
+        if let Value::Var(ctr) = idx.unspan() {
+            return ours(*ctr).then(|| self.var(*ctr));
+        }
+        let (ctr, step, divisor) = crate::loop_shape::wrapped_counter(self.cx.data, idx)?;
+        let Value::Var(len) = divisor.unspan() else {
             return None;
         };
-        self.in_range
-            .iter()
-            .any(|(c, hh)| c == i && hh == h)
-            .then(|| self.var(*i))
+        if !ours(ctr)
+            || !self
+                .in_range_lens
+                .iter()
+                .any(|(m, hh)| m == len && hh == held)
+        {
+            return None;
+        }
+        Some(if step == 0 {
+            self.var(ctr)
+        } else {
+            format!(
+                "(({} + INT64_C({step})) % {})",
+                self.var(ctr),
+                self.var(*len)
+            )
+        })
     }
 
     /// The bind of a record's address `pa` (`bind_record_ptr`): the store lookup, or — the
@@ -3763,12 +3956,14 @@ impl<'a> FnWriter<'a> {
             let Value::Int(size) = args[1].unspan() else {
                 return None;
             };
-            let Value::Var(index) = args[2].unspan() else {
-                return None;
-            };
             let header = self.held_vector(&args[0])?;
-            let raw = self.counter_index(&args[2], &header).is_some();
-            Some((header, i64::from(*size), self.var(*index), raw))
+            // A variable index, or one the loop proves inside the vector (a wrapped counter).
+            let (index, raw) = match (args[2].unspan(), self.counter_index(&args[2], &header)) {
+                (_, Some(i)) => (i, true),
+                (Value::Var(index), None) => (self.var(*index), false),
+                _ => return None,
+            };
+            Some((header, i64::from(*size), index, raw))
         };
         if let Some((header, size, idx, raw)) = read(value) {
             return Some((header, size, idx, None, raw));
@@ -4804,7 +4999,7 @@ impl<'a> FnWriter<'a> {
         self.hold_invariants(b, ind)?;
         let mints = self.hold_vectors(b, ind)?;
         self.hold_versions(b, ind)?;
-        let in_range_at = self.in_range.len();
+        let in_range_at = (self.in_range.len(), self.in_range_lens.len());
         let grid_at = self.grid_facts.len();
         self.counters_in_range(b);
         self.grid_counter_facts(b);
@@ -4840,7 +5035,8 @@ impl<'a> FnWriter<'a> {
                 .expect("the window this loop opened");
             self.line(ind, &format!("loft_tw_sync(&{w}, &{place});"));
         }
-        self.in_range.truncate(in_range_at);
+        self.in_range.truncate(in_range_at.0);
+        self.in_range_lens.truncate(in_range_at.1);
         self.grid_facts.truncate(grid_at);
         self.headers.pop();
         self.loop_calls.pop();
@@ -5291,7 +5487,7 @@ impl<'a> FnWriter<'a> {
                 written?;
                 if !matches!(else_arm.unspan(), Value::Null) {
                     self.line(ind, "} else {");
-                    if null_test {
+                    if null_test && !self.int_literal_fallback(cond, else_arm) {
                         self.line(ind + 1, "LOFT_COLD_PATH();");
                     }
                     self.stmt(else_arm, ind + 1)?;
@@ -5460,6 +5656,16 @@ impl<'a> FnWriter<'a> {
         .then(|| self.cx.data.def(d).known_type())
     }
 
+    /// `var = x` where `var` owns what it displaces and `x` reads it and answers a view
+    /// (`bind_lowering::answers_a_view_to_copy`, the bytecode writer's `R2d` arm): the store type.
+    fn reading_view_copy(&self, var: u16, x: &Value) -> Option<u16> {
+        let d = self.vars.tp(var).base().heap_def_nr()?;
+        (x.reads_var(var)
+            && self.vars.owns_displaced_store(var, x, self.cx.data)
+            && crate::bind_lowering::answers_a_view_to_copy(self.cx.data, self.d, x))
+        .then(|| self.cx.data.def(d).known_type())
+    }
+
     /// Register record type `tp` for the deep copy, or refuse a kind it does not walk yet.
     fn copyable(&self, tp: u16) -> Result<u16, String> {
         self.cx.copy_type(tp)?;
@@ -5490,13 +5696,26 @@ impl<'a> FnWriter<'a> {
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
-            let w = self.var(base);
+            // A tuple base is witnessed by each of its heap members (loft#2471, loft#2472).
+            let ws: Vec<String> = match crate::use_analysis::join_witness_members(self.vars, base) {
+                Some(m) => m
+                    .iter()
+                    .map(|i| format!("{}.f{i}", self.var(base)))
+                    .collect(),
+                None => vec![self.var(base)],
+            };
             let old = self.temp(CType::Ref);
             self.line(ind, &format!("{old} = {name};"));
             self.line(ind, &format!("{r} = {};", as_ref(e)?));
             self.line(
                 ind,
-                &format!("if ({r}.store_nr != 0xFFFF && {r}.store_nr == {w}.store_nr) {{"),
+                &format!(
+                    "if ({r}.store_nr != 0xFFFF && ({})) {{",
+                    ws.iter()
+                        .map(|w| format!("{r}.store_nr == {w}.store_nr"))
+                        .collect::<Vec<_>>()
+                        .join(" || ")
+                ),
             );
             self.line(ind + 1, &format!("{name} = loft_ref_null();"));
             self.line(
@@ -5570,15 +5789,20 @@ impl<'a> FnWriter<'a> {
         // `@FR-F-ParamRef` — a RECORD written back from a borrowed value displaces the caller's
         // store as an owned one does: released unless the new value lives in it (a drain's last
         // `slot = slot.right` reads null).
-        let displaces =
-            owned || matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _));
+        // Not through a link to a plain parameter, whose store is the caller's
+        // (`@FR-F-ParamRebind`, `link_write_releases`).
+        let releases = self.vars.link_write_releases(var);
+        let displaces = (owned
+            || matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)))
+            && releases;
         let e = self.expr(x, ind)?;
         let r = self.temp(CType::Ref);
         self.line(ind, &format!("{r} = {};", as_ref(e)?));
         // @PLN219 `@FR-F-ParamRef` — a slot cell: the field write when it names a field (an
         // owned value given up there), the write-back otherwise.  A field-naming cell is the
         // same before and after, so the displaced-store release below finds nothing to free.
-        if let Some(d) = self.cx.data.slot_link_def(self.vars.tp(var))
+        if releases
+            && let Some(d) = self.cx.data.slot_link_def(self.vars.tp(var))
             && let Some(src) = self.cx.data.slot_self_step(x, var)
         {
             let tp = self.copyable(self.cx.data.def(d).known_type())?;
@@ -5905,26 +6129,57 @@ impl<'a> FnWriter<'a> {
         Some(self.lazy_split_bind(var, &ls, x, ind))
     }
 
+    /// One assignment; under `LOFT_TRACE_BIND_C=<file>` also one row naming the lowering it
+    /// took, in the interpreter's `LOFT_TRACE_BIND` form (`function⇥variable⇥first|re⇥arm`), so
+    /// the two writers' choices can be compared row by row (STORE_RECORDS.md § Phases, 2).
+    fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        let first = !self.bound[var as usize];
+        self.bind_arm.push("");
+        let r = self.set_stmt_arms(var, x, ind);
+        let arm = self.bind_arm.pop().unwrap_or("");
+        if r.is_ok() {
+            crate::bind_lowering::trace_row(
+                "LOFT_TRACE_BIND_C",
+                self.cx.data.def(self.d).name(),
+                self.vars.name(var),
+                first,
+                arm,
+            );
+        }
+        r
+    }
+
+    /// Name the arm the innermost open `set_stmt` takes.
+    fn set_arm(&mut self, arm: &'static str) {
+        if let Some(top) = self.bind_arm.last_mut() {
+            *top = arm;
+        }
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "one arm per kind of bind; the rewritten binds are already helpers"
     )]
-    fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+    fn set_stmt_arms(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
         if self.vr.is_some()
             && let Some(r) = self.vr_set(var, x, ind)
         {
             self.bound[var as usize] = true;
+            self.set_arm("value-record");
             return r;
         }
         // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
         // every later read and write of it goes through.
         if self.store_links[var as usize] {
+            self.set_arm("store-link");
             return self.store_link_set(var, x, ind);
         }
         if self.link_repoint(var, x, ind)? {
+            self.set_arm("link-repoint");
             return Ok(());
         }
         if self.links[var as usize] && self.shapes[var as usize] == CType::Ref {
+            self.set_arm("link-write");
             return self.link_rebind(var, x, ind);
         }
         if let Some(a) = self.adopt
@@ -5933,6 +6188,7 @@ impl<'a> FnWriter<'a> {
         {
             self.bound[var as usize] = true;
             self.adopted_init(a, ind)?;
+            self.set_arm("adopted-init");
             return Ok(());
         }
         let first = !std::mem::replace(&mut self.bound[var as usize], true);
@@ -5947,12 +6203,18 @@ impl<'a> FnWriter<'a> {
             && crate::parser::vectors::owns_keyed_store(self.vars.tp(var))
         {
             self.keyed_null(var, first, ind);
+            self.set_arm("keyed-null");
             return Ok(());
         }
+        // A FIRST null init mints exactly where the bytecode writer's does
+        // (`bind_lowering::vector_null_mints`, the one answer): a `vector<T>?` local's takes the
+        // sentinel there (`NullableVectorNull`) and minted a store here.  @PLN220.
         if matches!(x.unspan(), Value::Null)
             && let crate::data::Type::Vector(_, dep) = self.vars.tp(var).base()
             && dep.is_empty()
-            && (if lazy {
+            && (if first && !crate::keys::c_own_vector_null() {
+                crate::bind_lowering::vector_null_mints(self.vars, var)
+            } else if lazy {
                 !first
             } else {
                 !(self.vars.is_skip_free(var) || self.vars.is_inline_ref(var))
@@ -5960,16 +6222,20 @@ impl<'a> FnWriter<'a> {
             && !self.split_tabs.values().any(|t| t.dead_buf == Some(var))
         {
             self.owned_vector_null(var, ind);
+            self.set_arm("vector-null");
             return Ok(());
         }
         let c = self.shapes[var as usize];
         if let Some(done) = self.rewritten_bind(var, x, ind) {
+            self.set_arm("rewritten");
             return done;
         }
         if c == CType::Int && self.sticky_update(var, x, ind)? {
+            self.set_arm("sticky");
             return Ok(());
         }
         if c == CType::Int && self.spec_chain(var, x, ind)? {
+            self.set_arm("spec-chain");
             return Ok(());
         }
         if c == CType::Text && !self.text_held(var) {
@@ -5979,9 +6245,11 @@ impl<'a> FnWriter<'a> {
         if self.join_stmt(var, x, first, &name, ind)?
             || self.opaque_callref_stmt(var, x, first, &name, ind)?
         {
+            self.set_arm("join");
             return Ok(());
         }
         if let Some((tp, frees)) = self.call_copy(var, x) {
+            self.set_arm(if frees { "call-copy-free" } else { "call-copy" });
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
@@ -6044,7 +6312,23 @@ impl<'a> FnWriter<'a> {
             self.flush(ind);
             return Ok(());
         }
-        if let Some(tp) = self.element_copy(var, x) {
+        // `@FR-B-Copy` — a tuple member bound first (`(ca, cb) = (mk(1), mk(2))` lowers to
+        // `ca = __ref_3.0`): `bind_lowering`'s `TupleElementCopy` (F5), the arm the bytecode
+        // writer takes, copied into the local's own store.  `element_copy` matches the call
+        // spelling of a projection only; bound plainly, the local and the tuple member were
+        // two frees of one store.  @PLN220.  `LOFT_C_OWN_TUPLE_MEMBER_BIND=1` binds it plainly.
+        let tuple_member = if first && !crate::keys::c_own_tuple_member_bind() {
+            match crate::bind_lowering::first_arm(self.cx.data, self.d, self.vars, var, x) {
+                crate::bind_lowering::FirstArm::TupleElementCopy { d_nr } => {
+                    Some(self.cx.data.def(d_nr).known_type())
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(tp) = tuple_member.or_else(|| self.element_copy(var, x)) {
+            self.set_arm("element-copy");
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
@@ -6057,7 +6341,31 @@ impl<'a> FnWriter<'a> {
             self.flush(ind);
             return Ok(());
         }
+        if !first && let Some(tp) = self.reading_view_copy(var, x) {
+            self.set_arm("reading-view-copy");
+            // `x = x.next ?? y`: the value reads `var` and answers another store; computed
+            // first, copied into a fresh store, and the displaced one released after — bound
+            // plainly, `var` named the other store and both freed it (`@FR-H-FreeTwice`).
+            let bytes = self.copyable(tp)?;
+            let e = self.expr(x, ind)?;
+            let r = self.temp(CType::Ref);
+            let old = self.temp(CType::Ref);
+            self.line(ind, &format!("{r} = {};", as_ref(e)?));
+            self.line(ind, &format!("{old} = {name};"));
+            self.line(ind, &format!("{name} = loft_ref_null();"));
+            self.line(
+                ind,
+                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+            );
+            self.line(
+                ind,
+                &format!("if ({old}.store_nr != 0xFFFF) loft_free_ref({old});"),
+            );
+            self.flush(ind);
+            return Ok(());
+        }
         if let Some((src, tp)) = self.whole_value_bind(var, x) {
+            self.set_arm("var-copy");
             let bytes = self.copyable(tp)?;
             let src = self.var(src);
             self.fresh_unless_owned(var, x, first, &name, ind);
@@ -6068,12 +6376,14 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         if !first && c == CType::Ref && self.displacing_rebind(var, x, &name, ind)? {
+            self.set_arm("displacing-rebind");
             return Ok(());
         }
         // A tuple local this function owns gives up the texts of its old value when a call's
         // tuple moves in (`assign`); a parameter's or a link's texts are the caller's.
         let owner = !self.params[var as usize] && !self.links[var as usize];
         let outer = std::mem::replace(&mut self.frees_old_tuple, owner);
+        self.set_arm("assign");
         let done = self.assign(x, &name, c, ind);
         self.frees_old_tuple = outer;
         done?;
@@ -6743,36 +7053,22 @@ impl<'a> FnWriter<'a> {
                 !matches!(o.unspan(), Value::Line(_) | Value::Set(..)) && !self.is_free(o)
             })
             .ok_or("a value block with no value")?;
-        // A view the block binds before its value serves the rest of it (`@FR-R-View`), the
-        // value included; its frame closes with the block.
+        // The statements before the value are a statement list like any other, walked by the
+        // one list walker (`stmts_in`), so every per-list fact holds there too: a range end's
+        // length, the peel seeds, the held record pointers, the push runs.  What the list binds
+        // — a view (`@FR-R-View`), a record pointer, a grid bind — serves the value as well, so
+        // it closes after the value, with the block (`stmts` closes it at the list's end).
         let frames = self.headers.len();
+        let held = self.rec_ptrs.len();
+        let binds = self.grid_binds.len();
         let r = (|| {
-            let mut run_end = 0;
-            let mut run_head = false;
-            for i in 0..at {
-                if run_head && i >= run_end {
-                    self.push_heads.pop();
-                    run_head = false;
-                }
-                if i >= run_end
-                    && let Some((end, head)) = self.reserve_push_run(&ops[..at], i, ind)?
-                {
-                    run_end = end;
-                    run_head = head;
-                }
-                if self.clear_before_mint(&ops[..at], i) {
-                    continue;
-                }
-                self.stmt(&ops[i], ind)?;
-                self.bind_view_header(ops, i, ind);
-            }
-            if run_head {
-                self.push_heads.pop();
-            }
+            self.stmts_upto(ops, at, ind)?;
             self.assign(&ops[at], target, c, ind)?;
             self.flush(ind);
             ops[at + 1..].iter().try_for_each(|o| self.stmt(o, ind))
         })();
+        self.grid_binds.truncate(binds);
+        self.rec_ptrs.truncate(held);
         self.headers.truncate(frames.min(self.headers.len()));
         r
     }
@@ -7715,7 +8011,16 @@ impl<'a> FnWriter<'a> {
         } else {
             name
         };
+        // `@FR-R-Version`'s callee clause: inside a fast twin, a leaf it walked calls that
+        // leaf's own fast twin (its decided tests are in this one's precondition).
+        let callee_fast =
+            mask & super::INV_BIT != 0 && self.vf.as_ref().is_some_and(|l| l.callees.contains(&d));
         let call = match &version {
+            _ if callee_fast => {
+                cx.request_twin(d, mask | super::VF_BIT);
+                let fast = super::twin_name(cx.data, d, mask | super::VF_BIT);
+                format!("{fast}({})", xs.join(", "))
+            }
             // `@FR-R-Version`: the fast twin where the flag holds, the twin as written elsewhere.
             Some(flag)
                 if mask & super::INV_BIT != 0 && mask & super::AP_BIT == 0 && fresh.is_none() =>
@@ -8420,6 +8725,7 @@ impl<'a> FnWriter<'a> {
             return self.assign(if want { t } else { e }, target, c, ind);
         }
         let null_test = self.null_test(cond);
+        let cond_v = cond;
         // Only the test is evaluated before the `if`; each arm's work — its call temporaries
         // included — is emitted inside that arm's braces, so it runs only when the arm does.
         // `a && b` and `a || b` arrive as such an `if`, which is what keeps the right operand
@@ -8429,12 +8735,45 @@ impl<'a> FnWriter<'a> {
         self.line(ind, &format!("if ({}) {{", bare(&cond)));
         self.assign(t, target, c, ind + 1)?;
         self.line(ind, "} else {");
-        if null_test {
+        if null_test && !self.int_literal_fallback_value(cond_v, e) {
             self.line(ind + 1, "LOFT_COLD_PATH();");
         }
         self.assign(e, target, c, ind + 1)?;
         self.line(ind, "}");
         Ok(())
+    }
+
+    /// An integer's `?? <literal>` — a not-null test of an integer whose else gives a literal —
+    /// stays a plain branch: the compiler makes it a select, which is cheaper than the
+    /// predicted jump `LOFT_COLD_PATH()` keeps (hex_form `boundary_loops` -36 % on clang, -9 %
+    /// on gcc).  A float's discharge keeps the marker: without it bench 11 `par` ran 23–49 %
+    /// slower.  `LOFT_COLD_INT_LITERAL=1` marks these too.
+    fn int_literal_fallback_value(&self, c: &Value, e: &Value) -> bool {
+        if crate::env_once!(std::env::var("LOFT_COLD_INT_LITERAL").is_ok_and(|v| v != "0")) {
+            return false;
+        }
+        matches!(c.unspan(), Value::Call(d, a) if a.len() == 1
+            && matches!(self.cx.data.def(*d).name(), "OpConvBoolFromInt" | "OpConvBoolFromLong"))
+            && matches!(e.unspan(), Value::Int(_) | Value::Long(_))
+    }
+
+    /// [`Self::int_literal_fallback_value`] for a statement `if`: its else assigns the literal.
+    fn int_literal_fallback(&self, c: &Value, else_arm: &Value) -> bool {
+        let one = match else_arm.unspan() {
+            Value::Block(b) => {
+                let ops: Vec<&Value> = b
+                    .operators
+                    .iter()
+                    .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+                    .collect();
+                match ops.as_slice() {
+                    [one] => *one,
+                    _ => return false,
+                }
+            }
+            other => other,
+        };
+        matches!(one.unspan(), Value::Set(_, x) if self.int_literal_fallback_value(c, x))
     }
 
     /// Is `c` a not-null test (`x != null` of a number)?  Its else is the null's path, which
@@ -9630,116 +9969,8 @@ impl<'a> FnWriter<'a> {
 
     /// `OpAppendVector(v, other, tp)` (`Stores::vector_add`, a linked element type's records by
     /// `vector_add_array`) and `OpPrependVector` (`Stores::prepend_vector`), `tp` the element.
-    /// A vector value that is one scalar slice materialised into a temporary of its own —
-    /// `{ <bounds>; <mint the temporary>; OpSliceView(tmp, src, lo, hi, row); tmp }`, the block a
-    /// slice used as a value converts to (`Parser::materialise_slice_leaves`) — as the statements
-    /// that compute its bounds and the slice op's operands.  `None` for any other value, or when
-    /// anything but its own mint, zero, clear or bind mentions the temporary.
-    fn slice_fill<'v>(&self, other: &'v Value) -> Option<(Vec<&'v Value>, &'v [Value])> {
-        if crate::env_once!(std::env::var("LOFT_NO_SLICE_INTO").is_ok_and(|v| v != "0")) {
-            return None;
-        }
-        let Value::Block(bl) = other.unspan() else {
-            return None;
-        };
-        let (last, rest) = bl.operators.split_last()?;
-        let Value::Var(tmp) = last.unspan() else {
-            return None;
-        };
-        if !self.vars.name(*tmp).contains("__iter_vec") {
-            return None;
-        }
-        let mut owned: Vec<u16> = vec![*tmp];
-        owned.extend(self.vars.tp(*tmp).depend().iter().copied());
-        let names_owned = |v: &Value| {
-            let mut hit = false;
-            v.walk(&mut |n| {
-                if matches!(n, Value::Var(x) if owned.contains(x)) {
-                    hit = true;
-                }
-            });
-            hit
-        };
-        let mut flat: Vec<&Value> = Vec::new();
-        fn flatten<'a>(ops: &'a [Value], out: &mut Vec<&'a Value>) {
-            for op in ops {
-                match op.unspan() {
-                    Value::Insert(inner) => flatten(inner, out),
-                    _ => out.push(op),
-                }
-            }
-        }
-        flatten(rest, &mut flat);
-        let mut prelude = Vec::new();
-        let mut slice: Option<&[Value]> = None;
-        for op in flat {
-            let n = op.unspan();
-            if let Value::Call(d, args) = n {
-                let name = self.cx.data.def(*d).name();
-                if matches!(name, "OpSliceView" | "OpSliceVector")
-                    && args.len() == 5
-                    && matches!(args[0].unspan(), Value::Var(x) if x == tmp)
-                    && !args[1..].iter().any(&names_owned)
-                    && slice.is_none()
-                {
-                    slice = Some(&args[1..]);
-                    continue;
-                }
-                if matches!(
-                    name,
-                    "OpDatabase" | "OpDatabaseNP" | "OpSetInt4" | "OpClearVector"
-                ) && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if owned.contains(x))
-                    && !args[1..].iter().any(&names_owned)
-                {
-                    continue;
-                }
-            }
-            // The temporary's own setup — its store's null init and its bind to that store's
-            // field — names nothing but the temporary's variables.
-            if let Value::Set(x, val) = n
-                && owned.contains(x)
-            {
-                let mut foreign = false;
-                val.walk(&mut |m| {
-                    if matches!(m, Value::Var(y) if !owned.contains(y)) {
-                        foreign = true;
-                    }
-                });
-                if foreign || slice.is_some() {
-                    return None;
-                }
-                continue;
-            }
-            if names_owned(op) {
-                return None;
-            }
-            prelude.push(op);
-        }
-        Some((prelude, slice?))
-    }
-
-    /// `(R-SliceInto)` (C) — the slice appended straight onto `v`: the bounds' statements, then
-    /// `loft_vec_slice(v, src, lo, hi, size)`, which appends `[lo, hi)` clamped as one block —
-    /// what the temporary's fill and the append it fed did together, without its store.
-    fn slice_into(
-        &mut self,
-        v: &Value,
-        prelude: &[&Value],
-        slice: &[Value],
-        ind: usize,
-    ) -> Result<E, String> {
-        let dest = as_ref(self.expr(v, ind)?)?;
-        for op in prelude {
-            self.stmt(op, ind)?;
-        }
-        let raw = format!("({dest})");
-        self.raw.insert(raw.clone(), K::Ref);
-        let mut args = vec![Value::RawExpr(raw)];
-        args.extend(slice.iter().cloned());
-        crate::rewrite_census::fired("R-SliceInto", 1);
-        self.vec_slice(&args, ind, "loft_vec_slice")
-    }
-
+    /// A slice value appended to a place reaches here as `OpSliceVector` already
+    /// (`@FR-R-SliceInto`, `crate::slice_into`).
     fn append_vector_op(
         &mut self,
         name: &str,
@@ -9751,12 +9982,6 @@ impl<'a> FnWriter<'a> {
         let tp = u16::try_from(Self::literal(tp, "element type")?)
             .map_err(|_| "an element type out of range")?;
         let linked = self.cx.stores.is_linked(tp);
-        if name == "OpAppendVector"
-            && !linked
-            && let Some((prelude, slice)) = self.slice_fill(other)
-        {
-            return self.slice_into(v, &prelude, slice, ind);
-        }
         self.cx.copy_type(tp)?;
         let (v, other) = self.two(name, &[v, other], ind)?;
         let (v, other) = (as_ref(v)?, as_ref(other)?);

@@ -80,8 +80,25 @@ pub(super) fn adopted_work_refs(rhs: &Value, function: &Function, data: &Data, o
                 adopted_work_refs(&last, function, data, out);
             }
         }
+        // `st = id(P { … })` — a callee that hands its parameter back whole delivers the
+        // construction's work-ref to the binding through the call (`delivered_work_ref`), so
+        // the binding adopts that store as it adopts a literal's (`@FR-O-Buffer`).  Left out,
+        // the binding and the work-ref each freed it (`@FR-H-FreeTwice`).  The pairing this
+        // feeds frees by identity, so a callee that answers another store on some path keeps
+        // both frees there.  `LOFT_NO_CALL_DELIVERED_PAIR=1` leaves the call out.
+        Value::Call(..) if !call_delivered_pair_off() => {
+            if let Some(w) = super::backings::delivered_work_ref(rhs, function, data) {
+                out.push(w);
+            }
+        }
         _ => {}
     }
+}
+
+/// `LOFT_NO_CALL_DELIVERED_PAIR=1` (STORE_RECORDS.md § The checks): a work-ref a call hands back
+/// is not paired with the binding that adopts it — the re-free the store records must report.
+fn call_delivered_pair_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_CALL_DELIVERED_PAIR").is_some())
 }
 
 /// Does a closure record's adoption take over the frame-exit free of local `v`?
@@ -306,6 +323,10 @@ pub(super) fn escaping_record_holds_buffer(
 /// map, and neither is one whose build this body does not contain.  Both fall back to the type
 /// dep, which is the only fact available for them and is right whenever the local is assigned
 /// once.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one walk over a build and its backings; to be split at the release file-split row"
+)]
 pub(crate) fn capture_build_backings(
     data: &Data,
     function: &Function,
@@ -325,6 +346,21 @@ pub(crate) fn capture_build_backings(
     // two builds gives them different stores (@FR-O-Latest), which the capture NAME cannot say
     // and which decides whether one of them may be made to borrow (@FR-L-CapOwn, loft#1440).
     let mut generation: HashMap<u16, u32> = HashMap::default();
+    // `@FR-L-CapOne` — a build over a NULL collection local first gives it a store
+    // (`if OpRefIsNull(c) { c = <buffer field> }`, loft#1218).  Every build runs that step before
+    // it captures, and only the first one finds `c` absent, so the step never changes which
+    // store a build adopts: it starts no new generation, and two builds over one null local
+    // group (loft#1715's `two_closures`).  A real assignment between them still does.
+    let null_slot_sets = null_slot_sets(code, data);
+    // `@FR-O-Complete` — a value branch written out per ARM (`line = if p { grow(src) } else
+    // { src }` lowered to one assignment in each arm) is still a join: the record built after
+    // it holds whichever arm ran.  Keyed by the else arm's last assignment, where the walk
+    // knows both arms are done.
+    let arm_joins = if crate::keys::arm_written_join() {
+        arm_written_joins(code, function, data)
+    } else {
+        HashMap::default()
+    };
     let mut out = CaptureBuilds::default();
     captures_built_in_a_loop(code, set_dbref, false, &mut out.rebuilt_in_loop);
     captures_rebound_in_a_loop(code, set_dbref, &mut out.rebound_in_loop);
@@ -347,6 +383,10 @@ pub(crate) fn capture_build_backings(
                 built.insert(c);
                 if let Some(b) = backing {
                     out.backing.insert(c, b);
+                    let all = out.backings_at_builds.entry(c).or_default();
+                    if !all.contains(&b) {
+                        all.push(b);
+                    }
                     built.insert(b);
                 }
                 out.adopted
@@ -358,6 +398,7 @@ pub(crate) fn capture_build_backings(
                 }
                 if let Some(arms) = join_arms.get(&c) {
                     out.join_arms_at_build.insert(c, arms.clone());
+                    out.join_bound_builds.insert((record, c));
                 }
                 resolved_in_rhs.insert(c);
                 // @FR-O-Latest — this very assignment is the one that moves the local off
@@ -372,6 +413,7 @@ pub(crate) fn capture_build_backings(
             if built.contains(v) {
                 out.reassigned_after_build.insert(*v);
             }
+            let held_before = latest.get(v).copied();
             match crate::use_analysis::view_root_slots(data, rhs).as_deref() {
                 Some([root]) if bind_views_root(function, *v, rhs, *root) => {
                     let holder = store_holder(&latest, *root);
@@ -395,7 +437,11 @@ pub(crate) fn capture_build_backings(
             }
             // …and the local now names a different store, so a build after this one adopts
             // something the builds before it never held.
-            *generation.entry(*v).or_default() += 1;
+            let slot_step = crate::keys::null_slot_generation()
+                && null_slot_sets.contains(&std::ptr::from_ref(node));
+            if !slot_step {
+                *generation.entry(*v).or_default() += 1;
+            }
             // The buffer this assignment minted is the store any LATER build adopts through
             // `v`.  An assignment that mints none leaves the local naming something this walk
             // cannot pin to a buffer, and a stale entry would name the wrong store outright.
@@ -410,6 +456,23 @@ pub(crate) fn capture_build_backings(
                 join_arms.remove(v);
             } else {
                 join_arms.insert(*v, arms);
+            }
+            if let Some((jv, owners)) = arm_joins.get(&std::ptr::from_ref(node))
+                && jv == v
+            {
+                // A one-armed branch (`if p { line = grow(line) }`) has the store the local held
+                // BEFORE it as its other arm; `owners` then lists the taken arm's alone.
+                let mut owners = owners.clone();
+                if owners.len() == 1
+                    && let Some(h) = held_before
+                    && !owners.contains(&h)
+                {
+                    owners.push(h);
+                }
+                if owners.len() > 1 {
+                    join_arms.insert(*v, owners);
+                    latest.remove(v);
+                }
             }
             let mut bufs = Vec::new();
             adopted_work_refs(rhs, function, data, &mut bufs);
@@ -427,6 +490,10 @@ pub(crate) fn capture_build_backings(
                 built.insert(*c);
                 if !fn_half && let Some(&backing) = latest.get(c) {
                     out.backing.insert(*c, backing);
+                    let all = out.backings_at_builds.entry(*c).or_default();
+                    if !all.contains(&backing) {
+                        all.push(backing);
+                    }
                     built.insert(backing);
                 }
                 if let Some(Value::Var(record)) = args.first().map(Value::unspan) {
@@ -439,6 +506,7 @@ pub(crate) fn capture_build_backings(
                     }
                     if let Some(arms) = join_arms.get(c) {
                         out.join_arms_at_build.insert(*c, arms.clone());
+                        out.join_bound_builds.insert((*record, *c));
                     }
                 }
             }
@@ -798,7 +866,18 @@ pub(crate) fn backs_an_adopted_capture(
                 // by the frame as well and an escaping closure reads a released store, while the
                 // one the local now names is suppressed although nobody adopted it and leaks
                 // (loft#1324).
-                Some(&backing) => backing == v,
+                // A capture built more than once over different backings (`a` over `[9]`, the
+                // local reassigned, `b` over a new slot) has a record holding EACH of them, so
+                // each of those frees is the one a record takes over (loft#1715's
+                // `reset_between`).
+                Some(&backing) => {
+                    backing == v
+                        || (crate::keys::every_build_backing()
+                            && built_with
+                                .backings_at_builds
+                                .get(&c)
+                                .is_some_and(|all| all.contains(&v)))
+                }
                 // No build point in this body, or a right-hand side naming no single root: the
                 // type dep is the only fact there is, and it is right whenever the local is
                 // assigned once.
@@ -1346,4 +1425,74 @@ fn filled_capture(data: &Data, fill: Option<&Value>) -> Option<(u16, bool)> {
 
 pub(super) fn is_record_local(function: &Function, w: u16) -> bool {
     !function.is_argument(w) && function.name(w).starts_with("___clos_")
+}
+
+/// The `Set(c, …)` nodes that give a NULL local its store under `if OpRefIsNull(c) { … }`
+/// — the step a build over a null collection capture, and an append to an absent collection,
+/// begin with.  Identified by node address, for [`capture_build_backings`]'s walk.
+fn null_slot_sets(code: &Value, data: &Data) -> HashSet<*const Value> {
+    let is_null = data.def_nr("OpRefIsNull");
+    let mut out: HashSet<*const Value> = HashSet::default();
+    code.walk(&mut |n: &Value| {
+        if let Value::If(cond, then, _) = n.unspan()
+            && let Value::Call(d, args) = cond.unspan()
+            && *d == is_null
+            && let Some(Value::Var(c)) = args.first().map(Value::unspan)
+        {
+            let c = *c;
+            then.walk(&mut |m: &Value| {
+                if matches!(m.unspan(), Value::Set(v, _) if *v == c) {
+                    out.insert(std::ptr::from_ref(m));
+                }
+            });
+        }
+    });
+    out
+}
+
+/// The branches whose two arms each assign one CAPTURED local — a value branch written out per
+/// arm — with the store owner of each arm's assignment (its call buffer `__ref_N` or literal
+/// backing `__vdb_N`), keyed by the else arm's last assignment of the local.
+fn arm_written_joins(
+    code: &Value,
+    function: &Function,
+    data: &Data,
+) -> HashMap<*const Value, (u16, Vec<u16>)> {
+    // The arm's LAST assignment of `v`: its address, and the owner of the store it binds.
+    let last_set = |arm: &Value, v: u16| -> Option<(*const Value, Option<u16>)> {
+        let mut last = None;
+        arm.walk(&mut |n: &Value| {
+            if let Value::Set(x, rhs) = n.unspan()
+                && *x == v
+            {
+                let owner = super::backings::call_buffer_of(rhs, function)
+                    .or_else(|| super::backings::literal_backing_of(rhs, function, data));
+                last = Some((std::ptr::from_ref(n), owner));
+            }
+        });
+        last
+    };
+    let mut out: HashMap<*const Value, (u16, Vec<u16>)> = HashMap::default();
+    code.walk(&mut |n: &Value| {
+        let Value::If(_, t, e) = n.unspan() else {
+            return;
+        };
+        for v in 0..function.next_var() {
+            if !function.is_captured(v) {
+                continue;
+            }
+            match (last_set(t, v), last_set(e, v)) {
+                (Some((_, Some(ot))), Some((se, Some(oe)))) if ot != oe => {
+                    out.insert(se, (v, vec![ot, oe]));
+                }
+                // No assignment in the else arm (or no else): the walk adds the store the local
+                // held before the branch when it reaches the then arm's assignment.
+                (Some((st, Some(ot))), None) => {
+                    out.insert(st, (v, vec![ot]));
+                }
+                _ => {}
+            }
+        }
+    });
+    out
 }

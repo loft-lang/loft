@@ -32,17 +32,45 @@ const RULE: &str = "R-SliceArg/range";
 struct Ops {
     from_bytes: u32,
     from_range: u32,
+    append_text: u32,
+    block: BlockOps,
+}
+
+/// The operators a slice value's block is made of, which [`admit`] and [`outside_mentions`]
+/// read: the one home of that block's test, for `@FR-R-SliceArg`'s range clause here and
+/// `@FR-R-SliceInto` (`crate::slice_into`).
+pub(crate) struct BlockOps {
     slice: [u32; 2],
     keep: [u32; 4],
     frees: [u32; 3],
     get_field: u32,
-    append_text: u32,
+}
+
+impl BlockOps {
+    pub(crate) fn new(data: &Data) -> Self {
+        BlockOps {
+            slice: [data.def_nr("OpSliceView"), data.def_nr("OpSliceVector")],
+            keep: [
+                data.def_nr("OpDatabase"),
+                data.def_nr("OpDatabaseNP"),
+                data.def_nr("OpSetInt4"),
+                data.def_nr("OpClearVector"),
+            ],
+            // Every one passes a null store by (`free_displaced`, `loft_free_displaced`).
+            frees: [
+                data.def_nr("OpFreeRef"),
+                data.def_nr("OpFreeRecordIn"),
+                data.def_nr("OpFreeRefIfDistinct"),
+            ],
+            get_field: data.def_nr("OpGetField"),
+        }
+    }
 }
 
 /// One admitted site: the temporary `T`, its store `W`.
-struct Site {
-    tmp: u16,
-    store: u16,
+pub(crate) struct Site {
+    pub(crate) tmp: u16,
+    pub(crate) store: u16,
 }
 
 fn disabled() -> bool {
@@ -61,21 +89,8 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     let ops = Ops {
         from_bytes: data.def_nr("n_text_from_bytes"),
         from_range: data.def_nr("n_text_from_byte_range"),
-        slice: [data.def_nr("OpSliceView"), data.def_nr("OpSliceVector")],
-        keep: [
-            data.def_nr("OpDatabase"),
-            data.def_nr("OpDatabaseNP"),
-            data.def_nr("OpSetInt4"),
-            data.def_nr("OpClearVector"),
-        ],
-        // Every one passes a null store by (`free_displaced`, `loft_free_displaced`).
-        frees: [
-            data.def_nr("OpFreeRef"),
-            data.def_nr("OpFreeRecordIn"),
-            data.def_nr("OpFreeRefIfDistinct"),
-        ],
-        get_field: data.def_nr("OpGetField"),
         append_text: data.def_nr("OpAppendText"),
+        block: BlockOps::new(data),
     };
     if ops.from_bytes == u32::MAX || ops.from_range == u32::MAX {
         return;
@@ -89,7 +104,7 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
         code.walk(&mut |n| {
             if let Some(block) = host(n, &ops) {
                 assigned += 1;
-                match admit(block, vars, &ops) {
+                match admit(block, vars, &ops.block) {
                     Ok(site) => sites.push(site),
                     Err(why) => decline(data, d_nr, None, why),
                 }
@@ -114,7 +129,7 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
                 "the text is neither assigned nor appended to a variable",
             );
         }
-        sites.retain(|s| match outside_mentions(&code, s, &ops) {
+        sites.retain(|s| match outside_mentions(&code, s, &ops.block) {
             Ok(()) => true,
             Err(why) => {
                 decline(data, d_nr, Some(vars.name(s.tmp)), why);
@@ -134,13 +149,13 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
             let Some(block) = host(n, &ops) else {
                 return;
             };
-            let Ok(site) = admit(block, vars, &ops) else {
+            let Ok(site) = admit(block, vars, &ops.block) else {
                 return;
             };
             if !sites.iter().any(|s| s.tmp == site.tmp) {
                 return;
             }
-            let (prelude, src, lo, hi) = split(block, &site, &ops);
+            let (prelude, [src, lo, hi, _]) = split(block, &site, &ops.block);
             let mut stmts = prelude;
             stmts.push(rebuilt(
                 n,
@@ -266,7 +281,7 @@ fn slice_call<'v>(v: &'v Value, ops: &Ops) -> Option<&'v crate::data::Block> {
 }
 
 /// The block a slice value is lowered to, when `v` is one.
-fn slice_block(v: &Value) -> Option<&crate::data::Block> {
+pub(crate) fn slice_block(v: &Value) -> Option<&crate::data::Block> {
     match v.unspan() {
         Value::Block(bl) => Some(bl),
         _ => None,
@@ -297,8 +312,12 @@ fn names(v: &Value, owned: &[u16]) -> bool {
 
 /// Is `block` exactly a slice value: the temporary's mint, bind and zero, the bounds, one
 /// slice whose operands name neither the temporary nor its store, and the temporary as its
-/// value?  The same block `FnWriter::slice_fill` accepts.
-fn admit(block: &crate::data::Block, vars: &Function, ops: &Ops) -> Result<Site, &'static str> {
+/// value?  `@FR-R-SliceInto` (`crate::slice_into`) reads the same block appended to a place.
+pub(crate) fn admit(
+    block: &crate::data::Block,
+    vars: &Function,
+    ops: &BlockOps,
+) -> Result<Site, &'static str> {
     let Some((last, rest)) = block.operators.split_last() else {
         return Err("an empty block");
     };
@@ -350,8 +369,12 @@ fn admit(block: &crate::data::Block, vars: &Function, ops: &Ops) -> Result<Site,
 }
 
 /// The bound statements (every statement that names neither the temporary nor its store) and
-/// the slice's source and bounds.
-fn split(block: &crate::data::Block, site: &Site, ops: &Ops) -> (Vec<Value>, Value, Value, Value) {
+/// the slice's operands after its destination: the source, the bounds and the element type.
+pub(crate) fn split(
+    block: &crate::data::Block,
+    site: &Site,
+    ops: &BlockOps,
+) -> (Vec<Value>, [Value; 4]) {
     let owned = [site.tmp, site.store];
     let mut prelude = Vec::new();
     let mut operands = None;
@@ -359,7 +382,12 @@ fn split(block: &crate::data::Block, site: &Site, ops: &Ops) -> (Vec<Value>, Val
     for op in flat(rest) {
         match op.unspan() {
             Value::Call(f, args) if ops.slice.contains(f) => {
-                operands = Some((args[1].clone(), args[2].clone(), args[3].clone()));
+                operands = Some([
+                    args[1].clone(),
+                    args[2].clone(),
+                    args[3].clone(),
+                    args[4].clone(),
+                ]);
             }
             other
                 if names(other, &owned)
@@ -367,13 +395,16 @@ fn split(block: &crate::data::Block, site: &Site, ops: &Ops) -> (Vec<Value>, Val
             _ => prelude.push(op.clone()),
         }
     }
-    let (src, lo, hi) = operands.expect("admitted: one slice");
-    (prelude, src, lo, hi)
+    (prelude, operands.expect("admitted: one slice"))
 }
 
 /// Outside its block, `W` is only declared null and freed, and `T` is never named: then the
 /// store is never minted once the block is gone, and every free of it passes a null by.
-fn outside_mentions(code: &Value, site: &Site, ops: &Ops) -> Result<(), &'static str> {
+pub(crate) fn outside_mentions(
+    code: &Value,
+    site: &Site,
+    ops: &BlockOps,
+) -> Result<(), &'static str> {
     let (mut store_all, mut tmp_all, mut store_freed, mut store_set) = (0, 0, 0, 0);
     let (mut store_in, mut tmp_in) = (0, 0);
     code.walk(&mut |n| match n {

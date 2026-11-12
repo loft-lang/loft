@@ -1,13 +1,13 @@
 diff --git a/src/scopes/view_walk.rs b/src/scopes/view_walk.rs
 --- a/src/scopes/view_walk.rs
 +++ b/src/scopes/view_walk.rs
-@@ -255,7 +255,8 @@
+@@ -267,7 +267,8 @@ pub(super) fn collect_views_to_materialise(
      // side instead.  That was a restatement — and once a binding can view more than one
      // container it is also a wrong answer, because the RHS names both and only one of them was
      // disturbed.  One home for the fact, named where it was observed.
--    out
+-    (out, write_backs)
 +    let _ = out;
-+    HashMap::default()
++    (HashMap::default(), write_backs)
  }
  
- /// The state of [`collect_views_to_materialise`]'s in-order walk.
+ /// `view-written-back` — a view written back into the place it views, after that place was

@@ -28,6 +28,9 @@ struct Bb {
     /// (var, RHS) per assignment in program order — the ownership pass (Phase 2) classifies each
     /// RHS structurally (`ownership_of`) or, for a `Var` RHS, resolves it flow-sensitively.
     owns: Vec<(u16, Value)>,
+    /// (position in `owns`, var, op) per statement-level call whose first operand is a variable
+    /// (`OpFreeRef(b)`), so a check can read the facts AT the call ([`facts_at_frees`]).
+    calls_on: Vec<(usize, u16, u32)>,
     /// short op labels, for the `cfg` dump / hand-verification only.
     ops: Vec<String>,
     succ: Vec<BlockId>,
@@ -225,6 +228,12 @@ impl Builder {
                     });
                     c
                 } else {
+                    if let Value::Call(d, args) = other
+                        && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+                    {
+                        let at = self.cfg.blocks[cur].owns.len();
+                        self.cfg.blocks[cur].calls_on.push((at, *b, *d));
+                    }
                     self.op(cur, Self::op_label(other));
                     Some(cur)
                 }
@@ -477,8 +486,11 @@ impl OFact {
             (Bottom, x) | (x, Bottom) => x,
             (Owned, Owned) => Owned,
             (Borrowed(b1), Borrowed(b2)) if b1 == b2 => Borrowed(b1),
+            // Borrowed on every path, of different stores: no path owns, so no free is ever
+            // licensed — still `Borrowed`, with no one base to name (`ownership_of`'s answer).
+            (Borrowed(_), Borrowed(_)) => Borrowed(u16::MAX),
             (Join(bb), _) | (_, Join(bb)) => Join(bb),
-            // remaining: Owned×Borrowed or Borrowed×Borrowed(differing base) — runtime-dependent.
+            // remaining: Owned×Borrowed — runtime-dependent.
             (Borrowed(bb), _) | (_, Borrowed(bb)) => Join(bb),
         }
     }
@@ -555,14 +567,14 @@ fn caller_arg_base(data: &Data, d_nr: u32, callee_d: u32, callee_base: u16, args
 }
 
 /// Forward ownership fixpoint: returns each block's OUT-state and the pass count (SI-3).
-fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize) {
-    // @P302/@PLN25 materialisation: a var RE-MINTED via `OpDatabase` on ANY path is a materialised
-    // OWNED local (the function owns its store), so a whole-value `var = src` copy INTO it is also
-    // owned — not a borrow of `src`. `OpDatabase(v)` is a `Call` statement, invisible to the `Set`-only
-    // `record_own`, so the transfer would otherwise carry the false-arm copy's `Borrowed(src)` through
-    // the join (the `n_choose` residual: `r = x` on the false arm, `OpDatabase(r)` on the true). This
-    // is NARROW — it only reclasses a bare `Var` RHS, never a projection (`OpGetField` → a genuine
-    // borrowing view stays `Borrowed`, so the A1b catch on the returned work-ref is preserved).
+/// Materialisation: a var RE-MINTED via `OpDatabase` on ANY path is a materialised
+/// OWNED local (the function owns its store), so a whole-value `var = src` copy INTO it is also
+/// owned — not a borrow of `src`. `OpDatabase(v)` is a `Call` statement, invisible to the `Set`-only
+/// `record_own`, so the transfer would otherwise carry the false-arm copy's `Borrowed(src)` through
+/// the join (the `n_choose` residual: `r = x` on the false arm, `OpDatabase(r)` on the true). This
+/// is NARROW — it only reclasses a bare `Var` RHS, never a projection (`OpGetField` → a genuine
+/// borrowing view stays `Borrowed`, so the A1b catch on the returned work-ref is preserved).
+fn reminted_vars(data: &Data, d_nr: u32) -> BTreeSet<u16> {
     let op_database = data.def_nr("OpDatabase");
     let mut reminted: BTreeSet<u16> = BTreeSet::new();
     data.def(d_nr).code.walk(&mut |x| {
@@ -573,13 +585,147 @@ fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize)
             reminted.insert(*v);
         }
     });
-    let n = cfg.blocks.len();
-    let mut preds: Vec<Vec<BlockId>> = vec![Vec::new(); n];
+    reminted
+}
+
+fn predecessors(cfg: &Cfg) -> Vec<Vec<BlockId>> {
+    let mut preds: Vec<Vec<BlockId>> = vec![Vec::new(); cfg.blocks.len()];
     for (b, bb) in cfg.blocks.iter().enumerate() {
         for &s in &bb.succ {
             preds[s].push(b);
         }
     }
+    preds
+}
+
+/// A block's IN state: the per-var meet of its predecessors' OUT states.
+fn block_in(preds: &[BlockId], outb: &[OState]) -> OState {
+    let mut st: OState = OState::new();
+    for &p in preds {
+        for (&v, &f) in &outb[p] {
+            let cur = st.get(&v).copied().unwrap_or(OFact::Bottom);
+            st.insert(v, OFact::meet(cur, f));
+        }
+    }
+    st
+}
+
+/// Every statement-level free in the body, with the fact its variable holds AT the free — the
+/// block's IN state replayed through the assignments before it.  A local is borrowed or owned
+/// per bind, so the fact at the function's exit, or the type's last deps, can judge a free made
+/// while an earlier bind still owned its store (`bl = T{…}; free bl; bl = { p }`).
+fn facts_at_frees(
+    data: &Data,
+    d_nr: u32,
+    cfg: &Cfg,
+    outb: &[OState],
+    free_ops: &[u32],
+) -> Vec<(u16, OFact)> {
+    let reminted = reminted_vars(data, d_nr);
+    let preds = predecessors(cfg);
+    let mut out = Vec::new();
+    for (bb, pr) in cfg.blocks.iter().zip(&preds) {
+        let mut st = block_in(pr, outb);
+        let owns = &bb.owns;
+        for at in 0..=owns.len() {
+            for &(c, v, d) in &bb.calls_on {
+                if c == at && free_ops.contains(&d) {
+                    out.push((v, st.get(&v).copied().unwrap_or(OFact::Bottom)));
+                }
+            }
+            if let Some((var, rhs)) = owns.get(at) {
+                assign(data, d_nr, &reminted, &mut st, *var, rhs);
+            }
+        }
+    }
+    out
+}
+
+/// One assignment's transfer: the fact `var` takes from `rhs`, given the facts `st` holds so
+/// far.  The one transfer both the fixpoint and [`facts_at_frees`] replay.
+fn assign(
+    data: &Data,
+    d_nr: u32,
+    reminted: &BTreeSet<u16>,
+    st: &mut OState,
+    var: u16,
+    rhs: &Value,
+) {
+    // A `= null` DECLARATION sentinel is not a real def — skip it (B's `collect_defs`
+    // does the same). Recording it would default a var whose real def is nested/
+    // conditional (a `??` `__ncc_N` temp) to `Owned`, the unsound over-free direction;
+    // skipping lets a read fall through to `ownership_of` (B's fact) instead.  A null
+    // in either spelling holds no store, and is the identity in B's join too
+    // (`holds_no_store`): a null on one path does not make a view runtime-owned.
+    if crate::use_analysis::holds_no_store(data, rhs) {
+        return;
+    }
+    let f = match rhs.unspan() {
+        // A whole-value `var = src` copy INTO a re-minted (materialised-owned) var owns —
+        // see `reminted` above. Otherwise a bare source var resolves flow-sensitively.
+        Value::Var(_) if reminted.contains(&var) => OFact::Owned,
+        // …and so does one the emitters copy (`bind_copies`, the oracle's own rule).
+        Value::Var(u)
+            if crate::use_analysis::bind_copies(data, &data.def(d_nr).variables, var, *u) =>
+        {
+            OFact::Owned
+        }
+        Value::Var(u) => st
+            .get(u)
+            .copied()
+            .unwrap_or_else(|| OFact::from_own(ownership_of(data, d_nr, rhs))),
+        // A NON-NATIVE user-function call consumes the callee summary directly (3.3).
+        // Native-bodied functions and ops fall to the structural classifier: their
+        // return ownership is carried by codegen metadata (`returns_borrowed_view`),
+        // not the loft body `return_ownership` reads — replicating that is 3.4's op-tail.
+        // EXCLUDE the primitive STRUCTURAL ops (store mint / projection): they are
+        // `DefType::Function` with an empty native body too, but `ownership_of`'s
+        // classify handles them exactly (mint → Owned, projection → Borrowed(base));
+        // routing them through `call_own` mis-classes a projection local `Owned` — the
+        // unsound over-free direction (3.4a: `xs = OpGetField(vdb, …)` regression).
+        Value::Call(callee_d, args)
+            if matches!(data.def(*callee_d).def_type, DefType::Function)
+                && data.def(*callee_d).native().is_empty()
+                && !classifies_structurally(data, *callee_d) =>
+        {
+            call_own(data, d_nr, *callee_d, args)
+        }
+        _ => OFact::from_own(ownership_of(data, d_nr, rhs)),
+    };
+    // A self-borrow `Borrowed(v)` for var `v` is NOT a real borrow — it is the @P302
+    // self-dep `[v]` a keyed-collection local carries so a later `s += …` re-inits in
+    // place: an OWNERSHIP marker, freed at scope exit. Normalise to `Owned` (matching
+    // the shipped `get_free_vars` @P302 carve-out; you cannot borrow from yourself).
+    // (A flow-INSENSITIVE db_var→Owned rule was tried and REVERTED: it forces the A1b
+    // return work-ref — `OpDatabase`'d for its Cell then returned as a borrowing view —
+    // to `Owned`, matching B's wrong-under-`LOFT_NO_A1B` fact and LOSING the catch.)
+    // Only a KEYED local carries that marker: a link re-pointed at its own child
+    // (`l = l.next`) is a real projection of itself, and stays the borrow it is.
+    let f = if f == OFact::Borrowed(var)
+        && crate::parser::vectors::is_keyed(data.def(d_nr).variables.tp(var))
+    {
+        OFact::Owned
+    } else {
+        f
+    };
+    // TEST-ONLY positive control for Check A: force the shadow's fact for the named
+    // var to `Owned` so it disagrees with the oracle where the oracle says a borrow.
+    // Check A's natural true positive was the A1b plan, and that disagreement was the
+    // shadow's own weaker base translation, not a fact defect (QUALITY-history.md B7r); with
+    // one translation shared by both derivations, a disagreement has to be injected
+    // to prove the reporting path fires.  Cached like the other injections.
+    let f = if inject_fact_owned() == Some(data.def(d_nr).variables.name(var)) {
+        OFact::Owned
+    } else {
+        f
+    };
+    st.insert(var, f);
+}
+
+fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize) {
+    let reminted = reminted_vars(data, d_nr);
+    let n = cfg.blocks.len();
+    let preds = predecessors(cfg);
     let mut outb: Vec<OState> = vec![OState::new(); n];
     let mut passes = 0usize;
     loop {
@@ -590,84 +736,10 @@ fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize)
         );
         let mut changed = false;
         for b in 0..n {
-            // IN[b] = per-var meet of preds' OUT.
-            let mut st: OState = OState::new();
-            for &p in &preds[b] {
-                for (&v, &f) in &outb[p] {
-                    let cur = st.get(&v).copied().unwrap_or(OFact::Bottom);
-                    st.insert(v, OFact::meet(cur, f));
-                }
-            }
+            let mut st = block_in(&preds[b], &outb);
             // Apply the block's assignments in program order (a later def sees earlier ones).
             for (var, rhs) in &cfg.blocks[b].owns {
-                // A `= null` DECLARATION sentinel is not a real def — skip it (B's `collect_defs`
-                // does the same). Recording it would default a var whose real def is nested/
-                // conditional (a `??` `__ncc_N` temp) to `Owned`, the unsound over-free direction;
-                // skipping lets a read fall through to `ownership_of` (B's fact) instead.
-                if matches!(rhs.unspan(), Value::Null) {
-                    continue;
-                }
-                let f = match rhs.unspan() {
-                    // A whole-value `var = src` copy INTO a re-minted (materialised-owned) var owns —
-                    // see `reminted` above. Otherwise a bare source var resolves flow-sensitively.
-                    Value::Var(_) if reminted.contains(var) => OFact::Owned,
-                    // …and so does one the emitters copy (`bind_copies`, the oracle's own rule).
-                    Value::Var(u)
-                        if crate::use_analysis::bind_copies(
-                            data,
-                            &data.def(d_nr).variables,
-                            *var,
-                            *u,
-                        ) =>
-                    {
-                        OFact::Owned
-                    }
-                    Value::Var(u) => st
-                        .get(u)
-                        .copied()
-                        .unwrap_or_else(|| OFact::from_own(ownership_of(data, d_nr, rhs))),
-                    // A NON-NATIVE user-function call consumes the callee summary directly (3.3).
-                    // Native-bodied functions and ops fall to the structural classifier: their
-                    // return ownership is carried by codegen metadata (`returns_borrowed_view`),
-                    // not the loft body `return_ownership` reads — replicating that is 3.4's op-tail.
-                    // EXCLUDE the primitive STRUCTURAL ops (store mint / projection): they are
-                    // `DefType::Function` with an empty native body too, but `ownership_of`'s
-                    // classify handles them exactly (mint → Owned, projection → Borrowed(base));
-                    // routing them through `call_own` mis-classes a projection local `Owned` — the
-                    // unsound over-free direction (3.4a: `xs = OpGetField(vdb, …)` regression).
-                    Value::Call(callee_d, args)
-                        if matches!(data.def(*callee_d).def_type, DefType::Function)
-                            && data.def(*callee_d).native().is_empty()
-                            && !classifies_structurally(data, *callee_d) =>
-                    {
-                        call_own(data, d_nr, *callee_d, args)
-                    }
-                    _ => OFact::from_own(ownership_of(data, d_nr, rhs)),
-                };
-                // A self-borrow `Borrowed(v)` for var `v` is NOT a real borrow — it is the @P302
-                // self-dep `[v]` a keyed-collection local carries so a later `s += …` re-inits in
-                // place: an OWNERSHIP marker, freed at scope exit. Normalise to `Owned` (matching
-                // the shipped `get_free_vars` @P302 carve-out; you cannot borrow from yourself).
-                // (A flow-INSENSITIVE db_var→Owned rule was tried and REVERTED: it forces the A1b
-                // return work-ref — `OpDatabase`'d for its Cell then returned as a borrowing view —
-                // to `Owned`, matching B's wrong-under-`LOFT_NO_A1B` fact and LOSING the catch.)
-                let f = if f == OFact::Borrowed(*var) {
-                    OFact::Owned
-                } else {
-                    f
-                };
-                // TEST-ONLY positive control for Check A: force the shadow's fact for the named
-                // var to `Owned` so it disagrees with the oracle where the oracle says a borrow.
-                // Check A's natural true positive was the A1b plan, and that disagreement was the
-                // shadow's own weaker base translation, not a fact defect (QUALITY-history.md B7r); with
-                // one translation shared by both derivations, a disagreement has to be injected
-                // to prove the reporting path fires.  Cached like the other injections.
-                let f = if inject_fact_owned() == Some(data.def(d_nr).variables.name(*var)) {
-                    OFact::Owned
-                } else {
-                    f
-                };
-                st.insert(*var, f);
+                assign(data, d_nr, &reminted, &mut st, *var, rhs);
             }
             if st != outb[b] {
                 outb[b] = st;
@@ -787,6 +859,7 @@ fn under_free(
 /// Check B — free-legitimacy: a freed var whose fact is `Borrowed(base)` is an over-free of a store
 /// owned elsewhere (RED). Returns `(freed_var, base)` per offending site. Pure — the free set and the
 /// facts are supplied by the caller — so it is unit-testable without a `Data`.
+#[cfg(test)]
 fn free_of_borrowed(freed: &[u16], facts: &OState) -> Vec<(u16, u16)> {
     freed
         .iter()
@@ -795,6 +868,43 @@ fn free_of_borrowed(freed: &[u16], facts: &OState) -> Vec<(u16, u16)> {
             _ => None,
         })
         .collect()
+}
+
+/// `@FR-O-Owner` — is `base` a literal buffer that handed its store to the local viewing it?
+/// A `__vdb_N` the frame never releases (skip-free, and no free of it in the body) leaves the
+/// store to its view, whose free is then the store's one release rather than an over-free; the
+/// scope pass detaches such a buffer afterwards (`buffer_detach`).  A parameter, or a buffer the
+/// frame does release, still owns what its views name.
+fn handed_over_buffer(vars: &crate::variables::Function, base: u16, freed: &[u16]) -> bool {
+    base != u16::MAX
+        && vars.name(base).starts_with("__vdb_")
+        && !vars.is_argument(base)
+        && vars.is_skip_free(base)
+        && !freed.contains(&base)
+}
+
+/// Check B's question, asked where each free IS: the frees whose variable is `Borrowed` at
+/// that point, once per variable, with the base it borrows — less a literal buffer that
+/// handed its store over ([`handed_over_buffer`]).
+fn borrowed_at_free(
+    data: &Data,
+    d_nr: u32,
+    cfg: &Cfg,
+    outb: &[OState],
+    free_ops: &[u32],
+    freed: &[u16],
+) -> Vec<(u16, u16)> {
+    let vars = &data.def(d_nr).variables;
+    let mut out: Vec<(u16, u16)> = Vec::new();
+    for (v, f) in facts_at_frees(data, d_nr, cfg, outb, free_ops) {
+        if let OFact::Borrowed(base) = f
+            && !handed_over_buffer(vars, base, freed)
+            && !out.iter().any(|(w, _)| *w == v)
+        {
+            out.push((v, base));
+        }
+    }
+    out
 }
 
 /// Check A — the shadow-diff: vars whose flow-sensitive fact does NOT refine B's `ownership_of`
@@ -897,7 +1007,8 @@ fn run_check(
         );
         reds += 1;
     }
-    for (v, base) in free_of_borrowed(&collect_free_targets(body, free_ops), exit_state) {
+    let freed = collect_free_targets(body, free_ops);
+    for (v, base) in borrowed_at_free(data, d_nr, cfg, &outb, free_ops, &freed) {
         eprintln!(
             "RED {name}: free-of-borrowed {} (v{v}) is Borrowed(v{base}={})",
             nm(v),
@@ -1032,6 +1143,7 @@ pub fn oracle_free_checks(data: &Data) {
         }
         if over {
             total_reds += run_override_check(name, &body, data, d_nr);
+            total_reds += run_capture_free_check(name, &body, data, d_nr);
         }
         if dev {
             let cfg = build(&body);
@@ -1331,6 +1443,167 @@ fn run_leak_scan(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
 /// their frees are visible) + Check C (under-free/leak). Both key off the post-codegen TYPE DEP (the
 /// materialisation-aware ownership signal), so they need no fixpoint — they are a free-placement
 /// CONSISTENCY layer (does the emitted free match the dep), beside Check A's independent cross-check.
+/// `@FR-L-CapRebind` (loft#2459), PROMOTED onto `LOFT_OWN_ORACLE=check` — a closure record holds
+/// the store its captured local named AT THE BUILD, for as long as the record lives.  An
+/// unconditional `OpFreeRef` of that store's backing, followed by a call through the closure
+/// while its record is not yet freed, is a use after the store's end — and so is one in a
+/// function that RETURNS the closure.  A free under an `if` is the identity-decided release the
+/// scope pass places where a record may hold the store, and is not counted.  The local's later
+/// rebinds do not move the record's hold: the backing is the one the local was bound to when
+/// the build ran.
+fn run_capture_free_check(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
+    let mut w = CaptureWalk {
+        vars: data.def(d_nr).variables(),
+        set_dbref: data.def_nr("OpSetDbRef"),
+        get_field: data.def_nr("OpGetField"),
+        free: data.def_nr("OpFreeRef"),
+        name,
+        backing_of: BTreeMap::new(),
+        held: Vec::new(),
+        ended: BTreeSet::new(),
+        reported: BTreeSet::new(),
+        returned: BTreeSet::new(),
+        reds: 0,
+    };
+    w.walk(body, false);
+    // A closure the function hands back outlives every free in it.
+    if let Value::Block(bl) = body.unspan()
+        && let Some(Value::Var(g)) = bl.operators.last().map(Value::unspan)
+    {
+        w.returned.insert(*g);
+    }
+    for i in 0..w.held.len() {
+        let h = w.held[i];
+        if h.freed && w.returned.contains(&h.fn_ref) && w.reported.insert((h.fn_ref, h.backing)) {
+            w.red(h, "which the function returns");
+        }
+    }
+    w.reds
+}
+
+/// One closure build [`run_capture_free_check`] follows.
+#[derive(Clone, Copy)]
+struct Held {
+    fn_ref: u16,
+    record: u16,
+    backing: u16,
+    captured: u16,
+    freed: bool,
+}
+
+struct CaptureWalk<'a> {
+    vars: &'a crate::variables::Function,
+    set_dbref: u32,
+    get_field: u32,
+    free: u32,
+    name: &'a str,
+    /// local -> the `__vdb_N` backing it was bound to last, in evaluation order.
+    backing_of: BTreeMap<u16, u16>,
+    held: Vec<Held>,
+    ended: BTreeSet<u16>,
+    reported: BTreeSet<(u16, u16)>,
+    returned: BTreeSet<u16>,
+    reds: usize,
+}
+
+impl CaptureWalk<'_> {
+    fn red(&mut self, h: Held, why: &str) {
+        eprintln!(
+            "RED {}: capture-freed {} (v{}) is held by the closure record {} built over {}, {why}",
+            self.name,
+            self.vars.name(h.backing),
+            h.backing,
+            self.vars.name(h.record),
+            self.vars.name(h.captured)
+        );
+        self.reds += 1;
+    }
+
+    fn walk(&mut self, n: &Value, guarded: bool) {
+        match n.unspan() {
+            Value::If(c, t, e) => {
+                self.walk(c, guarded);
+                self.walk(t, true);
+                self.walk(e, true);
+                return;
+            }
+            Value::Set(c, rhs) => {
+                self.walk(rhs, guarded);
+                self.bind(*c, rhs);
+                return;
+            }
+            Value::Call(d, args) if *d == self.free => {
+                if let Some(Value::Var(x)) = args.first().map(Value::unspan) {
+                    self.ended.insert(*x);
+                    if !guarded {
+                        for h in &mut self.held {
+                            if h.backing == *x {
+                                h.freed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            Value::CallRef(g, _) => {
+                for i in 0..self.held.len() {
+                    let h = self.held[i];
+                    if h.fn_ref == *g
+                        && h.freed
+                        && !self.ended.contains(&h.record)
+                        && self.reported.insert((h.fn_ref, h.backing))
+                    {
+                        self.red(h, "called after the free");
+                    }
+                }
+            }
+            Value::Return(v) => {
+                if let Value::Var(g) = v.unspan() {
+                    self.returned.insert(*g);
+                }
+            }
+            _ => {}
+        }
+        n.for_each_child(&mut |c| self.walk(c, guarded));
+    }
+
+    /// `c = rhs`: a bind to a literal backing, or a closure build over captured locals.
+    fn bind(&mut self, c: u16, rhs: &Value) {
+        if let Value::Call(d, args) = rhs.unspan()
+            && *d == self.get_field
+            && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+            && self.vars.name(*b).starts_with("__vdb")
+        {
+            self.backing_of.insert(c, *b);
+        }
+        let mut record = None;
+        let mut caps: Vec<u16> = Vec::new();
+        rhs.walk(&mut |m| match m {
+            Value::FnRef(_, w, _) if *w != u16::MAX => record = Some(*w),
+            Value::Call(d, args) if *d == self.set_dbref => {
+                if let Some(Value::Var(x)) = args.get(2).map(Value::unspan) {
+                    caps.push(*x);
+                }
+            }
+            _ => {}
+        });
+        if let Some(w) = record {
+            self.ended.remove(&w);
+            self.held.retain(|h| h.fn_ref != c);
+            for x in caps {
+                if let Some(&b) = self.backing_of.get(&x) {
+                    self.held.push(Held {
+                        fn_ref: c,
+                        record: w,
+                        backing: b,
+                        captured: x,
+                        freed: false,
+                    });
+                }
+            }
+        }
+    }
+}
+
 /// Check B (over-free), PROMOTED onto `LOFT_OWN_ORACLE=check` (runs beside the leak scan). A var freed
 /// by an unconditional `OpFreeRef` whose post-codegen type dep is NON-empty borrows a store owned
 /// elsewhere — freeing it is an over-free (double-free / UAF). The dep is codegen's ground truth
@@ -1355,8 +1628,17 @@ fn run_over_free_check(
     let nm = |v: u16| func.name(v).to_string();
     let mut reds = 0;
     let mut seen = BTreeSet::new();
-    for v in collect_free_targets(body, free_ops) {
-        if !seen.insert(v) {
+    // The type's deps describe the LAST bind; a free is judged by the bind it releases, so a
+    // variable must also be borrowed AT one of its frees (`facts_at_frees`).
+    let cfg = build(body);
+    let (outb, _) = ownership_dataflow(data, d_nr, &cfg);
+    let freed = collect_free_targets(body, free_ops);
+    let borrowed_here: Vec<u16> = borrowed_at_free(data, d_nr, &cfg, &outb, free_ops, &freed)
+        .into_iter()
+        .map(|(v, _)| v)
+        .collect();
+    for v in freed {
+        if !seen.insert(v) || !borrowed_here.contains(&v) {
             continue;
         }
         let dep = func.tp(v).depend();
@@ -1424,6 +1706,14 @@ fn run_override_check(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize
             let op = data.def(*d).name();
             if *d == sets.text_free && func.is_staged_text_temp(v) {
                 return; // the release the staging pass placed — the admissible free
+            }
+            // …and the identity-guarded release a witness, snapshot or write-back pass placed.
+            if data.def(*d).name() == "OpFreeRefIfDistinct"
+                && !via_tuple
+                && let Some(Value::Var(w)) = args.get(1).map(Value::unspan)
+                && func.is_placed_identity_release(v, *w)
+            {
+                return;
             }
             if sets.unconditional_ref_frees.contains(d) && !via_tuple {
                 eprintln!(
@@ -1631,8 +1921,13 @@ mod tests {
         // Owned ⊔ Borrowed → runtime-dependent Join (the `v[i] ?? d` / reassign-per-arm shape).
         assert_eq!(OFact::meet(Owned, Borrowed(5)), Join(5));
         assert_eq!(OFact::meet(Borrowed(5), Owned), Join(5)); // commutative
-        // Borrowing from different bases is also runtime-dependent.
-        assert_eq!(OFact::meet(Borrowed(1), Borrowed(2)), Join(1));
+        // Borrowing from different bases borrows on every path: no free is ever licensed, so it
+        // stays `Borrowed`, with no one base to name — what `ownership_of` answers.
+        assert_eq!(OFact::meet(Borrowed(1), Borrowed(2)), Borrowed(u16::MAX));
+        assert_eq!(
+            OFact::meet(Borrowed(u16::MAX), Borrowed(3)),
+            Borrowed(u16::MAX)
+        );
         // Join dominates.
         assert_eq!(OFact::meet(Join(7), Owned), Join(7));
         assert_eq!(OFact::meet(Owned, Join(7)), Join(7));

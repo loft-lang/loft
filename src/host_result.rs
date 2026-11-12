@@ -36,6 +36,7 @@ struct Ops {
     free_distinct: u32,
     set_child: u32,
     adopt: u32,
+    null_sentinel: u32,
     store_buf: u32,
     store_buf_only: u32,
     release: u32,
@@ -51,11 +52,20 @@ pub fn rewrite_program(data: &mut Data) -> usize {
     if std::env::var("LOFT_NO_HOST_RESULT").is_ok_and(|v| v != "0") {
         return 0;
     }
+    // The clause builds each result in the store of the first result on its path, which is
+    // the store the callee answered only where that first bind ADOPTS it (`(R-AdoptFirstBind)`).
+    // With the adoption off the bind copies into a store of its own, and the second call, the
+    // node and its adoptions were laid out for a store the result no longer names: `(7*7)` for
+    // `(2*7)`, an offset overflow on C.  Off with the rule it stands on.
+    if !crate::keys::adopt_first_bind_enabled() {
+        return 0;
+    }
     let ops = Ops {
         database: data.def_nr("OpDatabase"),
         free_distinct: data.def_nr("OpFreeRefIfDistinct"),
         set_child: data.def_nr("OpSetChildRec"),
         adopt: data.def_nr("OpAdoptChildRec"),
+        null_sentinel: data.def_nr("OpNullRefSentinel"),
         store_buf: data.def_nr("OpStoreBuf"),
         store_buf_only: data.def_nr("OpStoreBufOnly"),
         release: data.def_nr("OpReleaseRecIfDistinct"),
@@ -680,8 +690,15 @@ fn adopt_and_release(v: &mut Value, shape: &Shape, ops: &Ops, tp: i32) {
                 adopted = Some(l);
             }
             if let Some(l) = adopted {
-                bl.operators
-                    .insert(i + 1, Value::Set(l, Box::new(Value::Null)));
+                // The local lets go of the record the field adopted: a DETACH
+                // (`data::is_null_sentinel_detach`), never a free — the store lives on for the
+                // answer, and freeing it released the store the adopting node was built in.
+                let detach = if crate::keys::host_letgo_frees() {
+                    Value::Null
+                } else {
+                    Value::Call(ops.null_sentinel, Vec::new())
+                };
+                bl.operators.insert(i + 1, Value::Set(l, Box::new(detach)));
                 i += 2;
                 continue;
             }

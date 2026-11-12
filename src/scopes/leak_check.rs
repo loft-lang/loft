@@ -503,6 +503,13 @@ impl FrameReleases {
         if self.placed.contains(&v) {
             return true;
         }
+        // `@FR-H-FreeTwice` — a literal buffer adopted by an owning local assigned more than once:
+        // the local's rebinds and its own free release the store, so the emitter gave the
+        // buffer no free (`Scopes::pair_literal_buffers`).  The emitter's recorded decision, not
+        // the rule restated.
+        if function.adopter_released(v) {
+            return true;
+        }
         false
     }
 }

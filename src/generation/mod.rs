@@ -61,7 +61,7 @@ type PreEvalEntry = (String, String, String, u32, bool);
 /// runs stay silent, but tests (and a curious developer) can opt in to
 /// the same store-leak report the interpreter prints unconditionally —
 /// giving leak regressions a guard on `--native`, not just `--interpret`.
-const NATIVE_LEAK_CHECK_TAIL: &str = "    if std::env::var(\"LOFT_NATIVE_LEAK_CHECK\").is_ok() {\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            let rows = leaks.len();\n            let preview = if rows <= 5 { leaks.join(\", \") } else { format!(\"{} ... and {} more\", leaks[..5].join(\", \"), rows - 5) };\n            eprintln!(\"Warning: {} stores not freed at program exit: {preview}\", Stores::leak_total(&leaks));\n        }\n    }\n";
+const NATIVE_LEAK_CHECK_TAIL: &str = "    if std::env::var(\"LOFT_NATIVE_LEAK_CHECK\").is_ok() {\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            let rows = leaks.len();\n            let preview = if rows <= 5 { leaks.join(\", \") } else { format!(\"{} ... and {} more\", leaks[..5].join(\", \"), rows - 5) };\n            eprintln!(\"Warning: {} stores not freed at program exit: {preview}\", Stores::leak_total(&leaks));\n            #[cfg(not(target_arch = \"wasm32\"))]\n            loft::fault_log::record(\"leak\", &[(\"count\", Stores::leak_total(&leaks).to_string()), (\"stores\", preview.clone())]);\n        }\n    }\n";
 
 /// @PLN130 F8 — the `LOFT_STRICT_STORES` tail for the native `main` bootstrap.
 ///
@@ -78,7 +78,7 @@ const NATIVE_LEAK_CHECK_TAIL: &str = "    if std::env::var(\"LOFT_NATIVE_LEAK_CH
 /// the wasm targets link a SEPARATELY built `libloft` rlib — so a tail referencing a symbol
 /// added to `loft::keys` fails to compile there whenever that rlib is stale, which is a
 /// build break in the generated program rather than anything a probe wanted to know.
-const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))]\n    if std::env::var(\"LOFT_STRICT_STORES\").is_ok() {\n        loft::keys::strict_store_notice();\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            eprintln!(\"[strict-store] NEVER FREED: {} stores not freed at program exit: {}\", Stores::leak_total(&leaks), leaks.join(\", \"));\n            loft::keys::strict_store_leaks(Stores::leak_total(&leaks));\n        }\n        let n = loft::keys::strict_store_violations();\n        if n > 0 {\n            eprintln!(\"[strict-store] FAILED: {n} store-lifetime violation(s)\");\n            std::process::exit(1);\n        }\n    }\n";
+const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))]\n    if std::env::var(\"LOFT_STRICT_STORES\").is_ok() {\n        loft::keys::strict_store_notice();\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            eprintln!(\"[strict-store] NEVER FREED: {} stores not freed at program exit: {}\", Stores::leak_total(&leaks), leaks.join(\", \"));\n            loft::fault_log::record(\"leak\", &[(\"count\", Stores::leak_total(&leaks).to_string()), (\"stores\", leaks.join(\", \"))]);\n            loft::keys::strict_store_leaks(Stores::leak_total(&leaks));\n        }\n        let n = loft::keys::strict_store_violations();\n        if n > 0 {\n            eprintln!(\"[strict-store] FAILED: {n} store-lifetime violation(s)\");\n            std::process::exit(1);\n        }\n    }\n";
 
 /// Walk the Value IR tree and collect all function definition numbers
 /// referenced by `Value::Call(def_nr, _)` nodes.
@@ -423,6 +423,11 @@ pub struct Output<'a> {
     /// hand the displaced store to that buffer instead of freeing it.
     pub rebind_buffer: Option<(u16, String, Option<String>)>,
     pub rebind_buffer_used: bool,
+    /// The local whose reassignment `output_set` wraps in its `_old_<name>` stash, which
+    /// releases the displaced store itself: a call arm inside it frees nothing more.
+    pub old_stash_var: Option<u16>,
+    /// The exit each open `output_set` took, innermost last, for `LOFT_TRACE_BIND_NATIVE`.
+    pub bind_arm: Vec<&'static str>,
     /// Set by the call-return bind arm (`output_set_inner`) when the local it binds ends up
     /// holding a store of its OWN — an adopted null or same-store result, or a copy — so an
     /// owner witness can be pointed at it (`output_set_witnessed`).
@@ -1919,6 +1924,8 @@ impl<'a> Output<'a> {
             refill_in_place: crate::keys::refill_in_place_enabled(),
             rebind_buffer: None,
             rebind_buffer_used: false,
+            old_stash_var: None,
+            bind_arm: Vec::new(),
             call_bind_owns: false,
             rebind_handed: HashSet::new(),
             inline_hint: crate::keys::inline_hint_enabled(),
@@ -9067,7 +9074,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n{bind}{ledger}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::store_budget::apply_env_limit_if_set();\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}{ledger}    #[cfg(not(target_arch = \"wasm32\"))]\n    loft::fault_log::set_backend(\"native\");\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::store_budget::apply_env_limit_if_set();\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -9112,7 +9119,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n{bind}{ledger}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::store_budget::apply_env_limit_if_set();\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}{ledger}    #[cfg(not(target_arch = \"wasm32\"))]\n    loft::fault_log::set_backend(\"native\");\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::store_budget::apply_env_limit_if_set();\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;

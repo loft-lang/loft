@@ -222,6 +222,93 @@ pub(crate) fn link_inputs(c: &str) -> Vec<String> {
 
 /// The link inputs the unit marks `/* <kind>: <input> */` — `bound` for a library its package
 /// ships, `shim-archive` for a `[c] shim`'s archive — each also named on its own link line.
+/// The release tier compiles a `[c] shim`'s sources with the unit under link-time
+/// optimisation, so a shim's small functions inline into their callers (random `rand`: -45 %
+/// against the linked archive): the unit's link inputs and shims with each archive replaced by
+/// its sources, `-flto` and the shim's include directory added to `flags`.  A dynamic shipped
+/// program opens its shim's library beside it, and `cl` takes no `-flto`: both keep the
+/// archive.  `LOFT_NO_SHIM_LTO=1` links the archive in every tier.
+fn release_shim_lto(
+    c: &str,
+    tier: Tier,
+    dynamic: bool,
+    cc: &str,
+    links: Vec<String>,
+    shims: std::collections::HashSet<String>,
+    flags: &mut Vec<String>,
+) -> (Vec<String>, std::collections::HashSet<String>) {
+    if tier != Tier::Release
+        || dynamic
+        || dialect(cc) != Dialect::Gnu
+        || shims.is_empty()
+        || env_on("LOFT_NO_SHIM_LTO")
+    {
+        return (links, shims);
+    }
+    let (links, sources) = shims_as_sources(c, &links, &shims);
+    if !sources.is_empty() {
+        flags.push("-flto".to_string());
+        let inc =
+            loft::platform::scratch_dir().join(format!("loft_shim_inc_{}", std::process::id()));
+        if fa::create_dir_all(&inc).is_ok() && loft::c_shim::put_width_header(&inc).is_ok() {
+            flags.push("-I".to_string());
+            flags.push(inc.to_string_lossy().into_owned());
+        }
+    }
+    (links, sources)
+}
+
+/// Is `path` a C source (`.c`, any case)?
+fn is_c_source(path: &str) -> bool {
+    path.len() > 2
+        && path.is_char_boundary(path.len() - 2)
+        && path[path.len() - 2..].eq_ignore_ascii_case(".c")
+}
+
+/// The unit's link inputs with each `[c] shim` archive in `shims` replaced by the sources the
+/// unit names for it (`/* shim-source: */`, the lines after its `/* shim-archive: */`), and
+/// those sources: what the release tier compiles with the unit.  An archive whose sources the
+/// unit does not name stays linked.
+fn shims_as_sources(
+    c: &str,
+    links: &[String],
+    shims: &std::collections::HashSet<String>,
+) -> (Vec<String>, std::collections::HashSet<String>) {
+    let mut of: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut current: Option<String> = None;
+    for l in c.lines() {
+        if let Some(a) = l
+            .strip_prefix("/* shim-archive: ")
+            .and_then(|r| r.strip_suffix(" */"))
+        {
+            current = Some(a.to_string());
+        } else if let Some(src) = l
+            .strip_prefix("/* shim-source: ")
+            .and_then(|r| r.strip_suffix(" */"))
+        {
+            if let Some(a) = &current {
+                of.entry(a.clone()).or_default().push(src.to_string());
+            }
+        } else if !l.starts_with("/* link: ") {
+            current = None;
+        }
+    }
+    let mut out = Vec::new();
+    let mut sources = std::collections::HashSet::new();
+    for l in links {
+        match of.get(l) {
+            Some(srcs) if shims.contains(l) && srcs.iter().all(|s| is_c_source(s)) => {
+                for s in srcs {
+                    out.push(s.clone());
+                    sources.insert(s.clone());
+                }
+            }
+            _ => out.push(l.clone()),
+        }
+    }
+    (out, sources)
+}
+
 fn marked(c: &str, kind: &str) -> std::collections::HashSet<String> {
     let open = format!("/* {kind}: ");
     c.lines()
@@ -585,6 +672,12 @@ fn link_plan(
         }
         // A shim stays inside a static shipped program, linked whole and exported, so a symbol
         // found by name (`loft_c_bound_sym`) is there; a dynamic one opens its library instead.
+        // A shim's source compiled with the unit (the release tier) is in it whole already.
+        if binds && shims.contains(l) && is_c_source(l) {
+            link_args.push(l.clone());
+            export = true;
+            continue;
+        }
         if binds && shims.contains(l) {
             if !dynamic {
                 link_args.extend(loft::platform::c_whole_archive_args(l));
@@ -650,6 +743,7 @@ pub(crate) fn build(
     let binds = relocatable && loft::platform::c_binds_libraries_at_start();
     let dynamic = placement == (Placement::Shipped { dynamic: true });
     let (bound, shims) = (marked(c, "bound"), marked(c, "shim-archive"));
+    let (links, shims) = release_shim_lto(c, tier, dynamic, &cc, links, shims, &mut flags);
     if binds {
         flags.push("-DLOFT_BIND_LIBS".to_string());
         if dynamic {
@@ -742,6 +836,31 @@ pub(crate) fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The release tier compiles each `[c] shim` the unit links from the sources it names after
+    /// that archive; an archive with no sources named, or a lazy one (not marked
+    /// `shim-archive`), stays linked, and every other input passes through in order.
+    /// Falsified at c3defa8ff: with the source list not closed at a line that is no link,
+    /// the lazy archive's source attached to `libq.a` and replaced it.
+    #[test]
+    fn a_release_unit_compiles_its_shims_from_their_sources() {
+        let c = "/* `[c] shim` of package p, 2 sources */\n/* shim-archive: /s/libp.a */\n\
+                 /* link: /s/libp.a */\n/* shim-source: /p/c/a.c */\n/* shim-source: /p/c/b.c */\n\
+                 int x;\n/* shim-archive: /s/libq.a */\n/* link: /s/libq.a */\nint y;\n\
+                 /* link: /s/liblazy.a */\n/* shim-source: /z/c/z.c */\n";
+        let links: Vec<String> = ["-lpq", "/s/libp.a", "/s/libq.a", "/s/liblazy.a"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let shims = marked(c, "shim-archive");
+        let (out, sources) = shims_as_sources(c, &links, &shims);
+        assert_eq!(
+            out,
+            ["-lpq", "/p/c/a.c", "/p/c/b.c", "/s/libq.a", "/s/liblazy.a"]
+        );
+        assert_eq!(sources.len(), 2);
+        assert!(sources.contains("/p/c/a.c") && sources.contains("/p/c/b.c"));
+    }
 
     /// A wrapper compiler reports the banner of the one it wraps; the key must still tell
     /// them apart, or a `-DLOFT_VERIFY` wrapper runs the plain compiler's binary.

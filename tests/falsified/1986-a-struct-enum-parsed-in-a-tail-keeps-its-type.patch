@@ -1,30 +1,17 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index d2a9f612e..48ae222f7 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -4251,20 +4251,8 @@ impl Parser {
+@@ -4333,7 +4333,8 @@ impl Parser {
              Type::Reference(td, Deps::frame1(buf_var)),
              "fwd_copy_409_ref",
          );
--        // The deps belong to the storage and the kind and the `?` to the value: the result
--        // is delivered through the buffer, and stays the struct-enum or the nullable the
--        // signature declared (`set_delivered_vector_return` says the same of a vector).
-         let dep = Deps::attrs(vec![buf_attr]);
--        let declared = self.data.def(self.context).returned();
--        let delivered = match declared.base() {
--            Type::Enum(e, true, _) => Type::Enum(*e, true, dep),
--            _ => Type::Reference(td, dep),
--        };
--        self.data.definitions[self.context as usize].returned = if declared.ret_promo_peels() {
--            Type::optional(delivered)
--        } else {
--            delivered
--        };
-+        self.data.definitions[self.context as usize].returned = Type::Reference(td, dep);
+-        self.set_delivered_reference_return(td, buf_attr);
++        self.data.definitions[self.context as usize].returned =
++            Type::Reference(td, Deps::attrs(vec![buf_attr]));
      }
  
-     /// when there is no buffer, no work-var, or no tail.
-@@ -5692,19 +5680,7 @@ impl Parser {
+     /// The signature of a function whose record answer is delivered through its return
+@@ -5884,19 +5885,7 @@ impl Parser {
      /// `coalesce_not_null` mirrors.  Unrecognised, `if e != null { s += e.a }` over such an
      /// element proved nothing and `e.a` stayed `integer?`.  Only a wrapper qualifies: an
      /// ordinary enum's discriminant test says nothing about null.
@@ -45,7 +32,6 @@ index d2a9f612e..48ae222f7 100644
              return None;
          };
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index 6c4c92c49..a3a6a66d9 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
 @@ -3520,14 +3520,7 @@ impl Parser {

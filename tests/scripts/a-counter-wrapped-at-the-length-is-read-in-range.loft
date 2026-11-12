@@ -1,0 +1,141 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-InRange` and `@FR-R-Base`'s counter clause, the wrapped counter: inside
+// `for i in 0..n` with `n` the length of `v`, the loop runs only when `n >= 1` and keeps
+// `0 <= i < n`, so `(i + c) % n` for a literal `c >= 0` is never null and lies inside `v`.  The
+// IR drops its `?? d` and a record element's `?` read at it; the C reads the element with no
+// index test (`loop_shape::wrapped_counter`, the one reading of the shape).
+// Each cell answers what the interpreter answers; P = [{1,2}, {3,5}, {7,11}, {13,17}] and
+// f(b) = 100 x + y (102, 305, 711, 1317); each cell sums (i + 1) * f(b), hand-computed in its
+// comment.  The declining shapes: a negative step (`v[-1]` reads the LAST element, so a plain
+// read there would be wrong), a divisor that is not the length, an inclusive range (n = 0 runs
+// once), a counter not from 0, a body that empties the vector, a length bound two statements
+// before the loop over a parameter.
+//
+// @falsified-at: 770ce57ff — by hand: with both phases taking ANY divisor for the length
+//   (`Counter::is_length` true for every variable, `counter_index` without its length check),
+//   cm5 answers null on `--interpret` and fails on `--native-c`; the `-DLOFT_VERIFY` build
+//   (`LOFT_CC` a wrapper adding the flag) stops on "R-Base counter: element".
+// CHANNEL: the asserts, and the `LOFT_VERIFY` build of the C, which stops on the accessor's own
+// proof ("a proven index") where a read lies past the length.
+// ARMED: LOFT_VERIFY for the C counter clause; the interpreter's asserts need no instrument.
+// WITNESS: each assert message prints the value it read.
+// HOLDS: c = 0, 1, 2 (c0, c1, c2), the divisor `len(v)` itself (clen), a length local over the
+// frame's own vector (main), integer elements (cint), one element and none (c1 on [P] and []).
+
+struct P { x: integer, y: integer }
+
+fn f(b: P) -> integer { b.x * 100 + b.y }
+
+// c = 0, 1, 2 over a const parameter, n adjacent: 8113, 6086, 4871.
+fn c0(ps: const vector<P>) -> integer {
+  s = 0;
+  n = len(ps);
+  for i in 0..n { b = ps[i % n ?? 0]?; s += (i + 1) * f(b); }
+  s
+}
+fn c1(ps: const vector<P>) -> integer {
+  s = 0;
+  n = len(ps);
+  for i in 0..n { b = ps[(i + 1) % n ?? 0]?; s += (i + 1) * f(b); }
+  s
+}
+fn c2(ps: const vector<P>) -> integer {
+  s = 0;
+  n = len(ps);
+  for i in 0..n { b = ps[(i + 2) % n ?? 99]?; s += (i + 1) * f(b); }
+  s
+}
+// negative c: i = 0 reads index -1, the last element: 1317 + 2 * 102 + 3 * 305 + 4 * 711 = 5280.
+fn cneg(ps: const vector<P>) -> integer {
+  s = 0;
+  n = len(ps);
+  for i in 0..n { b = ps[(i - 1) % n ?? 0]?; s += (i + 1) * f(b); }
+  s
+}
+// the divisor is len(ps) itself, range end too: 6086.
+fn clen(ps: const vector<P>) -> integer {
+  s = 0;
+  for i in 0..len(ps) { b = ps[(i + 1) % len(ps) ?? 0]?; s += (i + 1) * f(b); }
+  s
+}
+// another divisor m: 3 -> 3253, 5 -> 5678 (index 4 is past the end).
+fn cm(ps: const vector<P>, m: integer) -> integer {
+  s = 0;
+  n = len(ps);
+  for i in 0..n { b = ps[(i + 1) % m ?? 0]?; s += (i + 1) * f(b); }
+  s
+}
+// inclusive: n = 0 runs once and the `??` answers 5, a miss: 1.  n = 4: 6086 + 5 * 305 + 15 - 5 + 1 = 7622.
+fn cincl(ps: const vector<P>) -> integer {
+  s = 0;
+  n = len(ps);
+  for i in 0..=n { b = ps[(i + 1) % n ?? 5]?; s += (i + 1) * (f(b) + 1) - 1; }
+  s + 1
+}
+// counter from 1: 5781.
+fn cfrom1(ps: const vector<P>) -> integer {
+  s = 0;
+  n = len(ps);
+  for i in 1..n { b = ps[(i + 1) % n ?? 0]?; s += (i + 1) * f(b); }
+  s
+}
+// integer elements: 240.
+fn cint(vi: const vector<integer>) -> integer {
+  s = 0;
+  n = len(vi);
+  for i in 0..n { s += (i + 1) * (vi[(i + 1) % n ?? 0] ?? 0); }
+  s
+}
+
+// a parameter, the length bound two statements before the loop (part 3): 6086.
+fn c1far(ps: const vector<P>) -> integer {
+  n = len(ps);
+  s = 0;
+  for i in 0..n { b = ps[(i + 1) % n ?? 0]?; s += (i + 1) * f(b); }
+  s
+}
+
+fn mk() -> vector<P> {
+  [P { x: 1, y: 2 }, P { x: 3, y: 5 }, P { x: 7, y: 11 }, P { x: 13, y: 17 }]
+}
+
+fn main() {
+  ps = mk();
+  // a length local, not adjacent, over the frame's own vector: 6086.
+  n = len(ps);
+  s = 0;
+  t = 7;
+  for i in 0..n { b = ps[(i + 1) % n ?? 0]?; s += (i + 1) * f(b); }
+  assert(s == 6086, "local {s}");
+  // the body empties the vector at i = 1, after its read: 305 + 1422 = 1727.
+  qs = mk();
+  m = len(qs);
+  s2 = 0;
+  for i in 0..m {
+    b = qs[(i + 1) % m ?? 0]?;
+    s2 += (i + 1) * f(b);
+    if i == 1 { qs = []; }
+  }
+  assert(s2 == 1727, "cleared {s2}");
+  assert(c0(ps) == 8113, "c0 {c0(ps)}");
+  assert(c1(ps) == 6086, "c1 {c1(ps)}");
+  assert(c2(ps) == 4871, "c2 {c2(ps)}");
+  assert(cneg(ps) == 5280, "cneg {cneg(ps)}");
+  assert(clen(ps) == 6086, "clen {clen(ps)}");
+  assert(cm(ps, 3) == 3253, "cm3 {cm(ps, 3)}");
+  assert(cm(ps, 5) == 5678, "cm5 {cm(ps, 5)}");
+  e: vector<P> = [];
+  assert(cincl(e) == 1, "cincl0 {cincl(e)}");
+  assert(cincl(ps) == 7622, "cincl4 {cincl(ps)}");
+  assert(cfrom1(ps) == 5781, "cfrom1 {cfrom1(ps)}");
+  assert(cint([10, 20, 30, 40]) == 240, "cint {cint([10, 20, 30, 40])}");
+  assert(c1far(ps) == 6086, "c1far {c1far(ps)}");
+  // one element: (i + 1) % 1 = 0 reads it, 711; none: the loop does not run, 0.
+  one = [P { x: 7, y: 11 }];
+  assert(c1(one) == 711, "one {c1(one)}");
+  assert(c1(e) == 0, "none {c1(e)}");
+  assert(t == 7, "t");
+  println("ok");
+}

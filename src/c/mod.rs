@@ -252,6 +252,10 @@ pub(crate) struct Cx<'a> {
     pub(crate) version_leaves: std::cell::RefCell<
         std::collections::HashMap<u32, Option<std::rc::Rc<crate::opt::version::Leaf>>>,
     >,
+    /// `@FR-R-Version`'s callee clause: the part of a caller's plan each called leaf's own fast
+    /// twin is written from (its decided `if`s, accesses and plain operators).
+    pub(crate) version_callees:
+        std::cell::RefCell<std::collections::HashMap<u32, std::rc::Rc<crate::opt::version::Leaf>>>,
     pub(crate) version_pres: std::cell::RefCell<std::collections::HashSet<u32>>,
     /// `@FR-R-Transient`'s twins and the structs they use (`body::transient`).
     pub(crate) tr: std::cell::RefCell<body::transient::TrState>,
@@ -438,6 +442,7 @@ impl<'a> Cx<'a> {
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
             version_leaves: std::cell::RefCell::new(std::collections::HashMap::new()),
+            version_callees: std::cell::RefCell::new(std::collections::HashMap::new()),
             version_pres: std::cell::RefCell::new(std::collections::HashSet::new()),
             tr: std::cell::RefCell::new(body::transient::TrState::default()),
             ap_windows: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -2538,6 +2543,17 @@ fn unit_defines(
     let mut out = String::new();
     if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
+    }
+    // `@FR-Path-Case` — a unit that reaches the file library compares a name with the entries
+    // of its directory the way the interpreter does, through the full lowercase mapping
+    // (`str::to_lowercase`): `É.txt` beside `é.txt` is a case clash, not a second file.  The
+    // table is the one `t.to_lowercase()` already registers, so only such a unit carries it.
+    if reached
+        .iter()
+        .any(|&d| data.def(d).position.file.ends_with("02_files.loft"))
+    {
+        cx.unicode_case(false);
+        out.push_str("#define LOFT_PATH_FOLD 1\n");
     }
     // `@FR-R-NoLocks`: a store is read-only only through `#lock = …`, a mapped file
     // (`file_map`) or a constant store; a unit that reaches none of them meets no locked write.

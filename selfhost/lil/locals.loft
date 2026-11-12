@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Run by the loft-in-loft test runner (`front/loft.loft --test`): scalar locals laid out by the
+// loft scope pass — assigned, reassigned, in both arms of an `if`, in loops (nested, inclusive,
+// `while`, left by `break`), and of the narrow types beside an integer.  Each value is
+// hand-computed.
+
+fn nested(n: integer) -> integer { t = 0; for i in 0..n { for j in 0..i { t += i * j; } } t }
+fn incl(n: integer) -> integer { t = 0; for i in 1..=n { t += i; } t }
+fn wh(n: integer) -> integer { i = 0; t = 0; while i < n { t += i; i += 1; } t }
+fn brk(n: integer) -> integer { t = 0; for i in 0..n { if i > 5 { break; } t += i; } t }
+fn after(n: integer) -> integer { t = 0; for _ in 0..n { t += 1; } u = t * 2; u }
+fn narrow(n: integer) -> integer { a = true; b = 'q'; d = n > 3; e = 7; if a && d && b == 'q' { e } else { 0 } }
+fn reassign(n: integer) -> integer { x = n; x = x * 2; y = x; x = y + 1; x }
+fn sel(n: integer) -> integer { r = match n { 0 => 10, 1 => 20, _ => 30 }; r + 1 }
+fn both(n: integer) -> integer { t = 0; if n > 2 { k = n * 3; t = k; } else { k = n; t = k + 1; } t }
+
+// 0 + 1·(0) + 2·(0+1) + 3·(0+1+2) + 4·(0+1+2+3) = 0 + 2 + 9 + 24 = 35.
+fn test_nested_loops() -> boolean { nested(5) == 35 && nested(0) == 0 }
+fn test_inclusive_range() -> boolean { incl(10) == 55 && incl(1) == 1 }
+fn test_while() -> boolean { wh(5) == 10 && wh(0) == 0 }
+// The loop stops after i = 5: 0 + 1 + … + 5.
+fn test_break() -> boolean { brk(10) == 15 && brk(3) == 3 }
+fn test_after_a_loop() -> boolean { after(4) == 8 }
+fn test_narrow_types() -> boolean { narrow(5) == 7 && narrow(2) == 0 }
+fn test_reassignment() -> boolean { reassign(3) == 7 }
+fn test_match() -> boolean { sel(0) == 11 && sel(1) == 21 && sel(9) == 31 }
+fn test_both_arms() -> boolean { both(3) == 9 && both(1) == 2 }
+
+fn main() { }

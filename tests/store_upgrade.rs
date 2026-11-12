@@ -1576,6 +1576,77 @@ fn cell_a_store_below_the_oldest_release_is_refused() {
     }
 }
 
+/// `@FR-L-Release` × `@FR-S-Format` — the release floor is asked before the image's placement
+/// token is.  The image is `tests/golden/images/trie-edge-t1`, a trie written under placement
+/// token 1 (loft#2241), which a whole load converts (`placement::TRIE_READS`); its sidecar is
+/// given the `version=` line a release that records itself writes.
+///   written by 1.4, reader reads from 2.0 on -> refused naming the bridge, both backends, and
+///                                                the image left byte for byte as it was
+///   written by 1.4, reader reads from 1.0 on -> loaded and converted: `5 1,2,3,4,5,`
+///   no release recorded, reader reads from 2.0 -> predates the recording, loaded the same
+/// Falsified with `Release::admits` answering `Ok` always: the first case loads.
+#[test]
+fn cell_an_older_token_image_meets_the_release_floor() {
+    let images =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/images/trie-edge-t1");
+    let golden = images.join("trie.store");
+    let side = loft::file_access::read_to_string(images.join("trie.store.dschema")).unwrap();
+    let recorded = side.replacen("slot=3\n", "slot=3\nversion=1.4\n", 1);
+    assert!(
+        recorded != side,
+        "the golden sidecar's root block moved:\n{side}"
+    );
+    let reader = "struct EWord { w: text, v: integer }\nfn main() {\n  t: trie<EWord[w]> = [];\n  \
+        if !store_load(t, \"a.store\") { println(\"not loaded\"); return; }\n  \
+        s = \"\";\n  for e in t { s += \"{e.v},\"; }\n  println(\"{len(t)} {s}\");\n}\n";
+    for (cell, sidecar, floor, expect) in [
+        (
+            "token_below",
+            &recorded,
+            "data_compatible_with = \"2.0\"\ndata_bridge = \"2.3\"\n",
+            "not loaded\n",
+        ),
+        (
+            "token_above",
+            &recorded,
+            "data_compatible_with = \"1.0\"\n",
+            "5 1,2,3,4,5,\n",
+        ),
+        (
+            "token_unrecorded",
+            &side,
+            "data_compatible_with = \"2.0\"\n",
+            "5 1,2,3,4,5,\n",
+        ),
+    ] {
+        let dir = cell_dir(cell);
+        loft::file_access::write(
+            dir.join("a.store"),
+            loft::file_access::read(&golden).unwrap(),
+        )
+        .unwrap();
+        loft::file_access::write(dir.join("a.store.dschema"), sidecar).unwrap();
+        manifest(&dir, "3.0", floor);
+        loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+        let before = store_bytes(&dir);
+        let reason = "this store was written by 1.4, and this program reads stores from 2.0 on; open it once with 2.3, then with this one";
+        for mode in [&[][..], &["--native-c"][..]] {
+            let mut args: Vec<&str> = mode.to_vec();
+            args.push("b.loft");
+            let (code, out, err) = run_loft(&dir, &args);
+            assert!(
+                code == 0 && out == expect && (expect != "not loaded\n" || err.contains(reason)),
+                "{cell} {mode:?}: ({code})\n{out}\n{err}"
+            );
+        }
+        assert!(
+            store_bytes(&dir) == before,
+            "{cell}: reading the image changed it"
+        );
+        let _ = loft::file_access::remove_dir_all(&dir);
+    }
+}
+
 /// Case 5: a store that records no release predates the recording and is read, as a sidecar
 /// without a `schema=` line is — an existing store is never newly refused by a floor.
 #[test]

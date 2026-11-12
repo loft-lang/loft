@@ -100,6 +100,17 @@ impl Parser {
         if src_var == u16::MAX {
             return Vec::new();
         }
+        // `@FR-B-View` — a stash of a PROJECTION (`a.1`, `s.h`) binds the member as it is, so
+        // it views the projection's root and frees nothing; typed as the owner it was freed
+        // at the scope's end beside the root's own release of that member
+        // (`@FR-H-FreeTwice`).  `LOFT_NO_STASH_VIEW_DEP=1` leaves it typed as an owner.
+        if !self.first_pass
+            && !stash_view_dep_off()
+            && let Some(root) = crate::use_analysis::projection_root(&value, &self.data)
+            && root < self.vars.count()
+        {
+            self.vars.depend(src_var, root);
+        }
         let mut list = vec![v_set(src_var, value)];
         list.push(self.nullable_slot_write_from(syn, slot_ref, src_var, fresh));
         list
@@ -355,9 +366,18 @@ impl Parser {
             return false;
         };
         let null = self.cl("OpNullRefSentinel", &[]);
+        // `@FR-B-View` — the payload is a READ of the record `named` holds, so whatever binds it
+        // borrows `named` (and `named` releases it).  Typed dep-less, `x = fresh_h(k).e` owned
+        // the record too: freed under `x` and again at `named`'s rebind (`@FR-H-FreeTwice`).
+        // `LOFT_NO_SLOT_READ_VIEW=1` leaves it typed as an owner.
+        let read_tp = if slot_read_view_off() {
+            tp.clone()
+        } else {
+            tp.depending(named)
+        };
         *code = v_block(
             vec![v_set(named, base.clone()), v_if(absent, null, slot)],
-            tp.clone(),
+            read_tp,
             "enum_slot_read_named",
         );
         true
@@ -502,4 +522,16 @@ impl Parser {
         }
         set_null
     }
+}
+
+/// `LOFT_NO_STASH_VIEW_DEP=1` (STORE_RECORDS.md § The checks): a nullable slot write's stash of
+/// a projection is typed as an owner — the re-free the store records must then report.
+fn stash_view_dep_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_STASH_VIEW_DEP").is_some())
+}
+
+/// `LOFT_NO_SLOT_READ_VIEW=1` (STORE_RECORDS.md § The checks): a tagged-slot read off a call's
+/// record is typed as an owner of that record — the re-free the store records must then report.
+fn slot_read_view_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_SLOT_READ_VIEW").is_some())
 }

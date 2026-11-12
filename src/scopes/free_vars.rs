@@ -206,6 +206,7 @@ impl Scopes<'_> {
                     }
                     release.push(call("OpFreeRef", v, data));
                     free_record_in_omitting_arms(&mut copy, v, function, tp, &release);
+                    self.arm_released_records.insert(v);
                     touched = true;
                 }
             }
@@ -623,6 +624,7 @@ impl Scopes<'_> {
                 moved_out,
             },
         );
+        self.arm_released_records.clear();
         // @PLN85 P4-records — at a RETURN site, a record work-ref's store may
         // BE the returned store: a named local adopts the arm's fresh Object
         // (`v: E = Pass{..}; if c { v = Fail{..} }; v` — two candidate stores,

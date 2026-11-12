@@ -2147,7 +2147,26 @@ static loft_ref loft_hash_walk(loft_ref c, const loft_key *keys, int nk, int by_
 
 static loft_ref loft_hash_sorted(loft_ref c, const loft_key *keys, int nk) { return loft_hash_walk(c, keys, nk, 0); }
 
-static loft_ref loft_hash_unsorted(loft_ref c) { return loft_hash_walk(c, 0, 0, 1); }
+/* hash::holds_records: does the table hold a store RECORD as an entry (a linked type's, or one
+ * handed in already built)?  Its slot value is a record number, which follows the allocator. */
+static int loft_h_holds_records(loft_ref c) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return 0;
+    loft_store_t *s = loft_store_of(c);
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0) return 0;
+    loft_hhdr h = loft_h_hdr(s, claim);
+    if (h.inl) return 0;
+    if (h.stride == 0) return 1;
+    for (uint32_t i = 0; i < h.count; i++)
+        if (loft_u32(s, claim, LOFT_H_BUCKET0 + i * h.sb) & LOFT_H_SLOT_RECORD) return 1;
+    return 0;
+}
+
+/* Stores::build_hash_unsorted_vec: slot order, or key order for a table holding store records
+ * (`@FR-Col-Unordered`). */
+static loft_ref loft_hash_unsorted(loft_ref c, const loft_key *keys, int nk) {
+    return loft_hash_walk(c, keys, nk, !loft_h_holds_records(c));
+}
 
 /* OpFreeScratch (Stores::free_iteration_scratch): the snapshot's two records go back. */
 static void loft_free_scratch(loft_ref x) {

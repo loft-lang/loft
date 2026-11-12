@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the loft front end as one call: source text in, the elaborated `ir::Bundle` out, with
+// no Rust image anywhere.  `Parser::parse_dir` over the standard library (each file its own two
+// passes), then a program over it (`Parser::parse_file`), then the steps `after_pass2` runs on
+// the settled IR.  What the elaboration does not carry yet is recorded in `El.refused`.
+
+use ir;
+use lex;
+use syntax;
+use el;
+use el_definitions;
+use el_expressions;
+use el_tret;
+use el_buffers;
+use el_refhome;
+use el_drop;
+use el_upgrade;
+
+// The standard library's files, in the order `Parser::parse_dir` reads them.
+pub fn stdlib_files(dir: text) -> vector<text> {
+  names = ["01_code.loft", "02_files.loft", "03_text.loft", "04_stacktrace.loft", "05_coroutine.loft", "06_json.loft", "07_reflect.loft"];
+  [for n in names { "{dir}/{n}" }]
+}
+
+// One file's two passes over `e` (`Parser::parse_file`): the declarations, then the bodies.
+// False where the file does not read or does not parse.
+fn elab_source(e: el::El, f: text) -> boolean {
+  src = file(f).content();
+  if src == null {
+    el::refuse(e, "a source file that does not read: {f}");
+    return false;
+  }
+  p = syntax::prepare(lex::lex(src!));
+  tree = syntax::parse_file(p);
+  if tree == null {
+    el::refuse(e, "a source file that does not parse: {f}");
+    return false;
+  }
+  e.p = p;
+  e.file = f;
+  e.lines = [];
+  for ln in src!.split('\n') {
+    e.lines += [ln];
+  }
+  e.first_pass = true;
+  e.line = 0;
+  el::reset_uses(e);
+  el_definitions::elab_file(e, tree!);
+  el_definitions::resolve_adopted_stubs(e);
+  el_definitions::reserve_late_return_buffers(e);
+  e.first_pass = false;
+  e.line = 0;
+  el::reset_uses(e);
+  el_definitions::elab_file(e, tree!);
+  true
+}
+
+// `Parser::after_pass2`: on the settled IR, the instances made above their template, the
+// text-return promotion and the work buffers, then the stored-reference checks and the
+// copy, upgrade and drop cascades.
+fn settle(e: el::El) {
+  el_expressions::rebuild_stale(e);
+  el_tret::promote_text_returns(e);
+  el_buffers::promote_work_buffers(e);
+  el_refhome::check_stored_reference_homes(e);
+  el_refhome::check_later_fresh_binds(e);
+  el_drop::synth_copy_cascades(e);
+  el_upgrade::synth_upgrade_drain(e);
+  el_drop::synth_drop_cascades(e);
+}
+
+// The standard library elaborated from its sources in `dir` (`default/`), source 0.
+pub fn standard_library(dir: text) -> el::El {
+  e = el::new_el(syntax::prepare(lex::lex("")), "", true);
+  for f in stdlib_files(dir) {
+    if !elab_source(e, f) {
+      return e;
+    }
+  }
+  e
+}
+
+// The program in `f` elaborated over the standard library `e` holds (`MAIN_SOURCE`), then the
+// whole bundle settled.  False where it does not read or parse.
+pub fn program(e: el::El, f: text) -> boolean {
+  e.default = false;
+  e.source = el::MAIN_SOURCE;
+  if !elab_source(e, f) {
+    return false;
+  }
+  settle(e);
+  true
+}

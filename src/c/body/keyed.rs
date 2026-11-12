@@ -307,10 +307,13 @@ impl FnWriter<'_> {
                 };
                 Ok(Some(E::new(code, K::Ref)))
             }
-            ("n_hash_unsorted", [h, _]) => {
+            ("n_hash_unsorted", [h, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let (keys, n) = self.cx.keys_of(tp);
                 let h = self.expr(h, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_hash_unsorted({})", as_ref(h)?),
+                    format!("loft_hash_unsorted({}, {keys}, {n})", as_ref(h)?),
                     K::Ref,
                 )))
             }

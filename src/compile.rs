@@ -135,6 +135,8 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     crate::opt::loop_record::rewrite_program(data, database);
     laps.lap("loop_record");
     laps.report("close_program", data.definitions());
+    // The store records (STORE_RECORDS.md), on the closed program: an observer.
+    crate::store_records::observe(data);
 }
 
 /// Incremental variant of [`byte_code`] — only emit bytecode for
@@ -246,6 +248,56 @@ pub fn byte_code_from(
     // Reports (and drains) the ones no diagnostic accounts for; native generation records its
     // own sites later and reports them separately.  A no-op unless `LOFT_COPY_MANIFEST` is set.
     crate::copy_manifest::report(data);
+    // The store instruments' names for each pc (`store_trace`): built only when one is on.
+    state.pc_names = crate::store_trace::wanted().then(|| {
+        std::sync::Arc::new(store_trace_names(
+            &state.bytecode,
+            &state.vars,
+            &state.line_numbers,
+            data,
+        ))
+    });
+}
+
+/// The store instruments' table (`store_trace`) from the generated code: each function's range,
+/// each variable-reading op from the code generator's `pc -> variable` map, and its statement
+/// lines.
+fn store_trace_names(
+    bytecode: &[u8],
+    vars: &crate::fxhash::FxHashMap<u32, u16>,
+    lines: &std::collections::BTreeMap<u32, u32>,
+    data: &Data,
+) -> crate::store_trace::PcNames {
+    let mut names = crate::store_trace::PcNames::new(lines.clone());
+    let mut owner: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
+    for d_nr in 0..data.definitions() {
+        let def = data.def(d_nr);
+        if !matches!(def.def_type, crate::data::DefType::Function)
+            || def.is_operator()
+            || def.code_length == 0
+        {
+            continue;
+        }
+        let name = def
+            .name()
+            .strip_prefix("n_")
+            .unwrap_or(def.name())
+            .to_string();
+        let end = def.code_position + def.code_length;
+        names.add_fn(def.code_position, end, name, def.position().file.as_str());
+        owner.insert(def.code_position, d_nr);
+    }
+    for (&pc, &v) in vars {
+        let Some(start) = names.fn_start(pc) else {
+            continue;
+        };
+        let Some(len) = instruction_len(bytecode, pc as usize, data) else {
+            continue;
+        };
+        let var_name = data.def(owner[&start]).variables().name(v).to_string();
+        names.add_var(pc, var_name, len as u32);
+    }
+    names
 }
 
 /// `LOFT_TRACE_BYTECODE=<file>` — the strict comparison's opcodes and bytecode layers
@@ -755,7 +807,7 @@ pub fn disassemble(
 /// A fixed per-opcode table cannot express these (`size(Text)` reports the
 /// in-memory pointer width, not the inline byte count).  `None` if the
 /// opcode is unknown or its operands run past the buffer.
-fn instruction_len(bytecode: &[u8], pc: usize, data: &Data) -> Option<usize> {
+pub(crate) fn instruction_len(bytecode: &[u8], pc: usize, data: &Data) -> Option<usize> {
     use crate::data::Context;
     use crate::variables::size as type_size;
     let first = *bytecode.get(pc)?;

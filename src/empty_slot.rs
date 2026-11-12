@@ -143,3 +143,95 @@ pub fn known_empty(data: &Data, ops: &[Value], vector: &Value) -> bool {
     }
     false
 }
+
+fn var_of(x: &Value) -> Option<u16> {
+    match x.unspan() {
+        Value::Var(v) => Some(*v),
+        _ => None,
+    }
+}
+
+fn op_name(data: &Data, d: u32) -> &str {
+    if (d as usize) < data.definitions.len() {
+        data.def(d).name()
+    } else {
+        ""
+    }
+}
+
+/// A clear of a vector variable: `t_6vector_clear(v)`, or the `OpClearVector(v)` `@FR-R-Wrapper`
+/// makes of it in the IR → `v`.
+#[must_use]
+pub fn clear_of(data: &Data, x: &Value) -> Option<u16> {
+    if let Value::Call(d, args) = x.unspan()
+        && let [a] = args.as_slice()
+        && matches!(op_name(data, *d), "t_6vector_clear" | "OpClearVector")
+    {
+        return var_of(a);
+    }
+    None
+}
+
+/// A work buffer's empty init: `if OpRefIsNull(v) { … } else { t_6vector_clear(v) }`, whose
+/// first branch mints a companion and binds `v` to its field → `v`, with the variables the
+/// first branch names besides `v`.
+#[must_use]
+pub fn buffer_init(data: &Data, x: &Value) -> Option<(u16, Vec<u16>)> {
+    let Value::If(test, mint, clear) = x.unspan() else {
+        return None;
+    };
+    let Value::Call(test_op, targs) = test.unspan() else {
+        return None;
+    };
+    let [tv] = targs.as_slice() else {
+        return None;
+    };
+    let vec = var_of(tv)?;
+    if op_name(data, *test_op) != "OpRefIsNull" {
+        return None;
+    }
+    let clear_ok = |stmt: &Value| clear_of(data, stmt) == Some(vec);
+    let clears = match clear.unspan() {
+        Value::Insert(items) => items.len() == 1 && clear_ok(&items[0]),
+        Value::Block(bl) => bl.operators.len() == 1 && clear_ok(&bl.operators[0]),
+        other => clear_ok(other),
+    };
+    if !clears {
+        return None;
+    }
+    let items: &[Value] = match mint.unspan() {
+        Value::Insert(items) => items,
+        Value::Block(bl) => &bl.operators,
+        _ => return None,
+    };
+    let mut others = Vec::new();
+    for item in items {
+        match item.unspan() {
+            Value::Call(op, args)
+                if matches!(
+                    op_name(data, *op),
+                    "OpFreeRefIfDistinct" | "OpDatabase" | "OpSetInt4"
+                ) =>
+            {
+                for a in args {
+                    if let Some(u) = var_of(a)
+                        && u != vec
+                    {
+                        others.push(u);
+                    }
+                }
+            }
+            Value::Set(u, rhs) if *u == vec => {
+                let Value::Call(get, args) = rhs.unspan() else {
+                    return None;
+                };
+                if op_name(data, *get) != "OpGetField" {
+                    return None;
+                }
+                others.extend(args.first().and_then(var_of));
+            }
+            _ => return None,
+        }
+    }
+    Some((vec, others))
+}

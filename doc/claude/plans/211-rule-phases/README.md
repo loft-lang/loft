@@ -26,8 +26,8 @@ the forms of `(R-ValueRecord)` the IR declines stay in the writers, closed build
 spelling them in the IR would not speed the interpreter (owner ruling, [c4-view-plan.md](c4-view-plan.md)
 § S2); c4-view S3 deleted both writers' element-first clauses (D-phase-4 closed).  D-fact-2
 gave the C `(R-RangedCall)` (its gain test now counts the operators a variant saves), and
-`(R-TextBorrow)` moved to the interpreter (§ Arc C's moves).  Next: `(R-SliceInto)` and
-`(R-RetAdopt)` measured on their beside builds; `(R-RefillText)` stays.  It
+`(R-TextBorrow)` and `(R-RetAdopt)` moved to the interpreter and `(R-SliceInto)` into the IR
+(§ Arc C's moves); `(R-RefillText)` stays.  It
 was to start once
 #1743 (every routine within 3×) and #2351 (the facts routine) were fixed; #1743 is fixed on
 `laptop-c-perf`, and on 2026-11-03 the owner asked to concentrate on this plan, so #2351's
@@ -355,6 +355,20 @@ per-routine profile names the rule.  A routine no existing rule could serve is l
 the emitted code of the routine it names — a class is a decline reason seen at the hot site,
 not a guess from the profile alone.  Effort S.
 
+*Done 2026-11-10:* [d1-classes.md](d1-classes.md) — the 33 routines over 2× in eleven classes.
+The widest is `(R-Range)`'s INDEX clause proving only the lower bound (nine routines); the next
+are `(R-Version)` refusing a leaf that calls a leaf (three) and copies where the twin borrows or
+moves (six).  D2 takes the first: its provable part with the select form, priced on `boundary_loops`, is 11.18 →
+9.29 ms (gcc) and 18.24 → 9.28 ms (clang) against the twin's 6.05.
+
+*D2, class 1 — two spellings built 2026-11-10* ([d2-upper-bound.md](d2-upper-bound.md)): the
+counter of `0..n` with `n` a length local (one answer, `length_locals::own_length_locals`,
+read by `(R-InRange)` in the IR and `(R-Base)`'s counter clause in the C; `boundary_loops`
+11.18 → 9.24 ms gcc, 18.26 → 12.37 ms clang; drawing's polygon routines 3–11 %), and the
+guard `e < len(v)` (`opt::below_len`, `(R-Base)`'s guard clause; pluginabi `request` −3 % on
+both compilers).  Open spellings: the stepped `while` counter (the lower bound), `i % n`, the
+equal-length vectors of `boundary_loops`.
+
 **D2 … — one generalised clause per phase,** in order of the time the class carries.  Each is
 priced by hand first (the hand form of the routine where the class is heaviest, same answer,
 instructions per op), then built as a clause of its rule under the rule's switch, then judged:
@@ -517,7 +531,7 @@ host, the adopted witness, and the companions of a vector `R-Apart` keeps inline
 (`opt::apart_vector`, moved from `lower` for this; the inline buffer is no store at all).  A
 function that yields or calls a generator is declined: a live frame may hold the store, which
 rustc tested at run time (`is_frame_held`).  The C's push-run reservation reads the form as an
-empty vector (`known_empty`, now `opt::empty_slot` — C′1).  Found on the way, in every IR pass of
+empty vector (`known_empty`, now `empty_slot`, in the front layer — C′1).  Found on the way, in every IR pass of
 this plan: a definition with a native NAME (a library export once its artifact is built) was
 skipped, though a native build emits its loft body — hex_shape with a warm library lost
 `form_read`'s 16 buffers; the filter is gone.  Census: rustc counted once per emitted copy (the
@@ -543,7 +557,7 @@ only `(R-FnRefBuffer)`'s records in `c/body/loop_record.rs`, and now keeps plain
 (drawing, 2 — the IR's kept pass mints nothing, where the C's port had measured a store reset as
 no gain).  Ownership goes through `opt::buffer_owner`, which gained the apart RECORD owners
 (`opt::apart_records`, moved from `lower` for this, with `ident_part` and `apart_disabled`
-given their one home there): an apart record holds no store to keep.  `opt::empty_slot`'s
+given their one home there): an apart record holds no store to keep.  `empty_slot`'s
 block scan learned that a write to ANOTHER field of the record leaves a vector slot empty —
 without it the C's push-run reservation lost hex_recover's `forms_upto` (8 → 6), whose kept
 record's other fields are written between the clear and the push.  Census: the rustc rows
@@ -604,6 +618,53 @@ runtime, codegen: 2 526 passed; a 17-cell probe matrix under `LOFT_POISON` and
 put out: r1 = 663) and `tests/scripts/2432-…`.  On the interpreter: 62 784 → 51 344
 instructions a pass of the probe, −18.2 %.
 
+**`(R-SliceInto)` — moved.**  `src/slice_into.rs`, in the scope pass after `(R-SliceArg)`'s range
+clause and on its slice-block test (`slice_text::admit` / `split` / `outside_mentions`, now one
+home for both rules; the C's `slice_fill` was a second copy of it).  `OpAppendVector(P, <slice
+block>, tp)` becomes the bounds' statements and `OpSliceVector(P, src, lo, hi, row)` — the form
+the parser already gives a local place.  The bounds now run before P is read, so P is admitted
+only as variables and constant field offsets that no bound statement assigns (the C writer
+evaluated P first and took any expression; no corpus site needed more).  Switch
+`LOFT_NO_SLICE_INTO` (the C's, now every backend's), trace `LOFT_TRACE_SLICE_INTO`.  The C
+writer's clause (`slice_fill`, `slice_into`) is deleted; the transient writer's clause reads the
+IR form through an `OpSliceVector` arm.  Evidence: with both on, the C writer admitted nothing;
+the C of the 3 036 corpus and bench programs, old binary against the IR clause, differs in 8,
+each read: one pair of parentheses the writer's raw place wrapped, and the cell's new cases;
+the switch A/B (2 931 programs) 0 defects; the C sweep (2 967 programs) 2 597 match, the two known
+differs, and the eight changed programs clean under `--poison`; `find_problems --subject` c and
+codegen with rustc native: 917 passed; the cell on the interpreter, the C and
+rustc, the switch on and off, under `LOFT_POISON` and `LOFT_STRICT_STORES`, four new cases (the
+field its own source, a field with elements, a bound with an effect, `i32` elements), falsified
+by a lower bound of 0 in the IR form (8 of 12 fail on both backends).  Census: `R-SliceInto`
+applied by `ir`; the C rows count sites, not emitted copies (cbor and pluginabi 3 → 1), and
+rustc gains it (0 → 1); `(R-CompleteWrite)` loses the temporary's own group (−1 each), whose
+store no longer exists; on rustc three `R-Header` sites become `R-Header/function`: with the
+temporary's store gone the decoder holds its source's header for the whole function.  On the
+interpreter: 10 292 → 7 536 instructions a pass of the probe, −26.8 %.
+
+**`(R-RetAdopt)` — moved to the interpreter.**  An interpreter clause, not an IR spelling, as
+`(R-TextBorrow)` moved: the decision already lived once in `opt::ret_adopt`, and only the
+compiled writers applied it.  An IR spelling would also reach the twins those writers build of
+the same body (`__ap`, `__d`), whose return buffer is the CALLER's vector and which must not
+adopt it.  `State::retbuf_adopt` (`src/state/codegen.rs`) takes the decision once per function
+in `def_code`; `adopted_bind` writes the result's bind as the buffer (minted when the caller
+offered none, cleared otherwise) and then the bind to its vector field; `generate_call` skips
+the witness's mint and zero; `adopted_delivery` skips the delivery's clear and append.  It reads
+nodes through `IrNode`, so warm runs (the body in the program store) take it too.  Switch
+`LOFT_NO_RETBUF_ADOPT`, now every backend's.  The plan's probe never reached the rule — the scope
+pass promotes its result local onto the buffer — so it was priced on the libraries where it
+fires, the interpreter with a throwaway prototype on and off: 46 routines, every hash equal;
+drawing `fronds` −7.3 %, mesh3d `mesh_to_floats` −2.6 %, nothing else past 2 %.  Built: `fronds`
+935–944 → 865–874 µs, cold and warm.  Evidence: the switch A/B (2 931 programs) 0 defects; the C sweep (2 967 programs, the interpreter its oracle) 2 597 match, the two known differs;
+the drop gate's interpreter cells clean;
+the six adoption cells on the interpreter and the C, the switch on and off, under `LOFT_POISON`
+and `LOFT_STRICT_STORES`; falsified by keeping the delivery's clear (`157-retbuf-adopt`'s `main`
+fails on the interpreter).  A first plant, dropping the reuse arm's clear, changed nothing: the
+function's entry clear already empties an offered buffer.  `find_problems --subject` codegen
+and runtime: 2 329 passed, the one pin that moved being `adopt_buffer_reuse`'s store census
+(3 interpreter mints fewer on and off the pool, the switch giving the old pair back).  Census:
+`R-RetAdopt` applied by `interp` too.
+
 ## Phase ordering
 
 A0 → A1 → A2 → A3 (the table first, so every later move is a blessed change of it) · B1 →
@@ -653,9 +714,9 @@ function before and not after.
 | `(R-SliceArg)` range | yes — IR facts | `text_from_byte_range` | 0.5 | `slice_arg`: 7 771 → 3 351, **−56.9 %** (the hand form skips the slice's bound normalisation); moved: 7 779 → 5 385, **−30.8 %** | **MOVED** (`slice_text::rewrite`, arc C's first) |
 | `(R-LoopBuffer)` | yes — `opt::hoist::loop_buffers` | `OpClearVector` on a held store | 0.6 | `loop_buffer`: 7 803 → 6 508, **−16.6 %**; moved: 7 311 → 6 106, **−16.5 %** | **MOVED** (`opt::loop_buffer`, arc C's sixth) |
 | `(R-LoopRecord)` | yes — `opt::loop_records` | the record's null to the prelude, one free after the loop | 0.1 | `loop_record`: 3 150 → 1 545, **−51.0 %**; moved: 3 058 → 1 613, **−47.3 %** | **MOVED** (`opt::loop_record`, arc C's seventh) |
-| `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector` | MOVE, as that parser path widened to field places; measured on arc C's beside build |
+| `(R-SliceInto)` | yes — IR facts | `OpSliceVector` onto the place | 0.5 | no hand form ([probes/slice_into/NOTE.md](probes/slice_into/NOTE.md)): a field place is not spellable; a LOCAL place `p += v[a..b]` already compiles to one `OpSliceVector`; moved, the switch off against on, `slice_into`: 10 292 → 7 536, **−26.8 %** | **MOVED** (`slice_into::rewrite`, the scope pass) |
 | `(R-ValueRecord)` view clause | yes — `opt::value_records`' view leaves, decided on the IR already (by each writer) | a value-record tuple element that is a REFERENCE to a place — new to the IR's tuple | — (not in B1) | no probe yet; S0's count: `R-ValueRecord/view` 3 bench functions, drawing's `parse_lock` / `parse_poly` among them | MOVE — c4-view-plan.md S1–S3; carries `(R-ElemFirst)`'s view-exit form with it (D-phase-4, D-phase-5) |
-| `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)) | owed: measured on arc C's beside build |
+| `(R-RetAdopt)` | yes — `opt::ret_adopt` | the guarded witness | 0.3 | no hand form ([probes/ret_adopt/NOTE.md](probes/ret_adopt/NOTE.md)); the probe's shape is promoted by the scope pass, so it was priced where the rule fires: drawing `fronds` −7.5 %, mesh3d `mesh_to_floats` −2.6 % on the interpreter | **MOVED to the interpreter** (`State::retbuf_adopt`: an IR spelling would reach the compiled writers' twins) |
 
 **Wave 2 — the rules that need one new piece.**
 
@@ -721,8 +782,8 @@ both STAY.
 **Arc C's order**, by measured gain and weight: `(R-SliceArg)`'s range clause first (the
 protocol's proof, −56.9 %), then `(R-Wrapper)` (40.9, −66.5 %), `(R-PushFill)`'s fill form (17.2,
 −71.5 %), `(R-KeyedEntry)` (4.2, −89 %), `(R-ElemFirst)`, `(R-LoopBuffer)`, `(R-LoopRecord)`;
-then `(R-CompleteWrite)` and `(R-TextBorrow)` as interpreter clauses; `(R-SliceInto)`,
-`(R-RetAdopt)` and `(R-RefillText)` measured on their beside builds.  The ports to the C
+then `(R-CompleteWrite)` and `(R-TextBorrow)` as interpreter clauses; `(R-SliceInto)` (moved),
+`(R-RetAdopt)` (moved, an interpreter clause) and `(R-RefillText)` (stays).  The ports to the C
 (`(R-GuardFree)`, `(R-FnHeader)`, `(R-SliceBorrow)`) are their own track.
 
 ## Documentation

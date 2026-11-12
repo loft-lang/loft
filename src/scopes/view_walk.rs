@@ -7,8 +7,9 @@
 //! that may move.
 
 use super::disturbance::{
-    ContainerAt, Disturbance, DisturbedParams, RemovedParams, ViewCause, grown_containers,
-    named_place, overwritten_records, released_children, reshaped_containers,
+    ContainerAt, Disturbance, DisturbedParams, RemovedParams, ViewCause, cleared_tagged_slots,
+    grown_containers, named_place, overwritten_records, released_children, reshaped_containers,
+    value_write_clears,
 };
 use super::places::{
     ParamPlace, add_offset, call_arg_at, compose_param_at, get_record_literal_keys,
@@ -247,8 +248,9 @@ pub(super) fn collect_views_to_materialise(
     data: &Data,
     database: &crate::database::Stores,
     disturbed: Option<&DisturbedParams>,
-) -> HashMap<u16, Disturbance> {
-    let out = ViewWalk::run(code, function, data, None, disturbed, Some(database), 0);
+) -> (HashMap<u16, Disturbance>, Vec<WriteBack>) {
+    let (out, write_backs) =
+        ViewWalk::run(code, function, data, None, disturbed, Some(database), 0);
     if !out.is_empty() && crate::env_once!(std::env::var_os("LOFT_DEBUG_F8").is_some()) {
         let mut names: Vec<String> = out
             .iter()
@@ -265,7 +267,21 @@ pub(super) fn collect_views_to_materialise(
     // side instead.  That was a restatement — and once a binding can view more than one
     // container it is also a wrong answer, because the RHS names both and only one of them was
     // disturbed.  One home for the fact, named where it was observed.
-    out
+    (out, write_backs)
+}
+
+/// `view-written-back` — a view written back into the place it views, after that place was
+/// written while the view was open.  A view re-reads its place (`(B-View)`), and a write into
+/// the place is not one of the events that end it (`(B-Disturb)`: an overwritten place stays),
+/// so the write-back copies the place onto itself: `keep = st.lib; st.lib = X; st.lib = keep`
+/// leaves `X` there, silently, on every backend.
+pub(crate) struct WriteBack {
+    pub(crate) view: u16,
+    pub(crate) container: u16,
+    /// The line of the write that changed the place since the view was bound.
+    pub(crate) written_at: u32,
+    /// The line of the write-back.
+    pub(crate) line: u32,
 }
 
 /// The state of [`collect_views_to_materialise`]'s in-order walk.
@@ -369,9 +385,31 @@ pub(super) struct ViewWalk<'a> {
     maybe_own: HashSet<u16>,
     /// The nesting level of the loop being walked (0: none).
     loop_level: u8,
+    /// `view-written-back` — each open view whose PLACE was written since it was bound, with
+    /// the line of the first such write.  The view survives a write into its place (`(B-View)`:
+    /// it re-reads what the place holds now), so writing it back there later restores nothing.
+    written: HashMap<u16, u32>,
+    /// The answer to that question: views written back into their own written place.
+    write_backs: Vec<WriteBack>,
+    /// Each compiler temp last bound to a plain variable (`__ref_3 = keep`), which a nullable
+    /// field's write-back copies from — read so that copy names the view it came from.
+    temp_names: HashMap<u16, u16>,
+    /// The tagged-slot clears that open a VALUE write ([`value_write_clears`]), named by
+    /// address: [`Self::walk_block`] sees each one's siblings, the statement walk does not.
+    value_clears: HashSet<*const Value>,
     /// While a loop's whole body is shaken ahead of its walk, that loop's level; 0 otherwise
     /// (`Disturbance::provisional`).
     loop_edge: u8,
+}
+
+/// One write [`ViewWalk::place_writes`] found: the place, its depth, its literal root index,
+/// the bytes it covers, and whether it is a whole record copied in.
+type PlaceWrite = ((u16, u32), u8, Option<(u32, i32)>, u32, bool);
+
+/// Do the byte ranges `[a, a + an)` and `[b, b + bn)` of one record meet?  [`ANY_FIELD`] on
+/// either side is the whole record, which meets everything.
+fn overlaps(a: u32, an: u32, b: u32, bn: u32) -> bool {
+    a == ANY_FIELD || b == ANY_FIELD || (a < b.saturating_add(bn) && b < a.saturating_add(an))
 }
 
 /// Does this `if` arm end by leaving the function — its last statement a `return`?
@@ -405,12 +443,42 @@ impl ViewWalk<'_> {
         disturbed: Option<&'a DisturbedParams>,
         database: Option<&'a crate::database::Stores>,
         start_line: u32,
-    ) -> HashMap<u16, Disturbance> {
+    ) -> (HashMap<u16, Disturbance>, Vec<WriteBack>) {
+        let (out, _, write_backs) = Self::run_seeded(
+            code,
+            function,
+            data,
+            cross_frame,
+            disturbed,
+            database,
+            start_line,
+            &[],
+        );
+        (out, write_backs)
+    }
+
+    /// [`Self::run`] with `seeds` open from the start: each `(view, container, field)` a
+    /// variable that already views a place inside `container` when the body begins — a
+    /// callee's element PARAMETER whose caller handed it an element of another parameter
+    /// (`@FR-B-Ref-Reshape`: a plain parameter aliases the caller's element as a `&` one
+    /// does).  Answers the views used after a disturbance, the seeds a disturbance reached at
+    /// all, used or not, and the write-backs the walk saw.
+    #[expect(clippy::too_many_arguments, reason = "run's arguments plus the seeds")]
+    pub(super) fn run_seeded<'a>(
+        code: &Value,
+        function: &'a Function,
+        data: &'a Data,
+        cross_frame: Option<&'a RemovedParams>,
+        disturbed: Option<&'a DisturbedParams>,
+        database: Option<&'a crate::database::Stores>,
+        start_line: u32,
+        seeds: &[(u16, u16, u32)],
+    ) -> (HashMap<u16, Disturbance>, HashSet<u16>, Vec<WriteBack>) {
         let mut walk = ViewWalk {
             function,
             data,
-            open: vec![Vec::new()],
-            bound_at: HashMap::default(),
+            open: vec![seeds.to_vec()],
+            bound_at: seeds.iter().map(|(v, _, _)| (*v, 0)).collect(),
             view_keys: HashMap::default(),
             view_depth: HashMap::default(),
             view_index: HashMap::default(),
@@ -426,12 +494,23 @@ impl ViewWalk<'_> {
             maybe_own: HashSet::default(),
             loop_level: 0,
             loop_edge: 0,
+            written: HashMap::default(),
+            write_backs: Vec::new(),
+            temp_names: HashMap::default(),
+            value_clears: HashSet::default(),
         };
         walk.walk_block(std::slice::from_ref(code));
-        walk.out
+        let reached = seeds
+            .iter()
+            .map(|(v, _, _)| *v)
+            .filter(|v| walk.shaken.contains_key(v) || walk.out.contains_key(v))
+            .collect();
+        (walk.out, reached, walk.write_backs)
     }
 
     fn walk_block(&mut self, stmts: &[Value]) {
+        self.value_clears
+            .extend(value_write_clears(stmts, self.data));
         for stmt in stmts {
             if let Value::Line(n) = stmt.unspan() {
                 self.line = *n;
@@ -547,6 +626,8 @@ impl ViewWalk<'_> {
         let depth_before = self.view_depth.clone();
         let index_before = self.view_index.clone();
         let own_before = self.maybe_own.clone();
+        let written_before = self.written.clone();
+        let mut writtens: [HashMap<u16, u32>; 2] = Default::default();
         let mut owns: [HashSet<u16>; 2] = Default::default();
         // Two arms, two slots: an `if` is walked in every function of every program,
         // the standard library's included, so its bookkeeping allocates nothing.
@@ -562,6 +643,7 @@ impl ViewWalk<'_> {
             self.view_depth.clone_from(&depth_before);
             self.view_index.clone_from(&index_before);
             self.maybe_own.clone_from(&own_before);
+            self.written.clone_from(&written_before);
             match branch {
                 Value::Block(b) => self.scoped(&b.operators),
                 Value::Insert(ops) => self.scoped(ops),
@@ -583,6 +665,7 @@ impl ViewWalk<'_> {
             depths[arm] = std::mem::take(&mut self.view_depth);
             indices[arm] = std::mem::take(&mut self.view_index);
             owns[arm] = std::mem::take(&mut self.maybe_own);
+            writtens[arm] = std::mem::take(&mut self.written);
         }
         // An arm that ends in `return` leaves the function: nothing it disturbed or
         // left open reaches the statements after the `if`, so the state there is the
@@ -599,7 +682,14 @@ impl ViewWalk<'_> {
             self.view_depth = std::mem::take(&mut depths[k]);
             self.view_index = std::mem::take(&mut indices[k]);
             self.maybe_own = std::mem::take(&mut owns[k]);
+            self.written = std::mem::take(&mut writtens[k]);
             return;
+        }
+        // A place written on EITHER path may hold the new value where the paths join.
+        let [t_written, e_written] = writtens;
+        self.written = t_written;
+        for (v, line) in e_written {
+            self.written.entry(v).or_insert(line);
         }
         let (e_open, e_shaken, e_keys) = ends.pop().expect("an else arm");
         let (mut open, mut shaken, t_keys) = ends.pop().expect("a then arm");
@@ -657,6 +747,178 @@ impl ViewWalk<'_> {
         self.open.pop();
     }
 
+    /// `view-written-back` (`@FR-B-View`, `@FR-B-Disturb`): first the views `stmt` copies back
+    /// onto the very place they view where that place was written since the view was bound,
+    /// then every open view whose place `stmt` itself writes into.
+    ///
+    /// The write-back copies a record onto itself, which is a no-op: harmless where nothing
+    /// wrote the place in between, and a silent wrong restore where something did, which is
+    /// what is reported.  A view a disturbance ended was materialised and is a real copy, so
+    /// it is not.  Only this frame's own writes count — a callee writing through a parameter
+    /// is not seen, which under-reports, the safe direction for a warning.  The loop head's
+    /// whole-body pass marks writes (the next turn sees them) and judges no write-back; one
+    /// inside the body is judged where the walk reaches it.
+    fn track_write_backs(&mut self, stmt: &Value) {
+        // A nullable field's write-back copies through a compiler temp bound to the view in
+        // the same statement (`__ref_3 = keep; … OpCopyRecord(__ref_3, n.lib.payload)`), so a
+        // source is read through such a binding to the variable it names.
+        let mut sets: Vec<(u16, Option<u16>)> = Vec::new();
+        stmt.walk(&mut |n| {
+            if let Value::Set(t, val) = n
+                && self.function.is_compiler_generated(*t)
+            {
+                let named = match val.unspan() {
+                    Value::Var(k) => Some(*k),
+                    _ => None,
+                };
+                sets.push((*t, named));
+            }
+        });
+        for (t, named) in sets {
+            match named {
+                Some(k) => self.temp_names.insert(t, k),
+                None => self.temp_names.remove(&t),
+            };
+        }
+        let temps = &self.temp_names;
+        let mut backs: Vec<(u16, (u16, u32), u8, Option<(u32, i32)>)> = Vec::new();
+        stmt.walk(&mut |n| {
+            if let Value::Call(d, args) = n
+                && let [src, dst, _] = &args[..]
+                && self.data.def(*d).name() == "OpCopyRecord"
+                && let Value::Var(k) = src.unspan()
+                && let Some((place, depth)) = named_place_depth(dst, self.data)
+            {
+                let index = crate::use_analysis::root_element_index(self.data, dst);
+                backs.push((temps.get(k).copied().unwrap_or(*k), place, depth, index));
+            }
+        });
+        let mut self_copies: Vec<((u16, u32), u8)> = Vec::new();
+        for (k, place, depth, index) in backs {
+            let (place, depth) = self.through_views(place, depth).unwrap_or((place, depth));
+            let names_it = self
+                .open
+                .iter()
+                .flatten()
+                .any(|&(v, c, f)| v == k && (c, f) == place);
+            let view_depth = self.view_depth.get(&k).copied().unwrap_or(0);
+            // Inside a collection the element must be PROVED the same one: both indices
+            // literal and equal.  `v[i]` and `v[j]` may be different elements.
+            let same_element = depth == 0
+                || matches!((self.view_index.get(&k), index), (Some(a), Some(b)) if *a == b);
+            if !(names_it && view_depth == depth && same_element) || self.shaken.contains_key(&k) {
+                continue;
+            }
+            self_copies.push((place, depth));
+            if self.loop_edge != 0 {
+                continue;
+            }
+            if let Some(&written_at) = self.written.get(&k)
+                && !self
+                    .write_backs
+                    .iter()
+                    .any(|w| w.view == k && w.line == self.line)
+            {
+                self.write_backs.push(WriteBack {
+                    view: k,
+                    container: place.0,
+                    written_at,
+                    line: self.line,
+                });
+            }
+        }
+        for (place, depth, index, span, record) in self.place_writes(stmt) {
+            let (root, depth) = self.through_views(place, depth).unwrap_or((place, depth));
+            // The write-back is itself a record copy into the place, and changes nothing: one
+            // record write per self-copy is left out, and only that one — over a whole loop
+            // body (the loop head's pass) the place's other writes still count.
+            if record && let Some(i) = self_copies.iter().position(|c| *c == (root, depth)) {
+                self_copies.swap_remove(i);
+                continue;
+            }
+            let hit: Vec<u16> = self
+                .open
+                .iter()
+                .flatten()
+                .filter(|&&(v, c, f)| {
+                    // A write THROUGH the view itself (`e.n = 41; v[0] = e`) is what the view
+                    // was taken for: the write-back then puts back what it wrote, which is
+                    // already there.  Only a write by another route loses it.
+                    c == root.0 && place.0 != v && !self.written.contains_key(&v) && {
+                        let dv = self.view_depth.get(&v).copied().unwrap_or(0);
+                        let distinct = matches!((self.view_index.get(&v), index), (Some(a), Some(b)) if *a != b);
+                        // Same record level: the two byte ranges.  A write deeper than the
+                        // view lands inside one of its slots; one shallower covers the view's.
+                        let (view_span, write_span) = match depth.cmp(&dv) {
+                            std::cmp::Ordering::Equal => (self.view_size(v), span),
+                            std::cmp::Ordering::Greater => (self.view_size(v), 1),
+                            std::cmp::Ordering::Less => (1, span),
+                        };
+                        !distinct && overlaps(f, view_span, root.1, write_span)
+                    }
+                })
+                .map(|&(v, _, _)| v)
+                .collect();
+            for v in hit {
+                self.written.insert(v, self.line);
+            }
+        }
+    }
+
+    /// Every place `stmt` writes into, at any depth inside it: a whole record copied in
+    /// ([`overwritten_records`]), a field set (`OpSet*` with its byte offset), and a container
+    /// grown or removed from.  Each with its depth, its literal root index and the bytes it
+    /// covers (`u32::MAX`: unknown, read as everything).
+    /// The last field says whether the write is a whole RECORD copied in.
+    fn place_writes(&self, stmt: &Value) -> Vec<PlaceWrite> {
+        let mut out: Vec<PlaceWrite> = Vec::new();
+        for w in overwritten_records(stmt, self.data, self.database) {
+            out.push((
+                w.place,
+                w.at.depth,
+                w.at.index,
+                w.size.unwrap_or(u32::MAX),
+                true,
+            ));
+        }
+        stmt.walk(&mut |n| {
+            if let Value::Call(d, args) = n
+                && self.data.def(*d).name().starts_with("OpSet")
+                && let [base, off, _, ..] = &args[..]
+                && let Value::Int(off) = off.unspan()
+                && let Some(((var, field), depth)) = named_place_depth(base, self.data)
+            {
+                // At the root's own record the field offset adds to the place; past an element
+                // read it is inside another record, and the root's place stands.
+                let slot = if depth == 0 {
+                    add_offset(field, *off as u32)
+                } else {
+                    field
+                };
+                let index = crate::use_analysis::root_element_index(self.data, base);
+                out.push(((var, slot), depth, index, 1, false));
+            }
+        });
+        let grown = grown_containers(stmt, self.data, self.function, self.database);
+        let reshaped = reshaped_containers(stmt, self.data, self.function);
+        for (place, at) in grown.into_iter().chain(reshaped) {
+            out.push((place, at.depth, at.index, 1, false));
+        }
+        out
+    }
+
+    /// The bytes a view's record covers, `u32::MAX` where the walk cannot size it.
+    fn view_size(&self, v: u16) -> u32 {
+        self.function
+            .tp(v)
+            .base()
+            .heap_def_nr()
+            .zip(self.database)
+            .map_or(u32::MAX, |(d, db)| {
+                u32::from(db.size(self.data.def(d).known_type()))
+            })
+    }
+
     /// Shake for everything `stmt` disturbs, at any depth inside it.
     fn disturb(&mut self, stmt: &Value) {
         self.disturb_parts(stmt, true);
@@ -666,6 +928,7 @@ impl ViewWalk<'_> {
     /// ([`Self::disturb_callees`]) left out when `via_calls` is false — [`Self::leaf`] then
     /// makes it itself, after the uses its arguments read (loft#2349).
     fn disturb_parts(&mut self, stmt: &Value, via_calls: bool) {
+        self.track_write_backs(stmt);
         if let Value::Set(v, _) = stmt.unspan()
             && !self.function.is_compiler_generated(*v)
             && matches!(
@@ -740,6 +1003,29 @@ impl ViewWalk<'_> {
                     w.at.index,
                     ViewCause::Overwritten,
                 );
+            }
+        }
+        // A null written into a tagged slot ends every view inside it, and the view OF the
+        // slot's payload too (`cleared_tagged_slots`), so the shake starts AT the slot's depth.
+        // A clear that opens a VALUE write overwrites the slot: the view of it stays, as the
+        // view of an overwritten record does, and only the views inside the old payload end.
+        for (w, value_write) in
+            cleared_tagged_slots(stmt, self.data, self.database, &self.value_clears)
+        {
+            for place in self.overwritten_slots(w.place, w.size) {
+                if value_write {
+                    self.shake_deeper_through_views(
+                        place,
+                        w.at.depth,
+                        w.at.index,
+                        ViewCause::Overwritten,
+                    );
+                    continue;
+                }
+                self.shake_payload_views(place, w.at.depth, w.at.index);
+                if let Some((root, at)) = self.through_views(place, w.at.depth) {
+                    self.shake_payload_views(root, at, None);
+                }
             }
         }
         // A growth ends the views deeper than the container it grows (`shake_places_keyed`).
@@ -1048,6 +1334,7 @@ impl ViewWalk<'_> {
             }
             self.shaken.remove(v);
             self.maybe_own.remove(v);
+            self.written.remove(v);
             for (i, frame) in self.open.iter_mut().enumerate() {
                 let held = frame.len();
                 frame.retain(|(view, _, _)| view != v);
@@ -1351,6 +1638,49 @@ impl ViewWalk<'_> {
         cause: ViewCause,
         via: Option<u32>,
     ) {
+        self.shake_places_at(place, depth.saturating_add(1), index, cause, via);
+    }
+
+    /// A tagged slot's null write at `place`, `depth` element reads below its root: every
+    /// view deeper than the slot ends, and so does one AT its depth that holds the payload's
+    /// address (`c = r.g`, typed `S?`), which cannot re-read the absence.  A handle typed as
+    /// the slot itself (`__nullable<S>`, the lowering's own temp) reads the discriminant on
+    /// every use and is spared, as the view of an overwritten place is (`@FR-B-Disturb`).
+    fn shake_payload_views(&mut self, place: (u16, u32), depth: u8, index: Option<(u32, i32)>) {
+        let slot_handles: Vec<(u16, Option<Disturbance>)> = self
+            .open
+            .iter()
+            .flatten()
+            .filter(|(view, c, _)| {
+                *c == place.0
+                    && self.view_depth.get(view) == Some(&depth)
+                    && self.data.is_nullable_wrapper(self.function.tp(*view))
+            })
+            .map(|(view, _, _)| (*view, self.shaken.get(view).copied()))
+            .collect();
+        self.shake_places_at(place, depth, index, ViewCause::Released, None);
+        for (view, prior) in slot_handles {
+            match prior {
+                Some(d) => {
+                    self.shaken.insert(view, d);
+                }
+                None => {
+                    self.shaken.remove(&view);
+                }
+            }
+        }
+    }
+
+    /// [`Self::shake_places_deeper`] counting the views AT `min_depth` and below, so a
+    /// disturbance that ends the view of its own place can say so.
+    fn shake_places_at(
+        &mut self,
+        place: (u16, u32),
+        min_depth: u8,
+        index: Option<(u32, i32)>,
+        cause: ViewCause,
+        via: Option<u32>,
+    ) {
         let spared: Vec<u16> = match index {
             Some((run, i)) => self
                 .open
@@ -1376,7 +1706,7 @@ impl ViewWalk<'_> {
             cause,
             via,
             &HashMap::default(),
-            depth.saturating_add(1),
+            min_depth,
         );
         for (view, prior) in before {
             match prior {
@@ -1435,7 +1765,9 @@ impl ViewWalk<'_> {
         // at the container's own depth was shaken by the root-level events and spared by the
         // ones nobody collected, so `c = b.vecf; b.vecf += [9]` copied `c` while `c =
         // o.inner.v; o.inner.v += [9]` kept it (loft#2161).
-        let min_depth = if cause == ViewCause::Reassigned {
+        // A tagged slot's null write (`Released`, asked at the slot's own depth) ends its view
+        // too: the view holds the payload's address, which cannot re-read the absence.
+        let min_depth = if matches!(cause, ViewCause::Reassigned | ViewCause::Released) {
             min_depth
         } else {
             min_depth.max(1)

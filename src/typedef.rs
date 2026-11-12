@@ -91,6 +91,17 @@ pub(crate) fn fold_declared_default(data: &Data, value: &Value) -> Option<Conten
     }
 }
 
+/// The files whose parse stopped short of their end, taken BEFORE the unresolved stubs are
+/// reported.  A stub named in one is the echo of the syntax error that stopped it: the
+/// declaration may sit below the point the parse gave up, and "Undefined type" — with a cure
+/// aimed at the imports — sends the reader the wrong way.  The error above is the one to read;
+/// a type still undefined once it is fixed is reported then.  An error that did NOT stop the
+/// parse (a type cycle, a mismatch) hides nothing below it, so it silences no report.  Both
+/// the direct and the deferred report ask it.
+pub(crate) fn files_stopped_early(lexer: &Lexer) -> std::collections::HashSet<String> {
+    lexer.stopped_files().clone()
+}
+
 /// Set the correct type and initial size in definitions.
 /// This will not factor in the space for attributes for records
 /// as we still need to analyze the actual use of records.
@@ -309,12 +320,16 @@ pub fn actual_types_deferred(
             data.definitions[d as usize].returned = Type::Reference(d, Deps::none());
         }
     }
+    let echoed = files_stopped_early(lexer);
     for d in start_def..data.definitions() {
         match data.def_type(d) {
             DefType::Unknown => {
                 if let Some(buf) = defer_unknown.as_deref_mut() {
                     let def = data.def(d);
                     buf.push((def.source, d, def.position));
+                    continue;
+                }
+                if echoed.contains(data.def(d).position.file.as_str()) {
                     continue;
                 }
                 let name = &data.def(d).name;
@@ -342,10 +357,26 @@ pub fn actual_types_deferred(
                 copy_unknown_fields(data, d);
                 // A return naming a generic struct declared below is not the bare template:
                 // `between_passes` makes it the instance its arguments name (@PLN165 D7).
-                if let Type::Unknown(was) = data.def(d).returned
+                // A `?` on the return is transparent, as on a field above: `S?` names the
+                // same forward reference as `S`, so it is peeled, resolved and put back —
+                // left as `Optional(Unknown(stub))`, every `-> S?` of a type declared below
+                // refused its own body (`expected unknown?, got S?`).
+                let (ret, optional) = match data.def(d).returned.clone() {
+                    Type::Optional(inner) => (*inner, true),
+                    other => (other, false),
+                };
+                if let Type::Unknown(was) = ret
+                    && (!optional || was != 0)
                     && data.def_type(was) != DefType::TypeTemplate
                 {
-                    data.set_returned(d, data.def(was).returned.clone());
+                    let resolved = data.def(was).returned.clone();
+                    if optional {
+                        // Only the stub inside the `?` is replaced: `set_returned`'s
+                        // "still unknown" check reads the wrapper as already set.
+                        data.definitions[d as usize].returned = Type::optional(resolved);
+                    } else {
+                        data.set_returned(d, resolved);
+                    }
                 }
             }
             DefType::Struct => {

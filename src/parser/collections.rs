@@ -1088,6 +1088,27 @@ impl Parser {
         None
     }
 
+    /// Is `to` an element of a KEYED collection, `c[k]` — the place `OpSetKeyed` writes?  Its
+    /// absence is a state the collection has (no record under the key), unlike a dense slot.
+    pub(crate) fn is_keyed_element_place(&self, to: &Value) -> bool {
+        if let Value::Call(get_nr, get_args) = to.unspan()
+            && self.data.def(*get_nr).name() == "OpGetRecord"
+            && let Some(Value::Int(db_tp)) = get_args.get(1)
+            && (*db_tp as usize) < self.database.types.len()
+        {
+            return matches!(
+                self.database.types[*db_tp as usize].parts,
+                Parts::Hash(_, _)
+                    | Parts::Sorted(_, _)
+                    | Parts::Ordered(_, _)
+                    | Parts::Index(_, _)
+                    | Parts::Radix(_, _)
+                    | Parts::Trie(_, _)
+            );
+        }
+        false
+    }
+
     /// `coll[key] = null` where `coll` is one member of a LINKED COLLECTION GROUP:
     /// the record leaves every member, and is freed exactly once (loft#900).
     /// `None` when `coll` is not a group member, which yields the single removal.
@@ -1445,6 +1466,47 @@ impl Parser {
             *slot = Value::Int(i32::from(off));
         }
         out
+    }
+
+    /// `a ⊕= b` writes what `a ⊕ b` answers, so a composed value that may be null (`s /= n`,
+    /// `@FR-N-Div`) is stored as `s = s / n` stores it: an inferred local widens to `τ?`
+    /// (`@FR-N-Join`), and any other slot — a declared local, a parameter, a field, an element
+    /// — is asked `@FR-N-Store`'s question.  Without it the step put a null into an `integer`
+    /// with nothing said.  A slot already `τ?`, and a link (which steps the place it names),
+    /// hold the null; a declared narrow slot never holds it: the step's range guard gives it
+    /// the type's default (`@FR-E-Uncomp-NN`, `guard_compound_range`).
+    fn compound_null_store(&mut self, to: &Value, f_type: &Type, composed: &Type) {
+        let Type::Optional(inner) = composed else {
+            return;
+        };
+        if matches!(f_type, Type::Optional(_) | Type::RefVar(_)) || f_type.is_unknown() {
+            return;
+        }
+        if let Value::Var(v) = to.unspan()
+            && *v < self.vars.count()
+        {
+            let v = *v;
+            if !self.vars.is_annotated(v) && !self.vars.is_argument(v) {
+                self.change_var_type(v, composed);
+                return;
+            }
+            if !self.first_pass && !Self::nstore_narrow(f_type, false) {
+                let what = format!(
+                    "{} `{}`",
+                    if self.vars.is_argument(v) {
+                        "the parameter"
+                    } else {
+                        "the local"
+                    },
+                    self.vars.name(v)
+                );
+                self.nstore_unwrap_report(inner, f_type, &what, None, false);
+            }
+            return;
+        }
+        if !self.first_pass && !Self::nstore_narrow(f_type, false) {
+            self.nstore_unwrap_report(inner, f_type, "the assignment target", None, false);
+        }
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -2187,6 +2249,9 @@ impl Parser {
         let (mut code, composed) = self.compute_op_code(op, to, val, f_type, src_tp);
         if op != "=" && !self.first_pass {
             self.check_compound_result(op, f_type, src_tp, &composed);
+        }
+        if op != "=" {
+            self.compound_null_store(to, f_type, &composed);
         }
         // loft#1009 — a COMPOUND assignment into a bounded integer slot had no range check
         // of any kind, so `l: u8 = 250; l += 10;` answered 260 and `b: u8 = 5; b -= 10;`
@@ -4279,7 +4344,10 @@ use #count instead"
             // `{ for …; CNull }`) hands its statements the expectation it inherited, and the
             // tail after the loop still needs it.
             let block_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
+            self.last_range_from = None;
+            self.last_range_till = None;
             let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+            let range_bounds = (self.last_range_from.take(), self.last_range_till.take());
             let iterable_fact = std::mem::take(&mut self.operand_fact);
             self.expected = block_expected;
             self.in_control_head = outer_head;
@@ -4714,7 +4782,9 @@ use #count instead"
             let loop_write_state = self.vars.save_and_clear_write_state();
             self.vars.clear_write_state();
             let spelling = self.loop_spelling.take();
+            let facts = self.assume_range(&range_bounds, for_var);
             self.parse_block("for", &mut block, &Type::Void);
+            self.forget_facts(facts);
             if id == "_"
                 && let Some(prev) = outer_discard
             {

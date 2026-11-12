@@ -166,14 +166,16 @@ fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers()
         Some(("LOFT_NO_GUARDED_CHAIN", "1")),
         Some(("LOFT_NO_RANGE_ARITH", "1")),
     ] {
-        for falsifier in [
-            ("LOFT_STRICT_STORES", "1"),
-            ("LOFT_POISON", "1"),
-            ("LOFT_POISON_CLAIM", "1"),
-            ("LOFT_NATIVE_LEAK_CHECK", "1"),
-            ("LOFT_HOIST_VERIFY", "1"),
-        ] {
-            let mut env = vec![falsifier];
+        {
+            // Every detector at once: one build per switch state, each detector still on
+            // (falsifying a guard is a one-time receipt, not a cost of every run).
+            let mut env = vec![
+                ("LOFT_STRICT_STORES", "1"),
+                ("LOFT_POISON", "1"),
+                ("LOFT_POISON_CLAIM", "1"),
+                ("LOFT_NATIVE_LEAK_CHECK", "1"),
+                ("LOFT_HOIST_VERIFY", "1"),
+            ];
             env.extend(switch);
             let got = run(&["--native"], &env);
             assert_eq!(

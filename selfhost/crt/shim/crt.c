@@ -820,13 +820,16 @@ int64_t loft_crt_hash_len(int64_t store, int64_t rec, int64_t pos) {
  * over, two records claimed in the hash's own store (loft_hash.h). ── */
 
 /* n_hash_sorted: the snapshot of a hash of type `tp`, its elements in key order, into `out`;
- * n_hash_unsorted (`unordered`): in slot order. */
+ * n_hash_unsorted (`unordered`): in slot order, or key order where the table holds store
+ * records (`@FR-Col-Unordered`), so it is handed the keys too. */
 int64_t loft_crt_hash_sorted(int64_t *out, int64_t no, int64_t store, int64_t rec, int64_t pos,
                              int64_t tp, int64_t unordered) {
     loft_ref r = loft_ref_null();
+    int keyed = loft_crt_keyed(tp);
     if (unordered)
-        r = loft_hash_unsorted(loft_crt_ref(store, rec, pos));
-    else if (loft_crt_keyed(tp))
+        r = loft_hash_unsorted(loft_crt_ref(store, rec, pos), keyed ? loft_crt_types[tp].keys : 0,
+                               keyed ? loft_crt_types[tp].nk : 0);
+    else if (keyed)
         r = loft_hash_sorted(loft_crt_ref(store, rec, pos), loft_crt_types[tp].keys,
                              loft_crt_types[tp].nk);
     loft_crt_put_ref(out, no, r);

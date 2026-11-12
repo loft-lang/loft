@@ -161,14 +161,16 @@ fn oracle() -> &'static str {
 /// passed the test-duration gate's 300 s on a loaded runner (328.8 s), and the limit is not
 /// raised (CI_BUDGET.md).
 fn cells_answer_the_interpreter(switch: Option<(&str, &str)>) {
-    for falsifier in [
-        ("LOFT_STRICT_STORES", "1"),
-        ("LOFT_POISON", "1"),
-        ("LOFT_POISON_CLAIM", "1"),
-        ("LOFT_NATIVE_LEAK_CHECK", "1"),
-        ("LOFT_HOIST_VERIFY", "1"),
-    ] {
-        let mut env = vec![falsifier];
+    {
+        // Every detector at once: one build per switch state, each detector still on
+        // (falsifying a guard is a one-time receipt, not a cost of every run).
+        let mut env = vec![
+            ("LOFT_STRICT_STORES", "1"),
+            ("LOFT_POISON", "1"),
+            ("LOFT_POISON_CLAIM", "1"),
+            ("LOFT_NATIVE_LEAK_CHECK", "1"),
+            ("LOFT_HOIST_VERIFY", "1"),
+        ];
         env.extend(switch);
         let got = run(&["--native"], &env);
         assert_eq!(

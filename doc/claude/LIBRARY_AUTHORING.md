@@ -228,7 +228,8 @@ native, guide, WASM cross-build, compatibility, transitive deps), set up in five
 4. **The suite, both backends, warnings denied** — the steps the library's CI gates on:
    `LOFT_DENY_WARNINGS=1 loft --interpret --tests tests`, `… loft test --native`, every
    `docs/*.loft` guide with `--interpret` and `--native`, and `LOFT_DENY_WARNINGS=1 loft
-   --check` over every `examples/*.loft` and `docs/*.loft` (an example is compiled, not run:
+   --check --native-c` over every `examples/*.loft` and `docs/*.loft` (an example is compiled
+   through the C backend, not run:
    most need a peer, a window or a port).  A library that claims the browser
    also runs its `--native-wasm` / `--html` gate (loft-library skill § the parity gate).
    ⚠ A `use`d library with a native crate runs as its cdylib **even under `--interpret`**, so

@@ -1607,35 +1607,44 @@ impl FnWriter<'_> {
                 if self.tr_root(src).is_some() {
                     return Err("a transient vector appended".into());
                 }
-                // `@FR-R-SliceInto`'s transient clause: a scalar slice value copied into the
-                // field straight from its source — the bounds' statements, then the clamped span
-                // — with no temporary store between them.
-                if let Some((prelude, slice)) = self.slice_fill(src)
-                    && let [from, lo, hi, tp] = slice
-                    && Self::literal(tp, "element type").is_ok_and(|tp| {
-                        u16::try_from(tp).is_ok_and(|tp| u32::from(self.cx.stores.size(tp)) == size)
-                    })
-                {
-                    for op in prelude {
-                        self.stmt(op, ind)?;
-                    }
-                    let es = self.args(&[from, lo, hi], ind)?;
-                    let [from, lo, hi] = <[E; 3]>::try_from(es)
-                        .map_err(|_| "a slice without three operands".to_string())?;
-                    let (from, lo, hi) =
-                        (super::as_ref(from)?, super::as_int(lo)?, super::as_int(hi)?);
-                    self.line(
-                        ind,
-                        &format!("loft_ta_vec_copy_range(&{d}, {from}, {lo}, {hi}, {size});"),
-                    );
-                    self.flush(ind);
-                    crate::rewrite_census::fired("R-SliceInto/transient", 1);
-                    return void();
-                }
                 let e = self.expr(src, ind)?;
                 let s = super::as_ref(e)?;
                 self.line(ind, &format!("loft_ta_vec_copy(&{d}, {s}, {size});"));
                 self.flush(ind);
+                void()
+            }
+            // `@FR-R-SliceInto`'s transient clause: the IR's slice into a place, when the place
+            // is a vector field of a value built outside the store — the clamped span copied
+            // into the field's own buffer straight from its source, with no store between.
+            "OpSliceVector" if args.first().and_then(|b| self.tr_root(b)).is_some() => {
+                if !self.tr_builds() {
+                    return Err("a site that appends to a transient vector".into());
+                }
+                let [dst, from, lo, hi, tp] = args else {
+                    return Err("a slice of another shape".into());
+                };
+                self.tr_writable(dst)?;
+                let Place::Vec(d, Elem::Scalar(size)) = self.tr_place(dst, ind)? else {
+                    return Err("a slice into records".into());
+                };
+                if self.tr_root(from).is_some() {
+                    return Err("a transient vector sliced".into());
+                }
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if u32::from(self.cx.stores.size(tp)) != size {
+                    return Err("a slice of another element size".into());
+                }
+                let es = self.args(&[from, lo, hi], ind)?;
+                let [from, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a slice without three operands".to_string())?;
+                let (from, lo, hi) = (super::as_ref(from)?, super::as_int(lo)?, super::as_int(hi)?);
+                self.line(
+                    ind,
+                    &format!("loft_ta_vec_copy_range(&{d}, {from}, {lo}, {hi}, {size});"),
+                );
+                self.flush(ind);
+                crate::rewrite_census::fired("R-SliceInto/transient", 1);
                 void()
             }
             "OpPreAllocVector" | "OpFinishRecord"

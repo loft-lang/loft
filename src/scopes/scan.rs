@@ -9,7 +9,7 @@ use super::Scopes;
 use super::backings::member_backing;
 use super::disturbance::{disturbance_site, disturbance_via, report_materialised_view};
 use super::free_vars::Delivered;
-use super::handoff::collect_drop_transferred;
+use super::handoff::{collect_drop_transferred, drop_bearing_source};
 use super::insert_free::scope_free_op_var;
 use super::witness::witness_points_at;
 use super::{Adopts, BindShape};
@@ -725,6 +725,22 @@ impl Scopes<'_> {
                 }
                 let (preamble, ls, postamble) = self.scan_args(args, function, data, *d_nr);
                 let call = Value::Call(*d_nr, ls);
+                // `@FR-H-Drop` — a copy that FREES its source (`0x8000`) hands the work-ref's
+                // record to the destination inside the op: from here the work-ref names a freed
+                // store and holds nothing to release.  A statement's hand-offs are armed after
+                // it is scanned (`convert`), so a disarm later in the SAME statement (`w =
+                // OpNullRefSentinel()` after an element copy, `parse_vector`) read the work-ref
+                // as owning, snapshotted the freed store and ran the hook on whatever took its
+                // slot.  This one is armed where it runs.
+                if *d_nr == data.def_nr("OpCopyRecord")
+                    && matches!(args.get(2).map(Value::unspan), Some(Value::Int(tp)) if tp & 0x8000 != 0)
+                    && let Some(w) = args.first().and_then(|a| drop_bearing_source(a, function))
+                    && function.name(w).starts_with("__ref_")
+                    && !self.per_path_pairs.contains(&(u16::MAX, w))
+                {
+                    self.drop_transferred
+                        .insert(*self.var_mapping.get(&w).unwrap_or(&w));
+                }
                 // D-heap-14 — a copy that hands a droppable over inside a branch ARM records that
                 // it RAN on the source's per-path flag (loft#1515), right after it: the source
                 // keeps its release on every path where this copy did not run.
@@ -1210,6 +1226,22 @@ impl Scopes<'_> {
         data: &Data,
     ) -> Value {
         let unspanned = value.unspan();
+        // `@FR-H-FreeTwice`, `@FR-O-Witness` — a lifted `??` join whose default is a literal
+        // built in a function-scoped accumulator (`h() ?? []`, `__kvb_N`) holds the subject's
+        // store on one path and the ACCUMULATOR's on the other.  The accumulator owns its store
+        // for the function's life (its entry null init mints it, each build reclaims it in
+        // place, its exit free releases it), so the lift frees only where it holds another
+        // store: the accumulator is its join witness.  Freed plainly, the lift released the
+        // accumulator's store and the exit free released it again.
+        // `LOFT_NO_NCC_LITERAL_WITNESS=1` frees the lift plainly.
+        if let Value::Block(bl) = unspanned
+            && bl.name == "ncc"
+            && !self.lift_join_witness.contains_key(&tmp)
+            && !crate::env_once!(std::env::var_os("LOFT_NO_NCC_LITERAL_WITNESS").is_some())
+            && let [acc] = Self::ncc_literal_accumulators(bl, function)[..]
+        {
+            self.lift_join_witness.insert(tmp, acc);
+        }
         if let Value::Call(fn_nr, _) = unspanned
             && (*fn_nr as usize) < data.definitions.len()
             && data.def(*fn_nr).is_loft_defined()

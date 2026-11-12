@@ -474,8 +474,8 @@ from a captured variable re-read, and the backtrace pointed to the exact `parse_
 cast, a termination test that never fires) is usually easier to see as Rust than as
 bytecode — and if codegen itself loops, there is no complete bytecode to read.
 
-`loft --check <file>` runs the **native** backend, which emits readable Rust and stops
-at the `rustc` diagnostics. The generated source persists at `loft_native_*.rs` in the
+`loft --check --native <file>` runs the **native** backend, which emits readable Rust and
+stops at the `rustc` diagnostics (a bare `--check` compiles the loft only). The generated source persists at `loft_native_*.rs` in the
 build temp dir (`$LOFT_TMPDIR`, default the system temp; the path is printed in any
 `E0xxx`). It encodes the same for-loop / yield / dispatch logic the interpreter
 compiles to bytecode, but as named-variable Rust — so a type mismatch, a wrong

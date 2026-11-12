@@ -65,23 +65,9 @@ pub(crate) fn rebound_vars(
     rebound
 }
 
-/// The variables `v` LINKS to: a `g = &e` local's type is a `RefVar` whose deps name its
-/// target, and a link to a link follows through.  Empty for a variable that is no link.
+/// The variables `v` LINKS to ([`crate::variables::Function::link_targets`]).
 pub(crate) fn link_targets(vars: &crate::variables::Function, v: u16) -> Vec<u16> {
-    let mut out: Vec<u16> = Vec::new();
-    let mut todo = vec![v];
-    while let Some(x) = todo.pop() {
-        if x >= vars.count() || !matches!(vars.tp(x).base(), Type::RefVar(_)) {
-            continue;
-        }
-        for d in vars.tp(x).depend() {
-            if d != v && !out.contains(&d) {
-                out.push(d);
-                todo.push(d);
-            }
-        }
-    }
-    out
+    vars.link_targets(v)
 }
 
 /// Add to `rebound` every link whose target — or whose target's target — is in it.  A

@@ -203,7 +203,10 @@ disagree.  An edge the rules cannot express means the RULE wants extending, and 
 is a claim to re-measure ([formal/README.md § When to reach for this doc](doc/claude/formal/README.md)).
 
 **Load the `engineering-rigor` skill the moment a situation is not diagnosed in ONE pass** —
-before the second round of probes, not after several (owner).
+before the second round of probes, not after several (owner).  **The same for a FIX: a fix that
+did not work in one go — a red the first attempt left, a regression it caused, a cure that had to
+be narrowed — is retried only after loading the skill** (owner): the retry starts from its
+matrix, not from a second guess.
 
 **Matrix-first for any non-trivial bug (esp. crash / silent corruption) — the urge to fix is the
 signal you haven't earned it:**
@@ -263,6 +266,11 @@ the formal rules already gave the answer; strained = the fix extended a rule, ch
 surface or needed a design call.  Absence counts as unjudged ([.github/LABELS.md §
 `contract:`](.github/LABELS.md)).  Don't scope-creep the active fix with unrelated bugs.
 
+**A store-lifetime defect (leak, double free, use after free, wrong free) is fixed in three
+places (owner):** the compiler, the store records, and the static checker, which must report
+the defect with the cure switched off (`scripts/own_sweep.py --cell <cell>` reads CAUGHT, not
+MISS) — [STORE_RECORDS.md § Every new defect](doc/claude/STORE_RECORDS.md#every-new-defect-updates-the-records-and-the-checker).
+
 ## Git safety — MANDATORY
 
 **Never `git stash pop` / `git pull` / `git checkout HEAD -- <file>` with uncommitted changes** —
@@ -304,7 +312,8 @@ either states is a claim: run the guard or repro it cites before repeating it ·
 
 **Runtime / memory:** [DATABASE.md](doc/claude/DATABASE.md) stores/DbRef · [REMOTE_STORES.md](doc/claude/REMOTE_STORES.md) ·
 [LAZY_STORES.md](doc/claude/LAZY_STORES.md) · [LIFETIME.md](doc/claude/LIFETIME.md) · [APART_VALUES.md](doc/claude/APART_VALUES.md) ·
-[OWNERSHIP_MODEL.md](doc/claude/OWNERSHIP_MODEL.md) the deps north-star · [PLACEMENT.md](doc/claude/PLACEMENT.md) where a
+[OWNERSHIP_MODEL.md](doc/claude/OWNERSHIP_MODEL.md) the deps north-star ·
+[STORE_RECORDS.md](doc/claude/STORE_RECORDS.md) each store's creation, uses and ends, and the checker · [PLACEMENT.md](doc/claude/PLACEMENT.md) where a
 library runs, and the four rules for one that can be placed · [LOGGER.md](doc/claude/LOGGER.md) ·
 [WASM.md](doc/claude/WASM.md) · [HTML_EXPORT.md](doc/claude/HTML_EXPORT.md) · [BROWSER_INTEROP.md](doc/claude/BROWSER_INTEROP.md) ·
 [TANMATSU.md](doc/claude/TANMATSU.md) 32-bit C target · [HARDWARE_BACKENDS.md](doc/claude/HARDWARE_BACKENDS.md) ·

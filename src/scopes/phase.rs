@@ -145,8 +145,20 @@ pub(super) fn run_scan_phase(
     // Computed BEFORE the struct takes its `&mut` on the store: the walk reads the store to
     // convert a field NUMBER into the byte OFFSET a view carries, and the two borrows cannot
     // overlap inside one initialiser.
-    let views_to_materialise =
+    let (views_to_materialise, write_backs) =
         collect_views_to_materialise(orig_code, orig_vars, data, database, disturbed);
+    // `view-written-back` — told where the walk saw it, as a copied view is.
+    for w in write_backs {
+        let def = data.def(d_nr);
+        let at = def.position();
+        crate::copy_manifest::note_written_back_view(
+            orig_vars.name(w.view),
+            orig_vars.name(w.container),
+            &def.original_name(),
+            w.written_at,
+            (at.file.as_str(), if w.line == 0 { at.line } else { w.line }),
+        );
+    }
     let mut scopes = Scopes {
         database,
         d_nr,
@@ -171,9 +183,12 @@ pub(super) fn run_scan_phase(
         paired_witness: HashMap::default(),
         minted_pairs: HashSet::default(),
         literal_buffer: HashMap::default(),
+        adopter_released: HashSet::default(),
         lift_join_witness: HashMap::default(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        view_temps: view_temps_in(orig_code, orig_vars, data),
+        pending_fkeep: None,
         first_set: u16::MAX,
         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
         arm_projection_temps: arm_projection_temps_in(orig_code, orig_vars, data),
@@ -191,6 +206,7 @@ pub(super) fn run_scan_phase(
         written_through: crate::use_analysis::written_through_locals(orig_code, data),
         // Filled below, from the working copy that records which views are materialised.
         capture_build_backing: crate::variables::CaptureBuilds::default(),
+        arm_released_records: HashSet::default(),
         closure_keep: closure_keep_set(data, orig_vars, orig_code),
         keep_build_target: None,
         lift_decl_depth: HashMap::default(),
@@ -221,6 +237,7 @@ pub(super) fn run_scan_phase(
         tuple_member_now: HashMap::default(),
         fnref_bound: Vec::new(),
         written_tuple_members: written_tuple_members_in(orig_code),
+        tuple_claimants: super::tuple_members::tuple_claimants_in(orig_code, orig_vars, data),
         view_backing: HashMap::default(),
         construction_backing: HashMap::default(),
         bind_backing: HashMap::default(),
@@ -646,6 +663,7 @@ pub(super) fn run_scan_phase(
     );
     lazy_buffer_mints(&mut code, &mut function, data);
     function.set_capture_builds(std::mem::take(&mut scopes.capture_build_backing));
+    function.set_adopter_released(scopes.adopter_released.drain().collect());
     data.definitions[d_nr as usize].code = code;
     data.definitions[d_nr as usize].variables = function;
     #[cfg(debug_assertions)]
@@ -1126,4 +1144,23 @@ fn snapshot_after_bind(code: &mut Value, v: u16, w: u16, data: &Data) {
         done
     }
     walk(code, v, w, data.def_nr("OpPutRef"));
+}
+
+/// Per local, the frame temporaries its assignments bind it to a view of — see
+/// `Scopes::view_temps`.
+pub(crate) fn view_temps_in(node: &Value, vars: &Function, data: &Data) -> HashMap<u16, Vec<u16>> {
+    let mut out: HashMap<u16, Vec<u16>> = HashMap::default();
+    node.walk(&mut |n: &Value| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && let Some(t) = super::backings::literal_backing_of(rhs, vars, data)
+                .or_else(|| super::backings::call_buffer_of(rhs, vars))
+            && t != *v
+        {
+            let e = out.entry(*v).or_default();
+            if !e.contains(&t) {
+                e.push(t);
+            }
+        }
+    });
+    out
 }

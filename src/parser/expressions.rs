@@ -1041,10 +1041,22 @@ impl Parser {
         // — a nullable local or a nullable native result leaked exactly as the dense one did.
         // `deps_ref` and `with_deps` see through the wrapper themselves.
         if let Value::Set(p, rhs) = node
-            && let Value::Call(d, _) = rhs.unspan()
+            && let Value::Call(d, call_args) = rhs.unspan()
+            // A call handed the caller's hidden return buffer delivers INTO it: the buffer is
+            // the store's owner already, and a second owner freed it again (`@FR-H-FreeTwice`,
+            // a library function shadowing a stdlib name, F-Surface/2331).
+            && (fresh_bind_beside_buffer()
+                || !call_args.iter().any(|a| {
+                    matches!(a.unspan(), Value::Var(b)
+                        if *b < self.vars.count() && self.vars.is_caller_hidden_buf(*b))
+                }))
             && !self.vars.is_argument(*p)
             && matches!(self.vars.tp(*p).base(), Type::Vector(_, _))
             && self.vars.tp(*p).deps_ref().is_some_and(|d| !d.is_empty())
+            // `@FR-O-Proxy` — deps that name only a GUARDED backing (an append's conditional
+            // mint, loft#1486) are not a borrow: the local owns what it names on every path and
+            // frees it, so a work-ref owner beside it freed the call's store a second time.
+            && (fresh_bind_owner_beside_guarded() || !self.vars.proxy_says_owned(*p))
             && matches!(self.data.def(*d).returned().base(), Type::Vector(_, deps) if deps.is_empty())
         {
             // Cloned only here, where the rewrite fires: the checks above run for every bind.
@@ -4366,6 +4378,60 @@ use a separate collection or add after the loop"
         );
     }
 
+    /// `@FR-E-Left` — `place = value` reduces the PLACE first.  A record value is lowered
+    /// with its place after it (`OpCopyRecord(value, place)`), and the in-place literal
+    /// re-derives the place once per field, so a value that writes a variable the place reads
+    /// (`v[j] = It { n: bump(j) }`, `bump(i: &integer)`) moved the place mid-assignment: the
+    /// fields landed in two elements.  Such a variable is read into a temporary before the
+    /// statement and the place reads the temporary; every other assignment is untouched.
+    fn fix_place_before_value(&mut self, code: &mut Value, to: &Value) {
+        if !matches!(to.unspan(), Value::Call(..)) || self.first_pass {
+            return;
+        }
+        let mut read: Vec<u16> = Vec::new();
+        to.any_node(&mut |n| {
+            if let Value::Var(x) = n.unspan()
+                && !read.contains(x)
+            {
+                read.push(*x);
+            }
+            false
+        });
+        let create_stack = self.data.def_nr("OpCreateStack");
+        let written = |x: u16, code: &Value| {
+            code.any_node(&mut |n| match n.unspan() {
+                Value::Set(y, _) => *y == x,
+                Value::Call(d, a) => {
+                    *d == create_stack
+                        && matches!(a.first().map(Value::unspan), Some(Value::Var(y)) if *y == x)
+                }
+                _ => false,
+            })
+        };
+        let mut fixed = to.clone();
+        let mut prefix = Vec::new();
+        for x in read {
+            // A variable the PLACE writes itself — a `??` temp inside an index — is the
+            // place's own work, defined there, not a value moving the place.
+            if !matches!(self.vars.tp(x).base(), Type::Integer(_) | Type::Character)
+                || !written(x, code)
+                || written(x, to)
+            {
+                continue;
+            }
+            let tp = self.vars.tp(x).clone();
+            let t = self.create_unique("__place_ix", &tp);
+            super::closures::replace_var(&mut fixed, x, &Value::Var(t));
+            prefix.push(Value::Set(t, Box::new(Value::Var(x))));
+        }
+        if prefix.is_empty() {
+            return;
+        }
+        replace_subtree(code, to, &fixed);
+        prefix.push(std::mem::replace(code, Value::Null));
+        *code = Value::Insert(prefix);
+    }
+
     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
     #[expect(
         clippy::too_many_lines,
@@ -4446,6 +4512,9 @@ use a separate collection or add after the loop"
         let place_fact = std::mem::take(&mut self.operand_fact);
         let outer_snapshot = self.tuple_self_snapshot.take();
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
+        if op == "=" {
+            self.fix_place_before_value(code, to);
+        }
         self.prefix_tuple_snapshot(code, outer_snapshot);
         let value_fact = std::mem::take(&mut self.operand_fact);
         self.check_assignment(op, to, &place_fact, &value_fact);
@@ -4466,6 +4535,7 @@ use a separate collection or add after the loop"
             self.mark_const_view(dst, &rhs, false);
         }
         self.rebind_local_heap_param(code, op, to, var_nr);
+        self.rebind_param_through_link(code, op, to, var_nr);
         self.rebind_lowered = already;
         self.group_reindex_after_vector_write(code, &group_to, &group_parent);
         // @C118 — `r = null` on a vector LOCAL is a whole-value write of the ABSENT
@@ -4642,6 +4712,62 @@ use a separate collection or add after the loop"
             return;
         }
         *code = Value::Insert(vec![free, detach, assign]);
+    }
+
+    /// `@FR-F-ParamRebind`, `@FR-O-Complete` — a whole write through a `&` link to a PLAIN heap
+    /// parameter (`cur = &n; cur = N { … }`) rebinds the parameter as `n = N { … }` does: the
+    /// record lands in the parameter's slot, and the caller's store stays the caller's
+    /// (`Function::link_write_releases` declines that free — f6e294a27's use-after-free).  So
+    /// it takes [`Self::rebind_local_heap_param`]'s witness: the exit frees what the parameter
+    /// names unless it is still the caller's store, and a later write frees the earlier one
+    /// first.  Left out, every written record leaked.  A re-point of the link (`cur = &x`,
+    /// `cur = &cur.next`) writes nothing.  `LOFT_NO_LINK_PARAM_REBIND=1`.
+    fn rebind_param_through_link(&mut self, code: &mut Value, op: &str, to: &Value, var_nr: u16) {
+        if self.first_pass
+            || op != "="
+            || var_nr == u16::MAX
+            || !matches!(to.unspan(), Value::Var(v) if *v == var_nr)
+            || crate::env_once!(std::env::var_os("LOFT_NO_LINK_PARAM_REBIND").is_some())
+        {
+            return;
+        }
+        let Type::RefVar(_) = self.vars.tp(var_nr).base() else {
+            return;
+        };
+        let [param] = self.vars.link_targets(var_nr)[..] else {
+            return;
+        };
+        if !self.vars.is_argument(param)
+            || matches!(self.vars.tp(param).base(), Type::RefVar(_))
+            || !matches!(
+                self.vars.tp(param).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+            || self.vars.is_compiler_generated(param)
+            || self.is_hidden_param(param)
+        {
+            return;
+        }
+        let Some(rhs) = bound_rhs(code, var_nr) else {
+            return;
+        };
+        if matches!(rhs.unspan(), Value::Call(d, _)
+            if matches!(self.data.def(*d).name(),
+                "OpCreateStack" | "OpVarRef" | "OpGetField" | "OpGetVector" | "OpVectorRef"))
+        {
+            return;
+        }
+        let reads = rhs.reads_var(var_nr) || rhs.reads_var(param);
+        let orig = self.ensure_rebind_witness(param);
+        if reads {
+            return;
+        }
+        let free = self.cl(
+            "OpFreeRefIfDistinct",
+            &[Value::Var(param), Value::Var(orig)],
+        );
+        let assign = std::mem::replace(code, Value::Null);
+        *code = Value::Insert(vec![free, assign]);
     }
 
     /// Record that this lambda rebinds a captured name whole-value.
@@ -5091,9 +5217,12 @@ use a separate collection or add after the loop"
         // (`(L-Ref)`), where an inline record field is read as `OpGetField`.  The field's
         // declared type carried the pointer marker; the type a READ of it answers does not.
         let stored_ref_place = record_place && self.is_stored_ref_read(to);
+        // `@FR-B-Ref-AnnotationOnly` — `=` binds a `&` only into a VARIABLE (`a = &b`); a
+        // field or element place that is no record (`n.k = &x`, `n.t = &s`, `v[0].k = &x`) is
+        // no bind site, and the `&` is the parse error the literal spelling already gets.
         self.amp_head = if record_place {
             AmpHead::StoredRefField
-        } else if op == "=" {
+        } else if op == "=" && var_nr != u16::MAX {
             AmpHead::AssignRhs
         } else {
             AmpHead::No
@@ -5172,6 +5301,7 @@ use a separate collection or add after the loop"
         // when the value carries no span of its own (a local read).  A preset value was parsed
         // elsewhere and has none here.
         let mut rhs_at: Option<crate::lexer::Position> = None;
+        let errors_before_rhs = self.lexer.diagnostics().error_count();
         let mut s_type = if let Some((value, tp)) = self.preset_rhs.take() {
             *code = value;
             tp
@@ -5180,6 +5310,9 @@ use a separate collection or add after the loop"
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
         self.in_bind_rhs = prev_bind_rhs;
+        // A right-hand side that reported its own error answers `void` because it failed:
+        // that error is the one mistake, so the bind below adds none.
+        let rhs_failed = self.lexer.diagnostics().error_count() > errors_before_rhs;
         // A value that answers nothing has nothing to bind.  Admitted, `s = f()` of a function
         // with no result left `s` a `void` local, and each later read misfired far from the
         // cause: `s + 1` reported `Expect token ;`, `"{s + 1}"` five syntax errors.  Named here,
@@ -5187,6 +5320,7 @@ use a separate collection or add after the loop"
         // Asked on pass 1 as well: the misread `+` derails that pass, which then never reaches
         // pass 2 — and a `void` result is known there (a later callee reads `unknown`).
         if op == "="
+            && !rhs_failed
             && matches!(s_type.base(), Type::Void)
             && let Some(at) = rhs_at
             && let Value::Var(v) = to.unspan()
@@ -5535,6 +5669,13 @@ use a separate collection or add after the loop"
         }
         if amp_collection_bind && var_nr != u16::MAX {
             self.vars.set_amp_container_link(var_nr);
+            // `@FR-B-Ref-Alias`, `@FR-H-FreeTwice` — the link shares its source's store and every
+            // whole-value write goes THROUGH it (`assign_writes_through`), so it never owns one:
+            // a write-through `c = a` retyped it as an owner, and the scope end freed the
+            // source's store under both names.  `LOFT_NO_LINK_NEVER_FREE=1` lets it free.
+            if !self.first_pass && !link_never_free_off() {
+                self.vars.set_skip_free(var_nr);
+            }
             // @FR-Col-Group, loft#1664 — and this is the OTHER half of the question left open
             // above.  `(Col-Group)` says a record entering through one member of a linked group
             // is in every member, BY ANY WRITE ROUTE, and a `&` link is a write route:
@@ -6239,7 +6380,11 @@ use a separate collection or add after the loop"
             // the vector's own record — no temporary, no release, no copy back.  The same
             // admission as the block-copy form (`slice_copy_form`); every other element
             // kind, and `LOFT_NO_SLICE_COPY=1`, keeps the temporary below.
-            if crate::env_once!(std::env::var_os("LOFT_NO_SLICE_COPY").is_none())
+            // A store a closure record holds is not reshaped in place (`@FR-L-CapRebind`):
+            // the temporary below refills a FRESH store then.
+            let held = self.capture_record_holds(var_nr);
+            if !held
+                && crate::env_once!(std::env::var_os("LOFT_NO_SLICE_COPY").is_none())
                 && crate::data::is_scalar(&elm_tp)
                 && !self.is_type_var_element(&elm_tp)
                 && let Value::Iter(_, init, _, _) = code.clone()
@@ -6273,12 +6418,17 @@ use a separate collection or add after the loop"
             // stride per element, over-reading the temp (silent on a copy, refused on a
             // foreign view; @PLN174 F4b found it).
             let rec_tp = Value::Int(self.append_elem_tp(&elm_tp));
-            let clear = self.cl("OpClearVector", &[Value::Var(var_nr)]);
-            let append = self.cl(
+            let mut ls = vec![code.clone()];
+            if held {
+                ls.extend(self.vector_db(&elm_tp, var_nr));
+            } else {
+                ls.push(self.cl("OpClearVector", &[Value::Var(var_nr)]));
+            }
+            ls.push(self.cl(
                 "OpAppendVector",
                 &[Value::Var(var_nr), Value::Var(tmp), rec_tp],
-            );
-            *code = Value::Insert(vec![code.clone(), clear, append]);
+            ));
+            *code = Value::Insert(ls);
             return Type::Void;
         }
         // A `&vector` parameter appends a slice as a local does (`@FR-Slice-Value`); its `=`
@@ -7138,7 +7288,16 @@ use a separate collection or add after the loop"
                 self.vars.name(var_nr)
             );
             if self.convert_store(code, &s_type, slot_tp, &what, rhs_at.as_ref()) {
-                slot_tp.clone()
+                // The declaration says the SHAPE; what the value BORROWS is the value's
+                // (`Type::with_deps_of`, `@FR-B-View`).  `dd: S = o.opt` reads a parameter's
+                // nullable field into a dense local: retyped to the bare declaration, `dd`
+                // owned the caller's record and its scope end freed it.
+                // `LOFT_NO_REPR_KEEPS_DEPS=1` drops the borrow.
+                if repr_keeps_deps_off() {
+                    slot_tp.clone()
+                } else {
+                    slot_tp.with_deps_of(&s_type)
+                }
             } else {
                 s_type
             }
@@ -7160,6 +7319,11 @@ use a separate collection or add after the loop"
                 Type::Text(_) | Type::Enum(..) | Type::Reference(..)
             )
             && !self.data.is_nullable_wrapper(slot_tp)
+            // A `τ?` SLOT holds the null: `.base()` above peels the `?`, and an `Entity?` field
+            // read as a dense struct-enum slot took the default for a null handle written into
+            // it (`h.e = absent`, `absent: Fireball? = null`) — the attic program
+            // a-null-struct-enum-slot-leaves-its-slot-as-null.  `@FR-N-Store`, @C163.
+            && !matches!(slot_tp, Type::Optional(_))
             && self.slot_takes_base(slot_tp, inner)
         {
             // A `reference<T>` POINTER field repoints, so it does hold null; it is told apart by
@@ -7173,17 +7337,63 @@ use a separate collection or add after the loop"
                 _ => false,
             };
             let inner = (**inner).clone();
-            self.nstore_unwrap_report_as(
-                &inner,
-                slot_tp,
-                "the assignment target",
-                None,
-                false,
-                kept.then_some(
-                    "when it is null the store does not happen, so the slot keeps the value it had",
-                ),
-                None,
-            );
+            // What the store does with a null, by slot (the warning's consequence clause):
+            //   * a text, a plain enum or a POINTER field holds the null;
+            //   * a keyed collection's element: absence under a key is a state the collection
+            //     has, so a null value removes the key, as `c[k] = null` does (`(Col-Assign)`,
+            //     `(Col-Remove)`, loft#2470);
+            //   * @C163 — a DENSE record or struct-enum slot has no null to hold, so the null is
+            //     the slot type's default, as `e?` gives it (`(N-Default)`); a type with no
+            //     default refuses the store, as it refuses `e?`.
+            let keyed = kept && self.is_keyed_element_place(to);
+            let dense = kept && !keyed;
+            let no_default = if dense {
+                self.data.has_default(slot_tp.base()).err()
+            } else {
+                None
+            };
+            let spelled = slot_tp.base().source_name(&self.data);
+            if let Some(reason) = no_default {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a nullable value is stored into a `{spelled}` slot, which has no null and \
+                     no default ({reason}) — discharge it with `?? <value>` or `!`, or declare the \
+                     field `{spelled}?`"
+                );
+            } else {
+                let consequence = if keyed {
+                    Some(
+                        "when it is null the key is removed, as `c[k] = null` removes it"
+                            .to_string(),
+                    )
+                } else if dense {
+                    Some(format!(
+                        "when it is null the slot takes `{spelled}`'s default, as `?` gives it"
+                    ))
+                } else {
+                    None
+                };
+                self.nstore_unwrap_report_as(
+                    &inner,
+                    slot_tp,
+                    "the assignment target",
+                    None,
+                    false,
+                    consequence.as_deref(),
+                    None,
+                );
+                if dense {
+                    // The default is the SLOT's: a `Circle?` written into a `Shape` field takes
+                    // `Shape`'s first variant, not `Circle`'s zero.  A variant's value is a
+                    // `Shape` value, so reading it as `Shape?` changes no representation; the
+                    // value keeps its own deps, which say whose store it is to free.
+                    let mut parent = Type::Null;
+                    let mut tp = Type::Optional(Box::new(slot_tp.base().with_deps_of(&inner)));
+                    self.handle_default_fallback(slot_tp, code, &mut parent, &mut tp);
+                    s_type = tp;
+                }
+            }
         }
         // @FR-O-Latest, loft#1466 — a CALL RESULT's borrow list is the CALLEE's answer, and on
         // pass 1 the callee has not been read yet.  What pass 1 publishes for it is a guess
@@ -7241,6 +7451,11 @@ use a separate collection or add after the loop"
                     && call_has_body
                     && self.vars.exists(*v_nr)
                     && !self.vars.is_argument(*v_nr)
+                    // A `&` link's deps name the PLACE it links, which a whole write copies
+                    // into (`@FR-B-Ref-Write`): the call's result never becomes the binding's,
+                    // so there is no guess of the call's to correct.  Cleared, the link read
+                    // OWNS, its bind copied the field, and the write landed in the copy.
+                    && !self.vars.is_amp_link(*v_nr)
                     && !s_type.is_unknown()
                     // …and the SLOT must be resolved too.  `is_equal(Unknown, τ)` is TRUE, so
                     // without this a generic's still-unknown local passes the equality test and
@@ -7373,6 +7588,19 @@ use a separate collection or add after the loop"
         let text_appends_rendering = op != "="
             && matches!(place_tp.base(), Type::Text(_))
             && Self::appends_rendering(&s_type);
+        // A tagged-slot read the store's conversion built (`enum_slot_read_named`) names the
+        // record it reads in its own result type; the bind adopts that borrow (`@FR-B-View`),
+        // which the conversion — answering only yes or no — cannot hand back itself.
+        let s_type = match code.unspan() {
+            Value::Block(bl)
+                if op == "="
+                    && bl.name == "enum_slot_read_named"
+                    && !bl.result.depend().is_empty() =>
+            {
+                s_type.with_deps_of(&bl.result)
+            }
+            _ => s_type,
+        };
         if !compound_keeps_place && !text_appends_rendering {
             self.change_var(to, &s_type);
         }
@@ -7785,8 +8013,18 @@ use a separate collection or add after the loop"
                     // the clear below before the append reads it (loft#1916).  A projection
                     // is COPIED into a fresh temp first, as the borrowed-Var arm above does;
                     // the temp then owns its copy and frees it.
-                    let projection =
-                        !s_type.depend().is_empty() || !s_type.base().depend().is_empty();
+                    // The type's deps are one spelling of a projection; the value's SHAPE is the
+                    // other — a destructured tuple member (`(s.n, s.t, s.v) = trio(…)` reads
+                    // `OpGetField(__ref_N, …)`) carries no dep, and staged as an owner the temp
+                    // freed the call's tuple store beside `__ref_N` (`@FR-H-FreeTwice`).
+                    // `LOFT_NO_UNTYPED_PROJECTION_COPY=1` reads the type only.
+                    let projection = !s_type.depend().is_empty()
+                        || !s_type.base().depend().is_empty()
+                        || (matches!(rhs_saved.unspan(), Value::Call(d, _)
+                            if crate::use_analysis::is_projection_op(&self.data, *d))
+                            && !crate::env_once!(
+                                std::env::var_os("LOFT_NO_UNTYPED_PROJECTION_COPY").is_some()
+                            ));
                     let fill_tmp = if projection {
                         vec![
                             v_set(tmp, Value::Null),
@@ -13408,6 +13646,45 @@ impl BufferExits<'_> {
             _ => false,
         }
     }
+}
+
+/// Every occurrence of the subtree `from` in `code` becomes `with`.
+fn replace_subtree(code: &mut Value, from: &Value, with: &Value) {
+    if code.unspan() == from.unspan() {
+        *code = with.clone();
+        return;
+    }
+    code.for_each_child_mut(&mut |c| replace_subtree(c, from, with));
+}
+
+/// `LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED=1` (STORE_RECORDS.md § The checks): `own_fresh_binds`
+/// gives a work-ref owner to a local that already owns what it names through a guarded backing
+/// — the re-free the store records must then report.
+fn fresh_bind_owner_beside_guarded() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("LOFT_FRESH_BIND_OWNER_BESIDE_GUARDED").is_ok_and(|v| v != "0")
+    })
+}
+
+/// `LOFT_NO_REPR_KEEPS_DEPS=1` (STORE_RECORDS.md § The checks): a value converted into a
+/// declared local's representation takes the bare declared type, dropping what it borrows —
+/// the wrong free the store records must then report.
+fn repr_keeps_deps_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_REPR_KEEPS_DEPS").is_some())
+}
+
+/// `LOFT_FRESH_BIND_BESIDE_BUFFER=1` (STORE_RECORDS.md § The checks): `own_fresh_binds` gives a
+/// work-ref owner to a call's result even where the call delivers into a hidden buffer — the
+/// re-free the store records must then report.
+fn fresh_bind_beside_buffer() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_FRESH_BIND_BESIDE_BUFFER").is_some())
+}
+
+/// `LOFT_NO_LINK_NEVER_FREE=1` (STORE_RECORDS.md § The checks): a `&` link to a collection may
+/// be freed as an owner — the re-free the store records must then report.
+fn link_never_free_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_LINK_NEVER_FREE").is_some())
 }
 
 #[cfg(test)]

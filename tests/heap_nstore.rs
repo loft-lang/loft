@@ -440,12 +440,10 @@ fn the_scalar_wording_is_unchanged() {
 //
 // `(N-Store)` names the slots a bare `null` may not enter as *"a local, a field, a collection
 // element, a tuple member, a call argument, a return, an INDEX"*.  The four positions above
-// ask; the ASSIGNMENT TARGET asked only for a SCALAR target, so `s.rec = null` and
-// `v[i] = null` passed in silence — and they are the two that answer WRONG:
-//
-//   * `s.rec = null` does not happen.  `s.rec.n` still reads what it held, where the literal
-//     `S{rec: null}` reads the type's zero — the same statement meaning two things.
-//   * `v[i] = null` is a no-op: the element and the length are untouched.
+// ask, and so does the ASSIGNMENT TARGET.  A dense record slot has no null to hold, so
+// `s.rec = null` and `v[i] = null` write the slot type's DEFAULT (@C163, `(N-Default)`):
+// `s.rec.n` reads the type's zero, as the literal `S{rec: null}` does, and `v[i]` the
+// element type's default with the length unchanged.  A type with no default refuses the store.
 //
 // Three OTHER shapes reach the same site and are not stores at all, which is why the ask
 // could not simply be widened to `is_dbref`.  They are the negative controls below:
@@ -454,11 +452,11 @@ fn the_scalar_wording_is_unchanged() {
 // exactly what they say, and warning on them would be a false report on correct code.
 //
 // The message's CONSEQUENCE clause is this position's own.  The shared default — "the slot
-// holds null" — is measured true for a scalar, and for a record travelling as a HANDLE (a
-// `null` argument arrives null, a `return null` reads back null); it is false for a dense
-// INLINE slot, which has no discriminant to spend on absence, and false here, where nothing
-// is written at all.  The cure is unchanged and is the real one: the `?` is what creates the
-// room (`synth_nullable_struct_fields` gives a discriminant only to the `?` the author wrote).
+// holds null" — is true for a scalar, and for a record travelling as a HANDLE (a `null`
+// argument arrives null, a `return null` reads back null); a dense INLINE slot has no
+// discriminant to spend on absence, so it takes the default instead.  The cure is unchanged:
+// the `?` is what creates the room (`synth_nullable_struct_fields` gives a discriminant only to
+// the `?` the author wrote).
 
 /// The assignment-target notice, keyed on its own consequence clause so it cannot be confused
 /// with the four positions that share the default one.
@@ -466,12 +464,12 @@ fn assign_notices(err: &str) -> usize {
     err.lines()
         .filter(|l| {
             l.contains("`null` is stored into the assignment target")
-                && l.contains("the store does not happen")
+                && l.contains("the slot takes")
         })
         .count()
 }
 
-/// A dense RECORD field: the write is dropped, and that used to be silent.
+/// A dense RECORD field: the slot takes the type's default, and the warning says so.
 #[test]
 fn a_null_into_a_record_field_is_reported() {
     let src = "struct E { n: integer }\n\
@@ -482,18 +480,19 @@ fn a_null_into_a_record_field_is_reported() {
         assert_eq!(
             assign_notices(&err),
             1,
-            "a dropped write must be reported ({backend})\n{err}"
+            "a null into a dense slot must be reported ({backend})\n{err}"
         );
         assert!(ok, "the cell still runs on {backend}\n{err}");
-        assert!(
-            out.contains('5'),
-            "and the value is unchanged — the report is what was missing ({backend}): {out}"
+        assert_eq!(
+            out.trim(),
+            "0",
+            "the field reads `E`'s default, as `S{{e: null}}` does ({backend}): {out}"
         );
     }
 }
 
-/// A VECTOR element target: a no-op, and it used to be silent.  A vector is not keyed, so
-/// `v[i] = null` is neither `(Col-Remove)`'s delete nor a store that lands.
+/// A VECTOR element target: the element takes `E`'s default.  A vector is not keyed, so
+/// `v[i] = null` is not `(Col-Remove)`'s delete, and the length does not move.
 #[test]
 fn a_null_into_a_vector_element_is_reported() {
     let src = "struct E { n: integer }\n\
@@ -504,12 +503,13 @@ fn a_null_into_a_vector_element_is_reported() {
         assert_eq!(
             assign_notices(&err),
             1,
-            "a no-op element store must be reported ({backend})\n{err}"
+            "a null element store must be reported ({backend})\n{err}"
         );
         assert!(ok, "the cell still runs on {backend}\n{err}");
-        assert!(
-            out.contains("2 1"),
-            "and neither the length nor the element moved ({backend}): {out}"
+        assert_eq!(
+            out.trim(),
+            "2 0",
+            "the length stays and the element reads `E`'s default ({backend}): {out}"
         );
     }
 }
@@ -571,8 +571,8 @@ fn a_collection_field_clear_is_not_a_store() {
 /// so `n.next = null` writes the sentinel: the store LANDS and `n.next == null` reads true.
 /// It is the shape that made the parse site the wrong home — by the time the target type is
 /// resolved there the marker is gone, so a gate written there reported a store that happens.
-/// Only the lowering separates them: a pointer field emits `OpSetDbRef`, a dense one
-/// `OpCopyRecord(null, …)`.
+/// Only the lowering separates them: a pointer field emits `OpSetDbRef`, a dense one copies
+/// the slot type's default (@C163).
 #[test]
 fn a_pointer_field_store_lands_and_is_silent() {
     let src = "struct Leaf { value: integer }\n\
@@ -586,12 +586,12 @@ fn a_pointer_field_store_lands_and_is_silent() {
         assert_eq!(
             assign_notices(&err),
             1,
-            "only the DENSE field is a dropped write ({backend})\n{err}"
+            "only the DENSE field is reported ({backend})\n{err}"
         );
         assert!(ok, "the pointer control runs on {backend}\n{err}");
         assert!(
-            out.contains("true 5"),
-            "the pointer store lands and the dense one does not ({backend}): {out}"
+            out.contains("true 0"),
+            "the pointer holds null and the dense field `Leaf`'s default ({backend}): {out}"
         );
     }
 }

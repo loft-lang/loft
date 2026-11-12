@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Version`'s early exit: in a leaf, `if c { return x }` with no else, whose arm holds no
+// element access while one follows it, is decided toward going on — `!c` joins the
+// precondition asked once per loop and the fast twin drops the `if`.  An exit with an else arm
+// (e3), an access before the exit (e5) stay undecided; a test that is not linear in the loop
+// (e6) is decided only where a counter it reads is held.  Every cell sums its leaf over a box:
+// inside the window (A), across all four edges (B), a window larger than its vector (D), and
+// (W) one column past the right edge whose index wraps into the next row, where only the
+// exit's own test keeps the read out.  Hand-computed per cell.
+//
+// @falsified-at: f47731187 — by hand: with a decided exit's tests left out of the precondition,
+//   W answers 72 for 60 on `--native-c` (the fast twin reads the wrapped column, z[8] + z[16]);
+//   the `-DLOFT_VERIFY` build passes it too (every index lies in the vector) and the
+//   interpreter is untouched (a C rule).  Deciding an exit the wrong way round is no plant: its
+//   test then asks for the outside, the precondition fails, and the written path runs.
+// CHANNEL: the asserts.
+// ARMED: none needed.
+// WITNESS: each assert message prints the value it read.
+// HOLDS: one exit (e1), two (e2), an exit arm that works first (e4); undecided e3, e5, e6.
+
+struct Hz { q0: integer, r0: integer, w: integer, h: integer, z: vector<float> }
+
+// E1: one early exit over the window test, then the access.
+fn e1(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  if dq < 0 || dq >= f.w || dr < 0 || dr >= f.h { return 0.0; }
+  f.z[dr * f.w + dq] ?? 0.0
+}
+// E2: two exits.
+fn e2(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  if dq < 0 || dq >= f.w { return 0.0; }
+  if dr < 0 || dr >= f.h { return 0.0; }
+  f.z[dr * f.w + dq] ?? 0.0
+}
+// E3: an exit with an else arm: undecided, still right.
+fn e3(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  k = 0;
+  if dq < 0 || dq >= f.w || dr < 0 || dr >= f.h { return 0.0; } else { k = 1; }
+  (f.z[dr * f.w + dq] ?? 0.0) * (k as float)
+}
+// E4: the exit arm works before it returns.
+fn e4(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  if dq < 0 || dq >= f.w || dr < 0 || dr >= f.h { k = dq + dr; return 0.0 * (k as float); }
+  f.z[dr * f.w + dq] ?? 0.0
+}
+// E5: the access before the exit: nothing follows it, undecided.
+fn e5(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  v = f.z[dr * f.w + dq] ?? 0.0;
+  if dq < 0 || dq >= f.w || dr < 0 || dr >= f.h { return 0.0; }
+  v
+}
+// E6: a test that is not linear: undecided.
+fn e6(f: Hz, q: integer, r: integer) -> float {
+  dq = q - f.q0; dr = r - f.r0;
+  if dq * dr < 0 || dq >= f.w || dr >= f.h || dq < 0 || dr < 0 { return 0.0; }
+  f.z[dr * f.w + dq] ?? 0.0
+}
+
+fn zs12() -> vector<float> { v: vector<float> = []; for k in 0..12 { v += [(k as float) * 0.5]; } v }
+
+// Each sums its leaf over a box: inside the window (A), across all four edges (B), and over a
+// window larger than its vector (D, q0 = r0 = 0, 4 x 4 over 12 elements).  The window's z sum
+// to 0.5 * 66 = 33 and everything outside answers 0.0, so every cell answers 33.
+fn box(f: Hz, which: integer, q0: integer, q1: integer, r0: integer, r1: integer) -> float {
+  t = 0.0;
+  for r in r0..r1 {
+    for q in q0..q1 {
+      t += if which == 1 { e1(f, q, r) } else if which == 2 { e2(f, q, r) }
+           else if which == 3 { e3(f, q, r) } else if which == 4 { e4(f, q, r) }
+           else if which == 5 { e5(f, q, r) } else { e6(f, q, r) };
+    }
+  }
+  t
+}
+
+fn main() {
+  f = Hz { q0: 2, r0: 3, w: 4, h: 3, z: zs12() };
+  big = Hz { q0: 0, r0: 0, w: 4, h: 4, z: zs12() };
+  z24: vector<float> = [];
+  for k in 0..24 { z24 += [(k as float) * 0.5]; }
+  f8 = Hz { q0: 2, r0: 3, w: 8, h: 3, z: z24 };
+  for w in 1..7 {
+    assert(box(f, w, 2, 6, 3, 6) == 33.0, "A{w} {box(f, w, 2, 6, 3, 6)}");
+    assert(box(f, w, 1, 7, 2, 7) == 33.0, "B{w} {box(f, w, 1, 7, 2, 7)}");
+    assert(box(big, w, 0, 4, 0, 4) == 33.0, "D{w} {box(big, w, 0, 4, 0, 4)}");
+    // W: one column past the right edge of an 8 x 3 window over 24 elements (the inner range
+    // nine wide, past the floor of eight): its index wraps into the next row, so the window
+    // test, not the index test, keeps it out.  Rows 0 and 1: 0.5 * (0 + … + 15) = 60.
+    assert(box(f8, w, 2, 11, 3, 5) == 60.0, "W{w} {box(f8, w, 2, 11, 3, 5)}");
+  }
+  println("ok");
+}

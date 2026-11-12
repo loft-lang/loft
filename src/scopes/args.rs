@@ -54,28 +54,29 @@ fn lift_view_deps(arg: &Value, data: &Data) -> Option<Vec<u16>> {
     }
 }
 
-/// loft#890, loft#1647 — the argument index whose STORE `outer_call` frees WHOLE for
-/// itself, via the `0x8000` source-free bit on its `const u16` type parameter.
-///
-/// `OpReplaceKeyed` and `OpCopyRecord` answer: each releases its source's whole store
-/// (`Stores::free` takes the store, not the record) once the copy is made, and a source
-/// that is an inline call the scope pass lifts into a `__lift_N` is a store that temp also
-/// owns.  Its scope-exit `OpFreeRef` is then a second release — silent while the slot stays
-/// free, and a stolen store the moment the allocator hands that slot to anything minted
-/// before the scope ends: `m.vs += [vert(a, up)]` followed by a lazily minted return buffer
-/// in the same pass freed that buffer at the pass's end, and the next pass's value was read
-/// from whatever took the slot after it (@FR-H-FreeAll: a store is released exactly once;
-/// @FR-H-FreeTwice names the slot reuse a second release hits).  Where the
-/// copy declines its release (the same store as the destination, a stack, free, read-only
-/// or free-protected store) the lift's own free would release nothing it owns either.
+/// The argument whose store `outer_call` frees for itself (`OpSets::freed_source_arg`): a
+/// source that is an inline call the scope pass lifts into a `__lift_N` is a store that temp
+/// also owns, and its scope-exit `OpFreeRef` would be a second release — silent while the
+/// slot stays free, and a stolen store the moment the allocator hands that slot to anything
+/// minted before the scope ends: `m.vs += [vert(a, up)]` followed by a lazily minted return
+/// buffer in the same pass freed that buffer at the pass's end (@FR-H-FreeAll: a store is
+/// released exactly once).  `cur = leaf(k)` through a link to an out-of-line field is the
+/// `OpSetChildRec` spelling of the same copy.
 fn moved_source_arg(outer_call: u32, args: &[Value], data: &Data) -> Option<usize> {
-    if outer_call == u32::MAX
-        || (outer_call != data.def_nr("OpReplaceKeyed")
-            && outer_call != data.def_nr("OpCopyRecord"))
-    {
+    if outer_call == u32::MAX {
         return None;
     }
-    matches!(args.get(2).map(Value::unspan), Some(Value::Int(tp)) if tp & 0x8000 != 0).then_some(0)
+    // `LOFT_NO_CHILD_REC_TAKES=1` (BOTH_BACKEND_SWITCHES.md) leaves the field write's lift its
+    // own free: the re-free the store records must then report.
+    if outer_call == data.def_nr("OpSetChildRec") && child_rec_takes_off() {
+        return None;
+    }
+    data.op_sets().freed_source_arg(outer_call, args)
+}
+
+fn child_rec_takes_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("LOFT_NO_CHILD_REC_TAKES").is_ok_and(|v| v != "0"))
 }
 
 impl Scopes<'_> {
@@ -137,6 +138,18 @@ impl Scopes<'_> {
                 let call = std::mem::replace(m, Value::Var(tmp));
                 preamble.push(self.lift_set(tmp, call, function, data));
                 lifted = true;
+            } else if let Some((w, absorb)) = self.inline_built_borrow_source(m, outer_call, data)
+                && !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_ARG_NAME").is_some())
+            {
+                // A member BUILT INLINE (`first((r, 1))` copies `r` into a work-ref inside the
+                // literal) at a call whose return may borrow it: hoisted, as the bare argument is
+                // (loft#1029), so the free-protection bracket (`n_protect_store_frees`) can name
+                // the member's store before the call — the callee handing the member back is then
+                // the caller's, and one it minted is still freed (`protectable_ref_args`' tuple
+                // arm).
+                let block = std::mem::replace(m, Value::Var(w));
+                self.hoist_built_block(block, absorb, preamble);
+                lifted = true;
             } else if matches!(m.unspan(), Value::Tuple(_)) {
                 let mut inner = match m.unspan() {
                     Value::Tuple(inner) => inner.clone(),
@@ -158,6 +171,65 @@ impl Scopes<'_> {
             }
         }
         lifted
+    }
+
+    /// Move an argument block [`Self::inline_built_borrow_source`] matched into `preamble`,
+    /// leaving its tail work-ref to be passed by name.
+    fn hoist_built_block(&mut self, block: Value, absorb: Option<u16>, preamble: &mut Vec<Value>) {
+        let Value::Block(bl) = block else {
+            unreachable!("inline_built_borrow_source matched a non-Block")
+        };
+        // The block's own scope disappears with the block, so every var it
+        // declared is now declared in the statement list we hoisted into. Move
+        // their `var_scope` entries with them: an entry left pointing at a scope
+        // no emitted code opens would have slot assignment place it against a
+        // sibling scope's zone. Only the VECTOR-literal shape reaches this — a
+        // struct literal's tail is the function-scope work-ref itself.
+        if let Some(block_scope) = absorb {
+            for sc in self.var_scope.values_mut() {
+                if *sc == block_scope {
+                    *sc = self.scope;
+                }
+            }
+        }
+        let mut ops = bl.operators;
+        ops.pop();
+        preamble.extend(ops);
+    }
+
+    /// `@FR-H-RefHome` — a call result lifted as the VALUE of a stored reference
+    /// (`OpSetDbRef(holder, pos, mk(…))`, `Linked { link: mk(9) }`) is the record's home, so it
+    /// lasts as long as the holder: scoped where the holder's root is, not in the block the
+    /// write stands in.  A literal built in a work-ref inside a call argument is such a block,
+    /// and the home freed at its end left the callee reading a released store.
+    /// `LOFT_NO_REF_HOME_LIFT=1` keeps the block's scope.
+    fn home_lasts_as_its_holder(
+        &mut self,
+        tmp: u16,
+        outer_call: u32,
+        args: &[Value],
+        arg_idx: usize,
+        data: &Data,
+    ) {
+        if outer_call == u32::MAX
+            || arg_idx != 2
+            || data.def(outer_call).name() != "OpSetDbRef"
+            || crate::env_once!(std::env::var_os("LOFT_NO_REF_HOME_LIFT").is_some())
+        {
+            return;
+        }
+        let Some(root) = args
+            .first()
+            .and_then(|a| super::par_writes::accessor_root_var(a, data))
+        else {
+            return;
+        };
+        let root = *self.var_mapping.get(&root).unwrap_or(&root);
+        if let Some(&sc) = self.var_scope.get(&root)
+            && self.scope_encloses(root)
+        {
+            self.var_scope.insert(tmp, sc);
+        }
     }
 
     /// Scan a list of call arguments.
@@ -464,8 +536,22 @@ impl Scopes<'_> {
                 // the dep is empty (owned).
                 let tmp = self.new_lift_var(function, &tp);
                 self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
+                self.home_lasts_as_its_holder(tmp, outer_call, args, arg_idx, data);
                 preamble.push(self.lift_set(tmp, scanned, function, data));
                 ls.push(Value::Var(tmp));
+            } else if let Some(arm_lifted) = self.lift_owned_coalesce_arm(
+                &scanned,
+                data,
+                function,
+                (arg_idx, transfer_copy, moved_arg),
+            ) {
+                // `@FR-O-Complete` — a collection coalesce read inline,
+                // `(g ?? nr_h(i))[i]`, lowers to `if present(g) g else nr_h(i)`: the fallback's
+                // owned result is held by nothing, the vector spelling's hidden buffer has no
+                // keyed twin, and every taken fallback leaked its store.  The call is lifted in
+                // its arm, so the temp owns it and the scope's free releases it (a free of null
+                // where the arm did not run).  `LOFT_NO_COALESCE_ARM_LIFT=1` leaves it inline.
+                ls.push(arm_lifted);
             } else if let Value::Call(g_nr, _) = scanned.unspan()
                 // `@FR-N-Shape`: the shape is read through `?`; the lift keeps the whole type.
                 && matches!(data.def(*g_nr).returned.base(), Type::Iterator(_, _))
@@ -539,25 +625,7 @@ impl Scopes<'_> {
                 // set would read complete while protecting nothing, and the source-free it
                 // then licenses would release a store the caller still reaches.  That
                 // trades this leak for a use-after-free.
-                let Value::Block(bl) = scanned else {
-                    unreachable!("inline_built_borrow_source matched a non-Block")
-                };
-                // The block's own scope disappears with the block, so every var it
-                // declared is now declared in the statement list we hoisted into. Move
-                // their `var_scope` entries with them: an entry left pointing at a scope
-                // no emitted code opens would have slot assignment place it against a
-                // sibling scope's zone. Only the VECTOR-literal shape reaches this — a
-                // struct literal's tail is the function-scope work-ref itself.
-                if let Some(block_scope) = absorb {
-                    for sc in self.var_scope.values_mut() {
-                        if *sc == block_scope {
-                            *sc = self.scope;
-                        }
-                    }
-                }
-                let mut ops = bl.operators;
-                ops.pop();
-                preamble.extend(ops);
+                self.hoist_built_block(scanned, absorb, &mut preamble);
                 ls.push(Value::Var(w));
             } else if let Some(tp) =
                 Self::unnameable_borrow_source(&scanned, outer_call, arg_idx, data)
@@ -1237,5 +1305,46 @@ impl Scopes<'_> {
             Type::Enum(d_nr, true, _) => Some(Type::Enum(*d_nr, true, Deps::none())),
             _ => None,
         }
+    }
+}
+
+impl Scopes<'_> {
+    /// `if c { v } else { call }` (either arm order) whose `call` answers an owned store
+    /// ([`Scopes::inline_struct_return`]) and whose other arm is a variable: the same `If` with
+    /// the call lifted into a `__lift_N` temp inside its arm, handed off where the outer call
+    /// consumes that argument.  `None` for any other value.
+    fn lift_owned_coalesce_arm(
+        &mut self,
+        val: &Value,
+        data: &Data,
+        function: &mut Function,
+        (arg_idx, transfer_copy, moved_arg): (usize, bool, Option<usize>),
+    ) -> Option<Value> {
+        if crate::env_once!(std::env::var_os("LOFT_NO_COALESCE_ARM_LIFT").is_some()) {
+            return None;
+        }
+        let Value::If(cond, then, els) = val.unspan() else {
+            return None;
+        };
+        let call_arm = |arm: &Value| matches!(arm.unspan(), Value::Call(..));
+        let var_arm = |arm: &Value| matches!(arm.unspan(), Value::Var(_));
+        let lift_then = call_arm(then) && var_arm(els);
+        if !(lift_then || (var_arm(then) && call_arm(els))) {
+            return None;
+        }
+        let call = if lift_then { then } else { els };
+        let tp = self.inline_struct_return(call, data, u32::MAX, function)?;
+        let tmp = self.new_lift_var(function, &tp);
+        // A source the outer call consumes (`OpReplaceKeyed`) hands the temp's store over, as
+        // the bare call argument's lift does.
+        self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
+        let set = self.lift_set(tmp, (**call).clone(), function, data);
+        let lifted = Value::Insert(vec![set, Value::Var(tmp)]);
+        let (t, e) = if lift_then {
+            (lifted, (**els).clone())
+        } else {
+            ((**then).clone(), lifted)
+        };
+        Some(Value::If(cond.clone(), Box::new(t), Box::new(e)))
     }
 }

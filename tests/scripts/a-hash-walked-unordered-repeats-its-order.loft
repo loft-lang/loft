@@ -74,8 +74,9 @@ fn main() {
   for i in 0..64 { if i % 3 == 0 { td.h[i] = null } }
   td.h = ta.h;
   assert(walk_t(td) == walk_t(ta) && len(td.h) == 64 && td.h[5].name == "n33", "u2c {walk_t(td)}");
-  // u3 — the walk skips the key sort: the scrambled fill does not come back in key order.
-  assert(walk(a) != ordered(a), "u3 {walk(a)}");
+  // u3 — `E` is linked, so its entries are records of their own and the walk is in KEY order
+  // (`@FR-Col-Unordered`): a record number follows the allocator, which no two backends share.
+  assert(walk(a) == ordered(a), "u3 {walk(a)}");
   // u4 — every entry once: 64 visits, keys summing to 0 + … + 63 = 2016, values the same.
   n = 0; sk = 0; sv = 0;
   for e in unordered(a.h) { n += 1; sk += e.k; sv += e.v; }

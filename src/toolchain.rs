@@ -180,6 +180,24 @@ pub fn toolchain_failure_hint(stderr: &str) -> Option<String> {
              && make install` in the loft tree.  The rlib in use is: {rlib}"
         ));
     }
+    // A crate loft's runtime rlib links was rebuilt after it (`E0460`, "possibly newer version
+    // of crate") or by another rustc (`E0514`): any cargo run with other flags in the same
+    // `target/` does this.  The library is not at fault; loft's runtime is.
+    if (stderr.contains("E0460") && stderr.contains("possibly newer version of crate"))
+        || (stderr.contains("E0514") && stderr.contains("compiled by an incompatible version"))
+    {
+        let rlib = find_loft_rlib().map_or_else(
+            || "none found".to_string(),
+            |(p, _)| p.display().to_string(),
+        );
+        return Some(format!(
+            "NOTE: loft's runtime rlib is older than a crate it links, or was built by another \
+             rustc — a cargo run with other flags in the same target/ rebuilds such a crate in \
+             place.  This is not a bug in the library being built, nor in your program.  \
+             Rebuild loft's runtime: `cargo build --release --lib --bin loft` in the loft \
+             tree (`make all && make install` for an installed loft).  The rlib in use is: {rlib}"
+        ));
+    }
     if stderr.contains("StableCrateId") {
         return Some(
             "NOTE: this is the known loft_ffi duplicate-crate collision — two copies of \
@@ -216,6 +234,19 @@ mod toolchain_hint_tests {
     #[test]
     fn flags_enospc() {
         assert!(toolchain_failure_hint("error: No space left on device (os error 28)").is_some());
+    }
+
+    /// The library build's failure when a crate the runtime rlib links was recompiled in place
+    /// after it (verbatim shape, a game's `tile_world` cdylib): the hint blames loft's runtime
+    /// and names the rebuild, not the library.
+    #[test]
+    fn a_crate_rebuilt_after_the_runtime_names_the_runtime() {
+        let stderr = "error[E0460]: found possibly newer version of crate `sha2` which `loft` \
+                      depends on\n   = note: perhaps that crate needs to be recompiled?\n\
+                      error: aborting due to 1 previous error";
+        let hint = toolchain_failure_hint(stderr).expect("E0460 must produce a hint");
+        assert!(hint.contains("not a bug in the library"), "hint: {hint}");
+        assert!(hint.contains("cargo build --release --lib"), "hint: {hint}");
     }
 
     #[test]

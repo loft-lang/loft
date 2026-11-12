@@ -597,6 +597,9 @@ pub struct Store {
     /// Bytecode position that allocated this store (via OpDatabase).
     /// Used for diagnostics when a store is leaked at program exit.
     pub created_at: u32,
+    /// Bytecode position of the op that freed this store, while it is free: a second free
+    /// names it (`@FR-H-FreeTwice`).
+    pub freed_at: u32,
     /// Bytecode position of the last significant operation on this store
     /// (OpCopyRecord, OpFreeRef skip, ref_count change, etc.).
     pub last_op_at: u32,
@@ -1231,6 +1234,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             free_root: 0,
             wild: 0,
@@ -1448,6 +1452,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             pinned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
@@ -1532,6 +1537,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             free_root: 0,
             wild: 0,
@@ -1654,6 +1660,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             free_root: 0,
             wild: 0,
@@ -3472,6 +3479,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
             lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
@@ -3520,6 +3528,7 @@ impl Store {
             store_nr: self.store_nr,
             alloc_serial: self.alloc_serial,
             created_at: self.created_at,
+            freed_at: self.freed_at,
             last_op_at: self.last_op_at,
             free_root: self.free_root,
             wild: self.wild,
@@ -3595,6 +3604,7 @@ impl Store {
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
+            freed_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
             lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
@@ -4359,6 +4369,19 @@ impl Store {
     #[cold]
     #[inline(never)]
     fn raise_out_of_bounds(&self, rec: u32, fld: u32, width: usize) -> ! {
+        // The interpreter's last dispatched op is the access: its site names where the
+        // corrupt reference was read (a compiled backend dispatches nothing, pc 0).
+        let (pc, _, _) = crate::crash_report::last_context();
+        let mut fields = vec![
+            ("rec", rec.to_string()),
+            ("fld", fld.to_string()),
+            ("type", self.known_type.to_string()),
+        ];
+        if pc != 0 && crate::fault_log::armed() {
+            fields.push(("pc", pc.to_string()));
+            fields.push(("site", crate::store_trace::site(pc)));
+        }
+        crate::fault_log::record("corrupt-reference", &fields);
         panic!(
             "Store access out of bounds: rec={rec} fld={fld} width={width} \
              store_bytes={} type={} — the reference is corrupt, not merely \
@@ -8054,6 +8077,9 @@ mod tests {
     }
 
     /// A store file with freed blocks in it, written and flushed: the image a cache bundle is.
+    /// Every other record is freed, so the interior holds free blocks with their footers
+    /// (`@FR-H-FreeFooter`), and the LAST record is freed too, so the store ends in a free block
+    /// (`@FR-H-Wilderness`): the read surface must build neither.
     #[cfg(feature = "mmap")]
     fn image_with_freed_blocks(tag: &str) -> (std::path::PathBuf, Vec<u8>) {
         let path = std::env::temp_dir().join(format!(
@@ -8067,6 +8093,7 @@ mod tests {
             for r in recs.iter().step_by(2) {
                 s.delete(*r);
             }
+            s.delete(recs[23]);
         }
         let bytes = std::fs::read(&path).unwrap();
         (path, bytes)

@@ -544,6 +544,30 @@ impl Scopes<'_> {
         })
     }
 
+    /// The literal-backing accumulators (`__kvb_N`, `__vdb_N`,
+    /// [`crate::variables::owns_literal_backing_store`]) an `ncc` block's arms end in: an arm
+    /// that builds a literal yields its accumulator as the block's tail.
+    pub(super) fn ncc_literal_accumulators(bl: &Block, function: &Function) -> Vec<u16> {
+        let Some(last) = bl.operators.last() else {
+            return Vec::new();
+        };
+        let mut arms: Vec<&Value> = Vec::new();
+        Self::ncc_tail_arms(last, &mut arms);
+        arms.iter()
+            .filter_map(|a| match a.unspan() {
+                Value::Block(b) => match b.operators.last().map(Value::unspan) {
+                    Some(Value::Var(acc))
+                        if crate::variables::owns_literal_backing_store(function.name(*acc)) =>
+                    {
+                        Some(*acc)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The terminal value of each arm of an `ncc` block's tail `if`.
     fn ncc_tail_arms<'a>(val: &'a Value, out: &mut Vec<&'a Value>) {
         match val.unspan() {
@@ -617,8 +641,26 @@ impl Scopes<'_> {
             }
             _ => false,
         };
+        // …and only where the subject's `__ncc_N` temp owns NOTHING (`skip_free`), which is the
+        // leak the lift cures.  A temp bound through the join guard owns the subject's store
+        // itself and frees it at exit; a lift beside it adopted the same store and freed it a
+        // second time (`@FR-H-FreeTwice`, `opt_null_arm(p, true)?.x`).
+        // `LOFT_NCC_LIFT_BESIDE_OWNER=1` lifts anyway.
+        let subject_owned = match val.unspan() {
+            Value::Block(bl) if bl.name == "ncc" && !ncc_lift_beside_owner() => bl
+                .operators
+                .iter()
+                .map(Value::unspan)
+                .find_map(|op| match op {
+                    Value::Set(t, _) => Some(*t),
+                    _ => None,
+                })
+                .is_some_and(|t| t < function.count() && !function.is_skip_free(t)),
+            _ => false,
+        };
         if let Value::Block(bl) = val.unspan()
             && bl.name == "ncc"
+            && !subject_owned
             && let (Type::Reference(d_nr, dep), opt) = bl.result.peel_optional()
             && ((dep.is_empty() && !subject_is_call_ref) || self.ncc_join_is_witnessed(val, data))
         {
@@ -968,3 +1010,10 @@ impl Scopes<'_> {
 /// chain of delegating tails before it answers `false`.  The bound is the cycle guard mutual
 /// recursion needs (`f<T>` forwarding to `g<T>` forwarding to `f<T>`), not a measured depth.
 const DELEGATION_DEPTH: usize = 8;
+
+/// `LOFT_NCC_LIFT_BESIDE_OWNER=1` (STORE_RECORDS.md § The checks): an inline `??` is lifted into
+/// an owner even where its subject temp already owns the subject's store — the re-free the
+/// store records must then report.
+fn ncc_lift_beside_owner() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NCC_LIFT_BESIDE_OWNER").is_some())
+}

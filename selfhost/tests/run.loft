@@ -59,18 +59,20 @@ fn ran(kernel_name: text, entry: text, args: vector<integer>) -> integer? {
 
 fn test_a_counted_loop_with_bit_operators_runs() {
   assert(ran("mix", "n_mix", [10, 1]) == 41, "mix(10, 1)");
-  // 500 000 passes, not the benchmark's 5 000 000: `bench/measure.py` runs that one, and this
-  // test shares one 120 s deadline with every kernel (Python computes both values).
-  assert(ran("mix", "n_mix", [500000, 1]) == 15773217, "mix(500000, 1)");
+  // 100 000 passes, not the benchmark's 5 000 000: `bench/measure.py` runs that one, and this
+  // test shares one 120 s deadline with every kernel.  Past 65 536, so a loop counter held in
+  // 16 bits would show; the mask never fires at any size (Python computes both values).
+  assert(ran("mix", "n_mix", [100000, 1]) == 3008929, "mix(100000, 1)");
 }
 
 fn test_a_loop_with_break_remainder_and_division_runs() {
   assert(ran("collatz", "n_collatz_len", [9]) == 20, "collatz_len(9)");
   assert(ran("collatz", "n_collatz_len", [27]) == 112, "collatz_len(27)");
   assert(ran("collatz", "n_longest", [1, 10]) == 9020, "longest(1, 10)");
-  // 1..2000, not the benchmark's 1..100000: `bench/measure.py` runs that one, and this test
-  // shares one 120 s deadline with every kernel (Python computes the value).
-  assert(ran("collatz", "n_longest", [1, 2000]) == 1161182, "longest(1, 2000)");
+  // 1..1000, not the benchmark's 1..100000: `bench/measure.py` runs that one, and this test
+  // shares one 120 s deadline with every kernel.  703's path still peaks at 250 504, past 16
+  // bits (Python computes the value).
+  assert(ran("collatz", "n_longest", [1, 1000]) == 871179, "longest(1, 1000)");
 }
 
 // S1.5: a `break` taken while `t` and `1` are pending leaves the stacks as the loop found them;

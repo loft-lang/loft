@@ -4,7 +4,7 @@
 
 //! @PLN184 Track W — the platform-sensitive scripts, run under the emulated Windows host
 //! (`LOFT_POISON_HOST=windows`) on both backends.  The layer applies Windows' rules over the
-//! real file system (BOTH_BACKEND_SWITCHES.md § Falsifier: the emulated Windows host), so a
+//! real file system (WINDOWS.md § Falsifier: the emulated Windows host), so a
 //! script that depends on Linux's rules, or a runtime path that bypasses `file_access`, fails
 //! here instead of first on the daily windows-latest run.
 //!

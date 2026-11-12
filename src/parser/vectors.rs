@@ -618,45 +618,7 @@ impl Parser {
         // that side — a name proven present, an index proven in bounds, a divisor proven
         // non-zero, a sign, a variant.  `i < len(v) && v[i] == x` is the guard `if` already
         // trusts, written as one condition.
-        let side = !is_or;
-        let bases = (
-            self.narrowed_non_null.len(),
-            self.narrowed_non_null_exprs.len(),
-            self.divisor_nonzero.len(),
-            self.math_sign_proven.len(),
-            self.variant_proven.len(),
-            self.index_bounded.len(),
-        );
-        for (v, s) in self.narrowings_from_condition(code) {
-            if s == side {
-                self.narrowed_non_null.push(v);
-            }
-        }
-        if let Some((e, s)) = self.projection_narrowing_from_condition(code)
-            && s == side
-        {
-            self.narrowed_non_null_exprs.push(e);
-        }
-        if let Some((v, s)) = self.divisor_proof_from_condition(code)
-            && s == side
-        {
-            self.divisor_nonzero.push(v);
-        }
-        if let Some((v, sg, s)) = self.math_sign_proof_from_condition(code)
-            && s == side
-        {
-            self.math_sign_proven.push((v, sg));
-        }
-        if side && let Some(pair) = self.variant_proof_from_condition(code) {
-            self.variant_proven.push(pair);
-        }
-        let caps = std::collections::HashMap::new();
-        let pairs = if side {
-            crate::parser::operators::collect_guard_pairs(code, &self.data, &caps)
-        } else {
-            crate::parser::operators::collect_guard_pairs_negated(code, &self.data, &caps)
-        };
-        self.index_bounded.extend(pairs);
+        let facts = self.assume_condition(code, !is_or);
         let mut second_code = Value::Null;
         let mut parent_tp = Type::Unknown(0);
         let second_pos = *self.lexer.peek_pos();
@@ -666,12 +628,7 @@ impl Parser {
             &mut parent_tp,
             precedence + 1,
         );
-        self.narrowed_non_null.truncate(bases.0);
-        self.narrowed_non_null_exprs.truncate(bases.1);
-        self.divisor_nonzero.truncate(bases.2);
-        self.math_sign_proven.truncate(bases.3);
-        self.variant_proven.truncate(bases.4);
-        self.index_bounded.truncate(bases.5);
+        self.forget_facts(facts);
         self.known_var_or_type(&second_code, &second_pos);
         if !self.convert_condition(&mut second_code, &second_type) && !self.first_pass {
             self.can_convert(&second_type, &Type::Boolean);
@@ -1425,8 +1382,12 @@ impl Parser {
                 I32.clone()
             }
         } else if let Some(nr) = self.lexer.has_long() {
-            // `@FR-W-Lit` — a literal past i32 in a regime file is refused with its cure.
-            if self.data.width32() && !self.first_pass {
+            // `@FR-W-Lit` — a literal past i32 in a regime file is refused with its cure, unless
+            // it stands where a 64-bit integer is EXPECTED (`y: i64 = 3000000000`, an `i64`
+            // field, element or parameter): "the literal still checks at an expected width".
+            let wide = |t: &Type| matches!(t.base(), Type::Integer(s) if s.is_wide());
+            let refused = self.data.width32() && !wide(&self.expected);
+            if refused && !self.first_pass {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -1453,7 +1414,13 @@ impl Parser {
                 });
             }
             *val = Value::Long(nr as i64);
-            crate::data::I64.clone()
+            // A refused literal is the regime's i32 on pass 1 as well, so pass 1's guess cannot
+            // give an untyped local the i64 a later pass would then expect and accept.
+            if refused && self.first_pass {
+                Type::Integer(crate::narrow::IntegerSpec::i32())
+            } else {
+                crate::data::I64.clone()
+            }
         } else if let Some(nr) = self.lexer.has_wide() {
             *val = Value::Long(nr as i64);
             Type::Integer(crate::narrow::IntegerSpec::i64())
@@ -2689,9 +2656,18 @@ or build a local and use that."
                     // snapshot: the hook, then the store (`Scopes::displaced_drop`).  A free
                     // here ran first, without the hook, and the snapshot's cascade read the
                     // store it had freed (loft#1610, a record capture in a loop).
+                    // `@FR-H-FreeTwice` — the snapshot releases EVERY slot of the record, so the
+                    // question is the record's: a cell beside a droppable capture (`k += 1` next
+                    // to `w: vector<H>`) was released here and again by the snapshot's cascade
+                    // (loft#1610's `c6`).
                     let snapshot_releases = self
                         .data
-                        .type_owns_droppable_anywhere(&self.data.attr_type(closure_rec_d, aid));
+                        .type_owns_droppable_anywhere(&self.data.attr_type(closure_rec_d, aid))
+                        || (crate::keys::record_snapshot_releases()
+                            && self.data.type_owns_droppable_anywhere(&Type::Reference(
+                                closure_rec_d,
+                                crate::data::Deps::none(),
+                            )));
                     if v_nr != u16::MAX
                         && self.assign_target != v_nr
                         && !snapshot_releases
@@ -4566,6 +4542,23 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             ));
         }
         Self::push_filter_step(&mut lp, if_step);
+        // A body that is one call (`[for a in xs { f(a) }]`) is bound as that call, so the slot
+        // takes the single bind's lowering — the dep strip and the copy-or-adopt that make it
+        // own the answer and release it after the element copy, as `v += [f(a)]`'s temp does.
+        // Wrapped in its braces' block, the slot inherited the call's declared borrow and freed
+        // nothing, so an answer the callee MINTED on one of its paths leaked per element
+        // (`@FR-F-Ret`, `@FR-O-Complete`; loft#2467's family).  A heap RECORD element only: a
+        // scalar or a collection slot has no copy-or-adopt to reach.
+        let body = match body.unspan() {
+            Value::Block(bl)
+                if matches!(in_t.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
+                    && bl.operators.len() == 1
+                    && matches!(bl.operators[0].unspan(), Value::Call(_, _)) =>
+            {
+                bl.operators[0].clone()
+            }
+            _ => body,
+        };
         lp.push(v_set(comp_var, body));
         lp.push(v_set(
             elm,
@@ -5475,6 +5468,16 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 let (tuple_var, idx) = (*tuple_var, *idx);
                 let base = keyed_tp.base().clone();
                 let kvb = self.vars.work_keyed(&base, &mut self.lexer);
+                // `@FR-H-FreeTwice` — the TUPLE owns the store it is handed and releases it with
+                // its members, so this accumulator is only the vehicle of the mint: its null
+                // init names no store (`bind_lowering::keyed_null_mints`), `OpDatabase` mints
+                // one, and it frees nothing.  As an owner it minted a store at function entry,
+                // the build reclaimed it in place, and its exit free released the tuple's
+                // member a second time.  `LOFT_NO_TUPLE_PLACE_VEHICLE=1` keeps it an owner.
+                if !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_PLACE_VEHICLE").is_some()) {
+                    self.vars.mark_inline_ref(kvb);
+                    self.vars.set_skip_free(kvb);
+                }
                 let db = self.cl("OpDatabase", &[Value::Var(kvb), Value::Int(i32::from(kt))]);
                 Value::Insert(vec![
                     v_set(kvb, Value::Null),
@@ -6662,7 +6665,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // signature. Saved and restored rather than cleared, because an element is
             // parsed INSIDE whatever push the literal itself arrived under.
             let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-            if Self::seeds_lambda_hint(in_t) {
+            // `@FR-W-Lit` — and a wide integer element in a regime file: a literal past i32
+            // checks at the element's width.
+            if Self::seeds_lambda_hint(in_t)
+                || (self.data.width32() && matches!(in_t.base(), Type::Integer(s) if s.is_wide()))
+            {
                 self.expected = in_t.base().clone();
             }
             let item_pos = *self.lexer.peek_pos();
@@ -7731,6 +7738,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     } else {
                         ls.push(copy);
                     }
+                    // `@FR-H-FreeTwice` — the source-free released the construction's work-ref
+                    // store inside the copy (`v += [S { op: 0, ..n }]`), while the work-ref
+                    // still named it and freed it again at the scope's end, after another
+                    // store had taken the slot.  The work-ref stops naming it here.
+                    if free_source_bit != 0
+                        && !self.first_pass
+                        && let Some(w) = object_work_ref(p, &self.vars)
+                        && !append_source_disarm_off()
+                    {
+                        ls.push(v_set(w, self.cl("OpNullRefSentinel", &[])));
+                    }
                 }
             } else if let Value::Tuple(values) = p {
                 // P189c — vector-element tuple literal.  Emit
@@ -8602,25 +8620,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if self.first_pass || !crate::coroutine_layout::yield_handed_over(tp) {
             return;
         }
-        // A TUPLE hands over each heap member: a literal's members one by one, and a tuple
-        // the generator holds through a literal of its members, which copies each of them.
         if let Type::Tuple(elems) = tp.base() {
-            if let Value::Var(t) = val.unspan()
-                && *t < self.vars.count()
-                && (self.vars.is_argument(*t) || !self.vars.is_compiler_generated(*t))
-            {
-                let t = *t;
-                *val = Value::Tuple(
-                    (0..elems.len())
-                        .map(|i| Value::TupleGet(t, i as u16))
-                        .collect(),
-                );
-            }
-            if let Value::Tuple(items) = val.unspan_mut() {
-                for (item, elm) in items.iter_mut().zip(elems.clone()) {
-                    self.yield_owned_value(item, &elm);
-                }
-            }
+            self.yield_owned_tuple(val, elems);
             return;
         }
         if self.value_is_fresh(val, tp) {
@@ -8700,6 +8701,45 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             Type::Vector(Box::new(elm), Deps::frame1(o)),
             "yield_copy",
         );
+    }
+
+    /// The tuple half of [`Self::yield_owned_value`].
+    // A TUPLE hands over each heap member: a literal's members one by one, and a tuple
+    // the generator holds through a literal of its members, which copies each of them.
+    fn yield_owned_tuple(&mut self, val: &mut Value, elems: &[Type]) {
+        if let Value::Var(t) = val.unspan()
+            && *t < self.vars.count()
+            && (self.vars.is_argument(*t) || !self.vars.is_compiler_generated(*t))
+        {
+            let t = *t;
+            *val = Value::Tuple(
+                (0..elems.len())
+                    .map(|i| Value::TupleGet(t, i as u16))
+                    .collect(),
+            );
+        }
+        if let Value::Tuple(items) = val.unspan_mut() {
+            for (item, elm) in items.iter_mut().zip(elems.to_vec()) {
+                self.yield_owned_value(item, &elm);
+            }
+        }
+        // A tuple RECORD held by an existing value (`t = mkp(5); yield t`) arrives unboxed
+        // through a work-ref that VIEWS it: its members are that value's, so each is copied
+        // like a literal's member.  Handed over as they were, the consumer released `t`'s
+        // record and the generator released it again (`@FR-H-FreeTwice`).  A record a CALL
+        // just filled is the yield's own and is handed over whole
+        // (`coroutine_layout::yield_handed_temps`).
+        if let Value::Block(bl) = val.unspan_mut()
+            && bl.name == "tuple_unbox"
+            && matches!(bl.operators.first().map(Value::unspan),
+                Some(Value::Set(_, r)) if !matches!(r.unspan(), Value::Call(..)))
+            && !crate::keys::unbox_yield_handover_off()
+            && let Some(Value::Tuple(items)) = bl.operators.last_mut().map(Value::unspan_mut)
+        {
+            for (item, elm) in items.iter_mut().zip(elems.to_vec()) {
+                self.yield_owned_value(item, &elm);
+            }
+        }
     }
 
     /// Is the value FRESH — held by nothing of the function's but the compiler temp it was
@@ -11410,4 +11450,24 @@ impl Parser {
                 }
         })
     }
+}
+
+/// `LOFT_NO_APPEND_SOURCE_DISARM=1` (STORE_RECORDS.md § The checks): a construction's work-ref
+/// keeps naming the store an append's source-freeing copy released — the re-free the store
+/// records must then report.
+fn append_source_disarm_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_APPEND_SOURCE_DISARM").is_some())
+}
+
+/// The work-ref an inline construction block builds in and hands back as its tail
+/// (`{#Object __ref_p2_N = …; …; __ref_p2_N}`), or `None` for any other value.
+fn object_work_ref(v: &Value, vars: &crate::variables::Function) -> Option<u16> {
+    let Value::Block(bl) = v.unspan() else {
+        return None;
+    };
+    let Value::Var(w) = bl.operators.last()?.unspan() else {
+        return None;
+    };
+    let n = vars.name(*w);
+    (n.starts_with("__ref_") || n.starts_with("__rref_")).then_some(*w)
 }

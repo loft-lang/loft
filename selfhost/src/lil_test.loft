@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the first test runner of loft in loft: a test program is elaborated over the standard
+// library from their sources (`frontend`), laid out by the scope pass (`scope`) and run by the
+// loft interpreter (`lower`, `run`), with no Rust code in the path.  Each function of the program
+// named `test_…` that takes no parameters is a test: it passes when it answers `true`, leaves no
+// store live and gives back every stack byte it took.
+
+use ir;
+use el;
+use frontend;
+use scope;
+use lower;
+use run;
+
+// One program's result: how many of its tests passed, and a line for each failure.
+pub struct Report {
+  pub passed: integer,
+  pub failed: vector<text>,
+}
+
+// The tests of the program in `f`, run over the standard library in `dir`.
+pub fn run_file(dir: text, f: text) -> Report {
+  r = Report { passed: 0, failed: [] };
+  e = frontend::standard_library(dir);
+  // What the standard library does not carry yet fails only a test that reaches it, at its call.
+  std_refused = len(e.refused);
+  if !frontend::program(e, f) || len(e.refused) > std_refused {
+    for w in e.refused[std_refused..] {
+      r.failed += ["{f}: refused: {w}"];
+    }
+    return r;
+  }
+  // A function the scope pass cannot lay out fails the test that reaches it, with this reason.
+  laid_out = scope::scope_bundle(e.b);
+  for d in e.b.data.definitions {
+    if d.def_type != 1 || d.source != 1 || !d.name.starts_with("n_test_") || len(d.attributes) > 0 {
+      continue;
+    }
+    name = d.name[2..];
+    o = run::run(e.b, d#index, []);
+    if o.refused != "" {
+      why = "{o.refused} in {o.refused_in}";
+      for w in laid_out {
+        if w.starts_with("{o.refused_in}: ") {
+          why = w;
+        }
+      }
+      r.failed += ["{f}: {name}: refused: {why}"];
+    } else if o.value != 1 {
+      r.failed += ["{f}: {name}: answered {o.value}, not true"];
+    } else if o.stores_left != 0 {
+      r.failed += ["{f}: {name}: left {o.stores_left} stores live"];
+    } else if o.stack_left != 0 {
+      r.failed += ["{f}: {name}: left the stack {o.stack_left} bytes off"];
+    } else {
+      r.passed += 1;
+    }
+  }
+  r
+}

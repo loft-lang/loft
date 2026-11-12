@@ -3952,12 +3952,16 @@ pub fn is_null_sentinel_detach(
     // scope scan disarms `__ncc_N` once it has handed the store the temp held to a closure's
     // owner slot (`Scopes::owner_slot_handoff`, loft#2210); the parser frees that temp itself
     // before every reassignment and never writes it the bare sentinel.
+    // A local whose one bind adopts its callee's record (`deferred_first_bind`) is let go the
+    // same way: `@FR-R-HostStore`'s result clause detaches a result once a field adopted it
+    // (`host_result::adopt_and_release`), and the store lives on for the answer.
     let name = function.name(var);
     (crate::variables::owns_literal_backing_store(name)
         || name.starts_with("__ref_")
         || name.starts_with("__rref_")
         || name.starts_with("__ncc_")
-        || name.starts_with("___clos_"))
+        || name.starts_with("___clos_")
+        || function.is_deferred_first_bind(var))
         && matches!(value.unspan(), Value::Call(nr, args)
             if args.is_empty() && data.def(*nr).name() == "OpNullRefSentinel")
 }

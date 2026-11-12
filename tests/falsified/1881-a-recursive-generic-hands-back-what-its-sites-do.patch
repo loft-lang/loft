@@ -1,8 +1,7 @@
-diff --git b/src/data.rs a/src/data.rs
-index 7c5c5b75f..78b133d9b 100644
---- b/src/data.rs
-+++ a/src/data.rs
-@@ -4989,16 +4989,8 @@ impl Definition {
+diff --git a/src/data.rs b/src/data.rs
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -5116,16 +5116,8 @@ impl Definition {
          vars: &crate::variables::Function,
          buf: Option<u16>,
          null_ref: u32,
@@ -19,7 +18,7 @@ index 7c5c5b75f..78b133d9b 100644
              // Null is a value, not a store — it can neither leak nor dangle.  So is the null
              // REFERENCE (`OpNullRefSentinel()`, `null_ref`), which is how a record-typed
              // `null` tail is spelled: read as "not proven", it refused every instance that
-@@ -5013,7 +5005,7 @@ impl Definition {
+@@ -5140,7 +5132,7 @@ impl Definition {
              // unknown shape it refused a body that returns its fresh buffer, so a bounded
              // generic reaching that operator (`fn diff<T: Subtractable>(a, b) -> T { a - b }`)
              // left its result unlifted and leaked one record per inline call (loft#1820).
@@ -28,7 +27,7 @@ index 7c5c5b75f..78b133d9b 100644
              // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
              // Held back while an arm-local of a monomorph was built against the type
              // variable's row and answered a wrong number; with that fixed the arms are
-@@ -5021,14 +5013,14 @@ impl Definition {
+@@ -5148,14 +5140,14 @@ impl Definition {
              // Both arms are required, so one borrowing arm still refuses the whole site —
              // the under-approximation composes rather than being widened away.
              Value::If(_, then, els) => {
@@ -46,7 +45,7 @@ index 7c5c5b75f..78b133d9b 100644
              // An `Insert` in tail position yields its last element, as a block does.  It is how
              // loft#2179 spells a returned parameter's copy (`Insert([Set(__ret_param, d),
              // Var(__ret_param)])`, `@FR-F-Ret`): read as an unknown shape, a `match` whose arms
-@@ -5037,7 +5029,7 @@ impl Definition {
+@@ -5164,7 +5156,7 @@ impl Definition {
              // (`@FR-G-Mono`, loft#2206).
              Value::Insert(ops) => ops
                  .last()
@@ -55,7 +54,7 @@ index 7c5c5b75f..78b133d9b 100644
              // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
              // and that is the honest answer HERE: the target is a runtime value, so this
              // body cannot read the callee's fact.  It is readable one frame up, where the
-@@ -5155,7 +5147,7 @@ impl Definition {
+@@ -5282,7 +5274,7 @@ impl Definition {
          }
          let mut slots: Vec<u16> = Vec::new();
          for site in &sites {
@@ -64,7 +63,7 @@ index 7c5c5b75f..78b133d9b 100644
                  continue;
              }
              match site.unspan() {
-@@ -5203,7 +5195,7 @@ impl Definition {
+@@ -5330,7 +5322,7 @@ impl Definition {
          }
          let mut targets: Vec<u32> = Vec::new();
          for site in &sites {
@@ -73,7 +72,7 @@ index 7c5c5b75f..78b133d9b 100644
                  continue;
              }
              match site.unspan() {
-@@ -5242,7 +5234,7 @@ impl Definition {
+@@ -5369,7 +5361,7 @@ impl Definition {
      }
  
      #[must_use]
@@ -82,7 +81,7 @@ index 7c5c5b75f..78b133d9b 100644
          let vars = &self.variables;
          let buf = self.value_return_buffer_var();
          let mut seen_return = false;
-@@ -5253,7 +5245,7 @@ impl Definition {
+@@ -5380,7 +5372,7 @@ impl Definition {
              let inner = inner.unspan();
              // A bare `Var` is the shape both the owned and the borrowed monomorph end
              // with after the scope pass, and it is the one the answer turns on.
@@ -91,11 +90,10 @@ index 7c5c5b75f..78b133d9b 100644
                  all_fresh = false;
              }
          }
-diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
-index dae1fc171..06a050458 100644
---- b/src/generation/dispatch.rs
-+++ a/src/generation/dispatch.rs
-@@ -1332,11 +1332,7 @@ impl Output<'_> {
+diff --git a/src/generation/dispatch.rs b/src/generation/dispatch.rs
+--- a/src/generation/dispatch.rs
++++ b/src/generation/dispatch.rs
+@@ -1599,11 +1599,7 @@ impl Output<'_> {
              crate::use_analysis::callee_of(self.data, self.def_nr, to),
          ) && matches!(to_unspanned, Value::Call(_, _) | Value::CallRef(_, _))
              && self.data.def(fn_nr).is_loft_defined()
@@ -108,32 +106,25 @@ index dae1fc171..06a050458 100644
              // @PLN157 § V-aa/§ V-ah (`@FR-R-ValueRecord`) — an admitted callee answers a
              // tuple: nothing to adopt, copy, protect or displace, so its binding is the
              // plain assignment below, and the buffer argument is dropped there.
-diff --git b/src/ownership_cfg.rs a/src/ownership_cfg.rs
-index 6c0f7b864..2cfec73c1 100644
---- b/src/ownership_cfg.rs
-+++ a/src/ownership_cfg.rs
-@@ -611,17 +611,6 @@ fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize)
-                     // A whole-value `var = src` copy INTO a re-minted (materialised-owned) var owns —
-                     // see `reminted` above. Otherwise a bare source var resolves flow-sensitively.
-                     Value::Var(_) if reminted.contains(var) => OFact::Owned,
--                    // …and so does one the emitters copy (`bind_copies`, the oracle's own rule).
--                    Value::Var(u)
--                        if crate::use_analysis::bind_copies(
--                            data,
--                            &data.def(d_nr).variables,
--                            *var,
--                            *u,
--                        ) =>
--                    {
--                        OFact::Owned
--                    }
-                     Value::Var(u) => st
-                         .get(u)
-                         .copied()
-diff --git b/src/scopes/inline_returns.rs a/src/scopes/inline_returns.rs
-index 680d2f4cf..fe3f06199 100644
---- b/src/scopes/inline_returns.rs
-+++ a/src/scopes/inline_returns.rs
+diff --git a/src/ownership_cfg.rs b/src/ownership_cfg.rs
+--- a/src/ownership_cfg.rs
++++ b/src/ownership_cfg.rs
+@@ -664,12 +664,6 @@ fn assign(
+         // A whole-value `var = src` copy INTO a re-minted (materialised-owned) var owns —
+         // see `reminted` above. Otherwise a bare source var resolves flow-sensitively.
+         Value::Var(_) if reminted.contains(&var) => OFact::Owned,
+-        // …and so does one the emitters copy (`bind_copies`, the oracle's own rule).
+-        Value::Var(u)
+-            if crate::use_analysis::bind_copies(data, &data.def(d_nr).variables, var, *u) =>
+-        {
+-            OFact::Owned
+-        }
+         Value::Var(u) => st
+             .get(u)
+             .copied()
+diff --git a/src/scopes/inline_returns.rs b/src/scopes/inline_returns.rs
+--- a/src/scopes/inline_returns.rs
++++ b/src/scopes/inline_returns.rs
 @@ -99,7 +99,7 @@ impl Scopes<'_> {
                  && if target.returns_borrowed_view() {
                      instance_copies && target.attr_names.contains_key("__retbuf")
@@ -161,7 +152,7 @@ index 680d2f4cf..fe3f06199 100644
          })
      }
  
-@@ -718,21 +717,10 @@ impl Scopes<'_> {
+@@ -760,21 +759,10 @@ impl Scopes<'_> {
                      || monomorph_returns_a_borrow
                      || ((def.name.starts_with("t_") || def.is_instance())
                          && (def.attr_names.contains_key("__retbuf")
@@ -185,11 +176,10 @@ index 680d2f4cf..fe3f06199 100644
              };
              if lift_owned_return && def.code != Value::Null {
                  // The same `returns_borrowed_view()` question its struct-enum sibling below
-diff --git b/src/use_analysis.rs a/src/use_analysis.rs
-index 723588966..f518122ca 100644
---- b/src/use_analysis.rs
-+++ a/src/use_analysis.rs
-@@ -2568,15 +2568,7 @@ impl<'a> Ownership<'a> {
+diff --git a/src/use_analysis.rs b/src/use_analysis.rs
+--- a/src/use_analysis.rs
++++ b/src/use_analysis.rs
+@@ -2617,15 +2617,7 @@ impl<'a> Ownership<'a> {
                              .iter()
                              .filter(|r| !holds_no_store(self.data, r))
                              .map(|r| {
@@ -206,7 +196,7 @@ index 723588966..f518122ca 100644
                                      Own::Owned
                                  } else {
                                      self.classify(r, func, defs)
-@@ -3800,20 +3792,6 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
+@@ -4016,20 +4008,6 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
      !may_return_a_borrow(data, fn_nr) || protectable_ref_args(data, d_nr, call).1
  }
  
@@ -227,7 +217,7 @@ index 723588966..f518122ca 100644
  /// May `fn_nr`'s result be a borrow of something the caller holds — the question both the
  /// source-free bit ([`call_return_frees_source`]) and native's argument bracket ask, so they
  /// ask it here and cannot answer it apart.
-@@ -3833,8 +3811,7 @@ pub fn may_return_a_borrow(data: &Data, fn_nr: u32) -> bool {
+@@ -4049,8 +4027,7 @@ pub fn may_return_a_borrow(data: &Data, fn_nr: u32) -> bool {
  /// A borrow of the callee's own LOCAL (`d = inner(n); v = d.value; return v`, promoted onto
  /// its buffer) or of its hidden buffer is the callee's store going to the caller, which the
  /// adopt exists for; read as a borrow it turned that adopt into a copy (one mint per call).

@@ -1,8 +1,7 @@
 diff --git a/src/scopes.rs b/src/scopes.rs
-index d05faff1c..72dac015d 100644
 --- a/src/scopes.rs
 +++ b/src/scopes.rs
-@@ -411,14 +411,6 @@ struct Scopes<'s> {
+@@ -428,14 +428,6 @@ struct Scopes<'s> {
      /// itself is never freed.  Keyed on every id the local is known by (the original and
      /// any scope copy `scan_set` makes of it).  [`owner_witness_locals`] picks them.
      owner_witness: HashMap<u16, u16>,
@@ -18,10 +17,9 @@ index d05faff1c..72dac015d 100644
      /// prefix (the record a rebuild is about to overwrite, loft#1388).  The rebuild's own
      /// snapshot (`displaced_drop`) skips them: one release per displaced record.
 diff --git a/src/scopes/args.rs b/src/scopes/args.rs
-index 2cb33b147..93c927067 100644
 --- a/src/scopes/args.rs
 +++ b/src/scopes/args.rs
-@@ -311,21 +311,6 @@ impl Scopes<'_> {
+@@ -383,21 +383,6 @@ impl Scopes<'_> {
              {
                  amp_foreign.push(orig);
              }
@@ -43,7 +41,7 @@ index 2cb33b147..93c927067 100644
              if let Value::Insert(ops) = scanned {
                  // Existing A5.6 hoisting: lift Set(w, Null) for owned Reference.
                  let is_a56_hoisted = Self::is_null_init_preamble(&ops, function);
-@@ -690,7 +675,6 @@ impl Scopes<'_> {
+@@ -758,7 +743,6 @@ impl Scopes<'_> {
                      .is_some_and(|at| at.typedef.is_amp_rebindable_heap())
                  || function.is_argument(*v)
                  || function.rebind_orig(*v).is_some()
@@ -52,7 +50,6 @@ index 2cb33b147..93c927067 100644
                  // call), so the local must own its store: empty deps, and @FR-O-Override's
                  // never-free flag vetoes it.
 diff --git a/src/scopes/buffers.rs b/src/scopes/buffers.rs
-index 9f5b662e0..8a82ca113 100644
 --- a/src/scopes/buffers.rs
 +++ b/src/scopes/buffers.rs
 @@ -77,52 +77,6 @@ pub(super) fn coalesce_tail_calls(v: &Value) -> Vec<&Value> {
@@ -142,10 +139,9 @@ index 9f5b662e0..8a82ca113 100644
              && fed_locals
                  .get(&av)
 diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
-index b00d5743a..aba14fb7c 100644
 --- a/src/scopes/get_free_vars.rs
 +++ b/src/scopes/get_free_vars.rs
-@@ -196,12 +196,6 @@ impl Scopes<'_> {
+@@ -199,12 +199,6 @@ impl Scopes<'_> {
          let mut guarded_hooks: std::collections::HashSet<u16> =
              std::collections::HashSet::default();
          let vars = self.variables(to_scope);
@@ -158,7 +154,7 @@ index b00d5743a..aba14fb7c 100644
          if scope_debug {
              eprintln!(
                  "[get_free_vars] fn={} to_scope={to_scope} scope={} vars={vars:?} ret_var={ret_var} \
-@@ -1212,22 +1206,6 @@ impl Scopes<'_> {
+@@ -1258,22 +1252,6 @@ impl Scopes<'_> {
                  }
              }
          }
@@ -178,14 +174,13 @@ index b00d5743a..aba14fb7c 100644
 -                ));
 -            }
 -        }
-         if !guarded.is_empty() {
-             guarded.append(&mut ls);
-             ls = guarded;
+         fnref_stand_down(&mut ls, &fnref_releases, function, data);
+         captured_record_stand_down(&mut ls, function, data, self.d_nr);
+         captured_view_stand_down(&mut guarded, function, data);
 diff --git a/src/scopes/phase.rs b/src/scopes/phase.rs
-index 6e4751cbc..aa228478d 100644
 --- a/src/scopes/phase.rs
 +++ b/src/scopes/phase.rs
-@@ -202,7 +202,6 @@ pub(super) fn run_scan_phase(
+@@ -218,7 +218,6 @@ pub(super) fn run_scan_phase(
          entry_witness: None,
          local_owns: HashMap::default(),
          owner_witness: HashMap::default(),
@@ -193,7 +188,7 @@ index 6e4751cbc..aa228478d 100644
          prefix_released: Vec::new(),
          displaced_owned,
          views_to_materialise,
-@@ -339,18 +338,6 @@ pub(super) fn run_scan_phase(
+@@ -356,18 +355,6 @@ pub(super) fn run_scan_phase(
              function.depend(v, b);
          }
      }
@@ -212,7 +207,7 @@ index 6e4751cbc..aa228478d 100644
      // @PLN219 `@FR-B-Ref-Repoint` — the cell a `&` PARAMETER is re-pointed to (`slot =
      // &slot.left` names the field through a compiler-made cell, `Parser::repoint_slot_param`)
      // is read through the parameter for the rest of the call, where its own name is not
-@@ -563,24 +550,6 @@ pub(super) fn run_scan_phase(
+@@ -580,24 +567,6 @@ pub(super) fn run_scan_phase(
      // call and not as `null`, because a heap local's `= null` lowers to `OpInitRef` — a
      // stack-record placeholder the allocator is expected to replace — and a free of THAT is
      // the `#306` refusal.
@@ -237,11 +232,10 @@ index 6e4751cbc..aa228478d 100644
      // @PLN219 — a slot cell is declared at the top, where every backend gives it the frame's
      // lifetime; a cell first set in a loop body was otherwise declared inside it.
      if !slot_cells.is_empty()
-@@ -1041,89 +1010,3 @@ pub(super) fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Da
-     let v = function.var(&name);
+@@ -1060,91 +1029,6 @@ pub(super) fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Da
      (v != u16::MAX).then_some(v)
  }
--
+ 
 -/// loft#2145 — the VIEW locals a `&` callee may rebind: each is handed to a `&` heap parameter
 -/// (`buffers::amp_rebound_locals`), borrows from another variable (its deps name one), is a
 -/// record or a struct-enum, and is bound ONCE, by a statement.  The once is what lets the
@@ -327,3 +321,6 @@ index 6e4751cbc..aa228478d 100644
 -    }
 -    walk(code, v, w, data.def_nr("OpPutRef"));
 -}
+ 
+ /// Per local, the frame temporaries its assignments bind it to a view of — see
+ /// `Scopes::view_temps`.

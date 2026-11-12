@@ -532,6 +532,11 @@ pub struct State {
     /// store-span check, which would otherwise take the unwritten slot for a missed
     /// recording.  Reset with `walk_steps`, per function.
     pub(crate) fused_away: Vec<u16>,
+    /// Codegen only: `@FR-R-RetAdopt`'s decision for the function being generated
+    /// (`opt::ret_adopt::ret_adopt`, the one both compiled writers apply): its result local
+    /// IS the hidden return buffer, its witness store is never minted, and the delivery copy
+    /// at its exits has nothing to move.  Set per function in `def_code`.
+    pub(crate) adopt: Option<crate::opt::ret_adopt::RetAdopt>,
     /// @P294: cached byte-capacity of the value-stack store (`stack_cur`).
     /// The stack store is allocated once and never re-`claim`s, so its
     /// buffer only grows through `ensure_stack`; this cache lets the hot
@@ -629,6 +634,9 @@ pub struct State {
     /// Cleared by the one place that writes `source_spans`, so a stale snapshot
     /// cannot be published.
     published_spans: Option<Arc<BTreeMap<u32, (Position, u32)>>>,
+    /// The store instruments' function and variable names per pc (`store_trace`), published
+    /// with the spans; `None` unless one of them is on.
+    pub(crate) pc_names: Option<Arc<crate::store_trace::PcNames>>,
     /// Function coverage — `Some(bitmap)` records which definitions this run actually
     /// entered, indexed by `d_nr`.  `None` on a normal run, so the hook in
     /// [`State::fn_call`] costs one branch and nothing else.  The test runner turns it
@@ -990,6 +998,7 @@ impl State {
             fast_stack: fast_stack_allowed(),
             walk_steps: None,
             fused_away: Vec::new(),
+            adopt: None,
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
@@ -1009,6 +1018,7 @@ impl State {
             halt_floor: 0,
             source_spans: BTreeMap::new(),
             published_spans: None,
+            pc_names: None,
             entered_fns: None,
             fn_positions: Vec::new(),
             worker_fn_memo: (u32::MAX, u32::MAX),
@@ -4189,6 +4199,7 @@ impl State {
             self.published_spans = Some(Arc::new(self.source_spans.clone()));
         }
         crate::crash_report::set_source_spans(self.published_spans.clone());
+        crate::store_trace::publish(self.pc_names.clone());
     }
 
     // ── @PLN16 debugger ──────────────────────────────────────────────────────
@@ -8167,24 +8178,8 @@ impl State {
         // `LOFT_TEXT_TIMELINE`.
         crate::state::text::text_timeline_summary();
         // `@FR-H-FreeTwice` — the double-free audit's verdict, printed whenever it is armed so
-        // an empty one is a MEASUREMENT rather than a silence.  Same-site re-frees are the join
-        // model and are reported as a count only; a different-site one has already printed its
-        // own line above, because that is the one worth reading.
-        if crate::keys::double_free_audit() {
-            let (same, other) = crate::keys::double_free_counts();
-            eprintln!(
-                "[double-free] {n} re-free(s) of an already-free slot: {other} from a \
-                 DIFFERENT site (a branch join — one free emitted per arm, only one arm mints) \
-                 and {same} from the SAME site (a runtime-guarded free whose guard let it \
-                 through twice).  Both are deliberate; this is a census, not a defect count.  \
-                 A re-free reaching here found the slot NOT reused, so nothing else was harmed \
-                 — the dangerous free, a stale reference releasing a slot handed to a new \
-                 owner, finds it LIVE and never appears here.  `LOFT_STRICT_STORES` converts \
-                 that case into this one by never recycling a slot.  Interpreter only: \
-                 `alloc_pc` is zero on `--native`, which collapses the split.",
-                n = same + other
-            );
-        }
+        // an empty one is a MEASUREMENT rather than a silence.
+        crate::keys::double_free_report();
         if !leaked.is_empty() {
             let rows = leaked.len();
             let count = crate::database::Stores::leak_total(&leaked);
@@ -8197,6 +8192,10 @@ impl State {
             // checked at RUNTIME rather than discharged statically: every store is freed
             // exactly once by exit, so a residue is a violation whatever its shape.
             let msg = format!("{count} stores not freed at program exit: {preview}");
+            crate::fault_log::record(
+                "leak",
+                &[("count", count.to_string()), ("stores", preview.clone())],
+            );
             // @PLN130 F8 — under LOFT_STRICT_STORES a store that is never freed is an
             // ERROR, not a warning. It is the other half of the same question: strict mode
             // asks that every store be freed exactly once, so both "freed then used" and
@@ -9190,6 +9189,7 @@ impl State {
         state.store_spans.clone_from(&self.store_spans);
         state.source_spans.clone_from(&self.source_spans);
         state.published_spans.clone_from(&self.published_spans);
+        state.pc_names.clone_from(&self.pc_names);
         state.fn_positions.clone_from(&self.fn_positions);
         state.frame_headroom = Arc::clone(&self.frame_headroom);
         state.gen_max_position = self.gen_max_position;
@@ -9236,6 +9236,7 @@ impl State {
             fast_stack: fast_stack_allowed(),
             walk_steps: None,
             fused_away: Vec::new(),
+            adopt: None,
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
@@ -9256,6 +9257,7 @@ impl State {
             halt_floor: 0,
             source_spans: BTreeMap::new(),
             published_spans: None,
+            pc_names: None,
             entered_fns: None,
             fn_positions: Vec::new(),
             worker_fn_memo: (u32::MAX, u32::MAX),

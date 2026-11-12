@@ -203,6 +203,9 @@ Two source shapes the rule deliberately does NOT license, each with its own answ
                 linked.  Afterwards c[s₁,…,sₙ] reads the copy back; v itself is untouched.
                 v's own key fields do not choose the place — they are overwritten on the
                 copy.  So c[5] = c[30]; c[30] = null MOVES the record from 30 to 5.
+                A NULL v (an absent lookup, a `T?` that is null) leaves the place reading
+                null, as `c[k] = null` does (Col-Remove): the record under (s₁,…,sₙ) is
+                removed, and an absent key stays absent.
 ```
 *Anchor:* `database/search.rs::set_keyed` (`insert_keyed_copy_at`, `keys::set_key`), both
 backends — the subscript's keys ride the op exactly as `OpGetRecord`'s do.  Guard
@@ -331,6 +334,10 @@ down (loft#1437).
                     table, never of its seed — so two tables built alike walk alike, a copy
                     walks as its source, and a run repeats on both backends.  It is not
                     insertion order: an insert after a removal may take the removed slot.
+                    A hash that holds a store RECORD as an entry — a linked type's entries
+                    (Col-Inline's `linked` fact), or one handed in already built — has no
+                    arena index for it, and walks in KEY order instead (Col-Order): a record
+                    number follows the allocator, which no two backends share.
                     Every other kind already walks without a sort, and keeps its Col-Order
                     order.  The walk reads the same snapshot as the ordered one, so what the
                     body may do to c is what an ordered walk allows.  A range or a text is

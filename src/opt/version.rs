@@ -105,6 +105,10 @@ pub struct Leaf {
     /// The operators the tests evaluate, by argument slice: plain in the fast twin.
     pub plain: HashSet<usize>,
     pub tests: Vec<Test>,
+    /// The leaves this one calls, walked inline: their decided `if`s, accesses and plain
+    /// operators are in the sets above (each keyed by an address in that callee's IR), and
+    /// the C writes each callee's own fast twin from them.
+    pub callees: Vec<u32>,
 }
 
 impl Leaf {
@@ -149,6 +153,13 @@ struct Walk<'a> {
     inputs: &'a Inputs<'a>,
     env: HashMap<u16, Local>,
     leaf: Leaf,
+    /// Does an element access follow the statement being walked, on the path that does not
+    /// leave the leaf?  An early exit is decided toward that path.
+    follows: bool,
+    /// Inside a called leaf: its record parameters, by the caller's record they name.  Its
+    /// variables are its own, so a field input is found only through this map there.
+    alias: HashMap<u16, u16>,
+    callee: bool,
 }
 
 fn op_name(data: &Data, d: u32) -> &str {
@@ -177,6 +188,32 @@ fn assigned(v: &Value, out: &mut HashSet<u16>) {
 }
 
 /// Does `v` read or write a vector element?
+/// Does `v` only leave the leaf: a `return`, or a block whose last statement is one?
+fn exits(v: &Value) -> bool {
+    match v.unspan() {
+        Value::Return(_) => true,
+        Value::Block(b) => b
+            .operators
+            .iter()
+            .rev()
+            .find(|o| !matches!(o.unspan(), Value::Line(_)))
+            .is_some_and(exits),
+        _ => false,
+    }
+}
+
+/// Is `v` an arm that does nothing: no `else`, or an empty block?
+fn empty_arm(v: &Value) -> bool {
+    match v.unspan() {
+        Value::Null => true,
+        Value::Block(b) => b
+            .operators
+            .iter()
+            .all(|o| matches!(o.unspan(), Value::Line(_))),
+        _ => false,
+    }
+}
+
 fn has_access(data: &Data, v: &Value) -> bool {
     let mut found = false;
     v.walk(&mut |n| {
@@ -228,7 +265,7 @@ impl Walk<'_> {
                         let Value::Int(fld) = args[1].unspan() else {
                             return None;
                         };
-                        let key = (*p, i64::from(*fld));
+                        let key = (self.root(*p)?, i64::from(*fld));
                         self.inputs
                             .scalars
                             .contains(&key)
@@ -259,7 +296,7 @@ impl Walk<'_> {
                 let Value::Int(off) = a[1].unspan() else {
                     return None;
                 };
-                let key = (*p, vec![i64::from(*off)]);
+                let key = (self.root(*p)?, vec![i64::from(*off)]);
                 self.inputs.headers.contains(&key).then_some(key)
             }
             _ => None,
@@ -341,8 +378,10 @@ impl Walk<'_> {
 
     /// An element read or write at a linear index of a header input: its tests and its slice.
     fn access(&mut self, name: &str, args: &[Value]) {
+        // An integer, float or boolean element field: each has a plain form in the fast twin.
         let elem = match (name, args.len()) {
-            ("OpGetInt", 2) | ("OpSetInt", 3) => &args[0],
+            ("OpGetInt" | "OpGetFloat" | "OpGetBoolean", 2)
+            | ("OpSetInt" | "OpSetFloat" | "OpSetBoolean", 3) => &args[0],
             _ => return,
         };
         let Value::Call(g, ga) = elem.unspan() else {
@@ -375,22 +414,111 @@ impl Walk<'_> {
         self.leaf.raw.insert(args.as_ptr() as usize);
     }
 
+    /// The leaf's own record variable `p` names: itself, or inside a called leaf the caller's
+    /// record its parameter was bound to.
+    fn root(&self, p: u16) -> Option<u16> {
+        if self.callee {
+            self.alias.get(&p).copied()
+        } else {
+            Some(p)
+        }
+    }
+
+    /// Walk a call of leaf `d` inline — `@FR-R-Version`'s callee clause: its parameters bound
+    /// to the caller's arguments (a linear value, a header, or the caller's record), its
+    /// decisions and accesses joining this leaf's plan.  The value it answers, as a linear
+    /// expression over the caller's terms, or `None`.  One level: a callee calls nothing.
+    fn call_leaf(&mut self, d: u32, args: &[Value]) -> Result<Option<Lin>, String> {
+        let def = self.data.def(d);
+        let name = def.original_name();
+        if self.callee {
+            return Err(format!("calls {name} from a called leaf"));
+        }
+        if def.def_type != crate::data::DefType::Function || matches!(def.code(), Value::Null) {
+            return Err(format!("calls {name}"));
+        }
+        let vars = def.variables();
+        let mut rebound = HashSet::new();
+        assigned(def.code(), &mut rebound);
+        let mut env = HashMap::new();
+        let mut alias = HashMap::new();
+        for (p, arg) in vars.arguments().into_iter().zip(args) {
+            if rebound.contains(&p) {
+                continue;
+            }
+            if let Some(l) = self.lin(arg) {
+                env.insert(p, Local::Lin(l));
+            } else if let Some((r, o)) = self.header(arg) {
+                env.insert(p, Local::Header(r, o));
+            } else if let Value::Var(v) = arg.unspan()
+                && let Some(r) = self.root(*v)
+            {
+                alias.insert(p, r);
+            }
+        }
+        let saved = (
+            std::mem::replace(&mut self.env, env),
+            std::mem::take(&mut self.params),
+            std::mem::replace(&mut self.alias, alias),
+        );
+        self.callee = true;
+        let r = self.walk(def.code());
+        // The value the callee answers: its last statement, or what that returns.
+        let value = r.is_ok().then(|| match def.code().unspan() {
+            Value::Block(b) => b
+                .operators
+                .iter()
+                .rev()
+                .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                .and_then(|last| match last.unspan() {
+                    Value::Return(e) => self.lin(e),
+                    other => self.lin(other),
+                }),
+            other => self.lin(other),
+        });
+        self.callee = false;
+        (self.env, self.params, self.alias) = saved;
+        r?;
+        if !self.leaf.callees.contains(&d) {
+            self.leaf.callees.push(d);
+        }
+        Ok(value.flatten())
+    }
+
+    /// A statement list in order, each statement knowing whether an access follows it.
+    fn walk_list(&mut self, ops: &[Value]) -> Result<(), String> {
+        let outer = self.follows;
+        for (k, op) in ops.iter().enumerate() {
+            self.follows = outer || ops[k + 1..].iter().any(|o| has_access(self.data, o));
+            self.walk(op)?;
+        }
+        self.follows = outer;
+        Ok(())
+    }
+
     /// Walk `v` in evaluation order; `Err` where the function is no leaf.
     fn walk(&mut self, v: &Value) -> Result<(), String> {
         match v.unspan() {
-            Value::Block(b) => {
-                for op in &b.operators {
-                    self.walk(op)?;
-                }
-                Ok(())
-            }
-            Value::Insert(ops) => {
-                for op in ops {
-                    self.walk(op)?;
-                }
-                Ok(())
-            }
+            Value::Block(b) => self.walk_list(&b.operators),
+            Value::Insert(ops) => self.walk_list(ops),
             Value::Set(x, e) => {
+                if let Value::Call(d, args) = e.unspan()
+                    && !op_name(self.data, *d).starts_with("Op")
+                    && op_name(self.data, *d) != "t_6vector_len"
+                {
+                    for a in args {
+                        self.walk(a)?;
+                    }
+                    match self.call_leaf(*d, args)? {
+                        Some(l) => {
+                            self.env.insert(*x, Local::Lin(l));
+                        }
+                        None => {
+                            self.env.remove(x);
+                        }
+                    }
+                    return Ok(());
+                }
                 self.walk(e)?;
                 let local = self
                     .lin(e)
@@ -412,6 +540,10 @@ impl Walk<'_> {
                 let want = match (at, ae) {
                     (true, false) => Some(true),
                     (false, true) => Some(false),
+                    // An early exit — `if c { return x }` — with an access after it: decided
+                    // toward going on, so `!c` joins the precondition and the fast twin skips it.
+                    (false, false) if self.follows && exits(t) && empty_arm(e) => Some(false),
+                    (false, false) if self.follows && exits(e) && empty_arm(t) => Some(true),
                     _ => None,
                 };
                 if let Some(want) = want
@@ -441,7 +573,11 @@ impl Walk<'_> {
             Value::Call(d, args) => {
                 let name = op_name(self.data, *d);
                 if !name.starts_with("Op") && name != "t_6vector_len" {
-                    return Err(format!("calls {}", self.data.def(*d).original_name()));
+                    for a in args {
+                        self.walk(a)?;
+                    }
+                    self.call_leaf(*d, args)?;
+                    return Ok(());
                 }
                 for a in args {
                     self.walk(a)?;
@@ -483,6 +619,9 @@ pub fn leaf(data: &Data, d: u32, inputs: &Inputs) -> Option<Leaf> {
         inputs,
         env: HashMap::new(),
         leaf: Leaf::default(),
+        follows: false,
+        alias: HashMap::new(),
+        callee: false,
     };
     let r = w.walk(def.code());
     let name = def.original_name();

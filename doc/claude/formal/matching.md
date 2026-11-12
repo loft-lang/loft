@@ -246,12 +246,21 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
   (P-Multi)  a MULTI-PATTERN arm `pat_a | pat_b => body` (or `pat_a, pat_b`, the same arm): try
              pat_a from ⟨0,v⟩ (whole-match); else pat_b; the FIRST whole-match commits.  (P-Alt at
              arm granularity — no new cursor work.)  P-Alt holds at EVERY pattern position: the
-             arm, a tuple element, a field sub-pattern, a slice element.
+             arm, a tuple element, a field sub-pattern, a slice element.  Where the arm carries a
+             guard, (P-Guard) decides which listed pattern commits: the first whose bindings
+             also pass the guard (@C162).
   (P-Guard)  a GUARDED arm `pat if cond => body`: run `pat` from κ; on Match(binds,κ') evaluate
              `cond` under σ extended with `binds`.  cond true ⟹ the arm commits (Match(binds,κ'));
              cond false ⟹ the arm ⇓ Fail — exactly as if `pat` had not matched (P-Atomic keeps the
              provisional binds invisible) — and selection moves to the NEXT arm.  The guard is the
-             only way an already-matched pattern can still reject its arm.
+             only way an already-matched pattern can still reject its arm.  On a multi-pattern arm
+             (P-Multi) the guard is asked of each listed pattern that matches, in order, under
+             that pattern's own bindings: the first whose guard holds commits, and the arm fails
+             only when none does — so `p_a | p_b if g` answers as the two arms `p_a if g` and
+             `p_b if g` would, and the guard may run once per matching pattern.  An alternation
+             NESTED in a pattern (a tuple element, a field sub-pattern, a slice element) has
+             committed to its first match before the guard runs, and a guard that fails it fails
+             the arm (@C162).
   (P-Atomic) ⟨pat,κ,σ⟩ ⇓ Fail ⟹ σ UNCHANGED, κ not advanced (INV-Pure).  Provisional captures from a
              failed attempt are NEVER observable — the arm body runs ONLY after a committed whole-match.
 ```

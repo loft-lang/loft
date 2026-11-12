@@ -95,8 +95,7 @@ struct Definition {
   file: u16,
   line: i32,
   // @PLN116 — an enum field needs an explicit default (an enum's 0 is null, and a
-  // non-null field may not hold null).  A real Definition always sets `structure`; the
-  // name+nr `def_names` key (which never reads it) takes this benign first-variant default.
+  // non-null field may not hold null).  A real Definition always sets `structure`.
   structure: Structure = Function,
   typedef: u16,
   arguments: u8,
@@ -140,7 +139,8 @@ pub fn define(self: Code, public: boolean, name: text, tp: Structure, file: u16,
     res = nr;
   } else {
     res = self.definitions.len();
-    self.def_names +=[Definition {name: name, nr: res as i32 }];
+    // `definitions` and `def_names` are one record set (`@FR-Col-Group`): appending here
+    // indexes the record by name too.
     self.definitions +=[
     Definition {public: public, name: name, nr: res as i32, structure: tp, file: file, line: line }
     ];

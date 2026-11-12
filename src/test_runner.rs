@@ -1275,7 +1275,10 @@ pub(crate) fn run_tests(
             // `#superseded` steer pointing at nothing, which is a hard ERROR everywhere
             // else.
             let scopes_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
-            if !has_errors {
+            if has_errors {
+                loft::copy_manifest::clear_materialised_views();
+            } else {
+                loft::copy_manifest::drain_written_back_views(&mut p.diagnostics);
                 loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
             }
             if let (Some(t), Some(parse_ms), Some(scopes_ms)) = (phase_clock, parse_ms, scopes_ms) {
@@ -2322,6 +2325,9 @@ pub(crate) fn run_tests(
 
                     // A fresh runtime for every function, so tests within a file cannot
                     // leak heap/store state into each other.
+                    // `LOFT_STRICT_STORES` counts its violations for the whole process; a test
+                    // that added one FAILS, as the direct run's exit does (`main.rs`).
+                    let strict_before = loft::keys::strict_store_violations();
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let (mut state, mut data_copy) = if let Some((program, data)) = &compiled {
                             // SAFETY: `compiled` outlives this test's `state`, which is
@@ -2450,14 +2456,32 @@ pub(crate) fn run_tests(
                     let should_fail = ann.expect_fail_fn.contains_key(fn_name.as_str())
                         || (!ann.expect_fail_file.is_empty()
                             && !ann.expect_fail_fn.contains_key(fn_name.as_str()));
+                    let strict_new = loft::keys::strict_store_violations() - strict_before;
                     let (passed, fail_msg) = match result {
-                        Ok((_, _, leaks)) if !leaks.is_empty() => (
+                        Ok(_) if strict_new > 0 && loft::keys::strict_stores() => (
                             false,
                             Some(format!(
-                                "{} store(s) not freed at exit: {}",
-                                leaks.len(),
-                                leaks.join(", ")
+                                "{strict_new} store-lifetime violation(s) under LOFT_STRICT_STORES \
+                                 (each reported above with its sites)"
                             )),
+                        ),
+                        Ok((_, _, leaks)) if !leaks.is_empty() => (
+                            false,
+                            Some({
+                                loft::fault_log::record(
+                                    "leak",
+                                    &[
+                                        ("count", leaks.len().to_string()),
+                                        ("stores", leaks.join(", ")),
+                                        ("test", fn_name.clone()),
+                                    ],
+                                );
+                                format!(
+                                    "{} store(s) not freed at exit: {}",
+                                    leaks.len(),
+                                    leaks.join(", ")
+                                )
+                            }),
                         ),
                         Ok((fault, fault_msg, _)) => {
                             if fault {
@@ -2752,6 +2776,8 @@ pub(crate) fn run_tests(
     // exit: a suite run used to end without the summary, so a leak in a `main`-less guard
     // was invisible to the one instrument built to see it (loft#1357).  No-op unarmed.
     loft::interp::state::text_timeline_summary();
+    // The re-free census (`LOFT_DOUBLE_FREE`), as a program's exit prints it.
+    loft::keys::double_free_report();
     // The test ledger's last program is written here, not left to the C `atexit` handler: on
     // Windows `std::process::exit` ends the process without running that table, so a run of
     // N files recorded the first N-1.  A no-op when nothing is armed; the handler then finds

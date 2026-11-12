@@ -18,8 +18,9 @@ status-level     = "pass"
 # escalates to SIGKILL if the process ignores SIGTERM.
 slow-timeout     = { period = "300s", terminate-after = 1 }
 # The run-wide limit: a WARM local run of the suite fits in 20 minutes, and when one does not
-# that is the trigger to optimise the suite — split it, parallelise it, or move tests to a
-# nightly or PR leg — never to raise this (owner; CI_BUDGET.md).  Enforced by nextest itself,
+# that is the trigger to optimise the suite — make slow tests fast, parallelise them, or move
+# tests to a nightly or PR leg — never to raise this, and never to split a local run into
+# several capped runs: sharding is for CI only (owner; CI_BUDGET.md).  Enforced by nextest itself,
 # so it holds however the suite is started.  The CI profiles below set no cap of their own
 # (their jobs' `timeout-minutes` bound them) — and must say so, since they inherit this one.
 global-timeout   = "20m"

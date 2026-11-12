@@ -18,12 +18,45 @@ impl Output<'_> {
     /// init + ≥1 ncc-borrow reassign; see [`Output::witness_vars`]) is routed
     /// through the owned-store-tracker path so neither free-site whole-store-frees
     /// a borrowed view.  Every other var goes straight to [`Self::output_set_body`].
+    /// One assignment; under `LOFT_TRACE_BIND_NATIVE=<file>` also one row naming the exit it
+    /// took (`rs@<line>`, the first exit reached), in the interpreter's `LOFT_TRACE_BIND` form,
+    /// so the writers' choices can be compared (`scripts/bind_census.py`, STORE_RECORDS.md
+    /// § Phases, 2).
     pub(super) fn output_set(
         &mut self,
         w: &mut dyn Write,
         var: u16,
         to: &Value,
     ) -> std::io::Result<()> {
+        let first = !self.declared.contains(&var);
+        self.bind_arm.push("");
+        let r = self.output_set_arms(w, var, to);
+        let arm = match self.bind_arm.pop() {
+            Some("") | None => "rs-tail",
+            Some(a) => a,
+        };
+        if r.is_ok() {
+            crate::bind_lowering::trace_row(
+                "LOFT_TRACE_BIND_NATIVE",
+                self.data.def(self.def_nr).name(),
+                self.data.def(self.def_nr).variables().name(var),
+                first,
+                arm,
+            );
+        }
+        r
+    }
+
+    /// Name the exit the innermost open `output_set` took, keeping the first one named.
+    fn note_arm(&mut self, arm: &'static str) {
+        if let Some(top) = self.bind_arm.last_mut()
+            && top.is_empty()
+        {
+            *top = arm;
+        }
+    }
+
+    fn output_set_arms(&mut self, w: &mut dyn Write, var: u16, to: &Value) -> std::io::Result<()> {
         // A value `if` bound here delivers the local's type (`null_arm_type`).
         let prev_if_type = self.if_value_type.take();
         if matches!(to.unspan(), Value::If(..)) {
@@ -280,7 +313,13 @@ impl Output<'_> {
         if reassign && !owned {
             write!(w, "{{ ")?;
             self.call_bind_owns = false;
+            // `@FR-H-FreeTwice` — the owned-store tracker releases the displaced store after
+            // the bind, so the call arm inside must not free it as `(displaced)` too
+            // (`old_stash_var`, the `_old_` stash's own rule): `d = through(null)` freed it
+            // twice (N-Store/1997 `h4`).
+            let outer_stash = self.old_stash_var.replace(var);
             self.output_set_inner(w, var, to)?;
+            self.old_stash_var = outer_stash;
             let copied = std::mem::take(&mut self.call_bind_owns);
             write!(
                 w,
@@ -305,7 +344,10 @@ impl Output<'_> {
                 write!(w, " _own_store_{name} = var_{name};")?;
             }
             write!(w, " }}")?;
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         if reassign && owned && to.reads_var(var) {
             // `r = f(r, …)` — the new value is computed FROM the old one, so `r`
@@ -327,7 +369,9 @@ impl Output<'_> {
             // `OpDatabase(var_r)` reuse must not happen here at all: reusing the
             // store the value reads is the same fault one step earlier.
             write!(w, "{{ let _disp_{name}: DbRef = _own_store_{name}; ")?;
+            let outer_stash = self.old_stash_var.replace(var);
             self.output_set_body(w, var, to)?;
+            self.old_stash_var = outer_stash;
             write!(
                 w,
                 "; if _disp_{name}.store_nr != u16::MAX \
@@ -335,7 +379,10 @@ impl Output<'_> {
                  {{ OpFreeRef(cell, _disp_{name}, \"{name}(owned)\"); }} \
                  _own_store_{name} = var_{name}; }}"
             )?;
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         if reassign && owned {
             // An OWNED reassign of a runtime-Join local (a 2nd+ owned assign).
@@ -353,7 +400,10 @@ impl Output<'_> {
             )?;
             self.output_set_body(w, var, to)?;
             write!(w, "; _own_store_{name} = var_{name}; }}")?;
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // First-decl.  `collect_witness_vars` requires ≥1 owned assign, and the
         // init is owned (a `first = v[i] ?? d` borrow-only local is borrow-TYPED,
@@ -569,7 +619,9 @@ impl Output<'_> {
                     self.rebind_buffer_used = false;
                     write!(w, "let mut __rbb_{name} = false; ")?;
                 }
+                let outer_stash = self.old_stash_var.replace(var);
                 self.output_set_inner(w, var, to)?;
+                self.old_stash_var = outer_stash;
                 self.rebind_buffer = None;
                 let handed = std::mem::take(&mut self.rebind_buffer_used)
                     .then_some(rebind_buf)
@@ -581,7 +633,10 @@ impl Output<'_> {
                     "; {handed}if _old_{name}.store_nr != {place}.store_nr{witness_guard} \
                      {{ OpFreeRef(cell, _old_{name}, \"var_{name}(prev)\"); }} }}"
                 )?;
-                return Ok(());
+                {
+                    self.note_arm(concat!("rs@", line!()));
+                    return Ok(());
+                }
             }
         }
         self.output_set_inner(w, var, to)
@@ -735,6 +790,30 @@ impl Output<'_> {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_set_inner(&mut self, w: &mut dyn Write, var: u16, to: &Value) -> std::io::Result<()> {
         let variables = self.data.def(self.def_nr).variables();
+        // `x = x.next ?? y` — the value reads `x` and answers another store
+        // (`bind_lowering::answers_a_view_to_copy`, the one test the bytecode writer's `R2d`
+        // and the C writer's `reading_view_copy` read): computed first, then copied into a
+        // fresh store.  Bound plainly, `x` named `b`'s store and both freed it.  The
+        // enclosing `_old_<x>` stash releases the store `x` held.
+        if self.declared.contains(&var)
+            && !self.coroutine_persistent_fields.contains_key(&var)
+            && let Some(d) = variables.tp(var).base().heap_def_nr()
+            && to.reads_var(var)
+            && variables.owns_displaced_store(var, to, self.data)
+            && crate::bind_lowering::answers_a_view_to_copy(self.data, self.def_nr, to)
+        {
+            let name = sanitize(variables.name(var));
+            let tp_lit = self.data.def(d).known_type();
+            write!(w, "{{ let _src = ")?;
+            self.output_code_inner(w, to)?;
+            write!(
+                w,
+                "; var_{name} = OpDatabase(cell, DbRef::NULL, {tp_lit}); \
+                 OpCopyRecord(cell,_src, var_{name}, {tp_lit}); }}"
+            )?;
+            self.note_arm("rs-reading-view-copy");
+            return Ok(());
+        }
         // P224: writes to coroutine-persistent locals target the struct
         // field directly so the value survives across `next_*` calls.
         // The same Var/Set pair would otherwise produce a state-arm-scoped
@@ -774,6 +853,45 @@ impl Output<'_> {
             // the right-hand side may be a compound `bool` expression (`!b` → `(..) != 1`), so
             // the ` as u8` wraps the WHOLE of it, as the local path below does.
             let wrap_bool = matches!(variables.tp(var).base(), Type::Boolean);
+            // `@FR-B-Copy` — a whole-record bind copies (`bind_lowering`'s `F3`/`R2c`, the arms
+            // the bytecode and C writers take): written plainly, the field named its source's
+            // store and both were freed (G-Yield, `__ref_4 = t` before a yield).  @PLN220.
+            // `LOFT_NO_COROUTINE_VAR_COPY=1` writes it plainly.
+            let copy_src =
+                match crate::bind_lowering::re_bind(self.data, self.def_nr, variables, var, to).arm
+                {
+                    crate::bind_lowering::ReArm::VarCopy { src, d_nr } => Some((src, d_nr)),
+                    _ => match crate::bind_lowering::first_arm(
+                        self.data,
+                        self.def_nr,
+                        variables,
+                        var,
+                        to,
+                    ) {
+                        crate::bind_lowering::FirstArm::RecordVarCopy { src, d_nr } => {
+                            Some((src, d_nr))
+                        }
+                        _ => None,
+                    },
+                };
+            if let Some((src, d_nr)) = copy_src
+                && !crate::env_once!(std::env::var_os("LOFT_NO_COROUTINE_VAR_COPY").is_some())
+            {
+                let tp = self.data.def(d_nr).known_type();
+                let src_place = match self.coroutine_persistent_fields.get(&src) {
+                    Some(f) => format!("self.var_{f}"),
+                    None => format!("var_{}", sanitize(variables.name(src))),
+                };
+                write!(
+                    w,
+                    "{{ let _old = self.var_{name}; self.var_{name} = OpDatabase(cell, DbRef::NULL, \
+                     {tp}); OpCopyRecord(cell, {src_place}, self.var_{name}, {tp}); \
+                     if _old.store_nr != u16::MAX && _old.store_nr != self.var_{name}.store_nr \
+                     {{ OpFreeRef(cell, _old, \"{name}(displaced)\"); }} }}"
+                )?;
+                self.note_arm("rs-coroutine-var-copy");
+                return Ok(());
+            }
             // A fn-ref field holds the `(definition, closure)` pair, so a bare definition
             // number — a non-capturing lambda, or an arm of an `if` — emits as that pair, the
             // channel the local path below uses (loft#1587).
@@ -795,7 +913,10 @@ impl Output<'_> {
                 write!(w, ") as u8")?;
             }
             write!(w, "{narrow_close}")?;
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         if variables.is_argument(var)
             && let Type::RefVar(inner) = variables.tp(var)
@@ -816,7 +937,10 @@ impl Output<'_> {
                 {
                     let src_name = sanitize(variables.name(*src));
                     write!(w, "var_{name} = var_{src_name}")?;
-                    return Ok(());
+                    {
+                        self.note_arm(concat!("rs@", line!()));
+                        return Ok(());
+                    }
                 }
                 // @PLN219 `@FR-B-Ref-Repoint` — a record or struct-enum parameter re-pointed to
                 // a local: the cell a slot re-point names (`Parser::repoint_slot_param`), or a
@@ -830,12 +954,17 @@ impl Output<'_> {
                 {
                     let src_place = self.var_place(*src);
                     write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
-                    return Ok(());
+                    {
+                        self.note_arm(concat!("rs@", line!()));
+                        return Ok(());
+                    }
                 }
                 // @PLN219 `@FR-F-ParamRef` — a whole write through a slot cell: the field write
                 // when the cell names a field (an owned value given up there), the write-back
                 // otherwise; a field-naming cell is unchanged, so nothing is displaced.
-                if let Some(d) = self.data.slot_link_def(variables.tp(var))
+                let releases = variables.link_write_releases(var);
+                if releases
+                    && let Some(d) = self.data.slot_link_def(variables.tp(var))
                     && let Some(src) = self.data.slot_self_step(to, var)
                 {
                     let kt = self.type_lit_u16(self.data.def(d).known_type());
@@ -845,7 +974,10 @@ impl Output<'_> {
                         w,
                         "; unsafe {{ stores.slot_move(&mut *var_{name}, &_slot_src, {kt}); }} }}"
                     )?;
-                    return Ok(());
+                    {
+                        self.note_arm(concat!("rs@", line!()));
+                        return Ok(());
+                    }
                 }
                 if let Some(d) = self.data.slot_link_def(variables.tp(var)) {
                     let owned = matches!(
@@ -863,9 +995,14 @@ impl Output<'_> {
                         w,
                         "; unsafe {{ let _old_disp = *var_{name}; stores.slot_write(&mut *var_{name}, &_slot_v, {kt});"
                     )?;
-                    write!(w, " OpFreeRefIfDistinct(cell, _old_disp, *var_{name});")?;
+                    if releases {
+                        write!(w, " OpFreeRefIfDistinct(cell, _old_disp, *var_{name});")?;
+                    }
                     write!(w, " }} }}")?;
-                    return Ok(());
+                    {
+                        self.note_arm(concat!("rs@", line!()));
+                        return Ok(());
+                    }
                 }
                 // `c = &v[i]`, `c = &o.f` and `c = &m` on a SCALAR parameter.
                 if crate::data::is_scalar(inner)
@@ -877,7 +1014,10 @@ impl Output<'_> {
                         write!(w, "var_{name} = unsafe {{ ")?;
                         self.output_place_pointer(w, to, &base)?;
                         write!(w, " }}")?;
-                        return Ok(());
+                        {
+                            self.note_arm(concat!("rs@", line!()));
+                            return Ok(());
+                        }
                     }
                     if op == "OpCreateStack"
                         && let [src_arg] = cargs.as_slice()
@@ -886,7 +1026,10 @@ impl Output<'_> {
                     {
                         let src_place = self.var_place(*src);
                         write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
-                        return Ok(());
+                        {
+                            self.note_arm(concat!("rs@", line!()));
+                            return Ok(());
+                        }
                     }
                 }
                 // @PLN87 P2.2 / @PLN85 t4 — a `&`-param whole-record write-back that
@@ -908,7 +1051,7 @@ impl Output<'_> {
                 // one are all the SLOT's.  Asked bare, a `&text?` write-back emitted
                 // `*var_p = "z"` with no `.to_string()` and rustc rejected it.
                 let inner_slot = inner.base();
-                let amp_owned_writeback = ((matches!(
+                let amp_owned_writeback = (((matches!(
                     inner_slot,
                     Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                 ) || crate::parser::vectors::is_keyed(inner_slot))
@@ -918,7 +1061,9 @@ impl Output<'_> {
                     ))
                     // `@FR-F-ParamRef` — a RECORD written back from a borrowed value displaces
                     // the caller's store too: released unless the new value lives in it.
-                    || matches!(inner_slot, Type::Reference(_, _) | Type::Enum(_, true, _));
+                    || matches!(inner_slot, Type::Reference(_, _) | Type::Enum(_, true, _)))
+                    // Not through a link to a plain parameter (`@FR-F-ParamRebind`).
+                    && variables.link_write_releases(var);
                 let needs_text_coerce = matches!(inner_slot, Type::Text(_));
                 // A `&boolean` slot holds the tri-state STORAGE byte (`u8`: 0/1/255,
                 // null-capable) while an expression like `!b` produces a two-state
@@ -988,7 +1133,10 @@ impl Output<'_> {
                     write!(w, " }}")?;
                 }
             }
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // @PLN167 decision 2 — a link to a text field or element is the slot's `DbRef`, bound
         // by value: the place (`OpGetField` / the element op) or the `DbRef` another store-kind
@@ -1003,7 +1151,10 @@ impl Output<'_> {
                 write!(w, "let mut var_{name}: DbRef = ")?;
             }
             self.output_code_inner(w, to)?;
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // @PLN87 L1 — a local SCALAR `&`-link.  `b = &a` lowers to
         // `b: &T = OpCreateStack(a)`; native represents it as a Rust mutable borrow
@@ -1218,7 +1369,10 @@ impl Output<'_> {
                     write!(w, " }}")?;
                 }
             }
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // @PLN87 L5 — a heap whole-value reference (`p = &o`): `OpCreateStack(o)` with a
         // Reference referent.  The interp form is a stack-ref to `o`'s slot; native aliases
@@ -1256,7 +1410,10 @@ impl Output<'_> {
                 self.declared.insert(var);
                 write!(w, "let mut var_{name}: *mut DbRef = {target}")?;
             }
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // loft#1371 — a WRITE through a local `&struct` link (`pd = S { n: 2 }`).  The bind
         // just above is the only value that re-points the link; every other value writes
@@ -1270,10 +1427,24 @@ impl Output<'_> {
             && to != &Value::Null
         {
             let name = sanitize(variables.name(var));
+            // Through a link to a plain parameter the displaced store is the caller's: written,
+            // never released (`@FR-F-ParamRebind`).
+            if !variables.link_write_releases(var) {
+                write!(w, "unsafe {{ *var_{name} = ")?;
+                self.output_code_inner(w, to)?;
+                write!(w, "; }}")?;
+                {
+                    self.note_arm(concat!("rs@", line!()));
+                    return Ok(());
+                }
+            }
             write!(w, "unsafe {{ let _old_disp = *var_{name}; *var_{name} = ")?;
             self.output_code_inner(w, to)?;
             write!(w, "; OpFreeRefIfDistinct(cell, _old_disp, *var_{name}); }}")?;
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // #257: aliasing a `&ref` param into a fresh local (`snap = s`), both
         // RefVars.  A local RefVar alias is non-owning and never written back
@@ -1295,7 +1466,10 @@ impl Output<'_> {
                 write!(w, "let mut var_{name}: DbRef = ")?;
             }
             self.output_code_inner(w, to)?;
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // @PLN25: a `text?` var stores as `String` like plain `text` — peel so the literal→String
         // `.to_string()` conversion fires for an Optional(Text) local.
@@ -1324,8 +1498,14 @@ impl Output<'_> {
         } else {
             String::new()
         };
+        // `@FR-H-FreeTwice` — inside `output_set`'s `_old_<name>` stash the displaced store is
+        // released there, after this arm, by the same identity and a stricter guard; freed
+        // here too, an adopting fn-ref rebind (`cv = f(t)`) released it twice.
+        // `LOFT_NATIVE_INNER_DISPLACED_FREE=1` keeps both.
+        let stash_releases = self.old_stash_var == Some(var)
+            && !crate::env_once!(std::env::var_os("LOFT_NATIVE_INNER_DISPLACED_FREE").is_some());
         let displaced_free = || -> String {
-            if witnessed {
+            if witnessed || stash_releases {
                 String::new()
             } else {
                 format!(
@@ -1564,7 +1744,14 @@ impl Output<'_> {
                     crate::use_analysis::ownership_of(self.data, self.def_nr, to)
                 && base != u16::MAX
             {
-                Some(sanitize(variables.name(base)))
+                // A tuple base is witnessed by each of its heap members (loft#2471, loft#2472).
+                let name = sanitize(variables.name(base));
+                Some(
+                    match crate::use_analysis::join_witness_members(variables, base) {
+                        Some(m) => m.iter().map(|i| format!("{name}.{i}")).collect::<Vec<_>>(),
+                        None => vec![name],
+                    },
+                )
             } else {
                 None
             };
@@ -1663,8 +1850,12 @@ impl Output<'_> {
                     // the adopt arm's own displaced-free (`_dst.store_nr != _src.store_nr`) is
                     // false there and nothing is freed — the assignment becomes the no-op it
                     // always was.
-                    Some(witness) => {
-                        format!("{PASSTHROUGH} || _src.store_nr != var_{witness}.store_nr")
+                    Some(members) => {
+                        let distinct: Vec<String> = members
+                            .iter()
+                            .map(|w| format!("_src.store_nr != var_{w}.store_nr"))
+                            .collect();
+                        format!("{PASSTHROUGH} || ({})", distinct.join(" && "))
                     }
                     // loft#974 — a callee that returns a VIEW hands back a pointer into a
                     // store the CALLER already owns, so the destination ALIASES it: that is
@@ -1780,8 +1971,15 @@ impl Output<'_> {
                 "; if {adopt} {{ {disp}var_{name} = _src; }} {rebind}else {{ {copy} }}{unprotect} }}"
             )?;
             // Adopted or copied, the local now holds its own store — unless the bind is an
-            // elided VIEW, which aliases on purpose.
-            self.call_bind_owns = !variables.is_view_elided(var);
+            // elided VIEW, which aliases on purpose, or the adopt arm is the unconditional
+            // alias of a borrowed view (`adopt == "true"`, loft#974): the local holds the
+            // caller's store then, and the owned-store tracker taking it as owned freed it
+            // when the local was next rebound (`@FR-H-FreeTwice`: a sub-rule run over a rule
+            // answering `p.nodes[0]` freed the subject's store).
+            // `LOFT_NATIVE_VIEW_ALIAS_OWNS=1` reads it as owned.
+            self.call_bind_owns = !variables.is_view_elided(var)
+                && (adopt != "true"
+                    || crate::env_once!(std::env::var_os("LOFT_NATIVE_VIEW_ALIAS_OWNS").is_some()));
             // @PLN130 — a MAY-copy site: the emitted code branches on store identity at
             // runtime and copies on the non-adopting arm.  Recorded regardless, because the
             // guard asks whether the diagnostic ACCOUNTS for the site, not whether this
@@ -1792,7 +1990,10 @@ impl Output<'_> {
                 tp_nr,
                 crate::copy_manifest::Origin::NativeCallReturn,
             );
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // loft#1248 — a first bind from a CLOSURE call whose return may borrow.  The
         // call-return block above is keyed on `Value::Call`, which names its definition; a
@@ -1850,7 +2051,10 @@ impl Output<'_> {
                 tp_nr,
                 crate::copy_manifest::Origin::NativeCallReturn,
             );
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // loft#1659 — the interpreter's `OpBindFnRefResult`: a closure call whose target is
         // unresolved.  The call's return left the minted-or-borrowed verdict; adopt the mint
@@ -1894,7 +2098,10 @@ impl Output<'_> {
                 tp_nr,
                 crate::copy_manifest::Origin::NativeCallReturn,
             );
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // @PLN130 F1/F2 — MATERIALISE an element/field read into a store `var` owns.
         //
@@ -1968,7 +2175,10 @@ impl Output<'_> {
                 tp_nr,
                 crate::copy_manifest::Origin::NativeRecordBind,
             );
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // When assigning a reference to a reference variable, a pointer copy is not
         // sufficient — emit an OpCopyRecord call for a deep copy.
@@ -2075,7 +2285,10 @@ impl Output<'_> {
                     tp_nr,
                     crate::copy_manifest::Origin::NativeRecordBind,
                 );
-                return Ok(());
+                {
+                    self.note_arm(concat!("rs@", line!()));
+                    return Ok(());
+                }
             }
         }
         // For text/reference block assignments, pre-declare the variable so that
@@ -2092,14 +2305,20 @@ impl Output<'_> {
                 if self.text_borrowed(var) {
                     write!(w, "let var_{name}: &str = ")?;
                     self.output_code_inner(w, to)?;
-                    return Ok(());
+                    {
+                        self.note_arm(concat!("rs@", line!()));
+                        return Ok(());
+                    }
                 }
                 write!(w, "let mut var_{name} = ")?;
                 self.output_code_inner(w, to)?;
                 if needs_to_string {
                     write!(w, ".to_string()")?;
                 }
-                return Ok(());
+                {
+                    self.note_arm(concat!("rs@", line!()));
+                    return Ok(());
+                }
             }
         }
         // S35: Set(var, Insert([stmt1, ..., last_expr])) — hoist all-but-last ops as
@@ -2165,7 +2384,10 @@ impl Output<'_> {
             } else if text_tail {
                 write!(w, ").to_string()")?;
             }
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // Hoist call arguments that mutate stores into temporaries to prevent
         // double-mutable-borrow of `stores` in the call expression.
@@ -2268,7 +2490,10 @@ impl Output<'_> {
             if needs_to_string {
                 write!(w, ".to_string()")?;
             }
-            return Ok(());
+            {
+                self.note_arm(concat!("rs@", line!()));
+                return Ok(());
+            }
         }
         // @P302 — capture first-vs-reassign BEFORE the `declared` insert below
         // (the first-decl branch inserts `var`, so the flag must be read now).

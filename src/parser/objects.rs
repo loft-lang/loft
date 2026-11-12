@@ -6007,7 +6007,12 @@ impl Parser {
                 // value builds (`(T-Chk-Vec)`): an `if`'s then arm `[]` asks this channel for its
                 // element, as it does under a declared local or a field assignment, which push it.
                 let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-                if Self::seeds_lambda_hint(&td) || crate::parser::vectors::is_collection(&td_base) {
+                // `@FR-W-Lit` — a wide integer field in a regime file: a literal past i32 for it
+                // checks at the field's width.
+                if Self::seeds_lambda_hint(&td)
+                    || crate::parser::vectors::is_collection(&td_base)
+                    || (self.data.width32() && matches!(td_base, Type::Integer(s) if s.is_wide()))
+                {
                     self.expected = td.clone();
                 }
                 // A COLLECTION member of a literal rebuilt into a whole local — a struct literal
@@ -7511,7 +7516,14 @@ impl Parser {
         } else {
             (base, base_tp)
         };
-        if fresh && view_base {
+        // …and so is a WHOLE-variable base (`Unit { hp: …, ..u }`): a temporary named onto the
+        // return buffer (`ref_return`) turned the bind into `__retbuf = u`, a reassignment of
+        // the caller's buffer — freed unguarded, or, without the free, `u` itself, written
+        // through.  `LOFT_NO_UPDATE_TEMP_COPY=1` copies only a view base this way.
+        if fresh
+            && (view_base
+                || !crate::env_once!(std::env::var_os("LOFT_NO_UPDATE_TEMP_COPY").is_some()))
+        {
             // A temporary is a work reference, and an assignment between two of those is a
             // plain `Set`: bound through the assignment path, the "copy" of a view base was
             // the base's own record, so the named fields wrote through to the base
@@ -7880,7 +7892,7 @@ impl Parser {
             diagnostic_at!(
                 self.lexer,
                 at,
-                Level::Advice,
+                Level::Warning,
                 code = "linked-group-double-fill",
                 "{others} {route} to `{holder}`'s records, not {own} — this literal fills \
                  {fills}, so one record set ends up holding everything they were given"

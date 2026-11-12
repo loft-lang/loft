@@ -355,7 +355,9 @@ impl Parser {
                             && matches!(rhs.unspan(), Value::Var(r) if *r == var_nr))
                 });
                 if self_ref {
-                    ls.remove(0);
+                    if !self.concat_into_a_held_store(ls, tp, f_type, var_nr, snapshot_len) {
+                        ls.remove(0);
+                    }
                 } else {
                     // Trailing self-reference `v = a + v` (the accumulator `v`
                     // appears as a NON-first operand): the parts loop emitted
@@ -494,6 +496,65 @@ impl Parser {
         } else {
             false
         }
+    }
+
+    /// `@FR-L-CapRebind` — may a closure record built earlier on this pass hold the store vector
+    /// local `v` names, so a rebind that reads `v` must move it to a fresh store rather than
+    /// work in place (loft#2459)?  Off under `LOFT_NO_CAPREBIND_MINT`.
+    pub(crate) fn capture_record_holds(&self, v: u16) -> bool {
+        !self.first_pass
+            && crate::keys::caprebind_mint()
+            && self.vars.rebind_must_mint(v)
+            && self
+                .capture_records
+                .get(&(false, self.context, v))
+                .is_some_and(|r| !r.is_empty())
+    }
+
+    /// `@FR-L-CapRebind` — `v = v + [...]` where a closure record built over `v` holds `v`'s
+    /// store.  A rebind is not a mutation-through, so the in-place append the self-concat
+    /// otherwise takes would reach the record: `v` takes a fresh store instead, its old value
+    /// copied out first (loft#2459).  `false`, changing nothing, where no record holds it.
+    fn concat_into_a_held_store(
+        &mut self,
+        ls: &mut Vec<Value>,
+        tp: &Type,
+        f_type: &Type,
+        var_nr: u16,
+        snapshot_len: usize,
+    ) -> bool {
+        if !self.capture_record_holds(var_nr) {
+            return false;
+        }
+        let append_nr = self.data.def_nr("OpAppendVector");
+        let Some(rec) = ls.iter().find_map(|stmt| match stmt.unspan() {
+            Value::Call(d, args)
+                if *d == append_nr
+                    && args.len() == 3
+                    && matches!(args[0].unspan(), Value::Var(t) if *t == var_nr) =>
+            {
+                Some(args[2].clone())
+            }
+            _ => None,
+        }) else {
+            return false;
+        };
+        let tmp = self.create_unique("__trail_tmp", f_type);
+        self.vars.defined(tmp);
+        let mut front = self.vector_db(tp, tmp);
+        front.push(self.cl(
+            "OpAppendVector",
+            &[Value::Var(tmp), Value::Var(var_nr), rec.clone()],
+        ));
+        front.extend(self.vector_db(tp, var_nr));
+        ls[0] = self.cl(
+            "OpAppendVector",
+            &[Value::Var(var_nr), Value::Var(tmp), rec],
+        );
+        for (i, p) in front.into_iter().enumerate() {
+            ls.insert(snapshot_len + i, p);
+        }
+        true
     }
 
     /// P193: eager init for `local: keyed_collection<T[key]> = []`.
@@ -793,8 +854,14 @@ impl Parser {
     /// owned too, the consumer's own free claims the store, and a buffer here would
     /// free it a second time.
     pub(crate) fn own_joined_call_arms(&mut self, code: &mut Value, result_tp: &Type) {
+        // A struct-`Enum` is the same heap record as a struct (`Type::heap_def_nr`): asked of
+        // `Reference` alone, a join of an enum-returning call and a view of an enum field left
+        // the call's minted store with no owner (loft#2467's family).
         if self.first_pass
-            || !matches!(result_tp.base(), Type::Reference(_, _))
+            || !matches!(
+                result_tp.base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
             || result_tp.depend().is_empty()
         {
             return;
@@ -919,7 +986,15 @@ impl Parser {
             // freeing it took the holder's storage with it and the next read of the same
             // field dereferenced poison (loft#920).
             let borrows = !tp.depend().is_empty();
-            let w = if matches!(operand.unspan(), Value::Var(_)) || borrows {
+            // …and so is a FIELD read of a temp (`Holder.parse(t).rows == null`): it is a view
+            // into the temp's store, which the temp's own lift releases, so a work-ref free
+            // released it a second time (`@FR-H-FreeTwice`).  `LOFT_NO_NULL_TEST_PROJECTION_VIEW=1`.
+            let projection = matches!(operand.unspan(), Value::Call(op, _)
+                if crate::use_analysis::is_projection_op(&self.data, *op))
+                && !crate::env_once!(
+                    std::env::var_os("LOFT_NO_NULL_TEST_PROJECTION_VIEW").is_some()
+                );
+            let w = if matches!(operand.unspan(), Value::Var(_)) || borrows || projection {
                 u16::MAX
             } else {
                 self.vars.work_refs(tp, &mut self.lexer)
@@ -1198,14 +1273,36 @@ impl Parser {
         // `null` argument arrives null, a `return null` reads back null), and false here.  The
         // cure is unchanged and is the real one — a dense field has no discriminant to spend
         // on absence (`synth_nullable_struct_fields`), and the `?` is what creates the room.
-        if matches!(code.unspan(), Value::Null) {
-            self.nstore_null_report_as(
-                f_type,
-                "the assignment target",
-                None,
-                false,
-                Some("the store does not happen, so the slot keeps the value it had"),
-            );
+        // @C163 — and the null a dense slot cannot hold is the slot type's default, written as
+        // `S {}` would be; a type with no default refuses the store, as it refuses `e?`.
+        if matches!(code.unspan(), Value::Null) && !self.first_pass {
+            match self.data.has_default(f_type.base()) {
+                Ok(()) => {
+                    let note = format!(
+                        "the slot takes `{}`'s default, as `?` gives it",
+                        f_type.base().source_name(&self.data)
+                    );
+                    self.nstore_null_report_as(
+                        f_type,
+                        "the assignment target",
+                        None,
+                        false,
+                        Some(&note),
+                    );
+                    if let Some((default, _)) = self.build_default(f_type.base()) {
+                        return self.copy_ref(to, &default, f_type);
+                    }
+                }
+                Err(reason) => {
+                    let spelled = f_type.base().source_name(&self.data);
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`null` is stored into a `{spelled}` slot, which has no null and no \
+                         default ({reason}) — write a value, or declare the slot `{spelled}?`"
+                    );
+                }
+            }
         }
         let d_nr = self.data.type_def_nr(f_type);
         let tp = self.data.def(d_nr).known_type();
@@ -1715,6 +1812,62 @@ impl Parser {
     /// source), and `a -= 1` over `OpMin(self: V, o: integer)` looked for `OpMin(V, V)`
     /// (loft#1819).  Answers the composed value and its type; the caller judges the type
     /// against the place.
+    /// Is `v` a comparison (`==`, `<`, …) or a short-circuit `&&` / `||` (`if a { b } else
+    /// { false }`, `if a { true } else { b }`) — the operators a `??` binds looser than?
+    fn is_comparison_or_logic(&self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::If(_, t, f) => {
+                matches!(f.unspan(), Value::Boolean(false))
+                    || matches!(t.unspan(), Value::Boolean(true))
+            }
+            Value::Call(d, _) => {
+                let n = self.data.def(*d).name();
+                ["OpEq", "OpNe", "OpLt", "OpLe", "OpGt", "OpGe"]
+                    .iter()
+                    .any(|p| n.starts_with(p))
+            }
+            _ => false,
+        }
+    }
+
+    /// `@FR-N-Div` and its float twin `@FR-N-Domain` — does `left ⊕ divisor` answer `τ?`
+    /// because ⊕ is `/` or `%` and a zero divisor yields the reserved null?  A divisor
+    /// provably non-zero (a non-zero constant, a name a guard proved) keeps `τ`.  Captured
+    /// before `call_op` consumes the divisor's code.
+    pub(crate) fn div_is_nullable(&self, operator: &str, left: &Type, divisor: &Value) -> bool {
+        (operator == "/" || operator == "%")
+            && (matches!(left.base(), Type::Integer(_))
+                || (crate::keys::ndomain_enabled()
+                    && matches!(left.base(), Type::Float | Type::Single)))
+            && !self.divisor_provably_nonzero(divisor)
+    }
+
+    /// The type an arithmetic operator's result takes, given what `call_op` typed it: `τ?`
+    /// for a partial `/` or `%` ([`Self::div_is_nullable`]), and for a nullable operand
+    /// riding into a value-preserving scalar op (`@FR-N-Prop` — the null already flows
+    /// through at run time).  A binary operator and a compound step (`a ⊕= b`) both ask it.
+    fn nullable_result(
+        operator: &str,
+        div_nullable: bool,
+        operand_nullable: bool,
+        tp: Type,
+    ) -> Type {
+        if div_nullable && crate::keys::pln25_dn1_enabled() {
+            return Type::optional(tp);
+        }
+        if operand_nullable
+            && !matches!(tp, Type::Optional(_))
+            && matches!(tp.base(), Type::Integer(_) | Type::Float | Type::Single)
+            && matches!(
+                operator,
+                "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
+            )
+        {
+            return Type::optional(tp);
+        }
+        tp
+    }
+
     pub(crate) fn compute_op_code(
         &mut self,
         op: &str,
@@ -1778,8 +1931,15 @@ impl Parser {
             )
             && Self::width32_int(f_type)
             && Self::width32_int(src_tp);
+        // `a ⊕= b` answers what `a ⊕ b` answers: a divisor not provably non-zero, or a
+        // nullable operand, makes the composed value `τ?` (`@FR-N-Div`, `@FR-N-Prop`), so the
+        // write is asked `@FR-N-Store`'s question and an inferred local widens (`@FR-N-Join`).
+        let div_nullable = self.div_is_nullable(op, f_type, val);
+        let operand_nullable = crate::keys::nprop_enabled()
+            && (matches!(f_type, Type::Optional(_)) || matches!(src_tp, Type::Optional(_)));
         let mut code = Value::Null;
         let tp = self.call_op_as(&mut code, name, spelled, &operands, &types);
+        let tp = Self::nullable_result(op, div_nullable, operand_nullable, tp);
         if regime32 && let Type::Integer(spec) = tp.base() {
             let narrow = Type::Integer(crate::narrow::IntegerSpec {
                 not_null: spec.not_null,
@@ -2810,7 +2970,15 @@ impl Parser {
                             // this, `fn f() -> text { ...; a.v.0 }` returns
                             // a `Str` whose ptr points into a freed host.
                             let parent_deps = t.depend();
+                            // `@FR-T-Absent` × `(N-Prop)` — a member of an in-flight tuple
+                            // (`v[i]` by a variable index, `Optional(Tuple)`) is `τᵢ?`: an absent
+                            // tuple is a tuple of null members, and N-Store polices where each
+                            // lands (`y: integer = v[i].0` is warned, as the whole tuple is).
+                            let in_flight = matches!(t, Type::Optional(_));
                             t = elems[idx].clone();
+                            if in_flight {
+                                t = Type::optional(t);
+                            }
                             // `@FR-O-Oracle`: a projection is Borrowed(BASE), so the element
                             // carries what the whole base borrows — ALL of it.  A tuple's base
                             // deps are the union of its elements' (`Type::depend`), so a literal
@@ -4594,12 +4762,23 @@ impl Parser {
                 rhs_type.source_name(&self.data),
                 result_type.source_name(&self.data),
             );
+            // A `boolean` default for a value that is not one is, nearly always, precedence:
+            // `x ?? -1 == 3` reads `-1 == 3` as the default, because `??` binds looser than a
+            // comparison, `&&` and `||`.  The mismatch alone names the symptom, not that.
+            let precedence = matches!(rhs_type.base(), Type::Boolean)
+                && !matches!(result_type.base(), Type::Boolean)
+                && self.is_comparison_or_logic(&rhs);
+            let why = if precedence {
+                " — `??` binds looser than a comparison, `&&` and `||`, so the default here is \
+                 the whole test after it; parenthesise the coalesce: `(x ?? d) == y`"
+            } else {
+                " — a default must be usable where the value's type is expected"
+            };
             diagnostic!(
                 self.lexer,
                 Level::Error,
                 code = "coalesce-default-type-mismatch",
-                "`??` default of type `{given}` is not assignable to `{wanted}` — a default \
-                 must be usable where the value's type is expected",
+                "`??` default of type `{given}` is not assignable to `{wanted}`{why}",
             );
             // @PLN131 — ONE fix, and no `edit`.  The obvious rewrite (`… as {wanted}`) is
             // not sound to spell: `"x" as integer` is a text parse that can fail, so
@@ -4637,10 +4816,13 @@ impl Parser {
         // that point, and a default left owner-less on the absent path leaks its store.
         let record_view = self.owned_record_subject(lhs_type, code)
             && Self::frame_view_of(&result_type, 0).is_some();
+        // A struct-`Enum` result is the same heap record (`own_joined_call_arms` says why).
         if !self.first_pass
             && (record_view
-                || (matches!(result_type.base(), Type::Reference(_, _))
-                    && !result_type.depend().is_empty()))
+                || (matches!(
+                    result_type.base(),
+                    Type::Reference(_, _) | Type::Enum(_, true, _)
+                ) && !result_type.depend().is_empty()))
             && let Some(owned) = self.materialise_owned_call(&rhs, &result_type)
         {
             rhs = owned;
@@ -4836,9 +5018,30 @@ impl Parser {
         matches!(
             lhs_type.base(),
             Type::Reference(_, _) | Type::Enum(_, true, _)
-        ) && match code.unspan() {
+        ) && self.every_tail_is_an_owned_call(code)
+    }
+
+    /// Is every value `code` can answer a loft call's (or a fn-ref call's) result?  A value
+    /// BRANCH whose every arm is one (`(if c { f() } else { g() }) ?? d`) mints on every path
+    /// as a bare call does (`@FR-O-Complete`); left out, the subject temp freed nothing, and
+    /// a tuple subject's unboxed members and its unbox work-ref both freed the box (attic
+    /// 1451's neighbour).  `LOFT_NO_NCC_BRANCH_SUBJECT=1` reads only a bare call.
+    fn every_tail_is_an_owned_call(&self, code: &Value) -> bool {
+        match code.unspan() {
             Value::Call(d, _) => self.data.def(*d).is_loft_defined(),
             Value::CallRef(_, _) => true,
+            Value::If(_, a, b)
+                if !crate::env_once!(std::env::var_os("LOFT_NO_NCC_BRANCH_SUBJECT").is_some()) =>
+            {
+                self.every_tail_is_an_owned_call(a) && self.every_tail_is_an_owned_call(b)
+            }
+            Value::Block(bl)
+                if !crate::env_once!(std::env::var_os("LOFT_NO_NCC_BRANCH_SUBJECT").is_some()) =>
+            {
+                bl.operators
+                    .last()
+                    .is_some_and(|t| self.every_tail_is_an_owned_call(t))
+            }
             _ => false,
         }
     }
@@ -4857,6 +5060,27 @@ impl Parser {
             }
             Type::Optional(inner) => {
                 Self::frame_view_of(inner, tmp).map(|v| Type::Optional(Box::new(v)))
+            }
+            // A tuple subject arrives boxed in `__ncc_N` and is unboxed into member reads of
+            // that store: each heap member views it as a record result does (attic 1451 — typed
+            // owning, the binding freed `t.0`, a field of the box, and `__ncc_N` freed the box).
+            // `LOFT_NO_NCC_TUPLE_VIEW=1` leaves the members owning.
+            Type::Tuple(elems)
+                if elems.iter().any(|e| e.heap_dep().is_some())
+                    && !crate::env_once!(std::env::var_os("LOFT_NO_NCC_TUPLE_VIEW").is_some()) =>
+            {
+                Some(Type::Tuple(
+                    elems
+                        .iter()
+                        .map(|e| {
+                            if e.heap_dep().is_some() {
+                                e.with_deps(&crate::data::Deps::frame(vec![tmp]))
+                            } else {
+                                e.clone()
+                            }
+                        })
+                        .collect(),
+                ))
             }
             _ => None,
         }
@@ -6458,11 +6682,7 @@ impl Parser {
             // `divisor_provably_nonzero` elision keeps `x / 2.0` non-null. Integer stays default-on.
             // @FR-N-Div and its float twin @FR-N-Domain: `/` and `%` type `τ?` because a zero
             // divisor yields the reserved null; a divisor provably non-zero keeps `τ`.
-            let div_nullable = (operator == "/" || operator == "%")
-                && (matches!(ctp.base(), Type::Integer(_))
-                    || (crate::keys::ndomain_enabled()
-                        && matches!(ctp.base(), Type::Float | Type::Single)))
-                && !self.divisor_provably_nonzero(&second_code);
+            let div_nullable = self.div_is_nullable(operator, ctp, &second_code);
             // @PLN102 (N-Prop) Phase 2 — capture operand nullability BEFORE `call_op` consumes
             // the operand types. A nullable operand PROPAGATES through a value-preserving scalar
             // op: the runtime already carries the null sentinel / NaN through (`n+5`, `5-n`,
@@ -6525,20 +6745,7 @@ impl Parser {
                     narrow
                 };
             }
-            if div_nullable && crate::keys::pln25_dn1_enabled() {
-                *ctp = Type::optional(ctp.clone());
-            } else if operand_nullable
-                && !matches!(*ctp, Type::Optional(_))
-                && matches!(ctp.base(), Type::Integer(_) | Type::Float | Type::Single)
-                && matches!(
-                    operator,
-                    "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
-                )
-            {
-                // @PLN102 (N-Prop): a nullable operand rode into a value-preserving scalar op —
-                // the result is nullable too (the null value already flows through at runtime).
-                *ctp = Type::optional(ctp.clone());
-            }
+            *ctp = Self::nullable_result(operator, div_nullable, operand_nullable, ctp.clone());
             // Plan-07 phase 1, step 1.B.1 — wrap binary fault-prone
             // arithmetic ops in `Value::Span` so runtime errors
             // (div-by-zero, narrow overflow, signed-overflow panic

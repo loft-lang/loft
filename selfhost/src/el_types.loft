@@ -698,6 +698,12 @@ fn is_struct_enum(t: ir::TypeT) -> boolean {
   match t { TyEnum { is_ref } => is_ref, _ => false }
 }
 
+// A heap RECORD: a struct reference, or a struct-`Enum`, which is the same record shape
+// (`Type::heap_def_nr`).
+pub fn is_heap_record(t: ir::TypeT) -> boolean {
+  t is TyReference || is_struct_enum(t)
+}
+
 // `Data::tuple_def`'s name parts: each member as `Type::name` writes it — the carried scalars and
 // texts as `tuple_member` spells them, a struct enum by its own name.  "" for any other member.
 fn tuple_shape(e: el::El, elems: vector<ir::TypeT>) -> text {

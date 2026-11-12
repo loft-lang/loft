@@ -1,0 +1,867 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the scope pass in loft (`src/scopes/`), its first slice: what a function of scalar
+// values needs to run.  Each block gets its scope number in the order the scan phase enters them
+// (`enter_scope`: the body 1, then each nested block as it is reached), and a body that answers a
+// value answers it through a `return` (`returns.rs`).  Each local then gets its live interval
+// (`variables/intervals.rs`) and its frame slot (`variables/slots_v2.rs`).  A local that would
+// need a free — a text, a reference, a collection — is refused by name: the frees are the next
+// slice.
+
+use ir;
+use frame;
+use lower;
+
+// The scope pass over every function of the program; a refusal names its function and reason.
+pub fn scope_bundle(b: ir::Bundle) -> vector<text> {
+  refused: vector<text> = [];
+  ops = ops_of(b);
+  for d in b.data.definitions {
+    if d.def_type != 1 || len(d.code) == 0 {
+      continue;
+    }
+    // Only the program's own functions (source 1) are laid out: the library's are reached
+    // through a call, which nothing here runs yet.
+    if d.source != 1 {
+      continue;
+    }
+    why = unsupported(d.variables);
+    if why != "" {
+      refused += ["{d.name}: {why}"];
+      continue;
+    }
+    n = Numbering { next: 1 };
+    seen: vector<boolean> = [for _ in d.variables.variables { false }];
+    code = number(d.code[0]!, n, 0, d.variables, seen);
+    if !((d.returned[0] ?? ir::TyVoid) is TyVoid) {
+      code = tail_return(code);
+    }
+    b.data.definitions[d#index].code = [code];
+    iv = intervals(code, d.variables, ops);
+    assign_slots(d.variables, iv, range_aliases(code, d.variables, ops), local_start(d.variables));
+    b.data.definitions[d#index].code = [zero_var_size(code)];
+  }
+  refused
+}
+
+// Why `f`'s locals cannot be laid out yet, or "" when they can: only values that need no free.
+fn unsupported(f: ir::Function) -> text {
+  for v in f.variables {
+    if v.argument {
+      continue;
+    }
+    t = v.type_def[0] ?? ir::TyVoid;
+    if needs_free(t) {
+      return "a local that needs a free (a text, a reference or a collection)";
+    }
+    if t is TyTuple || t is TyFunction {
+      return "a local tuple or function value";
+    }
+  }
+  ""
+}
+
+fn needs_free(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => needs_free(inner),
+    TyEnum { is_ref } => is_ref,
+    TyBoolean => false,
+    TySingle => false,
+    TyCharacter => false,
+    TyInteger => false,
+    TyFloat => false,
+    TyVoid => false,
+    _ => true
+  }
+}
+
+// The definitions the interval walk and the alias recognise by number.
+pub fn ops_of(b: ir::Bundle) -> Ops {
+  Ops {
+    free_text: lower::find(b, "OpFreeText") ?? -1,
+    free_ref: lower::find(b, "OpFreeRef") ?? -1,
+    create_stack: lower::find(b, "OpCreateStack") ?? -1,
+    add_int: lower::find(b, "OpAddInt") ?? -1,
+    lt_int: lower::find(b, "OpLtInt") ?? -1,
+    le_int: lower::find(b, "OpLeInt") ?? -1,
+    eq_int: lower::find(b, "OpEqInt") ?? -1
+  }
+}
+
+pub struct Ops {
+  free_text: integer,
+  free_ref: integer,
+  create_stack: integer,
+  add_int: integer,
+  lt_int: integer,
+  le_int: integer,
+  eq_int: integer
+}
+
+struct Numbering { next: integer }
+
+// Each block numbered as the scan phase enters it, in source order; each local's scope is the
+// block it is first assigned in.
+fn number(n: ir::Node, k: Numbering, cur: integer, f: ir::Function, seen: vector<boolean>) -> ir::Node {
+  match n {
+    NdBlock { block } => {
+      bl = block[0];
+      bl.scope = k.next;
+      k.next += 1;
+      bl.operators = [for x in bl.operators { number(x, k, bl.scope, f, seen) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      bl.scope = k.next;
+      k.next += 1;
+      bl.operators = [for x in bl.operators { number(x, k, bl.scope, f, seen) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdIf { cond, t, f: fb } => {
+      // A scalar both arms assign, and nothing before them, belongs to the scope around the
+      // `if` (`scan_if`'s `small_both`).
+      tv: vector<integer> = [];
+      fv: vector<integer> = [];
+      assigned(t, tv);
+      assigned(fb, fv);
+      for v in tv {
+        if fv.contains(v) && !(seen[v] ?? true) && !f.variables[v]!.argument && !needs_free(f.variables[v]!.type_def[0] ?? ir::TyVoid) {
+          seen[v] = true;
+          f.variables[v].scope = cur;
+        }
+      }
+      ir::NdIf { cond: number(cond, k, cur, f, seen), t: number(t, k, cur, f, seen), f: number(fb, k, cur, f, seen) }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: number(inner, k, cur, f, seen) },
+    NdReturn { inner } => ir::NdReturn { inner: number(inner, k, cur, f, seen) },
+    NdDrop { inner } => ir::NdDrop { inner: number(inner, k, cur, f, seen) },
+    NdSet { var, inner } => {
+      if !(seen[var] ?? true) {
+        seen[var] = true;
+        if !f.variables[var]!.argument {
+          f.variables[var].scope = cur;
+        }
+      }
+      ir::NdSet { var: var, inner: number(inner, k, cur, f, seen) }
+    },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { number(a, k, cur, f, seen) }] },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { number(x, k, cur, f, seen) }] },
+    _ => n
+  }
+}
+
+// The variables `n` assigns, in order, outside any loop (`find_assigned_vars`).
+fn assigned(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdSpan { inner } => assigned(inner, out),
+    NdSet { var, inner } => {
+      if !out.contains(var) {
+        out += [var];
+      }
+      assigned(inner, out);
+    },
+    NdBlock { block } => {
+      for x in block[0].operators {
+        assigned(x, out);
+      }
+    },
+    NdIf { cond, t, f } => {
+      assigned(cond, out);
+      assigned(t, out);
+      assigned(f, out);
+    },
+    NdInsert { items } => {
+      for x in items {
+        assigned(x, out);
+      }
+    },
+    NdCall { args } => {
+      for x in args {
+        assigned(x, out);
+      }
+    },
+    NdCallRef { args } => {
+      for x in args {
+        assigned(x, out);
+      }
+    },
+    NdDrop { inner } => assigned(inner, out),
+    NdReturn { inner } => assigned(inner, out),
+    _ => {}
+  }
+}
+
+// The body's last operator answered through a `return`, where it is a value and not one already.
+fn tail_return(body: ir::Node) -> ir::Node {
+  match body {
+    NdBlock { block } => {
+      bl = block[0];
+      k = len(bl.operators);
+      if k == 0 {
+        return body;
+      }
+      last = bl.operators[k - 1]!;
+      inner = match last { NdSpan { inner } => inner, _ => last };
+      if !(inner is NdReturn) {
+        bl.operators[k - 1] = match last {
+          NdSpan { pos, inner: li } => ir::NdSpan { pos: pos, inner: ir::NdReturn { inner: li } },
+          _ => ir::NdReturn { inner: last }
+        };
+      }
+      ir::NdBlock { block: [bl] }
+    },
+    _ => body
+  }
+}
+
+// `u32::MAX`: no definition yet.
+NO_DEF = 4294967295;
+
+// Each variable's live interval, `[first_def, last_use]` in the walk's sequence numbers, and the
+// sequence range of each loop (`compute_intervals`).
+pub struct Intervals {
+  first_def: vector<integer>,
+  last_use: vector<integer>,
+  seq: integer,
+  loop_scope: vector<integer>,
+  loop_start: vector<integer>,
+  loop_end: vector<integer>
+}
+
+pub fn intervals(code: ir::Node, f: ir::Function, ops: Ops) -> Intervals {
+  iv = Intervals {
+    first_def: [for _ in f.variables { NO_DEF }],
+    last_use: [for _ in f.variables { 0 }],
+    seq: 0,
+    loop_scope: [],
+    loop_start: [],
+    loop_end: []
+  };
+  walk(code, f, ops, iv);
+  iv
+}
+
+fn used(iv: Intervals, v: integer) {
+  if v >= 0 && v < len(iv.last_use) && iv.last_use[v]! < iv.seq {
+    iv.last_use[v] = iv.seq;
+  }
+}
+
+// The type a slot is laid out for, under its nullability (`Type::base`).
+fn base(t: ir::TypeT) -> ir::TypeT {
+  match t { TyOptional { inner } => base(inner), _ => t }
+}
+
+fn walk(n: ir::Node, f: ir::Function, ops: Ops, iv: Intervals) {
+  match n {
+    NdVar { n: v } => {
+      used(iv, v);
+      iv.seq += 1;
+    },
+    NdSet { var, inner } => {
+      // A text or an owned reference is pre-initialised before its value runs, so it takes its
+      // first definition first; any other value after it.
+      t = base(f.variables[var]!.type_def[0] ?? ir::TyVoid);
+      early = match t { TyText => true, TyReference => true, TyEnum { is_ref } => is_ref, _ => false };
+      if early && iv.first_def[var]! == NO_DEF {
+        iv.first_def[var] = iv.seq;
+        iv.seq += 1;
+      }
+      walk(inner, f, ops, iv);
+      if !early && iv.first_def[var]! == NO_DEF {
+        iv.first_def[var] = iv.seq;
+      }
+      used(iv, var);
+      iv.seq += 1;
+    },
+    NdBlock { block } => {
+      for x in block[0].operators {
+        walk(x, f, ops, iv);
+      }
+    },
+    NdLoop { block } => {
+      start = iv.seq;
+      for x in block[0].operators {
+        walk(x, f, ops, iv);
+      }
+      end = iv.seq;
+      iv.loop_scope += [block[0].scope];
+      iv.loop_start += [start];
+      iv.loop_end += [end];
+      // A variable defined before the loop and read in it may be read again at the next
+      // round's top: it lives to the loop's last sequence number.
+      if end > start {
+        for v in f.variables {
+          i = v#index;
+          fd = iv.first_def[i]!;
+          lu = iv.last_use[i]!;
+          if frame::width(v.type_def[0] ?? ir::TyVoid, false) > 0 && fd != NO_DEF && fd < start && lu >= start && lu < end {
+            iv.last_use[i] = end - 1;
+          }
+        }
+      }
+    },
+    NdIter { var, create, next, init } => {
+      used(iv, var);
+      iv.seq += 1;
+      walk(create, f, ops, iv);
+      walk(next, f, ops, iv);
+      walk(init, f, ops, iv);
+    },
+    NdIf { cond, t, f: fb } => {
+      walk(cond, f, ops, iv);
+      walk(t, f, ops, iv);
+      walk(fb, f, ops, iv);
+    },
+    NdCall { def_nr, args } => {
+      if (def_nr == ops.free_text || def_nr == ops.free_ref) && len(args) == 1 {
+        match args[0]! {
+          NdVar { n: v } => {
+            used(iv, v);
+            iv.seq += 1;
+            return;
+          },
+          _ => {}
+        }
+      }
+      for a in args {
+        walk(a, f, ops, iv);
+      }
+      for a in args {
+        borrowed(a, ops, iv);
+      }
+      iv.seq += 1;
+    },
+    NdCallRef { var, args } => {
+      for a in args {
+        walk(a, f, ops, iv);
+      }
+      for a in args {
+        borrowed(a, ops, iv);
+      }
+      used(iv, var);
+      iv.seq += 1;
+    },
+    NdReturn { inner } => walk(inner, f, ops, iv),
+    NdDrop { inner } => walk(inner, f, ops, iv),
+    NdInsert { items } => {
+      for x in items {
+        walk(x, f, ops, iv);
+      }
+    },
+    NdBreak => {},
+    NdContinue => {},
+    NdNull => {},
+    NdLine => {},
+    NdSpan { inner } => walk(inner, f, ops, iv),
+    NdTuple { items } => {
+      for x in items {
+        walk(x, f, ops, iv);
+      }
+      iv.seq += 1;
+    },
+    NdTupleGet { var } => {
+      used(iv, var);
+      iv.seq += 1;
+    },
+    NdTuplePut { var, inner } => {
+      walk(inner, f, ops, iv);
+      if iv.first_def[var]! == NO_DEF {
+        iv.first_def[var] = iv.seq;
+      }
+      used(iv, var);
+      iv.seq += 1;
+    },
+    NdYield { inner } => {
+      walk(inner, f, ops, iv);
+      iv.seq += 1;
+    },
+    NdParallel { arms } => {
+      for x in arms {
+        walk(x, f, ops, iv);
+      }
+      iv.seq += 1;
+    },
+    _ => {
+      iv.seq += 1;
+    }
+  }
+}
+
+// A variable a call borrows (`OpCreateStack(v)`) lives until the call runs
+// (`extend_borrowed_args`): through the wrappers a `&` argument is built in, not into another
+// call's arguments.
+fn borrowed(n: ir::Node, ops: Ops, iv: Intervals) {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr == ops.create_stack && ops.create_stack >= 0 {
+        match unspan(args[0] ?? ir::NdNull) {
+          NdVar { n: v } => used(iv, v),
+          _ => {}
+        }
+      }
+    },
+    NdInsert { items } => {
+      for x in items {
+        borrowed(x, ops, iv);
+      }
+    },
+    NdBlock { block } => {
+      for x in block[0].operators {
+        borrowed(x, ops, iv);
+      }
+    },
+    NdSpan { inner } => borrowed(inner, ops, iv),
+    _ => {}
+  }
+}
+
+fn unspan(n: ir::Node) -> ir::Node {
+  match n { NdSpan { inner } => unspan(inner), _ => n }
+}
+
+// A counted range loop's variable and its index (`loop_shape::range_counters`), as one pair
+// of two variable numbers; -1 where the loop is not one.
+struct Alias { lv: integer, ix: integer }
+
+fn range_counter(lp: ir::Block, ops: Ops) -> Alias? {
+  first = lp.operators[0];
+  if first == null {
+    return null;
+  }
+  lv = -1;
+  it: ir::Block? = null;
+  match unspan(first!) {
+    NdSet { var, inner } => {
+      lv = var;
+      match unspan(inner) {
+        NdBlock { block } => { it = block[0]; },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  if it == null || it!.name != "Iter range" {
+    return null;
+  }
+  // An inclusive range's iterator opens with its stop guard.
+  st = it!.operators;
+  if len(st) >= 4 && stop_guard(st[0]!, ops) {
+    st = st[1..];
+  }
+  test = ir::NdNull;
+  step = ir::NdNull;
+  yielded = ir::NdNull;
+  xi = -1;
+  counter = -1;
+  if len(st) == 4 {
+    // The two-counter form: the test, the index from the next counter, its step, the yield.
+    test = st[0]!;
+    nx = -1;
+    match unspan(st[1]!) {
+      NdSet { var, inner } => {
+        xi = var;
+        match unspan(inner) { NdVar { n: x } => { nx = x; }, _ => { return null; } }
+      },
+      _ => { return null; }
+    }
+    match unspan(st[2]!) {
+      NdSet { var, inner } => {
+        if var != nx {
+          return null;
+        }
+        step = unspan(inner);
+      },
+      _ => { return null; }
+    }
+    yielded = st[3]!;
+    counter = nx;
+  } else if len(st) == 3 {
+    match unspan(st[0]!) {
+      NdSet { var, inner } => {
+        xi = var;
+        step = unspan(inner);
+      },
+      _ => { return null; }
+    }
+    test = st[1]!;
+    yielded = st[2]!;
+    counter = xi;
+  } else {
+    return null;
+  }
+  step_ok = match step {
+    NdCall { def_nr, args } => def_nr == ops.add_int && len(args) == 2 && unspan(args[0]!) == ir::NdVar { n: counter } && unspan(args[1]!) == ir::NdInt { n: 1 },
+    _ => false
+  };
+  if !step_ok {
+    return null;
+  }
+  test_ok = false;
+  match unspan(test) {
+    NdIf { cond, t, f } => {
+      if breaks(t) && unspan(f) is NdNull {
+        match unspan(cond) {
+          NdCall { def_nr, args } => {
+            test_ok = (def_nr == ops.lt_int || def_nr == ops.le_int) && len(args) == 2 && unspan(args[1]!) == ir::NdVar { n: counter };
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  if !test_ok || unspan(yielded) != ir::NdVar { n: xi } {
+    return null;
+  }
+  Alias { lv: lv, ix: xi }
+}
+
+// `is_inclusive_stop_guard`: `if a == b { break }` before an inclusive range's step.
+fn stop_guard(n: ir::Node, ops: Ops) -> boolean {
+  match unspan(n) {
+    NdIf { cond, t, f } => breaks(t) && unspan(f) is NdNull && match unspan(cond) { NdCall { def_nr, args } => def_nr == ops.eq_int && len(args) == 2, _ => false },
+    _ => false
+  }
+}
+
+// `is_break_block`: a `break`, bare or as a block's only statement.
+fn breaks(n: ir::Node) -> boolean {
+  match unspan(n) {
+    NdBreak => true,
+    NdBlock { block } => len(block[0].operators) == 1 && unspan(block[0].operators[0]!) is NdBreak,
+    _ => false
+  }
+}
+
+// `slot_alias::range_slot_aliases`: a range loop's variable shares its index's slot where both
+// are one kind, the variable is set only by the iterator and the index is written by no body
+// statement — and neither has its address taken.
+fn range_aliases(code: ir::Node, f: ir::Function, ops: Ops) -> vector<Alias> {
+  loops: vector<ir::Block> = [];
+  collect_loops(code, loops);
+  out: vector<Alias> = [];
+  for lp in loops {
+    rc = range_counter(lp, ops);
+    if rc == null {
+      continue;
+    }
+    lv = rc!.lv;
+    ix = rc!.ix;
+    vl = f.variables[lv];
+    vi = f.variables[ix];
+    if lv == ix || vl == null || vi == null || vl!.argument || vi!.argument || "{vl!.type_def[0] ?? ir::TyVoid}" != "{vi!.type_def[0] ?? ir::TyVoid}" {
+      continue;
+    }
+    taken = false;
+    for a in out {
+      if a.lv == lv || a.ix == lv || a.lv == ix {
+        taken = true;
+      }
+    }
+    if taken {
+      continue;
+    }
+    c = Census { sets: 0, other: false };
+    census(code, lv, false, ops, c);
+    if c.sets != 1 || c.other {
+      continue;
+    }
+    ci = Census { sets: 0, other: false };
+    census(code, ix, false, ops, ci);
+    if ci.other {
+      continue;
+    }
+    body_sets = false;
+    for st in lp.operators[1..] {
+      if sets_var(st, ix) {
+        body_sets = true;
+      }
+    }
+    if !body_sets {
+      out += [Alias { lv: lv, ix: ix }];
+    }
+  }
+  out
+}
+
+fn collect_loops(n: ir::Node, out: vector<ir::Block>) {
+  match n {
+    NdLoop { block } => { out += [block[0]]; },
+    _ => {}
+  }
+  for c in children(n) {
+    collect_loops(c, out);
+  }
+}
+
+struct Census { sets: integer, other: boolean }
+
+// How often `v` is assigned, and whether anything but a plain read or assignment names it — or a
+// read sits under an `OpCreateStack`.
+fn census(n: ir::Node, v: integer, under_addr: boolean, ops: Ops, c: Census) {
+  match n {
+    NdVar { n: x } => if x == v && under_addr { c.other = true; },
+    NdSet { var } => if var == v { c.sets += 1; },
+    NdTupleGet { var } => if var == v { c.other = true; },
+    NdTuplePut { var } => if var == v { c.other = true; },
+    NdCallRef { var } => if var == v { c.other = true; },
+    NdIter { var } => if var == v { c.other = true; },
+    NdFnRef { var } => if var == v { c.other = true; },
+    _ => {}
+  }
+  addr = match n { NdCall { def_nr } => def_nr == ops.create_stack, NdSpan => under_addr, _ => false };
+  for ch in children(n) {
+    census(ch, v, addr, ops, c);
+  }
+}
+
+fn sets_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSet { var } => if var == v { return true; },
+    _ => {}
+  }
+  for ch in children(n) {
+    if sets_var(ch, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// The direct child nodes of `n`, in order (`Value::for_each_child`).
+fn children(n: ir::Node) -> vector<ir::Node> {
+  match n {
+    NdSpan { inner } => [inner],
+    NdCall { args } => args,
+    NdCallRef { args } => args,
+    NdBlock { block } => block[0].operators,
+    NdLoop { block } => block[0].operators,
+    NdInsert { items } => items,
+    NdTuple { items } => items,
+    NdSet { inner } => [inner],
+    NdReturn { inner } => [inner],
+    NdDrop { inner } => [inner],
+    NdYield { inner } => [inner],
+    NdIf { cond, t, f } => [cond, t, f],
+    NdIter { create, next, init } => [create, next, init],
+    NdTuplePut { inner } => [inner],
+    NdParallel { arms } => arms,
+    _ => []
+  }
+}
+
+// Where the locals start: past every argument's stepped slot and the return address's
+// (`assign_function_slots`).
+fn local_start(f: ir::Function) -> integer {
+  at = 0;
+  for v in f.variables {
+    if v.argument {
+      at += frame::stepped(frame::width(v.type_def[0]!, true));
+    }
+  }
+  at + frame::stepped(4)
+}
+
+// `variables::align`.
+fn align(t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => align(inner),
+    TyBoolean => 1,
+    TyEnum { is_ref } => if is_ref { 4 } else { 1 },
+    TySingle => 4,
+    TyCharacter => 4,
+    TyInteger => 8,
+    TyFloat => 8,
+    TyFunction => 8,
+    TyText => 8,
+    _ => 4
+  }
+}
+
+// `slots_v2::slot_kind`: a slot a free releases, or one held in place.
+fn ref_slot(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => ref_slot(inner),
+    TyEnum { is_ref } => is_ref,
+    TyText => true,
+    TyReference => true,
+    TyVector => true,
+    TyIndex => true,
+    TyHash => true,
+    TySorted => true,
+    TyRadix => true,
+    TyTrie => true,
+    TyIterator => true,
+    TyRefVar => true,
+    _ => false
+  }
+}
+
+struct Iv { var_nr: integer, ls: integer, le: integer, size: integer, align: integer, kind: boolean, slot: integer }
+
+// `slots_v2::assign_slots_v2`: each local, in order of its first definition, at the lowest
+// aligned offset no live local of another kind or size overlaps, and that does not straddle a
+// loop the other is wholly inside or outside of.  A range loop's variable takes its index's slot.
+fn assign_slots(f: ir::Function, iv: Intervals, aliases: vector<Alias>, start: integer) {
+  kept: vector<Alias> = [];
+  for a in aliases {
+    v = f.variables[a.ix]!;
+    if !v.argument && iv.first_def[a.ix]! != NO_DEF && frame::width(v.type_def[0] ?? ir::TyVoid, false) != 0 {
+      kept += [a];
+    }
+  }
+  ivs: vector<Iv> = [];
+  for v in f.variables {
+    i = v#index;
+    if v.argument {
+      continue;
+    }
+    aliased = false;
+    for a in kept {
+      if a.lv == i {
+        aliased = true;
+      }
+    }
+    fd = iv.first_def[i]!;
+    t = v.type_def[0] ?? ir::TyVoid;
+    sz = frame::width(t, false);
+    if aliased || fd == NO_DEF || sz == 0 {
+      continue;
+    }
+    ivs += [Iv { var_nr: i, ls: fd, le: iv.last_use[i]!, size: sz, align: align(t), kind: ref_slot(t), slot: 0 }];
+  }
+  // Sorted by first definition, then variable number: an insertion sort keeps it plain.
+  sorted: vector<Iv> = [];
+  for x in ivs {
+    at = len(sorted);
+    for y in sorted {
+      if y.ls > x.ls || (y.ls == x.ls && y.var_nr > x.var_nr) {
+        at = y#index;
+        break;
+      }
+    }
+    sorted.insert(at, x);
+  }
+  // The loops some variable is declared in, by sequence range.
+  ranges_s: vector<integer> = [];
+  ranges_e: vector<integer> = [];
+  seen: vector<integer> = [];
+  for v in f.variables {
+    for ls in iv.loop_scope {
+      if ls == v.scope && v.scope != 65535 && !seen.contains(ls) {
+        seen += [ls];
+        ranges_s += [iv.loop_start[ls#index]!];
+        ranges_e += [iv.loop_end[ls#index]!];
+      }
+    }
+  }
+  for x in sorted {
+    idx = x#index;
+    pos = round_up(start, x.align);
+    searching = true;
+    while searching {
+      searching = false;
+      for p in sorted[..idx] {
+        p_end = p.slot + p.size;
+        if !(pos < p_end && p.slot < pos + x.size) {
+          continue;
+        }
+        exact = pos == p.slot && x.size == p.size;
+        life = x.ls <= p.le && p.ls <= x.le;
+        incompatible = p.kind != x.kind || p.size != x.size;
+        straddle = false;
+        for s in ranges_s {
+          e = ranges_e[s#index]!;
+          iv_in = x.ls >= s && x.le < e;
+          iv_out = x.le < s || x.ls >= e;
+          p_in = p.ls >= s && p.le < e;
+          p_out = p.le < s || p.ls >= e;
+          if !((iv_in && p_in) || (iv_out && p_out)) {
+            straddle = true;
+          }
+        }
+        if !exact || life || incompatible || straddle {
+          pos = round_up(p_end, x.align);
+          searching = true;
+          break;
+        }
+      }
+    }
+    sorted[idx].slot = pos;
+  }
+  for v in f.variables {
+    if !v.argument {
+      v.stack_pos = 65535;
+    }
+  }
+  for x in sorted {
+    f.variables[x.var_nr].stack_pos = x.slot;
+  }
+  for a in kept {
+    for x in sorted {
+      if x.var_nr == a.ix {
+        f.variables[a.lv].stack_pos = x.slot;
+      }
+    }
+  }
+}
+
+// `n` up to the next multiple of `a`.
+fn round_up(n: integer, a: integer) -> integer {
+  if a != 0 { (n + a - 1) / a * a } else { n }
+}
+
+// `apply_var_size`: one reserve at the function's entry covers every slot, so no block reserves.
+fn zero_var_size(n: ir::Node) -> ir::Node {
+  match n {
+    NdBlock { block } => {
+      bl = block[0];
+      bl.var_size = 0;
+      bl.operators = [for x in bl.operators { zero_var_size(x) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      bl.var_size = 0;
+      bl.operators = [for x in bl.operators { zero_var_size(x) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: zero_var_size(cond), t: zero_var_size(t), f: zero_var_size(f) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: zero_var_size(inner) },
+    NdDrop { inner } => ir::NdDrop { inner: zero_var_size(inner) },
+    NdReturn { inner } => ir::NdReturn { inner: zero_var_size(inner) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { zero_var_size(a) }] },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { zero_var_size(a) }] },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { zero_var_size(x) }] },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: zero_var_size(create), next: zero_var_size(next), init: zero_var_size(init) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: zero_var_size(inner) },
+    _ => n
+  }
+}
+
+// `loft introspect --show-slots`'s rows for `f`: number, scope, slot and live interval.
+pub fn slot_rows(f: ir::Function, iv: Intervals) -> vector<text> {
+  [for v in f.variables {
+    live = if v.argument || iv.first_def[v#index]! == NO_DEF { "-" } else { "[{iv.first_def[v#index]!}, {iv.last_use[v#index]!}]" };
+    sc = if v.argument { "0" } else if v.scope == 65535 { "-" } else { "{v.scope}" };
+    "{v#index} {v.name} {sc} {frame::slot(f, v#index)} {live}"
+  }]
+}
+
+// Every function of the program (source 1) with its slot rows, as `slot_rows` gives them.
+pub fn slots_report(b: ir::Bundle) -> vector<text> {
+  ops = ops_of(b);
+  out: vector<text> = [];
+  for d in b.data.definitions {
+    if d.def_type == 1 && d.source == 1 && len(d.code) > 0 && len(d.variables.variables) > 0 {
+      out += ["fn {d.name}:"];
+      for r in slot_rows(d.variables, intervals(d.code[0]!, d.variables, ops)) {
+        out += ["  {r}"];
+      }
+    }
+  }
+  out
+}

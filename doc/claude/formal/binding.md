@@ -359,6 +359,12 @@ control — an UNDISTURBED view still aliases and still writes through, on both 
               the child live across a write that may be null is copied out at its bind, and a
               stored `reference<T>` to the child reads null after it (heap.md H-Removed).  A
               child is never shared: one node in two places is a `reference<T>`.
+              An `S?` field stored INLINE (the tagged `__nullable<S>` of layout.md
+              `L-Null-Tag`) answers the same, so the layout is not observable: a view of its
+              payload (`c = h.g`) or deeper (`d = h.g.next`) is a place inside the host, an
+              overwrite ends the deeper one and the view of the slot re-reads, and a write that
+              may be null copies both out at their bind.  A `&` link to the slot itself
+              (`c = &h.g`) names the slot and reads the absence.
               A `&` link to an out-of-line field (`cur = &h.f`, re-pointed by `cur = &cur.g`)
               names the FIELD: it reads the child the field holds, and a WHOLE write through it
               — `cur = v`, `cur = null`, `cur = cur.g` — is the write `h.f = v` (B-Ref-Write),

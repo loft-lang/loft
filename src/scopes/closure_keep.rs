@@ -198,6 +198,10 @@ impl Scopes<'_> {
     /// and the fn-ref nulled so it does not release the store a second time.  The block's end
     /// is not reached by a `break` or a `continue`: those passes release at the next rebuild or
     /// at the function's end, once either way.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass over the statements, each closure-keep case an arm of it; to be split at the release file-split row"
+    )]
     pub(super) fn closure_keep_pass_end(
         &mut self,
         bl: &Block,
@@ -280,6 +284,33 @@ impl Scopes<'_> {
             let mut others = self.closure_keep_live(&built_for);
             others.extend(links.iter().copied());
             let mut release = Vec::new();
+            // `@FR-H-FreeTwice` — the record's cascade below releases the store each capture
+            // slot holds; a frame BACKING that still names that store (`__vdb_N` of a loop-body
+            // `w = [...]`) lets go of it first, or the frame's own release of the backing frees
+            // it again (loft#1636's `c3`: the pass nobody kept, then `__vdb_1` at the end).
+            if crate::keys::pass_end_backing_detach() {
+                for (rec, off, x) in &self.closure_keep.captures {
+                    if *rec != r {
+                        continue;
+                    }
+                    let Some(&b) = self.capture_build_backing.backing.get(x) else {
+                        continue;
+                    };
+                    if !function.name(b).starts_with("__vdb_") {
+                        continue;
+                    }
+                    let captured =
+                        Value::Call(data.def_nr("OpGetDbRef"), vec![Value::Var(r), off.clone()]);
+                    release.push(v_if(
+                        Value::Call(
+                            data.def_nr("OpDistinctStore"),
+                            vec![Value::Var(b), captured],
+                        ),
+                        Value::Null,
+                        v_set(b, sentinel()),
+                    ));
+                }
+            }
             if let Some(hook) = drop_hook(function, r, data) {
                 release.push(hook);
             }
@@ -849,10 +880,15 @@ pub(super) fn pass_confined_records(
         // The `(L-CapKeep)` holders the scope pass itself binds (`__fkeep_N = f`,
         // `__fklink_N`) only compare stores: their bind is no escape, or the reading after the
         // scope pass would disagree with the one before it.
+        // `__fdisp_N` too: the displaced fn-ref snapshot a rebind binds (`__fdisp_1 = h`) is
+        // only compared and released.  Read as an escape AFTER the scope pass and not before it,
+        // the frame kept `t`'s release while the record took it as adopted (loft#2155).
         keep_temps: (0..function.count())
             .filter(|&v| {
                 let n = function.name(v);
-                n.starts_with("__fkeep_") || n.starts_with("__fklink_")
+                n.starts_with("__fkeep_")
+                    || n.starts_with("__fklink_")
+                    || (n.starts_with("__fdisp_") && crate::keys::fdisp_keep_temp())
             })
             .collect(),
         next_id: 0,

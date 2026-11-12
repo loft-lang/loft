@@ -184,6 +184,9 @@ impl Scopes<'_> {
         let scope_debug =
             crate::env_once!(std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug"));
         let mut ls = Vec::new();
+        // `@FR-H-FreeTwice` — each fn-ref release this sweep emits, with the closure records it
+        // carries, for the stand-down below.
+        let mut fnref_releases: Vec<(u16, Vec<u16>)> = Vec::new();
         // The conditional releases of loft#1464, kept apart so they can go FIRST.  Each reads a
         // closure-record local to decide whether that record's cascade already owes this store,
         // and the sweep's own `OpFreeRef` of that record would destroy the answer: the two
@@ -388,6 +391,7 @@ impl Scopes<'_> {
                         call_mints: self.tuple_call_mint.get(&v),
                         handed: Some(&self.drop_transferred),
                         moved: Some(&self.tuple_moved),
+                        claimants: Some(&self.tuple_claimants),
                     },
                     None,
                 ));
@@ -523,9 +527,26 @@ impl Scopes<'_> {
                 // Free them explicitly at function exit so the leak-check
                 // at `src/state/debug.rs:1045` doesn't trip.  Skip when
                 // the work-ref participates in the return chain.
+                // `@FR-B-View` — a work-ref whose deps name only OTHER bindings is a view of
+                // them, not a store of its own: an update over a value branch
+                // (`S { l: 7, ..(if c { p } else { q }) }`) binds its base work-ref to the arm's
+                // `__lift_N`, which frees that store, and freeing the work-ref too released it
+                // twice (`@FR-H-FreeTwice`).  `LOFT_WORK_REF_VIEW_FREES=1` frees it anyway.
+                // …except a KEYED work-ref, whose null init mints a store of its own
+                // (`bind_lowering::keyed_null_mints`): its deps say what it was typed from, not
+                // that it borrows, and left unfreed that store leaked (a generic instance's
+                // `__ref_p2_1: hash["x"]`, attic's generic-keyed-tuplocal).
+                // `LOFT_NO_KEYED_WORK_REF_OWNS=1` treats it as the view its deps say.
+                let keyed_owner = crate::parser::vectors::owns_keyed_store(function.tp(v))
+                    && crate::bind_lowering::keyed_null_mints(function, v)
+                    && !crate::env_once!(std::env::var_os("LOFT_NO_KEYED_WORK_REF_OWNS").is_some());
                 let is_work_ref = {
                     let n = function.name(v);
-                    n.starts_with("__ref_") || n.starts_with("__rref_")
+                    (n.starts_with("__ref_") || n.starts_with("__rref_"))
+                        && (dep.is_empty()
+                            || dep.contains(&v)
+                            || keyed_owner
+                            || work_ref_view_frees())
                 };
                 // @P302 — a keyed-collection local backed by its OWN store
                 // carries a self-dep `[v]` (added by the `s = []` clear path
@@ -1080,8 +1101,28 @@ impl Scopes<'_> {
                 // the record it holds, and its cascade is the release.
                 let adopted =
                     capture_adoption_owns_free(data, function, &self.capture_build_backing, v);
-                let emit =
-                    !leaves_frame && !function.is_skip_free(v) && !record_outlives && !adopted;
+                // `@FR-H-FreeTwice` — the return being swept releases this fn-ref's record inside
+                // its arms (`free_record_in_omitting_arms`): a local record releases through
+                // itself, so a release through the fn-ref as well freed it twice (attic 1444,
+                // `if pick { return a; } return b;`).  `LOFT_NO_ARM_RELEASED_FNREF_STAND_DOWN=1`
+                // releases both.
+                let local_records: Vec<u16> = carried
+                    .iter()
+                    .copied()
+                    .filter(|&r| r < function.count() && function.name(r).starts_with("___clos_"))
+                    .collect();
+                let arm_released = !local_records.is_empty()
+                    && local_records
+                        .iter()
+                        .all(|r| self.arm_released_records.contains(r))
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_NO_ARM_RELEASED_FNREF_STAND_DOWN").is_some()
+                    );
+                let emit = !leaves_frame
+                    && !function.is_skip_free(v)
+                    && !record_outlives
+                    && !adopted
+                    && !arm_released;
                 if emit {
                     if scope_debug {
                         eprintln!(
@@ -1116,6 +1157,11 @@ impl Scopes<'_> {
                         ls.push(call("OpDropFnRef", v, data));
                     }
                     ls.push(call("OpFreeRef", v, data));
+                    // A frame the closure-keep pass gates decides these releases by store
+                    // identity already, in an order its own stand-downs rely on.
+                    if !keep {
+                        fnref_releases.push((v, carried.clone()));
+                    }
                 }
             }
         }
@@ -1228,10 +1274,364 @@ impl Scopes<'_> {
                 ));
             }
         }
+        fnref_stand_down(&mut ls, &fnref_releases, function, data);
+        captured_record_stand_down(&mut ls, function, data, self.d_nr);
+        captured_view_stand_down(&mut guarded, function, data);
         if !guarded.is_empty() {
             guarded.append(&mut ls);
             ls = guarded;
         }
+        self.pair_literal_buffers(&mut ls, data, function);
         ls
     }
+
+    /// `@FR-O-Buffer` — a literal's buffer and the local that adopted it name ONE store, and
+    /// where this sweep frees both, the local is its owner: the buffer's plain free becomes
+    /// `OpFreeRefIfDistinct(buffer, local)`, a free only where the local was reassigned away
+    /// from it.  It moves ahead of the local's first mention, because a free resets the local
+    /// on C and `--native`, and a guard read after that compares against null.  A local this
+    /// sweep does not free keeps the buffer's plain free: that is then the store's only release
+    /// (a captured local, one with no free of its own — loft#1317's measurements).
+    /// `LOFT_NO_LITERAL_BUFFER_PAIR=1` keeps every buffer's plain free.
+    fn pair_literal_buffers(&mut self, ls: &mut Vec<Value>, data: &Data, function: &Function) {
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *OFF.get_or_init(|| std::env::var("LOFT_NO_LITERAL_BUFFER_PAIR").is_ok_and(|v| v != "0"))
+            || self.literal_buffer.is_empty()
+        {
+            return;
+        }
+        let free = data.def_nr("OpFreeRef");
+        let free_distinct = data.def_nr("OpFreeRefIfDistinct");
+        let frees = |op: &Value, w: u16| {
+            matches!(op.unspan(), Value::Call(d, args)
+                if (*d == free || *d == free_distinct)
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w))
+        };
+        // A rebound parameter (a local renamed onto the return buffer) releases at exit, through
+        // its entry witness, what the caller did not hand it — a release added after this sweep.
+        let mut rebound_params: Vec<u16> = function
+            .rebind_params()
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        // …and so does a local renamed onto the return buffer (`__rbw_<name>` is its witness).
+        rebound_params.extend((0..function.count()).filter(|&p| {
+            crate::bind_lowering::is_promoted_return_buffer(data, self.d_nr, function, p)
+        }));
+        let mut i = 0;
+        while i < ls.len() {
+            // The buffer's free may already be guarded against its adopter — a renamed return
+            // buffer guards every release against itself (`code = NdNull; … code = cl(…)`):
+            // the same pair, and the disarm below applies to it alike.
+            let guarded_by_adopter = |args: &[Value], b: u16| {
+                !crate::env_once!(std::env::var_os("LOFT_NO_GUARDED_BUFFER_DISARM").is_some())
+                    && matches!(args.get(1).map(Value::unspan),
+                        Some(Value::Var(x)) if self.literal_buffer.get(&b) == Some(x))
+            };
+            let paired = match ls[i].unspan() {
+                Value::Call(d, args) if *d == free || *d == free_distinct => {
+                    match args.first().map(Value::unspan) {
+                        Some(Value::Var(b)) if *d == free || guarded_by_adopter(args, *b) => self
+                            .literal_buffer
+                            .get(b)
+                            .filter(|&&w| {
+                                w != *b
+                                    && (ls.iter().any(|op| frees(op, w))
+                                        || rebound_params.contains(&w))
+                            })
+                            .map(|&w| (*b, w)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let Some((b, w)) = paired else {
+                i += 1;
+                continue;
+            };
+            ls.remove(i);
+            // `@FR-H-FreeTwice` — an OWNING local assigned more than once releases the
+            // buffer's store on every path: its rebind's displaced free where it moved on, its
+            // own free here where it did not.  Paired, the buffer freed it a second time once
+            // the local had moved on (`class = Pt { … }; class = pick(class, c)` under strict
+            // stores; with slot reuse the guard declined by luck).  So the buffer takes no free.
+            // `LOFT_NO_REBOUND_ADOPTER_DISARM=1` keeps the pairing.
+            let multi = self.multi_assigned.contains(&w)
+                || self
+                    .var_mapping
+                    .iter()
+                    .any(|(o, n)| *n == w && self.multi_assigned.contains(o));
+            // A renamed return buffer is an argument by slot, never-free to the sweep, and still
+            // releases at exit what the caller did not hand it.
+            // @FR-O-Proxy asks free — whether the buffer's free is the store's release;
+            // `proxy_says_owned` carries @FR-O-Override's veto.
+            let owner = function.proxy_says_owned(w)
+                || (function.is_argument(w) && rebound_params.contains(&w));
+            if multi && owner && !rebound_adopter_disarm_off() {
+                self.adopter_released.insert(b);
+                continue;
+            }
+            let mentions = |op: &Value| {
+                let mut hit = false;
+                op.walk(&mut |n| {
+                    if matches!(n, Value::Var(x) | Value::Set(x, _) if *x == w) {
+                        hit = true;
+                    }
+                });
+                hit
+            };
+            let at = ls.iter().position(mentions).unwrap_or(ls.len());
+            ls.insert(
+                at,
+                Value::Call(free_distinct, vec![Value::Var(b), Value::Var(w)]),
+            );
+            if at > i {
+                // The slot `i` now holds the op after the one moved; read it next.
+                continue;
+            }
+            i += 1;
+        }
+    }
+}
+
+/// `@FR-H-FreeTwice` (owner: a re-free is a defect, not a tolerated case) — a fn-ref and the
+/// local closure record it was built over are two names for one store, and each takes its own
+/// release at the scope's end: the record's `OpFreeRef(___clos_N)`, then the fn-ref's
+/// `OpDropFnRef(f); OpFreeRef(f)`, which frees the same store again.  Where this sweep releases
+/// such a record unconditionally, the fn-ref's release runs only for a closure DISTINCT from it
+/// — one written into the fn-ref through a `&fn` link since (loft#1463), which no record here
+/// releases — and is asked before the record's free, while both still name their stores.
+/// `LOFT_NO_FNREF_STAND_DOWN=1` restores the double release.
+fn fnref_stand_down(
+    ls: &mut Vec<Value>,
+    releases: &[(u16, Vec<u16>)],
+    function: &Function,
+    data: &Data,
+) {
+    if crate::env_once!(std::env::var_os("LOFT_NO_FNREF_STAND_DOWN").is_some()) {
+        return;
+    }
+    let free = data.def_nr("OpFreeRef");
+    let drop = data.def_nr("OpDropFnRef");
+    // A top-level `op(v)` statement's position: statements are inserted around a release after
+    // it is emitted, so a release is found by what it is, not where it was put.
+    let find = |ls: &[Value], op: u32, v: u16| {
+        ls.iter().position(|st| {
+            matches!(st.unspan(), Value::Call(d, args) if *d == op
+                && matches!(args.as_slice(), [a] if matches!(a.unspan(), Value::Var(x) if *x == v)))
+        })
+    };
+    for (v, carried) in releases.iter().rev() {
+        let records: Vec<u16> = carried
+            .iter()
+            .copied()
+            .filter(|&r| {
+                r != *v
+                    && r < function.count()
+                    && function.name(r).starts_with("___clos_")
+                    && find(ls, free, r).is_some()
+            })
+            .collect();
+        let Some(end) = find(ls, free, *v) else {
+            continue;
+        };
+        if records.is_empty() {
+            continue;
+        }
+        let start = match end.checked_sub(1) {
+            Some(p) if find(&ls[p..=p], drop, *v).is_some() => p,
+            _ => end,
+        };
+        // Asked BEFORE the record's own free: a free resets the variable it names, so after it
+        // the record no longer names the store the fn-ref's closure is compared with.
+        // A record's release is its hook (`if <live> <cascade>(r)`) and then its free: the
+        // guard goes ahead of the pair, never between them.
+        let hook_of = |st: &Value, r: u16| {
+            matches!(st.unspan(), Value::If(_, t, _) if matches!(t.unspan(), Value::Call(_, a)
+                if matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(y) if *y == r))))
+        };
+        let at = records
+            .iter()
+            .filter_map(|&r| {
+                let p = find(ls, free, r)?;
+                Some(if p > 0 && hook_of(&ls[p - 1], r) {
+                    p - 1
+                } else {
+                    p
+                })
+            })
+            .min()
+            .map_or(start, |p| p.min(start));
+        let release: Vec<Value> = ls.drain(start..=end).collect();
+        let guarded = records
+            .iter()
+            .rev()
+            .fold(Value::Insert(release), |inner, &r| {
+                v_if(
+                    Value::Call(
+                        data.def_nr("OpDistinctStore"),
+                        vec![call("OpFnRefClosure", *v, data), Value::Var(r)],
+                    ),
+                    inner,
+                    Value::Null,
+                )
+            });
+        ls.insert(at, guarded);
+    }
+}
+
+/// `@FR-H-FreeTwice`, `@FR-L-CapOwn` (loft#1869) — a closure record that captured a fn-ref
+/// (`OpSetDbRef(R, off, OpFnRefClosure(h))`) adopts the record `h` was built over: its cascade
+/// frees the store in slot `off`.  That record's own variable `r` still takes a free at the
+/// scope's end, of the same store.  Where this sweep releases both `R` (its cascade and free) and
+/// `r` unconditionally, `r` hands the store to `R` first — set to the null sentinel ahead of
+/// `R`'s release pair whenever `R` is live (the cascade's own test) and its slot names `r`'s
+/// store — so `r`'s free does nothing.  `LOFT_NO_CAPTURED_RECORD_STAND_DOWN=1` restores the
+/// double release.
+fn captured_record_stand_down(ls: &mut Vec<Value>, function: &Function, data: &Data, d_nr: u32) {
+    if crate::env_once!(std::env::var_os("LOFT_NO_CAPTURED_RECORD_STAND_DOWN").is_some()) {
+        return;
+    }
+    let set_dbref = data.def_nr("OpSetDbRef");
+    let fn_closure = data.def_nr("OpFnRefClosure");
+    let free = data.def_nr("OpFreeRef");
+    // (capturing record R, slot offset, the record r the captured fn-ref was built over).
+    let mut adopted: Vec<(u16, i32, u16)> = Vec::new();
+    data.def(d_nr).code.walk(&mut |n| {
+        if let Value::Call(d, args) = n
+            && *d == set_dbref
+            && let [Value::Var(big), Value::Int(off), held] = args.as_slice()
+            && let Value::Call(c, cargs) = held.unspan()
+            && *c == fn_closure
+            && let Some(Value::Var(h)) = cargs.first().map(Value::unspan)
+            && function.name(*big).starts_with("___clos_")
+        {
+            for r in function.tp(*h).depend() {
+                if r != *big
+                    && r < function.count()
+                    && function.name(r).starts_with("___clos_")
+                    && !adopted.contains(&(*big, *off, r))
+                {
+                    adopted.push((*big, *off, r));
+                }
+            }
+        }
+    });
+    let plain_free = |ls: &[Value], x: u16| {
+        ls.iter().position(|st| {
+            matches!(st.unspan(), Value::Call(d, a) if *d == free
+                && matches!(a.as_slice(), [v] if matches!(v.unspan(), Value::Var(y) if *y == x)))
+        })
+    };
+    let hook_of = |st: &Value, x: u16| {
+        matches!(st.unspan(), Value::If(_, t, _) if matches!(t.unspan(), Value::Call(_, a)
+            if matches!(a.as_slice(), [v] if matches!(v.unspan(), Value::Var(y) if *y == x))))
+    };
+    // A record confined to one loop pass BORROWS what it captured (`@FR-L-CapOwn`): its cascade
+    // releases nothing, so nothing is handed to it.
+    let confined = super::closure_keep::pass_confined_records(data, function, &data.def(d_nr).code);
+    for (big, off, r) in adopted {
+        if matches!(function.tp(big).base(), Type::Reference(rec, _) if confined.contains(rec)) {
+            continue;
+        }
+        let (Some(big_at), Some(_)) = (plain_free(ls, big), plain_free(ls, r)) else {
+            continue;
+        };
+        // Only where `R`'s release runs its cascade: a record built in a loop pass borrows
+        // what it captured, its hook is empty, and handing it the store would leak it.
+        if big_at == 0 || !hook_of(&ls[big_at - 1], big) {
+            continue;
+        }
+        let at = big_at - 1;
+        let slot = Value::Call(
+            data.def_nr("OpGetDbRef"),
+            vec![Value::Var(big), Value::Int(off)],
+        );
+        let hand_over = v_if(
+            Value::Call(data.def_nr("OpDistinctStore"), vec![Value::Var(r), slot]),
+            Value::Null,
+            v_set(r, Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new())),
+        );
+        let live = Value::Call(data.def_nr("OpStoreLive"), vec![Value::Var(big)]);
+        ls.insert(at, v_if(live, hand_over, Value::Null));
+    }
+}
+
+/// `@FR-H-FreeTwice` — a captured vector local viewing its literal backing (`v` over
+/// `__vdb_N`) and that backing are two names for one store, and where a closure build is
+/// conditional each takes the same guarded release (`free_unless_record_built`: freed unless a
+/// record was built), so a run that skips the build frees the store twice.  Where the guarded
+/// releases hold both under one condition, the view's keeps its hook (the elements' drop runs
+/// once, ahead of the free) and gives up its free; the backing's is the store's one release.
+/// `LOFT_NO_CAPTURED_VIEW_STAND_DOWN=1` restores the double release.
+fn captured_view_stand_down(guarded: &mut Vec<Value>, function: &Function, data: &Data) {
+    if crate::env_once!(std::env::var_os("LOFT_NO_CAPTURED_VIEW_STAND_DOWN").is_some()) {
+        return;
+    }
+    let free = data.def_nr("OpFreeRef");
+    // (condition, released variable, hook) of a `if <cond> null else { [hook;] OpFreeRef(x) }`.
+    let shape = |st: &Value| -> Option<(Value, u16, Option<Value>)> {
+        let Value::If(cond, then_arm, else_arm) = st.unspan() else {
+            return None;
+        };
+        if !matches!(then_arm.unspan(), Value::Null) {
+            return None;
+        }
+        let freed = |op: &Value| match op.unspan() {
+            Value::Call(op_nr, op_args) if *op_nr == free => match op_args.as_slice() {
+                [x] => match x.unspan() {
+                    Value::Var(v) => Some(*v),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        match else_arm.unspan() {
+            Value::Insert(ops) if ops.len() == 2 => {
+                freed(&ops[1]).map(|v| ((**cond).clone(), v, Some(ops[0].clone())))
+            }
+            other => freed(other).map(|v| ((**cond).clone(), v, None)),
+        }
+    };
+    let shapes: Vec<Option<(Value, u16, Option<Value>)>> = guarded.iter().map(shape).collect();
+    let mut drop_at: Vec<usize> = Vec::new();
+    for (i, sh) in shapes.iter().enumerate() {
+        let Some((cond, v, hook)) = sh else {
+            continue;
+        };
+        let [b] = function.tp(*v).depend()[..] else {
+            continue;
+        };
+        if b == *v || b >= function.count() || !function.name(b).starts_with("__vdb_") {
+            continue;
+        }
+        let backing_too = shapes
+            .iter()
+            .any(|o| matches!(o, Some((c, x, _)) if *x == b && c == cond));
+        if !backing_too {
+            continue;
+        }
+        match hook {
+            Some(h) => guarded[i] = v_if(cond.clone(), Value::Null, h.clone()),
+            None => drop_at.push(i),
+        }
+    }
+    for i in drop_at.into_iter().rev() {
+        guarded.remove(i);
+    }
+}
+
+/// `LOFT_WORK_REF_VIEW_FREES=1` (STORE_RECORDS.md § The checks): a work-ref that only views
+/// other bindings is freed at the scope's end as if it owned — the re-free the store records
+/// must then report.
+fn work_ref_view_frees() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_WORK_REF_VIEW_FREES").is_some())
+}
+
+/// `LOFT_NO_REBOUND_ADOPTER_DISARM=1` (STORE_RECORDS.md § The checks): a literal buffer adopted
+/// by an owning local that is assigned again keeps its scope-exit free, paired with the local —
+/// the re-free the store records must then report.
+fn rebound_adopter_disarm_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_REBOUND_ADOPTER_DISARM").is_some())
 }

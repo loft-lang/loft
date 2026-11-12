@@ -269,6 +269,11 @@ struct Scopes<'s> {
     /// RETURNED.  Where it is not, the buffer's plain free is the store's only release and
     /// has to stay plain.
     literal_buffer: HashMap<u16, u16>,
+    /// The literal buffers `pair_literal_buffers` leaves without any exit free because their
+    /// adopting local is an owner assigned more than once (`@FR-H-FreeTwice`): that local's
+    /// rebinds and its own free release the store.  Handed to the [`Function`] for the static
+    /// leak mirrors (`FrameReleases::explains`).
+    adopter_released: HashSet<u16>,
     /// loft#1257 — a `__lift_N` holding a COLLECTION `??` return whose `Own::Join` base the
     /// oracle can NAME.  The temp may hold the caller's own store (the discharge arm ran) or
     /// one the closure minted, and which of the two is decidable at run time by store IDENTITY
@@ -294,6 +299,13 @@ struct Scopes<'s> {
     /// is already gone, so such a base is not offered as a witness.  Conservative in the safe
     /// direction: declining keeps today's leak, never frees a store twice.
     multi_assigned: HashSet<u16>,
+    /// Per local: the frame temporaries its assignments bind it to a VIEW of — a literal's
+    /// backing (`x = OpGetField(__vdb_N, …)`) or a call's buffer (`x = f(…, __ref_N)`).  Their
+    /// stores are theirs to release (`scan_set`'s transition free declines on them).
+    view_temps: HashMap<u16, Vec<u16>>,
+    /// The `__fkeep_N` snapshot `closure_keep_rebind` took of the fn-ref the statement being
+    /// scanned rebinds, if any — for the rebuild release in `scan_set` to retire.
+    pending_fkeep: Option<u16>,
     /// The binding whose FIRST assignment the `Set` being scanned is, or `u16::MAX`.  A
     /// multi-assigned binding is first bound with no store of its own, so its value branch's
     /// arms take the per-arm copy `(B-Copy)` asks (`Scopes::arm_bind`, loft#2398).
@@ -326,6 +338,11 @@ struct Scopes<'s> {
     /// [`capture_build_backings`].  Computed once off the raw body, because the answer is
     /// positional (@FR-O-Latest) and the variable table carries only the LAST assignment.
     capture_build_backing: CaptureBuilds,
+    /// The closure records the return being swept releases INSIDE its arms
+    /// (`free_record_in_omitting_arms`), set by `free_vars` before it calls the sweep and
+    /// cleared after: a fn-ref built over one of them releases through the record, so the
+    /// sweep leaves it alone (`@FR-H-FreeTwice`, the attic program 1444).
+    arm_released_records: HashSet<u16>,
     /// The closure records and fn-ref locals whose releases are decided by store identity —
     /// see [`closure_keep_set`] (`@FR-L-CapKeep`).
     closure_keep: ClosureKeep,
@@ -486,6 +503,12 @@ struct Scopes<'s> {
     /// bufferless mint).  Every member write can then release the record it displaces with no
     /// other claimant left, on every path, and both arms of a join agree on the pairing.
     written_tuple_members: HashSet<(u16, u16)>,
+    /// `@FR-H-FreeTwice` — every work-ref an assignment of this function makes the claimant
+    /// of a tuple member (`b = (S { … }, 0)` claims `b.0` for the construction's work-ref), by
+    /// the variable numbers of the unscanned body.  A loop drops the per-assignment fact
+    /// (`tuple_call_mint`) its body changes, so a member released without it retires each
+    /// claimant that still names the store (`tuple_owned_elem_frees`).
+    tuple_claimants: HashMap<(u16, u16), Vec<u16>>,
     /// D-heap-3 (loft#1506) — a local BOUND to a projection of another local, and the
     /// `(offset, depth)` path from that local's record to the member it views.
     ///
@@ -773,6 +796,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             let db_nr = data.def_nr("OpDatabase");
             let gf_nr = data.def_nr("OpGetField");
             if !inject_unfreed {
+                let if_distinct_nr = data.def_nr("OpFreeRefIfDistinct");
                 let d = &mut data.definitions[d_nr as usize];
                 lastuse_reclaim(
                     &mut d.code,
@@ -781,6 +805,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                     gf_nr,
                     free_ref_nr,
                     &drop_bearing,
+                    if_distinct_nr,
                 );
             }
             // Plan-57 Phase 4 — Goal-E enforcement (THE watermark guard, supersedes
@@ -867,6 +892,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-SliceArg`'s range clause — `text_from_bytes(v[lo..hi])` reads the span in place:
         // decided on the same settled IR, so neither backend builds the slice.
         crate::slice_text::rewrite(data, d_nr);
+        // `@FR-R-SliceInto` — a slice value appended to a place is sliced into it: decided on
+        // the same settled IR, so no backend fills a temporary store to append it.
+        crate::slice_into::rewrite(data, d_nr);
         // `@FR-R-Wrapper` — a stdlib one-op wrapper's call is its op: decided last, so every
         // rewrite above sees the IR it saw before, and both backends skip the call.
         crate::wrapper_inline::rewrite(data, d_nr);

@@ -923,6 +923,7 @@ impl Pass<'_> {
                     || name.starts_with("__disp_")
                     || matches!(rhs.unspan(), Value::Call(op, _) if *op == self.ops.null_ref_sentinel)
             }
+            Value::If(cond, then, els) if self.is_claimant_disarm(cond, then, els) => true,
             Value::If(cond, then, els) => {
                 self.is_guard(cond, then, els)
                     && self.scaffold_or_null(then)
@@ -938,6 +939,24 @@ impl Pass<'_> {
             }
             _ => false,
         }
+    }
+
+    /// The claimant disarm (`scopes::tuple_members`, `LOFT_NO_CLAIMANT_DISARM`): before a tuple
+    /// member's free, `if OpDistinctStore(w, t.k) null else w = null` retires a work-ref that may
+    /// still name it.  The compare reads the member's store only to decide whether `w` is
+    /// retired — bookkeeping of the release, which follows, never a use of the value.
+    fn is_claimant_disarm(&self, cond: &Value, then: &Value, els: &Value) -> bool {
+        let Value::Call(d, args) = cond.unspan() else {
+            return false;
+        };
+        let [w, member] = args.as_slice() else {
+            return false;
+        };
+        *d == self.ops.distinct_store
+            && matches!(member.unspan(), Value::TupleGet(..))
+            && matches!(then.unspan(), Value::Null)
+            && matches!((w.unspan(), els.unspan()), (Value::Var(a), Value::Set(b, rhs))
+                if a == b && matches!(rhs.unspan(), Value::Call(op, _) if *op == self.ops.null_ref_sentinel))
     }
 
     fn scaffold_or_null(&self, node: &Value) -> bool {

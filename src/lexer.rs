@@ -598,6 +598,10 @@ pub struct Lexer {
     /// again with nothing of its own to remember.
     backtick_strip: Vec<Option<usize>>,
     diagnostics: Diagnostics,
+    /// The files whose parse stopped before their end (a syntax error left input the parser
+    /// could not read): a type declared below that point was never declared, so its uses above
+    /// are the echo of that error, not an undefined type (`typedef::files_stopped_early`).
+    stopped_files: std::collections::HashSet<String>,
 }
 
 /// What one step of the scan found ([`Lexer::scan_once`]).
@@ -892,6 +896,7 @@ impl Default for Lexer {
             open_strings: Vec::new(),
             backtick_strip: Vec::new(),
             diagnostics: Diagnostics::new(),
+            stopped_files: std::collections::HashSet::new(),
         }
     }
 }
@@ -969,6 +974,7 @@ impl Lexer {
             open_strings: Vec::new(),
             backtick_strip: Vec::new(),
             diagnostics: Diagnostics::new(),
+            stopped_files: std::collections::HashSet::new(),
         }
     }
 
@@ -1340,6 +1346,16 @@ impl Lexer {
 
     pub fn pos(&self) -> &Position {
         &self.position
+    }
+
+    /// The parse of the current file stops here, short of its end.
+    pub fn note_stopped(&mut self) {
+        self.stopped_files.insert(self.position.file.to_string());
+    }
+
+    /// The files whose parse stopped short of their end.
+    pub fn stopped_files(&self) -> &std::collections::HashSet<String> {
+        &self.stopped_files
     }
 
     /// Start position of the current lookahead token.  `pos()` returns the

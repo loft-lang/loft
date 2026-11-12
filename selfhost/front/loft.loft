@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — loft in loft: `loft <default dir> <program.loft>` runs a program with nothing but loft
+// code — the standard library and the program elaborated from their sources (`frontend`), the
+// lowering and the interpreter (`lower`, `run`) — and no Rust image.  It runs little yet: what a
+// stage does not carry is refused by name, and the run stops there.
+//
+// `loft --test <default dir> <program.loft>…` runs each program's `test_…` functions
+// (`lil_test`); `loft --slots <default dir> <program.loft>` prints each function's frame as
+// `loft introspect --show-slots` does.
+//
+// `loft --std-defs <default dir>` prints the standard library's definitions as the loft front
+// end elaborated them (`report::defs_report`), for the comparison with Rust's image.
+use el;
+use frontend;
+use report;
+use scope;
+use lower;
+use run;
+use lil_test;
+
+fn main() {
+  a = arguments();
+  if len(a) == 2 && a[0] == "--std-defs" {
+    e = frontend::standard_library(a[1] ?? "");
+    print(report::defs_report(e.b, 0));
+    for r in e.refused {
+      println("refused: {r}");
+    }
+    return;
+  }
+  // `loft --test <default dir> <program.loft>…`: every `test_…` function of each program run;
+  // a line for each failure, then the count.
+  if len(a) >= 3 && a[0] == "--test" {
+    passed = 0;
+    failed = 0;
+    for f in a[2..] {
+      r = lil_test::run_file(a[1] ?? "", f);
+      for w in r.failed {
+        println(w);
+      }
+      passed += r.passed;
+      failed += len(r.failed);
+    }
+    println("{passed} passed, {failed} failed");
+    if failed > 0 {
+      exit(1);
+    }
+    return;
+  }
+  // `loft --slots <default dir> <program.loft>`: each of the program's functions' variables,
+  // their scope, frame slot and live interval, as `loft introspect --show-slots` prints them.
+  if len(a) == 3 && a[0] == "--slots" {
+    e = frontend::standard_library(a[1] ?? "");
+    std_refused = len(e.refused);
+    if !frontend::program(e, a[2] ?? "") || len(e.refused) > std_refused {
+      fail(e.refused[std_refused..]);
+    }
+    sr = scope::scope_bundle(e.b);
+    for r in sr {
+      println("refused: {r}");
+    }
+    for r in scope::slots_report(e.b) {
+      println(r);
+    }
+    return;
+  }
+  // `loft <default dir> <program.loft> <function> [integer…]`: the function's answer.
+  if len(a) >= 3 {
+    e = frontend::standard_library(a[0] ?? "");
+    std_refused = len(e.refused);
+    if !frontend::program(e, a[1] ?? "") {
+      fail(e.refused[std_refused..]);
+    }
+    if len(e.refused) > std_refused {
+      fail(e.refused[std_refused..]);
+    }
+    sr = scope::scope_bundle(e.b);
+    if len(sr) > 0 {
+      fail(sr);
+    }
+    d = lower::find(e.b, "n_{a[2] ?? ""}");
+    if d == null {
+      fail(["no function {a[2] ?? ""} in {a[1] ?? ""}"]);
+    }
+    args: vector<integer> = [for x in a[3..] { x as integer ?? 0 }];
+    o = run::run(e.b, d!, args);
+    if o.refused != "" {
+      fail(["{o.refused} in {o.refused_in}"]);
+    }
+    println("{o.value}");
+    return;
+  }
+  eprintln("usage: loft <default dir> <program.loft> <function> [integer…]  |  loft --std-defs <default dir>");
+  exit(2);
+}
+
+// What a stage did not carry, one line each, and the exit.
+fn fail(why: vector<text>) {
+  for w in why {
+    eprintln("refused: {w}");
+  }
+  exit(2);
+}

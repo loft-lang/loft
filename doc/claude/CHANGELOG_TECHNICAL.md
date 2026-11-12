@@ -10,6 +10,25 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(R-RetAdopt)` runs on the interpreter (@PLN211 arc C)
+
+- A vector-returning function whose result local adopts the hidden return buffer now does so on
+  the interpreter as well: the local is built in the caller's buffer and the exit's copy goes.
+  The interpreter's generator applies `opt::ret_adopt`'s decision, the one both compiled writers
+  apply.  Drawing's `fronds` runs 7.5 % faster interpreted.  `LOFT_NO_RETBUF_ADOPT` turns it off
+  on every backend.
+
+### `(R-SliceInto)` runs in the IR (@PLN211 arc C)
+
+- A scalar slice appended to a place — a literal's field `R { f: v[a..b] }`, `x.f += v[a..b]` —
+  is appended onto the place in one block on every backend, the interpreter included: the scope
+  pass (`src/slice_into.rs`) writes the slice's bounds and one `OpSliceVector`, the form a local
+  place already took, and no temporary store is made.  The interpreter runs 26.8 % fewer
+  instructions on the `slice_into` probe; rustc now takes it too; the C emits what its writer
+  clause emitted, and that clause (`slice_fill`, `slice_into`) is deleted.
+  `LOFT_NO_SLICE_INTO` turns it off on every backend; `LOFT_TRACE_SLICE_INTO` names each site.
+- The emulated Windows host (`LOFT_POISON_HOST=windows`) is documented in `WINDOWS.md`.
+
 ### The rewrite census reads the C writer (@PLN211 A0)
 
 - `scripts/rewrite_census.py` writes every bench program with `--emit-c` as well as

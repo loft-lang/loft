@@ -1,0 +1,92 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A vector written to a binary file: where each element's written bytes are its stored bytes
+// in the host's order — the builtin integers, floats, singles and booleans, the 4-byte
+// integers, the plain bytes and enums — the C writes the whole vector as one block (the
+// serialiser's block path, `c::files::raw_width`); a record, a biased narrow integer (`u16`)
+// and every big-endian write of a multi-byte element take the per-element path.  Every byte
+// is hand-computed in its assert.
+//
+// @falsified-at: 67fb02fd3 — by hand: with the block path taken whatever the byte order, the
+//   big-endian `i32` and `single` cells answer the little-endian bytes on `--native-c`; the
+//   interpreter is untouched (a C writer path).
+// CHANNEL: the asserts.
+// ARMED: none needed.
+// WITNESS: each assert message prints the bytes it read.
+// HOLDS: i32 / single / integer in both orders, u8, float, boolean, enum (block); a record and a
+// u16 (per element); an empty vector.
+
+enum Col { Red, Green, Blue }
+struct S { a: integer, b: single }
+
+fn dump(path: text) -> text {
+  out = "";
+  for b in read_bytes(path) ?? [] { out += "{b as integer:02x}"; }
+  out
+}
+
+fn put_i32(path: text, be: boolean, v: vector<i32>) -> text {
+  f = file(path); f.set_file_size(0);
+  if be { f#format = BigEndian; } else { f#format = LittleEndian; }
+  f += v;
+  dump(path)
+}
+fn put_u8(path: text, v: vector<u8>) -> text {
+  f = file(path); f.set_file_size(0); f#format = LittleEndian; f += v; dump(path)
+}
+fn put_single(path: text, be: boolean, v: vector<single>) -> text {
+  f = file(path); f.set_file_size(0);
+  if be { f#format = BigEndian; } else { f#format = LittleEndian; }
+  f += v; dump(path)
+}
+fn put_int(path: text, be: boolean, v: vector<integer>) -> text {
+  f = file(path); f.set_file_size(0);
+  if be { f#format = BigEndian; } else { f#format = LittleEndian; }
+  f += v; dump(path)
+}
+fn put_float(path: text, v: vector<float>) -> text {
+  f = file(path); f.set_file_size(0); f#format = LittleEndian; f += v; dump(path)
+}
+fn put_bool(path: text, v: vector<boolean>) -> text {
+  f = file(path); f.set_file_size(0); f#format = LittleEndian; f += v; dump(path)
+}
+fn put_col(path: text, v: vector<Col>) -> text {
+  f = file(path); f.set_file_size(0); f#format = LittleEndian; f += v; dump(path)
+}
+fn put_s(path: text, v: vector<S>) -> text {
+  f = file(path); f.set_file_size(0); f#format = LittleEndian; f += v; dump(path)
+}
+fn put_u16(path: text, v: vector<u16>) -> text {
+  f = file(path); f.set_file_size(0); f#format = LittleEndian; f += v; dump(path)
+}
+
+fn main() {
+  p = "ser_matrix.bin";
+  // i32 [1, -2]: little-endian 01000000 feffffff, big-endian 00000001 fffffffe.
+  assert(put_i32(p, false, [1, -2]) == "01000000feffffff", "i32 le {put_i32(p, false, [1, -2])}");
+  assert(put_i32(p, true, [1, -2]) == "00000001fffffffe", "i32 be {put_i32(p, true, [1, -2])}");
+  // u8 [1, 255, 16]: 01ff10.
+  assert(put_u8(p, [1, 255, 16]) == "01ff10", "u8 {put_u8(p, [1, 255, 16])}");
+  // single 1.0 = 0x3f800000: le 0000803f, be 3f800000.
+  assert(put_single(p, false, [1.0 as single]) == "0000803f", "single le {put_single(p, false, [1.0 as single])}");
+  assert(put_single(p, true, [1.0 as single]) == "3f800000", "single be {put_single(p, true, [1.0 as single])}");
+  // integer [258]: le 0201000000000000, be 0000000000000102.
+  assert(put_int(p, false, [258]) == "0201000000000000", "int le {put_int(p, false, [258])}");
+  assert(put_int(p, true, [258]) == "0000000000000102", "int be {put_int(p, true, [258])}");
+  // an empty vector writes nothing.
+  e: vector<i32> = [];
+  assert(put_i32(p, false, e) == "", "empty {put_i32(p, false, e)}");
+  // float 1.5 = 0x3ff8000000000000, -2.0 = 0xc000000000000000, little-endian.
+  assert(put_float(p, [1.5, -2.0]) == "000000000000f83f00000000000000c0", "float {put_float(p, [1.5, -2.0])}");
+  // booleans are their stored byte.
+  assert(put_bool(p, [true, false, true]) == "010001", "bool {put_bool(p, [true, false, true])}");
+  // a plain enum is its stored byte, 1-based: Red, Blue, Green → 01 03 02.
+  assert(put_col(p, [Red, Blue, Green]) == "010302", "col {put_col(p, [Red, Blue, Green])}");
+  // a record is written field by field (no block): 7 as 8 bytes, 2.0 as 0x40000000, -1, 0.5.
+  assert(put_s(p, [S { a: 7, b: 2.0 as single }, S { a: -1, b: 0.5 as single }]) == "070000000000000000000040ffffffffffffffff0000003f", "s");
+  // a u16 is stored biased by one, so it is written element by element: 1, 65535, 300.
+  assert(put_u16(p, [1, 65535, 300]) == "0100ffff2c01", "u16 {put_u16(p, [1, 65535, 300])}");
+  delete(p);
+  println("ok");
+}

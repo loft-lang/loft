@@ -107,13 +107,15 @@ fn run_ok(args: &[&str], env: &[(&str, &str)]) {
 fn the_cells_hold_on_both_backends_in_both_switch_states_under_the_falsifiers() {
     run_ok(&["--interpret"], &[("LOFT_STRICT_STORES", "1")]);
     for switch in [None, Some(("LOFT_NO_LOOP_RECORD", "1"))] {
-        for falsifier in [
-            ("LOFT_STRICT_STORES", "1"),
-            ("LOFT_POISON", "1"),
-            ("LOFT_POISON_CLAIM", "1"),
-            ("LOFT_NATIVE_LEAK_CHECK", "1"),
-        ] {
-            let mut env = vec![falsifier];
+        {
+            // Every detector at once: one build per switch state, each detector still on
+            // (falsifying a guard is a one-time receipt, not a cost of every run).
+            let mut env = vec![
+                ("LOFT_STRICT_STORES", "1"),
+                ("LOFT_POISON", "1"),
+                ("LOFT_POISON_CLAIM", "1"),
+                ("LOFT_NATIVE_LEAK_CHECK", "1"),
+            ];
             env.extend(switch);
             run_ok(&["--native"], &env);
         }

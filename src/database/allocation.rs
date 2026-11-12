@@ -1418,6 +1418,16 @@ impl Stores {
             return None;
         }
         self.spare_store = None;
+        // `@FR-H-FreeTwice`'s other half — the kept store goes out as a NEW value, so it takes
+        // a new allocation stamp, as a store going live does.  `cr_fnref_minted` tells a store a
+        // fn-ref callee minted from one that was already there by this stamp: with the old one,
+        // a callee's result built in the spare read as borrowed, went on no hand-up list and
+        // was released by nobody (`heap_sound`'s `rebound_then_called` on rustc `--native`).
+        // `LOFT_NO_SPARE_RESTAMP=1` keeps the old stamp.
+        if !crate::env_once!(std::env::var_os("LOFT_NO_SPARE_RESTAMP").is_some()) {
+            self.stores_allocated += 1;
+            self.allocations[s as usize].alloc_serial = self.stores_allocated;
+        }
         Some(DbRef {
             store_nr: s,
             rec: 1,
@@ -1709,6 +1719,49 @@ impl Stores {
                 .is_some_and(|s| !s.is_free())
     }
 
+    /// `@FR-H-FreeTwice` — fail the run at a second free of store `al`, naming the op that
+    /// freed it first (`first`, a bytecode position) and the one freeing it again.
+    fn refuse_refree(&mut self, al: u16, first: u32, name: &str) {
+        // `LOFT_REFREE_BACKTRACE=1` — where the second free came from, when the report alone
+        // cannot say: a runtime routine's own release (a copy's source-free, a swap) carries
+        // no variable name, and generated native code no pc.
+        if std::env::var_os("LOFT_REFREE_BACKTRACE").is_some() {
+            eprintln!("{}", std::backtrace::Backtrace::force_capture());
+        }
+        // Each free resolved to its function, source position and the variable it released
+        // (`store_trace`), so the two sites can be read without `introspect`.
+        let at = |pc: u32| {
+            let by = crate::store_trace::freed_variable(pc)
+                .map_or_else(String::new, |v| format!(" by {v}"));
+            format!("{}{by}", crate::store_trace::site(pc))
+        };
+        // The names cost a table per compile, so only `LOFT_REFREE_FAILS=1` builds it.
+        let names = if crate::keys::refree_names() {
+            ""
+        } else {
+            "; LOFT_REFREE_FAILS=1 names the line and variable of each free"
+        };
+        // Generated native code has no pc but names the variable it frees (`free_named`).
+        let again = if self.alloc_pc == 0 && !name.is_empty() {
+            format!("by `{name}`")
+        } else {
+            at(self.alloc_pc)
+        };
+        let detail = format!(
+            "store #{al} freed {}, freed again {again}{names}",
+            at(first)
+        );
+        crate::fault_log::record(
+            "re-free",
+            &[
+                ("store", al.to_string()),
+                ("freed", at(first)),
+                ("again", at(self.alloc_pc)),
+            ],
+        );
+        self.raise_runtime(crate::runtime_error::RuntimeErrorKind::StoreFreedTwice { detail });
+    }
+
     /**
     Like [`free`], but includes the loft variable name in `LOFT_STORE_LOG` output.
     Generated native code calls this variant via `OpFreeRef(stores, var, "var_name")`.
@@ -1744,7 +1797,12 @@ impl Stores {
         if crate::keys::trace_db() {
             let was_free =
                 (al as usize) < self.allocations.len() && self.allocations[al as usize].free;
-            eprintln!("[db] free #{al} name={name} already_free={was_free}");
+            // `pc` is the freeing op's position, the `@abs` column of `loft introspect`: the
+            // interpreter's frees carry no name, so it is what tells two frees apart.
+            eprintln!(
+                "[db] free #{al} name={name} pc={} already_free={was_free}",
+                self.alloc_pc
+            );
         }
         // #405 — a wrong/stale free can carry an out-of-range store_nr (e.g. a
         // stack-NRVO loop-local's dep slot read on a not-taken branch before it
@@ -1758,6 +1816,14 @@ impl Stores {
             // iteration, so a per-occurrence print would flood stderr.
             use std::sync::atomic::{AtomicBool, Ordering};
             static WARNED: AtomicBool = AtomicBool::new(false);
+            crate::fault_log::record(
+                "wrong-free",
+                &[
+                    ("store", al.to_string()),
+                    ("var", name.to_string()),
+                    ("detail", "#405 out of range".to_string()),
+                ],
+            );
             if !WARNED.swap(true, Ordering::Relaxed) {
                 crate::loft_eprintln!(
                     "loft: BUG (#405): refused free of out-of-range store #{al} \
@@ -1816,6 +1882,15 @@ impl Stores {
             } else {
                 format!(", op={op}")
             };
+            crate::fault_log::record(
+                "wrong-free",
+                &[
+                    ("store", "0".to_string()),
+                    ("var", name.to_string()),
+                    ("at", at.clone()),
+                    ("detail", "#306 the stack store".to_string()),
+                ],
+            );
             crate::loft_eprintln!(
                 "loft: BUG (#306): refused to free the stack store (#0) \
                  (rec={}, pos={}, var='{name}', at {at}{op}) — a stack-record ref was \
@@ -1843,9 +1918,10 @@ impl Stores {
             crate::keys::strict_note_free(al, self.alloc_pc, name);
         }
         if already_free && crate::keys::double_free_audit() {
-            // `@FR-H-FreeTwice` — a CENSUS of tolerated re-frees, split by the emission that
-            // produced each.  It is not a defect channel, and measuring is what settled that:
-            // 433 762 re-frees over the corpus, every one deliberate.
+            // `@FR-H-FreeTwice` — a CENSUS of refused re-frees, split by the emission that
+            // produced each.  Each is a free the compiler emitted twice on one path, and the
+            // compiler removes them where it can (STORE_RECORDS.md § The checks): this branch
+            // sees only the re-frees whose slot nobody took in between.
             //
             // DIFFERENT site (433 754) — the branch join: the compiler emits one free per ARM of
             // a value branch, only one arm mints, and the other arm's free op lands here.
@@ -1853,12 +1929,10 @@ impl Stores {
             // `OpFreeRefIfDistinct(src, __ret_N)`, whose guard let the same instruction through
             // for a store already released on the transferred path.
             //
-            // Both polarities were predicted to be the anomaly, in that order, and both were
-            // measured to be the design.  The branch cannot host a defect gate for a reason that
-            // is structural rather than empirical: reaching it means the slot was NOT reused, so
-            // nothing else could have been harmed.  The free that IS dangerous — a stale
-            // reference releasing a slot handed to a new owner — finds the slot LIVE and takes
-            // the ordinary path below.  `LOFT_STRICT_STORES` is what converts that case into
+            // The branch cannot host a defect gate for a reason that is structural: reaching it
+            // means the slot was NOT reused, so nothing else could have been harmed.  The free
+            // that IS dangerous — a stale reference releasing a slot handed to a new owner —
+            // finds the slot LIVE and takes the ordinary path below.  `LOFT_STRICT_STORES` is what converts that case into
             // this one, by never recycling a slot.
             let same_site =
                 crate::keys::strict_free_site(al).is_some_and(|(pc, _)| pc == self.alloc_pc);
@@ -1866,7 +1940,16 @@ impl Stores {
         }
         let store = &mut self.allocations[al as usize];
         if store.free {
-            return; // Already freed — no-op (replaces Issue #120 tolerance hack).
+            // `@FR-H-FreeTwice` — a re-free is a compiler defect: the run fails at it, naming
+            // both frees, unless `LOFT_DOUBLE_FREE` asks for the census above instead or
+            // `LOFT_ALLOW_REFREE` lets it pass.  A
+            // re-free whose slot was handed out in between finds it live and is not seen here;
+            // `LOFT_STRICT_STORES` never hands a slot out again, so it sees those too.
+            if crate::keys::refree_fails() && !crate::keys::double_free_audit() {
+                let first = store.freed_at;
+                self.refuse_refree(al, first, name);
+            }
+            return;
         }
         // Plan-57 Phase C: const/global stores are PINNED — never freed (they
         // live for the whole program).  This replaces the `ref_count = u32::MAX/2`
@@ -1975,6 +2058,7 @@ impl Stores {
             store.reclaim_tail();
         }
         store.free = true;
+        store.freed_at = self.alloc_pc;
         crate::store_census::note(crate::store_census::Work::StoreFree, 1);
         #[cfg(feature = "op-census")]
         crate::store_census::alloc_event(format_args!("F {}", store.alloc_serial));
@@ -2523,10 +2607,16 @@ impl Stores {
     /// `for e in h par(...)` — the parallel queue preserves input order, but has no use for
     /// key order.  Slot order is fixed by the inserts and removes alone
     /// ([`crate::hash::records_by_slot`]), so these walks repeat from run to run.
-    pub fn build_hash_unsorted_vec(&mut self, hash_ref: &DbRef, _tp: u16) -> DbRef {
+    pub fn build_hash_unsorted_vec(&mut self, hash_ref: &DbRef, tp: u16) -> DbRef {
         // An absent holder has no scratch — see `build_hash_sorted_vec`.
         if hash_ref.rec == 0 {
             return DbRef::NULL;
+        }
+        // A table holding store records (a linked type's entries) has no arena order: its
+        // slot values are record numbers, which follow the allocator, so it walks in key order
+        // (`@FR-Col-Unordered`).
+        if crate::hash::holds_records(hash_ref, &self.allocations) {
+            return self.build_hash_sorted_vec(hash_ref, tp);
         }
         let recs = crate::hash::records_by_slot(hash_ref, &self.allocations);
         self.build_ref_scratch(hash_ref, &recs)

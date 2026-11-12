@@ -133,14 +133,15 @@ pub fn write<'a>(data: &Data, x: &'a Value) -> Option<(u16, &'a Value, &'a Value
 /// `t_6vector_clear(v)`, `OpFreeRef(v)`.
 #[must_use]
 pub fn unary(data: &Data, x: &Value) -> Option<(&'static str, u16)> {
+    if let Some(v) = crate::empty_slot::clear_of(data, x) {
+        return Some(("clear", v));
+    }
     if let Value::Call(d, args) = x.unspan()
         && let [a] = args.as_slice()
         && let Some(v) = var_of(a)
     {
         return match op_name(data, *d) {
             "OpLengthVector" | "t_6vector_len" => Some(("len", v)),
-            // The call, or the op `@FR-R-Wrapper` makes of it in the IR.
-            "t_6vector_clear" | "OpClearVector" => Some(("clear", v)),
             "OpFreeRef" => Some(("free", v)),
             _ => None,
         };
@@ -159,70 +160,6 @@ pub fn push<'a>(data: &Data, x: &'a Value) -> Option<(u16, &'a Value)> {
         return Some((v, val));
     }
     None
-}
-
-/// A work buffer's empty init: `if OpRefIsNull(v) { … } else { t_6vector_clear(v) }`, whose
-/// first branch mints a companion and binds `v` to its field → `v`, with the variables the
-/// first branch names besides `v`.
-#[must_use]
-pub fn buffer_init(data: &Data, x: &Value) -> Option<(u16, Vec<u16>)> {
-    let Value::If(test, mint, clear) = x.unspan() else {
-        return None;
-    };
-    let Value::Call(test_op, targs) = test.unspan() else {
-        return None;
-    };
-    let [tv] = targs.as_slice() else {
-        return None;
-    };
-    let vec = var_of(tv)?;
-    if op_name(data, *test_op) != "OpRefIsNull" {
-        return None;
-    }
-    let clear_ok = |stmt: &Value| matches!(unary(data, stmt), Some(("clear", u)) if u == vec);
-    let clears = match clear.unspan() {
-        Value::Insert(items) => items.len() == 1 && clear_ok(&items[0]),
-        Value::Block(bl) => bl.operators.len() == 1 && clear_ok(&bl.operators[0]),
-        other => clear_ok(other),
-    };
-    if !clears {
-        return None;
-    }
-    let items: &[Value] = match mint.unspan() {
-        Value::Insert(items) => items,
-        Value::Block(bl) => &bl.operators,
-        _ => return None,
-    };
-    let mut others = Vec::new();
-    for item in items {
-        match item.unspan() {
-            Value::Call(op, args)
-                if matches!(
-                    op_name(data, *op),
-                    "OpFreeRefIfDistinct" | "OpDatabase" | "OpSetInt4"
-                ) =>
-            {
-                for a in args {
-                    if let Some(u) = var_of(a)
-                        && u != vec
-                    {
-                        others.push(u);
-                    }
-                }
-            }
-            Value::Set(u, rhs) if *u == vec => {
-                let Value::Call(get, args) = rhs.unspan() else {
-                    return None;
-                };
-                if op_name(data, *get) != "OpGetField" {
-                    return None;
-                }
-                others.extend(args.first().and_then(var_of));
-            }
-            _ => return None,
-        }
-    }
-    Some((vec, others))
 }
 
 fn is_float_vector(tp: &Type) -> bool {
@@ -279,7 +216,7 @@ impl Walk<'_> {
         {
             return;
         }
-        if let Some((v, others)) = buffer_init(data, x)
+        if let Some((v, others)) = crate::empty_slot::buffer_init(data, x)
             && self.cand.contains(&v)
         {
             for c in others {
@@ -366,7 +303,7 @@ fn companion_loose(data: &Data, x: &Value, c: u16, held: &HashSet<u16>) -> bool 
     if companion_statement(data, x, c) {
         return false;
     }
-    if let Some((v, others)) = buffer_init(data, x)
+    if let Some((v, others)) = crate::empty_slot::buffer_init(data, x)
         && held.contains(&v)
         && others.contains(&c)
     {

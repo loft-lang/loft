@@ -10034,6 +10034,7 @@ fn main() {
             // @PLN130 F2 — the views the scope pass copied out of a container that changed
             // under them.  The copy keeps the program correct; this keeps it honest.
             loft::copy_manifest::drain_materialised_views(&mut p.diagnostics);
+            loft::copy_manifest::drain_written_back_views(&mut p.diagnostics);
             loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
             lints_ms = t.elapsed().as_secs_f64() * 1000.0;
         }
@@ -10170,6 +10171,10 @@ fn main() {
     // and says so; a warm load would replay the marks without the notice, so such a run is
     // not cached.
     let mut any_partial_native = false;
+    // loft#706's heal, for a library: a crate the runtime rlib links rebuilt after it (E0460)
+    // or by another rustc (E0514) fails every library's cdylib with the library blamed.  The
+    // runtime is rebuilt once per run, and the library tried again.
+    let mut lib_runtime_rebuilt = false;
     // #460 — never auto-native-compile the package that OWNS the entry file: that
     // package is the *script* being run, not a `use`d library, and the model is
     // "libraries compile, scripts interpret".  Its export set is entry-point
@@ -10228,7 +10233,7 @@ fn main() {
         if export.is_empty() {
             continue;
         }
-        let built = if force_build_fail {
+        let mut built = if force_build_fail {
             Err("LOFT_FORCE_NATIVE_BUILD_FAIL".to_string())
         } else {
             loft::native_artifact::cached_or_build_shared_cdylib(
@@ -10239,6 +10244,25 @@ fn main() {
                 &pending_native,
             )
         };
+        if let Err(e) = &built
+            && !lib_runtime_rebuilt
+            && native_utils::crate_resolution_failure(e)
+            && let Some(tree) = native_utils::loft_source_tree()
+        {
+            lib_runtime_rebuilt = true;
+            if native_utils::rebuild_runtime(
+                &tree,
+                "a crate the runtime rlib links was rebuilt after it, or by another rustc",
+            ) {
+                built = loft::native_artifact::cached_or_build_shared_cdylib(
+                    &p.data,
+                    &p.database,
+                    &export,
+                    pkg_dir,
+                    &pending_native,
+                );
+            }
+        }
         match built {
             Ok(Some(so)) => {
                 // loft#831 — the build succeeding does not mean this process can
@@ -10637,10 +10661,11 @@ fn main() {
         }
     }
 
-    // --check: parse + compile only, report errors and exit.
-    // When combined with --native, fall through to the native pipeline
-    // which will compile but not run the binary.
-    if check_only && !native_mode && native_emit.is_none() {
+    // --check: parse + compile only, report errors and exit.  Only a native backend the
+    // command line NAMES (`--native`, `--native-c`, …) goes on to the native pipeline, which
+    // compiles but does not run the binary: native being the default run mode is no request
+    // for it, and taking it for one made every plain `--check` a full rustc build.
+    if check_only && (!native_mode || !native_requested) && native_emit.is_none() {
         println!("ok");
         return;
     }

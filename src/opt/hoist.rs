@@ -4502,14 +4502,30 @@ pub(crate) fn local_owns_store(
     params: u16,
     x: u16,
 ) -> bool {
-    (x >= params || work_buffer_arg(data, d_nr, x))
+    local_owns_store_in(data, d_nr, vars, params, x, 0)
+}
+
+/// [`local_owns_store`] through a chain of frame locals: a dep that is itself a local owning
+/// its store (`lr_bx` moved into an element `_elm_N` of `lr_out`, whose backing is a `__vdb`)
+/// keeps the store in the frame, as a `__vdb` backing does.  Bounded, so a cycle answers no.
+fn local_owns_store_in(
+    data: &Data,
+    d_nr: u32,
+    vars: &crate::variables::Function,
+    params: u16,
+    x: u16,
+    depth: u8,
+) -> bool {
+    depth < 8
+        && (x >= params || work_buffer_arg(data, d_nr, x))
         && !matches!(vars.tp(x).base(), Type::RefVar(_))
         && !vars.is_captured(x)
-        && vars
-            .tp(x)
-            .depend()
-            .iter()
-            .all(|d| vars.name(*d).starts_with("__vdb"))
+        && vars.tp(x).depend().iter().all(|&d| {
+            vars.name(d).starts_with("__vdb")
+                || (d != x
+                    && !vars.is_argument(d)
+                    && local_owns_store_in(data, d_nr, vars, params, d, depth + 1))
+        })
 }
 
 /// Is `a` the vector `p` names, or a place inside its record (`OpGetField(p, …)`)?  A
@@ -4586,7 +4602,33 @@ fn call_leaves_param(
             is_scalar(&at.typedef) || matches!(at.typedef.base(), Type::Text(_)) || at.value_const
         });
     for (i, a) in args.iter().enumerate() {
-        if !is_path_of(data, a, p) {
+        // A VECTOR place this frame does not own may be `p`'s own vector under another name
+        // (`@FR-F-ParamHeap`: `grow(s.v, s)` hands one vector twice), so a native that writes
+        // one changes what `p`'s header holds as surely as a write to `p` does.  The op must
+        // take a vector there: a field write through a record parameter changes no header.
+        let aliases = callee
+            .attributes()
+            .get(i)
+            .is_some_and(|at| matches!(at.typedef.base(), Type::Vector(_, _)))
+            && vector_path(data, a).is_some_and(|(root, _)| {
+                // A HIDDEN parameter — the return buffer, or a WORK BUFFER promoted from this
+                // frame's own local (`lr_px` of `lock_ribbons`, `@FR-R-WorkBuffer`) — is
+                // storage the compiler hands in: the caller never passes a user value there,
+                // so it cannot be `p` under another name.  A promoted parameter's variable
+                // number is not its attribute index, so it is found by name.
+                let handed_in = vars.is_argument(root)
+                    && data
+                        .def(d_nr)
+                        .attributes()
+                        .iter()
+                        .any(|at| at.name == vars.name(root) && (at.hidden || at.work_buffer));
+                root != p
+                    && !is_scalar(vars.tp(root))
+                    && !matches!(vars.tp(root).base(), Type::Text(_))
+                    && !local_owns_store(data, d_nr, vars, params, root)
+                    && !handed_in
+            });
+        if !is_path_of(data, a, p) && !aliases {
             continue;
         }
         // An append READS its source — the whole vector, or a range of it (`t += v[lo..hi]`,

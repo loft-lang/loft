@@ -385,3 +385,50 @@ group capture in `Parser::parse_slice_pattern` / `parse_slice_repetition`
 (`src/parser/control.rs`); `formal/matching.md` `(P-Cap)`; guard
 `loft-suite/rules/matching/P-Cap/a-capture-of-a-group-binds-the-sub-slice-it-matched.loft`.
 **Catalogue:** `formal/matching.md` `(P-Rest)`, `(P-Opt)`, `(P-Rep)`.
+
+## C162 — a guard on a multi-pattern arm is asked of each listed pattern that matches
+
+**Decision.** `p_a | p_b if g => body` tries the guard against each listed pattern that matches,
+in order, under that pattern's own bindings; the first whose guard holds commits the arm, and the
+arm fails only when none does.  So the arm answers as the two arms `p_a if g` and `p_b if g`
+would, and the guard may run once per matching pattern.  An alternation nested inside a pattern
+(a tuple element, a field sub-pattern, a slice element) commits to its first match before the
+guard runs; a guard that rejects it rejects the arm.  **Why.** Merging two guarded arms into one
+`|` arm, or splitting one, never changes what a program answers, and which pattern is written
+first matters only when two of them pass the guard with different bindings.  It is the reading
+Rust gives, and both backends already gave it at the arm.  The cost is a guard that can run more
+than once, which a guard with a side effect shows.  The nested position keeps first-match because
+a nested alternation is resolved by the value's tag at that position, and retrying it would make
+every pattern a backtracking search.
+
+**Revisit when.** A program wants a nested alternation retried after a failed guard — the arm's
+retry would then have to reach inside the pattern.  Decided 2026-11-11 (owner: "the more or less
+Rust version").
+**Holds at:** `@C162` — `./scripts/idx tag:@C162`: the multi-pattern guard branches and the nested
+alternation element in `src/parser/control.rs`; `formal/matching.md` `(P-Guard)`, `(P-Multi)`;
+guard `loft-suite/rules/matching/P-Guard/a-guard-is-asked-of-each-listed-pattern.loft`.
+**Catalogue:** `formal/matching.md` `(P-Alt)`, `(P-Atomic)`.
+
+## C163 — a null written into a dense slot is the slot type's default
+
+**Decision.** A record or struct-enum field, or a vector element of such a type, is stored
+inline and has no null to hold.  A null written there — a bare `null`, or a `τ?` value under
+`(N-Store)`'s warning — is the slot type's default, `construct_default(τ)`: what `e?` gives and
+what the literal `S { rec: null }` already gave.  The default is the SLOT's type, so a `Circle?`
+written into a `Shape` field takes `Shape`'s first-declared variant.  A type with no default
+(`has_default` false: a record with a bare enum field and no `= <variant>`) refuses the store
+at compile time, as it refuses `e?`.  A keyed collection's element is outside it: absence
+under a key is a state the collection has (`(Col-Remove)`).  The warning stays: the program still stored a value that
+can be null into a slot that cannot.  **Why.** Most loft types have a default, and a slot that
+cannot hold null takes the default rather than ignoring the write (owner).  Skipping the store
+left the old value in place, so `s.rec = null` and `S { rec: null }` answered differently.
+
+**Revisit when.** A dense slot gains a presence word of its own — it could then hold the null
+as a local does.  Decided 2026-11-11 (owner: "pushing null into something that doesn't know
+what to do with it is the default").
+**Holds at:** `@C163` — `./scripts/idx tag:@C163`: the field and element store in
+`src/parser/expressions.rs` and `Parser::copy_ref` (`src/parser/operators.rs`);
+`formal/types.md` `(N-Store)`; guards
+`loft-suite/rules/types/N-Store/1720-a-nullable-written-to-an-enum-text-or-record-slot-is-reported.loft`,
+`…/1720b-a-nullable-written-to-an-element-is-reported.loft` and `tests/heap_nstore.rs`.
+**Catalogue:** `formal/types.md` `(N-Default)`, § Defaults.

@@ -1963,7 +1963,7 @@ mod generic_writes;
 mod generics;
 mod hints;
 mod imports;
-mod length_locals;
+pub(crate) mod length_locals;
 mod members;
 mod monomorph;
 mod nullable_slots;
@@ -3107,6 +3107,7 @@ impl Parser {
         }
         let res = self.lexer.peek().clone();
         if res.has != LexItem::None && self.lexer.diagnostics().level() != Level::Fatal {
+            self.lexer.note_stopped();
             if self.lexer.peek_token("use") {
                 diagnostic!(
                     self.lexer,

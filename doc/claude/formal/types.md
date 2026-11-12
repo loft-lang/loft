@@ -218,7 +218,16 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                    fall-through is where each test failed;
                  · the right operand of `t && b` runs only where t holds, and of `t || b`
                    only where it fails: b reads with what `if t`'s then side, or its else
-                   side, proves.  `i < len(v) && v[i] > 0` needs no discharge.
+                   side, proves.  `i < len(v) && v[i] > 0` needs no discharge;
+                 · a match arm's guard, `pat if t => body`: the body runs only where t holds
+                   (matching.md (P-Guard)), so it reads with what t proves there —
+                   `NLong { n: v } if v != null => take(v)` needs no discharge.  The guard
+                   alone proves it, not a multi-pattern arm's field tests, which hold for one
+                   of its patterns; the next arm reads with nothing the guard proved;
+                 · a `for` over a range, `for k in lo..n` with `lo` a constant: the body runs
+                   only where `lo <= k < n`, so with `lo >= 0` the end `n` is at least 1, and
+                   with `lo >= 1` (`lo..=n` too) the counter `k` is — each a divisor proven
+                   non-zero (`(N-Div)`).  The proof ends where the body writes `n`.
                A test of one name proves it: `v != null`, a truthy `v`, or `v == null` /
                `!v` on the side where it fails.  `t₁ && t₂` proves, where it holds, what
                each tᵢ proves where it holds, and `t₁ || t₂`, where it fails, what each
@@ -246,6 +255,13 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                comparison, a null test, a condition, `??`'s subject, `match`, a
                null-transparent callee and an `if` arm meeting its sibling's type
                (`(N-Join)`) say nothing.
+               What the warned store WRITES: a local, a parameter, a text slot and a plain-enum
+               slot hold the null.  A DENSE slot — a record or struct-enum field or vector
+               element, stored inline — has no null to hold, so the null is
+               `construct_default(τ)` of the SLOT's τ, the answer `e?` gives (`(N-Default)`),
+               and a τ outside `has_default` refuses the store at compile time (@C163).  A
+               keyed collection's element is not a dense slot: absence under a key is a state
+               the collection has, and `(Col-Assign)` / `(Col-Remove)` say what a write does.
 
   inference — declared vs inferred storage (the "by definition vs by use" split)
                The hard error for a narrow width is (I-Narrow)'s refusal seen from the slot:

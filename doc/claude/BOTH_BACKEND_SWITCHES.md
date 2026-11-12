@@ -13,21 +13,23 @@ and the free tree.  A wrong answer on `--native` only belongs to
 
 Each entry names its switch (the first bisect step), the falsifiers that apply
 (`LOFT_STRICT_STORES=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_KEYED_VERIFY=1`, the
-native leak check) and its `LOFT_TRACE_*` switch where one exists.  Because both backends
+native leak check, `LOFT_POISON_HOST=windows` —
+[WINDOWS.md § Falsifier](WINDOWS.md#falsifier-the-emulated-windows-host)) and its `LOFT_TRACE_*`
+switch where one exists.  Because both backends
 share the rewrite, agreement between them proves nothing here: hand-computed cell values and
 the switch A/B are the evidence.  The store's design is [DATABASE.md](DATABASE.md); the rules
 are in [formal/rewrites.md](formal/rewrites.md), [formal/heap.md](formal/heap.md) and
-[formal/ownership.md](formal/ownership.md).
+[formal/ownership.md](formal/ownership.md).  Past measurements:
+[BOTH_BACKEND_SWITCHES-history.md](BOTH_BACKEND_SWITCHES-history.md).
 
 ## Lowering: format appends, record placement and buffers
 
 **`LOFT_NO_FORMAT_APPEND=1`** (`@FR-R-FormatAppend`, default-ON, parse time, BOTH backends)
 makes `out += "…{e}…"` build its work text again — with it off, every literal and hole of
 the format is appended to `out` directly, in order, where no hole reads `out` and `out` is
-a text variable (a field keeps the work text; html `escape_html` 10.3× → 2.6× of Rust,
-zttext `materialise` 24× → 6.9×, `flow_layout_full` 107× → 15×) — and is the first bisect step for a wrong, missing or doubled part of
-a text built by appending format strings.  `LOFT_TRACE_FORMAT_APPEND=1` names each append
-written through and each kept, with the reason.
+a text variable (a field keeps the work text) — and is the first bisect step for a wrong,
+missing or doubled part of a text built by appending format strings.
+`LOFT_TRACE_FORMAT_APPEND=1` names each append written through and each kept, with the reason.
 
 **`LOFT_NO_LITERAL_EXIT_BUFFER=1`** (@PLN164 B2, `@FR-R-Place`'s callee clause, parse
 time, BOTH backends) makes a mid-body `return S { … }` build its record in a store of its
@@ -52,17 +54,13 @@ bisect step for a wrong field, a leak or a double free out of a record built by 
 stored in an appended element; `LOFT_TRACE_PLACE=1` names each admission and each decline
 (a read after the store, a hand-off to a call, a rebind, a second destination or host, a
 destination in a local record, a loop, a rejoin of a stored and a held path all keep the copy).
-Measured 2026-09-16 on the drawing bench's parse row: one store fewer per line and the copy
-gone, and a WASH on every counter (`perf stat`: instructions, cycles and cache misses equal
-within noise) because the record relocated there carries no heap on that scene.
 The same switch covers `(R-Place)`'s LOOP clause: a bind inside a loop whose
 result's ONE heap-owning field is stored into an element appended to a parameter or to a
 local vector bound before the loop (`sub = read(…); items += [sub.value]; p = sub.next`)
 gets its per-turn buffer claimed in the host's store (`OpPlaceRecord` in the lazy mint's
 `then`, the turn's `OpClear` kept), the field moves by `OpMoveField` — the bytes relocate,
 the source is ZEROED so the next turn's clear and the callee's refill find an empty record
-— and each exit releases the placed record as a block (`OpFreeRecordIn`).  Measured on the
-cbor decoder's bench (`--ship`, this box): decode 42.6 ms → 34.7 ms per op.
+— and each exit releases the placed record as a block (`OpFreeRecordIn`).
 **`LOFT_NO_TAKE_LOCAL=1`** (`(R-MoveLast)`'s local clause, the scope pass, BOTH backends) keeps
 `x = y` for a vector local `y` built afresh each pass (the double buffer `tmp = []; …; result =
 tmp`) a deep copy — with it off, `y` is given up to `x`, the stores exchanged.  It is the first
@@ -98,8 +96,7 @@ in a local, and for a leak into a caller's store; `LOFT_TRACE_PLACE=1` names eac
 mention after the move, a free outside an exit, a wrapper typed a level too deep — the
 tuple-destructured local `tests/branch_join.rs::a_vector_local_is_backed_by_its_own_element_type`
 guards).  A vector placed this way is not a fresh store root, so the native header and base hoists (`(R-LoopBuffer)`, `(R-CompleteWrite)`,
-`(R-Base)`) decline the loops that fill it — measured on the cbor decoder's bench: decode
-34.7 ms → 26.2 ms per op, and stores per `check_request` 20 → 7.
+`(R-Base)`) decline the loops that fill it.
 **`LOFT_NO_ZERO_COUNT=1`** (`@FR-R-ZeroCount`, on the closed program, BOTH backends) keeps
 `len(t) > 0` and every other comparison of a text's character count with the zero boundary
 counting characters — with it off, each reads the byte count (`size(t)`), which answers the
@@ -128,9 +125,7 @@ or freed record out of a callee that returns a field of a local, and for a calle
 store that was released under it; `LOFT_TRACE_PLACE=1` names each admission
 (`[return-field]`) and each decline (a parameter's or a view's field, an element, a returned
 record that owns no heap — the native value form's to answer — a statement in the exit that
-is not a free, a buffer that is not the function's own).  Measured on pluginabi's
-`check_request` driver (`--ship`, this box): 0.34 s → 0.33 s per 40 rounds; the
-copy census of `return p.a` 1 → 0 per call.
+is not a free, a buffer that is not the function's own).
 
 **`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON, parse time +
 scope pass, BOTH backends) keeps `x = f(x, …)` minting the callee's exit record in a store
@@ -217,8 +212,7 @@ is handed the field and the site copies the answer in only when it is not the fi
 (`palette_items_for_tool` answering `HEIGHT_STEP_LABELS`).  The first bisect step for a field
 that holds the wrong one of a callee's answers.
 `tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft` is its guard.
-Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
-byte-identical under the switch — so the gain is structural.  The callee clause admits a CHAIN exit
+The callee clause admits a CHAIN exit
 (`return mk(n)` hands the buffer through; asked recursively, a cycle declines), so a result
 that arrives through a chain is placed like a literal's; the switch covers it with the rest.
 
@@ -239,12 +233,16 @@ It also names every view copied out of its container (`[materialise] fn \`view\`
 **A value branch of calls witnesses every arm's buffer (@PLN157 § V-af, BOTH backends,
 parse time):** `v = if c { mk(i) } else { mk2(i) }` in a loop binds `v` to whichever arm's
 hidden return buffer ran, so every arm's buffer is `v`'s witness — the buffers are
-allocated once per activation and `v`'s per-iteration free declines against each, where
-before the branch paired nothing and every iteration minted and freed a store (the
-consumer's `smooth` −26 %).  **`LOFT_NO_JOIN_BUFFER_WITNESS=1`** restores the unpaired
-form and is the first bisect step for a leak, a double free or a stale record out of a
-loop that binds a record from a branch of calls; `LOFT_STRICT_STORES=1` and
-`LOFT_POISON=1` are the falsifiers.
+allocated once per activation and `v`'s per-iteration free declines against each.
+**`LOFT_NO_JOIN_BUFFER_WITNESS=1`** restores the unpaired form and is the first bisect step
+for a leak, a double free or a stale record out of a loop that binds a record from a branch
+of calls; `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the falsifiers.  Where an arm's
+answer needs a temp of its own (a call answering a borrow, which the bind copies), `v`
+borrows that temp and the temp releases it (`@FR-O-Complete`, `Scopes::lift_join_arm_tails`);
+**`LOFT_NO_CALL_ARM_HOLDERS=1`** leaves `v` owning it too — a re-free per evaluation.
+A literal built in a buffer the local adopts is freed only where the local moved off it
+(`OpFreeRefIfDistinct(buffer, local)`, ahead of the local's own free, `@FR-O-Buffer`);
+**`LOFT_NO_LITERAL_BUFFER_PAIR=1`** keeps both plain frees — a re-free per evaluation.
 
 **A match lowered once per arm (`@FR-M-Once`, default-ON, both backends, parse time):** a
 guarded arm folds its guard into its own condition (`parser::control::guarded_arm`), so a
@@ -255,12 +253,10 @@ leak or a crash in a `match` with guarded arms: a binding first written inside a
 condition is the shape to suspect.  Guards `loft-suite/rules/matching/M-Once/`.  (An enum arm's
 test as one op is the interpreter's alone, `LOFT_NO_TAG_JUMP`: `formal/rewrites.md` `(R-Fuse)`.)
 
-**Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a
-local reassigned across sibling `if`/`else if`/`match` arms used to keep EVERY arm's store
-alive to scope exit, so the watermark grew with the number of reassignment SITES rather than
-with how many of them run — a 16-site function peaked at 20 stores whichever single arm was
-taken. `recover_backer` confines each block's store to its block: a flat **5** at 2, 4, 8 and
-16 sites. **`LOFT_NO_CONF_RECOVER=1`** emits the pre-confinement form and is the first bisect
+**Store confinement across sibling blocks (default-ON, both backends):** a local reassigned
+across sibling `if`/`else if`/`match` arms keeps only the store of the arm that ran:
+`recover_backer` confines each block's store to its block, so the watermark grows with the
+arms that run, not with the reassignment sites. **`LOFT_NO_CONF_RECOVER=1`** emits the pre-confinement form and is the first bisect
 step for a wrong answer in a function that reassigns a local across sibling blocks. ⚠ The
 soundness condition is `store_dead_after_block`, NOT the flag: a local READ after the blocks
 does not confine, because freeing a confined store while the local still holds it returns the
@@ -294,9 +290,8 @@ the type MAXIMUM that never terminates on either form.
 **`LOFT_NO_BYTE_COPY=1`** (`@FR-R-ByteCopy`, default-ON, scope pass, BOTH backends) makes
 `for i in lo..hi { buf += [t.byte_at(i) as u8] }` push byte by byte again — with it off, the
 loop is one append of the bytes `[lo, hi)` behind `0 <= lo && lo <= hi && hi <= size(t)`,
-the loop as written running for a range the guard refuses (cbor `encode_bytes` 94.7× →
-43.1×; 2.9 → 0.4 ns a byte on the probe) — and is the first bisect step for a wrong, missing
-or extra byte out of such a copy.  It turns off the rule's vector clause with it
+the loop as written running for a range the guard refuses — and is the first bisect step for
+a wrong, missing or extra byte out of such a copy.  It turns off the rule's vector clause with it
 (`for i in lo..hi { buf += [v[off + i] ?? d] }` as one slice append behind its in-range
 guard) and `@FR-R-TextRun`, which builds on that clause: a byte vector filled only by such a
 copy and read once by `text_from_bytes` is read in place by `text_from_byte_range`, so the
@@ -318,22 +313,20 @@ serves both arms.  `LOFT_TRACE_STORE_SWAP=1` names each exchange.
 
 **`LOFT_NO_REBIND_OWN_BUFFER=1`** (`@FR-R-Rebind`'s own-buffer clause, default-ON, scope
 pass, BOTH backends) keeps `(R-Rebind)` to plain locals: a builder's `d = step(d, …)`, where
-`d` is the frame's own promoted return buffer, copies the step's result into `d` again (zttext
-insert loop 5.01 → 5.95 ms per op) — the first bisect step for a wrong or stale record out of
-such a loop.  `LOFT_TRACE_REBIND=1` names each site.
+`d` is the frame's own promoted return buffer, copies the step's result into `d` again — the
+first bisect step for a wrong or stale record out of such a loop.  `LOFT_TRACE_REBIND=1` names
+each site.
 
 **`LOFT_NO_VEC_COPY=1`** (`@FR-R-VecCopy`, default-ON, scope pass, BOTH backends) makes
 `for e in V { t += [e] }` push element by element again — with it off, the walk is
-`t += V` where t is a local or the frame's hidden return or work buffer (zttext `insert_text`
-25.4 → 5.95 ms per op) — and is the first bisect step for a wrong, missing or extra element
-out of such a copy.  `LOFT_TRACE_VEC_COPY=1` names each site admitted and each kept.
+`t += V` where t is a local or the frame's hidden return or work buffer — and is the first
+bisect step for a wrong, missing or extra element out of such a copy.  `LOFT_TRACE_VEC_COPY=1`
+names each site admitted and each kept.
 
 **`LOFT_NO_LITERAL_WALK=1`** (`@FR-R-LiteralWalk`, default-ON, parse time,
 BOTH backends) makes `for x in [a, b, c]` build and walk the vector again — with it off, the
 items are evaluated once into scalar temps and the loop is a counted select over them, no
-vector on either backend (mesh3d's `mesh_to_floats`, whose per-triangle `[t.a, t.b, t.c]`
-was a buffer reset, three appends and three element reads through the store) — and is the
-first bisect step for a wrong value, order or count out of a loop over a literal of scalars.
+vector on either backend — and is the first bisect step for a wrong value, order or count out of a loop over a literal of scalars.
 `LOFT_REWRITE_CENSUS` counts its admissions as `R-LiteralWalk`.
 
 **`LOFT_NO_FILL_LOOP=1`** (`@FR-R-PushFill`'s fill form, default-ON, IR phase, BOTH backends)
@@ -382,6 +375,22 @@ record into the field again where `h = T { …, f: h }` or `o.g = T { …, f: o.
 **`LOFT_NO_VARIANT_INPLACE=1`** (`@FR-R-InPlaceLiteral`'s variant clause) builds a variant
 literal rebinding an enum local or a return buffer on a work reference again, and so also
 turns off `(R-Demote)`'s variant clause: the next bisect step for an enum list or tree.
+
+**`LOFT_NO_CAPREBIND_MINT=1`** (`@FR-L-CapRebind`, default-ON, parse time and scope pass, BOTH
+backends) lets a rebind of a captured vector local that reads the local itself (`a = a + [3]`,
+`a = a[0..1]`) work in the local's store again, and drops the detach that keeps a loop pass's
+closure record on the store it was built with (`scopes::rebound_captures`, records confined to
+the pass).  The first bisect step for a closure that sees its local's later rebind;
+`LOFT_STRICT_STORES=1` and the leak gate are the falsifiers, since an escaping closure then reads
+a freed store.  **`LOFT_NO_CAPREBIND_KEEP=1`** lets the last-use pass free a store a captured
+local was bound to at its last read here (`scopes::last_use`), while the closure record still
+reads it: a use after free the next allocation exposes (`--native-c` under
+`LOFT_STRICT_STORES=1` names it; the interpreter under `LOFT_POISON=1` reads a corrupt
+reference).  `LOFT_OWN_ORACLE=check` reports it as `capture-freed`.  Three switches bring back
+a re-free at a scope's end (`@FR-H-FreeTwice`, scope pass; `LOFT_DOUBLE_FREE` counts it): a fn-ref
+freeing the local record it was built over (**`LOFT_NO_FNREF_STAND_DOWN=1`**), a record a
+capturing record's cascade adopts (**`LOFT_NO_CAPTURED_RECORD_STAND_DOWN=1`**), and a captured
+vector local beside its `__vdb_N` backing (**`LOFT_NO_CAPTURED_VIEW_STAND_DOWN=1`**).
 
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
 a plain local first-bound from a callee that returns the local it promoted onto its buffer
@@ -483,7 +492,10 @@ clause, so each arm test of a slice `match` reads the subject again, and
 repeat across a fresh record's fill is read again each time; **`LOFT_NO_SELF_REPLACE=1`**
 keeps the delivery of a buffer's own view into that buffer at every exit
 (`@FR-R-SelfReplace`, trace `LOFT_TRACE_SELF_REPLACE=1`); **`LOFT_NO_IN_RANGE=1`** keeps the discharge of a
-record element its loop proves in range (`@FR-R-InRange`); **`LOFT_NO_SINGLE_USE=1`** also keeps
+record element its loop proves in range (`@FR-R-InRange`), and **`LOFT_NO_LENGTH_LOCAL=1`** alone
+its length-local form — a range end `n` bound by `n = len(v)` earlier than the statement before
+the loop — together with `@FR-R-Base`'s counter clause reading the same local in the C writer;
+**`LOFT_NO_SINGLE_USE=1`** also keeps
 a comprehension's element temporary (`@FR-R-SingleUse`'s statement clause);
 **`LOFT_NO_DISCHARGE_INTO=1`** keeps the temporary of a text discharge that assigns a local
 (`@FR-R-DischargeInto`).  The `LOFT_TRACE_*` of the same name lists what each rewrote, per
@@ -576,34 +588,47 @@ answered, in a function that only reads it.  `LOFT_TRACE_WORK_BUFFER=1` names ea
 call site a work buffer of its own again.  By default a frame POOLS them: the k-th work buffer
 of element type τ in one call takes the frame's buffer `(τ, k)`, shared by every call site,
 because calls in a frame never overlap and a callee clears its buffer on entry.  Per site,
-the buffers climbed one per call: a function of 150 calls took 150 hidden parameters and its
-caller 150 more per call — a 15 500-line library spent 96 s in the scope pass where it now
-spends 0.17 s.  The pool is disjoint from the frame's OWN promoted locals, the only buffers
+the buffers climb one per call: a function of 150 calls takes 150 hidden parameters and its
+caller 150 more per call, which the scope pass pays for.  The pool is disjoint from the frame's OWN promoted locals, the only buffers
 that hold data across a call.  The bisect step between the rewrite and the pool: a wrong
 value that goes away here and not under `LOFT_NO_WORK_BUFFER` is two buffers of one frame
 sharing a store they must not.
 ## Lowering: slices
 
-**`LOFT_NO_SLICE_COPY=1`** (@PLN174 F4a, `(Slice-Value)`'s block-copy form, default-ON since
-2026-09-28, parse time, BOTH backends) keeps the per-element loop for a SCALAR-element slice
-bound to a local (`s = v[a..b]`, `s += v[a..b]`, and every vector-typed position the
-coercion serves) — with it off the span is copied in ONE block (`OpSliceVector`,
-`Stores::vector_slice`; forty 200 000-element slices 0.13 → 0.03 s) — and is the first bisect
+**`LOFT_NO_SLICE_COPY=1`** (@PLN174 F4a, `(Slice-Value)`'s block-copy form, default-ON, parse
+time, BOTH backends) keeps the per-element loop for a SCALAR-element slice bound to a local
+(`s = v[a..b]`, `s += v[a..b]`, and every vector-typed position the coercion serves) — with
+it off the span is copied in ONE block (`OpSliceVector`, `Stores::vector_slice`) — the first bisect
 step for a wrong slice of a scalar vector.  A heap, struct, type-variable or linked element
 keeps the loop either way.  **`LOFT_TRACE_ITERVEC=1`** names an iterator that meets a
 vector-typed position and is NOT materialised, with the value's shape — the instrument for
 "expected vector, got iterator" surviving at a site the coercion should serve.
 
-**`LOFT_NO_FOREIGN_VIEW=1`** (@PLN174 F4b, `(Slice-Value)`'s view clause, default-ON since
-2026-09-28, RUNTIME, both backends) copies a slice of a FOREIGN store (a mapped file, a
+**`LOFT_NO_FOREIGN_VIEW=1`** (@PLN174 F4b, `(Slice-Value)`'s view clause, default-ON, RUNTIME,
+both backends) copies a slice of a FOREIGN store (a mapped file, a
 library's buffer) where a bind into the local's own store takes a VIEW of the bytes
 (`OpSliceView` → `Stores::vector_slice_view`; under the switch the same op copies) — the
 first bisect step for a wrong byte, a leak or a refused write out of a slice of `file_map`'s
 result, and the A/B `tests/foreign_store.rs` runs both cell files under.  The one observable
-difference between the forms is that the copy takes a write and the view refuses it.  Since
-F5 the same switch covers a `#native` bridge's whole vector answer bound to a local
+difference between the forms is that the copy takes a write and the view refuses it.  The
+same switch covers a `#native` bridge's whole vector answer bound to a local
 (`OpAdoptVector` → `Stores::vector_adopt`, which views a foreign answer and copies under the
 switch; `tests/foreign_bridge.rs` is its A/B).
+
+**`LOFT_NO_SLICE_INTO=1`** (`@FR-R-SliceInto`, default-ON, scope pass, BOTH backends) keeps a
+scalar slice appended to a PLACE — a literal's field `R { f: v[a..b] }`, `x.f += v[a..b]` — as a
+slice built in a store of its own and then appended; with it on, the span is appended onto the
+place in one block, `OpSliceVector(P, v, lo, hi, tp)` after the slice's bound statements, the
+form a local place takes at parse time.  It also turns off the C's transient clause, which
+reads that form.  The first bisect step for a wrong or missing span in a vector field.
+`LOFT_TRACE_SLICE_INTO=1` names each site taken and each kept with why.
+
+**`LOFT_NO_RETBUF_ADOPT=1`** (`@FR-R-RetAdopt`, default-ON, every backend: the interpreter's
+generator and both compiled writers apply `opt::ret_adopt`'s one decision) makes a
+vector-returning function keep its delivery copies — with it on, a shape-A result local ADOPTS
+the hidden return buffer: built where it must end up, the exits deliver nothing, the backing
+reused across calls.  The bisect step for a wrong vector return, a leak at a vector-returning
+call, or values accumulating across calls.  `LOFT_TRACE_ADOPT=1` names the declining gate.
 
 ## Layout: out-of-line fields
 
@@ -615,6 +640,12 @@ that contains itself; it is the first bisect step only for a program whose types
 recurse, since a recursive one stops compiling.  For a wrong value, a leak or a double release
 in a recursive type, the falsifiers are `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` against
 hand-computed values (`loft-suite/rules/binding/B-OutOfLine/`).
+
+**A field write frees a call's answer once (both backends, scope pass):** `OpSetChildRec`, like
+`OpCopyRecord` and `OpReplaceKeyed`, frees its source store under `COPY_FREE_SOURCE`, so the
+call's `__lift_N` is read back as null after it and keeps no free (`OpSets::freed_source_arg`).
+**`LOFT_NO_CHILD_REC_TAKES=1`** leaves `OpSetChildRec` out: the first bisect step for a
+re-free (`LOFT_DOUBLE_FREE`) after `cur = f(…)` through a link (`B-Ref-Write/2433-…`).
 
 ## Lowering: `??` chains and nested literals
 
@@ -661,8 +692,7 @@ a constant comprehension.  **`LOFT_NO_FIELD_FILL=1`** (parse time, BOTH backends
 constant comprehension in a struct FIELD (`Lay { best: [for _ in 0..n { 2.0 }] }`) on its
 per-element push loop — with it off it takes the repeat-literal lowering a local's already has,
 when the field is a plain vector (`is_plain_vector`; a keyed collection stays on the loop, since
-n appends are not n inserts); together with the block repeat `lock_curved` 4.2× → 2.2×.
-**`LOFT_NO_SELF_APPEND_BLOCK=1`** (runtime, BOTH backends) makes `v += v` copy through a
+n appends are not n inserts).  **`LOFT_NO_SELF_APPEND_BLOCK=1`** (runtime, BOTH backends) makes `v += v` copy through a
 byte snapshot taken before the growth again — with it off, a self-append is one block copy
 inside the grown record, its source re-read from the field slot after the growth (which is
 also what fixed the heap-owning case: the claims walk read the source through a number
@@ -845,9 +875,7 @@ O(1) off the footer (tree-confirmed — claimed data can spell a false footer) i
 leaving adjacent frees to `claim`'s lazy O(blocks) sweep; the sweep stays armed only for
 the untracked one-word case.  **`LOFT_NO_FREE_FOOTER=1`** restores the sweep-only form
 whole (every delete arms it) and is the first bisect step for a store-layout fault in a
-delete-heavy run.  Measured: `fronds` −7.7 % (the § V-u arena's churn), and the class it
-retires is the `coalesce_free` cliff PERFORMANCE.md § V-j P2 first measured at 29.5 % of
-a shared-arena row.
+delete-heavy run.  The class it retires is the `coalesce_free` cliff (PERFORMANCE.md § V-j P2).
 
 **The tail free block is a wilderness (@PLN164, default-ON, both backends,
 `@FR-H-Wilderness`):** the free block that ends a store is held beside the free tree, and the
@@ -896,7 +924,7 @@ claim once the untracked words reach 256 and a fifth of the extent written, with
 that merges and tracks every free block, or at an explicit reclaim; a fresh or reset store
 starts the phase again, a store bound to a file never enters it.  A store built once and freed whole
 (a call's result buffer, a decoder's tree) never pays for its deletes, and its claims stay on
-the tail (pluginabi's `check_request` −6 %: the free-tree walks were a quarter of the row).
+the tail.
 **`LOFT_NO_LAZY_FREE=1`** tracks every delete at its site again (read per store at
 construction) and is the first bisect step for a store-layout fault, a claim that hands out a
 live block, or a store that grows instead of reusing a freed block.  The falsifiers are the free tree's
@@ -969,31 +997,3 @@ zero divisor), merged into `<file>` at exit (@PLN201 step 2, `src/ledger.rs`).  
 ordinary checked run on either backend and answers the same; it is slower, since every integer
 operator is a call, and it neither reads nor writes the program cache.  Both backends write the
 same file for the same runs.  `--ship` ignores it.  Guards: `tests/ledger.rs`.
-
-## Falsifier: the emulated Windows host
-
-**`LOFT_POISON_HOST=windows`** (@PLN184 Track W, runtime, BOTH backends, Linux and macOS)
-runs a loft program as if on Windows.  It sits in the same family as `LOFT_POISON`: a run
-mode that changes what the program meets, so that a defect a normal run hides shows up.  It
-is real code in every build, and on Windows it changes nothing.
-
-Every path a program sees uses the Windows spelling on drive `L:`, which is the real root:
-`temp_dir()` is `L:/tmp`, and a listing hands back `L:/…`.  Every path a program hands
-loft is read under Windows' rules.  `file_access` (`src/file_access/emulated.rs`) applies
-Microsoft's naming rules over the real file system:
-- a reserved character or a device name is refused;
-- a trailing dot or space is stripped;
-- `name:stream` writes a silent alternate data stream;
-- a name matches an existing entry whatever its case.
-
-**Scope.** Only a program's file handling is covered: what `Stores::resolve_path` resolves,
-and the directories `file_access::given` hands out.  The compiler's own paths stay on the
-host's rules until @PLN184 Track A moves them into `file_access`.  Store persistence is
-exempt; the daily windows-latest run proves it.  `MAX_PATH` is not reproduced, because
-`std` hands a long path to Windows in the verbatim form.
-
-**The checks:**
-- the unit tests in `src/file_access/emulated.rs` (one per rule, through
-  `file_access::with_program_host`);
-- the platform guard `tests/scripts/a-program-cannot-tell-which-platform-it-runs-on.loft`
-  run under the switch.

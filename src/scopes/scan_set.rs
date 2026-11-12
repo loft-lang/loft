@@ -397,6 +397,22 @@ impl Scopes<'_> {
         if let Some(copy) = self.copy_temp_held_bind(ov, v, value, function, data) {
             return self.scan(&copy, function, data);
         }
+        // `@FR-B-View` — a tuple local bound ONCE from a record's unbox (`t: (S?, integer) =
+        // mk()`, the declared spelling that unboxes a call's `__tuple` record): its heap
+        // members are reads of the record the unbox's work-ref holds, so they borrow it, as
+        // the parser's own holders of an unbox do (`Parser::unboxed_member_types`).  Left
+        // owning, the scope end freed `t.0` — a DbRef into that store — and then the
+        // work-ref.  A local bound more than once keeps its type: another bind may own.
+        // @FR-O-Proxy asks copy — view or owner; adding the dep authorises no free.
+        if !self.multi_assigned.contains(&ov)
+            && !unbox_member_deps_off()
+            && matches!(function.tp(v).base(), Type::Tuple(_))
+            && function.tp(v).depend().is_empty()
+            && let Some(w) = unbox_work_ref(value)
+            && w != v
+        {
+            function.depend(v, w);
+        }
         // `@FR-O-Complete` / `@FR-B-Copy` — a REASSIGNMENT of a heap local from a value
         // branch is lowered to the statement form, `if c { x = a } else { x = b }`, so each
         // arm's `Set` gets the lowering a single bind of that tail has: a whole variable is
@@ -421,7 +437,17 @@ impl Scopes<'_> {
         // runtime fact (`Own::Join`), not a copy — except a call arm the parser gave an owner for
         // the value form, which is written out as the call itself, because that owner served the
         // join.  RECORDS only: a vector keeps the value form, which already copies the chosen arm.
+        // …and the FIRST bind of a binding assigned again later is written out too, where every
+        // arm hands back a WHOLE variable (each arm's `Set` then copies, and the binding owns):
+        // the lift's temps released their copies at scope exit while the later bind's displaced
+        // free released the one the binding names — the same store twice (`at = if c { a }
+        // else { a }; at = reset(at)`).  A projection arm is not written out: it would leave the
+        // binding a VIEW for its later whole-value binds too, and `x = y` would alias `y`.
+        // `LOFT_NO_MULTI_FIRST_WRITES_OUT=1` keeps the lift there.
         let writes_out = (self.var_scope.contains_key(&v)
+            || (self.multi_assigned.contains(&ov)
+                && !multi_first_writes_out_off()
+                && every_arm_tail_is_var(value))
             || (data.type_owns_droppable_anywhere(function.tp(v))
                 && !self.arm_source_outlives_loop(value, function)))
             && Self::is_value_branch(value)
@@ -551,6 +577,7 @@ impl Scopes<'_> {
                     call_mints: self.tuple_call_mint.get(&v),
                     handed: Some(&self.drop_transferred),
                     moved: Some(&self.tuple_moved),
+                    claimants: Some(&self.tuple_claimants),
                 },
                 None,
             );
@@ -888,7 +915,14 @@ impl Scopes<'_> {
         // loft#1511 — remember which elements of a tuple-literal RHS were minted by their
         // own call, for the element frees at reassignment and scope exit.
         if matches!(function.tp(v).base(), Type::Tuple(_)) {
-            let joined = if matches!(value.unspan(), Value::If(..)) {
+            // A `match` arrives as a block that binds its subject and ends in the `if` chain
+            // (`scalar_match`); its arms join the same way (`@FR-H-FreeTwice`: the arms'
+            // construction work-refs were never retired, and each freed its member again).
+            // `LOFT_NO_MATCH_TUPLE_JOIN=1` reads only a bare `if`.
+            let joined = if matches!(value.unspan(), Value::If(..))
+                || (!crate::env_once!(std::env::var_os("LOFT_NO_MATCH_TUPLE_JOIN").is_some())
+                    && ends_in_branch(value))
+            {
                 branch_tuple_call_mints(value, function, data, data.def_nr("OpNullRefSentinel"))
             } else {
                 tuple_call_mints(value, function, data).map(|m| (m, Vec::new()))
@@ -898,6 +932,29 @@ impl Scopes<'_> {
             }
             match joined.map(|(m, _)| m) {
                 Some(mut m) => {
+                    // `@FR-H-FreeTwice` — a `null` member names no store, so what a later member
+                    // write puts there is the tuple's ALONE (a sole owner, no claimant): unpaired,
+                    // `member_write` kept the plain put, and the write's work-ref freed the
+                    // member the tuple frees too, while the displaced member leaked.
+                    // `LOFT_NO_NULL_MEMBER_OWNED=1` leaves it unpaired.
+                    if let Value::Tuple(members) = value.unspan()
+                        && !crate::env_once!(
+                            std::env::var_os("LOFT_NO_NULL_MEMBER_OWNED").is_some()
+                        )
+                    {
+                        let sentinel = data.def_nr("OpNullRefSentinel");
+                        for (idx, member) in members.iter().enumerate() {
+                            let idx = idx as u16;
+                            let null = match member.unspan() {
+                                Value::Null => true,
+                                Value::Call(d, a) => a.is_empty() && *d == sentinel,
+                                _ => false,
+                            };
+                            if null && self.written_tuple_members.contains(&(ov, idx)) {
+                                m.entry(idx).or_insert(None);
+                            }
+                        }
+                    }
                     // loft#1532 — an element a later member assignment writes is handed to the
                     // tuple ALONE here: its claimant is disarmed after the `Set`, with the other
                     // hand-off disarms, and it is paired as a sole owner.  See
@@ -1139,11 +1196,20 @@ impl Scopes<'_> {
                         continue;
                     }
                     let av_scope = self.var_scope.get(av).copied().unwrap_or(u16::MAX);
-                    if v_scope <= av_scope && v_scope != u16::MAX {
+                    // A coalesce bound in the buffer's OWN scope (`q = mq(4) ?? return` at a
+                    // function's top) takes `v`-side guard as well: `v`'s free declines while it
+                    // names the buffer, whose own free then releases it once.  Unguarded, both
+                    // freed it (`@FR-H-FreeTwice`).  `LOFT_NO_COALESCE_SAME_SCOPE_WITNESS=1`.
+                    let same_scope_coalesce = !branch
+                        && v_scope == av_scope
+                        && !crate::env_once!(
+                            std::env::var_os("LOFT_NO_COALESCE_SAME_SCOPE_WITNESS").is_some()
+                        );
+                    if v_scope <= av_scope && v_scope != u16::MAX && !same_scope_coalesce {
                         if branch {
                             self.paired_witness.entry(*av).or_insert(v);
                         }
-                    } else if v_scope != u16::MAX && av_scope != u16::MAX && v_scope > av_scope {
+                    } else if v_scope != u16::MAX && av_scope != u16::MAX && v_scope >= av_scope {
                         let buffers = self.witness_buffer.entry(v).or_default();
                         if !buffers.contains(av) {
                             buffers.push(*av);
@@ -1473,7 +1539,12 @@ impl Scopes<'_> {
             // with nothing to strip still has a mark to lift and emitters to steer, so both
             // must pass.  A binding whose deps name something ELSE is declined: that one is
             // not a view of what was disturbed.
-            && function.tp(v).depend().iter().all(|d| *d == container)
+            // A dep may also name what the container itself VIEWS: a capture read out of a
+            // `match` subject's temp (`_match_subj_N = o.items`) borrows `o`, the subject's
+            // source, which is the container one view out (`@FR-P-Cap-View`).
+            && function.tp(v).depend().iter().all(|d| {
+                *d == container || function.tp(container).depend().contains(d)
+            })
         {
             let vname = function.name(v).to_string();
             let deps: Vec<u16> = function.tp(v).depend().clone();
@@ -1898,9 +1969,40 @@ impl Scopes<'_> {
             // local read as a borrow and the buffer was freed by nobody: `t = h(bag)` with
             // `h = fn(q: Bag) -> vector<integer> { q.items }` held one store per call.  The
             // binding owns the buffer; say so, and `get_free_vars` frees it (`@FR-O-Move`).
-            let deps: Vec<u16> = function.tp(v).depend().clone();
-            for d in deps {
-                function.make_independent(v, d);
+            //
+            // `@FR-O-Complete`, `@FR-H-FreeTwice` — a binding ANOTHER assignment binds to a view
+            // (`x = mk(1)`, `x: vector<T> = []`: the store belongs to the call's buffer or the
+            // literal's temp) cannot also be declared this delivery's owner: one binding for
+            // every path, so its displaced free would release the temp's store, and the temp
+            // frees it again.  The delivery gets an owner of its own instead — a `__lift_N`
+            // declared where the binding is — and the binding views it, as it views the rest.
+            if self.multi_assigned.contains(&v) && crate::keys::callref_lift() {
+                let home = self.var_scope.get(&v).copied().unwrap_or(self.scope);
+                let tp = function.tp(v).with_deps(&Deps::none());
+                let tmp = self.new_lift_var(function, &tp);
+                self.var_scope.insert(tmp, home);
+                self.lift_decl_depth.insert(tmp, self.loop_depth_at(home));
+                let call = std::mem::replace(&mut set_value, Value::Null);
+                set_value = Value::Insert(vec![v_set(tmp, call), Value::Var(tmp)]);
+                // `@FR-O-Complete` — an append's guarded mint (`v += […]` while `v` is absent)
+                // marks its backing never-free because the LOCAL frees whatever it names
+                // (loft#1486).  A view of the lift frees nothing, so the backing releases its
+                // own store again; it is null where the mint did not run.  Kept never-free, a
+                // null pass's backing was released by nobody (N-Shape/2248's fn-ref append, on
+                // C; the interpreter's frame exit hid it).  `LOFT_NO_LIFT_BACKING_FREE=1`.
+                if !crate::env_once!(std::env::var_os("LOFT_NO_LIFT_BACKING_FREE").is_some()) {
+                    for d in function.tp(v).depend().clone() {
+                        if function.is_inline_ref(d) && function.is_skip_free(d) {
+                            function.clear_skip_free(d);
+                        }
+                    }
+                }
+                function.depend(v, tmp);
+            } else {
+                let deps: Vec<u16> = function.tp(v).depend().clone();
+                for d in deps {
+                    function.make_independent(v, d);
+                }
             }
         }
         // Prepend dependency initializations.
@@ -1909,6 +2011,28 @@ impl Scopes<'_> {
         // inits, the hoisted RHS preamble, and the Set itself, so the owned
         // store is released before any part of the new value is computed.
         if let Some(free) = transition_free {
+            // `@FR-H-FreeTwice`, `@FR-O-Complete` — a store a frame TEMPORARY owns (the backing or
+            // call buffer another assignment of `v` viewed) is that temporary's to release: the
+            // displaced free declines while `v` still names it (`x: vector<T> = []` then
+            // `x = fwd(none)`, a forwarding fn-ref whose declared return borrows `none`, freed
+            // the literal's store and `__vdb_N` freed it again — loft#1323).
+            let free = if crate::keys::view_temp_transition_guard() {
+                let distinct = data.def_nr("OpDistinctStore");
+                self.view_temps
+                    .get(&v)
+                    .into_iter()
+                    .flatten()
+                    .filter(|&&t| t != v)
+                    .fold(free, |inner, &t| {
+                        v_if(
+                            Value::Call(distinct, vec![Value::Var(v), Value::Var(t)]),
+                            inner,
+                            Value::Null,
+                        )
+                    })
+            } else {
+                free
+            };
             prefix.push(free);
         }
         // …and the witness snapshot is written AFTER it, so the free compares against the
@@ -2095,6 +2219,25 @@ impl Scopes<'_> {
                 }
                 // `@FR-L-CapOwn` — the record gives up what it adopted through its own
                 // cascade, emitted here; the store free releases only the record.
+                // `@FR-H-FreeTwice` — the `(L-CapKeep)` snapshot of the fn-ref being rebound
+                // (`__fkeep_N = g`, taken before this statement) still names the record released
+                // here, and its check after the build releases what no live name holds: the
+                // record again, once the build has minted a new one (O-Witness
+                // `rebuilt_reassigned`, strict stores).  It lets go of the record first — ahead
+                // of the hook, so the cascade stays next to the free it belongs to.
+                if let Some(f) = self.pending_fkeep
+                    && crate::keys::fkeep_rebuild_detach()
+                {
+                    let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(f)]);
+                    prefix.push(v_if(
+                        Value::Call(
+                            data.def_nr("OpDistinctStore"),
+                            vec![closure, Value::Var(*rec)],
+                        ),
+                        Value::Null,
+                        v_set(f, Value::Null),
+                    ));
+                }
                 if let Some(hook) = super::drops::drop_hook(function, *rec, data) {
                     prefix.push(hook);
                 }
@@ -2191,6 +2334,23 @@ impl Scopes<'_> {
                 }
                 WitnessSet::Other => witness_ops.push(guarded_release),
             }
+        }
+        // `@FR-B-View` — a local bound ONCE to a projection of a lifted call result
+        // (`own = mk(n).bounds`: `__lift_1 = mk(n); own = OpGetField(__lift_1, …)`) views the
+        // lift's store, which the lift releases.  The parser typed it before the lift existed,
+        // as an owner, and both freed the store (`@FR-H-FreeTwice`).  A local bound again keeps
+        // its type: another bind may own.  `LOFT_NO_LIFT_PROJECTION_VIEW=1` keeps it owning.
+        // @FR-O-Proxy asks copy — view or owner; adding the dep authorises no free.
+        if !self.multi_assigned.contains(&ov)
+            && !lift_projection_view_off()
+            && function.tp(v).depend().is_empty()
+            && crate::data::is_dbref(function.tp(v).base())
+            && let Some(root) = crate::use_analysis::projection_root(&set_value, data)
+            && root != v
+            && root < function.count()
+            && function.is_lift_temp(root)
+        {
+            function.depend(v, root);
         }
         if prefix.is_empty()
             && ls.is_empty()
@@ -2374,4 +2534,69 @@ enum RefRhs {
     Owned,
     /// A borrowed view into someone else's store (must never be freed).
     View,
+}
+
+/// The work-ref a `tuple_unbox` block binds the unboxed record to, or `None` for any other
+/// value.
+fn unbox_work_ref(value: &Value) -> Option<u16> {
+    match value.unspan() {
+        Value::Block(b) if b.name == "tuple_unbox" => {
+            match b.operators.first().map(Value::unspan) {
+                Some(Value::Set(w, _)) => Some(*w),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// `LOFT_NO_UNBOX_MEMBER_DEPS=1` — the scope pass's half of the switch the parser reads
+/// (`Parser::unboxed_member_types`).
+fn unbox_member_deps_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_UNBOX_MEMBER_DEPS").is_some())
+}
+
+/// `LOFT_NO_MULTI_FIRST_WRITES_OUT=1` (STORE_RECORDS.md § The checks): the first bind of a
+/// multiply-assigned record local from a value branch keeps the per-arm lift it borrows — the
+/// re-free the store records must then report.
+fn multi_first_writes_out_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_MULTI_FIRST_WRITES_OUT").is_some())
+}
+
+/// Does every arm of the value branch `value` end in a bare variable?
+///
+/// An arm that is itself a `??` is not one (`@FR-O-Complete`): its `__ncc_N` and its
+/// default's work-ref are a join the run settles, so the bind keeps the value form.  Written
+/// out with the bind, the closure build that captures the local lost the hand-off of that
+/// `??`'s stores, and the frame freed them under the escaping closure (loft#2210's branch-arm
+/// cell).  `LOFT_NO_WRITE_OUT_NCC_ARM=1` reads through the `??`.
+fn every_arm_tail_is_var(value: &Value) -> bool {
+    match value.unspan() {
+        Value::If(_, t, e) => every_arm_tail_is_var(t) && every_arm_tail_is_var(e),
+        Value::Block(b)
+            if b.name == "ncc"
+                && !crate::env_once!(std::env::var_os("LOFT_NO_WRITE_OUT_NCC_ARM").is_some()) =>
+        {
+            false
+        }
+        Value::Block(b) => b.operators.last().is_some_and(every_arm_tail_is_var),
+        Value::Var(_) => true,
+        _ => false,
+    }
+}
+
+/// `LOFT_NO_LIFT_PROJECTION_VIEW=1` (STORE_RECORDS.md § The checks): a local bound once to a
+/// projection of a lifted call result keeps owning it — the re-free the store records must
+/// then report.
+fn lift_projection_view_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_LIFT_PROJECTION_VIEW").is_some())
+}
+
+/// Does `value` end — through the tails of its blocks — in an `if`?
+fn ends_in_branch(value: &Value) -> bool {
+    match value.unspan() {
+        Value::If(..) => true,
+        Value::Block(b) => b.operators.last().is_some_and(ends_in_branch),
+        _ => false,
+    }
 }

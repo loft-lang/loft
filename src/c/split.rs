@@ -334,6 +334,17 @@ fn declarator(bare: &str, orig: &str) -> Option<(String, String, String, String)
     ))
 }
 
+/// `LOFT_HH_NONE`: an upper-case identifier, by the C convention an object-like macro, whose
+/// expansion the split cannot read.
+fn is_macro_name(init: &str) -> bool {
+    let b = init.as_bytes();
+    !b.is_empty()
+        && !b[0].is_ascii_digit()
+        && b.iter()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == b'_')
+        && b.iter().any(u8::is_ascii_uppercase)
+}
+
 /// The declarators of a top-level declaration statement, or `None` when it is no declaration.
 /// One line may hold several (`int a = 0; int64_t b = 0, c = 0;`).
 fn declaration(s: &Stmt) -> Option<Vec<Decl>> {
@@ -384,6 +395,10 @@ fn declaration(s: &Stmt) -> Option<Vec<Decl>> {
                     format!("{{ {ty} {stars}loft_split_tmp{arr} = {init}; memcpy({name}, loft_split_tmp, sizeof loft_split_tmp); }}")
                 } else if init.starts_with('{') {
                     format!("{name} = ({ty} {stars}){init};")
+                } else if is_macro_name(&init) {
+                    // A macro may expand to a brace list (`LOFT_HH_NONE`), which only an
+                    // initializer accepts: a temporary keeps it one, whatever it expands to.
+                    format!("{{ {ty} {stars}loft_split_tmp = {init}; {name} = loft_split_tmp; }}")
                 } else {
                     format!("{name} = {init};")
                 }
@@ -996,6 +1011,21 @@ mod tests {
             out.contains("loft_fr->v2_w = loft_wpark_take(&n_f__fr__loft_wp7_1);"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn a_macro_initializer_stays_an_initializer() {
+        // `LOFT_HH_NONE` expands to a brace list: `x = { … };` is no C, so the moved
+        // declaration initializes a temporary and assigns that.
+        let decl = "    loft_hh hh6 = LOFT_HH_NONE;\n";
+        let out = split(&body(decl, &read("hh6.rec"))).expect("split");
+        assert!(
+            out.contains(
+                "{ loft_hh loft_split_tmp = LOFT_HH_NONE; loft_fr->hh6 = loft_split_tmp; }"
+            ),
+            "{out}"
+        );
+        assert!(!out.contains("loft_fr->hh6 = LOFT_HH_NONE;"), "{out}");
     }
 
     #[test]

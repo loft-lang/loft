@@ -19,6 +19,50 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* `LOFT_FAULT_LOG=<file>` — each store fault as one JSON line, the Rust runtime's
+ * `fault_log` in the same format (`"backend":"c"`), beside the message printed anyway. */
+static inline FILE *loft_fault_file(void) {
+    static int ready = 0;
+    static FILE *f = NULL;
+    if (!ready) {
+        const char *p = getenv("LOFT_FAULT_LOG");
+        ready = 1;
+        if (p && *p) f = fopen(p, "a");
+    }
+    return f;
+}
+static inline void loft_fault_str(FILE *f, const char *s, size_t n) {
+    size_t i;
+    fputc('"', f);
+    for (i = 0; s && i < n && s[i]; i++) {
+        unsigned char c = (unsigned char) s[i];
+        if (c == '"' || c == '\\') {
+            fputc('\\', f);
+            fputc(c, f);
+        } else if (c < 0x20) {
+            fprintf(f, "\\u%04x", (unsigned) c);
+        } else {
+            fputc(c, f);
+        }
+    }
+    fputc('"', f);
+}
+static inline void loft_fault_begin(FILE *f, const char *kind) {
+    fputs("{\"kind\":", f);
+    loft_fault_str(f, kind, strlen(kind));
+    fputs(",\"backend\":\"c\"", f);
+}
+static inline void loft_fault_field(FILE *f, const char *k, const char *v) {
+    fputc(',', f);
+    loft_fault_str(f, k, strlen(k));
+    fputc(':', f);
+    loft_fault_str(f, v ? v : "", v ? strlen(v) : 0);
+}
+static inline void loft_fault_end(FILE *f) {
+    fputs("}\n", f);
+    fflush(f);
+}
 #ifndef LOFT_NO_JUMPS
 #include <setjmp.h>
 /* MinGW-w64 on 64-bit Windows spells `setjmp(b)` as `_setjmp(b, <frame>)`, which makes the
@@ -1314,6 +1358,25 @@ static LOFT_COLD void loft_strict_use_after_free(loft_ref r) {
         fflush(stdout);
         fprintf(stderr, "[strict-store] USE AFTER FREE (access) store #%u type=%s rec=%u pos=%u\n",
                 (unsigned) r.store_nr, kt < loft_ntn ? loft_tn[kt] : "?", (unsigned) r.rec, (unsigned) r.pos);
+        {
+            FILE *lf = loft_fault_file();
+            if (lf) {
+                char buf[512];
+                loft_fault_begin(lf, "use-after-free");
+                snprintf(buf, sizeof buf, "%u", (unsigned) r.store_nr);
+                loft_fault_field(lf, "store", buf);
+                loft_fault_field(lf, "access", "access");
+                loft_fault_field(lf, "type", kt < loft_ntn ? loft_tn[kt] : "?");
+                if (w) {
+                    snprintf(buf, sizeof buf, "`%s` %s:%u", w->fn, w->file, (unsigned) w->line);
+                    loft_fault_field(lf, "freed", buf);
+                }
+                snprintf(buf, sizeof buf, "`%s` %s:%u", here.fn ? here.fn : "?",
+                         here.file ? here.file : "?", (unsigned) here.line);
+                loft_fault_field(lf, "at", buf);
+                loft_fault_end(lf);
+            }
+        }
         if (w)
             fprintf(stderr, "  killed by the free in fn %s() at %s:%u\n", w->fn, w->file, (unsigned) w->line);
         else
@@ -1507,8 +1570,10 @@ static void loft_perrs_deliver_vector(loft_ref data, loft_ref to, int whole);
 /* `LOFT_DOUBLE_FREE` (`keys::double_free_audit`, `@FR-H-FreeTwice`): a CENSUS of tolerated
  * re-frees, split by whether the freeing site is the one that freed the slot first, and of FREED
  * slots made again through a reference that still names them (`loft_database`'s "a freed one
- * too").  Neither is a defect count: a branch join frees once per arm, and a loop's work-ref is
- * freed at the end of a pass and re-made at the next.  But a revival is also the one place a
+ * too").  A re-free is a free the compiler emitted twice on one path, which it removes where it
+ * can (STORE_RECORDS.md § The checks): this branch only sees the ones whose slot was not reused.
+ * A revival is the design (a loop's work-ref is freed at the end of a pass and re-made at the
+ * next), but it is also the one place a
  * STALE reference re-initialises a slot another store may have taken since — which is why each
  * different-site line names both sites.  Printed at exit (`loft_double_free_report`). */
 #ifdef LOFT_DOUBLE_FREE
@@ -1521,6 +1586,22 @@ static void loft_note_double_free(uint32_t nr) {
         loft_df_same++;
         return;
     }
+    {
+        FILE *lf = loft_fault_file();
+        if (lf && loft_df_other < 200) {
+            char buf[512];
+            loft_fault_begin(lf, "re-free");
+            snprintf(buf, sizeof buf, "%u", (unsigned) nr);
+            loft_fault_field(lf, "store", buf);
+            snprintf(buf, sizeof buf, "`%s` %s:%u", w ? w->fn : "?", w ? w->file : "?",
+                     w ? (unsigned) w->line : 0u);
+            loft_fault_field(lf, "freed", buf);
+            snprintf(buf, sizeof buf, "`%s` %s:%u", here.fn ? here.fn : "?",
+                     here.file ? here.file : "?", (unsigned) here.line);
+            loft_fault_field(lf, "again", buf);
+            loft_fault_end(lf);
+        }
+    }
     if (loft_df_other++ < 20) {
         fflush(stdout);
         fprintf(stderr, "[double-free] store #%u freed again in fn %s() at %s:%u, first freed in fn %s() at %s:%u\n",
@@ -1532,6 +1613,23 @@ static void loft_note_double_free(uint32_t nr) {
 static void loft_note_revival(uint32_t nr) {
     const loft_free_site *w = loft_freed_site(nr);
     loft_free_site here = loft_site_here();
+    {
+        FILE *lf = loft_fault_file();
+        if (lf && loft_df_revived < 200) {
+            char buf[512];
+            loft_fault_begin(lf, "use-after-free");
+            snprintf(buf, sizeof buf, "%u", (unsigned) nr);
+            loft_fault_field(lf, "store", buf);
+            snprintf(buf, sizeof buf, "`%s` %s:%u", w ? w->fn : "?", w ? w->file : "?",
+                     w ? (unsigned) w->line : 0u);
+            loft_fault_field(lf, "freed", buf);
+            snprintf(buf, sizeof buf, "`%s` %s:%u", here.fn ? here.fn : "?",
+                     here.file ? here.file : "?", (unsigned) here.line);
+            loft_fault_field(lf, "at", buf);
+            loft_fault_field(lf, "detail", "a freed slot made again through a reference that named it");
+            loft_fault_end(lf);
+        }
+    }
     if (loft_df_revived++ < 20) {
         fflush(stdout);
         fprintf(stderr, "[double-free] store #%u made again in fn %s() at %s:%u, freed in fn %s() at %s:%u\n",
@@ -1544,9 +1642,10 @@ static void loft_double_free_report(void) {
     fflush(stdout);
     fprintf(stderr,
             "[double-free] %llu re-free(s) of an already-free slot: %llu from a DIFFERENT site and %llu from the "
-            "SAME site; %llu freed slot(s) made again through a reference that still named them.  A census, not "
-            "a defect count: run with LOFT_STRICT_STORES too, so a freed slot is never handed to another store "
-            "and a stale reference meets the store it named.\n",
+            "SAME site; %llu freed slot(s) made again through a reference that still named them.  Each re-free is a "
+            "free the compiler emitted twice, harmless here only because nothing took the slot in between: run "
+            "with LOFT_STRICT_STORES too, so a freed slot is never handed to another store and a stale reference "
+            "meets the store it named.\n",
             (unsigned long long) (loft_df_same + loft_df_other), (unsigned long long) loft_df_other,
             (unsigned long long) loft_df_same, (unsigned long long) loft_df_revived);
 }
@@ -1786,6 +1885,32 @@ static int loft_slice_give(uint32_t nr) {
     return 0;
 }
 
+/* `@FR-H-FreeTwice` (`Stores::refuse_refree`): a free of a store that is already free is a
+ * compiler defect, and the run fails at it as the interpreter's does — the slot number is all a
+ * free checks, so a store made in between would be the one released.  `LOFT_ALLOW_REFREE` lets
+ * it pass; a `-DLOFT_DOUBLE_FREE` build counts instead. */
+static int loft_refree_allowed(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("LOFT_ALLOW_REFREE");
+        v = e && *e && strcmp(e, "0") != 0;
+    }
+    return v;
+}
+
+static void loft_refree_fail(uint32_t nr) {
+    char m[160];
+    snprintf(m, sizeof m,
+             "a store was freed twice: store #%u (a defect in the loft compiler; please report it)",
+             (unsigned) nr);
+    fflush(stdout);
+    fprintf(stderr, "error: %s\n", m);
+    loft_fail_msg.len = 0;
+    loft_push(&loft_fail_msg, m, strlen(m));
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
+    exit(1);
+}
+
 static void loft_free_ref(loft_ref r) {
     if (r.store_nr == 0xFFFE) {
         loft_gen_free(r);
@@ -1796,6 +1921,8 @@ static void loft_free_ref(loft_ref r) {
     loft_store_t *s = &loft_stores[r.store_nr];
 #ifdef LOFT_DOUBLE_FREE
     if (!s->pinned && !s->live) loft_note_double_free(r.store_nr);
+#else
+    if (!s->pinned && !s->live && !loft_refree_allowed()) loft_refree_fail(r.store_nr);
 #endif
     /* `Stores::free_named`: a store already free stays as it is. */
     if (s->pinned || !s->live) return;
@@ -2606,6 +2733,19 @@ LOFT_HOT_INLINE int64_t loft_vh_at_int(loft_vh h, uint32_t size, int64_t f, uint
 }
 
 LOFT_HOT_INLINE void loft_vh_put_int(loft_vh h, uint32_t size, int64_t f, uint32_t fld, int64_t v) {
+    LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put int");
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+
+/* @FR-R-Version — a fast twin's boolean element write at an index its precondition proved. */
+LOFT_HOT_INLINE void loft_vh_put_bool(loft_vh h, uint32_t size, int64_t f, uint32_t fld, uint8_t v) {
+    LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put bool");
+    h.base[(size_t) f * size + fld] = v;
+}
+
+/* @FR-R-Base's guard clause — a float element's write at an index proven in [0, len). */
+LOFT_HOT_INLINE void loft_vh_put_float(loft_vh h, uint32_t size, int64_t f, uint32_t fld, double v) {
+    LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put float");
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
@@ -7306,6 +7446,111 @@ LOFT_HOT_INLINE void loft_vh_set_float_at_nn(loft_vh h, uint32_t size, int64_t f
                                              const char *file, uint32_t line) {
     if (LOFT_VH_OUT(h, f)) {
         loft_index_miss(f, h.len, file, line);
+        return;
+    }
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+
+/* `@FR-R-Base`'s guard clause: the held accessors for an index a passed test keeps below the
+ * length, its sign unproved — the from-the-end wrap, then one sign test (an index below
+ * `-len` names no element); the end test is the guard's, proved again under `LOFT_VERIFY`.  A
+ * miss answers and reports as the wrapping accessors do. */
+#define LOFT_VH_LT(h, from, f) \
+    int64_t f = LOFT_VH_WRAP(h, from); \
+    LOFT_PROVED(f < (h).len, "a guarded index")
+LOFT_HOT_INLINE loft_ref loft_vh_get_lt(loft_vh h, uint32_t size, int64_t from) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return loft_ref_null();
+    loft_ref e = {0};
+    e.store_nr = h.store_nr;
+    e.rec = h.rec;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
+}
+LOFT_HOT_INLINE loft_ref loft_vh_get_at_lt(loft_vh h, uint32_t size, int64_t from, const char *file, uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return loft_ref_null_reported();
+    }
+    loft_ref e = {0};
+    e.store_nr = h.store_nr;
+    e.rec = h.rec;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
+}
+LOFT_HOT_INLINE uint8_t *loft_vh_addr_lt(loft_vh h, uint32_t size, int64_t from) {
+    LOFT_VH_LT(h, from, f);
+    return LOFT_UNLIKELY(f < 0) ? (uint8_t *) 0 : h.base + (size_t) f * size;
+}
+LOFT_HOT_INLINE uint8_t *loft_vh_addr_at_lt(loft_vh h, uint32_t size, int64_t from, const char *file, uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return (uint8_t *) 0;
+    }
+    return h.base + (size_t) f * size;
+}
+LOFT_HOT_INLINE int64_t loft_vh_get_int_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return LOFT_NULL;
+    int64_t v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE int64_t loft_vh_get_int_at_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, const char *file,
+                                              uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return LOFT_NULL;
+    }
+    int64_t v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE double loft_vh_get_float_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return (double) NAN;
+    double v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE double loft_vh_get_float_at_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, const char *file,
+                                               uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return (double) NAN;
+    }
+    double v;
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
+    return v;
+}
+LOFT_HOT_INLINE void loft_vh_set_int_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return;
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+LOFT_HOT_INLINE void loft_vh_set_int_at_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v,
+                                           const char *file, uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return;
+    }
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+LOFT_HOT_INLINE void loft_vh_set_float_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, double v) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return;
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+LOFT_HOT_INLINE void loft_vh_set_float_at_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, double v,
+                                             const char *file, uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
         return;
     }
     memcpy(h.base + (size_t) f * size + fld, &v, 8);

@@ -8213,3 +8213,82 @@ fn functions_containing(text: &str, needle: &str) -> std::collections::BTreeSet<
     }
     out
 }
+
+/// A not-null test's else keeps `LOFT_COLD_PATH()` (a predicted jump) where the fallback is a
+/// float, and drops it where an integer falls back to a literal (`v[i] ?? 0`), which the
+/// compiler then turns into a select: hex_form `boundary_loops` −36 % (clang), −9 % (gcc);
+/// a float discharge without the marker cost bench 11 `par` 23–49 %.  Values hand-computed:
+/// 10 + 20 + 30 + 0 (index 3 past the end) = 60, and 1.5 + 0.0 = 1.5.
+#[test]
+fn an_integer_literal_fallback_is_unmarked_and_a_float_one_keeps_its_cold_path() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("cold_int");
+    let file = dir.join("cold.loft");
+    fa::write(
+        &file,
+        "fn isum(v: vector<integer>) -> integer { s = 0; for i in 0..4 { s += v[i] ?? 0; } s }\n\
+         fn fsum(v: vector<float>) -> float { s = 0.0; for i in 0..2 { s += v[i] ?? 0.0; } s }\n\
+         fn main() { println(\"{isum([10, 20, 30])} {fsum([1.5])}\"); }\n",
+    )
+    .expect("write program");
+    let c = dir.join("cold.c");
+    let emitted = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    // The body of `name`'s frame-free form: from its definition line (the one that opens a
+    // brace) to its closing brace.
+    let body = |name: &str| -> String {
+        let mut at = 0;
+        let mut pos = 0;
+        for line in text.split_inclusive('\n') {
+            if line.contains(&format!(" {name}__fr(")) && line.trim_end().ends_with('{') {
+                at = pos;
+                break;
+            }
+            pos += line.len();
+        }
+        assert!(at > 0, "{name} has no body");
+        let end = text[at..].find("\n}\n").map_or(text.len(), |e| at + e);
+        text[at..end].to_string()
+    };
+    assert!(
+        !body("n_isum").contains("LOFT_COLD_PATH"),
+        "an integer `?? 0` stays a plain branch:\n{}",
+        body("n_isum")
+    );
+    assert!(
+        body("n_fsum").contains("LOFT_COLD_PATH"),
+        "a float `?? 0.0` keeps its cold path:\n{}",
+        body("n_fsum")
+    );
+    let exe = dir.join("cold");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "60 1.5\n");
+}

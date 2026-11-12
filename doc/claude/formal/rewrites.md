@@ -178,7 +178,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Alias)` | `/versioned` c, native |
 | `(R-Apart)` | `R-Apart` c, native · `/records` c, native · `/records/boundary` c · `/vector` c, native |
 | `(R-AppendTwin)` | `R-AppendTwin` c, native · `/loop-window` c · `/mint` c |
-| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c |
+| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c |
 | `(R-BoundAppend)` | `R-BoundAppend` parse |
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
@@ -230,7 +230,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-HotInline)` | not counted — executor: #hot operators inlined into the lean loop |
 | `(R-InPlace)` | not counted — condition: the write test the header hoists ask; counted under them |
 | `(R-InPlaceLiteral)` | `R-InPlaceLiteral` parse · `/child` parse |
-| `(R-InRange)` | `R-InRange` parse |
+| `(R-InRange)` | `R-InRange` parse · `/length-local` parse · `/wrapped` parse |
 | `(R-Inline)` | `R-Inline` c · `/helper` c |
 | `(R-InlineLeaf)` | `R-InlineLeaf` parse |
 | `(R-Inputs)` | `R-Inputs` c, native |
@@ -277,7 +277,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Refresh)` | `R-Refresh` native |
 | `(R-RegisterTable)` | not counted — executor: position and stack top passed in registers |
 | `(R-RepeatRun)` | `R-RepeatRun` ir |
-| `(R-RetAdopt)` | `R-RetAdopt` c, native |
+| `(R-RetAdopt)` | `R-RetAdopt` interp, c, native |
 | `(R-ReturnField)` | `R-ReturnField` ir |
 | `(R-Reuse)` | `R-Reuse` ir |
 | `(R-Rotate)` | `R-Rotate` interp |
@@ -289,7 +289,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-SingleUse)` | `R-SingleUse` parse |
 | `(R-SliceArg)` | `/range` ir |
 | `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
-| `(R-SliceInto)` | `R-SliceInto` c · `/transient` c |
+| `(R-SliceInto)` | `R-SliceInto` ir · `/transient` c |
 | `(R-SpecChain)` | `R-SpecChain` c |
 | `(R-SplitTable)` | `R-SplitTable` c, native |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
@@ -1242,6 +1242,63 @@ since nothing ties the counter to that vector's length.  zttext `locate` with th
 of `(R-InRange)` and the held-element clause of `(R-RecPtr)`: 3.61× → 1.15× (clang), 1.26×
 (gcc).  Switch `LOFT_NO_COUNTER_IN_RANGE`.  Site: `FnWriter::counters_in_range`.  Guard
 `tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r9, falsified on the verify build's proof).
+
+**The length-local form.**  The end may also be a copy of a local `n` that holds `len(v)` for
+the rest of the function: `n = len(v)` its one assignment, and nothing that can run after it —
+the rest of each enclosing statement list, and for a loop around it the whole loop — writing
+`v` or a variable viewing it (`(N-Index)`'s `length_locals`, the parser's own answer; a call's
+writes are its callee's, a function value's call is a write).  Then `v`'s length at the loop is
+`n`, and the clause holds as above.  `v` must be the frame's own vector: a local, or a
+`@FR-R-WorkBuffer` parameter, viewing no declared parameter.  A declared parameter can name the
+same vector as another parameter or as a field of one (`f(a, a)`, `f(s.items, s)`), and a
+write through that other name shortens `v` where `length_locals` cannot see it.  hex_form
+`boundary_loops` (`ne = len(ea)` taken before the loop nest): 11.18 → 9.24 ms (gcc), 18.26 →
+12.37 ms (clang), twin 6.05 ms.  Switch `LOFT_NO_LENGTH_LOCAL`.  Sites:
+`length_locals::own_length_locals` (the one answer, read by `(R-InRange)` too),
+`FnWriter::length_locals`, `peel::range_lens`.  Census row `R-Base/length-local`.  Guard
+`tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft` (a2 falsified without the
+write test, a6/a7 without the own-vector test).
+
+**The lockstep form.**  A length local of `v` is one of `w` too when `w` moves in lockstep
+with `v`: both the frame's own vectors, assigned once and not captured; their empty starts
+adjacent statements of one list (a local's mint and zero, or a work buffer's `if
+OpRefIsNull(x) { mint } else { clear }`); and every other write of either — `length_locals`'
+own write test — one append (`OpPreAllocVector(x, 1, _)`, `OpPush*(x, e)`) to one, followed as
+the very next statement by one append to the other, whose operand cannot leave between the two
+pushes.  Then `len(w) == len(v)` at every statement boundary outside a pair, and `n = len(v)` is
+a statement.  Each reader takes every vector a length local is the length of (the counter
+clause, the guard clause, `(R-InRange)`).  hex_form `boundary_loops` (`eb` pushed beside `ea`):
+9.24 → 7.38 ms (gcc), 12.45 → 10.23 ms (clang).  Switch `LOFT_NO_LOCKSTEP`.  Site:
+`length_locals::lockstep_twins`.  Census row `R-Base/length-local`.  Guard
+`tests/scripts/two-vectors-pushed-in-lockstep-share-a-length-local.loft` (t4 falsified with the
+pair check struck, t3 with the starts' adjacency struck).  Not yet: an element write to either
+(it does not resize, but the write test counts it), a vector or record append, starts apart.
+
+**The wrapped form.**  A read at `(i + c) % n` — a counter of such a loop, `c` a literal from 0
+up, `n` a local holding the held vector's length for the loop (the range end, or the local it
+was copied from) — lies in `[0, n)` (`(R-InRange)`'s wrapped form gives the reason) and takes
+no test either; it is written `((i + c) % n)`, `i` alone for `c = 0`.  Site:
+`FnWriter::counter_index`, through `loop_shape::wrapped_counter`.  Census row `R-Base/counter`.
+Guard `tests/scripts/a-counter-wrapped-at-the-length-is-read-in-range.loft`.
+
+**The guard clause.**  An index a passed test keeps below the length: inside `if e < len(v)`
+(its then-arm), after a `while e < n` loop's test (the rest of each turn), or either side of
+`a && b`, with `n` a length local of `v` as above and `e` a variable or `+`, `-`, `*` over
+variables and constants, matched structurally at the access.  The fact holds at `v[e]` while
+nothing evaluated since the test can resize `v` or assign a variable of `e` —
+`forward_walk::check_body`, applied in evaluation order and over a nested loop's whole body
+before the loop (a later turn runs a kill before an earlier read) — and `v` is the frame's own
+vector.  With `e >= 0` proved by `(R-Range)` the access takes no test (`loft_vh_at_*`,
+`loft_vh_put_*`); with its sign unproved the from-the-end wrap and a sign test remain and only
+the end test goes (the `_lt` accessors: an index below `-len` still names no element).  Each
+proves the end bound again under `LOFT_VERIFY`.  crypto `b64_decode` under pluginabi `request`
+(`while i < n`, `if i + k < n`, all four reads `_lt`): 1545.6 → 1496.1 µs (gcc), 1495.6 →
+1453.1 µs (clang).  Switch `LOFT_NO_GUARD_BOUND`.  Sites: `opt::below_len::guarded_indices` (the
+fact, shared), `FnWriter::guard_index`.  Census row `R-Base/guard`.  Guard
+`tests/scripts/an-index-a-passed-test-keeps-below-the-length-is-read-in-range.loft` (g6
+falsified with the kill struck: a wrong sum on `--native-c`, and the verify build stops on "a
+guarded index").  Not yet: the else side, an early exit (`if e >= len(v) { return }`), a field
+vector, a hidden return buffer (a caller may hand a call its own destination).
 
 ### A record local declared in a loop keeps its store
 
@@ -3240,6 +3297,12 @@ written in its own branch so the arm not taken computes nothing (`view_choice` /
 the C ship lane).  `LOFT_NO_VIEW_CHOICE_SLICE=1` copies a slice arm again; cells
 `tests/scripts/a-text-choice-between-slices-is-a-view.loft`.
 
+**A returned loop variable.**  A `for` loop's own variable is never promoted to the function's
+text return buffer (`classify_text_dep`: `was_loop_var` reads `SkipOwnedLocal`), so a function
+that returns a slice of it, or it, copies the result out and the walk borrows its element:
+server `Request.header` (`return h[wl + 1..].trim()` in `for h in self.headers`) −55 % on both
+compilers.  Guard `tests/scripts/a-text-walks-loop-variable-returned-is-copied-out-and-borrowed.loft`.
+
 **The store-read clause.**  `w = words[i]?` over a `const vector<text>` parameter bound `w`
 through two copies (the temp's `.to_string()` and the bind's `.clone()`) and a third where
 it became a hash key, while the Rust twin borrows `&str` throughout; `word_count` is that
@@ -3413,28 +3476,37 @@ then copied again.  `text_from_byte_range` is the native a decoder could have wr
                  OpSliceView(T, src, lo, hi, row); T }, tp)` — a scalar vector slice used
                  as a value, converted to a temporary T of its own
                  (`Parser::materialise_slice_leaves`) and appended to a place P (a literal's
-                 field, `x += v[a..b]`) — is the bounds' statements and one
+                 field, `x.f += v[a..b]`) — is the bounds' statements and one
                  `OpSliceVector(P, src, lo, hi, row)`: `[lo, hi)` clamped, appended onto P as
                  one block.  Nothing but T's own mint, bind, zero, clear and the one slice may
-                 name T or its store; anything else declines.  T is never minted, and its
-                 scope-exit release sees the null it starts as.
+                 name T or its store, and outside the block T is never named and its store
+                 only declared null and freed; P reads only variables and constant field
+                 offsets, none of them assigned by a bound statement, since P is now evaluated
+                 after the bounds; the append's element type is the slice's.  Anything else
+                 declines.  T is never minted, and its scope-exit release sees the null it
+                 starts as.
 ```
 
 **In words.**  The append was the only reader of T, and `loft_vec_slice` appends exactly what
 the temporary's fill and the append did together — the same clamped span, read before anything
 is written, safe when P is the source (`v += v[a..b]`: the span lies below the length).  A
 foreign source is COPIED, as the append copied the view's bytes before: P's store holds more
-than this vector, so `@FR-Const-Foreign`'s view does not apply to it.  C only (an emitter form;
-rustc's writer still fills a temporary); the interpreter runs the IR and is the reference.
-cbor's `CBytes { value: bytes[a..b] }`: pluginabi `check_request` −10 %, `req_state_b64` −4 % on
-the C ship lane.  Switch `LOFT_NO_SLICE_INTO`; cells
-`tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft`.  Sites: `slice_fill` /
-`slice_into` / `append_vector_op` in `src/c/body.rs`.
+than this vector, so `@FR-Const-Foreign`'s view does not apply to it.  It is the form the parser
+gives a LOCAL place (`p += v[a..b]`, `(Slice-Value)`'s block copy), extended to every place.
+Decided and applied in the scope pass, after `(R-SliceArg)`'s range clause and on the same
+slice-block test (`slice_text::admit`), so every backend runs it: on the interpreter the
+`slice_into` probe (@PLN211) runs 10 292 → 7 536 instructions a pass, −26.8 %; cbor's
+`CBytes { value: bytes[a..b] }`: pluginabi `check_request` −10 %, `req_state_b64` −4 % on the C
+ship lane; rustc's writer, which filled a temporary, now slices into the field too.  Switch
+`LOFT_NO_SLICE_INTO`, trace `LOFT_TRACE_SLICE_INTO`; cells
+`tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft`.  Site: `slice_into::rewrite`
+(the scope pass).
 
 ```
   (R-SliceInto)'s transient clause
                  the same slice appended to a vector field of a value built outside the
-                 store (`(R-Transient)`, a twin's `CBytes { value: bytes[a..b] }`) is the
+                 store (`(R-Transient)`, a twin's `CBytes { value: bytes[a..b] }`), which the
+                 IR form above has made `OpSliceVector(field, src, lo, hi, row)`, is the
                  bounds' statements and `loft_ta_vec_copy_range(field, src, lo, hi, size)`:
                  `[lo, hi)` clamped as `loft_vec_slice` clamps it, copied into the field's
                  own buffer, with no temporary store.  The element size of the slice must be
@@ -3449,8 +3521,9 @@ the range clause above (2.22× → 1.42× and 2.6× → 1.6× its twin).  No adm
 transient vector field yet (`(R-Transient)` declines an `OpGetField` of one), so no value shows
 the copy; the cell `c10` of `tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft`
 runs it beside the text its site reads, under the sweeps' poison and ASan modes.  Switch
-`LOFT_NO_SLICE_INTO` (both clauses).  Site: the `OpAppendVector` arm of the transient writer
-(`src/c/body/transient.rs`), `loft_ta_vec_copy_range` (`src/c/loft_rt.h`).
+`LOFT_NO_SLICE_INTO` (both clauses: with the IR form off, the transient writer sees the slice
+block, which it copies through a temporary).  Site: the `OpSliceVector` arm of the transient
+writer (`src/c/body/transient.rs`), `loft_ta_vec_copy_range` (`src/c/loft_rt.h`).
 
 ### A slice of a parameter is read where it lies
 
@@ -4213,11 +4286,18 @@ twice, at the scoping that carries the rule: blanking every `OpClearVector(buf)`
 (the entry clear included) corrupts the fronds probe — the reused buffer accumulates
 across calls — and collapsing the delivery BLOCK whole drops its scope-exit frees
 (2 stores leaked in the V-j corpus, caught by `LOFT_NATIVE_LEAK_CHECK`).  Switch
-`LOFT_NO_RETBUF_ADOPT`; `LOFT_TRACE_ADOPT=1` names the gate that declined.  Sites:
-`hoist::ret_adopt`, the init arm in `Output::output_set`, the witness skip in
-`OpDatabaseEmitter`, the scoped pair blanking in `TextDispatchEmitter`, the
-`in_adopt_delivery` scope in `Output::output_block`, the placement re-target in the
-§ V-j hook.
+`LOFT_NO_RETBUF_ADOPT`; `LOFT_TRACE_ADOPT=1` names the gate that declined.  The decision is
+`opt::ret_adopt::ret_adopt`, made once; each backend applies it at its own emission.  Rustc:
+the init arm in `Output::output_set`, the witness skip in `OpDatabaseEmitter`, the scoped pair
+blanking in `TextDispatchEmitter`, the `in_adopt_delivery` scope in `Output::output_block`, the
+placement re-target in the § V-j hook.  The C: `FnWriter::adopted_init`, the witness arm of
+`OpDatabase`, `delivery_block`.  The interpreter: `State::retbuf_adopt` in `def_code`,
+`adopted_bind`, the witness skip in `generate_call`, `adopted_delivery` in `generate_block` —
+an interpreter clause rather than an IR spelling, because the compiled writers build twins
+(`__ap`, `__d`) of the same body that must NOT adopt: their buffer is the caller's vector.
+On the interpreter drawing's `fronds` runs 7.5 % faster with it, mesh3d's `mesh_to_floats`
+2.6 %; where the scope pass already promoted the result local onto the buffer there is
+nothing for it to do.
 
 ### A returned local bound from a call is built in the return buffer
 
@@ -6959,6 +7039,36 @@ across crawler, drawing, text2d, stage, graphics.  Census row `R-Version/nest`; 
 `loft-suite/rules/rewrites/R-Version/an-inner-loops-calls-are-decided-once-per-outer-entry-at-the-boxs-corners.loft`.
 Site `FnWriter::version_level`, the corners in `FnWriter::version_site`.
 
+**The element kinds.**  A float or boolean element read or written at a linear index is proven
+like an integer one (`OpGetFloat`, `OpSetFloat`, `OpGetBoolean`, `OpSetBoolean`): its fast form
+is `loft_vh_at_float`, `loft_vh_put_float`, `loft_pa_bool` at `loft_vh_at_addr`, and
+`loft_vh_put_bool`.  Guard
+`tests/scripts/a-leaf-reads-and-writes-float-and-boolean-elements-at-its-proven-index.loft`.
+
+**The early exit.**  `if c { return x }` with no else, its arm holding no access while an access
+follows on the path that goes on, is DECIDED toward going on: `!c` joins the precondition and the
+fast twin drops the `if`.  Deciding is sound either way round (the test joins the
+precondition); toward the exit the precondition would fail where the access runs, so it is
+decided toward the access.  Guard `tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft`
+(W: a column past the window's right edge whose index wraps into the next row, kept out by the
+exit's test alone).
+
+**The callee clause.**  A leaf may call a leaf, one level deep: the walk enters the callee with its
+integer parameters bound to the caller's linear arguments and its record parameter to the
+caller's record, so the callee's own decided `if`s and accesses join the caller's plan and its
+tests the caller's precondition, and the value it answers is the caller's local.  The C writes
+the callee's fast twin `g__inv__vf` from the part of the caller's plan that lies in the callee's
+IR, and the caller's fast twin calls it.  A callee that is a leaf of its own (its own plan would
+write another fast twin), or that two callers would plan differently, declines the caller.  The
+hex libraries' cell accessors are the shape: `hexset_get` calls `hs_index`.  Measured (gcc /
+clang, the routines whose C changed): hex_place `field_union` −63 % / −52 %, hex_roof `roof_cone`
+−52 % / −37 %, hex_place `combine_cut` −22 % / −21 %, hex_roof `roof_match` −16 % / −7 %, graphics
+`blend_pixel` −7 % / −12 %; hex_fit `draft_fit_p` +1 % / +5 %: its one versioned call sits behind
+an `edge_mat(…) != 0 &&` that rarely holds, and the guard asked per row (+7.6 % instructions)
+is not repaid — a call in an `if` arm cannot be told from text2d `draw_quads`' hot one, so
+restricting the guard to calls every turn reaches would undo that rule's own measured gain.
+Guard `tests/scripts/a-leaf-that-calls-an-index-helper-takes-its-tests-once-per-loop.loft`.
+
 ### A short counted loop is written once per trip
 
 ```
@@ -7434,6 +7544,34 @@ that could be `d` declines, one holding a text or a scalar (a result buffer) doe
 does a record parameter whose type holds scalars only.  It
 dropped the `?` in ten of zttext's walks over `d.pieces`.  Guard
 `tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft` (r1, r2, r4, r5).
+
+**The length-local form.**  The range end may be a local `n` bound by `n = len(v)` as the
+statement right before the loop, or anywhere before it when `n` holds the length of a vector of
+the frame's own for the rest of the function — the same locals `(R-Base)`'s counter clause
+reads (`length_locals::own_length_locals`: `n` assigned once, nothing after it writing `v`,
+and `v` a local or a work buffer viewing no declared parameter).  The body check is the one
+above.  drawing's `polygon_generic` (`pg_ec = len(pg_table)` taken before the row loop): the
+element's `?` and its minted default are gone, fill_circle 14.47 → 12.84 µs (clang), 18.97 →
+18.18 (gcc); wide_line 4.60 → 4.20 (clang), 4.31 → 4.19 (gcc).  The counter clause needs this
+form beside it on a vector of records: its proven read alone leaves the discharge testing a
+loop-invariant record number, which clang unswitches (those routines 4–6 % slower).  Switch
+`LOFT_NO_LENGTH_LOCAL`.  Site: `in_range::length_local_aliases` (one alias per vector the
+local is the length of: a lockstep twin shares it).  Census row
+`R-InRange/length-local`.  Guard `tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft`
+(a8–a10; a10 falsified on `--interpret` with the own-vector test struck).
+
+**The wrapped form.**  Inside such a loop — exclusive, the counter from 0, the end `len(v)` or
+a local holding it — the index `(i + c) % n ?? d`, with `c` a literal from 0 up and `n` that
+length (the local the end came from, or `len(v)` itself), is `(i + c) % n` alone: the body runs
+only when `n >= 1`, so the divisor is not 0, and `%` takes the dividend's sign, so the value
+lies in `[0, n)`.  A record element's `?` read at that index is then its read alone, as at
+`i`.  A negative `c` is not the form: `(0 - 1) % n` is -1, and a vector read takes -1 from the
+end.  Inclusive ranges decline (`0..=n` runs once when `n` is 0).  graphics `polygon_crossings`
+(`pc_pts[(i + 1) % pc_n ?? 0]?`, with the counter form's test-free read): `fill_polygon` −39 % (clang),
+−6.1 % (gcc), hand-priced −23 % / −3.9 %.  Site: `in_range::wrapped_discharge`, through
+`loop_shape::wrapped_counter` (the one reading of the shape, `(R-Base)`'s counter clause asks
+it too).  Census row `R-InRange/wrapped`.  Guard
+`tests/scripts/a-counter-wrapped-at-the-length-is-read-in-range.loft`.
 
 ### A computed range start is one counter, stepped at the test
 

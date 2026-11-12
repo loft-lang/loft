@@ -184,6 +184,10 @@ pub(crate) struct OpSets {
     /// ([`Data::is_drop_function`]).  A release, like the frees above, and never a use of what
     /// it releases.
     pub(crate) drop_functions: std::sync::Arc<HashSet<u32>>,
+    /// The copies that FREE their source store once the copy is made, where their type
+    /// argument carries `keys::COPY_FREE_SOURCE`: `(op, source, destination, type argument)`.
+    /// Read through [`OpSets::freed_source_arg`].
+    pub(crate) source_freeing: [(u32, usize, usize, usize); 3],
 }
 
 impl OpSets {
@@ -237,6 +241,43 @@ impl OpSets {
             conditional_ref_frees: std::sync::Arc::new(conditional_ref_frees),
             text_free,
             drop_functions: std::sync::Arc::new(drop_functions),
+            source_freeing: [
+                (data.def_nr("OpCopyRecord"), 0, 1, 2),
+                (data.def_nr("OpReplaceKeyed"), 0, 1, 2),
+                (data.def_nr("OpSetChildRec"), 1, 0, 2),
+            ],
         }
+    }
+
+    /// loft#890, loft#1647 — the argument whose STORE the call `op(args)` frees whole for
+    /// itself, through the `COPY_FREE_SOURCE` bit on its constant type argument
+    /// (`Stores::release_copy_source`: the store, not the record).  A variable passed there
+    /// names a freed store once the call returns, so its own later free is a second release
+    /// (`@FR-H-FreeTwice`).  The one home for the question: the scope pass retires the
+    /// source's free with it (`Scopes::scan_args`), and the store records end the source's
+    /// store at the call.  A copy that declines its release (the destination's own store, a
+    /// stack, free, read-only or free-protected store) releases nothing the source owns
+    /// either, so a caller that drops the source's free there loses nothing.
+    pub(crate) fn freed_source_arg(&self, op: u32, args: &[crate::data::Value]) -> Option<usize> {
+        self.freed_source(op, args).map(|(src, _)| src)
+    }
+
+    /// [`Self::freed_source_arg`] with the destination argument beside it: the copy declines
+    /// its release where the source is the destination's own store.
+    pub(crate) fn freed_source(
+        &self,
+        op: u32,
+        args: &[crate::data::Value],
+    ) -> Option<(usize, usize)> {
+        let &(_, src, dst, tp) = self
+            .source_freeing
+            .iter()
+            .find(|(d, _, _, _)| *d == op && *d != u32::MAX)?;
+        matches!(
+            args.get(tp).map(crate::data::Value::unspan),
+            Some(crate::data::Value::Int(t))
+                if t & i32::from(crate::keys::COPY_FREE_SOURCE) != 0
+        )
+        .then_some((src, dst))
     }
 }
