@@ -2843,7 +2843,7 @@ impl Run<'_> {
     /// The variable an `OpDistinctStore` operand names a store through: the variable itself,
     /// or a fn-ref whose closure record it is (`OpFnRefClosure(g)`).
     fn operand_var(&self, v: Option<&Value>) -> Option<u16> {
-        match v.map(Value::unspan)? {
+        match v?.unspan() {
             Value::Var(x) => Some(*x),
             Value::Call(op, a) if *op == self.ops.fnref_closure => Self::first_var(a, 0),
             _ => None,
