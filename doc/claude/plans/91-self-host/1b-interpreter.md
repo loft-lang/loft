@@ -86,6 +86,12 @@ implementation.  So the usual "work around it and move on" is not allowed here:
   then the interpreter step resumes using the plain spelling.  **No workaround is written
   for a bug**, not even a temporary one: a workaround in the interpreter would hide exactly
   what this project exists to find.
+- **A defect in the Rust reference is fixed in the reference, never matched.**  A mismatch
+  between the interpreter and the Rust implementation is worked under
+  [README § The port method](README.md#the-port-method--the-diff-is-the-work-the-reference-is-the-truth):
+  the formal rule decides which side is right, the reference is corrected first with its cell,
+  and the interpreter follows the corrected result exactly.  The interpreter never closes a
+  mismatch on its own side.
 - **Friction is recorded, then judged.**  Anything that works but is not handy (a missing
   construct, a long spelling, an error message that names no cure) gets a row in the
   friction register below.  It records the spelling it forced and what a better one would
