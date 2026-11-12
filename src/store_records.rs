@@ -3053,6 +3053,75 @@ impl Run<'_> {
         true
     }
 
+    /// A capture SLOT as a guarded free's witness: the store is live exactly where the slot
+    /// names it, so it joins the slot's correlation and goes where the record goes.
+    fn correlate_witness_slot(st: &mut State, get_dbref: u32, witness: Option<&Value>, k: SKey) {
+        let Some(Value::Call(g, gargs)) = witness.map(Value::unspan) else {
+            return;
+        };
+        if *g != get_dbref {
+            return;
+        }
+        let (Some(r), Some(off)) = (Self::first_var(gargs, 0), Self::const_offset(gargs.get(1)))
+        else {
+            return;
+        };
+        for rec in Self::stores_of(&Self::pts(st, r)) {
+            if let Some(slot) = st.slots.get_mut(&rec).and_then(|m| m.get_mut(&off))
+                && slot.pts.contains(&Pt::Store(k))
+            {
+                slot.corr.insert(k);
+            }
+        }
+    }
+
+    /// A guarded free's stores the witness may name end only on the paths it does not: where
+    /// `x` names one on every path it is live, it stays live exactly where the witness names
+    /// it (`return if c { f } else { g }`).
+    #[expect(clippy::too_many_arguments, reason = "the guarded free's own operands")]
+    fn end_where_witness_does_not(
+        &mut self,
+        st: &mut State,
+        x: u16,
+        xp: &Pts,
+        w: Option<u16>,
+        field_slot: bool,
+        shared: &[SKey],
+        args: &[Value],
+        name: &str,
+    ) {
+        let label = format!("{name}({})", self.var_name(x));
+        for k in shared {
+            self.sites[k.site as usize].ends.insert(label.clone());
+            let Some(info) = st.stores.get_mut(k) else {
+                continue;
+            };
+            if !info.has(LIVE) {
+                continue;
+            }
+            if field_slot {
+                info.status = (info.status & !LIVE) | ENDED;
+                info.live.clear();
+                info.alts.clear();
+                info.ended = [x].into();
+                continue;
+            }
+            let strong = xp.len() == 1 || info.live.contains(&x);
+            info.ended = if info.has(ENDED) {
+                info.ended.intersection(&[x].into()).copied().collect()
+            } else {
+                [x].into()
+            };
+            info.status |= ENDED;
+            if strong && let Some(w) = w {
+                info.live.insert(w);
+            }
+            if strong && w.is_none() {
+                Self::correlate_witness_slot(st, self.ops.get_dbref, args.get(1), *k);
+            }
+        }
+    }
+
     fn free_op(&mut self, d: u32, args: &[Value], st: State) -> State {
         let ops = self.ops;
 
@@ -3133,36 +3202,9 @@ impl Run<'_> {
                         self.end_only(&mut st, x, &name, false, Some(&rest));
                     }
                     if !witness_holds_it {
-                        // One the witness may name ends only on the paths it does not: where
-                        // `x` names it on every path it is live, it stays live exactly where
-                        // the witness names it (`return if c { f } else { g }`).
-                        let label = format!("{name}({})", self.var_name(x));
-                        for k in &shared {
-                            self.sites[k.site as usize].ends.insert(label.clone());
-                            let Some(info) = st.stores.get_mut(k) else {
-                                continue;
-                            };
-                            if !info.has(LIVE) {
-                                continue;
-                            }
-                            if field_slot {
-                                info.status = (info.status & !LIVE) | ENDED;
-                                info.live.clear();
-                                info.alts.clear();
-                                info.ended = [x].into();
-                                continue;
-                            }
-                            let strong = xp.len() == 1 || info.live.contains(&x);
-                            info.ended = if info.has(ENDED) {
-                                info.ended.intersection(&[x].into()).copied().collect()
-                            } else {
-                                [x].into()
-                            };
-                            info.status |= ENDED;
-                            if strong && let Some(w) = w {
-                                info.live.insert(w);
-                            }
-                        }
+                        self.end_where_witness_does_not(
+                            &mut st, x, &xp, w, field_slot, &shared, args, &name,
+                        );
                     }
                 }
             }
