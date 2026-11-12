@@ -3502,6 +3502,15 @@ pub fn c_own_tuple_member_bind() -> bool {
     *ON.get_or_init(|| env_set("LOFT_C_OWN_TUPLE_MEMBER_BIND"))
 }
 
+/// `LOFT_NO_STASHED_JOIN=1` — a reassignment whose displaced free is stashed (a nullable local,
+/// or a value that reads it) deep-copies a join call's answer again instead of joining it at run
+/// time (`bind_lowering`'s R1 arm; @PLN220's A/B).
+#[must_use]
+pub fn stashed_join_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_STASHED_JOIN"))
+}
+
 /// `LOFT_NO_ENUM_JOIN=1` — a heap-enum local bound from a call that answers a fresh record on
 /// one path and a view of an argument on another is deep-copied at every bind again, instead of
 /// joined at run time (`bind_lowering`'s F9a / R1 arms; @PLN220's A/B).

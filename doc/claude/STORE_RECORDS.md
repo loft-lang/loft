@@ -389,7 +389,9 @@ at every bind, as the first bind and C do (`@FR-O-Move`); `LOFT_NO_REBIND_ADOPTS
 it into the local's own store again (the interpreter's arm R2b).  And a heap-enum local bound
 from a call that answers fresh on one path and a view of an argument on another is joined at
 run time as a record local is (F9a / R1, `OpBindOrCopy`); `LOFT_NO_ENUM_JOIN=1` deep-copies it at
-every bind.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
+every bind.  A nullable local, whose displaced free waits until after the bind, joins too when
+the value is a call that does not read it, with its slot reset first so the copy arm mints a
+store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
 on one writer (`--writer c|native`) and lists the arms the two decide differently.
 
 ## Phases

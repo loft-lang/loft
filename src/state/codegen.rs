@@ -2800,6 +2800,15 @@ impl State {
             if let ReArm::Join { d_nr, base } = rb.arm {
                 let tp_nr = stack.data.def(d_nr).known_type();
                 note_bind("R1");
+                // A stashed rebind still names its old store, which the copy arm's allocation
+                // would refill in place — the store may be a view into another record.  Reset
+                // to the sentinel, the copy mints a store of its own, as the C writer's join
+                // does; the stash on the stack keeps the old store for its free after.
+                if stash_old_for_post_free {
+                    let pos = stack.var_pos(v);
+                    stack.add_op("OpInitRefSentinel", self);
+                    self.code_add(pos);
+                }
                 // The DISPLACED old store is already released — or, for a `buffer_kept` local,
                 // is the construction buffer's, which that buffer releases: this branch is
                 // reached only past the plain owned-reassign free above (`owned_ref &&
@@ -2822,6 +2831,11 @@ impl State {
                 self.code_add(stack.var_pos(v));
                 self.code_add(tp_nr);
                 self.recheck_join_witnesses(stack, v, base, &rest, tp_nr);
+                // A nullable local, or one the value reads, waits for its stashed free: after
+                // the bind, and only where the new value names another store.
+                if stash_old_for_post_free {
+                    self.free_stashed(stack, v, entry_w, buffer_witness);
+                }
                 return;
             }
             if (owned_ref || witnessed || buffer_kept) && !s1_substituted {
