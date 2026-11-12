@@ -21,6 +21,7 @@ use own;
 use binds;
 use frame;
 use eq;
+use ret_adopt;
 
 // What kind of value a node, a variable or a result is, and so which stack holds it.
 enum Kind {
@@ -345,6 +346,9 @@ struct Lowering {
   // The source line of the last line marker lowered (`generate_set`'s `line_numbers` lookup),
   // which each bind row names (`L<line>`).
   line: integer,
+  // `@FR-R-RetAdopt`: the local that builds the answer in the return buffer itself (`v` -1 for
+  // none), decided once per function (`ret_adopt::ret_adopt`).
+  adopt: ret_adopt::RetAdopt,
   // The bytecode writer's walk state the binds read: the variables B2 freed before their
   // reassignment (`stack.owned_reassigned`), and the oracle's operator table, built once.
   owned_reassigned: vector<boolean>,
@@ -394,6 +398,7 @@ pub fn empty() -> Lowering {
     binds: [],
     notes: [],
     line: 0,
+    adopt: ret_adopt::RetAdopt {},
     owned_reassigned: [],
     own_ops: own::ops_of(ir::empty_bundle()),
     defs: own::new_defs(),
@@ -2583,6 +2588,9 @@ fn projects_a_variable(b: ir::Bundle, n: ir::Node) -> boolean {
 // `generate_set`: the row is written when the set is done, so a set inside the value comes
 // first.
 fn set(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
+  if adopted_bind(l, b, var, x) {
+    return;
+  }
   at = len(l.notes);
   first = !(fvar(b, l.def_nr, var)).stack_allocated;
   // The line the assignment stands on, read before its value is lowered.
@@ -3634,6 +3642,11 @@ fn param_kinds(d: ir::Definition) -> vector<Kind> {
 // value.
 fn call(l: Lowering, b: ir::Bundle, def_nr: integer, args: vector<ir::Node>) {
   d = b.data.definitions[def_nr]?;
+  // `@FR-R-RetAdopt`: the adopted result's witness is never minted, nor zeroed.
+  if l.adopt.v >= 0 && (d.name == "OpDatabase" || d.name == "OpSetInt4") && len(args) > 0
+      && (unspan(args[0]!) is NdVar) && unspan(args[0]!) == ir::NdVar { n: l.adopt.vdb } {
+    return;
+  }
   kinds = param_kinds(d);
   writer = if is_operator(d.name) { writer_code(d.name) } else { null };
   if writer != null {
@@ -3804,7 +3817,8 @@ fn tail_capture(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>) -> integer? {
 // nor a free (`assign_seq`, `src/c/body.rs`): the operators before it are statements, and the
 // frees after it run once the value is taken, as they run under it on the bytecode's stack.
 // A `tail_capture` answers its value after the frees.
-fn block_value(l: Lowering, b: ir::Bundle, blk: ir::Block) {
+fn block_value(l: Lowering, b: ir::Bundle, whole: ir::Block) {
+  blk = without_delivery(l, b, whole);
   tc = tail_capture(l, b, blk.operators);
   if tc != null {
     ret = last_non_line(blk.operators);
@@ -3845,8 +3859,67 @@ fn block_value(l: Lowering, b: ir::Bundle, blk: ir::Block) {
 
 // A block as a statement: every operator a statement.
 fn block_statement(l: Lowering, b: ir::Bundle, blk: ir::Block) {
-  for op in blk.operators {
+  for op in without_delivery(l, b, blk).operators {
     statement(l, b, op);
+  }
+}
+
+// `@FR-R-RetAdopt` (`adopted_delivery`): the block without the statements that deliver the
+// adopted local into the buffer it already is — its append, and the clear just before it.
+fn without_delivery(l: Lowering, b: ir::Bundle, blk: ir::Block) -> ir::Block {
+  skip = ret_adopt::delivery(b, l.adopt, blk.operators);
+  if len(skip) == 0 {
+    return blk;
+  }
+  kept: vector<ir::Node> = [];
+  for k in 0..len(blk.operators) {
+    if !skip.contains(k) {
+      kept += [blk.operators[k]!];
+    }
+  }
+  ir::Block { name: blk.name, operators: kept, result: blk.result, scope: blk.scope, var_size: blk.var_size }
+}
+
+// `@FR-R-RetAdopt` (`adopted_bind`): the adopted local's bind — it IS the return buffer.  A caller
+// that offered none gets one minted as the witness would have been; an offered one is emptied,
+// as the delivery's clear did.  Then the local is bound to the buffer's vector field as it was
+// to the witness's.  False for any other assignment.
+fn adopted_bind(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) -> boolean {
+  a = l.adopt;
+  if a.v < 0 || var != a.v {
+    return false;
+  }
+  match x {
+    NdCall { def_nr, args } => {
+      if len(args) == 0 || unspan(args[0]!) != ir::NdVar { n: a.vdb } {
+        return false;
+      }
+      buf = ir::NdVar { n: a.buf };
+      mint = ir::Block {
+        name: "adopted buffer",
+        operators: [
+          ir::NdCall { def_nr: own::def_nr(b, "OpDatabase"), args: [buf, ir::NdInt { n: a.db_tp }] },
+          ir::NdCall { def_nr: own::def_nr(b, "OpSetInt4"), args: [buf, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }] },
+        ],
+        result: [ir::TyVoid],
+        scope: 0,
+        var_size: 0,
+      };
+      statement(l, b, ir::NdIf {
+        cond: ir::NdCall { def_nr: own::def_nr(b, "OpRefIsNull"), args: [buf] },
+        t: ir::NdBlock { block: [mint] },
+        f: ir::NdCall { def_nr: own::def_nr(b, "OpClearVector"), args: [buf] },
+      });
+      rebound = args;
+      rebound[0] = buf;
+      at = len(l.notes);
+      first = !(fvar(b, l.def_nr, var)).stack_allocated;
+      line = l.line;
+      set_inner(l, b, var, ir::NdCall { def_nr: def_nr, args: rebound });
+      bind_row(l, b, var, first, at, line);
+      true
+    }
+    _ => false,
   }
 }
 
@@ -4412,6 +4485,7 @@ fn lower_walk(b: ir::Bundle, def_nr: integer, d: ir::Definition) -> Lowering {
   l.def_nr = def_nr;
   l.own_ops = own::ops_of(b);
   l.defs = own::function_defs(b, def_nr, l.own_ops);
+  l.adopt = ret_adopt::ret_adopt(b, def_nr);
   l.result = kind_of_types(d.returned);
   // Every variable lives at its byte of the Rust interpreter's frame (`frame::position`); the
   // frame is as large as its furthest variable reaches.
