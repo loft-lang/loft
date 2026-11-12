@@ -1180,6 +1180,9 @@ impl Run<'_> {
 
     /// Every store that may still be live at an exit is a leak.
     fn exit(&mut self, st: &State, how: &str) {
+        if self.traced {
+            self.trace(&Value::Text(format!("exit: {how}")), st);
+        }
         for (k, info) in &st.stores {
             if !info.has(LIVE) || !info.live.is_disjoint(&info.handed_by) {
                 continue;
@@ -1265,6 +1268,16 @@ impl Run<'_> {
                     && src != *x
                 {
                     Self::copy_alts(&mut st, *x, src);
+                    // …and a store `src` must-holds that `x` now names, `x` must-holds too.
+                    let named = Self::pts(&st, *x);
+                    for (k, info) in &mut st.stores {
+                        if info.has(LIVE)
+                            && info.live.contains(&src)
+                            && named.contains(&Pt::Store(*k))
+                        {
+                            info.live.insert(*x);
+                        }
+                    }
                 }
                 for k in kept {
                     if Self::pts(&st, *x).contains(&Pt::Store(k))
@@ -2258,6 +2271,13 @@ impl Run<'_> {
             }
             Value::Call(d, args) => match self.summaries.get(d) {
                 Some(Summary::Arg(i) | Summary::Buf(i)) => Self::first_var(args, *i as usize),
+                // `@FR-R-HostStore`: a callee handed a STORE buffer answers in that store.
+                Some(Summary::Join(i)) => match args.get(*i as usize).map(Value::unspan) {
+                    Some(Value::Call(sb, a)) if self.data.def(*sb).name() == "OpStoreBuf" => {
+                        Self::first_var(a, 0)
+                    }
+                    _ => None,
+                },
                 _ => None,
             },
             _ => None,
@@ -2902,6 +2922,21 @@ impl Run<'_> {
     )]
     fn call(&mut self, node: &Value, d: u32, args: &[Value], st: State) -> Option<(State, Val)> {
         let ops = self.ops;
+        // `@FR-R-HostStore`: a result its function drops is released by record — its store whole
+        // where that is not the answer's, as `OpFreeRefIfDistinct(rec, answer)` frees it; a record
+        // of the answer's store goes and the store lives on.
+        if self.data.def(d).name() == "OpReleaseRecIfDistinct"
+            && let Some(free_if) = ops
+                .conditional
+                .iter()
+                .copied()
+                .find(|c| self.data.def(*c).name() == "OpFreeRefIfDistinct")
+        {
+            return Some((
+                self.free_op(free_if, &args[..args.len().min(2)], st),
+                Val::null(),
+            ));
+        }
         if ops.unconditional.contains(&d) || d == ops.text_free || ops.conditional.contains(&d) {
             let mut st = self.free_op(d, args, st);
             if self.resets.contains(&(std::ptr::from_ref(node) as usize))
@@ -3350,6 +3385,12 @@ impl Run<'_> {
                         corr: BTreeSet::new(),
                     }
                 }
+            } else if def.name() == "OpStoreBufOnly" {
+                // `@FR-R-HostStore`: the buffer where it is a store buffer, else null.
+                let mut v = vals.into_iter().next().unwrap_or_else(Val::unknown);
+                v.pts.insert(Pt::Null);
+                v.corr.clear();
+                v
             } else if def.name() == "OpNullRefSentinel" {
                 // The null reference: no store.  Read as an operator answering into its
                 // (absent) first argument it was unknown, and every `-> S?` callee whose null
@@ -3424,6 +3465,25 @@ impl Run<'_> {
                     corr: BTreeSet::new(),
                 }
             }
+            // `@FR-R-HostStore`: a callee handed a STORE buffer (`OpStoreBuf(host)`, never null)
+            // claims every answer in that store, so it answers `host`'s store and mints none.
+            Summary::Join(i) | Summary::Buf(i)
+                if args.get(i as usize).is_some_and(|a| {
+                    matches!(a.unspan(), Value::Call(sb, _)
+                        if self.data.def(*sb).name() == "OpStoreBuf")
+                }) && vals.get(i as usize).is_some_and(|v| !v.pts.is_empty()) =>
+            {
+                let pts: Pts = vals[i as usize]
+                    .pts
+                    .iter()
+                    .copied()
+                    .filter(|p| *p != Pt::Null)
+                    .collect();
+                Val {
+                    pts,
+                    corr: BTreeSet::new(),
+                }
+            }
             // A buffer-filler handed "null, or the store this same call made on an earlier
             // pass" (a loop's head): the null path makes that store's role again, so the call
             // answers that store — not one more generation of it.
@@ -3480,7 +3540,13 @@ impl Run<'_> {
                 if let Some(info) = s.stores.get_mut(&k) {
                     info.status = LIVE | ABSENT;
                 }
+                // A null argument is the path the callee mints on: it answers the fresh store
+                // there, never null — unless its answer is `-> T?` itself.
                 let mut pts = viewed.pts;
+                pts.remove(&Pt::Null);
+                if matches!(def.returned(), crate::data::Type::Optional(_)) {
+                    pts.insert(Pt::Null);
+                }
                 pts.insert(Pt::Store(k));
                 Val {
                     pts,
