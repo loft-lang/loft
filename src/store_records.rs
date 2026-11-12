@@ -388,6 +388,13 @@ fn live_some_uncaptured() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_LIVE_SOME_UNCAPTURED").is_none())
 }
 
+/// `LOFT_RECORDS_NO_SLOT_SOLE_HOLDER=1`: a store held only in a leaving record's slot is handed
+/// on there only where the slot's correlation says so (the records' bisect switch).
+fn slot_sole_holder() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_SOLE_HOLDER").is_none())
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -1612,11 +1619,49 @@ impl Run<'_> {
                 }
             }
         }
+        // A store no variable names, held only in the slots of records this value certainly
+        // hands on, leaves with them on every path where it is live: the records' model knows
+        // no other holder of it.
+        let sole: BTreeSet<SKey> = if slot_sole_holder() {
+            let certain: Vec<SKey> = records
+                .iter()
+                .copied()
+                .filter(|k| single || val.corr.contains(k))
+                .collect();
+            let held: BTreeSet<SKey> = certain
+                .iter()
+                .filter_map(|r| st.slots.get(r))
+                .flat_map(|m| m.values().flat_map(|v| Self::stores_of(&v.pts)))
+                .collect();
+            held.into_iter()
+                .filter(|k| {
+                    let info = info_of(st, *k);
+                    info.live.is_empty()
+                        && info.alts.is_empty()
+                        && !st.vars.values().any(|p| p.contains(&Pt::Store(*k)))
+                        && !st
+                            .field_captures
+                            .values()
+                            .any(|p| p.contains(&Pt::Store(*k)))
+                        && st.slots.iter().all(|(r, m)| {
+                            certain.contains(r)
+                                || !m.values().any(|v| v.pts.contains(&Pt::Store(*k)))
+                        })
+                })
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
         // A closure record that leaves takes what its slots hold with it (`@FR-L-CapOne`).
         for k in records {
             if let Some(m) = st.slots.remove(&k) {
                 let src = st.slot_src.remove(&k).unwrap_or_default();
-                for (off, v) in m {
+                for (off, mut v) in m {
+                    v.corr.extend(
+                        Self::stores_of(&v.pts)
+                            .into_iter()
+                            .filter(|c| sole.contains(c)),
+                    );
                     Self::hand_on_var(st, src.get(&off).copied(), &v);
                 }
             }
