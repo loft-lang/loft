@@ -94,12 +94,21 @@ fn rebind_keeps_the_buffers_store_strict_native() {
 /// declining anything — a guard whose subject has been optimised away reads exactly like a
 /// guard whose subject is fixed.  `LOFT_NO_BUFFER_VETO=1` is also the file's own falsification
 /// receipt, which is why it is re-runnable rather than a recorded sha.
+///
+/// Since 473ea172d a second cure covers this shape (the first bind of a multiply-assigned local
+/// from a branch of whole variables is written out), so the control switches it off too
+/// (`LOFT_NO_MULTI_FIRST_WRITES_OUT=1`): with only that one off the guard passes, with both
+/// off it fails — the veto stays load-bearing.
 #[test]
 fn the_pairing_is_load_bearing() {
     for backend in ["--interpret", "--native-rust"] {
         let (ok, stdout, stderr) = run(
             backend,
-            &[("LOFT_NO_BUFFER_VETO", "1"), ("LOFT_STRICT_STORES", "1")],
+            &[
+                ("LOFT_NO_BUFFER_VETO", "1"),
+                ("LOFT_NO_MULTI_FIRST_WRITES_OUT", "1"),
+                ("LOFT_STRICT_STORES", "1"),
+            ],
         );
         assert!(
             !ok && stderr.contains("USE AFTER FREE"),

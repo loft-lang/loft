@@ -945,7 +945,7 @@ pub fn lazy_buffer_mints_at(function: &Function, v: u16, value: &Value) -> bool 
 pub fn answers_a_view_to_copy(data: &Data, d_nr: u32, value: &Value) -> bool {
     !crate::keys::reading_view_copy_off()
         && !matches!(
-            delivered_tail(value),
+            delivered_tail(value).unspan(),
             Value::Var(_) | Value::Call(_, _) | Value::CallRef(_, _)
         )
         && matches!(
