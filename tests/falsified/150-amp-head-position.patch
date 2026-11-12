@@ -1,12 +1,12 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -4609,7 +4609,7 @@
-         let stored_ref_place = record_place && self.is_stored_ref_read(to);
+@@ -5222,7 +5222,7 @@ use a separate collection or add after the loop"
+         // no bind site, and the `&` is the parse error the literal spelling already gets.
          self.amp_head = if record_place {
              AmpHead::StoredRefField
--        } else if op == "=" {
-+        } else if false && op == "=" {
+-        } else if op == "=" && var_nr != u16::MAX {
++        } else if false && op == "=" && var_nr != u16::MAX {
              AmpHead::AssignRhs
          } else {
              AmpHead::No

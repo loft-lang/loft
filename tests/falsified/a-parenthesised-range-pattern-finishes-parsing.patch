@@ -1,13 +1,13 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 0fbf8978a..961cba019 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -8275,13 +8275,6 @@
-     /// patterns after the rest and `(P-Point)` makes a variant one of them, so the tail
-     /// takes the forms the head does — it just reads at a negative index (loft#1419).
-     fn peek_is_variant_subpattern(&mut self, elm_tp: &Type) -> bool {
--        // @FR-P-Point — a plain struct `S { f… }` is a point pattern too: the element's own
--        // struct name opens it, and `parse_field_sub_pattern` parses it as a field's would.
+@@ -9284,14 +9284,6 @@ impl Parser {
+             .map(|(_, pointer)| pointer)
+             .or_else(|| self.forward_field_type(elm_tp));
+         let elm_tp = rec.as_ref().unwrap_or(elm_tp);
+-        if self.undeclared_struct_pattern(elm_tp) {
+-            return true;
+-        }
 -        if let Type::Reference(s_nr, _) = elm_tp.peel_link()
 -            && self.data.def_type(*s_nr) == DefType::Struct
 -        {
@@ -16,7 +16,7 @@ index 0fbf8978a..961cba019 100644
          let Some((elm_e_nr, _)) = self.pattern_variant_enum(elm_tp) else {
              return false;
          };
-@@ -8987,11 +8980,7 @@
+@@ -10008,11 +10000,7 @@ impl Parser {
              // the `name:pat` path.  A real type name identifies the scalar capture.
              if matches!(&self.lexer.peek().has, LexItem::Identifier(id) if id != "_") {
                  self.lexer.cont(); // Type
@@ -29,7 +29,7 @@ index 0fbf8978a..961cba019 100644
              }
          }
          self.lexer.revert(save);
-@@ -10670,30 +10659,6 @@
+@@ -12145,30 +12133,6 @@ impl Parser {
              self.expression(&mut hi);
              return (Value::Boolean(false), Type::Boolean);
          }
@@ -60,7 +60,7 @@ index 0fbf8978a..961cba019 100644
          let pat_pos = *self.lexer.pos();
          let mut lit = Value::Null;
          let negate = self.lexer.has_token("-");
-@@ -10850,21 +10815,15 @@
+@@ -12337,21 +12301,15 @@ impl Parser {
              } else if let Some(id) = self.lexer.has_identifier() {
                  if id == "_" {
                      is_wildcard = true;
@@ -88,7 +88,7 @@ index 0fbf8978a..961cba019 100644
                  } else {
                      // Bare identifier without `@` — wildcard binding (binds subject to name).
                      let bind_nr = self.pattern_binding(&id, subject_type);
-@@ -12288,18 +12247,6 @@
+@@ -14659,18 +14617,6 @@ impl Parser {
              }
              let elem_type = elem_type.clone();
              let elem_get = Value::TupleGet(tmp, i as u16);

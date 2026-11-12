@@ -1,29 +1,21 @@
-diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 561378040..fc7c5afce 100644
---- a/src/state/codegen.rs
-+++ b/src/state/codegen.rs
-@@ -3493,8 +3493,7 @@ impl State {
-                 let reads_v_on_exit_only =
-                     rhs_reads_v && stash_old_for_post_free && !reads_var_unless_exiting(value, v);
-                 if owned_ref
--                    // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
--                    && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
-+                    && let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
-                     && (!rhs_reads_v || reads_v_on_exit_only)
-                     && !rhs_is_new_record
-                     && crate::use_analysis::projection_container_var(stack.data, value).is_some()
-@@ -3743,13 +3742,7 @@ impl State {
-             // through `c2`, loft#1319).
-             note_bind("F3");
-             self.gen_set_first_ref_var_copy(stack, v, *src, d_nr);
--        } else if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
--            // loft#1693 — `heap_def_nr`, native's own test (`dispatch.rs`), so a struct-ENUM
--            // view materialises as a struct view does.  Matched as `Type::Reference` alone, a
--            // struct-enum element bound as a view and disturbed (`c = v[0]; v.remove(0)`)
--            // kept the interior pointer on the interpreter — it read the NEXT element after a
--            // removal and `null` after a growth — while `--native` copied, and the
--            // `(H-Materialise)` advice told the author a copy had been made.
-+        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
-             // @FR-O-Proxy asks copy — whether to MATERIALISE an element read into a store `v`
-             // owns rather than bind the interior pointer.  The materialise is what PREVENTS
-             // the container-wide free described below; it emits no free of its own.
+diff --git a/src/bind_lowering.rs b/src/bind_lowering.rs
+--- a/src/bind_lowering.rs
++++ b/src/bind_lowering.rs
+@@ -146,7 +146,7 @@ pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Va
+     // (@FR-O-Witness, loft#1336): its deps are empty only because a later copy stripped them.
+     // Through `heap_def_nr` and `base()`, so a struct-enum or nullable element view
+     // materialises too (loft#1693, loft#1456).
+-    if let Some(rec) = tp.base().heap_def_nr()
++    if let Type::Reference(rec, _) = tp.base().clone()
+         && tp.depend().is_empty()
+         && function.owner_witness(v).is_none()
+         && crate::use_analysis::projection_container_var(data, value).is_some()
+@@ -853,7 +853,7 @@ fn re_arm(
+     }
+     let reads_v_on_exit_only = rb.rhs_reads_v && stashed && !reads_var_unless_exiting(value, v);
+     if rb.owned_ref
+-        && let Some(rec) = tp.base().heap_def_nr()
++        && let Type::Reference(rec, _) = tp.base().clone()
+         && (!rb.rhs_reads_v || reads_v_on_exit_only)
+         && !rb.rhs_is_new_record
+         && crate::use_analysis::projection_container_var(data, value).is_some()
