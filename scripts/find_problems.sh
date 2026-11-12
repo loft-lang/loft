@@ -223,12 +223,19 @@ test_runner_cmd() {
     # run says what it spent where (`=== Slowest test binaries ===` in the summary and
     # $TEST_TIMES_FILE) — a run that hits the cap names its slow tests itself, with no second
     # run to find them (CI_BUDGET.md § the 20-minute cap).
+    # Two passes in ONE run, as the gate's (`make ci`): everything but the starvation victims —
+    # the networked tests a rustc storm starves — with the storm makers six wide
+    # (.config/nextest.toml's default profile), then the victims alone under `ci-victims`, once
+    # every storm has ended.  The set is the profile's (`ci_test_filter.py victims`).
     local base="cargo nextest run --no-fail-fast --status-level pass"
-    if [[ -n "${TEST_SELECT:-}" ]]; then
-      echo "$base -E '$TEST_SELECT'"
-    else
-      echo "$base"
+    local victims
+    victims=$(python3 "$REPO_ROOT/scripts/ci_test_filter.py" victims 2>/dev/null)
+    if [[ -z "$victims" ]]; then
+      if [[ -n "${TEST_SELECT:-}" ]]; then echo "$base -E '$TEST_SELECT'"; else echo "$base"; fi
+      return
     fi
+    local sel="${TEST_SELECT:-all()}"
+    echo "$base -E '($sel) & not ($victims)'; $base --no-tests=pass --profile ci-victims -E '($sel) & ($victims)'"
   else
     # No filterset support in plain `cargo test` — it runs everything, which is
     # the safe direction to fall back in.
@@ -523,7 +530,8 @@ test_times() {
       if (st != "SLOW") printf "%s\t%s\t%s\t%s\n", st, t, bin, test
     }' "$log" > "$TEST_TIMES_FILE" 2>/dev/null || true
   local started reached
-  started=$(grep -aoE "Starting [0-9]+ tests" "$log" | tail -1 | grep -oE "[0-9]+")
+  # Summed over the passes: the main one and the starvation victims' (test_runner_cmd).
+  started=$(grep -aoE "Starting [0-9]+ tests" "$log" | grep -oE "[0-9]+" | awk '{s+=$1} END{if (NR) print s}')
   reached=$(wc -l < "$TEST_TIMES_FILE" 2>/dev/null || echo 0)
   echo "=== Slowest test binaries (this run; every test in $TEST_TIMES_FILE) ==="
   echo "reached ${reached:-0} of ${started:-?} selected tests"

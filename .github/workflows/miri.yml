@@ -1324,10 +1324,10 @@ jobs:
       - name: Library code names no program numbers — whole corpus
         run: cargo test --release --test lib_ids -- --ignored
 
-      # A `[c] shim` linked into the wasm32 target (wasmtime runs it): a whole-program wasm
-      # build, too slow for the per-commit suite's serial native group.
-      - name: A C shim links into the wasm target
-        run: cargo test --release --test native a_c_shim_links_into_the_wasm_target -- --ignored
+      # `[c] shim`s linked into the wasm32 target (wasmtime runs them): one package's, and two
+      # packages' in one program.  Whole-program wasm builds, too slow for the per-commit suite.
+      - name: C shims link into the wasm target
+        run: cargo test --release --test native into_the_wasm_target -- --ignored
 
       # The limit guards at the real 300 / 64 KiB (`tests/limits_full/`).  The per-commit corpus
       # proves the same relations under LOWERED limits (`// @LIMIT:`); this run proves the real

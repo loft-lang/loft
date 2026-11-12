@@ -6074,6 +6074,7 @@ fn main() {\n\
 /// loft_w_strlen`.  `lcshim2` needs `strlen` from that library, `lcshim` brings its own copy.
 /// Skips without `clang`, the `wasm32-wasip2` target or `wasmtime`.
 #[test]
+#[ignore = "a wasm32 build of a whole program, the per-commit suite's only wasip2 rlib user — runs nightly in miri.yml's release-gate job"]
 fn two_c_shims_link_into_the_wasm_target() -> std::io::Result<()> {
     let have = |tool: &str| {
         loft::platform::process::harness_command(tool)

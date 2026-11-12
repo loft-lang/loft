@@ -690,7 +690,9 @@ networked tests a storm starves — `multiplayer_v2`, `multiplayer_v3`, `wasm_de
 one at a time, after every storm has ended.  `scripts/ci_test_filter.py victims` prints that
 set from `.config/nextest.toml`, so the Makefile, the workflow and nextest select one list.
 The second pass writes its junit to `target/nextest/ci-victims/`; the duration and speed gates
-read the main pass's.  The `default` profile keeps the single serial group for local runs.
+read the main pass's.  The local run (`find_problems.sh`, the `default` profile) schedules the
+same way: the storm makers six wide, then the victims alone under `ci-victims` — one run, under
+one cap.  One at a time the storm makers were a 716 s chain the cap cut; six wide, 313 s.
 
 ## The schedule is not a clock — the release gate (2026-09-04)
 
