@@ -2766,6 +2766,20 @@ impl Run<'_> {
                     .position(|p| *p == x)
                     .map_or(Origin::Mint, |i| Origin::MintInto(i as u16));
                 let site = self.site(node, origin);
+                // A store that may also have ended (a loop that ran no pass joins the store an
+                // earlier pass freed) is still `x`'s where it is live, when `x` names it wherever
+                // it is live: re-initialised in place there, minted on the other paths.
+                let mut kept = kept;
+                for p in &cur {
+                    if let Pt::Store(k) = p
+                        && k.site != site
+                        && let info = info_of(&st, *k)
+                        && info.has(LIVE)
+                        && info.live.contains(&x)
+                    {
+                        kept.insert(*p);
+                    }
+                }
                 // A store `x` holds is re-initialised in place, so it stays live exactly where
                 // `x` names it — as correlated with `x` as the store the null path makes.
                 let mut corr: BTreeSet<SKey> = Self::stores_of(&kept)
