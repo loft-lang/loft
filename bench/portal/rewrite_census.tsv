@@ -1653,7 +1653,6 @@
 20_interpreter	-	rust	R-WorkBuffer/onward	12
 20_interpreter	-	rust	R-Wrapper	16
 20_interpreter	-	rust	R-ZeroCount	8
-21_tree	-	c	H-SwapRebind	2
 21_tree	-	c	R-Base	1
 21_tree	-	c	R-Base/guard	1
 21_tree	-	c	R-BoundedNest/kernel	1
