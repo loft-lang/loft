@@ -420,15 +420,17 @@ The gaps fixed, by the representation they corrected:
   answers null); a guarded free of a capture slot leaves the store live exactly where the witness
   names it.
 
-Open (all four cells are records gaps; every function in them is runtime-clean at 0..3 passes
-on both backends):
+Open (four cells, all records gaps; every function in them is runtime-clean at 0..3 passes on
+both backends):
 - **One key for every earlier pass.**  A site minting each pass keeps its current store and ONE
   older generation, so the stores of passes 1..n-1 merge: a slot's correlation with the store it
   holds cannot survive (C's cell `one_loop`, 2357 `after_returned_fn`'s older store), and the
   zero-pass path's "this store exists only where the record does" is lost at the loop's exit
   (2357 `record`).  15's records MISS was the same shape; the first three passes are now analysed
   one by one, which caught it.  Owner: loft3-c1's pass design.
-- **A freed name still answers identity.**  The frame frees a backing, then a let-go point asks
-  `OpDistinctStore(slot, backing)`; at run time the stale reference still compares, the records
-  have dropped the name (C's cell `two_loops`).  Owner: loft3-c1 (`SInfo::stale`).
+- **A liveness test of a capture slot** (C's cell `two_loops`, its `#0`): a let-go point frees a
+  slot's store behind `OpStoreLive(OpGetDbRef(w, off))`, and the records narrowed that test only
+  for a plain variable, so a store the frame had already freed stayed in the slot.  Both backends
+  reset a freed variable, so the identity test beside it is no witness; the liveness test is what
+  keeps them clean.  Fixed by loft3-c1's cl-patches13 (the slot narrowed on the live arm).
 - L-CapKeep/1636 and L-CapOne/2281: loft3-c1's.
