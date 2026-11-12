@@ -544,6 +544,30 @@ impl Scopes<'_> {
         })
     }
 
+    /// The literal-backing accumulators (`__kvb_N`, `__vdb_N`,
+    /// [`crate::variables::owns_literal_backing_store`]) an `ncc` block's arms end in: an arm
+    /// that builds a literal yields its accumulator as the block's tail.
+    pub(super) fn ncc_literal_accumulators(bl: &Block, function: &Function) -> Vec<u16> {
+        let Some(last) = bl.operators.last() else {
+            return Vec::new();
+        };
+        let mut arms: Vec<&Value> = Vec::new();
+        Self::ncc_tail_arms(last, &mut arms);
+        arms.iter()
+            .filter_map(|a| match a.unspan() {
+                Value::Block(b) => match b.operators.last().map(Value::unspan) {
+                    Some(Value::Var(acc))
+                        if crate::variables::owns_literal_backing_store(function.name(*acc)) =>
+                    {
+                        Some(*acc)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The terminal value of each arm of an `ncc` block's tail `if`.
     fn ncc_tail_arms<'a>(val: &'a Value, out: &mut Vec<&'a Value>) {
         match val.unspan() {

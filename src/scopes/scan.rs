@@ -1226,6 +1226,22 @@ impl Scopes<'_> {
         data: &Data,
     ) -> Value {
         let unspanned = value.unspan();
+        // `@FR-H-FreeTwice`, `@FR-O-Witness` — a lifted `??` join whose default is a literal
+        // built in a function-scoped accumulator (`h() ?? []`, `__kvb_N`) holds the subject's
+        // store on one path and the ACCUMULATOR's on the other.  The accumulator owns its store
+        // for the function's life (its entry null init mints it, each build reclaims it in
+        // place, its exit free releases it), so the lift frees only where it holds another
+        // store: the accumulator is its join witness.  Freed plainly, the lift released the
+        // accumulator's store and the exit free released it again.
+        // `LOFT_NO_NCC_LITERAL_WITNESS=1` frees the lift plainly.
+        if let Value::Block(bl) = unspanned
+            && bl.name == "ncc"
+            && !self.lift_join_witness.contains_key(&tmp)
+            && !crate::env_once!(std::env::var_os("LOFT_NO_NCC_LITERAL_WITNESS").is_some())
+            && let [acc] = Self::ncc_literal_accumulators(bl, function)[..]
+        {
+            self.lift_join_witness.insert(tmp, acc);
+        }
         if let Value::Call(fn_nr, _) = unspanned
             && (*fn_nr as usize) < data.definitions.len()
             && data.def(*fn_nr).is_loft_defined()

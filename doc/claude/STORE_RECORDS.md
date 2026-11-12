@@ -228,6 +228,11 @@ a store owns it whatever its deps name (`get_free_vars`, `keyed_owner`);
 moving a backing's null init down to its build, drops the free of that backing from an early
 return ahead of the build, where the store does not exist yet (`lastuse_reclaim`);
 `LOFT_RECLAIM_KEEPS_EARLY_FREES=1` keeps it, and the return frees whatever the slot held.
+A `??` read inline whose default is a literal built in a function-scoped accumulator
+(`ch(h() ?? [])`, `__kvb_N`) lifts the join with the accumulator as its witness: the lift frees
+only where it holds the subject's store, and the accumulator keeps its own store for the
+function's life (`Scopes::lift_set`); `LOFT_NO_NCC_LITERAL_WITNESS=1` frees the lift plainly,
+and the accumulator's exit free releases that store again.
 
 A closure record HOLDS what it captures: each capture slot, keyed by the record's store and
 offset, keeps the captured value, and the captured stores are handed on only when a value
