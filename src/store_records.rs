@@ -342,6 +342,13 @@ fn rule_out_holder(info: &mut SInfo, x: u16) {
     }
 }
 
+/// `LOFT_RECORDS_NO_FIELD_RECORD_HOLDS=1`: a fn field's record is no holder of a store its slot
+/// was found to name, and leaves nothing with its host (the records' bisect switch).
+fn field_record_holds() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_FIELD_RECORD_HOLDS").is_none())
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -1500,6 +1507,27 @@ impl Run<'_> {
                 }
             }
         }
+        // A fn field's record lives in its host's store: where that store leaves, the record
+        // leaves with it, and so do the stores it holds.
+        if field_record_holds() {
+            let gone: Vec<u16> = st
+                .field_captures
+                .keys()
+                .copied()
+                .filter(|w| {
+                    Self::stores_of(&Self::pts(st, *w))
+                        .iter()
+                        .any(|k| val.pts.contains(&Pt::Store(*k)))
+                })
+                .collect();
+            for info in st.stores.values_mut() {
+                for w in &gone {
+                    if info.has(LIVE) && info.live.contains(w) {
+                        info.handed_by.insert(*w);
+                    }
+                }
+            }
+        }
         // A closure record that leaves takes what its slots hold with it (`@FR-L-CapOne`).
         for k in records {
             if let Some(m) = st.slots.remove(&k) {
@@ -2488,6 +2516,27 @@ impl Run<'_> {
                     && let Some(s) = &mut same
                 {
                     Self::equate(s, x, w);
+                }
+                // `OpDistinctStore(x, OpGetDbRef(w, off))` with `w` a fn field's record: where
+                // they are the SAME, the record's slot names `x`'s store, so the record holds it.
+                if let (Some(x), Some(Value::Call(g, ga))) =
+                    (self.operand_var(a.first()), a.get(1).map(Value::unspan))
+                    && *g == self.ops.get_dbref
+                    && let Some(Value::Var(w)) = ga.first().map(Value::unspan)
+                    && let Some(s) = &mut same
+                    && s.field_captures.contains_key(w)
+                    && field_record_holds()
+                {
+                    for k in Self::stores_of(&Self::pts(s, x)) {
+                        if let Some(info) = s.stores.get_mut(&k)
+                            && info.has(LIVE)
+                        {
+                            info.live.insert(*w);
+                            for alt in &mut info.alts {
+                                alt.insert(*w);
+                            }
+                        }
+                    }
                 }
                 (distinct, same)
             }
