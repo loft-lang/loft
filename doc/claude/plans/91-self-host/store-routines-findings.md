@@ -282,6 +282,7 @@ LOFT_NO_CACHE=1 python3 scripts/own_sweep.py --loft <bin> --oracle check-records
 | patches14 | 53 → 50 | 1 | 1 (6 below) |
 | series 2026-11-12 (8 commits on 91-self-host 8f7c1c9e0) | 50 → 36 | 6 | 2 (7, 8 below) |
 | series 2026-11-12, continued (loft2 and loft3-c1, on 91-self-host 7e2d72225 + the snapshot patch) | 36 → 6 | 17 (the 16 store_records.rs fixes 15caa3c50..7e2d72225, and the snapshot patch) | 3 (9–11 below) |
+| loop fixes 2026-11-12 (91-self-host f1df5b9a6 + B + D) | 6 → 5 (1643 runs; 4 new cells) | 1 (stale names, loft3-c1) | 4 (12–15 below) |
 
 The real defects the checker found first:
 
@@ -341,6 +342,31 @@ The real defects the checker found first:
    The build detaches an old slot naming its new fill first (`LOFT_NO_SNAPSHOT_KEEPS_REFILL`);
    suite cell L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.  Found only once the
    records modelled the snapshot's `OpCopyRecord`.
+12. **A staying record rebuilt in one pass freed its capture twice** — after exactly one pass of
+   `for … { g = fn() {..a..}; a = [i] }` the declaration's backing still named the record's
+   capture, and the frame's end freed both.  Let-go point 5 hands the backing's store to a record
+   whose live cascade frees it (`LOFT_NO_STAYING_RECORD_TAKES_BACKING`); suite cell
+   L-CapKeep/a-staying-record-rebuilt-in-one-pass-frees-its-capture-once.  L-Apply's three
+   findings and 2357's `after_local` / `after_in_frame` were this.
+13. **A pass-scoped fn-ref beside a kept one freed its record twice** — a second loop keeping a
+   fn-ref gates the frame (`closure_keep`), and the pass-scoped fn-ref then released its confined
+   record too (`LOFT_NO_CONFINED_RECORD_STAND_DOWN`); suite cell
+   L-CapKeep/a-pass-scoped-fn-ref-beside-a-kept-one-frees-its-record-once.  L-CapRebind
+   vector's findings were this and 12.
+14. **A call rebind in a loop refilled the vector a closure captured** — `a = mkv(i)` after the
+   build answered the value assigned after it: silent-wrong, both backends.  The call's buffer is
+   a backing the rebind detaches (`LOFT_NO_CALL_BUFFER_REBIND_DETACH`); suite cell
+   L-CapRebind/a-call-rebind-in-a-loop-leaves-the-record-its-build-time-vector.  Not a lifetime
+   fault, so the records cannot report it; found by the over-reach probe beside 12.
+15. **A capture rotated through call buffers was freed under a buffer** — `v = bump(v)` with a
+   kept closure: a use after free on the C backend at three passes.  Such a capture is the
+   buffers' to release (`LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS`); suite cell
+   L-CapRebind/a-capture-rotated-through-call-buffers-is-the-buffers-to-release.
+
+**A loop finding is re-run at 0, 1, 2 and 3 passes before it is called false.**  A suite cell's
+loop runs a fixed count, and 12, 13 and a leak a first version of 12's cure introduced showed
+only at ONE pass: at two or more the stores rotate apart, at none nothing is built.  The records
+walk every path; the cell's run walks one.
 
 The gaps fixed, by the representation they corrected:
 
@@ -394,5 +420,10 @@ The gaps fixed, by the representation they corrected:
   answers null); a guarded free of a capture slot leaves the store live exactly where the witness
   names it.
 
-Open: the six cells left are closure loops (L-Apply, L-CapKeep/1636, /2357, a-kept-closure,
-L-CapOne/2281, L-CapRebind vector), worked by loft3-c1 one slot trace at a time.
+Open:
+- the cells left: L-CapKeep/1636 (4) and L-CapOne/2281 (2), loft3-c1's; L-CapKeep/2357 (10) and
+  the false findings on two cured cells of this series (12's 1, 13's 4), loft2's.
+- **15 is a MISS**: with its cure off the records do not report it.  After the loop-head join the
+  two rotating buffer stores have no must-holder, so the rebuild's free ends one only as a MAY
+  and the next call's write through `__ref_1` is not told apart from the safe passes.  Catching it
+  needs the loop's store generations correlated across passes, the design loft3-c1 set aside.
