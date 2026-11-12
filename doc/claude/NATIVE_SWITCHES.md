@@ -833,6 +833,11 @@ callee starts as `[c; n]`.  Read where the literal is emitted.
 
 ## Element-first builds, complete writes and return buffers
 
+**`LOFT_NO_SPARE_RESTAMP=1`** / **`LOFT_NATIVE_SWAP_KEEPS_HANDUP=1`** (`@FR-H-FreeTwice`, runtime, rustc
+`--native`) are the bisect steps for a store a fn-ref call's buffer leaves unreleased or releases twice: the
+first keeps a kept spare's old allocation stamp when a callee builds in it (the result then reads as borrowed
+and nobody releases it), the second leaves an exchanged source on the fn-ref hand-up list (released twice).
+
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's

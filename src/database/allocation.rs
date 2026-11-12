@@ -1418,6 +1418,16 @@ impl Stores {
             return None;
         }
         self.spare_store = None;
+        // `@FR-H-FreeTwice`'s other half — the kept store goes out as a NEW value, so it takes
+        // a new allocation stamp, as a store going live does.  `cr_fnref_minted` tells a store a
+        // fn-ref callee minted from one that was already there by this stamp: with the old one,
+        // a callee's result built in the spare read as borrowed, went on no hand-up list and
+        // was released by nobody (`heap_sound`'s `rebound_then_called` on rustc `--native`).
+        // `LOFT_NO_SPARE_RESTAMP=1` keeps the old stamp.
+        if !crate::env_once!(std::env::var_os("LOFT_NO_SPARE_RESTAMP").is_some()) {
+            self.stores_allocated += 1;
+            self.allocations[s as usize].alloc_serial = self.stores_allocated;
+        }
         Some(DbRef {
             store_nr: s,
             rec: 1,
