@@ -1227,7 +1227,24 @@ impl Run<'_> {
     /// (`<record>_OpDropAll(w)`), or a free of a slot read (`OpFreeRef(OpGetDbRef(w, off))`,
     /// `scopes::rebound_captures`).  A slot store already ended on every path is ended twice.
     fn end_slots(&mut self, st: &mut State, w: u16, how: &str) {
-        let held: Vec<SKey> = Self::stores_of(&Self::held_by_record(st, w, None));
+        let mut held: Vec<SKey> = Self::stores_of(&Self::held_by_record(st, w, None));
+        // The cascade drops a closure record a slot holds (a captured fn-ref's record) with
+        // what ITS slots hold.
+        if how == "its cascade" {
+            let mut i = 0;
+            while i < held.len() {
+                if let Some(m) = st.slots.get(&held[i]) {
+                    for v in m.values() {
+                        for k in Self::stores_of(&v.pts) {
+                            if !held.contains(&k) {
+                                held.push(k);
+                            }
+                        }
+                    }
+                }
+                i += 1;
+            }
+        }
         let label = format!("{how}({})", self.var_name(w));
         for k in held {
             self.sites[k.site as usize].ends.insert(label.clone());
