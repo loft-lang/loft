@@ -231,6 +231,7 @@ impl State {
             stack.grow(stack.step(size(stack.function.tp(*v), &Context::Argument)));
         }
         let start = self.code_pos;
+        BIND_FN_START.with(|s| s.set(start));
         self.arguments = stack.position;
         stack.grow(stack.step(4)); // keep space for the code return address
         if is_empty_stub {
@@ -2598,11 +2599,13 @@ impl State {
         }
         let first = !stack.function.is_stack_allocated(v);
         // The source line the assignment stands on: the last line marker generated before it.
-        let line = self
-            .line_numbers
-            .range(..=self.code_pos)
-            .next_back()
-            .map_or(0, |(_, l)| *l);
+        let line = crate::bind_lowering::row_line(
+            &value.to_owned_value(),
+            self.line_numbers
+                .range(BIND_FN_START.with(std::cell::Cell::get)..=self.code_pos)
+                .next_back()
+                .map_or(0, |(_, l)| *l),
+        );
         BIND_NOTES.with(|n| n.borrow_mut().push(Vec::new()));
         self.generate_set_inner(stack, v, value);
         let mut notes = BIND_NOTES.with(|n| n.borrow_mut().pop().unwrap_or_default());
@@ -7330,6 +7333,10 @@ std::thread_local! {
     /// The notes of each bind being lowered: a frame per `generate_set`, since a value's own
     /// lowering can contain binds of its own.
     static BIND_NOTES: std::cell::RefCell<Vec<Vec<String>>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Where the function being generated starts, so a bind row's line is a line of that
+    /// function: a bind before its first line marker (a hoisted null init) names line 0, as
+    /// the other writers' rows do.
+    static BIND_FN_START: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Is `LOFT_TRACE_BIND` set?

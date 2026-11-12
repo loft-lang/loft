@@ -6148,7 +6148,7 @@ impl<'a> FnWriter<'a> {
     /// the two writers' choices can be compared row by row (STORE_RECORDS.md § Phases, 2).
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
         let first = !self.bound[var as usize];
-        let line = self.cur_line;
+        let line = crate::bind_lowering::row_line(x, self.cur_line);
         self.bind_arm.push("");
         let r = self.set_stmt_arms(var, x, ind);
         let arm = self.bind_arm.pop().unwrap_or("");

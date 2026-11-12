@@ -1158,6 +1158,14 @@ pub fn decided_lowering(
     format!("{}/b2={b2}", rb.arm.trace_name())
 }
 
+/// The source line a bind trace row names for `v = value`: the value's own position where the
+/// parser spanned it, else the line the writer last passed (`fallback`), so the three writers
+/// name one assignment by one line even where a writer's own position stream skips a function.
+#[must_use]
+pub fn row_line(value: &Value, fallback: u32) -> u32 {
+    value.span_pos().map_or(fallback, |p| p.line)
+}
+
 /// Is the bind trace the environment variable `env` names switched on?  A writer asks it before
 /// computing what only the trace prints.
 #[must_use]
