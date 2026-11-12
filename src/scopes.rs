@@ -786,6 +786,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             let db_nr = data.def_nr("OpDatabase");
             let gf_nr = data.def_nr("OpGetField");
             if !inject_unfreed {
+                let if_distinct_nr = data.def_nr("OpFreeRefIfDistinct");
                 let d = &mut data.definitions[d_nr as usize];
                 lastuse_reclaim(
                     &mut d.code,
@@ -794,6 +795,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                     gf_nr,
                     free_ref_nr,
                     &drop_bearing,
+                    if_distinct_nr,
                 );
             }
             // Plan-57 Phase 4 — Goal-E enforcement (THE watermark guard, supersedes
