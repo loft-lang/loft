@@ -348,6 +348,30 @@ impl FnWriter<'_> {
             .collect()
     }
 
+    /// The `OpFreeRefIfDistinct(a, w)` pairs of two local variables in this generator's body, as
+    /// C field names: `a` is freed only where it does not name `w`'s store.
+    fn distinct_free_pairs(&self) -> Vec<(String, String)> {
+        let data = self.cx.data;
+        let if_distinct = data.def_nr("OpFreeRefIfDistinct");
+        let mut out: Vec<(String, String)> = Vec::new();
+        data.def(self.d).code().walk(&mut |n| {
+            if let Value::Call(op, args) = n
+                && *op == if_distinct
+                && let [a, w] = args.as_slice()
+                && let (Value::Var(a), Value::Var(w)) = (a.unspan(), w.unspan())
+            {
+                let pair = (
+                    super::var_name(self.vars.name(*a), *a),
+                    super::var_name(self.vars.name(*w), *w),
+                );
+                if !out.contains(&pair) {
+                    out.push(pair);
+                }
+            }
+        });
+        out
+    }
+
     fn write_release(&self, bodies: &mut String, fields: &[(String, String, CType, bool)]) {
         let d = self.d;
         let _ = writeln!(
@@ -368,7 +392,30 @@ impl FnWriter<'_> {
                 }
             }
         }
-        for n in self.abandoned_stores() {
+        // `@FR-H-FreeTwice` — a local the body frees only where it is DISTINCT from a witness
+        // (`OpFreeRefIfDistinct(p, __ref_1)`: `p` adopted the call's buffer) is released the
+        // same way here, and before the witness, whose own release nulls its slot.  Freed
+        // plainly, an abandoned frame released the one store both name twice (1586's
+        // `built1586` left after one value).  `LOFT_C_PLAIN_ABANDON_FREE=1` frees each plainly.
+        let pairs = if crate::env_once!(std::env::var_os("LOFT_C_PLAIN_ABANDON_FREE").is_some()) {
+            Vec::new()
+        } else {
+            self.distinct_free_pairs()
+        };
+        let stores = self.abandoned_stores();
+        for (n, w) in &pairs {
+            if stores.contains(n) {
+                let _ = writeln!(
+                    bodies,
+                    "        if (fr->{n}.rec != 0 && fr->{n}.store_nr != fr->{w}.store_nr) \
+                     {{ loft_free_ref(fr->{n}); }} fr->{n} = loft_ref_null();"
+                );
+            }
+        }
+        for n in &stores {
+            if pairs.iter().any(|(a, _)| a == n) {
+                continue;
+            }
             let _ = writeln!(
                 bodies,
                 "        if (fr->{n}.rec != 0) {{ loft_free_ref(fr->{n}); fr->{n} = loft_ref_null(); }}"
