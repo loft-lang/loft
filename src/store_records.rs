@@ -872,6 +872,13 @@ impl Run<'_> {
                     p.insert(Pt::Store(old));
                 }
             }
+            // A fn field's record captured the store this site named at its build: that is
+            // the older generation now, as for a variable.
+            for p in st.field_captures.values_mut() {
+                if p.remove(&Pt::Store(cur)) {
+                    p.insert(Pt::Store(old));
+                }
+            }
             // A record minted again is a new record: its slots start empty, and the
             // previous generation's move with it.
             for m in st.slots.values_mut() {
