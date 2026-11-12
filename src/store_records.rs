@@ -3040,6 +3040,16 @@ impl Run<'_> {
                 names(&i.live),
                 names(&i.ended)
             );
+            // The record correlations: captured by, and non-null / null wherever it is live.
+            if !i.captured_by.is_empty() || !i.live_some.is_empty() || !i.live_null.is_empty() {
+                let _ = write!(
+                    o,
+                    " cap{:?} some{:?} null{:?}",
+                    names(&i.captured_by),
+                    names(&i.live_some),
+                    names(&i.live_null)
+                );
+            }
         }
         if !st.slots.is_empty() {
             o.push_str("\n    slots:");
