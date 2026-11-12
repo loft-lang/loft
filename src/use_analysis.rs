@@ -5423,7 +5423,7 @@ pub(crate) fn ownership_of_with(data: &Data, d_nr: u32, value: &Value, defs: &De
         // there is no single one, and the join is the unnameable one every reader copies.
         Own::Join { base }
             if base != u16::MAX
-                && matches!(def.variables.tp(base), Type::Tuple(_))
+                && matches!(def.variables.tp(base).base(), Type::Tuple(_))
                 && !tuple_join_witness_off()
                 && join_witness_member(&def.variables, base).is_none() =>
         {
@@ -5451,7 +5451,7 @@ pub fn join_witness_member(vars: &Function, base: u16) -> Option<u16> {
     if base == u16::MAX || tuple_join_witness_off() {
         return None;
     }
-    let Type::Tuple(elems) = vars.tp(base) else {
+    let Type::Tuple(elems) = vars.tp(base).base() else {
         return None;
     };
     let mut found = None;

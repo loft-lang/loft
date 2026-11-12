@@ -1426,7 +1426,7 @@ impl Run<'_> {
         };
         let function = &self.data.def(self.d_nr).variables;
         if base == u16::MAX
-            || !matches!(function.tp(base), crate::data::Type::Tuple(_))
+            || !matches!(function.tp(base).base(), crate::data::Type::Tuple(_))
             || crate::use_analysis::join_witness_member(function, base).is_some()
         {
             return;
