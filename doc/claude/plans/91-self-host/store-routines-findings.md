@@ -363,6 +363,14 @@ The real defects the checker found first:
    buffers' to release (`LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS`); suite cell
    L-CapRebind/a-capture-rotated-through-call-buffers-is-the-buffers-to-release.
 
+16. **A closure re-bound to a plain lambda leaked the record it displaced** — a fn-ref holding a
+   frame-built record, re-bound on a branch to a lambda that captures nothing, then returned: the
+   frame took the record as leaving on every run, so the re-bound run released neither the record
+   nor its captures, and skipped their hooks; both backends.  Such a frame is decided by store
+   identity (`LOFT_NO_PLAIN_REBIND_KEEP`); suite cell
+   L-CapOwn/a-closure-rebound-to-a-plain-lambda-releases-the-record-it-displaced.  Found probing
+   L-CapOne/2281's `lv` with the closure built on one branch only.
+
 **A loop finding is re-run at 0, 1, 2 and 3 passes before it is called false.**  A suite cell's
 loop runs a fixed count, and 12, 13 and a leak a first version of 12's cure introduced showed
 only at ONE pass: at two or more the stores rotate apart, at none nothing is built.  The records
@@ -433,4 +441,8 @@ both backends):
   for a plain variable, so a store the frame had already freed stayed in the slot.  Both backends
   reset a freed variable, so the identity test beside it is no witness; the liveness test is what
   keeps them clean.  Fixed by loft3-c1's cl-patches13 (the slot narrowed on the live arm).
-- L-CapKeep/1636 and L-CapOne/2281: loft3-c1's.
+- **A store's existence correlated with a record variable across a branch join** (L-CapOne/2281
+  `lv`: `h` names the second record exactly where it was built; the frame end's stand-downs walk
+  an arm where `h` names it and its record variable is null).  Same relation as 2357 `record`.
+  Owner: loft3-c1's design.
+- L-CapKeep/1636: loft3-c1's.
