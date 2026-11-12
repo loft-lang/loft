@@ -321,8 +321,7 @@ fake non-null on an op that can miss.
 > | spec | spare code? | overflow answers |
 > |---|---|---|
 > | `integer` (i64), `i32` | yes, and it is the bottom (`i32` is `i32::MIN + 1 ..= i32::MAX`, which is why `i32 = -2147483648` is refused) | `null` |
-> | `u32` | yes, but at the TOP — no non-null read tests for it, and writing it renders `4294967295`, outside the type's own range | the type's default |
-> | `u8`, `i8`, `u16`, `i16` | no: the range FILLS the width, so all 256 / 65 536 codes are values | the type's default |
+> | `u8`, `i8`, `u16`, `i16`, `u32` | no: the range FILLS the width, so all 256 / 65 536 / 2^32 codes are values | the type's default |
 >
 > The default is `(E-Uncomp-NN)`'s and is at least a legal value of the type, so nothing holds
 > a non-`τ` value — but it is indistinguishable from a computed one, which is the price of a

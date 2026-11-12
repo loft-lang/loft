@@ -204,9 +204,9 @@ The reserved code is expressed in the effective `min`/`max` of the integer
 type behind the field, and the read/write contract is symmetric: reading a
 narrow field into an `integer` widens the stored sentinel to integer null,
 and writing integer null (or `null`) stores the sentinel — a null always
-round-trips, at every width.  A plain (non-null) `u8` / `u16` field has no
-null to encode and uses the full range (256 / 65 536); `u32` keeps its top
-code out of range either way ([formal/types.md](formal/types.md) `(N-Reserve)`).  Typical `u32` use:
+round-trips, at every width.  A plain (non-null) `u8` / `u16` / `u32` field has no
+null to encode and uses the full range (256 / 65 536 / 2^32 codes,
+[formal/types.md](formal/types.md) `(N-Reserve)`).  Typical `u32` use:
 RGBA pixels, large file offsets, bitmasks wider than i32.
 
 **A NON-nullable narrow slot has no code for a failure, so the store says it.**  `u8`,

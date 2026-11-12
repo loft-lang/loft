@@ -1265,10 +1265,9 @@ fn OpSetInt4(v1: reference, fld: const u16, val: __word);
 // `u32` — the same bytes a binary format expects — so this is a decode change, not a
 // layout change, and `i32`/`vector<i32>` keep the signed pair untouched.
 //
-// `Raw` reserves the TOP code (`u32::MAX`) as the null sentinel, which is exactly the
-// range `u32` already declares (`limit(0, 4294967294)` — LOFT.md § nullable narrow
-// fields, "one 32-bit code reserved").  `Full` reserves nothing, so a non-null slot
-// covers the whole 2^32.  The Raw/Full split, and Full reusing the Raw write op,
+// `Raw` reserves the TOP code (`u32::MAX`) as the null sentinel, the code a nullable
+// `u32?` keeps back (LOFT.md § nullable narrow fields).  `Full` reserves nothing, so a
+// non-null `u32` slot covers the whole 2^32.  The Raw/Full split, and Full reusing the Raw write op,
 // mirror `OpGetShortRaw` / `OpGetShortFull` / `OpSetShortRaw` one width up.
 fn OpGetInt4Raw(v1: reference, fld: const u16) -> __word;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_u32_raw(db.rec, db.pos + u32::from(@fld)); if r == u32::MAX {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
