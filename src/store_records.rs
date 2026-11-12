@@ -4670,3 +4670,84 @@ fn null_init_mints(
         _ => false,
     }
 }
+
+/// The records driven from a hand-built function body: a shape no source spelling reaches
+/// (no loft source frees) can still be checked to be reported, and each rule gets a unit test.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::{Type, v_block, v_if};
+
+    /// Parse `source` beside the stdlib, run the scope pass, replace `fn_name`'s body by what
+    /// `body` builds from (the data, the function's number), and answer the records' findings
+    /// for it.
+    fn findings(
+        source: &str,
+        fn_name: &str,
+        body: impl FnOnce(&Data, u32) -> Value,
+    ) -> Vec<String> {
+        let mut p = crate::parser::Parser::new();
+        p.parse_stdlib(concat!(env!("CARGO_MANIFEST_DIR"), "/default"))
+            .expect("read the stdlib");
+        p.parse_str(source, "<records-test>", false);
+        crate::scopes::check(&mut p.data, &mut p.database);
+        let d = p.data.def_nr(fn_name);
+        assert_ne!(d, u32::MAX, "no function {fn_name}");
+        let code = body(&p.data, d);
+        p.data.definitions[d as usize].code = code;
+        let ops = Ops::new(&p.data);
+        let mut sum = BTreeMap::new();
+        analyse_all(&p.data, &ops, &mut sum)
+            .remove(&d)
+            .map(|(lines, _)| lines)
+            .unwrap_or_default()
+    }
+
+    fn call(data: &Data, op: &str, args: Vec<Value>) -> Value {
+        let d = data.def_nr(op);
+        assert_ne!(d, u32::MAX, "no op {op}");
+        Value::Call(d, args)
+    }
+
+    /// `design-stale-names.md` F6: an alias made AFTER a store's end is in `stale`, so a free
+    /// through it is still a re-free.  `h` mints the store and `w` names it on one arm only
+    /// (`{null, store}` after the join); the free through `h` ends it on every path; then `k` is
+    /// bound from `w` — a MAY alias made after the end, so not in the must-set `ended` — and
+    /// freed.  Where the arm ran, `k` names the freed store: the finding must stand.  Falsified
+    /// by dropping the alias insertion in `bind`: `k` is then in neither set and the re-free is
+    /// silenced as a name that never named the freed store.
+    #[test]
+    fn an_alias_made_after_the_end_still_reads_as_a_second_free() {
+        let src = "struct S1 { a: integer }\n\
+                   fn t(c: boolean) { h = S1 { a: 1 }; w = S1 { a: 2 }; k = S1 { a: 3 }; }\n\
+                   fn main() { t(true); }\n";
+        let found = findings(src, "n_t", |data, d| {
+            let vars = &data.def(d).variables;
+            let var = |name: &str| Value::Var(vars.var(name));
+            let tp = Value::Int(i32::from(data.def(data.def_nr("S1")).known_type()));
+            v_block(
+                vec![
+                    call(data, "OpDatabase", vec![var("h"), tp]),
+                    v_if(
+                        var("c"),
+                        call(data, "OpPutRef", vec![var("w"), var("h")]),
+                        Value::Null,
+                    ),
+                    call(data, "OpFreeRef", vec![var("h")]),
+                    call(data, "OpPutRef", vec![var("k"), var("w")]),
+                    call(data, "OpFreeRef", vec![var("k")]),
+                ],
+                Type::Void,
+                "records-test",
+            )
+        });
+        assert!(
+            found
+                .iter()
+                .any(|l| l.contains("re-free") && l.contains("`k`")),
+            "the free through `k`, bound from a stale name after the end, must read as a second \
+             free; the records said:\n{}",
+            found.join("\n")
+        );
+    }
+}
