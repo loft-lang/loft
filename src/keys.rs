@@ -3343,6 +3343,15 @@ pub fn view_temp_transition_guard() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_TEMP_TRANSITION_GUARD"))
 }
 
+/// `LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD=1` — a joined local's scope-end free
+/// (`OpFreeRefIfDistinct(v, witness)`) runs while `v` still names the backing an earlier bind
+/// viewed, which the backing frees too.
+#[must_use]
+pub fn view_temp_scope_end_guard() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD"))
+}
+
 /// `LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS=1` — a staying record keeps owning a capture the loop
 /// reassigns from a call buffer the frame releases (`capture_adoption`): its cascade and the
 /// frame's buffer release free the same store.

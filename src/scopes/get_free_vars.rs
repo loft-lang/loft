@@ -790,10 +790,33 @@ impl Scopes<'_> {
                         if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped)) {
                             ls.push(hook);
                         }
-                        ls.push(Value::Call(
+                        let free = Value::Call(
                             data.def_nr("OpFreeRefIfDistinct"),
                             vec![Value::Var(v), Value::Var(jw)],
-                        ));
+                        );
+                        // `@FR-H-FreeTwice` — a store a frame temporary owns (the backing an
+                        // earlier bind of `v` viewed) is that temporary's to release, here as at
+                        // the rebind (`scan_set`'s transition guard): `x: vector<T> = [..]`
+                        // never rebound from a forwarding fn-ref was freed by `x` and by
+                        // `__vdb_N`.  `LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD=1`.
+                        let free = if crate::keys::view_temp_scope_end_guard() {
+                            let distinct = data.def_nr("OpDistinctStore");
+                            self.view_temps
+                                .get(&v)
+                                .into_iter()
+                                .flatten()
+                                .filter(|&&t| t != v && t != jw && !function.is_skip_free(t))
+                                .fold(free, |inner, &t| {
+                                    v_if(
+                                        Value::Call(distinct, vec![Value::Var(v), Value::Var(t)]),
+                                        inner,
+                                        Value::Null,
+                                    )
+                                })
+                        } else {
+                            free
+                        };
+                        ls.push(free);
                     } else if is_work_ref && let Some(&witness) = self.paired_witness.get(&v) {
                         // `OpFreeRefIfDistinct` declines where the two alias, so it is
                         // sound only where somebody ELSE releases the store then: the
