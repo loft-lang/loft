@@ -463,7 +463,7 @@ Checker MISSes closed (each a defect the checker must report with its cure off):
 
 Open (two cells, records gaps, both in loft3-c1's cover design — "whatever of a key is still
 live, one of THESE names names it"):
-- L-CapKeep/1636 `c6`, `c8`.
+- L-CapKeep/1636 `c6` (`c8` cleared by the cover, loft3-c1's 75aee2306).
 - C's cell `one_loop` and `two_loops`: a leak each on `#3`, the older `a` buffers.
 
 Each function is right and clean at 0..3 passes on both backends, under poison, the leak check
