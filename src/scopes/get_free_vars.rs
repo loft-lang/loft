@@ -249,7 +249,14 @@ impl Scopes<'_> {
         let link_delivered = link_written_closure_records(data, function, self.d_nr);
         let exited: std::collections::HashSet<u16> = vars.iter().copied().collect();
         for v in vars {
-            if v == ret_var || suppress_source(function, v) {
+            // A closure record the frame decides by store identity (`closure_keep`) is released
+            // even where the return value may hold it: the stand-down below lets go of it
+            // first wherever the returned fn-ref does, so a run that re-bound the fn-ref to
+            // another value releases the record it displaced (`@FR-L-CapOwn`).
+            let gated_record = crate::keys::plain_rebind_keep()
+                && self.closure_keep.plain_rebound
+                && self.closure_keep.records.contains(&v);
+            if v == ret_var || (suppress_source(function, v) && !gated_record) {
                 continue;
             }
             // `@FR-L-CapKeep` — a closure record another live fn-ref still names is that
@@ -494,6 +501,11 @@ impl Scopes<'_> {
                     // statement about `@FR-L-CapOwn` and not a new suppression for every
                     // reference local.  One predicate, asked by `check_ref_leaks` too.
                     || closure_record_leaves_frame(data, function, self.d_nr, v);
+                // A record the frame decides by store identity (`closure_keep`, gated) stood
+                // down above wherever the returned fn-ref holds it, as one a link delivers
+                // does: it is released here on the runs that did not hand it out — a fn-ref
+                // re-bound to a lambda that captures nothing displaced it (`@FR-L-CapOwn`).
+                let leaves_frame = leaves_frame && !gated_record;
                 // H2 step 5 (DEPS_INVENTORY): the BLOCK-RESULT type's deps were
                 // read here for years under the positional guess.  That read is
                 // RETIRED: the declared-return (`ret_borrows_v`, a TYPED decode),

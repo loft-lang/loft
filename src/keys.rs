@@ -3444,6 +3444,16 @@ pub fn call_buffer_rebind_detach() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_CALL_BUFFER_REBIND_DETACH"))
 }
 
+/// `LOFT_NO_PLAIN_REBIND_KEEP=1` — a fn-ref bound to one closure record and re-bound to a lambda
+/// that captures nothing is not decided by store identity (`closure_keep`): the frame takes the
+/// record as leaving with the fn-ref whatever it holds, and a re-bound run leaks the record and
+/// its captures.
+#[must_use]
+pub fn plain_rebind_keep() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PLAIN_REBIND_KEEP"))
+}
+
 /// `LOFT_NO_SNAPSHOT_KEEPS_REFILL=1` — a closure record rebuilt through a snapshot (a capture
 /// type with a drop hook) keeps an old slot naming the store its new fill names: the snapshot's
 /// cascade then releases the capture the rebuilt record holds again (`vectors.rs`).

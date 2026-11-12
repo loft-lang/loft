@@ -320,6 +320,7 @@ The closure records' releases, each switch bringing back one second free (doc st
 - `LOFT_NO_CONFINED_RECORD_STAND_DOWN` — a pass-scoped fn-ref frees the confined record the frame frees.
 - `LOFT_NO_CALL_BUFFER_REBIND_DETACH` — a call rebind refills the buffer a record captured (a wrong value).
 - `LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS` — a rebuild frees a rotated capture a buffer still holds.
+- `LOFT_NO_PLAIN_REBIND_KEEP` — a record displaced by a plain lambda is released by nobody.
 - `LOFT_NO_RECORD_RELEASE_DETACH` — a record's release leaves a local naming its capture's store.
 - `LOFT_NO_FDISP_KEEP_TEMP` — a displaced fn-ref snapshot reads as a value use after the scope pass.
 - `LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS` — a staying record owns a capture rebound from a call buffer.
