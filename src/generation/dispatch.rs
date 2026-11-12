@@ -805,7 +805,7 @@ impl Output<'_> {
             && crate::bind_lowering::answers_a_view_to_copy(self.data, self.def_nr, to)
         {
             let name = sanitize(variables.name(var));
-            let tp_lit = self.data.def(d).known_type();
+            let tp_lit = self.type_lit(self.data.def(d).known_type());
             write!(w, "{{ let _src = ")?;
             self.output_code_inner(w, to)?;
             write!(
@@ -879,7 +879,9 @@ impl Output<'_> {
             if let Some((src, d_nr)) = copy_src
                 && !crate::env_once!(std::env::var_os("LOFT_NO_COROUTINE_VAR_COPY").is_some())
             {
-                let tp = self.data.def(d_nr).known_type();
+                // A library's code names the type through its id table (`type_lit`), never
+                // the program's number.
+                let tp = self.type_lit(self.data.def(d_nr).known_type());
                 let src_place = match self.coroutine_persistent_fields.get(&src) {
                     Some(f) => format!("self.var_{f}"),
                     None => format!("var_{}", sanitize(variables.name(src))),
