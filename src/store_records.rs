@@ -455,6 +455,27 @@ fn join_arms(a: &State, b: &State) -> State {
     join_state(a, b)
 }
 
+/// A copy pair survives a join where, on each side, it was kept or both names are null there:
+/// two nulls are the same value (`LOFT_RECORDS_NO_NULL_COPY_JOIN=1` keeps only kept pairs).
+fn join_copies(a: &State, b: &State) -> BTreeSet<(u16, u16)> {
+    let null = |st: &State, v: u16| {
+        st.vars
+            .get(&v)
+            .is_none_or(|p| p.iter().all(|x| *x == Pt::Null))
+    };
+    let holds = |st: &State, p: &(u16, u16)| {
+        st.copies.contains(p)
+            || (!crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_NULL_COPY_JOIN").is_some())
+                && null(st, p.0)
+                && null(st, p.1))
+    };
+    a.copies
+        .union(&b.copies)
+        .filter(|p| holds(a, p) && holds(b, p))
+        .copied()
+        .collect()
+}
+
 fn join_state(a: &State, b: &State) -> State {
     let null: Pts = [Pt::Null].into();
     let mut vars = BTreeMap::new();
@@ -535,7 +556,7 @@ fn join_state(a: &State, b: &State) -> State {
         flags,
         points,
         nonnull: a.nonnull.intersection(&b.nonnull).copied().collect(),
-        copies: a.copies.intersection(&b.copies).copied().collect(),
+        copies: join_copies(a, b),
         mints: a.mints.clone(),
     }
 }
