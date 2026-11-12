@@ -110,6 +110,17 @@ def missing_methods(methods: list[str], target: dict[str, str]) -> set[str]:
     src = ["#![allow(unused)]", "use loft::database::Stores;"]
     for i, m in enumerate(methods):
         src.append(f"fn p{i}() {{ let _ = Stores::{m}; }}")
+    # Where the rlib's dependencies are: `deps/` beside it (cargo through 1.99), or one
+    # `build/<crate>/<hash>/out/` per crate (cargo 1.100's build-dir layout, which has no
+    # `deps/`).  Both for the target and for the HOST: `loft` depends on
+    # `wasm_bindgen_macro`, a PROC-MACRO compiled for the host, which never appears in a
+    # wasm deps directory — without its path rustc stops at E0463 before it type-checks a
+    # single probe fn, so NO per-method verdict is emitted and `absent` comes back empty,
+    # exactly what "nothing is unavailable" looks like.  The self-test catches that.
+    dep_dirs = [rlib_dir / "deps", *sorted(rlib_dir.glob("build/*/*/out"))]
+    host = target_dir / "release"
+    dep_dirs += [host / "deps", *sorted(host.glob("build/*/*/out")), ROOT / "target/release/deps"]
+    dep_args = [a for d in dep_dirs if d.is_dir() for a in ("-L", f"dependency={d}")]
     with tempfile.TemporaryDirectory() as td:
         probe = Path(td) / "probe.rs"
         probe.write_text("\n".join(src) + "\n")
@@ -119,15 +130,7 @@ def missing_methods(methods: list[str], target: dict[str, str]) -> set[str]:
                 "--target", target["triple"],
                 "--crate-type", "rlib",
                 "--extern", f"loft={rlib}",
-                "-L", f"dependency={rlib_dir / 'deps'}",
-                # The HOST deps too, and not as belt-and-braces: `loft` depends on
-                # `wasm_bindgen_macro`, which is a PROC-MACRO — it is compiled for the host
-                # and can never appear in a wasm deps directory.  Without this path rustc
-                # stops at `E0463: can't find crate for wasm_bindgen_macro` before it type-
-                # checks a single probe fn, so NO per-method verdict is emitted and `absent`
-                # comes back empty — which is exactly what "nothing is unavailable" looks
-                # like.  The self-test below is what catches that, and it caught it here.
-                "-L", f"dependency={ROOT / 'target/release/deps'}",
+                *dep_args,
                 "--error-format=json",
                 "-o", str(Path(td) / "out.rlib"),
                 str(probe),
