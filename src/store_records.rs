@@ -2581,6 +2581,16 @@ impl Run<'_> {
         }
     }
 
+    /// The variable an `OpDistinctStore` operand names a store through: the variable itself,
+    /// or a fn-ref whose closure record it is (`OpFnRefClosure(g)`).
+    fn operand_var(&self, v: Option<&Value>) -> Option<u16> {
+        match v.map(Value::unspan)? {
+            Value::Var(x) => Some(*x),
+            Value::Call(op, a) if *op == self.ops.fnref_closure => Self::first_var(a, 0),
+            _ => None,
+        }
+    }
+
     /// `OpDistinctStore(a, b)`: where both operands name one single store (or both are
     /// null), the two are that store on every path and the DISTINCT arm cannot run; where
     /// they name two different single stores, the SAME arm cannot.  Anything wider keeps
@@ -2634,35 +2644,35 @@ impl Run<'_> {
             // does not name that store (`if OpDistinctStore(__ref_1, __rbw___ref_1)` — the
             // caller's buffer is never the one freed under it).
             (_, Some(y @ (Pt::Store(_) | Pt::Param(_))))
-                if let Some(Value::Var(x)) = args.first().map(Value::unspan)
+                if let Some(x) = self.operand_var(args.first())
                     && a.len() > 1
                     && a.contains(&y) =>
             {
                 let mut distinct = st.clone();
                 let rest: Pts = a.iter().copied().filter(|p| *p != y).collect();
-                Self::narrow(&mut distinct, *x, rest);
+                Self::narrow(&mut distinct, x, rest);
                 let mut same = st;
-                Self::narrow(&mut same, *x, [y].into());
+                Self::narrow(&mut same, x, [y].into());
                 (Some(distinct), Some(same))
             }
             // The witness is null: where the first operand is the SAME, it is null too.
             (_, Some(Pt::Null))
-                if let Some(Value::Var(x)) = args.first().map(Value::unspan)
+                if let Some(x) = self.operand_var(args.first())
                     && a.len() > 1
                     && a.contains(&Pt::Null)
                     && !a.contains(&Pt::Unknown) =>
             {
                 let mut same = st.clone();
-                Self::narrow(&mut same, *x, [Pt::Null].into());
+                Self::narrow(&mut same, x, [Pt::Null].into());
                 let mut distinct = st;
                 let rest: Pts = a.iter().copied().filter(|p| *p != Pt::Null).collect();
-                Self::narrow(&mut distinct, *x, rest);
+                Self::narrow(&mut distinct, x, rest);
                 (Some(distinct), Some(same))
             }
             // Where the two are the SAME, the first names only what the witness may name too:
             // a store both may name, or null or a caller's store where the witness may be null
             // or a caller's store (two parameters may name one store, or both be null).
-            _ if let Some(Value::Var(x)) = args.first().map(Value::unspan)
+            _ if let Some(x) = self.operand_var(args.first())
                 && !a.contains(&Pt::Unknown)
                 && !b.contains(&Pt::Unknown) =>
             {
@@ -2682,9 +2692,9 @@ impl Run<'_> {
                 }
                 let mut same = st.clone();
                 if same_pts != a {
-                    Self::narrow(&mut same, *x, same_pts);
+                    Self::narrow(&mut same, x, same_pts);
                 }
-                (Self::distinct_narrowed(args, *x, &a, st), Some(same))
+                (self.distinct_narrowed(args, x, &a, st), Some(same))
             }
             _ => (Some(st.clone()), Some(st)),
         }
@@ -2695,8 +2705,10 @@ impl Run<'_> {
     /// the tuple member `b.0` it built, after a loop that ran no pass).  Where the witness
     /// alone holds such a store, `x` names it only where it is live, so there too the two are
     /// one store.  Where that rules out every store `x` names, the arm cannot run.
-    fn distinct_narrowed(args: &[Value], x: u16, a: &Pts, st: State) -> Option<State> {
-        let w = args.get(1).and_then(|v| Self::named_var(&st, v));
+    fn distinct_narrowed(&self, args: &[Value], x: u16, a: &Pts, st: State) -> Option<State> {
+        let w = args
+            .get(1)
+            .and_then(|v| Self::named_var(&st, v).or_else(|| self.operand_var(Some(v))));
         let distinct_pts: Pts = a
             .iter()
             .copied()
