@@ -14,6 +14,19 @@ are kept as they were, so links to their anchors still resolve.
 
 ---
 
+## The rustc backend — the order as it read until 2026-11-12
+
+Until 2026-11-12 § The order of the large arcs read *"the rustc backend in good shape before
+the C backend; the language stable before loft-in-loft"*.  The owner shelved the rustc backend
+in October 2026, once the C backend existed: each performance fix for the Rust writer had become
+a slog through a rustc build of about 16 s per program, where the same loop through C compiles
+in under a second, and the C backend reached a median of 1.3× its Rust twins on the ship lane
+within days of its first corpus match (plans/203-c99-default-backend.md § The position; the
+2026-11 release record).  The C foreign-function layer, built in a day on the `[c] shim` and
+`loft_ffi.h` groundwork, took over a month to get right for rustc's cdylib and rlib coupling
+(revalidate-libs' E0514 reds in the 2026-11 record).  The writer stays as the ports' byte-for-byte
+reference until @PLN91 stage 6.
+
 ## Where we are & the highest-leverage next work (2026-07-10)
 
 > **Update 2026-07-10 — the plan board is EMPTY; the remaining work was never ticketed.**
