@@ -313,7 +313,13 @@ impl Output<'_> {
         if reassign && !owned {
             write!(w, "{{ ")?;
             self.call_bind_owns = false;
+            // `@FR-H-FreeTwice` — the owned-store tracker releases the displaced store after
+            // the bind, so the call arm inside must not free it as `(displaced)` too
+            // (`old_stash_var`, the `_old_` stash's own rule): `d = through(null)` freed it
+            // twice (N-Store/1997 `h4`).
+            let outer_stash = self.old_stash_var.replace(var);
             self.output_set_inner(w, var, to)?;
+            self.old_stash_var = outer_stash;
             let copied = std::mem::take(&mut self.call_bind_owns);
             write!(
                 w,
@@ -363,7 +369,9 @@ impl Output<'_> {
             // `OpDatabase(var_r)` reuse must not happen here at all: reusing the
             // store the value reads is the same fault one step earlier.
             write!(w, "{{ let _disp_{name}: DbRef = _own_store_{name}; ")?;
+            let outer_stash = self.old_stash_var.replace(var);
             self.output_set_body(w, var, to)?;
+            self.old_stash_var = outer_stash;
             write!(
                 w,
                 "; if _disp_{name}.store_nr != u16::MAX \
@@ -845,6 +853,45 @@ impl Output<'_> {
             // the right-hand side may be a compound `bool` expression (`!b` → `(..) != 1`), so
             // the ` as u8` wraps the WHOLE of it, as the local path below does.
             let wrap_bool = matches!(variables.tp(var).base(), Type::Boolean);
+            // `@FR-B-Copy` — a whole-record bind copies (`bind_lowering`'s `F3`/`R2c`, the arms
+            // the bytecode and C writers take): written plainly, the field named its source's
+            // store and both were freed (G-Yield, `__ref_4 = t` before a yield).  @PLN220.
+            // `LOFT_NO_COROUTINE_VAR_COPY=1` writes it plainly.
+            let copy_src =
+                match crate::bind_lowering::re_bind(self.data, self.def_nr, variables, var, to).arm
+                {
+                    crate::bind_lowering::ReArm::VarCopy { src, d_nr } => Some((src, d_nr)),
+                    _ => match crate::bind_lowering::first_arm(
+                        self.data,
+                        self.def_nr,
+                        variables,
+                        var,
+                        to,
+                    ) {
+                        crate::bind_lowering::FirstArm::RecordVarCopy { src, d_nr } => {
+                            Some((src, d_nr))
+                        }
+                        _ => None,
+                    },
+                };
+            if let Some((src, d_nr)) = copy_src
+                && !crate::env_once!(std::env::var_os("LOFT_NO_COROUTINE_VAR_COPY").is_some())
+            {
+                let tp = self.data.def(d_nr).known_type();
+                let src_place = match self.coroutine_persistent_fields.get(&src) {
+                    Some(f) => format!("self.var_{f}"),
+                    None => format!("var_{}", sanitize(variables.name(src))),
+                };
+                write!(
+                    w,
+                    "{{ let _old = self.var_{name}; self.var_{name} = OpDatabase(cell, DbRef::NULL, \
+                     {tp}); OpCopyRecord(cell, {src_place}, self.var_{name}, {tp}); \
+                     if _old.store_nr != u16::MAX && _old.store_nr != self.var_{name}.store_nr \
+                     {{ OpFreeRef(cell, _old, \"{name}(displaced)\"); }} }}"
+                )?;
+                self.note_arm("rs-coroutine-var-copy");
+                return Ok(());
+            }
             // A fn-ref field holds the `(definition, closure)` pair, so a bare definition
             // number — a non-capturing lambda, or an arm of an `if` — emits as that pair, the
             // channel the local path below uses (loft#1587).
