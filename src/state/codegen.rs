@@ -157,6 +157,9 @@ impl State {
         let _defs_memo = crate::use_analysis::defs_memo_scope(data, def_nr);
         // The rewrite census credits what the bytecode generator admits to the `interp` phase.
         let _census_body = crate::rewrite_census::InBody::enter("interp", data.def(def_nr).name());
+        if bind_trace_on() {
+            BIND_FN_START.with(|s| s.set(self.code_pos));
+        }
         // `@FR-R-LoopSlot`: the loop variables this frame places in their range index's slot.
         crate::rewrite_census::fired("R-LoopSlot", super::slot_aliases(data, def_nr).len());
         let logging =
@@ -2597,10 +2600,13 @@ impl State {
             return self.generate_set_inner(stack, v, value);
         }
         let first = !stack.function.is_stack_allocated(v);
-        // The source line the assignment stands on: the last line marker generated before it.
+        // The source line the assignment stands on: the last line marker this function generated
+        // before it, 0 before its first (as the C writer's row says).  The markers of the
+        // function generated before it are not this assignment's.
+        let fn_start = BIND_FN_START.with(std::cell::Cell::get);
         let line = self
             .line_numbers
-            .range(..=self.code_pos)
+            .range(fn_start..=self.code_pos)
             .next_back()
             .map_or(0, |(_, l)| *l);
         BIND_NOTES.with(|n| n.borrow_mut().push(Vec::new()));
@@ -7330,6 +7336,9 @@ std::thread_local! {
     /// The notes of each bind being lowered: a frame per `generate_set`, since a value's own
     /// lowering can contain binds of its own.
     static BIND_NOTES: std::cell::RefCell<Vec<Vec<String>>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Where the function being generated starts (`def_code`): a bind row's line is read from
+    /// this function's line markers only.
+    static BIND_FN_START: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Is `LOFT_TRACE_BIND` set?
