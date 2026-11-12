@@ -461,11 +461,16 @@ Checker MISSes closed (each a defect the checker must report with its cure off):
   shared store already freed where the witness cannot point into it (`maybe_stale`) reads as a
   second free.  Switch `LOFT_RECORDS_NO_GUARDED_REST_REPORTS`; control MISS 7 → 0.
 
-Open (two cells, records gaps, both in loft3-c1's cover design — "whatever of a key is still
-live, one of THESE names names it"):
-- L-CapKeep/1636 `c6` (`c8` cleared by the cover, loft3-c1's 75aee2306).
-- C's cell `one_loop` and `two_loops`: a leak each on `#3`, the older `a` buffers.
+- **A capture slot's correlation, lost through the loop and the frame end** (C's cell
+  `one_loop` / `two_loops`): the record's slot holds the older `a` buffers, and the frame end
+  frees the slot's store unless another name holds it.  Three gaps, each needed: the slot's
+  correlation was dropped at a re-mint and at the loop join; an identity test of a slot narrowed
+  only against one store, and a correlated store narrowed out stayed live; the dead arm of
+  `OpStoreLive(slot)` left the slot's stores live.  A correlation is read only where the slot is
+  the store's sole holder.  Switches `LOFT_RECORDS_NO_SLOT_CORR_JOIN`,
+  `LOFT_RECORDS_NO_SLOT_CORR_NARROW`, `LOFT_RECORDS_NO_SLOT_DEAD_ARM`.
 
-Each function is right and clean at 0..3 passes on both backends, under poison, the leak check
-and the re-free gate (1636 `c6` in the plain-copy and `keep(f)` spellings, `two_loops`, `one_loop`).
-The records flag the plain copy `g = f` only: the slot member of the cover.
+Open (one cell, a records gap, loft3-c1's cover design): L-CapKeep/1636 `c6` (`c8` cleared by
+the cover).  The function is right and clean at 0..3 passes on both backends, under poison, the
+leak check and the re-free gate, in the plain-copy and `keep(f)` spellings; the records flag the
+plain copy `g = f` only.
