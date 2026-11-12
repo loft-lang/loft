@@ -215,6 +215,11 @@ auto-merge does not wait for it.  Dispatched with the PR (step 4) it runs beside
 on `main` the night after the merge.  It costs about one nightly's runner time per PR (about
 1150 runner-minutes, most of them on macOS and Windows).
 
+It competes for runners with the PR's own run, so dispatch it on a head that already carries
+every known fix, and not while that run's CI or revalidate-libs jobs are still queued (`gh run
+list --status queued`).  One dispatched on a head a push was about to replace left the
+library revalidation running 2 jobs at a time; cancelled, it ran 10 or more.
+
 A nightly red in a consumer's suite (`switch-ab`, `consumer-main-health`) is triaged before
 it is fixed: run the consumer's suite on `main`'s own binary.  A failure there too is the
 consumer lagging the language (a stale lock, an API the rules now refuse), not this PR's
