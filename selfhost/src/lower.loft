@@ -2855,8 +2855,9 @@ fn set_inner(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   set_again(l, b, var, x);
 }
 
-// The reassignment (`codegen.rs:2513–3405`): B0, then B1's facts once, B2's free of the
-// displaced store, and the first arm of R1–R3 that matches.
+// The reassignment: the facts and the arm `bind_lowering::re_bind` / `re_arm` decide, in their
+// order, then the arm emitted as `generate_set_inner` emits it (B0, B2's free of the displaced
+// store, R1–R3).
 fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   v = fvar(b, l.def_nr, var);
   f = fn_of(b, l.def_nr);
@@ -2867,7 +2868,7 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     return;
   }
   u = unspan(x);
-  // B1 — the facts, each once.
+  // B1 — the facts (`re_bind`), each once.
   s1 = binds::s1_substituted(b, var, x);
   reads_v = binds::reads_var(x, var);
   own = own::ownership_of(b, l.own_ops, l.def_nr, x);
@@ -2875,27 +2876,82 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   rhs_may_alias_v = binds::rhs_may_alias_v(b, l.own_ops, l.def_nr, f, var, x);
   entry_w = binds::entry_witness(f, var);
   owned_ref = binds::owned_ref(b, l.def_nr, f, var, x);
+  // An ARGUMENT frees what it displaces only with an entry witness (`@FR-O-Buffer`): a rebound
+  // by-value parameter is detached in the IR first, and a renamed return buffer holds its
+  // caller's store (`LOFT_ARG_DISPLACED_FREE` unset).
+  frees_displaced = owned_ref && (!v.argument || entry_w != null);
   rhs_is_new_record = binds::rhs_is_new_record(b, x);
   nullable_local = binds::nullable_local(f, var);
   witnessed = binds::owner_witness(f, var) != null;
-  buffer_w = binds::displaced_buffer_witness(b, f, var, x);
-  // B2 — the displaced store: stashed past the assignment, freed before it, or kept.
-  // A compiler temporary's null reset frees nothing (`bind_lowering::re_bind`,
-  // `null_reset_of_temp`): the compiler writes it only after the temp's store was released or
-  // handed over, so a free here is a second release of that store.
-  temp_null_reset = binds::is_compiler_generated(f, var) && unspan(x) is NdNull;
-  stash = !temp_null_reset && owned_ref && (reads_v || rhs_is_new_record || nullable_local);
-  pre = !temp_null_reset && owned_ref && !s1;
-  b2 = if stash { "stash" } else if pre { "pre" } else { "none" };
   // loft#1522's veto keeps the free from an owner that adopted a construction buffer's store;
   // its copy arms still run (`@FR-B-Copy`).
   buffer_kept = !reads_v && binds::rebind_keeps_displaced(f, var) && binds::owns_its_binding(b, f, var, x);
-  // The facts the decision read (`ReBind::trace_facts`), noted before the arm; R2c adds its
-  // source ahead of the call's facts.
-  facts_at = len(l.notes);
+  buffer_w = binds::displaced_buffer_witness(b, f, var, x);
+  // A compiler temporary's null reset frees nothing (`null_reset_of_temp`): the compiler writes
+  // it only after the temp's store was released or handed over.
+  temp_null_reset = binds::is_compiler_generated(f, var) && binds::is_null_value(b, x);
+  stash = !temp_null_reset && owned_ref
+    && (reads_v || rhs_is_new_record || nullable_local || binds::rhs_reads_a_view_of(f, x, var));
+  pre = !temp_null_reset && !stash && frees_displaced && !s1;
+  b2 = if stash { "stash" } else if pre { "pre" } else { "none" };
+  rb = ReBind { reads_v: reads_v, witnessed: witnessed, stash: stash, alias_v: rhs_may_alias_v };
+  // The arm (`re_arm`), in the order its tests are taken.
+  callee = binds::callee_of(b, l.defs, x);
+  is_call = (u is NdCall) || (u is NdCallRef);
+  jb = own::named_join_base(own);
+  join_rec = binds::join_record(binds::first_bind_shape(t));
+  hd = own::heap_def_nr(t);
+  src = match u { NdVar { n } => n, _ => null };
+  arm = "R3";
+  if (owned_ref || buffer_kept) && !s1
+      && (!stash || (!reads_v && is_call && callee != null))
+      && !(u is NdVar) && !v.view_elided && jb != null && join_rec != null {
+    arm = "R1";
+  } else if (owned_ref || witnessed || buffer_kept) && !s1 {
+    cd = binds::def(b, callee ?? l.def_nr);
+    fresh = copies_into_fresh(rb);
+    sd: integer? = null;
+    if hd != null && src != null && src != var {
+      sd = own::record_copy_source(b, f, var, src!);
+    }
+    if owned_ref && !witnessed && opaque_call_destination(b, l.def_nr, f, var, entry_w)
+        && !v.view_elided && binds::opaque_callref_bind(b, l.defs, t, x) != null {
+      arm = "R2a";
+    } else if hd != null
+        && (!v.argument || (binds::is_promoted_return_buffer(b, l.def_nr, f, var) && (!reads_v || fresh)))
+        && is_call && callee != null && binds::is_loft_defined(cd)
+        && !binds::return_adopts_fresh_store(cd)
+        && !(reads_v && !witnessed && own::returns_borrowed_view(cd)
+             && !(rhs_base == 65535 && stash) && rhs_may_alias_v)
+        && !v.view_elided
+        && !binds::adopts_minted_at_bind(b, l.own_ops, f, var, x) {
+      arm = "R2b";
+    } else if sd != null && own::copies_as(b, hd!, sd!) {
+      arm = "R2c";
+    } else if owned_ref && hd != null
+        && (!reads_v || (stash && !binds::reads_var_unless_exiting(x, var)))
+        && !rhs_is_new_record && binds::projection_container_var(b, x) != null {
+      arm = "R2d";
+    } else if owned_ref && stash && reads_v && !rhs_is_new_record && hd != null
+        && binds::answers_a_view_to_copy(b, l.own_ops, l.def_nr, x) {
+      arm = "R2d";
+    }
+  }
+  // The facts the decision read (`ReBind::trace_facts`), noted before the arm.
   facts = "b2={b2} owned_ref={flag(owned_ref)} s1={flag(s1)} reads_v={flag(reads_v)} witnessed={flag(witnessed)} entry_w={flag(entry_w != null)} buffer_w={flag(buffer_w != null)} nullable={flag(nullable_local)} kept={flag(buffer_kept)} base={trace_var(f, rhs_base)} alias_v={flag(rhs_may_alias_v)}";
-  call_facts = trace_call_facts(l, b, f, var, x);
-  note(l, facts + call_facts);
+  if arm == "R2c" {
+    facts += " src={trace_var(f, src)}";
+  }
+  note(l, facts + trace_call_facts(l, b, f, var, x));
+  if arm == "R2a" {
+    refuse(l, "a record bound from a call through a function value");
+    return;
+  }
+  if arm == "R1" && binds::base(binds::tp(f, jb!)) is TyTuple {
+    refuse(l, "a join witnessed by a tuple's members");
+    return;
+  }
+  // B2 — the displaced store: stashed past the assignment, or freed before it.
   slot = slot_of(l, var);
   if stash {
     emit(l, Load, KRef, slot, 0);
@@ -2915,98 +2971,116 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     }
     l.owned_reassigned[var] = true;
   }
-  // R1 — a join: bound or copied by the store it comes back in (`join_own_enabled`, on).
-  d = match t { TyReference { n, dep: _ } => n, _ => null };
-  jb = own::named_join_base(own);
-  if owned_ref && !s1 && !stash && !(u is NdVar) && !v.view_elided && jb != null && d != null {
+  if arm == "R1" {
+    // A join: bound or copied by the store it comes back in.  A stashed rebind still names its
+    // old store, which the copy arm would refill: reset first, the stash keeps it for its free.
     note(l, "R1");
+    if stash {
+      init_ref(l, slot);
+    }
     value(l, b, x, KRef);
     emit(l, Load, KRef, slot_of(l, jb!), 0);
-    emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, d!)));
-    return;
+    emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, join_rec!)));
+  } else if arm == "R2b" {
+    rebind_call_copy(l, b, var, x, hd!, rb);
+  } else if arm == "R2c" {
+    // A whole record variable copied in.
+    init_ref(l, slot);
+    emit(l, Load, KRef, slot_of(l, src!), 0);
+    emit(l, Load, KRef, slot_of(l, src!), 0);
+    note(l, "R2c");
+    emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, hd!)));
+  } else if arm == "R2d" {
+    note(l, "R2d");
+    // A value that reads `v`, or may leave, is computed before `v`'s fresh store replaces it.
+    elem_copy(l, b, var, x, hd!, binds::value_can_exit(x) || reads_v);
+  } else {
+    note(l, "R3");
+    plain_set(l, b, var, x);
   }
-  if (owned_ref || witnessed) && !s1 {
-    if u is NdCallRef {
-      // R2a — a call through a function value (`opaque_callref_bind`).
-      refuse(l, "a record bound from a call through a function value");
-      return;
-    }
-    hd = own::heap_def_nr(t);
-    callee = binds::callee_of(b, l.defs, x);
-    cd = binds::def(b, callee ?? l.def_nr);
-    if hd != null && (!v.argument || (binds::is_promoted_return_buffer(b, l.def_nr, f, var) && !reads_v))
-        && ((u is NdCall) || (u is NdCallRef)) && callee != null && binds::is_loft_defined(cd)
-        && !binds::return_adopts_fresh_store(cd)
-        && !(reads_v && own::returns_borrowed_view(cd) && !(rhs_base == 65535 && stash))
-        && !v.view_elided
-        && !(v.deferred_first_bind && binds::adopts_minted_at_bind(b, l.own_ops, f, var, x)) {
-      // R2b — the call copy (`codegen.rs:2953–3036`).
-      tp = known_type(b, hd!);
-      alloc_after = stash || (witnessed && reads_v);
-      if !alloc_after {
-        init_ref(l, slot);
-        emit(l, Database, KRef, slot, tp);
-      }
-      raw = if binds::call_return_frees_source(b, l.own_ops, l.def_nr, l.defs, x) { tp + 32768 } else { tp };
-      fresh_path = (witnessed && reads_v) || (stash && rhs_may_alias_v);
-      ref_args: vector<integer> = [];
-      for a in binds::protectable_ref_args(b, l.defs, x).slots {
-        if !(fresh_path && a == var) {
-          ref_args += [a];
-        }
-      }
-      hidden = caller_hidden_args(b, l.def_nr, var, u);
-      for a in ref_args {
-        emit(l, Load, KRef, slot_of(l, a), 0);
-        emit(l, Protect, KRef, 0, 1);
-      }
-      value(l, b, x, KRef);
-      if fresh_path {
-        init_ref(l, slot);
-      }
-      emit(l, Database, KRef, slot, tp);
-      note(l, "R2b");
-      emit(l, CopyRefOrNull, KRef, slot, copy_operand(b, raw));
-      for a in ref_args {
-        emit(l, Load, KRef, slot_of(l, a), 0);
-        emit(l, Protect, KRef, 0, 0);
-      }
-      for a in hidden {
-        release_caller_hidden_arg(l, b, a);
-      }
-      if stash {
-        free_stashed(l, var, entry_w);
-      }
-      return;
-    }
-    src = match u { NdVar { n } => n, _ => null };
-    hh = own::heap_def_nr(t);
-    if hh != null && src != null && src != var {
-      sd = own::record_copy_source(b, f, var, src!);
-      if sd != null && own::copies_as(b, hh!, sd!) {
-        // R2c — a whole record variable copied in.
-        init_ref(l, slot);
-        emit(l, Load, KRef, slot_of(l, src!), 0);
-        emit(l, Load, KRef, slot_of(l, src!), 0);
-        l.notes[facts_at] = facts + " src={trace_var(f, src)}" + call_facts;
-        note(l, "R2c");
-        emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, hh!)));
-        if stash {
-          free_stashed(l, var, entry_w);
-        }
-        return;
-      }
-    }
-    if owned_ref && hh != null && !stash && binds::projection_container_var(b, x) != null {
-      note(l, "R2d");
-      elem_copy(l, b, var, x, hh!);
-      return;
-    }
-  }
-  note(l, "R3");
-  plain_set(l, b, var, x);
   if stash {
-    free_stashed(l, var, entry_w);
+    free_stashed(l, var, entry_w ?? buffer_w);
+  }
+}
+
+// The facts of a reassignment the call copy's emission reads (`bind_lowering::ReBind`): the
+// value reads `v`, `v` has an owner witness, the displaced store is stashed, the value may name
+// `v`'s own store.
+struct ReBind {
+  reads_v: boolean,
+  witnessed: boolean,
+  stash: boolean,
+  alias_v: boolean,
+}
+
+// `ReBind::copies_into_fresh`: does the call copy land in a FRESH store rather than re-initialise
+// `v`'s own in place?  A witnessed local whose value reads it, and wherever the displaced store
+// waits for its stashed free and the value may alias `v` or does not read it at all
+// (`LOFT_NO_STASH_FRESH` unset).
+fn copies_into_fresh(rb: ReBind) -> boolean {
+  (rb.witnessed && rb.reads_v) || (rb.stash && (rb.alias_v || !rb.reads_v))
+}
+
+// `bind_lowering::opaque_call_destination` (`@FR-O-Unknown`): may `v` take a closure call's
+// answer through the runtime copy-or-adopt — any local, and a renamed return buffer with an
+// entry witness (`LOFT_NO_BUFFER_OPAQUE_CALL` unset).
+fn opaque_call_destination(b: ir::Bundle, d: integer, f: ir::Function, var: integer, entry_w: integer?) -> boolean {
+  !fvar(b, d, var).argument || (binds::is_promoted_return_buffer(b, d, f, var) && entry_w != null)
+}
+
+// R2b — the call copy (`generate_set_inner`'s `ReArm::CallCopy`): the reference arguments
+// protected over the call, the answer deep-copied into `v`'s store — a fresh one where
+// `copies_into_fresh` says so — and the caller's hidden buffers released.  `v`'s OLD store is
+// protected through a stashed copy of its reference where the value reads it on the fresh path
+// (`ReBind::protects_old`).
+fn rebind_call_copy(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node, hd: integer, rb: ReBind) {
+  slot = slot_of(l, var);
+  tp = known_type(b, hd);
+  alloc_after = rb.stash || (rb.witnessed && rb.reads_v);
+  if !alloc_after {
+    init_ref(l, slot);
+    emit(l, Database, KRef, slot, tp);
+  }
+  raw = if binds::call_return_frees_source(b, l.own_ops, l.def_nr, l.defs, x) { tp + 32768 } else { tp };
+  fresh_path = copies_into_fresh(rb);
+  all_args = binds::protectable_ref_args(b, l.defs, x).slots;
+  v_is_ref_arg = false;
+  ref_args: vector<integer> = [];
+  for a in all_args {
+    if a == var {
+      v_is_ref_arg = true;
+    }
+    if !(fresh_path && a == var) {
+      ref_args += [a];
+    }
+  }
+  protects_old = rb.reads_v && v_is_ref_arg && (rb.witnessed || fresh_path);
+  hidden = caller_hidden_args(b, l.def_nr, var, unspan(x));
+  if protects_old {
+    emit(l, Load, KRef, slot, 0);
+    emit(l, Load, KRef, slot, 0);
+    emit(l, Protect, KRef, 0, 1);
+  }
+  for a in ref_args {
+    emit(l, Load, KRef, slot_of(l, a), 0);
+    emit(l, Protect, KRef, 0, 1);
+  }
+  value(l, b, x, KRef);
+  if fresh_path {
+    init_ref(l, slot);
+  }
+  emit(l, Database, KRef, slot, tp);
+  note(l, "R2b");
+  emit(l, CopyRefOrNull, KRef, slot, copy_operand(b, raw));
+  for a in ref_args {
+    emit(l, Load, KRef, slot_of(l, a), 0);
+    emit(l, Protect, KRef, 0, 0);
+  }
+  if protects_old {
+    emit(l, Protect, KRef, 0, 0);
+  }
+  for a in hidden {
+    release_caller_hidden_arg(l, b, a);
   }
 }
 
@@ -3050,10 +3124,10 @@ fn note_first(l: Lowering, b: ir::Bundle, f: ir::Function, var: integer, x: ir::
 
 // `free_stashed` (`codegen.rs:3547`): the displaced value the stash left under the
 // assignment, freed now unless it is the new value's store (or the entry's).
-fn free_stashed(l: Lowering, var: integer, entry_w: integer?) {
+fn free_stashed(l: Lowering, var: integer, keep: integer?) {
   emit(l, Load, KRef, slot_of(l, var), 0);
-  if entry_w != null {
-    emit(l, Load, KRef, slot_of(l, entry_w), 0);
+  if keep != null {
+    emit(l, Load, KRef, slot_of(l, keep), 0);
     emit(l, FreeRefUnlessEntry, KRef, 0, 0);
   } else {
     emit(l, FreeRefDistinct, KRef, 0, 0);
@@ -3126,7 +3200,7 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   }
   if hd != null && binds::has_no_deps(t) && binds::owner_witness(f, var) == null && binds::projection_container_var(b, x) != null {
     note_first(l, b, f, var, x, "", "F4");
-    elem_copy(l, b, var, x, hd!);
+    elem_copy(l, b, var, x, hd!, binds::value_can_exit(x));
     return;
   }
   if d != null && (x is NdTupleGet) && binds::has_no_deps(t) && binds::owner_witness(f, var) == null {
@@ -3150,7 +3224,7 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   callee = binds::callee_of(b, l.defs, x);
   if sd2 != null && callee != null && binds::is_loft_defined(binds::def(b, callee!)) {
     jb = own::named_join_base(own::ownership_of(b, l.own_ops, l.def_nr, x));
-    if (shape is TyReference) && !v.view_elided && jb != null {
+    if binds::join_record(shape) != null && !v.view_elided && jb != null {
       note_first(l, b, f, var, x, "base={trace_var(f, jb)}", "F9a");
       value(l, b, x, KRef);
       emit(l, Load, KRef, slot_of(l, jb!), 0);
@@ -3258,12 +3332,17 @@ fn var_copy(l: Lowering, b: ir::Bundle, var: integer, src: integer, d: integer) 
 
 // F4 and R2d (`gen_set_first_ref_elem_copy`, `codegen.rs:4175`): a projection copied out into a
 // record of `v`'s own; an absent one binds null.
-fn elem_copy(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node, d: integer) {
+fn elem_copy(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node, d: integer, value_first: boolean) {
   slot = slot_of(l, var);
   t = known_type(b, d);
+  if value_first {
+    value(l, b, x, KRef);
+  }
   init_ref(l, slot);
   emit(l, Database, KRef, slot, t);
-  value(l, b, x, KRef);
+  if !value_first {
+    value(l, b, x, KRef);
+  }
   emit(l, CopyRefOrNull, KRef, slot, copy_operand(b, t));
 }
 
