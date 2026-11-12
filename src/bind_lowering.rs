@@ -99,6 +99,72 @@ impl FirstArm {
     }
 }
 
+/// A variable's name in a bind trace row: `-` for none, `args` for the base that names one of
+/// several arguments (`u16::MAX`).
+fn trace_var(function: &Function, v: Option<u16>) -> String {
+    match v {
+        None => "-".to_string(),
+        Some(u16::MAX) => "args".to_string(),
+        Some(v) if v < function.count() => function.name(v).to_string(),
+        Some(v) => format!("#{v}"),
+    }
+}
+
+/// The facts of `v = value` every bind row names: the callee (a loft-defined function the value
+/// calls) and whether the bind adopts the store that callee minted in its buffer
+/// (`adopts_minted_at_bind`).  Empty for a value that is not such a call.
+fn trace_call_facts(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    value: &Value,
+) -> Vec<String> {
+    let Some(callee) = crate::use_analysis::callee_of(data, d_nr, value)
+        .filter(|&c| data.def(c).is_loft_defined())
+    else {
+        return Vec::new();
+    };
+    vec![
+        format!("callee={}", data.def(callee).name()),
+        format!(
+            "adopt={}",
+            u8::from(crate::use_analysis::adopts_minted_at_bind(
+                data, function, v, value
+            ))
+        ),
+    ]
+}
+
+impl FirstArm {
+    /// The facts a first bind's lowering acted on, for `LOFT_TRACE_BIND`: the join's base, the
+    /// copy's source, and the callee's facts (`trace_call_facts`).  Empty when there are none.
+    #[must_use]
+    pub fn trace_facts(
+        self,
+        data: &Data,
+        d_nr: u32,
+        function: &Function,
+        v: u16,
+        value: &Value,
+    ) -> String {
+        let mut facts = Vec::new();
+        match self {
+            FirstArm::CallRefJoin { base, .. }
+            | FirstArm::NullableCallJoin { base, .. }
+            | FirstArm::CallJoin { base, .. } => {
+                facts.push(format!("base={}", trace_var(function, Some(base))));
+            }
+            FirstArm::RecordVarCopy { src, .. } => {
+                facts.push(format!("src={}", trace_var(function, Some(src))));
+            }
+            _ => {}
+        }
+        facts.extend(trace_call_facts(data, d_nr, function, v, value));
+        facts.join(" ")
+    }
+}
+
 /// The lowering of the first assignment `v = value` in function `d_nr`; the reason for each
 /// test is beside it.  `state::codegen::gen_set_first_at_tos` emits the answer.
 #[must_use]
@@ -340,6 +406,45 @@ pub struct ReBind {
 }
 
 impl ReBind {
+    /// Every fact this reassignment's lowering read, for `LOFT_TRACE_BIND`: the displaced free
+    /// (`b2`) and the facts behind it, then the value's oracle base, whether it may name `v`'s
+    /// own store, the copy's source and the callee's facts (`trace_call_facts`).  The arm itself
+    /// is the writer's note: it names the arm it emitted.
+    #[must_use]
+    pub fn trace_facts(
+        &self,
+        data: &Data,
+        d_nr: u32,
+        function: &Function,
+        v: u16,
+        value: &Value,
+    ) -> String {
+        let b2 = match self.free {
+            DisplacedFree::Stash => "stash",
+            DisplacedFree::Pre { .. } => "pre",
+            DisplacedFree::None => "none",
+        };
+        let mut facts = vec![format!(
+            "b2={b2} owned_ref={} s1={} reads_v={} witnessed={} entry_w={} buffer_w={} \
+             nullable={} kept={} base={} alias_v={}",
+            u8::from(self.owned_ref),
+            u8::from(self.s1_substituted),
+            u8::from(self.rhs_reads_v),
+            u8::from(self.witnessed),
+            u8::from(self.entry_w.is_some()),
+            u8::from(self.buffer_witness.is_some()),
+            u8::from(self.nullable_local),
+            u8::from(self.buffer_kept),
+            trace_var(function, self.rhs_base),
+            u8::from(self.rhs_may_alias_v),
+        )];
+        if let ReArm::VarCopy { src, .. } = self.arm {
+            facts.push(format!("src={}", trace_var(function, Some(src))));
+        }
+        facts.extend(trace_call_facts(data, d_nr, function, v, value));
+        facts.join(" ")
+    }
+
     /// Does a copying reassignment (`ReArm::CallCopy`) land in a FRESH store, rather than
     /// re-initialise `v`'s own store in place?  The ONE answer the interpreter's code generator
     /// emits (`Codegen::generate_set_inner`, arm R2b) and the store records read: a witnessed
@@ -988,11 +1093,20 @@ pub fn answers_a_view_to_copy(data: &Data, d_nr: u32, value: &Value) -> bool {
         )
 }
 
+/// Is the bind trace the environment variable `env` names switched on?  A writer asks it before
+/// computing what only the trace prints.
+#[must_use]
+pub fn trace_enabled(env: &str) -> bool {
+    std::env::var_os(env).is_some_and(|p| !p.is_empty())
+}
+
 /// The lowering census (STORE_RECORDS.md § Phases, 2): one row per assignment a writer lowers,
-/// `function⇥variable⇥first|re⇥arm`, appended to the file the environment variable `env` names
-/// (`LOFT_TRACE_BIND_C`, `LOFT_TRACE_BIND_NATIVE`; the interpreter's own is `LOFT_TRACE_BIND`).
-/// A no-op when it is unset.  Rows from one process go to one file, in emission order.
-pub fn trace_row(env: &str, function: &str, var: &str, first: bool, arm: &str) {
+/// `function⇥variable⇥first|re⇥L<line>⇥arm`, appended to the file the environment variable
+/// `env` names (`LOFT_TRACE_BIND_C`, `LOFT_TRACE_BIND_NATIVE`; the interpreter's own is
+/// `LOFT_TRACE_BIND`).  `line` is the source line of the assignment, so rows pair by site even
+/// where a writer emits one assignment more than once (an unrolled loop, a guarded twin).  A
+/// no-op when it is unset.  Rows from one process go to one file, in emission order.
+pub fn trace_row(env: &str, function: &str, var: &str, first: bool, line: u32, arm: &str) {
     use std::io::Write as _;
     use std::sync::Mutex;
     static SINKS: Mutex<Vec<(String, crate::file_access::File)>> = Mutex::new(Vec::new());
@@ -1012,6 +1126,6 @@ pub fn trace_row(env: &str, function: &str, var: &str, first: bool, arm: &str) {
     }
     if let Some((_, f)) = sinks.iter_mut().find(|(e, _)| e == env) {
         let kind = if first { "first" } else { "re" };
-        let _ = writeln!(f, "{function}\t{var}\t{kind}\t{arm}");
+        let _ = writeln!(f, "{function}\t{var}\t{kind}\tL{line}\t{arm}");
     }
 }

@@ -2597,11 +2597,23 @@ impl State {
             return self.generate_set_inner(stack, v, value);
         }
         let first = !stack.function.is_stack_allocated(v);
+        // The source line the assignment stands on: the last line marker generated before it.
+        let line = self
+            .line_numbers
+            .range(..=self.code_pos)
+            .next_back()
+            .map_or(0, |(_, l)| *l);
         BIND_NOTES.with(|n| n.borrow_mut().push(Vec::new()));
         self.generate_set_inner(stack, v, value);
-        let notes = BIND_NOTES.with(|n| n.borrow_mut().pop().unwrap_or_default());
+        let mut notes = BIND_NOTES.with(|n| n.borrow_mut().pop().unwrap_or_default());
+        // `decided=<arm>` stays only where the emitted arm (the last note) is another one.
+        if let Some(i) = notes.iter().position(|n| n.starts_with("decided="))
+            && notes.last().map(String::as_str) == Some(&notes[i]["decided=".len()..])
+        {
+            notes.remove(i);
+        }
         bind_trace_write(&format!(
-            "{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\tL{line}\t{}",
             stack.data.def(stack.def_nr).name(),
             stack.function.name(v),
             if first { "first" } else { "re" },
@@ -2710,22 +2722,11 @@ impl State {
             } = rb;
             let mut stash_old_for_post_free = false;
             if bind_trace_on() {
-                // The free the code below emits (`rb.free`), not a recomputation of it: a
-                // compiler temporary's null reset is `None` whatever the facts say.
-                let b2 = match rb.free {
-                    DisplacedFree::Stash => "stash",
-                    DisplacedFree::Pre { .. } => "pre",
-                    DisplacedFree::None => "none",
-                };
-                note_bind(&format!(
-                    "b2={b2} owned_ref={} s1={} reads_v={} witnessed={} entry_w={} buffer_w={}",
-                    u8::from(owned_ref),
-                    u8::from(s1_substituted),
-                    u8::from(rhs_reads_v),
-                    u8::from(witnessed),
-                    u8::from(entry_w.is_some()),
-                    u8::from(buffer_witness.is_some())
-                ));
+                // The facts the decision read and the arm it decided (`rb`), not a
+                // recomputation: the arm this writer emits is noted where it emits it, and a
+                // row whose two differ says so (`generate_set`).
+                note_bind(&rb.trace_facts(stack.data, stack.def_nr, &stack.function, v, value));
+                note_bind(&format!("decided={}", rb.arm.trace_name()));
             }
             if rb.free == DisplacedFree::Stash {
                 let free_pos = stack.var_pos(v);
@@ -3504,6 +3505,12 @@ impl State {
         // test lives; the store records read the same answer.  This emits it.
         let arm =
             crate::bind_lowering::first_arm(stack.data, stack.def_nr, &stack.function, v, value);
+        if bind_trace_on() {
+            let facts = arm.trace_facts(stack.data, stack.def_nr, &stack.function, v, value);
+            if !facts.is_empty() {
+                note_bind(&facts);
+            }
+        }
         note_bind(arm.trace_name());
         match arm {
             FirstArm::Text => self.gen_set_first_text(stack, v, value),

@@ -392,7 +392,10 @@ run time as a record local is (F9a / R1, `OpBindOrCopy`); `LOFT_NO_ENUM_JOIN=1` 
 every bind.  A nullable local, whose displaced free waits until after the bind, joins too when
 the value is a call that does not read it, with its slot reset first so the copy arm mints a
 store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
-on one writer (`--writer c|native`) and lists the arms the two decide differently.
+on one writer (`--writer c|native`) and lists the arms the two decide differently.  Every row
+names its source line, so the census pairs by site; an interpreter row carries the facts its
+lowering read and a C row the arm `bind_lowering` decides beside its own (`lowering=R1/b2=stash
+join`).
 
 ## Phases
 

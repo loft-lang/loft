@@ -29,6 +29,7 @@ impl Output<'_> {
         to: &Value,
     ) -> std::io::Result<()> {
         let first = !self.declared.contains(&var);
+        let line = self.ckpt_cur_line;
         self.bind_arm.push("");
         let r = self.output_set_arms(w, var, to);
         let arm = match self.bind_arm.pop() {
@@ -41,6 +42,7 @@ impl Output<'_> {
                 self.data.def(self.def_nr).name(),
                 self.data.def(self.def_nr).variables().name(var),
                 first,
+                line,
                 arm,
             );
         }

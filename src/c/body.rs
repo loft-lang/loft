@@ -6134,16 +6134,33 @@ impl<'a> FnWriter<'a> {
     /// the two writers' choices can be compared row by row (STORE_RECORDS.md § Phases, 2).
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
         let first = !self.bound[var as usize];
+        let line = self.cur_line;
         self.bind_arm.push("");
         let r = self.set_stmt_arms(var, x, ind);
         let arm = self.bind_arm.pop().unwrap_or("");
-        if r.is_ok() {
+        if r.is_ok() && crate::bind_lowering::trace_enabled("LOFT_TRACE_BIND_C") {
+            // Beside the arm this writer took, the one `bind_lowering` decides for the same
+            // assignment (`lowering=`), so a row shows its own disagreement (@PLN220).
+            let lowering = if first {
+                crate::bind_lowering::first_arm(self.cx.data, self.d, self.vars, var, x)
+                    .trace_name()
+                    .to_string()
+            } else {
+                let rb = crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x);
+                let b2 = match rb.free {
+                    crate::bind_lowering::DisplacedFree::Stash => "stash",
+                    crate::bind_lowering::DisplacedFree::Pre { .. } => "pre",
+                    crate::bind_lowering::DisplacedFree::None => "none",
+                };
+                format!("{}/b2={b2}", rb.arm.trace_name())
+            };
             crate::bind_lowering::trace_row(
                 "LOFT_TRACE_BIND_C",
                 self.cx.data.def(self.d).name(),
                 self.vars.name(var),
                 first,
-                arm,
+                line,
+                &format!("lowering={lowering} {arm}"),
             );
         }
         r

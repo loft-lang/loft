@@ -6,17 +6,17 @@ for the same assignment, tallied over a set of programs.
 
 Every writer names the arm it lowers an assignment with — the interpreter under
 `LOFT_TRACE_BIND`, the C writer under `LOFT_TRACE_BIND_C`, the rustc writer under
-`LOFT_TRACE_BIND_NATIVE` — one row per assignment, `function⇥variable⇥first|re⇥…⇥arm`.  This
-runs each program once per writer, pairs the rows by (function, variable, k-th assignment of that
-variable) and counts the arm pairs.  An interpreter arm met with more than one C arm, or the
-other way round, is a place where the two writers decide differently for what the IR says is the
+`LOFT_TRACE_BIND_NATIVE` — one row per assignment, `function⇥variable⇥first|re⇥L<line>⇥… arm`.
+This runs each program once per writer, pairs the rows by site (function, variable, source line,
+k-th assignment there) and counts the arm pairs. An interpreter arm met with more than one C arm, or
+the other way round, is a place where the two writers decide differently for what the IR says is the
 same assignment — where a store-lifetime defect of one backend lives.
 
     scripts/bind_census.py --loft target/debug/loft --suite ../loft-suite [--jobs 8]
         [--writer c|native] [--out census.tsv] [--cells file-with-paths]
 
 Prints the pair table, most frequent first, and the disagreeing interpreter arms; `--out`
-writes every paired row (cell, function, variable, k, interpreter arm, writer arm).
+writes every paired row (cell, function, variable, L<line>#k, interpreter arm, writer arm).
 """
 
 import argparse
@@ -31,24 +31,33 @@ WRITER_ENV = {"c": ("--native-c", "LOFT_TRACE_BIND_C"), "native": ("--native", "
 
 
 def rows(path):
-    """(function, variable, first|re) -> arms in order, from one trace file."""
+    """(function, variable) -> [(first|re, line, arm)] in order, from one trace file.
+
+    A row is `function⇥variable⇥first|re⇥L<line>⇥facts… arm`; the arm is the last word, and an
+    interpreter rebind's `b2=` fact (the displaced free) is part of its lowering."""
     out = collections.defaultdict(list)
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 parts = line.rstrip("\n").split("\t")
-                if len(parts) < 4:
+                if len(parts) < 5:
                     continue
-                fn, var, kind, arm = parts[0], parts[1], parts[2], parts[-1]
-                # The interpreter's rebind row carries B2's facts before its arm
-                # (`b2=pre owned_ref=1 … R3`): the displaced-free fact is part of the lowering.
+                fn, var, kind, site, arm = parts[0], parts[1], parts[2], parts[3], parts[4]
                 words = arm.split(" ")
-                b2 = next((w for w in words if w.startswith("b2=")), None)
+                b2 = next((w for w in words if w.startswith("b2=") and "/" not in w), None)
                 arm = words[-1] + (f"/{b2}" if b2 else "")
-                out[(fn, var)].append((kind, arm))
+                out[(fn, var)].append((kind, site, arm))
     except OSError:
         pass
     return out
+
+
+def by_site(seq):
+    """The rows of one variable grouped by source line, each group in emission order."""
+    groups = collections.defaultdict(list)
+    for kind, site, arm in seq:
+        groups[site].append((kind, arm))
+    return groups
 
 
 def run(loft, cell, mode, env_name, trace):
@@ -76,14 +85,19 @@ def census(loft, cell, writer, tmp):
     run(loft, cell, mode, env_name, tw)
     ri, rw = rows(ti), rows(tw)
     paired = []
-    for key, wrows in rw.items():
-        irows = ri.get(key)
-        if not irows:
+    # Rows pair by site — the same variable on the same source line, the k-th there on each
+    # side — and only as many as the interpreter wrote: a writer that emits one assignment
+    # more than once (an unrolled loop, a guarded twin) repeats its rows for that site.
+    for key, wseq in rw.items():
+        iseq = ri.get(key)
+        if not iseq:
             continue
-        for k, ((ik, ia), (wk, wa)) in enumerate(zip(irows, wrows)):
-            if ik != wk:
-                break
-            paired.append((cell, key[0], key[1], k, ik, ia, wa))
+        isites, wsites = by_site(iseq), by_site(wseq)
+        for site, irows in isites.items():
+            for k, ((ik, ia), (wk, wa)) in enumerate(zip(irows, wsites.get(site, []))):
+                if ik != wk:
+                    break
+                paired.append((cell, key[0], key[1], f"{site}#{k}", ik, ia, wa))
     return paired
 
 
@@ -131,7 +145,7 @@ def main():
         for (kind, ia), c in sorted(split.items(), key=lambda kv: -sum(kv[1].values())):
             for wa, _ in c.most_common():
                 for r in ex[(kind, ia, wa)][: a.examples]:
-                    print(f"  {kind} {ia} -> {wa}: {os.path.relpath(r[0])} {r[1]} {r[2]}#{r[3]}")
+                    print(f"  {kind} {ia} -> {wa}: {os.path.relpath(r[0])} {r[1]} {r[2]} {r[3]}")
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:
             for r in allrows:
