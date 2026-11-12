@@ -233,6 +233,12 @@ A `??` read inline whose default is a literal built in a function-scoped accumul
 only where it holds the subject's store, and the accumulator keeps its own store for the
 function's life (`Scopes::lift_set`); `LOFT_NO_NCC_LITERAL_WITNESS=1` frees the lift plainly,
 and the accumulator's exit free releases that store again.
+A keyed TUPLE MEMBER is the tuple's to release: a null member's materialise (`t.0[k] = …`)
+mints through an accumulator that owns nothing (`Parser::keyed_place_materialise`,
+`LOFT_NO_TUPLE_PLACE_VEHICLE=1` keeps it an owner), and a null literal member a later member
+write fills is paired as a sole owner, so `member_write` releases what a write displaces and
+disarms the work-ref or literal accumulator that built the new value (`member_mint`);
+`LOFT_NO_NULL_MEMBER_OWNED=1` leaves it unpaired, and the work-ref frees the member again.
 
 A closure record HOLDS what it captures: each capture slot, keyed by the record's store and
 offset, keeps the captured value, and the captured stores are handed on only when a value

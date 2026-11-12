@@ -408,6 +408,24 @@ fn member_mint(m: &Value, function: &Function, data: &Data) -> Option<MemberMint
     if let Some(w) = delivered_work_ref(m, function, data) {
         return Some(MemberMint::Claimed(w));
     }
+    // A literal member (`([], 5)`) is built in its function-scoped accumulator (`__kvb_N`),
+    // which still names the store: the claimant to disarm, as a construction's work-ref is.
+    if let Value::Block(_) = m.unspan()
+        && let Some(w) = super::backings::block_tail_var(m)
+        && crate::variables::owns_literal_backing_store(function.name(w))
+        && !function.is_skip_free(w)
+        && !crate::env_once!(std::env::var_os("LOFT_NO_NULL_MEMBER_OWNED").is_some())
+    {
+        return Some(MemberMint::Claimed(w));
+    }
+    // A null keyed member's materialise hands the tuple a store its never-free accumulator
+    // minted (`Parser::keyed_place_materialise`): the member is that store's only owner.
+    if let Value::Var(w) = m.unspan()
+        && crate::variables::owns_literal_backing_store(function.name(*w))
+        && function.is_skip_free(*w)
+    {
+        return Some(MemberMint::Adopted);
+    }
     let Value::Call(fn_nr, args) = m.unspan() else {
         return None;
     };
@@ -422,7 +440,13 @@ fn member_mint(m: &Value, function: &Function, data: &Data) -> Option<MemberMint
             return Some(MemberMint::Claimed(*vr));
         }
         None
-    } else if def.return_adopts_fresh_store() && def.returned().base().heap_def_nr().is_some() {
+    } else if def.return_adopts_fresh_store()
+        && (def.returned().base().heap_def_nr().is_some()
+            // A keyed collection is a store of its own as a record is (`@FR-H-FreeTwice`:
+            // unpaired, a second `t.0 = mk()` kept the plain put and leaked the first).
+            || (crate::parser::vectors::owns_keyed_store(def.returned())
+                && !crate::env_once!(std::env::var_os("LOFT_NO_NULL_MEMBER_OWNED").is_some())))
+    {
         Some(MemberMint::Adopted)
     } else {
         None

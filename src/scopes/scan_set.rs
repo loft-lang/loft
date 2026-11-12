@@ -932,6 +932,29 @@ impl Scopes<'_> {
             }
             match joined.map(|(m, _)| m) {
                 Some(mut m) => {
+                    // `@FR-H-FreeTwice` — a `null` member names no store, so what a later member
+                    // write puts there is the tuple's ALONE (a sole owner, no claimant): unpaired,
+                    // `member_write` kept the plain put, and the write's work-ref freed the
+                    // member the tuple frees too, while the displaced member leaked.
+                    // `LOFT_NO_NULL_MEMBER_OWNED=1` leaves it unpaired.
+                    if let Value::Tuple(members) = value.unspan()
+                        && !crate::env_once!(
+                            std::env::var_os("LOFT_NO_NULL_MEMBER_OWNED").is_some()
+                        )
+                    {
+                        let sentinel = data.def_nr("OpNullRefSentinel");
+                        for (idx, member) in members.iter().enumerate() {
+                            let idx = idx as u16;
+                            let null = match member.unspan() {
+                                Value::Null => true,
+                                Value::Call(d, a) => a.is_empty() && *d == sentinel,
+                                _ => false,
+                            };
+                            if null && self.written_tuple_members.contains(&(ov, idx)) {
+                                m.entry(idx).or_insert(None);
+                            }
+                        }
+                    }
                     // loft#1532 — an element a later member assignment writes is handed to the
                     // tuple ALONE here: its claimant is disarmed after the `Set`, with the other
                     // hand-off disarms, and it is paired as a sole owner.  See

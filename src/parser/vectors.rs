@@ -5468,6 +5468,16 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 let (tuple_var, idx) = (*tuple_var, *idx);
                 let base = keyed_tp.base().clone();
                 let kvb = self.vars.work_keyed(&base, &mut self.lexer);
+                // `@FR-H-FreeTwice` — the TUPLE owns the store it is handed and releases it with
+                // its members, so this accumulator is only the vehicle of the mint: its null
+                // init names no store (`bind_lowering::keyed_null_mints`), `OpDatabase` mints
+                // one, and it frees nothing.  As an owner it minted a store at function entry,
+                // the build reclaimed it in place, and its exit free released the tuple's
+                // member a second time.  `LOFT_NO_TUPLE_PLACE_VEHICLE=1` keeps it an owner.
+                if !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_PLACE_VEHICLE").is_some()) {
+                    self.vars.mark_inline_ref(kvb);
+                    self.vars.set_skip_free(kvb);
+                }
                 let db = self.cl("OpDatabase", &[Value::Var(kvb), Value::Int(i32::from(kt))]);
                 Value::Insert(vec![
                     v_set(kvb, Value::Null),
