@@ -6652,6 +6652,16 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(false);
         }
+        // Whether the displaced store is freed at all is `bind_lowering::re_bind`'s answer, the
+        // one the bytecode writer and the store records read: a compiler temporary reset to
+        // null has released or handed over its store already (`DisplacedFree::None`), so a
+        // free here could only release that store a second time (`@FR-H-FreeTwice`).  @PLN220.
+        if !crate::keys::c_own_displaced_free()
+            && crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).free
+                == crate::bind_lowering::DisplacedFree::None
+        {
+            return Ok(false);
+        }
         let old = self.temp(CType::Ref);
         self.line(ind, &format!("{old} = {name};"));
         self.assign(x, name, CType::Ref, ind)?;

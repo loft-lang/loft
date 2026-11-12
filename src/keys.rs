@@ -3502,6 +3502,14 @@ pub fn c_own_tuple_member_bind() -> bool {
     *ON.get_or_init(|| env_set("LOFT_C_OWN_TUPLE_MEMBER_BIND"))
 }
 
+/// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
+/// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
+#[must_use]
+pub fn c_own_displaced_free() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_DISPLACED_FREE"))
+}
+
 /// `LOFT_C_OWN_VECTOR_NULL=1` — the C writer decides a vector local's first null-init mint by
 /// its own test again instead of `bind_lowering::vector_null_mints` (@PLN220's A/B).
 #[must_use]

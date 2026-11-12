@@ -378,6 +378,14 @@ into the IR** — each assignment says, in the IR, whether it binds, copies, ado
 decided once and read by all three code generators and by the records.  Until then the
 records can only read the choice the interpreter's code generator made.
 
+The C writer already reads `bind_lowering` for three of these choices, each with a switch that
+gives it back its own test: a vector local's first null-init mint (`LOFT_C_OWN_VECTOR_NULL=1`),
+a tuple member's first bind (`LOFT_C_OWN_TUPLE_MEMBER_BIND=1`), and whether a reassignment frees
+the store it displaces at all (`re_bind`'s `DisplacedFree`; `LOFT_C_OWN_DISPLACED_FREE=1` frees a
+compiler temporary's null reset again, a second free the writer's same-store guard makes a
+no-op).  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
+on one writer (`--writer c|native`) and lists the arms the two decide differently.
+
 ## Phases
 
 1. **Records beside the checker.**  Build the records as an observer (the shipped code stays
