@@ -3314,6 +3314,23 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
             other => other,
         };
         if carried.heap_dep().is_none() && carried.base().heap_dep().is_none() {
+            // A TUPLE carries the stores of its heap members, and a callee may hand one back
+            // (`fn first(p: (R, integer)) -> R { p.0 }`).  The bracket names a slot and a
+            // member has none (a literal's member is built inside the argument, after the
+            // bracket), so the set is incomplete — skipped instead, it read complete while
+            // protecting nothing, and the copy's source-free released the member's store
+            // that its holder freed again (`@FR-H-FreeTwice`, the loft#981 shape).
+            // A tuple LITERAL whose heap members are nameable (`scan_args` hoists a member built
+            // inline) protects each member's root instead.  `LOFT_NO_TUPLE_ARG_COVER=1` skips
+            // the tuple as before: the re-free the records report.
+            if crate::data::tuple_heap_leaves(carried) > 0
+                && !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_ARG_COVER").is_some())
+            {
+                match tuple_member_roots(data, arg, carried) {
+                    Some(roots) => protectable.extend(roots),
+                    None => covers_all = false,
+                }
+            }
             continue;
         }
         // What a `&` parameter links to; a `τ?` is no link.
@@ -3392,6 +3409,28 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
     protectable.sort_unstable();
     protectable.dedup();
     (protectable, covers_all)
+}
+
+/// The slots naming every heap member of a tuple-literal argument of type `tp`, or `None` when
+/// one cannot be named (a tuple variable, a member built inline that was not hoisted).
+fn tuple_member_roots(data: &Data, arg: &Value, tp: &Type) -> Option<Vec<u16>> {
+    let (Value::Tuple(members), Type::Tuple(elems)) = (arg.unspan(), tp.base()) else {
+        return None;
+    };
+    let mut roots = Vec::new();
+    for (m, e) in members.iter().zip(elems) {
+        if crate::data::tuple_heap_leaves(e) == 0 {
+            continue;
+        }
+        if matches!(e.base(), Type::Tuple(_)) {
+            roots.extend(tuple_member_roots(data, m, e)?);
+        } else if is_protectable_store_type(e) {
+            roots.extend(view_root_slots(data, m)?);
+        } else {
+            return None;
+        }
+    }
+    Some(roots)
 }
 
 /// Can the @P290 bracket mark the store behind an argument of this type?

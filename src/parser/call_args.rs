@@ -885,13 +885,26 @@ impl Parser {
             // live, and answering whatever the next allocation reused (loft#1114's class,
             // and its dense twin was correct throughout).  `deps_ref` documents `Optional`
             // as dep-transparent; a second list could only agree with it by accident.
-            if let Some(ad) = types[*ar as usize].deps_ref() {
-                for a in ad {
-                    dp.insert(*a);
-                }
-            }
+            Self::type_deps(&types[*ar as usize], &mut dp);
         }
         Vec::from_iter(dp)
+    }
+
+    /// What a value of `tp` borrows: its dep list, or — a TUPLE having none of its own — the
+    /// deps its members carry (`fn first(p: (R, integer)) -> R { p.0 }` answers a store the
+    /// argument's member borrows; read as nothing, the bind adopted that store and freed it
+    /// beside its holder, `@FR-H-FreeTwice`).
+    /// `LOFT_NO_TUPLE_ARG_DEPS=1` reads a tuple as borrowing nothing, as before.
+    fn type_deps(tp: &Type, dp: &mut HashSet<u16>) {
+        if let Type::Tuple(elems) = tp.base()
+            && !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_ARG_DEPS").is_some())
+        {
+            for e in elems {
+                Self::type_deps(e, dp);
+            }
+        } else if let Some(ad) = tp.deps_ref() {
+            dp.extend(ad.iter().copied());
+        }
     }
 
     /// The pooled buffer for work-buffer attribute `a_nr` of callee `d_nr` in the current

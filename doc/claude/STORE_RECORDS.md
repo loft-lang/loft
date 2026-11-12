@@ -162,7 +162,14 @@ included — joins its arms member by member, a `null` member blocking nothing
 `LOFT_NO_NULL_ARM_TUPLE_JOIN=1` lets a `null` arm leave the member unjoined.  A `&` link
 argument (`OpCreateStack(u)`) is protected across a copy's source-free as the store it reaches
 (`protectable_ref_args`); `LOFT_NO_LINK_ARG_PROTECT=1` skips it, and the set reads complete while
-protecting nothing.  An explicit `return p` of a `&` parameter records the borrow as the tail
+protecting nothing.  A tuple argument's heap members are a callee's to hand back too: a tuple
+literal protects each member's root, a member built inside the literal hoisted to give it a name
+(`lift_tuple_call_members`), and any other tuple leaves the set incomplete; a call's result borrows
+what the tuple's members borrow (`resolve_deps`); and the records read a member of a tuple
+parameter as the caller's store.  `LOFT_NO_TUPLE_ARG_COVER=1` skips the tuple (the copy's
+source-free releases the member its holder frees again), `LOFT_NO_TUPLE_ARG_DEPS=1` reads it as
+borrowing nothing (a vector result adopts the member's store), and `LOFT_NO_TUPLE_ARG_NAME=1`
+leaves the member unnamed (a callee's mint leaks).  An explicit `return p` of a `&` parameter records the borrow as the tail
 `{ p }` does; `LOFT_NO_RETURN_LINK_BORROW=1` declares the return fresh.  A generic instance
 whose return leaves are its parameters through a mutual recursion over another generic
 (`pick` → `pick_again` → `pick`) declares their borrow, as its concrete twin does

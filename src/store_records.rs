@@ -1173,6 +1173,16 @@ impl Run<'_> {
                     let val = Self::read(&st, k);
                     Some((st, val))
                 }
+                // A heap member of a tuple PARAMETER lies in a store the caller holds, as the
+                // parameter's own would: a callee that answers it borrows argument `t`
+                // (`fn first(p: (R, integer)) -> R { p.0 }`).
+                None if self.params.contains(t) && self.member_is_heap(*t, *i) => Some((
+                    st,
+                    Val {
+                        pts: [Pt::Param(*t)].into(),
+                        corr: BTreeSet::new(),
+                    },
+                )),
                 None => Some((st, Val::unknown())),
             },
             // `(G-Own)` — a yield whose type hands over gives the consumer the stores its value
@@ -2112,6 +2122,44 @@ impl Run<'_> {
         Some((s, vals))
     }
 
+    /// Is member `i` of tuple variable `t` a store reference?
+    fn member_is_heap(&self, t: u16, i: u16) -> bool {
+        let vars = &self.data.def(self.d_nr).variables;
+        t < vars.count()
+            && matches!(vars.tp(t).base(), crate::data::Type::Tuple(elems)
+                if elems.get(i as usize).is_some_and(|e| crate::data::is_dbref(e.base())))
+    }
+
+    /// A user function's arguments: a tuple literal argument is the callee's to READ, so its
+    /// members' stores stay with the caller, who releases them (a call-minted member is lifted
+    /// into a temp the scope pass frees) — where a tuple literal elsewhere hands them on.
+    fn user_call_args(&mut self, args: &[Value], st: State) -> Option<(State, Vec<Val>)> {
+        let mut s = st;
+        let mut vals = Vec::with_capacity(args.len());
+        for a in args {
+            if let Value::Tuple(xs) = a.unspan() {
+                let target = self.tuple_target.take();
+                let parts = self.tuple_elems(xs, s);
+                self.tuple_target = target;
+                let (s2, parts) = parts?;
+                s = s2;
+                let mut whole = Val::null();
+                for p in parts {
+                    whole.pts.extend(p.pts);
+                }
+                if whole.pts.len() > 1 {
+                    whole.pts.remove(&Pt::Null);
+                }
+                vals.push(whole);
+            } else {
+                let (s2, vs) = self.args(std::slice::from_ref(a), s)?;
+                s = s2;
+                vals.extend(vs);
+            }
+        }
+        Some((s, vals))
+    }
+
     /// Evaluate call arguments left to right.  A bare variable argument is a use of its
     /// store.
     fn args(&mut self, args: &[Value], st: State) -> Option<(State, Vec<Val>)> {
@@ -2458,7 +2506,11 @@ impl Run<'_> {
             }
             _ => {}
         }
-        let (mut s, vals) = self.args(args, st)?;
+        let (mut s, vals) = if self.summaries.contains_key(&d) {
+            self.user_call_args(args, st)?
+        } else {
+            self.args(args, st)?
+        };
         // A copy that frees its source store (`COPY_FREE_SOURCE`, `OpSets::freed_source`):
         // the source's stores end here, except one the destination names or a bracket
         // protects, whose release the runtime declines.  A source that is no variable (a

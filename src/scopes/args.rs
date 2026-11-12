@@ -138,6 +138,17 @@ impl Scopes<'_> {
                 let call = std::mem::replace(m, Value::Var(tmp));
                 preamble.push(self.lift_set(tmp, call, function, data));
                 lifted = true;
+            } else if let Some((w, absorb)) = self.inline_built_borrow_source(m, outer_call, data)
+                && !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_ARG_NAME").is_some())
+            {
+                // A member BUILT INLINE (`first((r, 1))` copies `r` into a work-ref inside the
+                // literal) at a call whose return may borrow it: hoisted, as the bare argument
+                // is (loft#1029), so the @P290 bracket can name the member's store before the
+                // call — the callee handing the member back is then the caller's, and one it
+                // minted is still freed (`protectable_ref_args`' tuple arm).
+                let block = std::mem::replace(m, Value::Var(w));
+                self.hoist_built_block(block, absorb, preamble);
+                lifted = true;
             } else if matches!(m.unspan(), Value::Tuple(_)) {
                 let mut inner = match m.unspan() {
                     Value::Tuple(inner) => inner.clone(),
@@ -159,6 +170,30 @@ impl Scopes<'_> {
             }
         }
         lifted
+    }
+
+    /// Move an argument block [`Self::inline_built_borrow_source`] matched into `preamble`,
+    /// leaving its tail work-ref to be passed by name.
+    fn hoist_built_block(&mut self, block: Value, absorb: Option<u16>, preamble: &mut Vec<Value>) {
+        let Value::Block(bl) = block else {
+            unreachable!("inline_built_borrow_source matched a non-Block")
+        };
+        // The block's own scope disappears with the block, so every var it
+        // declared is now declared in the statement list we hoisted into. Move
+        // their `var_scope` entries with them: an entry left pointing at a scope
+        // no emitted code opens would have slot assignment place it against a
+        // sibling scope's zone. Only the VECTOR-literal shape reaches this — a
+        // struct literal's tail is the function-scope work-ref itself.
+        if let Some(block_scope) = absorb {
+            for sc in self.var_scope.values_mut() {
+                if *sc == block_scope {
+                    *sc = self.scope;
+                }
+            }
+        }
+        let mut ops = bl.operators;
+        ops.pop();
+        preamble.extend(ops);
     }
 
     /// Scan a list of call arguments.
@@ -553,25 +588,7 @@ impl Scopes<'_> {
                 // set would read complete while protecting nothing, and the source-free it
                 // then licenses would release a store the caller still reaches.  That
                 // trades this leak for a use-after-free.
-                let Value::Block(bl) = scanned else {
-                    unreachable!("inline_built_borrow_source matched a non-Block")
-                };
-                // The block's own scope disappears with the block, so every var it
-                // declared is now declared in the statement list we hoisted into. Move
-                // their `var_scope` entries with them: an entry left pointing at a scope
-                // no emitted code opens would have slot assignment place it against a
-                // sibling scope's zone. Only the VECTOR-literal shape reaches this — a
-                // struct literal's tail is the function-scope work-ref itself.
-                if let Some(block_scope) = absorb {
-                    for sc in self.var_scope.values_mut() {
-                        if *sc == block_scope {
-                            *sc = self.scope;
-                        }
-                    }
-                }
-                let mut ops = bl.operators;
-                ops.pop();
-                preamble.extend(ops);
+                self.hoist_built_block(scanned, absorb, &mut preamble);
                 ls.push(Value::Var(w));
             } else if let Some(tp) =
                 Self::unnameable_borrow_source(&scanned, outer_call, arg_idx, data)
