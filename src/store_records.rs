@@ -425,6 +425,13 @@ fn uncover_all(st: &mut State, pts: &Pts) {
     }
 }
 
+/// `LOFT_RECORDS_NO_GUARDED_REST_REPORTS=1`: a guarded free's stores its witness cannot name
+/// end silently (the records' bisect switch).
+fn guarded_rest_reports() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_GUARDED_REST_REPORTS").is_none())
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -1197,7 +1204,10 @@ impl Run<'_> {
             let info = info_of(st, k);
             // A variable naming only this store or null, where the store is ended on every
             // path: freed again wherever the variable is not null.
-            let only_this = pts.iter().all(|p| *p == Pt::Null || *p == Pt::Store(k));
+            // A guarded free's stores its witness cannot name (`only`): the guard is distinct
+            // wherever `v` names one, so the free reaches each as if `v` named it alone.
+            let only_this = pts.iter().all(|p| *p == Pt::Null || *p == Pt::Store(k))
+                || (only.is_some() && guarded_rest_reports());
             // …and a DEFINITE name of a store a weak end already released on some path (a
             // maybe-null holder freed it first): freed again on that path.
             let weakly_ended = pts.len() == 1
@@ -3915,13 +3925,15 @@ impl Run<'_> {
                     let witness_holds_it = shared
                         .iter()
                         .all(|k| w.is_some_and(|w| info_of(&st, *k).live.contains(&w)));
-                    // The stores the witness cannot name end as any free ends them.
+                    // The stores the witness cannot name end as any free ends them: the guard
+                    // is distinct wherever `x` names one, so the free runs there — and frees
+                    // again a store already freed, as a plain free would (`@FR-H-FreeTwice`).
                     let rest: BTreeSet<SKey> = Self::stores_of(&xp)
                         .into_iter()
                         .filter(|k| !shared.contains(k))
                         .collect();
                     if !rest.is_empty() {
-                        self.end_only(&mut st, x, &name, false, Some(&rest));
+                        self.end_only(&mut st, x, &name, guarded_rest_reports(), Some(&rest));
                     }
                     if !witness_holds_it {
                         self.end_where_witness_does_not(
