@@ -333,6 +333,11 @@ struct Scopes<'s> {
     /// [`capture_build_backings`].  Computed once off the raw body, because the answer is
     /// positional (@FR-O-Latest) and the variable table carries only the LAST assignment.
     capture_build_backing: CaptureBuilds,
+    /// The closure records the return being swept releases INSIDE its arms
+    /// (`free_record_in_omitting_arms`), set by `free_vars` before it calls the sweep and
+    /// cleared after: a fn-ref built over one of them releases through the record, so the
+    /// sweep leaves it alone (`@FR-H-FreeTwice`, the attic program 1444).
+    arm_released_records: HashSet<u16>,
     /// The closure records and fn-ref locals whose releases are decided by store identity —
     /// see [`closure_keep_set`] (`@FR-L-CapKeep`).
     closure_keep: ClosureKeep,

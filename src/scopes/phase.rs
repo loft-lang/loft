@@ -205,6 +205,7 @@ pub(super) fn run_scan_phase(
         written_through: crate::use_analysis::written_through_locals(orig_code, data),
         // Filled below, from the working copy that records which views are materialised.
         capture_build_backing: crate::variables::CaptureBuilds::default(),
+        arm_released_records: HashSet::default(),
         closure_keep: closure_keep_set(data, orig_vars, orig_code),
         keep_build_target: None,
         lift_decl_depth: HashMap::default(),

@@ -1090,8 +1090,28 @@ impl Scopes<'_> {
                 // the record it holds, and its cascade is the release.
                 let adopted =
                     capture_adoption_owns_free(data, function, &self.capture_build_backing, v);
-                let emit =
-                    !leaves_frame && !function.is_skip_free(v) && !record_outlives && !adopted;
+                // `@FR-H-FreeTwice` — the return being swept releases this fn-ref's record inside
+                // its arms (`free_record_in_omitting_arms`): a local record releases through
+                // itself, so a release through the fn-ref as well freed it twice (attic 1444,
+                // `if pick { return a; } return b;`).  `LOFT_NO_ARM_RELEASED_FNREF_STAND_DOWN=1`
+                // releases both.
+                let local_records: Vec<u16> = carried
+                    .iter()
+                    .copied()
+                    .filter(|&r| r < function.count() && function.name(r).starts_with("___clos_"))
+                    .collect();
+                let arm_released = !local_records.is_empty()
+                    && local_records
+                        .iter()
+                        .all(|r| self.arm_released_records.contains(r))
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_NO_ARM_RELEASED_FNREF_STAND_DOWN").is_some()
+                    );
+                let emit = !leaves_frame
+                    && !function.is_skip_free(v)
+                    && !record_outlives
+                    && !adopted
+                    && !arm_released;
                 if emit {
                     if scope_debug {
                         eprintln!(
