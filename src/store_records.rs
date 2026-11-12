@@ -453,6 +453,13 @@ fn slot_corr_narrow() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_CORR_NARROW").is_none())
 }
 
+/// `LOFT_RECORDS_NO_KEEP_DROP_CASCADE=1`: a keep temporary's guarded `OpDropFnRef` cascades
+/// nothing, as the emitter's stand-down drop (the records' bisect switch).
+fn keep_drop_cascade() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_KEEP_DROP_CASCADE").is_none())
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -5048,7 +5055,7 @@ fn run_fn<'a>(
             _ => {}
         }
     });
-    standdown_drops(data, &body, &mut Vec::new(), &mut run.standdown_drops);
+    standdown_drops(data, vars, &body, &mut Vec::new(), &mut run.standdown_drops);
     released_records(data, vars, &body, &mut run.released_records);
     closure_records(data, vars, &body, &mut run.fn_record, &mut run.leaving);
     if let Some((mut s, value)) = run.eval(&body, st) {
@@ -5088,7 +5095,16 @@ fn released_records(
 /// guard on the same `f` — the emitter's stand-down release (`Run::standdown_drops`).  Every
 /// node of a guarded arm is recorded under its own address and, where wrapped in a span, the
 /// span's, as the walk that reads them meets either.
-fn standdown_drops(data: &Data, node: &Value, guarded: &mut Vec<u16>, out: &mut BTreeSet<usize>) {
+/// A keep temporary's drop (`__fkeep_N`, `closure_keep`) is not one: it ends an earlier record a
+/// fn-ref kept, whose own release stood down, so its cascade is where that record's captures end
+/// (`LOFT_RECORDS_NO_KEEP_DROP_CASCADE=1` counts it as a stand-down).
+fn standdown_drops(
+    data: &Data,
+    vars: &crate::variables::Function,
+    node: &Value,
+    guarded: &mut Vec<u16>,
+    out: &mut BTreeSet<usize>,
+) {
     let (distinct, closure, drop) = (
         data.def_nr("OpDistinctStore"),
         data.def_nr("OpFnRefClosure"),
@@ -5100,6 +5116,7 @@ fn standdown_drops(data: &Data, node: &Value, guarded: &mut Vec<u16>, out: &mut 
             && let Some(Value::Call(cl, b)) = a.first().map(Value::unspan)
             && *cl == closure
             && let Some(Value::Var(f)) = b.first().map(Value::unspan)
+            && !(keep_drop_cascade() && *f < vars.count() && vars.name(*f).starts_with("__fkeep_"))
         {
             Some(*f)
         } else {
@@ -5108,15 +5125,15 @@ fn standdown_drops(data: &Data, node: &Value, guarded: &mut Vec<u16>, out: &mut 
     };
     match node.unspan() {
         Value::If(c, t, e) => {
-            standdown_drops(data, c, guarded, out);
+            standdown_drops(data, vars, c, guarded, out);
             if let Some(f) = guard(c) {
                 guarded.push(f);
-                standdown_drops(data, t, guarded, out);
+                standdown_drops(data, vars, t, guarded, out);
                 guarded.pop();
             } else {
-                standdown_drops(data, t, guarded, out);
+                standdown_drops(data, vars, t, guarded, out);
             }
-            standdown_drops(data, e, guarded, out);
+            standdown_drops(data, vars, e, guarded, out);
         }
         Value::Call(op, a)
             if *op == drop
@@ -5125,7 +5142,7 @@ fn standdown_drops(data: &Data, node: &Value, guarded: &mut Vec<u16>, out: &mut 
             out.insert(std::ptr::from_ref(node) as usize);
             out.insert(std::ptr::from_ref(node.unspan()) as usize);
         }
-        _ => node.for_each_child(&mut |c| standdown_drops(data, c, guarded, out)),
+        _ => node.for_each_child(&mut |c| standdown_drops(data, vars, c, guarded, out)),
     }
 }
 
