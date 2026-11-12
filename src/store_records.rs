@@ -419,6 +419,7 @@ struct Ops {
     database: u32,
     set_dbref: u32,
     ref_is_null: u32,
+    vector_is_null: u32,
     distinct: u32,
     fnref_closure: u32,
     get_dbref: u32,
@@ -439,6 +440,7 @@ impl Ops {
             database: data.def_nr("OpDatabase"),
             set_dbref: data.def_nr("OpSetDbRef"),
             ref_is_null: data.def_nr("OpRefIsNull"),
+            vector_is_null: data.def_nr("OpVectorIsNull"),
             distinct: data.def_nr("OpDistinctStore"),
             fnref_closure: data.def_nr("OpFnRefClosure"),
             get_dbref: data.def_nr("OpGetDbRef"),
@@ -1834,6 +1836,11 @@ impl Run<'_> {
                 };
                 if *op == self.ops.ref_is_null {
                     Self::null_test(*x, st)
+                } else if *op == self.ops.vector_is_null && self.only_call_answers(&st, *x) {
+                    // A collection a call answered is null only as the null sentinel: a
+                    // `-> hash<…>?` hands back no absent-marked store (loft#1150).  A local's
+                    // null may be such a store, so for it the test decides nothing.
+                    Self::null_test(*x, st)
                 } else if *op == self.ops.ref_present {
                     // `OpConvBoolFromRef(x)`: true when `x` names a record.  A freed store
                     // still names one, so this is the null test turned round, never a
@@ -1848,6 +1855,15 @@ impl Run<'_> {
             }
             _ => both(st),
         }
+    }
+
+    /// Does every store `x` may name come from a call's answer?
+    fn only_call_answers(&self, st: &State, x: u16) -> bool {
+        let stores = Self::stores_of(&Self::pts(st, x));
+        !stores.is_empty()
+            && stores
+                .iter()
+                .all(|k| matches!(self.sites[k.site as usize].origin, Some(Origin::Call(_))))
     }
 
     /// `OpRefIsNull(x)`, as (null arm, store arm).  Where `x` is null, a store `x` points
@@ -2796,7 +2812,28 @@ impl Run<'_> {
                 let host = vals.into_iter().next().unwrap_or_else(Val::unknown);
                 return Some(self.place(node, &host, s));
             }
-            let val = if def.name() == "OpNullRefSentinel" {
+            let val = if d == ops.get_dbref {
+                // A stored reference read answers its REFERENT, which lives in another store
+                // than the record holding it (`cur = cur.next`): what the records know that
+                // slot holds, or nothing they follow.
+                let held = match Self::first_var(args, 0) {
+                    Some(w) => {
+                        let mut h = Self::held_by_record(&s, w, Self::const_offset(args.get(1)));
+                        // A reference this frame wrote into the holder (`a.next = b`).
+                        h.extend(s.points.get(&w).into_iter().flatten().copied());
+                        h
+                    }
+                    None => Pts::new(),
+                };
+                if held.is_empty() {
+                    Val::unknown()
+                } else {
+                    Val {
+                        pts: held,
+                        corr: BTreeSet::new(),
+                    }
+                }
+            } else if def.name() == "OpNullRefSentinel" {
                 // The null reference: no store.  Read as an operator answering into its
                 // (absent) first argument it was unknown, and every `-> S?` callee whose null
                 // arm spells it answered Unknown instead of Fresh.
@@ -2837,8 +2874,14 @@ impl Run<'_> {
             Summary::Fresh => {
                 let site = self.site(node, Origin::Call(d));
                 let k = Self::fresh(&mut s, site);
+                // A `-> T?` callee may answer null instead: the store is live only where the
+                // answer names it.
+                let mut pts: Pts = [Pt::Store(k)].into();
+                if matches!(def.returned(), crate::data::Type::Optional(_)) {
+                    pts.insert(Pt::Null);
+                }
                 Val {
-                    pts: [Pt::Store(k)].into(),
+                    pts,
                     corr: [k].into(),
                 }
             }
