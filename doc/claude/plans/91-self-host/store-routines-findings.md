@@ -451,6 +451,16 @@ on both backends):
   The test is `a.store_nr != b.store_nr` on every backend; it now joins the reference
   comparisons whose operands are no use.  Switch `LOFT_RECORDS_NO_IDENTITY_TEST_NO_USE`.
 
+Checker MISSes closed (each a defect the checker must report with its cure off):
+- **A guarded free that reaches a store already freed** — all seven control MISSes
+  (E-NullArg/1945, B-View/2362 and /1184, B-Copy/2334, B-Disturb, F-Ret/1884, R-LoopRecord) were
+  `LOFT_NO_REBOUND_ADOPTER_DISARM`'s re-free: an owning local adopts a literal buffer, a pass
+  frees it (a rebind's displaced free, or a view's free) and moves the local away, and the frame
+  end's `OpFreeRefIfDistinct(buffer, local)` frees it again.  The records ended a guarded free's
+  stores silently.  Now a store the witness cannot name is checked as a plain free is, and a
+  shared store already freed where the witness cannot point into it (`maybe_stale`) reads as a
+  second free.  Switch `LOFT_RECORDS_NO_GUARDED_REST_REPORTS`; control MISS 7 → 0.
+
 Open (two cells, records gaps, both in loft3-c1's cover design — "whatever of a key is still
 live, one of THESE names names it"):
 - L-CapKeep/1636 `c6`, `c8`.
