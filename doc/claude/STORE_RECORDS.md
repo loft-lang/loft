@@ -159,6 +159,10 @@ are not renamed, as on each path the current key already names the latest store.
 Where `OpStoreLive(OpGetDbRef(w, off))` holds (the frame end's let-go of a capture), the slot
 names none of its stores freed on every path or never made: the free it guards cannot reach one
 (`LOFT_RECORDS_NO_SLOT_LIVE_NARROW=1`).
+A store keeps a COVER: the variables that, on every path where it is live, name every live store
+under its key (an older generation stands for several).  A bind adds its name and a rebind drops
+it; a capture slot, a record field or a hand-over makes it unknown.  A certain free that empties
+it leaves the key not live: its names are all freed (`LOFT_RECORDS_NO_COVER=1`).
 A tuple member's free retires every work-ref an assignment made that member's claimant, where
 it still names the store (a loop drops the per-assignment claimant, `tuple_claimants`);
 `LOFT_NO_CLAIMANT_DISARM=1` leaves them naming it.  A collection a fn-ref call delivers into
