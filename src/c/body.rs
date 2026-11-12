@@ -6193,10 +6193,15 @@ impl<'a> FnWriter<'a> {
             self.set_arm("keyed-null");
             return Ok(());
         }
+        // A FIRST null init mints exactly where the bytecode writer's does
+        // (`bind_lowering::vector_null_mints`, the one answer): a `vector<T>?` local's takes the
+        // sentinel there (`NullableVectorNull`) and minted a store here.  @PLN220.
         if matches!(x.unspan(), Value::Null)
             && let crate::data::Type::Vector(_, dep) = self.vars.tp(var).base()
             && dep.is_empty()
-            && (if lazy {
+            && (if first && !crate::keys::c_own_vector_null() {
+                crate::bind_lowering::vector_null_mints(self.vars, var)
+            } else if lazy {
                 !first
             } else {
                 !(self.vars.is_skip_free(var) || self.vars.is_inline_ref(var))

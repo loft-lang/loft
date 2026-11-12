@@ -3494,6 +3494,14 @@ pub fn unbox_yield_handover_off() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_NO_UNBOX_YIELD_HANDOVER").is_some_and(|v| v != "0"))
 }
 
+/// `LOFT_C_OWN_VECTOR_NULL=1` — the C writer decides a vector local's first null-init mint by
+/// its own test again instead of `bind_lowering::vector_null_mints` (@PLN220's A/B).
+#[must_use]
+pub fn c_own_vector_null() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_VECTOR_NULL"))
+}
+
 /// `LOFT_NO_FRESH_PROTECTS_OLD=1` — a reassignment copied into a fresh store leaves the local's
 /// old store out of the protection bracket even where the value reads the local, as it did
 /// before (`Codegen::generate_set_inner`, arm R2b): the copy's source-free then releases it and
