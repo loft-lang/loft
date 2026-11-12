@@ -377,8 +377,15 @@ type SlotParts = (
 /// The closure records' part of a join: the slots, their source variables (kept where both
 /// sides agree) and the fn-field captures.
 fn join_slots(a: &State, b: &State) -> SlotParts {
+    // A record that does not exist on one side (never minted on that path) holds nothing there:
+    // that side's slot map is stale and does not widen the other side's.
+    let exists = |st: &State, k: &SKey| info_of(st, *k).status & (LIVE | ENDED) != 0;
     let mut slots = a.slots.clone();
+    slots.retain(|k, _| exists(a, k) || !b.slots.contains_key(k) || !exists(b, k));
     for (k, m) in &b.slots {
+        if !exists(b, k) && a.slots.contains_key(k) && exists(a, k) {
+            continue;
+        }
         let Some(into) = slots.get_mut(k) else {
             slots.insert(*k, m.clone());
             continue;
@@ -529,6 +536,7 @@ struct Finding {
 /// The ops the analysis gives a meaning to, resolved once.
 struct Ops {
     database: u32,
+    copy_record: u32,
     set_dbref: u32,
     ref_is_null: u32,
     vector_is_null: u32,
@@ -550,6 +558,7 @@ impl Ops {
         let s = data.op_sets();
         Ops {
             database: data.def_nr("OpDatabase"),
+            copy_record: data.def_nr("OpCopyRecord"),
             set_dbref: data.def_nr("OpSetDbRef"),
             ref_is_null: data.def_nr("OpRefIsNull"),
             vector_is_null: data.def_nr("OpVectorIsNull"),
@@ -1149,13 +1158,17 @@ impl Run<'_> {
         let function = &self.data.def(self.d_nr).variables;
         let mut out: Option<BTreeSet<i32>> = None;
         for &v in &self.sites[k.site as usize].holders {
-            if v >= function.count() || !function.name(v).starts_with("___clos_") {
+            if v >= function.count() {
                 continue;
             }
+            // The frame's closure variable, or a copy of its record (`__disp_N`): by type.
             let crate::data::Type::Reference(d, _) = function.tp(v).base() else {
                 continue;
             };
             let name = self.data.def(*d).name();
+            if !name.starts_with("__closure_") {
+                continue;
+            }
             let drop = self
                 .data
                 .def_nr(&format!("t_{}{name}_OpDropAll", name.len()));
@@ -3782,6 +3795,33 @@ impl Run<'_> {
                 let name = self.var_name(f);
                 for (k, offs) in freed {
                     self.end_record_slots(&mut s, k, &offs, &name);
+                }
+            }
+        }
+        // `OpCopyRecord(src, dst, tp)` copies the record's reference fields: a closure record
+        // displaced into a copy (`__disp_N`, a captured type with a drop hook) leaves the stores
+        // its slots name to the copy, whose cascade then releases them.
+        if d == ops.copy_record
+            && let (Some(src), Some(dst)) = (Self::first_var(args, 0), Self::first_var(args, 1))
+        {
+            let from: Vec<SKey> = Self::stores_of(&Self::pts(&s, src));
+            let merged: Option<BTreeMap<i32, Val>> = from
+                .iter()
+                .filter_map(|k| s.slots.get(k))
+                .fold(None, |acc: Option<BTreeMap<i32, Val>>, m| match acc {
+                    None => Some(m.clone()),
+                    Some(mut a) => {
+                        for (o, v) in m {
+                            let e = a.entry(*o).or_default();
+                            e.pts.extend(v.pts.iter().copied());
+                            e.corr = e.corr.intersection(&v.corr).copied().collect();
+                        }
+                        Some(a)
+                    }
+                });
+            if let Some(merged) = merged {
+                for k in Self::stores_of(&Self::pts(&s, dst)) {
+                    s.slots.insert(k, merged.clone());
                 }
             }
         }
