@@ -3424,6 +3424,16 @@ pub fn confined_record_stand_down() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_CONFINED_RECORD_STAND_DOWN"))
 }
 
+/// `LOFT_NO_CALL_BUFFER_REBIND_DETACH=1` — a vector local rebound in a loop from a call
+/// (`a = f(…)`, delivered into the hidden buffer `__ref_N`) refills that buffer in place while a
+/// closure record built earlier holds its store (`rebound_captures`, `capture_adoption`): the
+/// record answers the new value instead of its build-time one.
+#[must_use]
+pub fn call_buffer_rebind_detach() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CALL_BUFFER_REBIND_DETACH"))
+}
+
 /// `LOFT_NO_SNAPSHOT_KEEPS_REFILL=1` — a closure record rebuilt through a snapshot (a capture
 /// type with a drop hook) keeps an old slot naming the store its new fill names: the snapshot's
 /// cascade then releases the capture the rebuilt record holds again (`vectors.rs`).

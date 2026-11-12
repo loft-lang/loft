@@ -75,6 +75,24 @@ pub(super) fn call_buffer_of(rhs: &Value, function: &Function) -> Option<u16> {
     })
 }
 
+/// Does the frame ROTATE `c` through its call buffers (`OpPutRef(__ref_N, c)`, the swap that
+/// hands the value back as the next call's buffer)?  Such a capture's store is held by a buffer
+/// the rebound-capture facts do not name, so its record keeps borrowing it (`capture_adoption`)
+/// and its buffer is no detachable backing (`rebound_captures`).
+pub(super) fn rotated_through_buffers(code: &Value, data: &Data, c: u16) -> bool {
+    let put = data.def_nr("OpPutRef");
+    let mut hit = false;
+    code.walk(&mut |n: &Value| {
+        if let Value::Call(d, args) = n.unspan()
+            && *d == put
+            && matches!(args.get(1).map(Value::unspan), Some(Value::Var(x)) if *x == c)
+        {
+            hit = true;
+        }
+    });
+    hit
+}
+
 /// The literal backing a vector local's right-hand side binds it to — `OpGetField(__vdb_N, …)` —
 /// or `None` for any other value.
 pub(super) fn literal_backing_of(rhs: &Value, function: &Function, data: &Data) -> Option<u16> {

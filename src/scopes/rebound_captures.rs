@@ -95,6 +95,18 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
                         e.push(b);
                     }
                 } else {
+                    // A call delivering into its hidden buffer (`c = f(…, __ref_N)`): the
+                    // buffer is a backing too — refilled in place on the next pass, it is
+                    // detached first wherever a record holds its store (`@FR-L-CapRebind`).
+                    if crate::keys::call_buffer_rebind_detach()
+                        && let Some(b) = super::backings::call_buffer_of(rhs, vars)
+                        && !super::backings::rotated_through_buffers(code, data, *c)
+                    {
+                        let e = backings.entry(*c).or_default();
+                        if !e.contains(&b) {
+                            e.push(b);
+                        }
+                    }
                     unbacked.insert(*c);
                 }
             }
