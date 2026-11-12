@@ -878,6 +878,25 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     rb
 }
 
+/// `@FR-O-Unknown` — may `v` take a closure call's answer through the runtime copy-or-adopt
+/// (`ReArm::OpaqueCallRef`: copied when it predates the call, adopted when the call minted it)?
+/// Any local; and a renamed return buffer where an entry witness tells the caller's store from
+/// this frame's (`@FR-O-Buffer`), as the C writer's `opaque_callref_stmt` takes it.  Another
+/// argument's store is its caller's, which no bind here may adopt.  @PLN220.
+/// `LOFT_NO_BUFFER_OPAQUE_CALL=1` leaves the return buffer to the plain bind.
+fn opaque_call_destination(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    rb: &ReBind,
+) -> bool {
+    !function.is_argument(v)
+        || (is_promoted_return_buffer(data, d_nr, function, v)
+            && rb.entry_w.is_some()
+            && !crate::keys::buffer_opaque_call_off())
+}
+
 /// The arm of a reassignment, given its facts: the tests in the order the old chain took them.
 fn re_arm(
     data: &Data,
@@ -927,7 +946,7 @@ fn re_arm(
     }
     if rb.owned_ref
         && !rb.witnessed
-        && !function.is_argument(v)
+        && opaque_call_destination(data, d_nr, function, v, rb)
         && !function.is_view_elided(v)
         && let Some(rec) = crate::use_analysis::opaque_callref_bind(data, d_nr, tp, value)
     {
