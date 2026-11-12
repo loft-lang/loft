@@ -2659,11 +2659,23 @@ fn float_order<F: PartialOrd>(a: &F, b: &F, a_null: bool, b_null: bool) -> Order
     }
 }
 
+/// How a primitive vector's elements order — read off the element's schema type by
+/// `Stores::sort_vector`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SortOrder {
+    /// `single` (4 bytes) or `float` (8): `@FR-E-NullArg`'s order, null first.
+    Float,
+    /// Two's-complement, or a narrow offset code.
+    Signed,
+    /// The 4-byte unsigned encoding (`Parts::IntRaw`): `u32` and ranges past `i32::MAX`.
+    Unsigned,
+}
+
 /// Sort a vector of primitive elements in-place (ascending, STABLE as `sort` promises — it is
 /// observable only for floats, whose `-0.0` and `0.0` compare equal; equal integers are one
 /// value).  `elem_size` is the byte size of each element (1, 2, 4, or 8).
-/// `is_float` must be true for floating-point types (f32 at size=4, f64 at size=8).
-pub fn sort_vector(db: &DbRef, elem_size: u16, is_float: bool, stores: &mut [Store]) {
+pub fn sort_vector(db: &DbRef, elem_size: u16, order: SortOrder, stores: &mut [Store]) {
+    let is_float = order == SortOrder::Float;
     let len = length_vector(db, stores) as usize;
     if len < 2 {
         return;
@@ -2700,6 +2712,14 @@ pub fn sort_vector(db: &DbRef, elem_size: u16, is_float: bool, stores: &mut [Sto
                 vals.sort_by(|a, b| float_order(a, b, a.is_nan(), b.is_nan()));
                 for (i, &v) in vals.iter().enumerate() {
                     store.set_u32_raw(v_rec, 8 + (i as u32) * 4, v.to_bits());
+                }
+            } else if order == SortOrder::Unsigned {
+                let mut vals: Vec<u32> = (0..len)
+                    .map(|i| store.get_u32_raw(v_rec, 8 + (i as u32) * 4))
+                    .collect();
+                vals.sort_unstable();
+                for (i, &v) in vals.iter().enumerate() {
+                    store.set_u32_raw(v_rec, 8 + (i as u32) * 4, v);
                 }
             } else {
                 let mut vals: Vec<i32> = (0..len)
@@ -2851,7 +2871,7 @@ mod plan25_null_vector_tests {
         assert!(insert_vector(&NULL, 8, 0, &mut stores).is_null());
         assert!(!remove_vector(&NULL, 8, 0, &mut stores));
         clear_vector(&NULL, &mut stores);
-        sort_vector(&NULL, 8, false, &mut stores);
+        sort_vector(&NULL, 8, super::SortOrder::Signed, &mut stores);
         reverse_vector(&NULL, 8, &mut stores);
         // Reaching here = no accessor indexed stores[u16::MAX].
     }

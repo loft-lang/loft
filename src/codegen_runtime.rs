@@ -1889,14 +1889,7 @@ pub fn OpSetKeyed(
 /// Bytecode equivalent: `sort_vector` in `src/fill.rs:1835`.
 pub fn OpSortVector(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, db_tp: i32) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
-    let db_tp = db_tp as u16;
-    if stores.is_text_type(db_tp) {
-        vector::sort_text_vector(&data, &mut stores.allocations);
-        return;
-    }
-    let elem_size = stores.size(db_tp);
-    let is_float = db_tp == 2 || db_tp == 3;
-    vector::sort_vector(&data, elem_size, is_float, &mut stores.allocations);
+    stores.sort_vector(&data, db_tp as u16);
 }
 
 /// Insert a new default-valued element at `index` in a vector, shifting later elements right.

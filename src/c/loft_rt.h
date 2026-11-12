@@ -4597,6 +4597,12 @@ static int loft_cmp_i32(const void *a, const void *b) {
     memcpy(&y, b, 4);
     return (x > y) - (x < y);
 }
+static int loft_cmp_u32(const void *a, const void *b) {
+    uint32_t x, y;
+    memcpy(&x, a, 4);
+    memcpy(&y, b, 4);
+    return (x > y) - (x < y);
+}
 static int loft_cmp_i64(const void *a, const void *b) {
     int64_t x, y;
     memcpy(&x, a, 8);
@@ -4674,8 +4680,9 @@ static int loft_cmp_text_rec(const void *a, const void *b) {
 
 /* OpSortVector (vector::sort_vector, sort_text_vector): ascending, by the element's width and
  * kind — a text and a float in the order of `<` (null first, `@FR-E-NullArg`), a float stably
- * (`loft_sort_f32`/`_f64`), a byte or short by its stored code. */
-static void loft_vec_sort(loft_ref v, uint32_t size, int is_float, int is_text) {
+ * (`loft_sort_f32`/`_f64`), a byte or short by its stored code, a 4-byte integer signed or, in
+ * the unsigned encoding (`Stores::sorts_unsigned`), unsigned. */
+static void loft_vec_sort(loft_ref v, uint32_t size, int is_float, int is_text, int is_unsigned) {
     int64_t n = loft_vec_len(v);
     if (n < 2) return;
     loft_store_t *s = loft_store_of(v);
@@ -4690,7 +4697,7 @@ static void loft_vec_sort(loft_ref v, uint32_t size, int is_float, int is_text) 
     else if (size == 2) cmp = loft_cmp_u16;
     else if (size == 4 && is_float) { loft_sort_f32((uint8_t *) base, (size_t) n); return; }
     else if (size == 8 && is_float) { loft_sort_f64((uint8_t *) base, (size_t) n); return; }
-    else if (size == 4) cmp = loft_cmp_i32;
+    else if (size == 4) cmp = is_unsigned ? loft_cmp_u32 : loft_cmp_i32;
     else if (size == 8) cmp = loft_cmp_i64;
     if (cmp) qsort(base, (size_t) n, size, cmp);
 }

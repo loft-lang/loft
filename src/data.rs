@@ -6614,8 +6614,7 @@ impl Data {
             // One home for the width→Part decision, shared with the struct-field mint
             // and keyed on the same `NarrowIntKind` the element's read and write ops
             // come from.  `narrow_vec` is true here — that is what this site IS — which
-            // at 2 bytes selects the direct encoding for a non-null element and at 4
-            // bytes selects the sentinel-reserving unsigned kind.
+            // at 2 bytes selects the direct encoding for a non-null element.
             return NarrowIntKind::of(n, nullable, true, spec.unsigned_wide())
                 .part(database, m, nullable);
         }

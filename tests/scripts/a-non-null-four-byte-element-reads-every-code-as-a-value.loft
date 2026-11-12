@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-L-Narrow-Spare`: an element of a 4-byte type declared without `?` reads every stored
+// code as a value, as a field of that type does — the top code of `Word32` (0 to 4294967295)
+// included, through every way a vector is built, read and copied.  Only the `?` form reserves
+// that code (`u32?`), and keeps its null.  Every expected value is hand-computed.
+//
+// @falsified-at: dbf8b05ae — the installed main build: the first element read answers null
+//   on the interpreter and `--native-c` (the element took the null-reserving `Int4Raw` read).
+// CHANNEL: the asserts.
+// ARMED: none needed.
+// WITNESS: each assert message prints what it read.
+// HOLDS: a literal, a push, an index set, a `for` walk, a generic read, an append, a
+// concatenation, the formatted vector, a record element's field, `u32`'s own top, `u32?`'s null.
+
+type Word32 = integer limit(0, 4294967295) size(4);
+struct R { w: Word32 }
+
+fn first<T>(v: vector<T>) -> T { v[0] }
+
+fn main() {
+  v: vector<Word32> = [4294967295, 7];
+  assert(v[0] == 4294967295, "literal element: {v[0]}");
+  assert(v[0] != null, "a non-null element is never null");
+  assert(len(v) == 2, "len {len(v)}");
+  p: vector<Word32> = [];
+  p += [4294967295];
+  assert(p[0] == 4294967295, "pushed element: {p[0]}");
+  q: vector<Word32> = [1, 2];
+  q[1] = 4294967295;
+  assert(q[1] == 4294967295 && q[0] == 1, "index-set element: {q}");
+  s = 0;
+  for e in v { s += e; }
+  assert(s == 4294967302, "for sum: {s}");
+  assert(first(v) == 4294967295, "generic read: {first(v)}");
+  c: vector<Word32> = [];
+  c += v;
+  assert(c[0] == 4294967295, "appended: {c[0]}");
+  j = v + q;
+  assert(len(j) == 4 && j[0] == 4294967295 && j[3] == 4294967295, "concat: {j}");
+  assert("{v}" == "[4294967295,7]", "format: {v}");
+  rs: vector<R> = [R { w: 4294967295 }];
+  assert(rs[0].w == 4294967295, "record element: {rs[0].w}");
+  u: vector<u32> = [4294967294, 0];
+  assert(u[0] == 4294967294, "u32 top: {u[0]}");
+  n: vector<u32?> = [null, 4294967294, 5];
+  assert(n[0] == null, "a nullable element keeps its null");
+  assert(n[1] == 4294967294 && n[2] == 5, "nullable present: {n[1]} {n[2]}");
+}

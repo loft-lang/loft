@@ -121,11 +121,15 @@ can measure differently in two programs. A store written by one program is reada
               cannot — the compound step `x += n`, whose written-out form IS refused — the
               default is the fallback and the `narrow-fallback` advice says so.
   (L-Narrow-Enc) a width does NOT determine how its bytes decode.  At 2 and 4 bytes a
-              non-negative range running past the signed maximum stores UNSIGNED and reserves the
-              TOP code for absence; a signed range stores two's-complement and reserves its own
-              minimum.  So the ENCODING is part of layout(τ) exactly as the width is, and every
-              consumer of it — the schema `Parts`, the read/write ops, the key descriptor and the
-              constructor generated `init()` emits — derives it from ONE choice.
+              non-negative range running past the signed maximum stores UNSIGNED, and its `τ?`
+              form reserves the TOP code for absence; a signed range stores two's-complement and
+              reserves its own minimum.  A field and an element decode alike: without `?` every
+              code is a value (`(L-Narrow-Spare)`).  At 4 bytes the value itself is stored, not
+              an offset, so a range running both below zero and past the signed maximum has no
+              4-byte encoding and its `size(4)` is refused.  So the ENCODING is part of layout(τ)
+              exactly as the width is, and every consumer of it — the schema `Parts`, the
+              read/write ops, the sort's order, the key descriptor and the constructor generated
+              `init()` emits — derives it from ONE choice.
   (L-Narrow-Linked)  a narrow local a `&` can REACH holds the FIELD encoding, not the wide
               local form.  An ordinary narrow local is an 8-byte frame slot holding the value;
               one whose address is taken — by a `&` bind, a `&` argument or a re-point — holds

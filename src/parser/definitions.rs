@@ -5887,6 +5887,19 @@ impl Parser {
         };
         #[allow(clippy::cast_possible_truncation)]
         if spec.range_fits_width(width as u8, nullable) {
+            if !spec.has_width_encoding(width as u8) {
+                // `@FR-L-Narrow-Enc`: four bytes hold the count but neither 4-byte encoding
+                // holds both signs past `i32::MAX`.
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`size(4)` stores a range inside -2147483647..2147483647 or one from 0 to \
+                     4294967295, and `limit({}, {})` is neither — drop the `size(…)`, which \
+                     stores it in 8 bytes, or narrow the limit",
+                    spec.min,
+                    spec.max
+                );
+            }
             return;
         }
         let codes = 1i64 << (8 * width);

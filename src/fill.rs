@@ -6435,14 +6435,7 @@ fn sort_vector<const F: bool>(s: &mut State) {
     let v_db_tp = operands.get::<u16>(0);
     let v_r = s.get_stack_m::<F, DbRef>();
     {
-        let t = v_db_tp;
-        if s.database.is_text_type(t) {
-            vector::sort_text_vector(&v_r, &mut s.database.allocations);
-        } else {
-            let elem_size = s.database.size(t);
-            let is_float = t == 2 || t == 3;
-            vector::sort_vector(&v_r, elem_size, is_float, &mut s.database.allocations);
-        }
+        s.database.sort_vector(&v_r, v_db_tp);
     }
 }
 

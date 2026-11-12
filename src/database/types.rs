@@ -3232,6 +3232,35 @@ impl Stores {
         tp == super::TEXT_TP
     }
 
+    /// Does an element of schema type `tp` order by its UNSIGNED stored value? — the 4-byte
+    /// unsigned encoding (`Parts::IntRaw`, `@FR-L-Narrow-Enc`): `u32` and every range past
+    /// `i32::MAX`.  Read by every sort of such a vector, so none compares the bytes signed.
+    #[must_use]
+    pub fn sorts_unsigned(&self, tp: u16) -> bool {
+        matches!(
+            self.types.get(usize::from(tp)).map(|t| &t.parts),
+            Some(Parts::IntRaw(..))
+        )
+    }
+
+    /// `OpSortVector`: sort the primitive vector `r` of element type `tp` in place, in the
+    /// order of `<` on its elements — the one home both the interpreter and the compiled
+    /// runtime call, so the element's kind is decided once.
+    pub fn sort_vector(&mut self, r: &crate::keys::DbRef, tp: u16) {
+        if self.is_text_type(tp) {
+            crate::vector::sort_text_vector(r, &mut self.allocations);
+        } else {
+            let order = if tp == 2 || tp == 3 {
+                crate::vector::SortOrder::Float
+            } else if self.sorts_unsigned(tp) {
+                crate::vector::SortOrder::Unsigned
+            } else {
+                crate::vector::SortOrder::Signed
+            };
+            crate::vector::sort_vector(r, self.size(tp), order, &mut self.allocations);
+        }
+    }
+
     pub(super) fn show_fields(&self, pretty: bool, res: &mut String, v: &[Field]) {
         if pretty {
             *res += "\n";
