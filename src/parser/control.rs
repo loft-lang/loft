@@ -12878,6 +12878,13 @@ impl Parser {
         self.match_cursor = Some((cursor_var, cursor_def, pos_field, seg));
     }
 
+    /// `OpFreeRefIfDistinct(r, null)`: the free of a never-free local the code generator keeps
+    /// (a plain `OpFreeRef` of one is dropped), a no-op where `r` is null.
+    fn free_unless_null(&mut self, r: u16) -> Value {
+        let null = self.cl("OpNullRefSentinel", &[]);
+        self.cl("OpFreeRefIfDistinct", &[Value::Var(r), null])
+    }
+
     /// The run of `(xs: rule)*` / `+` ([`Self::parse_subrule_group`]): `xs` declared and
     /// minted at the match's level, then the loop that calls the rule from `seg`, takes the
     /// separator between two answers, moves each answer that consumed something into `xs` and
@@ -12926,7 +12933,17 @@ impl Parser {
         self.vars.defined(elm);
         self.vars.set_skip_free(elm);
         let mut append = self.append_element_ops(xs, ret_tp, elm, Value::Var(r));
-        if held {
+        // `@FR-O-Move` — the copy into `xs` frees the rule's answer only where it is the
+        // rule's own.  A rule whose answer is always a store it made (no borrowed return) has
+        // the copy free it; one that may answer a record of an argument (`p.nodes[0]`) has its
+        // answer released after the copy only where it names none of the arguments' stores —
+        // the witnesses the @P290 bracket protects — since the backends differ on whether a
+        // borrowed answer bound to `r` is that record or a copy of it.  Freeing a borrowed
+        // answer released the caller's whole store.  `LOFT_NO_SUBRULE_OWNED_ANSWER=1` frees
+        // every answer through the copy, as before.
+        let old_way = crate::env_once!(std::env::var_os("LOFT_NO_SUBRULE_OWNED_ANSWER").is_some());
+        let owned = held && (!self.data.def(fn_nr).returns_borrowed_view() || old_way);
+        if owned {
             let copy_d = self.data.def_nr("OpCopyRecord");
             for op in &mut append {
                 if let Value::Call(d, args) = op.unspan_mut()
@@ -12937,6 +12954,24 @@ impl Parser {
                 }
             }
         }
+        // The release of an answer the copy did not free: unguarded for an owned answer, and
+        // guarded by each witness for a borrowing rule whose arguments the bracket can name.
+        let release = if owned {
+            Some(self.free_unless_null(r))
+        } else if held {
+            let (witnesses, covers_all) =
+                crate::use_analysis::protectable_ref_args(&self.data, self.context, &call);
+            covers_all.then(|| {
+                let mut free = self.free_unless_null(r);
+                for w in witnesses.iter().rev() {
+                    let distinct = self.cl("OpDistinctStore", &[Value::Var(r), Value::Var(*w)]);
+                    free = v_if(distinct, free, Value::Null);
+                }
+                free
+            })
+        } else {
+            None
+        };
         let mut body = Vec::new();
         body.push(self.subrule_separator_step(subject, sep, xs, seg));
         body.push(v_set(r, call));
@@ -12944,8 +12979,19 @@ impl Parser {
         let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
         let moved = self.conv_op("<", Value::Var(seg), now, I32.clone(), I32.clone());
         let taken = v_if(present, moved, Value::Boolean(false));
-        body.push(v_if(taken, Value::Null, Value::Break(0)));
+        // An answer that consumed nothing stops the run without reaching the copy: released
+        // here as after the copy (a no-op on the null answer).  `LOFT_NO_SUBRULE_STOP_FREE=1`
+        // leaves it, as before.
+        let stop_free = !crate::env_once!(std::env::var_os("LOFT_NO_SUBRULE_STOP_FREE").is_some());
+        let stop = match &release {
+            Some(free) if stop_free => Value::Insert(vec![free.clone(), Value::Break(0)]),
+            _ => Value::Break(0),
+        };
+        body.push(v_if(taken, Value::Null, stop));
         body.extend(append);
+        if !owned && let Some(free) = release {
+            body.push(free);
+        }
         let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
         body.push(v_set(seg, now));
         ops.push(v_loop(body, "sub-rule run"));
