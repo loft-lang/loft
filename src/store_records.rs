@@ -142,6 +142,9 @@ struct State {
     /// Per site, how many stores it minted on this path: a join renames the side that minted
     /// fewer, so a site's current key names one generation on both sides.
     mints: Mints,
+    /// Pairs of variables one a plain copy of the other (`k = h`, smaller number first): the
+    /// same value until either is bound again, so a test that narrows one narrows both.
+    copies: BTreeSet<(u16, u16)>,
 }
 
 /// A site's mint count per path ([`State::mints`]).  Only the ORDER of two sides' counts at a
@@ -349,6 +352,13 @@ fn field_record_holds() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_FIELD_RECORD_HOLDS").is_none())
 }
 
+/// `LOFT_RECORDS_NO_COPY_ALIAS=1`: a plain copy `k = h` is no alias a narrowing follows (the
+/// records' bisect switch).
+fn copy_alias() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_COPY_ALIAS").is_none())
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -525,6 +535,7 @@ fn join_state(a: &State, b: &State) -> State {
         flags,
         points,
         nonnull: a.nonnull.intersection(&b.nonnull).copied().collect(),
+        copies: a.copies.intersection(&b.copies).copied().collect(),
         mints: a.mints.clone(),
     }
 }
@@ -930,6 +941,7 @@ impl Run<'_> {
 
     /// Bind `v` to `val`.  A live store only `v` named is left unreachable: a leak.
     fn bind(&mut self, st: &mut State, v: u16, val: &Val) {
+        st.copies.retain(|&(a, b)| a != v && b != v);
         for k in Self::stores_of(&Self::pts(st, v)) {
             let info = info_of(st, k);
             if info.has(LIVE)
@@ -1682,6 +1694,12 @@ impl Run<'_> {
                 let (mut st, out) = self.assign(v, *x, val, st)?;
                 if child_rec {
                     st.nonnull.insert(*x);
+                }
+                if let Value::Var(src) = val.unspan()
+                    && src != x
+                    && copy_alias()
+                {
+                    st.copies.insert(((*src).min(*x), (*src).max(*x)));
                 }
                 if let Some(src) = copied
                     && src != *x
@@ -3079,7 +3097,25 @@ impl Run<'_> {
 
     fn narrow(st: &mut State, x: u16, to: Pts) {
         let from = Self::pts(st, x);
-        for k in Self::stores_of(&from) {
+        // A plain copy of `x` still naming exactly what `x` did is the same value: narrowed too.
+        let twins: Vec<u16> = st
+            .copies
+            .iter()
+            .filter_map(|&(a, b)| match (a == x, b == x) {
+                (true, _) => Some(b),
+                (_, true) => Some(a),
+                _ => None,
+            })
+            .filter(|&u| Self::pts(st, u) == from)
+            .collect();
+        for u in twins {
+            Self::narrow_one(st, u, &from, to.clone());
+        }
+        Self::narrow_one(st, x, &from, to);
+    }
+
+    fn narrow_one(st: &mut State, x: u16, from: &Pts, to: Pts) {
+        for k in Self::stores_of(from) {
             if to.contains(&Pt::Store(k)) {
                 continue;
             }
@@ -3785,7 +3821,38 @@ impl Run<'_> {
                     let info = info_of(&s, *k);
                     info.has(LIVE) && info.live.contains(&old) && info.live.contains(&new)
                 });
-            if one || same {
+            // …or `new` is a plain copy of `old` neither has been bound away from since
+            // (`k = h`): the two name one value on every path, so they share every store.
+            let copy = copy_alias()
+                && s.copies.contains(&(old.min(new), old.max(new)))
+                && !held.is_empty()
+                && held == named;
+            if copy {
+                // Wherever `old` held a store, its copy `new` holds it too: `new` takes over
+                // `old`'s holder role before `old` lets go.
+                for info in s.stores.values_mut() {
+                    if info.live.contains(&old) {
+                        info.live.insert(new);
+                    }
+                    for alt in &mut info.alts {
+                        if alt.contains(&old) {
+                            alt.insert(new);
+                        }
+                    }
+                    // A name now in every alternative holds the store on every path.
+                    if let Some(first) = info.alts.first() {
+                        let every: BTreeSet<u16> = info
+                            .alts
+                            .iter()
+                            .skip(1)
+                            .fold(first.clone(), |m, a| m.intersection(a).copied().collect());
+                        info.live.extend(every);
+                        let live = info.live.clone();
+                        info.alts = normal_alts(std::mem::take(&mut info.alts), &live);
+                    }
+                }
+            }
+            if one || same || copy {
                 self.bind(&mut s, old, &Val::null());
             }
             return Some((s, Val::null()));
