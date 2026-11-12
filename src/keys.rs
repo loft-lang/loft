@@ -3405,6 +3405,15 @@ pub fn record_release_detach() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RECORD_RELEASE_DETACH"))
 }
 
+/// `LOFT_NO_SNAPSHOT_KEEPS_REFILL=1` — a closure record rebuilt through a snapshot (a capture
+/// type with a drop hook) keeps an old slot naming the store its new fill names: the snapshot's
+/// cascade then releases the capture the rebuilt record holds again (`vectors.rs`).
+#[must_use]
+pub fn snapshot_keeps_refill() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SNAPSHOT_KEEPS_REFILL"))
+}
+
 /// `LOFT_NO_RECORD_SNAPSHOT_RELEASES=1` — a closure build releases a displaced capture slot
 /// itself unless that CAPTURE's type owns a droppable (`vectors.rs`), though the displaced
 /// record's snapshot releases every slot once the record owns one: a second free.
