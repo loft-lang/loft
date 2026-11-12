@@ -157,6 +157,9 @@ impl State {
         let _defs_memo = crate::use_analysis::defs_memo_scope(data, def_nr);
         // The rewrite census credits what the bytecode generator admits to the `interp` phase.
         let _census_body = crate::rewrite_census::InBody::enter("interp", data.def(def_nr).name());
+        if bind_trace_on() {
+            BIND_FN_START.with(|s| s.set(self.code_pos));
+        }
         // `@FR-R-LoopSlot`: the loop variables this frame places in their range index's slot.
         crate::rewrite_census::fired("R-LoopSlot", super::slot_aliases(data, def_nr).len());
         let logging =

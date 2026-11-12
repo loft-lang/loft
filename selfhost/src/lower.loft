@@ -342,6 +342,9 @@ struct Lowering {
   // notes of the sets still open, innermost last, each set's from its `note_at` on.
   binds: vector<text>,
   notes: vector<text>,
+  // The source line of the last line marker lowered (`generate_set`'s `line_numbers` lookup),
+  // which each bind row names (`L<line>`).
+  line: integer,
   // The bytecode writer's walk state the binds read: the variables B2 freed before their
   // reassignment (`stack.owned_reassigned`), and the oracle's operator table, built once.
   owned_reassigned: vector<boolean>,
@@ -390,6 +393,7 @@ pub fn empty() -> Lowering {
     def_nr: -1,
     binds: [],
     notes: [],
+    line: 0,
     owned_reassigned: [],
     own_ops: own::ops_of(ir::empty_bundle()),
     defs: own::new_defs(),
@@ -1013,7 +1017,7 @@ fn note(l: Lowering, what: text) {
 
 // The row of the set of `var` whose notes start at `at`, as `generate_set` writes it when the
 // set is done: a nested set's row comes before the one that encloses it.
-fn bind_row(l: Lowering, b: ir::Bundle, var: integer, first: boolean, at: integer) {
+fn bind_row(l: Lowering, b: ir::Bundle, var: integer, first: boolean, at: integer, line: integer) {
   d = b.data.definitions[l.def_nr]!;
   joined = "";
   for i in at..len(l.notes) {
@@ -1023,7 +1027,7 @@ fn bind_row(l: Lowering, b: ir::Bundle, var: integer, first: boolean, at: intege
     l.notes.remove(len(l.notes) - 1);
   }
   name = d.variables.variables[var]!.name;
-  l.binds += ["{d.name}\t{name}\t{if first { "first" } else { "re" }}\t{if joined == "" { "?" } else { joined }}"];
+  l.binds += ["{d.name}\t{name}\t{if first { "first" } else { "re" }}\tL{line}\t{if joined == "" { "?" } else { joined }}"];
 }
 
 fn refuse(l: Lowering, what: text) {
@@ -2581,8 +2585,10 @@ fn projects_a_variable(b: ir::Bundle, n: ir::Node) -> boolean {
 fn set(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   at = len(l.notes);
   first = !(fvar(b, l.def_nr, var)).stack_allocated;
+  // The line the assignment stands on, read before its value is lowered.
+  line = l.line;
   set_inner(l, b, var, x);
-  bind_row(l, b, var, first, at);
+  bind_row(l, b, var, first, at, line);
 }
 
 // The variable `var` of definition `d`, as the image holds it (and the walk changes it).
@@ -2881,7 +2887,15 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   stash = !temp_null_reset && owned_ref && (reads_v || rhs_is_new_record || nullable_local);
   pre = !temp_null_reset && owned_ref && !s1;
   b2 = if stash { "stash" } else if pre { "pre" } else { "none" };
-  note(l, "b2={b2} owned_ref={flag(owned_ref)} s1={flag(s1)} reads_v={flag(reads_v)} witnessed={flag(witnessed)} entry_w={flag(entry_w != null)} buffer_w={flag(buffer_w != null)}");
+  // loft#1522's veto keeps the free from an owner that adopted a construction buffer's store;
+  // its copy arms still run (`@FR-B-Copy`).
+  buffer_kept = !reads_v && binds::rebind_keeps_displaced(f, var) && binds::owns_its_binding(b, f, var, x);
+  // The facts the decision read (`ReBind::trace_facts`), noted before the arm; R2c adds its
+  // source ahead of the call's facts.
+  facts_at = len(l.notes);
+  facts = "b2={b2} owned_ref={flag(owned_ref)} s1={flag(s1)} reads_v={flag(reads_v)} witnessed={flag(witnessed)} entry_w={flag(entry_w != null)} buffer_w={flag(buffer_w != null)} nullable={flag(nullable_local)} kept={flag(buffer_kept)} base={trace_var(f, rhs_base)} alias_v={flag(rhs_may_alias_v)}";
+  call_facts = trace_call_facts(l, b, f, var, x);
+  note(l, facts + call_facts);
   slot = slot_of(l, var);
   if stash {
     emit(l, Load, KRef, slot, 0);
@@ -2974,6 +2988,7 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
         init_ref(l, slot);
         emit(l, Load, KRef, slot_of(l, src!), 0);
         emit(l, Load, KRef, slot_of(l, src!), 0);
+        l.notes[facts_at] = facts + " src={trace_var(f, src)}" + call_facts;
         note(l, "R2c");
         emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, hh!)));
         if stash {
@@ -2998,6 +3013,39 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
 // A fact as the trace writes it: `u8::from`.
 fn flag(x: boolean) -> integer {
   if x { 1 } else { 0 }
+}
+
+// A variable's name in a bind row (`bind_lowering::trace_var`): `-` for none, `args` for the
+// base that names one of several arguments (`u16::MAX`), `#n` past the table.
+fn trace_var(f: ir::Function, v: integer?) -> text {
+  if v == null {
+    return "-";
+  }
+  if v! == 65535 {
+    return "args";
+  }
+  if v! < len(f.variables) { own::var_name(f, v!) } else { "#{v!}" }
+}
+
+// The facts every bind row names for a call (`bind_lowering::trace_call_facts`): the
+// loft-defined callee and whether the bind adopts the store it minted in its buffer, each
+// after a space; empty for a value that is no such call.
+fn trace_call_facts(l: Lowering, b: ir::Bundle, f: ir::Function, var: integer, x: ir::Node) -> text {
+  c = binds::callee_of(b, l.defs, x);
+  if c == null || !binds::is_loft_defined(binds::def(b, c!)) {
+    return "";
+  }
+  " callee={binds::def(b, c!).name} adopt={flag(binds::adopts_minted_at_bind(b, l.own_ops, f, var, x))}"
+}
+
+// A first bind's arm, after its facts (`FirstArm::trace_facts`) where there are any: the
+// join's base or the copy's source (`lead`, empty for neither), then the call's facts.
+fn note_first(l: Lowering, b: ir::Bundle, f: ir::Function, var: integer, x: ir::Node, lead: text, arm: text) {
+  facts = lead + trace_call_facts(l, b, f, var, x);
+  if facts != "" {
+    note(l, if lead == "" { facts[1..] } else { facts });
+  }
+  note(l, arm);
 }
 
 // `free_stashed` (`codegen.rs:3547`): the displaced value the stash left under the
@@ -3041,7 +3089,7 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
     // the slot, which holds what an earlier frame left — then the set, which the empty literal
     // needs none of.  A text view (@PLN198) owns no text and takes no init; the loft
     // interpreter holds every text loop variable as its own copy, so it never is one here.
-    note(l, "first-text");
+    note_first(l, b, f, var, x, "", "first-text");
     emit(l, InitText, KText, slot_of(l, var), 0);
     if !(u is NdText && u == NdText { s: "" }) {
       plain_set(l, b, var, x);
@@ -3051,18 +3099,18 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   if (base is TyReference || is_struct_enum(base)) && is_null {
     // F1 (`gen_set_first_ref_null`): the sentinel, whatever the deps say — `OpInitRef`
     // writes it too; a dependent's `OpInitCreateStack` is the stack store's (1b-frame.md F-1).
-    note(l, "F1");
+    note_first(l, b, f, var, x, "", "F1");
     init_ref(l, slot);
     return;
   }
   if base is TyIterator && is_null {
-    note(l, "first-iter-null");
+    note_first(l, b, f, var, x, "", "first-iter-null");
     init_ref(l, slot);
     return;
   }
   d = match t { TyReference { n, dep: _ } => n, _ => null };
   if d != null && is_call_of(b, u, "OpCopyRecord") {
-    note(l, "F2");
+    note_first(l, b, f, var, x, "", "F2");
     first_copy(l, b, var, d!, u);
     return;
   }
@@ -3071,19 +3119,19 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   if hd != null && src != null {
     sd = own::record_copy_source(b, f, var, src!);
     if sd != null && own::copies_as(b, hd!, sd!) {
-      note(l, "F3");
+      note_first(l, b, f, var, x, "src={trace_var(f, src)}", "F3");
       var_copy(l, b, var, src!, hd!);
       return;
     }
   }
   if hd != null && binds::has_no_deps(t) && binds::owner_witness(f, var) == null && binds::projection_container_var(b, x) != null {
-    note(l, "F4");
+    note_first(l, b, f, var, x, "", "F4");
     elem_copy(l, b, var, x, hd!);
     return;
   }
   if d != null && (x is NdTupleGet) && binds::has_no_deps(t) && binds::owner_witness(f, var) == null {
     // F5 (`gen_set_first_ref_tuple_copy`): a tuple member copied into a record of its own.
-    note(l, "F5");
+    note_first(l, b, f, var, x, "", "F5");
     kt = known_type(b, d!);
     init_ref(l, slot);
     emit(l, Database, KRef, slot, kt);
@@ -3103,53 +3151,53 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   if sd2 != null && callee != null && binds::is_loft_defined(binds::def(b, callee!)) {
     jb = own::named_join_base(own::ownership_of(b, l.own_ops, l.def_nr, x));
     if (shape is TyReference) && !v.view_elided && jb != null {
-      note(l, "F9a");
+      note_first(l, b, f, var, x, "base={trace_var(f, jb)}", "F9a");
       value(l, b, x, KRef);
       emit(l, Load, KRef, slot_of(l, jb!), 0);
       init_ref_under(l, slot);
       emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, sd2!)));
     } else if binds::return_adopts_fresh_store(binds::def(b, callee!)) || v.view_elided || binds::adopts_minted_at_bind(b, l.own_ops, f, var, x) {
-      note(l, "F9b");
+      note_first(l, b, f, var, x, "", "F9b");
       value(l, b, x, KRef);
       emit(l, Store, KRef, slot, 0);
     } else {
-      note(l, "F9c");
+      note_first(l, b, f, var, x, "", "F9c");
       call_copy(l, b, var, x, sd2!);
     }
     return;
   }
   if is_null && (t is TyOptional) && base is TyVector {
-    note(l, "F10");
+    note_first(l, b, f, var, x, "", "F10");
     init_ref(l, slot);
     return;
   }
   if is_null && (t is TyVector) {
-    note(l, "F11");
+    note_first(l, b, f, var, x, "", "F11");
     vector_null(l, b, var);
     return;
   }
   if is_null && binds::owns_keyed_store(t) {
-    note(l, "F12");
+    note_first(l, b, f, var, x, "", "F12");
     keyed_null(l, b, var, true);
     return;
   }
   if is_null && base is TyTuple {
-    note(l, "first-tuple-null");
+    note_first(l, b, f, var, x, "", "first-tuple-null");
     init_tuple_texts(l, var);
     plain_set(l, b, var, x);
     return;
   }
   if t is TyFunction {
-    note(l, "first-fn");
+    note_first(l, b, f, var, x, "", "first-fn");
     plain_set(l, b, var, x);
     return;
   }
   if (t is TyRefVar) && src != null && (binds::tp(f, src!) is TyRefVar) {
-    note(l, "first-refvar");
+    note_first(l, b, f, var, x, "", "first-refvar");
     plain_set(l, b, var, x);
     return;
   }
-  note(l, "F13");
+  note_first(l, b, f, var, x, "", "F13");
   if var_kind(l, var) == KTuple {
     init_tuple_texts(l, var);
   }
@@ -4022,6 +4070,8 @@ fn start_step_holds(b: ir::Bundle, d: integer, ops: vector<ir::Node>, s: Rotatio
 // test); the body: the post statements, the loop variable, the rest; the step; the test, which
 // jumps back to the body while it is false.  A `continue` goes to the step.
 fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) {
+  // The test belongs to the loop's own line (`gen_rotated_loop`): restored after the body.
+  loop_line = l.line;
   sd = r.seed;
   if sd != null {
     set(l, b, sd.ix, NdVar { n: sd.nxt });
@@ -4059,6 +4109,7 @@ fn rotated_loop(l: Lowering, b: ir::Bundle, ops: vector<ir::Node>, r: Rotation) 
       l.cont_loop[i] = -1;
     }
   }
+  l.line = loop_line;
   for p in r.pre {
     statement(l, b, p);
   }
@@ -4099,7 +4150,7 @@ fn close_mark(l: Lowering, level: integer) {
 // `n`, a statement: its ops leave the stacks as they found them.
 fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
   match n {
-    NdLine { n: _ } => {},
+    NdLine { n } => { l.line = n; },
     NdNull => {},
     NdSpan { inner } => statement(l, b, inner),
     NdReturn { inner } => expr(l, b, n),

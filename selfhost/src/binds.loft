@@ -242,9 +242,17 @@ fn rebind_keeps_displaced(f: ir::Function, v: integer) -> boolean {
   is_buffer_witnessed(f, v)
 }
 
-// src/variables/mod.rs:5391 fn owns_displaced_store — may the store `v` DISPLACES at
+// src/variables/mod.rs fn owns_displaced_store — may the store `v` DISPLACES at
 // `v = value` be freed?
 fn owns_displaced_store(b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> boolean {
+  owns_its_binding(b, f, v, value) && !rebind_keeps_displaced(f, v)
+}
+
+// src/variables/mod.rs fn owns_its_binding — is `v` an OWNER at `v = value`:
+// `owns_displaced_store` without loft#1522's veto, which decides only who releases the displaced
+// store (`@FR-B-Copy` does not depend on who frees).  A view is no owner: its deps name what it
+// views.
+fn owns_its_binding(b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> boolean {
   t = base(tp(f, v));
   store_backed = match t {
     TyReference { n: _, dep: _ } => true,
@@ -255,7 +263,6 @@ fn owns_displaced_store(b: ir::Bundle, f: ir::Function, v: integer, value: ir::N
   (store_backed || is_keyed(t))
     && proxy_says_owned(f, v)
     && !is_captured(f, v)
-    && !rebind_keeps_displaced(f, v)
     && !is_null_sentinel_detach(b, f, v, value)
 }
 
