@@ -3027,7 +3027,10 @@ impl Run<'_> {
                 pts.insert(Pt::Store(k));
                 Val { pts, corr }
             };
-            if val.pts != cur {
+            // Compared with what `x` names NOW: a mint at the site of a store `x` named moved
+            // that store to the older generation, so `x` names the older key while the new
+            // store took the key `x` named before.
+            if val.pts != Self::pts(&st, x) {
                 self.bind(&mut st, x, &val);
             }
             return Some((st, Val::null()));
