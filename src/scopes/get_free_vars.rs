@@ -532,10 +532,21 @@ impl Scopes<'_> {
                 // (`S { l: 7, ..(if c { p } else { q }) }`) binds its base work-ref to the arm's
                 // `__lift_N`, which frees that store, and freeing the work-ref too released it
                 // twice (`@FR-H-FreeTwice`).  `LOFT_WORK_REF_VIEW_FREES=1` frees it anyway.
+                // …except a KEYED work-ref, whose null init mints a store of its own
+                // (`bind_lowering::keyed_null_mints`): its deps say what it was typed from, not
+                // that it borrows, and left unfreed that store leaked (a generic instance's
+                // `__ref_p2_1: hash["x"]`, attic's generic-keyed-tuplocal).
+                // `LOFT_NO_KEYED_WORK_REF_OWNS=1` treats it as the view its deps say.
+                let keyed_owner = crate::parser::vectors::owns_keyed_store(function.tp(v))
+                    && crate::bind_lowering::keyed_null_mints(function, v)
+                    && !crate::env_once!(std::env::var_os("LOFT_NO_KEYED_WORK_REF_OWNS").is_some());
                 let is_work_ref = {
                     let n = function.name(v);
                     (n.starts_with("__ref_") || n.starts_with("__rref_"))
-                        && (dep.is_empty() || dep.contains(&v) || work_ref_view_frees())
+                        && (dep.is_empty()
+                            || dep.contains(&v)
+                            || keyed_owner
+                            || work_ref_view_frees())
                 };
                 // @P302 — a keyed-collection local backed by its OWN store
                 // carries a self-dep `[v]` (added by the `s = []` clear path

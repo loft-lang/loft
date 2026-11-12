@@ -16885,45 +16885,36 @@ impl Parser {
             _ => {}
         }
     }
+
     /// loft#1484, `@FR-F-Ret` — does EVERY return leaf of the body hand back a value that
-    /// still VIEWS the parameter `x`?
+    /// still VIEWS one of the parameters `xs`?
     ///
     /// Every return leaf is asked: the tail, each `return`, and each arm of a branch in either
     /// position.  A body with no leaf at all answers no.
     ///
     /// The RULES decide each leaf rather than a walk of the emitter: `(B-View)` says a
     /// struct-typed PROJECTION (`p[0]`, `o.inner`) aliases without `&`, and `(B-Copy)` says a
-    /// plain bind of a WHOLE heap value does not.  So a leaf borrows when it is the parameter itself, a projection ROOTED at
-    /// it, or a local every one of whose definitions is such a projection.  A local bound
-    /// from the whole parameter (`y: T = x; y`) is the copy D-call-13 narrowed this test to
-    /// exclude, and it still answers no — declaring THAT a borrow made the caller decline its
-    /// lift and free nothing, three corpus generics leaking one record per call.
+    /// plain bind of a WHOLE heap RECORD does not.  So a leaf borrows when it is a parameter
+    /// itself, a projection ROOTED at one, or a local every one of whose definitions is such a
+    /// projection.  A local bound from a whole record parameter (`y: T = x; y`) is the copy
+    /// D-call-13 narrowed this test to exclude, and it still answers no — declaring THAT a
+    /// borrow made the caller decline its lift and free nothing.  A COLLECTION's whole bind
+    /// shares the store, so with `whole_bind_views` (a collection return) `s = x; s` views `x`,
+    /// as the concrete twin declares (`-> hash["x"]`).
     ///
-    /// Transitive through projections and through NOTHING else, which is the same rule twice:
-    /// `e = p[0]; e2 = e.inner` still views `p`, while `e2 = e` copies and ends the chain.
+    /// A self call counts where, in each position of `xs`, it is handed a view of one of them —
+    /// so a recursion that SWAPS two arguments (`sw(b, a, i - 1)`) still hands back a view of
+    /// `a` or of `b`, the borrow its twin declares as `-> T["a", "b"]` (loft#1880).
     ///
-    /// A body with no leaf answers no, and so does any leaf this cannot read — the gate is a
-    /// POSITIVE proof and an under-approximation, because answering yes wrongly makes a caller
-    /// copy where the value was owned and orphan the store it was handed.
-    pub(crate) fn every_return_leaf_views_var(
-        data: &crate::data::Data,
-        ops: &[Value],
-        x: u16,
-        self_d: u32,
-    ) -> bool {
-        Self::every_return_leaf_views_one_of(data, ops, &[x], self_d)
-    }
-
-    /// [`Self::every_return_leaf_views_var`] for a SET of parameters `xs`: every return leaf
-    /// views one of them.  A self call counts where, in each position of `xs`, it is handed a
-    /// view of one of them — so a recursion that SWAPS two arguments (`sw(b, a, i - 1)`) still
-    /// hands back a view of `a` or of `b`, the borrow its twin declares as `-> T["a", "b"]`
-    /// (loft#1880).
-    pub(crate) fn every_return_leaf_views_one_of(
+    /// Any leaf this cannot read answers no — the gate is a POSITIVE proof and an
+    /// under-approximation, because answering yes wrongly makes a caller copy where the value
+    /// was owned and orphan the store it was handed.
+    pub(crate) fn every_return_leaf_views_one_of_as(
         data: &crate::data::Data,
         ops: &[Value],
         xs: &[u16],
         self_d: u32,
+        whole_bind_views: bool,
     ) -> bool {
         let mut sets: Vec<(u16, &Value)> = Vec::new();
         for op in ops {
@@ -16935,6 +16926,7 @@ impl Parser {
             xs,
             self_d,
             assumed: &[],
+            whole_bind_views,
         };
         // (found, all) over the leaves reached: a body with no leaf answers no, and one
         // leaf that does not view `xs` refuses the whole body.
@@ -25783,7 +25775,7 @@ fn max_lookahead() -> i32 {
     })
 }
 
-/// The walk [`Parser::every_return_leaf_views_one_of`] makes: which locals, through projections
+/// The walk [`Parser::every_return_leaf_views_one_of_as`] makes: which locals, through projections
 /// and self calls alone, still view one of the parameters `xs`.
 struct ViewWalk<'a> {
     data: &'a crate::data::Data,
@@ -25795,6 +25787,9 @@ struct ViewWalk<'a> {
     /// Generic templates assumed to hand back a view of their arguments — the ones whose own
     /// bodies this check is inside, read by co-induction (`template_call_views`).
     assumed: &'a [u32],
+    /// A whole-variable bind (`s = x`) is a VIEW of `x`: true for a collection return, where
+    /// the bind shares the store, false for a record, where it copies (`@FR-B-Copy`).
+    whole_bind_views: bool,
 }
 
 impl<'a> ViewWalk<'a> {
@@ -25850,6 +25845,16 @@ impl<'a> ViewWalk<'a> {
             // loft#1880 — a SELF call handed views of `xs` in their own positions answers what
             // this body answers, by the induction this walk is.
             if self.self_call_views(rhs, seen) || self.forwarded_call_views(rhs, seen) {
+                any = true;
+                continue;
+            }
+            // A collection local bound whole from another (`s = x`) shares its store.
+            if self.whole_bind_views
+                && let Value::Var(z) = rhs.unspan()
+            {
+                if !self.local_views(*z, seen) {
+                    return false;
+                }
                 any = true;
                 continue;
             }
@@ -25958,6 +25963,7 @@ impl<'a> ViewWalk<'a> {
             xs: &params,
             self_d: d,
             assumed: &assumed,
+            whole_bind_views: self.whole_bind_views,
         };
         let mut acc = (false, true);
         let n = bl.operators.len();
