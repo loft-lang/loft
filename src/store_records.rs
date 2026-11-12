@@ -606,6 +606,11 @@ struct Run<'a> {
     /// The guarded frees of one variable against another, after which the code generator resets
     /// the variable where the free ran (`Codegen::generate_call`, `@FR-O-NoDiverge`).
     cond_resets: BTreeSet<usize>,
+    /// The `OpDropFnRef(f)` nodes inside the emitter's stand-down guard
+    /// (`if OpDistinctStore(OpFnRefClosure(f), …)`, `get_free_vars::fnref_stand_down`): the
+    /// fn-ref's own release, which runs only for a closure no local record releases, so its
+    /// cascade is never the one a local record's captures end by.
+    standdown_drops: BTreeSet<usize>,
     /// Per fn-ref variable, the closure record its build names (`g = { …; FnRef(_, w) }`).
     fn_record: BTreeMap<u16, u16>,
     /// The closure records that leave the frame: the function returns their fn-ref, or the
@@ -1063,6 +1068,89 @@ impl Run<'_> {
                 slot.pts.extend(held.pts.iter().copied());
                 slot.corr = slot.corr.intersection(&held.corr).copied().collect();
             }
+        }
+    }
+
+    /// The capture slots the closure record minted at `k`'s site releases when a fn-ref's drop
+    /// runs its cascade: the offsets its type's live `_OpDropAll` frees
+    /// (`OpFreeRef(OpGetDbRef(self, off))`).  `None` where the site minted no closure variable
+    /// or its types disagree; an empty set for a retired cascade (`Data::retire_def_name`: an
+    /// earlier build owns the capture), which releases nothing.
+    fn cascade_frees(&self, k: SKey) -> Option<BTreeSet<i32>> {
+        let function = &self.data.def(self.d_nr).variables;
+        let mut out: Option<BTreeSet<i32>> = None;
+        for &v in &self.sites[k.site as usize].holders {
+            if v >= function.count() || !function.name(v).starts_with("___clos_") {
+                continue;
+            }
+            let crate::data::Type::Reference(d, _) = function.tp(v).base() else {
+                continue;
+            };
+            let name = self.data.def(*d).name();
+            let drop = self
+                .data
+                .def_nr(&format!("t_{}{name}_OpDropAll", name.len()));
+            let mut offs = BTreeSet::new();
+            if drop != u32::MAX {
+                let (free, get) = (
+                    self.data.def_nr("OpFreeRef"),
+                    self.data.def_nr("OpGetDbRef"),
+                );
+                self.data.def(drop).code.walk(&mut |n| {
+                    if let Value::Call(op, a) = n.unspan()
+                        && *op == free
+                        && let [inner] = a.as_slice()
+                        && let Value::Call(g, b) = inner.unspan()
+                        && *g == get
+                        && let [_, off] = b.as_slice()
+                        && let Value::Int(o) = off.unspan()
+                    {
+                        offs.insert(*o);
+                    }
+                });
+            }
+            match &out {
+                Some(o) if *o != offs => return None,
+                _ => out = Some(offs),
+            }
+        }
+        out
+    }
+
+    /// End the stores the slots `offs` of closure record `k` hold — a fn-ref's drop cascade
+    /// (`OpDropFnRef`), named after the fn-ref `name`.  A slot store already ended on every
+    /// path is ended twice.
+    fn end_record_slots(&mut self, st: &mut State, k: SKey, offs: &BTreeSet<i32>, name: &str) {
+        let held: Vec<SKey> = st
+            .slots
+            .get(&k)
+            .map(|m| {
+                m.iter()
+                    .filter(|(o, _)| offs.contains(o))
+                    .flat_map(|(_, v)| Self::stores_of(&v.pts))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let label = format!("its cascade({name})");
+        for h in held {
+            self.sites[h.site as usize].ends.insert(label.clone());
+            let info = info_of(st, h);
+            if info.has(ENDED) && !info.has(LIVE) {
+                self.find(
+                    "double-end",
+                    h.site,
+                    format!("the record `{name}` releases a capture by its cascade after its store was already freed"),
+                );
+            }
+            if !info.has(LIVE) {
+                continue;
+            }
+            let mut next = info.clone();
+            next.ended.clone_from(&info.live);
+            next.status = (info.status & !LIVE) | ENDED;
+            next.live.clear();
+            next.alts.clear();
+            st.stores.insert(h, next);
         }
     }
 
@@ -2994,11 +3082,20 @@ impl Run<'_> {
             let held = Self::pts(&st, old);
             let named = Self::pts(&st, new);
             let mut s = st;
-            if let [k] = Self::stores_of(&held)[..]
-                && held.iter().all(|p| *p == Pt::Store(k))
-                && named.iter().all(|p| *p == Pt::Store(k))
-                && !named.is_empty()
-            {
+            let one = matches!(Self::stores_of(&held)[..], [k]
+                if held.iter().all(|p| *p == Pt::Store(k))
+                    && named.iter().all(|p| *p == Pt::Store(k))
+                    && !named.is_empty());
+            // …or several, where both names must-hold each of them (a copy `k = h` of a
+            // fn-ref built in branches): wherever one of those stores is live, both name it.
+            let same = !held.is_empty()
+                && held == named
+                && held.iter().all(|p| matches!(p, Pt::Store(_)))
+                && Self::stores_of(&held).iter().all(|k| {
+                    let info = info_of(&s, *k);
+                    info.has(LIVE) && info.live.contains(&old) && info.live.contains(&new)
+                });
+            if one || same {
                 self.bind(&mut s, old, &Val::null());
             }
             return Some((s, Val::null()));
@@ -3259,6 +3356,47 @@ impl Run<'_> {
             && Self::is_record(&s, w)
         {
             self.end_slots(&mut s, w, "its cascade");
+        }
+        // `OpDropFnRef(f)` runs the same cascade on the record the fn-ref names (@FR-L-CapOwn,
+        // loft#1609): where the record's own release stood down (`___clos_N` reset because a
+        // fn-ref still names it), this is where its captures end.
+        // `LOFT_RECORDS_NO_DROP_FNREF_CASCADE=1` leaves them live.
+        // A closure type whose cascade was retired (`Data::retire_def_name`: an earlier build
+        // owns the capture) releases nothing, so only a record every one of whose possible
+        // types keeps a live `_OpDropAll` is cascaded; a mix is left alone, which can only
+        // keep a finding.
+        if def.name() == "OpDropFnRef"
+            && !self
+                .standdown_drops
+                .contains(&(std::ptr::from_ref(node) as usize))
+            && let Some(f) = Self::first_var(args, 0)
+            && Self::is_record(&s, f)
+            && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_DROP_FNREF_CASCADE").is_some())
+        {
+            // The emitter's own split (`get_free_vars::fnref_stand_down`): while a local
+            // closure-record variable still names the record, that record's release (its
+            // hook) is the cascade, and the fn-ref's drop is the one that stands down.
+            let function = &self.data.def(self.d_nr).variables;
+            let records: Vec<SKey> = Self::stores_of(&Self::pts(&s, f))
+                .into_iter()
+                .filter(|k| {
+                    !s.vars.iter().any(|(&v, p)| {
+                        v < function.count()
+                            && function.name(v).starts_with("___clos_")
+                            && p.contains(&Pt::Store(*k))
+                    })
+                })
+                .collect();
+            let freed: Option<Vec<(SKey, BTreeSet<i32>)>> = records
+                .iter()
+                .map(|k| self.cascade_frees(*k).map(|offs| (*k, offs)))
+                .collect();
+            if let Some(freed) = freed {
+                let name = self.var_name(f);
+                for (k, offs) in freed {
+                    self.end_record_slots(&mut s, k, &offs, &name);
+                }
+            }
         }
         if d == ops.set_dbref
             && let Some(value) = vals.get(2)
@@ -3597,6 +3735,7 @@ fn run_fn<'a>(
         rebinds: BTreeMap::new(),
         resets: BTreeSet::new(),
         cond_resets: BTreeSet::new(),
+        standdown_drops: BTreeSet::new(),
         fn_record: BTreeMap::new(),
         leaving: BTreeSet::new(),
         protected: Vec::new(),
@@ -3652,6 +3791,7 @@ fn run_fn<'a>(
             _ => {}
         }
     });
+    standdown_drops(data, &body, &mut Vec::new(), &mut run.standdown_drops);
     closure_records(data, vars, &body, &mut run.fn_record, &mut run.leaving);
     if let Some((mut s, value)) = run.eval(&body, st) {
         run.answer = run.answer.join(run.summary_of(&value.pts));
@@ -3666,6 +3806,51 @@ fn run_fn<'a>(
 /// records built inside another store (`w = OpChildRec(…)`, a fn field), whose host decides
 /// their life.  A record the function returns is not among them: it holds its captures until
 /// it leaves, and `hand_on` hands them on with it.
+/// Collect the `OpDropFnRef(f)` nodes under an `if OpDistinctStore(OpFnRefClosure(f), …)`
+/// guard on the same `f` — the emitter's stand-down release (`Run::standdown_drops`).  Every
+/// node of a guarded arm is recorded under its own address and, where wrapped in a span, the
+/// span's, as the walk that reads them meets either.
+fn standdown_drops(data: &Data, node: &Value, guarded: &mut Vec<u16>, out: &mut BTreeSet<usize>) {
+    let (distinct, closure, drop) = (
+        data.def_nr("OpDistinctStore"),
+        data.def_nr("OpFnRefClosure"),
+        data.def_nr("OpDropFnRef"),
+    );
+    let guard = |c: &Value| -> Option<u16> {
+        if let Value::Call(op, a) = c.unspan()
+            && *op == distinct
+            && let Some(Value::Call(cl, b)) = a.first().map(Value::unspan)
+            && *cl == closure
+            && let Some(Value::Var(f)) = b.first().map(Value::unspan)
+        {
+            Some(*f)
+        } else {
+            None
+        }
+    };
+    match node.unspan() {
+        Value::If(c, t, e) => {
+            standdown_drops(data, c, guarded, out);
+            if let Some(f) = guard(c) {
+                guarded.push(f);
+                standdown_drops(data, t, guarded, out);
+                guarded.pop();
+            } else {
+                standdown_drops(data, t, guarded, out);
+            }
+            standdown_drops(data, e, guarded, out);
+        }
+        Value::Call(op, a)
+            if *op == drop
+                && matches!(a.first().map(Value::unspan), Some(Value::Var(f)) if guarded.contains(f)) =>
+        {
+            out.insert(std::ptr::from_ref(node) as usize);
+            out.insert(std::ptr::from_ref(node.unspan()) as usize);
+        }
+        _ => node.for_each_child(&mut |c| standdown_drops(data, c, guarded, out)),
+    }
+}
+
 fn closure_records(
     data: &Data,
     vars: &crate::variables::Function,

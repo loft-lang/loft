@@ -136,6 +136,11 @@ link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(ol
 `old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through
 the link gives a closure the frame wrote there before back to the frame, which releases it
 (`LOFT_RECORDS_NO_LINK_TAKE_BACK=1`).
+A fn-ref's `OpDropFnRef` runs its record's cascade (`LOFT_RECORDS_NO_DROP_FNREF_CASCADE=1`): it ends
+the capture slots the record type's live `_OpDropAll` frees (none for a retired one), except under the
+emitter's stand-down guard (`if OpDistinctStore(OpFnRefClosure(f), …)`) or while a `___clos_N` still names
+the record, where the record's own release is the cascade.  The shared detach also nulls a copy (`k = h`)
+wherever both names must-hold every store they name.
 A tuple member's free retires every work-ref an assignment made that member's claimant, where
 it still names the store (a loop drops the per-assignment claimant, `tuple_claimants`);
 `LOFT_NO_CLAIMANT_DISARM=1` leaves them naming it.  A collection a fn-ref call delivers into
