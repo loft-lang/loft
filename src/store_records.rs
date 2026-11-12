@@ -359,6 +359,13 @@ fn copy_alias() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_COPY_ALIAS").is_none())
 }
 
+/// `LOFT_RECORDS_NO_SLOT_NULL=1`: a null written into a capture slot leaves the slot as it was,
+/// and a presence test of a slot decides nothing (the records' bisect switch).
+fn slot_null() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_NULL").is_none())
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -2609,6 +2616,15 @@ impl Run<'_> {
                 {
                     return arms;
                 }
+                if (*op == self.ops.ref_present || *op == self.ops.ref_is_null)
+                    && let Some((present, null)) = self.slot_present_test(&a[0], &st)
+                {
+                    return if *op == self.ops.ref_present {
+                        (present, null)
+                    } else {
+                        (null, present)
+                    };
+                }
                 let Value::Var(x) = a[0].unspan() else {
                     return both(st);
                 };
@@ -3083,6 +3099,39 @@ impl Run<'_> {
     /// where it holds, the slot names none of its stores that is freed on every path or was
     /// never made — the free it guards cannot reach one (`LOFT_RECORDS_NO_SLOT_LIVE_NARROW=1`).
     /// The other arm keeps the slot whole.
+    /// `OpConvBoolFromRef(OpGetDbRef(w, off))`: the (present, null) arms, decided by what the
+    /// slot may hold on this path — a store for the first, null for the second.  `None` where a
+    /// record `w` may name has no such slot followed.
+    fn slot_present_test(&self, arg: &Value, st: &State) -> Option<(Option<State>, Option<State>)> {
+        if !slot_null() {
+            return None;
+        }
+        let Value::Call(g, ga) = arg.unspan() else {
+            return None;
+        };
+        let (Some(Value::Var(w)), Some(off)) =
+            (ga.first().map(Value::unspan), Self::const_offset(ga.get(1)))
+        else {
+            return None;
+        };
+        if *g != self.ops.get_dbref {
+            return None;
+        }
+        let recs = Self::stores_of(&Self::pts(st, *w));
+        let mut held: Vec<&Pts> = Vec::new();
+        for k in &recs {
+            held.push(&st.slots.get(k)?.get(&off)?.pts);
+        }
+        if held.is_empty() {
+            return None;
+        }
+        let may_store = held
+            .iter()
+            .any(|p| p.iter().any(|q| matches!(q, Pt::Store(_) | Pt::Param(_))));
+        let may_null = held.iter().any(|p| p.is_empty() || p.contains(&Pt::Null));
+        Some((may_store.then(|| st.clone()), may_null.then(|| st.clone())))
+    }
+
     fn slot_live_test(&self, arg: &Value, st: &State) -> Option<(Option<State>, Option<State>)> {
         let Value::Call(g, ga) = arg.unspan() else {
             return None;
@@ -4224,6 +4273,31 @@ impl Run<'_> {
             if let Some(merged) = merged {
                 for k in Self::stores_of(&Self::pts(&s, dst)) {
                     s.slots.insert(k, merged.clone());
+                }
+            }
+        }
+        // A null written into a capture slot (`OpSetDbRef(w, off, OpNullRefSentinel())`, a
+        // stand-down letting a record give up its capture): the slot holds null from here.
+        if d == ops.set_dbref
+            && slot_null()
+            && let Some(value) = vals.get(2)
+            && !value
+                .pts
+                .iter()
+                .any(|p| matches!(p, Pt::Store(_) | Pt::Param(_) | Pt::Unknown))
+            && let Some(w) = Self::first_var(args, 0)
+            && let Some(off) = Self::const_offset(args.get(1))
+        {
+            let recs = Self::stores_of(&Self::pts(&s, w));
+            let strong = recs.len() == 1;
+            for k in recs {
+                if let Some(v) = s.slots.get_mut(&k).and_then(|m| m.get_mut(&off)) {
+                    if strong {
+                        v.pts = [Pt::Null].into();
+                        v.corr.clear();
+                    } else {
+                        v.pts.insert(Pt::Null);
+                    }
                 }
             }
         }
