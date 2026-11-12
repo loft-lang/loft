@@ -115,8 +115,8 @@ can measure differently in two programs. A store written by one program is reada
               the rule reaches them, and reserving `i32::MIN` is allowed because it costs one
               value in 2^32 and buys the only narrow type whose overflow is detectable
               ([@C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)
-              § Decision).  `u32` reserves a code too and takes the DEFAULT, so the exemption
-              is not a line to extend.  Where the language can
+              § Decision).  The exemption is not a line to extend: `u32`, `u8` and every
+              other narrow alias hold their whole width and take the DEFAULT.  Where the language can
               demand the author say what an unfitting value becomes it refuses instead; where it
               cannot — the compound step `x += n`, whose written-out form IS refused — the
               default is the fallback and the `narrow-fallback` advice says so.

@@ -2300,8 +2300,7 @@ impl Stores {
     }
 
     /// 4-byte UNSIGNED integer field type — a range that is non-negative and runs past
-    /// `i32::MAX` (`u32`).  Stored raw, no shift; `u32::MAX` reserved as the null
-    /// sentinel, which is why `u32` is declared `limit(0, 4294967294)`.
+    /// `i32::MAX` (`u32`).  Stored raw, no shift; a `u32?` slot keeps `u32::MAX` for null.
     ///
     /// The 4-byte twin of [`Stores::short_raw`].  A slot picks between this and
     /// [`Stores::int`] through [`crate::narrow::NarrowIntKind::part`], never by re-asking

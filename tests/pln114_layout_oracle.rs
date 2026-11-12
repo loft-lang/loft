@@ -113,7 +113,7 @@ fn loft_type_name(kind: &str) -> String {
         "i16" => "integer(-32768, 32767)".into(),
         "i32" | "integer" => "integer".into(),
         "text" => "text".into(),
-        "u32" => "integer(0, 4294967294)".into(),
+        "u32" => "integer(0, 4294967295)".into(),
         other => other.into(),
     }
 }

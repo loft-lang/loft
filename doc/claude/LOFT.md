@@ -188,7 +188,7 @@ u16   // integer limit(0, 65535)            — 2 bytes unsigned
 i16   // integer limit(-32768, 32767)       — 2 bytes signed
 i32   // integer (explicit 32-bit)          — 4 bytes signed, -2147483647..=2147483647
       //                                      (i32::MIN is the null sentinel, not a value)
-u32   // integer limit(0, 4_294_967_294)    — 4 bytes unsigned (post-2a)
+u32   // integer limit(0, 4_294_967_295)    — 4 bytes unsigned
 ```
 
 **Nullable narrow fields reserve one code for null** (#334).  The convention runs through every width:
@@ -197,7 +197,8 @@ u32   // integer limit(0, 4_294_967_294)    — 4 bytes unsigned (post-2a)
   byte's 256th code is the null sentinel;
 - a nullable `u16` field holds **65 535** distinct values — one short code
   is the sentinel (the `+1` storage encoding reserves raw `0`);
-- `u32` covers `0 ..= 4_294_967_294` — one 32-bit code reserved.
+- a nullable `u32` holds `0 ..= 4_294_967_294` — the top 32-bit code is the
+  null sentinel; a non-null `u32` holds all of `0 ..= 4_294_967_295`.
 
 The reserved code is expressed in the effective `min`/`max` of the integer
 type behind the field, and the read/write contract is symmetric: reading a

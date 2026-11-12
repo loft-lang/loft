@@ -296,3 +296,16 @@ Scope per step:
 Total realistic: **one focused day**, down from the earlier "two days"
 estimate — the step decomposition removes the speculative overhead.
 
+
+## #1031 — `u32` one short of its name (until 2026-11-12)
+
+**#1031 — `u32` is one short of its name, by construction.** The local and the field agree
+now. `u32 = 4294967295` is still refused: `default/01_code.loft` declares `u32` as
+`integer limit(0, 4294967294) size(4)`, keeping the top code back — and per the table above
+that reserved code is the one no non-null read tests for, so it buys the refusal without
+buying a null — and since @C127 no declared range buys one, whichever end its spare code
+sits at. The 2026-08 changelog line "`u32` finally holding every `u32`" overstated the
+fix, and is corrected.
+
+Since 2026-11-12 `u32` is `limit(0, 4294967295) size(4)`: the whole width, and `u32?` keeps
+the top code for its null as `u8?` does.

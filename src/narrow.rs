@@ -495,9 +495,9 @@ impl IntegerSpec {
     /// into an `i: integer` field reads null with nothing reported (@C85), and the lint called
     /// the only test that sees it always false.  The width families above are the whole answer.
     ///
-    /// ⚠ Do NOT re-derive clause 1 from "which code the type kept back".  `u32` keeps one
-    /// too — `limit(0, 4294967294) size(4)`, at the top of its range, which is what refuses
-    /// `u32 = 4294967295` — and it is in clause 2.  The reason `i32` is in clause 1 is that
+    /// ⚠ Do NOT re-derive clause 1 from "which code the type kept back".  A declared range can
+    /// keep one too (`limit(-100, 100) size(1)` leaves 55 codes spare) and is in clause 2.
+    /// The reason `i32` is in clause 1 is that
     /// the owner allowed the exemption on COST (one value in 2^32, for the only narrow type
     /// whose overflow is detectable), so this boundary moves by decision and not by a fact
     /// about representations (C127 § Decision; `tests/scripts/1615-…`'s `templates()` row
@@ -539,10 +539,12 @@ impl IntegerSpec {
         // Only a FIXED-width (`forced_size`) field can't widen to make room — an
         // un-annotated `limit(...)` instead widens via `range_to_width(+nullable)`,
         // so it never reaches here needing a sacrifice.  Reduce iff the range fills
-        // the fixed 1- or 2-byte width (256 / 65536 codes).
+        // the fixed 1-, 2- or 4-byte width (256 / 65536 / 2^32 codes): `u32?` keeps the top
+        // code for null as `u8?` does.
         match self.forced_size.map(NonZeroU8::get) {
             Some(1) => self.range() == 256,
             Some(2) => self.range() == 65_536,
+            Some(4) => self.range() == 1i64 << 32,
             _ => false,
         }
     }

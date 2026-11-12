@@ -156,7 +156,7 @@ fn the_layouts_are_the_hand_computed_ones() {
     // padded to 8 — the size of `struct { a: u8, b: u32, c: u16 }`.
     assert_eq!(size("__tuple<integer(0, 255),integer(0, 65535)>"), 4);
     assert_eq!(
-        size("__tuple<integer(0, 255),integer(0, 4294967294),integer(0, 65535)>"),
+        size("__tuple<integer(0, 255),integer(0, 4294967295),integer(0, 65535)>"),
         8
     );
     // (text, integer): the integer at 0, the handle at 8 -> 12, padded to 16.

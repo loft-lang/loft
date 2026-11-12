@@ -3787,7 +3787,7 @@ mod tuple_stack_layout_tests {
             max: match bits {
                 1 => 255,
                 2 => 65535,
-                _ => 4_294_967_294,
+                _ => 4_294_967_295,
             },
             not_null: false,
             forced_size: std::num::NonZeroU8::new(bits),
@@ -14376,7 +14376,7 @@ impl Data {
             (-128, 127) => Some("i8"),
             (0, 65535) => Some("u16"),
             (-32768, 32767) => Some("i16"),
-            (0, 4_294_967_294) => Some("u32"),
+            (0, 4_294_967_295) => Some("u32"),
             _ if s.is_signed32_template() => Some("i32"),
             _ => None,
         };
