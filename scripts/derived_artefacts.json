@@ -99,12 +99,12 @@
       ],
       "check": "git fetch -q --depth=1 origin main && git diff --quiet FETCH_HEAD -- default/ || make -s surface-check",
       "regen": [
-        "git fetch -q --depth=1 origin main && git diff --quiet FETCH_HEAD -- default/ || { cargo build -q --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html && make -s surface-gen; }"
+        "git fetch -q --depth=1 origin main && git diff --quiet FETCH_HEAD -- default/ || make -s surface-gen"
       ],
       "ci": true,
       "job": "surface",
       "needs": ["wasm"],
-      "note": "a wasm32 build of the whole crate, so it runs only when default/ (where builtins and ops are declared) differs from main; the regen builds the `--html` rlib it probes itself (target/loft/html), as no restored cache is sure to carry it and the probe's self-test refuses a missing one; the PR's gallery job checks it on every change, after `make game` has built the same rlib"
+      "note": "a wasm32 build of the whole crate, so it runs only when default/ (where builtins and ops are declared) differs from main; the PR's gallery job checks it on every change, after `make game` has built the same rlib"
     },
     {
       "name": "browser-bundle",

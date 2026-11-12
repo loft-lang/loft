@@ -86,6 +86,11 @@ def extract() -> dict[str, list[str]]:
     return out
 
 
+# The probe's errors other than the absences it asks about (E0599), from its last run: what a
+# failed self-test prints, so the log names WHY the probe could not answer.
+LAST_PROBE_ERRORS: list[str] = []
+
+
 def missing_methods(methods: list[str], target: dict[str, str]) -> set[str]:
     """Methods absent on `target`, per rustc. Empty when the probe compiles clean."""
     rlib_dir = ROOT / target["rlib"]
@@ -129,8 +134,16 @@ def missing_methods(methods: list[str], target: dict[str, str]) -> set[str]:
             ],
             capture_output=True, text=True, check=False,
         )
+    global LAST_PROBE_ERRORS
+    LAST_PROBE_ERRORS = []
     absent: set[str] = set()
     for line in proc.stderr.splitlines():
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if d.get("level") == "error" and (d.get("code") or {}).get("code") != "E0599":
+            LAST_PROBE_ERRORS.append(d.get("rendered") or d.get("message", ""))
         try:
             msg = json.loads(line).get("message", "")
         except json.JSONDecodeError:
@@ -183,7 +196,8 @@ def self_test() -> None:
     if sentinel not in absent:
         sys.exit(
             "SELF-TEST FAILED: the probe did not report a method that cannot exist, so an "
-            "empty 'unavailable' list proves nothing. Fix the probe before trusting it."
+            "empty 'unavailable' list proves nothing. Fix the probe before trusting it.\n"
+            "rustc said:\n" + "\n".join(LAST_PROBE_ERRORS[:5])
         )
     # …and that a method which DOES exist is not reported (no false positives).
     if missing_methods(["load_bytes"], target):
