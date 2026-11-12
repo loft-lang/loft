@@ -6276,7 +6276,8 @@ impl<'a> FnWriter<'a> {
             || crate::keys::c_own_call_copy()
             || matches!(
                 crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).arm,
-                crate::bind_lowering::ReArm::CallCopy { .. } | crate::bind_lowering::ReArm::Join { .. }
+                crate::bind_lowering::ReArm::CallCopy { .. }
+                    | crate::bind_lowering::ReArm::Join { .. }
             );
         if rebind_copies && let Some((tp, frees)) = self.call_copy(var, x) {
             self.set_arm(if frees { "call-copy-free" } else { "call-copy" });

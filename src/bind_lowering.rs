@@ -752,9 +752,22 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // names the hidden return buffer, which the proxy reads as a borrow, while each
     // arm's bind copies into the temp (that is what the write-out is for), so the
     // temp owns what the arm displaces — the sentinel its pre-init put there.
+    // An ARGUMENT frees what it displaces only with an entry witness, which tells the caller's
+    // store from one this frame minted (`@FR-O-Buffer`).  Without one the release is the scope
+    // pass's own: a rebound by-value parameter is detached in the IR before each rebind
+    // (`OpFreeRefIfDistinct(p, snapshot)` and its reset to the sentinel), so a free here would
+    // act on the sentinel — the C writer's `displacing_rebind` frees no such argument either.
+    // @PLN220.  `LOFT_ARG_DISPLACED_FREE=1` keeps the free for every argument but the hidden
+    // buffer, as before.
+    // Only the free BEFORE the bind is the scope pass's: `owned_ref` still decides the copy arms
+    // below, since a rebound parameter that owns its binding copies a call's answer as any owner
+    // does, and a stashed free (the value reads the parameter, or it is nullable) still runs —
+    // it is what the copy arms' fresh-store choice reads (#360).
     let owned_ref = (function.owns_displaced_store(v, value, data)
         || is_return_temp_owning_its_arms(data, d_nr, function, v))
         && (!is_hidden_buf_arg || entry_w.is_some());
+    let frees_displaced = owned_ref
+        && (crate::keys::arg_displaced_free() || !function.is_argument(v) || entry_w.is_some());
     // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
     // container's backing store (a vector element / nested field), so
     // the new value can land in the SAME store as v's old value —
@@ -834,7 +847,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
             || rhs_reads_a_view_of(function, value, v))
     {
         DisplacedFree::Stash
-    } else if owned_ref && !s1_substituted {
+    } else if frees_displaced && !s1_substituted {
         let witness = if crate::keys::displaced_witness_enabled() {
             crate::use_analysis::projection_container_var(data, value)
         } else {

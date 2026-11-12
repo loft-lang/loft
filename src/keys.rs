@@ -3631,6 +3631,15 @@ pub fn c_own_call_copy() -> bool {
     *ON.get_or_init(|| env_set("LOFT_C_OWN_CALL_COPY"))
 }
 
+/// `LOFT_ARG_DISPLACED_FREE=1` — a rebound argument without an entry witness frees the store it
+/// displaces again in `bind_lowering::re_bind` (a free on the sentinel the scope pass's detach
+/// left; @PLN220's A/B).
+#[must_use]
+pub fn arg_displaced_free() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_ARG_DISPLACED_FREE"))
+}
+
 /// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
 /// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
 #[must_use]
