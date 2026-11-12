@@ -2150,8 +2150,7 @@ impl Run<'_> {
                 if same_pts != a {
                     Self::narrow(&mut same, *x, same_pts);
                 }
-                let distinct = Self::distinct_narrowed(args, *x, &a, st);
-                (Some(distinct), Some(same))
+                (Self::distinct_narrowed(args, *x, &a, st), Some(same))
             }
             _ => (Some(st.clone()), Some(st)),
         }
@@ -2159,8 +2158,10 @@ impl Run<'_> {
 
     /// The DISTINCT arm of `OpDistinctStore(x, w)`: `x` names no store the witness holds
     /// wherever it is live, as `x` does, since there the two are one store (`__ref_p2_1` and
-    /// the tuple member `b.0` it built, after a loop that ran no pass).
-    fn distinct_narrowed(args: &[Value], x: u16, a: &Pts, st: State) -> State {
+    /// the tuple member `b.0` it built, after a loop that ran no pass).  Where the witness
+    /// alone holds such a store, `x` names it only where it is live, so there too the two are
+    /// one store.  Where that rules out every store `x` names, the arm cannot run.
+    fn distinct_narrowed(args: &[Value], x: u16, a: &Pts, st: State) -> Option<State> {
         let w = args.get(1).and_then(|v| Self::named_var(&st, v));
         let distinct_pts: Pts = a
             .iter()
@@ -2168,16 +2169,21 @@ impl Run<'_> {
             .filter(|p| match (p, w) {
                 (Pt::Store(k), Some(w)) => {
                     let info = info_of(&st, *k);
-                    !(info.has(LIVE) && info.live.contains(&x) && info.live.contains(&w))
+                    !(info.has(LIVE)
+                        && info.live.contains(&w)
+                        && (info.live.contains(&x) || !info.has(ENDED)))
                 }
                 _ => true,
             })
             .collect();
+        if distinct_pts.is_empty() {
+            return None;
+        }
         let mut distinct = st;
-        if distinct_pts != *a && !distinct_pts.is_empty() {
+        if distinct_pts != *a {
             Self::narrow(&mut distinct, x, distinct_pts);
         }
-        distinct
+        Some(distinct)
     }
 
     /// On a path where `x` is known to name only `to`: a store it no longer names, and that
