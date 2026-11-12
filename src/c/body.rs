@@ -6116,10 +6116,6 @@ impl<'a> FnWriter<'a> {
         Some(self.lazy_split_bind(var, &ls, x, ind))
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm per kind of bind; the rewritten binds are already helpers"
-    )]
     /// One assignment; under `LOFT_TRACE_BIND_C=<file>` also one row naming the lowering it
     /// took, in the interpreter's `LOFT_TRACE_BIND` form (`function⇥variable⇥first|re⇥arm`), so
     /// the two writers' choices can be compared row by row (STORE_RECORDS.md § Phases, 2).
@@ -6147,6 +6143,10 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind of bind; the rewritten binds are already helpers"
+    )]
     fn set_stmt_arms(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
         if self.vr.is_some()
             && let Some(r) = self.vr_set(var, x, ind)
