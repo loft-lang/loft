@@ -336,9 +336,11 @@ impl Output<'_> {
             // (`old_stash_var`, the `_old_` stash's own rule): `d = through(null)` freed it
             // twice (N-Store/1997 `h4`).
             let outer_stash = self.old_stash_var.replace(var);
+            self.call_bind_declined = false;
             self.output_set_inner(w, var, to)?;
             self.old_stash_var = outer_stash;
             let copied = std::mem::take(&mut self.call_bind_owns);
+            let declined = std::mem::take(&mut self.call_bind_declined);
             write!(
                 w,
                 // Clear the tracker only on the branch that actually freed.  A
@@ -360,6 +362,25 @@ impl Output<'_> {
             // copy lands in a FRESH store, and a tracker left null releases nobody.
             if copied || self.materialises_element(var, to) {
                 write!(w, " _own_store_{name} = var_{name};")?;
+            } else if declined {
+                // The call's answer was bound plain (`call_bind_taken`): it is this local's own
+                // store unless it is one of the call's other reference arguments' (a view the
+                // callee handed back), so the tracker takes it exactly then, as the copy arm's
+                // `call_bind_owns` would have.
+                let mut keep = vec![format!("var_{name}.store_nr != u16::MAX")];
+                for a in crate::use_analysis::protectable_ref_args(self.data, self.def_nr, to).0 {
+                    if a != var && !self.value_record_locals.contains_key(&a) {
+                        keep.push(format!(
+                            "var_{name}.store_nr != var_{}.store_nr",
+                            sanitize(variables.name(a))
+                        ));
+                    }
+                }
+                write!(
+                    w,
+                    " if {} {{ _own_store_{name} = var_{name}; }}",
+                    keep.join(" && ")
+                )?;
             }
             write!(w, " }}")?;
             {
@@ -457,6 +478,31 @@ impl Output<'_> {
             )?;
         }
         Ok(())
+    }
+
+    /// Does a bind reaching the call-return arm take its runtime copy-or-adopt?  A FIRST bind
+    /// does; a REASSIGNMENT only where `bind_lowering::re_bind` copies (R2b) or joins (R1), as
+    /// the bytecode and C writers do — any other binds the call's answer plain, and
+    /// `owned_ref_reassign` releases what it displaces where `re_bind` frees.  A declined bind
+    /// is noted (`call_bind_declined`) so an owner witness takes the answer as its own where it
+    /// is no other argument's store.  @PLN220.  `LOFT_NATIVE_OWN_CALL_BIND=1` takes the arm for
+    /// every reassignment again.
+    fn call_bind_taken(&mut self, var: u16, to: &Value) -> bool {
+        let variables = self.data.def(self.def_nr).variables();
+        // A deferred first bind (the one bind after an `if` pre-init) is a reassignment to
+        // `re_bind` too, which decides it for the bytecode writer.
+        let reassignment = self.declared.contains(&var) && !self.predeclared.contains(&var);
+        if !reassignment || crate::keys::native_own_call_bind() {
+            return true;
+        }
+        let taken = matches!(
+            crate::bind_lowering::re_bind(self.data, self.def_nr, variables, var, to).arm,
+            crate::bind_lowering::ReArm::CallCopy { .. } | crate::bind_lowering::ReArm::Join { .. }
+        );
+        if !taken {
+            self.call_bind_declined = true;
+        }
+        taken
     }
 
     /// The call's buffer argument where `var = to` adopts the store the callee minted onto it
@@ -600,7 +646,12 @@ impl Output<'_> {
                 && (crate::keys::native_own_displaced_free()
                     || crate::bind_lowering::re_bind(self.data, self.def_nr, variables, var, to)
                         .free
-                        != crate::bind_lowering::DisplacedFree::None);
+                        != crate::bind_lowering::DisplacedFree::None)
+                // An outer stash already releases what this bind displaces — the owner
+                // witness's `_disp_<v>` (`output_set_witnessed`) — so this one, the `_old_<v>`
+                // stash, frees nothing more: the stash's own rule (`old_stash_var`), which the
+                // call arm inside it already keeps.
+                && self.old_stash_var != Some(var);
             if owned_ref_reassign {
                 let name = sanitize(variables.name(var));
                 // For a witnessed retbuf-attr, also exclude the caller's entry
@@ -1651,6 +1702,7 @@ impl Output<'_> {
                 && !self.predeclared.contains(&var)
                 && !variables.is_deferred_first_bind(var))
                 || !crate::use_analysis::adopts_minted_at_bind(self.data, variables, var, to))
+            && self.call_bind_taken(var, to)
         {
             let tp_nr = self.data.def(d_nr).known_type();
             let tp_lit = self.type_lit(tp_nr);

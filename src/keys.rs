@@ -3685,6 +3685,15 @@ pub fn native_own_displaced_free() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_DISPLACED_FREE"))
 }
 
+/// `LOFT_NATIVE_OWN_CALL_BIND=1` — the rustc writer takes its runtime copy-or-adopt for every
+/// reassignment from a call again, instead of only where `bind_lowering::re_bind` copies or joins
+/// (@PLN220's A/B).
+#[must_use]
+pub fn native_own_call_bind() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_CALL_BIND"))
+}
+
 /// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
 /// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
 #[must_use]

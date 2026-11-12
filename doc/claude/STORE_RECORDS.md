@@ -444,12 +444,11 @@ displaced free waits until after the bind, joins too when
 the value is a call that does not read it, with its slot reset first so the copy arm mints a
 store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  The rustc writer reads it for whether a reassignment frees what it displaces
 (`LOFT_NATIVE_OWN_DISPLACED_FREE=1` gives it back its own test); its trace names its exits
-(`rs-call-bind`, `rs-var-copy`, `rs-value-record`, `rs-tail` for the plain bind).  Open: about
-160 reassignments `re_bind` binds plainly (R3: lift temporaries, `t = f(t)`) still take
-`rs-call-bind`, whose copy-or-adopt also keeps a tracked local's owned-store tracker
-(`_own_store_<v>`); routed to the plain bind, a tracked local's fresh store had no release left
-(B-Copy's record-local-first-bound cell leaked 8 records), so that family waits on the tracker
-following the plain bind.  A writer row's `lowering=` asks
+(`rs-call-bind`, `rs-var-copy`, `rs-value-record`, `rs-tail` for the plain bind).  A reassignment `re_bind` binds plainly takes the rustc writer's plain bind too, not its
+runtime copy-or-adopt (`call_bind_taken`; `LOFT_NATIVE_OWN_CALL_BIND=1` gives the arm back): an
+owner witness then takes the answer as its own where it is no other argument's store
+(`call_bind_declined`), and the plain bind's `_old_` stash stands down where the witness's
+`_disp_` stash already releases the displaced store (`old_stash_var`).  A writer row's `lowering=` asks
 `bind_lowering` over the IR the writer reads; the bytecode writer changes some variables' deps
 while it generates, so its own row can answer differently for the same assignment — the census
 pairs against that row, never the `lowering=` field.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
