@@ -114,18 +114,16 @@ pub fn set_par_trace(on: bool) {
 /// switch, or (native only) by `LOFT_TRACE_PAR_WORKERS` read once.  Off ⇒ the
 /// dispatch chokepoint stays allocation-free.
 pub(crate) fn par_trace_enabled() -> bool {
-    if PAR_TRACE_ON.load(std::sync::atomic::Ordering::Relaxed) {
-        return true;
-    }
+    let armed = PAR_TRACE_ON.load(std::sync::atomic::Ordering::Relaxed);
     #[cfg(not(feature = "wasm"))]
     {
         use std::sync::OnceLock;
         static ON: OnceLock<bool> = OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("LOFT_TRACE_PAR_WORKERS").is_some())
+        armed || *ON.get_or_init(|| std::env::var_os("LOFT_TRACE_PAR_WORKERS").is_some())
     }
     #[cfg(feature = "wasm")]
     {
-        false
+        armed
     }
 }
 

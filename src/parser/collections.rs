@@ -5359,7 +5359,6 @@ use #count instead"
 
     // Desugar `for a in vec par(b = worker(a), N) { body }` into an
     // index-based loop over the `parallel_for` result vector.
-    #[allow(clippy::too_many_arguments)]
     /// `elem_var` is the name this loop BINDS, `src_elem_var` the name the program wrote
     /// — they differ from the second loop over a name onward (loft#915).
     #[allow(clippy::too_many_arguments)]

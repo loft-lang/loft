@@ -10688,14 +10688,9 @@ impl Data {
                 // a swept type is no longer unresolved.  That silently produced an
                 // unpromoted `-> (integer, ref(Q))` — which the interpreter tolerated and
                 // `--native` read back as 0.  Sweep only what pass 2 does NOT recompute.
-                let n_attrs = self.definitions[d_nr].attributes.len();
-                for a_nr in 0..n_attrs {
-                    if let Some(new_ty) = Self::rewrite_type_opt(
-                        &self.definitions[d_nr].attributes[a_nr].typedef,
-                        stub_nr,
-                        &target,
-                    ) {
-                        self.definitions[d_nr].attributes[a_nr].typedef = new_ty;
+                for attr in &mut self.definitions[d_nr].attributes {
+                    if let Some(new_ty) = Self::rewrite_type_opt(&attr.typedef, stub_nr, &target) {
+                        attr.typedef = new_ty;
                     }
                 }
                 // …and the function's variable table, which the two-pass parser
@@ -13753,14 +13748,9 @@ impl Data {
             {
                 self.definitions[d_nr].returned = new_ret;
             }
-            let n_attrs = self.definitions[d_nr].attributes.len();
-            for a_nr in 0..n_attrs {
-                if let Some(new_ty) = Self::rewrite_type_opt(
-                    &self.definitions[d_nr].attributes[a_nr].typedef,
-                    stub_nr,
-                    &target_type,
-                ) {
-                    self.definitions[d_nr].attributes[a_nr].typedef = new_ty;
+            for attr in &mut self.definitions[d_nr].attributes {
+                if let Some(new_ty) = Self::rewrite_type_opt(&attr.typedef, stub_nr, &target_type) {
+                    attr.typedef = new_ty;
                 }
             }
         }

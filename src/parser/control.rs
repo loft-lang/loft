@@ -9577,7 +9577,6 @@ impl Parser {
     /// (Phase 4.3 step 5).  Reads from the subject SOURCE var `v` (not the `_match_subj` copy),
     /// matching the `x = v[lo..hi]` path.  Pushes the materialisation into `bindings`.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn materialize_named_rest(
         &mut self,
         v: u16,
@@ -10040,7 +10039,6 @@ impl Parser {
     /// lexer is at the `(`; consumes through `]`.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    #[allow(clippy::too_many_arguments)]
     fn parse_slice_repetition(
         &mut self,
         e_nr: u32,
@@ -10674,7 +10672,6 @@ impl Parser {
     /// Phase 4.3 step 5 (deferred here with a diagnostic).
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    #[allow(clippy::too_many_arguments)]
     fn parse_multi_element_alternation(
         &mut self,
         e_nr: u32,

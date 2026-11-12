@@ -10600,7 +10600,7 @@ extern crate loft;"
     /// Dispatches on the field's `typedef` to produce the correct `db.*` call.
     /// `s_var` is the Rust variable holding the parent struct's runtime id
     /// (e.g. `t59` for `known_type=59`).
-    #[allow(clippy::too_many_arguments)]
+    ///
     /// Register one field in the generated `init()`, then — @PLN127 arc D —
     /// replay the nullability deposit beside it.
     ///
