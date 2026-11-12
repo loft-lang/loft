@@ -283,7 +283,7 @@ LOFT_NO_CACHE=1 python3 scripts/own_sweep.py --loft <bin> --oracle check-records
 | series 2026-11-12 (8 commits on 91-self-host 8f7c1c9e0) | 50 → 36 | 6 | 2 (7, 8 below) |
 | series 2026-11-12, continued (loft2 and loft3-c1, on 91-self-host 7e2d72225 + the snapshot patch) | 36 → 6 | 17 (the 16 store_records.rs fixes 15caa3c50..7e2d72225, and the snapshot patch) | 3 (9–11 below) |
 | loop fixes 2026-11-12 (91-self-host f1df5b9a6 + B + D) | 6 → 5 (1643 runs; 4 new cells) | 1 (stale names, loft3-c1) | 4 (12–15 below) |
-| records series 2026-11-12 night (91-self-host 6231ed152..7523ed7ad + patches-it) | 4 → 2 | 6 (copy alias, slot null, uncaptured `live_some`, sole slot holder, identity test no use; loft3-c1's null-copy join) | 1 (16 below, E) |
+| records series 2026-11-12 night (91-self-host 6231ed152..f13d5ce40 + patches-kd) | 4 → 0 | 6 (copy alias, slot null, uncaptured `live_some`, sole slot holder, identity test no use; loft3-c1's null-copy join) | 1 (16 below, E) |
 
 The real defects the checker found first:
 
@@ -470,7 +470,12 @@ Checker MISSes closed (each a defect the checker must report with its cure off):
   the store's sole holder.  Switches `LOFT_RECORDS_NO_SLOT_CORR_JOIN`,
   `LOFT_RECORDS_NO_SLOT_CORR_NARROW`, `LOFT_RECORDS_NO_SLOT_DEAD_ARM`.
 
-Open (one cell, a records gap, loft3-c1's cover design): L-CapKeep/1636 `c6` (`c8` cleared by
-the cover).  The function is right and clean at 0..3 passes on both backends, under poison, the
-leak check and the re-free gate, in the plain-copy and `keep(f)` spellings; the records flag the
-plain copy `g = f` only.
+- **A keep temporary's drop read as the emitter's stand-down drop** (L-CapKeep/1636 `c6`): a
+  plain copy keeps the record each pass, so the old record leaves through closure_keep's
+  `__fkeep_N` drop, whose cascade releases the pass's capture.  The stand-down collector skipped
+  every guarded `OpDropFnRef(f)`; a keep temporary's drop now cascades.  Switch
+  `LOFT_RECORDS_NO_KEEP_DROP_CASCADE`.
+
+Open: none.  The clean sweep is CLEAN 1644/1644 (STATIC 0); the control has no MISS, matched
+catches 169 (the C cell's leak match was a false `one_loop` leak standing in for a leak that
+follows from the still-caught record re-free).
