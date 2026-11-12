@@ -2360,122 +2360,19 @@ jobs:
       pull-requests: write
     continue-on-error: true
     steps:
+      # The reporter is repo content (`.github/scripts/nightly-health.js`), shared with the
+      # PR-head nightly's own report job in miri.yml, so it has to be on disk to be required.
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
       - name: Sticky-comment the latest nightly health
         uses: actions/github-script@v7
         with:
           script: |
-            const marker = '<!-- nightly-status-comment -->';
-            let attentionNeeded = false;
-            try {
-              const icon = (c) => c === 'success' ? '✅'
-                : (c === 'skipped' || c === 'cancelled') ? '⤵️' : '❌';
-              const isBad = (j) => j.conclusion
-                && !['success', 'skipped', 'cancelled'].includes(j.conclusion);
-              // Ask for a WINDOW and pick the newest in it, rather than trusting
-              // position 0 of a one-item page.  GitHub's run-list endpoint can answer a
-              // STALE window at small `per_page`, and the staleness drifts rather than
-              // being a fixed offset — owner-measured 2026-08-19: `per_page=1` handed
-              // back a run from 08-07, `per_page=3` one from 08-15, `per_page=10` that
-              // day's own; re-queried an hour later all three answered 08-19.  So it is
-              // not reproducible on demand, which is exactly why position 0 cannot be
-              // trusted and `max(created_at)` over a window is the shape that holds
-              // whichever page the endpoint decides to serve.
-              //
-              // The cost of getting it wrong is not cosmetic: this reporter red-flagged
-              // a TWELVE-DAY-OLD macOS failure on every PR, one that eleven consecutive
-              // green scheduled runs had already superseded.  A health signal that cries
-              // wolf is one nobody reads.
-              const latestRun = async (workflow_id, extra) => {
-                const runs = await github.rest.actions.listWorkflowRuns({
-                  owner: context.repo.owner, repo: context.repo.repo,
-                  workflow_id, branch: context.payload.repository.default_branch,
-                  status: 'completed', per_page: 10, ...extra,
-                });
-                return runs.data.workflow_runs.reduce(
-                  (newest, r) => (!newest || r.created_at > newest.created_at ? r : newest),
-                  null,
-                );
-              };
-              const runJobs = async (run) => (await github.rest.actions.listJobsForWorkflowRun({
-                owner: context.repo.owner, repo: context.repo.repo,
-                run_id: run.id, per_page: 100,
-              })).data.jobs;
-              const sections = [];
-              // miri.yml nightly — few jobs, show each one.
-              const miri = await latestRun('miri.yml', {});
-              if (miri) {
-                const jobs = await runJobs(miri);
-                if (jobs.some(isBad)) attentionNeeded = true;
-                sections.push(`**miri nightly** (${miri.created_at.slice(0, 10)}): `
-                  + jobs.map((j) => `${icon(j.conclusion)} ${j.name}`).join(' · ')
-                  + ` — [run #${miri.run_number}](${miri.html_url})`);
-              }
-              // @PLN117 browser-threading gates (browser-threads.yml, nightly +
-              // on threading-surface pushes) — the only place `par` on real Web
-              // Worker threads is proven, so a red there is invisible anywhere
-              // else.  Tolerates a missing workflow (not yet on main, renamed)
-              // instead of losing the whole report to a 404.
-              let threads = null;
-              try { threads = await latestRun('browser-threads.yml', {}); } catch (e) { /* not on main yet */ }
-              if (threads) {
-                const jobs = await runJobs(threads);
-                if (jobs.some(isBad)) attentionNeeded = true;
-                sections.push(`**browser threading** (${threads.created_at.slice(0, 10)}): `
-                  + jobs.map((j) => `${icon(j.conclusion)} ${j.name}`).join(' · ')
-                  + ` — [run #${threads.run_number}](${threads.html_url})`);
-              }
-              // Scheduled daily full-matrix CI — the only place Windows runs.
-              // ~20 jobs, so name the failures and count the rest.
-              const daily = await latestRun('ci.yml', { event: 'schedule' });
-              if (daily) {
-                const jobs = await runJobs(daily);
-                const bad = jobs.filter(isBad);
-                if (bad.length) attentionNeeded = true;
-                const okCount = jobs.filter((j) => j.conclusion === 'success').length;
-                sections.push(`**daily full CI incl. Windows** (${daily.created_at.slice(0, 10)}): `
-                  + (bad.length
-                    ? bad.map((j) => `❌ ${j.name}`).join(' · ') + ` · ✅ ${okCount} green`
-                    : `✅ all ${okCount} jobs`)
-                  + ` — [run #${daily.run_number}](${daily.html_url})`);
-              }
-              let body;
-              if (!sections.length) {
-                body = `${marker}\n🌙 **Nightly health** — no completed nightly run yet. `
-                  + `Informational; not a merge gate.`;
-              } else {
-                body = `${marker}\n🌙 **Nightly health**: `
-                  + `${attentionNeeded ? '⚠️ needs attention' : 'all clear'}\n\n`
-                  + sections.join('\n')
-                  + `\n\nPer-*job* status (sees through the toolchain matrix's `
-                  + `\`continue-on-error\`). Informational; **not a merge gate**.`;
-              }
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: context.issue.number, per_page: 100,
-              });
-              const existing = comments.find((c) => c.body && c.body.includes(marker));
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner, repo: context.repo.repo,
-                  comment_id: existing.id, body,
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner, repo: context.repo.repo,
-                  issue_number: context.issue.number, body,
-                });
-              }
-              // A red nightly must be VISIBLE, not just a comment: the
-              // nightly sat red for 10+ straight days (June 2026) and the
-              // sticky comment alone never made anyone look.  Failing this
-              // job paints a red ❌ on every PR's checks list until the
-              // nightly is fixed — it is NOT in the required-checks set
-              // (and the job is continue-on-error), so it never blocks a
-              // merge; it just refuses to be ignored.
-              if (attentionNeeded) {
-                core.setFailed('Latest nightly on main is RED — see the sticky comment for the failing jobs.');
-              }
-            } catch (e) {
-              // Informational only — never fail the PR over a reporting hiccup.
-              core.warning(`nightly-status reporter skipped: ${e.message}`);
-            }
+            const health = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-health.js`);
+            await health.report({ github, context, core }, {
+              prNumber: context.issue.number,
+              headSha: context.payload.pull_request.head.sha,
+              failOnRed: true,
+            });

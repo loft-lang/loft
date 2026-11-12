@@ -66,6 +66,14 @@ on:
   schedule:
     - cron: '0 4 * * *'        # nightly 04:00 UTC
   workflow_dispatch:
+    inputs:
+      # The PR-head nightly (DEVELOPMENT.md § The PR-head nightly): dispatched on a PR's
+      # branch, it runs only the jobs a pull_request run skips — the rest ran in the PR's own
+      # CI on the same commit — and reports on the PR (`pr-head-report`).
+      pr_head:
+        description: 'Run only the jobs a PR skips, and report on the PR whose head this is'
+        type: boolean
+        default: false
   # Called by `release-gate.yml`: one deliberate run of every nightly against ONE
   # commit, ending in one verdict (the release evidence — RELEASE.md § The nightlies).
   # A called workflow sees its CALLER's event, which is a dispatch or a probe push and
@@ -218,6 +226,8 @@ jobs:
           fi
 
   miri:
+    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
+    if: ${{ !inputs.pr_head }}
     # @windows-exempt: a Linux-only tool-class interpreter (Miri over the unsafe store code, which has no Windows branch); the macOS leg shows portability
     # @nightly-class: unsound — hard UB — alignment, OOB, UAF, uninit
     name: Miri hard-UB gate (${{ matrix.os }})
@@ -318,6 +328,8 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   asan:
+    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
+    if: ${{ !inputs.pr_head }}
     # @windows-exempt: a Linux-only tool (AddressSanitizer); the defect class is platform-independent memory safety
     # @nightly-class: unsound — an out-of-bounds or use-after-free access
     name: ASan UAF/OOB sweep (${{ matrix.os }})
@@ -616,6 +628,8 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   poison:
+    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
+    if: ${{ !inputs.pr_head }}
     # @windows-exempt: a platform-independent invariant sweep (arena use-after-free); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a store-internal use-after-free the allocator hides
     name: LOFT_POISON arena-UAF gate (store-internal use-after-free)
@@ -696,6 +710,8 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   native-poison:
+    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
+    if: ${{ !inputs.pr_head }}
     # @windows-exempt: a platform-independent invariant sweep (arena use-after-free, --native); the native corpus runs on windows-latest daily
     # @nightly-class: unsound — a store use-after-free or leak the --native backend alone makes
     name: LOFT_POISON + leak gate on the --native corpus
@@ -855,6 +871,8 @@ jobs:
           python scripts\c_sweep.py --verbose --mode default --shard ${{ matrix.shard }}/6
 
   poison-claim:
+    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
+    if: ${{ !inputs.pr_head }}
     # @windows-exempt: a platform-independent invariant sweep (unwritten claims); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a read of memory nothing wrote, hidden by zero-filled claims
     name: LOFT_POISON_CLAIM gate (a claimed slot read before it is written)
@@ -917,6 +935,8 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   stack-shadow:
+    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
+    if: ${{ !inputs.pr_head }}
     # @windows-exempt: a platform-independent invariant sweep (stack slots); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a frame slot nobody wrote, mistyped, or stale
     name: LOFT_VERIFY_STACK gate (a frame slot nobody wrote, mistyped, or stale)
@@ -995,6 +1015,8 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   tsan:
+    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
+    if: ${{ !inputs.pr_head }}
     # @windows-exempt: a Linux-only tool (ThreadSanitizer); data races are platform-independent
     # @nightly-class: unsound — a data race, which is UB and has no other coverage
     name: ThreadSanitizer (par/threading data-race gate)
@@ -1060,6 +1082,8 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   native-asan:
+    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
+    if: ${{ !inputs.pr_head }}
     # @windows-exempt: a Linux-only tool (AddressSanitizer on --native)
     # @nightly-class: unsound — an OOB / UAF store access the `--native` codegen emits
     name: Native-backend ASan (--native codegen)
@@ -1347,6 +1371,8 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   debug-asserts:
+    # A pull_request run has this job; a PR-head dispatch leaves it to that run.
+    if: ${{ !inputs.pr_head }}
     # @windows-exempt: a platform-independent invariant sweep (debug assertions); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a violated internal invariant
     name: Debug-assertions gate (loft's internal invariants)
@@ -1741,6 +1767,53 @@ jobs:
   # This job reads per-JOB conclusions (not the run status) and opens/updates ONE
   # deduped GitHub issue on any red gate, so a week of red nightlies is a single
   # tracked issue, not seven (and auto-resolves it when the gates go green again).
+  pr-head-report:
+    # @windows-exempt: a reporter that reads other jobs' results; it builds and runs nothing
+    # The PR-head nightly's verdict, on the PR it was dispatched for: the sticky comment the
+    # PR's `Nightly health` job writes (one script, `.github/scripts/nightly-health.js`), and
+    # the commit status `nightly / PR head` on the head commit, which a branch rule can
+    # require so auto-merge waits for it.
+    name: PR-head nightly report
+    if: always() && inputs.pr_head
+    needs: [stale-plans-audit, stale-claims, asan-leak-gate, c-sweep-unsound, c-sweep-platforms,
+            valgrind, release-gate-sweeps, audit, toolchain-matrix, index-hygiene, library-health]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+      - uses: actions/github-script@v7
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const sha = context.sha;
+            const results = JSON.parse(process.env.RESULTS);
+            const red = results.some((r) => r === 'failure' || r === 'cancelled');
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha, context: 'nightly / PR head',
+              state: red ? 'failure' : 'success',
+              target_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+              description: red ? 'a nightly job a PR skips is red on this commit'
+                : 'every nightly job a PR skips is green on this commit',
+            });
+            const prs = (await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner, repo, commit_sha: sha,
+            })).data.filter((p) => p.state === 'open' && p.head.sha === sha);
+            const health = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/nightly-health.js`);
+            for (const pr of prs) {
+              await health.report({ github, context, core }, {
+                prNumber: pr.number, headSha: sha, failOnRed: false,
+              });
+            }
+
   notify:
     # @windows-exempt: platform-free — writes an issue
     name: Nightly gate failure → tracked issue
