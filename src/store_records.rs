@@ -1028,6 +1028,41 @@ impl Run<'_> {
         }
     }
 
+    /// A closure record the function hands back takes what its slots hold to the caller, which
+    /// calls it there: a capture whose store this frame already released — ended on every path
+    /// where it exists — is read after its end by the caller (`@FR-L-CapOwn`; loft#2210's
+    /// owner-slot hand-off under `LOFT_NO_WRITE_OUT_NCC_ARM`).  Records inside records are
+    /// followed through their own slots.
+    fn leaving_captures(&mut self, s: &State, value: &Val) {
+        let mut todo: Vec<SKey> = Self::stores_of(&value.pts);
+        let mut seen: BTreeSet<SKey> = BTreeSet::new();
+        while let Some(rec) = todo.pop() {
+            if !seen.insert(rec) {
+                continue;
+            }
+            let Some(m) = s.slots.get(&rec) else {
+                continue;
+            };
+            for slot in m.values() {
+                for k in Self::stores_of(&slot.pts) {
+                    let info = info_of(s, k);
+                    if info.has(ENDED) && !info.has(LIVE) && !info.has(HANDED) {
+                        self.find(
+                            "use-after-end",
+                            k.site,
+                            "a closure record handed back captures a store this frame already \
+                             released: the caller reads it through the closure"
+                                .to_string(),
+                        );
+                    }
+                    if s.slots.contains_key(&k) {
+                        todo.push(k);
+                    }
+                }
+            }
+        }
+    }
+
     /// Every store that may still be live at an exit is a leak.
     fn exit(&mut self, st: &State, how: &str) {
         for (k, info) in &st.stores {
@@ -1119,6 +1154,7 @@ impl Run<'_> {
                     Value::Var(x) => Some(*x),
                     _ => None,
                 };
+                self.leaving_captures(&s, &value);
                 Self::hand_on_var(&mut s, x, &value);
                 self.exit(&s, "a return");
                 None
@@ -3091,6 +3127,7 @@ fn run_fn<'a>(
     closure_records(data, vars, &body, &mut run.fn_record, &mut run.leaving);
     if let Some((mut s, value)) = run.eval(&body, st) {
         run.answer = run.answer.join(run.summary_of(&value.pts));
+        run.leaving_captures(&s, &value);
         Run::hand_on(&mut s, &value);
         run.exit(&s, "the end of the function");
     }

@@ -260,7 +260,8 @@ A value branch whose arm is itself a `??` (`p = if c { f(n) ?? P { … } }
 else { P { … } }`) keeps the value form at a first bind of a local assigned again later
 (`every_arm_tail_is_var`), so the closure build that captures it hands every store of that
 `??` to its owner slot; `LOFT_NO_WRITE_OUT_NCC_ARM=1` writes the bind out per arm, and the frame
-frees the `??`'s stores under the escaping closure (the records MISS this one: loft2-83 has it).
+frees the `??`'s stores under the escaping closure: the records report a closure record handed
+back whose capture slot names a store the frame already released (`leaving_captures`).
 
 A closure record HOLDS what it captures: each capture slot, keyed by the record's store and
 offset, keeps the captured value, and the captured stores are handed on only when a value
