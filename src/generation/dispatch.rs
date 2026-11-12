@@ -1744,12 +1744,12 @@ impl Output<'_> {
                     crate::use_analysis::ownership_of(self.data, self.def_nr, to)
                 && base != u16::MAX
             {
-                // A tuple base is witnessed by its one heap member (loft#2471).
+                // A tuple base is witnessed by each of its heap members (loft#2471, loft#2472).
                 let name = sanitize(variables.name(base));
                 Some(
-                    match crate::use_analysis::join_witness_member(variables, base) {
-                        Some(i) => format!("{name}.{i}"),
-                        None => name,
+                    match crate::use_analysis::join_witness_members(variables, base) {
+                        Some(m) => m.iter().map(|i| format!("{name}.{i}")).collect::<Vec<_>>(),
+                        None => vec![name],
                     },
                 )
             } else {
@@ -1850,8 +1850,12 @@ impl Output<'_> {
                     // the adopt arm's own displaced-free (`_dst.store_nr != _src.store_nr`) is
                     // false there and nothing is freed — the assignment becomes the no-op it
                     // always was.
-                    Some(witness) => {
-                        format!("{PASSTHROUGH} || _src.store_nr != var_{witness}.store_nr")
+                    Some(members) => {
+                        let distinct: Vec<String> = members
+                            .iter()
+                            .map(|w| format!("_src.store_nr != var_{w}.store_nr"))
+                            .collect();
+                        format!("{PASSTHROUGH} || ({})", distinct.join(" && "))
                     }
                     // loft#974 — a callee that returns a VIEW hands back a pointer into a
                     // store the CALLER already owns, so the destination ALIASES it: that is

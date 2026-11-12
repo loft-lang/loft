@@ -1412,7 +1412,7 @@ impl Run<'_> {
         self.reassign(node, x, val, st)
     }
 
-    /// A join whose witness is a TUPLE slot (`use_analysis::join_witness_member` names no
+    /// A join whose witness is a TUPLE slot (`use_analysis::join_witness_members` names no
     /// member): the slot holds no store, so the comparison cannot tell a member the callee
     /// handed back from one it minted — the member is adopted beside its holder and released
     /// twice (loft#2471).
@@ -1427,7 +1427,8 @@ impl Run<'_> {
         let function = &self.data.def(self.d_nr).variables;
         if base == u16::MAX
             || !matches!(function.tp(base).base(), crate::data::Type::Tuple(_))
-            || crate::use_analysis::join_witness_member(function, base).is_some()
+            || crate::use_analysis::join_witness_members(function, base)
+                .is_some_and(|m| !m.is_empty())
         {
             return;
         }

@@ -5418,14 +5418,12 @@ pub(crate) fn ownership_of_with(data: &Data, d_nr: u32, value: &Value, defs: &De
     let def = data.def(d_nr);
     match Ownership::new(data).classify(value, &def.variables, defs) {
         // A TUPLE carries no store of its own: what the value may borrow is one of its
-        // members (`@FR-O-Oracle`, loft#2471).  With ONE heap member that member is the
-        // witness every reader compares against ([`join_witness_member`]); with several
-        // there is no single one, and the join is the unnameable one every reader copies.
+        // members (`@FR-O-Oracle`, loft#2471): its heap members are the witnesses every reader
+        // compares against ([`join_witness_members`]).  One no member can witness is the
+        // unnameable join every reader copies.
         Own::Join { base }
             if base != u16::MAX
-                && matches!(def.variables.tp(base).base(), Type::Tuple(_))
-                && !tuple_join_witness_off()
-                && join_witness_member(&def.variables, base).is_none() =>
+                && join_witness_members(&def.variables, base).is_some_and(|m| m.is_empty()) =>
         {
             Own::Join { base: u16::MAX }
         }
@@ -5441,30 +5439,31 @@ pub fn tuple_join_witness_off() -> bool {
     crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_JOIN_WITNESS").is_some())
 }
 
-/// The member a join's TUPLE base is witnessed by: its one heap member, which is what a
-/// callee or an arm can hand back of it (loft#2471).  `None` for a base that is no tuple, and
-/// for a tuple with no single heap member (none, several, or one inside a nested tuple) — the
-/// oracle answers such a join with no witness at all.  Every reader of an [`Own::Join`] base
-/// asks this, so the three writers compare against the same place.
+/// The members a join's TUPLE base is witnessed by: each heap member, any of which a callee or
+/// an arm can hand back of it (loft#2471, loft#2472).  `None` for a base that is no tuple (the
+/// base itself is the witness); `Some(empty)` for a tuple no member of which can witness (a heap
+/// member inside a nested tuple), which the oracle answers as a join with no witness at all.
+/// Every reader of an [`Own::Join`] base asks this, so the three writers compare against the
+/// same places: the answer is copied where its store is ANY of them.
 #[must_use]
-pub fn join_witness_member(vars: &Function, base: u16) -> Option<u16> {
+pub fn join_witness_members(vars: &Function, base: u16) -> Option<Vec<u16>> {
     if base == u16::MAX || tuple_join_witness_off() {
         return None;
     }
     let Type::Tuple(elems) = vars.tp(base).base() else {
         return None;
     };
-    let mut found = None;
+    let mut found = Vec::new();
     for (i, e) in elems.iter().enumerate() {
         if crate::data::tuple_heap_leaves(e) == 0 {
             continue;
         }
-        if found.is_some() || matches!(e.base(), Type::Tuple(_)) {
-            return None;
+        if matches!(e.base(), Type::Tuple(_)) {
+            return Some(Vec::new());
         }
-        found = Some(u16::try_from(i).ok()?);
+        found.push(u16::try_from(i).ok()?);
     }
-    found
+    Some(found)
 }
 
 /// True when `classify` resolves a `Call(d, …)` STRUCTURALLY — a store mint

@@ -5696,17 +5696,26 @@ impl<'a> FnWriter<'a> {
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
-            // A tuple base is witnessed by its one heap member (loft#2471).
-            let w = match crate::use_analysis::join_witness_member(self.vars, base) {
-                Some(i) => format!("{}.f{i}", self.var(base)),
-                None => self.var(base),
+            // A tuple base is witnessed by each of its heap members (loft#2471, loft#2472).
+            let ws: Vec<String> = match crate::use_analysis::join_witness_members(self.vars, base) {
+                Some(m) => m
+                    .iter()
+                    .map(|i| format!("{}.f{i}", self.var(base)))
+                    .collect(),
+                None => vec![self.var(base)],
             };
             let old = self.temp(CType::Ref);
             self.line(ind, &format!("{old} = {name};"));
             self.line(ind, &format!("{r} = {};", as_ref(e)?));
             self.line(
                 ind,
-                &format!("if ({r}.store_nr != 0xFFFF && {r}.store_nr == {w}.store_nr) {{"),
+                &format!(
+                    "if ({r}.store_nr != 0xFFFF && ({})) {{",
+                    ws.iter()
+                        .map(|w| format!("{r}.store_nr == {w}.store_nr"))
+                        .collect::<Vec<_>>()
+                        .join(" || ")
+                ),
             );
             self.line(ind + 1, &format!("{name} = loft_ref_null();"));
             self.line(

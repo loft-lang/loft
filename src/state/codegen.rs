@@ -2817,10 +2817,11 @@ impl State {
                 // A PUSH op reads at the PRE-push position, so `var_pos(base)` is taken
                 // BEFORE `add_op` (matching the pre-Set free above); the POP op's
                 // `var_pos(v)` is taken AFTER `add_op` (post-pop position).
-                self.push_join_witness(stack, base);
+                let rest = self.push_join_witness(stack, base);
                 stack.add_op("OpBindOrCopy", self);
                 self.code_add(stack.var_pos(v));
                 self.code_add(tp_nr);
+                self.recheck_join_witnesses(stack, v, base, &rest, tp_nr);
                 return;
             }
             if (owned_ref || witnessed || buffer_kept) && !s1_substituted {
@@ -3729,20 +3730,6 @@ impl State {
     /// pattern that works the same whether slot-move is active or not
     /// (v.stack_pos keeps V1's value when OpVarRef just pushes a copy
     /// of src's DbRef).
-    /// Push the WITNESS a join's `OpBindOrCopy` compares the call's answer against: the base
-    /// variable's record, or — for a tuple base — its one heap member
-    /// (`use_analysis::join_witness_member`, loft#2471), since a tuple slot holds no record of
-    /// its own.  A PUSH op reads at the PRE-push position, so the offset is taken first.
-    fn push_join_witness(&mut self, stack: &mut Stack, base: u16) {
-        if let Some(i) = crate::use_analysis::join_witness_member(&stack.function, base) {
-            self.generate(&Value::TupleGet(base, i), stack, false);
-        } else {
-            let witness_pos = stack.var_pos(base);
-            stack.add_op("OpVarRef", self);
-            self.code_add(witness_pos);
-        }
-    }
-
     /// Push the WITNESS `OpBindOrCopy` compares a whole-record bind's source against: the
     /// record `src` names.  A present source equal to its witness is materialised into a
     /// fresh store (@FR-B-Copy); an absent one is adopted as the null it is.
@@ -3760,6 +3747,53 @@ impl State {
             let witness_pos = stack.var_pos(src);
             stack.add_op("OpVarRef", self);
             self.code_add(witness_pos);
+        }
+    }
+
+    /// Push the WITNESS a join's `OpBindOrCopy` compares the call's answer against: the base
+    /// variable's record, or — for a tuple base — its FIRST heap member, since a tuple slot
+    /// holds no record of its own (`use_analysis::join_witness_members`, loft#2471).  Answers
+    /// the tuple's other heap members, which [`Self::recheck_join_witnesses`] compares after
+    /// the bind.  A PUSH op reads at the PRE-push position, so the offset is taken first.
+    fn push_join_witness(&mut self, stack: &mut Stack, base: u16) -> Vec<u16> {
+        match crate::use_analysis::join_witness_members(&stack.function, base) {
+            Some(members) if !members.is_empty() => {
+                self.generate(&Value::TupleGet(base, members[0]), stack, false);
+                members[1..].to_vec()
+            }
+            _ => {
+                let witness_pos = stack.var_pos(base);
+                stack.add_op("OpVarRef", self);
+                self.code_add(witness_pos);
+                Vec::new()
+            }
+        }
+    }
+
+    /// A tuple base with several heap members (loft#2472): the first bind compared the answer
+    /// with the first member only.  Each further member is compared with what `v` now holds, by
+    /// the same op — `v` as the source, the member as the witness, the slot reset to the
+    /// sentinel first as the borrow arm needs — so a store equal to ANY member is copied, and an
+    /// answer the callee minted is adopted where it stands (re-binding it to itself).
+    fn recheck_join_witnesses(
+        &mut self,
+        stack: &mut Stack,
+        v: u16,
+        base: u16,
+        rest: &[u16],
+        tp_nr: u16,
+    ) {
+        for &i in rest {
+            let src_pos = stack.var_pos(v);
+            stack.add_op("OpVarRef", self);
+            self.code_add(src_pos);
+            self.generate(&Value::TupleGet(base, i), stack, false);
+            let slot_offset = stack.var_pos(v);
+            stack.add_op("OpInitRefSentinel", self);
+            self.code_add(slot_offset);
+            stack.add_op("OpBindOrCopy", self);
+            self.code_add(stack.var_pos(v));
+            self.code_add(tp_nr);
         }
     }
 
@@ -4024,13 +4058,14 @@ impl State {
         // Writing it here still satisfies `OpBindOrCopy`'s precondition — the slot holds a
         // sentinel before the guard writes it, which is all the borrow arm's
         // `alloc_record_at` needs.
-        self.push_join_witness(stack, base);
+        let rest = self.push_join_witness(stack, base);
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpInitRefSentinel", self);
         self.code_add(slot_offset);
         stack.add_op("OpBindOrCopy", self);
         self.code_add(stack.var_pos(v));
         self.code_add(tp_nr);
+        self.recheck_join_witnesses(stack, v, base, &rest, tp_nr);
     }
 
     /// First bind of an unresolved fn-ref call's record result (`OpBindFnRefResult`): the
