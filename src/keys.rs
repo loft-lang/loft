@@ -3502,6 +3502,15 @@ pub fn c_own_tuple_member_bind() -> bool {
     *ON.get_or_init(|| env_set("LOFT_C_OWN_TUPLE_MEMBER_BIND"))
 }
 
+/// `LOFT_NO_ENUM_JOIN=1` — a heap-enum local bound from a call that answers a fresh record on
+/// one path and a view of an argument on another is deep-copied at every bind again, instead of
+/// joined at run time (`bind_lowering`'s F9a / R1 arms; @PLN220's A/B).
+#[must_use]
+pub fn enum_join_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_ENUM_JOIN"))
+}
+
 /// `LOFT_NO_REBIND_ADOPTS_MINTED=1` — a reassignment from a call whose answer is the store it
 /// minted in its buffer is copied into the local's own store again, as only a deferred first
 /// bind adopted it before (`bind_lowering::re_bind`, arm R2b; @PLN220's A/B).

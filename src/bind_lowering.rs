@@ -195,7 +195,7 @@ pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Va
         && data.def(fn_nr).is_loft_defined()
     {
         if crate::keys::join_own_enabled()
-            && let Type::Reference(join_d_nr, _) = crate::use_analysis::first_bind_shape(tp).clone()
+            && let Some(join_d_nr) = join_record(crate::use_analysis::first_bind_shape(tp))
             && !function.is_view_elided(v)
             && let crate::use_analysis::Own::Join { base } =
                 crate::use_analysis::ownership_of(data, d_nr, value)
@@ -783,9 +783,9 @@ fn re_arm(
         && let crate::use_analysis::Own::Join { base } =
             crate::use_analysis::ownership_of(data, d_nr, value)
         && base != u16::MAX
-        && let Type::Reference(rec, _) = tp
+        && let Some(rec) = join_record(tp)
     {
-        return ReArm::Join { d_nr: *rec, base };
+        return ReArm::Join { d_nr: rec, base };
     }
     if !((rb.owned_ref || rb.witnessed || rb.buffer_kept) && !rb.s1_substituted) {
         return ReArm::Plain;
@@ -880,6 +880,18 @@ fn re_arm(
         return ReArm::ElementCopy { d_nr: rec };
     }
     ReArm::Plain
+}
+
+/// The record a runtime JOIN bind (`OpBindOrCopy`: adopt a fresh answer, copy a borrowed one)
+/// copies into, for a local of type `tp`: a heap record, or a heap enum, which the copy walks
+/// the same way (the C writer's `join_bind` takes both).  `None` for every other type, and for
+/// an enum under `LOFT_NO_ENUM_JOIN=1`, which deep-copies it at every bind as before.  @PLN220.
+fn join_record(tp: &Type) -> Option<u32> {
+    match tp {
+        Type::Reference(rec, _) => Some(*rec),
+        Type::Enum(rec, true, _) if !crate::keys::enum_join_off() => Some(*rec),
+        _ => None,
+    }
 }
 
 /// Is `value` a null — `null`, or the sentinel a reference reset writes?
