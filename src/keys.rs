@@ -3343,6 +3343,15 @@ pub fn view_temp_transition_guard() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_TEMP_TRANSITION_GUARD"))
 }
 
+/// `LOFT_NO_ELEMENT_VIEW_ABSENT=1` — a return copy of a record local that views a collection's
+/// element reads it present, as it did before (`record_local_may_be_absent`): a constant index
+/// past the end answered a default record from a `-> S?`.
+#[must_use]
+pub fn element_view_present() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_ELEMENT_VIEW_ABSENT"))
+}
+
 /// `LOFT_ARM_FREES_PARAM_DEPS=1` — a vector arm delivered into the return buffer frees a
 /// PARAMETER its local depends on, as it did before (`materialize_vector_arms_collect`): the
 /// caller's store, freed again by the caller.

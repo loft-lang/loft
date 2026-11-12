@@ -19292,8 +19292,12 @@ impl Parser {
     /// One typed dense may too (`@FR-N-Store`), where a null can have reached it: a record
     /// PARAMETER holds the `null` it was handed; an OWNED local (no dep) is a copy of some
     /// value or the result of a call, either of which may be nothing; and a local that views
-    /// another RECORD is what that record is.  A local that views a COLLECTION is a bound
-    /// element, which is there; a literal's own buffer is asked by nobody
+    /// another RECORD is what that record is.  A local that views a COLLECTION is an element
+    /// read, absent where the element is not there: `(N-Index)` types a CONSTANT index
+    /// non-null by contract, and an overrun is still null at run time (`@C80`), so
+    /// `r = v[0]; r` in a `-> S?` answers null for an empty `v` (`@FR-N-Road`).
+    /// `LOFT_NO_ELEMENT_VIEW_ABSENT=1` answers present again.  A literal's own buffer is
+    /// asked by nobody
     /// ([`Self::branch_has_nullable_leaf`] and the copy stop at an `Object` block).  A local
     /// typed by a template's TYPE VARIABLE is asked only where it is written `T?`: its
     /// instance may be a tuple, whose test is not the record's.
@@ -19305,6 +19309,12 @@ impl Parser {
             }
             let record = matches!(tp.base(), Type::Reference(d, _)
                 if !p.data.is_type_var_placeholder(*d) && tp.heap_def_nr().is_some());
+            if !seen.is_empty()
+                && crate::parser::vectors::is_collection(tp.base())
+                && !crate::keys::element_view_present()
+            {
+                return true;
+            }
             if !record || seen.contains(&v) {
                 return false;
             }
