@@ -1786,10 +1786,53 @@ impl Run<'_> {
             && !matches!(val.unspan(), Value::Call(d, _)
                 if matches!(data.def(*d).name(), "OpCreateStack" | "OpVarRef"))
         {
+            let shown = Self::pts(&st, x);
             let Some((mut s, value)) = self.eval(val, st) else {
                 return Ok(None);
             };
+            // `@FR-L-CapOwn` — a closure this frame wrote through the same `&fn` link before
+            // never reached the caller: the write displaces it, and it is this frame's again,
+            // held by whatever still names it (its `___clos_N`, which the frame releases).
+            // Only a store this frame made; the caller's own value (`Param`) stays the caller's.
+            // `LOFT_RECORDS_NO_LINK_TAKE_BACK=1` leaves it handed on.
+            if matches!(function.tp(x).base(), crate::data::Type::RefVar(inner)
+                    if matches!(inner.base(), crate::data::Type::Function(..)))
+                && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_LINK_TAKE_BACK").is_some())
+            {
+                for k in Self::stores_of(&shown) {
+                    if value.pts.contains(&Pt::Store(k)) {
+                        continue;
+                    }
+                    let holders: Vec<u16> = s
+                        .vars
+                        .iter()
+                        .filter(|&(&w, p)| w != x && p.len() == 1 && p.contains(&Pt::Store(k)))
+                        .map(|(&w, _)| w)
+                        .collect();
+                    if let Some(info) = s.stores.get_mut(&k)
+                        && info.has(HANDED)
+                        && !info.has(ENDED)
+                        && !holders.is_empty()
+                    {
+                        info.status = (info.status & !HANDED) | LIVE;
+                        info.live.extend(holders);
+                    }
+                }
+            }
             Self::hand_on(&mut s, &value);
+            // …and a read of the link from here answers what was written through it: the
+            // caller's variable now holds it (`__fklink_N = out` after `out = h` names `h`'s
+            // closure record).  Handed on, the store takes no live holder from this.
+            // `LOFT_RECORDS_NO_LINK_READS_WRITE=1` leaves the link reading the parameter.
+            // Inside a loop the link keeps reading the parameter: a write on some passes only
+            // (`if i == 0 { p = f }`) joins into "the caller's value or this pass's closure",
+            // and nothing here ties that choice back to the pass, so the read would split the
+            // releases that guard on it both ways (L-CapKeep/1636, three findings more).
+            if self.loops.is_empty()
+                && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_LINK_READS_WRITE").is_some())
+            {
+                self.bind(&mut s, x, &value);
+            }
             return Ok(Some((s, Val::null())));
         }
         // A lazy buffer's guarded `Set(v, Null)` is where its store is made (`set_var`).
@@ -2873,6 +2916,27 @@ impl Run<'_> {
                 st.vars.remove(&x);
             }
             return Some((st, Val::null()));
+        }
+        // `OpFnRefDetachShared(old, new)` (loft#1609): the closure half of `old` is nulled where
+        // it shares a store with `new` — the rebind or link write handed that closure on, so
+        // the release of `old` that follows finds nothing.  Followed where the share is
+        // certain: `old` names exactly the one store `new` names.  Elsewhere `old` keeps its
+        // stores, which can only keep a finding, never invent one.
+        if self.data.def(d).name() == "OpFnRefDetachShared"
+            && let (Some(old), Some(new)) = (Self::first_var(args, 0), Self::first_var(args, 1))
+            && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_DETACH_SHARED").is_some())
+        {
+            let held = Self::pts(&st, old);
+            let named = Self::pts(&st, new);
+            let mut s = st;
+            if let [k] = Self::stores_of(&held)[..]
+                && held.iter().all(|p| *p == Pt::Store(k))
+                && named.iter().all(|p| *p == Pt::Store(k))
+                && !named.is_empty()
+            {
+                self.bind(&mut s, old, &Val::null());
+            }
+            return Some((s, Val::null()));
         }
         // `OpInitRefSentinel(v)`: `v` is reset to null and names no store from here.
         if self.data.def(d).name() == "OpInitRefSentinel"

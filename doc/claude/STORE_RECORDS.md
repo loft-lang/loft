@@ -128,6 +128,11 @@ was built in; the records see the free as a use after end of the node
 releases nothing it displaces (`Function::link_write_releases`, `@FR-F-ParamRebind`); the
 records follow a link installed on one variable as a write to that variable, and a release of
 a parameter's store is a wrong end (`LOFT_LINK_PARAM_RELEASES=1` restores it).
+A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
+link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
+`old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through
+the link gives a closure the frame wrote there before back to the frame, which releases it
+(`LOFT_RECORDS_NO_LINK_TAKE_BACK=1`).
 A tuple member's free retires every work-ref an assignment made that member's claimant, where
 it still names the store (a loop drops the per-assignment claimant, `tuple_claimants`);
 `LOFT_NO_CLAIMANT_DISARM=1` leaves them naming it.  A collection a fn-ref call delivers into
