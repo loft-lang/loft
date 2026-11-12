@@ -162,6 +162,26 @@ fn info_of(st: &State, k: SKey) -> SInfo {
     })
 }
 
+/// `LOFT_NO_SLOT_HOLDERS=1` (records only): a closure record holding a capture in a slot is no
+/// holder of it, as before.
+fn slot_holders_off() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var_os("LOFT_NO_SLOT_HOLDERS").is_some())
+}
+
+/// On a path where `x` names no store: every holder set naming `x` (a variable, or a closure
+/// record whose slot holds the store) does not hold here.
+fn rule_out_everywhere(st: &mut State, x: u16) {
+    for info in st.stores.values_mut() {
+        if info.live.contains(&x) || info.alts.iter().any(|a| a.contains(&x)) {
+            rule_out_holder(info, x);
+            if info.status == 0 {
+                info.status = ABSENT;
+            }
+        }
+    }
+}
+
 /// The holders one side of a join knows: its alternatives, or its must-holders as one.
 fn holder_alts(x: &SInfo) -> Option<Vec<BTreeSet<u16>>> {
     if !x.alts.is_empty() {
@@ -1027,7 +1047,7 @@ impl Run<'_> {
     /// value's stores from here on — replacing what it held where `w` names one record and
     /// the offset is known (a null empties it: the code generator's give-up of a capture
     /// before a return, `@FR-L-CapOne`).
-    fn hold(st: &mut State, w: u16, off: Option<i32>, value: &Val, src: Option<u16>) {
+    fn hold(&self, st: &mut State, w: u16, off: Option<i32>, value: &Val, src: Option<u16>) {
         let recs = Self::stores_of(&Self::pts(st, w));
         let strong = recs.len() == 1 && off.is_some();
         let pts: Pts = value
@@ -1061,6 +1081,45 @@ impl Run<'_> {
                 None => {
                     if let Some(m) = st.slot_src.get_mut(&k) {
                         m.remove(&at);
+                    }
+                }
+            }
+            if strong {
+                // The slot no longer holds what it held: `w` is no holder of that any more.
+                let before: Vec<SKey> = st
+                    .slots
+                    .get(&k)
+                    .and_then(|m| m.get(&at))
+                    .map(|v| Self::stores_of(&v.pts))
+                    .unwrap_or_default();
+                for old in before {
+                    if !held.pts.contains(&Pt::Store(old))
+                        && let Some(info) = st.stores.get_mut(&old)
+                    {
+                        forget_holder(info, w);
+                    }
+                }
+                // A store the slot of a closure record now holds is held by that record wherever
+                // it is live: a path on which `w` names no record does not hold it there.
+                // Only an OWNER slot (`OpSetDbRef(w, off, __own_x)`, the capture hand-over)
+                // takes its store over; a view capture beside the store's backing does not.
+                let owner_src = src.is_some_and(|x| {
+                    self.data
+                        .def(self.d_nr)
+                        .variables
+                        .name(x)
+                        .starts_with("__own_")
+                });
+                if self.is_closure_record(w)
+                    && owner_src
+                    && let [only] = Self::stores_of(&held.pts)[..]
+                    && let Some(info) = st.stores.get_mut(&only)
+                    && info.has(LIVE)
+                    && !slot_holders_off()
+                {
+                    info.live.insert(w);
+                    for a in &mut info.alts {
+                        a.insert(w);
                     }
                 }
             }
@@ -2206,13 +2265,34 @@ impl Run<'_> {
                     let (null, present) = Self::null_test(*x, st);
                     (present, null)
                 } else if *op == self.ops.store_live {
-                    Self::live_test(*x, st)
+                    let (live, dead) = Self::live_test(*x, st);
+                    (live, self.no_record_holds(*x, dead))
                 } else {
                     both(st)
                 }
             }
             _ => both(st),
         }
+    }
+
+    /// A closure record variable (`___clos_N`): its capture slots hold stores.
+    fn is_closure_record(&self, w: u16) -> bool {
+        self.data
+            .def(self.d_nr)
+            .variables
+            .name(w)
+            .starts_with("___clos_")
+    }
+
+    /// On a path where the record closure record `x` names is not live, its slots hold nothing:
+    /// the holder sets naming it do not hold there.  (A NULL `x` says less: the record may have
+    /// been handed to a fn-ref and live on.)
+    fn no_record_holds(&self, x: u16, st: Option<State>) -> Option<State> {
+        let mut st = st?;
+        if self.is_closure_record(x) && !slot_holders_off() {
+            rule_out_everywhere(&mut st, x);
+        }
+        Some(st)
     }
 
     /// Does every store `x` may name come from a call's answer?
@@ -3484,7 +3564,7 @@ impl Run<'_> {
                         .starts_with("___clos_")
                         && !self.leaving.contains(&w) =>
                 {
-                    Self::hold(
+                    self.hold(
                         &mut s,
                         w,
                         Self::const_offset(args.get(1)),
