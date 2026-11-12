@@ -467,6 +467,9 @@ const MEMBER_BASE: u16 = 0x8000;
 /// The name an `ended` set keeps for a variable that freed the store and was then reset.
 const FREED_NAME: u16 = 0xFFFE;
 
+/// The name a reassignment parks the store it displaces under while the new value is built.
+const OLD_NAME: u16 = 0xFFFC;
+
 fn member_key(t: u16, i: u16) -> Option<u16> {
     (t < 0x0800 && i < 16).then_some(MEMBER_BASE | (t << 4) | i)
 }
@@ -1667,6 +1670,10 @@ impl Run<'_> {
         // store came from moves that store to the older generation (`fresh`), and a key read
         // before it would name the new store instead (a loop's `fixed = step(i)`).
         let old = Self::pts(&s, x);
+        // Parked in the state while the arm runs: a copy that mints at the site `x`'s old store
+        // came from moves it to the older generation, and a key kept outside the state would
+        // then name the new store (a loop's `class = pick(class, c)`).
+        s.vars.insert(OLD_NAME, old.clone());
         let bound = match rb.arm {
             ReArm::KeyedNull => Self::read(&s, x),
             ReArm::Join { .. } | ReArm::OpaqueCallRef { .. } => {
@@ -1719,6 +1726,7 @@ impl Run<'_> {
             ReArm::VarCopy { .. } | ReArm::ElementCopy { .. } => self.copied(&mut s, node),
             ReArm::Plain => value,
         };
+        let old = s.vars.remove(&OLD_NAME).unwrap_or(old);
         if rb.free == DisplacedFree::Stash && rb.arm != ReArm::KeyedNull && bound.pts != old {
             self.stashed_free(&mut s, x, &old, &bound);
             return Some((s, Val::null()));
