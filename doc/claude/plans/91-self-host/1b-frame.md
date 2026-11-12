@@ -182,7 +182,7 @@ never a gate (the order of the goals, 1b-interpreter.md).
       bind trace and allocator trace.
   - **PF5 (built)**: a run reports what the entry's return left on the stack — its frame base
     and the three evaluation stacks' depths (`Outcome.stack_left`) — and every kernel test
-    asserts it is 0 (`ran_clean`); `fib(25)`, 242785 calls, answers 75025 and leaves 0.  The
+    asserts it is 0 (`ran_clean`); `fib(20)`, 21891 calls, answers 6765 and leaves 0.  The
     Rust interpreter never shrinks the stack store (`State::grow_stack` only grows it), so the
     store's SIZE does not return to its start, and the loft one does not either: what returns
     is the stack's top.  Falsified: a `Pop` that leaves its integer fails four kernel tests on
