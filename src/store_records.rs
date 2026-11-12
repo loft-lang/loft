@@ -91,6 +91,12 @@ struct SInfo {
     /// record was built" leaves it live only there).  A test finding one of them null drops
     /// it; the last one dropped finds this store not live.  Empty: nothing known.
     live_some: BTreeSet<u16>,
+    /// The cover: on every path where the key is live, every live store under it is named by
+    /// one of these variables (a key standing for several stores — an older generation — too).
+    /// A bind adds its name, a rebind drops it, and a holder the cover cannot list (a capture
+    /// slot, a record field, a hand-over) makes it `None`, unknown.  A certain free that empties
+    /// it leaves the key not live: the names that held it are all freed (design-cover.md).
+    cover: Option<BTreeSet<u16>>,
     /// Closure-record variables null on every path where it is live (a record built only
     /// where the capture went into it).  A test finding one of them naming a record then
     /// finds this store not live.
@@ -402,6 +408,23 @@ fn identity_test_no_use() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_IDENTITY_TEST_NO_USE").is_none())
 }
 
+/// `LOFT_RECORDS_NO_COVER=1`: no key keeps a cover, so a free never finds its last holder gone.
+fn cover_on() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_COVER").is_some())
+}
+
+/// The stores in `pts` gain a holder the cover does not name (a capture slot, a record field,
+/// a hand-over): their cover is unknown from here on.
+fn uncover_all(st: &mut State, pts: &Pts) {
+    for p in pts {
+        if let Pt::Store(k) = p
+            && let Some(info) = st.stores.get_mut(k)
+        {
+            info.cover = None;
+        }
+    }
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -435,6 +458,15 @@ fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
             (false, false) => None,
         },
         handed_by: meet(&a.handed_by, a.has(LIVE), &b.handed_by, b.has(LIVE)),
+        cover: match (a.has(LIVE), b.has(LIVE)) {
+            (true, true) => match (&a.cover, &b.cover) {
+                (Some(x), Some(y)) => Some(x.union(y).copied().collect()),
+                _ => None,
+            },
+            (true, false) => a.cover.clone(),
+            (false, true) => b.cover.clone(),
+            (false, false) => None,
+        },
         live_some: BTreeSet::new(),
         live_null: BTreeSet::new(),
         captured_by: a.captured_by.union(&b.captured_by).copied().collect(),
@@ -1032,6 +1064,9 @@ impl Run<'_> {
         }
         for info in st.stores.values_mut() {
             forget_holder(info, v);
+            if let Some(c) = info.cover.as_mut() {
+                c.remove(&v);
+            }
             info.ended.remove(&v);
             if let Some(sn) = info.stale.as_mut() {
                 sn.remove(&v);
@@ -1052,6 +1087,9 @@ impl Run<'_> {
         for k in Self::stores_of(&val.pts) {
             self.sites[k.site as usize].holders.insert(v);
             if let Some(info) = st.stores.get_mut(&k) {
+                if let Some(c) = info.cover.as_mut() {
+                    c.insert(v);
+                }
                 if (single || val.corr.contains(&k)) && info.status & LIVE != 0 {
                     info.live.insert(v);
                     for a in &mut info.alts {
@@ -1086,6 +1124,7 @@ impl Run<'_> {
             cur,
             SInfo {
                 status: LIVE,
+                cover: cover_on().then(BTreeSet::new),
                 ..Default::default()
             },
         );
@@ -1250,6 +1289,29 @@ impl Run<'_> {
                 format!("`{name}` is freed by {how}, but its store is the caller's"),
             );
         }
+        if report && only.is_none() {
+            Self::uncover_freed(st, v, &pts);
+        }
+    }
+
+    /// A certain free through `v`: `v` leaves the cover of every key it names, and a key whose
+    /// cover that empties is not live — every name that held it is freed (`SInfo::cover`).
+    fn uncover_freed(st: &mut State, v: u16, pts: &Pts) {
+        if !cover_on() {
+            return;
+        }
+        for k in Self::stores_of(pts) {
+            if let Some(info) = st.stores.get_mut(&k)
+                && let Some(c) = info.cover.as_mut()
+                && c.remove(&v)
+                && c.is_empty()
+                && info.has(LIVE)
+            {
+                info.status &= !LIVE;
+                info.live.clear();
+                info.alts.clear();
+            }
+        }
     }
 
     /// Does `w` name a closure record that holds a capture?
@@ -1316,6 +1378,7 @@ impl Run<'_> {
     /// the offset is known (a null empties it: the code generator's give-up of a capture
     /// before a return, `@FR-L-CapOne`).
     fn hold(&self, st: &mut State, w: u16, off: Option<i32>, value: &Val, src: Option<u16>) {
+        uncover_all(st, &value.pts);
         let recs = Self::stores_of(&Self::pts(st, w));
         let strong = recs.len() == 1 && off.is_some();
         let pts: Pts = value
@@ -1574,6 +1637,7 @@ impl Run<'_> {
     }
 
     fn hand_on(st: &mut State, val: &Val) {
+        uncover_all(st, &val.pts);
         let single = val.pts.len() == 1;
         let mut records = Vec::new();
         for k in Self::stores_of(&val.pts) {
@@ -2289,6 +2353,13 @@ impl Run<'_> {
         let mut st = st;
         let old = Self::pts(&st, t);
         st.vars.insert(x, old.clone());
+        for k in Self::stores_of(&old) {
+            if let Some(info) = st.stores.get_mut(&k)
+                && let Some(c) = info.cover.as_mut()
+            {
+                c.insert(x);
+            }
+        }
         // The link reads its target: where a store `t` names is ended, the link may name it.
         for k in Self::stores_of(&old) {
             if let Some(info) = st.stores.get_mut(&k)
@@ -3342,6 +3413,9 @@ impl Run<'_> {
                 names(&i.live),
                 names(&i.ended)
             );
+            if let Some(c) = &i.cover {
+                let _ = write!(o, " cover{:?}", names(c));
+            }
             // The record correlations: captured by, and non-null / null wherever it is live.
             if !i.captured_by.is_empty() || !i.live_some.is_empty() || !i.live_null.is_empty() {
                 let _ = write!(
@@ -4474,6 +4548,7 @@ impl Run<'_> {
                         .collect();
                     Self::hand_on(&mut s, &handed);
                     if let Some(h) = Self::first_var(args, 0) {
+                        uncover_all(&mut s, &pointed);
                         s.points.entry(h).or_default().extend(pointed);
                     }
                 }
