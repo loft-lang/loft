@@ -1640,6 +1640,13 @@ pub fn OpRebindRecord(
         if stores.try_swap_rebind(&src, &to, raw & crate::keys::COPY_TP_MASK) {
             // The copy this replaces consumes the marker whatever it named.
             cr_take_fnref_borrowed(src.store_nr);
+            // `@FR-H-FreeTwice` — and the source store: the exchange parked or freed it, so a
+            // fn-ref call's buffer leaves the hand-up list here.  Left on it, the frame's guard
+            // released the store the exchange had parked as the spare, and the next exchange's
+            // park freed it again.  `LOFT_NATIVE_SWAP_KEEPS_HANDUP=1` leaves it on the list.
+            if !crate::env_once!(std::env::var_os("LOFT_NATIVE_SWAP_KEEPS_HANDUP").is_some()) {
+                cr_fnref_forget(src.store_nr);
+            }
             return DbRef {
                 store_nr: to.store_nr,
                 rec: 1,
@@ -6854,16 +6861,24 @@ pub fn cr_fnref_adopt(src: DbRef) -> bool {
     if cr_take_fnref_borrowed(src.store_nr) && src.rec != 0 {
         return false;
     }
-    if src.store_nr != u16::MAX {
-        FNREF_BUFS.with(|b| {
-            let mut list = b.borrow_mut();
-            if let Some(at) = list.iter().rposition(|(d, _)| d.store_nr == src.store_nr) {
-                list.remove(at);
-                FNREF_LEN.with(|n| n.set(u32::try_from(list.len()).unwrap_or(u32::MAX)));
-            }
-        });
-    }
+    cr_fnref_forget(src.store_nr);
     true
+}
+
+/// Take store `store_nr` off the fn-ref hand-up list: it has an owner now — a binding that
+/// adopted it ([`cr_fnref_adopt`]), or an exchange that consumed it ([`OpRebindRecord`]) — so
+/// [`FnRefBufGuard`] must not release it as well.
+fn cr_fnref_forget(store_nr: u16) {
+    if store_nr == u16::MAX {
+        return;
+    }
+    FNREF_BUFS.with(|b| {
+        let mut list = b.borrow_mut();
+        if let Some(at) = list.iter().rposition(|(d, _)| d.store_nr == store_nr) {
+            list.remove(at);
+            FNREF_LEN.with(|n| n.set(u32::try_from(list.len()).unwrap_or(u32::MAX)));
+        }
+    });
 }
 
 /// Give an owner to a store a fn-ref callee MINTED and handed back.
