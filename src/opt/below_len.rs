@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C — the bound checks an element access can skip
 
 //! `@FR-R-Base`'s guard clause — the element accesses a passed test keeps below their
 //! vector's length.
