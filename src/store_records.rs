@@ -2992,10 +2992,14 @@ impl Run<'_> {
                     })
                 })
             } {
-                Val {
-                    pts: kept,
-                    corr: [own].into(),
-                }
+                // A store of another site `x` must-holds is re-initialised in place where `x`
+                // names it, so it stays correlated with `x` as well.
+                let mut corr: BTreeSet<SKey> = Self::stores_of(&kept)
+                    .into_iter()
+                    .filter(|k| info_of(&st, *k).live.contains(&x))
+                    .collect();
+                corr.insert(own);
+                Val { pts: kept, corr }
             } else {
                 let origin = self
                     .params
