@@ -120,6 +120,9 @@ struct State {
     /// Boolean locals whose value this path knows: an ownership flag (`__rbo_<buf>`, a
     /// `__lbo_` displacement flag) written a constant, and read by the guard of a free.
     flags: BTreeMap<u16, bool>,
+    /// Per holder: the stores a reference written into its fields names but does not own
+    /// (`@FR-H-RefHome`).  The holder handed to a call reads them.
+    points: BTreeMap<u16, Pts>,
 }
 
 /// A value: the stores it may point into, and the stores CORRELATED with it — live only on
@@ -237,6 +240,10 @@ fn join_state(a: &State, b: &State) -> State {
         .map(|(k, v)| (*k, *v))
         .collect();
     let (slots, slot_src, field_captures) = join_slots(a, b);
+    let mut points: BTreeMap<u16, Pts> = a.points.clone();
+    for (w, p) in &b.points {
+        points.entry(*w).or_default().extend(p.iter().copied());
+    }
     State {
         vars,
         stores,
@@ -244,6 +251,7 @@ fn join_state(a: &State, b: &State) -> State {
         slot_src,
         field_captures,
         flags,
+        points,
     }
 }
 
@@ -509,6 +517,9 @@ struct Run<'a> {
     /// The variables inside an IR `n_protect_store_frees` bracket (`@P290`): a source-free
     /// in it declines the stores they name.
     protected: Vec<u16>,
+    /// The lift temporaries the function frees with a plain `OpFreeRef`: each still owns the
+    /// call result it holds, wherever a reference to it is written.
+    freed_lifts: BTreeSet<u16>,
 }
 
 impl Run<'_> {
@@ -626,6 +637,7 @@ impl Run<'_> {
         for m in st.slot_src.values_mut() {
             m.retain(|_, x| *x != v);
         }
+        st.points.remove(&v);
         let single = val.pts.len() == 1;
         for k in Self::stores_of(&val.pts) {
             self.sites[k.site as usize].holders.insert(v);
@@ -701,6 +713,24 @@ impl Run<'_> {
                     "use-after-end",
                     k.site,
                     format!("`{name}` is read by {how} after its store was freed"),
+                );
+            }
+        }
+    }
+
+    /// A holder read by a call reads the records its stored references name: one freed on
+    /// every path is read after its end (`@FR-H-RefHome`).
+    fn use_points(&mut self, st: &State, h: u16) {
+        for k in Self::stores_of(&st.points.get(&h).cloned().unwrap_or_default()) {
+            let info = info_of(st, k);
+            if info.has(ENDED) && !info.has(LIVE) {
+                let name = self.var_name(h);
+                self.find(
+                    "use-after-end",
+                    k.site,
+                    format!(
+                        "`{name}` is read by a call after a record its reference names was freed"
+                    ),
                 );
             }
         }
@@ -2212,6 +2242,9 @@ impl Run<'_> {
             if let Value::Var(x) = a.unspan() {
                 self.use_var(&s2, *x, "a call");
             }
+            if let Some(h) = Self::tail_var(a) {
+                self.use_points(&s2, h);
+            }
             vals.push(value);
             s = s2;
         }
@@ -2651,10 +2684,15 @@ impl Run<'_> {
                         .first()
                         .map(|h| Self::stores_of(&h.pts).into_iter().collect())
                         .unwrap_or_default();
+                    // …or a lift temporary the function frees: a stored reference only points
+                    // (`@FR-H-RefHome`), and the temporary is the call result's home.
+                    let freed_lifts = &self.freed_lifts;
                     let owned_elsewhere = |k: &SKey| {
                         host.contains(k)
                             || info_of(&s, *k).live.iter().any(|w| {
-                                *w < function.count() && !function.is_compiler_generated(*w)
+                                *w < function.count()
+                                    && (!function.is_compiler_generated(*w)
+                                        || freed_lifts.contains(w))
                             })
                     };
                     let handed = Val {
@@ -2671,7 +2709,17 @@ impl Run<'_> {
                             .filter(|k| !owned_elsewhere(k))
                             .collect(),
                     };
+                    // What the frame still owns, the holder only points at.
+                    let pointed: Pts = value
+                        .pts
+                        .iter()
+                        .copied()
+                        .filter(|p| matches!(p, Pt::Store(k) if owned_elsewhere(k)))
+                        .collect();
                     Self::hand_on(&mut s, &handed);
+                    if let Some(h) = Self::first_var(args, 0) {
+                        s.points.entry(h).or_default().extend(pointed);
+                    }
                 }
             }
         }
@@ -2856,6 +2904,7 @@ fn run_fn<'a>(
         fn_record: BTreeMap::new(),
         leaving: BTreeSet::new(),
         protected: Vec::new(),
+        freed_lifts: BTreeSet::new(),
     };
     let body = def.code.clone();
     // One pass in emission order: which assignments are first, each reassignment's lowering,
@@ -2889,6 +2938,9 @@ fn run_fn<'a>(
                         || (*op == unconditional && !crate::keys::free_reset_off())) =>
             {
                 run.resets.insert(at);
+                if *op == unconditional && vars.is_lift_temp(*x) {
+                    run.freed_lifts.insert(*x);
+                }
             }
             _ => {}
         }

@@ -196,6 +196,41 @@ impl Scopes<'_> {
         preamble.extend(ops);
     }
 
+    /// `@FR-H-RefHome` — a call result lifted as the VALUE of a stored reference
+    /// (`OpSetDbRef(holder, pos, mk(…))`, `Linked { link: mk(9) }`) is the record's home, so it
+    /// lasts as long as the holder: scoped where the holder's root is, not in the block the
+    /// write stands in.  A literal built in a work-ref inside a call argument is such a block,
+    /// and the home freed at its end left the callee reading a released store.
+    /// `LOFT_NO_REF_HOME_LIFT=1` keeps the block's scope.
+    fn home_lasts_as_its_holder(
+        &mut self,
+        tmp: u16,
+        outer_call: u32,
+        args: &[Value],
+        arg_idx: usize,
+        data: &Data,
+    ) {
+        if outer_call == u32::MAX
+            || arg_idx != 2
+            || data.def(outer_call).name() != "OpSetDbRef"
+            || crate::env_once!(std::env::var_os("LOFT_NO_REF_HOME_LIFT").is_some())
+        {
+            return;
+        }
+        let Some(root) = args
+            .first()
+            .and_then(|a| super::par_writes::accessor_root_var(a, data))
+        else {
+            return;
+        };
+        let root = *self.var_mapping.get(&root).unwrap_or(&root);
+        if let Some(&sc) = self.var_scope.get(&root)
+            && self.scope_encloses(root)
+        {
+            self.var_scope.insert(tmp, sc);
+        }
+    }
+
     /// Scan a list of call arguments.
     ///
     /// If any scanned arg comes back as `Insert([Set(w, Null), body])` where `w` is an
@@ -500,6 +535,7 @@ impl Scopes<'_> {
                 // the dep is empty (owned).
                 let tmp = self.new_lift_var(function, &tp);
                 self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
+                self.home_lasts_as_its_holder(tmp, outer_call, args, arg_idx, data);
                 preamble.push(self.lift_set(tmp, scanned, function, data));
                 ls.push(Value::Var(tmp));
             } else if let Some(arm_lifted) = self.lift_owned_coalesce_arm(

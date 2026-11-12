@@ -169,7 +169,11 @@ what the tuple's members borrow (`resolve_deps`); and the records read a member 
 parameter as the caller's store.  `LOFT_NO_TUPLE_ARG_COVER=1` skips the tuple (the copy's
 source-free releases the member its holder frees again), `LOFT_NO_TUPLE_ARG_DEPS=1` reads it as
 borrowing nothing (a vector result adopts the member's store), and `LOFT_NO_TUPLE_ARG_NAME=1`
-leaves the member unnamed (a callee's mint leaks).  An explicit `return p` of a `&` parameter records the borrow as the tail
+leaves the member unnamed (a callee's mint leaks).  A call result lifted as the value of a stored
+reference is that record's home and lasts as long as the holder, not the block the write stands in
+(`home_lasts_as_its_holder`); the records read a lift the function frees as the record's owner and
+a holder handed to a call as a read of the records its references name.  `LOFT_NO_REF_HOME_LIFT=1`
+keeps the block's scope: a literal built as a call argument releases the record before the call.  An explicit `return p` of a `&` parameter records the borrow as the tail
 `{ p }` does; `LOFT_NO_RETURN_LINK_BORROW=1` declares the return fresh.  A generic instance
 whose return leaves are its parameters through a mutual recursion over another generic
 (`pick` → `pick_again` → `pick`) declares their borrow, as its concrete twin does
