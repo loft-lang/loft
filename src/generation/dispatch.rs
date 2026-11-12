@@ -33,7 +33,11 @@ impl Output<'_> {
         let line = crate::bind_lowering::row_line(to, self.ckpt_cur_line);
         self.bind_arm.push("");
         let r = self.output_set_arms(w, var, to);
+        // The plain tail binds a value-record local's tuple, not a store (`@FR-R-ValueRecord`):
+        // named apart, as the C writer's `value-record` arm is, so a census row does not read a
+        // representation as a missing copy.
         let arm = match self.bind_arm.pop() {
+            Some("") | None if self.value_record_locals.contains_key(&var) => "rs-value-record",
             Some("") | None => "rs-tail",
             Some(a) => a,
         };
