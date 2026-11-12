@@ -91,25 +91,20 @@ pub(crate) fn fold_declared_default(data: &Data, value: &Value) -> Option<Conten
     }
 }
 
+/// The files whose parse stopped short of their end, taken BEFORE the unresolved stubs are
+/// reported.  A stub named in one is the echo of the syntax error that stopped it: the
+/// declaration may sit below the point the parse gave up, and "Undefined type" — with a cure
+/// aimed at the imports — sends the reader the wrong way.  The error above is the one to read;
+/// a type still undefined once it is fixed is reported then.  An error that did NOT stop the
+/// parse (a type cycle, a mismatch) hides nothing below it, so it silences no report.  Both
+/// the direct and the deferred report ask it.
+pub(crate) fn files_stopped_early(lexer: &Lexer) -> std::collections::HashSet<String> {
+    lexer.stopped_files().clone()
+}
+
 /// Set the correct type and initial size in definitions.
 /// This will not factor in the space for attributes for records
 /// as we still need to analyze the actual use of records.
-/// The files that already hold an error, taken BEFORE the unresolved stubs are reported.  A
-/// stub named in one is the echo of that error: the declaration may sit below the point the
-/// parse gave up, and "Undefined type" — with a cure aimed at the imports — sends the reader the
-/// wrong way.  The error above is the one to read; a type still undefined once it is fixed is
-/// reported then.  Taken before the reports, so they do not silence each other.  Both the direct
-/// and the deferred report ask it.
-pub(crate) fn files_with_errors(lexer: &Lexer) -> std::collections::HashSet<String> {
-    lexer
-        .diagnostics()
-        .entries()
-        .iter()
-        .filter(|en| en.level == Level::Error)
-        .map(|en| en.file.clone())
-        .collect()
-}
-
 pub fn complete_definition(_lexer: &mut Lexer, data: &mut Data, d_nr: u32) {
     match data.def(d_nr).name.as_str() {
         "vector" => {
@@ -325,7 +320,7 @@ pub fn actual_types_deferred(
             data.definitions[d as usize].returned = Type::Reference(d, Deps::none());
         }
     }
-    let echoed = files_with_errors(lexer);
+    let echoed = files_stopped_early(lexer);
     for d in start_def..data.definitions() {
         match data.def_type(d) {
             DefType::Unknown => {

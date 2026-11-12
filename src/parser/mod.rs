@@ -3107,6 +3107,7 @@ impl Parser {
         }
         let res = self.lexer.peek().clone();
         if res.has != LexItem::None && self.lexer.diagnostics().level() != Level::Fatal {
+            self.lexer.note_stopped();
             if self.lexer.peek_token("use") {
                 diagnostic!(
                     self.lexer,

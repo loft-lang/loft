@@ -1243,7 +1243,7 @@ impl Parser {
         //  (c) Still unresolved — emit the "Undefined type" error at
         //      the stored `Position`.
         let deferred = std::mem::take(&mut self.deferred_unknown);
-        let echoed = crate::typedef::files_with_errors(&self.lexer);
+        let echoed = crate::typedef::files_stopped_early(&self.lexer);
         for (source, stub_nr, pos) in deferred {
             let stub_name = self.data.def(stub_nr).name().to_string();
             // Case (a): stub upgraded in place
@@ -1276,7 +1276,7 @@ impl Parser {
             if self.lexer.diagnostics().level() == Level::Fatal {
                 continue;
             }
-            // …and a parse ERROR in the stub's own file stopped short of its declaration.
+            // …and a syntax error stopped the parse of the stub's own file short of its declaration.
             if echoed.contains(pos.file.as_str()) {
                 continue;
             }

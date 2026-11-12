@@ -531,6 +531,16 @@ fn a_type_declared_below_a_syntax_error_is_not_reported_undefined() {
         .error("Syntax error: unexpected '{' at a_type_declared_below_a_syntax_error_is_not_reported_undefined:2:8");
 }
 
+// An error that does not stop the parse hides nothing below it: a type cycle and an undefined
+// type in one file are both reported (`typedef::files_stopped_early` names only the files a
+// syntax error stopped short of their end).
+#[test]
+fn an_error_that_does_not_stop_the_parse_leaves_an_undefined_type_reported() {
+    code!("struct PENode { val: integer, next: PENode }\nfn f(v: V) -> V { v }")
+        .error("`PENode.next: PENode` makes every PENode contain another PENode — make it `PENode?` at an_error_that_does_not_stop_the_parse_leaves_an_undefined_type_reported:1:16")
+        .error("Undefined type V at an_error_that_does_not_stop_the_parse_leaves_an_undefined_type_reported:2:11");
+}
+
 #[test]
 fn qq_coalesce_crosstype_default_mismatch() {
     code!("fn test() { n: integer? = null; b = n ?? \"x\"; }")
