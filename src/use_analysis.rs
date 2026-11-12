@@ -5377,7 +5377,21 @@ pub(crate) fn function_defs(data: &Data, d_nr: u32) -> Defs {
 #[must_use]
 pub(crate) fn ownership_of_with(data: &Data, d_nr: u32, value: &Value, defs: &Defs) -> Own {
     let def = data.def(d_nr);
-    Ownership::new(data).classify(value, &def.variables, defs)
+    match Ownership::new(data).classify(value, &def.variables, defs) {
+        // A TUPLE carries no store of its own: what the value may borrow is one of its
+        // members, and every reader compares the answer's store with the base's — a tuple's
+        // has none to compare (`@FR-O-Oracle`, loft#2471: the C and rustc writers did not
+        // compile, and the interpreter read the slot's first bytes as one, aliasing a member
+        // that was not first).  A join with no nameable witness is the one every reader
+        // copies, bracketing the arguments: the borrow arm copies the member, the minted arm
+        // copies and releases what the callee minted.
+        Own::Join { base }
+            if base != u16::MAX && matches!(def.variables.tp(base), Type::Tuple(_)) =>
+        {
+            Own::Join { base: u16::MAX }
+        }
+        own => own,
+    }
 }
 
 /// True when `classify` resolves a `Call(d, …)` STRUCTURALLY — a store mint
