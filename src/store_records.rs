@@ -611,6 +611,9 @@ struct Run<'a> {
     /// fn-ref's own release, which runs only for a closure no local record releases, so its
     /// cascade is never the one a local record's captures end by.
     standdown_drops: BTreeSet<usize>,
+    /// The closure-record variables (`___clos_N`) the body releases itself (`OpFreeRef`): only
+    /// while one of those names a record is the record's own release its cascade.
+    released_records: BTreeSet<u16>,
     /// Per fn-ref variable, the closure record its build names (`g = { …; FnRef(_, w) }`).
     fn_record: BTreeMap<u16, u16>,
     /// The closure records that leave the frame: the function returns their fn-ref, or the
@@ -1735,16 +1738,23 @@ impl Run<'_> {
     /// one re-pointed between variables.
     fn link_install(&self, x: u16) -> Option<u16> {
         let data = self.data;
-        // A link to a store-backed kind: a scalar or text link holds no store to release.
+        // A link to a store-backed kind: a scalar or text link holds no store to release.  A
+        // fn-ref is one: a capturing closure's value names its record's store, so a write
+        // through `pd: &fn() = &g` lands that record in `g` (B-Ref-Intro/1454).
+        // `LOFT_RECORDS_NO_FN_LINK_INSTALL=1` leaves a fn link unfollowed.
         let crate::data::Type::RefVar(inner) = data.def(self.d_nr).variables.tp(x).base() else {
             return None;
         };
-        if !(matches!(
-            inner.base(),
-            crate::data::Type::Vector(..)
-                | crate::data::Type::Reference(..)
-                | crate::data::Type::Enum(_, true, _)
-        ) || crate::data::is_keyed(inner.base()))
+        let fn_link = matches!(inner.base(), crate::data::Type::Function(..))
+            && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_FN_LINK_INSTALL").is_some());
+        if !(fn_link
+            || matches!(
+                inner.base(),
+                crate::data::Type::Vector(..)
+                    | crate::data::Type::Reference(..)
+                    | crate::data::Type::Enum(_, true, _)
+            )
+            || crate::data::is_keyed(inner.base()))
         {
             return None;
         }
@@ -3423,16 +3433,28 @@ impl Run<'_> {
             && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_DROP_FNREF_CASCADE").is_some())
         {
             // The emitter's own split (`get_free_vars::fnref_stand_down`): while a local
-            // closure-record variable still names the record, that record's release (its
-            // hook) is the cascade, and the fn-ref's drop is the one that stands down.
+            // closure-record variable the frame releases still names the record, that record's
+            // release (its hook) is the cascade, and the fn-ref's drop is the one that stands
+            // down.  A record the frame never releases itself (written into a fn-ref through a
+            // link) ends by the fn-ref's drop alone.
+            // And a record another name may still hold (`k = h`, then `return k`) is not this
+            // drop's: the detach ahead of it (`OpFnRefDetachShared`) nulls `f` wherever the two
+            // share, which the records may not have followed.  A link onto `f`'s variable is not
+            // another holder, nor is a closure variable the frame never releases.
             let function = &self.data.def(self.d_nr).variables;
             let records: Vec<SKey> = Self::stores_of(&Self::pts(&s, f))
                 .into_iter()
                 .filter(|k| {
                     !s.vars.iter().any(|(&v, p)| {
-                        v < function.count()
-                            && function.name(v).starts_with("___clos_")
+                        v != f
                             && p.contains(&Pt::Store(*k))
+                            && (v >= function.count()
+                                || self.released_records.contains(&v)
+                                || !(function.name(v).starts_with("___clos_")
+                                    || matches!(
+                                        function.tp(v).base(),
+                                        crate::data::Type::RefVar(_)
+                                    )))
                     })
                 })
                 .collect();
@@ -3785,6 +3807,7 @@ fn run_fn<'a>(
         resets: BTreeSet::new(),
         cond_resets: BTreeSet::new(),
         standdown_drops: BTreeSet::new(),
+        released_records: BTreeSet::new(),
         fn_record: BTreeMap::new(),
         leaving: BTreeSet::new(),
         protected: Vec::new(),
@@ -3841,6 +3864,7 @@ fn run_fn<'a>(
         }
     });
     standdown_drops(data, &body, &mut Vec::new(), &mut run.standdown_drops);
+    released_records(data, vars, &body, &mut run.released_records);
     closure_records(data, vars, &body, &mut run.fn_record, &mut run.leaving);
     if let Some((mut s, value)) = run.eval(&body, st) {
         run.answer = run.answer.join(run.summary_of(&value.pts));
@@ -3855,6 +3879,26 @@ fn run_fn<'a>(
 /// records built inside another store (`w = OpChildRec(…)`, a fn field), whose host decides
 /// their life.  A record the function returns is not among them: it holds its captures until
 /// it leaves, and `hand_on` hands them on with it.
+/// The closure-record variables (`___clos_N`) the body releases itself (`Run::released_records`).
+fn released_records(
+    data: &Data,
+    vars: &crate::variables::Function,
+    body: &Value,
+    out: &mut BTreeSet<u16>,
+) {
+    let free_op = data.def_nr("OpFreeRef");
+    body.walk(&mut |n| {
+        if let Value::Call(op, a) = n.unspan()
+            && *op == free_op
+            && let Some(Value::Var(v)) = a.first().map(Value::unspan)
+            && *v < vars.count()
+            && vars.name(*v).starts_with("___clos_")
+        {
+            out.insert(*v);
+        }
+    });
+}
+
 /// Collect the `OpDropFnRef(f)` nodes under an `if OpDistinctStore(OpFnRefClosure(f), …)`
 /// guard on the same `f` — the emitter's stand-down release (`Run::standdown_drops`).  Every
 /// node of a guarded arm is recorded under its own address and, where wrapped in a span, the
