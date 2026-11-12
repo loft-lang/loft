@@ -395,6 +395,13 @@ fn slot_sole_holder() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_SOLE_HOLDER").is_none())
 }
 
+/// `LOFT_RECORDS_NO_IDENTITY_TEST_NO_USE=1`: an operand of a store identity test is a use of
+/// its store (the records' bisect switch).
+fn identity_test_no_use() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_IDENTITY_TEST_NO_USE").is_none())
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -4209,9 +4216,11 @@ impl Run<'_> {
         } else if matches!(
             self.data.def(d).name(),
             "OpEqRef" | "OpNeRef" | "OpStoreLive" | "OpRefIsNull" | "OpConvBoolFromRef"
-        ) {
+        ) || (d == self.ops.distinct && identity_test_no_use())
+        {
             // A reference COMPARISON reads the two references, never the stores they name:
-            // comparing a freed store's reference with another is no use of it.  So are the
+            // comparing a freed store's reference with another is no use of it — the store
+            // identity test (`OpDistinctStore`, `a.store_nr != b.store_nr`) too.  So are the
             // tests of a reference itself — null, naming a record — and the liveness test
             // (`@FR-L-CapOwn`'s guard), which exists to be asked of a store that may be freed.
             let mut s = st;
