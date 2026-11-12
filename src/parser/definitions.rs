@@ -1015,7 +1015,9 @@ impl Parser {
                 let num_variants = self.data.def(d_nr).attributes().len();
                 for a_nr in 0..num_variants {
                     let v_name = self.data.def(d_nr).attributes()[a_nr].name.clone();
-                    let v_nr = self.data.def_nr(&v_name);
+                    // This enum's own variant: the bare name is first-wins, and an earlier
+                    // enum's variant of the same name (the stdlib's, in a REPL) is not ours.
+                    let v_nr = self.data.variant_of(d_nr, &v_name);
                     if v_nr != u32::MAX {
                         self.data.definitions[v_nr as usize].returned = parent_returned.clone();
                     }
