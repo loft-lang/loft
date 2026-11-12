@@ -67,7 +67,10 @@ pub fn find_loft_rlib() -> Option<(std::path::PathBuf, Vec<std::path::PathBuf>)>
         // per-unit layout's `build/<crate>/<hash>/out/` dirs beside it.
         let search = || crate::native_lib::dependency_dirs(deps_dir.parent().unwrap_or(deps_dir));
         let exact = dir.join("libloft.rlib");
-        if crate::file_access::exists(&exact) {
+        // A copy another rustc wrote is a restored cache's debris beside the runtime this
+        // build made (the per-unit layout leaves `deps/` behind): linking it fails `E0514`.
+        // The next candidate — the uplift `refresh_runtime_uplift` keeps current — is the one.
+        if crate::file_access::exists(&exact) && !crate::native_lib::rlib_from_other_rustc(&exact) {
             return Some((exact, search()));
         }
         let hashed = crate::file_access::read_dir(dir)

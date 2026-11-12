@@ -337,7 +337,7 @@ fn rlib_meta_header(rlib: &std::path::Path) -> Option<MetaHeader> {
 
 /// Was this rlib written by a rustc OTHER than the one that will compile against it?  `false`
 /// whenever either side is unknown, so an unreadable header keeps the old choice.
-fn rlib_from_other_rustc(rlib: &std::path::Path) -> bool {
+pub(crate) fn rlib_from_other_rustc(rlib: &std::path::Path) -> bool {
     match (rlib_meta_header(rlib), rustc_version()) {
         (Some(h), Some(current)) => h.rustc != current,
         _ => false,
