@@ -203,6 +203,16 @@ projection whose type carries no dep (a destructured tuple member, `(s.n, s.t, s
 copies it into the staging temp as a typed projection does (`__p154_rhs`);
 `LOFT_NO_UNTYPED_PROJECTION_COPY=1` stages the projection itself, which the temp then frees.
 
+A closure record HOLDS what it captures: each capture slot, keyed by the record's store and
+offset, keeps the captured value, and the captured stores are handed on only when a value
+naming the record leaves (a return, a store into another owner).  Which record owns a capture
+is a per-run fact (`@FR-L-CapOne`) the code generator settles at each return by emptying the
+slots of the records that stay, so the records read that choice instead of guessing it.  A
+record built inside another store (a fn field) takes its captures over at the capture.  Where
+the frame frees a capture only on the paths a record does not hold it, the records keep the
+correlation: the records at least one of which names a record wherever the store is live, and
+those null there.
+
 The closure records' releases, each switch bringing back one second free (doc strings in
 `keys.rs`):
 
