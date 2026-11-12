@@ -450,7 +450,9 @@ pub fn read_dir(path: impl HostPath) -> io::Result<Vec<PathText>> {
             }
             out.push(PathText::from_os_as(&entry, path));
         }
-        out.sort_by_key(PathText::portable);
+        // One rendering per entry: a cache directory lists tens of thousands of names, and a
+        // key rendered per comparison made the sort the larger part of a run that prunes it.
+        out.sort_by_cached_key(PathText::portable);
         if unspellable {
             log_once(
                 &path.portable(),

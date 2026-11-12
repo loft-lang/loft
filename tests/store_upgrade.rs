@@ -317,10 +317,12 @@ fn run_loft(dir: &std::path::Path, args: &[&str]) -> (i32, String, String) {
 }
 
 /// Write the store with `writer` (which must print `saved true`), and answer the cell's dir.
+/// The writer is the cell's fixture, so it runs on the interpreter; the READER is what each
+/// cell checks, on the interpreter and on the C.
 fn write_store(name: &str, writer: &str) -> std::path::PathBuf {
     let dir = cell_dir(name);
     loft::file_access::write(dir.join("a.loft"), writer).unwrap();
-    let (code, out, err) = run_loft(&dir, &["a.loft"]);
+    let (code, out, err) = run_loft(&dir, &["--interpret", "a.loft"]);
     assert!(
         code == 0 && out.contains("saved true"),
         "{name}: the writer failed ({code}):\n{out}\n{err}"
@@ -660,7 +662,7 @@ fn sink_reader(types: &str) -> String {
 #[test]
 fn cell_every_kind_survives_an_upgrade() {
     let dir = write_store("sink", &sink_writer());
-    let (_, out, _) = run_loft(&dir, &["a.loft"]);
+    let (_, out, _) = run_loft(&dir, &["--interpret", "a.loft"]);
     let expect = out
         .lines()
         .next()
@@ -1351,7 +1353,7 @@ fn write_store_as(name: &str, version: &str, writer: &str) -> std::path::PathBuf
         manifest(&dir, version, "");
     }
     loft::file_access::write(dir.join("a.loft"), writer).unwrap();
-    let (code, out, err) = run_loft(&dir, &["a.loft"]);
+    let (code, out, err) = run_loft(&dir, &["--interpret", "a.loft"]);
     assert!(
         code == 0 && out.contains("saved true"),
         "{name}: the writer failed ({code}):\n{out}\n{err}"
