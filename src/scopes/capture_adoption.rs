@@ -75,7 +75,6 @@ pub(super) fn mark_borrowed_captures(data: &mut Data, database: &crate::database
                     let borrows = borrows
                         || (crate::keys::loop_buffer_capture_borrows()
                             && (!crate::keys::call_buffer_rebind_detach()
-                                || c == u16::MAX
                                 || super::backings::rotated_through_buffers(
                                     data.def(d_nr).code(),
                                     data,

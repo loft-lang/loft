@@ -51,7 +51,6 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
         return None;
     }
     let database = data.def_nr("OpDatabase");
-    let get_field = data.def_nr("OpGetField");
     let mut slots: HashMap<u16, Vec<Slot>> = HashMap::default();
     let mut backings: HashMap<u16, Vec<u16>> = HashMap::default();
     let mut owners: HashMap<(u16, u16), i32> = HashMap::default();
@@ -89,24 +88,14 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
             // `c = OpGetField(__vdb_N, 0, …)`: a collection local backed by a literal buffer;
             // `c = { OpDatabase(__ref_N, …); …; __ref_N }`: a record built in a work-ref.
             Value::Set(c, rhs) if rebound.contains(c) => {
-                if let Some(b) = built_backing(rhs, database, get_field) {
+                let (backing, backed) = assigned_backing(code, rhs, *c, vars, data);
+                if let Some(b) = backing {
                     let e = backings.entry(*c).or_default();
                     if !e.contains(&b) {
                         e.push(b);
                     }
-                } else {
-                    // A call delivering into its hidden buffer (`c = f(…, __ref_N)`): the
-                    // buffer is a backing too — refilled in place on the next pass, it is
-                    // detached first wherever a record holds its store (`@FR-L-CapRebind`).
-                    if crate::keys::call_buffer_rebind_detach()
-                        && let Some(b) = super::backings::call_buffer_of(rhs, vars)
-                        && !super::backings::rotated_through_buffers(code, data, *c)
-                    {
-                        let e = backings.entry(*c).or_default();
-                        if !e.contains(&b) {
-                            e.push(b);
-                        }
-                    }
+                }
+                if !backed {
                     unbacked.insert(*c);
                 }
             }
@@ -160,6 +149,33 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
         confined,
         unbacked,
     })
+}
+
+/// The backing `c = rhs` binds `c` to, and whether a backing minted the value: a literal buffer
+/// or a work-ref ([`built_backing`]) is one; a call delivering into its hidden buffer
+/// (`c = f(…, __ref_N)`) names that buffer as a backing too — refilled in place on the next
+/// pass, it is detached first wherever a record holds its store (`@FR-L-CapRebind`) — but its
+/// value may be a store of the callee's own, so `c` also counts as unbacked.  A capture the
+/// frame rotates through its buffers gets no buffer backing: the buffers release it.
+fn assigned_backing(
+    code: &Value,
+    rhs: &Value,
+    c: u16,
+    vars: &Function,
+    data: &Data,
+) -> (Option<u16>, bool) {
+    let (database, get_field) = (data.def_nr("OpDatabase"), data.def_nr("OpGetField"));
+    if let Some(b) = built_backing(rhs, database, get_field) {
+        return (Some(b), true);
+    }
+    let buffer = if crate::keys::call_buffer_rebind_detach()
+        && !super::backings::rotated_through_buffers(code, data, c)
+    {
+        super::backings::call_buffer_of(rhs, vars)
+    } else {
+        None
+    };
+    (buffer, false)
 }
 
 /// The backing local an assignment's right-hand side mints into: a collection's literal buffer
