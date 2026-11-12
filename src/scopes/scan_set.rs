@@ -2564,9 +2564,21 @@ fn multi_first_writes_out_off() -> bool {
 }
 
 /// Does every arm of the value branch `value` end in a bare variable?
+///
+/// An arm that is itself a `??` is not one (`@FR-O-Complete`): its `__ncc_N` and its
+/// default's work-ref are a join the run settles, so the bind keeps the value form.  Written
+/// out with the bind, the closure build that captures the local lost the hand-off of that
+/// `??`'s stores, and the frame freed them under the escaping closure (loft#2210's branch-arm
+/// cell).  `LOFT_NO_WRITE_OUT_NCC_ARM=1` reads through the `??`.
 fn every_arm_tail_is_var(value: &Value) -> bool {
     match value.unspan() {
         Value::If(_, t, e) => every_arm_tail_is_var(t) && every_arm_tail_is_var(e),
+        Value::Block(b)
+            if b.name == "ncc"
+                && !crate::env_once!(std::env::var_os("LOFT_NO_WRITE_OUT_NCC_ARM").is_some()) =>
+        {
+            false
+        }
         Value::Block(b) => b.operators.last().is_some_and(every_arm_tail_is_var),
         Value::Var(_) => true,
         _ => false,
