@@ -3502,6 +3502,15 @@ pub fn c_own_tuple_member_bind() -> bool {
     *ON.get_or_init(|| env_set("LOFT_C_OWN_TUPLE_MEMBER_BIND"))
 }
 
+/// `LOFT_NO_REBIND_ADOPTS_MINTED=1` — a reassignment from a call whose answer is the store it
+/// minted in its buffer is copied into the local's own store again, as only a deferred first
+/// bind adopted it before (`bind_lowering::re_bind`, arm R2b; @PLN220's A/B).
+#[must_use]
+pub fn rebind_adopts_minted_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_REBIND_ADOPTS_MINTED"))
+}
+
 /// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
 /// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
 #[must_use]

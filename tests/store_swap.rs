@@ -21,8 +21,10 @@ fn swaps(mode: &str, env: &[(&str, &str)]) -> (usize, String) {
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_TRACE_STORE_SWAP", "1")
         // `@FR-R-RebindBuffer` takes s12's rebind loop on `--native` by adopting instead of
-        // exchanging; this pins the exchange itself, so it is taken with that rule off.
+        // exchanging, and `@FR-O-Move`'s rebind adopt (`bind_lowering::re_bind`) takes it on the
+        // interpreter; this pins the exchange itself, so it is taken with both rules off.
         .env("LOFT_NO_REBIND_BUFFER", "1")
+        .env("LOFT_NO_REBIND_ADOPTS_MINTED", "1")
         .env_remove("LOFT_NO_STORE_SWAP");
     for (k, v) in env {
         cmd.env(k, v);

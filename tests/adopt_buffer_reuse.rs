@@ -357,7 +357,10 @@ fn the_store_census_drops() {
         // 2026-11-11: an interpreter reassignment's copy goes into a FRESH store where the
         // displaced one awaits its stashed free (writing into it re-freed it on a null answer):
         // 4 more on and off the pool, native unchanged (`LOFT_NO_STASH_FRESH=1` gives back 4).
-        (225, 345, 104, 232),
+        // A rebind from a call whose answer is its minted buffer store adopts it as the first
+        // bind does (`@FR-O-Move`, `bind_lowering::re_bind`): 14 fewer on and off the pool,
+        // native unchanged.  `LOFT_NO_REBIND_ADOPTS_MINTED=1` gives back 225/345.
+        (211, 331, 104, 232),
         "mints (interpret on, off, native on, off)"
     );
 }

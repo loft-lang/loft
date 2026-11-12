@@ -10,7 +10,9 @@
 // its own store, the runtime swaps the two stores' contents and releases the slot that ends up
 // holding the empty root.  Every value below is the copy's: each cell answers the same with
 // `LOFT_NO_STORE_SWAP=1`, and that A/B is the falsifier together with the swap census
-// (`tests/store_swap.rs`).  Values hand-computed.
+// (`tests/store_swap.rs`).  Values hand-computed.  Where the callee's answer is the store it
+// minted in its buffer, the rebind ADOPTS that store instead (`@FR-O-Move`; on `--native`,
+// `@FR-R-RebindBuffer`), so the census takes the exchange with those rules off.
 //
 // @falsified-at: none — the rule has no earlier build to catch, so the receipt is a SABOTAGE
 //   (2026-10-02): with `Stores::try_swap_in` skipping the release of the slot that ends up

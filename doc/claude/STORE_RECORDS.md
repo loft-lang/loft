@@ -383,7 +383,10 @@ gives it back its own test: a vector local's first null-init mint (`LOFT_C_OWN_V
 a tuple member's first bind (`LOFT_C_OWN_TUPLE_MEMBER_BIND=1`), and whether a reassignment frees
 the store it displaces at all (`re_bind`'s `DisplacedFree`; `LOFT_C_OWN_DISPLACED_FREE=1` frees a
 compiler temporary's null reset again, a second free the writer's same-store guard makes a
-no-op).  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
+no-op).  Where the two disagreed and the rules side with the C writer, the decision itself
+moved: a rebind from a call whose answer is the store it minted in its buffer adopts that store
+at every bind, as the first bind and C do (`@FR-O-Move`); `LOFT_NO_REBIND_ADOPTS_MINTED=1` copies
+it into the local's own store again (the interpreter's arm R2b).  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
 on one writer (`--writer c|native`) and lists the arms the two decide differently.
 
 ## Phases

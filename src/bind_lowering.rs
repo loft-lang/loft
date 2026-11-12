@@ -835,7 +835,12 @@ fn re_arm(
             // `LOFT_NO_FRESH_COPY_OF_VIEW=1`.
             && !(!rb.rhs_may_alias_v && !crate::keys::fresh_copy_of_view_off()))
         && !function.is_view_elided(v)
-        && !(function.is_deferred_first_bind(v)
+        // `@FR-O-Move` — an answer the callee minted in the buffer it was handed transfers to
+        // the binding at every bind, as the first-bind arm and the C writer take it: the
+        // displaced free is witnessed by that buffer (`buffer_witness`), and the scope pass
+        // pairs the local with it.  `LOFT_NO_REBIND_ADOPTS_MINTED=1` adopts at a deferred first
+        // bind only and copies at a rebind.  @PLN220.
+        && !((function.is_deferred_first_bind(v) || !crate::keys::rebind_adopts_minted_off())
             && crate::use_analysis::adopts_minted_at_bind(data, function, v, value))
     {
         return ReArm::CallCopy { d_nr: rec, fn_nr };
