@@ -32,6 +32,7 @@
 
 use crate::data::{Data, DefType, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 
 /// What a variable points into.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -2442,18 +2443,19 @@ impl Run<'_> {
                     other => format!("{other:?}"),
                 })
                 .collect();
-            o.push_str(&format!(" {}={{{}}}", self.var_name(*v), pts.join(",")));
+            let _ = write!(o, " {}={{{}}}", self.var_name(*v), pts.join(","));
         }
         o.push_str("\n    stores:");
         for (k, i) in &st.stores {
             let alts: Vec<Vec<String>> = i.alts.iter().map(names).collect();
-            o.push_str(&format!(
+            let _ = write!(
+                o,
                 " {}:st{} live{:?} alts{alts:?} end{:?}",
                 key(k),
                 i.status,
                 names(&i.live),
                 names(&i.ended)
-            ));
+            );
         }
         eprintln!("[store-trace] {o}");
     }
