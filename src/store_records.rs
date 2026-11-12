@@ -2587,7 +2587,23 @@ impl Run<'_> {
         let mut s = st;
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
-            if let Value::Tuple(xs) = a.unspan() {
+            // A block ending in the literal (`{ __ref_8 = tp; (OpGetField(__ref_8, …), …) }`, a
+            // boxed tuple unboxed into the argument) runs its leading statements first.
+            let (prefix, lit): (&[Value], &Value) = match a.unspan() {
+                Value::Block(b) => match b.operators.split_last() {
+                    Some((last, init)) if matches!(last.unspan(), Value::Tuple(_)) => (init, last),
+                    _ => (&[], a),
+                },
+                Value::Insert(ops) => match ops.split_last() {
+                    Some((last, init)) if matches!(last.unspan(), Value::Tuple(_)) => (init, last),
+                    _ => (&[], a),
+                },
+                _ => (&[], a),
+            };
+            if let Value::Tuple(xs) = lit.unspan() {
+                if !prefix.is_empty() {
+                    s = self.seq(prefix, s)?.0;
+                }
                 let target = self.tuple_target.take();
                 let parts = self.tuple_elems(xs, s);
                 self.tuple_target = target;
