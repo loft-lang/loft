@@ -8056,14 +8056,13 @@ pub type i16 = integer limit(-32768, 32767) size(2)
 pub type i32 = integer size(4)
 ```
 
-4-byte signed: -2\_147\_483\_647 – 2\_147\_483\_647.  The bottom of the 32-bit range (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold.
-`u32` reserves a code too, at the top of its range, and the two reservations LOOK alike and do not behave alike: an `i32` overflow reads `null`, a `u32` overflow reads `0`, the type's default.  That is not a claim that the reservations differ — it is C127's pragmatic exemption, allowed because losing one value out of 2^32 is cheap and being the one narrow type whose overflow is detectable is worth more (DESIGN\_DECISIONS.md C127 § Decision).  Pinned across both aliases by `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
+4-byte signed: -2\_147\_483\_647 – 2\_147\_483\_647.  The bottom of the 32-bit range (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold — C127's pragmatic exemption: an `i32` overflow reads `null`, where every other narrow type's reads its default.  Pinned by `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
 
 ```rust
-pub type u32 = integer limit(0, 4294967294) size(4)
+pub type u32 = integer limit(0, 4294967295) size(4)
 ```
 
-4-byte unsigned: 0 – 4\_294\_967\_294.  The top code is reserved to buy the same refusal `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32` above says why the two differ).  size(4) forces 4-byte storage and serialisation symmetric with `i32`, and a value in the upper half (2^31..2^32-2) reads back as the same positive integer.  `u32` is for file / wire-format fields (magic numbers, counts, tick fields) where the byte width is the load-bearing property; plain `integer` holds the whole 0..2^32-1 range and more.
+4-byte unsigned: 0 – 4\_294\_967\_295, the whole width.  It has no null: an overflow reads `0`, the type's default (C127).  `u32?` keeps the top code for its null, as `u8?` does, and holds 0 – 4\_294\_967\_294.  size(4) forces 4-byte storage and serialisation symmetric with `i32`.  `u32` is for file / wire-format fields (magic numbers, counts, tick fields) where the byte width is the load-bearing property.
 
 ```rust
 pub type i64 = integer size(8)
