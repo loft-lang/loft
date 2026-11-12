@@ -2866,6 +2866,51 @@ impl Run<'_> {
     }
 
     /// A free op: its own argument is not a use.
+    /// A capture SLOT freed unless the witness names its store (a closure build releasing the
+    /// capture an earlier pass left in its record): the slot's stores the witness cannot name
+    /// end, for certain where the slot names only that one.  `false` when the freed operand is
+    /// no slot of a record.
+    fn free_slot_unless_witness(&mut self, args: &[Value], name: &str, st: &mut State) -> bool {
+        let Some(Value::Call(g, gargs)) = args.first().map(Value::unspan) else {
+            return false;
+        };
+        if *g != self.ops.get_dbref {
+            return false;
+        }
+        let Some(rec) = Self::first_var(gargs, 0) else {
+            return false;
+        };
+        if !Self::is_record(st, rec) {
+            return false;
+        }
+        let held = Self::held_by_record(st, rec, Self::const_offset(gargs.get(1)));
+        let wp = args
+            .get(1)
+            .and_then(|a| Self::named_var(st, a))
+            .map(|w| Self::pts(st, w));
+        let label = format!("{name}({})", self.var_name(rec));
+        let stores = Self::stores_of(&held);
+        let single = stores.len() == 1 && !held.contains(&Pt::Unknown);
+        for k in stores {
+            if wp.as_ref().is_some_and(|wp| wp.contains(&Pt::Store(k))) {
+                continue;
+            }
+            self.sites[k.site as usize].ends.insert(label.clone());
+            if let Some(info) = st.stores.get_mut(&k)
+                && info.has(LIVE)
+            {
+                if single {
+                    info.status = (info.status & !LIVE) | ENDED;
+                    info.live.clear();
+                    info.alts.clear();
+                } else {
+                    info.status |= ENDED;
+                }
+            }
+        }
+        true
+    }
+
     fn free_op(&mut self, d: u32, args: &[Value], st: State) -> State {
         let ops = self.ops;
 
@@ -2904,6 +2949,10 @@ impl Run<'_> {
             // A free that is a no-op where the freed variable and its witness name one store.
             let name = self.data.def(d).name().to_string();
             let mut st = st;
+            // A capture SLOT freed unless the witness names its store.
+            if self.free_slot_unless_witness(args, &name, &mut st) {
+                return st;
+            }
             if let Some(x) = Self::first_var(args, 0) {
                 let w = Self::first_var(args, 1);
                 let xp = Self::pts(&st, x);
