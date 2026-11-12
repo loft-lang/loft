@@ -215,7 +215,9 @@ Elaboration is `selfhost/src/el*.loft`; gate E's runner is `selfhost/front/elab.
 **Measuring a change against gate E.**  The count alone hides a swap (one program gained, one
 lost).  Run the gate with `LOFT_ELAB_VERDICTS=<file>` on the change and on its base — the base
 from a `git worktree add <scratch>/head HEAD`, built there — and diff the two files: every line
-that moved is a program to read.  `--plan` ranks the refusal families by how many programs each
+that moved is a program to read.  Run it with `--jobs 6` under `ulimit -v 6000000`: the default runs
+one `elab` per core, and some corpus program drives one to 11 GB, which on a 60 GB box brought
+in the kernel's OOM killer and took the whole session with it.  `--plan` ranks the refusal families by how many programs each
 alone blocks; `--which TEXT` lists the programs that meet one; `LOFT_ELAB_KEEP=1` keeps the
 build directory for a single-program diff.
 
