@@ -432,6 +432,27 @@ fn guarded_rest_reports() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_GUARDED_REST_REPORTS").is_none())
 }
 
+/// `LOFT_RECORDS_NO_SLOT_DEAD_ARM=1`: the dead arm of a slot liveness test leaves the store the
+/// slot names as it was (the records' bisect switch).
+fn slot_dead_arm() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_DEAD_ARM").is_none())
+}
+
+/// `LOFT_RECORDS_NO_SLOT_CORR_JOIN=1`: a slot's correlation is intersected at a join and
+/// dropped at a re-mint of its store's site (the records' bisect switch).
+fn slot_corr_join() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_CORR_JOIN").is_none())
+}
+
+/// `LOFT_RECORDS_NO_SLOT_CORR_NARROW=1`: a store narrowed out of a capture slot keeps its
+/// liveness, and a slot is narrowed only against one store (the records' bisect switch).
+fn slot_corr_narrow() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_CORR_NARROW").is_none())
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -487,6 +508,9 @@ fn demote(st: &mut State, site: u32) {
     let cur = SKey { site, older: false };
     let old = SKey { site, older: true };
     if let Some(info) = st.stores.remove(&cur) {
+        // No earlier generation live here: a slot correlated with the current store stays
+        // correlated with the older key it becomes.
+        let old_quiet = !info_of(st, old).has(LIVE);
         let merged = match st.stores.get(&old) {
             Some(o) => join_info(o, &info),
             None => info,
@@ -511,7 +535,11 @@ fn demote(st: &mut State, site: u32) {
                 if v.pts.remove(&Pt::Store(cur)) {
                     v.pts.insert(Pt::Store(old));
                 }
-                v.corr.remove(&cur);
+                if v.corr.remove(&cur) && slot_corr_join() && (old_quiet || v.corr.contains(&old)) {
+                    v.corr.insert(old);
+                } else if !old_quiet {
+                    v.corr.remove(&old);
+                }
             }
         }
         if let Some(m) = st.slots.remove(&cur) {
@@ -672,7 +700,20 @@ fn join_slots(a: &State, b: &State) -> SlotParts {
             match into.get_mut(off) {
                 Some(x) => {
                     x.pts.extend(v.pts.iter().copied());
-                    x.corr = x.corr.intersection(&v.corr).copied().collect();
+                    // A store stays correlated with the slot where, on each side, it is
+                    // correlated there or not live (as for a value, `join_out`).
+                    x.corr = if slot_corr_join() {
+                        x.corr
+                            .union(&v.corr)
+                            .copied()
+                            .filter(|c| {
+                                (x.corr.contains(c) || !info_of(a, *c).has(LIVE))
+                                    && (v.corr.contains(c) || !info_of(b, *c).has(LIVE))
+                            })
+                            .collect()
+                    } else {
+                        x.corr.intersection(&v.corr).copied().collect()
+                    };
                 }
                 None => {
                     into.insert(*off, v.clone());
@@ -3241,22 +3282,44 @@ impl Run<'_> {
         else {
             return None;
         };
-        let y = match b.iter().next() {
-            Some(y @ Pt::Store(_)) if b.len() == 1 => *y,
-            _ => return None,
-        };
         if *op != self.ops.get_dbref
-            || a.len() < 2
-            || !a.contains(&y)
             || crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_SLOT_NARROW").is_some())
         {
             return None;
         }
+        let y = match b.iter().next() {
+            Some(y @ Pt::Store(_)) if b.len() == 1 => Some(*y),
+            _ => None,
+        };
+        let Some(y) = y.filter(|y| a.len() >= 2 && a.contains(y)) else {
+            // The other operand names several stores (or null): where SAME, the slot names only
+            // a store both may name; none at all, and the arm cannot run.
+            if !slot_corr_narrow()
+                || a.contains(&Pt::Unknown)
+                || b.contains(&Pt::Unknown)
+                || a.iter().any(|p| matches!(p, Pt::Param(_)))
+                || b.iter().any(|p| matches!(p, Pt::Param(_)))
+                || !a.iter().any(|p| matches!(p, Pt::Store(_)))
+            {
+                return None;
+            }
+            let both: Pts = a.intersection(b).copied().collect();
+            if both.len() == a.len() {
+                return None;
+            }
+            let same = if both.iter().any(|p| matches!(p, Pt::Store(_))) {
+                let mut same = st.clone();
+                Self::narrow_slot(&mut same, *w, off, |p| both.contains(p)).then_some(same)
+            } else {
+                None
+            };
+            return Some((Some(st.clone()), same));
+        };
         let mut distinct = st.clone();
-        Self::narrow_slot(&mut distinct, *w, off, |p| *p != y);
+        let d_ok = Self::narrow_slot(&mut distinct, *w, off, |p| *p != y);
         let mut same = st.clone();
-        Self::narrow_slot(&mut same, *w, off, |p| *p == y);
-        Some((Some(distinct), Some(same)))
+        let s_ok = Self::narrow_slot(&mut same, *w, off, |p| *p == y);
+        Some((d_ok.then_some(distinct), s_ok.then_some(same)))
     }
 
     /// `OpStoreLive(OpGetDbRef(w, off))` (the frame end's let-go of a capture, `@FR-L-CapOwn`):
@@ -3310,30 +3373,125 @@ impl Run<'_> {
         {
             return None;
         }
-        let dead: BTreeSet<SKey> = Self::stores_of(&Self::held_by_record(st, *w, Some(off)))
-            .into_iter()
+        let held_pts = Self::held_by_record(st, *w, Some(off));
+        let held = Self::stores_of(&held_pts);
+        let dead: BTreeSet<SKey> = held
+            .iter()
+            .copied()
             .filter(|k| info_of(st, *k).status & (LIVE | HANDED) == 0)
             .collect();
-        if dead.is_empty() {
+        // The dead arm of a slot that names ONE store: that store is not live there.  Where the
+        // records have it ended or absent on some path, the arm keeps those; where they have it
+        // live on every path, the arm cannot run.
+        let single = slot_dead_arm()
+            && held.len() == 1
+            && !held_pts
+                .iter()
+                .any(|p| matches!(p, Pt::Unknown | Pt::Param(_)));
+        // …and a store correlated with the slot of the one record `w` names: live only where
+        // the slot names it, and where it does, it is the store found dead.
+        let recs = Self::stores_of(&Self::pts(st, *w));
+        let corr: Vec<SKey> = if slot_dead_arm() && recs.len() == 1 {
+            st.slots
+                .get(&recs[0])
+                .and_then(|m| m.get(&off))
+                .map(|v| {
+                    v.corr
+                        .iter()
+                        .copied()
+                        .filter(|c| Self::sole_slot(st, recs[0], off, *c))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if dead.is_empty() && !single && corr.is_empty() {
             return None;
         }
         let mut live = st.clone();
-        Self::narrow_slot(
-            &mut live,
-            *w,
-            off,
-            |p| !matches!(p, Pt::Store(k) if dead.contains(k)),
-        );
-        Some((Some(live), Some(st.clone())))
+        if !dead.is_empty() {
+            let _ = Self::narrow_slot(
+                &mut live,
+                *w,
+                off,
+                |p| !matches!(p, Pt::Store(k) if dead.contains(k)),
+            );
+        }
+        let mut not_live: Vec<SKey> = corr;
+        if single {
+            not_live.push(held[0]);
+        }
+        let mut d = st.clone();
+        let mut feasible = true;
+        for k in not_live {
+            if let Some(i) = d.stores.get_mut(&k)
+                && i.has(LIVE)
+            {
+                if i.status & (ENDED | ABSENT | HANDED) == 0 {
+                    feasible = false;
+                    break;
+                }
+                i.status &= !LIVE;
+                i.live.clear();
+                i.alts.clear();
+            }
+        }
+        let dead_arm = feasible.then_some(d);
+        Some((Some(live), dead_arm))
     }
 
-    fn narrow_slot(st: &mut State, w: u16, off: i32, keep: impl Fn(&Pt) -> bool) {
-        for k in Self::stores_of(&Self::pts(st, w)) {
-            if let Some(v) = st.slots.get_mut(&k).and_then(|m| m.get_mut(&off)) {
+    /// Is slot `off` of record `rec` the only holder of `k` — no variable, fn field or other
+    /// slot names it?  A slot's correlation ("live only where the slot names it") is read only
+    /// then: a store an older record's slot also holds is live through that one too.
+    fn sole_slot(st: &State, rec: SKey, off: i32, k: SKey) -> bool {
+        let p = Pt::Store(k);
+        !st.vars.values().any(|v| v.contains(&p))
+            && !st.field_captures.values().any(|v| v.contains(&p))
+            && st.slots.iter().all(|(r, m)| {
+                m.iter()
+                    .all(|(o, v)| (*r == rec && *o == off) || !v.pts.contains(&p))
+            })
+    }
+
+    /// `false` where the narrowing leaves no path: a store live only where the slot names it,
+    /// and live on every path, is dropped from the only record that could hold it.
+    fn narrow_slot(st: &mut State, w: u16, off: i32, keep: impl Fn(&Pt) -> bool) -> bool {
+        let recs = Self::stores_of(&Self::pts(st, w));
+        let mut gone: Vec<SKey> = Vec::new();
+        if recs.len() == 1
+            && let Some(v) = st.slots.get(&recs[0]).and_then(|m| m.get(&off))
+        {
+            gone = v
+                .corr
+                .iter()
+                .copied()
+                .filter(|c| !keep(&Pt::Store(*c)) && Self::sole_slot(st, recs[0], off, *c))
+                .collect();
+        }
+        for k in &recs {
+            if let Some(v) = st.slots.get_mut(k).and_then(|m| m.get_mut(&off)) {
                 v.pts.retain(|p| !matches!(p, Pt::Store(_)) || keep(p));
                 v.corr.retain(|c| keep(&Pt::Store(*c)));
             }
         }
+        // A correlated store is live only where the slot names it: dropped from the slot of the
+        // one record `w` names, it is not live on this path.
+        if slot_corr_narrow() && recs.len() == 1 {
+            for c in gone {
+                if let Some(i) = st.stores.get_mut(&c)
+                    && i.has(LIVE)
+                {
+                    if i.status & (ABSENT | ENDED | HANDED) == 0 {
+                        return false;
+                    }
+                    i.status &= !LIVE;
+                    i.live.clear();
+                    i.alts.clear();
+                }
+            }
+        }
+        true
     }
 
     fn narrow(st: &mut State, x: u16, to: Pts) {
