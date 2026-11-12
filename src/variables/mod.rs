@@ -540,6 +540,10 @@ pub struct Function {
     /// leak mirrors that read the function after it (`scopes::FrameReleases`).  Absent on a
     /// function restored from the IR cache.
     capture_builds: Option<CaptureBuilds>,
+    /// The literal buffers the scope pass's free emitter left without an exit free because an
+    /// owning local assigned more than once releases their store (`Scopes::pair_literal_buffers`),
+    /// kept for the static leak mirrors.  Empty on a function restored from the IR cache.
+    adopter_released: std::collections::HashSet<u16>,
     /// loft#1466 — the locals whose borrow list pass 2 has already rebuilt.
     ///
     /// A CALL RESULT's deps are the CALLEE's answer and pass 1 has not read the callee's body,
@@ -924,9 +928,20 @@ impl Function {
         self.capture_builds.as_ref()
     }
 
+    pub(crate) fn set_adopter_released(&mut self, buffers: std::collections::HashSet<u16>) {
+        self.adopter_released = buffers;
+    }
+
+    /// Does an owning local's rebinds and free release this literal buffer's store, so the
+    /// free emitter gave the buffer no exit free (`Scopes::pair_literal_buffers`)?
+    pub(crate) fn adopter_released(&self, v: u16) -> bool {
+        self.adopter_released.contains(&v)
+    }
+
     pub fn new(name: &str, file: &str) -> Self {
         Function {
             capture_builds: None,
+            adopter_released: std::collections::HashSet::new(),
             pass2_rebuilt: std::collections::HashSet::new(),
             pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
@@ -1252,6 +1267,7 @@ impl Function {
         Function {
             // The build facts belong to one finished scope pass, and a copy starts another.
             capture_builds: None,
+            adopter_released: std::collections::HashSet::new(),
             pass2_rebuilt: std::collections::HashSet::new(),
             pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),

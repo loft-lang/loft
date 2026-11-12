@@ -1293,7 +1293,7 @@ impl Scopes<'_> {
     /// sweep does not free keeps the buffer's plain free: that is then the store's only release
     /// (a captured local, one with no free of its own — loft#1317's measurements).
     /// `LOFT_NO_LITERAL_BUFFER_PAIR=1` keeps every buffer's plain free.
-    fn pair_literal_buffers(&self, ls: &mut Vec<Value>, data: &Data, function: &Function) {
+    fn pair_literal_buffers(&mut self, ls: &mut Vec<Value>, data: &Data, function: &Function) {
         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *OFF.get_or_init(|| std::env::var("LOFT_NO_LITERAL_BUFFER_PAIR").is_ok_and(|v| v != "0"))
             || self.literal_buffer.is_empty()
@@ -1368,6 +1368,7 @@ impl Scopes<'_> {
             let owner = function.proxy_says_owned(w)
                 || (function.is_argument(w) && rebound_params.contains(&w));
             if multi && owner && !rebound_adopter_disarm_off() {
+                self.adopter_released.insert(b);
                 continue;
             }
             let mentions = |op: &Value| {

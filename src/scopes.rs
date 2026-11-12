@@ -269,6 +269,11 @@ struct Scopes<'s> {
     /// RETURNED.  Where it is not, the buffer's plain free is the store's only release and
     /// has to stay plain.
     literal_buffer: HashMap<u16, u16>,
+    /// The literal buffers `pair_literal_buffers` leaves without any exit free because their
+    /// adopting local is an owner assigned more than once (`@FR-H-FreeTwice`): that local's
+    /// rebinds and its own free release the store.  Handed to the [`Function`] for the static
+    /// leak mirrors (`FrameReleases::explains`).
+    adopter_released: HashSet<u16>,
     /// loft#1257 — a `__lift_N` holding a COLLECTION `??` return whose `Own::Join` base the
     /// oracle can NAME.  The temp may hold the caller's own store (the discharge arm ran) or
     /// one the closure minted, and which of the two is decidable at run time by store IDENTITY

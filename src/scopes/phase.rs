@@ -183,6 +183,7 @@ pub(super) fn run_scan_phase(
         paired_witness: HashMap::default(),
         minted_pairs: HashSet::default(),
         literal_buffer: HashMap::default(),
+        adopter_released: HashSet::default(),
         lift_join_witness: HashMap::default(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
@@ -662,6 +663,7 @@ pub(super) fn run_scan_phase(
     );
     lazy_buffer_mints(&mut code, &mut function, data);
     function.set_capture_builds(std::mem::take(&mut scopes.capture_build_backing));
+    function.set_adopter_released(scopes.adopter_released.drain().collect());
     data.definitions[d_nr as usize].code = code;
     data.definitions[d_nr as usize].variables = function;
     #[cfg(debug_assertions)]
