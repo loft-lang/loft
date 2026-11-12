@@ -1744,7 +1744,14 @@ impl Output<'_> {
                     crate::use_analysis::ownership_of(self.data, self.def_nr, to)
                 && base != u16::MAX
             {
-                Some(sanitize(variables.name(base)))
+                // A tuple base is witnessed by its one heap member (loft#2471).
+                let name = sanitize(variables.name(base));
+                Some(
+                    match crate::use_analysis::join_witness_member(variables, base) {
+                        Some(i) => format!("{name}.{i}"),
+                        None => name,
+                    },
+                )
             } else {
                 None
             };

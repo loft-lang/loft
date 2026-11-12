@@ -5696,7 +5696,11 @@ impl<'a> FnWriter<'a> {
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
-            let w = self.var(base);
+            // A tuple base is witnessed by its one heap member (loft#2471).
+            let w = match crate::use_analysis::join_witness_member(self.vars, base) {
+                Some(i) => format!("{}.f{i}", self.var(base)),
+                None => self.var(base),
+            };
             let old = self.temp(CType::Ref);
             self.line(ind, &format!("{old} = {name};"));
             self.line(ind, &format!("{r} = {};", as_ref(e)?));

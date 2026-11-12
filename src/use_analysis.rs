@@ -5418,19 +5418,53 @@ pub(crate) fn ownership_of_with(data: &Data, d_nr: u32, value: &Value, defs: &De
     let def = data.def(d_nr);
     match Ownership::new(data).classify(value, &def.variables, defs) {
         // A TUPLE carries no store of its own: what the value may borrow is one of its
-        // members, and every reader compares the answer's store with the base's — a tuple's
-        // has none to compare (`@FR-O-Oracle`, loft#2471: the C and rustc writers did not
-        // compile, and the interpreter read the slot's first bytes as one, aliasing a member
-        // that was not first).  A join with no nameable witness is the one every reader
-        // copies, bracketing the arguments: the borrow arm copies the member, the minted arm
-        // copies and releases what the callee minted.
+        // members (`@FR-O-Oracle`, loft#2471).  With ONE heap member that member is the
+        // witness every reader compares against ([`join_witness_member`]); with several
+        // there is no single one, and the join is the unnameable one every reader copies.
         Own::Join { base }
-            if base != u16::MAX && matches!(def.variables.tp(base), Type::Tuple(_)) =>
+            if base != u16::MAX
+                && matches!(def.variables.tp(base), Type::Tuple(_))
+                && !tuple_join_witness_off()
+                && join_witness_member(&def.variables, base).is_none() =>
         {
             Own::Join { base: u16::MAX }
         }
         own => own,
     }
+}
+
+/// `LOFT_NO_TUPLE_JOIN_WITNESS=1` — the writers compare a join's answer against a tuple base's
+/// slot, as before loft#2471: the C and rustc writers do not compile it, and the interpreter
+/// reads the slot's first bytes as the record, adopting a member that is not first (the
+/// re-free the store records report).
+pub fn tuple_join_witness_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_JOIN_WITNESS").is_some())
+}
+
+/// The member a join's TUPLE base is witnessed by: its one heap member, which is what a
+/// callee or an arm can hand back of it (loft#2471).  `None` for a base that is no tuple, and
+/// for a tuple with no single heap member (none, several, or one inside a nested tuple) — the
+/// oracle answers such a join with no witness at all.  Every reader of an [`Own::Join`] base
+/// asks this, so the three writers compare against the same place.
+#[must_use]
+pub fn join_witness_member(vars: &Function, base: u16) -> Option<u16> {
+    if base == u16::MAX || tuple_join_witness_off() {
+        return None;
+    }
+    let Type::Tuple(elems) = vars.tp(base) else {
+        return None;
+    };
+    let mut found = None;
+    for (i, e) in elems.iter().enumerate() {
+        if crate::data::tuple_heap_leaves(e) == 0 {
+            continue;
+        }
+        if found.is_some() || matches!(e.base(), Type::Tuple(_)) {
+            return None;
+        }
+        found = Some(u16::try_from(i).ok()?);
+    }
+    found
 }
 
 /// True when `classify` resolves a `Call(d, …)` STRUCTURALLY — a store mint

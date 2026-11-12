@@ -1346,6 +1346,7 @@ impl Run<'_> {
                 | FirstArm::NullableCallJoin { .. }
                 | FirstArm::CallJoin { .. }
                 | FirstArm::OpaqueCallRef { .. } => {
+                    self.tuple_witness(&s, arm, &value);
                     Self::consume(&mut s, &value);
                     self.copied(&mut s, node)
                 }
@@ -1355,6 +1356,40 @@ impl Run<'_> {
             return Some((s, Val::null()));
         }
         self.reassign(node, x, val, st)
+    }
+
+    /// A join whose witness is a TUPLE slot (`use_analysis::join_witness_member` names no
+    /// member): the slot holds no store, so the comparison cannot tell a member the callee
+    /// handed back from one it minted — the member is adopted beside its holder and released
+    /// twice (loft#2471).
+    fn tuple_witness(&mut self, s: &State, arm: crate::bind_lowering::FirstArm, value: &Val) {
+        use crate::bind_lowering::FirstArm;
+        let (FirstArm::CallRefJoin { base, .. }
+        | FirstArm::NullableCallJoin { base, .. }
+        | FirstArm::CallJoin { base, .. }) = arm
+        else {
+            return;
+        };
+        let function = &self.data.def(self.d_nr).variables;
+        if base == u16::MAX
+            || !matches!(function.tp(base), crate::data::Type::Tuple(_))
+            || crate::use_analysis::join_witness_member(function, base).is_some()
+        {
+            return;
+        }
+        let name = self.var_name(base);
+        for k in Self::stores_of(&value.pts) {
+            if info_of(s, k).has(LIVE) {
+                self.find(
+                    "re-free",
+                    k.site,
+                    format!(
+                        "a join's witness `{name}` is a tuple: no store to compare, so a member \
+                         handed back is adopted beside its holder and released twice"
+                    ),
+                );
+            }
+        }
     }
 
     /// `x = val` where `x` already holds a slot: the displaced store's free, then the arm.

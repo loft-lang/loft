@@ -2817,9 +2817,7 @@ impl State {
                 // A PUSH op reads at the PRE-push position, so `var_pos(base)` is taken
                 // BEFORE `add_op` (matching the pre-Set free above); the POP op's
                 // `var_pos(v)` is taken AFTER `add_op` (post-pop position).
-                let witness_pos = stack.var_pos(base);
-                stack.add_op("OpVarRef", self);
-                self.code_add(witness_pos);
+                self.push_join_witness(stack, base);
                 stack.add_op("OpBindOrCopy", self);
                 self.code_add(stack.var_pos(v));
                 self.code_add(tp_nr);
@@ -3731,6 +3729,20 @@ impl State {
     /// pattern that works the same whether slot-move is active or not
     /// (v.stack_pos keeps V1's value when OpVarRef just pushes a copy
     /// of src's DbRef).
+    /// Push the WITNESS a join's `OpBindOrCopy` compares the call's answer against: the base
+    /// variable's record, or — for a tuple base — its one heap member
+    /// (`use_analysis::join_witness_member`, loft#2471), since a tuple slot holds no record of
+    /// its own.  A PUSH op reads at the PRE-push position, so the offset is taken first.
+    fn push_join_witness(&mut self, stack: &mut Stack, base: u16) {
+        if let Some(i) = crate::use_analysis::join_witness_member(&stack.function, base) {
+            self.generate(&Value::TupleGet(base, i), stack, false);
+        } else {
+            let witness_pos = stack.var_pos(base);
+            stack.add_op("OpVarRef", self);
+            self.code_add(witness_pos);
+        }
+    }
+
     /// Push the WITNESS `OpBindOrCopy` compares a whole-record bind's source against: the
     /// record `src` names.  A present source equal to its witness is materialised into a
     /// fresh store (@FR-B-Copy); an absent one is adopted as the null it is.
@@ -4012,9 +4024,7 @@ impl State {
         // Writing it here still satisfies `OpBindOrCopy`'s precondition — the slot holds a
         // sentinel before the guard writes it, which is all the borrow arm's
         // `alloc_record_at` needs.
-        let witness_pos = stack.var_pos(base);
-        stack.add_op("OpVarRef", self);
-        self.code_add(witness_pos);
+        self.push_join_witness(stack, base);
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpInitRefSentinel", self);
         self.code_add(slot_offset);

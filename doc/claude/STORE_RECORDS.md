@@ -194,7 +194,11 @@ the arm too.  The records read IR, which both spellings share, so they cannot se
 record update built in a temporary (`Unit { hp: …, ..u }` as a value) gives the temporary a store
 of its own and copies the base in, which on a return buffer is the caller's store, refilled
 (`parse_object_update`); `LOFT_NO_UPDATE_TEMP_COPY=1` binds a whole-variable base instead, which
-named onto the buffer freed the caller's store (the records: `store-wrong-end`).  A collection
+named onto the buffer freed the caller's store (the records: `store-wrong-end`).  A call
+join whose base is a TUPLE argument is witnessed by the tuple's one heap member
+(`use_analysis::join_witness_member`, read by every writer); a tuple with several has no single
+witness and is copied.  `LOFT_NO_TUPLE_JOIN_WITNESS=1` compares against the tuple slot, which
+holds no store: the records report the re-free (`store-re-free`, "a join's witness is a tuple").  A collection
 coalesce read inline (`(g ?? nr_h(i))[i]`) lifts its fallback call into a `__lift_N` inside the
 arm (`Scopes::lift_owned_coalesce_arm`), handed off where the outer call consumes it;
 `LOFT_NO_COALESCE_ARM_LIFT=1` leaves the call inline, and a keyed fallback leaks.  Where
