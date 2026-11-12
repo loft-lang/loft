@@ -3564,6 +3564,16 @@ pub fn rebind_adopts_minted_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_REBIND_ADOPTS_MINTED"))
 }
 
+/// `LOFT_NULL_LETGO_FREES=1` — a bare `null` written to a local displaces the store it held
+/// again (`Function::owns_displaced_store`), so a let-go after an adoption, and a compiler
+/// temporary's null reset after its store was handed on, free that store a second time: the
+/// defect `(R-HostStore)`'s let-go rule cured, restored for the checker's control.
+#[must_use]
+pub fn null_letgo_frees() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NULL_LETGO_FREES"))
+}
+
 /// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
 /// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
 #[must_use]

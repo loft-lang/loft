@@ -4325,13 +4325,17 @@ impl Function {
     pub fn link_write_releases(&self, v: u16) -> bool {
         // …and only where the place the link names OWNS the store (`link_target_owns`: a view
         // behind the link borrows): the two halves of one question, asked by every writer.
-        // `LOFT_LINK_PARAM_RELEASES=1` brings the parameter half's release back.
+        // A link reaching a plain parameter releases nothing — both halves say so, the first
+        // because such a parameter borrows — and `LOFT_LINK_PARAM_RELEASES=1` brings its
+        // release back whole, the defect `@FR-F-ParamRebind` cured.
+        let reaches_plain_param = self
+            .link_targets(v)
+            .iter()
+            .any(|&t| self.is_argument(t) && !matches!(self.tp(t).base(), Type::RefVar(_)));
+        if reaches_plain_param {
+            return crate::keys::link_param_releases();
+        }
         self.link_target_owns(v)
-            && (crate::keys::link_param_releases()
-                || !self
-                    .link_targets(v)
-                    .iter()
-                    .any(|&t| self.is_argument(t) && !matches!(self.tp(t).base(), Type::RefVar(_))))
     }
 
     /// The variables that may VIEW a store `root` lives in — every variable a read of which
@@ -5700,8 +5704,9 @@ impl Function {
         // `OpNullRefSentinel()`): the local hands its record on — `(R-HostStore)` writes it
         // after `OpAdoptChildRec` gave the record to a field — and displaces nothing it owns.
         // The C and Rust emitters free only on a store-producing right-hand side, so this is
-        // the interpreter agreeing with them (`@FR-O-NoDiverge`).
-        !matches!(value.unspan(), Value::Null)
+        // the interpreter agreeing with them (`@FR-O-NoDiverge`).  `LOFT_NULL_LETGO_FREES=1`
+        // reads it as a rebind again, which restores the re-free of a store already let go.
+        (!matches!(value.unspan(), Value::Null) || crate::keys::null_letgo_frees())
             && self.owns_its_binding(v, value, data)
             // loft#1522 — and the store is not one a construction work-ref still NAMES.  The
             // proxy answers "owned" for such a local because the adoption leaves its dep list

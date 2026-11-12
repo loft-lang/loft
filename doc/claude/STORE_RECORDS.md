@@ -124,7 +124,10 @@ A tuple held from a record's unbox (a call's tuple returned or appended) borrows
 the unbox binds (`unboxed_member_types`); `LOFT_NO_UNBOX_MEMBER_DEPS=1` leaves its members owning.  A `(R-HostStore)` result is let
 go after a field adopts it as a detach (`OpNullRefSentinel`), not a free of the store the node
 was built in; the records see the free as a use after end of the node
-(`LOFT_HOST_LETGO_FREES=1` restores it).  A whole write through a `&` link to a plain parameter
+(`LOFT_HOST_LETGO_FREES=1` restores it); a bare `null` written to a local displaces nothing
+it owns (`Function::owns_displaced_store`), so a let-go or a compiler temporary's null reset after
+its store was handed on frees nothing (`LOFT_NULL_LETGO_FREES=1` restores the second free).  A
+whole write through a `&` link to a plain parameter
 releases nothing it displaces (`Function::link_write_releases`, `@FR-F-ParamRebind`); the
 records follow a link installed on one variable as a write to that variable, and a release of
 a parameter's store is a wrong end (`LOFT_LINK_PARAM_RELEASES=1` restores it).
