@@ -1711,7 +1711,13 @@ impl Stores {
 
     /// `@FR-H-FreeTwice` — fail the run at a second free of store `al`, naming the op that
     /// freed it first (`first`, a bytecode position) and the one freeing it again.
-    fn refuse_refree(&mut self, al: u16, first: u32) {
+    fn refuse_refree(&mut self, al: u16, first: u32, name: &str) {
+        // `LOFT_REFREE_BACKTRACE=1` — where the second free came from, when the report alone
+        // cannot say: a runtime routine's own release (a copy's source-free, a swap) carries
+        // no variable name, and generated native code no pc.
+        if std::env::var_os("LOFT_REFREE_BACKTRACE").is_some() {
+            eprintln!("{}", std::backtrace::Backtrace::force_capture());
+        }
         // Each free resolved to its function, source position and the variable it released
         // (`store_trace`), so the two sites can be read without `introspect`.
         let at = |pc: u32| {
@@ -1725,10 +1731,15 @@ impl Stores {
         } else {
             "; LOFT_REFREE_FAILS=1 names the line and variable of each free"
         };
-        let detail = format!(
-            "store #{al} freed {}, freed again {}{names}",
-            at(first),
+        // Generated native code has no pc but names the variable it frees (`free_named`).
+        let again = if self.alloc_pc == 0 && !name.is_empty() {
+            format!("by `{name}`")
+        } else {
             at(self.alloc_pc)
+        };
+        let detail = format!(
+            "store #{al} freed {}, freed again {again}{names}",
+            at(first)
         );
         crate::fault_log::record(
             "re-free",
@@ -1926,7 +1937,7 @@ impl Stores {
             // `LOFT_STRICT_STORES` never hands a slot out again, so it sees those too.
             if crate::keys::refree_fails() && !crate::keys::double_free_audit() {
                 let first = store.freed_at;
-                self.refuse_refree(al, first);
+                self.refuse_refree(al, first, name);
             }
             return;
         }
