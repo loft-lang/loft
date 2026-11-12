@@ -669,7 +669,7 @@ pub fn file_hash(path: &str) -> Option<[u8; 32]> {
 /// @PLN11 Arc N / N0 — locate `libloft.rlib` for THIS build (dev `target/<prof>/`,
 /// its `deps/`, or an installed `<prefix>/share/loft/`).
 fn loft_rlib_path() -> Option<std::path::PathBuf> {
-    let exe_dir = crate::native_lib::current_runtime_profile_dir()?;
+    let exe_dir = crate::cargo_layout::current_runtime_profile_dir()?;
     let exe_dir = exe_dir.as_path();
     if let Some(found) = rlib_candidates(exe_dir)
         .into_iter()

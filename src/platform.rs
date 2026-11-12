@@ -2525,7 +2525,7 @@ pub fn bridge_import_lib(dir: &std::path::Path, libname: &str) -> ImportLib {
 /// through `cargo:rustc-link-search`, and a `rustc` loft drives itself does not, so a cdylib
 /// link fails `LNK1181`.  `rlib` is `target/<profile>/libloft.rlib` or
 /// `target/<profile>/deps/libloft-*.rlib`, or the per-unit `build/loft/<hash>/out/libloft.rlib`;
-/// the scan reads every build unit of that profile ([`crate::native_lib::build_units`]).
+/// the scan reads every build unit of that profile ([`crate::cargo_layout::build_units`]).
 /// Empty off Windows, where no import library exists.
 #[must_use]
 pub fn import_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -2541,9 +2541,9 @@ pub fn import_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf>
     }) else {
         return Vec::new();
     };
-    let profile_dir = crate::native_lib::runtime_profile_dir(profile_dir);
+    let profile_dir = crate::cargo_layout::runtime_profile_dir(profile_dir);
     let mut dirs = Vec::new();
-    for (out, output) in crate::native_lib::build_units(&profile_dir) {
+    for (out, output) in crate::cargo_layout::build_units(&profile_dir) {
         // `out/` and its immediate subdirs (some crates emit into `out/<target>/`).
         if crate::file_access::is_dir(&out) {
             dirs.push(out.clone());

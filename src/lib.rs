@@ -285,6 +285,7 @@ pub mod c_signature;
 pub mod cache;
 pub mod cache_gc;
 mod calc;
+pub mod cargo_layout;
 pub mod copy_manifest;
 pub mod crash_report;
 pub mod data;
