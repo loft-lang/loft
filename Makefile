@@ -126,6 +126,12 @@ endif
 # Linux; a Windows Python defaults to cp1252 and misreads any non-ASCII byte.
 export PYTHONUTF8 := 1
 
+# Cargo 1.100's build-dir layout has no target/<profile>/deps/, which the native toolchain
+# (src/toolchain.rs), make-release.sh and the cdylib builds read: keep the old layout until
+# they read the new one (cargo's temporary opt-out, removed one release later).  The CI
+# workflows set the same variable.
+export __CARGO_TEMPORARY_BUILD_DIR_NEW_LAYOUT_OPT_OUT := 1
+
 # macOS: cc-rs invocations (notably `ring`'s build script) need the SDK path
 # on -isysroot.  When `xcode-select -p` points at the bare Command Line Tools,
 # plain `cc` does not auto-detect it and the build fails with

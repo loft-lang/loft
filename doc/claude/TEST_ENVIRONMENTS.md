@@ -195,6 +195,18 @@ or set `RUSTUP_HOME` / `CARGO_HOME` to the real ones, when the native half is pa
 the test claims.  `n3_use_native.rs::a_dependency_version_is_part_of_its_users_native_artifact`
 is the worked example; the defect it guards read as a flake in `manifest_less_resolution.rs`.
 
+## Cargo 1.100's build-dir layout: keep the old one for now
+
+Cargo 1.100 builds into a new layout: one `target/<profile>/build/<crate>/<hash>/out/` per
+crate and no `target/<profile>/deps/`.  The native toolchain (`src/toolchain.rs`
+`rlib_search_dirs`), `scripts/make-release.sh` and the library cdylib builds still look in
+`deps/`, so on the new layout a `--native` build reports `E0463: can't find crate for loft`.
+Until they read the new layout, `__CARGO_TEMPORARY_BUILD_DIR_NEW_LAYOUT_OPT_OUT=1` keeps the old
+one.  `make` exports it and every CI workflow that builds sets it.  A bare `cargo` command on
+a 1.100 toolchain needs it in the shell.  Cargo removes the opt-out one release later
+(rust-lang/cargo#17182), so the readers have to move before then.  `gen_target_surface.py`'s
+probe already reads both layouts.
+
 ## macOS: what makes the suite slow, and the setup that removes it
 
 **A freshly linked binary pays a security assessment on its first launch** — about 260 ms on top
