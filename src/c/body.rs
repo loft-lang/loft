@@ -6265,7 +6265,20 @@ impl<'a> FnWriter<'a> {
             self.set_arm("join");
             return Ok(());
         }
-        if let Some((tp, frees)) = self.call_copy(var, x) {
+        // A REBIND copies a call's answer into the variable's own store only where
+        // `bind_lowering::re_bind` copies (`ReArm::CallCopy`, arm R2b) or joins (`ReArm::Join`,
+        // R1: a join `join_stmt` above declined, for a variable that is kept rather than owned,
+        // is copied — adopting or copying, the copy is never wrong for a join's answer).  Any
+        // other variable — a lift temporary carrying a call's answer to its place — binds it as
+        // it is, and the displaced store, if any, is released by `displacing_rebind`.  @PLN220.
+        // `LOFT_C_OWN_CALL_COPY=1` copies wherever `call_copy` says.
+        let rebind_copies = first
+            || crate::keys::c_own_call_copy()
+            || matches!(
+                crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).arm,
+                crate::bind_lowering::ReArm::CallCopy { .. } | crate::bind_lowering::ReArm::Join { .. }
+            );
+        if rebind_copies && let Some((tp, frees)) = self.call_copy(var, x) {
             self.set_arm(if frees { "call-copy-free" } else { "call-copy" });
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;

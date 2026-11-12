@@ -3622,6 +3622,15 @@ pub fn null_letgo_frees() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NULL_LETGO_FREES"))
 }
 
+/// `LOFT_C_OWN_CALL_COPY=1` — the C writer copies a rebind's call answer into the variable's own
+/// store wherever its own `call_copy` says, instead of only where `bind_lowering::re_bind`
+/// answers `ReArm::CallCopy` (@PLN220's A/B).
+#[must_use]
+pub fn c_own_call_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_CALL_COPY"))
+}
+
 /// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
 /// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
 #[must_use]
