@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
 
 //! Store records — every store a function can hold: where it is created, which variables
 //! hold it, which operations use it, and how each path ends it (doc/claude/STORE_RECORDS.md).

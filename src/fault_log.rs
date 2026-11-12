@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I70 — Database subsystem (alloc / persistence / journal / snapshot / schema)
 
 //! `LOFT_FAULT_LOG=<file>` — every store fault the runtime detects, as DATA: one JSON object
 //! per line, appended, beside the human message the reporter prints anyway.

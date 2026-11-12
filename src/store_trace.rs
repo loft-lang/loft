@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I70 — Database subsystem (alloc / persistence / journal / snapshot / schema)
 
 //! Where a store went: bytecode positions resolved to the function, the source position and
 //! the variable, for the store-lifetime instruments — `LOFT_STRICT_STORES` (an access to a
