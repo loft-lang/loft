@@ -280,6 +280,7 @@ LOFT_NO_CACHE=1 python3 scripts/own_sweep.py --loft <bin> --oracle check-records
 | patches11–12 | 80 → 72 | 5 | 1 (5 below) |
 | patches13 | 69 → 53 (base took loft3-c1's closure batch) | 3 | 0 (+ two checker MISSes for loft-c9 now CAUGHT) |
 | patches14 | 53 → 50 | 1 | 1 (6 below) |
+| series 2026-11-12 (8 commits on 91-self-host 8f7c1c9e0) | 50 → 36 | 6 | 2 (7, 8 below) |
 
 The real defects the checker found first:
 
@@ -313,6 +314,17 @@ The real defects the checker found first:
    rule's own or names no argument's store (`LOFT_NO_SUBRULE_OWNED_ANSWER`,
    `LOFT_NO_SUBRULE_STOP_FREE`); suite cell P-Rule/a-sub-rule-run-releases…  The rustc-native
    backend still re-frees the run's temporary through its own `_own_store_` shadow (loft-c9).
+7. **A vector local a forwarding fn-ref may rebind was freed twice where it never was** —
+   `x: vector<integer> = [5, 6]; for _ in 0..n { x = fwd(q) }` with `fwd` a lambda forwarding to
+   another: the scope-end free `OpFreeRefIfDistinct(x, q)` (loft#1257's join witness) ran while
+   `x` still named its literal backing, which freed it too.  Latent on main, both backends.  The
+   scope-end free takes the rebind's view-temp guard (`LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD`); suite
+   cell O-Latest/a-vector-local-a-forwarding-fn-ref-may-rebind-is-released-once.
+8. **A binding arm answering the subject freed the caller's vector** —
+   `match v { [h, ..t] => t, whole => whole }` delivered `whole` into the return buffer and freed
+   its dependency, the parameter `v`.  Latent on main, both backends, every element type.  The
+   arm delivery skips a parameter dependency (`LOFT_ARM_FREES_PARAM_DEPS`); suite cell
+   P-Rest/a-binding-arm-answering-the-subject-leaves-the-callers-vector.
 
 The gaps fixed, by the representation they corrected:
 
@@ -338,18 +350,26 @@ The gaps fixed, by the representation they corrected:
   stored-reference read answers its referent, not the holder's store; a tuple-literal argument
   is read, not handed on, and a tuple parameter's member is the caller's store; a nested member
   moved out of another tuple is that member; a put into a local tuple's member assigns it.
+- **Who holds a store, path by path** — a store may be held by one of several names on different
+  paths (a two-buffer rotation): beside its must-holders it keeps ALTERNATIVES, name sets of
+  which one holds it wherever it is live; a free or a narrowing on a name drops the alternatives
+  naming it, and a copy (`OpPutRef`, `x = y`, `OpRefAlias`, a call answering its buffer or
+  argument) adds its destination where its source holds.  A loop head that joins a pass which
+  freed a buffer and reset it keeps that site's store as the buffer's; an `OpDatabase` re-init
+  keeps a maybe-ended store the variable must-holds; `x = f(…, x)` answering `x`'s own store
+  keeps `x` its holder.  `LOFT_STORE_TRACE=<fn>` prints the state after each statement.
+- **Guards with a single witness** — the DISTINCT arm of `OpDistinctStore(v, w)` rules out a store
+  `w` alone must-holds (where it cannot have ended), and an arm left with nothing cannot run: the
+  join of arms answering different buffers closes with it.
 - **Owners a stored reference leaves in place** — a compiler temporary the function frees keeps
   the record a `reference<T>` field names, and a holder handed to a call reads those records.
 
 Open, each wanting more than a local fix:
 
-- **A value joined from arms answering different buffers** (O-Complete/157-join-witness,
-  C-Var/2315, O-Complete/2386, O-Latest/1323, F-Ret/2188, H-Alloc): the closing guard
-  `if OpDistinctStore(v, a) if OpDistinctStore(v, b) OpFreeRef(v)` is a no-op at runtime, but
-  after the join the records no longer know which buffer `v` came from on each path.  Deriving it
-  from the guard alone, without the variable must-holding the store, made seven cells worse.
-- **A two-buffer rotation** (`__ref_1 ← __ref_3; __ref_3 ← v`: H-RootExtent, B-Copy keyed
-  rebind): each store is held by one of two names, never the same one on every path.
+- **More than two live stores from one site** (O-Complete/2408 `in_a_loop_branch`): a loop that
+  rotates `__ref_1 ← __ref_2 ← l` keeps three stores of the buffer-init site live at once, and a
+  site keys only its latest store and one older generation, so a join meets two different stores
+  under one key.
 - **A caller-minted buffer parameter** (R-TailSelf/vec_local): the records follow a null path
   every caller rules out by minting the buffer first.
 
