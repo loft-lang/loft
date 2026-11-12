@@ -3650,6 +3650,15 @@ pub fn arg_displaced_free() -> bool {
     *ON.get_or_init(|| env_set("LOFT_ARG_DISPLACED_FREE"))
 }
 
+/// `LOFT_C_OWN_VAR_COPY=1` — the C writer copies a rebind from another variable's record
+/// wherever its own `whole_value_bind` says, instead of only where `bind_lowering::re_bind`
+/// answers `ReArm::VarCopy` (@PLN220's A/B).
+#[must_use]
+pub fn c_own_var_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_VAR_COPY"))
+}
+
 /// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
 /// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
 #[must_use]

@@ -6396,7 +6396,17 @@ impl<'a> FnWriter<'a> {
             self.flush(ind);
             return Ok(());
         }
-        if let Some((src, tp)) = self.whole_value_bind(var, x) {
+        // A REBIND copies another variable's record only where `bind_lowering::re_bind` does
+        // (`ReArm::VarCopy`, arm R2c): a variable that owns none of what it binds — a return
+        // temporary taking a parameter it hands back — binds it as the view it is.  @PLN220.
+        // `LOFT_C_OWN_VAR_COPY=1` copies wherever `whole_value_bind` says.
+        let rebind_var_copies = first
+            || crate::keys::c_own_var_copy()
+            || matches!(
+                crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).arm,
+                crate::bind_lowering::ReArm::VarCopy { .. }
+            );
+        if rebind_var_copies && let Some((src, tp)) = self.whole_value_bind(var, x) {
             self.set_arm("var-copy");
             let bytes = self.copyable(tp)?;
             let src = self.var(src);

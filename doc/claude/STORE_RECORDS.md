@@ -415,9 +415,10 @@ into the IR** — each assignment says, in the IR, whether it binds, copies, ado
 decided once and read by all three code generators and by the records.  Until then the
 records can only read the choice the interpreter's code generator made.
 
-The C writer already reads `bind_lowering` for four of these choices, each with a switch that
+The C writer already reads `bind_lowering` for five of these choices, each with a switch that
 gives it back its own test: whether a rebind copies a call's answer into the variable's own
-store (only where `re_bind` copies or joins; `LOFT_C_OWN_CALL_COPY=1`), a vector local's first null-init mint (`LOFT_C_OWN_VECTOR_NULL=1`),
+store (only where `re_bind` copies or joins; `LOFT_C_OWN_CALL_COPY=1`) or another
+variable's record (only where `re_bind` copies it, R2c; `LOFT_C_OWN_VAR_COPY=1`), a vector local's first null-init mint (`LOFT_C_OWN_VECTOR_NULL=1`),
 a tuple member's first bind (`LOFT_C_OWN_TUPLE_MEMBER_BIND=1`), and whether a reassignment frees
 the store it displaces at all (`re_bind`'s `DisplacedFree`; `LOFT_C_OWN_DISPLACED_FREE=1` frees a
 compiler temporary's null reset again, a second free the writer's same-store guard makes a
