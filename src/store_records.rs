@@ -603,6 +603,9 @@ struct Run<'a> {
     /// reassignment freed before its build (`owned_reassigned`) or of a lift temporary
     /// (`Codegen::generate_call`, @PLN118, loft#2385).
     resets: BTreeSet<usize>,
+    /// The guarded frees of one variable against another, after which the code generator resets
+    /// the variable where the free ran (`Codegen::generate_call`, `@FR-O-NoDiverge`).
+    cond_resets: BTreeSet<usize>,
     /// Per fn-ref variable, the closure record its build names (`g = { …; FnRef(_, w) }`).
     fn_record: BTreeMap<u16, u16>,
     /// The closure records that leave the frame: the function returns their fn-ref, or the
@@ -2915,6 +2918,33 @@ impl Run<'_> {
                 }
                 st.vars.remove(&x);
             }
+            // Reset where the guard let the free run: `x` names only what the witness may name
+            // (the guard declined there), or null.
+            if self
+                .cond_resets
+                .contains(&(std::ptr::from_ref(node) as usize))
+                && let (Some(x), Some(w)) = (Self::first_var(args, 0), Self::first_var(args, 1))
+            {
+                let wp = Self::pts(&st, w);
+                let kept: Pts = Self::pts(&st, x)
+                    .into_iter()
+                    .filter(|p| matches!(p, Pt::Store(_) | Pt::Param(_)) && wp.contains(p))
+                    .chain(std::iter::once(Pt::Null))
+                    .collect();
+                for (k, info) in &mut st.stores {
+                    if !kept.contains(&Pt::Store(*k)) {
+                        forget_holder(info, x);
+                        if info.ended.remove(&x) {
+                            info.ended.insert(FREED_NAME);
+                        }
+                    }
+                }
+                if kept.len() == 1 {
+                    st.vars.remove(&x);
+                } else {
+                    st.vars.insert(x, kept);
+                }
+            }
             return Some((st, Val::null()));
         }
         // `OpFnRefDetachShared(old, new)` (loft#1609): the closure half of `old` is nulled where
@@ -3500,6 +3530,7 @@ fn run_fn<'a>(
         tuple_target: None,
         rebinds: BTreeMap::new(),
         resets: BTreeSet::new(),
+        cond_resets: BTreeSet::new(),
         fn_record: BTreeMap::new(),
         leaving: BTreeSet::new(),
         protected: Vec::new(),
@@ -3541,6 +3572,16 @@ fn run_fn<'a>(
                 if *op == unconditional && vars.is_compiler_generated(*x) {
                     run.freed_temps.insert(*x);
                 }
+            }
+            // …and after a guarded free of one variable against another, where the free ran
+            // (`LOFT_NO_GUARDED_FREE_RESET`, the twin of `Codegen::generate_call`'s test).
+            Value::Call(op, args)
+                if *op == if_distinct
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(_)))
+                    && matches!(args.get(1).map(Value::unspan), Some(Value::Var(_)))
+                    && !crate::keys::guarded_free_reset_off() =>
+            {
+                run.cond_resets.insert(at);
             }
             _ => {}
         }

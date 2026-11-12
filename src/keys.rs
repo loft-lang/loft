@@ -3343,6 +3343,14 @@ pub fn view_temp_transition_guard() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_TEMP_TRANSITION_GUARD"))
 }
 
+/// `LOFT_NO_GUARDED_FREE_RESET=1` — the interpreter leaves a variable a guarded free released
+/// naming its freed slot (`OpFreeRefIfDistinct` in `state/codegen.rs`), where C resets it.
+#[must_use]
+pub fn guarded_free_reset_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_GUARDED_FREE_RESET"))
+}
+
 /// `LOFT_NO_ELEMENT_VIEW_ABSENT=1` — a return copy of a record local that views a collection's
 /// element reads it present, as it did before (`record_local_may_be_absent`): a constant index
 /// past the end answered a default record from a `-> S?`.

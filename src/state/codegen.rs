@@ -4501,6 +4501,33 @@ impl State {
             self.code_add(var_pos);
             return Type::Void;
         }
+        // `@FR-O-NoDiverge` — every other variable a guarded free releases is reset where the
+        // free ran, as C's `loft_free_var_distinct` resets it: where it named another store than
+        // the witness.  Left naming its freed slot, a loop's next pass read it as live: a
+        // work-buffer parameter handed null, rewritten into a loop by `(R-TailSelf)`, cleared
+        // the store its tail jump had freed (`LOFT_WORK_BUFFER_NULL=1`, strict stores).
+        // `LOFT_NO_GUARDED_FREE_RESET=1` leaves it naming the freed slot.
+        if stack.data.def(op).name() == "OpFreeRefIfDistinct"
+            && let [Value::Var(v), Value::Var(w)] = parameters
+            && !crate::keys::guarded_free_reset_off()
+        {
+            self.push_var_ref(stack, *v);
+            self.push_var_ref(stack, *w);
+            stack.add_op("OpFreeRefIfDistinct", self);
+            let reset = Value::If(
+                Box::new(Value::Call(
+                    stack.data.def_nr("OpDistinctStore"),
+                    vec![Value::Var(*v), Value::Var(*w)],
+                )),
+                Box::new(Value::Call(
+                    stack.data.def_nr("OpInitRefSentinel"),
+                    vec![Value::Var(*v)],
+                )),
+                Box::new(Value::Null),
+            );
+            self.generate(&reset, stack, false);
+            return Type::Void;
+        }
         // try destination-passing optimisation for text-producing natives.
         if self.try_text_dest_pass(stack, op, parameters) {
             return Type::Void;
