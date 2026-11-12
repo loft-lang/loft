@@ -711,7 +711,7 @@ assumes the variant cannot change under it. Keyed on the ARM's own tag test, so 
 drift from the parser's numbering. Quiet on a SAME-variant overwrite (the value is
 right), on an unrelated field, and on a LOCAL subject — that is a reassignment `(B-View)`
 already materialises) ·
-`LOFT_NO_LINKED_GROUP` (loft#926 `linked-group-double-fill` WARNING: one struct literal, or
+`LOFT_NO_LINKED_GROUP` (loft#926 `linked-group-double-fill` WARNING: one struct literal, or <!-- doc-lint: ok -->
 one block's appends, gives RECORDS to two members of a linked collection group — two keyed collections over one
 element type are two routes to a SINGLE record set, so both end up holding everything and
 nothing at the literal says so. Quiet on a member written `[]`, which is how every group is

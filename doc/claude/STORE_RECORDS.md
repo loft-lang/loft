@@ -136,7 +136,7 @@ local views it (`scan_set`); `LOFT_NO_CALLREF_LIFT=1` makes the local its owner 
 displaced free then releases the view's temporary store.  A nullable value stored into a
 declared dense local keeps what it borrows (`dd: S = o.opt` views `o`);
 `LOFT_NO_REPR_KEEPS_DEPS=1` types the local as the bare declaration, an owner.  An inline
-`??` is lifted into an owner only where its subject temp owns nothing (loft#879's leak);
+`??` is lifted into an owner only where its subject temp owns nothing (loft#879's leak); <!-- doc-lint: ok -->
 `LOFT_NCC_LIFT_BESIDE_OWNER=1` lifts beside a subject temp that owns the store too.  The
 interpreter's reassignment copy goes into a fresh store wherever the displaced store waits
 for its stashed free; `LOFT_NO_STASH_FRESH=1` writes into it, and a null answer then frees it
@@ -185,8 +185,8 @@ pass-through.  A fresh-returning generic instance copies a NULLABLE parameter it
 An owning record local rebound from a value that reads it and answers a view (`x = x.next ?? y`)
 copies into a fresh store (`re_arm`, and the C writer's `reading_view_copy`, one test:
 `bind_lowering::answers_a_view_to_copy`); `LOFT_NO_READING_VIEW_COPY=1` binds the view.  A diverging
-coalesce bound in its buffer's own scope (`q = mq(4) ?? return`) frees `q` only where it no longer
-names the buffer; `LOFT_NO_COALESCE_SAME_SCOPE_WITNESS=1` frees both.  A null test of a temp's
+coalesce bound in its buffer's own scope (`q = mq(4) ?? return`) frees `q` only where it names a
+store other than the buffer; `LOFT_NO_COALESCE_SAME_SCOPE_WITNESS=1` frees both.  A null test of a temp's
 field (`Holder.parse(t).rows == null`) reads it in place, the temp's lift owning the store;
 `LOFT_NO_NULL_TEST_PROJECTION_VIEW=1` captures it in a work-ref that frees it again.  The records
 read an operator answering a heap value from a text (`OpCastVectorFromText`) as a mint.  A literal
