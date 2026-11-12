@@ -2874,13 +2874,18 @@ fn set_again(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
   witnessed = binds::owner_witness(f, var) != null;
   buffer_w = binds::displaced_buffer_witness(b, f, var, x);
   // B2 — the displaced store: stashed past the assignment, freed before it, or kept.
-  stash = owned_ref && (reads_v || rhs_is_new_record || nullable_local);
-  b2 = if stash { "stash" } else if owned_ref && !s1 { "pre" } else { "none" };
+  // A compiler temporary's null reset frees nothing (`bind_lowering::re_bind`,
+  // `null_reset_of_temp`): the compiler writes it only after the temp's store was released or
+  // handed over, so a free here is a second release of that store.
+  temp_null_reset = binds::is_compiler_generated(f, var) && unspan(x) is NdNull;
+  stash = !temp_null_reset && owned_ref && (reads_v || rhs_is_new_record || nullable_local);
+  pre = !temp_null_reset && owned_ref && !s1;
+  b2 = if stash { "stash" } else if pre { "pre" } else { "none" };
   note(l, "b2={b2} owned_ref={flag(owned_ref)} s1={flag(s1)} reads_v={flag(reads_v)} witnessed={flag(witnessed)} entry_w={flag(entry_w != null)} buffer_w={flag(buffer_w != null)}");
   slot = slot_of(l, var);
   if stash {
     emit(l, Load, KRef, slot, 0);
-  } else if owned_ref && !s1 {
+  } else if pre {
     emit(l, Load, KRef, slot, 0);
     // `displaced_witness_enabled` (default on): the projection's container, else the buffer.
     witness = binds::projection_container_var(b, x) ?? buffer_w;

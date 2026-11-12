@@ -1373,10 +1373,14 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
         crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
       }
       // `OpVarRef(v); OpFreeRef` (`free_named`): the store `v` names released — a null and an
-      // already free store are no-ops; the slot keeps what it held.
+      // already free store are no-ops — and `v` reset to null, as every backend resets a
+      // variable after its free (`Codegen::generate_call`, `@FR-H-FreeTwice`): the compiler
+      // relies on it, so a later free of the same variable is a free of null.  Left holding
+      // the store, the VM's second free released it again.
       FreeVar => {
         crt::slot_ref(io, stk, base + op.a);
         crt::free_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+        crt::set_slot_ref(stk, base + op.a, NULL_STORE, 0, 0);
       }
       // `OpFreeRef` of a value.
       FreeRef => {

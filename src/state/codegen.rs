@@ -2703,8 +2703,6 @@ impl State {
                 rhs_reads_v,
                 entry_w,
                 owned_ref,
-                rhs_is_new_record,
-                nullable_local,
                 witnessed,
                 buffer_kept,
                 buffer_witness,
@@ -2712,12 +2710,12 @@ impl State {
             } = rb;
             let mut stash_old_for_post_free = false;
             if bind_trace_on() {
-                let b2 = if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
-                    "stash"
-                } else if owned_ref && !s1_substituted {
-                    "pre"
-                } else {
-                    "none"
+                // The free the code below emits (`rb.free`), not a recomputation of it: a
+                // compiler temporary's null reset is `None` whatever the facts say.
+                let b2 = match rb.free {
+                    DisplacedFree::Stash => "stash",
+                    DisplacedFree::Pre { .. } => "pre",
+                    DisplacedFree::None => "none",
                 };
                 note_bind(&format!(
                     "b2={b2} owned_ref={} s1={} reads_v={} witnessed={} entry_w={} buffer_w={}",
