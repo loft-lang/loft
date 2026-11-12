@@ -520,6 +520,9 @@ struct Run<'a> {
     /// The compiler temporaries the function frees with a plain `OpFreeRef` (a lift, a literal's
     /// work-ref): each still owns the record it holds, wherever a reference to it is written.
     freed_temps: BTreeSet<u16>,
+    /// A tuple literal met as a MEMBER of an enclosing tuple's value (the tail of a
+    /// `tuple_member_move` block): its stores are that member's, not handed on.
+    member_tuple: bool,
 }
 
 impl Run<'_> {
@@ -1173,6 +1176,18 @@ impl Run<'_> {
                     None => Self::hand_on(&mut s, &value),
                 }
                 Some((s, Val::null()))
+            }
+            Value::Tuple(xs) if std::mem::take(&mut self.member_tuple) => {
+                let (s, parts) = self.tuple_elems(xs, st)?;
+                let mut whole = Val::null();
+                for p in parts {
+                    whole.pts.extend(p.pts);
+                    whole.corr.extend(p.corr);
+                }
+                if whole.pts.len() > 1 {
+                    whole.pts.remove(&Pt::Null);
+                }
+                Some((s, whole))
             }
             Value::Tuple(xs) => {
                 let target = self.tuple_target;
@@ -2178,6 +2193,15 @@ impl Run<'_> {
                     whole.pts.remove(&Pt::Null);
                 }
                 vals.push(whole);
+            } else if Self::tail_is_tuple(x) {
+                // A member moved out of another tuple (`u = t`): a block ending in the
+                // member's own tuple literal.  Its tail is joined like a bare nested literal.
+                let target = self.tuple_target.take();
+                let out = self.eval_member_block(x, s);
+                self.tuple_target = target;
+                let (s2, v) = out?;
+                s = s2;
+                vals.push(v);
             } else {
                 let (s2, vs) = self.args(std::slice::from_ref(x), s)?;
                 s = s2;
@@ -2185,6 +2209,39 @@ impl Run<'_> {
             }
         }
         Some((s, vals))
+    }
+
+    /// Is `v` a block or insert whose value is a tuple literal?
+    fn tail_is_tuple(v: &Value) -> bool {
+        match v.unspan() {
+            Value::Block(bl) => bl
+                .operators
+                .last()
+                .is_some_and(|t| matches!(t.unspan(), Value::Tuple(_))),
+            Value::Insert(ops) => ops
+                .last()
+                .is_some_and(|t| matches!(t.unspan(), Value::Tuple(_))),
+            _ => false,
+        }
+    }
+
+    /// Evaluate a [`Self::tail_is_tuple`] block with its tail read as a member.
+    fn eval_member_block(&mut self, v: &Value, st: State) -> Option<(State, Val)> {
+        let ops = match v.unspan() {
+            Value::Block(bl) => &bl.operators,
+            Value::Insert(ops) => ops,
+            _ => return self.eval(v, st),
+        };
+        let (last, init) = ops.split_last()?;
+        let mut s = st;
+        for op in init {
+            let (s2, _) = self.eval(op, s)?;
+            s = s2;
+        }
+        self.member_tuple = true;
+        let out = self.eval(last, s);
+        self.member_tuple = false;
+        out
     }
 
     /// Is member `i` of tuple variable `t` a store reference?
@@ -2229,8 +2286,10 @@ impl Run<'_> {
     /// store.
     fn args(&mut self, args: &[Value], st: State) -> Option<(State, Vec<Val>)> {
         let target = self.tuple_target.take();
+        let member = std::mem::take(&mut self.member_tuple);
         let out = self.args_inner(args, st);
         self.tuple_target = target;
+        self.member_tuple = member;
         out
     }
 
@@ -2334,7 +2393,10 @@ impl Run<'_> {
                     && x < MEMBER_BASE
                     && (self.data.def(self.d_nr).variables.is_skip_free(x)
                         || self.moved_away.contains(&x));
-                if !dropped {
+                // A text free of a tuple member releases the text in it; a nested member's
+                // record stores (`u.2` of `(s, w, (h, w))`) are their work-refs' to free.
+                let text_of_member = d == ops.text_free && x >= MEMBER_BASE;
+                if !dropped && !text_of_member {
                     self.end(&mut st, x, &name, true);
                 }
             }
@@ -2905,6 +2967,7 @@ fn run_fn<'a>(
         leaving: BTreeSet::new(),
         protected: Vec::new(),
         freed_temps: BTreeSet::new(),
+        member_tuple: false,
     };
     let body = def.code.clone();
     // One pass in emission order: which assignments are first, each reassignment's lowering,
