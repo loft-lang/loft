@@ -233,8 +233,6 @@ fn slot_read(s: Slot, data: &Data) -> Value {
 /// at its build).  The model is `@FR-G-Arg-Rebind`'s `detach_if_frame_held`.
 fn detach_held_backing(code: &mut Value, facts: &Rebound, data: &Data) {
     let database = data.def_nr("OpDatabase");
-    let sentinel = data.def_nr("OpNullRefSentinel");
-    let distinct = data.def_nr("OpDistinctStore");
     // backing -> every slot that can hold its store, with the local it captures.
     let mut held_by: HashMap<u16, Vec<(Slot, u16)>> = HashMap::default();
     for (c, bs) in &facts.backings {
@@ -257,29 +255,98 @@ fn detach_held_backing(code: &mut Value, facts: &Rebound, data: &Data) {
         let Some(slots) = held_by.get(&b) else {
             return Vec::new();
         };
-        let b = &b;
         slots
             .iter()
-            .map(|&(s, c)| {
-                let same = Value::Call(distinct, vec![Value::Var(*b), slot_read(s, data)]);
-                let mut detach = v_set(*b, Value::Call(sentinel, Vec::new()));
-                // A record capture with an OWNER slot takes the store over there, so its
-                // cascade releases it and the frame's own name is cleared (`@FR-L-CapOwn`).
-                if let Some(&own) = facts.owners.get(&(s.record, c)) {
-                    let take = Value::Call(
-                        data.def_nr("OpSetDbRef"),
-                        vec![Value::Var(s.record), Value::Int(own), slot_read(s, data)],
-                    );
-                    detach = Value::Insert(vec![take, detach]);
-                }
-                v_if(
-                    record_live(s.record, data),
-                    v_if(same, Value::Null, detach),
-                    Value::Null,
-                )
-            })
+            .map(|&(s, c)| detach_if_held(b, s, c, facts, data))
             .collect()
     });
+}
+
+/// `b` lets go of its store where the live record's slot `s` holds it: the record keeps the
+/// store, and `b` is reset to the sentinel.  A record capture with an OWNER slot takes the store
+/// over there, so its cascade releases it and the frame's own name is cleared (`@FR-L-CapOwn`).
+fn detach_if_held(b: u16, s: Slot, c: u16, facts: &Rebound, data: &Data) -> Value {
+    let same = Value::Call(
+        data.def_nr("OpDistinctStore"),
+        vec![Value::Var(b), slot_read(s, data)],
+    );
+    let mut detach = v_set(b, Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new()));
+    if let Some(&own) = facts.owners.get(&(s.record, c)) {
+        let take = Value::Call(
+            data.def_nr("OpSetDbRef"),
+            vec![Value::Var(s.record), Value::Int(own), slot_read(s, data)],
+        );
+        detach = Value::Insert(vec![take, detach]);
+    }
+    v_if(
+        record_live(s.record, data),
+        v_if(same, Value::Null, detach),
+        Value::Null,
+    )
+}
+
+/// Let-go point 5 — the EXIT of the loop that rebuilds a record that STAYS in the frame (not
+/// pass-confined, not leaving): the record owns what it captured and releases it at its death,
+/// and a frame backing (`__vdb_N`) whose store its slot still holds lets go of it here, where
+/// the record is certainly live.  Without it a loop that ran once leaves the declaration's
+/// backing naming the store the record captured, and the frame end frees it twice — in either
+/// order (`@FR-L-CapOwn`, `@FR-H-FreeTwice`).  A backing that is the captured local itself
+/// stays: the local is read after the loop.
+fn detach_backings_at_loop_exit(
+    code: &mut Value,
+    facts: &Rebound,
+    leaving: &HashSet<u16>,
+    data: &Data,
+) {
+    let mut held: Vec<(u16, Slot, u16)> = Vec::new();
+    for (c, ss) in &facts.slots {
+        for s in ss {
+            if leaving.contains(&s.record) || facts.confined.contains(s) {
+                continue;
+            }
+            for b in facts.backings.get(c).into_iter().flatten() {
+                if *b != *c && !held.contains(&(*b, *s, *c)) {
+                    held.push((*b, *s, *c));
+                }
+            }
+        }
+    }
+    if held.is_empty() {
+        return;
+    }
+    let set_dbref = data.def_nr("OpSetDbRef");
+    after_outer_loops(code, &mut |lp| {
+        // Only after a loop that builds the record: its slot is written inside.
+        let builds = |s: Slot| {
+            lp.any_node(&mut |n| {
+                matches!(n.unspan(), Value::Call(d, a) if *d == set_dbref
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if *w == s.record)
+                    && matches!(a.get(1).map(Value::unspan), Some(Value::Int(o)) if *o == s.off))
+            })
+        };
+        held.iter()
+            .filter(|&&(_, s, _)| builds(s))
+            .map(|&(b, s, c)| detach_if_held(b, s, c, facts, data))
+            .collect()
+    });
+}
+
+/// Insert, after every `Loop` statement no other `Loop` encloses, the statements `pick` answers.
+fn after_outer_loops(code: &mut Value, pick: &mut dyn FnMut(&Value) -> Vec<Value>) {
+    if matches!(code.unspan(), Value::Loop(_)) {
+        return;
+    }
+    if let Value::Block(bl) = code.unspan_mut() {
+        let mut out = Vec::with_capacity(bl.operators.len());
+        for op in std::mem::take(&mut bl.operators) {
+            let is_loop = matches!(op.unspan(), Value::Loop(_));
+            let extra = if is_loop { pick(&op) } else { Vec::new() };
+            out.push(op);
+            out.extend(extra);
+        }
+        bl.operators = out;
+    }
+    code.for_each_child_mut(&mut |ch| after_outer_loops(ch, pick));
 }
 
 /// The capture slots a BUILD statement writes: a fn-ref local's build
@@ -628,6 +695,9 @@ pub(super) fn release_rebound_captures(data: &mut Data, fresh: &[u32]) {
         release_on_rebuild(&mut code, &facts, data);
         release_confined_at_end(&mut code, &facts, data);
         let leaving = leaving_records(&code, data.def(d_nr).variables(), data);
+        if crate::keys::staying_record_takes_backing() {
+            detach_backings_at_loop_exit(&mut code, &facts, &leaving, data);
+        }
         if !leaving.is_empty() {
             keep_leaving_captures(&mut code, &facts, &leaving, data);
         }

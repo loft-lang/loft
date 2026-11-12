@@ -3405,6 +3405,15 @@ pub fn record_release_detach() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RECORD_RELEASE_DETACH"))
 }
 
+/// `LOFT_NO_STAYING_RECORD_TAKES_BACKING=1` — a frame backing whose store a staying closure
+/// record's capture slot still holds after the loop that rebuilt it keeps that store
+/// (`rebound_captures`): the frame frees it and the record's cascade frees it again.
+#[must_use]
+pub fn staying_record_takes_backing() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STAYING_RECORD_TAKES_BACKING"))
+}
+
 /// `LOFT_NO_SNAPSHOT_KEEPS_REFILL=1` — a closure record rebuilt through a snapshot (a capture
 /// type with a drop hook) keeps an old slot naming the store its new fill names: the snapshot's
 /// cascade then releases the capture the rebuilt record holds again (`vectors.rs`).
