@@ -3668,6 +3668,15 @@ pub fn buffer_opaque_call_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_OPAQUE_CALL"))
 }
 
+/// `LOFT_C_OWN_JOIN=1` — the C writer joins a rebind at run time only where the variable owns
+/// what it displaces, instead of also where `bind_lowering::re_bind` answers `ReArm::Join` for a
+/// kept local (@PLN220's A/B).
+#[must_use]
+pub fn c_own_join() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_JOIN"))
+}
+
 /// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
 /// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
 #[must_use]
