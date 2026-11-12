@@ -130,6 +130,9 @@ struct State {
     /// Per holder: the stores a reference written into its fields names but does not own
     /// (`@FR-H-RefHome`).  The holder handed to a call reads them.
     points: BTreeMap<u16, Pts>,
+    /// Variables known to name a record on this path whatever their store: bound from
+    /// `OpChildRec` (a field's present child, or a fresh one), until rebound.
+    nonnull: BTreeSet<u16>,
 }
 
 /// A value: the stores it may point into, and the stores CORRELATED with it — live only on
@@ -360,6 +363,7 @@ fn join_state(a: &State, b: &State) -> State {
         field_captures,
         flags,
         points,
+        nonnull: a.nonnull.intersection(&b.nonnull).copied().collect(),
     }
 }
 
@@ -601,6 +605,8 @@ struct Run<'a> {
     imprecise: bool,
     /// `LOFT_STORE_TRACE` names this function: print the state after each statement.
     traced: bool,
+    /// Inside a `fn_ref_field_reset` or `fn_ref_field_set` block: a fn field is being written.
+    in_field_reset: u32,
     steps: usize,
     /// Per enclosing loop: the state that leaves it (`break`) and that starts its next pass
     /// (`continue`).
@@ -763,6 +769,7 @@ impl Run<'_> {
             info.live_null.remove(&v);
         }
         st.field_captures.remove(&v);
+        st.nonnull.remove(&v);
         for m in st.slot_src.values_mut() {
             m.retain(|_, x| *x != v);
         }
@@ -1383,6 +1390,12 @@ impl Run<'_> {
         }
         match v {
             Value::Span(b) => self.eval(&b.1, st),
+            Value::Block(b) if matches!(b.name, "fn_ref_field_reset" | "fn_ref_field_set") => {
+                self.in_field_reset += 1;
+                let out = self.seq(&b.operators, st);
+                self.in_field_reset -= 1;
+                out
+            }
             Value::Block(b) => self.seq(&b.operators, st),
             Value::Insert(ops) => self.seq(ops, st),
             Value::Loop(b) => self.run_loop(&b.operators, st),
@@ -1401,6 +1414,12 @@ impl Run<'_> {
                     return Some((st, Val::null()));
                 }
                 st.flags.remove(x);
+                if self.in_field_reset > 0
+                    && matches!(val.unspan(), Value::Call(n, _)
+                        if self.data.def(*n).name() == "OpNullRefSentinel")
+                {
+                    Self::give_back_field_captures(&mut st, *x);
+                }
                 let copied = self.copied_from(val);
                 // `x = f(…, x)` answering `x`'s own store (a value operator writing its result
                 // into the buffer `x` hands it): `x` still names, and must-holds, what it did.
@@ -1413,7 +1432,12 @@ impl Run<'_> {
                 } else {
                     Vec::new()
                 };
+                let child_rec = matches!(val.unspan(), Value::Call(n, _)
+                    if self.data.def(*n).name() == "OpChildRec");
                 let (mut st, out) = self.assign(v, *x, val, st)?;
+                if child_rec {
+                    st.nonnull.insert(*x);
+                }
                 if let Some(src) = copied
                     && src != *x
                 {
@@ -2275,6 +2299,32 @@ impl Run<'_> {
         }
     }
 
+    /// A fn field overwritten while it held the frame's own closure record (a field reset or
+    /// set nulls `___clos_N` where the field's old record is it): the record leaves the field, and
+    /// the stores it took over at the capture are the frame's again, held by whatever still
+    /// names them (`h.f = fn() { v.a }; h.f = id` — the frame then frees `v`).
+    fn give_back_field_captures(st: &mut State, w: u16) {
+        let Some(taken) = st.field_captures.get(&w).cloned() else {
+            return;
+        };
+        for k in Self::stores_of(&taken) {
+            let holders: BTreeSet<u16> = st
+                .vars
+                .iter()
+                .filter(|(_, p)| p.len() == 1 && p.contains(&Pt::Store(k)))
+                .map(|(v, _)| *v)
+                .collect();
+            if let Some(info) = st.stores.get_mut(&k)
+                && info.has(HANDED)
+                && info.captured_by.contains(&w)
+            {
+                info.status = (info.status & !HANDED) | LIVE;
+                info.live = holders;
+                info.handed_by.clear();
+            }
+        }
+    }
+
     /// A closure record variable (`___clos_N`): its capture slots hold stores.
     fn is_closure_record(&self, w: u16) -> bool {
         self.data
@@ -2309,9 +2359,10 @@ impl Run<'_> {
     /// every path where it is ended is not ended.
     fn null_test(x: u16, st: State) -> (Option<State>, Option<State>) {
         let pts = Self::pts(&st, x);
-        let may_null = pts
-            .iter()
-            .any(|p| matches!(p, Pt::Null | Pt::Param(_) | Pt::Unknown));
+        let may_null = !st.nonnull.contains(&x)
+            && pts
+                .iter()
+                .any(|p| matches!(p, Pt::Null | Pt::Param(_) | Pt::Unknown));
         let may_store = pts.iter().any(|p| !matches!(p, Pt::Null));
         let null_arm = may_null
             .then(|| {
@@ -3969,6 +4020,7 @@ fn run_fn<'a>(
         findings: BTreeSet::new(),
         answer: Summary::Bottom,
         imprecise: false,
+        in_field_reset: 0,
         traced: {
             static TRACE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
             TRACE
