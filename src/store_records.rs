@@ -3077,15 +3077,29 @@ impl Run<'_> {
             return false;
         }
         let held = Self::held_by_record(st, rec, Self::const_offset(gargs.get(1)));
-        let wp = args
-            .get(1)
-            .and_then(|a| Self::named_var(st, a))
-            .map(|w| Self::pts(st, w));
+        let w = args.get(1).and_then(|a| Self::named_var(st, a));
+        let wp = w.map(|w| Self::pts(st, w));
         let label = format!("{name}({})", self.var_name(rec));
         let stores = Self::stores_of(&held);
         let single = stores.len() == 1 && !held.contains(&Pt::Unknown);
         for k in stores {
             if wp.as_ref().is_some_and(|wp| wp.contains(&Pt::Store(k))) {
+                // The witness may name it: it ends where the witness does not, and where the
+                // slot names only this store it stays live exactly where the witness names it.
+                if let Some(w) = w
+                    && single
+                    && let Some(info) = st.stores.get_mut(&k)
+                    && info.has(LIVE)
+                    && !info.live.contains(&w)
+                    && wp.as_ref().is_some_and(|wp| wp.len() > 1)
+                {
+                    self.sites[k.site as usize].ends.insert(label.clone());
+                    info.status |= ENDED;
+                    info.live.insert(w);
+                    for a in &mut info.alts {
+                        a.insert(w);
+                    }
+                }
                 continue;
             }
             self.sites[k.site as usize].ends.insert(label.clone());
