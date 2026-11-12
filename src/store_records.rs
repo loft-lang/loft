@@ -2824,7 +2824,8 @@ impl Run<'_> {
     }
 
     /// `LOFT_STORE_TRACE=<fn substring>`: each statement of a matching function, with what
-    /// every variable names and every store's statuses and holders after it.
+    /// every variable names, every store's statuses and holders, and every closure record's
+    /// capture slots (with the stores live only through them) after it.
     fn trace(&self, op: &Value, st: &State) {
         let names = |s: &BTreeSet<u16>| s.iter().map(|v| self.var_name(*v)).collect::<Vec<_>>();
         let key = |k: &SKey| format!("#{}{}", k.site, if k.older { "'" } else { "" });
@@ -2851,6 +2852,29 @@ impl Run<'_> {
                 names(&i.live),
                 names(&i.ended)
             );
+        }
+        if !st.slots.is_empty() {
+            o.push_str("\n    slots:");
+            for (k, m) in &st.slots {
+                for (off, v) in m {
+                    let pts: Vec<String> = v
+                        .pts
+                        .iter()
+                        .map(|p| match p {
+                            Pt::Store(k) => key(k),
+                            other => format!("{other:?}"),
+                        })
+                        .collect();
+                    let corr: Vec<String> = v.corr.iter().map(key).collect();
+                    let _ = write!(
+                        o,
+                        " {}@{off}={{{}}}corr{{{}}}",
+                        key(k),
+                        pts.join(","),
+                        corr.join(",")
+                    );
+                }
+            }
         }
         eprintln!("[store-trace] {o}");
     }
