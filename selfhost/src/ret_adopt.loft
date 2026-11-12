@@ -1,0 +1,277 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RetAdopt` (src/opt/ret_adopt.rs `ret_adopt`, and the interpreter's clause of it,
+// src/state/codegen.rs `retbuf_adopt`): a vector function that builds its answer in one local and
+// copies it into the hidden return buffer at the end builds it IN the buffer instead.  The local
+// adopts the buffer: its witness `__vdb_N` is never minted nor zeroed, its bind takes the buffer
+// (minted where the caller offered none, emptied where it did), and the delivery's clear and
+// append go.  Decided here off the function's IR, applied by `lower.loft` at those three places.
+
+use ir;
+use own;
+use binds;
+
+// `opt::ret_adopt::RetAdopt`: the adopted local `v`, its witness `vdb`, the buffer `buf` and the
+// witness's store type; `v` is -1 where the function adopts nothing.
+pub struct RetAdopt {
+  pub v: integer = -1,
+  pub vdb: integer = -1,
+  pub buf: integer = -1,
+  pub db_tp: integer = 0,
+}
+
+// What one pre-order walk of the body gathered (`ret_adopt`'s two `any_node` walks share it).
+struct Scan {
+  buf: integer,
+  // First walk.
+  copy_block_appends: integer,
+  appends: integer,
+  src: integer,
+  bad: boolean,
+  init_v: integer,
+  init_vdb: integer,
+  // Second walk.
+  v_sets: integer,
+  db_tp: integer,
+  db_seen: boolean,
+  // The interpreter's `bound`: `v = OpGetField(vdb, int, int)` somewhere.
+  bound: boolean,
+}
+
+fn name_of(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn is_var(n: ir::Node, v: integer) -> boolean {
+  match binds::unspan_node(n) {
+    NdVar { n: x } => x == v,
+    _ => false,
+  }
+}
+
+fn var_of(n: ir::Node) -> integer {
+  match binds::unspan_node(n) {
+    NdVar { n: x } => x,
+    _ => -1,
+  }
+}
+
+// `peel_link`: `base()`, then every `&` and `Rewritten` marker peeled.
+fn peel_link(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => peel_link(inner),
+    TyRefVar { inner } => peel_link(inner),
+    TyRewritten { inner } => peel_link(inner),
+    _ => t,
+  }
+}
+
+// The decision, or a `RetAdopt` with `v` -1.  The interpreter's own condition is folded in: the
+// local is bound from its witness's vector field (`retbuf_adopt`'s `bound`), so every place that
+// applies it finds its statement.  `LOFT_NO_RETBUF_ADOPT` unset.
+pub fn ret_adopt(b: ir::Bundle, d: integer) -> RetAdopt {
+  none = RetAdopt {};
+  def = b.data.definitions[d]!;
+  if !binds::is_loft_defined(def) || len(def.returned) == 0 || !(peel_link(def.returned[0]!) is TyVector) {
+    return none;
+  }
+  if own::returns_borrowed_view(def) {
+    return none;
+  }
+  attr = binds::hidden_return_buffer_attr(def);
+  if attr == null {
+    return none;
+  }
+  f = def.variables;
+  buf = binds::var_named(f, def.attributes[attr!]!.name);
+  if buf == own::MAX || len(def.code) == 0 {
+    return none;
+  }
+  s = Scan { buf: buf, copy_block_appends: 0, appends: 0, src: -1, bad: false, init_v: -1, init_vdb: -1,
+             v_sets: 0, db_tp: 0, db_seen: false, bound: false };
+  first_walk(b, f, def.code[0]!, s);
+  if s.bad || s.appends != s.copy_block_appends || s.src < 0 || s.init_v < 0 {
+    return none;
+  }
+  v = s.src;
+  if s.init_v != v || v >= len(f.variables) || f.variables[v]!.argument || binds::is_captured(f, v) {
+    return none;
+  }
+  second_walk(b, s, v, s.init_vdb, def.code[0]!);
+  if s.bad || s.v_sets != 1 || !s.db_seen || !s.bound {
+    return none;
+  }
+  RetAdopt { v: v, vdb: s.init_vdb, buf: buf, db_tp: s.db_tp }
+}
+
+// The children of `n` in `any_node`'s order (`for_each_child`), each walked by `step`.
+fn children(n: ir::Node) -> vector<ir::Node> {
+  match n {
+    NdSpan { pos: _, inner } => [inner],
+    NdCall { def_nr: _, args } => args,
+    NdCallRef { var: _, args } => args,
+    NdInsert { items } => items,
+    NdTuple { items } => items,
+    NdParallel { arms } => arms,
+    NdBlock { block } => block[0]!.operators,
+    NdLoop { block } => block[0]!.operators,
+    NdSet { var: _, inner } => [inner],
+    NdReturn { inner } => [inner],
+    NdDrop { inner } => [inner],
+    NdYield { inner } => [inner],
+    NdTuplePut { var: _, idx: _, inner } => [inner],
+    NdIf { cond, t, f } => [cond, t, f],
+    NdIter { var: _, create, next, init } => [create, next, init],
+    _ => [],
+  }
+}
+
+// The first walk: the appends into the buffer inside a `one_buffer_vec_copy` block, every
+// delivery into the buffer and its one source, any other use of the buffer, and the first
+// `v = OpGetField(__vdb_N, …)` of a local that is no argument.
+fn first_walk(b: ir::Bundle, f: ir::Function, n: ir::Node, s: Scan) {
+  match n {
+    NdParallel { arms: _ } => { s.bad = true; }
+    NdYield { inner: _ } => { s.bad = true; }
+    NdBlock { block } => {
+      if block[0]!.name == "one_buffer_vec_copy" {
+        for op in block[0]!.operators {
+          match binds::unspan_node(op) {
+            NdCall { def_nr, args } => {
+              if name_of(b, def_nr) == "OpAppendVector" && len(args) > 0 && is_var(args[0]!, s.buf) {
+                s.copy_block_appends += 1;
+              }
+            }
+            _ => {}
+          }
+        }
+      }
+    }
+    NdCall { def_nr, args } => {
+      nm = name_of(b, def_nr);
+      if (nm == "OpReplaceVector" || nm == "OpAppendVector") && len(args) > 0 && is_var(args[0]!, s.buf) {
+        if nm == "OpAppendVector" {
+          s.appends += 1;
+        }
+        src = if len(args) > 1 { var_of(args[1]!) } else { -1 };
+        if src < 0 || (s.src >= 0 && s.src != src) {
+          s.bad = true;
+        } else {
+          s.src = src;
+        }
+      } else if nm != "OpClearVector" && nm != "" {
+        for a in args {
+          if is_var(a, s.buf) {
+            s.bad = true;
+          }
+        }
+      }
+    }
+    NdSet { var, inner } => {
+      match binds::unspan_node(inner) {
+        NdCall { def_nr, args } => {
+          w = if len(args) > 0 { var_of(args[0]!) } else { -1 };
+          if name_of(b, def_nr) == "OpGetField" && w >= 0 && w < len(f.variables)
+              && own::var_name(f, w).starts_with("__vdb") && !f.variables[var]!.argument && s.init_v < 0 {
+            s.init_v = var;
+            s.init_vdb = w;
+          }
+        }
+        _ => {}
+      }
+    }
+    _ => {}
+  }
+  for c in children(n) {
+    first_walk(b, f, c, s);
+  }
+}
+
+// The second walk: the local's binds, the witness's one mint and its type, and any use of the
+// witness other than its mint, field read, zero and free; the interpreter's `bound` beside it.
+fn second_walk(b: ir::Bundle, s: Scan, v: integer, vdb: integer, n: ir::Node) {
+  match n {
+    NdSet { var, inner } => {
+      if !(binds::unspan_node(inner) is NdNull) {
+        if var == v {
+          s.v_sets += 1;
+        } else if var == vdb {
+          s.bad = true;
+        }
+      }
+      if var == v {
+        match inner {
+          NdCall { def_nr, args } => {
+            if name_of(b, def_nr) == "OpGetField" && len(args) == 3 && is_var(args[0]!, vdb)
+                && (args[1]! is NdInt) && (args[2]! is NdInt) {
+              s.bound = true;
+            }
+          }
+          _ => {}
+        }
+      }
+    }
+    NdCall { def_nr, args } => {
+      nm = name_of(b, def_nr);
+      if nm == "OpDatabase" && len(args) > 0 && is_var(args[0]!, vdb) {
+        match if len(args) > 1 { binds::unspan_node(args[1]!) } else { ir::NdNull } {
+          NdInt { n: tp } => {
+            if s.db_seen {
+              s.bad = true;
+            }
+            s.db_seen = true;
+            s.db_tp = tp;
+          }
+          _ => {}
+        }
+      } else if nm != "" && nm != "OpDatabase" && nm != "OpGetField" && nm != "OpSetInt4"
+          && nm != "OpFreeRef" && nm != "OpFreeRefTag" {
+        for a in args {
+          if is_var(a, vdb) {
+            s.bad = true;
+          }
+        }
+      }
+    }
+    _ => {}
+  }
+  for c in children(n) {
+    second_walk(b, s, v, vdb, c);
+  }
+}
+
+// `adopted_delivery`: the positions in `ops` the adopted local's delivery takes — every append
+// of it into the buffer, and the clear just before one.
+pub fn delivery(b: ir::Bundle, a: RetAdopt, ops: vector<ir::Node>) -> vector<integer> {
+  out: vector<integer> = [];
+  if a.v < 0 {
+    return out;
+  }
+  for k in 0..len(ops) {
+    if is_buffer_call(b, a, ops[k]!, "OpAppendVector", 2) && second_arg_is(ops[k]!, a.v) {
+      if k > 0 && is_buffer_call(b, a, ops[k - 1]!, "OpClearVector", 1) {
+        out += [k - 1];
+      }
+      out += [k];
+    }
+  }
+  out
+}
+
+// A call to `name` with at least `arity` arguments whose first is the buffer — the node itself,
+// not through a span, as `adopted_delivery` asks it.
+fn is_buffer_call(b: ir::Bundle, a: RetAdopt, n: ir::Node, name: text, arity: integer) -> boolean {
+  match n {
+    NdCall { def_nr, args } => name_of(b, def_nr) == name && len(args) >= arity && (args[0]! is NdVar) && var_of(args[0]!) == a.buf,
+    _ => false,
+  }
+}
+
+fn second_arg_is(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdCall { def_nr: _, args } => len(args) > 1 && (args[1]! is NdVar) && var_of(args[1]!) == v,
+    _ => false,
+  }
+}
