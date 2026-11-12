@@ -519,7 +519,7 @@ struct Run<'a> {
     /// record is built inside another store (a fn field).  Such a record adopts what it
     /// captures (`@FR-L-CapOwn`); every other record only holds it.
     leaving: BTreeSet<u16>,
-    /// The variables inside an IR `n_protect_store_frees` bracket (`@P290`): a source-free
+    /// The variables inside an IR `n_protect_store_frees` bracket: a source-free
     /// in it declines the stores they name.
     protected: Vec<u16>,
     /// The compiler temporaries the function frees with a plain `OpFreeRef` (a lift, a literal's

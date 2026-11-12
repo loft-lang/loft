@@ -142,10 +142,11 @@ impl Scopes<'_> {
                 && !crate::env_once!(std::env::var_os("LOFT_NO_TUPLE_ARG_NAME").is_some())
             {
                 // A member BUILT INLINE (`first((r, 1))` copies `r` into a work-ref inside the
-                // literal) at a call whose return may borrow it: hoisted, as the bare argument
-                // is (loft#1029), so the @P290 bracket can name the member's store before the
-                // call — the callee handing the member back is then the caller's, and one it
-                // minted is still freed (`protectable_ref_args`' tuple arm).
+                // literal) at a call whose return may borrow it: hoisted, as the bare argument is
+                // (loft#1029), so the free-protection bracket (`n_protect_store_frees`) can name
+                // the member's store before the call — the callee handing the member back is then
+                // the caller's, and one it minted is still freed (`protectable_ref_args`' tuple
+                // arm).
                 let block = std::mem::replace(m, Value::Var(w));
                 self.hoist_built_block(block, absorb, preamble);
                 lifted = true;

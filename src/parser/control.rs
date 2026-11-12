@@ -12933,14 +12933,14 @@ impl Parser {
         self.vars.defined(elm);
         self.vars.set_skip_free(elm);
         let mut append = self.append_element_ops(xs, ret_tp, elm, Value::Var(r));
-        // `@FR-O-Move` — the copy into `xs` frees the rule's answer only where it is the
-        // rule's own.  A rule whose answer is always a store it made (no borrowed return) has
-        // the copy free it; one that may answer a record of an argument (`p.nodes[0]`) has its
-        // answer released after the copy only where it names none of the arguments' stores —
-        // the witnesses the @P290 bracket protects — since the backends differ on whether a
-        // borrowed answer bound to `r` is that record or a copy of it.  Freeing a borrowed
-        // answer released the caller's whole store.  `LOFT_NO_SUBRULE_OWNED_ANSWER=1` frees
-        // every answer through the copy, as before.
+        // `@FR-O-Move` — the copy into `xs` frees the rule's answer only where it is the rule's
+        // own.  A rule whose answer is always a store it made (no borrowed return) has the copy
+        // free it; one that may answer a record of an argument (`p.nodes[0]`) has its answer
+        // released after the copy only where it names none of the arguments' stores — the
+        // witnesses the call's free-protection bracket (`n_protect_store_frees`) protects — since
+        // the backends differ on whether a borrowed answer bound to `r` is that record or a copy
+        // of it.  Freeing a borrowed answer released the caller's whole store.
+        // `LOFT_NO_SUBRULE_OWNED_ANSWER=1` frees every answer through the copy, as before.
         let old_way = crate::env_once!(std::env::var_os("LOFT_NO_SUBRULE_OWNED_ANSWER").is_some());
         let owned = held && (!self.data.def(fn_nr).returns_borrowed_view() || old_way);
         if owned {
