@@ -442,7 +442,12 @@ which that free released under the caller (`LOFT_ARG_DISPLACED_FREE=1` emits it 
 records report the free as a `store-wrong-end`).  A nullable local, whose
 displaced free waits until after the bind, joins too when
 the value is a call that does not read it, with its slot reset first so the copy arm mints a
-store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
+store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  The rustc writer reads it for whether a reassignment frees what it displaces
+(`LOFT_NATIVE_OWN_DISPLACED_FREE=1` gives it back its own test); its trace names its exits
+(`rs-call-bind`, `rs-var-copy`, `rs-tail` for the plain bind).  A writer row's `lowering=` asks
+`bind_lowering` over the IR the writer reads; the bytecode writer changes some variables' deps
+while it generates, so its own row can answer differently for the same assignment — the census
+pairs against that row, never the `lowering=` field.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
 on one writer (`--writer c|native`) and lists the arms the two decide differently.  Every row
 names its source line, so the census pairs by site; an interpreter row carries the facts its
 lowering read and a C row the arm `bind_lowering` decides beside its own (`lowering=R1/b2=stash

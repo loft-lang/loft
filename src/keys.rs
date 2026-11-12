@@ -3677,6 +3677,14 @@ pub fn c_own_join() -> bool {
     *ON.get_or_init(|| env_set("LOFT_C_OWN_JOIN"))
 }
 
+/// `LOFT_NATIVE_OWN_DISPLACED_FREE=1` — the rustc writer frees a reassignment's displaced store
+/// by its own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
+#[must_use]
+pub fn native_own_displaced_free() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_DISPLACED_FREE"))
+}
+
 /// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
 /// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
 #[must_use]

@@ -586,7 +586,17 @@ impl Output<'_> {
                         | Value::Block(_)
                         | Value::If(_, _, _)
                 )
-                && (!is_retbuf_attr || self.retbuf_witness.contains(&var));
+                && (!is_retbuf_attr || self.retbuf_witness.contains(&var))
+                // Whether the displaced store is freed at all is `bind_lowering::re_bind`'s
+                // answer, the one the bytecode writer, the C writer and the store records read:
+                // a compiler temporary reset to null has released or handed over its store
+                // already, and an argument without an entry witness is the scope pass's to
+                // release (`DisplacedFree::None`).  @PLN220.
+                // `LOFT_NATIVE_OWN_DISPLACED_FREE=1` frees by this test alone again.
+                && (crate::keys::native_own_displaced_free()
+                    || crate::bind_lowering::re_bind(self.data, self.def_nr, variables, var, to)
+                        .free
+                        != crate::bind_lowering::DisplacedFree::None);
             if owned_ref_reassign {
                 let name = sanitize(variables.name(var));
                 // For a witnessed retbuf-attr, also exclude the caller's entry
