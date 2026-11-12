@@ -198,7 +198,13 @@ named onto the buffer freed the caller's store (the records: `store-wrong-end`).
 join whose base is a TUPLE argument is witnessed by the tuple's one heap member
 (`use_analysis::join_witness_member`, read by every writer); a tuple with several has no single
 witness and is copied.  `LOFT_NO_TUPLE_JOIN_WITNESS=1` compares against the tuple slot, which
-holds no store: the records report the re-free (`store-re-free`, "a join's witness is a tuple").  A collection
+holds no store: the records report the re-free (`store-re-free`, "a join's witness is a tuple").  A
+fn-ref whose closure record a return releases inside its arms (`free_record_in_omitting_arms`)
+takes no release of its own at that return (`if pick { return a; } return b;`);
+`LOFT_NO_ARM_RELEASED_FNREF_STAND_DOWN=1` releases both.  A `match` of lambdas carries every
+arm's closure record in its deps, as the `if` twin does (`arm_join_type`);
+`LOFT_NO_MATCH_ARM_RECORD_DEP=1` keeps only the first arm's, and the fn-ref's release then pairs
+with that record alone.  A collection
 coalesce read inline (`(g ?? nr_h(i))[i]`) lifts its fallback call into a `__lift_N` inside the
 arm (`Scopes::lift_owned_coalesce_arm`), handed off where the outer call consumes it;
 `LOFT_NO_COALESCE_ARM_LIFT=1` leaves the call inline, and a keyed fallback leaks.  Where

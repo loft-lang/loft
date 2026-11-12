@@ -17966,7 +17966,19 @@ impl Parser {
             return tp.clone();
         }
         let mut kept = deps.clone();
-        kept.retain(|v| !minted.contains(v));
+        // A lambda arm mints its CLOSURE RECORD, and a fn-ref's dep on that record is not a
+        // borrow the join's owner takes over: it names the record the fn-ref holds, which the
+        // scope sweep reads to release the fn-ref and its record once (`fnref_stand_down`).
+        // Dropped here, a `match` of lambdas carried only its FIRST arm's record (that arm
+        // settles the type unfiltered), while the `if` twin, which filters nothing, carried
+        // both; the second arm's record was then released by its own variable and again
+        // through the fn-ref (`@FR-H-FreeTwice`, attic 1469 `both_local`).
+        // `LOFT_NO_MATCH_ARM_RECORD_DEP=1` drops it again.
+        let fn_ref = matches!(tp.base(), Type::Function(..))
+            && !crate::env_once!(std::env::var_os("LOFT_NO_MATCH_ARM_RECORD_DEP").is_some());
+        kept.retain(|v| {
+            !minted.contains(v) || (fn_ref && self.vars.name(*v).starts_with("___clos_"))
+        });
         if kept.len() == deps.len() {
             return tp.clone();
         }
