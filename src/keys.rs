@@ -3659,6 +3659,15 @@ pub fn c_own_var_copy() -> bool {
     *ON.get_or_init(|| env_set("LOFT_C_OWN_VAR_COPY"))
 }
 
+/// `LOFT_NO_BUFFER_OPAQUE_CALL=1` — a renamed return buffer rebound from a closure call with an
+/// unresolved target binds the answer plain again instead of copying-or-adopting it at run time
+/// (`bind_lowering::re_bind`, arm R2a; @PLN220's A/B).
+#[must_use]
+pub fn buffer_opaque_call_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_OPAQUE_CALL"))
+}
+
 /// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its
 /// own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
 #[must_use]
