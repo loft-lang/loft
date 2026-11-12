@@ -5691,7 +5691,20 @@ impl<'a> FnWriter<'a> {
             && join.is_some()
             && self.vars.owns_displaced_store(var, x, self.cx.data)
             && !x.reads_var(var);
-        if let Some((tp, base)) = join.filter(|_| first || rebind_owned) {
+        // A rebind `bind_lowering::re_bind` joins (R1) is joined here too — a KEPT local (one a
+        // construction buffer's store was adopted into, `buffer_kept`) as well as an owning one;
+        // only an owning rebind frees what it displaces.  Declined, such a rebind fell to
+        // `call_copy`, a copy where the interpreter adopts a fresh answer.  @PLN220.
+        // `LOFT_C_OWN_JOIN=1` joins owning rebinds only.
+        let rebind_joins = rebind_owned
+            || (!first
+                && join.is_some()
+                && !crate::keys::c_own_join()
+                && matches!(
+                    crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).arm,
+                    crate::bind_lowering::ReArm::Join { .. }
+                ));
+        if let Some((tp, base)) = join.filter(|_| first || rebind_joins) {
             // OpBindOrCopy: a result in the base's store is a view, copied into a fresh store;
             // any other is the callee's fresh store, adopted.
             let bytes = self.copyable(tp)?;
