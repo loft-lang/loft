@@ -19,7 +19,8 @@ impl Output<'_> {
     /// through the owned-store-tracker path so neither free-site whole-store-frees
     /// a borrowed view.  Every other var goes straight to [`Self::output_set_body`].
     /// One assignment; under `LOFT_TRACE_BIND_NATIVE=<file>` also one row naming the exit it
-    /// took (`rs@<line>`, the first exit reached), in the interpreter's `LOFT_TRACE_BIND` form,
+    /// took (`rs-<lowering>`, the first exit reached; `rs-tail` when none is named), in the
+    /// interpreter's `LOFT_TRACE_BIND` form,
     /// so the writers' choices can be compared (`scripts/bind_census.py`, STORE_RECORDS.md
     /// § Phases, 2).
     pub(super) fn output_set(
@@ -36,14 +37,25 @@ impl Output<'_> {
             Some("") | None => "rs-tail",
             Some(a) => a,
         };
-        if r.is_ok() {
+        if r.is_ok() && crate::bind_lowering::trace_enabled("LOFT_TRACE_BIND_NATIVE") {
+            // Beside the exit this writer took, the lowering `bind_lowering` decides for the
+            // same assignment, so a row shows its own disagreement (@PLN220).
+            let variables = self.data.def(self.def_nr).variables();
+            let lowering = crate::bind_lowering::decided_lowering(
+                self.data,
+                self.def_nr,
+                variables,
+                var,
+                to,
+                first,
+            );
             crate::bind_lowering::trace_row(
                 "LOFT_TRACE_BIND_NATIVE",
                 self.data.def(self.def_nr).name(),
-                self.data.def(self.def_nr).variables().name(var),
+                variables.name(var),
                 first,
                 line,
-                arm,
+                &format!("lowering={lowering} {arm}"),
             );
         }
         r
@@ -347,7 +359,7 @@ impl Output<'_> {
             }
             write!(w, " }}")?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-witness-copy");
                 return Ok(());
             }
         }
@@ -382,7 +394,7 @@ impl Output<'_> {
                  _own_store_{name} = var_{name}; }}"
             )?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-witness-stash");
                 return Ok(());
             }
         }
@@ -403,7 +415,7 @@ impl Output<'_> {
             self.output_set_body(w, var, to)?;
             write!(w, "; _own_store_{name} = var_{name}; }}")?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-witness-reset");
                 return Ok(());
             }
         }
@@ -636,7 +648,7 @@ impl Output<'_> {
                      {{ OpFreeRef(cell, _old_{name}, \"var_{name}(prev)\"); }} }}"
                 )?;
                 {
-                    self.note_arm(concat!("rs@", line!()));
+                    self.note_arm("rs-displacing-rebind");
                     return Ok(());
                 }
             }
@@ -918,7 +930,7 @@ impl Output<'_> {
             }
             write!(w, "{narrow_close}")?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-coroutine-local");
                 return Ok(());
             }
         }
@@ -942,7 +954,7 @@ impl Output<'_> {
                     let src_name = sanitize(variables.name(*src));
                     write!(w, "var_{name} = var_{src_name}")?;
                     {
-                        self.note_arm(concat!("rs@", line!()));
+                        self.note_arm("rs-param-link-repoint");
                         return Ok(());
                     }
                 }
@@ -959,7 +971,7 @@ impl Output<'_> {
                     let src_place = self.var_place(*src);
                     write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
                     {
-                        self.note_arm(concat!("rs@", line!()));
+                        self.note_arm("rs-param-record-repoint");
                         return Ok(());
                     }
                 }
@@ -979,7 +991,7 @@ impl Output<'_> {
                         "; unsafe {{ stores.slot_move(&mut *var_{name}, &_slot_src, {kt}); }} }}"
                     )?;
                     {
-                        self.note_arm(concat!("rs@", line!()));
+                        self.note_arm("rs-param-slot-move");
                         return Ok(());
                     }
                 }
@@ -1004,7 +1016,7 @@ impl Output<'_> {
                     }
                     write!(w, " }} }}")?;
                     {
-                        self.note_arm(concat!("rs@", line!()));
+                        self.note_arm("rs-param-slot-write");
                         return Ok(());
                     }
                 }
@@ -1019,7 +1031,7 @@ impl Output<'_> {
                         self.output_place_pointer(w, to, &base)?;
                         write!(w, " }}")?;
                         {
-                            self.note_arm(concat!("rs@", line!()));
+                            self.note_arm("rs-param-scalar-place");
                             return Ok(());
                         }
                     }
@@ -1031,7 +1043,7 @@ impl Output<'_> {
                         let src_place = self.var_place(*src);
                         write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
                         {
-                            self.note_arm(concat!("rs@", line!()));
+                            self.note_arm("rs-param-scalar-repoint");
                             return Ok(());
                         }
                     }
@@ -1138,7 +1150,7 @@ impl Output<'_> {
                 }
             }
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-param-write");
                 return Ok(());
             }
         }
@@ -1156,7 +1168,7 @@ impl Output<'_> {
             }
             self.output_code_inner(w, to)?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-store-text-link");
                 return Ok(());
             }
         }
@@ -1374,7 +1386,7 @@ impl Output<'_> {
                 }
             }
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-link-write");
                 return Ok(());
             }
         }
@@ -1415,7 +1427,7 @@ impl Output<'_> {
                 write!(w, "let mut var_{name}: *mut DbRef = {target}")?;
             }
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-record-link-repoint");
                 return Ok(());
             }
         }
@@ -1438,7 +1450,7 @@ impl Output<'_> {
                 self.output_code_inner(w, to)?;
                 write!(w, "; }}")?;
                 {
-                    self.note_arm(concat!("rs@", line!()));
+                    self.note_arm("rs-record-link-write");
                     return Ok(());
                 }
             }
@@ -1446,7 +1458,7 @@ impl Output<'_> {
             self.output_code_inner(w, to)?;
             write!(w, "; OpFreeRefIfDistinct(cell, _old_disp, *var_{name}); }}")?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-record-link-write-release");
                 return Ok(());
             }
         }
@@ -1471,7 +1483,7 @@ impl Output<'_> {
             }
             self.output_code_inner(w, to)?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-refvar-bind");
                 return Ok(());
             }
         }
@@ -1995,7 +2007,7 @@ impl Output<'_> {
                 crate::copy_manifest::Origin::NativeCallReturn,
             );
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-call-bind");
                 return Ok(());
             }
         }
@@ -2056,7 +2068,7 @@ impl Output<'_> {
                 crate::copy_manifest::Origin::NativeCallReturn,
             );
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-callref-join");
                 return Ok(());
             }
         }
@@ -2103,7 +2115,7 @@ impl Output<'_> {
                 crate::copy_manifest::Origin::NativeCallReturn,
             );
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-fnref-bind");
                 return Ok(());
             }
         }
@@ -2180,7 +2192,7 @@ impl Output<'_> {
                 crate::copy_manifest::Origin::NativeRecordBind,
             );
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-element-copy");
                 return Ok(());
             }
         }
@@ -2290,7 +2302,7 @@ impl Output<'_> {
                     crate::copy_manifest::Origin::NativeRecordBind,
                 );
                 {
-                    self.note_arm(concat!("rs@", line!()));
+                    self.note_arm("rs-var-copy");
                     return Ok(());
                 }
             }
@@ -2310,7 +2322,7 @@ impl Output<'_> {
                     write!(w, "let var_{name}: &str = ")?;
                     self.output_code_inner(w, to)?;
                     {
-                        self.note_arm(concat!("rs@", line!()));
+                        self.note_arm("rs-text-borrowed");
                         return Ok(());
                     }
                 }
@@ -2320,7 +2332,7 @@ impl Output<'_> {
                     write!(w, ".to_string()")?;
                 }
                 {
-                    self.note_arm(concat!("rs@", line!()));
+                    self.note_arm("rs-text-first");
                     return Ok(());
                 }
             }
@@ -2389,7 +2401,7 @@ impl Output<'_> {
                 write!(w, ").to_string()")?;
             }
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-block-tail");
                 return Ok(());
             }
         }
@@ -2495,7 +2507,7 @@ impl Output<'_> {
                 write!(w, ".to_string()")?;
             }
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-call-into");
                 return Ok(());
             }
         }

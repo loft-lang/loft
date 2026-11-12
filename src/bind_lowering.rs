@@ -1132,6 +1132,32 @@ pub fn answers_a_view_to_copy(data: &Data, d_nr: u32, value: &Value) -> bool {
         )
 }
 
+/// The lowering `bind_lowering` decides for `v = value`, as a writer's trace row names it beside
+/// its own arm (`lowering=R1/b2=stash join`): the first arm's name for a first bind, the
+/// reassignment's arm with its displaced free otherwise.  Only a trace asks it.
+#[must_use]
+pub fn decided_lowering(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    value: &Value,
+    first: bool,
+) -> String {
+    if first {
+        return first_arm(data, d_nr, function, v, value)
+            .trace_name()
+            .to_string();
+    }
+    let rb = re_bind(data, d_nr, function, v, value);
+    let b2 = match rb.free {
+        DisplacedFree::Stash => "stash",
+        DisplacedFree::Pre { .. } => "pre",
+        DisplacedFree::None => "none",
+    };
+    format!("{}/b2={b2}", rb.arm.trace_name())
+}
+
 /// Is the bind trace the environment variable `env` names switched on?  A writer asks it before
 /// computing what only the trace prints.
 #[must_use]

@@ -6155,19 +6155,14 @@ impl<'a> FnWriter<'a> {
         if r.is_ok() && crate::bind_lowering::trace_enabled("LOFT_TRACE_BIND_C") {
             // Beside the arm this writer took, the one `bind_lowering` decides for the same
             // assignment (`lowering=`), so a row shows its own disagreement (@PLN220).
-            let lowering = if first {
-                crate::bind_lowering::first_arm(self.cx.data, self.d, self.vars, var, x)
-                    .trace_name()
-                    .to_string()
-            } else {
-                let rb = crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x);
-                let b2 = match rb.free {
-                    crate::bind_lowering::DisplacedFree::Stash => "stash",
-                    crate::bind_lowering::DisplacedFree::Pre { .. } => "pre",
-                    crate::bind_lowering::DisplacedFree::None => "none",
-                };
-                format!("{}/b2={b2}", rb.arm.trace_name())
-            };
+            let lowering = crate::bind_lowering::decided_lowering(
+                self.cx.data,
+                self.d,
+                self.vars,
+                var,
+                x,
+                first,
+            );
             crate::bind_lowering::trace_row(
                 "LOFT_TRACE_BIND_C",
                 self.cx.data.def(self.d).name(),
