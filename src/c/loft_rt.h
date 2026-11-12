@@ -2878,6 +2878,15 @@ LOFT_HOT_INLINE int loft_vh_fill_f32(loft_vh h, int64_t base, int64_t lo, int64_
     return 1;
 }
 
+/* A `u32` element run: the code `loft_set_int4_raw` writes, null as 0xFFFFFFFF. */
+LOFT_HOT_INLINE int loft_vh_fill_u32(loft_vh h, int64_t base, int64_t lo, int64_t hi, int inclusive,
+                                     int64_t v) {
+    int64_t f, n;
+    if (!loft_fill_run(h, base, lo, hi, inclusive, &f, &n)) return 0;
+    loft_fill4(h.base + (size_t) f * 4, v == LOFT_NULL ? 0xFFFFFFFFu : (uint32_t) (uint64_t) v, (size_t) n);
+    return 1;
+}
+
 /* @FR-R-Fill's guarded clause: a body `t = base + i; if t < bound { v[t] = c }` writes exactly
  * the indexes below `bound`, so the range it fills ends at min(end, bound - base), saturating
  * where native's `saturating_sub` / `saturating_add` do. */
@@ -7561,6 +7570,59 @@ LOFT_HOT_INLINE void loft_vh_set_float_at_lt(loft_vh h, uint32_t size, int64_t f
         return;
     }
     memcpy(h.base + (size_t) f * size + fld, &v, 8);
+}
+
+/* The same held-header element writes for a 4-byte unsigned slot (`OpSetInt4Raw`: `u32`, and
+ * `u32?` with 0xFFFFFFFF for null), one family with the 8-byte ones above: each index form
+ * answers a miss exactly as its `int` twin, and the value is encoded as `loft_set_int4_raw`
+ * encodes it. */
+LOFT_HOT_INLINE void loft_vh_store_u32(loft_vh h, uint32_t size, int64_t f, uint32_t fld, int64_t v) {
+    uint32_t x = v == LOFT_NULL ? 0xFFFFFFFFu : (uint32_t) (uint64_t) v;
+    memcpy(h.base + (size_t) f * size + fld, &x, 4);
+}
+LOFT_HOT_INLINE void loft_vh_put_u32(loft_vh h, uint32_t size, int64_t f, uint32_t fld, int64_t v) {
+    LOFT_PROVED(f >= 0 && f < h.len, "a proven index: put u32");
+    loft_vh_store_u32(h, size, f, fld, v);
+}
+LOFT_HOT_INLINE void loft_vh_set_u32(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v) {
+    int64_t f = loft_vh_index(h, from);
+    if (f < 0) return;
+    loft_vh_store_u32(h, size, f, fld, v);
+}
+LOFT_HOT_INLINE void loft_vh_set_u32_at(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v,
+                                        const char *file, uint32_t line) {
+    int64_t f = LOFT_VH_WRAP(h, from);
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(from, h.len, file, line);
+        return;
+    }
+    loft_vh_store_u32(h, size, f, fld, v);
+}
+LOFT_HOT_INLINE void loft_vh_set_u32_nn(loft_vh h, uint32_t size, int64_t f, uint32_t fld, int64_t v) {
+    if (LOFT_VH_OUT(h, f)) return;
+    loft_vh_store_u32(h, size, f, fld, v);
+}
+LOFT_HOT_INLINE void loft_vh_set_u32_at_nn(loft_vh h, uint32_t size, int64_t f, uint32_t fld, int64_t v,
+                                           const char *file, uint32_t line) {
+    if (LOFT_VH_OUT(h, f)) {
+        loft_index_miss(f, h.len, file, line);
+        return;
+    }
+    loft_vh_store_u32(h, size, f, fld, v);
+}
+LOFT_HOT_INLINE void loft_vh_set_u32_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) return;
+    loft_vh_store_u32(h, size, f, fld, v);
+}
+LOFT_HOT_INLINE void loft_vh_set_u32_at_lt(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v,
+                                           const char *file, uint32_t line) {
+    LOFT_VH_LT(h, from, f);
+    if (LOFT_UNLIKELY(f < 0)) {
+        loft_index_miss(from, h.len, file, line);
+        return;
+    }
+    loft_vh_store_u32(h, size, f, fld, v);
 }
 
 /* `t[i]` (`State::text_char_or_raise`): a byte index naming no byte of the text. */

@@ -2813,7 +2813,12 @@ impl<'a> FnWriter<'a> {
                 let proof = self.held_proof(vec, &held);
                 Ok(Some(E::new(format!("({proof}, {code})"), K::Void)))
             }
-            ("OpSetInt" | "OpSetFloat", [inner, fld, val]) => {
+            // A 4-byte unsigned element (`u32`) is the same write through the held header, four
+            // bytes wide; `@FR-R-Version`'s fast twin has no such kind, so it keeps its own path.
+            ("OpSetInt" | "OpSetFloat" | "OpSetInt4Raw", [inner, fld, val]) => {
+                if name == "OpSetInt4Raw" && self.version_raw(args) {
+                    return Ok(None);
+                }
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
                 };
@@ -2834,18 +2839,13 @@ impl<'a> FnWriter<'a> {
                         version::version_access(name, &held, size, fld, &index, Some(&value));
                     return Ok(Some(E::new(code, K::Void)));
                 }
-                let (f, value) = if name == "OpSetInt" {
-                    ("loft_vh_set_int", as_int(value)?)
-                } else {
-                    ("loft_vh_set_float", as_float(value)?)
+                let (f, put, value) = match name {
+                    "OpSetInt" => ("loft_vh_set_int", "loft_vh_put_int", as_int(value)?),
+                    "OpSetInt4Raw" => ("loft_vh_set_u32", "loft_vh_put_u32", as_int(value)?),
+                    _ => ("loft_vh_set_float", "loft_vh_put_float", as_float(value)?),
                 };
                 let guard = self.guard_index(idx);
                 if guard == Some(true) {
-                    let put = if name == "OpSetInt" {
-                        "loft_vh_put_int"
-                    } else {
-                        "loft_vh_put_float"
-                    };
                     let index = as_int(index)?;
                     let proof = self.held_proof(vec, &held);
                     return Ok(Some(E::new(
@@ -5251,6 +5251,7 @@ impl<'a> FnWriter<'a> {
             "i64" => ("loft_vh_fill_i64", as_int(val)?),
             "f64" => ("loft_vh_fill_f64", as_float(val)?),
             "f32" => ("loft_vh_fill_f32", as_single(val)?),
+            "u32" => ("loft_vh_fill_u32", as_int(val)?),
             _ => return Ok(None),
         };
         let bound = match f.bound {

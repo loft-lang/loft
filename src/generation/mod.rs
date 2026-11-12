@@ -3254,6 +3254,10 @@ impl Output<'_> {
         let Some(f) = hoist::fill_loop(lp, self.data) else {
             return Ok(false);
         };
+        // `stores.fill_hoisted` has no 4-byte unsigned form: a `u32` fill stays the loop here.
+        if f.rust_type == "u32" {
+            return Ok(false);
+        }
         if f.bound.is_some() && self.switches.guarded_fill_disabled {
             return Ok(false);
         }

@@ -3662,14 +3662,17 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     let Value::Call(setter, wargs) = setter_stmt.unspan() else {
         return decline("the body is not a call");
     };
-    let Some((_, rust_type)) = FUSABLE_SETTERS
+    // A 4-byte unsigned element (`u32`'s `OpSetInt4Raw`) fills too: a run of one 4-byte code.
+    // It is the fill's kind alone, not a `FUSABLE_SETTERS` row — the single fused store reads
+    // that table and has no `u32` form on every writer.
+    let setter_name = data.def(*setter).name();
+    let fusable = FUSABLE_SETTERS
         .iter()
-        .find(|(name, _)| *name == data.def(*setter).name())
+        .find(|(name, _)| *name == setter_name)
+        .map(|(_, ty)| ty);
+    let Some(rust_type) = fusable.or(if setter_name == "OpSetInt4Raw" { Some(&"u32") } else { None })
     else {
-        return decline(&format!(
-            "the body is `{}`, not a fusable setter",
-            data.def(*setter).name()
-        ));
+        return decline(&format!("the body is `{setter_name}`, not a fusable setter"));
     };
     let [inner, fld, val] = &wargs[..] else {
         return decline("the setter does not take three operands");
@@ -3691,7 +3694,7 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     };
     let width: u32 = match *rust_type {
         "i64" | "f64" => 8,
-        "f32" => 4,
+        "f32" | "u32" => 4,
         _ => return None,
     };
     if u32::try_from(*size).ok() != Some(width) {

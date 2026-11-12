@@ -8292,3 +8292,94 @@ fn an_integer_literal_fallback_is_unmarked_and_a_float_one_keeps_its_cold_path()
         .expect("run");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "60 1.5\n");
 }
+
+/// A `u32` element written through a held vector header is one 4-byte store
+/// (`loft_vh_set_u32*`), and a counted loop writing one value over a run of them is one fill
+/// (`loft_vh_fill_u32`, `@FR-R-Fill`'s guarded clause here) — the forms an 8-byte integer
+/// element already had; without them graphics' `u32` canvas wrote each pixel through a record
+/// reference and a store lookup (`clear` 2.0x → 4.7x its Rust twin).  Values hand-computed:
+/// the span writes indices 2..11 of 12; the ramp's last element is 4500000000 masked to 32
+/// bits, 205032704.
+/// @falsified-at b9d1ef41c: `fill_loop` declining `OpSetInt4Raw` fails the fill assertion;
+/// `loft_vh_store_u32` writing `v + 1` fails the values (`[1,1500000001,…]`).
+#[test]
+fn a_u32_element_write_is_a_held_store_and_a_run_of_them_is_one_fill() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("u32_store");
+    let file = dir.join("u32.loft");
+    fa::write(
+        &file,
+        "fn span(v: vector<u32>, lo: integer, hi: integer, c: integer) {\n\
+           n = len(v); cc: u32 = c & 4294967295;\n\
+           for x in lo..hi { t = x; if t < n { v[t] = cc; } }\n\
+         }\n\
+         fn ramp(v: vector<u32>, k: integer) { for i in 0..len(v) { v[i] = (i * k) & 4294967295; } }\n\
+         fn main() {\n\
+           v: vector<u32> = [0 as u32; 12]; span(v, 2, 30, 4294967295);\n\
+           w: vector<u32> = [0 as u32; 4]; ramp(w, 1500000000);\n\
+           println(\"{v[1]} {v[2]} {v[11]} {len(v)} {w}\");\n\
+         }\n",
+    )
+    .expect("write program");
+    let c = dir.join("u32.c");
+    let emitted = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    let body = |name: &str| -> String {
+        let mut at = 0;
+        let mut pos = 0;
+        for line in text.split_inclusive('\n') {
+            if line.contains(&format!(" {name}__fr(")) && line.trim_end().ends_with('{') {
+                at = pos;
+                break;
+            }
+            pos += line.len();
+        }
+        assert!(at > 0, "{name} has no body");
+        let end = text[at..].find("\n}\n").map_or(text.len(), |e| at + e);
+        text[at..end].to_string()
+    };
+    assert!(
+        body("n_span").contains("loft_vh_fill_u32("),
+        "the guarded run of one u32 is a fill:\n{}",
+        body("n_span")
+    );
+    assert!(
+        body("n_ramp").contains("loft_vh_set_u32"),
+        "a u32 element write is the held store:\n{}",
+        body("n_ramp")
+    );
+    let exe = dir.join("u32");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "0 4294967295 4294967295 12 [0,1500000000,3000000000,205032704]\n"
+    );
+}
