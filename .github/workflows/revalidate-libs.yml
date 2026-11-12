@@ -172,6 +172,8 @@ jobs:
             loft-src/target/release/libloft.rlib
             loft-src/target/release/deps/*.rlib
             loft-src/target/release/deps/*.so
+            loft-src/target/release/build/*/*/out/*.rlib
+            loft-src/target/release/build/*/*/out/*.so
             loft-src/target/release/components/
           if-no-files-found: error
           # The components' `.loft-build-fp`: a component is taken only beside its fingerprint.

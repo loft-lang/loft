@@ -72,37 +72,11 @@ const SCRIPTS_NATIVE_SKIP: &[&str] = &[
     "75-native-stub.loft",
 ];
 
-/// Locate `libloft.rlib` and its sibling deps directory for standalone `rustc` compilation.
-///
-/// Searches only the deps directory of the currently running test binary so that
-/// the rlib always matches the features compiled into this test.  The old approach
-/// of scanning both profiles and picking by mtime caused S33 in CI: a later
-/// `cargo build --no-default-features` produced a newer no-features rlib in the
-/// other profile's deps/, shadowing the full-features rlib and leaving png/random
-/// functions as stubs that silently return wrong values.
-fn find_loft_rlib() -> Option<(PathBuf, PathBuf)> {
-    // The test binary lives at target/{profile}/deps/{test_binary}.
-    // Its parent is the deps/ directory that holds the rlib built with the same features.
-    let deps = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))?;
-
-    // Find the most recently modified loft rlib in this profile's deps/.
-    // Accept both "libloft-HASH.rlib" (cargo test profile) and "libloft.rlib"
-    // (produced when building lib+test together).  Both live in the same
-    // profile-specific deps/ directory, so there is no cross-profile shadowing
-    // (the S33 risk only arose when scanning multiple profile directories).
-    let rlib = fa::read_dir(&deps)
-        .ok()?
-        .into_iter()
-        .filter(|e| {
-            let n = e.file_name().unwrap_or_default();
-            (n.starts_with("libloft-") || n == "libloft.rlib") && n.ends_with(".rlib")
-        })
-        .max_by_key(|e| fa::symlink_metadata(e).and_then(|m| m.modified()).ok())?
-        .os_spelling();
-
-    Some((rlib, deps))
+/// The `libloft.rlib` this test binary links and its dependency dirs, for a standalone
+/// `rustc` compile: the binary's own build only, so the rlib carries the features compiled
+/// into this test (S33), under either cargo layout — `loft::native_lib::linked_runtime`.
+fn find_loft_rlib() -> Option<(PathBuf, Vec<PathBuf>)> {
+    loft::native_lib::linked_runtime()
 }
 
 /// Collect additional `--extern name=path` arguments for optional feature dependencies.
@@ -115,12 +89,13 @@ fn find_loft_rlib() -> Option<(PathBuf, PathBuf)> {
 /// explicitly (S31).  This function scans deps/ and returns ALL non-loft rlibs as
 /// `(crate_name, rlib_path)` pairs.  All versions of each crate are included so that
 /// rustc can select the hash that matches what `libloft` was compiled against.
-fn collect_extra_externs(deps_dir: &Path) -> Vec<(String, PathBuf)> {
-    let Ok(entries) = fa::read_dir(deps_dir) else {
-        return Vec::new();
-    };
+fn collect_extra_externs(deps_dirs: &[PathBuf]) -> Vec<(String, PathBuf)> {
     let mut result = Vec::new();
-    for entry in entries {
+    for entry in deps_dirs
+        .iter()
+        .filter_map(|d| fa::read_dir(d).ok())
+        .flatten()
+    {
         let name = entry.file_name().unwrap_or_default().to_string();
         if !name.starts_with("lib") || !name.ends_with(".rlib") || name.starts_with("libloft") {
             continue;
@@ -149,69 +124,12 @@ fn collect_extra_externs(deps_dir: &Path) -> Vec<(String, PathBuf)> {
 /// plus each of their immediate subdirectories.  Some crates (e.g. `windows-targets`) place
 /// import libraries in a platform-specific subdirectory such as `out/x86_64-pc-windows-msvc/`
 /// rather than directly in `out/`.  Adding both levels covers all known layouts.
-fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, PathBuf)>) -> Vec<PathBuf> {
-    if loft::platform::host_lib_os() != loft::platform::LibOs::Windows {
-        return Vec::new();
-    }
-    let Some((rlib, _)) = rlib_info else {
-        return Vec::new();
-    };
-    // rlib is at target/{profile}/libloft.rlib or target/{profile}/deps/libloft-*.rlib.
-    // Walk up to find the profile directory (release/ or debug/).
-    let profile_dir = rlib.parent().and_then(|p| {
-        if fa::file_name(p).is_some_and(|n| n == "deps") {
-            p.parent()
-        } else {
-            Some(p)
-        }
-    });
-    let Some(profile_dir) = profile_dir else {
-        return Vec::new();
-    };
-    let build_dir = profile_dir.join("build");
-    let Ok(entries) = fa::read_dir(&build_dir) else {
-        return Vec::new();
-    };
-    let mut dirs = Vec::new();
-    for entry in entries {
-        let build_entry = entry.os_spelling();
-
-        // Add out/ and its immediate subdirs (for libs generated into OUT_DIR).
-        let out = build_entry.join("out");
-        if fa::is_dir(&out) {
-            dirs.push(out.clone());
-            if let Ok(subdirs) = fa::read_dir(&out) {
-                for sub in subdirs {
-                    if fa::is_dir(&sub) {
-                        dirs.push(sub.os_spelling());
-                    }
-                }
-            }
-        }
-
-        // Read the build-script output file for `cargo:rustc-link-search` directives.
-        // Crates like `windows_x86_64_msvc` ship `windows.0.48.5.lib` inside their
-        // source package (cargo registry) and emit
-        //   cargo:rustc-link-search=<CARGO_MANIFEST_DIR>
-        // rather than writing the file to OUT_DIR.  Cargo caches these directives in
-        // `target/{profile}/build/{crate}-{hash}/output`.  Reading them here replicates
-        // exactly what cargo passes to the linker.
-        let output_file = build_entry.join("output");
-        if let Ok(content) = fa::read_to_string(&output_file) {
-            for line in content.lines() {
-                let path_str = line
-                    .strip_prefix("cargo:rustc-link-search=native=")
-                    .or_else(|| line.strip_prefix("cargo:rustc-link-search="));
-                if let Some(path_str) = path_str {
-                    let p = PathBuf::from(path_str);
-                    if fa::is_dir(&p) && !dirs.contains(&p) {
-                        dirs.push(p);
-                    }
-                }
-            }
-        }
-    }
-    dirs
+fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, Vec<PathBuf>)>) -> Vec<PathBuf> {
+    // One home for the scan, under either cargo layout: `platform::import_lib_search_dirs`.
+    rlib_info
+        .as_ref()
+        .map(|(rlib, _)| loft::platform::import_lib_search_dirs(rlib))
+        .unwrap_or_default()
 }
 
 /// This checkout's own native cache (`platform::native_cache_dir`): the generated `.rs`,
@@ -226,7 +144,7 @@ fn native_scratch() -> PathBuf {
 /// content hash.  A run whose stamp differs from the one the cache directory remembers
 /// sweeps the caches of the older build first (`platform::sweep_own_native_cache`) — once
 /// per process, because nextest starts a process per shard.
-fn sweep_older_build(rlib_info: &Option<(PathBuf, PathBuf)>) {
+fn sweep_older_build(rlib_info: &Option<(PathBuf, Vec<PathBuf>)>) {
     static SWEPT: OnceLock<()> = OnceLock::new();
     SWEPT.get_or_init(|| {
         let Some((rlib, _)) = rlib_info else { return };
@@ -357,7 +275,7 @@ fn fnv64(data: &[u8]) -> u64 {
 /// the no-op rebuild (warm-cache hit) while still invalidating when the binary
 /// actually changes (different bytes → different hash).  The rlib is read once
 /// per process via `rlib_content_hash`, not once per fixture.
-fn cache_key(rs_content: &[u8], rlib_info: &Option<(PathBuf, PathBuf)>) -> u64 {
+fn cache_key(rs_content: &[u8], rlib_info: &Option<(PathBuf, Vec<PathBuf>)>) -> u64 {
     let mut key = fnv64(rs_content);
     if let Some((rlib, _)) = rlib_info {
         key ^= fnv64(rlib.to_string_lossy().as_bytes());
@@ -614,7 +532,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
 /// Return true if the cached binary is still valid for the current `.rs` content
 /// and rlib.  Uses a content-hash sidecar (`{binary}.key`) written at compile
 /// time — immune to clock skew and cross-machine binary copies.
-fn binary_cache_valid(job: &NativeJob, rlib_info: &Option<(PathBuf, PathBuf)>) -> bool {
+fn binary_cache_valid(job: &NativeJob, rlib_info: &Option<(PathBuf, Vec<PathBuf>)>) -> bool {
     // Binary must exist.
     if !fa::exists(&job.binary) {
         return false;
@@ -642,7 +560,7 @@ fn binary_cache_valid(job: &NativeJob, rlib_info: &Option<(PathBuf, PathBuf)>) -
 /// not in PATH (caller should skip the run phase), and `Err` on a real compile failure.
 fn compile_native_job(
     job: &NativeJob,
-    rlib_info: &Option<(PathBuf, PathBuf)>,
+    rlib_info: &Option<(PathBuf, Vec<PathBuf>)>,
 ) -> std::io::Result<bool> {
     if binary_cache_valid(job, rlib_info) {
         println!("  cached  {}", job.stem);
@@ -724,8 +642,10 @@ fn compile_native_job(
     if let Some((rlib, deps_dir)) = rlib_info {
         args.push("--extern".to_string());
         args.push(format!("loft={}", rlib.display()));
-        args.push("-L".to_string());
-        args.push(deps_dir.display().to_string());
+        for d in deps_dir {
+            args.push("-L".to_string());
+            args.push(d.display().to_string());
+        }
         // S31: pass --extern for optional feature deps (rand_core, rand_pcg, etc.) so that
         // generated code using `random` or `png` features compiles without E0433 errors.
         for (crate_name, rlib_path) in collect_extra_externs(deps_dir) {
@@ -866,7 +786,7 @@ fn native_lanes(jobs: usize) -> usize {
 
 fn run_native_jobs(
     jobs: Vec<NativeJob>,
-    rlib_info: Option<(PathBuf, PathBuf)>,
+    rlib_info: Option<(PathBuf, Vec<PathBuf>)>,
 ) -> std::io::Result<()> {
     let scratch = native_scratch();
     let concurrency = native_lanes(jobs.len());

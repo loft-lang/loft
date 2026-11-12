@@ -2000,7 +2000,9 @@ pub(crate) fn run_tests(
                                 cmd.push_args(loft::native_lib::loft_extern_args(
                                     &ld.join("libloft.rlib"),
                                 ));
-                                cmd.push_arg("-L").push_arg(native_utils::deps_dir_of(ld));
+                                for d in native_utils::dep_search_dirs(ld) {
+                                    cmd.push_arg("-L").push_arg(d);
+                                }
                                 // Propagate `-L native=` for every build-script
                                 // `OUT_DIR` that bundles a native lib — the G2
                                 // mitigation main.rs already has on the standalone
@@ -2027,7 +2029,7 @@ pub(crate) fn run_tests(
                                 // (see `native_lib::loft_ffi_for_libloft`).
                                 if let Some(ffi) = loft::native_lib::loft_ffi_for_libloft(
                                     &ld.join("libloft.rlib"),
-                                    &native_utils::deps_dir_of(ld),
+                                    &native_utils::dep_search_dirs(ld),
                                 ) {
                                     cmd.push_arg("--extern")
                                         .push_arg(format!("loft_ffi={}", ffi.display()));
@@ -2037,12 +2039,15 @@ pub(crate) fn run_tests(
                             // for native-backed libraries (graphics, crypto, …)
                             // compile under --native — mirrors the standalone +
                             // WASM native compiles, which already call this.
-                            let loft_deps = lib_dir.as_ref().map(|d| native_utils::deps_dir_of(d));
+                            let loft_deps = lib_dir
+                                .as_ref()
+                                .map(|d| native_utils::dep_search_dirs(d))
+                                .unwrap_or_default();
                             native_utils::add_native_extern_flags(
                                 &mut cmd,
                                 &native_data,
                                 None,
-                                loft_deps.as_deref(),
+                                &loft_deps,
                             );
                             // And the C libraries the `#c` bindings resolve against, as the
                             // standalone native compile links them.  Without this a STATIC

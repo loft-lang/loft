@@ -452,54 +452,8 @@ use std::sync::OnceLock;
 /// `rlib` is `target/<profile>/libloft.rlib` or `target/<profile>/deps/libloft-*.rlib`.
 #[allow(dead_code)]
 pub fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<PathBuf> {
-    if loft::platform::host_lib_os() != loft::platform::LibOs::Windows {
-        return Vec::new();
-    }
-    // Walk up to the profile dir (release/ or debug/), then scan `build/<crate>-<hash>/`.
-    let Some(profile_dir) = rlib.parent().and_then(|p| {
-        if fa::file_name(p).is_some_and(|n| n == "deps") {
-            p.parent()
-        } else {
-            Some(p)
-        }
-    }) else {
-        return Vec::new();
-    };
-    let Ok(entries) = fa::read_dir(profile_dir.join("build")) else {
-        return Vec::new();
-    };
-    let mut dirs = Vec::new();
-    for entry in entries {
-        let build_entry = entry.os_spelling();
-        // `out/` and its immediate subdirs (libs generated into OUT_DIR).
-        let out = build_entry.join("out");
-        if fa::is_dir(&out) {
-            dirs.push(out.clone());
-            if let Ok(subs) = fa::read_dir(&out) {
-                dirs.extend(
-                    subs.into_iter()
-                        .map(|e| e.os_spelling())
-                        .filter(|p| fa::is_dir(p)),
-                );
-            }
-        }
-        // `cargo:rustc-link-search` directives cached in `build/<crate>-<hash>/output`
-        // (e.g. `windows_x86_64_msvc` ships its `.lib` inside the registry package).
-        if let Ok(content) = fa::read_to_string(build_entry.join("output")) {
-            for line in content.lines() {
-                if let Some(p) = line
-                    .strip_prefix("cargo:rustc-link-search=native=")
-                    .or_else(|| line.strip_prefix("cargo:rustc-link-search="))
-                {
-                    let p = PathBuf::from(p);
-                    if fa::is_dir(&p) && !dirs.contains(&p) {
-                        dirs.push(p);
-                    }
-                }
-            }
-        }
-    }
-    dirs
+    // One home for the scan, under either cargo layout: `platform::import_lib_search_dirs`.
+    loft::platform::import_lib_search_dirs(rlib)
 }
 
 /// Count the warnings **loft itself** raised about `script_name` (a `.loft` file name).

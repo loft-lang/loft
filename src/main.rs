@@ -10959,16 +10959,16 @@ fn main() {
                 cmd.push_arg("-L")
                     .push_arg(format!("dependency={}", d.display()));
             }
-            search.first().cloned()
+            search
         } else {
-            None
+            Vec::new()
         };
         // PKG.5: add --extern flags for native packages (WASM target).
         native_utils::add_native_extern_flags(
             &mut cmd,
             &p.data,
             Some("wasm32-wasip2"),
-            wasm_deps_dir.as_deref(),
+            &wasm_deps_dir,
         );
         for (_, objs) in &wasm_shim_objects {
             for o in objs {
@@ -11376,7 +11376,7 @@ fn main() {
                     .iter()
                     .map(|(ident, _)| ident.clone())
                     .collect();
-                let mut bridge_dep_search: Option<std::path::PathBuf> = None;
+                let mut bridge_dep_search: Vec<std::path::PathBuf> = Vec::new();
                 let mut bridge_externs: Vec<(String, std::path::PathBuf)> = Vec::new();
                 if !nonloft_deps.is_empty() {
                     // Stage the deps-only crate under a per-bridge temp dir, then build it.
@@ -11418,27 +11418,33 @@ fn main() {
                         );
                         std::process::exit(1);
                     }
-                    let deps = synth_dir.join("target/wasm32-unknown-unknown/release/deps");
-                    if fa::is_dir(&deps) {
+                    // Every dir the bridge crate's deps landed in: `release/deps/`, or one
+                    // `build/<crate>/<hash>/out/` per crate (cargo's per-unit layout).
+                    let dirs: Vec<std::path::PathBuf> = loft::native_lib::dependency_dirs(
+                        &synth_dir.join("target/wasm32-unknown-unknown/release"),
+                    )
+                    .into_iter()
+                    .filter(|d| fa::is_dir(d))
+                    .collect();
+                    if !dirs.is_empty() {
                         // Resolve each DIRECT dep to its `lib<ident>-<hash>.rlib` for `--extern`.
-                        let files: Vec<String> = fa::read_dir(&deps)
-                            .map(|rd| {
-                                rd.iter()
-                                    .filter_map(|e| e.file_name().map(str::to_string))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
+                        let files: Vec<std::path::PathBuf> = dirs
+                            .iter()
+                            .filter_map(|d| fa::read_dir(d).ok())
+                            .flatten()
+                            .map(|e| e.os_spelling())
+                            .collect();
                         for ident in &nonloft_idents {
                             let prefix = format!("lib{ident}-");
                             if let Some(f) = files.iter().find(|f| {
-                                f.starts_with(&prefix)
-                                    && fa::extension(std::path::Path::new(f.as_str()))
+                                fa::file_name(f).is_some_and(|n| n.starts_with(&prefix))
+                                    && fa::extension(f)
                                         .is_some_and(|ext| ext.eq_ignore_ascii_case("rlib"))
                             }) {
-                                bridge_externs.push((ident.clone(), deps.join(f)));
+                                bridge_externs.push((ident.clone(), f.clone()));
                             }
                         }
-                        bridge_dep_search = Some(deps);
+                        bridge_dep_search = dirs;
                     }
                 }
                 // @PLN117 — a bridge links into the same wasm as loft's runtime, so it
@@ -11491,7 +11497,7 @@ fn main() {
                         .push_arg("--extern")
                         .push_arg(format!("{ident}={}", rlib.display()));
                 }
-                if let Some(ref deps) = bridge_dep_search {
+                for deps in &bridge_dep_search {
                     build
                         .push_arg("-L")
                         .push_arg(format!("dependency={}", deps.display()));
@@ -11508,7 +11514,7 @@ fn main() {
                 cmd.push_arg("--extern")
                     .push_arg(format!("{crate_ident}={}", bridge_rlib.display()));
                 // Build-extension: link the bridge crate's Cargo deps into the main wasm.
-                if let Some(ref deps) = bridge_dep_search {
+                for deps in &bridge_dep_search {
                     cmd.push_arg("-L")
                         .push_arg(format!("dependency={}", deps.display()));
                 }
@@ -12818,10 +12824,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     cmd.push_arg("-L")
                         .push_arg(format!("dependency={}", d.display()));
                 }
-                let deps = search
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| deps_dir_of(&lib_dir));
+                let deps = if search.is_empty() {
+                    vec![deps_dir_of(&lib_dir)]
+                } else {
+                    search
+                };
                 // Pick the `loft_ffi` that `libloft` was built against, NOT the first
                 // in dir order: with two copies in `deps/`, naming the wrong one puts
                 // a second `loft_ffi` in the link → "colliding StableCrateId" (see
@@ -12849,7 +12856,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 &mut cmd,
                 &p.data,
                 None,
-                native_deps_dir.as_deref(),
+                native_deps_dir.as_deref().unwrap_or_default(),
             );
             // @PLN24 arc D — and the C libraries `#c` bindings resolve against.
             // Host target only: wasm has no C ABI to link (arc E).
@@ -13010,7 +13017,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     for arg in cmd.get_args() {
                         eprintln!("    {}", arg.to_string_lossy());
                     }
-                    if let Some(deps) = native_deps_dir.as_ref() {
+                    if let Some(deps) = native_deps_dir.as_ref().and_then(|v| v.first()) {
                         eprintln!("\nDeps directory: {}", deps.display());
                         match fa::read_dir(deps) {
                             Ok(rd) => {

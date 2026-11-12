@@ -32,27 +32,17 @@ use common::cached_default;
 // tests so one's stub set can't clobber the other's between wire and execute.
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-/// Locate `libloft.rlib` + its sibling `deps/` for standalone rustc, matching the
-/// feature set of this test binary (mirrors `tests/native.rs::find_loft_rlib`).
-fn find_loft_rlib() -> Option<(PathBuf, PathBuf)> {
-    let deps = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let rlib = fa::read_dir(&deps)
-        .ok()?
-        .into_iter()
-        .filter(|e| {
-            let n = e.file_name().unwrap_or_default();
-            (n.starts_with("libloft-") || n == "libloft.rlib") && n.ends_with(".rlib")
-        })
-        .max_by_key(|e| fa::symlink_metadata(e).and_then(|m| m.modified()).ok())?
-        .os_spelling();
-    Some((rlib, deps))
+/// The `libloft.rlib` this test binary links and its dependency dirs, under either cargo
+/// layout (`loft::native_lib::linked_runtime`, shared with `tests/native.rs`).
+fn find_loft_rlib() -> Option<(PathBuf, Vec<PathBuf>)> {
+    loft::native_lib::linked_runtime()
 }
 
 /// `--extern name=path` for optional feature deps (random/png) that the generated
 /// stdlib code may reference, mirroring `tests/native.rs::collect_extra_externs`.
-fn extra_externs(deps: &Path) -> Vec<(String, PathBuf)> {
+fn extra_externs(deps: &[PathBuf]) -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
-    if let Ok(entries) = fa::read_dir(deps) {
+    for entries in deps.iter().filter_map(|d| fa::read_dir(d).ok()) {
         for e in entries {
             let n = e.file_name().unwrap_or_default().to_string();
             if !n.starts_with("lib") || !n.ends_with(".rlib") || n.starts_with("libloft") {
@@ -77,7 +67,7 @@ fn cdylib_name(stem: &str) -> String {
 
 /// Compile `src` as a cdylib against `libloft.rlib`, mirroring the `--native`
 /// rustc invocation.  Panics (keeping the source for inspection) on failure.
-fn compile_cdylib(src: &str, stem: &str, tmp: &Path, rlib: &Path, deps: &Path) -> PathBuf {
+fn compile_cdylib(src: &str, stem: &str, tmp: &Path, rlib: &Path, deps: &[PathBuf]) -> PathBuf {
     let rs = tmp.join(format!("{stem}.rs"));
     fa::write(&rs, src).unwrap();
     let so = tmp.join(cdylib_name(stem));
@@ -94,9 +84,11 @@ fn compile_cdylib(src: &str, stem: &str, tmp: &Path, rlib: &Path, deps: &Path) -
         rs.display().to_string(),
         "--extern".into(),
         format!("loft={}", rlib.display()),
-        "-L".into(),
-        deps.display().to_string(),
     ];
+    for d in deps {
+        args.push("-L".into());
+        args.push(d.display().to_string());
+    }
     for (name, path) in extra_externs(deps) {
         args.push("--extern".into());
         args.push(format!("{name}={}", path.display()));

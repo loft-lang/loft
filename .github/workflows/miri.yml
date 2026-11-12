@@ -1579,7 +1579,7 @@ jobs:
       # library lacks fails to compile (`E0599 vector_record_append`, the branch probe for
       # PR #2069).  Dropped here, the only loft rlib is the one `cargo test` builds below.
       - name: Drop the cached loft rlibs
-        run: rm -f target/release/libloft.rlib target/release/deps/libloft-*.rlib target/release/deps/libloft-*.rmeta
+        run: rm -f target/release/libloft.rlib target/release/deps/libloft-*.rlib target/release/deps/libloft-*.rmeta target/release/build/loft/*/out/libloft.rlib target/release/build/loft/*/out/libloft.rmeta
 
       - name: Test (ubuntu, ${{ matrix.toolchain }})
         env:
