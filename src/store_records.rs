@@ -3935,6 +3935,25 @@ impl Run<'_> {
                     if !rest.is_empty() {
                         self.end_only(&mut st, x, &name, guarded_rest_reports(), Some(&rest));
                     }
+                    // A shared store already freed where `x` names it, on paths where the
+                    // witness cannot point into it: the guard is distinct there, and the free
+                    // runs a second time.
+                    if guarded_rest_reports()
+                        && let Some(w) = w
+                    {
+                        for k in &shared {
+                            let info = info_of(&st, *k);
+                            if info.has(ENDED) && info.ended.contains(&x) && !maybe_stale(&info, w)
+                            {
+                                let nm = self.var_name(x);
+                                self.find(
+                                    "re-free",
+                                    k.site,
+                                    format!("`{nm}` is freed by {name} after its store was already freed"),
+                                );
+                            }
+                        }
+                    }
                     if !witness_holds_it {
                         self.end_where_witness_does_not(
                             &mut st, x, &xp, w, field_slot, &shared, args, &name,
