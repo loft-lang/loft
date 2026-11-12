@@ -2558,6 +2558,11 @@ impl Run<'_> {
                 (distinct, same)
             }
             Value::Call(op, a) if a.len() == 1 => {
+                if *op == self.ops.store_live
+                    && let Some(arms) = self.slot_live_test(&a[0], &st)
+                {
+                    return arms;
+                }
                 let Value::Var(x) = a[0].unspan() else {
                     return both(st);
                 };
@@ -3026,6 +3031,41 @@ impl Run<'_> {
         let mut same = st.clone();
         Self::narrow_slot(&mut same, *w, off, |p| *p == y);
         Some((Some(distinct), Some(same)))
+    }
+
+    /// `OpStoreLive(OpGetDbRef(w, off))` (the frame end's let-go of a capture, `@FR-L-CapOwn`):
+    /// where it holds, the slot names none of its stores that is freed on every path or was
+    /// never made — the free it guards cannot reach one (`LOFT_RECORDS_NO_SLOT_LIVE_NARROW=1`).
+    /// The other arm keeps the slot whole.
+    fn slot_live_test(&self, arg: &Value, st: &State) -> Option<(Option<State>, Option<State>)> {
+        let Value::Call(g, ga) = arg.unspan() else {
+            return None;
+        };
+        let (Some(Value::Var(w)), Some(off)) =
+            (ga.first().map(Value::unspan), Self::const_offset(ga.get(1)))
+        else {
+            return None;
+        };
+        if *g != self.ops.get_dbref
+            || crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_SLOT_LIVE_NARROW").is_some())
+        {
+            return None;
+        }
+        let dead: BTreeSet<SKey> = Self::stores_of(&Self::held_by_record(st, *w, Some(off)))
+            .into_iter()
+            .filter(|k| info_of(st, *k).status & (LIVE | HANDED) == 0)
+            .collect();
+        if dead.is_empty() {
+            return None;
+        }
+        let mut live = st.clone();
+        Self::narrow_slot(
+            &mut live,
+            *w,
+            off,
+            |p| !matches!(p, Pt::Store(k) if dead.contains(k)),
+        );
+        Some((Some(live), Some(st.clone())))
     }
 
     fn narrow_slot(st: &mut State, w: u16, off: i32, keep: impl Fn(&Pt) -> bool) {
