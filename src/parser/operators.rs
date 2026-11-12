@@ -5018,9 +5018,30 @@ impl Parser {
         matches!(
             lhs_type.base(),
             Type::Reference(_, _) | Type::Enum(_, true, _)
-        ) && match code.unspan() {
+        ) && self.every_tail_is_an_owned_call(code)
+    }
+
+    /// Is every value `code` can answer a loft call's (or a fn-ref call's) result?  A value
+    /// BRANCH whose every arm is one (`(if c { f() } else { g() }) ?? d`) mints on every path
+    /// as a bare call does (`@FR-O-Complete`); left out, the subject temp freed nothing, and
+    /// a tuple subject's unboxed members and its unbox work-ref both freed the box (attic
+    /// 1451's neighbour).  `LOFT_NO_NCC_BRANCH_SUBJECT=1` reads only a bare call.
+    fn every_tail_is_an_owned_call(&self, code: &Value) -> bool {
+        match code.unspan() {
             Value::Call(d, _) => self.data.def(*d).is_loft_defined(),
             Value::CallRef(_, _) => true,
+            Value::If(_, a, b)
+                if !crate::env_once!(std::env::var_os("LOFT_NO_NCC_BRANCH_SUBJECT").is_some()) =>
+            {
+                self.every_tail_is_an_owned_call(a) && self.every_tail_is_an_owned_call(b)
+            }
+            Value::Block(bl)
+                if !crate::env_once!(std::env::var_os("LOFT_NO_NCC_BRANCH_SUBJECT").is_some()) =>
+            {
+                bl.operators
+                    .last()
+                    .is_some_and(|t| self.every_tail_is_an_owned_call(t))
+            }
             _ => false,
         }
     }
@@ -5039,6 +5060,27 @@ impl Parser {
             }
             Type::Optional(inner) => {
                 Self::frame_view_of(inner, tmp).map(|v| Type::Optional(Box::new(v)))
+            }
+            // A tuple subject arrives boxed in `__ncc_N` and is unboxed into member reads of
+            // that store: each heap member views it as a record result does (attic 1451 — typed
+            // owning, the binding freed `t.0`, a field of the box, and `__ncc_N` freed the box).
+            // `LOFT_NO_NCC_TUPLE_VIEW=1` leaves the members owning.
+            Type::Tuple(elems)
+                if elems.iter().any(|e| e.heap_dep().is_some())
+                    && !crate::env_once!(std::env::var_os("LOFT_NO_NCC_TUPLE_VIEW").is_some()) =>
+            {
+                Some(Type::Tuple(
+                    elems
+                        .iter()
+                        .map(|e| {
+                            if e.heap_dep().is_some() {
+                                e.with_deps(&crate::data::Deps::frame(vec![tmp]))
+                            } else {
+                                e.clone()
+                            }
+                        })
+                        .collect(),
+                ))
             }
             _ => None,
         }

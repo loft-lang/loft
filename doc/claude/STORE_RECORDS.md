@@ -243,6 +243,12 @@ mints through an accumulator that owns nothing (`Parser::keyed_place_materialise
 write fills is paired as a sole owner, so `member_write` releases what a write displaces and
 disarms the work-ref or literal accumulator that built the new value (`member_mint`);
 `LOFT_NO_NULL_MEMBER_OWNED=1` leaves it unpaired, and the work-ref frees the member again.
+A `??` over a call answering a boxed TUPLE (`first(v) ?? (S { … }, 0)`) types the heap members
+of its result as views of the subject temp, as a record result is (`frame_view_of`);
+`LOFT_NO_NCC_TUPLE_VIEW=1` leaves them owning, and the binding frees a field of the box the temp
+frees.  A value branch whose every arm is such a call (`(if c { f() } else { g() }) ?? d`) is an
+owned subject as a bare call is (`every_tail_is_an_owned_call`); `LOFT_NO_NCC_BRANCH_SUBJECT=1`
+reads only a bare call, and the unbox work-ref and the binding both free the box.
 
 A closure record HOLDS what it captures: each capture slot, keyed by the record's store and
 offset, keeps the captured value, and the captured stores are handed on only when a value
