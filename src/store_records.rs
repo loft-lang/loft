@@ -2517,13 +2517,17 @@ impl Run<'_> {
                     .position(|p| *p == x)
                     .map_or(Origin::Mint, |i| Origin::MintInto(i as u16));
                 let site = self.site(node, origin);
+                // A store `x` holds is re-initialised in place, so it stays live exactly where
+                // `x` names it — as correlated with `x` as the store the null path makes.
+                let mut corr: BTreeSet<SKey> = Self::stores_of(&kept)
+                    .into_iter()
+                    .filter(|k| info_of(&st, *k).live.contains(&x))
+                    .collect();
                 let k = Self::fresh(&mut st, site);
+                corr.insert(k);
                 let mut pts = kept;
                 pts.insert(Pt::Store(k));
-                Val {
-                    pts,
-                    corr: [k].into(),
-                }
+                Val { pts, corr }
             };
             if val.pts != cur {
                 self.bind(&mut st, x, &val);
