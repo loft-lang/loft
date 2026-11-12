@@ -924,8 +924,8 @@
 14_stdlib_vector	-	c	R-GuardedChain/operators	8
 14_stdlib_vector	-	c	R-Header	16
 14_stdlib_vector	-	c	R-InRange	1
-14_stdlib_vector	-	c	R-Inline	10
-14_stdlib_vector	-	c	R-Inline/helper	7
+14_stdlib_vector	-	c	R-Inline	11
+14_stdlib_vector	-	c	R-Inline/helper	6
 14_stdlib_vector	-	c	R-InlineLeaf	10
 14_stdlib_vector	-	c	R-Inputs	10
 14_stdlib_vector	-	c	R-LoopSlot	28
