@@ -894,7 +894,8 @@ fn re_arm(
     let stashed = rb.free == DisplacedFree::Stash;
     // A stashed displaced free (a nullable local) runs after the join as it runs after a copy,
     // and a `τ?` local joins as its `τ` twin does (`first_bind_shape`) — the C writer's
-    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there: a call handed `v`
+    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there — either call
+    // spelling, a `CallRef` whose target resolves (`callee_of`) included: a call handed `v`
     // may answer `v`'s own store, which the copy arm would refill under it (#360), and the
     // join's "fresh" test is a call's — a `??` block's stored-reference arm names a store
     // neither `v` nor the base owns.  `LOFT_NO_STASHED_JOIN=1` copies them instead.  @PLN220.
@@ -909,7 +910,7 @@ fn re_arm(
         && (!stashed
             || (stashed_join
                 && !rb.rhs_reads_v
-                && matches!(value.unspan(), Value::Call(..))
+                && matches!(value.unspan(), Value::Call(..) | Value::CallRef(..))
                 && crate::use_analysis::callee_of(data, d_nr, value).is_some()))
         && !matches!(value.unspan(), Value::Var(_))
         && crate::keys::join_own_enabled()
