@@ -2299,11 +2299,11 @@ impl Run<'_> {
             Value::Call(op, a) if *op == self.ops.distinct => {
                 let (distinct, mut same) = self.decide_distinct(a, st);
                 // Where the two are the SAME, every name set holding one holds the other.
-                if let (Some(Value::Var(x)), Some(Value::Var(w))) =
-                    (a.first().map(Value::unspan), a.get(1).map(Value::unspan))
+                if let (Some(x), Some(w)) =
+                    (self.operand_var(a.first()), self.operand_var(a.get(1)))
                     && let Some(s) = &mut same
                 {
-                    Self::equate(s, *x, *w);
+                    Self::equate(s, x, w);
                 }
                 (distinct, same)
             }
