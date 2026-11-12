@@ -3343,6 +3343,15 @@ pub fn view_temp_transition_guard() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_TEMP_TRANSITION_GUARD"))
 }
 
+/// `LOFT_ARM_FREES_PARAM_DEPS=1` — a vector arm delivered into the return buffer frees a
+/// PARAMETER its local depends on, as it did before (`materialize_vector_arms_collect`): the
+/// caller's store, freed again by the caller.
+#[must_use]
+pub fn arm_frees_param_deps() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
+}
+
 /// `LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD=1` — a joined local's scope-end free
 /// (`OpFreeRefIfDistinct(v, witness)`) runs while `v` still names the backing an earlier bind
 /// viewed, which the backing frees too.

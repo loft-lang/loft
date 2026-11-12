@@ -20769,6 +20769,14 @@ impl Parser {
                             // store a second time (`@FR-H-FreeTwice`).
                             // `LOFT_ARM_FREES_VIEW_DEPS=1` frees every dep.
                             // @FR-O-Proxy asks free — `proxy_says_owned` carries @FR-O-Override's veto.
+                            // A PARAMETER is the caller's store, whatever its proxy says: an
+                            // arm answering a binding of the subject (`match v { [h, ..t] => t,
+                            // whole => whole }`) copied it into `w` and freed the caller's
+                            // vector — a double free on both backends.
+                            // `LOFT_ARM_FREES_PARAM_DEPS=1` frees it again.
+                            if self.vars.is_argument(d) && !crate::keys::arm_frees_param_deps() {
+                                continue;
+                            }
                             if self.vars.proxy_says_owned(d) || arm_frees_view_deps() {
                                 seq.push(self.cl("OpFreeRef", &[Value::Var(d)]));
                             }
