@@ -145,6 +145,9 @@ struct State {
     /// Pairs of variables one a plain copy of the other (`k = h`, smaller number first): the
     /// same value until either is bound again, so a test that narrows one narrows both.
     copies: BTreeSet<(u16, u16)>,
+    /// The function's closure-record variables (`___clos_N`), the same on every path: the
+    /// `live_some` candidates of a store no record captures (`live_some_candidates`).
+    records: BTreeSet<u16>,
 }
 
 /// A site's mint count per path ([`State::mints`]).  Only the ORDER of two sides' counts at a
@@ -366,6 +369,25 @@ fn slot_null() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_NULL").is_none())
 }
 
+/// The closure-record variables a join asks whether they are non-null wherever store `info`
+/// is live (`SInfo::live_some`): those that captured it, or — a store no record captures, one
+/// minted only on the runs that also build a record (a loop's pass, L-CapKeep/2357 `record`) —
+/// every closure record of the function.  The one seam for the candidates.
+fn live_some_candidates(info: &SInfo, st: &State) -> BTreeSet<u16> {
+    if info.captured_by.is_empty() && live_some_uncaptured() {
+        st.records.clone()
+    } else {
+        info.captured_by.clone()
+    }
+}
+
+/// `LOFT_RECORDS_NO_LIVE_SOME_UNCAPTURED=1`: a store no record captures carries no
+/// `live_some` (the records' bisect switch).
+fn live_some_uncaptured() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_LIVE_SOME_UNCAPTURED").is_none())
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -498,6 +520,7 @@ fn join_state(a: &State, b: &State) -> State {
         if info.has(LIVE) {
             // Per side: what it knows, or the records it holds non-null; `None` where the
             // store is not live there.
+            let candidates = live_some_candidates(&info, a);
             let side = |st: &State, i: &SInfo| -> Option<BTreeSet<u16>> {
                 if !i.has(LIVE) {
                     None
@@ -505,7 +528,7 @@ fn join_state(a: &State, b: &State) -> State {
                     Some(i.live_some.clone())
                 } else {
                     Some(
-                        info.captured_by
+                        candidates
                             .iter()
                             .copied()
                             .filter(|w| st.vars.get(w).is_some_and(|p| !p.contains(&Pt::Null)))
@@ -564,6 +587,7 @@ fn join_state(a: &State, b: &State) -> State {
         points,
         nonnull: a.nonnull.intersection(&b.nonnull).copied().collect(),
         copies: join_copies(a, b),
+        records: a.records.union(&b.records).copied().collect(),
         mints: a.mints.clone(),
     }
 }
@@ -1103,6 +1127,13 @@ impl Run<'_> {
         report: bool,
         only: Option<&BTreeSet<SKey>>,
     ) {
+        // A record variable freed (and reset) says nothing more about a store it did not
+        // capture: drop it from that store's `live_some`.
+        for info in st.stores.values_mut() {
+            if info.captured_by.is_empty() && info.live_some.contains(&v) {
+                info.live_some.clear();
+            }
+        }
         let pts = Self::pts(st, v);
         let label = format!("{how}({})", self.var_name(v));
         for k in Self::stores_of(&pts) {
@@ -4612,6 +4643,9 @@ fn run_fn<'a>(
     for &p in &params {
         st.vars.insert(p, [Pt::Param(p)].into());
     }
+    st.records = (0..def.variables.count())
+        .filter(|&v| def.variables.name(v).starts_with("___clos_"))
+        .collect();
     let mut run = Run {
         data,
         ops,
