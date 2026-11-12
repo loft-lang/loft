@@ -386,7 +386,10 @@ compiler temporary's null reset again, a second free the writer's same-store gua
 no-op).  Where the two disagreed and the rules side with the C writer, the decision itself
 moved: a rebind from a call whose answer is the store it minted in its buffer adopts that store
 at every bind, as the first bind and C do (`@FR-O-Move`); `LOFT_NO_REBIND_ADOPTS_MINTED=1` copies
-it into the local's own store again (the interpreter's arm R2b).  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
+it into the local's own store again (the interpreter's arm R2b).  And a heap-enum local bound
+from a call that answers fresh on one path and a view of an argument on another is joined at
+run time as a record local is (F9a / R1, `OpBindOrCopy`); `LOFT_NO_ENUM_JOIN=1` deep-copies it at
+every bind.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
 on one writer (`--writer c|native`) and lists the arms the two decide differently.
 
 ## Phases
