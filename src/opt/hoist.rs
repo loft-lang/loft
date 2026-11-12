@@ -3670,9 +3670,14 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
         .iter()
         .find(|(name, _)| *name == setter_name)
         .map(|(_, ty)| ty);
-    let Some(rust_type) = fusable.or(if setter_name == "OpSetInt4Raw" { Some(&"u32") } else { None })
-    else {
-        return decline(&format!("the body is `{setter_name}`, not a fusable setter"));
+    let Some(rust_type) = fusable.or(if setter_name == "OpSetInt4Raw" {
+        Some(&"u32")
+    } else {
+        None
+    }) else {
+        return decline(&format!(
+            "the body is `{setter_name}`, not a fusable setter"
+        ));
     };
     let [inner, fld, val] = &wargs[..] else {
         return decline("the setter does not take three operands");
