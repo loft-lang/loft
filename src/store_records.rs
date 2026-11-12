@@ -14,6 +14,7 @@
 //!
 //! An OBSERVER: it never rewrites IR.  Reached only through
 //!   * `LOFT_STORE_TABLE=<fn substring>` — print the records of the matching functions;
+//!   * `LOFT_STORE_TRACE=<fn substring>` — print the state after each of their statements;
 //!   * `LOFT_OWN_ORACLE=check-records` — report every finding as a `RED` line;
 //!   * `LOFT_STORE_PROFILE=1` — the analysis' cost, and the slowest functions.
 //!
@@ -67,6 +68,11 @@ struct SInfo {
     status: u8,
     /// The variables that point into it on EVERY path where it is live.
     live: BTreeSet<u16>,
+    /// Alternatives to `live` (empty: none known): name sets such that on every path where
+    /// the store is live, every name of at least one set points into it.  A join of paths
+    /// holding it under different names keeps each side's holders (a two-buffer rotation,
+    /// `__ref_2 ← __ref_3; __ref_3 ← v`), so freeing each of those names still ends it.
+    alts: Vec<BTreeSet<u16>>,
     /// The variables that point into it on EVERY path where it is ended.
     ended: BTreeSet<u16>,
     /// The variables whose value, naming this store, was handed on (returned, captured by a
@@ -155,6 +161,75 @@ fn info_of(st: &State, k: SKey) -> SInfo {
     })
 }
 
+/// The holders one side of a join knows: its alternatives, or its must-holders as one.
+fn holder_alts(x: &SInfo) -> Option<Vec<BTreeSet<u16>>> {
+    if !x.alts.is_empty() {
+        Some(x.alts.clone())
+    } else if x.live.is_empty() {
+        None
+    } else {
+        Some(vec![x.live.clone()])
+    }
+}
+
+/// Alternatives kept minimal: a set holding another adds nothing, one equal to the
+/// must-holders says nothing beyond them, and too many are dropped.
+fn normal_alts(mut alts: Vec<BTreeSet<u16>>, live: &BTreeSet<u16>) -> Vec<BTreeSet<u16>> {
+    alts.sort();
+    alts.dedup();
+    let keep: Vec<BTreeSet<u16>> = alts
+        .iter()
+        .filter(|a| !alts.iter().any(|b| b != *a && b.is_subset(a)))
+        .cloned()
+        .collect();
+    if keep.len() < 2 || keep.len() > 6 || keep.iter().any(|a| a == live) {
+        Vec::new()
+    } else {
+        keep
+    }
+}
+
+/// `v` names the store no more: no longer a must-holder, nor in any alternative (one left
+/// empty leaves nothing known).
+fn forget_holder(info: &mut SInfo, v: u16) {
+    info.live.remove(&v);
+    for a in &mut info.alts {
+        a.remove(&v);
+    }
+    if info.alts.iter().any(BTreeSet::is_empty) {
+        info.alts.clear();
+    }
+}
+
+/// On a path where `x` does not name the store: where `x` must-holds it, or every
+/// alternative names `x`, it is not live here; otherwise the alternatives naming `x` drop.
+fn rule_out_holder(info: &mut SInfo, x: u16) {
+    if !info.has(LIVE) {
+        return;
+    }
+    if info.live.contains(&x) {
+        info.status &= !LIVE;
+        info.live.clear();
+        info.alts.clear();
+        return;
+    }
+    if info.alts.is_empty() {
+        return;
+    }
+    info.alts.retain(|a| !a.contains(&x));
+    if info.alts.is_empty() {
+        info.status &= !LIVE;
+        info.live.clear();
+        info.alts.clear();
+    } else {
+        info.live = info.alts.iter().skip(1).fold(info.alts[0].clone(), |m, a| {
+            m.intersection(a).copied().collect()
+        });
+        let live = info.live.clone();
+        info.alts = normal_alts(std::mem::take(&mut info.alts), &live);
+    }
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -165,6 +240,18 @@ fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     SInfo {
         status: a.status | b.status,
         live: meet(&a.live, a.has(LIVE), &b.live, b.has(LIVE)),
+        alts: match (a.has(LIVE), b.has(LIVE)) {
+            (true, true) => match (holder_alts(a), holder_alts(b)) {
+                (Some(x), Some(y)) => normal_alts(
+                    x.into_iter().chain(y).collect(),
+                    &meet(&a.live, true, &b.live, true),
+                ),
+                _ => Vec::new(),
+            },
+            (true, false) => a.alts.clone(),
+            (false, true) => b.alts.clone(),
+            (false, false) => Vec::new(),
+        },
         ended: meet(&a.ended, a.has(ENDED), &b.ended, b.has(ENDED)),
         handed_by: meet(&a.handed_by, a.has(LIVE), &b.handed_by, b.has(LIVE)),
         live_some: BTreeSet::new(),
@@ -491,6 +578,8 @@ struct Run<'a> {
     /// The analysis lost track somewhere (a construct it does not follow, or its budget):
     /// the function draws no findings and answers `Unknown`.
     imprecise: bool,
+    /// `LOFT_STORE_TRACE` names this function: print the state after each statement.
+    traced: bool,
     steps: usize,
     /// Per enclosing loop: the state that leaves it (`break`) and that starts its next pass
     /// (`continue`).
@@ -633,7 +722,7 @@ impl Run<'_> {
             }
         }
         for info in st.stores.values_mut() {
-            info.live.remove(&v);
+            forget_holder(info, v);
             info.ended.remove(&v);
             info.handed_by.remove(&v);
             if info.live_some.contains(&v) {
@@ -652,6 +741,9 @@ impl Run<'_> {
             if let Some(info) = st.stores.get_mut(&k) {
                 if (single || val.corr.contains(&k)) && info.status & LIVE != 0 {
                     info.live.insert(v);
+                    for a in &mut info.alts {
+                        a.insert(v);
+                    }
                 }
                 if single && info.status & ENDED != 0 {
                     info.ended.insert(v);
@@ -800,7 +892,16 @@ impl Run<'_> {
             if !info.has(LIVE) {
                 continue;
             }
-            let strong = pts.len() == 1 || info.live.contains(&v);
+            // The alternatives naming `v` are the paths this free ends it on.
+            let rest_alts: Vec<BTreeSet<u16>> = info
+                .alts
+                .iter()
+                .filter(|a| !a.contains(&v))
+                .cloned()
+                .collect();
+            let strong = pts.len() == 1
+                || info.live.contains(&v)
+                || (!info.alts.is_empty() && rest_alts.is_empty());
             let mut next = info.clone();
             if strong {
                 next.ended = if info.has(ENDED) {
@@ -810,6 +911,7 @@ impl Run<'_> {
                 };
                 next.status = (info.status & !LIVE) | ENDED;
                 next.live.clear();
+                next.alts.clear();
             } else {
                 next.ended = if info.has(ENDED) {
                     info.ended.intersection(&[v].into()).copied().collect()
@@ -822,6 +924,13 @@ impl Run<'_> {
                     next.ended.insert(FREED_NAME);
                 }
                 next.status |= ENDED;
+                if rest_alts.len() < info.alts.len() {
+                    next.live = rest_alts.iter().skip(1).fold(rest_alts[0].clone(), |m, a| {
+                        m.intersection(a).copied().collect()
+                    });
+                    let live = next.live.clone();
+                    next.alts = normal_alts(rest_alts, &live);
+                }
             }
             st.stores.insert(k, next);
         }
@@ -977,6 +1086,7 @@ impl Run<'_> {
             next.ended.clone_from(&info.live);
             next.status = (info.status & !LIVE) | ENDED;
             next.live.clear();
+            next.alts.clear();
             st.stores.insert(k, next);
         }
     }
@@ -1012,6 +1122,7 @@ impl Run<'_> {
                 if single || val.corr.contains(&k) {
                     info.status = (info.status & !LIVE) | HANDED;
                     info.live.clear();
+                    info.alts.clear();
                 } else {
                     info.status |= HANDED;
                 }
@@ -1133,7 +1244,14 @@ impl Run<'_> {
                     return Some((st, Val::null()));
                 }
                 st.flags.remove(x);
-                self.assign(v, *x, val, st)
+                let copied = self.copied_from(val);
+                let (mut st, out) = self.assign(v, *x, val, st)?;
+                if let Some(src) = copied
+                    && src != *x
+                {
+                    Self::copy_alts(&mut st, *x, src);
+                }
+                Some((st, out))
             }
             Value::If(cond, then_v, else_v) => {
                 let (s, _) = self.eval(cond, st)?;
@@ -1288,7 +1406,7 @@ impl Run<'_> {
                 for w in crate::coroutine_layout::yield_handed_temps(self.data, self.d_nr, y) {
                     s.vars.remove(&w);
                     for info in s.stores.values_mut() {
-                        info.live.remove(&w);
+                        forget_holder(info, w);
                         info.ended.remove(&w);
                     }
                 }
@@ -1321,6 +1439,7 @@ impl Run<'_> {
             {
                 info.status = (info.status & !LIVE) | HANDED;
                 info.live.clear();
+                info.alts.clear();
             }
         }
     }
@@ -1818,7 +1937,7 @@ impl Run<'_> {
         }
         s.vars.remove(&tmp);
         for info in s.stores.values_mut() {
-            info.live.remove(&tmp);
+            forget_holder(info, tmp);
             info.ended.remove(&tmp);
         }
     }
@@ -1878,7 +1997,17 @@ impl Run<'_> {
                 let (et, ef) = cf.map_or((None, None), |s| self.decide(e, s));
                 (join_opt(tt, et), join_opt(tf, ef))
             }
-            Value::Call(op, a) if *op == self.ops.distinct => self.decide_distinct(a, st),
+            Value::Call(op, a) if *op == self.ops.distinct => {
+                let (distinct, mut same) = self.decide_distinct(a, st);
+                // Where the two are the SAME, every name set holding one holds the other.
+                if let (Some(Value::Var(x)), Some(Value::Var(w))) =
+                    (a.first().map(Value::unspan), a.get(1).map(Value::unspan))
+                    && let Some(s) = &mut same
+                {
+                    Self::equate(s, *x, *w);
+                }
+                (distinct, same)
+            }
             Value::Call(op, a) if a.len() == 1 => {
                 let Value::Var(x) = a[0].unspan() else {
                     return both(st);
@@ -1929,10 +2058,7 @@ impl Run<'_> {
                 let mut s = st.clone();
                 for k in Self::stores_of(&pts) {
                     if let Some(info) = s.stores.get_mut(&k) {
-                        if info.live.contains(&x) {
-                            info.status &= !LIVE;
-                            info.live.clear();
-                        }
+                        rule_out_holder(info, x);
                         if info.ended.contains(&x) {
                             info.status &= !ENDED;
                             info.ended.clear();
@@ -1966,6 +2092,7 @@ impl Run<'_> {
             if info.has(LIVE) && info.live_some.remove(&x) && info.live_some.is_empty() {
                 info.status &= !LIVE;
                 info.live.clear();
+                info.alts.clear();
                 if info.status == 0 {
                     return false;
                 }
@@ -1981,6 +2108,7 @@ impl Run<'_> {
             if info.has(LIVE) && info.live_null.contains(&x) {
                 info.status &= !LIVE;
                 info.live.clear();
+                info.alts.clear();
                 info.live_null.clear();
                 if info.status == 0 {
                     return false;
@@ -2026,10 +2154,7 @@ impl Run<'_> {
             let mut possible = !followed || pts.contains(&Pt::Null) || stores.is_empty();
             for k in &stores {
                 if let Some(info) = s.stores.get_mut(k) {
-                    if info.live.contains(&x) {
-                        info.status &= !LIVE;
-                        info.live.clear();
-                    }
+                    rule_out_holder(info, x);
                     if info.status & !LIVE != 0 {
                         possible = true;
                     }
@@ -2048,6 +2173,58 @@ impl Run<'_> {
             possible.then_some(s)
         };
         (live_arm, dead_arm)
+    }
+
+    /// The variable whose value `val` is on every path where that variable names a store: a
+    /// plain read or an alias (`OpRefAlias`), or a call answering an argument's store as it
+    /// is (`Arg`, or `Buf` where the buffer it is handed names one).
+    fn copied_from(&self, val: &Value) -> Option<u16> {
+        match val.unspan() {
+            Value::Var(y) => Some(*y),
+            Value::Call(d, args)
+                if (*d as usize) < self.data.definitions.len()
+                    && self.data.def(*d).name() == "OpRefAlias" =>
+            {
+                Self::first_var(args, 0)
+            }
+            Value::Call(d, args) => match self.summaries.get(d) {
+                Some(Summary::Arg(i) | Summary::Buf(i)) => Self::first_var(args, *i as usize),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `dst` now names what `src` names wherever `src` names a store: an alternative holding
+    /// `src` holds `dst` as well.
+    fn copy_alts(st: &mut State, dst: u16, src: u16) {
+        for info in st.stores.values_mut() {
+            for a in &mut info.alts {
+                if a.contains(&src) {
+                    a.insert(dst);
+                }
+            }
+        }
+    }
+
+    /// On a path where `x` and `w` name one store: a must-holder set or an alternative
+    /// holding either holds both.
+    fn equate(st: &mut State, x: u16, w: u16) {
+        for info in st.stores.values_mut() {
+            if !info.has(LIVE) {
+                continue;
+            }
+            if info.live.contains(&x) || info.live.contains(&w) {
+                info.live.insert(x);
+                info.live.insert(w);
+            }
+            for a in &mut info.alts {
+                if a.contains(&x) || a.contains(&w) {
+                    a.insert(x);
+                    a.insert(w);
+                }
+            }
+        }
     }
 
     /// `OpDistinctStore(a, b)`: where both operands name one single store (or both are
@@ -2196,10 +2373,8 @@ impl Run<'_> {
             }
             if let Some(info) = st.stores.get_mut(&k)
                 && info.has(LIVE)
-                && info.live.contains(&x)
             {
-                info.status &= !LIVE;
-                info.live.clear();
+                rule_out_holder(info, x);
                 if info.status == 0 {
                     st.stores.remove(&k);
                 }
@@ -2217,6 +2392,9 @@ impl Run<'_> {
         for op in ops {
             let value = cur.1;
             cur = self.eval(op, cur.0)?;
+            if self.traced {
+                self.trace(op, &cur.0);
+            }
             // A block's value is its last value-producing statement's: the cleanup frees the
             // scope pass places after it (`{ if … ; OpFreeRefIfDistinct(…) }`) run while the
             // value waits, and answer nothing.
@@ -2225,6 +2403,37 @@ impl Run<'_> {
             }
         }
         Some(cur)
+    }
+
+    /// `LOFT_STORE_TRACE=<fn substring>`: each statement of a matching function, with what
+    /// every variable names and every store's statuses and holders after it.
+    fn trace(&self, op: &Value, st: &State) {
+        let names = |s: &BTreeSet<u16>| s.iter().map(|v| self.var_name(*v)).collect::<Vec<_>>();
+        let key = |k: &SKey| format!("#{}{}", k.site, if k.older { "'" } else { "" });
+        let mut o: String = format!("{op:?}").chars().take(110).collect();
+        o.push_str("\n    vars:");
+        for (v, p) in &st.vars {
+            let pts: Vec<String> = p
+                .iter()
+                .map(|p| match p {
+                    Pt::Store(k) => key(k),
+                    other => format!("{other:?}"),
+                })
+                .collect();
+            o.push_str(&format!(" {}={{{}}}", self.var_name(*v), pts.join(",")));
+        }
+        o.push_str("\n    stores:");
+        for (k, i) in &st.stores {
+            let alts: Vec<Vec<String>> = i.alts.iter().map(names).collect();
+            o.push_str(&format!(
+                " {}:st{} live{:?} alts{alts:?} end{:?}",
+                key(k),
+                i.status,
+                names(&i.live),
+                names(&i.ended)
+            ));
+        }
+        eprintln!("[store-trace] {o}");
     }
 
     /// A call to an operator or function that answers nothing (a free, a set).
@@ -2554,6 +2763,7 @@ impl Run<'_> {
                             if field_slot {
                                 info.status = (info.status & !LIVE) | ENDED;
                                 info.live.clear();
+                                info.alts.clear();
                                 info.ended = [x].into();
                                 continue;
                             }
@@ -2615,7 +2825,7 @@ impl Run<'_> {
                 // ended a store, the store keeps that fact under a placeholder name, so a
                 // later free of the same store by another name still reads as a second one.
                 for info in st.stores.values_mut() {
-                    info.live.remove(&x);
+                    forget_holder(info, x);
                     if info.ended.remove(&x) {
                         info.ended.insert(FREED_NAME);
                     }
@@ -2652,6 +2862,9 @@ impl Run<'_> {
                 value
             };
             self.bind(&mut s, dst, &bound);
+            if !witness && let Some(sv) = Self::first_var(args, 1) {
+                Self::copy_alts(&mut s, dst, sv);
+            }
             return Some((s, Val::null()));
         }
         if d == ops.database
@@ -3150,6 +3363,13 @@ fn run_fn<'a>(
         findings: BTreeSet::new(),
         answer: Summary::Bottom,
         imprecise: false,
+        traced: {
+            static TRACE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+            TRACE
+                .get_or_init(|| std::env::var("LOFT_STORE_TRACE").ok())
+                .as_deref()
+                .is_some_and(|f| def.name().contains(f))
+        },
         steps: 0,
         loops: Vec::new(),
         params,
