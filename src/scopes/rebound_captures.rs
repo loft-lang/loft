@@ -144,6 +144,11 @@ fn rebound_facts(code: &Value, vars: &Function, data: &Data) -> Option<Rebound> 
             !is_confined || keep
         });
     }
+    // A capture the frame ROTATES through its call buffers is the buffers' to release: its record
+    // borrows it (`capture_adoption`), so no let-go point here may free or detach its store.
+    if crate::keys::rotated_capture_left_to_buffers() {
+        slots.retain(|c, _| !super::backings::rotated_through_buffers(code, data, *c));
+    }
     slots.retain(|c, ss| !ss.is_empty() && backings.contains_key(c));
     if slots.is_empty() {
         return None;

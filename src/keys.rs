@@ -3424,6 +3424,16 @@ pub fn confined_record_stand_down() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_CONFINED_RECORD_STAND_DOWN"))
 }
 
+/// `LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS=1` — a capture the frame rotates through its call
+/// buffers (`OpPutRef(__ref_N, c)`) is still released by the rebound-capture let-go points as if
+/// its record owned it, though the record borrows it: a rebuild frees a store a buffer still
+/// holds, and the next call reads it (the C backend reports it; `rebound_captures`).
+#[must_use]
+pub fn rotated_capture_left_to_buffers() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS"))
+}
+
 /// `LOFT_NO_CALL_BUFFER_REBIND_DETACH=1` — a vector local rebound in a loop from a call
 /// (`a = f(…)`, delivered into the hidden buffer `__ref_N`) refills that buffer in place while a
 /// closure record built earlier holds its store (`rebound_captures`, `capture_adoption`): the
