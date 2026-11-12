@@ -1533,8 +1533,15 @@ impl Run<'_> {
                         .any(|k| val.pts.contains(&Pt::Store(*k)))
                 })
                 .collect();
+            // Only a record the value certainly names: a returned fn-ref that may be a plain
+            // lambda on some run hands no record on there.
+            let certain: Vec<SKey> = records
+                .iter()
+                .copied()
+                .filter(|k| single || val.corr.contains(k))
+                .collect();
             for (&v, p) in &st.vars {
-                if records.iter().any(|k| p.contains(&Pt::Store(*k))) && !gone.contains(&v) {
+                if certain.iter().any(|k| p.contains(&Pt::Store(*k))) && !gone.contains(&v) {
                     gone.push(v);
                 }
             }
