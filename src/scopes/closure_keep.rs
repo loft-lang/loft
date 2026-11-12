@@ -371,7 +371,14 @@ impl Scopes<'_> {
                 }),
         );
         let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(v)]);
-        for &r in &self.closure_keep.records {
+        // A pass-confined record is a name released after this one too: the frame frees its
+        // local at the frame's end, so a fn-ref still holding it lets go (`@FR-H-FreeTwice`).
+        let confined: &[u16] = if crate::keys::confined_record_stand_down() {
+            &self.closure_keep.confined_records
+        } else {
+            &[]
+        };
+        for &r in self.closure_keep.records.iter().chain(confined) {
             out.push(v_if(
                 Value::Call(
                     data.def_nr("OpDistinctStore"),
@@ -631,6 +638,9 @@ impl Scopes<'_> {
 pub(crate) struct ClosureKeep {
     pub(super) gated: bool,
     pub(super) records: Vec<u16>,
+    /// The `___clos_N` locals confined to one pass: the frame frees each at its end, so a
+    /// fn-ref holding one's record stands down against it (`closure_keep_stand_down`).
+    confined_records: Vec<u16>,
     pub(super) holders: Vec<u16>,
     owning: HashSet<u16>,
     /// Every capture a build writes: `(record, offset, captured local)`.
@@ -667,10 +677,12 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
         }
         match function.tp(v).base() {
             Type::Function(..) if !function.is_compiler_generated(v) => out.holders.push(v),
-            Type::Reference(r, _)
-                if function.name(v).starts_with("___clos_") && !confined.contains(r) =>
-            {
-                out.records.push(v);
+            Type::Reference(r, _) if function.name(v).starts_with("___clos_") => {
+                if confined.contains(r) {
+                    out.confined_records.push(v);
+                } else {
+                    out.records.push(v);
+                }
             }
             _ => {}
         }

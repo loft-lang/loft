@@ -3414,6 +3414,16 @@ pub fn staying_record_takes_backing() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_STAYING_RECORD_TAKES_BACKING"))
 }
 
+/// `LOFT_NO_CONFINED_RECORD_STAND_DOWN=1` — in a frame whose fn-refs are released by store
+/// identity (`closure_keep`), a pass-scoped fn-ref releases its pass-confined record at the pass
+/// end without asking whether that record's own local, which the frame frees at its end, still
+/// names it: the record is freed twice.
+#[must_use]
+pub fn confined_record_stand_down() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CONFINED_RECORD_STAND_DOWN"))
+}
+
 /// `LOFT_NO_SNAPSHOT_KEEPS_REFILL=1` — a closure record rebuilt through a snapshot (a capture
 /// type with a drop hook) keeps an old slot naming the store its new fill names: the snapshot's
 /// cascade then releases the capture the rebuilt record holds again (`vectors.rs`).
