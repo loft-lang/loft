@@ -3054,6 +3054,17 @@ impl Run<'_> {
         }
         let (mut s, vals) = if self.summaries.contains_key(&d) {
             self.user_call_args(args, st)?
+        } else if matches!(self.data.def(d).name(), "OpEqRef" | "OpNeRef") {
+            // A reference COMPARISON reads the two references, never the stores they name:
+            // comparing a freed store's reference with another is no use of it.
+            let mut s = st;
+            let mut vals = Vec::with_capacity(args.len());
+            for a in args {
+                let (s2, value) = self.eval(a, s)?;
+                vals.push(value);
+                s = s2;
+            }
+            (s, vals)
         } else {
             self.args(args, st)?
         };
