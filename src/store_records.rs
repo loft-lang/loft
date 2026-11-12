@@ -2670,6 +2670,65 @@ impl Run<'_> {
                 })
                 .collect();
             let mut st = st;
+            // A loop pass that freed this site's store and reset `x` joins, at the head, a pass
+            // that kept it: live where `x` names it, ended where `x` is null.  Re-initialised in
+            // place on the first paths and minted on the others, `x` names a live store from
+            // this site after either, and only `x` must-holds it.  The ended store a stale name
+            // may still reach moves to the older generation.
+            let here = self
+                .site_of
+                .get(&(std::ptr::from_ref(node) as usize))
+                .copied();
+            if let Some(site) = here
+                && let [k] = Self::stores_of(&cur)[..]
+                && k.site == site
+                && !k.older
+                && cur.iter().all(|p| matches!(p, Pt::Null | Pt::Store(_)))
+                && !st.slots.contains_key(&k)
+                && let info = info_of(&st, k)
+                && info.has(LIVE)
+                && info.has(ENDED)
+                && !info.has(HANDED)
+                && info.live.contains(&x)
+                && info.captured_by.is_empty()
+            {
+                let old = SKey { site, older: true };
+                let mut ended = info.ended.clone();
+                ended.remove(&x);
+                let part = SInfo {
+                    status: info.status & !LIVE,
+                    ended,
+                    ..Default::default()
+                };
+                let merged = match st.stores.get(&old) {
+                    Some(o) => join_info(o, &part),
+                    None => part,
+                };
+                st.stores.insert(old, merged);
+                for (&v, p) in &mut st.vars {
+                    if v != x && p.contains(&Pt::Store(k)) {
+                        p.insert(Pt::Store(old));
+                    }
+                }
+                for p in st.points.values_mut() {
+                    if p.contains(&Pt::Store(k)) {
+                        p.insert(Pt::Store(old));
+                    }
+                }
+                st.stores.insert(
+                    k,
+                    SInfo {
+                        status: LIVE,
+                        ..Default::default()
+                    },
+                );
+                let val = Val {
+                    pts: [Pt::Store(k)].into(),
+                    corr: [k].into(),
+                };
+                self.bind(&mut st, x, &val);
+                return Some((st, Val::null()));
+            }
             let val = if !kept.is_empty() && kept.len() == cur.len() {
                 Val {
                     corr: Self::stores_of(&kept).into_iter().collect(),
