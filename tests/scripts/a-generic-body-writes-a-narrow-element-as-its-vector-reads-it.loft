@@ -1,0 +1,122 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-G-Mono` with `@FR-L-Narrow-Enc`: a generic body instantiated at a 1- or 2-byte integer
+// element writes each element in the encoding its vector reads — a `τ?` with its null code and
+// offset, a `τ` raw — exactly as the concrete code does.  So an indexed set, an appended
+// slice, the stdlib `sort` (whose body appends slices), `sort_by`, `insert`, `reverse`,
+// `filter` and `map` answer the same at `i8?`, `u8?`, `i16?`, `u16?` as at `integer?`.  Every
+// expected vector is hand-computed.
+//
+// @falsified-at: dbf8b05ae — the installed main build: the generic set panics in the
+//   allocator at every 1- and 2-byte type (`u8` included), the generic slice of `i8?`
+//   `[null, 1]` answers `[1,2]`, `sort` of a `vector<u8?>` crashes, `insert` of 7 into a
+//   `vector<i8?>` reads back 8.
+// CHANNEL: the asserts.
+// ARMED: none needed.
+// WITNESS: each assert message prints the vector it read.
+// HOLDS: four nullable narrow types and two non-null controls, through eight element writes.
+
+fn set_from<T>(a: vector<T>, b: vector<T>) {
+  i = 0;
+  for e in a {
+    b[i] = e;
+    i += 1;
+  }
+}
+
+fn tail<T>(a: vector<T>) -> vector<T> {
+  b: vector<T> = [];
+  b += a[1..3];
+  b
+}
+
+fn second<T>(a: vector<T>) -> T { a[1] }
+
+fn check_i8() {
+  a: vector<i8?> = [5, null, -3];
+  b: vector<i8?> = [0, 0, 0];
+  set_from(a, b);
+  assert("{b}" == "[5,null,-3]", "i8? set: {b}");
+  assert("{tail(a)}" == "[null,-3]", "i8? slice: {tail(a)}");
+  assert(second(a) == null, "i8? read: {second(a)}");
+  s: vector<i8?> = [5, null, -3, 1];
+  s.sort();
+  assert("{s}" == "[null,-3,1,5]", "i8? sort: {s}");
+  k: vector<i8?> = [5, null, -3, 1];
+  k.sort_by(|x| { x ?? 100 });
+  assert("{k}" == "[-3,1,5,null]", "i8? sort_by: {k}");
+  n: vector<i8?> = [5, null];
+  n.insert(1, null);
+  n.insert(0, 7);
+  assert("{n}" == "[7,5,null,null]", "i8? insert: {n}");
+  r: vector<i8?> = [5, null, -3];
+  r.reverse();
+  assert("{r}" == "[-3,null,5]", "i8? reverse: {r}");
+  f = a.filter(|x| { x != null });
+  assert("{f}" == "[5,-3]", "i8? filter: {f}");
+  m = a.map(|x| { x });
+  assert("{m}" == "[5,null,-3]", "i8? map: {m}");
+}
+
+fn check_u8() {
+  a: vector<u8?> = [5, null, 254];
+  b: vector<u8?> = [0, 0, 0];
+  set_from(a, b);
+  assert("{b}" == "[5,null,254]", "u8? set: {b}");
+  assert("{tail(a)}" == "[null,254]", "u8? slice: {tail(a)}");
+  s: vector<u8?> = [5, null, 1];
+  s.sort();
+  assert("{s}" == "[null,1,5]", "u8? sort: {s}");
+  n: vector<u8?> = [5];
+  n.insert(0, null);
+  assert("{n}" == "[null,5]", "u8? insert: {n}");
+}
+
+fn check_i16() {
+  a: vector<i16?> = [300, null, -300];
+  b: vector<i16?> = [0, 0, 0];
+  set_from(a, b);
+  assert("{b}" == "[300,null,-300]", "i16? set: {b}");
+  assert("{tail(a)}" == "[null,-300]", "i16? slice: {tail(a)}");
+  s: vector<i16?> = [300, null, -300];
+  s.sort();
+  assert("{s}" == "[null,-300,300]", "i16? sort: {s}");
+  n: vector<i16?> = [300];
+  n.insert(0, -7);
+  assert("{n}" == "[-7,300]", "i16? insert: {n}");
+}
+
+fn check_u16() {
+  a: vector<u16?> = [5, null, 1];
+  b: vector<u16?> = [0, 0, 0];
+  set_from(a, b);
+  assert("{b}" == "[5,null,1]", "u16? set: {b}");
+  assert("{tail(a)}" == "[null,1]", "u16? slice: {tail(a)}");
+  s: vector<u16?> = [5, null, 1];
+  s.sort();
+  assert("{s}" == "[null,1,5]", "u16? sort: {s}");
+  n: vector<u16?> = [5];
+  n.insert(0, 7);
+  assert("{n}" == "[7,5]", "u16? insert: {n}");
+}
+
+fn check_controls() {
+  a: vector<u8> = [5, 255, 1];
+  b: vector<u8> = [0, 0, 0];
+  set_from(a, b);
+  assert("{b}" == "[5,255,1]", "u8 set: {b}");
+  c: vector<i16> = [-32768, 32767, 1];
+  d: vector<i16> = [0, 0, 0];
+  set_from(c, d);
+  assert("{d}" == "[-32768,32767,1]", "i16 set: {d}");
+  assert("{tail(c)}" == "[32767,1]", "i16 slice: {tail(c)}");
+}
+
+fn main() {
+  check_i8();
+  check_u8();
+  check_i16();
+  check_u16();
+  check_controls();
+}

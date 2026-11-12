@@ -105,6 +105,10 @@ impl Parser {
             return (d != u32::MAX)
                 .then(|| Value::Call(d, vec![elm, pos, Value::Int(0), src_value]));
         }
+        // A narrow integer's `?` is NOT written as its `τ`: a 1- or 2-byte `τ?` element reserves
+        // a null code and, signed, shifts its offset, so its write takes the type WITH the `?`
+        // — the same kind the element's read decodes (`vectors::narrow_elm_kind`).
+        let declared = concrete;
         let concrete = concrete.base();
         // Resolve op def_nrs.  Each branch resolves only the ones it needs.
         let op = match concrete {
@@ -117,7 +121,7 @@ impl Parser {
                 // generic `vector<T>` eight bytes wide into a one- or two-byte slot
                 // (loft#1378: `200 0` for two `u8`s, `29768 32767` for `-3000, 3000` as i16).
                 if let Some(call) = crate::parser::vectors::narrow_elm_write(
-                    concrete,
+                    declared,
                     elm.clone(),
                     &src_value,
                     data,
@@ -358,10 +362,19 @@ impl Parser {
             // binding of the variable this triplet was lowered for — never the template's
             // first variable by default.
             // A `τ?` element is `τ`'s shape with a nullability bit (@FR-N-Shape): written as
-            // `τ` — at `integer?` the triplet stayed a record copy and the write crashed.
+            // `τ` — at `integer?` the triplet stayed a record copy and the write crashed.  An
+            // integer keeps its `?`: a narrow one's null is a reserved code and, signed, a
+            // shifted offset (`@FR-L-Narrow-Enc`), so its vector and its setter are the
+            // nullable ones the element's read decodes.
             let site = matched.as_ref().and_then(|(_, _, _, copy_tp)| {
                 Self::element_write_binding(*copy_tp, bindings, data)
-                    .map(|bound| bound.base().clone())
+                    .map(|bound| {
+                        if matches!(bound.base(), Type::Integer(_)) {
+                            bound.clone()
+                        } else {
+                            bound.base().clone()
+                        }
+                    })
                     .filter(Self::is_rewritable_append_target)
             });
             if let (Some((elm_var, out_var, src_value, _)), Some(concrete)) = (matched, site) {
@@ -612,8 +625,8 @@ impl Parser {
     /// be USED (`OpGetInt(OpGetVector(…), 0)`); a write destination wants the reference
     /// itself, and the wrapper is what made the copy read an `i64` where it needed an
     /// address.  Recognising the wrapper by its ARGUMENT SHAPE — one element read plus a
-    /// zero offset — keeps this from having to carry a second copy of the op list that
-    /// `wrap_vector_get_val` already owns.
+    /// zero offset, and for a narrow integer its `min` — keeps this from having to carry a
+    /// second copy of the op list that `wrap_vector_get_val` already owns.
     pub(super) fn element_write_destination(dest: &Value, data: &Data) -> Option<Value> {
         // A tuple element's read is stamped for unboxing (`TV_TUPLE_READ`); as a write
         // destination it is the element reference inside.
@@ -632,8 +645,14 @@ impl Parser {
         if is_element_read(dest) {
             return Some(dest.clone());
         }
-        if let Value::Call(_, wrapped) = dest.unspan()
-            && wrapped.len() == 2
+        // A narrow integer's read carries its offset `min` as a third argument
+        // (`OpGetByte(…, 0, min)`), so it is recognised by name, beside the two-argument shape.
+        if let Value::Call(g, wrapped) = dest.unspan()
+            && (wrapped.len() == 2
+                || (*g != u32::MAX
+                    && (*g as usize) < data.definitions.len()
+                    && crate::narrow::NarrowIntKind::is_get_op(data.def(*g).name())))
+            && wrapped.len() >= 2
             && matches!(wrapped[1].unspan(), Value::Int(0))
             && is_element_read(&wrapped[0])
         {
