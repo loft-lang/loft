@@ -1533,6 +1533,13 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
           ints[sp_int + 3] ?? 65535, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0,
           op.a, op.b
         );
+        // A null source copied into a FRESH destination (flag 4, `COPY_FRESH_DEST`) leaves it
+        // absent: a struct takes its default image over the runtime's zero fill, so a nullable
+        // field reads null (`Stores::copy_null_into`, loft#2414, `@C137`).
+        d_store = ints[sp_int + 3] ?? NULL_STORE;
+        if (ints[sp_int] ?? NULL_STORE) == NULL_STORE && d_store != NULL_STORE && op.b & 4 != 0 && types::is_struct(b, op.a) {
+          crt::fill(d_store, ints[sp_int + 4] ?? 0, ints[sp_int + 5] ?? 0, image_of(b, images, imaged, op.a));
+        }
       }
       // Vectors (S3's second slice): a vector is the reference to its field, an element a
       // reference into the same store, so neither changes who owns the store.
