@@ -281,6 +281,7 @@ LOFT_NO_CACHE=1 python3 scripts/own_sweep.py --loft <bin> --oracle check-records
 | patches13 | 69 → 53 (base took loft3-c1's closure batch) | 3 | 0 (+ two checker MISSes for loft-c9 now CAUGHT) |
 | patches14 | 53 → 50 | 1 | 1 (6 below) |
 | series 2026-11-12 (8 commits on 91-self-host 8f7c1c9e0) | 50 → 36 | 6 | 2 (7, 8 below) |
+| series 2026-11-12, continued (loft2 and loft3-c1, on 91-self-host 7e2d72225 + the snapshot patch) | 36 → 6 | 17 (the 16 store_records.rs fixes 15caa3c50..7e2d72225, and the snapshot patch) | 3 (9–11 below) |
 
 The real defects the checker found first:
 
@@ -325,6 +326,21 @@ The real defects the checker found first:
    its dependency, the parameter `v`.  Latent on main, both backends, every element type.  The
    arm delivery skips a parameter dependency (`LOFT_ARM_FREES_PARAM_DEPS`); suite cell
    P-Rest/a-binding-arm-answering-the-subject-leaves-the-callers-vector.
+9. **An element read at a constant index past the end, returned as `-> D?`, answered a default
+   record** — `r = v[0]; r` on an empty vector: silent-wrong on both backends.  The local may be
+   absent, so the return answers null (`LOFT_NO_ELEMENT_VIEW_ABSENT`); suite cell
+   N-Road/a-returned-element-read-at-a-constant-index-past-the-end-is-null.
+10. **A work buffer handed null was read after its guarded free at each tail jump** — the
+   interpreter left a variable its `OpFreeRefIfDistinct` released naming the freed store, where
+   C resets it; `(R-TailSelf)` then cleared it in place on the next pass.  The interpreter now
+   resets it as C does (`LOFT_NO_GUARDED_FREE_RESET`); suite cell
+   R-WorkBuffer/a-work-buffer-handed-null-is-reset-at-each-tail-jump.
+11. **A closure rebuilt through a snapshot released a capture it takes again** — a capture type
+   with a drop hook rebuilds the record through `__disp_N`, whose cascade releases every slot; a
+   leaving closure rebuilt twice in a loop over the frame's `e` freed `e` twice, both backends.
+   The build detaches an old slot naming its new fill first (`LOFT_NO_SNAPSHOT_KEEPS_REFILL`);
+   suite cell L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.  Found only once the
+   records modelled the snapshot's `OpCopyRecord`.
 
 The gaps fixed, by the representation they corrected:
 
@@ -363,13 +379,20 @@ The gaps fixed, by the representation they corrected:
   join of arms answering different buffers closes with it.
 - **Owners a stored reference leaves in place** — a compiler temporary the function frees keeps
   the record a `reference<T>` field names, and a holder handed to a call reads those records.
+- **Closure records' slots** — a capture slot holds a store; an owner slot (`__own_x`) makes the
+  record a holder of it, and an identity test of a slot (`OpDistinctStore(OpGetDbRef(w, off), x)`)
+  narrows the slot on each arm.  A record's cascade (`<record>_OpDropAll`, `OpDropFnRef`) ends
+  only the slots its type's drop frees, follows a record a slot holds, and is typed by any holder
+  of a `__closure_*` type, a rebuild snapshot (`__disp_N`) included.  `OpCopyRecord` gives the
+  snapshot the source record's slots.  A join ignores the slots of a record that does not exist
+  on one side.  `LOFT_STORE_TRACE` prints the slots.
+- **A fn-ref's closure as an operand** — `OpDistinctStore(OpFnRefClosure(g), w)` narrows and
+  equates `g` itself, as a plain variable operand does: the stand-downs that hand the frame's
+  closure record to a fn-ref read right.
+- **Host stores and guarded frees of a capture** — `R-HostStore`'s result clause
+  (`OpReleaseRecIfDistinct` a guarded free, `OpStoreBufOnly` may be null, a minting callee never
+  answers null); a guarded free of a capture slot leaves the store live exactly where the witness
+  names it.
 
-Open, each wanting more than a local fix:
-
-- **More than two live stores from one site** (O-Complete/2408 `in_a_loop_branch`): a loop that
-  rotates `__ref_1 ← __ref_2 ← l` keeps three stores of the buffer-init site live at once, and a
-  site keys only its latest store and one older generation, so a join meets two different stores
-  under one key.
-- **A caller-minted buffer parameter** (R-TailSelf/vec_local): the records follow a null path
-  every caller rules out by minting the buffer first.
-
+Open: the six cells left are closure loops (L-Apply, L-CapKeep/1636, /2357, a-kept-closure,
+L-CapOne/2281, L-CapRebind vector), worked by loft3-c1 one slot trace at a time.
