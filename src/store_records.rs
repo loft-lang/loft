@@ -1227,24 +1227,43 @@ impl Run<'_> {
     /// (`<record>_OpDropAll(w)`), or a free of a slot read (`OpFreeRef(OpGetDbRef(w, off))`,
     /// `scopes::rebound_captures`).  A slot store already ended on every path is ended twice.
     fn end_slots(&mut self, st: &mut State, w: u16, how: &str) {
-        let mut held: Vec<SKey> = Self::stores_of(&Self::held_by_record(st, w, None));
-        // The cascade drops a closure record a slot holds (a captured fn-ref's record) with
-        // what ITS slots hold.
-        if how == "its cascade" {
+        let mut held: Vec<SKey> = if how == "its cascade" {
+            // The cascade frees the slots its record type's `_OpDropAll` frees (an owner slot,
+            // not a view capture beside it), and drops a record such a slot holds with what
+            // ITS cascade frees.
+            let mut out: Vec<SKey> = st
+                .field_captures
+                .get(&w)
+                .map(Self::stores_of)
+                .unwrap_or_default();
+            let mut recs: Vec<SKey> = Self::stores_of(&Self::pts(st, w));
             let mut i = 0;
-            while i < held.len() {
-                if let Some(m) = st.slots.get(&held[i]) {
-                    for v in m.values() {
-                        for k in Self::stores_of(&v.pts) {
-                            if !held.contains(&k) {
-                                held.push(k);
-                            }
+            while i < recs.len() {
+                let r = recs[i];
+                i += 1;
+                let Some(m) = st.slots.get(&r) else {
+                    continue;
+                };
+                let offs = self.cascade_frees(r);
+                for (o, v) in m {
+                    if offs.as_ref().is_some_and(|f| !f.contains(o)) {
+                        continue;
+                    }
+                    for k in Self::stores_of(&v.pts) {
+                        if !out.contains(&k) {
+                            out.push(k);
+                        }
+                        if st.slots.contains_key(&k) && !recs.contains(&k) {
+                            recs.push(k);
                         }
                     }
                 }
-                i += 1;
             }
-        }
+            out
+        } else {
+            Self::stores_of(&Self::held_by_record(st, w, None))
+        };
+        held.dedup();
         let label = format!("{how}({})", self.var_name(w));
         for k in held {
             self.sites[k.site as usize].ends.insert(label.clone());
