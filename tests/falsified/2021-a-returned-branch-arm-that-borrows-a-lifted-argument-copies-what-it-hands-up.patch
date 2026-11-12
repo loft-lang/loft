@@ -1,5 +1,26 @@
+diff --git a/src/bind_lowering.rs b/src/bind_lowering.rs
+--- a/src/bind_lowering.rs
++++ b/src/bind_lowering.rs
+@@ -648,7 +648,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
+     // arm's bind copies into the temp (that is what the write-out is for), so the
+     // temp owns what the arm displaces — the sentinel its pre-init put there.
+     let owned_ref = (function.owns_displaced_store(v, value, data)
+-        || is_return_temp_owning_its_arms(data, d_nr, function, v))
++        || (false && is_return_temp_owning_its_arms(data, d_nr, function, v)))
+         && (!is_hidden_buf_arg || entry_w.is_some());
+     // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
+     // container's backing store (a vector element / nested field), so
+@@ -806,7 +806,8 @@ fn re_arm(
+             // answered — a view into another store its exit release then freed
+             // (`@FR-H-FreeTwice`, O-Buffer's `class = pick(class, c)`).
+             // `LOFT_NO_BUFFER_FRESH_COPY=1` keeps the plain bind.
+-            || (is_promoted_return_buffer(data, d_nr, function, v)
++            || (false
++                && is_promoted_return_buffer(data, d_nr, function, v)
+                 && (!rb.rhs_reads_v
+                     || (rb.copies_into_fresh() && !crate::keys::buffer_fresh_copy_off()))))
+         && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
-index f65820aa9..b89b33576 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
 @@ -15,7 +15,7 @@ use super::insert_free::{
@@ -11,7 +32,7 @@ index f65820aa9..b89b33576 100644
      return_copies_whole_local, return_has_non_source_arm, return_has_null_arm,
      return_moved_holders, returned_var_null_unified,
  };
-@@ -701,7 +701,7 @@ impl Scopes<'_> {
+@@ -703,7 +703,7 @@ impl Scopes<'_> {
                  "OpFreeRefIfDistinct"
              });
              let mut result = Vec::with_capacity(ls.len() + null_arm_record_sources.len() + 2);
@@ -20,7 +41,7 @@ index f65820aa9..b89b33576 100644
              let distinct = data.def_nr("OpDistinctStore");
              let join_arm_dropped = &join_arm_dropped;
              // The sweep's frees go FIRST: they name the returned local as their WITNESS (its
-@@ -891,7 +891,7 @@ impl Scopes<'_> {
+@@ -893,7 +893,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -29,7 +50,7 @@ index f65820aa9..b89b33576 100644
              free_copied_text_sources(&mut result, expr, &ls, function, data);
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
-@@ -937,7 +937,7 @@ impl Scopes<'_> {
+@@ -939,7 +939,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -38,7 +59,7 @@ index f65820aa9..b89b33576 100644
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-@@ -992,7 +992,7 @@ impl Scopes<'_> {
+@@ -994,7 +994,7 @@ impl Scopes<'_> {
                  }
              }
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -47,7 +68,7 @@ index f65820aa9..b89b33576 100644
              result.append(&mut ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-@@ -1285,7 +1285,7 @@ impl Scopes<'_> {
+@@ -1287,7 +1287,7 @@ impl Scopes<'_> {
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
@@ -56,7 +77,7 @@ index f65820aa9..b89b33576 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else if ret_var != u16::MAX {
                      ls.push(Value::Return(Box::new(Value::Var(ret_var))));
-@@ -1347,7 +1347,7 @@ impl Scopes<'_> {
+@@ -1355,7 +1355,7 @@ impl Scopes<'_> {
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
@@ -65,7 +86,7 @@ index f65820aa9..b89b33576 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else {
                      ls.push(Value::Return(Box::new(Value::Null)));
-@@ -1428,165 +1428,33 @@ pub(super) struct Delivered {
+@@ -1436,165 +1436,33 @@ pub(super) struct Delivered {
      pub(super) moved_out: Option<(u16, Vec<u16>)>,
  }
  
@@ -257,42 +278,9 @@ index f65820aa9..b89b33576 100644
  
  /// loft#2282 — `tp`, a definition's declared return type, with a dep on its hidden TEXT
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 8249eefb0..70f9ab4a2 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -2724,12 +2724,7 @@ impl State {
-             // (@FR-O-NoDiverge).  Excluding it outright left the store a frame minted for a
-             // null-handed buffer to nobody when a call that took the buffer answered another
-             // store: `none = rec(k - 1, none)` leaked one record per top-level call.
--            // loft#2021 — a return temp bound in a branch written out per arm: its one dep
--            // names the hidden return buffer, which the proxy reads as a borrow, while each
--            // arm's bind copies into the temp (that is what the write-out is for), so the
--            // temp owns what the arm displaces — the sentinel its pre-init put there.
--            let owned_ref = (stack.function.owns_displaced_store(v, value, stack.data)
--                || is_return_temp_owning_its_arms(stack, v))
-+            let owned_ref = stack.function.owns_displaced_store(v, value, stack.data)
-                 && (!is_hidden_buf_arg || entry_w.is_some());
-             // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
-             // container's backing store (a vector element / nested field), so
-@@ -2991,16 +2986,7 @@ impl State {
-                 }
-                 if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
-                     stack.function.tp(v).base().clone()
--                    // loft#2021 — the PROMOTED return buffer is the one argument this frame
--                    // binds a value into: a local renamed onto the hidden buffer (`r = if c {
--                    // id(g(3)) } else { null }; r`, written out per arm).  Its bind from a
--                    // callee that may hand back a caller's store copies like a local's does;
--                    // adopted, it handed up the lifted argument the frame frees at exit.
--                    // Not where the call is handed that buffer itself (`r = f(…, r)`): the
--                    // callee delivers INTO it and the result is its own store, which native's
--                    // same-store passthrough adopts — copying it here minted a store per call.
--                    && (!stack.function.is_argument(v)
--                        || (is_promoted_return_buffer(stack, v) && !rhs_reads_v))
-+                    && !stack.function.is_argument(v)
-                     && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
-                     && let Some(fn_nr) =
-                         crate::use_analysis::callee_of(stack.data, stack.def_nr, value)
-@@ -7414,46 +7400,6 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
+@@ -7236,46 +7236,6 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
      })
  }
  
