@@ -194,7 +194,14 @@ buffer adopted by a renamed return buffer that is assigned again takes no free, 
 the return included (`pair_literal_buffers`); `LOFT_NO_GUARDED_BUFFER_DISARM=1` keeps the guarded one.
 On rustc `--native`, a call arm inside `output_set`'s `_old_<name>` stash leaves the displaced
 store to that stash (`Output::old_stash_var`); `LOFT_NATIVE_INNER_DISPLACED_FREE=1` frees it in
-the arm too.  The records read IR, which both spellings share, so they cannot see this one.  A
+the arm too.  The records read IR, which both spellings share, so they cannot see this one.
+Nor the next two, also rustc `--native` only: a call bind that aliases a borrowed view into a
+never-free local (`adopt` is `true`) leaves `call_bind_owns` false, so a runtime-Join local's
+owned-store tracker does not take the caller's store as its own
+(`LOFT_NATIVE_VIEW_ALIAS_OWNS=1` does); and a guarded free of such a local
+(`OpFreeRefIfDistinct`) lets its tracker go of the store it releases
+(`LOFT_NATIVE_GUARDED_FREE_KEEPS_TRACKER=1` keeps it) — each switch re-frees a sub-rule run's
+answer (P-Rule `borrowed`, `mixed_run`).  A
 record update built in a temporary (`Unit { hp: …, ..u }` as a value) gives the temporary a store
 of its own and copies the base in, which on a return buffer is the caller's store, refilled
 (`parse_object_update`); `LOFT_NO_UPDATE_TEMP_COPY=1` binds a whole-variable base instead, which

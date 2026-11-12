@@ -1971,8 +1971,15 @@ impl Output<'_> {
                 "; if {adopt} {{ {disp}var_{name} = _src; }} {rebind}else {{ {copy} }}{unprotect} }}"
             )?;
             // Adopted or copied, the local now holds its own store — unless the bind is an
-            // elided VIEW, which aliases on purpose.
-            self.call_bind_owns = !variables.is_view_elided(var);
+            // elided VIEW, which aliases on purpose, or the adopt arm is the unconditional
+            // alias of a borrowed view (`adopt == "true"`, loft#974): the local holds the
+            // caller's store then, and the owned-store tracker taking it as owned freed it
+            // when the local was next rebound (`@FR-H-FreeTwice`: a sub-rule run over a rule
+            // answering `p.nodes[0]` freed the subject's store).
+            // `LOFT_NATIVE_VIEW_ALIAS_OWNS=1` reads it as owned.
+            self.call_bind_owns = !variables.is_view_elided(var)
+                && (adopt != "true"
+                    || crate::env_once!(std::env::var_os("LOFT_NATIVE_VIEW_ALIAS_OWNS").is_some()));
             // @PLN130 — a MAY-copy site: the emitted code branches on store identity at
             // runtime and copies on the non-adopting arm.  Recorded regardless, because the
             // guard asks whether the diagnostic ACCOUNTS for the site, not whether this

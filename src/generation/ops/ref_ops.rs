@@ -436,6 +436,24 @@ impl OpEmitter for OpFreeRefIfDistinctEmitter {
             write!(ctx.w, ").store_nr {{ {release}(cell,")?;
             ctx.emit(ph_val)?;
             write!(ctx.w, ", \"{ph_name}\")")?;
+            // `@FR-H-FreeTwice` — a runtime-Join local's owned-store tracker lets go of the
+            // store this releases, or its next rebind released it again (a sub-rule run's
+            // answer, freed after the copy into the list: P-Rule `mixed_run`).
+            // `LOFT_NATIVE_GUARDED_FREE_KEEPS_TRACKER=1` leaves the tracker naming it.
+            if let Value::Var(v) = ph_val
+                && ctx.output.witness_vars.contains(v)
+                && !crate::env_once!(
+                    std::env::var_os("LOFT_NATIVE_GUARDED_FREE_KEEPS_TRACKER").is_some()
+                )
+            {
+                write!(
+                    ctx.w,
+                    "; if _own_store_{n}.store_nr == {ph_place}.store_nr {{ _own_store_{n} = DbRef::NULL; }}",
+                    n = super::super::sanitize(
+                        ctx.output.data.def(ctx.output.def_nr).variables().name(*v)
+                    )
+                )?;
+            }
             if let Value::Var(_) = ph_val {
                 write!(ctx.w, "; {ph_place}.store_nr = u16::MAX")?;
             }
