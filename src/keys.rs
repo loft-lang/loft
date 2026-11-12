@@ -3494,6 +3494,14 @@ pub fn unbox_yield_handover_off() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_NO_UNBOX_YIELD_HANDOVER").is_some_and(|v| v != "0"))
 }
 
+/// `LOFT_C_OWN_TUPLE_MEMBER_BIND=1` — the C writer binds a tuple member's first bind plainly
+/// again instead of taking `bind_lowering`'s `TupleElementCopy` (@PLN220's A/B).
+#[must_use]
+pub fn c_own_tuple_member_bind() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_TUPLE_MEMBER_BIND"))
+}
+
 /// `LOFT_C_OWN_VECTOR_NULL=1` — the C writer decides a vector local's first null-init mint by
 /// its own test again instead of `bind_lowering::vector_null_mints` (@PLN220's A/B).
 #[must_use]

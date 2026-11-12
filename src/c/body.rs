@@ -6299,7 +6299,22 @@ impl<'a> FnWriter<'a> {
             self.flush(ind);
             return Ok(());
         }
-        if let Some(tp) = self.element_copy(var, x) {
+        // `@FR-B-Copy` — a tuple member bound first (`(ca, cb) = (mk(1), mk(2))` lowers to
+        // `ca = __ref_3.0`): `bind_lowering`'s `TupleElementCopy` (F5), the arm the bytecode
+        // writer takes, copied into the local's own store.  `element_copy` matches the call
+        // spelling of a projection only; bound plainly, the local and the tuple member were
+        // two frees of one store.  @PLN220.  `LOFT_C_OWN_TUPLE_MEMBER_BIND=1` binds it plainly.
+        let tuple_member = if first && !crate::keys::c_own_tuple_member_bind() {
+            match crate::bind_lowering::first_arm(self.cx.data, self.d, self.vars, var, x) {
+                crate::bind_lowering::FirstArm::TupleElementCopy { d_nr } => {
+                    Some(self.cx.data.def(d_nr).known_type())
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(tp) = tuple_member.or_else(|| self.element_copy(var, x)) {
             self.set_arm("element-copy");
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
