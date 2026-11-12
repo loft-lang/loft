@@ -420,10 +420,15 @@ The gaps fixed, by the representation they corrected:
   answers null); a guarded free of a capture slot leaves the store live exactly where the witness
   names it.
 
-Open:
-- the cells left: L-CapKeep/1636 (4) and L-CapOne/2281 (2), loft3-c1's; L-CapKeep/2357 (10) and
-  the false findings on two cured cells of this series (12's 1, 13's 4), loft2's.
-- **15 is a MISS**: with its cure off the records do not report it.  After the loop-head join the
-  two rotating buffer stores have no must-holder, so the rebuild's free ends one only as a MAY
-  and the next call's write through `__ref_1` is not told apart from the safe passes.  Catching it
-  needs the loop's store generations correlated across passes, the design loft3-c1 set aside.
+Open (all four cells are records gaps; every function in them is runtime-clean at 0..3 passes
+on both backends):
+- **One key for every earlier pass.**  A site minting each pass keeps its current store and ONE
+  older generation, so the stores of passes 1..n-1 merge: a slot's correlation with the store it
+  holds cannot survive (C's cell `one_loop`, 2357 `after_returned_fn`'s older store), and the
+  zero-pass path's "this store exists only where the record does" is lost at the loop's exit
+  (2357 `record`).  15's records MISS was the same shape; the first three passes are now analysed
+  one by one, which caught it.  Owner: loft3-c1's pass design.
+- **A freed name still answers identity.**  The frame frees a backing, then a let-go point asks
+  `OpDistinctStore(slot, backing)`; at run time the stale reference still compares, the records
+  have dropped the name (C's cell `two_loops`).  Owner: loft3-c1 (`SInfo::stale`).
+- L-CapKeep/1636 and L-CapOne/2281: loft3-c1's.
