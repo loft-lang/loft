@@ -296,12 +296,16 @@ fn detach_backings_at_loop_exit(
     code: &mut Value,
     facts: &Rebound,
     leaving: &HashSet<u16>,
+    vars: &Function,
     data: &Data,
 ) {
     let mut held: Vec<(u16, Slot, u16)> = Vec::new();
     for (c, ss) in &facts.slots {
         for s in ss {
-            if leaving.contains(&s.record) || facts.confined.contains(s) {
+            if leaving.contains(&s.record)
+                || facts.confined.contains(s)
+                || !cascade_frees_slot(data, vars, *s)
+            {
                 continue;
             }
             for b in facts.backings.get(c).into_iter().flatten() {
@@ -329,6 +333,65 @@ fn detach_backings_at_loop_exit(
             .map(|&(b, s, c)| detach_if_held(b, s, c, facts, data))
             .collect()
     });
+}
+
+/// Does the record `s.record` names release the store its slot holds, at its death?  Read off
+/// its type's live drop cascade (`OpFreeRef(OpGetDbRef(self, off))`): a record that BORROWS the
+/// capture (`mark_borrowed_captures`) has that walk stripped or its cascade retired, and handing
+/// it a store would leave the store to nobody.
+fn cascade_frees_slot(data: &Data, vars: &Function, s: Slot) -> bool {
+    let crate::data::Type::Reference(d, _) = vars.tp(s.record).base() else {
+        return false;
+    };
+    let name = data.def(*d).name();
+    let drop = data.def_nr(&format!("t_{}{name}_OpDropAll", name.len()));
+    if drop == u32::MAX {
+        return false;
+    }
+    let (free, get) = (data.def_nr("OpFreeRef"), data.def_nr("OpGetDbRef"));
+    let mut frees = false;
+    data.def(drop).code().walk(&mut |n| {
+        if let Value::Call(op, a) = n.unspan()
+            && *op == free
+            && let [inner] = a.as_slice()
+            && let Value::Call(g, b) = inner.unspan()
+            && *g == get
+            && let [_, off] = b.as_slice()
+            && matches!(off.unspan(), Value::Int(o) if *o == s.off)
+        {
+            frees = true;
+        }
+    });
+    frees
+}
+
+/// Let-go point 5 over every function: run after `mark_borrowed_captures`, which settles which
+/// records own their captures (`cascade_frees_slot` reads its verdict off the cascades).
+pub(super) fn detach_staying_record_backings(data: &mut Data, fresh: &[u32]) {
+    if !crate::keys::staying_record_takes_backing()
+        || crate::env_once!(std::env::var_os("LOFT_NO_REBOUND_CAPTURES").is_some())
+    {
+        return;
+    }
+    for &d_nr in fresh {
+        if !matches!(data.def(d_nr).def_type, DefType::Function) {
+            continue;
+        }
+        let Some(facts) = rebound_facts(data.def(d_nr).code(), data.def(d_nr).variables(), data)
+        else {
+            continue;
+        };
+        let mut code = data.def(d_nr).code.clone();
+        let leaving = leaving_records(&code, data.def(d_nr).variables(), data);
+        detach_backings_at_loop_exit(
+            &mut code,
+            &facts,
+            &leaving,
+            data.def(d_nr).variables(),
+            data,
+        );
+        data.definitions[d_nr as usize].code = code;
+    }
 }
 
 /// Insert, after every `Loop` statement no other `Loop` encloses, the statements `pick` answers.
@@ -695,9 +758,6 @@ pub(super) fn release_rebound_captures(data: &mut Data, fresh: &[u32]) {
         release_on_rebuild(&mut code, &facts, data);
         release_confined_at_end(&mut code, &facts, data);
         let leaving = leaving_records(&code, data.def(d_nr).variables(), data);
-        if crate::keys::staying_record_takes_backing() {
-            detach_backings_at_loop_exit(&mut code, &facts, &leaving, data);
-        }
         if !leaving.is_empty() {
             keep_leaving_captures(&mut code, &facts, &leaving, data);
         }
