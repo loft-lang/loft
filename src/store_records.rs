@@ -1510,7 +1510,8 @@ impl Run<'_> {
         // A fn field's record lives in its host's store: where that store leaves, the record
         // leaves with it, and so do the stores it holds.
         if field_record_holds() {
-            let gone: Vec<u16> = st
+            // …and a closure record handed on itself leaves with what its variable holds.
+            let mut gone: Vec<u16> = st
                 .field_captures
                 .keys()
                 .copied()
@@ -1520,6 +1521,11 @@ impl Run<'_> {
                         .any(|k| val.pts.contains(&Pt::Store(*k)))
                 })
                 .collect();
+            for (&v, p) in &st.vars {
+                if records.iter().any(|k| p.contains(&Pt::Store(*k))) && !gone.contains(&v) {
+                    gone.push(v);
+                }
+            }
             for info in st.stores.values_mut() {
                 for w in &gone {
                     if info.has(LIVE) && info.live.contains(w) {
@@ -2524,16 +2530,27 @@ impl Run<'_> {
                     && *g == self.ops.get_dbref
                     && let Some(Value::Var(w)) = ga.first().map(Value::unspan)
                     && let Some(s) = &mut same
-                    && s.field_captures.contains_key(w)
+                    && (s.field_captures.contains_key(w) || self.is_closure_record(*w))
                     && field_record_holds()
                 {
+                    // Every name of the record holds it: `w`, and a fn-ref holding the same
+                    // record (`___clos_1` is nulled where `g` takes it over).
+                    let rec = Self::stores_of(&Self::pts(s, *w));
+                    let names: Vec<u16> = s
+                        .vars
+                        .iter()
+                        .filter(|(v, p)| {
+                            **v == *w || rec.iter().any(|k| p.contains(&Pt::Store(*k)))
+                        })
+                        .map(|(v, _)| *v)
+                        .collect();
                     for k in Self::stores_of(&Self::pts(s, x)) {
                         if let Some(info) = s.stores.get_mut(&k)
                             && info.has(LIVE)
                         {
-                            info.live.insert(*w);
+                            info.live.extend(names.iter().copied());
                             for alt in &mut info.alts {
-                                alt.insert(*w);
+                                alt.extend(names.iter().copied());
                             }
                         }
                     }
