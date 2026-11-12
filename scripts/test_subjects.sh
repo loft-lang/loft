@@ -145,13 +145,19 @@ subject_paths() {
   esac
 }
 
-# The nextest filterset for the DEFAULT run: everything except the heavy binaries.
+# The nextest filterset for the DEFAULT run: everything except the heavy binaries and the
+# nightly-only tests.  The nightly clause is CI's own (`ci_test_filter.py nightly`): a test whose
+# subject is the Rust writer lives in a `mod rust_writer` and runs on neither per-change gate,
+# which is also what lets the curated run skip the two wasm rlib builds (find_problems.sh
+# `selection_needs`): the per-change `--html` / `--native-wasm` tests go through the C.
 curated_filter() {
-  local parts=() b
+  local parts=() b d
   for b in "${HEAVY_BINARIES[@]}"; do parts+=("binary($b)"); done
   local joined
   joined=$(IFS='+'; echo "${parts[*]}")
-  echo "not ( ${joined//+/ + } )"
+  d="${BASH_SOURCE[0]%/*}"
+  [[ "$d" == "${BASH_SOURCE[0]}" ]] && d=.
+  echo "not ( ${joined//+/ + } ) and $(python3 "$d/ci_test_filter.py" nightly)"
 }
 
 # Every test binary this repo actually has.

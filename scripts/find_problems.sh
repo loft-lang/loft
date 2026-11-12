@@ -287,14 +287,21 @@ rebuild_one() {
 # @PLN159 phase I — what the current selection needs beyond the dev build.
 # Sets NEED_RELEASE (a selected binary spawns `target/release/loft`) and NEED_WASM
 # (a selected binary is a wasm/html one, or drives `--html` / `--native-wasm`).
-# The curated and full runs select those binaries, so they need everything; only a
-# `--subject` / `--changed` selection can skip, and it skips by READING the selected
-# sources, not by guessing from the subject's name.
+# The full run needs everything.  The curated run needs the release rlib and NOT the wasm
+# rlibs: it leaves out the heavy page builders and every `mod rust_writer` test, so its
+# `--html` / `--native-wasm` tests are the C backend's (clang, no loft rlib), and a Rust-writer
+# page test belongs in `mod rust_writer` (TESTING.md § The compiled backend a test runs on).
+# A `--subject` / `--changed` selection skips by READING the selected sources, not by
+# guessing from the subject's name.
 NEED_RELEASE=1
 NEED_WASM=1
 selection_needs() {
   NEED_RELEASE=1; NEED_WASM=1
-  case "${SELECT_LABEL:-curated}" in subject:*|changed:*) ;; *) return 0 ;; esac
+  case "${SELECT_LABEL:-curated}" in
+    subject:*|changed:*) ;;
+    curated) NEED_WASM=0; return 0 ;;
+    *) return 0 ;;
+  esac
   local b src
   NEED_RELEASE=0; NEED_WASM=0
   for b in $(grep -oE 'binary\([a-z0-9_]+\)' <<<"${TEST_SELECT:-}" | sed -E 's/binary\((.*)\)/\1/' | sort -u); do
@@ -403,8 +410,8 @@ rebuild_native_cdylibs() {
   # (`CARGO_BIN_EXE_loft`), which resolves its rlib beside itself in target/debug;
   # the release rlib serves only the binaries that spawn `target/release/loft`,
   # and the wasm rlibs only the html/wasm suites.  `selection_needs` reads the
-  # selected binaries' sources for exactly those two facts; the curated and full
-  # runs keep everything.
+  # selected binaries' sources for exactly those two facts; the curated run needs
+  # the release rlib only, the full run everything.
   selection_needs
 
   # 3. The wasm32-unknown-unknown rlib used by the html_wasm suite.
@@ -412,7 +419,7 @@ rebuild_native_cdylibs() {
   #    first run lets the --html driver build it so we don't impose a
   #    wasm-target install on developers who never touch the HTML gate.
   if [[ "$NEED_WASM" == 0 ]]; then
-    printf '  %-44s %s\n' "wasm rlibs" "skipped — no wasm/html binary in the selection" >&2
+    printf '  %-44s %s\n' "wasm rlibs" "skipped — the selection has no Rust-writer wasm/html test" >&2
   fi
   if [[ "$NEED_WASM" == 1 && -d "$repo_root/target/loft/html/wasm32-unknown-unknown" ]]; then
     echo "== rebuild wasm32-unknown-unknown rlib (the --html shape) ==" >> "$log"

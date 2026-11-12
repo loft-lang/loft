@@ -614,7 +614,9 @@ runs when — today).  The C's coverage is what makes it stable, so a test:
   browser page builds through the C too (`--native-c --html`, its wasm through clang —
   [C_BACKEND.md](C_BACKEND.md)).
 - **names `--native-rust` only when its subject is the Rust writer** — what it emits, its
-  rewrites, its counts.  A test that only needs *a* compiled program uses the C.
+  rewrites, its counts, its `--html` page — and then lives in a `mod rust_writer`, which
+  only the nightly runs (`scripts/ci_test_filter.py nightly`; the local curated run leaves it
+  out too, and so builds no wasm rlib).  A test that only needs *a* compiled program uses the C.
 - **is never skipped, or moved back to rustc, because the C fails it.**  A program the C
   refuses or answers wrongly is a C backend defect: fix it (or file it, by the bug-filing
   policy), and keep the test on the C.
