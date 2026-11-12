@@ -283,7 +283,7 @@ LOFT_NO_CACHE=1 python3 scripts/own_sweep.py --loft <bin> --oracle check-records
 | series 2026-11-12 (8 commits on 91-self-host 8f7c1c9e0) | 50 → 36 | 6 | 2 (7, 8 below) |
 | series 2026-11-12, continued (loft2 and loft3-c1, on 91-self-host 7e2d72225 + the snapshot patch) | 36 → 6 | 17 (the 16 store_records.rs fixes 15caa3c50..7e2d72225, and the snapshot patch) | 3 (9–11 below) |
 | loop fixes 2026-11-12 (91-self-host f1df5b9a6 + B + D) | 6 → 5 (1643 runs; 4 new cells) | 1 (stale names, loft3-c1) | 4 (12–15 below) |
-| records series 2026-11-12 night (91-self-host 6231ed152..7523ed7ad) | 4 → 2 | 5 (copy alias, slot null, uncaptured `live_some`, sole slot holder; loft3-c1's null-copy join) | 1 (16 below, E) |
+| records series 2026-11-12 night (91-self-host 6231ed152..7523ed7ad + patches-it) | 4 → 2 | 6 (copy alias, slot null, uncaptured `live_some`, sole slot holder, identity test no use; loft3-c1's null-copy join) | 1 (16 below, E) |
 
 The real defects the checker found first:
 
@@ -446,7 +446,16 @@ on both backends):
   the re-mint and the loop join instead was measured and moves nothing: the older generation is
   live before every later re-mint.
 
+- **A store identity test read as a use** (C's cell `two_loops`, a use after end on `a`): the
+  frame end compares a capture slot with `a` (`OpDistinctStore`) after `a`'s buffer was freed.
+  The test is `a.store_nr != b.store_nr` on every backend; it now joins the reference
+  comparisons whose operands are no use.  Switch `LOFT_RECORDS_NO_IDENTITY_TEST_NO_USE`.
+
 Open (two cells, records gaps, both in loft3-c1's cover design — "whatever of a key is still
 live, one of THESE names names it"):
 - L-CapKeep/1636 `c6`, `c8`.
-- C's cell `one_loop`, and `two_loops` (a leak and a use after end on `#3`).
+- C's cell `one_loop` and `two_loops`: a leak each on `#3`, the older `a` buffers.
+
+Each function is right and clean at 0..3 passes on both backends, under poison, the leak check
+and the re-free gate (1636 `c6` in the plain-copy and `keep(f)` spellings, `two_loops`, `one_loop`).
+The records flag the plain copy `g = f` only: the slot member of the cover.
