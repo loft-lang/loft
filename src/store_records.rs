@@ -3529,9 +3529,14 @@ impl Run<'_> {
         }
         let (mut s, vals) = if self.summaries.contains_key(&d) {
             self.user_call_args(args, st)?
-        } else if matches!(self.data.def(d).name(), "OpEqRef" | "OpNeRef") {
+        } else if matches!(
+            self.data.def(d).name(),
+            "OpEqRef" | "OpNeRef" | "OpStoreLive" | "OpRefIsNull" | "OpConvBoolFromRef"
+        ) {
             // A reference COMPARISON reads the two references, never the stores they name:
-            // comparing a freed store's reference with another is no use of it.
+            // comparing a freed store's reference with another is no use of it.  So are the
+            // tests of a reference itself — null, naming a record — and the liveness test
+            // (`@FR-L-CapOwn`'s guard), which exists to be asked of a store that may be freed.
             let mut s = st;
             let mut vals = Vec::with_capacity(args.len());
             for a in args {
