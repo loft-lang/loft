@@ -1176,7 +1176,11 @@ impl Run<'_> {
             }
             Value::TuplePut(t, i, x) => {
                 let (mut s, value) = self.eval(x, st)?;
-                match member_key(*t, *i).filter(|k| s.vars.contains_key(k)) {
+                // A put into a local tuple's member assigns that member, followed or not: the
+                // member's earlier store, where it was the only name, is lost by the put.
+                let local =
+                    !self.params.contains(t) && *t < self.data.def(self.d_nr).variables.count();
+                match member_key(*t, *i).filter(|k| local || s.vars.contains_key(k)) {
                     Some(k) => self.bind(&mut s, k, &value),
                     None => Self::hand_on(&mut s, &value),
                 }
