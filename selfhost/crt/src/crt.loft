@@ -340,6 +340,8 @@ fn c_stack_str_bool(store: integer, at: integer, v: integer);
 #c "loft_crt_stack_str_bool" "void(int64_t, int64_t, int64_t)"
 fn c_stack_str_of_ref(store: integer, at: integer, s: integer, r: integer, p: integer);
 #c "loft_crt_stack_str_of_ref" "void(int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_store_from_image(io: vector<integer>, bytes: vector<u8>) -> integer;
+#c "loft_crt_store_from_image" "int64_t(int64_t*, int64_t, const char*, int64_t)"
 fn c_stack_move(store: integer, from: integer, to: integer, n: integer);
 #c "loft_crt_stack_move" "void(int64_t, int64_t, int64_t, int64_t)"
 fn c_stack_str(out: vector<u8>, store: integer, at: integer) -> integer;
@@ -393,6 +395,12 @@ pub fn stack_str_bool(store: integer, at: integer, v: integer) {
 // `OpGetStackText`: a view of the text the reference `(s, r, p)` names, pushed at `at`.
 pub fn stack_str_of_ref(store: integer, at: integer, s: integer, r: integer, p: integer) {
   c_stack_str_of_ref(store, at, s, r, p);
+}
+
+// A store made from `bytes`, a store's image as Rust built it; its reference in `io`.  False
+// when the image is refused.
+pub fn store_from_image(io: vector<integer>, bytes: vector<u8>) -> boolean {
+  c_store_from_image(io, bytes) != 0
 }
 
 // `n` bytes of the stack moved from `from` to `to` (`copy_result`).

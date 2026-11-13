@@ -919,6 +919,7 @@ fn materialize_run_image(
     code: &[u8],
     starts: &[u32],
     ops: &(Vec<String>, Vec<String>),
+    consts: &[RunConstBytes],
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     schema: &[SchemaType],
     main: i64,
@@ -962,6 +963,20 @@ fn materialize_run_image(
     for n in natives {
         let e = nv.push(stores);
         e.set_field_str(stores, 0, n);
+    }
+    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_CONSTS), count(consts.len()), ds::RUNCONST_STRIDE, &mut stores.allocations);
+    let cv = rec.field_recvec(ds::RUNIMG_CONSTS, ds::RUNCONST_STRIDE);
+    for c in consts {
+        let e = cv.push(stores);
+        e.set_field_int(stores, ds::RUNCONST_DEF, i64::from(c.def));
+        e.set_field_int(stores, ds::RUNCONST_REC, i64::from(c.rec));
+        e.set_field_int(stores, ds::RUNCONST_POS, i64::from(c.pos));
+        let b = DbRef {
+            pos: e.db_ref().pos + ds::RUNCONST_BYTES,
+            ..e.db_ref()
+        };
+        crate::vector::pre_alloc_vector(&b, count(c.bytes.len()), 1, &mut stores.allocations);
+        crate::vector::append_bytes(&b, &c.bytes, &mut stores.allocations);
     }
     crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_TYPES), count(schema.len()), ds::DBTYPE_STRIDE, &mut stores.allocations);
     materialize_schema(stores, &rec, ds::RUNIMG_TYPES, schema);
@@ -1020,6 +1035,37 @@ pub fn run_image_ops(data: &Data) -> (Vec<String>, Vec<String>) {
             .collect();
     }
     (names, layouts)
+}
+
+/// One constant's store as the run image carries it: its definition, its root, and the store's
+/// bytes up to its last live record.
+pub struct RunConstBytes {
+    pub def: u32,
+    pub rec: u32,
+    pub pos: u32,
+    pub bytes: Vec<u8>,
+}
+
+/// The constants Rust built for the program (`Stores::const_refs`, by definition): each one's
+/// store as bytes, the run image's copy of it.
+#[must_use]
+pub fn run_image_consts(program: &Stores) -> Vec<RunConstBytes> {
+    let mut out = Vec::new();
+    for (d, r) in program.const_refs.iter().enumerate() {
+        if r.store_nr == u16::MAX || r.rec == 0 {
+            continue;
+        }
+        let store = &program.allocations[r.store_nr as usize];
+        let live = store.usage();
+        let end = (live.live_end_words as usize * 8).min(store.raw_bytes().len());
+        out.push(RunConstBytes {
+            def: u32::try_from(d).unwrap_or(u32::MAX),
+            rec: r.rec,
+            pos: r.pos,
+            bytes: store.raw_bytes()[..end].to_vec(),
+        });
+    }
+    out
 }
 
 /// Each definition's first byte in the code stream, and one more entry for the stream's end, so
@@ -1103,6 +1149,7 @@ pub fn save_run_image(
             code,
             &starts,
             &run_image_ops(data),
+            &run_image_consts(program),
             library_names,
             &program.types,
             main,

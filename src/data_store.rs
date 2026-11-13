@@ -499,16 +499,23 @@ pub(crate) const BUNDLE_STRIDE: u32 = 40;
 pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 
 /// `RunImage { code: vector<u8>, starts: vector<u32>, ops, layouts, natives: vector<text>,
-/// types: vector<DbType>, main: integer, cwd: boolean }` — the run image's store root (@PLN91).
+/// consts: vector<RunConst>, types: vector<DbType>, main: integer, cwd: boolean }` — the run image's store root (@PLN91).
 pub(crate) const RUNIMG_MAIN: u32 = 0;
 pub(crate) const RUNIMG_CODE: u32 = 8;
 pub(crate) const RUNIMG_STARTS: u32 = 12;
 pub(crate) const RUNIMG_OPS: u32 = 16;
 pub(crate) const RUNIMG_LAYOUTS: u32 = 20;
 pub(crate) const RUNIMG_NATIVES: u32 = 24;
-pub(crate) const RUNIMG_TYPES: u32 = 28;
-pub(crate) const RUNIMG_CWD: u32 = 32;
+pub(crate) const RUNIMG_CONSTS: u32 = 28;
+pub(crate) const RUNIMG_TYPES: u32 = 32;
+pub(crate) const RUNIMG_CWD: u32 = 36;
 pub(crate) const RUNIMG_STRIDE: u32 = 40;
+/// `RunConst { def, rec, pos: integer, bytes: vector<u8> }` — one constant's store as bytes.
+pub(crate) const RUNCONST_DEF: u32 = 0;
+pub(crate) const RUNCONST_REC: u32 = 8;
+pub(crate) const RUNCONST_POS: u32 = 16;
+pub(crate) const RUNCONST_BYTES: u32 = 24;
+pub(crate) const RUNCONST_STRIDE: u32 = 32;
 #[cfg(feature = "mmap")] // only `save_run_image` claims a run-image root
 pub(crate) const RUNIMG_ROOT_WORDS: u32 = (8 + RUNIMG_STRIDE).div_ceil(8);
 
@@ -1779,5 +1786,11 @@ mod tests {
         assert_eq!(pos(ids.run_image, "natives"), RUNIMG_NATIVES);
         assert_eq!(pos(ids.run_image, "types"), RUNIMG_TYPES);
         assert_eq!(pos(ids.run_image, "cwd"), RUNIMG_CWD);
+        assert_eq!(pos(ids.run_image, "consts"), RUNIMG_CONSTS);
+        assert_eq!(u32::from(stores.size(ids.run_const)), RUNCONST_STRIDE);
+        assert_eq!(pos(ids.run_const, "def"), RUNCONST_DEF);
+        assert_eq!(pos(ids.run_const, "rec"), RUNCONST_REC);
+        assert_eq!(pos(ids.run_const, "pos"), RUNCONST_POS);
+        assert_eq!(pos(ids.run_const, "bytes"), RUNCONST_BYTES);
     }
 }

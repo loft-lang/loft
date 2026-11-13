@@ -149,6 +149,7 @@ H_BOOL_NULL = 126;
 H_REMOVE_VECTOR = 127;
 H_SET_TEXT_REPLACE = 128;
 H_FORMAT_STACK_FLOAT = 129;
+H_CONST_REF = 130;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -315,6 +316,7 @@ pub fn handler(name: text) -> integer {
     "OpRemoveVector" => H_REMOVE_VECTOR,
     "OpSetTextReplace" => H_SET_TEXT_REPLACE,
     "OpFormatStackFloat" => H_FORMAT_STACK_FLOAT,
+    "OpConstRef" => H_CONST_REF,
     _ => -1
   }
 }
@@ -439,6 +441,7 @@ fn layout_of(h: integer) -> text {
     127 => "h",
     128 => "h",
     129 => "hbzc",
+    130 => "q",
     _ => ""
   }
 }
@@ -621,6 +624,23 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   tl: vector<boolean> = [false];
   needs = bind_table_needs(hs);
   io: vector<integer> = [NULL_STORE, 0, 0];
+  // The constants as stores of their own, adopted from the bytes Rust built them as
+  // (`RunImage.consts`), by definition: `const_refs`.
+  cs: vector<integer> = [];
+  cr: vector<integer> = [];
+  cp: vector<integer> = [];
+  for c in img.consts {
+    while len(cs) <= c.def {
+      cs += [NULL_STORE];
+      cr += [0];
+      cp += [0];
+    }
+    if crt::store_from_image(io, c.bytes) {
+      cs[c.def] = io[0] ?? NULL_STORE;
+      cr[c.def] = c.rec;
+      cp[c.def] = c.pos;
+    }
+  }
   // `LOFT_BRUN_TRACE`: each operator's position, name and stack top on stderr before it runs.
   trace = env_variable("LOFT_BRUN_TRACE") != null;
   // Each element type's default image, derived on first use (`types::default_image`).
@@ -1546,6 +1566,12 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       sp -= 24;
       crt::slot_ref(io, stk, sp - (fp - 24));
       crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::format_float(fval, fwidth, fprec, ftoken, fplus, fdir, false));
+    } else if h == H_CONST_REF {
+      // `const_ref_at(d_nr)`: the constant's root, in the store adopted for it.
+      cd = i64_at(img.code, pc) ?? 0;
+      pc += 8;
+      crt::set_slot_ref(stk, sp, cs[cd] ?? NULL_STORE, cr[cd] ?? 0, cp[cd] ?? 0);
+      sp += 16;
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };

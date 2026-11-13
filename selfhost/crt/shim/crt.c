@@ -17,6 +17,7 @@
  * written by the runtime's own `loft_get_file`, `loft_write_file`, `loft_read_file`, …, and a
  * relative path resolves against the program's directory as a C program's does. */
 #include "../../../src/c/loft_io.h"
+#include "../../../src/c/loft_image.h"
 
 /* A text that crossed the bridge: `bytes` long (an embedded NUL kept), or null when -1. */
 static loft_str loft_crt_str(const char *val, int64_t bytes) {
@@ -260,6 +261,20 @@ void loft_crt_stack_str_bool(int64_t store, int64_t at, int64_t v) {
 void loft_crt_stack_str_of_ref(int64_t store, int64_t at, int64_t s, int64_t r, int64_t p) {
     loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
     *(loft_str *) loft_crt_slot_at(store, at) = t ? loft_view(t) : loft_null_text();
+}
+
+/* A run image's constant (`OpConstRef`): a fresh store adopting `bytes` — the store as Rust built
+ * it — as its image (`loft_image_adopt`, the loader `store_load` uses); its reference written
+ * into `io`.  Answers 0 when the image is refused. */
+int64_t loft_crt_store_from_image(int64_t *io, int64_t n_io, const char *bytes, int64_t n) {
+    loft_ref r = loft_ref_null();
+    loft_database(&r, 8);
+    uint8_t *copy = (uint8_t *) malloc((size_t) n);
+    if (!copy) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(copy, bytes, (size_t) n);
+    if (!loft_image_adopt(r, copy, (size_t) n, 0, 0, 0, "a constant", "run image")) return 0;
+    loft_crt_put_ref(io, n_io, r);
+    return 1;
 }
 
 /* `copy_result`: `n` bytes moved within the stack. */
