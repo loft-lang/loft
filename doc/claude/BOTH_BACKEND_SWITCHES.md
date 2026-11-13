@@ -411,7 +411,8 @@ holds either the caller's store or one it minted, so the scope pass snapshots th
 in (`__rbw_<buf> = OpRefAlias(buf)`) and every free of that local declines on it; and a local
 first bound inside an `if` (whose pre-init makes the bind a rebind) adopts at that bind
 (`Variable::deferred_first_bind`).  **`LOFT_NO_ADOPT_BUFFER_REUSE=1`** keeps those buffers
-null again and mints no snapshot — the first bisect step for a use-after-free or a wrong
+null again (the snapshot is still minted: a rebind of the buffer frees what it displaces only
+through it) — the first bisect step for a use-after-free or a wrong
 field out of a callee that rebinds or returns past a local it promoted onto its buffer.
 `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
 
