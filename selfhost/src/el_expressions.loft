@@ -12551,12 +12551,20 @@ fn is_zero(n: ir::Node) -> boolean {
 // side — a bare local or a truthy conversion (`OpConvBoolFrom…`) where it holds, a heap null
 // test (`OpRefIsNull`, `OpVectorIsNull`) where it fails, `v == null` / `v != null` against the
 // null literal, `!` swapping the sides; -1 for any other shape, which proves nothing.
+// The presence proof of a conjunction: a proof that holds where its conjunct holds, the left
+// one first.
+fn and_presence(a: DivProof, b: DivProof) -> DivProof {
+  if a.v >= 0 && a.then { a } else if b.v >= 0 && b.then { b } else { DivProof { v: -1, then: false } }
+}
+
 fn presence_proof(e: el::El, test: ir::Node) -> DivProof {
   none = DivProof { v: -1, then: false };
   match test {
     NdSpan { pos: _, inner } => presence_proof(e, inner),
     NdVar { n } => DivProof { v: n, then: true },
-    NdIf { cond, t, f: _ } => if el_ir::unspan(t) == ir::NdBoolean { b: true } { presence_proof(e, cond) } else { none },
+    // `a && b` (`if a { b } else { false }`): where it holds, both conjuncts do — either one's
+    // presence proof is the conjunction's (`narrowings_from_condition`).
+    NdIf { cond, t, f } => if el_ir::unspan(t) == ir::NdBoolean { b: true } { presence_proof(e, cond) } else if el_ir::unspan(f) == ir::NdBoolean { b: false } { and_presence(presence_proof(e, cond), presence_proof(e, t)) } else { none },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
       if len(args) == 2 && (starts_with(nm, "OpEq") || starts_with(nm, "OpNe")) {
@@ -18753,7 +18761,11 @@ fn while_expr(e: el::El, vars: el_vars::Vars, cond: integer, body: integer?) -> 
     return ex(ir::NdNull, ir::TyVoid);
   }
   vars.whiles += 1;
+  // `parse_while`: the body runs only where the condition holds, so a non-null proof in it
+  // narrows its variable there as an `if`'s does (`(N-Chain)`); a write drops it.
+  facts = assume_condition(e, vars, c.code, true);
   b = parse_block(e, vars, body!, "while", ir::TyVoid);
+  forget_facts(vars, facts);
   vars.whiles -= 1;
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
