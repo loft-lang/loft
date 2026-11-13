@@ -775,6 +775,69 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
   }
 }
 
+// src/bind_lowering.rs fn join_base — the base a rebind joins on (R1): a choice's
+// whole-variable arm (`choice_var_arm`), else the oracle's `Join` base.
+pub fn join_base(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, value: ir::Node, v: integer) -> integer? {
+  cv = choice_var_arm(b, ops, d, f, value, v);
+  if cv != null {
+    return cv;
+  }
+  own::named_join_base(own::ownership_of(b, ops, d, value))
+}
+
+// src/bind_lowering.rs fn choice_var_arm (`@FR-B-Copy`) — the variable a CHOICE hands over whole
+// on one of its arms (`class = bound ?? Owned`) while every other arm answers a store of its own
+// or null: the rebind joins on it.  Null for anything else — a second such variable, or an arm
+// that may be a view.
+pub fn choice_var_arm(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, value: ir::Node, v: integer) -> integer? {
+  if !(own::bare(value) is NdIf) {
+    return null;
+  }
+  arms: vector<ir::Node> = [];
+  choice_leaves(value, arms);
+  var: integer? = null;
+  for arm in arms {
+    a = own::bare(arm);
+    w = match a { NdVar { n } => n, _ => -1 };
+    if w >= 0 && w != v && w < len(f.variables) && !own::is_argument(f, w)
+        && own::heap_def_nr(tp(f, w)) != null && !own::var_name(f, w).starts_with("__") {
+      if var != null && var! != w {
+        return null;
+      }
+      var = w;
+      continue;
+    }
+    if own::holds_no_store(b, a) {
+      continue;
+    }
+    // A construction's work-ref, or a call that answers a store of its own.
+    if w >= 0 && own::var_name(f, w).starts_with("__ref_") {
+      continue;
+    }
+    if w < 0 && own::ownership_of(b, ops, d, a) is Owned {
+      continue;
+    }
+    return null;
+  }
+  var
+}
+
+// The leaves of a choice: each arm's value, a block's its tail.
+fn choice_leaves(n: ir::Node, out: vector<ir::Node>) {
+  match n {
+    NdSpan { pos: _, inner } => choice_leaves(inner, out),
+    NdIf { cond: _, t, f } => {
+      choice_leaves(t, out);
+      choice_leaves(f, out);
+    },
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      out += [if len(ops) > 0 { ops[len(ops) - 1]! } else { n }];
+    },
+    _ => { out += [n]; }
+  }
+}
+
 // src/use_analysis.rs fn tuple_member_roots — the slots naming every heap member of a tuple
 // LITERAL argument of type `t`; null when one cannot be named (a tuple variable, a member built
 // inline that was not hoisted).

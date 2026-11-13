@@ -64,7 +64,14 @@ counted them.
    selfhost/front/elab.loft`): 53 leaks and 12 re-free / use-after-end findings, mostly on
    paths gate E does not run — each a real defect or a records false positive to settle
    (`struct_match`'s `__ref_2` re-free reads as a false positive).
-5. **Suite cells**: the choice join has none yet.  The other fixes' cells are on suite
+5. **The rustc writer and the choice join**: `generation/dispatch.rs` joins only a CALL's answer
+   (`call_bind_taken`), so a rebind `re_bind` joins on a choice (`class = bound ?? Owned`) is
+   bound plainly on `--native` alone, and `class` and `bound` free one record twice (the
+   interpreter and C are right).  Repro: the suite cell
+   `rules/binding/B-Copy/a-branch-handing-back-a-local-copies-it-into-a-binding-assigned-before.loft`
+   under `--native`.  The C writer's `join_stmt` is the model.
+6. **Suite cells**: the choice join's is `rules/binding/B-Copy/a-branch-handing-back-a-local-copies-it-into-a-binding-assigned-before.loft`
+   (`LOFT_NO_CHOICE_VAR_JOIN`).  The other fixes' cells are on suite
    `91-self-host` with receipts; two score only under an instrument (O-Detach under
    `LOFT_POISON=1`, O-Buffer under `LOFT_STRICT_STORES=1`), as their CHANNEL lines say.
 
