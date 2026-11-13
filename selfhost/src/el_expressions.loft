@@ -6853,7 +6853,9 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   if el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !is_link(e, rhs!) {
     return vec_copy_bind(e, vars, v, x);
   }
+  vars.assign_seam = true;
   c = stored(e, vars, x, declared!);
+  vars.assign_seam = false;
   if c == null {
     refuse_known(e, x.tp, "a value its declared type converts: {type_kind(x.tp)} to {type_kind(declared!)}");
     return ex(ir::NdNull, ir::TyVoid);
