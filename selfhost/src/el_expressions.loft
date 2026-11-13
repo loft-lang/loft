@@ -3672,10 +3672,6 @@ fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer) -> Ex {
   // A closure answering a text is not carried: its value's type lists the hidden text buffers
   // the lambda takes, and its captures and body borrow from the closure record.
-  if !e.first_pass && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyText {
-    el::refuse(e, "a closure answering a text");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-  }
   if e.first_pass {
     end = match e.p.nodes[body] { SBlock { end: be } => be, _ => 0 };
     rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
@@ -3740,7 +3736,13 @@ fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps:
     },
     _ => {}
   }
-  ex(el_ir::v_block(ops, ft, "fn_ref_with_closure"), ft)
+  // The block itself lists every parameter but the closure record — a text answer's hidden
+  // `&text` buffer too — as `fn_ref_with_closure` types it; the value keeps the visible ones.
+  bt = match ft {
+    TyFunction { args: _, result, dep, consts } => ir::TyFunction { args: [for a in el::def(e, d).attributes if a.name != "__closure" { a.typedef[0] ?? ir::TyVoid }], result: result, dep: dep, consts: consts },
+    _ => ft
+  };
+  ex(el_ir::v_block(ops, bt, "fn_ref_with_closure"), ft)
 }
 
 // `Deps::callee_frame1`'s tag: a dep naming a slot of the callee's frame, not the caller's.
