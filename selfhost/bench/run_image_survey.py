@@ -50,6 +50,8 @@ def main():
     ap.add_argument("--chapter", action="append", default=[], help="a suite chapter (repeatable)")
     ap.add_argument("--top", type=int, default=30)
     ap.add_argument("--timeout", type=int, default=60)
+    ap.add_argument("--show", action="append", default=[],
+                    help="list the programs of a verdict (agree, differ, refused, crash; repeatable)")
     o = ap.parse_args()
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     loft = o.loft or os.path.join(root, "target", "release", "loft")
@@ -71,13 +73,18 @@ def main():
                                           o.chapter, o.scripts_only) if census.plain(f)]
         counts = collections.Counter()
         ops = collections.Counter()
+        shown = []
         with cf.ThreadPoolExecutor(o.jobs) as ex:
             for f, verdict, what in ex.map(lambda f: one(f, loft, runner, tmp, env, o.timeout), files):
                 counts[verdict] += 1
+                if verdict in o.show:
+                    shown.append(f"{verdict}\t{os.path.relpath(f, root)}\t{what[0]}")
                 if verdict == "refused":
                     ops[what[0]] += 1
         print(f"{counts['agree']} of {len(files)} programs agree; " +
               ", ".join(f"{counts[k]} {k}" for k in ("refused", "differ", "crash", "noimage") if counts[k]))
+        for line in sorted(shown):
+            print(line)
         if ops:
             print("first operator not carried, by programs it stops:")
             for name, n in ops.most_common(o.top):

@@ -236,6 +236,19 @@ void loft_crt_stack_str_of_field(int64_t store, int64_t at, int64_t s, int64_t r
     *(loft_str *) loft_crt_slot_at(store, at) = loft_get_text(loft_crt_ref(s, r, p), (uint32_t) fld);
 }
 
+/* A `*_dest` native's write: `val` appended to the text the reference `(s, r, p)` names — a text
+ * local of the stack store, or a text a store holds. */
+void loft_crt_ref_text_append(int64_t s, int64_t r, int64_t p, const char *val, int64_t bytes) {
+    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
+    if (t) loft_text_concat(t, loft_crt_str(val, bytes));
+}
+
+/* `OpClearStackText`: the text the reference `(s, r, p)` names emptied, its buffer kept. */
+void loft_crt_ref_text_clear(int64_t s, int64_t r, int64_t p) {
+    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
+    if (t) loft_text_set(t, loft_lit("", 0));
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);

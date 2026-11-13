@@ -616,3 +616,96 @@ pub fn named(ts: vector<ir::DbType>, name: text) -> integer? {
   }
   null
 }
+
+// The element type of `tp` when it is a hash, else null.
+pub fn hash_element(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtHash { content, fields: _ } => content,
+    _ => null,
+  }
+}
+
+// The element type of `tp` when it is a plain vector, else null.
+// An array's element type (a vector of linked records), or null.
+pub fn array_element(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtArray { content } => content,
+    _ => null,
+  }
+}
+
+pub fn vector_element(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtVector { content } => content,
+    _ => null,
+  }
+}
+
+// S4's keyed collections, by the kind the shim's keyed routines take: 1 a sorted, 2 an ordered (a
+// sorted of linked records), 3 an index, 4 a spatial index, 5 a trie; null for any other type.
+pub fn keyed_kind(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtSorted { content: _, keys: _ } => 1,
+    PtOrdered { content: _, keys: _ } => 2,
+    PtIndex { content: _, keys: _ } => 3,
+    PtRadix { content: _, fields: _ } => 4,
+    PtTrie { content: _, key: _ } => 5,
+    _ => null,
+  }
+}
+
+// The element type of a keyed collection of S4's, or null.
+pub fn keyed_element(ts: vector<ir::DbType>, tp: integer) -> integer? {
+  t = ts[tp];
+  if t == null {
+    return null;
+  }
+  match t.parts[0]! {
+    PtSorted { content, keys: _ } => content,
+    PtOrdered { content, keys: _ } => content,
+    PtIndex { content, keys: _ } => content,
+    PtRadix { content, fields: _ } => content,
+    PtTrie { content, key: _ } => content,
+    _ => null,
+  }
+}
+
+// The collection a record is added to (`record_collection`): the parent itself (field 65535), or
+// the parent struct's field `fld`, read at its position (`at`, `loft_field`) when it has no
+// linked siblings — `at` null where it has, which no caller carries.
+pub struct RecordColl {
+  pub tp: integer,
+  pub fld: integer,
+  pub at: integer?
+}
+
+pub fn record_collection(ts: vector<ir::DbType>, ptp: integer, fld: integer) -> RecordColl {
+  if fld != 65535 {
+    match ts[ptp]!.parts[0]! {
+      PtStruct { fields } => {
+        f = fields[fld]!;
+        if len(f.other_indexes) == 0 {
+          return RecordColl { tp: f.content, fld: fld, at: f.position };
+        }
+      }
+      _ => {}
+    }
+  }
+  RecordColl { tp: ptp, fld: fld, at: null }
+}

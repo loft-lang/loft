@@ -23,6 +23,7 @@ fn main() {
   }
   r = img!;
   hs = brun::bind_ops(r);
+  ns = brun::bind_natives(r);
   entry = run_image::entry(r);
   if entry < 0 {
     eprintln("refused: the image has no main");
@@ -32,7 +33,7 @@ fn main() {
   crt::stack_new(io, 65536);
   stk = io[0] ?? 0;
   t1 = ticks();
-  o = brun::run(r, hs, stk, entry);
+  o = brun::run(r, hs, ns, stk, entry);
   t2 = ticks();
   crt::stack_free(stk);
   if o.refused != "" {

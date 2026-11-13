@@ -82,6 +82,18 @@ H_INT_NULL = 60;
 H_TEXT_NULL = 61;
 H_LENGTH_TEXT = 62;
 H_EQ_TEXT = 63;
+H_STATIC_CALL = 64;
+H_PREALLOC_VECTOR = 65;
+H_CLEAR_VECTOR = 66;
+H_PUSH = 67;
+H_PUSH_FLOAT = 68;
+H_NEW_RECORD = 69;
+H_FINISH_RECORD = 70;
+H_GET_VECTOR = 71;
+H_LENGTH_VECTOR = 72;
+H_CONST_ENUM = 73;
+H_CONV_BOOL_FROM_REF = 74;
+H_CLEAR_STACK_TEXT = 75;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -163,8 +175,57 @@ pub fn handler(name: text) -> integer {
     "OpConvTextFromNull" => H_TEXT_NULL,
     "OpLengthText" => H_LENGTH_TEXT,
     "OpEqText" => H_EQ_TEXT,
+    "OpStaticCall" => H_STATIC_CALL,
+    "OpPreAllocVector" => H_PREALLOC_VECTOR,
+    "OpClearVector" => H_CLEAR_VECTOR,
+    "OpPushInt" => H_PUSH,
+    "OpPushInt4" => H_PUSH,
+    "OpPushBoolean" => H_PUSH,
+    "OpPushEnum" => H_PUSH,
+    "OpPushCharacter" => H_PUSH,
+    "OpPushByte" => H_PUSH,
+    "OpPushFloat" => H_PUSH_FLOAT,
+    "OpPushSingle" => H_PUSH_FLOAT,
+    "OpNewRecord" => H_NEW_RECORD,
+    "OpNewRecordNP" => H_NEW_RECORD,
+    "OpFinishRecord" => H_FINISH_RECORD,
+    "OpGetVector" => H_GET_VECTOR,
+    "OpLengthVector" => H_LENGTH_VECTOR,
+    "OpConstEnum" => H_CONST_ENUM,
+    "OpConvBoolFromRef" => H_CONV_BOOL_FROM_REF,
+    "OpClearStackText" => H_CLEAR_STACK_TEXT,
     _ => -1
   }
+}
+
+// The runner's natives, by the number `native_handler` gives each name: each pops its
+// arguments off the stack and pushes its result as its Rust body does (`src/native.rs`).
+N_ASSERT = 1;
+N_ENV_VARIABLE_DEST = 2;
+N_NOW = 3;
+N_TICKS = 4;
+N_PROTECT = 5;
+N_UNPROTECT = 6;
+
+pub fn native_handler(name: text) -> integer {
+  match name {
+    "n_assert" => N_ASSERT,
+    "n_env_variable_dest" => N_ENV_VARIABLE_DEST,
+    "n_now" => N_NOW,
+    "n_ticks" => N_TICKS,
+    "n_protect_store_frees" => N_PROTECT,
+    "n_unprotect_store_frees" => N_UNPROTECT,
+    _ => -1
+  }
+}
+
+// The runner's number for each native of the image, by the index `OpStaticCall` carries.
+pub fn bind_natives(img: ir::RunImage) -> vector<integer> {
+  ns: vector<integer> = [];
+  for name in img.natives {
+    ns += [native_handler(name)];
+  }
+  ns
 }
 
 // The constant operands each operator reads, in the image's letters (`ir_store::operand_layout`):
@@ -217,6 +278,13 @@ fn layout_of(h: integer) -> text {
     57 => "h",
     58 => "h",
     59 => "h",
+    64 => "h",
+    65 => "hh",
+    69 => "hh",
+    70 => "hh",
+    71 => "h",
+    73 => "e",
+    75 => "h",
     _ => ""
   }
 }
@@ -227,7 +295,8 @@ pub fn bind_ops(img: ir::RunImage) -> vector<integer> {
   hs: vector<integer> = [];
   for name in img.ops {
     h = handler(name);
-    if h > 0 && (img.layouts[len(hs)] ?? "") != layout_of(h) {
+    want = if name == "OpPushByte" { "i" } else { layout_of(h) };
+    if h > 0 && (img.layouts[len(hs)] ?? "") != want {
       h = -2;
     }
     hs += [h];
@@ -327,7 +396,7 @@ pub struct Outcome {
 
 // Run the image's code from `entry` (a code position) on stack store `stk`, the operators bound
 // by `hs` (`bind_ops`), until the entry frame returns.
-pub fn run(img: ir::RunImage, hs: vector<integer>, stk: integer, entry: integer) -> Outcome {
+pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: integer, entry: integer) -> Outcome {
   pc = entry;
   // `State::execute`: the entry frame's return position at 0, the frame from 8.
   sp = 8;
@@ -336,6 +405,9 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, stk: integer, entry: integer)
   steps = 0;
   table_loaded = false;
   io: vector<integer> = [NULL_STORE, 0, 0];
+  // Each element type's default image, derived on first use (`types::default_image`).
+  images: vector<vector<u8>> = [];
+  imaged: vector<boolean> = [];
   while true {
     if sp + 1024 > cap {
       cap = sp + 65536;
@@ -676,6 +748,135 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, stk: integer, entry: integer)
       b = crt::stack_str(stk, sp + 16);
       set_bool(stk, sp, a == b);
       sp += 8;
+    } else if h == H_STATIC_CALL {
+      // `static_call`: the native by the index the operator carries, which pops its arguments
+      // and pushes its result on this stack.
+      idx = u16_at(img.code, pc);
+      pc += 2;
+      nh = ns[idx] ?? -1;
+      if nh == N_ASSERT {
+        line = get(stk, sp - 8);
+        file = crt::stack_str(stk, sp - 24);
+        message = crt::stack_str(stk, sp - 40);
+        test = get_bool(stk, sp - 48);
+        sp -= 48;
+        assert(test, message ?? "", file ?? "", line ?? 0);
+      } else if nh == N_ENV_VARIABLE_DEST {
+        crt::slot_ref(io, stk, sp - 16);
+        vname = crt::stack_str(stk, sp - 32);
+        sp -= 32;
+        crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, env_variable(vname ?? "") ?? "");
+      } else if nh == N_NOW || nh == N_TICKS {
+        set(stk, sp, if nh == N_NOW { now() } else { ticks() });
+        sp += 8;
+      } else if nh == N_PROTECT || nh == N_UNPROTECT {
+        sp -= 16;
+        crt::slot_ref(io, stk, sp);
+        crt::protect(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, nh == N_PROTECT);
+      } else {
+        nname = img.natives[idx] ?? "native {idx}";
+        return Outcome { refused: "a native the runner does not carry: {nname} at {at}", steps: steps };
+      }
+    } else if h == H_PREALLOC_VECTOR {
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::vec_prealloc(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, u16_at(img.code, pc), u16_at(img.code, pc + 2));
+      pc += 4;
+    } else if h == H_CLEAR_VECTOR {
+      if !table_loaded {
+        load_table(img.types);
+        table_loaded = true;
+      }
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::vec_clear(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    } else if h == H_PUSH {
+      // The value popped at its own width, then the vector.
+      name = img.ops[op] ?? "";
+      mn = 0;
+      if name == "OpPushByte" {
+        mn = i32_at(img.code, pc);
+        pc += 4;
+      }
+      which = if name == "OpPushInt" { crt::P_INT } else if name == "OpPushInt4" { crt::P_INT4 } else if name == "OpPushCharacter" { crt::P_CHARACTER } else if name == "OpPushByte" { crt::P_BYTE } else if name == "OpPushEnum" { crt::P_ENUM } else { crt::P_BOOLEAN };
+      sp -= 8;
+      v = if which == crt::P_BOOLEAN { crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + sp, 0, 0) } else if which == crt::P_ENUM { crt::get_w(crt::W_ENUM, stk, 1, 8 + sp, 0, 0) } else if which == crt::P_CHARACTER { crt::get_w(crt::W_CHARACTER, stk, 1, 8 + sp, 0, 0) } else { get(stk, sp) };
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::vec_push(which, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, mn, v);
+    } else if h == H_PUSH_FLOAT {
+      single = (img.ops[op] ?? "") == "OpPushSingle";
+      sp -= 8;
+      v = crt::get_float(stk, 1, 8 + sp, 0, single);
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::vec_push_float(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, v, single);
+    } else if h == H_NEW_RECORD || h == H_FINISH_RECORD {
+      // A record added to a plain vector, as `lower.loft` adds it: the collection is the parent
+      // or its field `fld` at its position; the element appended and filled with its type's
+      // defaults (not for `OpNewRecordNP`), then counted by `OpFinishRecord`.
+      ptp = u16_at(img.code, pc);
+      fld = u16_at(img.code, pc + 2);
+      pc += 4;
+      rc = types::record_collection(img.types, ptp, fld);
+      elem = types::vector_element(img.types, rc.tp);
+      if (rc.fld != 65535 && rc.at == null) || elem == null {
+        return Outcome { refused: "a record added to a collection that is not a plain vector: {img.types[rc.tp]!.name} at {at}", steps: steps };
+      }
+      if h == H_FINISH_RECORD {
+        sp -= 16;
+      }
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      vs = io[0] ?? NULL_STORE;
+      vr = io[1] ?? 0;
+      vp = (io[2] ?? 0) + (rc.at ?? 0);
+      if h == H_FINISH_RECORD {
+        crt::vec_finish(vs, vr, vp);
+      } else {
+        crt::vec_append(io, vs, vr, vp, img.types[elem!]!.size);
+        if (img.ops[op] ?? "") == "OpNewRecord" {
+          while len(imaged) <= elem! {
+            images += [[]];
+            imaged += [false];
+          }
+          if !(imaged[elem!] ?? false) {
+            images[elem!] = types::default_image(img.types, elem!);
+            imaged[elem!] = true;
+          }
+          crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[elem!]!);
+        }
+        crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+        sp += 16;
+      }
+    } else if h == H_GET_VECTOR {
+      size = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 8;
+      ix = get(stk, sp);
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::vec_get(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, size, ix);
+      crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+      sp += 16;
+    } else if h == H_LENGTH_VECTOR {
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      set(stk, sp, crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0));
+      sp += 8;
+    } else if h == H_CONST_ENUM {
+      set(stk, sp, img.code[pc] ?? 0);
+      pc += 1;
+      sp += 8;
+    } else if h == H_CONV_BOOL_FROM_REF {
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      set_bool(stk, sp, (io[1] ?? 0) != 0);
+      sp += 8;
+    } else if h == H_CLEAR_STACK_TEXT {
+      crt::slot_ref(io, stk, sp - u16_at(img.code, pc));
+      pc += 2;
+      crt::ref_text_clear(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };

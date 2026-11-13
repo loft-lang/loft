@@ -332,6 +332,10 @@ fn c_stack_str_null(store: integer, at: integer);
 #c "loft_crt_stack_str_null" "void(int64_t, int64_t)"
 fn c_stack_str_of_field(store: integer, at: integer, s: integer, r: integer, p: integer, fld: integer);
 #c "loft_crt_stack_str_of_field" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+fn c_ref_text_append(s: integer, r: integer, p: integer, val: text, bytes: integer);
+#c "loft_crt_ref_text_append" "void(int64_t, int64_t, int64_t, const char*, int64_t)"
+fn c_ref_text_clear(s: integer, r: integer, p: integer);
+#c "loft_crt_ref_text_clear" "void(int64_t, int64_t, int64_t)"
 fn c_stack_move(store: integer, from: integer, to: integer, n: integer);
 #c "loft_crt_stack_move" "void(int64_t, int64_t, int64_t, int64_t)"
 fn c_stack_str(out: vector<u8>, store: integer, at: integer) -> integer;
@@ -365,6 +369,16 @@ pub fn stack_str_null(store: integer, at: integer) {
 // `OpGetText`: a view of the text at field `fld` of `(s, r, p)`, pushed at `at`.
 pub fn stack_str_of_field(store: integer, at: integer, s: integer, r: integer, p: integer, fld: integer) {
   c_stack_str_of_field(store, at, s, r, p, fld);
+}
+
+// A `*_dest` native's write: `val` appended to the text the reference `(s, r, p)` names.
+pub fn ref_text_append(s: integer, r: integer, p: integer, val: text?) {
+  c_ref_text_append(s, r, p, val ?? "", bytes_of(val));
+}
+
+// `OpClearStackText`: the text the reference `(s, r, p)` names emptied.
+pub fn ref_text_clear(s: integer, r: integer, p: integer) {
+  c_ref_text_clear(s, r, p);
 }
 
 // `n` bytes of the stack moved from `from` to `to` (`copy_result`).
