@@ -12,6 +12,14 @@ every active branch into one PR.
 
 ## Where it stands
 
+At `0653ade1e` (later than the rows below): gate E 617 of 2062 agree, 26 differ, 0 freed twice;
+the strict-stores C elaborator leaks **0 stores** over the 2062 programs (no fault); the records
+sweep reads CLEAN on all 1679 suite cells; the records report 13 findings on the elaborator
+itself (`n_index`'s re-free is a false one: the checker loses that `x`, a field of `__lift_3`,
+names #4 only where `__lift_3` does once the `if` joins — path-correlated holders are owed).
+The suite runner fails a cell arming `LOFT_DOUBLE_FREE` that reports a re-free.  The earlier
+state, kept for reference:
+
 - **Gate E** (`selfhost/front/elab_gate.py`, the C-built elaborator): 617 of 2054 agree, 25
   differ, **0 freed twice** at `8255edd6c`.
 - **Suite** (suite `91-self-host`, both-c, dev binary): 3316 passed; the 2 failures are the
@@ -42,6 +50,17 @@ every active branch into one PR.
 | `6c9a4ff68` | C: a first bind joined on a choice's variable into a view, and the copy leaked (`call_args`' `last_t`: ~100k TypeT; came with `8255edd6c`) | `LOFT_C_FIRST_CHOICE_JOIN_ANY` |
 | `ba445643c` | a witnessed local bound from a choice of buffer calls lost the store a call made into a null buffer (`member`: ~71k Ex; both backends) | `LOFT_NO_WITNESS_NULL_BUFFER` |
 | `c89a8b1f4` | the cargo build-dir opt-out retired (release-blocking); `9152f7fd3` fixes the tests that assumed `deps/` | — |
+| `a31844d73` | loft#2476: a view bound from a choice of buffer calls leaked the store a call made into a null buffer (`vector_return`) | — |
+| `324035eb8` | a `!`-checked argument read as a mint, so the copy of the answer lost its source-free (`classify_tail`, ~1.1k Own) | `LOFT_NO_NCR_ARG_ROOT` |
+| `32d6b49bd` | `out = out[0..at] + [g] + …` typed `out` with the slice's scratch store, never freed (`sorted_groups`; main, both backends) | `LOFT_NO_SELF_SLICE_DEPS` |
+| `094f56067`, `058453a3d` | loft#2477: a rebind reading a lift's view freed the store twice; the lift lets go, for an owner only (a view leaked: `member`) | `LOFT_NO_LIFT_LET_GO`, `LOFT_LIFT_LET_GO_VIEWS` |
+| `77ab3fa86` | a call argument choosing a join arm's call read as a mint, so the copy lost its source-free (`place_assignment`, ~520 Node); only for call arguments — a `??` arm witness keeps the old reading | `LOFT_NO_JOIN_ARM_ARG_ROOT` |
+| `70fa71fe5` | an early-leaving return arm's source (`_ret_src`) was never freed, though it owned a fresh record (`pattern_cond`) | `LOFT_NO_RET_SRC_OWNS` |
+| `65c48e585` | a scalar vector built inline as an argument made the bracket incomplete (`match_expr`'s `arm_typed`) | `LOFT_NO_SCALAR_VECTOR_EXEMPT` |
+| `c5febb2ef` | C: a copied answer was compared with the destination's freed old store; a reused slot matched and the answer leaked (`fill_instance`) | `LOFT_C_STALE_HELD_KEEP` |
+| `916d55b2e` | `70fa71fe5` freed an early-leaving arm's LITERAL twice (its record is the literal buffer's); the source owns only a non-literal tail | `LOFT_NO_RET_SRC_OWNS` |
+| `fd2e88c85` | records: a store a hidden buffer parameter holds at an exit is the caller's (false leaks after `ba445643c`) | `LOFT_RECORDS_NO_BUFFER_HANDS_BACK` |
+| `0653ade1e` | C: a literal field read into a skip-free temporary was copied, and leaked (`sink_ncc`) | `LOFT_C_SKIPFREE_ELEMENT_COPY` |
 
 The C re-free census (`LOFT_DOUBLE_FREE`) now names a same-site re-free (first 20); it only
 counted them.
@@ -76,6 +95,10 @@ LOFT_EMIT_PARSED=p.store target/debug/loft <program>
 LOFT_NO_NATIVE_LIBS=1 LOFT_NO_AUTO_REBUILD=1 LOFT_REFREE_FAILS=1 \
   target/debug/loft --interpret selfhost/front/elab.loft p.store <program> std.store
 ```
+
+A long check runs a COPY of the dev binary (`cp target/debug/loft <scratch>/loft-<sha>`, passed as
+`--loft`): a `cargo build` for the next fix otherwise replaces the binary under a running gate,
+and the result mixes two builds.
 
 `LOFT_STRICT_STORES=1` names a use after free; it also never reuses a freed slot, which hides a
 free through a stale reference — the plain build with `LOFT_DOUBLE_FREE=1` shows those.  For the
