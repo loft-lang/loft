@@ -2081,6 +2081,32 @@ impl Scopes<'_> {
                     })
                     .collect(),
             ));
+        } else if transition_free.is_none()
+            && was_in_scope
+            && !lifts.is_empty()
+            && matches!(
+                function.tp(v).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+            && !crate::env_once!(std::env::var_os("LOFT_NO_LIFT_LET_GO").is_some())
+        {
+            // The value reads `v` (`x = ex(x.code, x.tp)`), so `v` cannot let go before it is
+            // computed, and the code generator's displaced free releases what `v` held after
+            // the bind.  Where that is a lift's store, the LIFT lets go of it instead, so the
+            // store is released once (loft#2477).  `LOFT_NO_LIFT_LET_GO=1` keeps both frees.
+            let distinct = data.def_nr("OpDistinctStore");
+            transition_free = Some(Value::Insert(
+                lifts
+                    .iter()
+                    .map(|&l| {
+                        v_if(
+                            Value::Call(distinct, vec![Value::Var(v), Value::Var(l)]),
+                            Value::Null,
+                            v_set(l, Value::Null),
+                        )
+                    })
+                    .collect(),
+            ));
         } else if !lifts.is_empty()
             && let Some(free) = transition_free.take()
         {

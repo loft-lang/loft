@@ -3460,9 +3460,43 @@ impl Run<'_> {
         if distinct_pts.is_empty() {
             return None;
         }
+        // The same for the witness: a store both name on every path where it is live is named
+        // by neither where they are distinct (`if OpDistinctStore(x, __lift) null else __lift =
+        // null`, loft#2477: the lift does not hold `x`'s store on the arm that keeps it).  Read
+        // before `x` is narrowed, which leaves that store not live here.
+        // `LOFT_RECORDS_NO_DISTINCT_WITNESS_NARROW=1` narrows `x` alone.
+        let w_keep: Option<(u16, Pts)> = w
+            .filter(|&w| {
+                w != x
+                    && !crate::env_once!(
+                        std::env::var_os("LOFT_RECORDS_NO_DISTINCT_WITNESS_NARROW").is_some()
+                    )
+                    && matches!(args.get(1).map(Value::unspan), Some(Value::Var(v)) if *v == w)
+            })
+            .and_then(|w| {
+                let wp = Self::pts(&st, w);
+                let keep: Pts = wp
+                    .iter()
+                    .copied()
+                    .filter(|p| match p {
+                        Pt::Store(k) => {
+                            let info = info_of(&st, *k);
+                            !(info.has(LIVE) && info.live.contains(&w) && info.live.contains(&x))
+                        }
+                        _ => true,
+                    })
+                    .collect();
+                (keep != wp).then_some((w, keep))
+            });
         let mut distinct = st;
         if distinct_pts != *a {
             Self::narrow(&mut distinct, x, distinct_pts);
+        }
+        if let Some((w, keep)) = w_keep {
+            if keep.is_empty() {
+                return None;
+            }
+            Self::narrow(&mut distinct, w, keep);
         }
         Some(distinct)
     }
