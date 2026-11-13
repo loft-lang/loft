@@ -17409,6 +17409,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         binds: vector<ir::Node> = [];
         aliases: vector<el_vars::VarName> = [];
         binding_arm = false;
+        alts: vector<VAlt> = [];
         if sd >= 0 {
           va = variant_arm(e, vars, pats, sd, x.code);
           if va == null {
@@ -17418,6 +17419,7 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
           wild = cond == null;
           binds = va!.binds;
           aliases = va!.aliases;
+          alts = va!.alts;
         } else if scalar_subject && len(pats) == 1 && binding_name(e, pats[0]!) != "" {
           // A bare name that names nothing (`n => n * 2`) binds the subject and matches anything
           // (`binding_arm`: `n#N = _match_subj_N`, then the body).
@@ -17561,7 +17563,23 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
         if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
           ac = match b.code { NdBlock { block } => if block[0].name == "Object" { b.code } else { arm_typed(b.code, outside_deps(b.code, el_types::deps(b.tp))) }, _ => b.code };
         }
-        out += [MArm { cond: cond, code: ac, tp: b.tp }];
+        if len(alts) > 0 {
+          // One arm per listed pattern, each binding its own fields ahead of the body (or of the
+          // guard, which is asked of each pattern).
+          for al in alts {
+            if ug != null {
+              out += [MArm { cond: el_ir::v_if(al.cond, el_ir::v_block(al.binds + [ug!], ir::TyBoolean, "match_guard"), ir::NdBoolean { b: false }), code: ac, tp: b.tp }];
+            } else {
+              ai = el_ir::v_block(al.binds + [b.code], b.tp, "match_arm");
+              if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
+                ai = arm_typed(ai, outside_deps(ai, el_types::deps(b.tp)));
+              }
+              out += [MArm { cond: al.cond, code: ai, tp: b.tp }];
+            }
+          }
+        } else {
+          out += [MArm { cond: cond, code: ac, tp: b.tp }];
+        }
         if wild {
           break;
         }
@@ -19086,7 +19104,11 @@ fn sub_pattern_cond(e: el::El, vars: el_vars::Vars, pat: integer, tmp: integer, 
   }
 }
 
-struct VArm { cond: ir::Node?, binds: vector<ir::Node>, aliases: vector<el_vars::VarName> }
+struct VAlt { cond: ir::Node, binds: vector<ir::Node> }
+
+// `alts`: an alternation whose patterns bind fields, one test and binding list per pattern —
+// the arm is emitted once per pattern, as Rust splits it; empty otherwise.
+struct VArm { cond: ir::Node?, binds: vector<ir::Node>, aliases: vector<el_vars::VarName>, alts: vector<VAlt> }
 
 // `parse_match_inner`'s arm over struct enum `sd`, its subject the local `subj`: each pattern a
 // variant of the enum, the test its ordinal against the record's (`OpGetEnum` at 0); a struct
@@ -19095,7 +19117,16 @@ struct VArm { cond: ir::Node?, binds: vector<ir::Node>, aliases: vector<el_vars:
 // `_` is no test.  A field pattern with a sub-pattern, a binding in an alternation, a qualified
 // pattern and a binding of a heap field are refused by name.
 fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: integer, subj: ir::Node) -> VArm? {
-  r = VArm { cond: null, binds: [], aliases: [] };
+  r = VArm { cond: null, binds: [], aliases: [], alts: [] };
+  // An alternation whose patterns bind (`Circle { r } | Ring { r }`) is split per pattern, each
+  // binding the same `_mv_<field>_N` the first made.
+  split = false;
+  if len(pats) > 1 {
+    for pn0 in pats {
+      match e.p.nodes[pn0] { PName { fields: fs } => { if len(fs) > 0 { split = true; } }, _ => {} }
+    }
+  }
+  first_names: vector<text> = [];
   for pn in pats {
     match e.p.nodes[pn] {
       PWild => {
@@ -19119,11 +19150,9 @@ fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: intege
         disc = el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [subj, ir::NdInt { n: 0 }])]);
         c = el_ir::cl(e, "OpEqInt", [disc, ir::NdInt { n: ord }]);
         r.cond = if r.cond == null { c } else { el_ir::v_if(r.cond!, ir::NdBoolean { b: true }, c) };
-        if len(fields) > 0 && len(pats) > 1 {
-          el::refuse(e, "a binding in an alternation of variants");
-          return null;
-        }
         vd = el::variant_of(e, sd, name);
+        ab: vector<ir::Node> = [];
+        anames: vector<text> = [];
         for f in fields {
           match e.p.nodes[f] {
             PFieldPat { name: fname, pat } => {
@@ -19154,15 +19183,41 @@ fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: intege
               if read == null {
                 return null;
               }
-              mv = el_vars::create_unique(vars, "mv_{fname}", ft);
-              el_vars::set_defined(vars, mv);
-              vars.vars[mv].skip_free = true;
-              r.binds += [el_ir::v_set(mv, read!)];
-              r.aliases += [el_vars::VarName { name: fname, nr: el_vars::var(vars, fname) }];
-              el_vars::set_name(vars, fname, mv);
+              mv = -1;
+              if split {
+                for al in r.aliases {
+                  if al.name == fname {
+                    mv = el_vars::var(vars, fname);
+                  }
+                }
+              }
+              if mv >= 0 && !el_types::is_equal(e, el_vars::tp(vars, mv), ft) {
+                el::refuse(e, "a binding the listed patterns type differently: {fname}");
+                return null;
+              }
+              if mv < 0 {
+                mv = el_vars::create_unique(vars, "mv_{fname}", ft);
+                el_vars::set_defined(vars, mv);
+                vars.vars[mv].skip_free = true;
+                r.aliases += [el_vars::VarName { name: fname, nr: el_vars::var(vars, fname) }];
+                el_vars::set_name(vars, fname, mv);
+              }
+              ab += [el_ir::v_set(mv, read!)];
+              anames += [fname];
             },
             _ => {}
           }
+        }
+        if split {
+          if len(r.alts) == 0 {
+            first_names = anames;
+          } else if len(anames) != len(first_names) || !all_in(anames, first_names) {
+            el::refuse(e, "a name only some of the listed patterns bind");
+            return null;
+          }
+          r.alts += [VAlt { cond: c, binds: ab }];
+        } else {
+          r.binds += ab;
         }
       },
       _ => {
@@ -19172,6 +19227,15 @@ fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: intege
     }
   }
   r
+}
+
+fn all_in(xs: vector<text>, ys: vector<text>) -> boolean {
+  for x in xs {
+    if !ys.contains(x) {
+      return false;
+    }
+  }
+  true
 }
 
 fn unsettled(t: ir::TypeT) -> boolean {
