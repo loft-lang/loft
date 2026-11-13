@@ -231,6 +231,18 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // literal at the tail leaves them as they are (`pick`, R-Rebind against #1888's cell).  A
   // buffer the first pass RENAMED onto the tail call's work ref keeps the parameter in Rust,
   // in the signature and in the body's type — not carried: refused by name.
+  // `return_source` / `materialized_view_return` per arm: a record tail branch whose arm
+  // projects a field of a call's result is materialised into the buffer arm by arm — not carried.
+  if !e.first_pass && rb >= 0 && el_types::base(result) is TyReference {
+    match code {
+      NdBlock { block } => {
+        if len(block[0].operators) > 0 && branch_projects_call(e, peel_return(el_ir::unspan(block[0].operators[-1]!))) {
+          el::refuse(e, "a record returned from a branch whose arm projects a field of a call's result");
+        }
+      },
+      _ => {}
+    }
+  }
   if rb >= 0 && len(vars.mid_params) == 1 && el_types::base(result) is TyReference {
     match code {
       NdBlock { block } => {
@@ -15018,6 +15030,49 @@ fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
 // - a call hands its hidden `__ref_N` the buffer, and the call becomes the chain that answers
 //   it (`chain_site_set_shape`), unless the callee answers a view of its arguments.
 // Any other record value is refused by name.
+// Is `n` an `if` one of whose arms answers a field or an element of a loft function's result
+// (`if c { mk(n).inner } else { … }`)?
+fn branch_projects_call(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => arm_projects_call(e, t) || arm_projects_call(e, f),
+    _ => false
+  }
+}
+
+fn arm_projects_call(e: el::El, n: ir::Node) -> boolean {
+  a = el_ir::unspan(n);
+  // A block answers its last statement.
+  for _ in 0..10000 {
+    match a {
+      NdBlock { block } => {
+        if len(block[0].operators) == 0 {
+          return false;
+        }
+        a = el_ir::unspan(block[0].operators[-1]!);
+      },
+      _ => break
+    }
+  }
+  match a {
+    NdIf { cond: _, t, f } => {
+      either = arm_projects_call(e, t) || arm_projects_call(e, f);
+      either
+    },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if (nm == "OpGetField" || nm == "OpGetVector" || nm == "OpVectorRef") && len(args) > 0 {
+        r = el_ir::unspan(args[0]!);
+        while r is NdCall && match r { NdCall { def_nr: rd } => starts_with(el::def(e, rd).name, "OpGet") || el::def(e, rd).name == "OpVectorRef", _ => false } {
+          r = match r { NdCall { args: ra } => el_ir::unspan(ra[0] ?? ir::NdNull), _ => ir::NdNull };
+        }
+        return match r { NdCall { def_nr: cd } => starts_with(el::def(e, cd).name, "n_") || starts_with(el::def(e, cd).name, "t_"), _ => false };
+      }
+      false
+    },
+    _ => false
+  }
+}
+
 fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex {
   rb = el_vars::var(vars, "__retbuf");
   if rb < 0 {
@@ -15030,6 +15085,10 @@ fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -> Ex
   d = e.context;
   unrenamed = attr_nr(el::def(e, d), "__retbuf") >= 0;
   x = el_ir::unspan(v.code);
+  if !e.first_pass && branch_projects_call(e, x) {
+    el::refuse(e, "a record returned from a branch whose arm projects a field of a call's result");
+    return ex(ir::NdNull, ir::TyNever);
+  }
   // A `??` borrowing visible parameters alone is returned as that view (`MergeAttr`): the
   // signature borrows them, nothing is delivered into the buffer.
   is_ncc = match x { NdBlock { block } => block[0].name == "ncc", _ => false };
