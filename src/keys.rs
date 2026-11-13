@@ -3644,6 +3644,25 @@ pub fn lift_temp_view_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_LIFT_TEMP_VIEW"))
 }
 
+/// `LOFT_NO_BRANCH_LOCAL_JOIN=1` — `bind_lowering::re_bind` binds a value branch that hands
+/// back another local's whole record on one path (`c = b ?? d` into a binding assigned before)
+/// plain again, so the binding names that local's record and both free it.
+#[must_use]
+pub fn branch_local_join_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_BRANCH_LOCAL_JOIN"))
+}
+
+/// `LOFT_C_CALL_ONLY_JOIN=1` — the C writer joins a rebind at run time (`OpBindOrCopy`'s
+/// copy-or-adopt) only for a call's answer again, binding any other value `bind_lowering::re_bind`
+/// joins (an `if` choosing a view or a fresh record) as it stands, so the local names the view's
+/// store and both are freed.
+#[must_use]
+pub fn c_call_only_join() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_CALL_ONLY_JOIN"))
+}
+
 /// `LOFT_C_NULL_FREES_ENTRY=1` — the C writer's call copy into a promoted return buffer frees the
 /// store the caller handed in when the call answers null (`loft_bind_copy`'s null arm), as it did
 /// before `@FR-O-Buffer` was asked there.

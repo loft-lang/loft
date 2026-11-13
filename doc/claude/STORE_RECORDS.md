@@ -442,7 +442,7 @@ The C writer already reads `bind_lowering` for six of these choices, each with a
 gives it back its own test: whether a rebind copies a call's answer into the variable's own
 store (only where `re_bind` copies or joins; `LOFT_C_OWN_CALL_COPY=1`) or another
 variable's record (only where `re_bind` copies it, R2c; `LOFT_C_OWN_VAR_COPY=1`), whether a
-rebind joins at run time (also a kept local, where `re_bind` joins it, R1; `LOFT_C_OWN_JOIN=1`), a vector local's first null-init mint (`LOFT_C_OWN_VECTOR_NULL=1`),
+rebind joins at run time (also a kept local, where `re_bind` joins it, R1; `LOFT_C_OWN_JOIN=1`; and a value that is no call's answer, such as a `??` of a local, where `re_bind` joins it; `LOFT_C_CALL_ONLY_JOIN=1`), a vector local's first null-init mint (`LOFT_C_OWN_VECTOR_NULL=1`),
 a tuple member's first bind (`LOFT_C_OWN_TUPLE_MEMBER_BIND=1`), and whether a reassignment frees
 the store it displaces at all (`re_bind`'s `DisplacedFree`; `LOFT_C_OWN_DISPLACED_FREE=1` frees a
 compiler temporary's null reset again, a second free the writer's same-store guard makes a
@@ -452,7 +452,7 @@ at every bind, as the first bind and C do (`@FR-O-Move`); `LOFT_NO_REBIND_ADOPTS
 it into the local's own store again (the interpreter's arm R2b).  And a heap-enum local bound
 from a call that answers fresh on one path and a view of an argument on another is joined at
 run time as a record local is (F9a / R1, `OpBindOrCopy`); `LOFT_NO_ENUM_JOIN=1` deep-copies it at
-every bind.  That join takes no protect bracket, so no bracket stands between a wrong
+every bind.  A value branch that hands back another local's whole record on one path (`c = b ?? d` into a binding assigned before) is joined the same way with that local as the witness, so the local's arm is copied (`@FR-B-Copy`); `LOFT_NO_BRANCH_LOCAL_JOIN=1` binds it plain, and both then free the local's record.  The records do not yet report that second free: they read the branch's two paths as one may-set.  That join takes no protect bracket, so no bracket stands between a wrong
 signature and the caller's store: a function's return is the join of every return site (`@FR-F-Ret`), and a mid-body
 `return` never narrows the published deps while the rest of the body is read — the prune of a
 stale parameter dep waits for the tail, or for the end of a body whose returns are all mid-body.

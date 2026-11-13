@@ -130,6 +130,7 @@ use handles::retain_shared_handles;
 pub(crate) use handoff::{
     appends_to_element, copy_hands_off, copy_moves_drop_from, drop_bearing_source,
 };
+pub(crate) use join_rewrite::branch_tail_vars;
 use join_rewrite::{reassociate_coalesce_chains, rewrite_written_out, write_out_joined_copies};
 use last_use::{
     drop_bearing_stores, last_use_guard, lastuse_reclaim, reclaim_free_intent,
