@@ -105,6 +105,19 @@ start; the interpreter fills it in.
   in the form `introspect` prints.  **Slots built**: `reports slots` (`report::slots_report`)
   against `introspect --show-slots`; lifetimes and bytecode wait on their producers.
 
+## Reading a difference
+
+- **The runner's own frame, without a C build:** run it on the Rust interpreter,
+  `LOFT_NO_NATIVE_LIBS=1 loft --interpret selfhost/cover/run_program.loft --compare <image>`
+  (from `selfhost/`; seconds, where the C build of the runner takes minutes).  An env-gated
+  `eprintln` in `run.loft`'s op fetch then names every op a function runs.
+- **A run that stops before its table:** `LOFT_ALLOW_REFREE=1` lets the runner pass a re-free,
+  so it writes its `LOFT_TRACE_BIND` table (an absolute path: the runner resolves relative paths
+  from the program's directory).  Equal tables with a different run mean the runner EMITS an arm
+  differently from what both sides decided.
+- **The tools follow the compiler they were built with:** compare.py builds the runner and the
+  report tool with `target/op-census/release/loft`; rebuild that binary after a compiler change.
+
 ## Probes before building (each can fail on its own)
 
 - **PC1** — the tool can fail: one program whose stdout differs (a format the interpreter gets
