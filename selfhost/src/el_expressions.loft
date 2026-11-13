@@ -6503,7 +6503,7 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     sd = struct_literal_def(e, it);
     if sd >= 0 {
       if !el_types::is_equal(e, inner, ir::TyReference { n: sd, dep: [] }) {
-        el::refuse(e, "a vector item of another type than the field's");
+        el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {el::def(e, sd).name}");
         return ex(ir::NdNull, ir::TyVoid);
       }
       if e.first_pass {
@@ -6539,7 +6539,7 @@ fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     }
     x = expression(e, vars, it);
     if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) {
-      el::refuse(e, "a vector item of another type than the field's");
+      el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {display_type_name(e, x.tp)}");
       return ex(ir::NdNull, ir::TyVoid);
     }
     // An item handing the record's own local to a function is evaluated before the append
@@ -6950,8 +6950,11 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   if el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !is_link(e, rhs!) {
     return vec_copy_bind(e, vars, v, x);
   }
+  // `parse_declared`: `if !narrow_store_checks(…) { convert(…) }` — a `??` the narrow slot guards
+  // inside is not converted again, so its subject takes one checked cast.
+  pre = if e.first_pass { null } else { el_convert::guard_discharge(e, vars, x.code, declared!) };
   vars.assign_seam = true;
-  c = stored(e, vars, x, declared!);
+  c = if pre != null { pre } else { stored(e, vars, x, declared!) };
   vars.assign_seam = false;
   if c == null {
     refuse_known(e, x.tp, "a value its declared type converts: {type_kind(x.tp)} to {type_kind(declared!)}");
@@ -6969,7 +6972,7 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   // The annotated local is the assignment's store (`narrow_store_checks`, then
   // `guard_declared_range`), as for a plain `=`.
   code = c!;
-  if !e.first_pass {
+  if !e.first_pass && pre == null {
     g = el_convert::guard_discharge(e, vars, code, declared!);
     code = g ?? el_convert::guard_range(e, code, declared!, el_convert::guard_source(vars, code, x.tp), declared! is TyOptional);
   }
@@ -7801,9 +7804,10 @@ fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fn
 // The literal `n` written into field `fname` of the record `v` under construction (place `r`,
 // definition `d`): a vector field, or a keyed one (`hash`, `sorted`, `index`) whose records are
 // added through the record itself.
-// A literal item of a type that declares a drop hook is built apart in a store of its own and
-// copied into its element (the copy's free-source bit releasing the temporary) — not carried:
-// refused by name rather than built in place.
+// A literal item of a type that declares a drop hook, in a struct FIELD's vector literal, is built
+// apart in a store of its own and copied into its element (the copy's free-source bit releasing
+// the temporary) — not carried: refused by name rather than built in place.  A local's vector
+// literal builds such items in place, as the port does.
 fn refuses_hooked_items(e: el::El, items: vector<integer>) -> boolean {
   if e.first_pass {
     return false;
@@ -7891,7 +7895,7 @@ fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: inte
     }
     x = expression(e, vars, it);
     if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) {
-      el::refuse(e, "a vector item of another type than the field's");
+      el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {display_type_name(e, x.tp)}");
       return null;
     }
     if e.first_pass {
@@ -19781,9 +19785,6 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
     SVecLit { items: its } => { items = its; },
     _ => {}
   }
-  if refuses_hooked_items(e, items) {
-    return Built { x: ex(ir::NdNull, ir::TyUnknown { n: 0 }), items: [], elem: ir::TyUnknown { n: 0 } };
-  }
   // An empty `[]` into a local returns before `unique_elm_var`; otherwise the element local is
   // `Reference(type_def_nr(parent_tp.content()))` borrowing the destination, and a bind's
   // `parent_tp` carries the destination's deps but no content — definition 0, a bind and an
@@ -19899,7 +19900,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   }
   for x in xs {
     if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, in_t, x.tp) && !(el_types::struct_enum_def(in_t) >= 0 && variant_parent(e, x.tp) == el_types::struct_enum_def(in_t)) {
-      el::refuse(e, "a vector item of another type than the first");
+      el::refuse(e, "a vector item of another type than the first: {display_type_name(e, in_t)} then {display_type_name(e, x.tp)}");
       return refused_build();
     }
   }
