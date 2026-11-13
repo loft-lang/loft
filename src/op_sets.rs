@@ -281,3 +281,37 @@ impl OpSets {
         .then_some((src, dst))
     }
 }
+
+/// Is `op` a RELEASE statement — a free, a drop cascade, a guarded one (`if <holds a record>
+/// <release> else null`), or a release with its reset (`{ OpFreeRef(w); w =
+/// OpNullRefSentinel() }`, an owner witness's at a scope exit)?  Such a statement yields no
+/// value, so a value block's value is the last statement before its releases.  The one
+/// reading the C writer (`is_free`), the rustc writer (`is_void_value`) and the store records
+/// (`seq`) share: each had its own, and a witness release after a value was misread by all
+/// three.
+#[must_use]
+pub fn is_release_statement(data: &Data, op: &crate::data::Value) -> bool {
+    use crate::data::Value;
+    match op.unspan() {
+        Value::Call(d, _) => {
+            if (*d as usize) >= data.definitions.len() {
+                return false;
+            }
+            let name = data.def(*d).name();
+            name.starts_with("OpFree")
+                || name == "OpDropFnRef"
+                || (name.starts_with("t_")
+                    && (name.ends_with("_OpDrop") || name.ends_with("_OpDropAll")))
+                || name == "n_set_store_lock"
+        }
+        Value::If(_, t, e) => matches!(e.unspan(), Value::Null) && is_release_statement(data, t),
+        Value::Insert(items) => {
+            items.iter().any(|i| is_release_statement(data, i))
+                && items.iter().all(|i| {
+                    is_release_statement(data, i)
+                        || matches!(i.unspan(), Value::Set(..) | Value::Line(_))
+                })
+        }
+        _ => false,
+    }
+}

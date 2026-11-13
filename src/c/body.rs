@@ -2968,31 +2968,7 @@ impl<'a> FnWriter<'a> {
 
     /// A scope-exit free, or the store lock the cleanup window may hold.
     fn is_free(&self, v: &Value) -> bool {
-        match v.unspan() {
-            Value::Call(d, _) => {
-                let name = self.cx.data.def(*d).name();
-                // A drop cascade releases as a free does: a closure's (`OpDropFnRef`) and a
-                // record type's (`t_<n><Type>_OpDrop` / `_OpDropAll`), each ahead of its
-                // store's free.
-                name.starts_with("OpFree")
-                    || name == "OpDropFnRef"
-                    || (name.starts_with("t_")
-                        && (name.ends_with("_OpDrop") || name.ends_with("_OpDropAll")))
-                    || name == "n_set_store_lock"
-            }
-            // The guarded release `if <holds a record> <release> else null`.
-            Value::If(_, t, e) => matches!(e.unspan(), Value::Null) && self.is_free(t),
-            // A release with its reset (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner
-            // witness's): a free and a `Set`, so no value.
-            Value::Insert(items) => {
-                !items.is_empty()
-                    && items.iter().all(|i| {
-                        self.is_free(i) || matches!(i.unspan(), Value::Set(..) | Value::Line(_))
-                    })
-                    && items.iter().any(|i| self.is_free(i))
-            }
-            _ => false,
-        }
+        crate::op_sets::is_release_statement(self.cx.data, v)
     }
 
     /// `ops` for their effect, returning the value a `tail_capture` names.
