@@ -4734,9 +4734,20 @@ use a separate collection or add after the loop"
         // while the binding is still intact, then detach, then adopt.  It is the compiler
         // applying the workaround a user would write by hand (`t = mk(p.a + 1); p = t`), which
         // is what makes the target shape a proven artifact rather than a guess.
+        //
+        // A read of the binding is also a read of a VIEW of it (`bl = match p { V { b } => b[0],
+        // … }; p = V { b: [bl] }`): the value copies through `bl` from the store the free is
+        // about to release, so the free-then-build order read freed bytes — a wrong answer on
+        // the interpreter.  `LOFT_NO_DETACH_VIEW_READS=1` asks the name alone.
         if let Value::Set(dst, rhs) = &assign
             && *dst == var_nr
-            && rhs.reads_var(var_nr)
+            && (rhs.reads_var(var_nr)
+                || (!crate::env_once!(std::env::var_os("LOFT_NO_DETACH_VIEW_READS").is_some())
+                    && self
+                        .vars
+                        .views_of(&[var_nr])
+                        .iter()
+                        .any(|w| rhs.reads_var(*w))))
         {
             let tp = self.vars.tp(var_nr).clone();
             let hoisted = self.vars.work_refs(&tp, &mut self.lexer);
