@@ -344,6 +344,10 @@ fn c_store_from_image(io: vector<integer>, bytes: vector<u8>) -> integer;
 #c "loft_crt_store_from_image" "int64_t(int64_t*, int64_t, const char*, int64_t)"
 fn c_store_live(nr: integer) -> integer;
 #c "loft_crt_store_live" "int64_t(int64_t)"
+fn c_store_known(nr: integer) -> integer;
+#c "loft_crt_store_known" "int64_t(int64_t)"
+fn c_set_store_known(nr: integer, tp: integer);
+#c "loft_crt_set_store_known" "void(int64_t, int64_t)"
 fn c_ser_ref_text(s: integer, r: integer, p: integer);
 #c "loft_crt_ser_ref_text" "void(int64_t, int64_t, int64_t)"
 fn c_de_ref_text(s: integer, r: integer, p: integer);
@@ -414,6 +418,16 @@ pub fn store_from_image(io: vector<integer>, bytes: vector<u8>) -> boolean {
 // Is store `nr` live — not freed?
 pub fn store_live(nr: integer) -> boolean {
   c_store_live(nr) != 0
+}
+
+// The type a typed mint gave store `nr`'s root, 65535 for none (`Store::known_type`).
+pub fn store_known(nr: integer) -> integer {
+  c_store_known(nr)
+}
+
+// Store `nr`'s root type set, as a placement into a fresh store sets it.
+pub fn set_store_known(nr: integer, tp: integer) {
+  c_set_store_known(nr, tp);
 }
 
 // A text reached through a reference, serialised for `OpWriteFile`.

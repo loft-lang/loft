@@ -282,6 +282,17 @@ int64_t loft_crt_store_live(int64_t nr) {
     return nr >= 0 && nr < loft_nstores && loft_stores[nr].live ? 1 : 0;
 }
 
+/* The type a typed mint gave store `nr`'s root (`Store::known_type`), 65535 for none. */
+int64_t loft_crt_store_known(int64_t nr) {
+    return nr >= 0 && nr < loft_nstores ? loft_stores[nr].known : 0xFFFF;
+}
+
+/* As `Stores::place_record_prefilled` when the host names no store: the fresh store keeps the
+ * placed record's type. */
+void loft_crt_set_store_known(int64_t nr, int64_t tp) {
+    if (nr >= 0 && nr < loft_nstores) loft_stores[nr].known = (uint16_t) tp;
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);

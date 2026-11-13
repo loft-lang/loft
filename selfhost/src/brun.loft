@@ -178,6 +178,11 @@ H_FORMAT_SINGLE = 154;
 H_CONV_BOOL_FROM_SINGLE = 155;
 H_CONV_BOOL_FROM_CHAR = 156;
 H_EQ_REF = 157;
+H_PLACE_RECORD = 158;
+H_MOVE_VECTOR = 159;
+H_MOVE_FIELD = 160;
+H_HASH_REMOVE = 161;
+H_SET_KEYED = 162;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -390,6 +395,13 @@ pub fn handler(name: text) -> integer {
     "OpConvBoolFromSingle" => H_CONV_BOOL_FROM_SINGLE,
     "OpConvBoolFromCharacter" => H_CONV_BOOL_FROM_CHAR,
     "OpEqRef" => H_EQ_REF,
+    "OpPlaceRecord" => H_PLACE_RECORD,
+    "OpMoveVector" => H_MOVE_VECTOR,
+    "OpReplaceVector" => H_MOVE_VECTOR,
+    "OpMoveField" => H_MOVE_FIELD,
+    "OpMoveRecord" => H_MOVE_FIELD,
+    "OpHashRemove" => H_HASH_REMOVE,
+    "OpSetKeyed" => H_SET_KEYED,
     _ => -1
   }
 }
@@ -540,6 +552,11 @@ fn layout_of(h: integer) -> text {
     149 => "hb",
     150 => "hi",
     154 => "hbzc",
+    158 => "h",
+    159 => "h",
+    160 => "h",
+    161 => "h",
+    162 => "hb",
     _ => ""
   }
 }
@@ -700,6 +717,19 @@ fn make_store(ts: vector<ir::DbType>, stk: integer, io: vector<integer>, tl: vec
 fn copy_flags(ts: vector<ir::DbType>, raw: integer) -> integer {
   tp = raw & 16383;
   (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(ts, tp) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 })
+}
+
+// Type `tp`'s default image in the run's cache, derived on its first use
+// (`types::default_image`).
+fn default_of(ts: vector<ir::DbType>, images: vector<vector<u8>>, imaged: vector<boolean>, tp: integer) {
+  while len(imaged) <= tp {
+    images += [[]];
+    imaged += [false];
+  }
+  if !(imaged[tp] ?? false) {
+    images[tp] = types::default_image(ts, tp);
+    imaged[tp] = true;
+  }
 }
 
 // The width a key part takes on the stack, by its key's type: Rust's key content code is the
@@ -1328,15 +1358,8 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
           crt::vec_append(io, vs, vr, vp, img.types[rtp]!.size);
         }
         if (img.ops[op] ?? "") == "OpNewRecord" {
-          while len(imaged) <= rtp {
-            images += [[]];
-            imaged += [false];
-          }
-          if !(imaged[rtp] ?? false) {
-            images[rtp] = types::default_image(img.types, rtp);
-            imaged[rtp] = true;
-          }
-          crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[rtp]!);
+          default_of(img.types, images, imaged, rtp);
+          crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[rtp] ?? []);
         }
         crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
         sp += 16;
@@ -1486,15 +1509,8 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       crt::copy_record(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ds, dr, dp, ctp, flags);
       // A null source into a fresh destination leaves a struct its default image.
       if (io[0] ?? NULL_STORE) == NULL_STORE && ds != NULL_STORE && flags & 4 != 0 && types::is_struct(img.types, ctp) {
-        while len(imaged) <= ctp {
-          images += [[]];
-          imaged += [false];
-        }
-        if !(imaged[ctp] ?? false) {
-          images[ctp] = types::default_image(img.types, ctp);
-          imaged[ctp] = true;
-        }
-        crt::fill(ds, dr, dp, images[ctp]!);
+        default_of(img.types, images, imaged, ctp);
+        crt::fill(ds, dr, dp, images[ctp] ?? []);
       }
     } else if h == H_APPEND_VECTOR {
       vtp = u16_at(img.code, pc);
@@ -1846,14 +1862,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
             io[1] = 0;
           } else {
             crt::database(io, img.types[hb]!.size, hb);
-            while len(imaged) <= hb {
-              images += [[]];
-              imaged += [false];
-            }
-            if !(imaged[hb] ?? false) {
-              images[hb] = types::default_image(img.types, hb);
-              imaged[hb] = true;
-            }
+            default_of(img.types, images, imaged, hb);
             crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[hb]!);
           }
           crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
@@ -2031,6 +2040,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
     } else if h == H_GET_RECORD {
       // `get_record`: the key parts and then the collection popped; a hash's entry, or a
       // sorted's or an index's record, found under them (`hash_find` / `keyed_find`).
+      ensure_table(img.types, tl);
       gtp2 = u16_at(img.code, pc);
       gn = img.code[pc + 2] ?? 0;
       pc += 3;
@@ -2106,6 +2116,82 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       ear = io[1] ?? 0;
       set_bool(stk, sp, if ear == 0 || err == 0 { ear == 0 && err == 0 } else { (io[0] ?? NULL_STORE) == ers && ear == err && (io[2] ?? 0) == erp });
       sp += 8;
+    } else if h == H_PLACE_RECORD {
+      // `@FR-R-Place` (`Stores::place_record_prefilled`): a call's return buffer claimed in the
+      // store of the record its result lands in, prefilled with its type's defaults; in a fresh
+      // store when the host names none.  A record that is not an element of the host store's
+      // root vector is noted foreign (`@FR-H-RootExtent`), the root read off the store's type.
+      ptp = u16_at(img.code, pc);
+      pc += 2;
+      crt::slot_ref(io, stk, sp - 16);
+      phs = io[0] ?? NULL_STORE;
+      pfresh = phs == NULL_STORE || (io[1] ?? 0) == 0 || !crt::store_live(phs);
+      pelem = if pfresh { null } else { types::root_vector_element(img.types, crt::store_known(phs)) };
+      default_of(img.types, images, imaged, ptp);
+      pimg = images[ptp] ?? [];
+      crt::place_record(io, phs, io[1] ?? 0, io[2] ?? 0, ptp, types::enum_parent_size(img.types, ptp), pimg, pelem != null && pelem != ptp);
+      if pfresh {
+        crt::set_store_known(io[0] ?? NULL_STORE, ptp);
+      }
+      crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    } else if h == H_MOVE_VECTOR || h == H_MOVE_FIELD || h == H_HASH_REMOVE {
+      // Two references popped — the operator's first argument the deeper — and the type; the
+      // placement family (`@FR-R-Place`) and a hash's removal, through the C runtime.
+      ensure_table(img.types, tl);
+      mraw = u16_at(img.code, pc);
+      pc += 2;
+      crt::slot_ref(io, stk, sp - 16);
+      m2s = io[0] ?? NULL_STORE;
+      m2r = io[1] ?? 0;
+      m2p = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 32);
+      sp -= 32;
+      m1s = io[0] ?? NULL_STORE;
+      m1r = io[1] ?? 0;
+      m1p = io[2] ?? 0;
+      mname = img.ops[op] ?? "";
+      if h == H_MOVE_VECTOR {
+        mlinked = img.types[mraw]?.linked ?? false;
+        if mname == "OpMoveVector" {
+          crt::move_vector(m1s, m1r, m1p, m2s, m2r, m2p, mraw, mlinked);
+        } else {
+          crt::vec_replace(m1s, m1r, m1p, m2s, m2r, m2p, mraw, mlinked);
+        }
+      } else if h == H_MOVE_FIELD {
+        crt::move_field(m1s, m1r, m1p, m2s, m2r, m2p, mraw, mname == "OpMoveRecord");
+      } else if m2r != 0 {
+        // The type's top bit (`CLEAR_KEYED_VIEW`) marks a linked group's view member, which
+        // only unlinks; a sorted or an index removes through `keyed_remove`.
+        mtp = mraw & 32767;
+        mkelem = types::keyed_element(img.types, mtp);
+        if mkelem != null {
+          crt::keyed_remove(m1s, m1r, m1p, m2s, m2r, m2p, types::keyed_kind(img.types, mtp) ?? 0, mkelem!, mtp, mraw & 32768 != 0);
+        } else if types::hash_element(img.types, mtp) != null {
+          crt::hash_remove(m1s, m1r, m1p, m2s, m2r, m2p, types::content_of(img.types, mtp) ?? 0, mtp, mraw & 32768 != 0);
+        } else {
+          return Outcome { refused: "a removal from a collection the runner does not remove from: OpHashRemove at {at}", steps: steps };
+        }
+      }
+    } else if h == H_SET_KEYED {
+      // `c[k…] = v`: the key parts, the value and the collection popped; the type's top bit
+      // releases the value after (`Stores::set_keyed`).
+      ensure_table(img.types, tl);
+      kraw = u16_at(img.code, pc);
+      kn2 = img.code[pc + 2] ?? 0;
+      pc += 3;
+      ktp = kraw & 32767;
+      kkind = types::keyed_kind(img.types, ktp) ?? 0;
+      if types::hash_element(img.types, ktp) == null && kkind == 0 {
+        return Outcome { refused: "a keyed write into a collection the runner does not write into: OpSetKeyed at {at}", steps: steps };
+      }
+      sp -= push_keys(img.types, stk, ktp, kn2, sp);
+      crt::slot_ref(io, stk, sp - 16);
+      kvs = io[0] ?? NULL_STORE;
+      kvr = io[1] ?? 0;
+      kvp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 32);
+      sp -= 32;
+      crt::set_keyed(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, kvs, kvr, kvp, types::content_of(img.types, ktp) ?? 0, ktp, kn2, kraw >= 32768, kkind);
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
