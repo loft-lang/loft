@@ -954,7 +954,15 @@ struct Run<'a> {
     /// Creation site per IR node address: stable while the body is not rewritten.
     site_of: BTreeMap<usize, u32>,
     sites: Vec<SiteRec>,
-    findings: BTreeSet<Finding>,
+    /// Each finding with the source line of the statement where it was first seen (0: before
+    /// any line marker).  The line is no part of the finding's identity, so a finding seen again
+    /// on a later pass or path stays one.
+    findings: BTreeMap<Finding, u32>,
+    /// The line of the last `Line` marker the walk passed.
+    line: u32,
+    /// Where each store first ended: its line and the free that ended it, for the re-free and
+    /// use-after-end findings to name.  Beside the state, not in it: a fact about the walk.
+    end_lines: BTreeMap<SKey, (u32, String)>,
     /// The function's answer, joined over every return.
     answer: Summary,
     /// The analysis lost track somewhere (a construct it does not follow, or its budget):
@@ -1064,8 +1072,25 @@ impl Run<'_> {
         }
     }
 
+    /// ` (ended at line L by its free)` for a store whose first end the walk saw.
+    fn ended_note(&self, k: SKey) -> String {
+        self.end_lines
+            .get(&k)
+            .map(|(line, by)| {
+                if *line == 0 {
+                    format!(" (ended by {by})")
+                } else {
+                    format!(" (ended at line {line} by {by})")
+                }
+            })
+            .unwrap_or_default()
+    }
+
     fn find(&mut self, kind: &'static str, site: u32, detail: String) {
-        self.findings.insert(Finding { kind, site, detail });
+        let line = self.line;
+        self.findings
+            .entry(Finding { kind, site, detail })
+            .or_insert(line);
     }
 
     fn pts(st: &State, v: u16) -> Pts {
@@ -1196,7 +1221,10 @@ impl Run<'_> {
                 self.find(
                     "use-after-end",
                     k.site,
-                    format!("`{name}` is read by {how} after its store was freed"),
+                    format!(
+                        "`{name}` is read by {how} after its store was freed{}",
+                        self.ended_note(k)
+                    ),
                 );
             }
         }
@@ -1273,7 +1301,10 @@ impl Run<'_> {
                 self.find(
                     "re-free",
                     k.site,
-                    format!("`{name}` is freed by {how} after its store was already freed"),
+                    format!(
+                        "`{name}` is freed by {how} after its store was already freed{}",
+                        self.ended_note(k)
+                    ),
                 );
             }
             if report && info.has(HANDED) && pts.len() == 1 && !info.has(LIVE) {
@@ -1287,6 +1318,10 @@ impl Run<'_> {
             if !info.has(LIVE) {
                 continue;
             }
+            let at_line = self.line;
+            self.end_lines
+                .entry(k)
+                .or_insert_with(|| (at_line, label.clone()));
             // The alternatives naming `v` are the paths this free ends it on.
             let rest_alts: Vec<BTreeSet<u16>> = info
                 .alts
@@ -1331,6 +1366,22 @@ impl Run<'_> {
             }
             st.stores.insert(k, next);
         }
+        self.report_param_ends(v, how, report, only, &pts);
+        if report && only.is_none() {
+            Self::uncover_freed(st, v, &pts);
+        }
+    }
+
+    /// The wrong ends of an end of `v`: a free of the caller's store (a parameter's), named
+    /// alone or beside null, or beside stores of the frame's own where nothing guards the free.
+    fn report_param_ends(
+        &mut self,
+        v: u16,
+        how: &str,
+        report: bool,
+        only: Option<&BTreeSet<SKey>>,
+        pts: &Pts,
+    ) {
         // A free of a variable that names the caller's store — alone, or that or null.
         // The "or null" reading only for a plain free: a guarded one (`OpFreeRefIfDistinct`)
         // of a buffer that may be the caller's declines where its witness holds it.
@@ -1339,6 +1390,25 @@ impl Run<'_> {
         } else {
             pts.iter().collect()
         };
+        // A plain free of a variable that MAY name the caller's store beside stores of its own:
+        // nothing at run time tells the paths apart, so on the one where it names the caller's
+        // store, that store is released under the caller (the source-free's twin).  A guarded
+        // end (`only`) asked its witness already.  `LOFT_RECORDS_NO_MAYBE_PARAM_END=1` leaves it
+        // unreported.
+        if report
+            && only.is_none()
+            && how == "OpFreeRef"
+            && params.len() > 1
+            && params.iter().any(|p| matches!(p, Pt::Param(_)))
+            && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_MAYBE_PARAM_END").is_some())
+        {
+            let name = self.var_name(v);
+            self.find(
+                "wrong-end",
+                u32::MAX,
+                format!("`{name}` may be the caller's store, and {how} releases it"),
+            );
+        }
         if report && params.len() == 1 && how != "OpFreeText" && matches!(params[0], Pt::Param(_)) {
             let name = self.var_name(v);
             self.find(
@@ -1346,9 +1416,6 @@ impl Run<'_> {
                 u32::MAX,
                 format!("`{name}` is freed by {how}, but its store is the caller's"),
             );
-        }
-        if report && only.is_none() {
-            Self::uncover_freed(st, v, &pts);
         }
     }
 
@@ -1857,7 +1924,8 @@ impl Run<'_> {
                 site: k.site,
                 detail: format!("a path reaches {how} with the store live, held by {held}"),
             };
-            self.findings.insert(f);
+            let line = self.line;
+            self.findings.entry(f).or_insert(line);
         }
     }
 
@@ -1884,6 +1952,9 @@ impl Run<'_> {
         if self.steps > STEP_BUDGET {
             self.imprecise = true;
             return None;
+        }
+        if let Value::Line(n) = v {
+            self.line = *n;
         }
         match v {
             Value::Span(b) => self.eval(&b.1, st),
@@ -3629,17 +3700,10 @@ impl Run<'_> {
     }
 
     /// A call to an operator or function that answers nothing (a free, a set).
-    /// A release with its reset (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner
-    /// witness's at a scope exit): void calls and `Set`s only, so the block's value waits past it.
+    /// A release statement after a block's value (`op_sets::is_release_statement`, the one
+    /// reading the C and rustc writers share): the value waits past it.
     fn is_void_release(&self, op: &Value) -> bool {
-        let Value::Insert(items) = op.unspan() else {
-            return false;
-        };
-        !items.is_empty()
-            && items.iter().any(|i| self.is_void_call(i))
-            && items.iter().all(|i| {
-                self.is_void_call(i) || matches!(i.unspan(), Value::Set(..) | Value::Line(_))
-            })
+        crate::op_sets::is_release_statement(self.data, op)
     }
 
     fn is_void_call(&self, op: &Value) -> bool {
@@ -5023,7 +5087,9 @@ fn run_fn<'a>(
         d_nr,
         site_of: BTreeMap::new(),
         sites: Vec::new(),
-        findings: BTreeSet::new(),
+        findings: BTreeMap::new(),
+        line: 0,
+        end_lines: BTreeMap::new(),
         answer: Summary::Bottom,
         imprecise: false,
         in_field_reset: 0,
@@ -5300,6 +5366,15 @@ fn components(data: &Data, fns: &[u32]) -> Vec<Vec<u32>> {
 
 /// Every function's answer and its final run: the least fixpoint over the call graph, taken
 /// component by component, callees first, so only a recursive component iterates.
+/// ` (line N)` after a finding seen at a source line; nothing before the first marker.
+fn line_note(line: u32) -> String {
+    if line == 0 {
+        String::new()
+    } else {
+        format!(" (line {line})")
+    }
+}
+
 fn analyse_all(
     data: &Data,
     ops: &Ops,
@@ -5329,8 +5404,14 @@ fn analyse_all(
                     let lines: Vec<String> = run
                         .findings
                         .iter()
-                        .map(|f| {
-                            format!("store-{} {}{}", f.kind, site_label(&run, f.site), f.detail)
+                        .map(|(f, line)| {
+                            format!(
+                                "store-{} {}{}{}",
+                                f.kind,
+                                site_label(&run, f.site),
+                                f.detail,
+                                line_note(*line)
+                            )
                         })
                         .collect();
                     (run.answer, run.imprecise, lines)
@@ -5446,12 +5527,13 @@ fn print_records(run: &Run, name: &str, sum: Summary) {
             s.ends.iter().cloned().collect::<Vec<_>>().join(", "),
         );
     }
-    for f in &run.findings {
+    for (f, line) in &run.findings {
         eprintln!(
-            "[stores]   {} {}{}",
+            "[stores]   {} {}{}{}",
             f.kind,
             site_label(run, f.site),
-            f.detail
+            f.detail,
+            line_note(*line)
         );
     }
 }
@@ -5523,6 +5605,43 @@ mod tests {
         let d = data.def_nr(op);
         assert_ne!(d, u32::MAX, "no op {op}");
         Value::Call(d, args)
+    }
+
+    /// A plain free of a variable that names the caller's store on one path and its own on the
+    /// other releases the caller's store on the first (`@FR-F-ParamRebind`): `x` is bound to
+    /// parameter `p` where `c` holds and minted where it does not, then freed.  Falsified by
+    /// `LOFT_RECORDS_NO_MAYBE_PARAM_END` (the finding goes away), and by binding `x` only
+    /// to its own store (no `Param` point to report).
+    #[test]
+    fn a_free_of_a_maybe_parameter_store_is_a_wrong_end() {
+        let src = "struct S2 { a: integer }\n\
+                   fn t(p: S2, c: boolean) { x = S2 { a: 1 }; }\n\
+                   fn main() { t(S2 { a: 2 }, true); }\n";
+        let found = findings(src, "n_t", |data, d| {
+            let vars = &data.def(d).variables;
+            let var = |name: &str| Value::Var(vars.var(name));
+            let tp = Value::Int(i32::from(data.def(data.def_nr("S2")).known_type()));
+            v_block(
+                vec![
+                    v_if(
+                        var("c"),
+                        call(data, "OpPutRef", vec![var("x"), var("p")]),
+                        call(data, "OpDatabase", vec![var("x"), tp]),
+                    ),
+                    call(data, "OpFreeRef", vec![var("x")]),
+                ],
+                Type::Void,
+                "records-test",
+            )
+        });
+        assert!(
+            found
+                .iter()
+                .any(|l| l.contains("wrong-end") && l.contains("may be the caller's store")),
+            "a plain free of `x`, the caller's store on one path, must read as a wrong end; the \
+             records said:\n{}",
+            found.join("\n")
+        );
     }
 
     /// `design-stale-names.md` F6: an alias made AFTER a store's end is in `stale`, so a free

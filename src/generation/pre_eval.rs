@@ -1223,10 +1223,9 @@ impl Output<'_> {
             }
             Value::Block(bl) => matches!(bl.result, Type::Void),
             // A release with its reset (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner
-            // witness's) yields no value.
-            Value::Insert(items) => {
-                !items.is_empty() && items.iter().all(|i| self.is_void_value(i))
-            }
+            // witness's) yields no value (`op_sets::is_release_statement`, shared with the C
+            // writer and the store records).
+            Value::Insert(_) => crate::op_sets::is_release_statement(self.data, v),
             _ => false,
         }
     }

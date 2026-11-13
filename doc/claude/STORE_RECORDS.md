@@ -134,7 +134,14 @@ a parameter's store is a wrong end (`LOFT_LINK_PARAM_RELEASES=1` restores it).  
 that releases its source (`COPY_FREE_SOURCE`) where the source may be a parameter's store and
 neither the destination nor a bracket's protected argument names it: a call that answers its
 argument on some path hands the caller's store to that free (`LOFT_RECORDS_NO_PARAM_SOURCE_FREE=1`
-leaves it unreported).
+leaves it unreported).  A plain free of a variable that may name the caller's store beside
+stores of the frame's own is one too: nothing at run time tells the paths apart
+(`LOFT_RECORDS_NO_MAYBE_PARAM_END=1`).
+A finding names the source line it was first seen at, and a re-free or a use after the end names
+the free that ended the store (`(ended at line L by OpFreeRefIfDistinct(x))`).  Which statement
+of a block is its value is one reading shared with the C and rustc writers
+(`op_sets::is_release_statement`): a release after the value, a witness's with its reset
+included, yields none.
 A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
 link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
 `old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through
