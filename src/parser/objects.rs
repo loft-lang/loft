@@ -3611,7 +3611,23 @@ impl Parser {
             let saved_in_fmt = self.in_format_expr;
             self.in_format_expr = true;
             let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-            let mut tp = if self.lexer.has_token("for") {
+            // `@FR-F-Interp` — a hole holds an expression.  An empty one (`"{}"`) is almost always
+            // a literal pair of braces the author meant; parsed as an expression it reported
+            // `Expect token )` and `Expect token ;` at the brace, which names neither the hole
+            // nor the escape.
+            let empty_hole = self.lexer.peek_token("}");
+            if empty_hole && !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "an empty `{{}}` in a text is a format hole with nothing in it — write `{{{{}}}}` \
+                     for a literal pair of braces, or put the value to show between them"
+                );
+            }
+            let mut tp = if empty_hole {
+                format = Value::str("");
+                Type::Text(crate::data::Deps::none())
+            } else if self.lexer.has_token("for") {
                 self.iter_for(&mut format, &mut append_value)
             } else {
                 self.expression(&mut format)
@@ -3777,7 +3793,14 @@ impl Parser {
                     list.push(self.cl(call, &[Value::Var(var), Value::str(&text)]));
                 }
             } else {
-                diagnostic!(self.lexer, Level::Error, "Formatter error");
+                // The hole's expression ended, an optional `:spec` was read, and what follows is
+                // neither the `}` that closes the hole nor the rest of the text.
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "this format hole does not close here — a hole holds one expression, then \
+                     an optional `:spec`, then `}}`; write `{{{{` and `}}}}` for literal braces"
+                );
                 return Type::Void;
             }
         }
