@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `run_timed <image>` runs the image's `main` through the loft interpreter, as the census's
+// runner (`selfhost/cover/run_program.loft`) does, and writes on stderr how long each part took:
+// `timed load=<µs> setup=<µs> lower=<µs> run=<µs>` — the image read and checked, the constants
+// and the stack built, the functions lowered to the interpreter's code on their first calls
+// (`run::Outcome.lowered_us`), and the program's own steps.  `selfhost/bench/slowest.py` reads
+// the line beside the Rust interpreter's phases.  A construct the loft interpreter does not carry is reported as
+// `refused: <reason>` with exit 3.
+#cwd
+use load;
+use lower;
+use run;
+use crt;
+use consts;
+
+fn main() {
+  a = arguments();
+  image = a[0] ?? "";
+  t0 = ticks();
+  b = load::load(image);
+  if b == null {
+    eprintln("refused: no image at {image}");
+    exit(3);
+  }
+  crt::fs_anchor(load::program_relative(b));
+  entry = lower::find(b, "n_main");
+  if entry == null {
+    eprintln("refused: the image has no n_main");
+    exit(3);
+  }
+  t1 = ticks();
+  cs = consts::build(b);
+  stk = run::new_stack();
+  t2 = ticks();
+  o = run::run_on(b, entry, [], stk, cs);
+  t3 = ticks();
+  crt::stack_free(stk);
+  consts::release(cs);
+  if o.refused != "" {
+    eprintln("refused: {o.refused} — in {o.refused_in}");
+    exit(3);
+  }
+  lw = o.lowered_us ?? 0;
+  eprintln("timed load={t1 - t0} setup={t2 - t1} lower={lw} run={t3 - t2 - lw}");
+}
