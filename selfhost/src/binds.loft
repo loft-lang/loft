@@ -717,11 +717,27 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
       continue;
     }
     t = at.typedef[0]!;
+    // A `&` link carries the store of what it links to; a `τ?` carries τ's.
+    carried = match t { TyRefVar { inner } => inner, _ => t };
+    link_target: ir::TypeT? = match t { TyRefVar { inner } => inner, _ => null };
     // `heap_dep()` already peels; `base().heap_dep()` peels once more.
-    if !own::has_heap_dep(t) && !own::has_heap_dep(base(t)) {
+    if !own::has_heap_dep(carried) && !own::has_heap_dep(base(carried)) {
+      // A TUPLE carries the stores of its heap members, and the callee may hand one back
+      // (`fn first(p: (R, integer)) -> R { p.0 }`): a literal's members protect their roots,
+      // any other tuple leaves the set incomplete, so the copy frees no source.
+      if heap_leaves(carried) > 0 {
+        roots = tuple_member_roots(b, arg, carried);
+        if roots == null {
+          r.covers_all = false;
+        } else {
+          for x in roots! {
+            insert_sorted_unique(r.slots, x);
+          }
+        }
+      }
       continue;
     }
-    // src/use_analysis.rs:3319 fn is_protectable_store_type — `is_dbref(tp.base())`.
+    // src/use_analysis.rs fn is_protectable_store_type — `is_dbref(tp.base())`.
     protectable = own::base_is_dbref(t);
     // The arms match the argument AS GIVEN, spans included; only `view_root_slots` peels them.
     match arg {
@@ -738,6 +754,12 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
           // holds no store
         } else if protectable {
           view_roots_into(b, arg, r);
+        } else if own::def_name(b, cd) == "OpCreateStack" && link_target != null && own::base_is_dbref(link_target!) {
+          // A `&` link to a local: the callee reaches that local's store and may hand it back.
+          match cargs[0] ?? ir::NdNull {
+            NdVar { n: u } => { insert_sorted_unique(r.slots, u); },
+            _ => { r.covers_all = false; }
+          }
         } else {
           r.covers_all = false;
         }
@@ -750,6 +772,54 @@ fn protectable_args_of(b: ir::Bundle, defs: own::Defs, call: ir::Node, args: vec
         }
       }
     }
+  }
+}
+
+// src/use_analysis.rs fn tuple_member_roots — the slots naming every heap member of a tuple
+// LITERAL argument of type `t`; null when one cannot be named (a tuple variable, a member built
+// inline that was not hoisted).
+fn tuple_member_roots(b: ir::Bundle, arg: ir::Node, t: ir::TypeT) -> vector<integer>? {
+  members = match own::bare(arg) { NdTuple { items } => items, _ => { return null; } };
+  elems = match base(t) { TyTuple { elems: es } => es, _ => { return null; } };
+  roots: vector<integer> = [];
+  for e in elems {
+    m = members[e#index];
+    if m == null {
+      break;
+    }
+    if heap_leaves(e) == 0 {
+      continue;
+    }
+    if base(e) is TyTuple {
+      inner = tuple_member_roots(b, m!, e);
+      if inner == null {
+        return null;
+      }
+      roots += inner!;
+    } else if own::base_is_dbref(e) {
+      found: vector<integer> = [];
+      if !own::view_root_slots(b, m!, found) {
+        return null;
+      }
+      roots += found;
+    } else {
+      return null;
+    }
+  }
+  roots
+}
+
+// src/data.rs fn tuple_heap_leaves — how many records a type holds, a nested tuple's summed.
+pub fn heap_leaves(t: ir::TypeT) -> integer {
+  match base(t) {
+    TyTuple { elems } => {
+      n = 0;
+      for e in elems {
+        n += heap_leaves(e);
+      }
+      n
+    },
+    _ => if own::is_dbref(base(t)) { 1 } else { 0 }
   }
 }
 
