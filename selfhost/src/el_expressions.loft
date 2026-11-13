@@ -4656,7 +4656,7 @@ fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
     return ex(ir::NdNull, ir::TyVoid);
   }
   if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: elm, dep: [] }) {
-    el::refuse(e, "a local that changes type");
+    el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   if e.first_pass {
@@ -5236,7 +5236,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if e.p.nodes[rhs!] is SStructLit && el_vars::rebind_must_mint(vars, v) {
     x = expression(e, vars, rhs!);
     if !e.first_pass && !el_vars::change_var_type(e, vars, v, el_types::without_deps(el_types::unrewritten(x.tp))) {
-      el::refuse(e, "a local that changes type");
+      el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     }
     return ex(el_ir::v_set(v, x.code), ir::TyVoid);
   }
@@ -5247,7 +5247,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     o = object_into(e, vars, v, rhs!);
     vars.bind_declares = false;
     if !el_vars::change_var_type(e, vars, v, el_types::unrewritten(o.tp)) {
-      el::refuse(e, "a local that changes type");
+      el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     }
     return ex(o.code, ir::TyVoid);
   }
@@ -5265,7 +5265,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
       concat_operand(e, vars, ops, v, expression(e, vars, n));
     }
     if !promoted && !el_vars::change_var_type(e, vars, v, ir::TyText { dep: [v] }) {
-      el::refuse(e, "a local that changes type");
+      el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     }
     return ex(ir::NdInsert { items: ops }, ir::TyVoid);
   }
@@ -5304,7 +5304,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   vars.slice_node = outer_slice;
   if concat && x.tp is TyRewritten {
     if !el_vars::change_var_type(e, vars, v, el_types::unrewritten(x.tp)) {
-      el::refuse(e, "a local that changes type");
+      el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     }
     el_vars::drop_use(vars, v);
     return ex(x.code, ir::TyVoid);
@@ -5316,7 +5316,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   // A generator's handle is bound as it is, the local typed as its iterator.
   if x.tp is TyIterator && el_ir::unspan(x.code) is NdCall {
     if !el_vars::change_var_type(e, vars, v, x.tp) {
-      el::refuse(e, "a local that changes type");
+      el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     }
     return ex(el_ir::v_set(v, x.code), ir::TyVoid);
   }
@@ -5463,7 +5463,7 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   }
   rebuild_call_deps(e, vars, v, op, x);
   if !promoted_text && !el_vars::change_var_type(e, vars, v, bound_tp) {
-    el::refuse(e, "a local that changes type");
+    el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
   }
   first_vector_bind(e, vars, v, bound_tp, at);
   // `parse_assign`: a local bound from a read a length local made trusted is what this pass
@@ -16820,7 +16820,7 @@ fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, de
     return ex(ir::NdNull, ir::TyVoid);
   }
   if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
-    el::refuse(e, "a local that changes type");
+    el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   // `vector_def` on both passes; the element's store type (`vector_of`) on the second, in
@@ -17140,6 +17140,14 @@ fn cast_expr_to(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex {
 }
 
 // ── match (src/parser/control.rs `parse_match`, `parse_scalar_match`) ──────────────────────────
+
+// What `change_var_type` last refused: "`name` is <type>, the value <type>".
+fn retype_note(e: el::El, vars: el_vars::Vars) -> text {
+  if vars.retype_var < 0 || len(vars.retype_from) == 0 || len(vars.retype_to) == 0 {
+    return "";
+  }
+  "`{el_vars::name_of(vars, vars.retype_var)}` is {display_type_name(e, vars.retype_from[0]!)}, the value {display_type_name(e, vars.retype_to[0]!)}"
+}
 
 // One parsed arm: its condition (null for a wildcard), its code and its type.
 pub struct MArm {
@@ -20384,7 +20392,7 @@ fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared
   }
   // A link (`v: &vector<T>`) names the vector it appends to: its own type stays.
   if !(el_vars::tp(vars, v) is TyRefVar) && !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
-    el::refuse(e, "a local that changes type");
+    el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return refused_build();
   }
   if len(xs) > 0 {
@@ -21121,7 +21129,7 @@ fn slice_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
 fn slice_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   elem = match x.tp { TyIterator { step } => step, _ => ir::TyVoid };
   if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: elem, dep: [] }) {
-    el::refuse(e, "a local that changes type");
+    el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
   if e.first_pass {

@@ -175,6 +175,10 @@ pub struct Vars {
   // The assignment seam's conversion is in flight (`Parser::parse_assign`, which reaches the
   // checked narrowing without `convert`'s entry guard): `el_convert::implicit_checked_narrow` reads it.
   pub assign_seam: boolean = false,
+  // The last change of type `change_var_type` refused: the local, its type and the new one.
+  pub retype_var: integer = -1,
+  pub retype_from: vector<ir::TypeT>,
+  pub retype_to: vector<ir::TypeT>,
   // The bind `object_into` builds into declares its local (`assignment`'s `declaring`).
   pub bind_declares: boolean = false,
   // `Parser::lambda_counter`: the lambdas this body made, naming the next `__lambda_<fn>_<N>`
@@ -456,7 +460,20 @@ pub fn is_compiler_generated(v: Vars, nr: integer) -> boolean {
 // `Function::change_var_type`, the cases a plain binding meets: a local still untyped takes the
 // value's type, and one already of that type keeps it.  False for any other change, which the
 // caller refuses by name.
+// `change_var`, recording what it refused (the local, its type, the new type) for the refusal
+// that names it.
 pub fn change_var_type(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean {
+  was = tp(v, nr);
+  ok = change_var_type_core(e, v, nr, t);
+  if !ok {
+    v.retype_var = nr;
+    v.retype_from = [was];
+    v.retype_to = [t];
+  }
+  ok
+}
+
+fn change_var_type_core(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolean {
   // A local bound again is no longer what a guard (or a loop range) proved of it.
   v.present = [for x in v.present if x != nr { x }];
   v.nonzero = [for x in v.nonzero if x != nr { x }];
