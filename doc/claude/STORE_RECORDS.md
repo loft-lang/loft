@@ -142,6 +142,14 @@ the free that ended the store (`(ended at line L by OpFreeRefIfDistinct(x))`).  
 of a block is its value is one reading shared with the C and rustc writers
 (`op_sets::is_release_statement`): a release after the value, a witness's with its reset
 included, yields none.
+A call the interpreter brackets only on its copy arm (F9c, F7-copy, R2b) is read bracketed there
+alone (`LOFT_RECORDS_BRACKET_EVERY_BIND=1` reads every bind of a call bracketed).  A callee that
+writes a fresh value through a `&` argument ends the caller's old store and binds the argument to
+a new one; a write inside a branch joins the written and the kept state
+(`LOFT_RECORDS_NO_CALL_WRITE_BACK=1`, `LOFT_RECORDS_NO_BRANCH_WRITE_BACK=1`).  A read through a name
+that may still point into a store ended on every path is a use after its end
+(`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
+read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
 A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
 link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
 `old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through

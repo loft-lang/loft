@@ -1014,6 +1014,10 @@ struct Run<'a> {
     /// The variables inside an IR `n_protect_store_frees` bracket: a source-free
     /// in it declines the stores they name.
     protected: Vec<u16>,
+    /// The call a code generator brackets around the call itself (`LOFT_NO_PROTECT_AFTER_CALL`),
+    /// by node, with the stores its reference arguments held before it: a release inside the
+    /// callee declines them.
+    call_bracket: Option<(usize, BTreeSet<SKey>)>,
     /// The compiler temporaries the function frees with a plain `OpFreeRef` (a lift, a literal's
     /// work-ref): each still owns the record it holds, wherever a reference to it is written.
     freed_temps: BTreeSet<u16>,
@@ -1216,7 +1220,14 @@ impl Run<'_> {
         for k in Self::stores_of(&Self::pts(st, v)) {
             self.sites[k.site as usize].uses.insert(how.to_string());
             let info = info_of(st, k);
-            if info.has(ENDED) && info.ended.contains(&v) {
+            // …or a name that MAY still point into a store ended on every path: on the path where
+            // it does, the read finds the freed store (`bl` viewing `b`, read by `b`'s own rebind
+            // after its displaced free).  Only a KNOWN stale set counts here — an unknown one
+            // names every variable.  `LOFT_RECORDS_NO_STALE_READS=1` reads `ended` alone.
+            let stale_read = !info.has(LIVE)
+                && info.stale.as_ref().is_some_and(|s| s.contains(&v))
+                && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_STALE_READS").is_some());
+            if info.has(ENDED) && (info.ended.contains(&v) || stale_read) {
                 let name = self.var_name(v);
                 self.find(
                     "use-after-end",
@@ -2304,7 +2315,8 @@ impl Run<'_> {
                 self.bind(&mut s, x, &value);
                 return Some((s, Val::null()));
             }
-            let (mut s, value) = self.eval(val, st)?;
+            let pre_protected = self.first_bind_bracket(&st, val, arm);
+            let (mut s, value) = self.eval_bracketed(val, st, pre_protected.as_ref())?;
             let bound = match arm {
                 // A fn-ref holds the closure record its build names (`FnRef(_, w)` reads `w`),
                 // so its first bind holds that store as a reassignment does.  One read out of a
@@ -2334,7 +2346,7 @@ impl Run<'_> {
                 FirstArm::CallCopy { .. } | FirstArm::NullableCallCopy { .. } => {
                     if crate::use_analysis::call_return_frees_source(data, self.d_nr, val) {
                         Self::consume(&mut s, &value);
-                        self.unprotected_source_free(&mut s, val, &value);
+                        self.unprotected_source_free(&mut s, val, &value, pre_protected.as_ref());
                     }
                     self.copied(&mut s, node)
                 }
@@ -2678,7 +2690,11 @@ impl Run<'_> {
                 self.end(&mut st, x, "the displaced free", true);
             }
         }
-        let (mut s, value) = self.eval(val, st)?;
+        // Only the copy arm (R2b) brackets the call at run time.
+        let pre_protected = self
+            .pre_call_protected(&st, val)
+            .filter(|_| matches!(rb.arm, ReArm::CallCopy { .. }) || bracket_every_bind());
+        let (mut s, value) = self.eval_bracketed(val, st, pre_protected.as_ref())?;
         // What `x` held, read AFTER the value: a call that makes a store at a site `x`'s old
         // store came from moves that store to the older generation (`fresh`), and a key read
         // before it would name the new store instead (a loop's `fixed = step(i)`).
@@ -2697,7 +2713,7 @@ impl Run<'_> {
                 if crate::use_analysis::call_return_frees_source(data, self.d_nr, val) {
                     Self::consume(&mut s, &value);
                     if rb.free != DisplacedFree::Stash {
-                        self.unprotected_source_free(&mut s, val, &value);
+                        self.unprotected_source_free(&mut s, val, &value, pre_protected.as_ref());
                     }
                     // The copy's source-free releases what the call answered, and a call that
                     // reads `x` may answer `x`'s own store.  Unprotected (`ReBind::protects_old`),
@@ -2795,16 +2811,74 @@ impl Run<'_> {
         }
     }
 
-    /// A copy's source-free (`COPY_FREE_SOURCE`) releases what the call answered unless the
-    /// copy bracket protects it: a store of the answer that no protectable argument names
-    /// (`use_analysis::protectable_ref_args`, the code generator's own list) ends here.
-    fn unprotected_source_free(&mut self, st: &mut State, call: &Value, value: &Val) {
-        let protected: BTreeSet<SKey> =
+    /// The stores the copy bracket protects when it is set around the call itself
+    /// (`LOFT_NO_PROTECT_AFTER_CALL`): what the protectable arguments name BEFORE the call.
+    /// `None` when the bracket is set after the call, as the code generators set it by default
+    /// (`keys::protect_after_call`), so the source-free reads the state after the call.
+    /// The stores a first bind's copy bracket protects: the copy arm's only (F9c, F7-copy).  A
+    /// plain bind or a join sets none at run time, so the records read the call unbracketed.
+    fn first_bind_bracket(
+        &self,
+        st: &State,
+        val: &Value,
+        arm: crate::bind_lowering::FirstArm,
+    ) -> Option<BTreeSet<SKey>> {
+        let bracketed = matches!(
+            arm,
+            crate::bind_lowering::FirstArm::CallCopy { .. }
+                | crate::bind_lowering::FirstArm::NullableCallCopy { .. }
+        );
+        self.pre_call_protected(st, val)
+            .filter(|_| bracketed || bracket_every_bind())
+    }
+
+    /// Evaluate a bind's value with the call bracket `pre` (its protected stores) set for it.
+    fn eval_bracketed(
+        &mut self,
+        val: &Value,
+        st: State,
+        pre: Option<&BTreeSet<SKey>>,
+    ) -> Option<(State, Val)> {
+        self.call_bracket = pre.map(|p| (std::ptr::from_ref(val.unspan()) as usize, p.clone()));
+        let out = self.eval(val, st);
+        self.call_bracket = None;
+        out
+    }
+
+    fn pre_call_protected(&self, st: &State, call: &Value) -> Option<BTreeSet<SKey>> {
+        if crate::keys::protect_after_call() {
+            return None;
+        }
+        Some(
             crate::use_analysis::protectable_ref_args(self.data, self.d_nr, call)
                 .0
                 .into_iter()
                 .flat_map(|a| Self::stores_of(&Self::pts(st, a)))
-                .collect();
+                .collect(),
+        )
+    }
+
+    /// A copy's source-free (`COPY_FREE_SOURCE`) releases what the call answered unless the
+    /// copy bracket protects it: a store of the answer that no protectable argument names
+    /// (`use_analysis::protectable_ref_args`, the code generator's own list) ends here.  The
+    /// arguments are read after the call (`@FR-O-Move`: a `&` argument the callee re-points
+    /// no longer holds the store it answers), or before it where `pre` says the bracket is
+    /// set around the call.
+    fn unprotected_source_free(
+        &mut self,
+        st: &mut State,
+        call: &Value,
+        value: &Val,
+        pre: Option<&BTreeSet<SKey>>,
+    ) {
+        let protected: BTreeSet<SKey> = match pre {
+            Some(p) => p.clone(),
+            None => crate::use_analysis::protectable_ref_args(self.data, self.d_nr, call)
+                .0
+                .into_iter()
+                .flat_map(|a| Self::stores_of(&Self::pts(st, a)))
+                .collect(),
+        };
         let freed: BTreeSet<SKey> = Self::stores_of(&value.pts)
             .into_iter()
             .filter(|k| !protected.contains(k) && !value.corr.contains(k))
@@ -4578,6 +4652,13 @@ impl Run<'_> {
                 s = s2;
             }
             (s, vals)
+        } else if d == self.ops.set_dbref && args.len() == 3 && !set_dbref_value_use() {
+            // A reference WRITTEN into a slot is handed over, not read: the record (written)
+            // and the offset are uses, the value's store is not touched.
+            let (s, mut vals) = self.args(&args[..2], st)?;
+            let (s, value) = self.eval(&args[2], s)?;
+            vals.push(value);
+            (s, vals)
         } else {
             self.args(args, st)?
         };
@@ -5060,8 +5141,172 @@ impl Run<'_> {
                 }
             }
         };
+        self.call_write_backs(&mut s, node, d, args);
         Some((s, val))
     }
+
+    /// `@FR-F-ParamRef` at the call: a callee that writes a fresh value through its `&`
+    /// parameter on every path ([`writes_back_fresh`]) hands that value to the variable the
+    /// argument links (`f(OpCreateStack(w))`), and releases the store `w` held (the callee's
+    /// `OpFreeRefIfDistinct`).  A store the call bracket protects across the call itself
+    /// (`LOFT_NO_PROTECT_AFTER_CALL`) is not released: the runtime declines it, and nothing
+    /// holds it once `w` names the new store.  A callee that writes on some paths only, or
+    /// writes a borrowed value, is not followed: `w` keeps what it held, which can only keep a
+    /// finding (`LOFT_RECORDS_NO_CALL_WRITE_BACK=1` leaves every write-back unfollowed).
+    fn call_write_backs(&mut self, s: &mut State, node: &Value, d: u32, args: &[Value]) {
+        if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_CALL_WRITE_BACK").is_some()) {
+            return;
+        }
+        let bracket = self
+            .call_bracket
+            .as_ref()
+            .filter(|(n, _)| *n == std::ptr::from_ref(node.unspan()) as usize)
+            .map(|(_, p)| p.clone())
+            .unwrap_or_default();
+        for (i, a) in args.iter().enumerate() {
+            let Value::Call(op, cargs) = a.unspan() else {
+                continue;
+            };
+            if self.data.def(*op).name() != "OpCreateStack" {
+                continue;
+            }
+            let Some(Value::Var(w)) = cargs.first().map(Value::unspan) else {
+                continue;
+            };
+            let write = write_back_of(self.data, d, i);
+            if write == WriteBack::None {
+                continue;
+            }
+            // A write inside a branch happens on some runs: the caller's state after the call
+            // is the join of the written one and the one that kept the old store (`join_arms`).
+            let kept = (write == WriteBack::Maybe).then(|| s.clone());
+            let gone: BTreeSet<SKey> = Self::stores_of(&Self::pts(s, *w))
+                .into_iter()
+                .filter(|k| !bracket.contains(k))
+                .collect();
+            if !gone.is_empty() {
+                self.end_only(
+                    s,
+                    *w,
+                    "the write-back through its `&` argument",
+                    true,
+                    Some(&gone),
+                );
+            }
+            let site = self.site(a, Origin::Call(d));
+            let k = Self::fresh(s, site);
+            let value = Val {
+                pts: [Pt::Store(k)].into(),
+                corr: [k].into(),
+            };
+            self.bind(s, *w, &value);
+            if let Some(kept) = kept {
+                *s = join_arms(s, &kept);
+            }
+        }
+    }
+}
+
+/// Does `d` write a FRESH value through its `i`-th parameter, a `&` link to a store, on every
+/// path — a whole write (`p = P { … }`) at the top level of its body?  The code generator
+/// releases the store the parameter displaced there (`@FR-F-ParamRef`).  A write inside a
+/// branch or a loop, or of a value the function does not own, answers no: the caller then
+/// keeps reading what its variable held, which can only keep a finding.
+/// How a callee writes a fresh value through a `&` parameter: never, on every path (a
+/// top-level whole write), or on some paths (a whole write inside a branch).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WriteBack {
+    None,
+    Always,
+    Maybe,
+}
+
+/// [`writes_back_fresh`] for the top level, and the same write found inside an `if` arm for
+/// `Maybe` (`LOFT_RECORDS_NO_BRANCH_WRITE_BACK=1` reads such a write as none).  A write inside a
+/// loop body counts as `Maybe` too: the loop may run no pass.
+fn write_back_of(data: &Data, d: u32, i: usize) -> WriteBack {
+    if writes_back_fresh(data, d, i) {
+        return WriteBack::Always;
+    }
+    if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_BRANCH_WRITE_BACK").is_some()) {
+        return WriteBack::None;
+    }
+    let def = data.def(d);
+    let Some(p) = def.attributes.get(i).map(|_| i as u16) else {
+        return WriteBack::None;
+    };
+    if !fresh_write_target(data, d, p) {
+        return WriteBack::None;
+    }
+    if def.code.any_node(&mut |n| fresh_write_of(data, d, p, n)) {
+        WriteBack::Maybe
+    } else {
+        WriteBack::None
+    }
+}
+
+/// Is parameter `p` of `d` a `&` link to a store a whole write can replace?
+fn fresh_write_target(data: &Data, d: u32, p: u16) -> bool {
+    let vars = &data.def(d).variables;
+    if !vars.is_argument(p) {
+        return false;
+    }
+    let crate::data::Type::RefVar(inner) = vars.tp(p).base() else {
+        return false;
+    };
+    inner.heap_def_nr().is_some()
+        || matches!(
+            inner.base(),
+            crate::data::Type::Vector(..) | crate::data::Type::Enum(_, true, _)
+        )
+        || crate::data::is_keyed(inner.base())
+}
+
+/// Is `op` a whole write of a value `d` owns through parameter `p`?
+fn fresh_write_of(data: &Data, d: u32, p: u16, op: &Value) -> bool {
+    matches!(op.unspan(), Value::Set(v, rhs) if *v == p
+    && !matches!(rhs.unspan(), Value::Call(c, _)
+        if matches!(data.def(*c).name(), "OpCreateStack" | "OpVarRef"))
+    && matches!(
+        crate::use_analysis::ownership_of(data, d, rhs),
+        crate::use_analysis::Own::Owned
+    ))
+}
+
+fn writes_back_fresh(data: &Data, d: u32, i: usize) -> bool {
+    let def = data.def(d);
+    let vars = &def.variables;
+    let Some(p) = def.attributes.get(i).map(|_| i as u16) else {
+        return false;
+    };
+    if !vars.is_argument(p) {
+        return false;
+    }
+    let crate::data::Type::RefVar(inner) = vars.tp(p).base() else {
+        return false;
+    };
+    if !(inner.heap_def_nr().is_some()
+        || matches!(
+            inner.base(),
+            crate::data::Type::Vector(..) | crate::data::Type::Enum(_, true, _)
+        )
+        || crate::data::is_keyed(inner.base()))
+    {
+        return false;
+    }
+    let ops = match def.code.unspan() {
+        Value::Block(b) => &b.operators,
+        _ => return false,
+    };
+    ops.iter().any(|op| {
+        matches!(op.unspan(), Value::Set(v, rhs) if *v == p
+        && !matches!(rhs.unspan(), Value::Call(c, _)
+            if matches!(data.def(*c).name(), "OpCreateStack" | "OpVarRef"))
+        && matches!(
+            crate::use_analysis::ownership_of(data, d, rhs),
+            crate::use_analysis::Own::Owned
+        ))
+    })
 }
 
 /// Run one function's body; its answer, findings and records.
@@ -5114,6 +5359,7 @@ fn run_fn<'a>(
         fn_record: BTreeMap::new(),
         leaving: BTreeSet::new(),
         protected: Vec::new(),
+        call_bracket: None,
         freed_temps: BTreeSet::new(),
         member_tuple: false,
     };
@@ -5366,6 +5612,18 @@ fn components(data: &Data, fns: &[u32]) -> Vec<Vec<u32>> {
 
 /// Every function's answer and its final run: the least fixpoint over the call graph, taken
 /// component by component, callees first, so only a recursive component iterates.
+/// `LOFT_RECORDS_SET_DBREF_VALUE_USE=1` — the value an `OpSetDbRef` writes into a slot counts as a
+/// use of its store again.
+fn set_dbref_value_use() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_RECORDS_SET_DBREF_VALUE_USE").is_some())
+}
+
+/// `LOFT_RECORDS_BRACKET_EVERY_BIND=1` — the records read a call bracket at every first bind and
+/// rebind of a call, not only at the copy arms the interpreter brackets.
+fn bracket_every_bind() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_RECORDS_BRACKET_EVERY_BIND").is_some())
+}
+
 /// ` (line N)` after a finding seen at a source line; nothing before the first marker.
 fn line_note(line: u32) -> String {
     if line == 0 {
