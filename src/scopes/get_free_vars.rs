@@ -1362,11 +1362,22 @@ impl Scopes<'_> {
         }
         let free = data.def_nr("OpFreeRef");
         let free_distinct = data.def_nr("OpFreeRefIfDistinct");
-        let frees = |op: &Value, w: u16| {
-            matches!(op.unspan(), Value::Call(d, args)
-                if (*d == free || *d == free_distinct)
-                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w))
-        };
+        // A free of `w`, plain or behind the lift-view guard (`if OpDistinctStore(w, lift) free`,
+        // `Scopes::lift_viewers`): guarded, `w` still releases what it holds wherever it names no
+        // lift's store, which is the only place it can hold the buffer's (loft#2475).
+        fn frees_var(op: &Value, w: u16, free: u32, free_distinct: u32) -> bool {
+            match op.unspan() {
+                Value::Call(d, args) => {
+                    (*d == free || *d == free_distinct)
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w)
+                }
+                Value::If(_, t, e) if matches!(e.unspan(), Value::Null) => {
+                    frees_var(t, w, free, free_distinct)
+                }
+                _ => false,
+            }
+        }
+        let frees = |op: &Value, w: u16| frees_var(op, w, free, free_distinct);
         // A rebound parameter (a local renamed onto the return buffer) releases at exit, through
         // its entry witness, what the caller did not hand it — a release added after this sweep.
         let mut rebound_params: Vec<u16> = function
