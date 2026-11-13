@@ -4793,9 +4793,13 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   }
   v = -1;
   written = "";
+  // Is this the bind that DECLARES the local (read before `binding_var` marks it defined)?
+  declaring = true;
   match e.p.nodes[target] {
     SName { name, member } => {
       if member == "" {
+        known = el_vars::var(vars, name);
+        declaring = known < 0 || (!el_vars::was_defined(vars, known) && !vars.vars[known].argument);
         v = binding_var(e, vars, name);
         written = name;
       }
@@ -4922,36 +4926,46 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
     }
     return ex(el_ir::v_set(v, x.code), ir::TyVoid);
   }
-  // A whole record written through a link to a record local (`cur = b`, `cur` a `&` of `a`):
-  // a fresh copy of the value (`materialized_amp_field`), written through the link — `a` takes
-  // `b`'s contents.  A source other than a record local of the link's type stays refused.
-  link_rd = match el_vars::tp(vars, v) { TyRefVar { inner } => struct_ref(e, el_types::base(inner)), _ => -1 };
-  if link && link_rd >= 0 {
+  // port: expressions.rs assign_refvar_reference — a whole value written through a `&` link to a
+  // record or a struct enum (`@FR-B-Ref-Write`).  A bare variable other than the link itself, or a
+  // field read, is a VIEW of a store some live binding names: it is copied into a work ref of its
+  // own (`materialized_amp_field`, the work ref skip-free and minted on both passes), so the place
+  // the link names owns a store nobody else does (`@FR-B-Copy`, loft#1303).  Any other value — a
+  // call's answer, a literal — is written through as it is.
+  link_rd = match el_vars::tp(vars, v) {
+    TyRefVar { inner } => match el_types::base(inner) {
+      TyReference { n } => n,
+      TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+      _ => -1
+    },
+    _ => -1
+  };
+  // The bind that DECLARES a link to a place makes the local that place's view (`t = p`, `p` a
+  // `&` parameter): a link, not a write through one (`declaring`, above).
+  if link && link_rd >= 0 && !declaring {
+    is_senum = match el_vars::tp(vars, v) { TyRefVar { inner } => el_types::base(inner) is TyEnum, _ => false };
     x = expression(e, vars, rhs!);
+    view = el_ir::unspan(x.code);
+    bare_var = match view { NdVar { n: rv } => rv != v, _ => false };
+    if !bare_var && !calls(e, view, "OpGetField") {
+      return ex(if e.first_pass { ir::NdNull } else { el_ir::v_set(v, x.code) }, ir::TyVoid);
+    }
+    rec_tp = if is_senum { ir::TyEnum { n: link_rd, is_ref: true, dep: [] } } else { ir::TyReference { n: link_rd, dep: [] } };
+    tmp = el_vars::work_ref(vars, rec_tp);
+    vars.vars[tmp].skip_free = true;
     if e.first_pass {
       return ex(ir::NdNull, ir::TyVoid);
     }
-    // A loft call's fresh record, or a record literal built as a value (its own `__ref_p2_N`,
-    // an "Object" block), is bound to the link as it is (`b = make(…)`, `b = S { … }`).
-    literal = match el_ir::unspan(x.code) { NdBlock { block } => block[0].name == "Object", _ => false };
-    if (minting_call(e, x.code) || literal) && struct_ref(e, el_types::base(x.tp)) == link_rd {
-      return ex(el_ir::v_set(v, x.code), ir::TyVoid);
-    }
-    if !(x.code is NdVar) || struct_ref(e, el_types::base(x.tp)) != link_rd {
-      el::refuse(e, "a whole value written through a `&` link");
-      return ex(ir::NdNull, ir::TyVoid);
-    }
     kt = el::def(e, link_rd).known_type;
-    tmp = el_vars::work_ref(vars, ir::TyReference { n: link_rd, dep: [] });
     copy = el_ir::v_block([
       el_ir::v_set(tmp, ir::NdNull),
       el_ir::cl(e, "OpDatabase", [ir::NdVar { n: tmp }, ir::NdInt { n: kt }]),
       el_ir::cl(e, "OpCopyRecord", [x.code, ir::NdVar { n: tmp }, ir::NdInt { n: kt }]),
       ir::NdVar { n: tmp }
-    ], ir::TyReference { n: link_rd, dep: [tmp] }, "materialized_amp_field");
+    ], el_types::with_deps(rec_tp, [tmp]), "materialized_amp_field");
     return ex(el_ir::v_set(v, copy), ir::TyVoid);
   }
-  if link && !scalar_link(vars, v) {
+  if link && !scalar_link(vars, v) && !declaring {
     el::refuse(e, "a whole value written through a `&` link");
     return ex(ir::NdNull, ir::TyVoid);
   }
