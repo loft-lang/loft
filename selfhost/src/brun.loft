@@ -169,6 +169,7 @@ H_WRITE_FILE = 145;
 H_READ_FILE = 146;
 H_FS_OP = 147;
 H_FILE_OP = 148;
+H_GET_RECORD = 149;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -365,6 +366,7 @@ pub fn handler(name: text) -> integer {
     "OpSeekFile" => H_FILE_OP,
     "OpTruncateFile" => H_FILE_OP,
     "OpSyncFile" => H_FILE_OP,
+    "OpGetRecord" => H_GET_RECORD,
     _ => -1
   }
 }
@@ -382,6 +384,7 @@ N_ENDS_WITH = 8;
 N_WRITE_BYTES = 9;
 N_VECTOR_SUM_INT = 10;
 N_OS_TEMP_DIR_DEST = 11;
+N_KEYED_ENTRY_INTS = 12;
 
 pub fn native_handler(name: text) -> integer {
   match name {
@@ -396,6 +399,7 @@ pub fn native_handler(name: text) -> integer {
     "n_write_bytes" => N_WRITE_BYTES,
     "n_vector_sum_int" => N_VECTOR_SUM_INT,
     "n_os_temp_dir_dest" => N_OS_TEMP_DIR_DEST,
+    "n_keyed_entry_ints" => N_KEYED_ENTRY_INTS,
     _ => -1
   }
 }
@@ -510,6 +514,7 @@ fn layout_of(h: integer) -> text {
     141 => "h",
     145 => "h",
     146 => "h",
+    149 => "hb",
     _ => ""
   }
 }
@@ -519,7 +524,7 @@ fn layout_of(h: integer) -> text {
 // here, beside the handlers, so an operator added later is listed where it is added.  The one
 // exception is `OpDatabase`, which needs it only for a vector wrapper and loads it there.
 fn needs_table(h: integer) -> boolean {
-  h == H_WRITE_FILE || h == H_READ_FILE || h == H_CLEAR_VECTOR || h == H_FINISH_RECORD || h == H_COPY_RECORD || h == H_BIND_OR_COPY || h == H_COPY_REF_OR_NULL || h == H_REMOVE_VECTOR || h == H_APPEND_VECTOR || h == H_APPEND_COPY || h == H_CLEAR || h == H_KEEP_VECTOR_RANGE
+  h == H_GET_RECORD || h == H_WRITE_FILE || h == H_READ_FILE || h == H_CLEAR_VECTOR || h == H_FINISH_RECORD || h == H_COPY_RECORD || h == H_BIND_OR_COPY || h == H_COPY_REF_OR_NULL || h == H_REMOVE_VECTOR || h == H_APPEND_VECTOR || h == H_APPEND_COPY || h == H_CLEAR || h == H_KEEP_VECTOR_RANGE
 }
 
 // Per opcode of the image: does its operator need the type table (`needs_table`)?
@@ -670,6 +675,39 @@ fn make_store(ts: vector<ir::DbType>, stk: integer, io: vector<integer>, tl: vec
 fn copy_flags(ts: vector<ir::DbType>, raw: integer) -> integer {
   tp = raw & 16383;
   (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(ts, tp) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 })
+}
+
+// The width a key part takes on the stack, by its key's type: Rust's key content code is the
+// type number less one (`stack_keys`) — 5 a text's view (16), any other 8.
+fn key_width(ts: vector<ir::DbType>, tp: integer, i: integer) -> integer {
+  code = (ts[tp]!.keys[i]!.type_nr).abs() - 1;
+  if code == 5 { 16 } else { 8 }
+}
+
+// The `n` key parts of collection type `tp` on the stack under `top` — the first key on top, as
+// `stack_keys` pops them — pushed onto the C runtime's key stack in key order, each read at its
+// own width: an integer, a single, a float, a boolean's or an enum's byte, a text, a character.
+// Answers the bytes they take.
+fn push_keys(ts: vector<ir::DbType>, stk: integer, tp: integer, n: integer, top: integer) -> integer {
+  at = top;
+  for i in 0..n {
+    code = (ts[tp]!.keys[i]!.type_nr).abs() - 1;
+    at -= key_width(ts, tp, i);
+    if code == 2 || code == 3 {
+      crt::key_float(crt::get_float(stk, 1, 8 + at, 0, code == 2), code == 2);
+    } else if code == 5 {
+      crt::key_text(crt::stack_str(stk, at));
+    } else if code == 4 {
+      crt::key_int(crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0));
+    } else if code == 6 {
+      crt::key_int(crt::get_w(crt::W_CHARACTER, stk, 1, 8 + at, 0, 0));
+    } else if code >= 7 && ts[code]!.parts[0]! is PtEnum {
+      crt::key_int(crt::get_w(crt::W_ENUM, stk, 1, 8 + at, 0, 0));
+    } else {
+      crt::key_int(get(stk, at));
+    }
+  }
+  top - at
 }
 
 // What a run answers: the operator it stopped at when it refused one, and how many it ran.
@@ -1155,6 +1193,28 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         crt::slot_ref(io, stk, sp - 16);
         sp -= 16;
         crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, os_temp_dir());
+      } else if nh == N_KEYED_ENTRY_INTS {
+        // `@FR-R-KeyedEntry`: `keyed_entry_ints(data, parent_tp, fld, k1..k4)` — the entry under
+        // the key in the hash `record_collection` names, found or filed with its key written.
+        if !(tl[0] ?? false) {
+          ensure_table(img.types, tl);
+        }
+        kptp = get(stk, sp - 48) ?? 0;
+        kfld = get(stk, sp - 40) ?? 0;
+        krc = types::record_collection(img.types, kptp, kfld);
+        if (krc.fld != 65535 && krc.at == null) || types::hash_element(img.types, krc.tp) == null {
+          return Outcome { refused: "a keyed entry in a collection that is not a hash: n_keyed_entry_ints at {at}", steps: steps };
+        }
+        kkeys = len(img.types[krc.tp]!.keys);
+        kn = if kkeys < 1 { 1 } else if kkeys > 4 { 4 } else { kkeys };
+        for ki in 0..kn {
+          crt::key_int(get(stk, sp - 32 + ki * 8));
+        }
+        crt::slot_ref(io, stk, sp - 64);
+        sp -= 64;
+        crt::keyed_entry(io, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + (krc.at ?? 0), types::content_of(img.types, krc.tp) ?? 0, krc.tp, kn);
+        crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+        sp += 16;
       } else {
         nname = img.natives[idx] ?? "native {idx}";
         return Outcome { refused: "a native the runner does not carry: {nname} at {at}", steps: steps };
@@ -1943,6 +2003,26 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         set(stk, sp, oans);
         sp += 8;
       }
+    } else if h == H_GET_RECORD {
+      // `get_record`: the key parts and then the collection popped; a hash's entry, or a
+      // sorted's or an index's record, found under them (`hash_find` / `keyed_find`).
+      gtp2 = u16_at(img.code, pc);
+      gn = img.code[pc + 2] ?? 0;
+      pc += 3;
+      gkind = types::keyed_kind(img.types, gtp2) ?? 0;
+      if types::hash_element(img.types, gtp2) == null && gkind == 0 {
+        return Outcome { refused: "a lookup in a collection the runner does not look up in: OpGetRecord at {at}", steps: steps };
+      }
+      gbytes = push_keys(img.types, stk, gtp2, gn, sp);
+      sp -= gbytes + 16;
+      crt::slot_ref(io, stk, sp);
+      if gkind != 0 {
+        crt::keyed_find(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gkind, gtp2, gn);
+      } else {
+        crt::hash_find(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gtp2, gn);
+      }
+      crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+      sp += 16;
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
