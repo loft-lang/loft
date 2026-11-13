@@ -2923,6 +2923,33 @@ impl Run<'_> {
     /// The stashed old reference of a reassignment, freed unless the new value names the
     /// same store, with `x` bound to the new value.
     fn stashed_free(&mut self, s: &mut State, x: u16, old: &Pts, bound: &Val) {
+        // `@FR-F-ParamRebind` — a visible parameter that still names the caller's store, rebound
+        // to a value that cannot be that store: the guard (`OpFreeRefIfDistinct(old, new)`) is
+        // distinct on every path, so the stashed free releases the caller's store.  The rebind's
+        // own detach (`rebind_local_heap_param`) nulls the slot first; this is the rebind that
+        // lost it.  `LOFT_RECORDS_NO_STASHED_PARAM_END=1` leaves it unreported.
+        if old.len() == 1
+            && let Some(Pt::Param(p)) = old.iter().next()
+            && !bound.pts.contains(&Pt::Param(*p))
+            && !bound.pts.iter().any(|q| matches!(q, Pt::Unknown))
+            && self.params.iter().position(|q| *q == *p).is_some_and(|i| {
+                self.data
+                    .def(self.d_nr)
+                    .attributes()
+                    .get(i)
+                    .is_some_and(|a| {
+                        !a.hidden && !matches!(a.typedef, crate::data::Type::RefVar(_))
+                    })
+            })
+            && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_STASHED_PARAM_END").is_some())
+        {
+            let name = self.var_name(x);
+            self.find(
+                "wrong-end",
+                u32::MAX,
+                format!("`{name}` is rebound, and the stashed free releases the caller's store"),
+            );
+        }
         let tmp = u16::MAX;
         s.vars.insert(tmp, old.clone());
         for k in Self::stores_of(old) {
