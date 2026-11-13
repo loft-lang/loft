@@ -900,7 +900,7 @@ pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result
     )
 }
 
-/// The RUN image (@PLN91, doc/claude/plans/91-self-host/handoff-2026-11-13-run-image.md): the
+/// The RUN image (the run-image handoff under doc/claude/plans/91-self-host/): the
 /// bytecode the Rust writer produced (`compile::byte_code`), stored as it was written so the
 /// loft runner executes it in place — no IR, no lowering on the run path.
 ///
@@ -912,7 +912,10 @@ pub fn save_bundle(data: &Data, program: &Stores, path: &str) -> std::io::Result
 /// program declared `#cwd`.  Every vector is reserved at its exact length first
 /// (`@FR-Col-Capacity`): grown by doubling, each would carry up to twice its content.
 #[cfg(feature = "mmap")]
-#[expect(clippy::too_many_arguments, reason = "the run image's parts, each from its own owner")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the run image's parts, each from its own owner"
+)]
 fn materialize_run_image(
     stores: &mut Stores,
     root: DbRef,
@@ -932,9 +935,19 @@ fn materialize_run_image(
         ..root
     };
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_CODE), count(code.len()), 1, &mut stores.allocations);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_CODE),
+        count(code.len()),
+        1,
+        &mut stores.allocations,
+    );
     crate::vector::append_bytes(&slot(ds::RUNIMG_CODE), code, &mut stores.allocations);
-    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_STARTS), count(starts.len()), 4, &mut stores.allocations);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_STARTS),
+        count(starts.len()),
+        4,
+        &mut stores.allocations,
+    );
     let sv = rec.field_recvec(ds::RUNIMG_STARTS, 4);
     for &at in starts {
         let e = sv.push(stores).db_ref();
@@ -948,13 +961,23 @@ fn materialize_run_image(
         }
         natives[i] = name;
     }
-    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_NATIVES), count(natives.len()), 4, &mut stores.allocations);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_NATIVES),
+        count(natives.len()),
+        4,
+        &mut stores.allocations,
+    );
     let nv = rec.field_recvec(ds::RUNIMG_NATIVES, 4);
     for n in natives {
         let e = nv.push(stores);
         e.set_field_str(stores, 0, n);
     }
-    crate::vector::pre_alloc_vector(&slot(ds::RUNIMG_TYPES), count(schema.len()), ds::DBTYPE_STRIDE, &mut stores.allocations);
+    crate::vector::pre_alloc_vector(
+        &slot(ds::RUNIMG_TYPES),
+        count(schema.len()),
+        ds::DBTYPE_STRIDE,
+        &mut stores.allocations,
+    );
     materialize_schema(stores, &rec, ds::RUNIMG_TYPES, schema);
     rec.set_field_int(stores, ds::RUNIMG_MAIN, main);
     rec.set_field_bool(stores, ds::RUNIMG_CWD, cwd);

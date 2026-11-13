@@ -1864,7 +1864,7 @@ impl Output<'_> {
             // rustc E0425 "cannot find function `n_defaulted` in this scope", from a package
             // whose test file happened to name a helper the way the library did (loft#878).
             // `@FR-O-Move` — the arguments' stores AFTER the call (`keys::protect_after_call`):
-            // a `&` argument the callee re-points no longer holds the store it answers.
+            // a `&` argument the callee re-points holds another store than the one it answers.
             let (protect_before, protect_after) = if crate::keys::protect_after_call() {
                 (String::new(), protect)
             } else {

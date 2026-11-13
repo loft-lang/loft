@@ -335,12 +335,11 @@ pub(super) fn owner_witness_locals(
             && !matches!(function.tp(*t), Type::RefVar(_))
             && function.tp(*t).base().heap_def_nr().is_some()
         {
-            let kind = witness_set_kind(val, *t, *t, function, data, d_nr, &mut |v| {
+            match witness_set_kind(val, *t, *t, function, data, d_nr, &mut |v| {
                 let defs =
                     defs.get_or_insert_with(|| crate::use_analysis::function_defs(data, d_nr));
                 crate::use_analysis::ownership_of_with(data, d_nr, v, defs)
-            });
-            match kind {
+            }) {
                 WitnessSet::Mint | WitnessSet::MintReading => {
                     minted.insert(*t);
                 }

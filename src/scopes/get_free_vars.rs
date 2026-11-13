@@ -582,6 +582,7 @@ impl Scopes<'_> {
                 if viewer_now {
                     self.skipped_viewers.insert(v);
                 }
+                // @FR-O-Proxy asks free — the sweep's free; the override is read below.
                 let owns = (function.proxy_says_owned(v)
                     || self.late_owners.contains(&v)
                     || self.lift_join_witness.contains_key(&v)

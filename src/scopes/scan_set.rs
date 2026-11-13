@@ -2092,6 +2092,9 @@ impl Scopes<'_> {
             // (`code = got!`, deps `[got]`) is never freed by it, so the lift keeps its store.
             // `LOFT_LIFT_LET_GO_VIEWS=1` lets a view's lift go too (the elaborator's `member`
             // then leaked one `Node` per field read).
+            // @FR-O-Proxy asks free — whether the displaced free releases the lift's store; a
+            // never-free local (`@FR-O-Override`) releases nothing, so its lift keeps the store.
+            && !function.is_skip_free(v)
             && (function.tp(v).depend().is_empty()
                 || crate::env_once!(std::env::var_os("LOFT_LIFT_LET_GO_VIEWS").is_some()))
             && !crate::env_once!(std::env::var_os("LOFT_NO_LIFT_LET_GO").is_some())
@@ -2773,8 +2776,11 @@ impl Scopes<'_> {
             || matches!(value, Value::Null)
             || !function.rebind_keeps_displaced(v)
             // A kept local with deps is a VIEW on some path (`k = h.u; k = S { … }`): what it
-            // displaces is another's store, never its own copy.
+            // displaces is another's store, never its own copy.  A never-free local
+            // (`@FR-O-Override`) releases nothing either.
+            // @FR-O-Proxy asks free — a free follows, so the override is consulted beside it.
             || !function.tp(v).depend().is_empty()
+            || function.is_skip_free(v)
             || !crate::keys::kept_element_copy()
             || crate::env_once!(std::env::var_os("LOFT_NO_KEPT_DISPLACED_FREE").is_some())
         {

@@ -3616,10 +3616,9 @@ fn view_roots(data: &Data, arg: &Value, join_arm_buffers: bool) -> Option<Vec<u1
             }
             // `v[i]` read as nullable (`OpGetVectorNullable`, the `!` unwrap's element read)
             // lies in `v`'s store as `OpGetVector`'s does.
-            if !is_projection_op(data, *d)
-                && !(data.def(*d).name() == "OpGetVectorNullable"
-                    && !crate::env_once!(std::env::var_os("LOFT_NO_NCR_ARG_ROOT").is_some()))
-            {
+            let nullable_element = data.def(*d).name() == "OpGetVectorNullable"
+                && !crate::env_once!(std::env::var_os("LOFT_NO_NCR_ARG_ROOT").is_some());
+            if !is_projection_op(data, *d) && !nullable_element {
                 return None;
             }
             view_roots(data, cargs.first()?, join_arm_buffers)

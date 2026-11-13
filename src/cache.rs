@@ -2112,7 +2112,7 @@ mod tests {
 
     /// The fingerprint stamps are bounded like the images: the newest [`KEEP_STDLIB_STAMPS`]
     /// stay, the older go, and a name that is not a stamp is left alone.
-    /// @falsified-at: hand-measured (089c5a96c + this change, 2026-11-12) — with the stamp removal taken
+    /// @falsified-at: hand-measured (089c5a96c + this change) — with the stamp removal taken
     /// out, `older stamp 0 removed` fails.
     #[test]
     fn stdlib_stamps_keep_the_newest_and_nothing_else() {

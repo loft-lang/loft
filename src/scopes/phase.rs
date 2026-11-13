@@ -706,6 +706,8 @@ pub(super) fn run_scan_phase(
             .skipped_viewers
             .iter()
             .copied()
+            // @FR-O-Proxy asks oracle — which skipped viewers ended the scan as owners, for the
+            // rescan; it emits nothing, and the rescan's own frees consult the override.
             .filter(|&v| !late_owners.contains(&v) && v < vars.count() && vars.proxy_says_owned(v))
             .collect()
     };

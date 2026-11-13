@@ -3045,7 +3045,7 @@ impl Run<'_> {
     /// copy bracket protects it: a store of the answer that no protectable argument names
     /// (`use_analysis::protectable_ref_args`, the code generator's own list) ends here.  The
     /// arguments are read after the call (`@FR-O-Move`: a `&` argument the callee re-points
-    /// no longer holds the store it answers), or before it where `pre` says the bracket is
+    /// holds another store than the one it answers), or before it where `pre` says the bracket is
     /// set around the call.
     fn unprotected_source_free(
         &mut self,
@@ -3084,6 +3084,10 @@ impl Run<'_> {
     /// The states the two arms of an `if` on `cond` start from, as (then, else); `None` is
     /// an arm the test rules out.  A test the records cannot read keeps both arms with the
     /// state unchanged, which is sound: narrowing only ever removes paths a test excludes.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per test shape the records can read; the split is release work (M-file-split)"
+    )]
     fn decide(&self, cond: &Value, st: State) -> (Option<State>, Option<State>) {
         let both = |st: State| (Some(st.clone()), Some(st));
         match cond.unspan() {
@@ -3518,7 +3522,7 @@ impl Run<'_> {
     /// capture slot read out of a record that stays in this frame (`OpGetDbRef`).
     fn decide_distinct(&self, args: &[Value], st: State) -> (Option<State>, Option<State>) {
         // A view pair narrows `x` further on both sides of what the rest decides (`view_pair_arms`).
-        if let Some((x, w)) = self.view_pair(args, &st) {
+        if let Some((x, w)) = Self::view_pair(args, &st) {
             let wp = Self::pts(&st, w);
             let (distinct, same) = self.decide_distinct_plain(args, st);
             let distinct = distinct.and_then(|mut d| {
@@ -3549,7 +3553,7 @@ impl Run<'_> {
     }
 
     /// The view pair (`State::views`) an identity test of two variables reads, as `(view, base)`.
-    fn view_pair(&self, args: &[Value], st: &State) -> Option<(u16, u16)> {
+    fn view_pair(args: &[Value], st: &State) -> Option<(u16, u16)> {
         if !views_enabled() {
             return None;
         }
@@ -6204,6 +6208,61 @@ fn null_init_mints(
 
 /// The records driven from a hand-built function body: a shape no source spelling reaches
 /// (no loft source frees) can still be checked to be reported, and each rule gets a unit test.
+/// The view relation (`State::views`).  `LOFT_RECORDS_NO_VIEW_PAIRS=1` leaves it out.
+fn views_enabled() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_VIEW_PAIRS").is_some())
+}
+
+/// The paths a value can end on, as `(arm, tail)`: the arms of an `if`, and in a block its last
+/// statement, through spans.  `arm` is the whole arm, for asking what that path sets.
+fn value_tails<'v>(data: &Data, v: &'v Value, out: &mut Vec<(&'v Value, &'v Value)>) {
+    // A block's value is its last statement that is not a free: the frees the scan appends
+    // after the value answer nothing (`{ __lift = f(); __lift.x; OpFreeRef(__lift_1) }`).
+    fn is_free(data: &Data, op: &Value) -> bool {
+        matches!(op.unspan(), Value::Call(d, _)
+            if matches!(data.def(*d).name(),
+                "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefUnlessEntry" | "OpFreeText"))
+    }
+    fn last_value<'v>(data: &Data, ops: &'v [Value]) -> Option<&'v Value> {
+        ops.iter().rev().find(|op| !is_free(data, op))
+    }
+    fn tail<'v>(data: &Data, v: &'v Value) -> &'v Value {
+        match v.unspan() {
+            Value::Block(bl) if !bl.operators.is_empty() => {
+                last_value(data, &bl.operators).map_or(v.unspan(), |l| tail(data, l))
+            }
+            other => other,
+        }
+    }
+    match v.unspan() {
+        Value::If(_, t, e) => {
+            value_tails(data, t, out);
+            value_tails(data, e, out);
+        }
+        Value::Block(bl) if !bl.operators.is_empty() => {
+            let last =
+                last_value(data, &bl.operators).unwrap_or_else(|| bl.operators.last().unwrap());
+            if matches!(last.unspan(), Value::If(..)) {
+                value_tails(data, last, out);
+            } else {
+                out.push((v, tail(data, v)));
+            }
+        }
+        _ => out.push((v, v)),
+    }
+}
+
+/// Does `v` assign `w` anywhere inside it?
+fn sets_var(v: &Value, w: u16) -> bool {
+    let mut found = false;
+    v.walk(&mut |n| {
+        if matches!(n, Value::Set(x, _) if *x == w) {
+            found = true;
+        }
+    });
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6318,59 +6377,4 @@ mod tests {
             found.join("\n")
         );
     }
-}
-
-/// The view relation (`State::views`).  `LOFT_RECORDS_NO_VIEW_PAIRS=1` leaves it out.
-fn views_enabled() -> bool {
-    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_VIEW_PAIRS").is_some())
-}
-
-/// The paths a value can end on, as `(arm, tail)`: the arms of an `if`, and in a block its last
-/// statement, through spans.  `arm` is the whole arm, for asking what that path sets.
-fn value_tails<'v>(data: &Data, v: &'v Value, out: &mut Vec<(&'v Value, &'v Value)>) {
-    // A block's value is its last statement that is not a free: the frees the scan appends
-    // after the value answer nothing (`{ __lift = f(); __lift.x; OpFreeRef(__lift_1) }`).
-    fn is_free(data: &Data, op: &Value) -> bool {
-        matches!(op.unspan(), Value::Call(d, _)
-            if matches!(data.def(*d).name(),
-                "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefUnlessEntry" | "OpFreeText"))
-    }
-    fn last_value<'v>(data: &Data, ops: &'v [Value]) -> Option<&'v Value> {
-        ops.iter().rev().find(|op| !is_free(data, op))
-    }
-    fn tail<'v>(data: &Data, v: &'v Value) -> &'v Value {
-        match v.unspan() {
-            Value::Block(bl) if !bl.operators.is_empty() => {
-                last_value(data, &bl.operators).map_or(v.unspan(), |l| tail(data, l))
-            }
-            other => other,
-        }
-    }
-    match v.unspan() {
-        Value::If(_, t, e) => {
-            value_tails(data, t, out);
-            value_tails(data, e, out);
-        }
-        Value::Block(bl) if !bl.operators.is_empty() => {
-            let last =
-                last_value(data, &bl.operators).unwrap_or_else(|| bl.operators.last().unwrap());
-            if matches!(last.unspan(), Value::If(..)) {
-                value_tails(data, last, out);
-            } else {
-                out.push((v, tail(data, v)));
-            }
-        }
-        _ => out.push((v, v)),
-    }
-}
-
-/// Does `v` assign `w` anywhere inside it?
-fn sets_var(v: &Value, w: u16) -> bool {
-    let mut found = false;
-    v.walk(&mut |n| {
-        if matches!(n, Value::Set(x, _) if *x == w) {
-            found = true;
-        }
-    });
-    found
 }
