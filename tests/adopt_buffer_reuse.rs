@@ -360,7 +360,11 @@ fn the_store_census_drops() {
         // A rebind from a call whose answer is its minted buffer store adopts it as the first
         // bind does (`@FR-O-Move`, `bind_lowering::re_bind`): 14 fewer on and off the pool,
         // native unchanged.  `LOFT_NO_REBIND_ADOPTS_MINTED=1` gives back 225/345.
-        (211, 331, 104, 232),
+        // The rustc writer binds those rebinds plain too (`call_bind_taken`): the callee's
+        // fresh store is kept where its copy-or-adopt refilled a released one, 14 more pooled
+        // and 12 more unpooled on native (a 30M-pass rebind loop runs ~6% faster and no longer
+        // grows to 3.3 GB).  `LOFT_NATIVE_OWN_CALL_BIND=1` gives back 104/232.
+        (211, 331, 118, 244),
         "mints (interpret on, off, native on, off)"
     );
 }

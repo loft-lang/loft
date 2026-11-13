@@ -346,7 +346,7 @@ pub(super) fn owner_witness_locals(
                 WitnessSet::Other => {
                     // A view of another variable's storage.  A null or a store nobody names
                     // is not a VIEW and does not make the ownership mixed on its own.
-                    if is_view_of_storage(val, function, data) {
+                    if is_view_of_storage(val, function, data, d_nr) {
                         viewed.insert(*t);
                     }
                 }
@@ -454,7 +454,7 @@ pub(super) fn owner_witness_locals(
 /// — two OWNING assignments by `(B-Copy)` — carry a witness, after which
 /// `Scopes::displaced_drop` declined on `@FR-O-Override` and neither record's `OpDrop` ran.
 /// Two sites, two different questions, one answer: this is the `viewed` half only.
-fn is_view_of_storage(value: &Value, function: &Function, data: &Data) -> bool {
+fn is_view_of_storage(value: &Value, function: &Function, data: &Data, d_nr: u32) -> bool {
     if delivered_work_ref(value, function, data).is_some() {
         return false;
     }
@@ -474,7 +474,21 @@ fn is_view_of_storage(value: &Value, function: &Function, data: &Data) -> bool {
         // of `x = o.opt` under `@FR-L-Null-Which`) answers as its present arm does.
         Value::If(_, _, _) => {
             let seen = crate::use_analysis::through_null_arm(data, value);
-            !matches!(seen.unspan(), Value::If(_, _, _)) && is_view_of_storage(seen, function, data)
+            if !matches!(seen.unspan(), Value::If(_, _, _)) {
+                return is_view_of_storage(seen, function, data, d_nr);
+            }
+            // A CHOICE views storage where the oracle says its value borrows: `match v.tp {
+            // TRv { inner } => inner, _ => v.tp }` hands the local a view on every path.  Read
+            // as no view, a local also bound from a call was never mixed, took no witness, and
+            // its deps were stripped: freed as an owner, it released the store it viewed.  A
+            // choice of two mints (`if c { mk(i) } else { mk2(i) }`) is no view.
+            // `LOFT_NO_CHOICE_VIEW=1` reads every choice as no view again.
+            !crate::keys::choice_view_off()
+                && matches!(
+                    crate::use_analysis::ownership_of(data, d_nr, value),
+                    crate::use_analysis::Own::Borrowed { .. }
+                        | crate::use_analysis::Own::Join { .. }
+                )
         }
         _ => false,
     }
@@ -592,9 +606,15 @@ fn held_by_compiler_temp(value: &Value, function: &Function, data: &Data) -> boo
         Value::Var(r) => {
             (*r as usize) < function.count() as usize
                 && function.is_compiler_generated(*r)
-                && ["__ref_", "__rref_", "__vdb_", "__ncc_"]
+                && (["__ref_", "__rref_", "__vdb_", "__ncc_"]
                     .iter()
                     .any(|p| function.name(*r).starts_with(p))
+                    // The `!` unwrap's lift (`{ __lift_N = t; __lift_N }`) holds the store it
+                    // took and frees it at its own scope exit, unless it is marked never-free.
+                    // `LOFT_NO_LIFT_TEMP_VIEW=1` reads a bind of it as a mint again.
+                    || (function.name(*r).starts_with("__lift_")
+                        && !function.is_skip_free(*r)
+                        && !crate::keys::lift_temp_view_off()))
         }
         Value::Block(b) => b
             .operators

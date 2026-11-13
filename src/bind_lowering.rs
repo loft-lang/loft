@@ -753,19 +753,33 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // arm's bind copies into the temp (that is what the write-out is for), so the
     // temp owns what the arm displaces — the sentinel its pre-init put there.
     // An ARGUMENT frees what it displaces only with an entry witness, which tells the caller's
-    // store from one this frame minted (`@FR-O-Buffer`).  Without one the release is the scope
-    // pass's own: a rebound by-value parameter is detached in the IR before each rebind
-    // (`OpFreeRefIfDistinct(p, snapshot)` and its reset to the sentinel), so a free here would
-    // act on the sentinel — the C writer's `displacing_rebind` frees no such argument either.
+    // store from one this frame minted (`@FR-O-Buffer`).  Without one the release is not this
+    // free's: a rebound by-value parameter is detached in the IR before each rebind
+    // (`OpFreeRefIfDistinct(p, snapshot)` and its reset to the sentinel), and a renamed return
+    // buffer holds the store its CALLER handed it, which a free here released under the caller
+    // (a re-free under `LOFT_NO_ADOPT_BUFFER_REUSE=1`: tests/scripts/a-value-read-and-dropped-is-
+    // built-outside-the-store.loft's `decode`).  The C writer's `displacing_rebind` frees no
+    // such argument either.
     // @PLN220.  `LOFT_ARG_DISPLACED_FREE=1` keeps the free for every argument but the hidden
     // buffer, as before.
     // Only the free BEFORE the bind is the scope pass's: `owned_ref` still decides the copy arms
     // below, since a rebound parameter that owns its binding copies a call's answer as any owner
     // does, and a stashed free (the value reads the parameter, or it is nullable) still runs —
     // it is what the copy arms' fresh-store choice reads (#360).
+    // A keyed local whose null init minted nothing (`keyed_null_mints`) and that is only ever
+    // bound to a null or a borrow (`__kvb_N = b.0`, a temporary viewing a store another binding
+    // owns) never holds a store of its own, so a reassignment displaces nothing — the C and
+    // rustc writers free nothing there either.  One that takes a call's answer may hold a store
+    // that call minted, and keeps its free.  @PLN220.  `LOFT_KEYED_VIEW_DISPLACED_FREE=1` frees
+    // again.
+    let keyed_view = crate::parser::vectors::owns_keyed_store(function.tp(v))
+        && !keyed_null_mints(function, v)
+        && !crate::keys::keyed_view_displaced_free()
+        && only_null_or_borrowed(data, d_nr, v);
     let owned_ref = (function.owns_displaced_store(v, value, data)
         || is_return_temp_owning_its_arms(data, d_nr, function, v))
-        && (!is_hidden_buf_arg || entry_w.is_some());
+        && (!is_hidden_buf_arg || entry_w.is_some())
+        && !keyed_view;
     let frees_displaced = owned_ref
         && (crate::keys::arg_displaced_free() || !function.is_argument(v) || entry_w.is_some());
     // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
@@ -878,6 +892,25 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     rb
 }
 
+/// `@FR-O-Unknown` — may `v` take a closure call's answer through the runtime copy-or-adopt
+/// (`ReArm::OpaqueCallRef`: copied when it predates the call, adopted when the call minted it)?
+/// Any local; and a renamed return buffer where an entry witness tells the caller's store from
+/// this frame's (`@FR-O-Buffer`), as the C writer's `opaque_callref_stmt` takes it.  Another
+/// argument's store is its caller's, which no bind here may adopt.  @PLN220.
+/// `LOFT_NO_BUFFER_OPAQUE_CALL=1` leaves the return buffer to the plain bind.
+fn opaque_call_destination(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    rb: &ReBind,
+) -> bool {
+    !function.is_argument(v)
+        || (is_promoted_return_buffer(data, d_nr, function, v)
+            && rb.entry_w.is_some()
+            && !crate::keys::buffer_opaque_call_off())
+}
+
 /// The arm of a reassignment, given its facts: the tests in the order the old chain took them.
 fn re_arm(
     data: &Data,
@@ -894,7 +927,8 @@ fn re_arm(
     let stashed = rb.free == DisplacedFree::Stash;
     // A stashed displaced free (a nullable local) runs after the join as it runs after a copy,
     // and a `τ?` local joins as its `τ` twin does (`first_bind_shape`) — the C writer's
-    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there: a call handed `v`
+    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there — either call
+    // spelling, a `CallRef` whose target resolves (`callee_of`) included: a call handed `v`
     // may answer `v`'s own store, which the copy arm would refill under it (#360), and the
     // join's "fresh" test is a call's — a `??` block's stored-reference arm names a store
     // neither `v` nor the base owns.  `LOFT_NO_STASHED_JOIN=1` copies them instead.  @PLN220.
@@ -909,7 +943,7 @@ fn re_arm(
         && (!stashed
             || (stashed_join
                 && !rb.rhs_reads_v
-                && matches!(value.unspan(), Value::Call(..))
+                && matches!(value.unspan(), Value::Call(..) | Value::CallRef(..))
                 && crate::use_analysis::callee_of(data, d_nr, value).is_some()))
         && !matches!(value.unspan(), Value::Var(_))
         && crate::keys::join_own_enabled()
@@ -926,7 +960,7 @@ fn re_arm(
     }
     if rb.owned_ref
         && !rb.witnessed
-        && !function.is_argument(v)
+        && opaque_call_destination(data, d_nr, function, v, rb)
         && !function.is_view_elided(v)
         && let Some(rec) = crate::use_analysis::opaque_callref_bind(data, d_nr, tp, value)
     {
@@ -1031,6 +1065,32 @@ fn join_record(tp: &Type) -> Option<u32> {
     }
 }
 
+/// Is every value function `d_nr` binds to `v` a null or a borrow of another binding
+/// (`use_analysis::Own::Borrowed`)?  Then `v` never holds a store of its own.  A value of any
+/// other ownership — a call's answer, a join, a mint — answers no, which only keeps a free.
+fn only_null_or_borrowed(data: &Data, d_nr: u32, v: u16) -> bool {
+    fn walk(data: &Data, d_nr: u32, v: u16, node: &Value, ok: &mut bool) {
+        if !*ok {
+            return;
+        }
+        if let Value::Set(var, value) = node.unspan()
+            && *var == v
+            && !is_null_value(data, value)
+            && !matches!(
+                crate::use_analysis::ownership_of(data, d_nr, value),
+                crate::use_analysis::Own::Borrowed { .. }
+            )
+        {
+            *ok = false;
+            return;
+        }
+        node.for_each_child(&mut |c| walk(data, d_nr, v, c, ok));
+    }
+    let mut ok = true;
+    walk(data, d_nr, v, data.def(d_nr).code(), &mut ok);
+    ok
+}
+
 /// Is `value` a null — `null`, or the sentinel a reference reset writes?
 fn is_null_value(data: &Data, value: &Value) -> bool {
     match value.unspan() {
@@ -1107,6 +1167,40 @@ pub fn answers_a_view_to_copy(data: &Data, d_nr: u32, value: &Value) -> bool {
             crate::use_analysis::ownership_of(data, d_nr, value),
             crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. }
         )
+}
+
+/// The lowering `bind_lowering` decides for `v = value`, as a writer's trace row names it beside
+/// its own arm (`lowering=R1/b2=stash join`): the first arm's name for a first bind, the
+/// reassignment's arm with its displaced free otherwise.  Only a trace asks it.
+#[must_use]
+pub fn decided_lowering(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    value: &Value,
+    first: bool,
+) -> String {
+    if first {
+        return first_arm(data, d_nr, function, v, value)
+            .trace_name()
+            .to_string();
+    }
+    let rb = re_bind(data, d_nr, function, v, value);
+    let b2 = match rb.free {
+        DisplacedFree::Stash => "stash",
+        DisplacedFree::Pre { .. } => "pre",
+        DisplacedFree::None => "none",
+    };
+    format!("{}/b2={b2}", rb.arm.trace_name())
+}
+
+/// The source line a bind trace row names for `v = value`: the value's own position where the
+/// parser spanned it, else the line the writer last passed (`fallback`), so the three writers
+/// name one assignment by one line even where a writer's own position stream skips a function.
+#[must_use]
+pub fn row_line(value: &Value, fallback: u32) -> u32 {
+    value.span_pos().map_or(fallback, |p| p.line)
 }
 
 /// Is the bind trace the environment variable `env` names switched on?  A writer asks it before

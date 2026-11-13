@@ -91,6 +91,12 @@ struct SInfo {
     /// record was built" leaves it live only there).  A test finding one of them null drops
     /// it; the last one dropped finds this store not live.  Empty: nothing known.
     live_some: BTreeSet<u16>,
+    /// The cover: on every path where the key is live, every live store under it is named by
+    /// one of these variables (a key standing for several stores — an older generation — too).
+    /// A bind adds its name, a rebind drops it, and a holder the cover cannot list (a capture
+    /// slot, a record field, a hand-over) makes it `None`, unknown.  A certain free that empties
+    /// it leaves the key not live: the names that held it are all freed (design-cover.md).
+    cover: Option<BTreeSet<u16>>,
     /// Closure-record variables null on every path where it is live (a record built only
     /// where the capture went into it).  A test finding one of them naming a record then
     /// finds this store not live.
@@ -145,6 +151,9 @@ struct State {
     /// Pairs of variables one a plain copy of the other (`k = h`, smaller number first): the
     /// same value until either is bound again, so a test that narrows one narrows both.
     copies: BTreeSet<(u16, u16)>,
+    /// The function's closure-record variables (`___clos_N`), the same on every path: the
+    /// `live_some` candidates of a store no record captures (`live_some_candidates`).
+    records: BTreeSet<u16>,
 }
 
 /// A site's mint count per path ([`State::mints`]).  Only the ORDER of two sides' counts at a
@@ -359,6 +368,98 @@ fn copy_alias() -> bool {
     *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_COPY_ALIAS").is_none())
 }
 
+/// `LOFT_RECORDS_NO_SLOT_NULL=1`: a null written into a capture slot leaves the slot as it was,
+/// and a presence test of a slot decides nothing (the records' bisect switch).
+fn slot_null() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_NULL").is_none())
+}
+
+/// The closure-record variables a join asks whether they are non-null wherever store `info`
+/// is live (`SInfo::live_some`): those that captured it, or — a store no record captures, one
+/// minted only on the runs that also build a record (a loop's pass, L-CapKeep/2357 `record`) —
+/// every closure record of the function.  The one seam for the candidates.
+fn live_some_candidates(info: &SInfo, st: &State) -> BTreeSet<u16> {
+    if info.captured_by.is_empty() && live_some_uncaptured() {
+        st.records.clone()
+    } else {
+        info.captured_by.clone()
+    }
+}
+
+/// `LOFT_RECORDS_NO_LIVE_SOME_UNCAPTURED=1`: a store no record captures carries no
+/// `live_some` (the records' bisect switch).
+fn live_some_uncaptured() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_LIVE_SOME_UNCAPTURED").is_none())
+}
+
+/// `LOFT_RECORDS_NO_SLOT_SOLE_HOLDER=1`: a store held only in a leaving record's slot is handed
+/// on there only where the slot's correlation says so (the records' bisect switch).
+fn slot_sole_holder() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_SOLE_HOLDER").is_none())
+}
+
+/// `LOFT_RECORDS_NO_IDENTITY_TEST_NO_USE=1`: an operand of a store identity test is a use of
+/// its store (the records' bisect switch).
+fn identity_test_no_use() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_IDENTITY_TEST_NO_USE").is_none())
+}
+
+/// `LOFT_RECORDS_NO_COVER=1`: no key keeps a cover, so a free never finds its last holder gone.
+fn cover_on() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_COVER").is_some())
+}
+
+/// The stores in `pts` gain a holder the cover does not name (a capture slot, a record field,
+/// a hand-over): their cover is unknown from here on.
+fn uncover_all(st: &mut State, pts: &Pts) {
+    for p in pts {
+        if let Pt::Store(k) = p
+            && let Some(info) = st.stores.get_mut(k)
+        {
+            info.cover = None;
+        }
+    }
+}
+
+/// `LOFT_RECORDS_NO_GUARDED_REST_REPORTS=1`: a guarded free's stores its witness cannot name
+/// end silently (the records' bisect switch).
+fn guarded_rest_reports() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_GUARDED_REST_REPORTS").is_none())
+}
+
+/// `LOFT_RECORDS_NO_SLOT_DEAD_ARM=1`: the dead arm of a slot liveness test leaves the store the
+/// slot names as it was (the records' bisect switch).
+fn slot_dead_arm() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_DEAD_ARM").is_none())
+}
+
+/// `LOFT_RECORDS_NO_SLOT_CORR_JOIN=1`: a slot's correlation is intersected at a join and
+/// dropped at a re-mint of its store's site (the records' bisect switch).
+fn slot_corr_join() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_CORR_JOIN").is_none())
+}
+
+/// `LOFT_RECORDS_NO_SLOT_CORR_NARROW=1`: a store narrowed out of a capture slot keeps its
+/// liveness, and a slot is narrowed only against one store (the records' bisect switch).
+fn slot_corr_narrow() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_SLOT_CORR_NARROW").is_none())
+}
+
+/// `LOFT_RECORDS_NO_KEEP_DROP_CASCADE=1`: a keep temporary's guarded `OpDropFnRef` cascades
+/// nothing, as the emitter's stand-down drop (the records' bisect switch).
+fn keep_drop_cascade() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_RECORDS_NO_KEEP_DROP_CASCADE").is_none())
+}
+
 fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
     let meet = |x: &BTreeSet<u16>, xa: bool, y: &BTreeSet<u16>, ya: bool| match (xa, ya) {
         (true, true) => x.intersection(y).copied().collect(),
@@ -392,6 +493,15 @@ fn join_info(a: &SInfo, b: &SInfo) -> SInfo {
             (false, false) => None,
         },
         handed_by: meet(&a.handed_by, a.has(LIVE), &b.handed_by, b.has(LIVE)),
+        cover: match (a.has(LIVE), b.has(LIVE)) {
+            (true, true) => match (&a.cover, &b.cover) {
+                (Some(x), Some(y)) => Some(x.union(y).copied().collect()),
+                _ => None,
+            },
+            (true, false) => a.cover.clone(),
+            (false, true) => b.cover.clone(),
+            (false, false) => None,
+        },
         live_some: BTreeSet::new(),
         live_null: BTreeSet::new(),
         captured_by: a.captured_by.union(&b.captured_by).copied().collect(),
@@ -405,6 +515,9 @@ fn demote(st: &mut State, site: u32) {
     let cur = SKey { site, older: false };
     let old = SKey { site, older: true };
     if let Some(info) = st.stores.remove(&cur) {
+        // No earlier generation live here: a slot correlated with the current store stays
+        // correlated with the older key it becomes.
+        let old_quiet = !info_of(st, old).has(LIVE);
         let merged = match st.stores.get(&old) {
             Some(o) => join_info(o, &info),
             None => info,
@@ -429,7 +542,11 @@ fn demote(st: &mut State, site: u32) {
                 if v.pts.remove(&Pt::Store(cur)) {
                     v.pts.insert(Pt::Store(old));
                 }
-                v.corr.remove(&cur);
+                if v.corr.remove(&cur) && slot_corr_join() && (old_quiet || v.corr.contains(&old)) {
+                    v.corr.insert(old);
+                } else if !old_quiet {
+                    v.corr.remove(&old);
+                }
             }
         }
         if let Some(m) = st.slots.remove(&cur) {
@@ -491,6 +608,7 @@ fn join_state(a: &State, b: &State) -> State {
         if info.has(LIVE) {
             // Per side: what it knows, or the records it holds non-null; `None` where the
             // store is not live there.
+            let candidates = live_some_candidates(&info, a);
             let side = |st: &State, i: &SInfo| -> Option<BTreeSet<u16>> {
                 if !i.has(LIVE) {
                     None
@@ -498,7 +616,7 @@ fn join_state(a: &State, b: &State) -> State {
                     Some(i.live_some.clone())
                 } else {
                     Some(
-                        info.captured_by
+                        candidates
                             .iter()
                             .copied()
                             .filter(|w| st.vars.get(w).is_some_and(|p| !p.contains(&Pt::Null)))
@@ -557,6 +675,7 @@ fn join_state(a: &State, b: &State) -> State {
         points,
         nonnull: a.nonnull.intersection(&b.nonnull).copied().collect(),
         copies: join_copies(a, b),
+        records: a.records.union(&b.records).copied().collect(),
         mints: a.mints.clone(),
     }
 }
@@ -588,7 +707,20 @@ fn join_slots(a: &State, b: &State) -> SlotParts {
             match into.get_mut(off) {
                 Some(x) => {
                     x.pts.extend(v.pts.iter().copied());
-                    x.corr = x.corr.intersection(&v.corr).copied().collect();
+                    // A store stays correlated with the slot where, on each side, it is
+                    // correlated there or not live (as for a value, `join_out`).
+                    x.corr = if slot_corr_join() {
+                        x.corr
+                            .union(&v.corr)
+                            .copied()
+                            .filter(|c| {
+                                (x.corr.contains(c) || !info_of(a, *c).has(LIVE))
+                                    && (v.corr.contains(c) || !info_of(b, *c).has(LIVE))
+                            })
+                            .collect()
+                    } else {
+                        x.corr.intersection(&v.corr).copied().collect()
+                    };
                 }
                 None => {
                     into.insert(*off, v.clone());
@@ -987,6 +1119,9 @@ impl Run<'_> {
         }
         for info in st.stores.values_mut() {
             forget_holder(info, v);
+            if let Some(c) = info.cover.as_mut() {
+                c.remove(&v);
+            }
             info.ended.remove(&v);
             if let Some(sn) = info.stale.as_mut() {
                 sn.remove(&v);
@@ -1007,6 +1142,9 @@ impl Run<'_> {
         for k in Self::stores_of(&val.pts) {
             self.sites[k.site as usize].holders.insert(v);
             if let Some(info) = st.stores.get_mut(&k) {
+                if let Some(c) = info.cover.as_mut() {
+                    c.insert(v);
+                }
                 if (single || val.corr.contains(&k)) && info.status & LIVE != 0 {
                     info.live.insert(v);
                     for a in &mut info.alts {
@@ -1041,6 +1179,7 @@ impl Run<'_> {
             cur,
             SInfo {
                 status: LIVE,
+                cover: cover_on().then(BTreeSet::new),
                 ..Default::default()
             },
         );
@@ -1096,6 +1235,13 @@ impl Run<'_> {
         report: bool,
         only: Option<&BTreeSet<SKey>>,
     ) {
+        // A record variable freed (and reset) says nothing more about a store it did not
+        // capture: drop it from that store's `live_some`.
+        for info in st.stores.values_mut() {
+            if info.captured_by.is_empty() && info.live_some.contains(&v) {
+                info.live_some.clear();
+            }
+        }
         let pts = Self::pts(st, v);
         let label = format!("{how}({})", self.var_name(v));
         for k in Self::stores_of(&pts) {
@@ -1106,7 +1252,10 @@ impl Run<'_> {
             let info = info_of(st, k);
             // A variable naming only this store or null, where the store is ended on every
             // path: freed again wherever the variable is not null.
-            let only_this = pts.iter().all(|p| *p == Pt::Null || *p == Pt::Store(k));
+            // A guarded free's stores its witness cannot name (`only`): the guard is distinct
+            // wherever `v` names one, so the free reaches each as if `v` named it alone.
+            let only_this = pts.iter().all(|p| *p == Pt::Null || *p == Pt::Store(k))
+                || (only.is_some() && guarded_rest_reports());
             // …and a DEFINITE name of a store a weak end already released on some path (a
             // maybe-null holder freed it first): freed again on that path.
             let weakly_ended = pts.len() == 1
@@ -1198,6 +1347,29 @@ impl Run<'_> {
                 format!("`{name}` is freed by {how}, but its store is the caller's"),
             );
         }
+        if report && only.is_none() {
+            Self::uncover_freed(st, v, &pts);
+        }
+    }
+
+    /// A certain free through `v`: `v` leaves the cover of every key it names, and a key whose
+    /// cover that empties is not live — every name that held it is freed (`SInfo::cover`).
+    fn uncover_freed(st: &mut State, v: u16, pts: &Pts) {
+        if !cover_on() {
+            return;
+        }
+        for k in Self::stores_of(pts) {
+            if let Some(info) = st.stores.get_mut(&k)
+                && let Some(c) = info.cover.as_mut()
+                && c.remove(&v)
+                && c.is_empty()
+                && info.has(LIVE)
+            {
+                info.status &= !LIVE;
+                info.live.clear();
+                info.alts.clear();
+            }
+        }
     }
 
     /// Does `w` name a closure record that holds a capture?
@@ -1264,6 +1436,7 @@ impl Run<'_> {
     /// the offset is known (a null empties it: the code generator's give-up of a capture
     /// before a return, `@FR-L-CapOne`).
     fn hold(&self, st: &mut State, w: u16, off: Option<i32>, value: &Val, src: Option<u16>) {
+        uncover_all(st, &value.pts);
         let recs = Self::stores_of(&Self::pts(st, w));
         let strong = recs.len() == 1 && off.is_some();
         let pts: Pts = value
@@ -1522,6 +1695,7 @@ impl Run<'_> {
     }
 
     fn hand_on(st: &mut State, val: &Val) {
+        uncover_all(st, &val.pts);
         let single = val.pts.len() == 1;
         let mut records = Vec::new();
         for k in Self::stores_of(&val.pts) {
@@ -1574,11 +1748,49 @@ impl Run<'_> {
                 }
             }
         }
+        // A store no variable names, held only in the slots of records this value certainly
+        // hands on, leaves with them on every path where it is live: the records' model knows
+        // no other holder of it.
+        let sole: BTreeSet<SKey> = if slot_sole_holder() {
+            let certain: Vec<SKey> = records
+                .iter()
+                .copied()
+                .filter(|k| single || val.corr.contains(k))
+                .collect();
+            let held: BTreeSet<SKey> = certain
+                .iter()
+                .filter_map(|r| st.slots.get(r))
+                .flat_map(|m| m.values().flat_map(|v| Self::stores_of(&v.pts)))
+                .collect();
+            held.into_iter()
+                .filter(|k| {
+                    let info = info_of(st, *k);
+                    info.live.is_empty()
+                        && info.alts.is_empty()
+                        && !st.vars.values().any(|p| p.contains(&Pt::Store(*k)))
+                        && !st
+                            .field_captures
+                            .values()
+                            .any(|p| p.contains(&Pt::Store(*k)))
+                        && st.slots.iter().all(|(r, m)| {
+                            certain.contains(r)
+                                || !m.values().any(|v| v.pts.contains(&Pt::Store(*k)))
+                        })
+                })
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
         // A closure record that leaves takes what its slots hold with it (`@FR-L-CapOne`).
         for k in records {
             if let Some(m) = st.slots.remove(&k) {
                 let src = st.slot_src.remove(&k).unwrap_or_default();
-                for (off, v) in m {
+                for (off, mut v) in m {
+                    v.corr.extend(
+                        Self::stores_of(&v.pts)
+                            .into_iter()
+                            .filter(|c| sole.contains(c)),
+                    );
                     Self::hand_on_var(st, src.get(&off).copied(), &v);
                 }
             }
@@ -2199,6 +2411,13 @@ impl Run<'_> {
         let mut st = st;
         let old = Self::pts(&st, t);
         st.vars.insert(x, old.clone());
+        for k in Self::stores_of(&old) {
+            if let Some(info) = st.stores.get_mut(&k)
+                && let Some(c) = info.cover.as_mut()
+            {
+                c.insert(x);
+            }
+        }
         // The link reads its target: where a store `t` names is ended, the link may name it.
         for k in Self::stores_of(&old) {
             if let Some(info) = st.stores.get_mut(&k)
@@ -2608,6 +2827,15 @@ impl Run<'_> {
                     && let Some(arms) = self.slot_live_test(&a[0], &st)
                 {
                     return arms;
+                }
+                if (*op == self.ops.ref_present || *op == self.ops.ref_is_null)
+                    && let Some((present, null)) = self.slot_present_test(&a[0], &st)
+                {
+                    return if *op == self.ops.ref_present {
+                        (present, null)
+                    } else {
+                        (null, present)
+                    };
                 }
                 let Value::Var(x) = a[0].unspan() else {
                     return both(st);
@@ -3061,28 +3289,83 @@ impl Run<'_> {
         else {
             return None;
         };
-        let y = match b.iter().next() {
-            Some(y @ Pt::Store(_)) if b.len() == 1 => *y,
-            _ => return None,
-        };
         if *op != self.ops.get_dbref
-            || a.len() < 2
-            || !a.contains(&y)
             || crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_SLOT_NARROW").is_some())
         {
             return None;
         }
+        let y = match b.iter().next() {
+            Some(y @ Pt::Store(_)) if b.len() == 1 => Some(*y),
+            _ => None,
+        };
+        let Some(y) = y.filter(|y| a.len() >= 2 && a.contains(y)) else {
+            // The other operand names several stores (or null): where SAME, the slot names only
+            // a store both may name; none at all, and the arm cannot run.
+            if !slot_corr_narrow()
+                || a.contains(&Pt::Unknown)
+                || b.contains(&Pt::Unknown)
+                || a.iter().any(|p| matches!(p, Pt::Param(_)))
+                || b.iter().any(|p| matches!(p, Pt::Param(_)))
+                || !a.iter().any(|p| matches!(p, Pt::Store(_)))
+            {
+                return None;
+            }
+            let both: Pts = a.intersection(b).copied().collect();
+            if both.len() == a.len() {
+                return None;
+            }
+            let same = if both.iter().any(|p| matches!(p, Pt::Store(_))) {
+                let mut same = st.clone();
+                Self::narrow_slot(&mut same, *w, off, |p| both.contains(p)).then_some(same)
+            } else {
+                None
+            };
+            return Some((Some(st.clone()), same));
+        };
         let mut distinct = st.clone();
-        Self::narrow_slot(&mut distinct, *w, off, |p| *p != y);
+        let d_ok = Self::narrow_slot(&mut distinct, *w, off, |p| *p != y);
         let mut same = st.clone();
-        Self::narrow_slot(&mut same, *w, off, |p| *p == y);
-        Some((Some(distinct), Some(same)))
+        let s_ok = Self::narrow_slot(&mut same, *w, off, |p| *p == y);
+        Some((d_ok.then_some(distinct), s_ok.then_some(same)))
     }
 
     /// `OpStoreLive(OpGetDbRef(w, off))` (the frame end's let-go of a capture, `@FR-L-CapOwn`):
     /// where it holds, the slot names none of its stores that is freed on every path or was
     /// never made — the free it guards cannot reach one (`LOFT_RECORDS_NO_SLOT_LIVE_NARROW=1`).
     /// The other arm keeps the slot whole.
+    /// `OpConvBoolFromRef(OpGetDbRef(w, off))`: the (present, null) arms, decided by what the
+    /// slot may hold on this path — a store for the first, null for the second.  `None` where a
+    /// record `w` may name has no such slot followed.
+    fn slot_present_test(&self, arg: &Value, st: &State) -> Option<(Option<State>, Option<State>)> {
+        if !slot_null() {
+            return None;
+        }
+        let Value::Call(g, ga) = arg.unspan() else {
+            return None;
+        };
+        let (Some(Value::Var(w)), Some(off)) =
+            (ga.first().map(Value::unspan), Self::const_offset(ga.get(1)))
+        else {
+            return None;
+        };
+        if *g != self.ops.get_dbref {
+            return None;
+        }
+        let recs = Self::stores_of(&Self::pts(st, *w));
+        let mut held: Vec<&Pts> = Vec::new();
+        for k in &recs {
+            held.push(&st.slots.get(k)?.get(&off)?.pts);
+        }
+        if held.is_empty() {
+            return None;
+        }
+        let may_store = held
+            .iter()
+            .any(|p| p.iter().any(|q| matches!(q, Pt::Store(_) | Pt::Param(_))));
+        let may_null = held.iter().any(|p| p.is_empty() || p.contains(&Pt::Null));
+        Some((may_store.then(|| st.clone()), may_null.then(|| st.clone())))
+    }
+
     fn slot_live_test(&self, arg: &Value, st: &State) -> Option<(Option<State>, Option<State>)> {
         let Value::Call(g, ga) = arg.unspan() else {
             return None;
@@ -3097,30 +3380,125 @@ impl Run<'_> {
         {
             return None;
         }
-        let dead: BTreeSet<SKey> = Self::stores_of(&Self::held_by_record(st, *w, Some(off)))
-            .into_iter()
+        let held_pts = Self::held_by_record(st, *w, Some(off));
+        let held = Self::stores_of(&held_pts);
+        let dead: BTreeSet<SKey> = held
+            .iter()
+            .copied()
             .filter(|k| info_of(st, *k).status & (LIVE | HANDED) == 0)
             .collect();
-        if dead.is_empty() {
+        // The dead arm of a slot that names ONE store: that store is not live there.  Where the
+        // records have it ended or absent on some path, the arm keeps those; where they have it
+        // live on every path, the arm cannot run.
+        let single = slot_dead_arm()
+            && held.len() == 1
+            && !held_pts
+                .iter()
+                .any(|p| matches!(p, Pt::Unknown | Pt::Param(_)));
+        // …and a store correlated with the slot of the one record `w` names: live only where
+        // the slot names it, and where it does, it is the store found dead.
+        let recs = Self::stores_of(&Self::pts(st, *w));
+        let corr: Vec<SKey> = if slot_dead_arm() && recs.len() == 1 {
+            st.slots
+                .get(&recs[0])
+                .and_then(|m| m.get(&off))
+                .map(|v| {
+                    v.corr
+                        .iter()
+                        .copied()
+                        .filter(|c| Self::sole_slot(st, recs[0], off, *c))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if dead.is_empty() && !single && corr.is_empty() {
             return None;
         }
         let mut live = st.clone();
-        Self::narrow_slot(
-            &mut live,
-            *w,
-            off,
-            |p| !matches!(p, Pt::Store(k) if dead.contains(k)),
-        );
-        Some((Some(live), Some(st.clone())))
+        if !dead.is_empty() {
+            let _ = Self::narrow_slot(
+                &mut live,
+                *w,
+                off,
+                |p| !matches!(p, Pt::Store(k) if dead.contains(k)),
+            );
+        }
+        let mut not_live: Vec<SKey> = corr;
+        if single {
+            not_live.push(held[0]);
+        }
+        let mut d = st.clone();
+        let mut feasible = true;
+        for k in not_live {
+            if let Some(i) = d.stores.get_mut(&k)
+                && i.has(LIVE)
+            {
+                if i.status & (ENDED | ABSENT | HANDED) == 0 {
+                    feasible = false;
+                    break;
+                }
+                i.status &= !LIVE;
+                i.live.clear();
+                i.alts.clear();
+            }
+        }
+        let dead_arm = feasible.then_some(d);
+        Some((Some(live), dead_arm))
     }
 
-    fn narrow_slot(st: &mut State, w: u16, off: i32, keep: impl Fn(&Pt) -> bool) {
-        for k in Self::stores_of(&Self::pts(st, w)) {
-            if let Some(v) = st.slots.get_mut(&k).and_then(|m| m.get_mut(&off)) {
+    /// Is slot `off` of record `rec` the only holder of `k` — no variable, fn field or other
+    /// slot names it?  A slot's correlation ("live only where the slot names it") is read only
+    /// then: a store an older record's slot also holds is live through that one too.
+    fn sole_slot(st: &State, rec: SKey, off: i32, k: SKey) -> bool {
+        let p = Pt::Store(k);
+        !st.vars.values().any(|v| v.contains(&p))
+            && !st.field_captures.values().any(|v| v.contains(&p))
+            && st.slots.iter().all(|(r, m)| {
+                m.iter()
+                    .all(|(o, v)| (*r == rec && *o == off) || !v.pts.contains(&p))
+            })
+    }
+
+    /// `false` where the narrowing leaves no path: a store live only where the slot names it,
+    /// and live on every path, is dropped from the only record that could hold it.
+    fn narrow_slot(st: &mut State, w: u16, off: i32, keep: impl Fn(&Pt) -> bool) -> bool {
+        let recs = Self::stores_of(&Self::pts(st, w));
+        let mut gone: Vec<SKey> = Vec::new();
+        if recs.len() == 1
+            && let Some(v) = st.slots.get(&recs[0]).and_then(|m| m.get(&off))
+        {
+            gone = v
+                .corr
+                .iter()
+                .copied()
+                .filter(|c| !keep(&Pt::Store(*c)) && Self::sole_slot(st, recs[0], off, *c))
+                .collect();
+        }
+        for k in &recs {
+            if let Some(v) = st.slots.get_mut(k).and_then(|m| m.get_mut(&off)) {
                 v.pts.retain(|p| !matches!(p, Pt::Store(_)) || keep(p));
                 v.corr.retain(|c| keep(&Pt::Store(*c)));
             }
         }
+        // A correlated store is live only where the slot names it: dropped from the slot of the
+        // one record `w` names, it is not live on this path.
+        if slot_corr_narrow() && recs.len() == 1 {
+            for c in gone {
+                if let Some(i) = st.stores.get_mut(&c)
+                    && i.has(LIVE)
+                {
+                    if i.status & (ABSENT | ENDED | HANDED) == 0 {
+                        return false;
+                    }
+                    i.status &= !LIVE;
+                    i.live.clear();
+                    i.alts.clear();
+                }
+            }
+        }
+        true
     }
 
     fn narrow(st: &mut State, x: u16, to: Pts) {
@@ -3174,7 +3552,7 @@ impl Run<'_> {
             // A block's value is its last value-producing statement's: the cleanup frees the
             // scope pass places after it (`{ if … ; OpFreeRefIfDistinct(…) }`) run while the
             // value waits, and answer nothing.
-            if self.is_void_call(op) {
+            if self.is_void_call(op) || self.is_void_release(op) {
                 cur.1 = value;
             }
         }
@@ -3210,6 +3588,9 @@ impl Run<'_> {
                 names(&i.live),
                 names(&i.ended)
             );
+            if let Some(c) = &i.cover {
+                let _ = write!(o, " cover{:?}", names(c));
+            }
             // The record correlations: captured by, and non-null / null wherever it is live.
             if !i.captured_by.is_empty() || !i.live_some.is_empty() || !i.live_null.is_empty() {
                 let _ = write!(
@@ -3248,6 +3629,19 @@ impl Run<'_> {
     }
 
     /// A call to an operator or function that answers nothing (a free, a set).
+    /// A release with its reset (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner
+    /// witness's at a scope exit): void calls and `Set`s only, so the block's value waits past it.
+    fn is_void_release(&self, op: &Value) -> bool {
+        let Value::Insert(items) = op.unspan() else {
+            return false;
+        };
+        !items.is_empty()
+            && items.iter().any(|i| self.is_void_call(i))
+            && items.iter().all(|i| {
+                self.is_void_call(i) || matches!(i.unspan(), Value::Set(..) | Value::Line(_))
+            })
+    }
+
     fn is_void_call(&self, op: &Value) -> bool {
         let Value::Call(d, _) = op.unspan() else {
             return false;
@@ -3709,13 +4103,34 @@ impl Run<'_> {
                     let witness_holds_it = shared
                         .iter()
                         .all(|k| w.is_some_and(|w| info_of(&st, *k).live.contains(&w)));
-                    // The stores the witness cannot name end as any free ends them.
+                    // The stores the witness cannot name end as any free ends them: the guard
+                    // is distinct wherever `x` names one, so the free runs there — and frees
+                    // again a store already freed, as a plain free would (`@FR-H-FreeTwice`).
                     let rest: BTreeSet<SKey> = Self::stores_of(&xp)
                         .into_iter()
                         .filter(|k| !shared.contains(k))
                         .collect();
                     if !rest.is_empty() {
-                        self.end_only(&mut st, x, &name, false, Some(&rest));
+                        self.end_only(&mut st, x, &name, guarded_rest_reports(), Some(&rest));
+                    }
+                    // A shared store already freed where `x` names it, on paths where the
+                    // witness cannot point into it: the guard is distinct there, and the free
+                    // runs a second time.
+                    if guarded_rest_reports()
+                        && let Some(w) = w
+                    {
+                        for k in &shared {
+                            let info = info_of(&st, *k);
+                            if info.has(ENDED) && info.ended.contains(&x) && !maybe_stale(&info, w)
+                            {
+                                let nm = self.var_name(x);
+                                self.find(
+                                    "re-free",
+                                    k.site,
+                                    format!("`{nm}` is freed by {name} after its store was already freed"),
+                                );
+                            }
+                        }
                     }
                     if !witness_holds_it {
                         self.end_where_witness_does_not(
@@ -4084,9 +4499,11 @@ impl Run<'_> {
         } else if matches!(
             self.data.def(d).name(),
             "OpEqRef" | "OpNeRef" | "OpStoreLive" | "OpRefIsNull" | "OpConvBoolFromRef"
-        ) {
+        ) || (d == self.ops.distinct && identity_test_no_use())
+        {
             // A reference COMPARISON reads the two references, never the stores they name:
-            // comparing a freed store's reference with another is no use of it.  So are the
+            // comparing a freed store's reference with another is no use of it — the store
+            // identity test (`OpDistinctStore`, `a.store_nr != b.store_nr`) too.  So are the
             // tests of a reference itself — null, naming a record — and the liveness test
             // (`@FR-L-CapOwn`'s guard), which exists to be asked of a store that may be freed.
             let mut s = st;
@@ -4114,6 +4531,38 @@ impl Run<'_> {
                 .flat_map(|pts| Self::stores_of(&pts))
                 .collect();
             let name = format!("{} (its source)", self.data.def(d).name());
+            // A source that may be a PARAMETER's store — a call that answers its argument on
+            // some path (`@FR-F-Ret`'s join) — is released on that path too: the source-free
+            // has no runtime guard but the bracket and the destination.  The caller still
+            // owns that store.  `LOFT_RECORDS_NO_PARAM_SOURCE_FREE=1` leaves it unreported.
+            let kept_params: BTreeSet<Pt> = vals
+                .get(dst)
+                .map(|v| v.pts.clone())
+                .into_iter()
+                .chain(self.protected.iter().map(|p| Self::pts(&s, *p)))
+                .flat_map(|pts| pts.into_iter().filter(|p| matches!(p, Pt::Param(_))))
+                .collect();
+            let src_pts = x.map_or_else(
+                || vals.get(src).map(|v| v.pts.clone()).unwrap_or_default(),
+                |x| Self::pts(&s, x),
+            );
+            if src_pts
+                .iter()
+                .any(|p| matches!(p, Pt::Param(_)) && !kept_params.contains(p))
+                && !crate::env_once!(
+                    std::env::var_os("LOFT_RECORDS_NO_PARAM_SOURCE_FREE").is_some()
+                )
+            {
+                let what = x.map_or_else(
+                    || "the value".to_string(),
+                    |x| format!("`{}`", self.var_name(x)),
+                );
+                self.find(
+                    "wrong-end",
+                    u32::MAX,
+                    format!("{what} may be the caller's store, and {name} releases it"),
+                );
+            }
             if let Some(x) = x {
                 let freed: BTreeSet<SKey> = Self::stores_of(&Self::pts(&s, x))
                     .into_iter()
@@ -4227,6 +4676,31 @@ impl Run<'_> {
                 }
             }
         }
+        // A null written into a capture slot (`OpSetDbRef(w, off, OpNullRefSentinel())`, a
+        // stand-down letting a record give up its capture): the slot holds null from here.
+        if d == ops.set_dbref
+            && slot_null()
+            && let Some(value) = vals.get(2)
+            && !value
+                .pts
+                .iter()
+                .any(|p| matches!(p, Pt::Store(_) | Pt::Param(_) | Pt::Unknown))
+            && let Some(w) = Self::first_var(args, 0)
+            && let Some(off) = Self::const_offset(args.get(1))
+        {
+            let recs = Self::stores_of(&Self::pts(&s, w));
+            let strong = recs.len() == 1;
+            for k in recs {
+                if let Some(v) = s.slots.get_mut(&k).and_then(|m| m.get_mut(&off)) {
+                    if strong {
+                        v.pts = [Pt::Null].into();
+                        v.corr.clear();
+                    } else {
+                        v.pts.insert(Pt::Null);
+                    }
+                }
+            }
+        }
         if d == ops.set_dbref
             && let Some(value) = vals.get(2)
         {
@@ -4315,6 +4789,7 @@ impl Run<'_> {
                         .collect();
                     Self::hand_on(&mut s, &handed);
                     if let Some(h) = Self::first_var(args, 0) {
+                        uncover_all(&mut s, &pointed);
                         s.points.entry(h).or_default().extend(pointed);
                     }
                 }
@@ -4538,6 +5013,9 @@ fn run_fn<'a>(
     for &p in &params {
         st.vars.insert(p, [Pt::Param(p)].into());
     }
+    st.records = (0..def.variables.count())
+        .filter(|&v| def.variables.name(v).starts_with("___clos_"))
+        .collect();
     let mut run = Run {
         data,
         ops,
@@ -4622,7 +5100,7 @@ fn run_fn<'a>(
             _ => {}
         }
     });
-    standdown_drops(data, &body, &mut Vec::new(), &mut run.standdown_drops);
+    standdown_drops(data, vars, &body, &mut Vec::new(), &mut run.standdown_drops);
     released_records(data, vars, &body, &mut run.released_records);
     closure_records(data, vars, &body, &mut run.fn_record, &mut run.leaving);
     if let Some((mut s, value)) = run.eval(&body, st) {
@@ -4662,7 +5140,16 @@ fn released_records(
 /// guard on the same `f` — the emitter's stand-down release (`Run::standdown_drops`).  Every
 /// node of a guarded arm is recorded under its own address and, where wrapped in a span, the
 /// span's, as the walk that reads them meets either.
-fn standdown_drops(data: &Data, node: &Value, guarded: &mut Vec<u16>, out: &mut BTreeSet<usize>) {
+/// A keep temporary's drop (`__fkeep_N`, `closure_keep`) is not one: it ends an earlier record a
+/// fn-ref kept, whose own release stood down, so its cascade is where that record's captures end
+/// (`LOFT_RECORDS_NO_KEEP_DROP_CASCADE=1` counts it as a stand-down).
+fn standdown_drops(
+    data: &Data,
+    vars: &crate::variables::Function,
+    node: &Value,
+    guarded: &mut Vec<u16>,
+    out: &mut BTreeSet<usize>,
+) {
     let (distinct, closure, drop) = (
         data.def_nr("OpDistinctStore"),
         data.def_nr("OpFnRefClosure"),
@@ -4674,6 +5161,7 @@ fn standdown_drops(data: &Data, node: &Value, guarded: &mut Vec<u16>, out: &mut 
             && let Some(Value::Call(cl, b)) = a.first().map(Value::unspan)
             && *cl == closure
             && let Some(Value::Var(f)) = b.first().map(Value::unspan)
+            && !(keep_drop_cascade() && *f < vars.count() && vars.name(*f).starts_with("__fkeep_"))
         {
             Some(*f)
         } else {
@@ -4682,15 +5170,15 @@ fn standdown_drops(data: &Data, node: &Value, guarded: &mut Vec<u16>, out: &mut 
     };
     match node.unspan() {
         Value::If(c, t, e) => {
-            standdown_drops(data, c, guarded, out);
+            standdown_drops(data, vars, c, guarded, out);
             if let Some(f) = guard(c) {
                 guarded.push(f);
-                standdown_drops(data, t, guarded, out);
+                standdown_drops(data, vars, t, guarded, out);
                 guarded.pop();
             } else {
-                standdown_drops(data, t, guarded, out);
+                standdown_drops(data, vars, t, guarded, out);
             }
-            standdown_drops(data, e, guarded, out);
+            standdown_drops(data, vars, e, guarded, out);
         }
         Value::Call(op, a)
             if *op == drop
@@ -4699,7 +5187,7 @@ fn standdown_drops(data: &Data, node: &Value, guarded: &mut Vec<u16>, out: &mut 
             out.insert(std::ptr::from_ref(node) as usize);
             out.insert(std::ptr::from_ref(node.unspan()) as usize);
         }
-        _ => node.for_each_child(&mut |c| standdown_drops(data, c, guarded, out)),
+        _ => node.for_each_child(&mut |c| standdown_drops(data, vars, c, guarded, out)),
     }
 }
 

@@ -776,9 +776,43 @@ impl Parser {
             self.length_locals = (self.context, found, Vec::new());
         }
         self.parse_block("return from block", &mut v, &result);
+        self.finish_mid_return_prune();
         self.refuse_too_deep_tree(&mut v);
         self.check_result(&v);
         self.finish_body(v, result)
+    }
+
+    /// `@FR-F-Ret` — the D-own-2 prune of a function whose `return`s are all mid-body: a
+    /// visible parameter dep that no `return` justified is dropped, now that every `return`
+    /// has been seen (`ref_return` defers it there; a tail runs it itself, over the whole body).
+    fn finish_mid_return_prune(&mut self) {
+        if self.context == u32::MAX
+            || !self
+                .mid_return_prune_pending
+                .remove(&(self.context, self.first_pass))
+        {
+            return;
+        }
+        let ctx = self.context;
+        let pass = self.first_pass;
+        let ret = self.data.def(ctx).returned().clone();
+        let attrs = self.data.def(ctx).attributes();
+        let Some(deps) = ret.deps_ref() else {
+            return;
+        };
+        let kept: Vec<u16> = deps
+            .iter()
+            .copied()
+            .filter(|&d| {
+                attrs.get(d as usize).is_none_or(|at| at.hidden)
+                    || self.mid_return_justified.contains(&(ctx, pass, d))
+                    || self.mid_return_param_deps.contains(&(ctx, pass, d))
+            })
+            .collect();
+        if kept.len() != deps.len() {
+            self.data.definitions[ctx as usize].returned =
+                ret.with_deps(&crate::data::Deps::attrs(kept));
+        }
     }
 
     /// Finish a function body: everything a parsed `{ … }` needs before it can be

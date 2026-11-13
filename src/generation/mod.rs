@@ -432,6 +432,11 @@ pub struct Output<'a> {
     /// holding a store of its OWN — an adopted null or same-store result, or a copy — so an
     /// owner witness can be pointed at it (`output_set_witnessed`).
     pub call_bind_owns: bool,
+    /// Set where a reassignment met the call-return bind arm's every test but the one
+    /// `bind_lowering::re_bind` answers, so it bound the call's answer plain: the answer is the
+    /// local's own unless it is another argument's store, which an owner witness reads
+    /// (`output_set_witnessed`).  @PLN220.
+    pub call_bind_declined: bool,
     /// `@FR-R-RebindBuffer` — the hidden buffer locals a rebind hands stores to; their
     /// scope-exit release parks the store instead of freeing it.
     pub rebind_handed: HashSet<u16>,
@@ -1927,6 +1932,7 @@ impl<'a> Output<'a> {
             old_stash_var: None,
             bind_arm: Vec::new(),
             call_bind_owns: false,
+            call_bind_declined: false,
             rebind_handed: HashSet::new(),
             inline_hint: crate::keys::inline_hint_enabled(),
             push_windows: Vec::new(),

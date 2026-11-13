@@ -3617,6 +3617,39 @@ pub fn stashed_join_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_STASHED_JOIN"))
 }
 
+/// `LOFT_TAIL_JUMP_FREES_BUFFER=1` — a self tail call's jump runs the return buffer's
+/// return-time release again (`opt::tail_self::releases`, `@FR-O-Buffer`).
+#[must_use]
+pub fn tail_jump_frees_buffer() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TAIL_JUMP_FREES_BUFFER"))
+}
+
+/// `LOFT_NO_LIFT_TEMP_VIEW=1` — a bind of a value a freeing `__lift_N` temporary holds is read as
+/// a mint by the owner-witness census again (`scopes::witness::held_by_compiler_temp`).
+#[must_use]
+pub fn lift_temp_view_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_LIFT_TEMP_VIEW"))
+}
+
+/// `LOFT_NO_CHOICE_VIEW=1` — an `if` or `match` whose arms view storage is read as no view by
+/// the owner-witness census again (`scopes::witness::is_view_of_storage`, `@FR-O-Witness`).
+#[must_use]
+pub fn choice_view_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_CHOICE_VIEW"))
+}
+
+/// `LOFT_MID_RETURN_PRUNE=1` — a mid-body `return` prunes the return's stale parameter deps on
+/// the spot again, publishing a signature that may omit a parameter a later `return` borrows
+/// while the rest of the body is parsed (`ref_return`'s D-own-2 prune; `@FR-F-Ret`).
+#[must_use]
+pub fn mid_return_prune_now() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_MID_RETURN_PRUNE"))
+}
+
 /// `LOFT_NO_ENUM_JOIN=1` — a heap-enum local bound from a call that answers a fresh record on
 /// one path and a view of an argument on another is deep-copied at every bind again, instead of
 /// joined at run time (`bind_lowering`'s F9a / R1 arms; @PLN220's A/B).
@@ -3661,6 +3694,66 @@ pub fn c_own_call_copy() -> bool {
 pub fn arg_displaced_free() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| env_set("LOFT_ARG_DISPLACED_FREE"))
+}
+
+/// `LOFT_C_OWN_VAR_COPY=1` — the C writer copies a rebind from another variable's record
+/// wherever its own `whole_value_bind` says, instead of only where `bind_lowering::re_bind`
+/// answers `ReArm::VarCopy` (@PLN220's A/B).
+#[must_use]
+pub fn c_own_var_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_VAR_COPY"))
+}
+
+/// `LOFT_NO_BUFFER_OPAQUE_CALL=1` — a renamed return buffer rebound from a closure call with an
+/// unresolved target binds the answer plain again instead of copying-or-adopting it at run time
+/// (`bind_lowering::re_bind`, arm R2a; @PLN220's A/B).
+#[must_use]
+pub fn buffer_opaque_call_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_BUFFER_OPAQUE_CALL"))
+}
+
+/// `LOFT_C_OWN_JOIN=1` — the C writer joins a rebind at run time only where the variable owns
+/// what it displaces, instead of also where `bind_lowering::re_bind` answers `ReArm::Join` for a
+/// kept local (@PLN220's A/B).
+#[must_use]
+pub fn c_own_join() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_C_OWN_JOIN"))
+}
+
+/// `LOFT_NATIVE_OWN_DISPLACED_FREE=1` — the rustc writer frees a reassignment's displaced store
+/// by its own test again where `bind_lowering::re_bind` answers no displaced free (@PLN220's A/B).
+#[must_use]
+pub fn native_own_displaced_free() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_DISPLACED_FREE"))
+}
+
+/// `LOFT_NATIVE_OWN_CALL_BIND=1` — the rustc writer takes its runtime copy-or-adopt for every
+/// reassignment from a call again, instead of only where `bind_lowering::re_bind` copies or joins
+/// (@PLN220's A/B).
+#[must_use]
+pub fn native_own_call_bind() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_CALL_BIND"))
+}
+
+/// `LOFT_NATIVE_OWN_VAR_COPY=1` — the rustc writer copies every reassignment from another
+/// variable's record again, instead of only where `bind_lowering::re_bind` copies (@PLN220's A/B).
+#[must_use]
+pub fn native_own_var_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NATIVE_OWN_VAR_COPY"))
+}
+
+/// `LOFT_KEYED_VIEW_DISPLACED_FREE=1` — `bind_lowering::re_bind` frees what a keyed local whose
+/// null init minted nothing displaces again (a free of the sentinel; @PLN220's A/B).
+#[must_use]
+pub fn keyed_view_displaced_free() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_KEYED_VIEW_DISPLACED_FREE"))
 }
 
 /// `LOFT_C_OWN_DISPLACED_FREE=1` — the C writer frees a reassignment's displaced store by its

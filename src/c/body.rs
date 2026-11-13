@@ -2982,6 +2982,15 @@ impl<'a> FnWriter<'a> {
             }
             // The guarded release `if <holds a record> <release> else null`.
             Value::If(_, t, e) => matches!(e.unspan(), Value::Null) && self.is_free(t),
+            // A release with its reset (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner
+            // witness's): a free and a `Set`, so no value.
+            Value::Insert(items) => {
+                !items.is_empty()
+                    && items.iter().all(|i| {
+                        self.is_free(i) || matches!(i.unspan(), Value::Set(..) | Value::Line(_))
+                    })
+                    && items.iter().any(|i| self.is_free(i))
+            }
             _ => false,
         }
     }
@@ -5691,7 +5700,20 @@ impl<'a> FnWriter<'a> {
             && join.is_some()
             && self.vars.owns_displaced_store(var, x, self.cx.data)
             && !x.reads_var(var);
-        if let Some((tp, base)) = join.filter(|_| first || rebind_owned) {
+        // A rebind `bind_lowering::re_bind` joins (R1) is joined here too — a KEPT local (one a
+        // construction buffer's store was adopted into, `buffer_kept`) as well as an owning one;
+        // only an owning rebind frees what it displaces.  Declined, such a rebind fell to
+        // `call_copy`, a copy where the interpreter adopts a fresh answer.  @PLN220.
+        // `LOFT_C_OWN_JOIN=1` joins owning rebinds only.
+        let rebind_joins = rebind_owned
+            || (!first
+                && join.is_some()
+                && !crate::keys::c_own_join()
+                && matches!(
+                    crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).arm,
+                    crate::bind_lowering::ReArm::Join { .. }
+                ));
+        if let Some((tp, base)) = join.filter(|_| first || rebind_joins) {
             // OpBindOrCopy: a result in the base's store is a view, copied into a fresh store;
             // any other is the callee's fresh store, adopted.
             let bytes = self.copyable(tp)?;
@@ -6135,26 +6157,21 @@ impl<'a> FnWriter<'a> {
     /// the two writers' choices can be compared row by row (STORE_RECORDS.md § Phases, 2).
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
         let first = !self.bound[var as usize];
-        let line = self.cur_line;
+        let line = crate::bind_lowering::row_line(x, self.cur_line);
         self.bind_arm.push("");
         let r = self.set_stmt_arms(var, x, ind);
         let arm = self.bind_arm.pop().unwrap_or("");
         if r.is_ok() && crate::bind_lowering::trace_enabled("LOFT_TRACE_BIND_C") {
             // Beside the arm this writer took, the one `bind_lowering` decides for the same
             // assignment (`lowering=`), so a row shows its own disagreement (@PLN220).
-            let lowering = if first {
-                crate::bind_lowering::first_arm(self.cx.data, self.d, self.vars, var, x)
-                    .trace_name()
-                    .to_string()
-            } else {
-                let rb = crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x);
-                let b2 = match rb.free {
-                    crate::bind_lowering::DisplacedFree::Stash => "stash",
-                    crate::bind_lowering::DisplacedFree::Pre { .. } => "pre",
-                    crate::bind_lowering::DisplacedFree::None => "none",
-                };
-                format!("{}/b2={b2}", rb.arm.trace_name())
-            };
+            let lowering = crate::bind_lowering::decided_lowering(
+                self.cx.data,
+                self.d,
+                self.vars,
+                var,
+                x,
+                first,
+            );
             crate::bind_lowering::trace_row(
                 "LOFT_TRACE_BIND_C",
                 self.cx.data.def(self.d).name(),
@@ -6396,7 +6413,17 @@ impl<'a> FnWriter<'a> {
             self.flush(ind);
             return Ok(());
         }
-        if let Some((src, tp)) = self.whole_value_bind(var, x) {
+        // A REBIND copies another variable's record only where `bind_lowering::re_bind` does
+        // (`ReArm::VarCopy`, arm R2c): a variable that owns none of what it binds — a return
+        // temporary taking a parameter it hands back — binds it as the view it is.  @PLN220.
+        // `LOFT_C_OWN_VAR_COPY=1` copies wherever `whole_value_bind` says.
+        let rebind_var_copies = first
+            || crate::keys::c_own_var_copy()
+            || matches!(
+                crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).arm,
+                crate::bind_lowering::ReArm::VarCopy { .. }
+            );
+        if rebind_var_copies && let Some((src, tp)) = self.whole_value_bind(var, x) {
             self.set_arm("var-copy");
             let bytes = self.copyable(tp)?;
             let src = self.var(src);

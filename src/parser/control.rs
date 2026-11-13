@@ -22433,7 +22433,32 @@ impl Parser {
             })
             .map(|(a, _)| a)
             .collect();
-            dep.retain(|d| !stale_visible.contains(d));
+            // `@FR-F-Ret` — a mid-body `return` sees its own value only, so a dep it does not
+            // justify may be one a LATER `return` does (`match v { … => { return mk(..); } … _
+            // => v }`).  Dropped here, the signature said "fresh" for the rest of the body, and
+            // a recursive call parsed there freed the store of the argument it was handed back.
+            // The site records what it justifies; the prune runs once every `return` has been
+            // seen: at the tail, whose body is the whole function, or at the end of the body
+            // (`finish_mid_return_prune`).  `LOFT_MID_RETURN_PRUNE=1` prunes here again.
+            if site == RetSite::MidReturn && !crate::keys::mid_return_prune_now() {
+                let attrs = self.data.def(self.context).attributes();
+                for &d in &dep {
+                    if attrs.get(d as usize).is_some_and(|at| !at.hidden)
+                        && !stale_visible.contains(&d)
+                    {
+                        self.mid_return_justified
+                            .insert((self.context, self.first_pass, d));
+                    }
+                }
+                self.mid_return_prune_pending
+                    .insert((self.context, self.first_pass));
+            } else {
+                dep.retain(|d| !stale_visible.contains(d));
+                if site == RetSite::BlockTail {
+                    self.mid_return_prune_pending
+                        .remove(&(self.context, self.first_pass));
+                }
+            }
             // loft#2179 — where mid-body `return`s of this pass hand back TWO or more different
             // parameters, every one of them stays declared.  A mid-body site's `body` is its own
             // value only, so the prune above dropped the parameter an earlier `return` merged:

@@ -237,5 +237,9 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         n_on < n_off,
         "native: {n_on} mints with adoption, {n_off} without"
     );
-    assert_eq!((n_on, n_off), (66, 109), "native mints (on, off)");
+    // A rebind `bind_lowering::re_bind` binds plain is bound plain on rustc too
+    // (`call_bind_taken`): its copy-or-adopt's copy store goes, 5 fewer in the ON arm and 7 in
+    // the OFF one (that arm's switch turns the first-bind adopt off, not this);
+    // `LOFT_NATIVE_OWN_CALL_BIND=1` gives back 66/109.
+    assert_eq!((n_on, n_off), (61, 102), "native mints (on, off)");
 }
