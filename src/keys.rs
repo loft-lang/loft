@@ -5088,3 +5088,13 @@ mod p355_large_str {
 pub fn width32_all() -> bool {
     std::env::var("LOFT_WIDTH").is_ok_and(|v| v.trim() == "32")
 }
+
+/// `@FR-B-Copy` — a projection rebound into a KEPT local (loft#1522's veto) is copied as into an
+/// owner, and the kept local's rebind releases a copy it displaces (`scopes`'s
+/// `kept_displaced_free`).  **DEFAULT ON**; `LOFT_NO_KEPT_ELEMENT_COPY=1` binds the projection
+/// plainly and drops nothing extra.
+#[must_use]
+pub fn kept_element_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEPT_ELEMENT_COPY"))
+}

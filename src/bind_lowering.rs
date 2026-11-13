@@ -1105,7 +1105,15 @@ fn re_arm(
         };
     }
     let reads_v_on_exit_only = rb.rhs_reads_v && stashed && !reads_var_unless_exiting(value, v);
-    if rb.owned_ref
+    // A KEPT local (one a construction buffer's store was adopted into) is released at its
+    // exits too (`OpFreeRefIfDistinct(v, buffer)`), so a projection bound into it plainly made
+    // it a view the exit then freed, and a refill of the container rewrote it (`cond = mc.cond`
+    // in a loop beside `cond = NdIf { … }`: a wrong answer on the interpreter, a double free on
+    // both backends; main).  It copies as an owner does.  `LOFT_NO_KEPT_ELEMENT_COPY=1`.
+    // An OWNING kept local only: one with deps is a view on some path, and a copy into it
+    // would have no owner.
+    let kept_copies = rb.buffer_kept && tp.depend().is_empty() && crate::keys::kept_element_copy();
+    if (rb.owned_ref || kept_copies)
         && let Some(rec) = tp.base().heap_def_nr()
         && (!rb.rhs_reads_v || reads_v_on_exit_only)
         && !rb.rhs_is_new_record

@@ -250,6 +250,28 @@ pub(super) fn reuse_record_buffers(
             decline(av, "its result local is witnessed");
             continue;
         }
+        if !ungated
+            && !crate::env_once!(std::env::var_os("LOFT_POOL_UNGUARDED_FREE_OK").is_some())
+            && fed_locals.get(&av).is_some_and(|vs| {
+                vs.iter().any(|&v| {
+                    bl.operators
+                        .iter()
+                        .any(|op| frees_unguarded(op, v, av, data))
+                })
+            })
+        {
+            // A free of the result local that does not ask this buffer — an early `return`
+            // the scan placed before the bind that registered the guard (`tuple_match`'s
+            // refusal on a later member: `OpFreeRefIfDistinct(mc, __ref_2)`) — releases the
+            // buffer's store on any pass after the first, and the buffer releases it again
+            // (`@FR-H-FreeTwice`; the self-hosted elaborator, both backends).
+            // `LOFT_POOL_UNGUARDED_FREE_OK=1` pools anyway.
+            decline(
+                av,
+                "its result local has a free that does not ask this buffer",
+            );
+            continue;
+        }
         if null_init_at(&bl.operators, av).is_none() {
             decline(av, "no top-level null-init");
             continue;
@@ -586,4 +608,39 @@ fn buffer_call_uses(ops: &[Value], av: u16, data: &Data) -> usize {
         });
     }
     n
+}
+
+/// Does `op` free `v` without asking whether `v` still names buffer `av`'s store — a plain
+/// `OpFreeRef(v)`, or `OpFreeRefIfDistinct(v, w)` with `w` another witness?  A free inside
+/// `if OpDistinctStore(v, av)` asks; so does `OpFreeRefIfDistinct(v, av)`.  Any other node is
+/// searched through: a free buried in a statement is still a free of `v`.
+fn frees_unguarded(op: &Value, v: u16, av: u16, data: &Data) -> bool {
+    match op.unspan() {
+        Value::Call(d, args) => {
+            let name = data.def(*d).name();
+            let first_is_v =
+                matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v);
+            if first_is_v && name == "OpFreeRef" {
+                return true;
+            }
+            if first_is_v && name == "OpFreeRefIfDistinct" {
+                return !matches!(args.get(1).map(Value::unspan), Some(Value::Var(w)) if *w == av);
+            }
+            args.iter().any(|a| frees_unguarded(a, v, av, data))
+        }
+        Value::If(cond, t, f) => {
+            let asks_av = matches!(cond.unspan(), Value::Call(d, a)
+                if data.def(*d).name() == "OpDistinctStore"
+                    && a.iter().any(|x| matches!(x.unspan(), Value::Var(y) if *y == v))
+                    && a.iter().any(|x| matches!(x.unspan(), Value::Var(y) if *y == av)));
+            (!asks_av && frees_unguarded(t, v, av, data)) || frees_unguarded(f, v, av, data)
+        }
+        Value::Block(bl) => bl.operators.iter().any(|o| frees_unguarded(o, v, av, data)),
+        Value::Loop(bl) => bl.operators.iter().any(|o| frees_unguarded(o, v, av, data)),
+        Value::Insert(ops) => ops.iter().any(|o| frees_unguarded(o, v, av, data)),
+        Value::Set(_, inner) | Value::Return(inner) | Value::Drop(inner) => {
+            frees_unguarded(inner, v, av, data)
+        }
+        _ => false,
+    }
 }

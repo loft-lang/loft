@@ -2489,6 +2489,24 @@ impl Scopes<'_> {
         {
             function.depend(v, root);
         }
+        // A KEPT local (loft#1522's veto: it adopted a construction buffer's store, which the
+        // buffer releases) frees nothing at a rebind.  Since a projection rebound into it is
+        // copied (`bind_lowering`'s kept copy), it can also hold a store of its own, and a
+        // rebind dropped that copy (`cond = mc.cond` then `cond = NdIf { a: cond!, … }`).  The
+        // store it held is released after the new value lands, unless it is the buffer's or
+        // the one the local holds now.  `LOFT_NO_KEPT_DISPLACED_FREE=1` drops it as before.
+        let displaced = match (
+            displaced,
+            self.kept_displaced_free(v, was_in_scope, &set_value, function, data),
+        ) {
+            (d, None) => d,
+            (None, Some((pre, post))) => Some((pre, post)),
+            (Some((mut pre, mut post)), Some((p2, q2))) => {
+                pre.extend(p2);
+                post.extend(q2);
+                Some((pre, post))
+            }
+        };
         if prefix.is_empty()
             && ls.is_empty()
             && witness_update.is_none()
@@ -2735,5 +2753,66 @@ fn ends_in_branch(value: &Value) -> bool {
         Value::If(..) => true,
         Value::Block(b) => b.operators.last().is_some_and(ends_in_branch),
         _ => false,
+    }
+}
+
+impl Scopes<'_> {
+    /// The pre/post pair releasing what a KEPT local held before a rebind (see the call site):
+    /// a snapshot ahead of the bind, and after it a free of the snapshot unless it names the
+    /// construction buffer's store or the store the local holds now.  `None` when `v` is not
+    /// kept or has no paired buffer.
+    fn kept_displaced_free(
+        &mut self,
+        v: u16,
+        was_in_scope: bool,
+        value: &Value,
+        function: &mut Function,
+        data: &Data,
+    ) -> Option<(Vec<Value>, Vec<Value>)> {
+        if !was_in_scope
+            || matches!(value, Value::Null)
+            || !function.rebind_keeps_displaced(v)
+            // A kept local with deps is a VIEW on some path (`k = h.u; k = S { … }`): what it
+            // displaces is another's store, never its own copy.
+            || !function.tp(v).depend().is_empty()
+            || !crate::keys::kept_element_copy()
+            || crate::env_once!(std::env::var_os("LOFT_NO_KEPT_DISPLACED_FREE").is_some())
+        {
+            return None;
+        }
+        // The buffer: the literal this bind adopts (`{#Object … __ref_p2_N }`), else the one the
+        // scan paired the local with.
+        let from_literal = match value.unspan() {
+            Value::Block(bl) if bl.name == "Object" => match bl.operators.last().map(Value::unspan)
+            {
+                Some(Value::Var(w)) => Some(*w),
+                _ => None,
+            },
+            _ => None,
+        };
+        let av = from_literal.or_else(|| {
+            self.literal_buffer
+                .iter()
+                .find_map(|(&b, &w)| (w == v).then_some(b))
+        })?;
+        let tp = function.tp(v).clone();
+        let snap = self.new_lift_var(function, &tp.without_deps());
+        function.set_skip_free(snap);
+        let distinct = data.def_nr("OpDistinctStore");
+        let pre = vec![v_set(
+            snap,
+            Value::Call(data.def_nr("OpRefAlias"), vec![Value::Var(v)]),
+        )];
+        // The identity-guarded free, not a plain `OpFreeRef`: the bytecode writer drops a plain
+        // free of a `skip_free` temporary.
+        let free = v_if(
+            Value::Call(distinct, vec![Value::Var(snap), Value::Var(av)]),
+            Value::Call(
+                data.def_nr("OpFreeRefIfDistinct"),
+                vec![Value::Var(snap), Value::Var(v)],
+            ),
+            Value::Null,
+        );
+        Some((pre, vec![free]))
     }
 }
