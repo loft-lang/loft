@@ -7198,14 +7198,16 @@ fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer
           // A pointer field names the record given, or nothing.
           if x.tp is TyNull {
             fc = el_ir::cl(e, "OpNullRefSentinel", []);
-          } else if struct_ref(e, el_types::base(x.tp)) == struct_ref(e, el_types::base(at)) && !(x.tp is TyOptional) {
+          } else if struct_ref(e, el_types::base(x.tp)) == struct_ref(e, el_types::base(at)) && (!(x.tp is TyOptional) || at is TyOptional) {
+            // A nullable pointer field takes a nullable record: its null is the reference
+            // sentinel either way (`@FR-L-Null`).
             fc = x.code;
           }
         } else {
           fc = stored(e, vars, x, at);
         }
         if fc == null {
-          refuse_known(e, x.tp, "a field value its type converts: {type_kind(x.tp)} to {type_kind(at)}");
+          refuse_known(e, x.tp, "a field value its type converts: {display_type_name(e, x.tp)} to {display_type_name(e, at)}");
           return null;
         }
         list += [set_field(e, d, a, r, fc!)];
