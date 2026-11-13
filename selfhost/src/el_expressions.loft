@@ -374,7 +374,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // it — the deps the first pass gave it, in attribute numbering.  So is a template's answering
   // its variable, which takes none of the record delivery (`generic_promote_ok`).
   templated = el::def(e, e.context).def_type == el::DT_GENERIC && el_types::type_var(e, el_types::base(result)) >= 0;
-  if (rb >= 0 && !e.first_pass && el_types::base(result) is TyReference && !view_answer) || templated {
+  if (rb >= 0 && !e.first_pass && record_result(result) && !view_answer) || templated {
     match code {
       NdBlock { block } => {
         bl = block[0];
@@ -1219,6 +1219,12 @@ pub fn null_sentinel_tail(e: el::El, code: ir::Node) -> boolean {
 }
 
 // The vector parameters an early exit copies into the buffer `buf` (`OpAppendVector(buf, p, …)`).
+// A result delivered through a record buffer: a struct, or a struct enum that is not nullable
+// (a `-> E?` variant is built in a store of its own).
+pub fn record_result(result: ir::TypeT) -> boolean {
+  el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional))
+}
+
 pub fn returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, buf: integer) -> vector<integer> {
   r: vector<integer> = [];
   for op in ops {
