@@ -2701,7 +2701,20 @@ impl Run<'_> {
             .into_iter()
             .filter(|p| *p != Pt::Null)
             .collect();
-        !held.is_empty() && held == named
+        if held.is_empty() {
+            return false;
+        }
+        // …or every store `x` holds is one `w` names wherever it is live (`live`): a buffer
+        // refilled in place across a loop's passes names this pass's store or the one an earlier
+        // pass left, and `x` bound from it last pass names that one — the same store on every
+        // path where it exists (tuple_match's `mc`).  `LOFT_RECORDS_NO_LIVE_WITNESS=1` asks for
+        // the two sets to be equal.
+        held == named
+            || (!crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_LIVE_WITNESS").is_some())
+                && held.iter().all(|p| match p {
+                    Pt::Store(k) => named.contains(p) && info_of(st, *k).live.contains(&w),
+                    _ => false,
+                }))
     }
 
     fn reassign(&mut self, node: &Value, x: u16, val: &Value, st: State) -> Option<(State, Val)> {
