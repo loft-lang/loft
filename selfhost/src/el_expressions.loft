@@ -7786,8 +7786,29 @@ fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fn
   if e.first_pass {
     return [];
   }
+  // A call whose vector answer goes through a hidden buffer is handed the FIELD as that buffer
+  // (`parse_vector_inner`'s field arm): the buffer is pointed at the field where it is used, and
+  // the call writes the elements in place.
+  match el_ir::unspan(x.code) {
+    NdCall { def_nr, args } => {
+      w = hidden_ref_arg(vars, args);
+      cd = el::def(e, def_nr);
+      la = cd.attributes[len(cd.attributes) - 1];
+      if w >= 0 && la != null && la!.hidden && el_types::base(la!.typedef[0] ?? ir::TyVoid) is TyVector && el_types::is_equal(e, el_types::without_deps(el_types::base(x.tp)), ir::TyVector { inner: inner, dep: [] }) {
+        vk0 = vector_store(e, inner, el_types::elem_name(e, inner));
+        if vk0 >= 0 {
+          // Nulled just before the statement that fills it (`mark_inline_ref`), not at the top.
+          el_vars::mark_inline(vars, w);
+          fp = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: vk0 }]);
+          return [el_ir::v_set(w, fp), x.code];
+        }
+      }
+    },
+    _ => {}
+  }
   if x.tp is TyOptional || !(el_types::base(x.tp) is TyVector) || !copies_whole_vector(e, vars, x.code) || !el_types::is_equal(e, x.tp, ir::TyVector { inner: inner, dep: [] }) {
-    refuse_known(e, x.tp, "a vector field written from something other than a literal or a vector place");
+    what = if x.tp is TyOptional { "a nullable vector" } else if !(el_types::base(x.tp) is TyVector) { display_type_name(e, x.tp) } else if !copies_whole_vector(e, vars, x.code) { tail_kind(e, vars, x.code) } else { "a vector of {display_type_name(e, x.tp)}" };
+    refuse_known(e, x.tp, "a vector field written from something other than a literal or a vector place: {what}");
     return null;
   }
   nm = el_types::elem_name(e, inner);
