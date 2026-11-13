@@ -197,6 +197,42 @@ void loft_crt_slot_arg_free(int64_t store, int64_t at) {
     a->len = 0;
 }
 
+/* ── The run image's runner (@PLN91, handoff-2026-11-13-run-image.md step 3): the Rust
+ * interpreter's stack image, read and written at the Rust positions.  A text temporary is a
+ * 16-byte `loft_str` view, a text local a 24-byte `loft_text`, as the Rust frame holds them. */
+
+/* `OpConstText`: a view of `len` bytes of the image's code at `from` — the bytes stay where the
+ * image holds them. */
+void loft_crt_stack_str_code(int64_t store, int64_t at, const char *code, int64_t from, int64_t len) {
+    loft_str *v = (loft_str *) loft_crt_slot_at(store, at);
+    v->p = code + from;
+    v->len = (size_t) len;
+}
+
+/* `OpVarText`: a view of the text local at `src`. */
+void loft_crt_stack_str_of_text(int64_t store, int64_t at, int64_t src) {
+    *(loft_str *) loft_crt_slot_at(store, at) = loft_view((loft_text *) loft_crt_slot_at(store, src));
+}
+
+/* `OpAppendText`: the view at `src` appended to the text local at `at`. */
+void loft_crt_stack_text_append_str(int64_t store, int64_t at, int64_t src) {
+    loft_text_concat((loft_text *) loft_crt_slot_at(store, at), *(loft_str *) loft_crt_slot_at(store, src));
+}
+
+/* `copy_result`: `n` bytes moved within the stack. */
+void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
+    memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);
+}
+
+/* The text a view at `at` shows, copied into `out` when it fits: its length, -1 for null. */
+int64_t loft_crt_stack_str(char *out, int64_t cap, int64_t store, int64_t at) {
+    loft_str v = *(loft_str *) loft_crt_slot_at(store, at);
+    if (loft_str_is_null(v)) return -1;
+    int64_t len = (int64_t) v.len;
+    if (len <= cap && len > 0) memcpy(out, v.p, (size_t) len);
+    return len;
+}
+
 /* The run's end: the stack store released (a pinned store keeps itself from `loft_free_ref`). */
 void loft_crt_stack_free(int64_t store) {
     loft_store_t *s = &loft_stores[store];

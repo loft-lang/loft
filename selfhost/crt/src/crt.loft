@@ -319,6 +319,52 @@ pub fn bind_copy(io: vector<integer>, tp: integer, s_store: integer, s_rec: inte
   c_bind_copy(io, tp, s_store, s_rec, s_pos);
 }
 
+// The run image's runner (@PLN91 run image, step 3): the Rust stack image at its positions.
+fn c_stack_str_code(store: integer, at: integer, code: vector<u8>, from: integer, len: integer);
+#c "loft_crt_stack_str_code" "void(int64_t, int64_t, const char*, int64_t, int64_t)"
+fn c_stack_str_of_text(store: integer, at: integer, src: integer);
+#c "loft_crt_stack_str_of_text" "void(int64_t, int64_t, int64_t)"
+fn c_stack_text_append_str(store: integer, at: integer, src: integer);
+#c "loft_crt_stack_text_append_str" "void(int64_t, int64_t, int64_t)"
+fn c_stack_move(store: integer, from: integer, to: integer, n: integer);
+#c "loft_crt_stack_move" "void(int64_t, int64_t, int64_t, int64_t)"
+fn c_stack_str(out: vector<u8>, store: integer, at: integer) -> integer;
+#c "loft_crt_stack_str" "int64_t(char*, int64_t, int64_t, int64_t)"
+
+// `OpConstText`: a view of `len` bytes of the image's `code` at `from`, pushed at `at`.
+pub fn stack_str_code(store: integer, at: integer, code: vector<u8>, from: integer, len: integer) {
+  c_stack_str_code(store, at, code, from, len);
+}
+
+// `OpVarText`: a view of the text local at `src`, pushed at `at`.
+pub fn stack_str_of_text(store: integer, at: integer, src: integer) {
+  c_stack_str_of_text(store, at, src);
+}
+
+// `OpAppendText`: the view at `src` appended to the text local at `at`.
+pub fn stack_text_append_str(store: integer, at: integer, src: integer) {
+  c_stack_text_append_str(store, at, src);
+}
+
+// `n` bytes of the stack moved from `from` to `to` (`copy_result`).
+pub fn stack_move(store: integer, from: integer, to: integer, n: integer) {
+  c_stack_move(store, from, to, n);
+}
+
+// The text the view at `at` shows, or null.
+pub fn stack_str(store: integer, at: integer) -> text? {
+  buf = room(64);
+  n = c_stack_str(buf, store, at);
+  if n < 0 {
+    return null;
+  }
+  if n > len(buf) {
+    buf = room(n);
+    n = c_stack_str(buf, store, at);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
 // `OpGetInt` and `OpSetInt`: the 8-byte integer at byte `fld` of the record.
 pub fn get_int(store: integer, rec: integer, pos: integer, fld: integer) -> integer? {
   c_get_int(store, rec, pos, fld)

@@ -1,0 +1,390 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The run image's runner (@PLN91, doc/claude/plans/91-self-host/handoff-2026-11-13-run-image.md
+// step 3): the bytecode the Rust writer produced, executed in place.  One stack store laid out
+// as the Rust interpreter's (`State`): `sp` is its `stack_pos`, a byte offset; a frame slot is
+// addressed as the Rust operator addresses it, relative to the stack top at that moment; a
+// call pushes its return position and jumps to an absolute code position; a return copies the
+// result down to the frame's base (`State::fn_return`, `copy_result`).  Each operator follows
+// its Rust body (`default/*.loft`'s `#rust`, or `src/fill.rs` / `src/state/`) — its operands
+// read in its order, its stack values popped before a slot is addressed — and reaches the C
+// runtime (`crt`) for what a store holds.  An operator the runner does not carry is refused by
+// name where it is reached.
+use ir;
+use crt;
+
+// The runner's operators, by the number `handler` gives each name.
+H_GOTO = 1;
+H_GOTO_FALSE = 2;
+H_CONST_INT = 3;
+H_VAR_INT = 4;
+H_PUT_INT = 5;
+H_INT_VV = 6;
+H_INT_VC = 7;
+H_CMP_INT_VV = 8;
+H_CMP_INT_VC = 9;
+H_INT_VV_PUT = 10;
+H_INT_VC_PUT = 11;
+H_CMP_INT_VV_JUMP = 12;
+H_CMP_INT_VC_JUMP = 13;
+H_CALL = 14;
+H_RETURN = 15;
+H_RESERVE_FRAME = 16;
+H_FREE_STACK = 17;
+H_ADD_INT = 18;
+H_MIN_INT = 19;
+H_MUL_INT = 20;
+H_INIT_TEXT = 21;
+H_CLEAR_TEXT = 22;
+H_FREE_TEXT = 23;
+H_CONST_TEXT = 24;
+H_VAR_TEXT = 25;
+H_APPEND_TEXT = 26;
+H_FORMAT_INT = 27;
+H_ARG_TEXT = 28;
+H_FORMAT_TEXT = 29;
+H_PRINT = 30;
+
+// The runner's number for operator `name`, or -1 for one it does not carry.
+pub fn handler(name: text) -> integer {
+  match name {
+    "OpGotoWord" => H_GOTO,
+    "OpGotoFalseWord" => H_GOTO_FALSE,
+    "OpConstInt" => H_CONST_INT,
+    "OpVarInt" => H_VAR_INT,
+    "OpPutInt" => H_PUT_INT,
+    "OpIntVV" => H_INT_VV,
+    "OpIntVC" => H_INT_VC,
+    "OpCmpIntVV" => H_CMP_INT_VV,
+    "OpCmpIntVC" => H_CMP_INT_VC,
+    "OpIntVVPut" => H_INT_VV_PUT,
+    "OpIntVCPut" => H_INT_VC_PUT,
+    "OpCmpIntVVJump" => H_CMP_INT_VV_JUMP,
+    "OpCmpIntVCJump" => H_CMP_INT_VC_JUMP,
+    "OpCall" => H_CALL,
+    "OpReturn" => H_RETURN,
+    "OpReserveFrame" => H_RESERVE_FRAME,
+    "OpFreeStack" => H_FREE_STACK,
+    "OpAddInt" => H_ADD_INT,
+    "OpMinInt" => H_MIN_INT,
+    "OpMulInt" => H_MUL_INT,
+    "OpMulIntNullable" => H_MUL_INT,
+    "OpInitText" => H_INIT_TEXT,
+    "OpClearText" => H_CLEAR_TEXT,
+    "OpFreeText" => H_FREE_TEXT,
+    "OpConstText" => H_CONST_TEXT,
+    "OpVarText" => H_VAR_TEXT,
+    "OpAppendText" => H_APPEND_TEXT,
+    "OpFormatInt" => H_FORMAT_INT,
+    "OpArgText" => H_ARG_TEXT,
+    "OpFormatText" => H_FORMAT_TEXT,
+    "OpPrint" => H_PRINT,
+    _ => -1
+  }
+}
+
+// The constant operands each operator reads, in the image's letters (`ir_store::operand_layout`):
+// the image's layout of the operator must be this, or its bytes would be read off the wrong
+// offsets.
+fn layout_of(h: integer) -> text {
+  match h {
+    1 => "i",
+    2 => "i",
+    3 => "q",
+    4 => "h",
+    5 => "h",
+    6 => "bhh",
+    7 => "bhq",
+    8 => "bhh",
+    9 => "bhq",
+    10 => "bhhh",
+    11 => "bhhq",
+    12 => "bhhi",
+    13 => "bhqi",
+    14 => "qhq",
+    15 => "hhh",
+    16 => "h",
+    17 => "hh",
+    21 => "h",
+    22 => "h",
+    23 => "h",
+    24 => "t",
+    25 => "h",
+    26 => "h",
+    27 => "hbbzzc",
+    28 => "h",
+    29 => "hcb",
+    _ => ""
+  }
+}
+
+// The runner's number for each opcode of the image: -1 for an operator it does not carry, -2 for
+// one whose operands the image lays out otherwise than the runner reads them.
+pub fn bind_ops(img: ir::RunImage) -> vector<integer> {
+  hs: vector<integer> = [];
+  for name in img.ops {
+    h = handler(name);
+    if h > 0 && (img.layouts[len(hs)] ?? "") != layout_of(h) {
+      h = -2;
+    }
+    hs += [h];
+  }
+  hs
+}
+
+// ── operands, read little-endian from the code stream ──
+
+fn u16_at(c: vector<u8>, p: integer) -> integer {
+  (c[p] ?? 0) + (c[p + 1] ?? 0) * 256
+}
+
+fn i32_at(c: vector<u8>, p: integer) -> integer {
+  v = u16_at(c, p) + u16_at(c, p + 2) * 65536;
+  if v >= 2147483648 { v - 4294967296 } else { v }
+}
+
+fn i8_at(c: vector<u8>, p: integer) -> integer {
+  v = c[p] ?? 0;
+  if v >= 128 { v - 256 } else { v }
+}
+
+// An i64 operand: its high half times 2^32 plus its low half, so `i64::MIN` — the integer null
+// — reads as loft's null.
+fn i64_at(c: vector<u8>, p: integer) -> integer? {
+  lo = u16_at(c, p) + u16_at(c, p + 2) * 65536;
+  hi = i32_at(c, p + 4);
+  hi * 4294967296 + lo
+}
+
+// ── the stack: a slot is `(stk, record 1, 8 + at)`, as `crt` addresses a frame ──
+
+fn get(stk: integer, at: integer) -> integer? {
+  crt::get_int(stk, 1, 8 + at, 0)
+}
+
+fn set(stk: integer, at: integer, v: integer?) {
+  crt::set_int(stk, 1, 8 + at, 0, v);
+}
+
+fn get_bool(stk: integer, at: integer) -> boolean {
+  crt::get_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0) == 1
+}
+
+fn set_bool(stk: integer, at: integer, v: boolean) {
+  crt::set_w(crt::W_BOOLEAN, stk, 1, 8 + at, 0, 0, if v { 1 } else { 0 });
+}
+
+// The stack's width for a value of `size` bytes (`aligned_stack_step`).
+fn step(size: integer) -> integer {
+  (size + 7) / 8 * 8
+}
+
+// ── the operators' arithmetic, as `ops::fused_int` and `ops::fused_cmp` ──
+
+fn int_kind(kind: integer, a: integer?, b: integer?) -> integer? {
+  if kind == 0 {
+    a + b
+  } else if kind == 1 {
+    a - b
+  } else if kind == 2 {
+    a * b
+  } else if kind == 3 {
+    a & b
+  } else if kind == 4 {
+    a | b
+  } else {
+    a ^ b
+  }
+}
+
+// A comparison on the raw `i64`s: the null sentinel is the least value and equals itself.
+fn cmp_kind(kind: integer, a: integer?, b: integer?) -> boolean {
+  d = if a == null && b == null { 0 } else if a == null { -1 } else if b == null { 1 } else if a! < b! { -1 } else if a! > b! { 1 } else { 0 };
+  if kind == 0 { d == 0 } else if kind == 1 { d != 0 } else if kind == 2 { d < 0 } else if kind == 3 { d <= 0 } else if kind == 4 { d > 0 } else { d >= 0 }
+}
+
+// What a run answers: the operator it stopped at when it refused one, and how many it ran.
+pub struct Outcome {
+  pub refused: text,
+  pub steps: integer,
+}
+
+// Run the image's code from `entry` (a code position) on stack store `stk`, the operators bound
+// by `hs` (`bind_ops`), until the entry frame returns.
+pub fn run(img: ir::RunImage, hs: vector<integer>, stk: integer, entry: integer) -> Outcome {
+  pc = entry;
+  // `State::execute`: the entry frame's return position at 0, the frame from 8.
+  sp = 8;
+  cap = 0;
+  depth = 0;
+  steps = 0;
+  while true {
+    if sp + 1024 > cap {
+      cap = sp + 65536;
+      crt::stack_grow(stk, cap);
+    }
+    at = pc;
+    op = img.code[pc] ?? 0;
+    pc += 1;
+    if op == 255 {
+      op = 255 + (img.code[pc] ?? 0);
+      pc += 1;
+    }
+    h = hs[op] ?? -1;
+    steps += 1;
+    if h == H_GOTO {
+      pc = pc + 4 + i32_at(img.code, pc);
+    } else if h == H_GOTO_FALSE {
+      d = i32_at(img.code, pc);
+      pc += 4;
+      sp -= 8;
+      if !get_bool(stk, sp) {
+        pc += d;
+      }
+    } else if h == H_CONST_INT {
+      set(stk, sp, i64_at(img.code, pc));
+      pc += 8;
+      sp += 8;
+    } else if h == H_VAR_INT {
+      set(stk, sp, get(stk, sp - u16_at(img.code, pc)));
+      pc += 2;
+      sp += 8;
+    } else if h == H_PUT_INT {
+      p = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 8;
+      set(stk, sp + 8 - p, get(stk, sp));
+    } else if h == H_INT_VV || h == H_INT_VC || h == H_CMP_INT_VV || h == H_CMP_INT_VC {
+      kind = img.code[pc] ?? 0;
+      a = get(stk, sp - u16_at(img.code, pc + 1));
+      b = if h == H_INT_VV || h == H_CMP_INT_VV { get(stk, sp - u16_at(img.code, pc + 3)) } else { i64_at(img.code, pc + 3) };
+      pc += if h == H_INT_VV || h == H_CMP_INT_VV { 5 } else { 11 };
+      if h == H_INT_VV || h == H_INT_VC {
+        set(stk, sp, int_kind(kind, a, b));
+      } else {
+        set_bool(stk, sp, cmp_kind(kind, a, b));
+      }
+      sp += 8;
+    } else if h == H_INT_VV_PUT || h == H_INT_VC_PUT {
+      kind = img.code[pc] ?? 0;
+      dst = u16_at(img.code, pc + 1);
+      a = get(stk, sp - u16_at(img.code, pc + 3));
+      b = if h == H_INT_VV_PUT { get(stk, sp - u16_at(img.code, pc + 5)) } else { i64_at(img.code, pc + 5) };
+      pc += if h == H_INT_VV_PUT { 7 } else { 13 };
+      // `put_var` addresses `stack_pos + step - dst`, the result never pushed.
+      set(stk, sp + 8 - dst, int_kind(kind, a, b));
+    } else if h == H_CMP_INT_VV_JUMP || h == H_CMP_INT_VC_JUMP {
+      kind = img.code[pc] ?? 0;
+      a = get(stk, sp - u16_at(img.code, pc + 1));
+      vv = h == H_CMP_INT_VV_JUMP;
+      b = if vv { get(stk, sp - u16_at(img.code, pc + 3)) } else { i64_at(img.code, pc + 3) };
+      d = i32_at(img.code, pc + (if vv { 5 } else { 11 }));
+      pc += if vv { 9 } else { 15 };
+      if !cmp_kind(kind, a, b) {
+        pc += d;
+      }
+    } else if h == H_CALL {
+      to = i64_at(img.code, pc + 10) ?? 0;
+      pc += 18;
+      // `fn_call`: the return position pushed, the callee entered.
+      set(stk, sp, pc);
+      sp += 8;
+      depth += 1;
+      pc = to;
+    } else if h == H_RETURN {
+      ret = u16_at(img.code, pc);
+      value = u16_at(img.code, pc + 2);
+      discard = u16_at(img.code, pc + 4);
+      pos = sp;
+      fn_stack = sp - discard;
+      back = get(stk, fn_stack + ret) ?? 0;
+      if value > 0 {
+        crt::stack_move(stk, pos - step(value), fn_stack, value);
+      }
+      sp = fn_stack + step(value);
+      if depth == 0 {
+        return Outcome { refused: "", steps: steps };
+      }
+      depth -= 1;
+      pc = back;
+    } else if h == H_RESERVE_FRAME {
+      sp += step(u16_at(img.code, pc));
+      pc += 2;
+    } else if h == H_FREE_STACK {
+      value = u16_at(img.code, pc);
+      discard = u16_at(img.code, pc + 2);
+      pc += 4;
+      pos = sp;
+      sp -= discard;
+      if value > 0 {
+        crt::stack_move(stk, pos - step(value), sp, value);
+      }
+      sp += step(value);
+    } else if h == H_ADD_INT || h == H_MIN_INT || h == H_MUL_INT {
+      sp -= 8;
+      b = get(stk, sp);
+      a = get(stk, sp - 8);
+      set(stk, sp - 8, if h == H_ADD_INT { a + b } else if h == H_MIN_INT { a - b } else { a * b });
+    } else if h == H_INIT_TEXT || h == H_CLEAR_TEXT || h == H_FREE_TEXT {
+      slot = sp - u16_at(img.code, pc);
+      pc += 2;
+      if h == H_INIT_TEXT {
+        crt::slot_text_init(stk, slot);
+      } else if h == H_CLEAR_TEXT {
+        crt::slot_text_clear(stk, slot);
+      } else {
+        crt::slot_text_free(stk, slot);
+      }
+    } else if h == H_CONST_TEXT {
+      n = img.code[pc] ?? 0;
+      crt::stack_str_code(stk, sp, img.code, pc + 1, n);
+      pc += 1 + n;
+      sp += 16;
+    } else if h == H_VAR_TEXT {
+      crt::stack_str_of_text(stk, sp, sp - u16_at(img.code, pc));
+      pc += 2;
+      sp += 16;
+    } else if h == H_APPEND_TEXT {
+      // `append_text`: the view popped first, the local addressed after it.
+      sp -= 16;
+      crt::stack_text_append_str(stk, sp - u16_at(img.code, pc) + 16, sp);
+      pc += 2;
+    } else if h == H_FORMAT_INT {
+      p = u16_at(img.code, pc);
+      radix = img.code[pc + 2] ?? 10;
+      token = img.code[pc + 3] ?? 32;
+      plus = (img.code[pc + 4] ?? 0) == 1;
+      note = (img.code[pc + 5] ?? 0) == 1;
+      dir = i8_at(img.code, pc + 6);
+      pc += 7;
+      width = get(stk, sp - 8) ?? 0;
+      val = get(stk, sp - 16);
+      sp -= 16;
+      crt::slot_text_append(stk, sp - (p - 16), crt::format_int(val, radix, width, token, plus, note, dir));
+    } else if h == H_ARG_TEXT {
+      // `arg_text`: the argument's view, copied to the top.
+      crt::stack_move(stk, sp - u16_at(img.code, pc), sp, 16);
+      pc += 2;
+      sp += 16;
+    } else if h == H_FORMAT_TEXT {
+      // `format_text`: the width and then the view popped, the local addressed past both.
+      p = u16_at(img.code, pc);
+      dir = i8_at(img.code, pc + 2);
+      token = img.code[pc + 3] ?? 32;
+      pc += 4;
+      width = get(stk, sp - 8) ?? 0;
+      val = crt::stack_str(stk, sp - 24);
+      sp -= 24;
+      crt::slot_text_append(stk, sp - (p - 24), crt::format_text(val, width, dir, token));
+    } else if h == H_PRINT {
+      sp -= 16;
+      print(crt::stack_str(stk, sp) ?? "");
+    } else {
+      name = img.ops[op] ?? "op {op}";
+      why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
+      return Outcome { refused: "{why}: {name} at {at}", steps: steps };
+    }
+  }
+  Outcome { refused: "", steps: steps }
+}

@@ -498,15 +498,17 @@ pub(crate) const BUNDLE_STRIDE: u32 = 40;
 #[cfg(feature = "mmap")] // only `save_bundle` claims a bundle root
 pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 
-/// `RunImage { code: vector<u8>, starts: vector<u32>, natives: vector<text>, types:
-/// vector<DbType>, main: integer, cwd: boolean }` — the run image's store root (@PLN91).
+/// `RunImage { code: vector<u8>, starts: vector<u32>, ops, layouts, natives: vector<text>,
+/// types: vector<DbType>, main: integer, cwd: boolean }` — the run image's store root (@PLN91).
 pub(crate) const RUNIMG_MAIN: u32 = 0;
 pub(crate) const RUNIMG_CODE: u32 = 8;
 pub(crate) const RUNIMG_STARTS: u32 = 12;
-pub(crate) const RUNIMG_NATIVES: u32 = 16;
-pub(crate) const RUNIMG_TYPES: u32 = 20;
-pub(crate) const RUNIMG_CWD: u32 = 24;
-pub(crate) const RUNIMG_STRIDE: u32 = 32;
+pub(crate) const RUNIMG_OPS: u32 = 16;
+pub(crate) const RUNIMG_LAYOUTS: u32 = 20;
+pub(crate) const RUNIMG_NATIVES: u32 = 24;
+pub(crate) const RUNIMG_TYPES: u32 = 28;
+pub(crate) const RUNIMG_CWD: u32 = 32;
+pub(crate) const RUNIMG_STRIDE: u32 = 40;
 #[cfg(feature = "mmap")] // only `save_run_image` claims a run-image root
 pub(crate) const RUNIMG_ROOT_WORDS: u32 = (8 + RUNIMG_STRIDE).div_ceil(8);
 
@@ -1772,6 +1774,8 @@ mod tests {
         assert_eq!(pos(ids.run_image, "main"), RUNIMG_MAIN);
         assert_eq!(pos(ids.run_image, "code"), RUNIMG_CODE);
         assert_eq!(pos(ids.run_image, "starts"), RUNIMG_STARTS);
+        assert_eq!(pos(ids.run_image, "ops"), RUNIMG_OPS);
+        assert_eq!(pos(ids.run_image, "layouts"), RUNIMG_LAYOUTS);
         assert_eq!(pos(ids.run_image, "natives"), RUNIMG_NATIVES);
         assert_eq!(pos(ids.run_image, "types"), RUNIMG_TYPES);
         assert_eq!(pos(ids.run_image, "cwd"), RUNIMG_CWD);

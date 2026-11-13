@@ -440,11 +440,15 @@ fn empty_bundle() -> Bundle {
 // is laid out in definition order, so `starts` rises: a definition with no bytecode (a native,
 // a type, an operator) starts where the one before it ended, and one more entry holds the
 // stream's end — definition `d`'s code is `code[starts[d]..starts[d + 1]]`.  Beside it the
-// natives by the index `OpStaticCall` carries, the type schema of the program's stores, the
-// entry definition and whether the program declared `#cwd`.
+// operators by opcode — each one's name and the layout of its constant operands, one letter
+// per operand (`ir_store::operand_layout`) — the natives by the index `OpStaticCall` carries,
+// the type schema of the program's stores, the entry definition and whether the program
+// declared `#cwd`.
 pub struct RunImage {
   pub code: vector<u8>,
   pub starts: vector<u32>,
+  pub ops: vector<text>,
+  pub layouts: vector<text>,
   pub natives: vector<text>,
   pub types: vector<DbType>,
   pub main: integer,
@@ -453,5 +457,5 @@ pub struct RunImage {
 
 // The empty run image one is read into.
 pub fn empty_run_image() -> RunImage {
-  RunImage { code: [], starts: [], natives: [], types: [], main: 0, cwd: false }
+  RunImage { code: [], starts: [], ops: [], layouts: [], natives: [], types: [], main: 0, cwd: false }
 }

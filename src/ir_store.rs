@@ -918,6 +918,7 @@ fn materialize_run_image(
     root: DbRef,
     code: &[u8],
     starts: &[u32],
+    ops: &(Vec<String>, Vec<String>),
     library_names: &crate::fxhash::FxHashMap<String, u16>,
     schema: &[SchemaType],
     main: i64,
@@ -940,6 +941,14 @@ fn materialize_run_image(
         let e = sv.push(stores).db_ref();
         stores.store_mut(&e).set_u32_raw(e.rec, e.pos, at);
     }
+    for (off, list) in [(ds::RUNIMG_OPS, &ops.0), (ds::RUNIMG_LAYOUTS, &ops.1)] {
+        crate::vector::pre_alloc_vector(&slot(off), count(list.len()), 4, &mut stores.allocations);
+        let v = rec.field_recvec(off, 4);
+        for n in list {
+            let e = v.push(stores);
+            e.set_field_str(stores, 0, n);
+        }
+    }
     let mut natives: Vec<&str> = Vec::new();
     for (name, &idx) in library_names {
         let i = usize::from(idx);
@@ -958,6 +967,59 @@ fn materialize_run_image(
     materialize_schema(stores, &rec, ds::RUNIMG_TYPES, schema);
     rec.set_field_int(stores, ds::RUNIMG_MAIN, main);
     rec.set_field_bool(stores, ds::RUNIMG_CWD, cwd);
+}
+
+/// How a constant operand of type `tp` sits in the bytecode, as one letter — the width the
+/// Rust writer gives it (`state::codegen::add_const`, the two must agree): `b` u8, `c` i8, `h`
+/// u16, `s` i16, `w` u32, `i` i32, `q` i64, `e` an enum's byte, `z` a boolean's byte, `t` a
+/// text (a u8 length, then the bytes), `f` f64, `g` f32, `k` keys (a u8 count, then per key a
+/// u16 type, an i16 position and an i32 start), `?` a type the writer gives no operand.
+#[must_use]
+pub fn operand_layout(tp: &Type) -> char {
+    match tp {
+        Type::Integer(s) if s.forced_size.map(std::num::NonZeroU8::get) == Some(4) => {
+            if s.min >= 0 { 'w' } else { 'i' }
+        }
+        Type::Integer(s) if s.min == 0 && s.max == 255 => 'b',
+        Type::Integer(s) if s.min == -128 && s.max == 127 => 'c',
+        Type::Integer(s) if s.min == 0 && s.max == 65535 => 'h',
+        Type::Integer(s) if s.min == -32768 && s.max == 32767 => 's',
+        Type::Integer(_) => 'q',
+        Type::Enum(_, _, _) => 'e',
+        Type::Boolean => 'z',
+        Type::Text(_) => 't',
+        Type::Float => 'f',
+        Type::Single => 'g',
+        Type::Keys => 'k',
+        _ => '?',
+    }
+}
+
+/// The operators by opcode: each one's name and the layout of its constant operands
+/// ([`operand_layout`], one letter per operand); an opcode no operator holds stays empty.
+#[must_use]
+pub fn run_image_ops(data: &Data) -> (Vec<String>, Vec<String>) {
+    let mut names: Vec<String> = Vec::new();
+    let mut layouts: Vec<String> = Vec::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if !def.is_operator() || def.op_code() == u16::MAX {
+            continue;
+        }
+        let code = usize::from(def.op_code());
+        if names.len() <= code {
+            names.resize(code + 1, String::new());
+            layouts.resize(code + 1, String::new());
+        }
+        names[code] = def.name().to_string();
+        layouts[code] = def
+            .attributes()
+            .iter()
+            .filter(|a| !a.mutable)
+            .map(|a| operand_layout(&a.typedef))
+            .collect();
+    }
+    (names, layouts)
 }
 
 /// Each definition's first byte in the code stream, and one more entry for the stream's end, so
@@ -1040,6 +1102,7 @@ pub fn save_run_image(
             root,
             code,
             &starts,
+            &run_image_ops(data),
             library_names,
             &program.types,
             main,

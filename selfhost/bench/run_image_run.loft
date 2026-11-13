@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Run a program from its run image (@PLN91, handoff-2026-11-13-run-image.md step 3): load the
+// image `loft --emit-run-image` wrote, bind its operators and natives, and execute `main`'s
+// bytecode in place (`brun::run`).  Writes on stderr `timed load=<µs> run=<µs> steps=<n>`, or
+// `refused: <reason>` with exit 3 for an operator the runner does not carry yet.
+#cwd
+use ir;
+use load;
+use run_image;
+use brun;
+use crt;
+
+fn main() {
+  a = arguments();
+  path = a[0] ?? "";
+  t0 = ticks();
+  img = load::load_run(path);
+  if img == null {
+    eprintln("refused: no run image at {path}");
+    exit(3);
+  }
+  r = img!;
+  hs = brun::bind_ops(r);
+  entry = run_image::entry(r);
+  if entry < 0 {
+    eprintln("refused: the image has no main");
+    exit(3);
+  }
+  io: vector<integer> = [0, 0, 0];
+  crt::stack_new(io, 65536);
+  stk = io[0] ?? 0;
+  t1 = ticks();
+  o = brun::run(r, hs, stk, entry);
+  t2 = ticks();
+  crt::stack_free(stk);
+  if o.refused != "" {
+    eprintln("refused: {o.refused}");
+    exit(3);
+  }
+  eprintln("timed load={t1 - t0} run={t2 - t1} steps={o.steps}");
+}

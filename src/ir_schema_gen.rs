@@ -909,6 +909,10 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     let _ = t136; // may be unused
     let vec_starts = db.vector(t136);
     db.field(t113, "starts", vec_starts);
+    let vec_ops = db.vector(t5);
+    db.field(t113, "ops", vec_ops);
+    let vec_layouts = db.vector(t5);
+    db.field(t113, "layouts", vec_layouts);
     let vec_natives = db.vector(t5);
     db.field(t113, "natives", vec_natives);
     let vec_types = db.vector(t111);
