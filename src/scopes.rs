@@ -74,7 +74,7 @@ use crate::variables::{Function, compute_intervals, size};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeMap;
 
-mod args;
+pub(crate) mod args;
 mod arm_lift;
 mod backings;
 mod branches;

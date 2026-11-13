@@ -3483,7 +3483,10 @@ the ordinary writer's shapes for its value-record locals and pointer parameters.
 gone where the source is transient: a `text argument copy` of a transient text is the text
 itself (nothing writes the tree while it lives), and a call whose callee answers the caller's
 `&text` work buffer goes to that callee's `__wr` twin, its result read from the buffer, when it
-is read in the bind's block before the buffer is touched again.  The writer is the allow-list: an
+is read in the bind's block before the buffer is touched again and never written there (a local
+appended to or handed to a `&text` parameter after its bind keeps its own text:
+`scopes::args::writes_var`; guard
+`tests/scripts/a-transient-sites-text-local-keeps-a-write-after-its-bind.loft`).  The writer is the allow-list: an
 operation on a transient value no arm answers declines the twin, and the function keeps the
 store form.  Texts are COPIED into the arena (the views of the frame are a later step).  Two
 consequences of sharing, enforced in the writer: a transient tree may share records the store

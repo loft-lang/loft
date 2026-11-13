@@ -57,7 +57,7 @@ fn lift_view_deps(arg: &Value, data: &Data) -> Option<Vec<u16>> {
 /// May evaluating `v` write variable `x`: an assignment of it, a call through a function value,
 /// or `x` handed to a parameter that does not take a `text` by value — a `&` parameter, or an
 /// operator's stack position (`OpAppendText(pos, …)`)?
-fn writes_var(v: &Value, x: u16, data: &Data) -> bool {
+pub(crate) fn writes_var(v: &Value, x: u16, data: &Data) -> bool {
     v.any_node(&mut |n| match n {
         Value::Set(y, _) => *y == x,
         Value::CallRef(..) => true,
