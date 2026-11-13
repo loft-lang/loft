@@ -4945,6 +4945,35 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if rhs != null {
     unqualify_literal(e, rhs!);
   }
+  // `parse_object`'s update bound to a fresh local from a base LOCAL (`d = S { f: v, ..u }`): the
+  // local is bound from the base as `d = u` binds (a copy), then each named field is written.
+  if rhs != null && op == "=" && !fixed {
+    match e.p.nodes[rhs!] {
+      SStructLit { name: un, member: um, fields: ufs, base: ub } => {
+        if um == "" && ub != null && e.p.nodes[ub!] is SName && e.p.nodes[target] is SName {
+          tn = match e.p.nodes[target] { SName { name: t0, member: tm } => if tm == "" { t0 } else { "" }, _ => "" };
+          bn = match e.p.nodes[ub!] { SName { name: b0, member: bm } => if bm == "" { b0 } else { "" }, _ => "" };
+          known = if tn == "" { -1 } else { el_vars::var(vars, tn) };
+          bv = if bn == "" { -1 } else { el_vars::var(vars, bn) };
+          ud = el::def_nr(e, un);
+          fresh = tn != "" && tn != bn && (known < 0 || (!el_vars::was_defined(vars, known) && !vars.vars[known].argument));
+          if fresh && bv >= 0 && ud >= 0 && el::def(e, ud).def_type == el::DT_STRUCT && struct_ref(e, el_types::base(el_vars::tp(vars, bv))) == ud && !(el_vars::tp(vars, bv) is TyOptional) {
+            bound = assignment(e, vars, at, fixed, op, target, ub!);
+            dv = el_vars::var(vars, tn);
+            if dv < 0 {
+              return bound;
+            }
+            writes = update_writes(e, vars, ir::NdVar { n: dv }, ud, ufs);
+            if writes == null {
+              return ex(ir::NdNull, ir::TyVoid);
+            }
+            return ex(ir::NdInsert { items: [bound.code] + writes! }, ir::TyVoid);
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   if fixed || rhs == null {
     el::refuse(e, "a const binding");
     return ex(ir::NdNull, ir::TyVoid);
@@ -5010,7 +5039,9 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if vars.vars[v].argument && struct_ref(e, pt0) >= 0 && !hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && e.p.nodes[rhs!] is SStructLit && struct_literal_def(e, rhs!) == struct_ref(e, pt0) {
     orig = if e.first_pass { -1 } else { el_vars::rebind_witness(vars, v) };
     vars.vars[v].argument = false;
+    vars.bind_declares = declaring;
     o = object_into(e, vars, v, rhs!);
+    vars.bind_declares = false;
     vars.vars[v].argument = true;
     el_vars::unmark_built(vars, v);
     if e.first_pass {
@@ -5205,7 +5236,9 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
   if e.p.nodes[rhs!] is SStructLit {
     // Built in place in the local (`parse_object`): the statement is the build itself, with
     // no `Set` around it.
+    vars.bind_declares = declaring;
     o = object_into(e, vars, v, rhs!);
+    vars.bind_declares = false;
     if !el_vars::change_var_type(e, vars, v, el_types::unrewritten(o.tp)) {
       el::refuse(e, "a local that changes type");
     }
@@ -6940,7 +6973,9 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
     }
     if sd >= 0 && el::def(e, sd).def_type == el::DT_ENUM_VALUE && el::def(e, sd).parent == el_types::struct_enum_def(declared!) {
       if !vars.vars[v].argument || hidden_param(e, vars, v) {
+        vars.bind_declares = true;
         o = object_into(e, vars, v, rhs!);
+        vars.bind_declares = false;
         return ex(o.code, ir::TyVoid);
       }
       o = object_fresh(e, vars, sd, fs, el_types::without_deps(el_types::base(declared!)));
@@ -6951,7 +6986,9 @@ fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn:
   // A struct literal of the declared struct is built in place in the local, as without the
   // annotation (`parse_object`'s destination hint).
   if e.p.nodes[rhs!] is SStructLit && struct_ref(e, el_types::base(declared!)) >= 0 && struct_literal_def(e, rhs!) == struct_ref(e, el_types::base(declared!)) {
+    vars.bind_declares = true;
     o = object_into(e, vars, v, rhs!);
+    vars.bind_declares = false;
     return ex(o.code, ir::TyVoid);
   }
   // A declared vector whose value is an `if`: its definitions are made where the right side
@@ -7027,6 +7064,27 @@ fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   qual = "";
   fields: vector<integer> = [];
   unqualify_literal(e, n);
+  // An update rebinding a local (`d = S { f: v, ..d }`) is built apart and bound
+  // (`parse_object`'s value road).
+  match e.p.nodes[n] {
+    SStructLit { name: un, member: um, fields: ufs, base: ub } => {
+      if um == "" && ub != null {
+        // A FRESH local binds its base as a view and copies it (`__ref_p2_N = base; d =
+        // __ref_p2_N`), then writes the fields — carried where the base is a local (`assignment`),
+        // not for any other base: refused by name.
+        if !e.first_pass && vars.bind_declares {
+          el::refuse(e, "an update binding a fresh local from a base that is not a local");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        o = update_value(e, vars, el::def_nr(e, un), ufs, ub!);
+        if !e.first_pass && el_ir::is_null(o.code) {
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: el_types::without_deps(o.tp) });
+      }
+    },
+    _ => {}
+  }
   match e.p.nodes[n] {
     SStructLit { name: sn, member, fields: fs, base } => {
       if (member != "" && !el::use_exists(e, sn)) || base != null {
@@ -8008,10 +8066,86 @@ fn literal_def(e: el::El, d: integer) -> boolean {
 // `Parser::parse_object`'s fresh-record arm, a literal that is a value rather than a bind: on the
 // second pass built in its own `__ref_p2_N` ("Object", answering the buffer and typed as a
 // record borrowing it); on the first its fields are read and it answers the record's type.
+// `Parser::parse_object`'s update (`S { f: v, ..base }`) as a value: built apart in its own
+// `__ref_p2_N` — minted, the base's record copied in (`OpCopyRecord`), then each named field
+// written in the literal's order ("Object").  A base of another type is refused by name.
+fn update_value(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>, base: integer) -> Ex {
+  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+    el::refuse(e, "an update of something other than a plain struct");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  b = expression(e, vars, base);
+  if e.first_pass {
+    first_pass_fields(e, vars, d, fields);
+    return ex(ir::NdNull, ir::TyReference { n: d, dep: [] });
+  }
+  if struct_ref(e, el_types::base(b.tp)) != d || b.tp is TyOptional {
+    refuse_known(e, b.tp, "an update over a base of another type: {display_type_name(e, b.tp)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  w = el_vars::work_ref_p2(vars, ir::TyReference { n: d, dep: [] });
+  kt = ir::NdInt { n: el::def(e, d).known_type };
+  wr = ir::NdVar { n: w };
+  writes = update_writes(e, vars, wr, d, fields);
+  if writes == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ops = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [wr, kt]), el_ir::cl(e, "OpCopyRecord", [b.code, wr, kt])] + writes! + [wr];
+  tp = ir::TyReference { n: d, dep: [w] };
+  ex(el_ir::v_block(ops, tp, "Object"), tp)
+}
+
+// An update's named fields written into the record at `r`, in the literal's order: a scalar
+// through its field's write op, a text replaced (`OpSetTextReplace`).  Any other field type is
+// refused by name.
+fn update_writes(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
+  out: vector<ir::Node> = [];
+  def = el::def(e, d);
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname, e: fe } => {
+        a = attr_nr(def, fname);
+        if a < 0 || fe == null {
+          el::refuse(e, "a field the struct does not declare: `{fname}` of `{def.name}`");
+          return null;
+        }
+        at = def.attributes[a]!.typedef[0] ?? ir::TyVoid;
+        x = expression(e, vars, fe!);
+        if el_types::base(at) is TyText {
+          c = stored(e, vars, x, at);
+          if c == null {
+            refuse_known(e, x.tp, "an update field value its type converts: {display_type_name(e, x.tp)} to {display_type_name(e, at)}");
+            return null;
+          }
+          out += [el_ir::cl(e, "OpSetTextReplace", [r, ir::NdInt { n: field_position(e, d, fname) }, c!])];
+        } else if el_convert::plain_scalar(at) || el_convert::plain_enum(at) {
+          c = stored(e, vars, x, at);
+          if c == null {
+            refuse_known(e, x.tp, "an update field value its type converts: {display_type_name(e, x.tp)} to {display_type_name(e, at)}");
+            return null;
+          }
+          out += [set_field(e, d, a, r, c!)];
+        } else {
+          el::refuse(e, "an update of a field of this type: {display_type_name(e, at)}");
+          return null;
+        }
+      },
+      _ => {
+        el::refuse(e, "a field initialiser of this form in an update");
+        return null;
+      }
+    }
+  }
+  out
+}
+
 fn object_expr(e: el::El, vars: el_vars::Vars, name0: text, member0: text, fields: vector<integer>, base: integer?) -> Ex {
   qv = qualified_variant(e, name0, member0);
   name = if qv != "" { qv } else { name0 };
   member = if qv != "" { "" } else { member0 };
+  if member == "" && base != null {
+    return update_value(e, vars, el::def_nr(e, name), fields, base!);
+  }
   if (member != "" && !el::use_exists(e, name)) || base != null {
     el::refuse(e, "a qualified struct literal or an update");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });

@@ -175,6 +175,8 @@ pub struct Vars {
   // The assignment seam's conversion is in flight (`Parser::parse_assign`, which reaches the
   // checked narrowing without `convert`'s entry guard): `el_convert::implicit_checked_narrow` reads it.
   pub assign_seam: boolean = false,
+  // The bind `object_into` builds into declares its local (`assignment`'s `declaring`).
+  pub bind_declares: boolean = false,
   // `Parser::lambda_counter`: the lambdas this body made, naming the next `__lambda_<fn>_<N>`
   pub lambdas: integer = 0,
   // `Parser::expected` for the one node a bind is about to read (`expect_node`): the type its
