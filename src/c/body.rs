@@ -5669,20 +5669,7 @@ impl<'a> FnWriter<'a> {
         name: &str,
         ind: usize,
     ) -> Result<bool, String> {
-        let mut join = self.join_bind(var, x);
-        // `bind_lowering::re_bind` joins (R1) any value the oracle answers `Own::Join` for, not
-        // only a call's: `class = bound ?? Owned` chooses a view of `bound` or a fresh record.
-        // Bound as it stands, the local named `bound`'s record and both were freed (the
-        // self-hosted ownership oracle's `classify_var`); the bytecode writer copies the view
-        // arm with `OpBindOrCopy`.  @PLN220.  `LOFT_C_CALL_ONLY_JOIN=1` joins calls alone.
-        if join.is_none()
-            && !first
-            && !crate::keys::c_call_only_join()
-            && let crate::bind_lowering::ReArm::Join { d_nr, base } =
-                crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).arm
-        {
-            join = Some((self.cx.data.def(d_nr).known_type(), base));
-        }
+        let join = self.join_bind(var, x);
         // A rebind releases the store it displaces when the variable owns it, as the bytecode
         // writer's owned reassignment does — never the base's, nor a store the call was handed.
         let rebind_owned = !first
@@ -5742,15 +5729,6 @@ impl<'a> FnWriter<'a> {
                 // argument naming that store is a view of the variable itself (`f(c ?? d)`'s
                 // `__lift`), and keeping it there leaked the displaced record on every rebind.
                 let mut keep = vec![format!("{old}.store_nr != {name}.store_nr")];
-                // A promoted return buffer keeps the store its caller handed in (`@FR-O-Buffer`,
-                // the entry witness), as `displacing_rebind` keeps it.
-                if let Some(w) = self
-                    .vars
-                    .entry_witness(var)
-                    .filter(|_| self.vars.is_argument(var))
-                {
-                    keep.push(format!("{old}.store_nr != {}.store_nr", self.var(w)));
-                }
                 if let Some(buf) = self.vars.displaced_buffer_witness(var, x, self.cx.data) {
                     keep.push(format!("{old}.store_nr != {}.store_nr", self.var(buf)));
                 }

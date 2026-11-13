@@ -10,7 +10,7 @@ use super::handoff::{appends_to_element, copy_hands_off, var_copy_owns};
 use crate::data::{Block, Data, Type, Value, v_set};
 use crate::variables::Function;
 
-pub(crate) fn branch_tail_vars(node: &Value) -> Vec<u16> {
+pub(super) fn branch_tail_vars(node: &Value) -> Vec<u16> {
     fn walk(n: &Value, out: &mut Vec<u16>) {
         match n.unspan() {
             Value::Var(x) => {

@@ -955,8 +955,35 @@ fn re_arm(
         return ReArm::KeyedNull;
     }
     let stashed = rb.free == DisplacedFree::Stash;
-    if let Some(arm) = runtime_join(data, d_nr, function, v, value, rb) {
-        return arm;
+    // A stashed displaced free (a nullable local) runs after the join as it runs after a copy,
+    // and a `τ?` local joins as its `τ` twin does (`first_bind_shape`) — the C writer's
+    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there — either call
+    // spelling, a `CallRef` whose target resolves (`callee_of`) included: a call handed `v`
+    // may answer `v`'s own store, which the copy arm would refill under it (#360), and the
+    // join's "fresh" test is a call's — a `??` block's stored-reference arm names a store
+    // neither `v` nor the base owns.  `LOFT_NO_STASHED_JOIN=1` copies them instead.  @PLN220.
+    let stashed_join = !crate::keys::stashed_join_off();
+    let join_shape = if stashed_join {
+        crate::use_analysis::first_bind_shape(tp)
+    } else {
+        tp
+    };
+    if (rb.owned_ref || rb.buffer_kept)
+        && !rb.s1_substituted
+        && (!stashed
+            || (stashed_join
+                && !rb.rhs_reads_v
+                && matches!(value.unspan(), Value::Call(..) | Value::CallRef(..))
+                && crate::use_analysis::callee_of(data, d_nr, value).is_some()))
+        && !matches!(value.unspan(), Value::Var(_))
+        && crate::keys::join_own_enabled()
+        && !function.is_view_elided(v)
+        && let crate::use_analysis::Own::Join { base } =
+            crate::use_analysis::ownership_of(data, d_nr, value)
+        && base != u16::MAX
+        && let Some(rec) = join_record(join_shape)
+    {
+        return ReArm::Join { d_nr: rec, base };
     }
     if !((rb.owned_ref || rb.witnessed || rb.buffer_kept) && !rb.s1_substituted) {
         return ReArm::Plain;
@@ -1092,101 +1119,6 @@ fn only_null_or_borrowed(data: &Data, d_nr: u32, v: u16) -> bool {
     let mut ok = true;
     walk(data, d_nr, v, data.def(d_nr).code(), &mut ok);
     ok
-}
-
-/// `R1` — does the rebind `v = value` join at run time (`OpBindOrCopy`: a view of the base
-/// copied, a fresh store adopted)?  Where the oracle answers `Own::Join`, and where a value
-/// branch hands back another local whole (`branch_local_join`).
-fn runtime_join(
-    data: &Data,
-    d_nr: u32,
-    function: &Function,
-    v: u16,
-    value: &Value,
-    rb: &ReBind,
-) -> Option<ReArm> {
-    let tp = function.tp(v);
-    let stashed = rb.free == DisplacedFree::Stash;
-    // A stashed displaced free (a nullable local) runs after the join as it runs after a copy,
-    // and a `τ?` local joins as its `τ` twin does (`first_bind_shape`) — the C writer's
-    // `join_stmt` rebind.  Only for a CALL that does not read `v`, as there — either call
-    // spelling, a `CallRef` whose target resolves (`callee_of`) included: a call handed `v`
-    // may answer `v`'s own store, which the copy arm would refill under it (#360), and the
-    // join's "fresh" test is a call's — a `??` block's stored-reference arm names a store
-    // neither `v` nor the base owns.  `LOFT_NO_STASHED_JOIN=1` copies them instead.  @PLN220.
-    let stashed_join = !crate::keys::stashed_join_off();
-    let join_shape = if stashed_join {
-        crate::use_analysis::first_bind_shape(tp)
-    } else {
-        tp
-    };
-    if (rb.owned_ref || rb.buffer_kept)
-        && !rb.s1_substituted
-        && (!stashed
-            || (stashed_join
-                && !rb.rhs_reads_v
-                && matches!(value.unspan(), Value::Call(..) | Value::CallRef(..))
-                && crate::use_analysis::callee_of(data, d_nr, value).is_some()))
-        && !matches!(value.unspan(), Value::Var(_))
-        && crate::keys::join_own_enabled()
-        && !function.is_view_elided(v)
-        && let crate::use_analysis::Own::Join { base } =
-            crate::use_analysis::ownership_of(data, d_nr, value)
-        && base != u16::MAX
-        && let Some(rec) = join_record(join_shape)
-    {
-        return Some(ReArm::Join { d_nr: rec, base });
-    }
-    branch_local_join(data, function, v, value, rb, join_shape)
-}
-
-/// `@FR-B-Copy` — a value BRANCH that hands back another local's whole record on one path
-/// (`c = b ?? Owned`, `c = if k { b } else { mk() }`) copies that arm and adopts the others, as
-/// the bare `c = b` copies (R2c): the runtime join (R1) with that local as the witness.  The scope
-/// pass keeps the value form for such a branch where an arm is a compiler temporary, on the
-/// promise of this join (`scopes::scan_set`'s write-out, `arm_lift::arm_bind`), and the oracle's
-/// `Owned` for an owned local's arm declined it — the binding named the local's record and both
-/// freed it (`@FR-H-FreeTwice`).  `LOFT_NO_BRANCH_LOCAL_JOIN=1` binds such a branch plain again.
-fn branch_local_join(
-    data: &Data,
-    function: &Function,
-    v: u16,
-    value: &Value,
-    rb: &ReBind,
-    join_shape: &Type,
-) -> Option<ReArm> {
-    if !(rb.owned_ref || rb.buffer_kept)
-        || rb.s1_substituted
-        || rb.free == DisplacedFree::Stash
-        || crate::keys::branch_local_join_off()
-        || !crate::keys::join_own_enabled()
-        || function.is_view_elided(v)
-    {
-        return None;
-    }
-    let base = sole_branch_local(function, v, value)?;
-    let rec = join_record(join_shape)?;
-    function
-        .record_copy_source(data, v, base)
-        .is_some_and(|src_d| data.copies_as(rec, src_d))
-        .then_some(ReArm::Join { d_nr: rec, base })
-}
-
-/// The one program-named local (not `v`, not a compiler temporary) a value branch hands back
-/// whole on some path — `b` in `b ?? d` or `if k { b } else { mk() }` — or `None` for a value
-/// that is no branch, or a branch with none or several (one witness names one store).
-fn sole_branch_local(function: &Function, v: u16, value: &Value) -> Option<u16> {
-    if !matches!(
-        value.unspan(),
-        Value::If(..) | Value::Block(_) | Value::Insert(_)
-    ) {
-        return None;
-    }
-    let mut named = crate::scopes::branch_tail_vars(value)
-        .into_iter()
-        .filter(|&x| x != v && x < function.count() && !function.is_compiler_generated(x));
-    let first = named.next()?;
-    named.next().is_none().then_some(first)
 }
 
 /// Is `value` a null — `null`, or the sentinel a reference reset writes?
