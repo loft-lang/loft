@@ -40,11 +40,6 @@ permissions:
   contents: read
 
 env:
-  # Cargo 1.100 (stable since 2026-11-09) builds into a new build-dir layout with no
-  # target/<profile>/deps/, which the native toolchain (src/toolchain.rs), make-release.sh
-  # and the cdylib builds still read.  Its temporary opt-out keeps the old layout until they
-  # read the new one; cargo drops the opt-out one release later (rust-lang/cargo#17182).
-  __CARGO_TEMPORARY_BUILD_DIR_NEW_LAYOUT_OPT_OUT: "1"
   PYTHONUTF8: '1'
   LOFT_SUITE_DIR: loft-suite
   CARGO_TERM_COLOR: always

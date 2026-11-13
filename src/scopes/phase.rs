@@ -133,7 +133,8 @@ pub(super) fn run_scan_phase(
     confined: &HashMap<u16, u16>,
     disturbed: Option<&DisturbedParams>,
     sunk: &HashSet<u16>,
-) -> Vec<(usize, u16)> {
+    late_owners: &HashSet<u16>,
+) -> (Vec<(usize, u16)>, HashSet<u16>) {
     // @PLN85 `local_source` over-free fix (gated): the heap slots whose OWNED store
     // is displaced by a later borrow/join reassignment. Computed on the pre-scope
     // code so the dep classification is read before any dep-strip below mutates it.
@@ -186,6 +187,8 @@ pub(super) fn run_scan_phase(
         adopter_released: HashSet::default(),
         lift_join_witness: HashMap::default(),
         lift_viewers: HashMap::default(),
+        late_owners: late_owners.clone(),
+        skipped_viewers: HashSet::default(),
         value_hoists: Vec::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
@@ -692,12 +695,25 @@ pub(super) fn run_scan_phase(
         data,
     );
     let written_out = std::mem::take(&mut scopes.written_out);
+    // Skipped by a sweep as a view, and an owner by the end of the scan: a later bind
+    // stripped its deps.  The caller rescans with these read as owners from the start.
+    let late: HashSet<u16> = if crate::keys::late_owner_rescan_off() {
+        HashSet::default()
+    } else {
+        let vars = &data.definitions[d_nr as usize].variables;
+        scopes
+            .skipped_viewers
+            .iter()
+            .copied()
+            .filter(|&v| !late_owners.contains(&v) && v < vars.count() && vars.proxy_says_owned(v))
+            .collect()
+    };
     for (v_nr, scope) in scopes.var_scope {
         data.definitions[d_nr as usize]
             .variables
             .set_scope(v_nr, scope);
     }
-    written_out
+    (written_out, late)
 }
 
 /// For every `Set(v, CallRef)` in `node`, the `Join` base the oracle names for it, grouped by

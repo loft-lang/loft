@@ -576,7 +576,14 @@ impl Scopes<'_> {
                 // the hard way: the ladder was attached to that predicate and its gate NEVER
                 // FIRED, because the sweep does not go through it.  That predicate is the
                 // licence for the null-arm / keyed leg; THIS is the licence for the sweep.
+                let viewer_now = !function.proxy_says_owned(v)
+                    && !function.tp(v).depend().is_empty()
+                    && crate::data::is_dbref(function.tp(v).base());
+                if viewer_now {
+                    self.skipped_viewers.insert(v);
+                }
                 let owns = (function.proxy_says_owned(v)
+                    || self.late_owners.contains(&v)
                     || self.lift_join_witness.contains_key(&v)
                     || (dep.len() == 1
                         && dep[0] == v
@@ -1355,11 +1362,22 @@ impl Scopes<'_> {
         }
         let free = data.def_nr("OpFreeRef");
         let free_distinct = data.def_nr("OpFreeRefIfDistinct");
-        let frees = |op: &Value, w: u16| {
-            matches!(op.unspan(), Value::Call(d, args)
-                if (*d == free || *d == free_distinct)
-                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w))
-        };
+        // A free of `w`, plain or behind the lift-view guard (`if OpDistinctStore(w, lift) free`,
+        // `Scopes::lift_viewers`): guarded, `w` still releases what it holds wherever it names no
+        // lift's store, which is the only place it can hold the buffer's (loft#2475).
+        fn frees_var(op: &Value, w: u16, free: u32, free_distinct: u32) -> bool {
+            match op.unspan() {
+                Value::Call(d, args) => {
+                    (*d == free || *d == free_distinct)
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w)
+                }
+                Value::If(_, t, e) if matches!(e.unspan(), Value::Null) => {
+                    frees_var(t, w, free, free_distinct)
+                }
+                _ => false,
+            }
+        }
+        let frees = |op: &Value, w: u16| frees_var(op, w, free, free_distinct);
         // A rebound parameter (a local renamed onto the return buffer) releases at exit, through
         // its entry witness, what the caller did not hand it — a release added after this sweep.
         let mut rebound_params: Vec<u16> = function

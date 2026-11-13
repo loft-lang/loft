@@ -33,13 +33,10 @@
 use loft::file_access as fa;
 use std::path::PathBuf;
 
+/// The `loft` binary this test was built beside, wherever cargo's layout puts it (the
+/// per-unit layout keeps test binaries out of `<profile>/deps/`).
 fn loft_bin() -> PathBuf {
-    let mut p = std::env::current_exe().expect("test binary path");
-    p.pop();
-    if p.ends_with("deps") {
-        p.pop();
-    }
-    p.join("loft")
+    PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 /// Run `src` on `backend` under the store oracle. Returns combined output.

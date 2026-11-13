@@ -1295,6 +1295,21 @@ impl Run<'_> {
             // wherever `v` names one, so the free reaches each as if `v` named it alone.
             let only_this = pts.iter().all(|p| *p == Pt::Null || *p == Pt::Store(k))
                 || (only.is_some() && guarded_rest_reports());
+            // …and a store a JOIN's answer may be, beside stores that exist only on the other
+            // paths (`Summary::Join` mints its fresh store LIVE | ABSENT): where those are absent
+            // the variable names this one, so ended here, it is freed again on that path
+            // (`__ref_N = f(x, __ref_N)` answering `x`, freed with `x`'s owner — loft#2474's
+            // elaborator, `arm_delivery`).  A null beside them is a path that frees nothing, as
+            // for `only_this`.  `LOFT_RECORDS_NO_JOIN_REFREE=1` leaves it unreported.
+            let join_path =
+                !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_JOIN_REFREE").is_some())
+                    && pts.len() > 1
+                    && pts.iter().all(|p| match p {
+                        Pt::Store(o) if *o == k => true,
+                        Pt::Store(o) => st.stores.get(o).is_some_and(|i| i.status & ABSENT != 0),
+                        Pt::Null => true,
+                        _ => false,
+                    });
             // …and a DEFINITE name of a store a weak end already released on some path (a
             // maybe-null holder freed it first): freed again on that path.
             let weakly_ended = pts.len() == 1
@@ -1304,7 +1319,8 @@ impl Run<'_> {
             if report
                 && info.has(ENDED)
                 && (info.ended.contains(&v)
-                    || (((only_this && !info.has(LIVE)) || weakly_ended) && maybe_stale(&info, v)))
+                    || (((only_this && !info.has(LIVE)) || weakly_ended) && maybe_stale(&info, v))
+                    || (join_path && !info.has(LIVE)))
             {
                 // Every end here is a free, which the runtime refuses on a free slot
                 // (`@FR-H-FreeTwice`) and runs on whatever store took the slot since.

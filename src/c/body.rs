@@ -5617,11 +5617,16 @@ impl<'a> FnWriter<'a> {
         let (Type::Reference(d, _) | Type::Enum(d, true, _)) = shape.base().clone() else {
             return None;
         };
-        let f = ua::callee_of(data, self.d, x)?;
-        if !data.def(f).is_loft_defined()
-            || !crate::keys::join_own_enabled()
-            || self.vars.is_view_elided(v)
-        {
+        if !crate::keys::join_own_enabled() || self.vars.is_view_elided(v) {
+            return None;
+        }
+        // `@FR-B-Copy` — a choice that hands another heap variable over whole on one arm
+        // joins on that variable, as `bind_lowering::re_bind` decides for the bytecode writer.
+        let Some(f) = ua::callee_of(data, self.d, x) else {
+            return crate::bind_lowering::choice_var_arm(data, self.d, self.vars, x, v)
+                .map(|base| (data.def(d).known_type(), base));
+        };
+        if !data.def(f).is_loft_defined() {
             return None;
         }
         match ua::ownership_of(data, self.d, x) {

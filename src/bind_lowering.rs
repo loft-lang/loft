@@ -968,9 +968,22 @@ fn re_arm(
     } else {
         tp
     };
+    // `@FR-O-Move` — a call handed `v` itself as its buffer (S1, `__ref_N = f(x, __ref_N)`, the
+    // shape a join arm's owning call is bound in) whose answer may be an ARGUMENT's store: the
+    // answer is the buffer the callee filled, a store it made, or `x`'s.  Bound plainly, `v`
+    // named `x`'s store on that path and both were freed (loft#2474's elaborator,
+    // `arm_delivery`).  Joined on `x` it is copied there and adopted elsewhere; the stashed
+    // displaced free releases the buffer's store where the answer is not it.
+    // `LOFT_NO_S1_JOIN=1` binds it plainly again.
+    let s1_join = rb.s1_substituted
+        && stashed
+        && !crate::keys::s1_join_off()
+        && matches!(value.unspan(), Value::Call(..))
+        && crate::use_analysis::callee_of(data, d_nr, value).is_some();
     if (rb.owned_ref || rb.buffer_kept)
-        && !rb.s1_substituted
+        && (!rb.s1_substituted || s1_join)
         && (!stashed
+            || s1_join
             || (stashed_join
                 && !rb.rhs_reads_v
                 && matches!(value.unspan(), Value::Call(..) | Value::CallRef(..))
@@ -978,9 +991,9 @@ fn re_arm(
         && !matches!(value.unspan(), Value::Var(_))
         && crate::keys::join_own_enabled()
         && !function.is_view_elided(v)
-        && let crate::use_analysis::Own::Join { base } =
-            crate::use_analysis::ownership_of(data, d_nr, value)
+        && let Some(base) = join_base(data, d_nr, function, value, v)
         && base != u16::MAX
+        && base != v
         && let Some(rec) = join_record(join_shape)
     {
         return ReArm::Join { d_nr: rec, base };
@@ -1084,6 +1097,82 @@ fn re_arm(
 /// copies into, for a local of type `tp`: a heap record, or a heap enum, which the copy walks
 /// the same way (the C writer's `join_bind` takes both).  `None` for every other type, and for
 /// an enum under `LOFT_NO_ENUM_JOIN=1`, which deep-copies it at every bind as before.  @PLN220.
+/// The base a rebind joins on (R1): a choice's whole-variable arm ([`choice_var_arm`]), else
+/// the oracle's `Join` base.
+fn join_base(data: &Data, d_nr: u32, function: &Function, value: &Value, v: u16) -> Option<u16> {
+    choice_var_arm(data, d_nr, function, value, v).or_else(|| {
+        match crate::use_analysis::ownership_of(data, d_nr, value) {
+            crate::use_analysis::Own::Join { base } => Some(base),
+            _ => None,
+        }
+    })
+}
+
+/// `@FR-B-Copy` — the variable a CHOICE hands over whole on one of its arms
+/// (`class = bound ?? Owned`, `x = if c { y } else { mk() }`) while every other arm answers a
+/// store of its own or null.  Bound plainly, `v` named that variable's store beside it and the
+/// two were freed apart; the choice is a join on that variable, copied where the answer is its
+/// store and adopted where it is a fresh arm's.  Decided by the arms, not by the oracle's answer
+/// for the whole, which reads through the variable's own definitions (an owning local first
+/// bound from a parameter's view reads as that view).  `None` for anything else — a second
+/// such variable, or an arm that may be a view — which keeps the lowering it had
+/// (`LOFT_NO_CHOICE_VAR_JOIN=1` answers `None` always).
+pub(crate) fn choice_var_arm(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    value: &Value,
+    v: u16,
+) -> Option<u16> {
+    fn leaves<'a>(n: &'a Value, out: &mut Vec<&'a Value>) {
+        match n.unspan() {
+            Value::If(_, t, e) => {
+                leaves(t, out);
+                leaves(e, out);
+            }
+            Value::Block(b) if !b.operators.is_empty() => {
+                // A block's value is its tail; a block that ends in a jump answers nothing.
+                if let Some(last) = b.operators.last() {
+                    out.push(last);
+                }
+            }
+            _ => out.push(n),
+        }
+    }
+    if crate::keys::choice_var_join_off() || !matches!(value.unspan(), Value::If(..)) {
+        return None;
+    }
+    let mut arms = Vec::new();
+    leaves(value, &mut arms);
+    let mut var = None;
+    for arm in arms {
+        match arm.unspan() {
+            Value::Var(w)
+                if *w != v
+                    && *w < function.count()
+                    && !function.is_argument(*w)
+                    && function.tp(*w).base().heap_def_nr().is_some()
+                    && !function.name(*w).starts_with("__") =>
+            {
+                if var.is_some_and(|x| x != *w) {
+                    return None;
+                }
+                var = Some(*w);
+            }
+            a if crate::use_analysis::holds_no_store(data, a) => {}
+            // A construction's work-ref (`{ OpDatabase(__ref_N); …; __ref_N }`) or a call that
+            // answers a store of its own.
+            Value::Var(w) if function.name(*w).starts_with("__ref_") => {}
+            a if matches!(
+                crate::use_analysis::ownership_of(data, d_nr, a),
+                crate::use_analysis::Own::Owned
+            ) && !matches!(a.unspan(), Value::Var(_)) => {}
+            _ => return None,
+        }
+    }
+    var
+}
+
 fn join_record(tp: &Type) -> Option<u32> {
     match tp {
         Type::Reference(rec, _) => Some(*rec),

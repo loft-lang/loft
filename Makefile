@@ -126,12 +126,6 @@ endif
 # Linux; a Windows Python defaults to cp1252 and misreads any non-ASCII byte.
 export PYTHONUTF8 := 1
 
-# Cargo 1.100's build-dir layout has no target/<profile>/deps/, which the native toolchain
-# (src/toolchain.rs), make-release.sh and the cdylib builds read: keep the old layout until
-# they read the new one (cargo's temporary opt-out, removed one release later).  The CI
-# workflows set the same variable.
-export __CARGO_TEMPORARY_BUILD_DIR_NEW_LAYOUT_OPT_OUT := 1
-
 # macOS: cc-rs invocations (notably `ring`'s build script) need the SDK path
 # on -isysroot.  When `xcode-select -p` points at the bare Command Line Tools,
 # plain `cc` does not auto-detect it and the build fails with
@@ -401,9 +395,9 @@ install:
 # failed with `cannot stat` and took the whole install down.  This step runs BEFORE
 # the binary is installed, so the failure is at least honest: it leaves the user on
 # their previous loft rather than pairing a new binary with stale runtimes.
-# `src/native_utils.rs::dep_search_dirs` already reads both layouts for the LINK;
-# this is the same fact on the install side.  The two blocks above still assume
-# `deps/` and are correct today: they are ordinary cargo builds, not build-std ones.
+# `src/cargo_layout.rs` reads both layouts for the LINK; this is the same fact on the
+# install side, and the two ordinary wasm builds above read it through
+# `scripts/cargo_dep_files.sh`, which leaves loft's own rlib out.
 #
 # loft's OWN rlib is excluded, for the reason `assemble_atomics_sysroot` gives when
 # it skips the same file: the link names it with `--extern` and `-L dependency=`, and
@@ -414,11 +408,11 @@ install-wasm-artifacts:
 	@$(SUDO) install -d $(PREFIX)/share/loft/wasm32-wasip2/deps
 	@$(SUDO) install -m 644 target/wasm32-wasip2/release/libloft.rlib $(PREFIX)/share/loft/wasm32-wasip2/
 	@$(SUDO) rm -f $(PREFIX)/share/loft/wasm32-wasip2/deps/*.rlib
-	@$(SUDO) cp target/wasm32-wasip2/release/deps/*.rlib $(PREFIX)/share/loft/wasm32-wasip2/deps/
+	@$(SUDO) cp $$(scripts/cargo_dep_files.sh target/wasm32-wasip2/release '*.rlib') $(PREFIX)/share/loft/wasm32-wasip2/deps/
 	@$(SUDO) install -d $(PREFIX)/share/loft/wasm32-unknown-unknown/deps
 	@$(SUDO) install -m 644 target/wasm32-unknown-unknown/release/libloft.rlib $(PREFIX)/share/loft/wasm32-unknown-unknown/
 	@$(SUDO) rm -f $(PREFIX)/share/loft/wasm32-unknown-unknown/deps/*.rlib
-	@$(SUDO) cp target/wasm32-unknown-unknown/release/deps/*.rlib $(PREFIX)/share/loft/wasm32-unknown-unknown/deps/
+	@$(SUDO) cp $$(scripts/cargo_dep_files.sh target/wasm32-unknown-unknown/release '*.rlib') $(PREFIX)/share/loft/wasm32-unknown-unknown/deps/
 	@if [ -f target/loft/html-mt/wasm32-unknown-unknown/release/libloft.rlib ]; then \
 	  echo "install: shipping the threaded browser runtime (html-mt)"; \
 	  $(SUDO) install -d $(PREFIX)/share/loft/html-mt/wasm32-unknown-unknown/deps; \

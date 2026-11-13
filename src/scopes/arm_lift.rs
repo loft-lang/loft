@@ -466,6 +466,13 @@ impl Scopes<'_> {
         // A binding assigned elsewhere keeps the parser's fact: the runtime join bind copies
         // its arms there, and naming a hoist here would make it a borrow at every Set it has.
         if self.multi_assigned.contains(&bound) {
+            // …but the FIRST of those Sets binds plainly where an arm is a lift's copy, so the
+            // binding names the lift's store on that path and a later rebind's displaced free
+            // and the lift's own free released it twice (loft#2475).  The binding's frees decline
+            // where it names a lift (`note_lift_viewers`); the lift releases its copy.
+            // `LOFT_NO_LIFT_VIEW_GUARD=1` restores the double free.
+            let lifts: Vec<u16> = copied.iter().map(|&(_, tmp)| tmp).collect();
+            self.note_lift_viewers(bound, &lifts);
             return materialised;
         }
         // From here the binding BORROWS its per-arm temps and releases nothing, so an arm it was

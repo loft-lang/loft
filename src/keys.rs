@@ -1746,6 +1746,15 @@ pub fn protect_after_call() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_PROTECT_AFTER_CALL"))
 }
 
+/// `LOFT_NO_LATE_OWNER_RESCAN=1` — an early `return` scanned before the bind that strips a
+/// local's view deps skips that local again, which the frame's exit frees: the store leaks on
+/// the early path (`Scopes::late_owners`, `scopes::phase::run_scan_phase`).
+#[must_use]
+pub fn late_owner_rescan_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_LATE_OWNER_RESCAN"))
+}
+
 /// `@FR-H-FreeTwice` — a local bound from a branch whose arm reads a projection out of a
 /// lifted call result (`d = if c { mk().x } else { fresh() }`) names, on that path, the store
 /// the lift releases; its own free and a rebind's displaced free decline there
@@ -3647,6 +3656,23 @@ pub fn lift_temp_view_off() -> bool {
 /// `LOFT_C_NULL_FREES_ENTRY=1` — the C writer's call copy into a promoted return buffer frees the
 /// store the caller handed in when the call answers null (`loft_bind_copy`'s null arm), as it did
 /// before `@FR-O-Buffer` was asked there.
+/// `LOFT_NO_S1_JOIN=1` — a rebind from a call handed the variable itself as its buffer, whose
+/// answer may be an argument's store, binds plainly again (`bind_lowering::re_arm`'s S1 join).
+#[must_use]
+pub fn s1_join_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_S1_JOIN"))
+}
+
+/// `LOFT_NO_CHOICE_VAR_JOIN=1` — a rebind from a choice that hands another heap variable over
+/// whole on one arm (`class = bound ?? Owned`) binds plainly again, naming that variable's store
+/// beside it (`bind_lowering::choice_var_arm`).
+#[must_use]
+pub fn choice_var_join_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_CHOICE_VAR_JOIN"))
+}
+
 #[must_use]
 pub fn c_null_frees_entry() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

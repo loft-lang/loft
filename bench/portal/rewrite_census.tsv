@@ -1696,7 +1696,6 @@
 21_tree	-	c	R-WorkPark	3
 21_tree	-	c	R-Wrapper	9
 21_tree	-	c	R-ZeroCount	8
-21_tree	-	rust	H-SwapRebind	6
 21_tree	-	rust	R-Base	2
 21_tree	-	rust	R-BoundedNest/kernel	1
 21_tree	-	rust	R-CharWalk	10

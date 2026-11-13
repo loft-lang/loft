@@ -312,6 +312,33 @@ impl Scopes<'_> {
         Some(Value::Insert(out))
     }
 
+    /// `@FR-H-FreeTwice` — `v` names the store of a `__lift_N` its value handed it on some
+    /// path (a hoisted arm block, or an arm the lift copied for a binding assigned elsewhere
+    /// too), which the lift releases: record the lifts in `lift_viewers`, so `v`'s own frees
+    /// decline where it names one, and give each lift `v`'s turn in the sweep just ahead of it —
+    /// `v`'s guarded free compares with the lift while the lift still names its store, as a
+    /// tuple's backings take the tuple's turn.  `keys::lift_view_guard`.
+    pub(super) fn note_lift_viewers(&mut self, v: u16, lifts: &[u16]) {
+        if !crate::keys::lift_view_guard() || lifts.is_empty() {
+            return;
+        }
+        let e = self.lift_viewers.entry(v).or_default();
+        for &l in lifts {
+            if l != v && !e.contains(&l) {
+                e.push(l);
+            }
+        }
+        for &l in lifts {
+            if l != v
+                && let Some(lpos) = self.var_order.iter().position(|&x| x == l)
+            {
+                self.var_order.remove(lpos);
+                let at = self.var_order.iter().position(|&x| x == v).unwrap_or(lpos);
+                self.var_order.insert(at, l);
+            }
+        }
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn scan_set(
         &mut self,
@@ -1749,26 +1776,7 @@ impl Scopes<'_> {
         // `@FR-H-FreeTwice` — an arm of the value that reads a projection out of a lifted call
         // result leaves `v` naming that lift's store, which the lift's own free releases.
         let viewed = std::mem::replace(&mut self.value_hoists, outer_hoists);
-        if crate::keys::lift_view_guard() && !viewed.is_empty() {
-            let e = self.lift_viewers.entry(v).or_default();
-            for &l in &viewed {
-                if l != v && !e.contains(&l) {
-                    e.push(l);
-                }
-            }
-            // The guard compares `v` with the lift while the lift still names its store, so the
-            // lift takes `v`'s turn in the sweep just ahead of it, as a tuple's backings do
-            // below: `v`'s guarded free runs first, the lift's after it.
-            for l in viewed {
-                if l != v
-                    && let Some(lpos) = self.var_order.iter().position(|&x| x == l)
-                {
-                    self.var_order.remove(lpos);
-                    let at = self.var_order.iter().position(|&x| x == v).unwrap_or(lpos);
-                    self.var_order.insert(at, l);
-                }
-            }
-        }
+        self.note_lift_viewers(v, &viewed);
         self.prefix_released.truncate(prefix_from);
         if first_binding {
             self.binding_now.pop();
@@ -2057,9 +2065,23 @@ impl Scopes<'_> {
             && !value.reads_var(v)
             && !value.reads_var(ov)
         {
-            transition_free = Some(call("OpFreeRef", v, data));
-        }
-        if !lifts.is_empty()
+            // No free of its own here: where `v` names a lift's store it lets go of it, and
+            // anywhere else the code generator's displaced free — with the hand-over a
+            // construction's work-ref makes — stays as it was (loft#2475).
+            let distinct = data.def_nr("OpDistinctStore");
+            transition_free = Some(Value::Insert(
+                lifts
+                    .iter()
+                    .map(|&l| {
+                        v_if(
+                            Value::Call(distinct, vec![Value::Var(v), Value::Var(l)]),
+                            Value::Null,
+                            v_set(v, Value::Null),
+                        )
+                    })
+                    .collect(),
+            ));
+        } else if !lifts.is_empty()
             && let Some(free) = transition_free.take()
         {
             let distinct = data.def_nr("OpDistinctStore");
