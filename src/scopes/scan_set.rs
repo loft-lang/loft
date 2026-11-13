@@ -2419,6 +2419,25 @@ impl Scopes<'_> {
                     witness_ops.push(witness_points_at(w, v, data));
                 }
                 WitnessSet::Other => witness_ops.push(guarded_release),
+                // The witness takes the store only where no temp of the choice holds it: the
+                // call made it into a null buffer, and the local is its one name (the
+                // self-hosted elaborator's `member`, `x = match … { … expression(…) … }`).
+                WitnessSet::MintUnless(temps) => {
+                    witness_ops.push(guarded_release);
+                    let distinct = data.def_nr("OpDistinctStore");
+                    let cond = temps
+                        .iter()
+                        .map(|&t| Value::Call(distinct, vec![Value::Var(v), Value::Var(t)]))
+                        .reduce(|a, b| v_if(a, b, Value::Boolean(false)))
+                        .unwrap_or(Value::Boolean(true));
+                    let not_null =
+                        Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+                    witness_ops.push(v_if(
+                        v_if(not_null, cond, Value::Boolean(false)),
+                        witness_points_at(w, v, data),
+                        Value::Null,
+                    ));
+                }
             }
         }
         // `@FR-B-View` — a local bound ONCE to a projection of a lifted call result

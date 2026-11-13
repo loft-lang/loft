@@ -4605,7 +4605,27 @@ impl Run<'_> {
                 self.bind(&mut st, x, &val);
                 return Some((st, Val::null()));
             }
-            let val = if !kept.is_empty() && kept.len() == cur.len() {
+            // A HIDDEN buffer parameter is null where the caller handed the sentinel, and this
+            // `OpDatabase` mints there (`Origin::MintInto`): read as re-initialised only, the
+            // function answered the parameter alone (`Arg`), and a caller handing null lost the
+            // store it made (`tail = if … { unspan(…) } else { NdNull }`).
+            // `LOFT_RECORDS_NO_HIDDEN_PARAM_MINT=1` reads it as re-initialised.
+            let hidden_param = !crate::env_once!(
+                std::env::var_os("LOFT_RECORDS_NO_HIDDEN_PARAM_MINT").is_some()
+            ) && cur.contains(&Pt::Param(x))
+                // A RECORD return's buffer: a collection's is minted by the caller before the
+                // call (`@FR-O-LazyBuffer`), so the callee never meets its null.
+                && !crate::parser::vectors::is_collection(
+                    self.data.def(self.d_nr).returned().base(),
+                )
+                && self.params.iter().position(|q| *q == x).is_some_and(|i| {
+                    self.data
+                        .def(self.d_nr)
+                        .attributes()
+                        .get(i)
+                        .is_some_and(|a| a.hidden)
+                });
+            let val = if !kept.is_empty() && kept.len() == cur.len() && !hidden_param {
                 Val {
                     corr: Self::stores_of(&kept).into_iter().collect(),
                     pts: kept,
