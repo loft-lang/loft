@@ -2115,7 +2115,7 @@ impl Run<'_> {
                 // the value is not that projection, `w` is still null.
                 let view_bases: Vec<u16> = if views_enabled() {
                     let mut tails = Vec::new();
-                    value_tails(val, &mut tails);
+                    value_tails(self.data, val, &mut tails);
                     let mut out = Vec::new();
                     for (i, (_, t)) in tails.iter().enumerate() {
                         if let Value::Call(op, pargs) = t.unspan()
@@ -4023,6 +4023,12 @@ impl Run<'_> {
                 })
                 .collect();
             let _ = write!(o, " {}={{{}}}", self.var_name(*v), pts.join(","));
+        }
+        if !st.views.is_empty() {
+            o.push_str("\n    views:");
+            for (x, w) in &st.views {
+                let _ = write!(o, " {}~{}", self.var_name(*x), self.var_name(*w));
+            }
         }
         o.push_str("\n    stores:");
         for (k, i) in &st.stores {
@@ -6294,24 +6300,37 @@ fn views_enabled() -> bool {
 
 /// The paths a value can end on, as `(arm, tail)`: the arms of an `if`, and in a block its last
 /// statement, through spans.  `arm` is the whole arm, for asking what that path sets.
-fn value_tails<'v>(v: &'v Value, out: &mut Vec<(&'v Value, &'v Value)>) {
-    fn tail<'v>(v: &'v Value) -> &'v Value {
+fn value_tails<'v>(data: &Data, v: &'v Value, out: &mut Vec<(&'v Value, &'v Value)>) {
+    // A block's value is its last statement that is not a free: the frees the scan appends
+    // after the value answer nothing (`{ __lift = f(); __lift.x; OpFreeRef(__lift_1) }`).
+    fn is_free(data: &Data, op: &Value) -> bool {
+        matches!(op.unspan(), Value::Call(d, _)
+            if matches!(data.def(*d).name(),
+                "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefUnlessEntry" | "OpFreeText"))
+    }
+    fn last_value<'v>(data: &Data, ops: &'v [Value]) -> Option<&'v Value> {
+        ops.iter().rev().find(|op| !is_free(data, op))
+    }
+    fn tail<'v>(data: &Data, v: &'v Value) -> &'v Value {
         match v.unspan() {
-            Value::Block(bl) if !bl.operators.is_empty() => tail(bl.operators.last().unwrap()),
+            Value::Block(bl) if !bl.operators.is_empty() => {
+                last_value(data, &bl.operators).map_or(v.unspan(), |l| tail(data, l))
+            }
             other => other,
         }
     }
     match v.unspan() {
         Value::If(_, t, e) => {
-            value_tails(t, out);
-            value_tails(e, out);
+            value_tails(data, t, out);
+            value_tails(data, e, out);
         }
         Value::Block(bl) if !bl.operators.is_empty() => {
-            let last = bl.operators.last().unwrap();
+            let last =
+                last_value(data, &bl.operators).unwrap_or_else(|| bl.operators.last().unwrap());
             if matches!(last.unspan(), Value::If(..)) {
-                value_tails(last, out);
+                value_tails(data, last, out);
             } else {
-                out.push((v, tail(v)));
+                out.push((v, tail(data, v)));
             }
         }
         _ => out.push((v, v)),
