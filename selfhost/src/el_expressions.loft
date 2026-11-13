@@ -1605,6 +1605,12 @@ fn record_may_be_absent(vars: el_vars::Vars, v: integer, seen: vector<integer>) 
   if t is TyOptional {
     return true;
   }
+  // A view of a collection's element may be absent (`r = v[0]` past the end: `(N-Index)` types a
+  // constant index non-null, and an overrun is still null, `@FR-N-Road`) — except a loop's own
+  // element, which the loop binds only to one that exists (`LOFT_NO_ELEMENT_VIEW_ABSENT` unset).
+  if len(seen) > 0 && el_types::is_collection(el_types::base(t)) && !el_vars::was_loop_var(vars, seen[0]!) {
+    return true;
+  }
   if !(el_types::base(t) is TyReference) || seen.contains(v) {
     return false;
   }
@@ -18594,6 +18600,7 @@ pub fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> in
   if id == "_" {
     u = el_vars::create_unique(vars, "_", t);
     el_vars::set_defined(vars, u);
+    vars.loop_vars += [u];
     return u;
   }
   lv = el_vars::loop_variable(vars, id, t);
@@ -18601,6 +18608,7 @@ pub fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> in
     el_vars::set_name(vars, src_id, lv);
   }
   el_vars::set_defined(vars, lv);
+  vars.loop_vars += [lv];
   lv
 }
 

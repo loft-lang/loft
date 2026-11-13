@@ -110,6 +110,8 @@ pub struct Vars {
   pub proven: vector<Proven>,
   // `Function::loops`' variables, innermost last: the loops still open
   pub active_loops: vector<integer>,
+  // `Variable::was_loop_var`: every variable that has served as a loop's, kept across passes.
+  pub loop_vars: vector<integer>,
   // The `x#count` counter a body asked of an open loop (`Function::loop_count_of`), by its loop
   // variable.
   pub loop_counts: vector<LoopCounter>,
@@ -755,6 +757,11 @@ pub fn loop_value_of_index(v: Vars, nr: integer) -> ir::Node {
     k -= 1;
   }
   ir::NdNull
+}
+
+// `Function::was_loop_var`: has `nr` served as a loop's variable in this function?
+pub fn was_loop_var(v: Vars, nr: integer) -> boolean {
+  v.loop_vars.contains(nr)
 }
 
 // `Function::is_active_loop_var`: the variable of a loop still open.
