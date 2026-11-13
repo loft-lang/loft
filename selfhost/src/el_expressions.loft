@@ -5366,6 +5366,19 @@ fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: t
       }
     }
   }
+  // `@FR-B-Copy`: a local bound from a link to a record (`t = p`, `p: &C`) — declared, or the
+  // return buffer such a local was renamed onto — is a copy of the referent, typed as the record
+  // (Rust's bind reads the link's referent type).  A link target was written through above.
+  if !(el_vars::tp(vars, v) is TyRefVar) && x.code is NdVar {
+    match x.tp {
+      TyRefVar { inner } => {
+        if struct_ref(e, el_types::base(inner)) >= 0 || el_convert::struct_enum(el_types::base(inner)) {
+          x.tp = el_types::without_deps(inner);
+        }
+      },
+      _ => {}
+    }
+  }
   // `Parser::change_var`: a record local never borrows itself — `d = step(d, k)` answers a
   // borrow of `d`, and that dep is left out of `d`'s own type.
   bound_tp = x.tp;
@@ -11448,6 +11461,71 @@ pub fn receives(e: el::El, m: integer, tn: integer) -> boolean {
 // `Parser::call_nr` through `process_call_args`, for a definition whose parameters each take
 // their argument as it is (`convert`'s equal case) and whose result is a scalar: the call and
 // its declared result.  Defaults, hidden buffers, conversions and heap results are refused.
+// port: data.rs Type::is_amp_rebindable_heap — a `&` to a heap kind the write-back re-points:
+// a record, a struct enum, a vector or a keyed collection.
+fn amp_rebindable_heap(t: ir::TypeT) -> boolean {
+  match t {
+    TyRefVar { inner } => match el_types::base(inner) {
+      TyReference { n: _ } => true,
+      TyEnum { is_ref } => is_ref,
+      TyVector { inner: _ } => true,
+      TyHash { n: _ } => true,
+      TySorted { n: _ } => true,
+      TyIndex { n: _ } => true,
+      TyRadix { n: _ } => true,
+      TyTrie { n: _ } => true,
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// port: parser/mod.rs callee_param_rebinds_owned with closures.rs collect_param_rebinds_owned —
+// which of function `f`'s parameters its body rebinds with a store it owns (`p = <owned>`), or
+// hands to a callee that does.  `seen` breaks recursion as Rust's cache seeds `false`.
+fn param_rebinds_owned(e: el::El, f: integer, seen: vector<integer>) -> vector<boolean> {
+  df = el::def(e, f);
+  n = len(df.attributes);
+  out: vector<boolean> = [for _ in 0..n { false }];
+  if seen.contains(f) || len(df.code) == 0 || el_ir::is_null(df.code[0]!) || n == 0 {
+    return out;
+  }
+  seen += [f];
+  collect_rebinds_owned(e, f, df.code[0]!, n, out, seen);
+  out
+}
+
+fn collect_rebinds_owned(e: el::El, f: integer, code: ir::Node, n: integer, out: vector<boolean>, seen: vector<integer>) {
+  c = el_ir::unspan(code);
+  match c {
+    NdSet { var, inner } => {
+      if var < n && !el_ir::is_null(el_ir::unspan(inner)) && own::ownership_of(e.b, own::ops_of(e.b), f, inner) is Owned {
+        out[var] = true;
+      }
+    },
+    NdCall { def_nr, args } => {
+      cd = el::def(e, def_nr);
+      if len(cd.code) > 0 && !el_ir::is_null(cd.code[0]!) {
+        inner = param_rebinds_owned(e, def_nr, seen);
+        for ar in args {
+          match el_ir::unspan(ar) {
+            NdVar { n: v } => {
+              if (inner[ar#index] ?? false) && v < n {
+                out[v] = true;
+              }
+            },
+            _ => {}
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for ch in el_ir::children(c) {
+    collect_rebinds_owned(e, f, ch, n, out, seen);
+  }
+}
+
 fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex? {
   def = el::def(e, d);
   // A generic is called through its instance for the argument types (`@FR-G-Key`): the first
@@ -11552,6 +11630,21 @@ fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::Node>
       continue;
     }
     if pt is TyRefVar && !(a.hidden) {
+      // loft#1287 (`(F-ParamRebind)`): a plain heap PARAMETER handed to a `&` parameter the
+      // callee rebinds with a store of its own takes the rebind witness a body-written rebind
+      // takes: its entry store is stashed, and the frame's exit frees the rebound one.
+      match el_ir::unspan(arg) {
+        NdVar { n: av } => {
+          if !e.first_pass && amp_rebindable_heap(pt) && vars.vars[av]!.argument && !(el_vars::tp(vars, av) is TyRefVar)
+              && !el_vars::is_compiler_generated(vars, av) && !hidden_param(e, vars, av) {
+            seen: vector<integer> = [];
+            if (param_rebinds_owned(e, d, seen)[a#index] ?? false) {
+              el_vars::rebind_witness(vars, av);
+            }
+          }
+        },
+        _ => {}
+      }
       l = link_argument(e, vars, arg, at, pt);
       if l == null {
         return null;
