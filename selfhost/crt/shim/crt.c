@@ -249,6 +249,13 @@ void loft_crt_ref_text_clear(int64_t s, int64_t r, int64_t p) {
     if (t) loft_text_set(t, loft_lit("", 0));
 }
 
+/* `OpCastTextFromBool`: the view of "true", "false" or — for the null boolean (255) — the null
+ * text, pushed at `at`. */
+void loft_crt_stack_str_bool(int64_t store, int64_t at, int64_t v) {
+    *(loft_str *) loft_crt_slot_at(store, at) = v == 1 ? loft_lit("true", 4)
+        : v == 255 ? loft_null_text() : loft_lit("false", 5);
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);

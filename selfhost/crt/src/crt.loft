@@ -336,6 +336,8 @@ fn c_ref_text_append(s: integer, r: integer, p: integer, val: text, bytes: integ
 #c "loft_crt_ref_text_append" "void(int64_t, int64_t, int64_t, const char*, int64_t)"
 fn c_ref_text_clear(s: integer, r: integer, p: integer);
 #c "loft_crt_ref_text_clear" "void(int64_t, int64_t, int64_t)"
+fn c_stack_str_bool(store: integer, at: integer, v: integer);
+#c "loft_crt_stack_str_bool" "void(int64_t, int64_t, int64_t)"
 fn c_stack_move(store: integer, from: integer, to: integer, n: integer);
 #c "loft_crt_stack_move" "void(int64_t, int64_t, int64_t, int64_t)"
 fn c_stack_str(out: vector<u8>, store: integer, at: integer) -> integer;
@@ -379,6 +381,11 @@ pub fn ref_text_append(s: integer, r: integer, p: integer, val: text?) {
 // `OpClearStackText`: the text the reference `(s, r, p)` names emptied.
 pub fn ref_text_clear(s: integer, r: integer, p: integer) {
   c_ref_text_clear(s, r, p);
+}
+
+// `OpCastTextFromBool`: "true", "false" or the null text, for the boolean byte `v`.
+pub fn stack_str_bool(store: integer, at: integer, v: integer) {
+  c_stack_str_bool(store, at, v);
 }
 
 // `n` bytes of the stack moved from `from` to `to` (`copy_result`).

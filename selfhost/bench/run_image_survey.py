@@ -34,9 +34,11 @@ def one(f, loft, runner, tmp, env, timeout):
         return f, "noimage", err.strip().splitlines()[-1:] or [""]
     rc, want, _ = proc([loft, "--interpret", f], env, timeout, cwd=os.path.dirname(f))
     rc2, got, err2 = proc([runner, img], env, timeout, cwd=os.path.dirname(f))
-    m = re.search(r"refused: (.*?): (\w+) at \d+", err2)
+    m = re.search(r"refused: (.*): (.+?) at \d+", err2)
     if rc2 == 3 and m:
-        return f, "refused", [m.group(2)]
+        # An operator or a native by name; a collection the runner does not add to by its kind.
+        what = m.group(2) if re.fullmatch(r"[\w#]+", m.group(2)) else m.group(1)
+        return f, "refused", [what]
     if rc2 not in (0, 1) and rc2 != rc:
         return f, "crash", [f"exit {rc2}"]
     return f, ("agree" if got == want else "differ"), [""]
