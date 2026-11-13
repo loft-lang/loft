@@ -19,7 +19,8 @@ impl Output<'_> {
     /// through the owned-store-tracker path so neither free-site whole-store-frees
     /// a borrowed view.  Every other var goes straight to [`Self::output_set_body`].
     /// One assignment; under `LOFT_TRACE_BIND_NATIVE=<file>` also one row naming the exit it
-    /// took (`rs@<line>`, the first exit reached), in the interpreter's `LOFT_TRACE_BIND` form,
+    /// took (`rs-<lowering>`, the first exit reached; `rs-tail` when none is named), in the
+    /// interpreter's `LOFT_TRACE_BIND` form,
     /// so the writers' choices can be compared (`scripts/bind_census.py`, STORE_RECORDS.md
     /// § Phases, 2).
     pub(super) fn output_set(
@@ -29,21 +30,36 @@ impl Output<'_> {
         to: &Value,
     ) -> std::io::Result<()> {
         let first = !self.declared.contains(&var);
-        let line = self.ckpt_cur_line;
+        let line = crate::bind_lowering::row_line(to, self.ckpt_cur_line);
         self.bind_arm.push("");
         let r = self.output_set_arms(w, var, to);
+        // The plain tail binds a value-record local's tuple, not a store (`@FR-R-ValueRecord`):
+        // named apart, as the C writer's `value-record` arm is, so a census row does not read a
+        // representation as a missing copy.
         let arm = match self.bind_arm.pop() {
+            Some("") | None if self.value_record_locals.contains_key(&var) => "rs-value-record",
             Some("") | None => "rs-tail",
             Some(a) => a,
         };
-        if r.is_ok() {
+        if r.is_ok() && crate::bind_lowering::trace_enabled("LOFT_TRACE_BIND_NATIVE") {
+            // Beside the exit this writer took, the lowering `bind_lowering` decides for the
+            // same assignment, so a row shows its own disagreement (@PLN220).
+            let variables = self.data.def(self.def_nr).variables();
+            let lowering = crate::bind_lowering::decided_lowering(
+                self.data,
+                self.def_nr,
+                variables,
+                var,
+                to,
+                first,
+            );
             crate::bind_lowering::trace_row(
                 "LOFT_TRACE_BIND_NATIVE",
                 self.data.def(self.def_nr).name(),
-                self.data.def(self.def_nr).variables().name(var),
+                variables.name(var),
                 first,
                 line,
-                arm,
+                &format!("lowering={lowering} {arm}"),
             );
         }
         r
@@ -305,7 +321,7 @@ impl Output<'_> {
         let is_var_copy = matches!(
             to.unspan(),
             Value::Var(src) if variables.record_copy_source(self.data, var, *src).is_some()
-        );
+        ) && self.var_copy_taken(var, to);
         let owned = is_var_copy
             || matches!(
                 crate::use_analysis::ownership_of(self.data, self.def_nr, to),
@@ -320,9 +336,11 @@ impl Output<'_> {
             // (`old_stash_var`, the `_old_` stash's own rule): `d = through(null)` freed it
             // twice (N-Store/1997 `h4`).
             let outer_stash = self.old_stash_var.replace(var);
+            self.call_bind_declined = false;
             self.output_set_inner(w, var, to)?;
             self.old_stash_var = outer_stash;
             let copied = std::mem::take(&mut self.call_bind_owns);
+            let declined = std::mem::take(&mut self.call_bind_declined);
             write!(
                 w,
                 // Clear the tracker only on the branch that actually freed.  A
@@ -344,10 +362,29 @@ impl Output<'_> {
             // copy lands in a FRESH store, and a tracker left null releases nobody.
             if copied || self.materialises_element(var, to) {
                 write!(w, " _own_store_{name} = var_{name};")?;
+            } else if declined {
+                // The call's answer was bound plain (`call_bind_taken`): it is this local's own
+                // store unless it is one of the call's other reference arguments' (a view the
+                // callee handed back), so the tracker takes it exactly then, as the copy arm's
+                // `call_bind_owns` would have.
+                let mut keep = vec![format!("var_{name}.store_nr != u16::MAX")];
+                for a in crate::use_analysis::protectable_ref_args(self.data, self.def_nr, to).0 {
+                    if a != var && !self.value_record_locals.contains_key(&a) {
+                        keep.push(format!(
+                            "var_{name}.store_nr != var_{}.store_nr",
+                            sanitize(variables.name(a))
+                        ));
+                    }
+                }
+                write!(
+                    w,
+                    " if {} {{ _own_store_{name} = var_{name}; }}",
+                    keep.join(" && ")
+                )?;
             }
             write!(w, " }}")?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-witness-copy");
                 return Ok(());
             }
         }
@@ -382,7 +419,7 @@ impl Output<'_> {
                  _own_store_{name} = var_{name}; }}"
             )?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-witness-stash");
                 return Ok(());
             }
         }
@@ -403,7 +440,7 @@ impl Output<'_> {
             self.output_set_body(w, var, to)?;
             write!(w, "; _own_store_{name} = var_{name}; }}")?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-witness-reset");
                 return Ok(());
             }
         }
@@ -441,6 +478,51 @@ impl Output<'_> {
             )?;
         }
         Ok(())
+    }
+
+    /// Does a whole-record bind from another variable copy it?  A FIRST bind does; a
+    /// REASSIGNMENT only where `bind_lowering::re_bind` copies (R2c), as the bytecode and C
+    /// writers do — a variable that owns none of what it binds (a return temporary taking a
+    /// parameter it hands back) binds the view.  The owner witness asks it too, so a declined
+    /// copy is not counted as an owned store.  @PLN220.  `LOFT_NATIVE_OWN_VAR_COPY=1` copies
+    /// every such reassignment again.
+    fn var_copy_taken(&self, var: u16, to: &Value) -> bool {
+        let variables = self.data.def(self.def_nr).variables();
+        if !self.declared.contains(&var)
+            || self.predeclared.contains(&var)
+            || crate::keys::native_own_var_copy()
+        {
+            return true;
+        }
+        matches!(
+            crate::bind_lowering::re_bind(self.data, self.def_nr, variables, var, to).arm,
+            crate::bind_lowering::ReArm::VarCopy { .. }
+        )
+    }
+
+    /// Does a bind reaching the call-return arm take its runtime copy-or-adopt?  A FIRST bind
+    /// does; a REASSIGNMENT only where `bind_lowering::re_bind` copies (R2b) or joins (R1), as
+    /// the bytecode and C writers do — any other binds the call's answer plain, and
+    /// `owned_ref_reassign` releases what it displaces where `re_bind` frees.  A declined bind
+    /// is noted (`call_bind_declined`) so an owner witness takes the answer as its own where it
+    /// is no other argument's store.  @PLN220.  `LOFT_NATIVE_OWN_CALL_BIND=1` takes the arm for
+    /// every reassignment again.
+    fn call_bind_taken(&mut self, var: u16, to: &Value) -> bool {
+        let variables = self.data.def(self.def_nr).variables();
+        // A deferred first bind (the one bind after an `if` pre-init) is a reassignment to
+        // `re_bind` too, which decides it for the bytecode writer.
+        let reassignment = self.declared.contains(&var) && !self.predeclared.contains(&var);
+        if !reassignment || crate::keys::native_own_call_bind() {
+            return true;
+        }
+        let taken = matches!(
+            crate::bind_lowering::re_bind(self.data, self.def_nr, variables, var, to).arm,
+            crate::bind_lowering::ReArm::CallCopy { .. } | crate::bind_lowering::ReArm::Join { .. }
+        );
+        if !taken {
+            self.call_bind_declined = true;
+        }
+        taken
     }
 
     /// The call's buffer argument where `var = to` adopts the store the callee minted onto it
@@ -574,7 +656,22 @@ impl Output<'_> {
                         | Value::Block(_)
                         | Value::If(_, _, _)
                 )
-                && (!is_retbuf_attr || self.retbuf_witness.contains(&var));
+                && (!is_retbuf_attr || self.retbuf_witness.contains(&var))
+                // Whether the displaced store is freed at all is `bind_lowering::re_bind`'s
+                // answer, the one the bytecode writer, the C writer and the store records read:
+                // a compiler temporary reset to null has released or handed over its store
+                // already, and an argument without an entry witness is the scope pass's to
+                // release (`DisplacedFree::None`).  @PLN220.
+                // `LOFT_NATIVE_OWN_DISPLACED_FREE=1` frees by this test alone again.
+                && (crate::keys::native_own_displaced_free()
+                    || crate::bind_lowering::re_bind(self.data, self.def_nr, variables, var, to)
+                        .free
+                        != crate::bind_lowering::DisplacedFree::None)
+                // An outer stash already releases what this bind displaces — the owner
+                // witness's `_disp_<v>` (`output_set_witnessed`) — so this one, the `_old_<v>`
+                // stash, frees nothing more: the stash's own rule (`old_stash_var`), which the
+                // call arm inside it already keeps.
+                && self.old_stash_var != Some(var);
             if owned_ref_reassign {
                 let name = sanitize(variables.name(var));
                 // For a witnessed retbuf-attr, also exclude the caller's entry
@@ -636,7 +733,7 @@ impl Output<'_> {
                      {{ OpFreeRef(cell, _old_{name}, \"var_{name}(prev)\"); }} }}"
                 )?;
                 {
-                    self.note_arm(concat!("rs@", line!()));
+                    self.note_arm("rs-displacing-rebind");
                     return Ok(());
                 }
             }
@@ -918,7 +1015,7 @@ impl Output<'_> {
             }
             write!(w, "{narrow_close}")?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-coroutine-local");
                 return Ok(());
             }
         }
@@ -942,7 +1039,7 @@ impl Output<'_> {
                     let src_name = sanitize(variables.name(*src));
                     write!(w, "var_{name} = var_{src_name}")?;
                     {
-                        self.note_arm(concat!("rs@", line!()));
+                        self.note_arm("rs-param-link-repoint");
                         return Ok(());
                     }
                 }
@@ -959,7 +1056,7 @@ impl Output<'_> {
                     let src_place = self.var_place(*src);
                     write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
                     {
-                        self.note_arm(concat!("rs@", line!()));
+                        self.note_arm("rs-param-record-repoint");
                         return Ok(());
                     }
                 }
@@ -979,7 +1076,7 @@ impl Output<'_> {
                         "; unsafe {{ stores.slot_move(&mut *var_{name}, &_slot_src, {kt}); }} }}"
                     )?;
                     {
-                        self.note_arm(concat!("rs@", line!()));
+                        self.note_arm("rs-param-slot-move");
                         return Ok(());
                     }
                 }
@@ -1004,7 +1101,7 @@ impl Output<'_> {
                     }
                     write!(w, " }} }}")?;
                     {
-                        self.note_arm(concat!("rs@", line!()));
+                        self.note_arm("rs-param-slot-write");
                         return Ok(());
                     }
                 }
@@ -1019,7 +1116,7 @@ impl Output<'_> {
                         self.output_place_pointer(w, to, &base)?;
                         write!(w, " }}")?;
                         {
-                            self.note_arm(concat!("rs@", line!()));
+                            self.note_arm("rs-param-scalar-place");
                             return Ok(());
                         }
                     }
@@ -1031,7 +1128,7 @@ impl Output<'_> {
                         let src_place = self.var_place(*src);
                         write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
                         {
-                            self.note_arm(concat!("rs@", line!()));
+                            self.note_arm("rs-param-scalar-repoint");
                             return Ok(());
                         }
                     }
@@ -1138,7 +1235,7 @@ impl Output<'_> {
                 }
             }
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-param-write");
                 return Ok(());
             }
         }
@@ -1156,7 +1253,7 @@ impl Output<'_> {
             }
             self.output_code_inner(w, to)?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-store-text-link");
                 return Ok(());
             }
         }
@@ -1374,7 +1471,7 @@ impl Output<'_> {
                 }
             }
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-link-write");
                 return Ok(());
             }
         }
@@ -1415,7 +1512,7 @@ impl Output<'_> {
                 write!(w, "let mut var_{name}: *mut DbRef = {target}")?;
             }
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-record-link-repoint");
                 return Ok(());
             }
         }
@@ -1438,7 +1535,7 @@ impl Output<'_> {
                 self.output_code_inner(w, to)?;
                 write!(w, "; }}")?;
                 {
-                    self.note_arm(concat!("rs@", line!()));
+                    self.note_arm("rs-record-link-write");
                     return Ok(());
                 }
             }
@@ -1446,7 +1543,7 @@ impl Output<'_> {
             self.output_code_inner(w, to)?;
             write!(w, "; OpFreeRefIfDistinct(cell, _old_disp, *var_{name}); }}")?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-record-link-write-release");
                 return Ok(());
             }
         }
@@ -1471,7 +1568,7 @@ impl Output<'_> {
             }
             self.output_code_inner(w, to)?;
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-refvar-bind");
                 return Ok(());
             }
         }
@@ -1625,6 +1722,7 @@ impl Output<'_> {
                 && !self.predeclared.contains(&var)
                 && !variables.is_deferred_first_bind(var))
                 || !crate::use_analysis::adopts_minted_at_bind(self.data, variables, var, to))
+            && self.call_bind_taken(var, to)
         {
             let tp_nr = self.data.def(d_nr).known_type();
             let tp_lit = self.type_lit(tp_nr);
@@ -1765,7 +1863,14 @@ impl Output<'_> {
             // bare name, so a call reached a `fn` that had been emitted under another —
             // rustc E0425 "cannot find function `n_defaulted` in this scope", from a package
             // whose test file happened to name a helper the way the library did (loft#878).
-            write!(w, "{{ let _dst = var_{name}; {protect}let _src = ")?;
+            // `@FR-O-Move` — the arguments' stores AFTER the call (`keys::protect_after_call`):
+            // a `&` argument the callee re-points no longer holds the store it answers.
+            let (protect_before, protect_after) = if crate::keys::protect_after_call() {
+                (String::new(), protect)
+            } else {
+                (protect, String::new())
+            };
+            write!(w, "{{ let _dst = var_{name}; {protect_before}let _src = ")?;
             if let Value::Call(_, args) = to_unspanned {
                 // @PLN157 § V-p — the TWIN form here too (`@FR-R-Inputs`): this site spells
                 // the call itself, so it asks the same question `user_fn_call_body` does.
@@ -1972,7 +2077,7 @@ impl Output<'_> {
             };
             write!(
                 w,
-                "; if {adopt} {{ {disp}var_{name} = _src; }} {rebind}else {{ {copy} }}{unprotect} }}"
+                "; {protect_after}if {adopt} {{ {disp}var_{name} = _src; }} {rebind}else {{ {copy} }}{unprotect} }}"
             )?;
             // Adopted or copied, the local now holds its own store — unless the bind is an
             // elided VIEW, which aliases on purpose, or the adopt arm is the unconditional
@@ -1995,7 +2100,7 @@ impl Output<'_> {
                 crate::copy_manifest::Origin::NativeCallReturn,
             );
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-call-bind");
                 return Ok(());
             }
         }
@@ -2056,7 +2161,7 @@ impl Output<'_> {
                 crate::copy_manifest::Origin::NativeCallReturn,
             );
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-callref-join");
                 return Ok(());
             }
         }
@@ -2103,7 +2208,7 @@ impl Output<'_> {
                 crate::copy_manifest::Origin::NativeCallReturn,
             );
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-fnref-bind");
                 return Ok(());
             }
         }
@@ -2180,7 +2285,7 @@ impl Output<'_> {
                 crate::copy_manifest::Origin::NativeRecordBind,
             );
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-element-copy");
                 return Ok(());
             }
         }
@@ -2208,6 +2313,7 @@ impl Output<'_> {
             (variables.tp(var).base().heap_def_nr(), to_unspanned)
             && variables.record_copy_source(self.data, var, *src).is_some()
             && !self.value_record_locals.contains_key(&var)
+            && self.var_copy_taken(var, to)
         {
             // The source READ, rendered by the Var emitter rather than spelled `var_<src>`: a
             // `&S` link holds `*mut DbRef` and reads as the record behind it (@FR-C-Ref), so
@@ -2290,7 +2396,7 @@ impl Output<'_> {
                     crate::copy_manifest::Origin::NativeRecordBind,
                 );
                 {
-                    self.note_arm(concat!("rs@", line!()));
+                    self.note_arm("rs-var-copy");
                     return Ok(());
                 }
             }
@@ -2310,7 +2416,7 @@ impl Output<'_> {
                     write!(w, "let var_{name}: &str = ")?;
                     self.output_code_inner(w, to)?;
                     {
-                        self.note_arm(concat!("rs@", line!()));
+                        self.note_arm("rs-text-borrowed");
                         return Ok(());
                     }
                 }
@@ -2320,7 +2426,7 @@ impl Output<'_> {
                     write!(w, ".to_string()")?;
                 }
                 {
-                    self.note_arm(concat!("rs@", line!()));
+                    self.note_arm("rs-text-first");
                     return Ok(());
                 }
             }
@@ -2389,7 +2495,7 @@ impl Output<'_> {
                 write!(w, ").to_string()")?;
             }
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-block-tail");
                 return Ok(());
             }
         }
@@ -2495,7 +2601,7 @@ impl Output<'_> {
                 write!(w, ".to_string()")?;
             }
             {
-                self.note_arm(concat!("rs@", line!()));
+                self.note_arm("rs-call-into");
                 return Ok(());
             }
         }

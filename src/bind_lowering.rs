@@ -547,9 +547,39 @@ fn reads_var_unless_exiting(value: &Value, v: u16) -> bool {
 /// until after it, and runs only when the stores differ (`DisplacedFree::Stash`): `x = m(x)`
 /// where `x` views a lift temp that owns each delivery.  `rhs_reads_v` is syntactic and sees
 /// only `v` itself.
+///
+/// A view of a view is one too: `bl = block[0]` out of a match capture `_mv_block_1` of `b`
+/// names `_mv_block_1`, whose deps name `b`, so `b = ex(NdBlock { block: [bl] })` copies out of
+/// the store a pre-free had already released (a silent wrong answer on the interpreter, the
+/// self-hosted elaborator's `parse_code`).  The views are closed over their dep chains;
+/// `LOFT_NO_TRANSITIVE_VIEW_READ=1` asks the direct deps alone again.
 fn rhs_reads_a_view_of(function: &Function, value: &Value, v: u16) -> bool {
-    (0..function.count())
-        .any(|w| w != v && function.tp(w).depend().contains(&v) && value.reads_var(w))
+    if crate::keys::transitive_view_read_off() {
+        return (0..function.count())
+            .any(|w| w != v && function.tp(w).depend().contains(&v) && value.reads_var(w));
+    }
+    let n = function.count();
+    let mut views = vec![false; usize::from(n)];
+    if usize::from(v) < views.len() {
+        views[usize::from(v)] = true;
+    }
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for w in 0..n {
+            if !views[usize::from(w)]
+                && function
+                    .tp(w)
+                    .depend()
+                    .iter()
+                    .any(|&d| views.get(usize::from(d)).copied().unwrap_or(false))
+            {
+                views[usize::from(w)] = true;
+                grew = true;
+            }
+        }
+    }
+    (0..n).any(|w| w != v && views[usize::from(w)] && value.reads_var(w))
 }
 
 /// The facts a reassignment `v = value` in function `d_nr` is lowered on, and the lowering;
@@ -766,9 +796,20 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     // below, since a rebound parameter that owns its binding copies a call's answer as any owner
     // does, and a stashed free (the value reads the parameter, or it is nullable) still runs —
     // it is what the copy arms' fresh-store choice reads (#360).
+    // A keyed local whose null init minted nothing (`keyed_null_mints`) and that is only ever
+    // bound to a null or a borrow (`__kvb_N = b.0`, a temporary viewing a store another binding
+    // owns) never holds a store of its own, so a reassignment displaces nothing — the C and
+    // rustc writers free nothing there either.  One that takes a call's answer may hold a store
+    // that call minted, and keeps its free.  @PLN220.  `LOFT_KEYED_VIEW_DISPLACED_FREE=1` frees
+    // again.
+    let keyed_view = crate::parser::vectors::owns_keyed_store(function.tp(v))
+        && !keyed_null_mints(function, v)
+        && !crate::keys::keyed_view_displaced_free()
+        && only_null_or_borrowed(data, d_nr, v);
     let owned_ref = (function.owns_displaced_store(v, value, data)
         || is_return_temp_owning_its_arms(data, d_nr, function, v))
-        && (!is_hidden_buf_arg || entry_w.is_some());
+        && (!is_hidden_buf_arg || entry_w.is_some())
+        && !keyed_view;
     let frees_displaced = owned_ref
         && (crate::keys::arg_displaced_free() || !function.is_argument(v) || entry_w.is_some());
     // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
@@ -1054,6 +1095,32 @@ fn join_record(tp: &Type) -> Option<u32> {
     }
 }
 
+/// Is every value function `d_nr` binds to `v` a null or a borrow of another binding
+/// (`use_analysis::Own::Borrowed`)?  Then `v` never holds a store of its own.  A value of any
+/// other ownership — a call's answer, a join, a mint — answers no, which only keeps a free.
+fn only_null_or_borrowed(data: &Data, d_nr: u32, v: u16) -> bool {
+    fn walk(data: &Data, d_nr: u32, v: u16, node: &Value, ok: &mut bool) {
+        if !*ok {
+            return;
+        }
+        if let Value::Set(var, value) = node.unspan()
+            && *var == v
+            && !is_null_value(data, value)
+            && !matches!(
+                crate::use_analysis::ownership_of(data, d_nr, value),
+                crate::use_analysis::Own::Borrowed { .. }
+            )
+        {
+            *ok = false;
+            return;
+        }
+        node.for_each_child(&mut |c| walk(data, d_nr, v, c, ok));
+    }
+    let mut ok = true;
+    walk(data, d_nr, v, data.def(d_nr).code(), &mut ok);
+    ok
+}
+
 /// Is `value` a null — `null`, or the sentinel a reference reset writes?
 fn is_null_value(data: &Data, value: &Value) -> bool {
     match value.unspan() {
@@ -1130,6 +1197,40 @@ pub fn answers_a_view_to_copy(data: &Data, d_nr: u32, value: &Value) -> bool {
             crate::use_analysis::ownership_of(data, d_nr, value),
             crate::use_analysis::Own::Borrowed { .. } | crate::use_analysis::Own::Join { .. }
         )
+}
+
+/// The lowering `bind_lowering` decides for `v = value`, as a writer's trace row names it beside
+/// its own arm (`lowering=R1/b2=stash join`): the first arm's name for a first bind, the
+/// reassignment's arm with its displaced free otherwise.  Only a trace asks it.
+#[must_use]
+pub fn decided_lowering(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    v: u16,
+    value: &Value,
+    first: bool,
+) -> String {
+    if first {
+        return first_arm(data, d_nr, function, v, value)
+            .trace_name()
+            .to_string();
+    }
+    let rb = re_bind(data, d_nr, function, v, value);
+    let b2 = match rb.free {
+        DisplacedFree::Stash => "stash",
+        DisplacedFree::Pre { .. } => "pre",
+        DisplacedFree::None => "none",
+    };
+    format!("{}/b2={b2}", rb.arm.trace_name())
+}
+
+/// The source line a bind trace row names for `v = value`: the value's own position where the
+/// parser spanned it, else the line the writer last passed (`fallback`), so the three writers
+/// name one assignment by one line even where a writer's own position stream skips a function.
+#[must_use]
+pub fn row_line(value: &Value, fallback: u32) -> u32 {
+    value.span_pos().map_or(fallback, |p| p.line)
 }
 
 /// Is the bind trace the environment variable `env` names switched on?  A writer asks it before

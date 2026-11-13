@@ -230,6 +230,11 @@ debug build of its commit, and one per fix adds up to hours on a loaded box.
 - **It runs from a mirror of the tree without its `Cargo.toml`**: a loft whose runtime
   refresh reads only the working directory would take the tree for its own
   checkout and build it before every native run.
+- **The daily build has no per-access store check.**  It is built without the `strict-stores`
+  feature, and under `LOFT_STRICT_STORES=1` it says so (*"this runtime was built without the
+  per-access check"*): a use after free is not detected there.  A guard whose only channel is
+  that check scores INERT against it however wrong main is; score it on a channel the build has
+  (the freed-twice refusal, `LOFT_POISON=1`, the leak gate) or against `REF=` (a local build).
 - **A stale install still scores, and says so**: a note when `origin/main` has moved past the
   installed commit, and a second when that commit is not an ancestor of this tree — the two
   sides then also differ by commits the branch lacks.

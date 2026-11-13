@@ -614,7 +614,18 @@ fn held_by_compiler_temp(value: &Value, function: &Function, data: &Data) -> boo
                     // `LOFT_NO_LIFT_TEMP_VIEW=1` reads a bind of it as a mint again.
                     || (function.name(*r).starts_with("__lift_")
                         && !function.is_skip_free(*r)
-                        && !crate::keys::lift_temp_view_off()))
+                        && !crate::keys::lift_temp_view_off())
+                    // The `!` unwrap's other spelling: a discharged PROJECTION
+                    // (`def(e, n).attrs[i]!`) is checked in a `_ncr_N` that views what the
+                    // projection reads, its deps naming the temporary that holds it (the
+                    // inline container's `__ref_N`).  It is held where that temporary is; an
+                    // `_ncr_N` that took an owned value names no such dep and stays a mint.
+                    // `LOFT_NO_NCR_TEMP_VIEW=1` reads a bind of it as a mint again.
+                    || (function.name(*r).starts_with("_ncr_")
+                        && !crate::keys::ncr_temp_view_off()
+                        && function.tp(*r).depend().iter().any(|&d| {
+                            d != *r && held_by_compiler_temp(&Value::Var(d), function, data)
+                        })))
         }
         Value::Block(b) => b
             .operators

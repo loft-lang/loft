@@ -185,6 +185,8 @@ pub(super) fn run_scan_phase(
         literal_buffer: HashMap::default(),
         adopter_released: HashSet::default(),
         lift_join_witness: HashMap::default(),
+        lift_viewers: HashMap::default(),
+        value_hoists: Vec::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
         view_temps: view_temps_in(orig_code, orig_vars, data),

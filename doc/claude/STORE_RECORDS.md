@@ -134,7 +134,22 @@ a parameter's store is a wrong end (`LOFT_LINK_PARAM_RELEASES=1` restores it).  
 that releases its source (`COPY_FREE_SOURCE`) where the source may be a parameter's store and
 neither the destination nor a bracket's protected argument names it: a call that answers its
 argument on some path hands the caller's store to that free (`LOFT_RECORDS_NO_PARAM_SOURCE_FREE=1`
-leaves it unreported).
+leaves it unreported).  A plain free of a variable that may name the caller's store beside
+stores of the frame's own is one too: nothing at run time tells the paths apart
+(`LOFT_RECORDS_NO_MAYBE_PARAM_END=1`).
+A finding names the source line it was first seen at, and a re-free or a use after the end names
+the free that ended the store (`(ended at line L by OpFreeRefIfDistinct(x))`).  Which statement
+of a block is its value is one reading shared with the C and rustc writers
+(`op_sets::is_release_statement`): a release after the value, a witness's with its reset
+included, yields none.
+A call the interpreter brackets only on its copy arm (F9c, F7-copy, R2b) is read bracketed there
+alone (`LOFT_RECORDS_BRACKET_EVERY_BIND=1` reads every bind of a call bracketed).  A callee that
+writes a fresh value through a `&` argument ends the caller's old store and binds the argument to
+a new one; a write inside a branch joins the written and the kept state
+(`LOFT_RECORDS_NO_CALL_WRITE_BACK=1`, `LOFT_RECORDS_NO_BRANCH_WRITE_BACK=1`).  A read through a name
+that may still point into a store ended on every path is a use after its end
+(`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
+read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
 A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
 link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
 `old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through
@@ -451,7 +466,25 @@ which that free released under the caller (`LOFT_ARG_DISPLACED_FREE=1` emits it 
 records report the free as a `store-wrong-end`).  A nullable local, whose
 displaced free waits until after the bind, joins too when
 the value is a call that does not read it, with its slot reset first so the copy arm mints a
-store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
+store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  A copied call result's bracket
+protects the stores the reference arguments hold AFTER the call (`@FR-O-Move`), as the C
+writer compares against them: a callee that re-points a `&` argument and answers its old
+store hands that store to the copy, and one that answers the new store hands over a store the
+argument still holds.  `LOFT_NO_PROTECT_AFTER_CALL=1` brackets the call itself again, which
+leaks the first and frees the second while the argument holds it.  The rustc writer reads it for whether a reassignment frees what it displaces
+(`LOFT_NATIVE_OWN_DISPLACED_FREE=1` gives it back its own test); its trace names its exits
+(`rs-call-bind`, `rs-var-copy`, `rs-value-record`, `rs-tail` for the plain bind).  A reassignment `re_bind` binds plainly takes the rustc writer's plain bind too, not its
+runtime copy-or-adopt (`call_bind_taken`; `LOFT_NATIVE_OWN_CALL_BIND=1` gives the arm back): an
+owner witness then takes the answer as its own where it is no other argument's store
+(`call_bind_declined`), and the plain bind's `_old_` stash stands down where the witness's
+`_disp_` stash already releases the displaced store (`old_stash_var`).  A reassignment from
+another variable's record copies only where `re_bind` copies it (R2c), the owner witness asking
+the same (`var_copy_taken`; `LOFT_NATIVE_OWN_VAR_COPY=1`).  And `re_bind` itself frees nothing a
+keyed local displaces when its null init minted nothing and every value it is bound to is a null
+or a borrow (`__kvb_N = b.0`): it never holds a store (`LOFT_KEYED_VIEW_DISPLACED_FREE=1`).  A writer row's `lowering=` asks
+`bind_lowering` over the IR the writer reads; the bytecode writer changes some variables' deps
+while it generates, so its own row can answer differently for the same assignment — the census
+pairs against that row, never the `lowering=` field.  `scripts/bind_census.py` pairs every assignment's lowering on the interpreter and
 on one writer (`--writer c|native`) and lists the arms the two decide differently.  Every row
 names its source line, so the census pairs by site; an interpreter row carries the facts its
 lowering read and a C row the arm `bind_lowering` decides beside its own (`lowering=R1/b2=stash

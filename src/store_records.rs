@@ -954,7 +954,15 @@ struct Run<'a> {
     /// Creation site per IR node address: stable while the body is not rewritten.
     site_of: BTreeMap<usize, u32>,
     sites: Vec<SiteRec>,
-    findings: BTreeSet<Finding>,
+    /// Each finding with the source line of the statement where it was first seen (0: before
+    /// any line marker).  The line is no part of the finding's identity, so a finding seen again
+    /// on a later pass or path stays one.
+    findings: BTreeMap<Finding, u32>,
+    /// The line of the last `Line` marker the walk passed.
+    line: u32,
+    /// Where each store first ended: its line and the free that ended it, for the re-free and
+    /// use-after-end findings to name.  Beside the state, not in it: a fact about the walk.
+    end_lines: BTreeMap<SKey, (u32, String)>,
     /// The function's answer, joined over every return.
     answer: Summary,
     /// The analysis lost track somewhere (a construct it does not follow, or its budget):
@@ -1006,6 +1014,10 @@ struct Run<'a> {
     /// The variables inside an IR `n_protect_store_frees` bracket: a source-free
     /// in it declines the stores they name.
     protected: Vec<u16>,
+    /// The call a code generator brackets around the call itself (`LOFT_NO_PROTECT_AFTER_CALL`),
+    /// by node, with the stores its reference arguments held before it: a release inside the
+    /// callee declines them.
+    call_bracket: Option<(usize, BTreeSet<SKey>)>,
     /// The compiler temporaries the function frees with a plain `OpFreeRef` (a lift, a literal's
     /// work-ref): each still owns the record it holds, wherever a reference to it is written.
     freed_temps: BTreeSet<u16>,
@@ -1064,8 +1076,25 @@ impl Run<'_> {
         }
     }
 
+    /// ` (ended at line L by its free)` for a store whose first end the walk saw.
+    fn ended_note(&self, k: SKey) -> String {
+        self.end_lines
+            .get(&k)
+            .map(|(line, by)| {
+                if *line == 0 {
+                    format!(" (ended by {by})")
+                } else {
+                    format!(" (ended at line {line} by {by})")
+                }
+            })
+            .unwrap_or_default()
+    }
+
     fn find(&mut self, kind: &'static str, site: u32, detail: String) {
-        self.findings.insert(Finding { kind, site, detail });
+        let line = self.line;
+        self.findings
+            .entry(Finding { kind, site, detail })
+            .or_insert(line);
     }
 
     fn pts(st: &State, v: u16) -> Pts {
@@ -1191,12 +1220,22 @@ impl Run<'_> {
         for k in Self::stores_of(&Self::pts(st, v)) {
             self.sites[k.site as usize].uses.insert(how.to_string());
             let info = info_of(st, k);
-            if info.has(ENDED) && info.ended.contains(&v) {
+            // …or a name that MAY still point into a store ended on every path: on the path where
+            // it does, the read finds the freed store (`bl` viewing `b`, read by `b`'s own rebind
+            // after its displaced free).  Only a KNOWN stale set counts here — an unknown one
+            // names every variable.  `LOFT_RECORDS_NO_STALE_READS=1` reads `ended` alone.
+            let stale_read = !info.has(LIVE)
+                && info.stale.as_ref().is_some_and(|s| s.contains(&v))
+                && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_STALE_READS").is_some());
+            if info.has(ENDED) && (info.ended.contains(&v) || stale_read) {
                 let name = self.var_name(v);
                 self.find(
                     "use-after-end",
                     k.site,
-                    format!("`{name}` is read by {how} after its store was freed"),
+                    format!(
+                        "`{name}` is read by {how} after its store was freed{}",
+                        self.ended_note(k)
+                    ),
                 );
             }
         }
@@ -1273,7 +1312,10 @@ impl Run<'_> {
                 self.find(
                     "re-free",
                     k.site,
-                    format!("`{name}` is freed by {how} after its store was already freed"),
+                    format!(
+                        "`{name}` is freed by {how} after its store was already freed{}",
+                        self.ended_note(k)
+                    ),
                 );
             }
             if report && info.has(HANDED) && pts.len() == 1 && !info.has(LIVE) {
@@ -1287,6 +1329,10 @@ impl Run<'_> {
             if !info.has(LIVE) {
                 continue;
             }
+            let at_line = self.line;
+            self.end_lines
+                .entry(k)
+                .or_insert_with(|| (at_line, label.clone()));
             // The alternatives naming `v` are the paths this free ends it on.
             let rest_alts: Vec<BTreeSet<u16>> = info
                 .alts
@@ -1331,6 +1377,22 @@ impl Run<'_> {
             }
             st.stores.insert(k, next);
         }
+        self.report_param_ends(v, how, report, only, &pts);
+        if report && only.is_none() {
+            Self::uncover_freed(st, v, &pts);
+        }
+    }
+
+    /// The wrong ends of an end of `v`: a free of the caller's store (a parameter's), named
+    /// alone or beside null, or beside stores of the frame's own where nothing guards the free.
+    fn report_param_ends(
+        &mut self,
+        v: u16,
+        how: &str,
+        report: bool,
+        only: Option<&BTreeSet<SKey>>,
+        pts: &Pts,
+    ) {
         // A free of a variable that names the caller's store — alone, or that or null.
         // The "or null" reading only for a plain free: a guarded one (`OpFreeRefIfDistinct`)
         // of a buffer that may be the caller's declines where its witness holds it.
@@ -1339,6 +1401,25 @@ impl Run<'_> {
         } else {
             pts.iter().collect()
         };
+        // A plain free of a variable that MAY name the caller's store beside stores of its own:
+        // nothing at run time tells the paths apart, so on the one where it names the caller's
+        // store, that store is released under the caller (the source-free's twin).  A guarded
+        // end (`only`) asked its witness already.  `LOFT_RECORDS_NO_MAYBE_PARAM_END=1` leaves it
+        // unreported.
+        if report
+            && only.is_none()
+            && how == "OpFreeRef"
+            && params.len() > 1
+            && params.iter().any(|p| matches!(p, Pt::Param(_)))
+            && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_MAYBE_PARAM_END").is_some())
+        {
+            let name = self.var_name(v);
+            self.find(
+                "wrong-end",
+                u32::MAX,
+                format!("`{name}` may be the caller's store, and {how} releases it"),
+            );
+        }
         if report && params.len() == 1 && how != "OpFreeText" && matches!(params[0], Pt::Param(_)) {
             let name = self.var_name(v);
             self.find(
@@ -1346,9 +1427,6 @@ impl Run<'_> {
                 u32::MAX,
                 format!("`{name}` is freed by {how}, but its store is the caller's"),
             );
-        }
-        if report && only.is_none() {
-            Self::uncover_freed(st, v, &pts);
         }
     }
 
@@ -1857,7 +1935,8 @@ impl Run<'_> {
                 site: k.site,
                 detail: format!("a path reaches {how} with the store live, held by {held}"),
             };
-            self.findings.insert(f);
+            let line = self.line;
+            self.findings.entry(f).or_insert(line);
         }
     }
 
@@ -1884,6 +1963,9 @@ impl Run<'_> {
         if self.steps > STEP_BUDGET {
             self.imprecise = true;
             return None;
+        }
+        if let Value::Line(n) = v {
+            self.line = *n;
         }
         match v {
             Value::Span(b) => self.eval(&b.1, st),
@@ -2233,7 +2315,8 @@ impl Run<'_> {
                 self.bind(&mut s, x, &value);
                 return Some((s, Val::null()));
             }
-            let (mut s, value) = self.eval(val, st)?;
+            let pre_protected = self.first_bind_bracket(&st, val, arm);
+            let (mut s, value) = self.eval_bracketed(val, st, pre_protected.as_ref())?;
             let bound = match arm {
                 // A fn-ref holds the closure record its build names (`FnRef(_, w)` reads `w`),
                 // so its first bind holds that store as a reassignment does.  One read out of a
@@ -2263,7 +2346,7 @@ impl Run<'_> {
                 FirstArm::CallCopy { .. } | FirstArm::NullableCallCopy { .. } => {
                     if crate::use_analysis::call_return_frees_source(data, self.d_nr, val) {
                         Self::consume(&mut s, &value);
-                        self.unprotected_source_free(&mut s, val, &value);
+                        self.unprotected_source_free(&mut s, val, &value, pre_protected.as_ref());
                     }
                     self.copied(&mut s, node)
                 }
@@ -2607,7 +2690,11 @@ impl Run<'_> {
                 self.end(&mut st, x, "the displaced free", true);
             }
         }
-        let (mut s, value) = self.eval(val, st)?;
+        // Only the copy arm (R2b) brackets the call at run time.
+        let pre_protected = self
+            .pre_call_protected(&st, val)
+            .filter(|_| matches!(rb.arm, ReArm::CallCopy { .. }) || bracket_every_bind());
+        let (mut s, value) = self.eval_bracketed(val, st, pre_protected.as_ref())?;
         // What `x` held, read AFTER the value: a call that makes a store at a site `x`'s old
         // store came from moves that store to the older generation (`fresh`), and a key read
         // before it would name the new store instead (a loop's `fixed = step(i)`).
@@ -2626,7 +2713,7 @@ impl Run<'_> {
                 if crate::use_analysis::call_return_frees_source(data, self.d_nr, val) {
                     Self::consume(&mut s, &value);
                     if rb.free != DisplacedFree::Stash {
-                        self.unprotected_source_free(&mut s, val, &value);
+                        self.unprotected_source_free(&mut s, val, &value, pre_protected.as_ref());
                     }
                     // The copy's source-free releases what the call answered, and a call that
                     // reads `x` may answer `x`'s own store.  Unprotected (`ReBind::protects_old`),
@@ -2724,16 +2811,74 @@ impl Run<'_> {
         }
     }
 
-    /// A copy's source-free (`COPY_FREE_SOURCE`) releases what the call answered unless the
-    /// copy bracket protects it: a store of the answer that no protectable argument names
-    /// (`use_analysis::protectable_ref_args`, the code generator's own list) ends here.
-    fn unprotected_source_free(&mut self, st: &mut State, call: &Value, value: &Val) {
-        let protected: BTreeSet<SKey> =
+    /// The stores the copy bracket protects when it is set around the call itself
+    /// (`LOFT_NO_PROTECT_AFTER_CALL`): what the protectable arguments name BEFORE the call.
+    /// `None` when the bracket is set after the call, as the code generators set it by default
+    /// (`keys::protect_after_call`), so the source-free reads the state after the call.
+    /// The stores a first bind's copy bracket protects: the copy arm's only (F9c, F7-copy).  A
+    /// plain bind or a join sets none at run time, so the records read the call unbracketed.
+    fn first_bind_bracket(
+        &self,
+        st: &State,
+        val: &Value,
+        arm: crate::bind_lowering::FirstArm,
+    ) -> Option<BTreeSet<SKey>> {
+        let bracketed = matches!(
+            arm,
+            crate::bind_lowering::FirstArm::CallCopy { .. }
+                | crate::bind_lowering::FirstArm::NullableCallCopy { .. }
+        );
+        self.pre_call_protected(st, val)
+            .filter(|_| bracketed || bracket_every_bind())
+    }
+
+    /// Evaluate a bind's value with the call bracket `pre` (its protected stores) set for it.
+    fn eval_bracketed(
+        &mut self,
+        val: &Value,
+        st: State,
+        pre: Option<&BTreeSet<SKey>>,
+    ) -> Option<(State, Val)> {
+        self.call_bracket = pre.map(|p| (std::ptr::from_ref(val.unspan()) as usize, p.clone()));
+        let out = self.eval(val, st);
+        self.call_bracket = None;
+        out
+    }
+
+    fn pre_call_protected(&self, st: &State, call: &Value) -> Option<BTreeSet<SKey>> {
+        if crate::keys::protect_after_call() {
+            return None;
+        }
+        Some(
             crate::use_analysis::protectable_ref_args(self.data, self.d_nr, call)
                 .0
                 .into_iter()
                 .flat_map(|a| Self::stores_of(&Self::pts(st, a)))
-                .collect();
+                .collect(),
+        )
+    }
+
+    /// A copy's source-free (`COPY_FREE_SOURCE`) releases what the call answered unless the
+    /// copy bracket protects it: a store of the answer that no protectable argument names
+    /// (`use_analysis::protectable_ref_args`, the code generator's own list) ends here.  The
+    /// arguments are read after the call (`@FR-O-Move`: a `&` argument the callee re-points
+    /// no longer holds the store it answers), or before it where `pre` says the bracket is
+    /// set around the call.
+    fn unprotected_source_free(
+        &mut self,
+        st: &mut State,
+        call: &Value,
+        value: &Val,
+        pre: Option<&BTreeSet<SKey>>,
+    ) {
+        let protected: BTreeSet<SKey> = match pre {
+            Some(p) => p.clone(),
+            None => crate::use_analysis::protectable_ref_args(self.data, self.d_nr, call)
+                .0
+                .into_iter()
+                .flat_map(|a| Self::stores_of(&Self::pts(st, a)))
+                .collect(),
+        };
         let freed: BTreeSet<SKey> = Self::stores_of(&value.pts)
             .into_iter()
             .filter(|k| !protected.contains(k) && !value.corr.contains(k))
@@ -3629,17 +3774,10 @@ impl Run<'_> {
     }
 
     /// A call to an operator or function that answers nothing (a free, a set).
-    /// A release with its reset (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner
-    /// witness's at a scope exit): void calls and `Set`s only, so the block's value waits past it.
+    /// A release statement after a block's value (`op_sets::is_release_statement`, the one
+    /// reading the C and rustc writers share): the value waits past it.
     fn is_void_release(&self, op: &Value) -> bool {
-        let Value::Insert(items) = op.unspan() else {
-            return false;
-        };
-        !items.is_empty()
-            && items.iter().any(|i| self.is_void_call(i))
-            && items.iter().all(|i| {
-                self.is_void_call(i) || matches!(i.unspan(), Value::Set(..) | Value::Line(_))
-            })
+        crate::op_sets::is_release_statement(self.data, op)
     }
 
     fn is_void_call(&self, op: &Value) -> bool {
@@ -4514,6 +4652,13 @@ impl Run<'_> {
                 s = s2;
             }
             (s, vals)
+        } else if d == self.ops.set_dbref && args.len() == 3 && !set_dbref_value_use() {
+            // A reference WRITTEN into a slot is handed over, not read: the record (written)
+            // and the offset are uses, the value's store is not touched.
+            let (s, mut vals) = self.args(&args[..2], st)?;
+            let (s, value) = self.eval(&args[2], s)?;
+            vals.push(value);
+            (s, vals)
         } else {
             self.args(args, st)?
         };
@@ -4996,8 +5141,172 @@ impl Run<'_> {
                 }
             }
         };
+        self.call_write_backs(&mut s, node, d, args);
         Some((s, val))
     }
+
+    /// `@FR-F-ParamRef` at the call: a callee that writes a fresh value through its `&`
+    /// parameter on every path ([`writes_back_fresh`]) hands that value to the variable the
+    /// argument links (`f(OpCreateStack(w))`), and releases the store `w` held (the callee's
+    /// `OpFreeRefIfDistinct`).  A store the call bracket protects across the call itself
+    /// (`LOFT_NO_PROTECT_AFTER_CALL`) is not released: the runtime declines it, and nothing
+    /// holds it once `w` names the new store.  A callee that writes on some paths only, or
+    /// writes a borrowed value, is not followed: `w` keeps what it held, which can only keep a
+    /// finding (`LOFT_RECORDS_NO_CALL_WRITE_BACK=1` leaves every write-back unfollowed).
+    fn call_write_backs(&mut self, s: &mut State, node: &Value, d: u32, args: &[Value]) {
+        if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_CALL_WRITE_BACK").is_some()) {
+            return;
+        }
+        let bracket = self
+            .call_bracket
+            .as_ref()
+            .filter(|(n, _)| *n == std::ptr::from_ref(node.unspan()) as usize)
+            .map(|(_, p)| p.clone())
+            .unwrap_or_default();
+        for (i, a) in args.iter().enumerate() {
+            let Value::Call(op, cargs) = a.unspan() else {
+                continue;
+            };
+            if self.data.def(*op).name() != "OpCreateStack" {
+                continue;
+            }
+            let Some(Value::Var(w)) = cargs.first().map(Value::unspan) else {
+                continue;
+            };
+            let write = write_back_of(self.data, d, i);
+            if write == WriteBack::None {
+                continue;
+            }
+            // A write inside a branch happens on some runs: the caller's state after the call
+            // is the join of the written one and the one that kept the old store (`join_arms`).
+            let kept = (write == WriteBack::Maybe).then(|| s.clone());
+            let gone: BTreeSet<SKey> = Self::stores_of(&Self::pts(s, *w))
+                .into_iter()
+                .filter(|k| !bracket.contains(k))
+                .collect();
+            if !gone.is_empty() {
+                self.end_only(
+                    s,
+                    *w,
+                    "the write-back through its `&` argument",
+                    true,
+                    Some(&gone),
+                );
+            }
+            let site = self.site(a, Origin::Call(d));
+            let k = Self::fresh(s, site);
+            let value = Val {
+                pts: [Pt::Store(k)].into(),
+                corr: [k].into(),
+            };
+            self.bind(s, *w, &value);
+            if let Some(kept) = kept {
+                *s = join_arms(s, &kept);
+            }
+        }
+    }
+}
+
+/// Does `d` write a FRESH value through its `i`-th parameter, a `&` link to a store, on every
+/// path — a whole write (`p = P { … }`) at the top level of its body?  The code generator
+/// releases the store the parameter displaced there (`@FR-F-ParamRef`).  A write inside a
+/// branch or a loop, or of a value the function does not own, answers no: the caller then
+/// keeps reading what its variable held, which can only keep a finding.
+/// How a callee writes a fresh value through a `&` parameter: never, on every path (a
+/// top-level whole write), or on some paths (a whole write inside a branch).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WriteBack {
+    None,
+    Always,
+    Maybe,
+}
+
+/// [`writes_back_fresh`] for the top level, and the same write found inside an `if` arm for
+/// `Maybe` (`LOFT_RECORDS_NO_BRANCH_WRITE_BACK=1` reads such a write as none).  A write inside a
+/// loop body counts as `Maybe` too: the loop may run no pass.
+fn write_back_of(data: &Data, d: u32, i: usize) -> WriteBack {
+    if writes_back_fresh(data, d, i) {
+        return WriteBack::Always;
+    }
+    if crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_BRANCH_WRITE_BACK").is_some()) {
+        return WriteBack::None;
+    }
+    let def = data.def(d);
+    let Some(p) = def.attributes.get(i).map(|_| i as u16) else {
+        return WriteBack::None;
+    };
+    if !fresh_write_target(data, d, p) {
+        return WriteBack::None;
+    }
+    if def.code.any_node(&mut |n| fresh_write_of(data, d, p, n)) {
+        WriteBack::Maybe
+    } else {
+        WriteBack::None
+    }
+}
+
+/// Is parameter `p` of `d` a `&` link to a store a whole write can replace?
+fn fresh_write_target(data: &Data, d: u32, p: u16) -> bool {
+    let vars = &data.def(d).variables;
+    if !vars.is_argument(p) {
+        return false;
+    }
+    let crate::data::Type::RefVar(inner) = vars.tp(p).base() else {
+        return false;
+    };
+    inner.heap_def_nr().is_some()
+        || matches!(
+            inner.base(),
+            crate::data::Type::Vector(..) | crate::data::Type::Enum(_, true, _)
+        )
+        || crate::data::is_keyed(inner.base())
+}
+
+/// Is `op` a whole write of a value `d` owns through parameter `p`?
+fn fresh_write_of(data: &Data, d: u32, p: u16, op: &Value) -> bool {
+    matches!(op.unspan(), Value::Set(v, rhs) if *v == p
+    && !matches!(rhs.unspan(), Value::Call(c, _)
+        if matches!(data.def(*c).name(), "OpCreateStack" | "OpVarRef"))
+    && matches!(
+        crate::use_analysis::ownership_of(data, d, rhs),
+        crate::use_analysis::Own::Owned
+    ))
+}
+
+fn writes_back_fresh(data: &Data, d: u32, i: usize) -> bool {
+    let def = data.def(d);
+    let vars = &def.variables;
+    let Some(p) = def.attributes.get(i).map(|_| i as u16) else {
+        return false;
+    };
+    if !vars.is_argument(p) {
+        return false;
+    }
+    let crate::data::Type::RefVar(inner) = vars.tp(p).base() else {
+        return false;
+    };
+    if !(inner.heap_def_nr().is_some()
+        || matches!(
+            inner.base(),
+            crate::data::Type::Vector(..) | crate::data::Type::Enum(_, true, _)
+        )
+        || crate::data::is_keyed(inner.base()))
+    {
+        return false;
+    }
+    let ops = match def.code.unspan() {
+        Value::Block(b) => &b.operators,
+        _ => return false,
+    };
+    ops.iter().any(|op| {
+        matches!(op.unspan(), Value::Set(v, rhs) if *v == p
+        && !matches!(rhs.unspan(), Value::Call(c, _)
+            if matches!(data.def(*c).name(), "OpCreateStack" | "OpVarRef"))
+        && matches!(
+            crate::use_analysis::ownership_of(data, d, rhs),
+            crate::use_analysis::Own::Owned
+        ))
+    })
 }
 
 /// Run one function's body; its answer, findings and records.
@@ -5023,7 +5332,9 @@ fn run_fn<'a>(
         d_nr,
         site_of: BTreeMap::new(),
         sites: Vec::new(),
-        findings: BTreeSet::new(),
+        findings: BTreeMap::new(),
+        line: 0,
+        end_lines: BTreeMap::new(),
         answer: Summary::Bottom,
         imprecise: false,
         in_field_reset: 0,
@@ -5048,6 +5359,7 @@ fn run_fn<'a>(
         fn_record: BTreeMap::new(),
         leaving: BTreeSet::new(),
         protected: Vec::new(),
+        call_bracket: None,
         freed_temps: BTreeSet::new(),
         member_tuple: false,
     };
@@ -5300,6 +5612,27 @@ fn components(data: &Data, fns: &[u32]) -> Vec<Vec<u32>> {
 
 /// Every function's answer and its final run: the least fixpoint over the call graph, taken
 /// component by component, callees first, so only a recursive component iterates.
+/// `LOFT_RECORDS_SET_DBREF_VALUE_USE=1` — the value an `OpSetDbRef` writes into a slot counts as a
+/// use of its store again.
+fn set_dbref_value_use() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_RECORDS_SET_DBREF_VALUE_USE").is_some())
+}
+
+/// `LOFT_RECORDS_BRACKET_EVERY_BIND=1` — the records read a call bracket at every first bind and
+/// rebind of a call, not only at the copy arms the interpreter brackets.
+fn bracket_every_bind() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_RECORDS_BRACKET_EVERY_BIND").is_some())
+}
+
+/// ` (line N)` after a finding seen at a source line; nothing before the first marker.
+fn line_note(line: u32) -> String {
+    if line == 0 {
+        String::new()
+    } else {
+        format!(" (line {line})")
+    }
+}
+
 fn analyse_all(
     data: &Data,
     ops: &Ops,
@@ -5329,8 +5662,14 @@ fn analyse_all(
                     let lines: Vec<String> = run
                         .findings
                         .iter()
-                        .map(|f| {
-                            format!("store-{} {}{}", f.kind, site_label(&run, f.site), f.detail)
+                        .map(|(f, line)| {
+                            format!(
+                                "store-{} {}{}{}",
+                                f.kind,
+                                site_label(&run, f.site),
+                                f.detail,
+                                line_note(*line)
+                            )
                         })
                         .collect();
                     (run.answer, run.imprecise, lines)
@@ -5446,12 +5785,13 @@ fn print_records(run: &Run, name: &str, sum: Summary) {
             s.ends.iter().cloned().collect::<Vec<_>>().join(", "),
         );
     }
-    for f in &run.findings {
+    for (f, line) in &run.findings {
         eprintln!(
-            "[stores]   {} {}{}",
+            "[stores]   {} {}{}{}",
             f.kind,
             site_label(run, f.site),
-            f.detail
+            f.detail,
+            line_note(*line)
         );
     }
 }
@@ -5523,6 +5863,43 @@ mod tests {
         let d = data.def_nr(op);
         assert_ne!(d, u32::MAX, "no op {op}");
         Value::Call(d, args)
+    }
+
+    /// A plain free of a variable that names the caller's store on one path and its own on the
+    /// other releases the caller's store on the first (`@FR-F-ParamRebind`): `x` is bound to
+    /// parameter `p` where `c` holds and minted where it does not, then freed.  Falsified by
+    /// `LOFT_RECORDS_NO_MAYBE_PARAM_END` (the finding goes away), and by binding `x` only
+    /// to its own store (no `Param` point to report).
+    #[test]
+    fn a_free_of_a_maybe_parameter_store_is_a_wrong_end() {
+        let src = "struct S2 { a: integer }\n\
+                   fn t(p: S2, c: boolean) { x = S2 { a: 1 }; }\n\
+                   fn main() { t(S2 { a: 2 }, true); }\n";
+        let found = findings(src, "n_t", |data, d| {
+            let vars = &data.def(d).variables;
+            let var = |name: &str| Value::Var(vars.var(name));
+            let tp = Value::Int(i32::from(data.def(data.def_nr("S2")).known_type()));
+            v_block(
+                vec![
+                    v_if(
+                        var("c"),
+                        call(data, "OpPutRef", vec![var("x"), var("p")]),
+                        call(data, "OpDatabase", vec![var("x"), tp]),
+                    ),
+                    call(data, "OpFreeRef", vec![var("x")]),
+                ],
+                Type::Void,
+                "records-test",
+            )
+        });
+        assert!(
+            found
+                .iter()
+                .any(|l| l.contains("wrong-end") && l.contains("may be the caller's store")),
+            "a plain free of `x`, the caller's store on one path, must read as a wrong end; the \
+             records said:\n{}",
+            found.join("\n")
+        );
     }
 
     /// `design-stale-names.md` F6: an alias made AFTER a store's end is in `stale`, so a free

@@ -157,9 +157,6 @@ impl State {
         let _defs_memo = crate::use_analysis::defs_memo_scope(data, def_nr);
         // The rewrite census credits what the bytecode generator admits to the `interp` phase.
         let _census_body = crate::rewrite_census::InBody::enter("interp", data.def(def_nr).name());
-        if bind_trace_on() {
-            BIND_FN_START.with(|s| s.set(self.code_pos));
-        }
         // `@FR-R-LoopSlot`: the loop variables this frame places in their range index's slot.
         crate::rewrite_census::fired("R-LoopSlot", super::slot_aliases(data, def_nr).len());
         let logging =
@@ -234,6 +231,7 @@ impl State {
             stack.grow(stack.step(size(stack.function.tp(*v), &Context::Argument)));
         }
         let start = self.code_pos;
+        BIND_FN_START.with(|s| s.set(start));
         self.arguments = stack.position;
         stack.grow(stack.step(4)); // keep space for the code return address
         if is_empty_stub {
@@ -2600,15 +2598,14 @@ impl State {
             return self.generate_set_inner(stack, v, value);
         }
         let first = !stack.function.is_stack_allocated(v);
-        // The source line the assignment stands on: the last line marker this function generated
-        // before it, 0 before its first (as the C writer's row says).  The markers of the
-        // function generated before it are not this assignment's.
-        let fn_start = BIND_FN_START.with(std::cell::Cell::get);
-        let line = self
-            .line_numbers
-            .range(fn_start..=self.code_pos)
-            .next_back()
-            .map_or(0, |(_, l)| *l);
+        // The source line the assignment stands on: the last line marker generated before it.
+        let line = crate::bind_lowering::row_line(
+            &value.to_owned_value(),
+            self.line_numbers
+                .range(BIND_FN_START.with(std::cell::Cell::get)..=self.code_pos)
+                .next_back()
+                .map_or(0, |(_, l)| *l),
+        );
         BIND_NOTES.with(|n| n.borrow_mut().push(Vec::new()));
         self.generate_set_inner(stack, v, value);
         let mut notes = BIND_NOTES.with(|n| n.borrow_mut().pop().unwrap_or_default());
@@ -3131,9 +3128,15 @@ impl State {
                         let prot = Value::Call(protect_fn, vec![Value::Var(v)]);
                         self.generate(&prot, stack, false);
                     }
-                    for av in &ref_args {
-                        let prot = Value::Call(protect_fn, vec![Value::Var(*av)]);
-                        self.generate(&prot, stack, false);
+                    // `@FR-O-Move` — the arguments' stores after the call
+                    // (`keys::protect_after_call`); `v`'s own old store stays protected
+                    // through the stash above.
+                    let after_call = crate::keys::protect_after_call();
+                    if !after_call {
+                        for av in &ref_args {
+                            let prot = Value::Call(protect_fn, vec![Value::Var(*av)]);
+                            self.generate(&prot, stack, false);
+                        }
                     }
                     // #360: evaluate the source call FIRST (reads v's OLD store, so
                     // a self-ref `s = grow(s)` works), THEN OpDatabase re-inits v's
@@ -3144,6 +3147,12 @@ impl State {
                     // on the eval stack (its slot offset is taken there);
                     // OpCopyRefOrNull's slot offset is taken after it pops src.
                     self.generate(value, stack, false);
+                    if after_call {
+                        for av in &ref_args {
+                            let prot = Value::Call(protect_fn, vec![Value::Var(*av)]);
+                            self.generate(&prot, stack, false);
+                        }
+                    }
                     if fresh_path {
                         // The call is done with the old store; take a FRESH one.  Two reasons,
                         // each from its own rule, which is why this is not `witnessed` alone: a
@@ -4214,9 +4223,14 @@ impl State {
         // `n_protect_store_frees` so the two semantics no longer collide.
         let protect_fn = stack.data.def_nr("n_protect_store_frees");
         let unprotect_fn = stack.data.def_nr("n_unprotect_store_frees");
-        for av in &ref_args {
-            let prot = Value::Call(protect_fn, vec![Value::Var(*av)]);
-            self.generate(&prot, stack, false);
+        // `@FR-O-Move` — the stores the arguments hold once the call returns (a `&` argument
+        // the callee re-points no longer holds the store it answers): `keys::protect_after_call`.
+        let after_call = crate::keys::protect_after_call();
+        if !after_call {
+            for av in &ref_args {
+                let prot = Value::Call(protect_fn, vec![Value::Var(*av)]);
+                self.generate(&prot, stack, false);
+            }
         }
         // Cluster-A A.4: ONE return-ownership query, shared with the native
         // backend (`generation/dispatch.rs`).  Hidden-only deps are either
@@ -4242,6 +4256,12 @@ impl State {
         // generate(value) pushes src and the opcode pops it, so the stack returns
         // to that level and the slot offset stays valid.
         self.generate(value, stack, false);
+        if after_call {
+            for av in &ref_args {
+                let prot = Value::Call(protect_fn, vec![Value::Var(*av)]);
+                self.generate(&prot, stack, false);
+            }
+        }
         stack.add_op("OpCopyRefOrNull", self);
         self.code_add(slot_offset);
         self.code_add(tp_with_free as u16);
@@ -7336,8 +7356,9 @@ std::thread_local! {
     /// The notes of each bind being lowered: a frame per `generate_set`, since a value's own
     /// lowering can contain binds of its own.
     static BIND_NOTES: std::cell::RefCell<Vec<Vec<String>>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// Where the function being generated starts (`def_code`): a bind row's line is read from
-    /// this function's line markers only.
+    /// Where the function being generated starts, so a bind row's line is a line of that
+    /// function: a bind before its first line marker (a hoisted null init) names line 0, as
+    /// the other writers' rows do.
     static BIND_FN_START: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 

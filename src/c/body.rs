@@ -2968,31 +2968,7 @@ impl<'a> FnWriter<'a> {
 
     /// A scope-exit free, or the store lock the cleanup window may hold.
     fn is_free(&self, v: &Value) -> bool {
-        match v.unspan() {
-            Value::Call(d, _) => {
-                let name = self.cx.data.def(*d).name();
-                // A drop cascade releases as a free does: a closure's (`OpDropFnRef`) and a
-                // record type's (`t_<n><Type>_OpDrop` / `_OpDropAll`), each ahead of its
-                // store's free.
-                name.starts_with("OpFree")
-                    || name == "OpDropFnRef"
-                    || (name.starts_with("t_")
-                        && (name.ends_with("_OpDrop") || name.ends_with("_OpDropAll")))
-                    || name == "n_set_store_lock"
-            }
-            // The guarded release `if <holds a record> <release> else null`.
-            Value::If(_, t, e) => matches!(e.unspan(), Value::Null) && self.is_free(t),
-            // A release with its reset (`{ OpFreeRef(w); w = OpNullRefSentinel() }`, an owner
-            // witness's): a free and a `Set`, so no value.
-            Value::Insert(items) => {
-                !items.is_empty()
-                    && items.iter().all(|i| {
-                        self.is_free(i) || matches!(i.unspan(), Value::Set(..) | Value::Line(_))
-                    })
-                    && items.iter().any(|i| self.is_free(i))
-            }
-            _ => false,
-        }
+        crate::op_sets::is_release_statement(self.cx.data, v)
     }
 
     /// `ops` for their effect, returning the value a `tail_capture` names.
@@ -6157,26 +6133,21 @@ impl<'a> FnWriter<'a> {
     /// the two writers' choices can be compared row by row (STORE_RECORDS.md § Phases, 2).
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
         let first = !self.bound[var as usize];
-        let line = self.cur_line;
+        let line = crate::bind_lowering::row_line(x, self.cur_line);
         self.bind_arm.push("");
         let r = self.set_stmt_arms(var, x, ind);
         let arm = self.bind_arm.pop().unwrap_or("");
         if r.is_ok() && crate::bind_lowering::trace_enabled("LOFT_TRACE_BIND_C") {
             // Beside the arm this writer took, the one `bind_lowering` decides for the same
             // assignment (`lowering=`), so a row shows its own disagreement (@PLN220).
-            let lowering = if first {
-                crate::bind_lowering::first_arm(self.cx.data, self.d, self.vars, var, x)
-                    .trace_name()
-                    .to_string()
-            } else {
-                let rb = crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x);
-                let b2 = match rb.free {
-                    crate::bind_lowering::DisplacedFree::Stash => "stash",
-                    crate::bind_lowering::DisplacedFree::Pre { .. } => "pre",
-                    crate::bind_lowering::DisplacedFree::None => "none",
-                };
-                format!("{}/b2={b2}", rb.arm.trace_name())
-            };
+            let lowering = crate::bind_lowering::decided_lowering(
+                self.cx.data,
+                self.d,
+                self.vars,
+                var,
+                x,
+                first,
+            );
             crate::bind_lowering::trace_row(
                 "LOFT_TRACE_BIND_C",
                 self.cx.data.def(self.d).name(),
@@ -6321,6 +6292,19 @@ impl<'a> FnWriter<'a> {
                 name.clone()
             };
             self.fresh_unless_owned(var, x, first, &name, ind);
+            // `@FR-O-Buffer` — a local promoted onto the return buffer may still hold the store
+            // its CALLER handed in (the entry witness).  A null answer binds null there and
+            // releases nothing: `loft_bind_copy` frees what the destination held, which was the
+            // caller's buffer, and the caller read it afterwards (the self-hosted elaborator's
+            // `rewrite_unknown`, recursing into `r = rewrite_unknown(inner, …)`).  The bytecode
+            // and Rust writers already decline there.  `LOFT_C_NULL_FREES_ENTRY=1` frees it.
+            let null_keeps_entry = match self.vars.entry_witness(var) {
+                Some(w) if !crate::keys::c_null_frees_entry() => format!(
+                    "if ({r}.store_nr == 0xFFFF && {name}.store_nr != 0xFFFF && {name}.store_nr == {}.store_nr) {name} = loft_ref_null(); else ",
+                    self.var(w)
+                ),
+                _ => String::new(),
+            };
             if frees {
                 // The stores of the call's reference arguments are protected, as the bytecode
                 // writer protects them (`protectable_ref_args`): a result that is a view into
@@ -6345,7 +6329,7 @@ impl<'a> FnWriter<'a> {
                     self.line(
                         ind,
                         &format!(
-                            "if (!({keep} && loft_swap_rebind({bytes}, {r}, &{name}))) {{ \
+                            "{null_keeps_entry}if (!({keep} && loft_swap_rebind({bytes}, {r}, &{name}))) {{ \
                              loft_bind_copy(loft_types, {bytes}, &{name}, {r}); \
                              if ({keep}) loft_free_ref({r}); }}"
                         ),
@@ -6353,14 +6337,18 @@ impl<'a> FnWriter<'a> {
                 } else {
                     self.line(
                         ind,
-                        &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+                        &format!(
+                            "{null_keeps_entry}{{ loft_bind_copy(loft_types, {bytes}, &{name}, {r}); \
+                             if ({keep}) loft_free_ref({r}); }}"
+                        ),
                     );
-                    self.line(ind, &format!("if ({keep}) loft_free_ref({r});"));
                 }
             } else {
                 self.line(
                     ind,
-                    &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+                    &format!(
+                        "{null_keeps_entry}loft_bind_copy(loft_types, {bytes}, &{name}, {r});"
+                    ),
                 );
             }
             self.flush(ind);
