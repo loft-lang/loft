@@ -256,6 +256,12 @@ void loft_crt_stack_str_bool(int64_t store, int64_t at, int64_t v) {
         : v == 255 ? loft_null_text() : loft_lit("false", 5);
 }
 
+/* `OpGetStackText`: a view of the text the reference `(s, r, p)` names, pushed at `at`. */
+void loft_crt_stack_str_of_ref(int64_t store, int64_t at, int64_t s, int64_t r, int64_t p) {
+    loft_text *t = (loft_text *) loft_place(loft_crt_ref(s, r, p), 0);
+    *(loft_str *) loft_crt_slot_at(store, at) = t ? loft_view(t) : loft_null_text();
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);

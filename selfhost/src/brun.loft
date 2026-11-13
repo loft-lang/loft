@@ -109,6 +109,20 @@ H_CAST_TEXT_FROM_BOOL = 87;
 H_VEC_GET_INT = 88;
 H_PUT_1 = 89;
 H_GET_FLOAT = 90;
+H_COPY_RECORD = 91;
+H_APPEND_VECTOR = 92;
+H_APPEND_COPY = 93;
+H_VEC_END_JUMP = 94;
+H_FLOAT2 = 95;
+H_CMP_FLOAT = 96;
+H_SIZE_TEXT = 97;
+H_CONV_INT_FROM_ENUM = 98;
+H_CONV_BOOL_FROM_TEXT = 99;
+H_CONV_BOOL_FROM_FLOAT = 100;
+H_CONV_CHAR_FROM_INT = 101;
+H_FORMAT_FLOAT = 102;
+H_FORMAT_STACK_INT = 103;
+H_GET_STACK_TEXT = 104;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -229,6 +243,27 @@ pub fn handler(name: text) -> integer {
     "OpCastTextFromBool" => H_CAST_TEXT_FROM_BOOL,
     "OpVecGetIntNullable" => H_VEC_GET_INT,
     "OpGetFloat" => H_GET_FLOAT,
+    "OpCopyRecord" => H_COPY_RECORD,
+    "OpAppendVector" => H_APPEND_VECTOR,
+    "OpAppendCopy" => H_APPEND_COPY,
+    "OpVecEndJump" => H_VEC_END_JUMP,
+    "OpAddFloat" => H_FLOAT2,
+    "OpMinFloat" => H_FLOAT2,
+    "OpMulFloat" => H_FLOAT2,
+    "OpDivFloat" => H_FLOAT2,
+    "OpRemFloat" => H_FLOAT2,
+    "OpEqFloat" => H_CMP_FLOAT,
+    "OpNeFloat" => H_CMP_FLOAT,
+    "OpLtFloat" => H_CMP_FLOAT,
+    "OpLeFloat" => H_CMP_FLOAT,
+    "OpSizeText" => H_SIZE_TEXT,
+    "OpConvIntFromEnum" => H_CONV_INT_FROM_ENUM,
+    "OpConvBoolFromText" => H_CONV_BOOL_FROM_TEXT,
+    "OpConvBoolFromFloat" => H_CONV_BOOL_FROM_FLOAT,
+    "OpConvCharacterFromInt" => H_CONV_CHAR_FROM_INT,
+    "OpFormatFloat" => H_FORMAT_FLOAT,
+    "OpFormatStackInt" => H_FORMAT_STACK_INT,
+    "OpGetStackText" => H_GET_STACK_TEXT,
     _ => -1
   }
 }
@@ -330,6 +365,12 @@ fn layout_of(h: integer) -> text {
     88 => "hhhh",
     89 => "h",
     90 => "h",
+    91 => "h",
+    92 => "h",
+    93 => "h",
+    94 => "hhi",
+    102 => "hbzc",
+    103 => "hbbzzc",
     _ => ""
   }
 }
@@ -431,6 +472,21 @@ fn load_table(ts: vector<ir::DbType>) {
   }
   n = crt::load_types(types::flat(rows), len(ts));
   assert(n == len(rows), "the type table loads: {n} rows of {len(rows)}");
+}
+
+fn get_f(stk: integer, at: integer) -> float? {
+  crt::get_float(stk, 1, 8 + at, 0, false)
+}
+
+fn set_f(stk: integer, at: integer, v: float?) {
+  crt::set_float(stk, 1, 8 + at, 0, v, false);
+}
+
+// A float comparison as the operators define it: NaN — the float null — is the least value and
+// equals itself, as `cmp_kind` treats the integer null.
+fn cmp_float(kind: integer, a: float?, b: float?) -> boolean {
+  d = if a == null && b == null { 0 } else if a == null { -1 } else if b == null { 1 } else if a! < b! { -1 } else if a! > b! { 1 } else { 0 };
+  if kind == 0 { d == 0 } else if kind == 1 { d != 0 } else if kind == 2 { d < 0 } else { d <= 0 }
 }
 
 // What a run answers: the operator it stopped at when it refused one, and how many it ran.
@@ -1025,6 +1081,134 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       crt::vec_get(io, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, size, get(stk, sp - ixp));
       set(stk, sp, if (io[1] ?? 0) == 0 { null } else { crt::get_int(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld) });
       sp += 8;
+    } else if h == H_COPY_RECORD {
+      // `OpCopyRecord(src, dst, tp)`: the type's low bits and the flags `lower.loft` derives —
+      // the source freed, the type holding no stored references, the destination fresh.
+      if !table_loaded {
+        load_table(img.types);
+        table_loaded = true;
+      }
+      raw = u16_at(img.code, pc);
+      pc += 2;
+      ctp = raw & 16383;
+      flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(img.types, ctp) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 });
+      crt::slot_ref(io, stk, sp - 16);
+      ds = io[0] ?? NULL_STORE;
+      dr = io[1] ?? 0;
+      dp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 32);
+      sp -= 32;
+      crt::copy_record(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ds, dr, dp, ctp, flags);
+      // A null source into a fresh destination leaves a struct its default image.
+      if (io[0] ?? NULL_STORE) == NULL_STORE && ds != NULL_STORE && flags & 4 != 0 && types::is_struct(img.types, ctp) {
+        while len(imaged) <= ctp {
+          images += [[]];
+          imaged += [false];
+        }
+        if !(imaged[ctp] ?? false) {
+          images[ctp] = types::default_image(img.types, ctp);
+          imaged[ctp] = true;
+        }
+        crt::fill(ds, dr, dp, images[ctp]!);
+      }
+    } else if h == H_APPEND_VECTOR {
+      if !table_loaded {
+        load_table(img.types);
+        table_loaded = true;
+      }
+      vtp = u16_at(img.code, pc);
+      pc += 2;
+      crt::slot_ref(io, stk, sp - 16);
+      os = io[0] ?? NULL_STORE;
+      orr = io[1] ?? 0;
+      op2 = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 32);
+      sp -= 32;
+      crt::vec_add(vtp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, os, orr, op2);
+    } else if h == H_APPEND_COPY {
+      if !table_loaded {
+        load_table(img.types);
+        table_loaded = true;
+      }
+      vtp = u16_at(img.code, pc);
+      pc += 2;
+      etp = types::content_of(img.types, vtp);
+      if etp == null || (img.types[etp!]?.linked ?? false) {
+        return Outcome { refused: "a repeat of an element type the runner does not carry: AppendCopy at {at}", steps: steps };
+      }
+      sp -= 8;
+      cnt = get(stk, sp) ?? 0;
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::vec_append_copy(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, etp!, cnt);
+    } else if h == H_VEC_END_JUMP {
+      vec = u16_at(img.code, pc);
+      ixp = u16_at(img.code, pc + 2);
+      d = i32_at(img.code, pc + 4);
+      pc += 8;
+      crt::slot_ref(io, stk, sp - vec);
+      ln = crt::vec_len(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+      if cmp_kind(2, get(stk, sp - ixp), ln) {
+        pc += d;
+      }
+    } else if h == H_FLOAT2 {
+      sp -= 8;
+      fb = get_f(stk, sp);
+      fa = get_f(stk, sp - 8);
+      name = img.ops[op] ?? "";
+      set_f(stk, sp - 8, if name == "OpAddFloat" { fa + fb } else if name == "OpMinFloat" { fa - fb } else if name == "OpMulFloat" { fa * fb } else if name == "OpDivFloat" { fa / fb } else { fa % fb });
+    } else if h == H_CMP_FLOAT {
+      sp -= 8;
+      fb = get_f(stk, sp);
+      fa = get_f(stk, sp - 8);
+      name = img.ops[op] ?? "";
+      set_bool(stk, sp - 8, cmp_float(if name == "OpEqFloat" { 0 } else if name == "OpNeFloat" { 1 } else if name == "OpLtFloat" { 2 } else { 3 }, fa, fb));
+    } else if h == H_SIZE_TEXT {
+      sp -= 16;
+      t = crt::stack_str(stk, sp);
+      set(stk, sp, if t == null { 0 } else { size(t!) });
+      sp += 8;
+    } else if h == H_CONV_INT_FROM_ENUM {
+      e = crt::get_w(crt::W_ENUM, stk, 1, 8 + sp - 8, 0, 0);
+      set(stk, sp - 8, e);
+    } else if h == H_CONV_BOOL_FROM_TEXT {
+      sp -= 16;
+      set_bool(stk, sp, crt::stack_str(stk, sp) != null);
+      sp += 8;
+    } else if h == H_CONV_BOOL_FROM_FLOAT {
+      set_bool(stk, sp - 8, get_f(stk, sp - 8) != null);
+    } else if h == H_CONV_CHAR_FROM_INT {
+      ci = get(stk, sp - 8);
+      crt::set_w(crt::W_CHARACTER, stk, 1, 8 + sp - 8, 0, 0, ci);
+    } else if h == H_FORMAT_FLOAT {
+      // `format_float`: precision, width and the value popped, the local past all three.
+      p = u16_at(img.code, pc);
+      token = img.code[pc + 2] ?? 32;
+      plus = (img.code[pc + 3] ?? 0) == 1;
+      dir = i8_at(img.code, pc + 4);
+      pc += 5;
+      precision = get(stk, sp - 8) ?? 0;
+      width = get(stk, sp - 16) ?? 0;
+      fv = get_f(stk, sp - 24);
+      sp -= 24;
+      crt::slot_text_append(stk, sp - (p - 24), crt::format_float(fv, width, precision, token, plus, dir, false));
+    } else if h == H_FORMAT_STACK_INT {
+      // `format_stack_int`: as `format_int`, into the text the slot's reference names.
+      p = u16_at(img.code, pc);
+      radix = img.code[pc + 2] ?? 10;
+      token = img.code[pc + 3] ?? 32;
+      plus = (img.code[pc + 4] ?? 0) == 1;
+      note = (img.code[pc + 5] ?? 0) == 1;
+      dir = i8_at(img.code, pc + 6);
+      pc += 7;
+      width = get(stk, sp - 8) ?? 0;
+      val = get(stk, sp - 16);
+      sp -= 16;
+      crt::slot_ref(io, stk, sp - (p - 16));
+      crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::format_int(val, radix, width, token, plus, note, dir));
+    } else if h == H_GET_STACK_TEXT {
+      crt::slot_ref(io, stk, sp - 16);
+      crt::stack_str_of_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
