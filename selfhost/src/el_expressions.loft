@@ -2754,7 +2754,8 @@ fn literal_arms_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: int
       if tb == null || fb == null { null } else { ir::NdIf { cond: cond, t: tb!, f: fb! } }
     },
     NdBlock { block } => {
-      if block[0].name == "Object" {
+      // A struct literal, or a struct enum's unit variant (`EnumUnitLit`, built the same way).
+      if block[0].name == "Object" || block[0].name == "EnumUnitLit" {
         return object_into_buffer(e, vars, x, rb, result);
       }
       bl = block[0];
@@ -2781,9 +2782,11 @@ fn object_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integer, 
   w = -1;
   ops: vector<ir::Node> = [];
   lit_t = result;
+  kind = "Object";
   match x {
     NdBlock { block: ob } => {
-      if ob[0].name == "Object" {
+      if ob[0].name == "Object" || ob[0].name == "EnumUnitLit" {
+        kind = ob[0].name;
         lit_t = ob[0].result[0] ?? result;
         for op in ob[0].operators {
           match op {
@@ -2823,7 +2826,7 @@ fn object_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integer, 
     built = rebind_safe_literal(e, vars, built, rb);
   }
   // Typed as the literal — a variant's own record where the result is its enum.
-  el_ir::v_block(built, el_types::with_deps(el_types::without_deps(lit_t), [rb]), "Object")
+  el_ir::v_block(built, el_types::with_deps(el_types::without_deps(lit_t), [rb]), kind)
 }
 
 // `variant_parent_enum`: the struct enum whose variant `t` is a record of (through a `?`), or -1.
@@ -16901,6 +16904,33 @@ pub struct MArm {
 // subject's — its body read against the type the arms settled on; then the chain of `if`s from
 // the last arm back, ending in a wildcard arm's code or the result's null.  A guard, a binding, a
 // field pattern and any other subject are refused by name.
+// Is `n` a getter chain (`OpGetField`, `OpGetVector`, …) rooted at a variable — a place every
+// read of which answers the same record?
+fn getter_place(e: el::El, n: ir::Node) -> boolean {
+  at = el_ir::unspan(n);
+  for _ in 0..10000 {
+    match at {
+      NdVar { n: _ } => { return true; },
+      NdCall { def_nr, args } => {
+        if !starts_with(el::def(e, def_nr).name, "OpGet") || len(args) == 0 {
+          return false;
+        }
+        at = el_ir::unspan(args[0]!);
+      },
+      _ => { return false; }
+    }
+  }
+  false
+}
+
+// Is `n` a block whose last statement is a bare `null`?
+fn block_ends_null(n: ir::Node) -> boolean {
+  match n {
+    NdBlock { block } => len(block[0].operators) > 0 && el_ir::is_null(el_ir::unspan(block[0].operators[-1]!)),
+    _ => false
+  }
+}
+
 fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
   // A bind's right-hand side (`r = match …`): Rust writes each arm into the destination.
   at_bind = node >= 0 && vars.expect_node == node;
@@ -16916,9 +16946,15 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   // field holds, read in place where the subject is a local.  A nullable one is matched the
   // same way: its null reaches the wildcard arm.
   sd = struct_enum_of(e, match st { TyOptional { inner } => inner, _ => st });
-  if sd >= 0 && !(el_ir::unspan(x.code) is NdVar) {
-    el::refuse(e, "a match on a struct enum that is not a local");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  // `parse_match` for a struct enum: a PLACE (a local, or a getter chain rooted at one —
+  // `match h.sh`) is read in place by every arm's test; any other subject (a call's answer) is
+  // held in `_match_subj_N` first, inside a `match` block.
+  held_set: ir::Node? = null;
+  if sd >= 0 && !(el_ir::unspan(x.code) is NdVar) && !getter_place(e, x.code) {
+    held = el_vars::create_unique(vars, "match_subj", el_types::without_deps(st));
+    el_vars::set_defined(vars, held);
+    held_set = el_ir::v_set(held, x.code);
+    x = ex(ir::NdVar { n: held }, el_types::without_deps(st));
   }
   pd = struct_ref(e, el_types::base(st));
   if !scalar_subject && !enum_subject && sd < 0 && pd >= 0 && el::def(e, pd).def_type == el::DT_STRUCT && !(st is TyOptional) {
@@ -17141,12 +17177,16 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   // tail its arms take the per-arm accumulator there (`if_tail_yields_text`), which the second
   // pass follows.
   if e.first_pass && el_types::base(result) is TyText && (scalar_subject || enum_subject || sd >= 0) && len(out) > 0 {
+    // `type_null_arms` on this pass too: a written `null` arm answers the text's null, so the
+    // tail's per-arm delivery (`if_tail_yields_text`) sees every arm answer a text.
+    tnull = el_convert::null_of(e, el_types::base(result));
     fc = ir::NdNull;
     for a in rev(out) {
-      fc = if a.cond == null { a.code } else { el_ir::v_if(a.cond!, a.code, fc) };
+      ac = if a.tp is TyNull && el_ir::is_null(a.code) && tnull != null { tnull! } else { a.code };
+      fc = if a.cond == null { ac } else { el_ir::v_if(a.cond!, ac, fc) };
     }
     if sd >= 0 {
-      return ex(fc, result);
+      return if held_set == null { ex(fc, result) } else { ex(el_ir::v_block([held_set!, fc], result, "match"), result) };
     }
     return ex(el_ir::v_block([el_ir::v_set(v, x.code), fc], result, if scalar_subject { "scalar_match" } else { "match" }), result);
   }
@@ -17168,6 +17208,18 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
     for a in out {
       if nl != null && el_ir::is_null(a.code) {
         out[a#index].code = nl!;
+      } else if nl != null && a.tp is TyNull && block_ends_null(a.code) {
+        // An arm block answering a written `null` (a variant arm with bindings): its tail is
+        // the result's null and the block is typed as the result.
+        out[a#index].code = match a.code {
+          NdBlock { block } => {
+            nb = block[0];
+            nb.operators[-1] = nl!;
+            nb.result = [result];
+            ir::NdBlock { block: [nb] }
+          },
+          _ => a.code
+        };
       } else if hn != null && ends_in_halt(e, a.code) && !scalar(rbase) {
         // Beside a record arm the arms' own literal stores are stripped from the join
         // (`arm_join_type`) — not carried.
@@ -17225,8 +17277,11 @@ fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<int
   if null_arm && el_convert::sentinel_value(result) {
     result = ir::TyOptional { inner: result };
   }
-  // A struct enum read in place needs no `match` block.
+  // A struct enum read in place needs no `match` block; a held subject is set inside one.
   if sd >= 0 {
+    if held_set != null {
+      return own_match_arms(e, vars, ex(el_ir::v_block([held_set!, chain], result, "match"), result));
+    }
     return own_match_arms(e, vars, ex(chain, result));
   }
   own_match_arms(e, vars, ex(el_ir::v_block([el_ir::v_set(v, x.code), chain], result, "match"), result))
@@ -18659,7 +18714,10 @@ fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: intege
               // A vector or record field binds as a view of the subject (`vector<T>["s"]`), a text
               // field as the text it reads.
               if ft is TyVector || (ft is TyReference && struct_ref(e, ft) >= 0) {
-                ft = el_types::with_deps(ft, match el_ir::unspan(subj) { NdVar { n: sv } => [sv], _ => [] });
+                // `@FR-P-Cap-View`: the capture borrows the subject's source variable — a place's
+                // root where the subject is read in place (`match_borrow_source`).
+                sroot = match_borrow_source(e, vars, subj);
+                ft = el_types::with_deps(ft, if sroot >= 0 { [sroot] } else { [] });
               } else if ft is TyText {
                 ft = el_types::without_deps(ft);
               } else if !el_convert::plain_scalar(el_types::base(ft)) {
