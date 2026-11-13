@@ -141,6 +141,25 @@ fn emit_program_image(p: &mut parser::Parser, ships_live_tier: bool, out: &str) 
     std::process::exit(0);
 }
 
+/// `loft --emit-run-image <out.store> prog.loft`: write the program's RUN image — its bytecode
+/// as the interpreter would run it, with the function, native and type tables — and exit
+/// without running it.  Exit 1, naming the path, when it cannot be written.
+#[cfg(feature = "mmap")]
+fn emit_program_run_image(state: &State, data: &loft::data::Data, out: &str) -> ! {
+    if let Err(e) = loft::ir_store::save_run_image(state, data, out) {
+        eprintln!("loft: cannot write the run image to {out}: {e}");
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
+/// A build without file-backed stores cannot write a run image.
+#[cfg(not(feature = "mmap"))]
+fn emit_program_run_image(_state: &State, _data: &loft::data::Data, _out: &str) -> ! {
+    eprintln!("loft: --emit-run-image needs file-backed stores, which this build leaves out");
+    std::process::exit(2);
+}
+
 /// `LOFT_EMIT_PARSED=<out>`: write the image of the program as the parser left it, before the
 /// scope pass, and exit without running it.  Exit 1, naming the path, when it cannot be written.
 #[cfg(feature = "mmap")]
@@ -278,6 +297,7 @@ fn print_help() {
     );
     println!("  --native-emit [out.rs]        write generated Rust source and exit");
     println!("  --emit-image <out.store>      write the program's compiled IR image and exit");
+    println!("  --emit-run-image <out.store>  write the program's bytecode image and exit");
     println!("                                (default: .loft/<script>.rs beside the script)");
     println!("  --native-c                    like --native but through C and the host's C");
     println!("                                compiler (LOFT_CC, CC, else cc); combines with");
@@ -7697,6 +7717,9 @@ fn main() {
     // @PLN91 S0.2 — `--emit-image <out.store>`: write the program's IMAGE (the bundle the
     // startup cache saves, with its layout sidecar) and exit without running it.
     let mut emit_image: Option<String> = None;
+    // @PLN91 — `--emit-run-image <out.store>`: write the RUN image (the bytecode the Rust writer
+    // produced, which the loft runner executes in place) and exit without running the program.
+    let mut emit_run_image: Option<String> = None;
     // @PLN86 F12 — `loft sandbox-check <file>`: run the admission walk ONLY and print
     // Admitted / Rejected + diagnostics, NEVER execute.  The modder's "will this be
     // allowed?" loop; the policy comes from `loft.toml` like a normal run.
@@ -7878,6 +7901,14 @@ fn main() {
                 std::process::exit(2);
             };
             emit_image = Some(out);
+            i += 1;
+            native_mode = false;
+        } else if a == "--emit-run-image" {
+            let Some(out) = argv.get(i).cloned() else {
+                eprintln!("loft: --emit-run-image needs the path to write the image to");
+                std::process::exit(2);
+            };
+            emit_run_image = Some(out);
             i += 1;
             native_mode = false;
         } else if a == "--introspect" || a == "introspect" {
@@ -9709,7 +9740,8 @@ fn main() {
         && script_desugared.is_none()
         && !script_mode
         && !introspect_mode
-        && emit_image.is_none();
+        && emit_image.is_none()
+        && emit_run_image.is_none();
     p.track_sources = program_cache_on;
     // @PLN11 G2/M6 — on a warm hit with LOFT_CODEGEN_STORE, the cache is loaded
     // as a SKELETON (def table only) and the mmap'd bundle store is returned
@@ -10541,6 +10573,10 @@ fn main() {
     let t_byte_code = std::time::Instant::now();
     compile::byte_code_with_store(&mut state, &mut p.data, warm_store.as_ref());
     loft::platform::phase("byte_code", t_byte_code.elapsed().as_secs_f64());
+    // @PLN91 — the run image is taken from the bytecode as the interpreter would run it.
+    if let Some(out) = &emit_run_image {
+        emit_program_run_image(&state, &p.data, out);
+    }
     // @PLN119 arc A — a platform without the placement transport runs a placed
     // library in-process. By the plan's invariant that is the same PROGRAM, so
     // it is silent by default; but it is not the same ISOLATION, and a
