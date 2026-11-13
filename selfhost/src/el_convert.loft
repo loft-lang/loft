@@ -275,16 +275,6 @@ pub fn guard_discharge(e: el::El, vars: el_vars::Vars, code: ir::Node, should: i
         NdSet { var, inner } => { held = var; subject = inner; },
         _ => { return null; }
       }
-      // Already guarded — the two seams that reach one store must not judge it twice (Rust
-      // recognises its `OpRangeDefault`; this port's guard is the `dn4cast` block).
-      match el_ir::unspan(subject) {
-        NdBlock { block: sb } => {
-          if sb[0].name == "dn4cast" {
-            return code;
-          }
-        },
-        _ => {}
-      }
       default = ir::NdNull;
       pick = ir::NdNull;
       match bl.operators[1] ?? ir::NdNull {
