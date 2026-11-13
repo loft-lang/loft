@@ -664,6 +664,33 @@ pub fn same_file(a: impl HostPath, b: impl HostPath) -> bool {
     }
 }
 
+/// Are `a` and `b` one FILE on disk, a hard link included?  [`same_file`] compares canonical
+/// paths, which differ for two links to one inode: cargo's per-unit layout uplifts
+/// `<profile>/libloft.rlib` as a hard link to `build/loft/<hash>/out/libloft.rlib`.  Unix
+/// compares device and inode; elsewhere the paths, or else size and modification time.
+#[must_use]
+pub fn same_file_identity(a: impl HostPath, b: impl HostPath) -> bool {
+    let (a, b) = (&*a.to_path_text(), &*b.to_path_text());
+    if same_file(a, b) {
+        return true;
+    }
+    let (Ok(x), Ok(y)) = (metadata(a), metadata(b)) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        x.dev() == y.dev() && x.ino() == y.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        x.len() == y.len()
+            && x.modified()
+                .ok()
+                .is_some_and(|m| y.modified().ok() == Some(m))
+    }
+}
+
 /// Does `path` on disk live inside `dir` on disk?  `false` when either does not exist.
 #[must_use]
 pub fn is_under_canonical(path: impl HostPath, dir: impl HostPath) -> bool {

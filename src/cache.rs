@@ -671,8 +671,12 @@ pub fn file_hash(path: &str) -> Option<[u8; 32]> {
 fn loft_rlib_path() -> Option<std::path::PathBuf> {
     let exe_dir = crate::cargo_layout::current_runtime_profile_dir()?;
     let exe_dir = exe_dir.as_path();
+    // The same debris rule `toolchain::find_loft_rlib` applies (#304: both name one rlib).
+    let debris = crate::cargo_layout::classic_deps_is_debris(exe_dir)
+        && !crate::env_once!(std::env::var_os("LOFT_NATIVE_CLASSIC_DEPS_FIRST").is_some());
     if let Some(found) = rlib_candidates(exe_dir)
         .into_iter()
+        .skip(usize::from(debris))
         .find(|c| crate::file_access::exists(c))
     {
         return Some(found);
