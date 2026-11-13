@@ -4518,6 +4518,38 @@ impl Run<'_> {
                 .flat_map(|pts| Self::stores_of(&pts))
                 .collect();
             let name = format!("{} (its source)", self.data.def(d).name());
+            // A source that may be a PARAMETER's store — a call that answers its argument on
+            // some path (`@FR-F-Ret`'s join) — is released on that path too: the source-free
+            // has no runtime guard but the bracket and the destination.  The caller still
+            // owns that store.  `LOFT_RECORDS_NO_PARAM_SOURCE_FREE=1` leaves it unreported.
+            let kept_params: BTreeSet<Pt> = vals
+                .get(dst)
+                .map(|v| v.pts.clone())
+                .into_iter()
+                .chain(self.protected.iter().map(|p| Self::pts(&s, *p)))
+                .flat_map(|pts| pts.into_iter().filter(|p| matches!(p, Pt::Param(_))))
+                .collect();
+            let src_pts = x.map_or_else(
+                || vals.get(src).map(|v| v.pts.clone()).unwrap_or_default(),
+                |x| Self::pts(&s, x),
+            );
+            if src_pts
+                .iter()
+                .any(|p| matches!(p, Pt::Param(_)) && !kept_params.contains(p))
+                && !crate::env_once!(
+                    std::env::var_os("LOFT_RECORDS_NO_PARAM_SOURCE_FREE").is_some()
+                )
+            {
+                let what = x.map_or_else(
+                    || "the value".to_string(),
+                    |x| format!("`{}`", self.var_name(x)),
+                );
+                self.find(
+                    "wrong-end",
+                    u32::MAX,
+                    format!("{what} may be the caller's store, and {name} releases it"),
+                );
+            }
             if let Some(x) = x {
                 let freed: BTreeSet<SKey> = Self::stores_of(&Self::pts(&s, x))
                     .into_iter()

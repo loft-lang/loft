@@ -549,6 +549,13 @@ pub struct Parser {
     /// it cannot tell a parameter another `return` borrows from a stale one; this is how it
     /// knows (`ref_return`'s D-own-2 prune).
     pub(crate) mid_return_param_deps: std::collections::HashSet<(u32, bool, u16)>,
+    /// `@FR-F-Ret` — the visible parameters a mid-body `return` justifies as a borrow source,
+    /// by `(function, first_pass, attribute)`, and the functions whose D-own-2 prune waits for
+    /// the end of the body (`ref_return`, `finish_mid_return_prune`).  A mid-body site sees
+    /// only its own value, so it must not drop a dep a later `return` justifies: the signature
+    /// is read while the body is still parsed, by the function's own recursive calls.
+    pub(crate) mid_return_justified: std::collections::HashSet<(u32, bool, u16)>,
+    pub(crate) mid_return_prune_pending: std::collections::HashSet<(u32, bool)>,
     /// loft#2188 — the parser is reading the right-hand side of a plain local's `=`: a branch
     /// there is a VALUE being bound, whose arms `lift_borrowing_call_value` lifts.  Cleared
     /// inside a lambda's body, whose tail is a return position again (`ref_return`'s).
@@ -2104,6 +2111,8 @@ impl Parser {
             abstract_vars: std::collections::HashMap::new(),
             plain_declared: std::collections::HashSet::new(),
             mid_return_param_deps: std::collections::HashSet::new(),
+            mid_return_justified: std::collections::HashSet::new(),
+            mid_return_prune_pending: std::collections::HashSet::new(),
             in_bind_rhs: false,
             produced: None,
             pending_lambda_facts: Vec::new(),

@@ -130,7 +130,11 @@ its store was handed on frees nothing (`LOFT_NULL_LETGO_FREES=1` restores the se
 whole write through a `&` link to a plain parameter
 releases nothing it displaces (`Function::link_write_releases`, `@FR-F-ParamRebind`); the
 records follow a link installed on one variable as a write to that variable, and a release of
-a parameter's store is a wrong end (`LOFT_LINK_PARAM_RELEASES=1` restores it).
+a parameter's store is a wrong end (`LOFT_LINK_PARAM_RELEASES=1` restores it).  So is a copy
+that releases its source (`COPY_FREE_SOURCE`) where the source may be a parameter's store and
+neither the destination nor a bracket's protected argument names it: a call that answers its
+argument on some path hands the caller's store to that free (`LOFT_RECORDS_NO_PARAM_SOURCE_FREE=1`
+leaves it unreported).
 A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
 link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
 `old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through
@@ -433,7 +437,12 @@ at every bind, as the first bind and C do (`@FR-O-Move`); `LOFT_NO_REBIND_ADOPTS
 it into the local's own store again (the interpreter's arm R2b).  And a heap-enum local bound
 from a call that answers fresh on one path and a view of an argument on another is joined at
 run time as a record local is (F9a / R1, `OpBindOrCopy`); `LOFT_NO_ENUM_JOIN=1` deep-copies it at
-every bind.  A renamed return buffer with an entry witness rebound from a closure call takes
+every bind.  That join takes no protect bracket, so no bracket stands between a wrong
+signature and the caller's store: a function's return is the join of every return site (`@FR-F-Ret`), and a mid-body
+`return` never narrows the published deps while the rest of the body is read — the prune of a
+stale parameter dep waits for the tail, or for the end of a body whose returns are all mid-body.
+Narrowed at the site, a recursive call parsed after an early fresh `return` read "fresh", and its
+append released the argument's store (`LOFT_MID_RETURN_PRUNE=1` prunes at the site again).  A renamed return buffer with an entry witness rebound from a closure call takes
 the call's answer through the runtime copy-or-adopt (`@FR-O-Unknown`, R2a) as any local does, as
 the C writer always did (`LOFT_NO_BUFFER_OPAQUE_CALL=1` binds it plain).  A rebound argument with
 no entry witness frees nothing before the bind, as the C writer never did: a by-value parameter

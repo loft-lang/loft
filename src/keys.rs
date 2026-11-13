@@ -3604,6 +3604,15 @@ pub fn stashed_join_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_STASHED_JOIN"))
 }
 
+/// `LOFT_MID_RETURN_PRUNE=1` — a mid-body `return` prunes the return's stale parameter deps on
+/// the spot again, publishing a signature that may omit a parameter a later `return` borrows
+/// while the rest of the body is parsed (`ref_return`'s D-own-2 prune; `@FR-F-Ret`).
+#[must_use]
+pub fn mid_return_prune_now() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_MID_RETURN_PRUNE"))
+}
+
 /// `LOFT_NO_ENUM_JOIN=1` — a heap-enum local bound from a call that answers a fresh record on
 /// one path and a view of an argument on another is deep-copied at every bind again, instead of
 /// joined at run time (`bind_lowering`'s F9a / R1 arms; @PLN220's A/B).
