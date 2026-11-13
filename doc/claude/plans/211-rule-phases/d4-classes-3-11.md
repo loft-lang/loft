@@ -121,3 +121,13 @@ header): the eight pops read through the loop's push header (the plain `v[i] ?? 
 header again.  Package bench, C ship lane against the Rust twin: gcc **1.74x → 1.43x**, clang
 **1.58x → 1.41x**.  Left: about 80 instructions per split against the twin's 97-instruction
 split, mostly the eight `?? 0` null tests and the slice clamp the IR writes before each cut.
+
+**Where the graphics package stands** (C ship lane against the Rust twin, gcc / clang):
+fill_polygon 1.30 / 1.34, draw_bezier 1.43 / 1.41, every other routine 0.67–1.05; median 0.99 /
+1.03.  What is left has no single clear win.  fill_polygon's gap is the call boundary of its
+natural spelling — `polygon_crossings` returns a fresh vector per scanline, so each call derives
+the points header, the push window and the caller's view of the result again (171 instructions
+per scanline against the twin's 45, which keeps one buffer in one function); one clear instead
+of two, and the clear inlined, priced within ±3 % and not consistently.  draw_bezier's remainder
+is the eight `?? 0` null tests and the slice clamp before each cut (about 30 of 239 instructions
+per split, ~2 % of the routine).  blend_pixel holds at 1.02 / 0.92 with ±0.1 % between runs.
