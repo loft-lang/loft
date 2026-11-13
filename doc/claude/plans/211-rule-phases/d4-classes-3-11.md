@@ -101,3 +101,15 @@ the length reset: gcc −6 %, clang −9 %.  Package bench, C ship lane against 
 gcc **2.04x → 1.32x**, clang **1.50x → 1.34x**; the other routines unchanged.  Left: the
 callee clears its buffer twice in a row (one clear priced at a further 2 %, gcc only — not
 built), and the per-scanline window derivation (41 instructions).
+
+`fill_rect` is at parity in the harness (0.95x gcc, 1.02x clang), but the clang build is
+bimodal per process: run alone on one core it takes 2.05 ms in some runs and 3.92 ms in most,
+where gcc (1.82 ms) and the Rust twin (1.92 ms) hold steady.  Not code: the fast and slow runs
+of one binary retire the same 9.02 G instructions with the same L2 store misses (36–40 M, last
+level negligible); the slow runs' extra ~180 M cycles are all store-buffer-full stalls
+(`resource_stalls.sb` 237 M → 418 M), so the same stores commit to L3 more slowly.  Ruled out:
+address randomisation (bimodal with it off), transparent huge pages (bimodal with them off for
+the process), the 4096-byte row stride (bimodal at width 1056 too), SSE/AVX transitions (no AVX
+in either binary); gcc's row loop is the same two 16-byte stores per turn.  Trigger unknown;
+no change — a rewrite would be a layout fix with no named cause.  Counters: `perf stat -e
+cpu_core/resource_stalls.sb/u,…` works on this box outside the sandbox, pinned to core 0.
