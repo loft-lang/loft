@@ -3647,6 +3647,15 @@ pub fn lift_temp_view_off() -> bool {
 /// `LOFT_C_NULL_FREES_ENTRY=1` — the C writer's call copy into a promoted return buffer frees the
 /// store the caller handed in when the call answers null (`loft_bind_copy`'s null arm), as it did
 /// before `@FR-O-Buffer` was asked there.
+/// `LOFT_NO_CHOICE_VAR_JOIN=1` — a rebind from a choice that hands another heap variable over
+/// whole on one arm (`class = bound ?? Owned`) binds plainly again, naming that variable's store
+/// beside it (`bind_lowering::choice_var_arm`).
+#[must_use]
+pub fn choice_var_join_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_CHOICE_VAR_JOIN"))
+}
+
 #[must_use]
 pub fn c_null_frees_entry() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
