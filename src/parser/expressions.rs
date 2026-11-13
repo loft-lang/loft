@@ -9270,7 +9270,11 @@ use a separate collection or add after the loop"
     /// @C112 — a binding position mints a local whatever else carries that name.
     pub(crate) fn at_binding_name(&self) -> bool {
         (self.lexer.peek_token("=") && !self.lexer.peek_token("=="))
+            // In a format hole `:` opens the format spec (`{x:3}`), never an annotation (the
+            // annotation parse is skipped there too): read as a declaration, an unknown `zz` in
+            // `"{zz:3}"` became a fresh null local and rendered as nothing, unreported.
             || (self.lexer.peek_token(":")
+                && !self.in_format_expr
                 && !self.lexer.peek_token("::")
                 && !self.lexer.peek_token(":="))
             || (self.in_tuple_lhs && (self.lexer.peek_token(",") || self.lexer.peek_token(")")))
