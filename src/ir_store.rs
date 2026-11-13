@@ -986,6 +986,7 @@ fn materialize_run_image(
         e.set_field_int(stores, ds::RUNFNREF_DEF, i64::from(f.def));
         e.set_field_int(stores, ds::RUNFNREF_DROP, i64::from(f.drop));
         e.set_field_int(stores, ds::RUNFNREF_KIND, i64::from(f.kind));
+        e.set_field_int(stores, ds::RUNFNREF_CASCADE, f.cascade);
         let hv = DbRef {
             pos: e.db_ref().pos + ds::RUNFNREF_HIDDEN,
             ..e.db_ref()
@@ -1096,6 +1097,7 @@ pub struct RunFnRefShape {
     pub def: u32,
     pub drop: u32,
     pub kind: u8,
+    pub cascade: i64,
     pub hidden: Vec<i64>,
 }
 
@@ -1141,10 +1143,20 @@ pub fn run_image_fnrefs(data: &Data, program: &Stores) -> Vec<RunFnRefShape> {
         } else {
             0
         };
-        if drop == 0 && hidden.is_empty() && kind == 0 {
+        // `drop_fn_ref`: the closure record's drop cascade, a generated function.
+        let record = def.closure_record();
+        let cascade = if record == u32::MAX {
+            -1
+        } else {
+            match data.drop_cascade_nr(record) {
+                u32::MAX => -1,
+                c => i64::from(c),
+            }
+        };
+        if drop == 0 && hidden.is_empty() && kind == 0 && cascade < 0 {
             continue;
         }
-        out.push(RunFnRefShape { def: d, drop, kind, hidden });
+        out.push(RunFnRefShape { def: d, drop, kind, cascade, hidden });
     }
     out
 }

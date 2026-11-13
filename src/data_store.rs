@@ -512,13 +512,14 @@ pub(crate) const RUNIMG_FNREFS: u32 = 32;
 pub(crate) const RUNIMG_TYPES: u32 = 36;
 pub(crate) const RUNIMG_CWD: u32 = 40;
 pub(crate) const RUNIMG_STRIDE: u32 = 48;
-/// `RunFnRef { def, drop, kind: integer, hidden: vector<integer> }` — a call through a function
+/// `RunFnRef { def, drop, kind, cascade: integer, hidden: vector<integer> }` — a call through a function
 /// reference's shape.
 pub(crate) const RUNFNREF_DEF: u32 = 0;
 pub(crate) const RUNFNREF_DROP: u32 = 8;
 pub(crate) const RUNFNREF_KIND: u32 = 16;
-pub(crate) const RUNFNREF_HIDDEN: u32 = 24;
-pub(crate) const RUNFNREF_STRIDE: u32 = 32;
+pub(crate) const RUNFNREF_CASCADE: u32 = 24;
+pub(crate) const RUNFNREF_HIDDEN: u32 = 32;
+pub(crate) const RUNFNREF_STRIDE: u32 = 40;
 /// `RunConst { def, rec, pos: integer, bytes: vector<u8> }` — one constant's store as bytes.
 pub(crate) const RUNCONST_DEF: u32 = 0;
 pub(crate) const RUNCONST_REC: u32 = 8;
@@ -1801,6 +1802,7 @@ mod tests {
         assert_eq!(pos(ids.run_fn_ref, "def"), RUNFNREF_DEF);
         assert_eq!(pos(ids.run_fn_ref, "drop"), RUNFNREF_DROP);
         assert_eq!(pos(ids.run_fn_ref, "kind"), RUNFNREF_KIND);
+        assert_eq!(pos(ids.run_fn_ref, "cascade"), RUNFNREF_CASCADE);
         assert_eq!(pos(ids.run_fn_ref, "hidden"), RUNFNREF_HIDDEN);
         assert_eq!(u32::from(stores.size(ids.run_const)), RUNCONST_STRIDE);
         assert_eq!(pos(ids.run_const, "def"), RUNCONST_DEF);

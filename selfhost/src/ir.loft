@@ -457,12 +457,14 @@ pub struct RunConst {
 // A function's shape as a call through a function reference needs it
 // (`State::fn_call_ref_to`), for one that is not a plain call: the text-buffer bytes the call
 // drops (a reference type pushes as many as the widest text answer needs), the hidden return
-// buffers it allocates in order (-1 a record's, a type number a vector's of that type), and its
-// kind — 0 bytecode, 1 a native, 2 a generator.
+// buffers it allocates in order (-1 a record's, a type number a vector's of that type), its
+// kind — 0 bytecode, 1 a native, 2 a generator — and the drop cascade of its closure record
+// (`OpDropFnRef`, -1 for none).
 pub struct RunFnRef {
   pub def: integer,
   pub drop: integer,
   pub kind: integer,
+  pub cascade: integer,
   pub hidden: vector<integer>,
 }
 

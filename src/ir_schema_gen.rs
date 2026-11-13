@@ -917,6 +917,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t114, "def", 0);
     db.field(t114, "drop", 0);
     db.field(t114, "kind", 0);
+    db.field(t114, "cascade", 0);
     let vec_hidden = db.vector(t0);
     db.field(t114, "hidden", vec_hidden);
     let vec_code = db.vector(t116);

@@ -150,6 +150,11 @@ H_REMOVE_VECTOR = 127;
 H_SET_TEXT_REPLACE = 128;
 H_FORMAT_STACK_FLOAT = 129;
 H_CONST_REF = 130;
+H_CALL_REF = 131;
+H_FN_REF_CLOSURE = 132;
+H_VAR_FN_REF = 133;
+H_DROP_FN_REF = 134;
+H_FN_REF_DETACH = 135;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -317,6 +322,11 @@ pub fn handler(name: text) -> integer {
     "OpSetTextReplace" => H_SET_TEXT_REPLACE,
     "OpFormatStackFloat" => H_FORMAT_STACK_FLOAT,
     "OpConstRef" => H_CONST_REF,
+    "OpCallRef" => H_CALL_REF,
+    "OpFnRefClosure" => H_FN_REF_CLOSURE,
+    "OpVarFnRef" => H_VAR_FN_REF,
+    "OpDropFnRef" => H_DROP_FN_REF,
+    "OpFnRefDetachShared" => H_FN_REF_DETACH,
     _ => -1
   }
 }
@@ -442,6 +452,11 @@ fn layout_of(h: integer) -> text {
     128 => "h",
     129 => "hbzc",
     130 => "q",
+    131 => "hh",
+    132 => "h",
+    133 => "h",
+    134 => "h",
+    135 => "hh",
     _ => ""
   }
 }
@@ -641,6 +656,18 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       cp[c.def] = c.pos;
     }
   }
+  // Each definition's call-through-a-reference shape (`RunImage.fnrefs`), by definition: -1 a
+  // plain call.
+  sh: vector<integer> = [for _ in 0..len(img.starts) { -1 }];
+  for f in img.fnrefs {
+    sh[f.def] = f#index;
+  }
+  // The buffers a call through a reference allocated (`fnref_bufs`): the callee's depth and the
+  // reference, released when that call returns (`release_fnref_bufs`).
+  fbd: vector<integer> = [];
+  fbs: vector<integer> = [];
+  fbr: vector<integer> = [];
+  fbp: vector<integer> = [];
   // `LOFT_BRUN_TRACE`: each operator's position, name and stack top on stderr before it runs.
   trace = env_variable("LOFT_BRUN_TRACE") != null;
   // Each element type's default image, derived on first use (`types::default_image`).
@@ -736,6 +763,51 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
         crt::stack_move(stk, pos - step(value), fn_stack, value);
       }
       sp = fn_stack + step(value);
+      // `release_fnref_bufs`: the buffers this call was handed by a call through a reference
+      // are freed, except one it returns — that one is the caller's now.
+      if len(fbd) > 0 && (fbd[len(fbd) - 1] ?? -1) >= depth {
+        rets = NULL_STORE;
+        if value == 12 {
+          crt::slot_ref(io, stk, fn_stack);
+          rets = io[0] ?? NULL_STORE;
+        }
+        hand_s: vector<integer> = [];
+        hand_r: vector<integer> = [];
+        hand_p: vector<integer> = [];
+        while len(fbd) > 0 && (fbd[len(fbd) - 1] ?? -1) >= depth {
+          k = len(fbd) - 1;
+          fd = fbd[k] ?? -1;
+          bs2 = fbs[k] ?? NULL_STORE;
+          br2 = fbr[k] ?? 0;
+          bp2 = fbp[k] ?? 0;
+          fbd = fbd[0..k];
+          fbs = fbs[0..k];
+          fbr = fbr[0..k];
+          fbp = fbp[0..k];
+          if fd != depth {
+            continue;
+          }
+          if bs2 == rets {
+            hand_s += [bs2];
+            hand_r += [br2];
+            hand_p += [bp2];
+          } else if crt::store_live(bs2) {
+            // A buffer already freed — by the frame it was handed up to — is left alone.
+            if trace {
+              eprintln("\tfree fn-ref buffer store {bs2}");
+            }
+            crt::free_ref(bs2, br2, bp2);
+          }
+        }
+        if depth > 0 {
+          for hk in 0..len(hand_s) {
+            fbd += [depth - 1];
+            fbs += [hand_s[hk] ?? NULL_STORE];
+            fbr += [hand_r[hk] ?? 0];
+            fbp += [hand_p[hk] ?? 0];
+          }
+        }
+      }
       if depth == 0 {
         return Outcome { refused: "", steps: steps };
       }
@@ -945,6 +1017,9 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
     } else if h == H_FREE_REF {
       sp -= 16;
       crt::slot_ref(io, stk, sp);
+      if trace {
+        eprintln("\tfree store {io[0] ?? NULL_STORE} rec {io[1] ?? 0}");
+      }
       crt::free_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     } else if h == H_VAR_BOOL || h == H_VAR_8 {
       // The slot's bytes as they stand: a boolean's tri-state byte (255 for null), an enum's
@@ -1572,6 +1647,111 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       pc += 8;
       crt::set_slot_ref(stk, sp, cs[cd] ?? NULL_STORE, cr[cd] ?? 0, cp[cd] ?? 0);
       sp += 16;
+    } else if h == H_CALL_REF {
+      // `fn_call_ref_to`: the definition the reference names; its extra text buffers dropped,
+      // its hidden return buffers allocated and pushed, the closure record pushed when it has
+      // one, then the call.
+      fv = u16_at(img.code, pc);
+      asz = u16_at(img.code, pc + 2);
+      pc += 4;
+      rd = get(stk, sp - fv) ?? -1;
+      if rd < 0 || rd + 1 >= len(img.starts) {
+        return Outcome { refused: "a call through a reference that names no function: OpCallRef at {at}", steps: steps };
+      }
+      shi = sh[rd] ?? -1;
+      hsz = 0;
+      if shi >= 0 {
+        shp = img.fnrefs[shi]!;
+        if shp.kind == 1 {
+          return Outcome { refused: "a call through a reference to a native: OpCallRef at {at}", steps: steps };
+        }
+        if shp.kind == 2 {
+          return Outcome { refused: "a call through a reference to a generator: OpCallRef at {at}", steps: steps };
+        }
+        if shp.drop > 0 && asz >= shp.drop {
+          sp -= shp.drop;
+          fv -= shp.drop;
+          asz -= shp.drop;
+        }
+        for hb in shp.hidden {
+          // A record's buffer is a store with no root (`Stores::null()`), a vector's a store of
+          // its `main_vector<T>` type with its defaults — both FRESH: `crt::database` makes
+          // again in place a store `io` already names, so `io` is the null reference first.
+          io[0] = NULL_STORE;
+          io[1] = 0;
+          io[2] = 0;
+          if hb < 0 {
+            crt::database(io, 8, 0);
+            io[1] = 0;
+          } else {
+            crt::database(io, img.types[hb]!.size, hb);
+            while len(imaged) <= hb {
+              images += [[]];
+              imaged += [false];
+            }
+            if !(imaged[hb] ?? false) {
+              images[hb] = types::default_image(img.types, hb);
+              imaged[hb] = true;
+            }
+            crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[hb]!);
+          }
+          crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+          fbd += [depth + 1];
+          fbs += [io[0] ?? NULL_STORE];
+          fbr += [io[1] ?? 0];
+          fbp += [io[2] ?? 0];
+          sp += 16;
+          hsz += 16;
+        }
+      }
+      crt::slot_ref(io, stk, sp - (fv + hsz - 8));
+      if (io[1] ?? 0) != 0 {
+        crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+        sp += 16;
+      }
+      set(stk, sp, pc);
+      sp += 8;
+      depth += 1;
+      pc = img.starts[rd] ?? 0;
+    } else if h == H_FN_REF_CLOSURE {
+      // A function reference's closure record, 8 bytes into its 20-byte slot, pushed.
+      crt::stack_move(stk, sp - (u16_at(img.code, pc) - 8), sp, 12);
+      pc += 2;
+      sp += 16;
+    } else if h == H_VAR_FN_REF {
+      // The whole 20-byte reference pushed, in a 24-byte step.
+      crt::stack_move(stk, sp - u16_at(img.code, pc), sp, 20);
+      pc += 2;
+      sp += 24;
+    } else if h == H_DROP_FN_REF {
+      // `drop_fn_ref`: a live closure record released by its record's drop cascade, called with
+      // the closure pushed; nothing for a null or freed closure, or one without a cascade.
+      dfv = u16_at(img.code, pc);
+      pc += 2;
+      dd = get(stk, sp - dfv) ?? -1;
+      crt::slot_ref(io, stk, sp - (dfv - 8));
+      dshi = if dd >= 0 && dd < len(sh) { sh[dd] ?? -1 } else { -1 };
+      dcas = if dshi >= 0 { img.fnrefs[dshi]!.cascade } else { -1 };
+      if dcas >= 0 && (io[1] ?? 0) != 0 && crt::store_live(io[0] ?? NULL_STORE) {
+        crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+        sp += 16;
+        set(stk, sp, pc);
+        sp += 8;
+        depth += 1;
+        pc = img.starts[dcas] ?? 0;
+      }
+    } else if h == H_FN_REF_DETACH {
+      // `fn_ref_detach_shared`: the old reference's closure forgotten where it has none or shares
+      // the new one's store.
+      ofv = u16_at(img.code, pc);
+      nfv = u16_at(img.code, pc + 2);
+      pc += 4;
+      crt::slot_ref(io, stk, sp - (nfv - 8));
+      nst = io[0] ?? NULL_STORE;
+      crt::slot_ref(io, stk, sp - (ofv - 8));
+      if (io[1] ?? 0) == 0 || (io[0] ?? NULL_STORE) == nst {
+        crt::set_slot_ref(stk, sp - (ofv - 8), NULL_STORE, 0, 0);
+      }
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };

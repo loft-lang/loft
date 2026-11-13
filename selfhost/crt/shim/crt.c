@@ -277,6 +277,11 @@ int64_t loft_crt_store_from_image(int64_t *io, int64_t n_io, const char *bytes, 
     return 1;
 }
 
+/* Is store `nr` live?  A freed store answers 0 (`Store::is_free`). */
+int64_t loft_crt_store_live(int64_t nr) {
+    return nr >= 0 && nr < loft_nstores && loft_stores[nr].live ? 1 : 0;
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);
