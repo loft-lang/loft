@@ -3007,16 +3007,18 @@ impl Run<'_> {
             }
             // `OpEqInt(OpGetInt4(x, 0), 0)`: a nullable struct-enum's absent tag, the second half
             // of its null test (`x == null` is `OpRefIsNull(x) || tag(x) == 0`).  No local OWNS a
-            // tag-0 record — copying an absent field answers null, and a view of one is its
-            // parent's store — so the absent side narrows `x` as the null test does.  Without it
+            // tag-0 COPY — copying an absent field answers null — so the absent side drops `x`'s copies.  Without it
             // the `x == null` arm kept `x`'s copy and a rebind there read as a leak (`cond =
-            // mc.cond` under `if cond == null`).  `LOFT_RECORDS_NO_TAG_NULL_TEST=1`.
+            // mc.cond` under `if cond == null`).  OPT-IN (`LOFT_RECORDS_TAG_NULL_TEST=1`): a MINTED record
+            // can carry a non-absent variant the records do not know, so the absent side keeps it,
+            // and suite B-Copy/a-branch-handing-back-… then reads one false finding where the
+            // default reads none — the precise answer needs the variant a mint writes.
             Value::Call(op, a)
                 if a.len() == 2
                     && self.data.def(*op).name() == "OpEqInt"
                     && matches!(a[1].unspan(), Value::Int(0))
-                    && !crate::env_once!(
-                        std::env::var_os("LOFT_RECORDS_NO_TAG_NULL_TEST").is_some()
+                    && crate::env_once!(
+                        std::env::var_os("LOFT_RECORDS_TAG_NULL_TEST").is_some()
                     )
                     && let Value::Call(g, ga) = a[0].unspan()
                     && self.data.def(*g).name() == "OpGetInt4"
@@ -3028,7 +3030,27 @@ impl Run<'_> {
                         crate::data::Type::Optional(inner) if matches!(inner.base(), crate::data::Type::Enum(_, true, _))
                     ) =>
             {
-                Self::null_test(*x, st)
+                // The absent side: `x` is null, or a record with the absent tag — never a COPY
+                // (copying an absent field answers null), but a call's answer through a buffer can
+                // be one (`fold(n) -> Own?` answering its buffer marked absent).  So only the copies
+                // leave `x` there.  The present side names a store.
+                let (_, present) = Self::null_test(*x, st.clone());
+                let mut absent = st;
+                let keep: Pts = Self::pts(&absent, *x)
+                    .into_iter()
+                    .filter(|p| match p {
+                        Pt::Store(k) => {
+                            !matches!(self.sites[k.site as usize].origin, Some(Origin::Copy))
+                        }
+                        _ => true,
+                    })
+                    .collect();
+                if keep.is_empty() {
+                    (None, present)
+                } else {
+                    Self::narrow(&mut absent, *x, keep);
+                    (Some(absent), present)
+                }
             }
             Value::Call(op, a) if *op == self.ops.distinct => {
                 let (distinct, mut same) = self.decide_distinct(a, st);
