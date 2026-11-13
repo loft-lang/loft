@@ -19420,8 +19420,9 @@ impl Parser {
     /// that mint behind — the buffer is a parameter, so no free on the return path names it,
     /// and the caller frees only the result it is handed (`@FR-O-Complete`).  A pooled buffer
     /// (`@FR-R-Reuse`) hid it: the mint then refilled the caller's own store.  The source is
-    /// read into a view local (`_ret_src_N`, never freed: what it views is released by its own
-    /// owner) and the copy reads that, so only the path that copies mints.
+    /// read into a local (`_ret_src_N`) and the copy reads that, so only the path that copies
+    /// mints.  A source with deps is a view, never freed (its owner releases what it views);
+    /// one without owns its store, which the frame's exit releases.
     fn bind_leaving_source(&mut self, td: u32, src: &mut Value) -> Option<Value> {
         if self.first_pass
             || matches!(self.data.def(self.context).def_type(), DefType::Generic)
@@ -19442,10 +19443,19 @@ impl Parser {
             Value::Block(bl) => bl.result.depend(),
             _ => Vec::new(),
         };
+        // A source with no deps answers a store of its own (a call's fresh record,
+        // `v_if(lc.code, …)` after the arm's early `return`): the local OWNS it, and the
+        // frame's exit releases it after the copy.  Never freed, it leaked one record per
+        // pass (the self-hosted elaborator's `pattern_cond`).  `LOFT_NO_RET_SRC_OWNS=1`
+        // keeps every source a view.
+        let owns = deps.is_empty()
+            && !crate::env_once!(std::env::var_os("LOFT_NO_RET_SRC_OWNS").is_some());
         let tp = Type::Optional(Box::new(Type::Reference(td, Deps::frame(deps))));
         let v = self.create_unique("_ret_src", &tp);
         self.vars.defined(v);
-        self.vars.set_skip_free(v);
+        if !owns {
+            self.vars.set_skip_free(v);
+        }
         let path = std::mem::replace(src, Value::Var(v));
         Some(crate::data::v_set(v, path))
     }
