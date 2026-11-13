@@ -12,9 +12,8 @@ every active branch into one PR.
 
 ## Where it stands
 
-- **Gate E** (`selfhost/front/elab_gate.py`, the C-built elaborator over 2048 programs): 616
-  agree, 30 differ, **5 freed twice** at `c4ba47b68` (357 freed twice that morning).  A run at
-  `3eb82c694` (the choice join below) was in progress at handoff.
+- **Gate E** (`selfhost/front/elab_gate.py`, the C-built elaborator): 617 of 2049 agree, 27
+  differ, **2 freed twice** at `3eb82c694` (357 freed twice that morning).
 - **Suite** (suite `91-self-host` `c1358dd`, both-c, dev binary): 3304 passed, 0 failed.
 - **Store records**: every fix below reads CAUGHT with its switch off and CLEAN with it on
   (`scripts/own_sweep.py --oracle check-records --cell <probe> --switch '' --switch <S>`).
@@ -36,8 +35,12 @@ counted them.
 
 ## Open
 
-1. **Gate E's last cases.**  `classify_var` (3 programs) and `tag_in` → `enum_field` (C-Var
-   2441) are the choice-join shape; the run at `3eb82c694` says whether they are gone.
+1. **`tag_in` → `enum_field`** (suite C-Var `2441-a-field-every-variant-declares-…`): `tag_in`
+   frees a store at its exit (el_expressions.loft 8007) that `enum_field`'s `__ncc_3` — the
+   `field_get(…, recv) ?? ir::NdNull` temporary, `recv = v_if(tag_in(…), place, …)` — frees
+   again (line 7997).  `tag_in`'s own binds are right since the choice join (`cond` copies
+   `test`); the store reaches `enum_field` through `v_if`'s and `field_get`'s child records.
+   `classify_var`'s three programs closed with the choice join.
 2. **`arm_delivery`** (suite H-Move `a-file-local-moved-into-a-structure-keeps-its-handle`):
    two adjacent frees in its exit sweep (el_expressions.loft 2283) release one store.  The
    interpreter shows it with `LOFT_REFREE_FAILS=1`; the first free's variable is not named.
