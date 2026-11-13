@@ -6240,8 +6240,10 @@ fn vector_field_bind(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir::Ty
                 }
               }
               if !reads_base {
-                el::refuse(e, "a vector field bound from a call that could fill it in place");
-                return ex(ir::NdNull, ir::TyVoid);
+                // `place_buffer_of`: the field is emptied, the call's buffer pointed at it (nulled
+                // just before the statement, `mark_inline_ref`), and the call fills it in place.
+                el_vars::mark_inline(vars, bv);
+                return ex(ir::NdInsert { items: [clear, el_ir::v_set(bv, place), x.code] }, ir::TyVoid);
               }
             }
           },
