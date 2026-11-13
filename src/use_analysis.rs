@@ -3292,6 +3292,11 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
         return (Vec::new(), false);
     };
     let attrs = data.def(fn_nr).attributes();
+    // A record answer of a known type: a generic's `T` is a placeholder that may be a tuple.
+    let returns_record = match data.def(fn_nr).returned().base() {
+        Type::Reference(r, _) | Type::Enum(r, true, _) => !data.is_type_var_placeholder(*r),
+        _ => false,
+    };
     let mut protectable = Vec::new();
     let mut covers_all = true;
     for (i, arg) in args.iter().enumerate() {
@@ -3331,6 +3336,31 @@ pub fn protectable_ref_args(data: &Data, d_nr: u32, call: &Value) -> (Vec<u16>, 
                     None => covers_all = false,
                 }
             }
+            continue;
+        }
+        // A vector of scalars holds no record, so a record answer never lies in its store and
+        // the copy's source-free can never reach it: the argument needs no protection and does
+        // not leave the set incomplete.  Counted uncovered, a call building the vector inline
+        // (`arm_typed(b.code, outside_deps(…))`) cost the copy its source-free, and every record
+        // the callee made leaked (the self-hosted elaborator's `match_expr`).  An answer that
+        // is itself a vector may be this one, and is not exempted.
+        // `LOFT_NO_SCALAR_VECTOR_EXEMPT=1` counts it as before.
+        // Only a true scalar element: a TUPLE element is read by reference into the vector's
+        // store (suite G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path).
+        if returns_record
+            && let Type::Vector(elem, _) = carried.base()
+            && matches!(
+                elem.base(),
+                Type::Integer(_)
+                    | Type::Boolean
+                    | Type::Float
+                    | Type::Single
+                    | Type::Character
+                    | Type::Text(_)
+                    | Type::Enum(_, false, _)
+            )
+            && !crate::env_once!(std::env::var_os("LOFT_NO_SCALAR_VECTOR_EXEMPT").is_some())
+        {
             continue;
         }
         // What a `&` parameter links to; a `τ?` is no link.
