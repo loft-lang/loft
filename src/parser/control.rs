@@ -19448,7 +19448,19 @@ impl Parser {
         // frame's exit releases it after the copy.  Never freed, it leaked one record per
         // pass (the self-hosted elaborator's `pattern_cond`).  `LOFT_NO_RET_SRC_OWNS=1`
         // keeps every source a view.
+        // Not an arm ending in a LITERAL: its record lies in the literal's own buffer, which the
+        // frame releases — freed by the local too, it was freed twice.
+        fn tail_is_literal(v: &Value) -> bool {
+            match v.unspan() {
+                Value::Block(bl) if bl.name == "Object" => true,
+                Value::Block(bl) => bl.operators.last().is_some_and(tail_is_literal),
+                Value::Insert(ops) => ops.last().is_some_and(tail_is_literal),
+                Value::If(_, t, f) => tail_is_literal(t) || tail_is_literal(f),
+                _ => false,
+            }
+        }
         let owns = deps.is_empty()
+            && !tail_is_literal(src)
             && !crate::env_once!(std::env::var_os("LOFT_NO_RET_SRC_OWNS").is_some());
         let tp = Type::Optional(Box::new(Type::Reference(td, Deps::frame(deps))));
         let v = self.create_unique("_ret_src", &tp);
