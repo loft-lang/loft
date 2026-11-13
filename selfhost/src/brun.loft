@@ -137,6 +137,18 @@ H_KEEP_VECTOR_RANGE = 114;
 H_PUT_FN_REF = 115;
 H_FORMAT_STACK_TEXT = 116;
 H_TAG_VC_JUMP = 117;
+H_BIND_OR_COPY = 118;
+H_COPY_REF_OR_NULL = 119;
+H_DIV_INT_NULLABLE = 120;
+H_SET_SINGLE = 121;
+H_GET_SINGLE = 122;
+H_GET_CHARACTER = 123;
+H_VAR_CHARACTER = 124;
+H_PUT_CHARACTER = 125;
+H_BOOL_NULL = 126;
+H_REMOVE_VECTOR = 127;
+H_SET_TEXT_REPLACE = 128;
+H_FORMAT_STACK_FLOAT = 129;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -291,6 +303,18 @@ pub fn handler(name: text) -> integer {
     "OpPutFnRef" => H_PUT_FN_REF,
     "OpFormatStackText" => H_FORMAT_STACK_TEXT,
     "OpTagVCJump" => H_TAG_VC_JUMP,
+    "OpBindOrCopy" => H_BIND_OR_COPY,
+    "OpCopyRefOrNull" => H_COPY_REF_OR_NULL,
+    "OpDivIntNullable" => H_DIV_INT_NULLABLE,
+    "OpSetSingle" => H_SET_SINGLE,
+    "OpGetSingle" => H_GET_SINGLE,
+    "OpGetCharacter" => H_GET_CHARACTER,
+    "OpVarCharacter" => H_VAR_CHARACTER,
+    "OpPutCharacter" => H_PUT_CHARACTER,
+    "OpConvBoolFromNull" => H_BOOL_NULL,
+    "OpRemoveVector" => H_REMOVE_VECTOR,
+    "OpSetTextReplace" => H_SET_TEXT_REPLACE,
+    "OpFormatStackFloat" => H_FORMAT_STACK_FLOAT,
     _ => -1
   }
 }
@@ -405,6 +429,16 @@ fn layout_of(h: integer) -> text {
     115 => "h",
     116 => "hcb",
     117 => "bhqi",
+    118 => "hh",
+    119 => "hh",
+    121 => "h",
+    122 => "h",
+    123 => "h",
+    124 => "h",
+    125 => "h",
+    127 => "h",
+    128 => "h",
+    129 => "hbzc",
     _ => ""
   }
 }
@@ -414,7 +448,7 @@ fn layout_of(h: integer) -> text {
 // here, beside the handlers, so an operator added later is listed where it is added.  The one
 // exception is `OpDatabase`, which needs it only for a vector wrapper and loads it there.
 fn needs_table(h: integer) -> boolean {
-  h == H_CLEAR_VECTOR || h == H_COPY_RECORD || h == H_APPEND_VECTOR || h == H_APPEND_COPY || h == H_CLEAR || h == H_KEEP_VECTOR_RANGE
+  h == H_CLEAR_VECTOR || h == H_FINISH_RECORD || h == H_COPY_RECORD || h == H_BIND_OR_COPY || h == H_COPY_REF_OR_NULL || h == H_REMOVE_VECTOR || h == H_APPEND_VECTOR || h == H_APPEND_COPY || h == H_CLEAR || h == H_KEEP_VECTOR_RANGE
 }
 
 // Per opcode of the image: does its operator need the type table (`needs_table`)?
@@ -536,6 +570,37 @@ fn cmp_float(kind: integer, a: float?, b: float?) -> boolean {
   if kind == 0 { d == 0 } else if kind == 1 { d != 0 } else if kind == 2 { d < 0 } else { d <= 0 }
 }
 
+// The type table loaded into the C runtime once a run (`tl[0]` says it is).
+fn ensure_table(ts: vector<ir::DbType>, tl: vector<boolean>) {
+  if !(tl[0] ?? false) {
+    load_table(ts);
+    tl[0] = true;
+  }
+}
+
+// `alloc_record_at` as today's runner makes a store: the reference in the slot at `at`, a store
+// made (or made again where it names one) with a zeroed root of `tp`'s size — an enum variant's
+// its parent's — and the reference written back.  A vector wrapper is released through the type
+// table, so that loads it.
+fn make_store(ts: vector<ir::DbType>, stk: integer, io: vector<integer>, tl: vector<boolean>, at: integer, tp: integer) {
+  crt::slot_ref(io, stk, at);
+  bytes = types::enum_parent_size(ts, tp);
+  if types::is_vector_wrapper(ts, tp) {
+    ensure_table(ts, tl);
+    crt::database_wrapper(io, bytes, tp);
+  } else {
+    crt::database(io, bytes, tp);
+  }
+  crt::set_slot_ref(stk, at, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+}
+
+// A copy's type operand: its low bits, and the flags `lower.loft` derives from it — the source
+// freed (0x8000), the type holding no stored references, the destination fresh (0x4000).
+fn copy_flags(ts: vector<ir::DbType>, raw: integer) -> integer {
+  tp = raw & 16383;
+  (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(ts, tp) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 })
+}
+
 // What a run answers: the operator it stopped at when it refused one, and how many it ran.
 pub struct Outcome {
   pub refused: text,
@@ -553,7 +618,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
   steps = 0;
   // The type table in the C runtime before the first operator that walks it (`needs_table`):
   // loaded at that one place, on first need — a program that never needs it does not pay for it.
-  table_loaded = false;
+  tl: vector<boolean> = [false];
   needs = bind_table_needs(hs);
   io: vector<integer> = [NULL_STORE, 0, 0];
   // `LOFT_BRUN_TRACE`: each operator's position, name and stack top on stderr before it runs.
@@ -575,9 +640,8 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
     }
     h = hs[op] ?? -1;
     steps += 1;
-    if !table_loaded && (needs[op] ?? false) {
-      load_table(img.types);
-      table_loaded = true;
+    if !(tl[0] ?? false) && (needs[op] ?? false) {
+      ensure_table(img.types, tl);
     }
     if trace {
       eprintln("{at}\t{img.ops[op] ?? "?"}\tsp={sp}");
@@ -779,24 +843,9 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       a = get(stk, sp - 8);
       set(stk, sp - 8, if a == null { null } else { -a! });
     } else if h == H_DATABASE {
-      // `OpDatabase` / `OpDatabaseNP` as today's runner does it: the slot's reference, a store
-      // made (or made again where it names one) with a zeroed root of the type's size — an
-      // enum variant's its parent's — and the reference written back.
-      at2 = sp - u16_at(img.code, pc);
-      tp = u16_at(img.code, pc + 2);
+      // `OpDatabase` / `OpDatabaseNP`: the store the slot's reference names made (`make_store`).
+      make_store(img.types, stk, io, tl, sp - u16_at(img.code, pc), u16_at(img.code, pc + 2));
       pc += 4;
-      crt::slot_ref(io, stk, at2);
-      bytes = types::enum_parent_size(img.types, tp);
-      if types::is_vector_wrapper(img.types, tp) {
-        if !table_loaded {
-          load_table(img.types);
-          table_loaded = true;
-        }
-        crt::database_wrapper(io, bytes, tp);
-      } else {
-        crt::database(io, bytes, tp);
-      }
-      crt::set_slot_ref(stk, at2, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
     } else if h == H_VAR_REF {
       // `get_var::<DbRef>`: the 12-byte reference pushed in a 16-byte step.
       crt::stack_move(stk, sp - u16_at(img.code, pc), sp, 12);
@@ -970,39 +1019,68 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       crt::slot_ref(io, stk, sp);
       crt::vec_push_float(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, v, single);
     } else if h == H_NEW_RECORD || h == H_FINISH_RECORD {
-      // A record added to a plain vector, as `lower.loft` adds it: the collection is the parent
-      // or its field `fld` at its position; the element appended and filled with its type's
-      // defaults (not for `OpNewRecordNP`), then counted by `OpFinishRecord`.
+      // A record added to a collection, as `lower.loft` adds it: the collection is the parent
+      // or its field `fld` at its position; by its kind the record is made (a plain vector's
+      // element appended, an array's entry, a keyed collection's staged element, a hash's
+      // entry) and filled with its type's defaults (not for `OpNewRecordNP`), then filed by
+      // `OpFinishRecord`.
       ptp = u16_at(img.code, pc);
       fld = u16_at(img.code, pc + 2);
       pc += 4;
       rc = types::record_collection(img.types, ptp, fld);
       elem = types::vector_element(img.types, rc.tp);
-      if (rc.fld != 65535 && rc.at == null) || elem == null {
-        return Outcome { refused: "a record added to a collection that is not a plain vector: {img.types[rc.tp]!.name} at {at}", steps: steps };
+      aelem = types::array_element(img.types, rc.tp);
+      kelem = types::keyed_element(img.types, rc.tp);
+      helem = types::hash_element(img.types, rc.tp);
+      if (rc.fld != 65535 && rc.at == null) || (elem == null && aelem == null && kelem == null && helem == null) {
+        return Outcome { refused: "a record added to a collection the runner does not add to: {img.types[rc.tp]!.name} at {at}", steps: steps };
       }
       if h == H_FINISH_RECORD {
-        sp -= 16;
-      }
-      sp -= 16;
-      crt::slot_ref(io, stk, sp);
-      vs = io[0] ?? NULL_STORE;
-      vr = io[1] ?? 0;
-      vp = (io[2] ?? 0) + (rc.at ?? 0);
-      if h == H_FINISH_RECORD {
-        crt::vec_finish(vs, vr, vp);
+        // The record on top, the collection's owner under it.
+        crt::slot_ref(io, stk, sp - 16);
+        rs = io[0] ?? NULL_STORE;
+        rr = io[1] ?? 0;
+        rp = io[2] ?? 0;
+        crt::slot_ref(io, stk, sp - 32);
+        sp -= 32;
+        vs = io[0] ?? NULL_STORE;
+        vr = io[1] ?? 0;
+        vp = (io[2] ?? 0) + (rc.at ?? 0);
+        if aelem != null {
+          crt::array_append(vs, vr, vp, rs, rr, rp);
+        } else if kelem != null {
+          crt::keyed_finish(vs, vr, vp, rs, rr, rp, types::keyed_kind(img.types, rc.tp) ?? 0, kelem!, rc.tp);
+        } else if helem != null {
+          crt::hash_insert(vs, vr, vp, rs, rr, rp, helem!, rc.tp);
+        } else {
+          crt::vec_finish(vs, vr, vp);
+        }
       } else {
-        crt::vec_append(io, vs, vr, vp, img.types[elem!]!.size);
+        sp -= 16;
+        crt::slot_ref(io, stk, sp);
+        vs = io[0] ?? NULL_STORE;
+        vr = io[1] ?? 0;
+        vp = (io[2] ?? 0) + (rc.at ?? 0);
+        rtp = if aelem != null { aelem! } else if kelem != null { kelem! } else if helem != null { helem! } else { elem! };
+        if aelem != null {
+          crt::entry_new(io, vs, vr, vp, img.types[rtp]!.size);
+        } else if kelem != null {
+          crt::keyed_new(io, vs, vr, vp, types::keyed_kind(img.types, rc.tp) ?? 0, img.types[rtp]!.size);
+        } else if helem != null {
+          crt::hash_entry(io, vs, vr, vp, img.types[rtp]!.size, img.types[rtp]!.linked);
+        } else {
+          crt::vec_append(io, vs, vr, vp, img.types[rtp]!.size);
+        }
         if (img.ops[op] ?? "") == "OpNewRecord" {
-          while len(imaged) <= elem! {
+          while len(imaged) <= rtp {
             images += [[]];
             imaged += [false];
           }
-          if !(imaged[elem!] ?? false) {
-            images[elem!] = types::default_image(img.types, elem!);
-            imaged[elem!] = true;
+          if !(imaged[rtp] ?? false) {
+            images[rtp] = types::default_image(img.types, rtp);
+            imaged[rtp] = true;
           }
-          crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[elem!]!);
+          crt::fill(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, images[rtp]!);
         }
         crt::set_slot_ref(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
         sp += 16;
@@ -1142,7 +1220,7 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       raw = u16_at(img.code, pc);
       pc += 2;
       ctp = raw & 16383;
-      flags = (if raw & 32768 != 0 { 1 } else { 0 }) + (if types::holds_no_stored_refs(img.types, ctp) { 2 } else { 0 }) + (if raw & 16384 != 0 { 4 } else { 0 });
+      flags = copy_flags(img.types, raw);
       crt::slot_ref(io, stk, sp - 16);
       ds = io[0] ?? NULL_STORE;
       dr = io[1] ?? 0;
@@ -1356,6 +1434,118 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, ns: vector<integer>, stk: int
       if cmp_kind(1, tag, tc) {
         pc += d;
       }
+    } else if h == H_BIND_OR_COPY {
+      // `bind_or_copy`: the witness and then the source popped; a source in the witness's store
+      // is copied into a store made for the variable, any other is bound as it is.
+      bpos = u16_at(img.code, pc);
+      braw = u16_at(img.code, pc + 2);
+      pc += 4;
+      crt::slot_ref(io, stk, sp - 16);
+      wst = io[0] ?? NULL_STORE;
+      crt::slot_ref(io, stk, sp - 32);
+      sp -= 32;
+      bss = io[0] ?? NULL_STORE;
+      bsr = io[1] ?? 0;
+      bsp = io[2] ?? 0;
+      if bss != NULL_STORE && bss == wst {
+        make_store(img.types, stk, io, tl, sp - bpos, braw & 32767);
+        crt::slot_ref(io, stk, sp - bpos);
+        crt::copy_record(bss, bsr, bsp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, braw & 16383, copy_flags(img.types, braw));
+      } else {
+        crt::set_slot_ref(stk, sp - bpos, bss, bsr, bsp);
+      }
+    } else if h == H_COPY_REF_OR_NULL {
+      // `copy_ref_or_null`: a null source frees the variable's store and leaves it null; any
+      // other is copied into the store the variable names.
+      cpos = u16_at(img.code, pc);
+      craw = u16_at(img.code, pc + 2);
+      pc += 4;
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      css = io[0] ?? NULL_STORE;
+      csr = io[1] ?? 0;
+      csp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - cpos);
+      if csr == 0 {
+        if (io[0] ?? NULL_STORE) != NULL_STORE {
+          crt::free_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+        }
+        crt::set_slot_ref(stk, sp - cpos, NULL_STORE, 0, 0);
+      } else {
+        crt::copy_record(css, csr, csp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, craw & 16383, copy_flags(img.types, craw));
+      }
+    } else if h == H_DIV_INT_NULLABLE {
+      sp -= 8;
+      db2 = get(stk, sp);
+      set(stk, sp - 8, if db2 == 0 { null } else { get(stk, sp - 8) / db2 });
+    } else if h == H_SET_SINGLE {
+      sfld = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 8;
+      sv = crt::get_float(stk, 1, 8 + sp, 0, true);
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::set_float(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, sfld, sv, true);
+    } else if h == H_GET_SINGLE {
+      gfld = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::set_float(stk, 1, 8 + sp, 0, crt::get_float(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, gfld, true), true);
+      sp += 8;
+    } else if h == H_GET_CHARACTER {
+      cfld = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::set_w(crt::W_CHARACTER, stk, 1, 8 + sp, 0, 0, crt::get_w(crt::W_CHARACTER, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, cfld, 0));
+      sp += 8;
+    } else if h == H_VAR_CHARACTER {
+      crt::stack_move(stk, sp - u16_at(img.code, pc), sp, 4);
+      pc += 2;
+      sp += 8;
+    } else if h == H_PUT_CHARACTER {
+      chp = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 8;
+      crt::stack_move(stk, sp, sp + 8 - chp, 4);
+    } else if h == H_BOOL_NULL {
+      // The null boolean: the byte 255.
+      set(stk, sp, 255);
+      sp += 8;
+    } else if h == H_REMOVE_VECTOR {
+      // `v.remove(i)`: by element type as `lower.loft` picks the mode — 2 linked, 1 owning heap,
+      // 0 plain; the index popped, then the vector; answers whether one was removed.
+      rtp2 = u16_at(img.code, pc);
+      pc += 2;
+      rix = get(stk, sp - 8);
+      sp -= 24;
+      crt::slot_ref(io, stk, sp);
+      ret2 = img.types[rtp2]!;
+      mode = if ret2.linked { 2 } else if types::owns_heap(img.types, rtp2) { 1 } else { 0 };
+      set_bool(stk, sp, crt::vec_remove(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, rtp2, ret2.size, mode, rix));
+      sp += 8;
+    } else if h == H_SET_TEXT_REPLACE {
+      tfld = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 16;
+      tv = crt::stack_str(stk, sp);
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::refill_text(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, tfld, tv);
+    } else if h == H_FORMAT_STACK_FLOAT {
+      // As `format_float`, into the text the slot's reference names.
+      fp = u16_at(img.code, pc);
+      ftoken = img.code[pc + 2] ?? 32;
+      fplus = (img.code[pc + 3] ?? 0) == 1;
+      fdir = i8_at(img.code, pc + 4);
+      pc += 5;
+      fprec = get(stk, sp - 8) ?? 0;
+      fwidth = get(stk, sp - 16) ?? 0;
+      fval = get_f(stk, sp - 24);
+      sp -= 24;
+      crt::slot_ref(io, stk, sp - (fp - 24));
+      crt::ref_text_append(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, crt::format_float(fval, fwidth, fprec, ftoken, fplus, fdir, false));
     } else {
       name = img.ops[op] ?? "op {op}";
       why = if h == -2 { "an operator whose operands the image lays out otherwise" } else { "an operator the runner does not carry" };
