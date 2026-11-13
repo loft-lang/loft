@@ -189,7 +189,7 @@ copied:
 |---|---|---|
 | T tokens | 1845 of 1850 files | four `"\0"` literals (a one-NUL text is loft's null text), one script |
 | S syntax | 1836 of 1843 files | seven refusal cells, all `@EXPECT_ERROR` files |
-| E image | 691 of 1815 programs agree, 1 differs (`selfhost/front/elab_gate.py`, at `a3f4e85f6`); 250 more are programs the Rust front end itself refuses (an `@ARGS: --lib` is passed to both) | the one difference (C-Var/2441: the compiled elaborator frees a store twice), then the families `elab_gate.py --plan` ranks first |
+| E image | 718 of 1825 programs agree, 1 differs (`selfhost/front/elab_gate.py`, at `6ca9cf280`); 250 more are programs the Rust front end itself refuses (an `@ARGS: --lib` is passed to both) | the one difference (C-Var/2441: the compiled elaborator frees a store twice), then the families `elab_gate.py --plan` ranks first |
 | E by rule | 60 of 379 formal rules carried for every suite cell, 94 for some, 225 for none; 254 of 1073 suite cells (14 rules have only cells the Rust front end refuses) | dispatch (5 of 28 cells: free overload sets carried; methods in a set, generic members, run-time variant dispatch refused by name), tuples (0 of 22), closures (1 of 47), calls (6 of 50), interfaces (2 of 38) |
 
 **Measuring by formal rule.**  The suite holds its cells under `rules/<chapter>/<rule>/`, so a
