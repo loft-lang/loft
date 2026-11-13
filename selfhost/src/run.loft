@@ -28,6 +28,10 @@ pub struct Outcome {
   // What the entry's return left on the stack: its frame base and the evaluation stacks'
   // depths, 0 when every call gave back what it took (PF5); 0 for a refused run.
   pub stack_left: integer,
+  // The microseconds the run spent lowering functions to the interpreter's code (each on its
+  // first call), so a timed run can tell that compile work from the program's own steps
+  // (`selfhost/bench/run_timed.loft`).  Set on a run that finished.
+  pub lowered_us: integer,
 }
 
 NULL_STORE = 65535;
@@ -253,7 +257,10 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
     progs += [lower::empty()];
     lowered += [false];
   }
+  lowered_us = 0;
+  t_lower = ticks();
   first = lower::lower(b, entry);
+  lowered_us += ticks() - t_lower;
   if first.refused != "" {
     return Outcome { value: 0, refused: first.refused, refused_in: first.refused_in, stores_left: 0, stack_left: 0 };
   }
@@ -459,7 +466,9 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
       Call => {
         callee = op.a;
         if !lowered[callee] {
+          t_lower = ticks();
           progs[callee] = lower::lower(b, callee);
+          lowered_us += ticks() - t_lower;
           lowered[callee] = true;
         }
         callee_prog = progs[callee]!;
@@ -594,6 +603,7 @@ pub fn run_on(b: ir::Bundle, entry: integer, args: vector<integer>, stk: integer
             refused_in: "",
             stores_left: crt::live_stores() - stores_before,
             stack_left: base + sp_int + sp_float + sp_text,
+            lowered_us: lowered_us,
           };
         }
         // The frame's text arguments were copies the call made.
