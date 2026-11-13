@@ -1733,6 +1733,19 @@ pub fn adopt_first_bind_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
 }
 
+/// `@FR-O-Move` — the call bracket around a copied call result protects the stores the
+/// reference arguments hold AFTER the call: the copy's source-free must not release a store an
+/// argument still holds, and nothing else.  A callee that re-points a `&` argument and answers
+/// its old store hands that store to the copy, which must free it; protected as it was before
+/// the call, it was held by nothing and leaked.  The C writer compares against the arguments'
+/// stores after the call, and the store records read the state after it.  **DEFAULT ON**, the
+/// interpreter and the Rust writer.  `LOFT_NO_PROTECT_AFTER_CALL=1` brackets the call itself
+/// again: the first bisect step for a leak or a double free at a copied call result.
+pub fn protect_after_call() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PROTECT_AFTER_CALL"))
+}
+
 /// loft#1612 (`@FR-B-Copy`): a `??` chain the AUTHOR parenthesised — `(x ?? y) ?? d`, whose
 /// subject the parser must hoist into a `__ncc_N` temp — is right-associated in the scopes pass,
 /// so every operand is an arm again and the destination copies rather than viewing the temp.

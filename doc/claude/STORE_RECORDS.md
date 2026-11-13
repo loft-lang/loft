@@ -458,7 +458,12 @@ which that free released under the caller (`LOFT_ARG_DISPLACED_FREE=1` emits it 
 records report the free as a `store-wrong-end`).  A nullable local, whose
 displaced free waits until after the bind, joins too when
 the value is a call that does not read it, with its slot reset first so the copy arm mints a
-store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  The rustc writer reads it for whether a reassignment frees what it displaces
+store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  A copied call result's bracket
+protects the stores the reference arguments hold AFTER the call (`@FR-O-Move`), as the C
+writer compares against them: a callee that re-points a `&` argument and answers its old
+store hands that store to the copy, and one that answers the new store hands over a store the
+argument still holds.  `LOFT_NO_PROTECT_AFTER_CALL=1` brackets the call itself again, which
+leaks the first and frees the second while the argument holds it.  The rustc writer reads it for whether a reassignment frees what it displaces
 (`LOFT_NATIVE_OWN_DISPLACED_FREE=1` gives it back its own test); its trace names its exits
 (`rs-call-bind`, `rs-var-copy`, `rs-value-record`, `rs-tail` for the plain bind).  A reassignment `re_bind` binds plainly takes the rustc writer's plain bind too, not its
 runtime copy-or-adopt (`call_bind_taken`; `LOFT_NATIVE_OWN_CALL_BIND=1` gives the arm back): an
