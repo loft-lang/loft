@@ -88,6 +88,12 @@ message.  It now walks the whole vector, as a loop over the vector itself does. 
 a parameter works, an `x#remove` in its loop counts as a change to it, and adding to it inside
 its own loop is refused as it is for any vector.
 
+**`rev(v)` no longer depends on where the function that fills `v` is written.**  `v = mk();
+for x in rev(v)` was refused ("rev() on a non-range expression must wrap a sorted, index, or
+vector collection") when `mk` was declared below its caller, and worked when it was declared
+above.  It now works either way.  A `rev` over something that is not a collection is reported
+once, without a second message about the loop.
+
 **Clearer messages for common mistakes.**  `p.z = 3` on a struct with no field `z` says
 `Unknown field P.z` instead of "Variable 'p' cannot change type".  An empty `"{}"` in a text says
 it is an empty format hole and that `{{}}` writes a pair of braces, instead of "Expect token )".
