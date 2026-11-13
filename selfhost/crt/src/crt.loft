@@ -328,6 +328,10 @@ fn c_stack_text_append_str(store: integer, at: integer, src: integer);
 #c "loft_crt_stack_text_append_str" "void(int64_t, int64_t, int64_t)"
 fn c_stack_code_bytes(store: integer, at: integer, code: vector<u8>, from: integer, n: integer);
 #c "loft_crt_stack_code_bytes" "void(int64_t, int64_t, const char*, int64_t, int64_t)"
+fn c_stack_str_null(store: integer, at: integer);
+#c "loft_crt_stack_str_null" "void(int64_t, int64_t)"
+fn c_stack_str_of_field(store: integer, at: integer, s: integer, r: integer, p: integer, fld: integer);
+#c "loft_crt_stack_str_of_field" "void(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_stack_move(store: integer, from: integer, to: integer, n: integer);
 #c "loft_crt_stack_move" "void(int64_t, int64_t, int64_t, int64_t)"
 fn c_stack_str(out: vector<u8>, store: integer, at: integer) -> integer;
@@ -351,6 +355,16 @@ pub fn stack_text_append_str(store: integer, at: integer, src: integer) {
 // `n` bytes of the image's `code` at `from` copied onto the stack at `at` as they stand.
 pub fn stack_code_bytes(store: integer, at: integer, code: vector<u8>, from: integer, n: integer) {
   c_stack_code_bytes(store, at, code, from, n);
+}
+
+// `OpConvTextFromNull`: the null text's view pushed at `at`.
+pub fn stack_str_null(store: integer, at: integer) {
+  c_stack_str_null(store, at);
+}
+
+// `OpGetText`: a view of the text at field `fld` of `(s, r, p)`, pushed at `at`.
+pub fn stack_str_of_field(store: integer, at: integer, s: integer, r: integer, p: integer, fld: integer) {
+  c_stack_str_of_field(store, at, s, r, p, fld);
 }
 
 // `n` bytes of the stack moved from `from` to `to` (`copy_result`).

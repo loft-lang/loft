@@ -225,6 +225,17 @@ void loft_crt_stack_code_bytes(int64_t store, int64_t at, const char *code, int6
     memcpy(loft_crt_slot_at(store, at), code + from, (size_t) n);
 }
 
+/* `OpConvTextFromNull`: the null text's view (the one byte "\0") pushed at `at`. */
+void loft_crt_stack_str_null(int64_t store, int64_t at) {
+    *(loft_str *) loft_crt_slot_at(store, at) = loft_null_text();
+}
+
+/* `OpGetText`: a view of the text the field at `fld` of `(s, r, p)` holds, pushed at `at` — the
+ * bytes stay in the store. */
+void loft_crt_stack_str_of_field(int64_t store, int64_t at, int64_t s, int64_t r, int64_t p, int64_t fld) {
+    *(loft_str *) loft_crt_slot_at(store, at) = loft_get_text(loft_crt_ref(s, r, p), (uint32_t) fld);
+}
+
 /* `copy_result`: `n` bytes moved within the stack. */
 void loft_crt_stack_move(int64_t store, int64_t from, int64_t to, int64_t n) {
     memmove(loft_crt_slot_at(store, to), loft_crt_slot_at(store, from), (size_t) n);

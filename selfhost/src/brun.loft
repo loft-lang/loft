@@ -63,6 +63,25 @@ H_PUT_TEXT = 41;
 H_PUT_BOOL = 42;
 H_CONST_FLOAT = 43;
 H_CONST_SINGLE = 44;
+H_GET_FIELD = 45;
+H_REF_IS_NULL = 46;
+H_SET_INT = 47;
+H_SET_INT4 = 48;
+H_SET_TEXT = 49;
+H_SET_BYTE = 50;
+H_FREE_REF_IF_DISTINCT = 51;
+H_REF_ALIAS = 52;
+H_FREE_REF = 53;
+H_VAR_BOOL = 54;
+H_PUT_REF = 55;
+H_PUT_8 = 56;
+H_GET_INT = 57;
+H_GET_INT4 = 58;
+H_GET_TEXT = 59;
+H_INT_NULL = 60;
+H_TEXT_NULL = 61;
+H_LENGTH_TEXT = 62;
+H_EQ_TEXT = 63;
 
 // The runner's number for operator `name`, or -1 for one it does not carry.
 pub fn handler(name: text) -> integer {
@@ -125,6 +144,25 @@ pub fn handler(name: text) -> integer {
     "OpPutBool" => H_PUT_BOOL,
     "OpConstFloat" => H_CONST_FLOAT,
     "OpConstSingle" => H_CONST_SINGLE,
+    "OpGetField" => H_GET_FIELD,
+    "OpRefIsNull" => H_REF_IS_NULL,
+    "OpSetInt" => H_SET_INT,
+    "OpSetInt4" => H_SET_INT4,
+    "OpSetText" => H_SET_TEXT,
+    "OpSetByte" => H_SET_BYTE,
+    "OpFreeRefIfDistinct" => H_FREE_REF_IF_DISTINCT,
+    "OpRefAlias" => H_REF_ALIAS,
+    "OpFreeRef" => H_FREE_REF,
+    "OpVarBool" => H_VAR_BOOL,
+    "OpPutRef" => H_PUT_REF,
+    "OpPutFloat" => H_PUT_8,
+    "OpGetInt" => H_GET_INT,
+    "OpGetInt4" => H_GET_INT4,
+    "OpGetText" => H_GET_TEXT,
+    "OpConvIntFromNull" => H_INT_NULL,
+    "OpConvTextFromNull" => H_TEXT_NULL,
+    "OpLengthText" => H_LENGTH_TEXT,
+    "OpEqText" => H_EQ_TEXT,
     _ => -1
   }
 }
@@ -168,6 +206,17 @@ fn layout_of(h: integer) -> text {
     42 => "h",
     43 => "f",
     44 => "g",
+    45 => "h",
+    47 => "h",
+    48 => "h",
+    49 => "h",
+    50 => "hi",
+    54 => "h",
+    55 => "h",
+    56 => "h",
+    57 => "h",
+    58 => "h",
+    59 => "h",
     _ => ""
   }
 }
@@ -536,6 +585,96 @@ pub fn run(img: ir::RunImage, hs: vector<integer>, stk: integer, entry: integer)
       n = if h == H_CONST_FLOAT { 8 } else { 4 };
       crt::stack_code_bytes(stk, sp, img.code, pc, n);
       pc += n;
+      sp += 8;
+    } else if h == H_GET_FIELD {
+      // A reference's position moved to its field: the popped reference pushed back moved.
+      crt::slot_ref(io, stk, sp - 16);
+      crt::set_slot_ref(stk, sp - 16, io[0] ?? NULL_STORE, io[1] ?? 0, (io[2] ?? 0) + u16_at(img.code, pc));
+      pc += 2;
+    } else if h == H_REF_IS_NULL {
+      crt::slot_ref(io, stk, sp - 16);
+      sp -= 16;
+      set_bool(stk, sp, (io[0] ?? NULL_STORE) == NULL_STORE);
+      sp += 8;
+    } else if h == H_SET_INT || h == H_SET_INT4 || h == H_SET_BYTE {
+      // The value popped, then the reference; the field written through the C runtime.
+      fld = u16_at(img.code, pc);
+      mn = if h == H_SET_BYTE { i32_at(img.code, pc + 2) } else { 0 };
+      pc += if h == H_SET_BYTE { 6 } else { 2 };
+      sp -= 8;
+      v = get(stk, sp);
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      if h == H_SET_INT {
+        crt::set_int(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld, v);
+      } else {
+        crt::set_w(if h == H_SET_INT4 { crt::W_INT4 } else { crt::W_BYTE }, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld, mn, v);
+      }
+    } else if h == H_SET_TEXT {
+      fld = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 16;
+      v = crt::stack_str(stk, sp);
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::set_text(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld, v);
+    } else if h == H_GET_INT || h == H_GET_INT4 || h == H_GET_TEXT {
+      fld = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      if h == H_GET_TEXT {
+        crt::stack_str_of_field(stk, sp, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld);
+        sp += 16;
+      } else {
+        set(stk, sp, if h == H_GET_INT { crt::get_int(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld) } else { crt::get_w(crt::W_INT4, io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, fld, 0) });
+        sp += 8;
+      }
+    } else if h == H_FREE_REF_IF_DISTINCT {
+      // `free_displaced(placeholder, witness)`: both popped, the witness on top.
+      crt::slot_ref(io, stk, sp - 16);
+      ws = io[0] ?? NULL_STORE;
+      wr = io[1] ?? 0;
+      wp = io[2] ?? 0;
+      crt::slot_ref(io, stk, sp - 32);
+      sp -= 32;
+      crt::free_displaced(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0, ws, wr, wp);
+    } else if h == H_REF_ALIAS {
+      // The reference stays where it is.
+    } else if h == H_FREE_REF {
+      sp -= 16;
+      crt::slot_ref(io, stk, sp);
+      crt::free_ref(io[0] ?? NULL_STORE, io[1] ?? 0, io[2] ?? 0);
+    } else if h == H_VAR_BOOL {
+      set_bool(stk, sp, get_bool(stk, sp - u16_at(img.code, pc)));
+      pc += 2;
+      sp += 8;
+    } else if h == H_PUT_REF {
+      p = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 16;
+      crt::stack_move(stk, sp, sp + 16 - p, 12);
+    } else if h == H_PUT_8 {
+      p = u16_at(img.code, pc);
+      pc += 2;
+      sp -= 8;
+      crt::stack_move(stk, sp, sp + 8 - p, 8);
+    } else if h == H_INT_NULL {
+      set(stk, sp, null);
+      sp += 8;
+    } else if h == H_TEXT_NULL {
+      crt::stack_str_null(stk, sp);
+      sp += 16;
+    } else if h == H_LENGTH_TEXT {
+      sp -= 16;
+      t = crt::stack_str(stk, sp);
+      set(stk, sp, if t == null { 0 } else { len(t!) });
+      sp += 8;
+    } else if h == H_EQ_TEXT {
+      sp -= 32;
+      a = crt::stack_str(stk, sp);
+      b = crt::stack_str(stk, sp + 16);
+      set_bool(stk, sp, a == b);
       sp += 8;
     } else {
       name = img.ops[op] ?? "op {op}";
