@@ -753,6 +753,14 @@ impl Parser {
                     self.skip_remaining_args();
                 }
             }
+            // A field the receiver does not declare is no place to store into.  Left as the
+            // receiver `Var`, a WRITE (`p.z = 3`) re-typed the receiver on the first pass and
+            // reported "Variable 'p' cannot change type from P to integer" instead of the
+            // unknown field — the placeholder the variant-field branch above leaves, for the
+            // same reason.
+            if self.first_pass && matches!(code, Value::Var(_)) {
+                *code = Value::Null;
+            }
             return Type::Unknown(0);
         }
         // @PLN115 S6 — record the resolved member reference at the member name: a
