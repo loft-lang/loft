@@ -1744,7 +1744,31 @@ impl Scopes<'_> {
             self.prefix_released
                 .extend(built_before.iter().map(|(rec, _)| *rec));
         }
+        let outer_hoists = std::mem::take(&mut self.value_hoists);
         let scanned = self.scan(value, function, data);
+        // `@FR-H-FreeTwice` — an arm of the value that reads a projection out of a lifted call
+        // result leaves `v` naming that lift's store, which the lift's own free releases.
+        let viewed = std::mem::replace(&mut self.value_hoists, outer_hoists);
+        if crate::keys::lift_view_guard() && !viewed.is_empty() {
+            let e = self.lift_viewers.entry(v).or_default();
+            for &l in &viewed {
+                if l != v && !e.contains(&l) {
+                    e.push(l);
+                }
+            }
+            // The guard compares `v` with the lift while the lift still names its store, so the
+            // lift takes `v`'s turn in the sweep just ahead of it, as a tuple's backings do
+            // below: `v`'s guarded free runs first, the lift's after it.
+            for l in viewed {
+                if l != v
+                    && let Some(lpos) = self.var_order.iter().position(|&x| x == l)
+                {
+                    self.var_order.remove(lpos);
+                    let at = self.var_order.iter().position(|&x| x == v).unwrap_or(lpos);
+                    self.var_order.insert(at, l);
+                }
+            }
+        }
         self.prefix_released.truncate(prefix_from);
         if first_binding {
             self.binding_now.pop();
@@ -2007,6 +2031,46 @@ impl Scopes<'_> {
         }
         // Prepend dependency initializations.
         let mut prefix = Vec::new();
+        // `@FR-H-FreeTwice` — a local an earlier bind left naming a hoisted lift's store
+        // (`Scopes::lift_viewers`) is released by this rebind only where it names none of them;
+        // where it does, the lift frees that store and the local lets go of it (a bare `Null`,
+        // which displaces nothing it owns).  Either way the local holds the sentinel when the
+        // code generator's own displaced free runs, so that free has nothing left to release.
+        let lifts: Vec<u16> = if crate::keys::lift_view_guard() {
+            self.lift_viewers
+                .get(&v)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|&l| l != v)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if transition_free.is_none()
+            && was_in_scope
+            && !lifts.is_empty()
+            && matches!(
+                function.tp(v).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+            && !value.reads_var(v)
+            && !value.reads_var(ov)
+        {
+            transition_free = Some(call("OpFreeRef", v, data));
+        }
+        if !lifts.is_empty()
+            && let Some(free) = transition_free.take()
+        {
+            let distinct = data.def_nr("OpDistinctStore");
+            transition_free = Some(lifts.iter().fold(free, |inner, &l| {
+                v_if(
+                    Value::Call(distinct, vec![Value::Var(v), Value::Var(l)]),
+                    inner,
+                    v_set(v, Value::Null),
+                )
+            }));
+        }
         // #316 — the ownership-transition free runs FIRST: before the dep
         // inits, the hoisted RHS preamble, and the Set itself, so the owned
         // store is released before any part of the new value is computed.

@@ -1746,6 +1746,17 @@ pub fn protect_after_call() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_PROTECT_AFTER_CALL"))
 }
 
+/// `@FR-H-FreeTwice` — a local bound from a branch whose arm reads a projection out of a
+/// lifted call result (`d = if c { mk().x } else { fresh() }`) names, on that path, the store
+/// the lift releases; its own free and a rebind's displaced free decline there
+/// (`Scopes::lift_viewers`).  **DEFAULT ON**, the scope pass, so every backend.
+/// `LOFT_NO_LIFT_VIEW_GUARD=1` frees the local unguarded again: the first bisect step for a
+/// store freed twice by a `__lift_N` and the local beside it.
+pub fn lift_view_guard() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LIFT_VIEW_GUARD"))
+}
+
 /// loft#1612 (`@FR-B-Copy`): a `??` chain the AUTHOR parenthesised — `(x ?? y) ?? d`, whose
 /// subject the parser must hoist into a `__ncc_N` temp — is right-associated in the scopes pass,
 /// so every operand is an arm again and the destination copies rather than viewing the temp.

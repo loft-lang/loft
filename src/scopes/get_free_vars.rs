@@ -1000,7 +1000,25 @@ impl Scopes<'_> {
                         {
                             ls.push(hook);
                         }
-                        ls.push(call("OpFreeRef", v, data));
+                        // `@FR-H-FreeTwice` — where a branch arm left `v` naming a hoisted
+                        // lift's store (`Scopes::lift_viewers`), that lift releases it: the free
+                        // runs only where `v` names none of them.  An extra guard can only
+                        // REFUSE a free, and each store it refuses is one the lift frees.
+                        let distinct = data.def_nr("OpDistinctStore");
+                        let free = self
+                            .lift_viewers
+                            .get(&v)
+                            .into_iter()
+                            .flatten()
+                            .filter(|&&l| l != v)
+                            .fold(call("OpFreeRef", v, data), |inner, &l| {
+                                v_if(
+                                    Value::Call(distinct, vec![Value::Var(v), Value::Var(l)]),
+                                    inner,
+                                    Value::Null,
+                                )
+                            });
+                        ls.push(free);
                     }
                 }
             }
